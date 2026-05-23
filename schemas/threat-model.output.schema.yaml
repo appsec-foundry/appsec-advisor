@@ -507,6 +507,31 @@ properties:
         scenario:
           type: string
           minLength: 10
+        evidence_summary:
+          # One-sentence prose claim describing WHAT the snippet in
+          # `evidence[]` demonstrates. Distinct from `scenario` (attack
+          # narrative). Rendered in §8 Threat Register as the
+          # `**Evidence:**` line above the collapsible code excerpt.
+          # Optional — composer synthesises a CWE-class-based fallback
+          # when absent, but operator-authored prose is preferred for
+          # Critical/High findings.
+          type: [string, "null"]
+          minLength: 20
+        evidence_prose:
+          # Legacy alias for `evidence_summary`. Preserved so older
+          # threat-model.yaml files load against the current schema.
+          type: [string, "null"]
+        impact_description:
+          # One-sentence concrete consequence statement. Rendered as the
+          # `**Impact:**` line in §8 Threat Register. Optional — composer
+          # falls back to the last sentence of `scenario` when absent.
+          # Always rendered for Critical/High; deduped against `scenario`
+          # only at Medium/Low.
+          type: [string, "null"]
+          minLength: 20
+        impact_summary:
+          # Legacy alias for `impact_description`.
+          type: [string, "null"]
         likelihood:
           type: string
           enum: [Critical, High, Medium, Low, Informational]

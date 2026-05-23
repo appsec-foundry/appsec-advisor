@@ -183,6 +183,43 @@ def _component_idle_seconds(progress_files: list[Path]) -> dict[str, int]:
     return out
 
 
+def _is_past_stride_phase(output_dir: Path) -> bool:
+    """Return True when ``.appsec-checkpoint`` shows the orchestrator has
+    moved past Phase 9 (STRIDE enumeration).
+
+    Checkpoint format examples written by other parts of the skill:
+      ``phase=10 status=...``
+      ``phase=11 status=writing_output``
+      ``phase=repair/1 status=completed``
+
+    After Phase 9 ends, ``.stride-*.json`` files are intentionally frozen
+    — a flat progress curve is the expected state. Continuing to count
+    stagnant_seconds in that window produces false-positive STRIDE_STALE
+    warnings (verified in the 2026-05-23 juice-shop run: 7 spurious
+    STRIDE_STALE lines between 07:00 and 07:23 while Phase 11 was rendering
+    normally). Read errors / missing checkpoint default to ``False`` so the
+    pre-Phase-9 and Phase-9-active windows keep the existing semantics.
+    """
+    cp = output_dir / ".appsec-checkpoint"
+    try:
+        text = cp.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    # Match `phase=<token>` — token may contain digits, slashes, letters
+    # (e.g. `repair/1`). Anything that is not a bare `9` is treated as
+    # past-STRIDE. Pre-Phase-9 the watchdog is gated by ``phase9_detected``
+    # via stride file presence, so an early-phase checkpoint value here
+    # (``phase=1`` … ``phase=8``) cannot trip the false-positive.
+    import re as _re
+    m = _re.search(r"phase=([^\s]+)", text)
+    if not m:
+        return False
+    token = m.group(1)
+    # The exact STRIDE phase is `phase=9` — anything else (including
+    # repair/N and 10/11) is past it.
+    return token != "9"
+
+
 def watch(
     output_dir: Path,
     plugin_root: Path,
@@ -243,8 +280,14 @@ def watch(
         if (sc > 0 or pg > 0) and not stale_fired:
             _log(output_dir, "INFO", "STRIDE_PROGRESS", f"stride_files={sc}  total_bytes={sb}  progress_files={pg}")
 
-        # 5 — stagnation tracking (only after Phase 9 has started).
-        if phase9_detected:
+        # 5 — stagnation tracking (only after Phase 9 has started, and only
+        # while Phase 9 is still the active phase. Once the orchestrator
+        # advances past STRIDE — observable via .appsec-checkpoint reading
+        # `phase=10`, `phase=11`, `phase=repair/*`, or any non-9 marker —
+        # the .stride-*.json files are intentionally frozen and a flat
+        # progress curve is the expected state, not a hang.)
+        past_stride = _is_past_stride_phase(output_dir)
+        if phase9_detected and not past_stride:
             if sc == last_count and sb == last_bytes:
                 stagnant_seconds += heartbeat_interval
             else:
@@ -259,8 +302,11 @@ def watch(
                 stale_fired = True
 
         # 6 — canary timeout (no .stride-*.json N seconds after Phase 9 start).
+        # Same Phase-9-active gate as #5 — a post-STRIDE phase legitimately
+        # has zero stride output once the orchestrator moves on.
         if (
             phase9_detected
+            and not past_stride
             and not canary_fired
             and sc == 0
             and phase9_start is not None

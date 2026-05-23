@@ -355,6 +355,15 @@ echo "PRE-WRITE-CHECK: verify attack_surface, security_controls, trust_boundarie
 
 Compose the full yaml body in memory (schema at top of this file). The Write tool call in this substep carries the yaml `content:` argument.
 
+**Output hygiene — token-budget critical (added 2026-05-23 after 7m 57s Substep-2 measurement):**
+
+The juice-shop run on 2026-05-23 spent ~6 minutes in reasoning prose between STEP_START [2/3] and the Write tool call, generating ~13 k output tokens of internal preamble for a 40 KB yaml write. Same run produced 2× `YAML_INVARIANT_DRIFT` warnings (T-005, T-009) — silent mutation of `stride`/`title`/`evidence` away from `.threats-merged.json`. Both are avoidable.
+
+- **Do not narrate the yaml composition.** No "I will now compose the yaml" / "Let me check the fields" / "Here is my plan" prose. The next action after STEP_START [2/3] is the Write tool call. Cross-checks belong in deterministic Bash steps (which already exist after the Write), not in chat output.
+- **Verbatim copy is non-negotiable.** For every threat in `.threats-merged.json`, copy `stride`, `cwe`, `component_id`, `evidence` **byte-for-byte** into the corresponding yaml entry. Do not rephrase, re-classify, or "improve" these fields — they were locked in upstream and `enforce_yaml_invariants.py` audits the difference. Treating them as editable is what produces the drift warnings.
+- **Single Write call.** The yaml is small enough (~40-50 KB ≈ 13 k–16 k tokens) to fit in one Write. Composing in multiple writes wastes a turn each and risks partial-yaml states that fail schema validation.
+- **Narrative-only fields are yours.** `threats[].title`, `threats[].scenario`, `mitigations[].title`/`steps`/`verification`, asset descriptions — these need LLM synthesis. Spend the token budget here, not on copying mechanical fields you should be transcribing.
+
 **F-NNN ID reflow rule (CRITICAL — non-negotiable):** When transferring threats from `.threats-merged.json` into `yaml.threats[]`:
 
 - **Every** entry in `.threats-merged.json` MUST be present in `yaml.threats[]` with a sequential F-NNN id.

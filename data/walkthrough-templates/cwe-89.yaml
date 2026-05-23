@@ -1,0 +1,40 @@
+cwe: CWE-89
+category: sql_injection
+human_label: "SQL Injection via raw query construction"
+
+sequence_diagram: |
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      actor Attacker
+      participant API as "{component} ({file}:{line})"
+      participant ORM as "Query layer"
+      participant DB as Database
+
+      alt Current state
+          Attacker->>API: {endpoint_guess} with `' OR 1=1 --` in a user-controlled field
+          API->>ORM: Build SQL by string interpolation — attacker payload becomes part of the query
+          ORM->>DB: SELECT … WHERE col = '' OR 1=1 --' AND …
+          DB-->>ORM: First matching row regardless of intended predicate
+          ORM-->>API: Authenticated user row returned to the caller
+          API-->>Attacker: 200 OK with authenticated session / leaked rows
+      else After {mitigation_primary}
+          Attacker->>API: Same request payload
+          API->>ORM: Build the same query with parameter binding
+          ORM->>DB: SELECT … WHERE col = $1 AND … (bound parameter)
+          DB-->>ORM: No matching row — literal string treated as data
+          ORM-->>API: Empty result set
+          API-->>Attacker: 401 Unauthorized / empty result
+      end
+  ```
+
+detection_signals:
+  - "Application-side SQL parse errors (`SQLITE_ERROR`, `syntax error near`) on the affected endpoint"
+  - "Slow-query log entries containing `UNION SELECT`, `OR 1=1`, or stacked statements against `{component}`"
+  - "Raw `sequelize.query()` / `db.raw()` call sites at `{file}` flagged by a static-analysis pre-commit hook"
+  - "WAF body-inspection flagging classical SQLi payloads in POST bodies to endpoints under `{component}`"
+
+attack_steps_template:
+  - "Identify the vulnerable input parameter — `{component}` interpolates it directly into a SQL string at `{file}:{line}`"
+  - "Send a request with an SQL meta-character payload (e.g. `' OR 1=1 --`) in the parameter"
+  - "Server returns the first matching row regardless of the original predicate, granting access or leaking data"

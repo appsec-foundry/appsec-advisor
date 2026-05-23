@@ -182,7 +182,7 @@ def test_resolve_unknown_preset_fails(isolated_root):
     assert any("ghost" in e for e in errors)
 
 
-def test_cli_required_preset_without_repo_fails(isolated_root):
+def test_org_profile_required_preset_without_repo_fails(isolated_root):
     effective, errors = rop.resolve(
         str(FIXTURE_PATH), "appsec-verification", False, None, isolated_root, env={}
     )

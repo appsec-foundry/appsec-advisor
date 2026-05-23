@@ -484,5 +484,5 @@ cwe_to_th:
   CWE-829: [TH-14, TH-08]        # Inclusion from untrusted sphere
   CWE-506: [TH-14]               # Embedded Malicious Code
   CWE-1357: [TH-14]              # Insufficiently Trustworthy Component
-  CWE-942: [TH-11, TH-15]        # Permissive Cross-domain Policy
+  CWE-942: [TH-06, TH-15]        # Permissive Cross-domain Policy — Broken Access Control (OWASP A01) and CSRF-enabling
   CWE-602: [TH-06]               # Client-Side Enforcement of Server-Side Security (client-trust → broken AuthZ)

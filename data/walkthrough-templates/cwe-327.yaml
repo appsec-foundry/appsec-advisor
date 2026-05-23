@@ -1,0 +1,36 @@
+cwe: CWE-327
+category: broken_crypto
+human_label: "Broken or risky cryptographic algorithm"
+
+sequence_diagram: |
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      actor Attacker
+      participant Store as "Credential / data store"
+      participant Cracker as "Offline cracker (hashcat / john)"
+      participant App as "{component} ({file}:{line})"
+
+      alt Current state
+          Attacker->>Store: Obtain hash dump (SQLi, backup leak, or repo)
+          Store-->>Attacker: Hashes computed with the broken algorithm (`{cwe}` — fast / unsalted)
+          Attacker->>Cracker: Run dictionary + GPU rules against the dump
+          Cracker->>Cracker: Iterate through known-password lists and common mutations
+          Cracker-->>Attacker: Plaintext credentials recovered within minutes
+          Attacker->>App: Authenticate with recovered credentials
+          App-->>Attacker: 200 OK — legitimate session granted
+      else After {mitigation_primary}
+          Attacker->>Store: Obtain hash dump
+          Store-->>Attacker: Hashes computed with bcrypt / argon2id (slow, salted)
+          Attacker->>Cracker: GPU run estimates centuries per password
+          Cracker-->>Attacker: Cracking infeasible at scale
+          Attacker->>App: Falls back to credential-stuffing or phishing
+          App-->>Attacker: Adaptive rate-limiting blocks the bulk attempts
+      end
+  ```
+
+detection_signals:
+  - "Static-analysis flag on `crypto.createHash('md5'|'sha1')`, `DES`, `RC4` usage in `{file}`"
+  - "Hash-format inspection on the persistence layer revealing the broken algorithm in stored credentials"
+  - "Dependency-audit finding referencing the broken-crypto CWE class against `{component}`"
+  - "SIEM rule on bulk credential-validation patterns matching a leaked-then-cracked timeline"

@@ -64,7 +64,14 @@ document:
     # layout integrates the chain diagram with the per-finding walkthroughs.
     - system_overview
     - architecture_diagrams
-    - attack_walkthroughs
+    # §3 Attack Walkthroughs — conditional on `not skip_attack_walkthroughs`.
+    # `--quick` sets `skip_attack_walkthroughs=true` in `.skill-config.json`
+    # which causes the composer to drop §3 entirely (heading, body, TOC entry,
+    # quick-mode-notice bullet, §8 intro back-link). The composer's
+    # `is_skipped_section_id` / `_compute_toc_entries` paths read this flag
+    # via `eval_context["skip_attack_walkthroughs"]`. Standard / thorough
+    # depths leave it `false` and §3 renders normally.
+    - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
     - assets
     - attack_surface
     # §6 Use Cases removed (2026-05) — value-vs-noise tradeoff. The numbering
@@ -124,7 +131,8 @@ document:
         - management_summary
         - system_overview
         - architecture_diagrams
-        - attack_walkthroughs
+        # §3 conditional on `not skip_attack_walkthroughs` — see main `order:` block.
+        - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
         - assets
         - attack_surface
         # §6 Use Cases removed (2026-05); see comment in main `order:` above.
@@ -154,7 +162,8 @@ document:
         - toc
         - system_overview
         - architecture_diagrams
-        - attack_walkthroughs
+        # §3 conditional on `not skip_attack_walkthroughs` — see main `order:` block.
+        - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
         - assets
         - attack_surface
         # §6 Use Cases removed (2026-05); see comment in `order:` above.
@@ -431,11 +440,15 @@ sections:
         - { key: component,   header: "Component",           render: component_ref,  required: true }
         - { key: mitigations, header: "Primary Mitigations", render: mitigation_list, required: true }
       rows:
-        min: 5
-        max: 20
+        # 2026-05 user-request (second iteration): cap Top Findings at 5
+        # so the Management Summary stays a true scan-first surface. §8
+        # Threat Register is the canonical full catalogue. min: 3 keeps
+        # small assessments from rendering an empty / 1-row tabelle.
+        min: 3
+        max: 5
     footer_template: |
       {% if total_qualifying > rendered_count %}
-      _+{{ total_qualifying - rendered_count }} additional ≥High findings — see [Section 8.2 High](#82-high-12)._
+      _+{{ total_qualifying - rendered_count }} additional ≥High findings — see [§8 Threat Register](#8-threat-register)._
       {% endif %}
 
       _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Pfad** glyphs ①–⑦ link to the matching attack-path bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
@@ -480,6 +493,14 @@ sections:
         - { key: mitigation, header: "Mitigation", render: mitigation_id,     required: true }
         - { key: addresses,  header: "Addresses",  render: finding_list,      required: true }
         - { key: effort,     header: "Effort",     render: effort_badge,      required: true, enum: [Low, Medium, High] }
+      rows:
+        # 2026-05 user-request (second iteration): cap Top Mitigations
+        # at 5 (was 10). Overflow falls through to §9 Mitigation Register
+        # which carries the full P1/P2/P3 catalogue with `Why` / `How` /
+        # verification detail. The §1 surface keeps only the highest-
+        # leverage P1 entries.
+        min: 3
+        max: 5
 
   operational_strengths:
     heading: "### Operational Strengths"
@@ -743,12 +764,43 @@ sections:
     walkthrough_depth:
       # Per §3.x walkthrough (skipped for §3.1 — that block is governed by
       # chain_compactness above).
-      min_body_lines: 18
+      #
+      # 2026-05 iteration 2: raised from 18 → 60 so a bare "heading + 1
+      # paragraph + sequenceDiagram" stub no longer satisfies the floor.
+      # A real labelled-form walkthrough (Attacker Profile / Prerequisites
+      # / Attack Steps / Sequence Diagram / Business Impact / Detection
+      # Signals / Defense in Depth / Cross-references) is ~70-100 lines.
+      min_body_lines: 60
       require_alt_else_block: true
       # §3.1 Attack Chain Overview chains — minimum non-trivial size.
       # The chain_compactness block above caps the UPPER bound at 6 nodes;
       # this is the LOWER bound. Together they pin the corridor.
       min_chain_overview_nodes_per_block: 4
+      # Per-§3.x section structure — every walkthrough MUST carry these
+      # labelled-form blocks in this order. Consumed by
+      # `qa_checks.py:check_walkthrough_structure`.
+      required_labelled_sections:
+        - "Attacker Profile"
+        - "Prerequisites"
+        - "Attack Steps"
+        - "Sequence Diagram"
+        - "Business Impact"
+        - "Detection Signals"
+        - "Defense in Depth"
+        - "Cross-references"
+      # The labelled-form sections must be **bold-headed** (`**Title**`),
+      # not `####` H4 headings — `####` are reserved for §3.1 Chain blocks.
+      labelled_section_format: bold
+      # Renderer must replace every `<!-- WALKTHROUGH_FILL: ... -->` placeholder
+      # before composing. A surviving placeholder is a contract violation.
+      forbidden_placeholders:
+        - "WALKTHROUGH_FILL"
+      # Each chain block under §3.1 must carry a `**Key takeaway:**` line
+      # after its `graph LR` block.
+      require_chain_key_takeaway: true
+      # Each chain block under §3.1 must be headed by `#### Chain N — <name>`
+      # (NOT a flat `- Chain N` bullet, NOT a level-3 heading).
+      require_chain_subsection_heading: true
     per_critical_subsection_condition: "not skip_attack_walkthroughs"
 
     # ---------------------------------------------------------------------
@@ -1438,19 +1490,24 @@ sections:
 
       **STRIDE Coverage:** {{ stride_line }}
     sub_sections: []
-    # Schema for the flat finding table. Pre-2026-05 had 9 columns (ID,
-    # Finding, Threat Category, Component, Criticality, CVSS, Vektor,
-    # Mitigation, References); the CVSS column was always empty and the
-    # four ID-only columns crowded the prose out of the Finding cell.
-    # The Story-Card layout folds Threat Category / Component / Mitigation
-    # / References inline inside Finding (with `<br><br>` paragraph breaks
-    # and an evidence-code snippet for Critical / High / Medium severities).
-    # The render layer is `_build_finding_cell` in `compose_threat_model.py`.
+    # Schema for the flat finding table.
+    #
+    # History:
+    #  * Pre-2026-05 had 9 columns (ID, Finding, Threat Category, Component,
+    #    Criticality, CVSS, Vektor, Mitigation, References). CVSS was
+    #    always empty and the four ID-only columns crowded the prose out
+    #    of the Finding cell.
+    #  * 2026-05 R-5 folded Threat Category / Component / Mitigation /
+    #    References inline inside Finding (Story Card layout in
+    #    `_build_finding_cell` in `compose_threat_model.py`).
+    #  * 2026-05 R-6 swapped the trailing Vektor column for a Component
+    #    column so the table groups visually by where the finding lives;
+    #    Vektor moved inside the Story Card as a labelled field.
     finding_table:
       columns:
         - { key: id,          header: "ID",          render: finding_anchor }
         - { key: finding,     header: "Finding",     render: story_card }
-        - { key: vektor,      header: "Vektor",      render: vektor_ref }
+        - { key: component,   header: "Component",   render: component_ref }
         - { key: criticality, header: "Criticality", render: severity_badge }
 
   # -------------------------------------------------------------------------

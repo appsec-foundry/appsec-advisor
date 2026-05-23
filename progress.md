@@ -106,27 +106,46 @@ Wichtige Luecke (verifiziert):
 
 ### 0. Verification-Spike (MUSS zuerst, vor allem anderen)
 
-Die gesamte Architektur steht und faellt mit einer ungeprueften Annahme:
-**statusLine refresht weiter, waehrend der Hauptagent im `Agent`-Tool auf
-einen Subagent wartet.** SKILL-impl:1528 dokumentiert genau das gegenteilige
-Verhalten: *"The Agent tool dispatches Stage 1 in foreground and blocks
-the chat for the full duration."* Ob `refreshInterval` waehrend dieses
-Blockings tickt, ist nicht aus der Doku ableitbar und nicht im Repo getestet.
+Zwei ungeprüfte Annahmen, beide kritisch:
 
-Spike-Setup (≤ 1 Stunde):
+**Q1:** `statusLine` (Bottom-Bar) refresht waehrend `Agent`-Tool-Blocking?
+**Q2:** `subagentStatusLine` (Subagent-Panel) refresht waehrend
+`Agent`-Tool-Blocking?
 
-1. Trivialer Statusline-Renderer: `python3 -c "import json,sys,time; \
-   sys.stdin.read(); print(f'tick {int(time.time())}')"`.
-2. `.claude/settings.json` mit `refreshInterval: 2` darauf zeigen.
-3. Trivialer Skill, der einen Subagent dispatcht, der `sleep 120` macht.
-4. Beobachten: aendert sich der `tick`-Wert in der Statusbar waehrend
-   der 120 s? Wenn nein → die ganze Architektur ist tot, und es muss
-   stattdessen ein PreToolUse/PostToolUse-Hook auf `terminalSequence`
-   mit OSC-9;4 fuer Taskbar-Progress evaluiert werden.
-5. Ergebnis als `.run-observations-statusline-spike.md` ablegen.
+SKILL-impl:1528 dokumentiert das Blocking explizit:
+*"The Agent tool dispatches Stage 1 in foreground and blocks the chat for
+the full duration."* Plausibel ist, dass `subagentStatusLine` waehrend des
+Blocks weiter aktualisiert wird (denn Subagents laufen ja gerade — Hauptzweck
+des Panels), aber unbewiesen. Die Architektur braucht beide PASS:
+A (Section 6) haengt an Q2, B (Section 6) haengt an Q1.
 
-Erst wenn der Spike `PASS` liefert, geht es mit den weiteren Abschnitten
-weiter. Andernfalls Plan abbrechen und Alternativweg neu skizzieren.
+Spike-Setup:
+
+1. Trivialer Bottom-Bar-Renderer: `.spike/statusline/statusline_tick.py`
+   (Counter in /tmp, schreibt Log).
+2. Trivialer Subagent-Panel-Renderer: `.spike/statusline/subagent_tick.py`
+   (analog, liest stdin-JSON mit Subagent-Rows, gibt Counter pro Row).
+3. `~/.claude/settings.json` mit beiden Bloecken (`statusLine` +
+   `subagentStatusLine`), `refreshInterval: 2`.
+4. Im Repo: Prompt an Claude, der einen Subagent dispatcht der `sleep 120`
+   macht.
+5. Beobachten beider Anzeigen:
+   - Tickt die Bottom-Bar waehrend des 120-s-Blocks? (Q1)
+   - Tickt die Subagent-Zeile waehrend des 120-s-Blocks? (Q2)
+6. Logs auswerten: `/tmp/.appsec-spike-*.log` Zeitstempel-Abstaende.
+7. Ergebnis als `.run-observations-statusline-spike.md` ablegen mit zwei
+   getrennten Verdicts (Q1, Q2).
+
+Entscheidungsbaum:
+
+- Q1=PASS, Q2=PASS → Voll-Architektur (A+B), wie geplant.
+- Q1=FAIL, Q2=PASS → Nur Option A (subagentStatusLine) implementieren.
+  Bottom-Bar fallen lassen, Setup-Skill nicht bauen. Doku in HELP.txt:
+  "Live-Progress nur im Agent-Panel sichtbar."
+- Q1=PASS, Q2=FAIL → Nur Option B (statusLine + Setup-Skill).
+  `subagentStatusLine`-Default fallen lassen.
+- Beide FAIL → Plan abbrechen, Alternativweg evaluieren
+  (`terminalSequence` OSC-9;4 Taskbar-Progress via Hook).
 
 ### 1. Snapshot-Schicht — `appsec_status.py` erweitern
 
@@ -322,30 +341,88 @@ Hebel), dann `phase-group-architecture.md`, dann der Rest.
 Keine per-phase `TaskCreate`-Erweiterung. Das widerspricht dem bestehenden
 TaskList-Vertrag in `SKILL-impl.md` und wuerde die UI eher unruhiger machen.
 
-### 6. Claude-Code-Konfiguration
+### 6. Claude-Code-Konfiguration — Hybrid A+B
 
-Fuer lokale Projektentwicklung kann `.claude/settings.json` spaeter erweitert
-werden:
+**Harte Limitierung (verifiziert gegen plugins-reference, Stand heute):**
+
+> Settings | `settings.json` | Default configuration applied when the
+> plugin is enabled. **Only the `agent` and `subagentStatusLine` keys
+> are currently supported**
+
+Die Bottom-Bar (`statusLine`) kann ein Plugin also **nicht** als Default
+ausliefern. Daher Hybrid:
+
+#### A. `subagentStatusLine` als Plugin-Default (out-of-the-box)
+
+Plugin-Root `settings.json` (wird vom Plugin-Loader gemerged, sobald das
+Plugin enabled ist — null Konfiguration durch den User):
+
+```json
+{
+  "subagentStatusLine": {
+    "type": "command",
+    "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/appsec_subagent_statusline.py"
+  }
+}
+```
+
+**Schema-Hinweis (verifiziert gegen settings.json-Schema):** `subagentStatusLine`
+akzeptiert nur `type` + `command`. **Kein `refreshInterval`.** Claude Code
+bestimmt die Render-Cadence der Subagent-Panel-Zeilen selbst — der Plugin
+hat darauf keinen Einfluss. Renderer muss daher tolerant gegenueber
+"viel haeufiger als erwartet"- bzw. "viel seltener"-Aufrufen sein.
+
+`scripts/appsec_subagent_statusline.py` liest stdin-JSON (alle sichtbaren
+Subagent-Rows, mit `id/label/startTime/tokenCount/cwd`), reichert jede Row
+um AppSec-Component-Step + Idle-Zeit an, schreibt eine
+`{"id":"…","content":"…"}`-Zeile pro Row. Nur fuer STRIDE-Subagents
+ueberschrieben; alle anderen Subagents behalten Default-Rendering (Row-ID
+weglassen).
+
+**Was damit out-of-the-box sichtbar wird:** Phase-9 STRIDE-Subagents zeigen
+in ihrer Panel-Zeile statt `name · description · token count` z.B.
+`stride/auth · step 4/9 Validation · 1m12s · 4.1k tok`. Bottom-Bar bleibt
+leer, aber im Agent-Panel hat der User Live-Progress ohne jeden Setup-Schritt.
+
+#### B. Setup-Skill fuer Bottom-Bar (einmaliger Opt-in)
+
+Neuer Skill: `skills/enable-progress-bar/SKILL.md`. Aufruf via
+`/appsec-advisor:enable-progress-bar`.
+
+Verhalten:
+
+1. Liest `~/.claude/settings.json` (falls vorhanden) bzw. erstellt sie.
+2. Zeigt dem User den `statusLine`-Block, den der Skill einfuegen wird,
+   und holt explizites `JA/NEIN` per AskUserQuestion bzw. Console-Prompt.
+3. Bei `JA`: deep-merge des Blocks in die bestehende Datei (kein
+   Ueberschreiben anderer Keys). Atomic-Write via tmp+rename.
+4. Backup der originalen Datei nach `~/.claude/settings.json.bak-appsec-<epoch>`.
+5. Gibt klare Anweisung: "neue Claude-Code-Session starten, dann ist die
+   AppSec-Bottom-Bar aktiv".
+6. Spiegelbild-Skill `/appsec-advisor:disable-progress-bar` entfernt den
+   Block wieder.
+
+Einzufuegender Block:
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "python3 /home/mrohr/appsec-advisor/scripts/appsec_statusline.py",
+    "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/appsec_statusline.py",
     "refreshInterval": 2,
     "padding": 1
   }
 }
 ```
 
-Fuer Plugin-Auslieferung:
+Permissions: Setup-Skill braucht in `data/required-permissions.yaml`
+explizit `Read(~/.claude/settings.json)`, `Write(~/.claude/settings.json)`,
+`Write(~/.claude/settings.json.bak-*)`.
 
-- Script mitliefern.
-- In `HELP.txt`/README dokumentieren, wie Nutzer `statusLine` aktivieren.
-- Optional `settings.json` im Plugin-Root mit `subagentStatusLine`, weil das
-  laut Plugin-Doku als Default erlaubt ist.
-- Nicht davon ausgehen, dass der Plugin eine globale `statusLine` automatisch
-  setzen kann.
+Erster Skill-Run der AppSec-Hauptpipeline gibt einen einzeiligen Hinweis
+in der Completion-Summary aus, wenn `statusLine` noch nicht eingerichtet:
+`Tipp: /appsec-advisor:enable-progress-bar einmal ausfuehren, dann ist die
+Bottom-Bar dauerhaft sichtbar.`
 
 ## Implementierungsschritte
 
@@ -400,9 +477,27 @@ Fuer Plugin-Auslieferung:
    - Testlauf mit kuenstlichen Progress-Dateien.
    - Danach echter kurzer `--dry-run`/Quick-Run, falls verfuegbar.
 
-7. **Optional: `subagentStatusLine`.**
-   - STRIDE-Subagent-Zeilen mit Component-Step/Idle-Zeit anreichern.
-   - Plugin-Root-`settings.json` nur fuer `subagentStatusLine` verwenden.
+7. **`subagentStatusLine` als Plugin-Default (Option A aus Section 6).**
+   - Nur wenn Spike-Q2 PASS.
+   - `scripts/appsec_subagent_statusline.py` bauen, das stdin-Subagent-Rows
+     fuer STRIDE-Subagents um Component-Step + Idle-Zeit anreichert
+     (delegiert an `stride_progress.snapshot()` aus Schritt 1).
+   - Non-STRIDE-Subagents: Row-ID nicht ueberschreiben (Default rendert
+     weiter).
+   - Plugin-Root `settings.json` schreiben mit `subagentStatusLine`-Block
+     (siehe Section 6). Permissions in `data/required-permissions.yaml`
+     pruefen.
+
+8. **Setup-Skill `/appsec-advisor:enable-progress-bar` (Option B aus Section 6).**
+   - Nur wenn Spike-Q1 PASS.
+   - Neuer Skill: `skills/enable-progress-bar/SKILL.md` +
+     `scripts/enable_progress_bar.py`.
+   - Verhalten gemaess Section 6.B: read+confirm+deep-merge+backup.
+   - Spiegelbild-Skill `disable-progress-bar` analog.
+   - Completion-Summary der Hauptpipeline um einmaligen Setup-Hinweis
+     ergaenzen, wenn `statusLine` noch nicht aktiv ist.
+   - Tests fuer: Datei existiert nicht / existiert leer / hat anderen
+     `statusLine`-Eintrag (kein Ueberschreiben!) / Backup-Rotation.
 
 ## Risiken und Gegenmassnahmen
 
@@ -426,6 +521,8 @@ Fuer Plugin-Auslieferung:
 
 ## Akzeptanzkriterien
 
+- **(Vorbedingung)** Verification-Spike aus Section 0 hat `PASS`
+  protokolliert: `refreshInterval` tickt waehrend `Agent`-Tool-Blocking.
 - In einer interaktiven Claude-Code-Session aktualisiert sich die AppSec-Zeile
   alle 2 Sekunden, auch wenn der Hauptagent gerade auf Subagents wartet.
 - Die Anzeige zeigt Phase/Stage, Prozent-Schaetzung, ETA und Stale-Hinweis.
@@ -433,5 +530,8 @@ Fuer Plugin-Auslieferung:
   Component-Step angezeigt.
 - Bei `--output <path>` zeigt die Statusline den richtigen Run.
 - Bei keinem laufenden Run zeigt sie kurz `AppSec idle` oder bleibt leer.
-- Unit-Tests decken Snapshot-Berechnung, Statusline-Rendering und stale
-  thresholds ab.
+- statusline-Renderer-Aufruf bleibt unter 50 ms wall-clock (gemessen
+  in CI mit `time python3 scripts/appsec_statusline.py`).
+- Unit-Tests decken ab: Snapshot-Berechnung in `appsec_status.py --live`,
+  Statusline-Rendering, stale thresholds, Pointer-`expires_at`-Expiry,
+  Lock-Liveness-Fallback auf `idle`, Throttle-Cache, Watchdog-Timeout.

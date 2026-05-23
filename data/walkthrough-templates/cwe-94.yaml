@@ -1,0 +1,33 @@
+cwe: CWE-94
+category: code_injection
+human_label: "Code Injection / sandbox escape"
+
+sequence_diagram: |
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      actor Attacker
+      participant API as "{component} ({file}:{line})"
+      participant Sandbox as "Eval / VM context"
+      participant Host as "Host process"
+
+      alt Current state
+          Attacker->>API: {endpoint_guess} with JS payload escaping the sandbox
+          API->>Sandbox: Pass attacker-controlled code to eval / `vm.runInContext`
+          Sandbox->>Sandbox: Prototype-walk reaches the host realm
+          Sandbox->>Host: Sandbox escape — attacker-controlled code runs on host
+          Host-->>API: Host-side primitives invoked under server identity
+          API-->>Attacker: Command output / arbitrary side effects / RCE
+      else After {mitigation_primary}
+          Attacker->>API: Same payload
+          API->>API: Server-side validation rejects user-supplied executable code
+          API->>API: Allow-list of safe operations applied before any evaluation
+          API-->>Attacker: 400 Bad Request — input not accepted for evaluation
+      end
+  ```
+
+detection_signals:
+  - "Static-analysis flag on `eval`, `Function`, or `vm.runIn*Context` call sites near `{file}`"
+  - "Process-tree anomalies (child processes spawned by `{component}` outside the normal worker pool)"
+  - "Outbound network connections from the sandbox VM to attacker-controlled hosts"
+  - "Audit log entries showing input length or character distribution outside the normal range on the affected endpoint"

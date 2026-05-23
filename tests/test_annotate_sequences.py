@@ -195,7 +195,7 @@ def test_empty_threat_list_noop():
 # ---------------------------------------------------------------------------
 
 
-def test_idempotent_rerun():
+def test_annotate_sequences_idempotent_rerun():
     threats = [
         _threat("T-001", "auth-service", "Spoofing", "Critical", "CWE-89"),
         _threat("T-004", "rest-api", "Tampering", "High", "CWE-321"),
@@ -286,7 +286,7 @@ def test_multiple_sequence_diagrams_independent():
 # ---------------------------------------------------------------------------
 
 
-def test_cli_rewrites_file_in_place(tmp_path: Path):
+def test_annotate_sequences_cli_rewrites_file_in_place(tmp_path: Path):
     md_path = tmp_path / "threat-model.md"
     md_path.write_text(SIMPLE_MD, encoding="utf-8")
 

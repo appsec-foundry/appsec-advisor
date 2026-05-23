@@ -1388,6 +1388,8 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
         ]),
         ("architecture_assessment", "Architecture Assessment", [
             "| Defect | Description | Key Findings |",
+            # Post-2026-05 weaknesses[] shape — 4-column table
+            "| Weakness category | Affected component(s) | Description | Key findings |",
         ]),
         ("operational_strengths", "Operational Strengths", [
             # M3.10 — categorical-cluster layout
@@ -2933,6 +2935,97 @@ def check_section7_finding_link_duplicate(md_path: Path) -> Report:
     return report
 
 
+_RELEVANT_FINDING_BULLET_RE = re.compile(
+    r"^[ \t]*[-*][ \t]+\[(F-\d{3,4})\]\(#f-\d{3,4}\)[ \t]+[—\-][ \t]+(.+?)\s*$",
+    re.MULTILINE,
+)
+
+# Stop-words ignored when comparing F-NNN title tokens against rationale text.
+_SEMANTIC_STOPWORDS: frozenset[str] = frozenset({
+    "the", "a", "an", "of", "for", "and", "or", "via", "in", "on", "to",
+    "with", "from", "by", "is", "are", "be", "as", "at", "this", "that",
+    "has", "have", "had", "any", "all", "can", "may", "will", "would",
+    "should", "could", "such", "into", "onto", "uses", "use", "used",
+    "using", "than", "then", "when", "where", "what", "how", "via",
+    # Generic security filler that doesn't disambiguate one finding from another
+    "attack", "attacker", "user", "users", "vulnerable", "vulnerability",
+    "finding", "control", "controls", "issue", "endpoint", "endpoints",
+    "request", "response", "data", "value", "values",
+})
+
+
+def _semantic_tokens(text: str) -> set[str]:
+    """Lower-cased alpha-only tokens ≥3 chars, stop-words filtered."""
+    if not text:
+        return set()
+    raw = re.findall(r"[A-Za-z][A-Za-z\-]{2,}", text)
+    return {t.lower() for t in raw if t.lower() not in _SEMANTIC_STOPWORDS}
+
+
+def check_section7_finding_reference_semantic(md_path: Path) -> Report:
+    """Flag `**Relevant findings**` bullets whose F-NNN reference and
+    rationale sentence describe semantically different threats.
+
+    Background (R-2 — 2026-05): Stage-2 and repair-mode renderers occasionally
+    write `[F-004](#f-004) — Algorithm confusion allows forging tokens` where
+    F-004's actual title in `threat-model.yaml` is `"SQL Injection — search.ts:23"`.
+    The link target is well-formed but the rationale describes a different
+    finding entirely — a reader following the link gets visible drift.
+
+    Heuristic: compute the set of content tokens in the threat's title
+    (excluding the filename suffix) and the set of content tokens in the
+    rationale. Flag as a warning when overlap = 0 AND both sets are
+    non-empty AND the rationale is long enough to expect at least one
+    overlap (≥ 6 tokens).
+
+    Soft check — emits warnings, not blocking issues, because the heuristic
+    can have false-positives on legitimate cross-references (e.g. an F-NNN
+    cited only to point at related context).
+    """
+    report = Report(check="section7_finding_reference_semantic")
+    if not md_path.is_file():
+        report.issues.append(f"file not found: {md_path}")
+        return report
+    text = md_path.read_text(encoding="utf-8")
+    section, start_line = _extract_section7(text)
+    if not section:
+        report.warnings.append("§7 not found in document")
+        report.ok = 1
+        return report
+
+    label_index = _load_label_index(md_path)
+    if not label_index:
+        report.warnings.append("threat-model.yaml not readable; semantic check skipped")
+        report.ok = 1
+        return report
+
+    for m in _RELEVANT_FINDING_BULLET_RE.finditer(section):
+        fid = m.group(1)
+        rationale = m.group(2).strip()
+        entry = label_index.get(fid.upper()) or label_index.get(fid.replace("F-", "T-").upper())
+        if not entry:
+            continue
+        title = entry[0] if isinstance(entry, tuple) else entry
+        # Strip the file-path suffix from the title — it adds noise that
+        # rarely appears in rationale prose.
+        title_clean = re.sub(r"\s*[—\-(][^—\-(]*\.\w+(:\d+)?\)?\s*$", "", title)
+        title_tokens = _semantic_tokens(title_clean)
+        rationale_tokens = _semantic_tokens(rationale)
+        if not title_tokens or len(rationale_tokens) < 6:
+            continue
+        overlap = title_tokens & rationale_tokens
+        if not overlap:
+            line_no = start_line + section.count("\n", 0, m.start())
+            report.warnings.append(
+                f"§7 line {line_no}: rationale for [{fid}] mentions "
+                f"{sorted(rationale_tokens)[:5]} but yaml title is "
+                f"'{title_clean}' — likely wrong F-NNN reference "
+                f"(Repair-Agent content drift / wrong-finding citation)."
+            )
+    report.ok = 1
+    return report
+
+
 # ---------------------------------------------------------------------------
 # End of §7 clarity checks.
 # ---------------------------------------------------------------------------
@@ -3033,6 +3126,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     paragraph_density_report = check_paragraph_density(md)
     # M-12c: path-shaped tokens that should be backticked per prose-style Rule 6.
     inline_code_report = check_inline_code_format(md)
+    label_as_code_report = check_label_as_code(md)
     # M-19 alt: empty validation_objective on hypotheses is a contract violation.
     hypothesis_validation_report = check_hypothesis_validation_objective(md)
     # M1: evidence-integrity check — line in-range, not pure-noise,
@@ -3072,6 +3166,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     section7_h4_intro_report = check_section7_h4_positive_intro(md)
     section7_fence_intro_report = check_section7_fence_intro_sentence(md)
     section7_finding_dup_report = check_section7_finding_link_duplicate(md)
+    section7_finding_sem_report = check_section7_finding_reference_semantic(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -3101,6 +3196,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "falls_short_format": falls_short_report.as_dict(),
         "paragraph_density": paragraph_density_report.as_dict(),
         "inline_code_format": inline_code_report.as_dict(),
+        "label_as_code": label_as_code_report.as_dict(),
         "hypothesis_validation_objective": hypothesis_validation_report.as_dict(),
         "evidence_integrity": evidence_integrity_report.as_dict(),
         "unfounded_perimeter_claims": perimeter_report.as_dict(),
@@ -3119,6 +3215,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "section7_h4_positive_intro": section7_h4_intro_report.as_dict(),
         "section7_fence_intro_sentence": section7_fence_intro_report.as_dict(),
         "section7_finding_link_duplicate": section7_finding_dup_report.as_dict(),
+        "section7_finding_reference_semantic": section7_finding_sem_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -5215,6 +5312,10 @@ def check_walkthrough_depth(
     min_body_lines = rules.get("min_body_lines")
     require_alt_else = bool(rules.get("require_alt_else_block"))
     min_overview_nodes = rules.get("min_chain_overview_nodes_per_block")
+    required_labelled = list(rules.get("required_labelled_sections") or [])
+    forbidden_placeholders = list(rules.get("forbidden_placeholders") or [])
+    require_chain_takeaway = bool(rules.get("require_chain_key_takeaway"))
+    require_chain_heading = bool(rules.get("require_chain_subsection_heading"))
 
     try:
         text = md_path.read_text(encoding="utf-8")
@@ -5328,6 +5429,91 @@ def check_walkthrough_depth(
                             f"contrasts the vulnerable path with the "
                             f"post-mitigation path."
                         )
+
+        # --- 3. Per-§3.x required labelled sections (2026-05 iteration 2).
+        # Every walkthrough must carry the contract's
+        # `required_labelled_sections` list as bold-headed (`**Title**`)
+        # blocks. Missing labels indicate a stub walkthrough that does not
+        # match the labelled-form contract.
+        if required_labelled:
+            body_lower = body.lower()
+            for label in required_labelled:
+                # Match `**Label**` on its own line (allowing trailing
+                # punctuation / colon), case-insensitive.
+                pat = re.compile(
+                    r"^\s*\*\*" + re.escape(label) + r"\*\*\s*$",
+                    re.MULTILINE | re.IGNORECASE,
+                )
+                if not pat.search(body):
+                    report.issues.append(
+                        f"§3.{sub_num} '{heading[:60]}': missing required "
+                        f"labelled section `**{label}**`. Each walkthrough "
+                        f"must carry every section from the contract's "
+                        f"`walkthrough_depth.required_labelled_sections` "
+                        f"list in bold-header form."
+                    )
+
+        # --- 4. Forbidden placeholders. Surviving WALKTHROUGH_FILL tokens
+        # mean the renderer agent failed to replace the scaffold prompts.
+        for tok in forbidden_placeholders:
+            if tok in body:
+                count = body.count(tok)
+                report.issues.append(
+                    f"§3.{sub_num} '{heading[:60]}': {count} surviving "
+                    f"`{tok}` placeholder(s) — the renderer must replace "
+                    f"every `<!-- {tok}: ... -->` comment with repo-specific "
+                    f"prose before composing."
+                )
+
+    # --- 5. §3.1 chain heading / `**Key takeaway:**` enforcement.
+    # The contract requires each chain to be its own `#### Chain N — <name>`
+    # block followed by a `graph LR` block and a `**Key takeaway:**` line.
+    # Reject the "single mega-block" form (all chains in one mermaid block
+    # without sub-section headings) — historic anti-pattern that breaks the
+    # right-side TOC and forces the reader to interpret one wide graph.
+    body_31_full = _extract_h3_section_body(text, "3.1 Attack Chain Overview") or ""
+    if body_31_full:
+        # Count `#### Chain N — ...` headings.
+        chain_h4_re = re.compile(
+            r"^####\s+Chain\s+\d+\s+—\s+\S", re.MULTILINE
+        )
+        chain_h4_count = len(chain_h4_re.findall(body_31_full))
+        # Count graph LR blocks.
+        graph_lr_count = len(re.findall(
+            r"```mermaid\s*\n\s*graph\s+LR", body_31_full
+        ))
+
+        if require_chain_heading and graph_lr_count > 0 and chain_h4_count == 0:
+            report.issues.append(
+                "§3.1 Attack Chain Overview: no `#### Chain N — <name>` "
+                f"sub-sections found, but {graph_lr_count} `graph LR` "
+                "block(s) are present. The contract requires one chain "
+                "per `#### Chain N` block (forbidden mega-block form)."
+            )
+
+        if (
+            require_chain_heading
+            and chain_h4_count > 0
+            and graph_lr_count > 0
+            and chain_h4_count != graph_lr_count
+        ):
+            report.issues.append(
+                f"§3.1 Attack Chain Overview: {chain_h4_count} chain "
+                f"heading(s) but {graph_lr_count} graph LR block(s) — "
+                "each chain MUST have its own `graph LR` block (1:1)."
+            )
+
+        if require_chain_takeaway and chain_h4_count > 0:
+            takeaway_count = len(re.findall(
+                r"^\*\*Key takeaway:\*\*", body_31_full, re.MULTILINE
+            ))
+            if takeaway_count < chain_h4_count:
+                report.issues.append(
+                    f"§3.1 Attack Chain Overview: {chain_h4_count} "
+                    f"chain block(s) but only {takeaway_count} "
+                    f"`**Key takeaway:**` line(s) — every chain must "
+                    f"close with a one-sentence Key-takeaway summary."
+                )
 
     if not report.issues:
         report.ok = 1
@@ -5735,6 +5921,112 @@ def check_inline_code_format(md_path: Path) -> Report:
             )
     if not report.issues:
         report.ok = 1
+    return report
+
+
+# ---------------------------------------------------------------------------
+# 2026-05 R-7 — Inverse check: ``label-as-code`` detector.
+#
+# Background: the prose-fixer aggressively backticks code-shaped tokens
+# (paths, function calls, JWT literals, …). The opposite drift — names
+# and labels wrapped in backticks when they should be plain prose — is
+# easier for an LLM to introduce. Examples observed on the 2026-05
+# juice-shop run:
+#   * ``"the `Why` / `How` / verification fields"``  — labels, not code
+#   * ``"takes one HTTP `POST`"``                      — protocol noun, not code
+#   * ``"each row's `notes` column"``                  — table-column label
+#
+# This check scans prose for single-word backticked tokens against an
+# allowlist of known-non-code labels and emits a warning per occurrence.
+# Conservative — only the explicit allowlist fires; ambiguous tokens
+# (``eval``, ``null``, ``catch``) stay backticked because in security
+# prose they ARE typically code references.
+# ---------------------------------------------------------------------------
+
+# Tokens that, when seen inside `` ` ` `` in prose, are LABELS not code.
+# Add a token here only when it has been observed as a false positive in
+# a real assessment — the allowlist's purpose is to flag drift, not to
+# strip backticks from anything that could conceivably be a label.
+_LABEL_TOKENS: frozenset[str] = frozenset({
+    # MS / threat-register / mitigation-register field labels
+    "Why", "How", "Effort", "Priority", "Severity",
+    "Addresses", "Component", "Components", "Mitigation", "Mitigations",
+    "Notes", "Vektor", "Classification", "Issue", "Impact", "Fix",
+    "Location", "Evidence",
+    "Verification", "Steps",
+    # Schema column / field names in lower case
+    "notes", "addresses", "priority", "effort", "severity",
+    "verify",  # JWT verify ALONE — should be jwt.verify() if code
+    # HTTP methods written as bare nouns ("takes one HTTP POST")
+    "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
+})
+
+# Detects ``` `Word` ``` in prose where Word matches the allowlist. The
+# token MUST be exactly one identifier (no dots, no parens, no slashes —
+# those shapes are real code).
+_LABEL_AS_CODE_RE = re.compile(r"`([A-Za-z]{3,15})`")
+
+
+def check_label_as_code(md_path: Path) -> Report:
+    """R-7: warn when labels / field names / bare HTTP methods are
+    backticked in prose. Companion to ``check_inline_code_format`` (which
+    flags the inverse — code-shaped tokens left bare).
+
+    Conservative scope:
+      * Only matches tokens of length 3-15 chars made of plain Latin
+        letters. Multi-word tokens, hyphenated tokens, and any token with
+        a dot/paren/slash are skipped (those shapes are real code).
+      * Only matches tokens in the curated ``_LABEL_TOKENS`` allowlist —
+        ambiguous tokens like ``eval``, ``null``, ``catch`` are left
+        backticked because in security prose they ARE typically code
+        references.
+      * Skips fenced code blocks, headings, table rows, HTML blockquotes.
+
+    All findings are warnings (non-blocking). The check exists to surface
+    drift back to the author, not to fail the build.
+    """
+    report = Report("label_as_code")
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return report
+
+    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    lines = text.splitlines()
+    flagged: list[tuple[int, str]] = []
+    in_html_block = False
+    for lineno, line in enumerate(lines, start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        if "<blockquote" in stripped:
+            in_html_block = True
+        if in_html_block:
+            if "</blockquote>" in stripped:
+                in_html_block = False
+            continue
+        # Drop HTML inline code spans + link URLs so we don't accidentally
+        # match `<code>POST</code>` content or URL fragments.
+        masked = re.sub(r"<code\b.*?</code>", "", line, flags=re.IGNORECASE)
+        masked = re.sub(r"\]\(([^)]+)\)", lambda m: "](" + " " * len(m.group(1)) + ")", masked)
+        for m in _LABEL_AS_CODE_RE.finditer(masked):
+            tok = m.group(1)
+            if tok in _LABEL_TOKENS:
+                flagged.append((lineno, tok))
+    if flagged:
+        from collections import Counter
+        counter = Counter(tok for _, tok in flagged)
+        for tok, n in counter.most_common(20):
+            lines_with = sorted({ln for ln, t in flagged if t == tok})[:3]
+            report.warnings.append(
+                f"label-as-code token `{tok}` appears {n}× in prose "
+                f"(line(s) {lines_with}{'…' if n > 3 else ''}) — unwrap "
+                f"the backticks (label, not code), or rewrite as a proper "
+                f"code reference such as `<obj>.{tok}()` if you meant the "
+                f"function call."
+            )
+    report.ok = 1
     return report
 
 
@@ -8051,6 +8343,20 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py section7_finding_link_duplicate <md>", file=sys.stderr)
             return 2
         report = check_section7_finding_link_duplicate(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "section7_finding_reference_semantic":
+        if len(argv) != 3:
+            print("usage: qa_checks.py section7_finding_reference_semantic <md>", file=sys.stderr)
+            return 2
+        report = check_section7_finding_reference_semantic(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "label_as_code":
+        if len(argv) != 3:
+            print("usage: qa_checks.py label_as_code <md>", file=sys.stderr)
+            return 2
+        report = check_label_as_code(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "yaml_md":

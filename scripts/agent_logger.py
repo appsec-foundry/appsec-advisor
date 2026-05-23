@@ -15,14 +15,26 @@ Events logged:
   SCAN_COMPLETE — threat-analyst finished (PostToolUse, top-level only)
   CONTEXT_READY — context resolver wrote .threat-modeling-context.md (size)
   AGENT_INVOKE  — non-orchestrator agent completed (PostToolUse, top-level only)
-  FILE_WRITE    — Write tool completed (path, size)
-  FILE_EDIT     — Edit tool completed (path, char delta)
+  FILE_WRITE    — Write tool completed (path, size, duration)
+  FILE_EDIT     — Edit tool completed (path, char delta, duration)
+  FILE_READ     — Read tool completed (path, byte/line size, duration)
+  GREP_RUN      — Grep tool completed (pattern, path, duration)
+  GLOB_RUN      — Glob tool completed (pattern, path, duration)
+  BASH_OK       — Bash tool completed without WARN indicators (cmd clip, duration)
   TOOL_ERROR    — any tool returned is_error=true
   BASH_WARN     — Bash output contains permission/error indicators
   SESSION_STOP  — agent session ended (reason, token usage, estimated cost)
   MAX_TURNS     — agent hit its maxTurns limit (logged as ERROR)
   ASSESSMENT_SUMMARY — final summary (duration, mode, threat counts, tokens, cost, models)
   ASSESSMENT_FILES   — all files written during the assessment (full paths, deduplicated)
+
+Performance-diagnostic note (added 2026-05-23): FILE_READ / GREP_RUN / GLOB_RUN /
+BASH_OK were added to close the visibility gap — previously only ~15% of tool calls
+appeared in this log (only Write/Edit and WARN-Bash), making "silent" stretches in
+the run impossible to attribute. With this addition every PostToolUse emits an event,
+and each event carries a `dur=<seconds>` tail computed from the matching PreToolUse
+manifest in `.active-tool-calls/`. Use `dur` to spot slow tools (e.g. long-running
+compose_threat_model.py invocations) without re-instrumenting the agents themselves.
 
 Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / AGENT_INVOKE)?
   PostToolUse for the Agent tool only fires in the *outermost* Claude session —
@@ -533,19 +545,40 @@ def _record_tool_start(data: dict, sid: str) -> None:
         pass
 
 
-def _record_tool_end(data: dict) -> None:
-    """Remove the per-call marker at PostToolUse. Idempotent."""
+def _record_tool_end(data: dict) -> int:
+    """Remove the per-call marker at PostToolUse and return the matching
+    `started_at` epoch (0 if no manifest was found). Idempotent.
+
+    The returned value lets callers compute tool-call duration without a
+    second filesystem read. Diagnostic events (FILE_READ, GREP_RUN, etc.)
+    append a `dur=<seconds>` suffix when the manifest could be located.
+    """
+    started_at = 0
     try:
         tool_use_id = (data.get("tool_use_id") or "").strip()
         if not tool_use_id:
-            return
+            return 0
         path = _active_tool_path(tool_use_id)
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                started_at = int(json.load(fh).get("started_at", 0))
+        except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
+            pass
         try:
             os.unlink(path)
         except FileNotFoundError:
             pass
     except Exception:
         pass
+    return started_at
+
+
+def _dur_suffix(started_at: int) -> str:
+    """Format `dur=<seconds>s` tail when started_at is known, else empty."""
+    if not started_at:
+        return ""
+    d = max(0, int(time.time()) - started_at)
+    return f"  dur={d}s"
 
 
 # Events that are ALWAYS mirrored to stderr, even without --verbose. These
@@ -1727,11 +1760,12 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     # M3.6 #2 — clear the in-flight marker file. Idempotent and silent on
     # missing files (sub-agent Pre + missing-Post case is handled by the
     # reader's age-based filter).
-    _record_tool_end(data)
+    started_at = _record_tool_end(data)
+    dur_tail = _dur_suffix(started_at)
 
     # --- errors from any tool take priority ---
     if is_err:
-        _write("ERROR", "TOOL_ERROR", f"tool={tool}  {_mask_secrets(_clip(resp))}", sid)
+        _write("ERROR", "TOOL_ERROR", f"tool={tool}  {_mask_secrets(_clip(resp))}{dur_tail}", sid)
         return
 
     # --- Agent invocation ---
@@ -1767,7 +1801,7 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         path = inp.get("file_path", "?")
         content = inp.get("content", "")
         size = len(content) if isinstance(content, str) else 0
-        _write("INFO ", "FILE_WRITE", f"{path}  ({size:,} chars)", sid)
+        _write("INFO ", "FILE_WRITE", f"{path}  ({size:,} chars){dur_tail}", sid)
 
         # Dedicated marker: context resolver finished — context is now available
         # for all subsequent phases.
@@ -1782,7 +1816,39 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         rall = inp.get("replace_all", False)
         delta = len(new) - len(old) if isinstance(new, str) and isinstance(old, str) else 0
         tag = " (replace_all)" if rall else ""
-        _write("INFO ", "FILE_EDIT", f"{path}  delta={delta:+,} chars{tag}", sid)
+        _write("INFO ", "FILE_EDIT", f"{path}  delta={delta:+,} chars{tag}{dur_tail}", sid)
+
+    # --- MultiEdit tool ---
+    elif tool == "MultiEdit":
+        path = inp.get("file_path", "?")
+        edits = inp.get("edits", []) or []
+        n_edits = len(edits) if isinstance(edits, list) else 0
+        _write("INFO ", "FILE_EDIT", f"{path}  multi_edits={n_edits}{dur_tail}", sid)
+
+    # --- Read tool — diagnostic (closes visibility gap on silent stretches) ---
+    elif tool == "Read":
+        path = inp.get("file_path", "?")
+        offset = inp.get("offset")
+        limit = inp.get("limit")
+        rng = ""
+        if offset is not None or limit is not None:
+            rng = f"  range=offset={offset or 0},limit={limit or 'eof'}"
+        _write("INFO ", "FILE_READ", f"{path}{rng}{dur_tail}", sid)
+
+    # --- Grep tool — diagnostic ---
+    elif tool == "Grep":
+        pattern = _clip(str(inp.get("pattern", "")), 60)
+        path = inp.get("path", "")
+        glob_pat = inp.get("glob", "")
+        scope = f"  path={path}" if path else (f"  glob={glob_pat}" if glob_pat else "")
+        _write("INFO ", "GREP_RUN", f"pattern={pattern}{scope}{dur_tail}", sid)
+
+    # --- Glob tool — diagnostic ---
+    elif tool == "Glob":
+        pattern = _clip(str(inp.get("pattern", "")), 80)
+        path = inp.get("path", "")
+        scope = f"  path={path}" if path else ""
+        _write("INFO ", "GLOB_RUN", f"pattern={pattern}{scope}{dur_tail}", sid)
 
     # --- Bash tool — warn on errors + extract substep progress for verbose ---
     elif tool == "Bash":
@@ -1811,9 +1877,21 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         # orchestrator's help-discovery noise (typically 10+ calls per run)
         # drowned out genuine errors in the log.
         is_help_call = "--help" in cmd_str or cmd_str.endswith(" -h") or " -h " in cmd_str
-        if any(kw in resp_str for kw in ERROR_KW) and not is_help_call:
+        is_warn = any(kw in resp_str for kw in ERROR_KW) and not is_help_call
+        if is_warn:
             cmd = _mask_secrets(_clip(cmd_str, 80))
-            _write("WARN ", "BASH_WARN", f"cmd={cmd}  resp={_mask_secrets(_clip(str(resp), 100))}", sid)
+            _write("WARN ", "BASH_WARN", f"cmd={cmd}  resp={_mask_secrets(_clip(str(resp), 100))}{dur_tail}", sid)
+        else:
+            # BASH_OK closes the diagnostic gap: previously only WARN-Bash hit
+            # the log, so any successful long-running script (compose_threat_model.py,
+            # validate_intermediate.py, pregenerate_fragments.py) was invisible.
+            # With BASH_OK + dur=<seconds> a 10-minute compose call shows up directly.
+            # Skip noisy `.agent-run.log` echo commands (the agent emits the canonical
+            # PHASE_START / PHASE_END entries via that channel, so logging the wrapper
+            # bash call would duplicate every phase event).
+            if ".agent-run.log" not in cmd_str:
+                cmd = _mask_secrets(_clip(cmd_str, 80))
+                _write("INFO ", "BASH_OK", f"cmd={cmd}{dur_tail}", sid)
 
         # --- Verbose-only: surface STEP_START / PHASE_START / PHASE_END from
         #     orchestrator Bash echo commands.  These are written to

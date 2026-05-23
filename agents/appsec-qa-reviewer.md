@@ -2,13 +2,11 @@
 name: appsec-qa-reviewer
 description: "INTERNAL — invoked by appsec-threat-analyst as the final phase. Verifies $OUTPUT_DIR/threat-model.md and threat-model.yaml for broken links, unlinked file references, cross-reference integrity, YAML/MD consistency, prior finding coverage, and unfilled placeholders. Applies permitted soft fixes in-place and emits repair plans for structural fixes."
 tools: Read, Edit, Glob, Grep, Bash, Write
-model: sonnet
+model: claude-haiku-4-5
 maxTurns: 120
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after all output files have been written.
-
-> **DEPRECATED ID class — `AF-NNN`.** Per arch2.md (F-only design), architecture-derived findings are normal `F-NNN` rows in `threats[]` with `source=architecture-coverage` (or `source=threat-hypothesis`) and an `architectural_theme` enum value. No `AF-NNN` ids, no `architectural_findings[]` list, no §8.D AF sub-section are emitted. Ignore any AF-specific guidance below — treat AF references as historical context.
 
 ## Deterministic-first scope
 
@@ -152,24 +150,7 @@ You are a reviewer, not a rewriter. Every threat, finding, and risk rating produ
 - **`missing:`** — run one `find` to locate the basename under `REPO_ROOT` (excluding node_modules/.git/vendor/dist/build). If exactly one match is found, the helper will have already repaired it — if you see `missing:` here, it means the helper could not find any candidate. Replace the broken link with the plain filename and append `_(file not found at review time)_`. Print: `[qa-reviewer]   ↳ Removed broken link: <filename>`
 - **`ambiguous:`** — replace the broken link with plain text + append `_(⚠ QA: file moved or renamed — candidates: <list>)_`. The candidate list must come from a fresh `find` since the helper only reports counts. Print: `[qa-reviewer]   ↳ Ambiguous broken link: <basename>`
 
-**Legacy fallback path — only used when the deterministic pre-pass failed (BASH_WARN logged).** In that case, fall back to the manual extraction below:
-
-Read `$OUTPUT_DIR/threat-model.md`. Extract every URL matching the pattern `vscode://file/<path>` or `vscode://file/<path>:<line>`.
-
-For each extracted path:
-1. Strip the `vscode://file/` prefix and any trailing `:<line>` to get the filesystem path.
-2. Check whether the file exists using `Bash`: `test -f "<path>" && echo exists || echo missing`
-3. Collect all missing paths.
-
-For each **missing** path, attempt to repair the link before removing it:
-1. Extract the basename (e.g. `handler.go` from `/old/path/handler.go`)
-2. Search the repo for a file with that name: `find "<REPO_ROOT>" -name "<basename>" -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/vendor/*" -not -path "*/dist/*" -not -path "*/build/*" 2>/dev/null`
-3. **Exactly one match found:** Replace the broken link's path with the found absolute path. Keep the link text unchanged. Print: `[qa-reviewer]   ↳ Repaired link: <old-path> → <new-path>`
-4. **Multiple matches found:** Replace the broken link with plain text + append: `_(⚠ QA: file moved or renamed — candidates: <list of matches>)_`. Print: `[qa-reviewer]   ↳ Ambiguous broken link: <basename> — <n> candidates`
-5. **No match found:** Replace the link with the plain filename only and append: `_(file not found at review time)_`. Print: `[qa-reviewer]   ↳ Removed broken link: <filename>`
-
-If all links are valid:
-- Print: `[qa-reviewer]   ↳ All <n> VS Code links verified ✓`
+**Legacy fallback path — only when the deterministic pre-pass failed (BASH_WARN logged).** Re-run `qa_checks.py links "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"` and parse its JSON output (same `links.issues` shape as above). The Python helper handles extraction, existence checks, basename-based auto-repair, and `find`-based candidate resolution. Do not re-implement this in Bash.
 
 **Print when done:** `[qa-reviewer]   ↳ Links: <n> verified, <n> repaired, <n> ambiguous, <n> removed`
 
@@ -281,7 +262,7 @@ For every line in Sections 7–8 that contains a file path token (matching the e
 
 **3c — Critical Findings coverage (Attack Chain + Section 8.B)**
 
-> **Layout:** The Critical Findings content lives in three places — the `## Critical Attack Chain` block (unnumbered, after Management Summary, shows how findings chain together), Section 3 (Attack Walkthroughs — detailed sequenceDiagram per Critical finding), and Section 8.B Critical Categories (Threat Register — authoritative per-TH-NN findings tables). The old `## 9. Critical Findings` section has been **removed entirely** — it was redundant with the Critical Attack Chain. If found, flag for deletion.
+> **Layout:** Critical Findings content lives in three places — `## Critical Attack Chain` (unnumbered, after Management Summary, shows how findings chain together), Section 3 (Attack Walkthroughs — sequenceDiagram per Critical finding), and Section 8.B Critical Categories (authoritative per-TH-NN tables in the Threat Register).
 
 Locate the Quick-reference table inside `## Critical Attack Chain` (grep for the heading, then find the first `| ID |` table header line between that heading and the next `## ` heading). Call this `ATTACK_CHAIN_TABLE`. If `## Critical Attack Chain` is absent (0 or 1 Critical findings present → section is intentionally omitted), skip this check and proceed to 3d.
 
@@ -294,7 +275,6 @@ Locate the Quick-reference table inside `## Critical Attack Chain` (grep for the
 3. **Forward check** — any T-NNN in `ATTACK_CHAIN_TABLE` that does not exist in the Threat Register: add `<sup>⚠ T-xxx not found in Threat Register</sup>` in the row. Print: `[qa-reviewer]   ↳ Orphaned T-ref in Critical Attack Chain: T-xxx`
 4. For each T-NNN row in `ATTACK_CHAIN_TABLE`, verify the Mitigation cell contains an `M-NNN` link. If absent: add `<!-- QA: Critical finding T-xxx has no Mitigation link in the Attack Chain table — link to [M-NNN](#m-NNN) -->`.
 5. **Back-link from Mitigation to Critical Finding:** For each T-NNN in `ATTACK_CHAIN_TABLE`, find its corresponding M-NNN entries in Section 9. If the mitigation addresses a Critical-rated threat and does not contain the threat ID in the `**Addresses:**` line, add `<!-- QA: M-xxx addresses Critical threat T-xxx — ensure Addresses line links back -->`.
-6. **No "Critical Findings" section:** If a `## 9. Critical Findings` or `## N. Critical Findings` section exists, it is a legacy artifact and MUST be flagged for removal: `<!-- QA: "Critical Findings" section is redundant with Critical Attack Chain — remove it -->`. Print `[qa-reviewer]   ↳ Legacy "Critical Findings" section found — flagged for removal`.
 
 **3d — Requirement reference validity**
 
@@ -330,43 +310,13 @@ If skipped: `[qa-reviewer]   ↳ Check 3e skipped — requirements disabled or u
 
 **3f — Cross-reference style (link + title + bullets outside tables)**
 
-This check enforces the convention defined in `phase-group-threats.md` → "Cross-reference linking rule (all sections)": every `T-NNN`, `M-NNN`, `F-NNN`, `AF-NNN`, `TH-NN`, or `C-NN` that is used as a **reference** (not an identifier in an ID column) MUST be shaped `[X-NNN](#x-nnn) — <short title>` (uniform reference schema, em-dash separator) and — when it appears outside a table — MUST render as a Markdown bullet list when ≥2 references are on the same logical line.
+Apply the rules from `shared/qa-crossref-rules.md` — they cover (1) the title lookup built from Threat Register rows, Mitigation headings, Finding/Component/Category anchors, (2) the reference-site classification table, (3) the four auto-repair rules in fixed order (bare-ID → link, link-without-em-dash → titled, comma-list outside tables → bullets, comma-list inside tables → `<br/>`), and (4) the edge-case exclusions (code fences, HTML comments, Mermaid blocks, anchor definitions, ID columns).
 
-The check is deterministic and auto-repairs violations in-place. It runs exactly once per QA pass.
+Run the check exactly once per QA pass. Apply repairs in a single `Edit` batch per file.
 
-1. **Build the title lookup** from the Threat Register rows, Mitigation Register headings, Finding anchors, Component anchors, and Threat Category anchors:
-   - For each row `| <a id="t-NNN"></a>T-NNN | <component> | <stride> | <scenario> | …`, derive `title_t[T-NNN]` as the first ≤60 characters of the scenario up to the first `:`, `.`, or `(`. Strip leading markdown backticks. Fall back to the first non-empty word-group when no delimiter is found.
-   - For each heading `#### <a id="m-NNN"></a>M-NNN — <title>`, derive `title_m[M-NNN]` as the text after ` — ` up to end-of-line, stripped.
-   - For each finding anchor `### <a id="f-NNN"></a>F-NNN — <title>` (and the analogous `AF-NNN` form in §8.D), derive `title_f[F-NNN]` / `title_af[AF-NNN]` from the text after ` — `. Fall back to `threat-model.yaml → findings[].title` when the anchor heading uses the bare ID form.
-   - For each component anchor `### <a id="c-NN"></a>C-NN — <name>` (Section 2.3 Components), derive `title_c[C-NN]` from the text after ` — `. Fall back to `threat-model.yaml → components[].name` when the heading is bare.
-   - For each category anchor `#### <a id="th-NN"></a>TH-NN — <Category>`, derive `title_th[TH-NN]` from the text after ` — `.
+**Print**: `[qa-reviewer]   ↳ Style 3f: <n_title_fixes> titles added, <n_bullet_fixes> bullet-list conversions, <n_br_fixes> comma→<br/> conversions`.
 
-2. **Scan every reference site and classify it**:
-   | Location | Shape required | Violation |
-   |----------|----------------|-----------|
-   | Table ID column (first cell, matches `\| <a id="t-NNN"></a>T-NNN`) | **Bare ID** — no link, no title | — |
-   | Table reference cell (any column named `Mitigations`, `Addresses`, `Linked Threats`, `Enables`, `Controls`) with ≥2 refs | `[X-NNN](#x-nnn) — <title><br/>[X-NNN](#x-nnn) — <title>` | Missing title OR comma-separated (no `<br/>`) |
-   | Table reference cell with exactly 1 ref | `[X-NNN](#x-nnn) — <title>` | Missing title |
-   | Prose outside tables — Mitigation Register `**Addresses:**` with ≥2 refs | Bullet list, one `- [X-NNN](#x-nnn) — <title>` per line | Missing title OR comma-separated |
-   | Prose outside tables — Mitigation Register `**Addresses:**` with 1 ref | Inline `**Addresses:** [X-NNN](#x-nnn) — <title>` | Missing title |
-   | Parenthetical inside a sentence (`…(T-005 — Hardcoded RSA key)…`) | `([X-NNN](#x-nnn) — <title>)` | Missing link |
-
-3. **Auto-repair rules (applied in this order, single Edit batch per file):**
-   a. **Bare-ID → link.** Any `\bT-\d{3}\b`, `\bM-\d{3}\b`, `\bF-\d{3}\b`, `\bAF-\d{3}\b`, `\bTH-\d{2}\b`, or `\bC-\d{2}\b` outside a Mermaid block, a code fence, the ID-column anchor site, or an existing `[X-NNN](#x-nnn)` is wrapped with the anchor link.
-   b. **Link-without-em-dash → link+em-dash+title.** Any `[X-NNN](#x-nnn)` (where `X ∈ {T, M, F, AF, TH, C}`) not immediately followed by ` — ` on the same visual unit (same table cell, same prose clause up to `,` or `;` or `.`) is rewritten to `[X-NNN](#x-nnn) — <title>` using the lookup from step 1. The legacy bare-space form (`[C-01](#c-01) REST API`) and colon form (`[F-009](#f-009): SQL injection`) are both rewritten to the uniform em-dash form — this is the single reference schema for every linked entity in the document.
-   c. **Comma-list outside tables → bullet list.** In the Mitigation Register `## 9.` body only: any `**Addresses:** …, …` line carrying ≥2 references is converted to a bullet list (see template in `phase-group-threats.md`).
-   d. **Comma-list inside tables → `<br/>`-separated.** Any table cell matching `\| [^|]*[T|M]-\d{3}[^|]*, [^|]*[T|M]-\d{3}[^|]*\|` is rewritten to `<br/>`-separated form, each entry `[X-NNN](#x-nnn) — <title>`.
-
-4. **Print**: `[qa-reviewer]   ↳ Style 3f: <n_title_fixes> titles added, <n_bullet_fixes> bullet-list conversions, <n_br_fixes> comma→<br/> conversions`.
-
-5. **Log CHECK_END**: `Check 3 — 3f style fixes applied: <n> titles, <n> bullet lists, <n> table breaks`.
-
-**Edge cases (do NOT repair):**
-- IDs inside code fences (```` ``` ````) or inline code spans (`` ` ``).
-- IDs inside HTML comments (`<!-- … -->`).
-- IDs inside Mermaid diagram blocks (` ```mermaid `).
-- The anchor definition site itself: `<a id="t-001"></a>T-001`, `<a id="m-001"></a>M-001`.
-- The `ID` column of any table (first `|`-separated cell of a row, when the table header line is exactly `| ID |`).
+**Log CHECK_END**: `Check 3 — 3f style fixes applied: <n> titles, <n> bullet lists, <n> table breaks`.
 
 **3g — Classification tags (pillar + OWASP + Top 25)**
 
@@ -401,12 +351,12 @@ Validation and auto-repair:
 3. Read `ranking.views.top_findings` from `.triage-flags.json` (skip this check with warning if v1 schema or file missing).
 4. Compute the expected row sequence (top 15 with `effective_severity ∈ {Critical, High}`) and compare against actual.
 5. If any rank / F-ID / criticality / breach cell diverges: **auto-rewrite the table** from the triage ranking source. Keep anchor links `[F-NNN](#f-NNN)` intact. Use the canonical short-title derivation (first clause of scenario, truncated at 50 chars outside backticks).
-6. **Component column enforcement.** The `Component` column MUST contain `[C-NN](#c-NN) <Component name>` — a single linked cell with no `<br/><small>` wrapper. When the Finding cell carries a trailing `<br/><small>[C-NN](#c-NN) <name></small>` (legacy inline form), strip it from the Finding cell and move it into the Component column, preserving the anchor link. Cells missing the component entirely are backfilled from `threat-model.yaml → findings[].component` resolved via `components[].name`. AF-NNN rows with no single component render the literal string `Architecture`.
+6. **Component column enforcement.** The `Component` column MUST contain `[C-NN](#c-NN) <Component name>` — a single linked cell with no `<br/><small>` wrapper. When the Finding cell carries a trailing `<br/><small>[C-NN](#c-NN) <name></small>` (legacy inline form), strip it from the Finding cell and move it into the Component column, preserving the anchor link. Cells missing the component entirely are backfilled from `threat-model.yaml → findings[].component` resolved via `components[].name`.
 7. Print: `[qa-reviewer]   ↳ Top Findings (MS): <n> rows aligned, <n> reordered, <n> cells corrected, <n> component cells populated/reformatted, legacy Top Threats section <present/stripped>`.
 
 When `.triage-flags.json` is absent or `version == 1`, skip with `[qa-reviewer]   ↳ Top Findings sort: skipped (no triage v2 ranking — re-run with analysis_version >= 2)`.
 
-**Legacy strip rule.** When a `### Top Threats` heading with a category-level table (header matches `| Severity | Category |`, `| # | Severity | Category |`, or similar) is detected in the Management Summary, **remove the entire section and its table** before inserting the unified Top Findings table. A single comment `<!-- QA: legacy Top Threats category table removed — unified Top Findings is now the sole MS register -->` is emitted in its place, then the unified table follows. Category-level information remains accessible in §8.A (which is unaffected).
+**Legacy strip rule.** The heading rename `### Top Threats → ### Top Findings` is handled deterministically by the pre-pass (`qa_checks.py` legacy-heading rename map). If a category-level table (header `| Severity | Category |` or `| # | Severity | Category |`) survives the rename — i.e. the rename happened but the old category-aggregated body remains — remove the entire surviving table and emit `<!-- QA: legacy Top Threats category table removed — unified Top Findings is now the sole MS register -->`. Category-level information remains accessible in §8.A.
 
 **3i — Operational Strengths cluster shape and evidence**
 
@@ -642,7 +592,7 @@ Verify all required top-level sections exist in `$OUTPUT_DIR/threat-model.md`:
 
 | Required section heading | Pass condition |
 |--------------------------|----------------|
-| `## Management Summary` | Present, contains exactly **five** sub-sections in this order: `### Verdict` (with 🟢/🟡/🔴 severity cue **and** a red HTML blockquote containing the worst-case-scenario bullets with F-NNN citations), `### Top Findings` (table with Criticality emojis 🔴/🟠, F-NNN IDs, 7 columns, `(P1)`/`(P2)` priority tokens in Primary Mitigations), `### Architecture Assessment` (table with Defect/Description/Key Findings or legacy Severity/Layer columns), `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` 5-column sub-tables), `### Operational Strengths` (5-column table with Bottom line). When `CHECK_REQUIREMENTS=true`, also `### Requirements Compliance` between Mitigations and Operational Strengths. Contains at least one `[F-` or `[T-` link (in Verdict blockquote or Top Findings table) and at least one `[M-` link (in Mitigations column). Legacy heading `### Follow-up Actions` is auto-rewritten to `### Mitigations`. Legacy heading `### Top Threats` is auto-rewritten to `### Top Findings`. A standalone `### ⚠ Worst Case Scenarios` / `### Worst Case Scenarios` / `### Worst Case Scenario` sub-section is **auto-stripped**; its bullet content is merged into the Verdict blockquote. Sub-sections with numeric prefixes (e.g. `### 1.1 Verdict`) have the prefix auto-stripped. |
+| `## Management Summary` | Present, contains exactly **five** sub-sections in this order: `### Verdict` (with 🟢/🟡/🔴 severity cue **and** a red HTML blockquote containing the worst-case-scenario bullets with F-NNN citations), `### Top Findings` (table with Criticality emojis 🔴/🟠, F-NNN IDs, 7 columns, `(P1)`/`(P2)` priority tokens in Primary Mitigations), `### Architecture Assessment` (table with Defect/Description/Key Findings or legacy Severity/Layer columns), `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` 5-column sub-tables), `### Operational Strengths` (3-column cluster table with Bottom line — see Check 3i; legacy 5-column form is auto-rewritten). When `CHECK_REQUIREMENTS=true`, also `### Requirements Compliance` between Mitigations and Operational Strengths. Contains at least one `[F-` or `[T-` link (in Verdict blockquote or Top Findings table) and at least one `[M-` link (in Mitigations column). Legacy heading `### Follow-up Actions` is auto-rewritten to `### Mitigations`. Legacy heading `### Top Threats` is auto-rewritten to `### Top Findings`. A standalone `### ⚠ Worst Case Scenarios` / `### Worst Case Scenarios` / `### Worst Case Scenario` sub-section is **auto-stripped**; its bullet content is merged into the Verdict blockquote. Sub-sections with numeric prefixes (e.g. `### 1.1 Verdict`) have the prefix auto-stripped. |
 | `## 1. System Overview` | Present and > 3 lines of content |
 | `## 2. Architecture Diagrams` | Present and contains at least one `\`\`\`mermaid` block |
 | Security Architecture Assessment subsection | Present (any of `### 2.3`, `### 2.4`, `### 2.5` named "Security Architecture Assessment") and contains the Overall Architecture Security Rating (🟢/🟡/🔴) and a non-empty justification paragraph |
@@ -707,203 +657,28 @@ For each section missing an introductory sentence: add `<!-- QA: Section <N> is 
 
 **Section 8 legacy-stub check:** Section 8 is the Threat Register in the current contract. If it still renders as the old two-line stub that only points to `Critical Attack Chain` and `Section 7.1 Critical`, add `<!-- QA: Section 8 is still using the legacy stub layout — re-render with the current Threat Register contract (8.A categories at a glance plus 8.B-8.E finding blocks). -->` at the top of Section 8. Print: `[qa-reviewer]   ↳ Section 8 legacy stub: <absent|present>`
 
-**Section 2.4 numbered layout check:** The Security Architecture Assessment (`### 2.4` — also accepted as `### 2.3` or `### 2.5` for systems that shift numbering) MUST contain exactly nine `####` H4 sub-sections, each prefixed with its canonical number:
+**Section 2.4 — Security Architecture Assessment checks:** Apply the rules from `shared/qa-section24-themes.md`. Three sub-checks run in order:
 
-1. `#### 2.4.1 Architecture Patterns`
-2. `#### 2.4.2 Key Architectural Risks`
-3. `#### 2.4.3 Secret Management`
-4. `#### 2.4.4 Authentication`
-5. `#### 2.4.5 Authorization & Access Control`
-6. `#### 2.4.6 Input Validation & Output Encoding`
-7. `#### 2.4.7 Separation & Isolation`
-8. `#### 2.4.8 Defense-in-Depth`
-9. `#### 2.4.9 Overall Architecture Security Rating`
+1. **Numbered layout (1):** validate that Section 2.4 (also accepted as `### 2.3` / `### 2.5`) contains the nine canonical `#### 2.4.1`–`#### 2.4.9` H4 sub-sections; rewrite legacy non-numbered or H5-form headings; flag missing themes; verify reading order.
+2. **Theme body format (2.4.3–2.4.8):** validate the bullet-first micro-template (`Current state.` / `Structural defects:` / `Impact.` / `Target architecture.` / `Linked threats:`), prose length, mandatory code refs in themes 2.4.3/4/5, library-name rules, theme length cap, and the sound-architecture short form.
+3. **Per-theme diagrams (2.4.3–2.4.8):** wrong diagram type, prohibited-theme diagrams in 2.4.6 / 2.4.8, node-count cap (≤7), node-label rules, missing `**Key takeaway:**` line, and the mandatory-diagram matrix keyed by `DIAGRAM_DEPTH`.
 
-Walk the Section 2.4 block (from `### 2.4` to the next `### ` or `## ` heading) and collect every `#### ` heading. Apply these checks:
+Each sub-check prints its own `[qa-reviewer]   ↳ Section 2.4 ...` summary line as documented in `shared/qa-section24-themes.md`.
 
-1. **Legacy non-numbered H4 headings.** Any of the following are legacy artefacts from the pre-flat layout and MUST be rewritten or stripped:
-   - `#### Trust Model Evaluation` → delete the sub-section (merged into 2.4.4)
-   - `#### Authentication and Authorization Architecture` → delete the sub-section (merged into 2.4.4 / 2.4.5)
-   - `#### Cross-Cutting Architecture Findings` → delete the heading **but keep the body** (it contained the six legacy themes; the themes below get auto-renamed to numbered H4)
-   - `#### Architecture Patterns` (unnumbered) → rename to `#### 2.4.1 Architecture Patterns`
-   - `#### Key Architectural Risks` (unnumbered) → rename to `#### 2.4.2 Key Architectural Risks`
-   - `#### Overall Architecture Security Rating` (unnumbered) → rename to `#### 2.4.9 Overall Architecture Security Rating`
-   For deletions, print `[qa-reviewer]   ↳ Section 2.4 legacy sub-section removed: <heading>` and leave a single-line marker `<!-- QA: stripped legacy sub-section "<heading>" — content is now distributed across 2.4.3 through 2.4.8 per phase-group-architecture.md → "Section 2.4 layout" -->` at the deletion point.
+**Management Summary checks (10 sub-checks):** Apply the rules from `shared/qa-ms-checks.md`. Run the sub-checks in order:
 
-2. **Legacy H5 themes inside the (now-removed) Cross-Cutting block.** The six themes used to be `##### 1. Secret Management` through `##### 6. Defense-in-Depth` — H5 headings with a leading integer. For each occurrence inside Section 2.4, rewrite the heading in place to its new numbered H4 form:
-   - `##### 1. Secret Management` → `#### 2.4.3 Secret Management`
-   - `##### 2. Authentication` → `#### 2.4.4 Authentication`
-   - `##### 3. Authorization & Access Control` → `#### 2.4.5 Authorization & Access Control`
-   - `##### 4. Input Validation & Output Encoding` → `#### 2.4.6 Input Validation & Output Encoding`
-   - `##### 5. Separation & Isolation` → `#### 2.4.7 Separation & Isolation`
-   - `##### 6. Defense-in-Depth` → `#### 2.4.8 Defense-in-Depth`
-   Also accept `**Secret Management**` (bold-paragraph variant with no heading at all) and rewrite to the same numbered H4. Print: `[qa-reviewer]   ↳ Section 2.4 theme headings normalised: <n> rewrites`.
+1. **Presence** — generate the whole MS from the Threat / Mitigation Registers if `## Management Summary` is missing entirely (critical defect).
+2. **Verdict** — `### Verdict` first; severity cue + red HTML blockquote with bullets + closing sentences; auto-wrap legacy plain bullets.
+3. **Required sub-sections** — exactly five in order (Verdict, Top Findings, Architecture Assessment, Mitigations, Operational Strengths); plus `### Requirements Compliance` when `CHECK_REQUIREMENTS=true`; strip numeric prefixes.
+4. **Forbidden sub-sections** — auto-strip Risk Distribution / STRIDE Coverage / Worst Case Scenarios; auto-rename Top Threats / Critical Findings / Key Strengths; flag the rest.
+5. **Verdict blockquote** — red HTML blockquote with 2–5 bold-name bullets + parenthesised italic F-NNN citations; migrate any standalone Worst Case Scenarios heading into it.
+6. **Top Findings table** — 7 columns (`# | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations`); 🔴 before 🟠; legend line required.
+7. **Architecture Assessment table** — 3 columns (`Defect | Description | Key Findings`); legacy 5-column form is logged but not auto-rewritten.
+8. **Mitigations sub-tables** — `#### Prioritized Mitigations` + `#### Follow-up Mitigations`, both 5-column (`ID | Mitigation | Component | Addresses | Effort`); legacy `### Follow-up Actions` auto-rewritten.
+9. **Operational Strengths format** — 3-column cluster header only (detailed cluster validation is Check 3i).
+10. **Prose purity** — no `[T-` / `[M-` / `vscode://` / file paths in Verdict prose or Architecture Assessment intro.
 
-3. **Missing themes.** After normalisation, all nine expected sub-sections must be present. For each missing number, append at the end of Section 2.4: `<!-- QA: Section 2.4 is missing sub-section "2.4.<n> <title>" — add the micro-template body (Current state / Structural defects / Impact / Target architecture / Linked threats). See phase-group-architecture.md → "The six architecture themes" -->`. Print: `[qa-reviewer]   ↳ Section 2.4 sub-sections: <n>/9 present`.
-
-4. **Out-of-order / gap check.** Extract the numeric sequence from the numbered H4 headings in reading order and verify it is exactly `[2.4.1, 2.4.2, 2.4.3, 2.4.4, 2.4.5, 2.4.6, 2.4.7, 2.4.8, 2.4.9]`. A gap or reorder is flagged with `<!-- QA: Section 2.4 heading sequence is <observed> — expected 2.4.1 through 2.4.9 in order. Reorder the sub-sections. -->` at the first out-of-place heading.
-
-**Section 2.4 theme body format check (2.4.3 to 2.4.8):** For each of the six theme sub-sections, walk the body (between its `#### 2.4.<n>` heading and the next `#### ` heading) and enforce:
-
-1. **Bullet-first micro-template.** The body MUST contain (in order) the following labelled blocks, each introduced by a bold label:
-   - `**Current state.**` or `**Current state:**` (one sentence follows on the same line or the next)
-   - `**Structural defects:**` (followed by a bulleted list of 3 to 5 items — the `- ` bullets start on the next line)
-   - `**Impact.**` (one sentence)
-   - `**Target architecture.**` (one or two sentences)
-   - `**Linked threats:**` (followed by clickable `[T-NNN](#t-NNN)` references — mandatory when any T-NNN is linked; omit only in the sound-architecture short form described below)
-   Missing blocks are flagged: `<!-- QA: theme "<heading>" is missing required block "<label>" — see phase-group-architecture.md → "Per-theme template" -->`.
-
-2. **Prose blocks are concise but not artificially truncated.** Each labelled block (`Current state.`, `Impact.`, `Target architecture.`) may be one to three sentences. If any block exceeds 3 sentences, flag: `<!-- QA: theme "<heading>" contains an overly long prose paragraph (>3 sentences) — compress to 1–3 sentences. -->`. Exception: the sound-architecture short form described below.
-
-3. **Code references REQUIRED in themes 2.4.3, 2.4.4, 2.4.5.** Secret Management, Authentication, and Authorization themes MUST contain at least one `vscode://` link or `[file:line]` reference in their `Current state.` sentence or `Structural defects:` bullets. If none are found, flag: `<!-- QA: theme "<heading>" is missing code references — themes 2.4.3/2.4.4/2.4.5 must include concrete file:line locations. -->`. For themes 2.4.6 through 2.4.8, code references are optional but allowed.
-
-4. **Library names allowed for key context.** When a library name and version appear as the root cause of a structural defect (e.g., an outdated JWT library), they are allowed. Exhaustive version inventories (listing every transitive dependency) are flagged: `<!-- QA: theme "<heading>" contains excessive library version inventory — keep only key root-cause libraries. -->`. Allowed: naming 1–2 key libraries per theme. The word "RSA-1024" or "RSA-2048" (key size) is never flagged.
-
-5. **Theme length cap.** Count rendered lines from the `####` heading to the next `####` heading (exclusive). If > 25 lines and no diagram is present, or > 40 lines with a diagram, flag: `<!-- QA: theme "<heading>" is <n> lines — the cap is 20 lines (prose-only) or 35 lines (with diagram). Compress the bullets. -->`.
-
-6. **Sound-architecture short form.** When the entire body is a single sentence beginning with `**Current state.**` and ending with "No systemic finding.", the bullets/Impact/Target/Linked-threats blocks are optional and the length cap is relaxed to 5 lines. Skip checks 1 and 2 in that case.
-
-Print: `[qa-reviewer]   ↳ Section 2.4 theme bodies: <n>/6 checked, <n> missing-block, <n> over-prose, <n> file-refs, <n> lib-versions, <n> over-length`
-
-**Section 2.4 per-theme diagram check:** The theme diagram rules changed in the new layout — two themes are now **mandatory** at `standard` depth or higher, and the caps are applied per-theme instead of summed across the whole Cross-Cutting block.
-
-For each theme (2.4.3 to 2.4.8), run:
-
-1. **Wrong diagram type.** Any ```` ```mermaid ```` block inside the theme whose first non-whitespace keyword is `sequenceDiagram`, `classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `pie`, `journey`, or `flowchart` is flagged: `<!-- QA: theme "<heading>" uses diagram type `<type>` — only `graph LR` or `graph TB` is allowed in Section 2.4 themes. See phase-group-architecture.md → "Per-theme Mermaid diagrams" -->`.
-
-2. **Prohibited-theme diagram.** Any ```` ```mermaid ```` block inside `2.4.6 Input Validation & Output Encoding` or `2.4.8 Defense-in-Depth` is flagged regardless of type and auto-removed: `<!-- QA: theme "<heading>" must not contain a Mermaid diagram — this theme is bullets-only (see phase-group-architecture.md → "Forbidden-theme reasoning"). Diagram auto-stripped. -->`.
-
-3. **Node-count overload.** Count nodes (lines matching `^\s*\w+[\[\(]`). If > 7, flag: `<!-- QA: theme "<heading>" diagram has <n> nodes — the cap is 7. Simplify, split, or drop the diagram. -->`.
-
-4. **Node labels may include short file references.** For 2.4.x theme diagrams, node labels MAY include short file references (e.g., `routes/login.ts\nRaw SQL`) to help locate the architectural defect. Full absolute paths or `vscode://` URLs inside node labels are still flagged. For C4-level diagrams (2.1, 2.2, 2.3), node labels must remain abstract (User, IdP, Vault, API, DB).
-
-5. **Missing Key takeaway.** If a diagram is present, a single-sentence `**Key takeaway:**` line MUST appear between the closing ```` ``` ```` fence and the first labelled block. If missing, flag: `<!-- QA: theme "<heading>" diagram is missing its **Key takeaway:** sentence -->`.
-
-6. **Mandatory-diagram enforcement at standard+ depth.** Read `DIAGRAM_DEPTH` from the header metadata row (`| Depth | quick|standard|thorough |`) and apply the matrix:
-
-   | Theme | `quick` | `standard` | `thorough` |
-   |---|---|---|---|
-   | 2.4.3 Secret Management | — | recommended (not enforced) | **mandatory** |
-   | 2.4.4 Authentication | — | **mandatory** | **mandatory** |
-   | 2.4.5 Authorization & Access Control | — | optional | optional |
-   | 2.4.6 Input Validation | — | forbidden | forbidden |
-   | 2.4.7 Separation & Isolation | — | optional | optional |
-   | 2.4.8 Defense-in-Depth | — | forbidden | forbidden |
-
-   For each theme marked **mandatory** at the current depth where no `graph LR` / `graph TB` block is present, flag at the top of the theme body: `<!-- QA: theme "<heading>" is missing its mandatory Mermaid diagram at DIAGRAM_DEPTH=<depth>. See phase-group-architecture.md → "Per-theme Mermaid diagrams" → mandatory matrix. -->`.
-
-   Themes marked "optional" or "recommended" are never flagged for missing diagrams — only for presence of a forbidden type, overload, or missing takeaway.
-
-Print: `[qa-reviewer]   ↳ Section 2.4 theme diagrams: <n> present, <n> mandatory-missing, <n> forbidden-stripped, <n> wrong-type, <n> overload, <n> label-pollution, <n> missing-takeaway`
-
-**Management Summary presence check (critical):** Find `## Management Summary`. If the heading is entirely absent, **this is a critical defect** — the Management Summary is mandatory at all assessment depths. Generate a complete Management Summary by reading the Threat Register (Section 8) and Mitigation Register (Section 9) from the document, then insert it between the Table of Contents (or Changelog if present) and Section 1. The generated summary must include all five required sub-sections (Verdict with integrated worst-case-scenarios blockquote, Top Findings, Architecture Assessment, Mitigations with Prioritized and Follow-up sub-tables, Operational Strengths). Follow the template in `phase-group-threats.md` → "Build Management Summary". Use F-NNN IDs in the Top Findings table. Print: `[qa-reviewer]   ↳ Management Summary: <present|GENERATED — was missing>`
-
-**Management Summary verdict check:** Find `## Management Summary`. The first sub-section MUST be `### Verdict`. The verdict MUST follow this structure: (1) opening sentence beginning with 🟢/🟡/🔴 severity cue + one-sentence verdict (Critical/High counts are permitted in the opening sentence), (2) a **red HTML `<blockquote>` with bullet points** — each bullet names one critical attack path in bold followed by a plain-language explanation and a parenthesised italic F-NNN citation (e.g. `*([F-009](#f-009))*`), (3) 1–2 closing sentences with overall assessment. The blockquote style MUST include `border-left: 3px solid #dc2626; background: #fef2f2`. If the verdict uses plain bullets without the blockquote (legacy format), **auto-repair** by wrapping the bullet block inside the canonical blockquote tags. If the verdict is not under a `### Verdict` heading, wrap it in one. Print: `[qa-reviewer]   ↳ Management Summary verdict: <ok|blockquote-wrapped|heading-added|missing|no-severity-cue|no-bullets>`
-
-**Management Summary required sub-sections check (exactly FIVE, order enforced):** The following headings MUST be present inside `## Management Summary`, in this order:
-
-1. `### Verdict`
-2. `### Top Findings` (legacy name `### Top Threats` is **auto-renamed** to `### Top Findings`)
-3. `### Architecture Assessment`
-4. `### Mitigations` (with `#### Prioritized Mitigations` and `#### Follow-up Mitigations` sub-tables). The legacy name `### Follow-up Actions` is auto-rewritten to `### Mitigations`.
-5. `### Operational Strengths`
-
-**Numbered sub-section check:** Scan all headings inside `## Management Summary` for numeric prefixes — patterns like `### 1.1 Verdict`, `### 1.2 Top Findings`, `### 2. Architecture Assessment`. **Auto-strip** any leading `<digit>.<digit> ` or `<digit>. ` prefix from these headings. Log: `[qa-reviewer]   ↳ Management Summary numbered headings: <n> stripped`.
-
-When `CHECK_REQUIREMENTS=true`, `### Requirements Compliance` is also mandatory (placed between Mitigations and Operational Strengths). Print: `[qa-reviewer]   ↳ Management Summary sub-sections: <n>/5 present (+requirements: <ok|missing|n/a>)`
-
-**Management Summary forbidden sub-sections check:** The following headings are banned:
-
-- `### Risk Distribution` / `### STRIDE Coverage` → **auto-strip** (lives in Threat Register only).
-- `### ⚠ Worst Case Scenarios` / `### Worst Case Scenarios` / `### Worst Case Scenario` (any variant) → **auto-strip** and migrate bullet content into the Verdict's red HTML blockquote. The reference format integrates worst-case scenarios as the bullets inside the Verdict blockquote — a standalone sub-section is a legacy layout. See the migration rule below.
-- `### Top Threats` / `### Top Critical Findings` / `### Critical Findings` → **auto-rename** to `### Top Findings` (and update table columns to new 7-column format: # | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations).
-- `### Recommended Priority Actions` / `### Immediate Actions` → flag: merged into `### Mitigations` (Prioritized Mitigations sub-table).
-- `### Key Strengths` → **auto-rewrite** to `### Operational Strengths`.
-- `### Overall Security Rating` → flag: the Verdict heading carries the rating.
-- `#### Structural Defects` → flag: merged into Architecture Assessment table.
-
-Print: `[qa-reviewer]   ↳ Management Summary forbidden sub-sections: <n> flagged, <n> auto-stripped, <n> auto-renamed`
-
-**Management Summary Top Findings format check:** `### Top Findings` (or its auto-renamed legacy equivalent `### Top Threats`) MUST contain a table (not a bullet list). The table MUST have 7 columns: `#` (rank), `Criticality` (emoji 🔴/🟠), `Finding` (F-NNN link + short title), `Component` (C-NN link + name), `Threat` (TH-NN link + category name), `Vektor` (linked to Appendix A anchor), `Primary Mitigations` (M-NNN links). Verify:
-- Every row has a `#` rank number in the first column.
-- Every `Criticality` cell has 🔴 (Critical) or 🟠 (High) emoji.
-- Every `Finding` cell contains a clickable `[F-NNN](#f-NNN)` link followed by a short title (em-dash separator). Legacy `[T-NNN]` IDs in this column are flagged — the primary ID in the Top Findings table is F-NNN.
-- Every `Component` cell contains `[C-NN](#c-NN) — <name>` or the literal `Architecture` for AF-NNN entries.
-- Every `Vektor` cell is a clickable link to Appendix A (e.g. `[Internet Anon](#vektor-internet-anon)`). Bare text Vektor values without links are auto-repaired.
-- Every `Primary Mitigations` cell contains at least one `[M-NNN](#m-NNN) — <short action>` link.
-- All 🔴 rows appear before 🟠 rows.
-- A legend line follows the table: `> 🔴 = Critical · 🟠 = High. **Vektor** values link to full definitions in [Appendix A — Vektor Taxonomy](#appendix-a-vektor-taxonomy).`
-- Legacy column formats (old 6-column: Severity | ID | Description | Impact | Mitigation | Effort) are flagged for rewrite; the check logs the column mismatch but does NOT auto-rewrite (too destructive — leave for manual re-run).
-The legacy heading `### Top Risks` / `### Top Threats` is auto-renamed to `### Top Findings`. If the old bullet-list format is detected (lines starting with `- **[T-`), flag for table rewrite.
-Print: `[qa-reviewer]   ↳ Management Summary Top Findings: table with <n> rows, <n> format issues, legacy-rename=<yes|no>, vektor-links=<n>/<n>`
-
-**Management Summary Verdict blockquote check (replaces the legacy separate Worst Case Scenarios check):** The `### Verdict` section MUST contain an embedded red HTML `<blockquote>` with the worst-case-scenario bullets. The blockquote style MUST include `border-left: 3px solid #dc2626; background: #fef2f2`. Checks:
-
-1. **Blockquote presence inside Verdict (auto-repair):** If `### Verdict` is present but contains plain bullets outside any blockquote, **auto-repair** by wrapping the bullet block in the canonical tags:
-   ```
-   <br/>
-
-   <blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
-
-   <existing bullet lines>
-
-   </blockquote>
-
-   <br/>
-   ```
-   The blockquote MUST sit between the opening sentence and the closing prose sentences — do not replace either.
-
-2. **Standalone Worst Case Scenarios heading migration (auto-strip + merge):** If a standalone `### ⚠ Worst Case Scenarios` / `### Worst Case Scenarios` / `### Worst Case Scenario` heading exists anywhere inside `## Management Summary`:
-   - Extract the heading's bullet content (bold scenario names + F-NNN/T-NNN references).
-   - Convert scenario paragraphs into single-line bullets (`- **<Name>** — <sentence>. *([F-NNN](#f-NNN))*`) if necessary.
-   - **Auto-strip** the standalone heading and its surrounding `<blockquote>` wrapper.
-   - **Auto-merge** the extracted bullets into the Verdict blockquote. When the Verdict already has its own bullets, append the migrated ones; deduplicate by scenario name.
-   - Drop any "See [Critical Attack Chain]" trailing link from the migrated content — that link is not part of the new Verdict format.
-
-3. **Content checks (inside Verdict blockquote):**
-   - Contains between 2 and 5 bold bullet names (lines matching `- **<Name>** — …`).
-   - Scenario names are business outcomes, not technical descriptions.
-   - Each bullet references at least one `[F-NNN](#f-NNN)` (preferred) or `[T-NNN](#t-NNN)` link; the reference MUST be wrapped in italics and parentheses (e.g. `*([F-009](#f-009))*`).
-   - No `[M-` references (mitigations live in Top Findings and Mitigations section).
-
-4. **Markdown blockquote fallback:** If a Markdown blockquote (`> `) is used instead of HTML, **auto-convert** it to the HTML form with red styling.
-
-Print: `[qa-reviewer]   ↳ Management Summary Verdict blockquote: <n> bullets, blockquote=<html-ok|wrapped|missing>, legacy-WCS-migrated=<yes|no>`
-
-**Management Summary Architecture Assessment format check:** `### Architecture Assessment` MUST contain a table with **exactly three columns**: `Defect`, `Description`, `Key Findings`. Verify:
-- The column header row matches `| Defect | Description | Key Findings |` (case-insensitive on header names).
-- The Defect cell is a bold short phrase (e.g. `**Secrets in source code**`).
-- The Key Findings column contains clickable `[F-NNN](#f-NNN)` (preferred) or `[T-NNN](#t-NNN)` links, each followed by a short label: `[F-NNN](#f-NNN) — <short label>` (e.g. `[F-009](#f-009) — SQL injection in product search`). Bare F-NNN/T-NNN links without a label are a format defect — add the label from the Threat Register. Multiple findings in the same cell are `<br/>`-separated.
-- The section closes with a line referencing `[§7 Security Architecture](#7-security-architecture)`.
-- An opening 🔴/🟡/🟢 severity-cue sentence precedes the table; a short framing sentence (e.g. "Four cross-cutting defects drive …") sits between the verdict sentence and the table.
-Legacy 5-column form (`Severity | Layer | Defect | Consequence | Enables`) is deprecated but accepted — the check logs the column mismatch. Do NOT auto-rewrite 5-col → 3-col (too destructive; leave for manual re-run). Bullet-list form (`#### Structural Defects` + bullets) is flagged for rewrite.
-Print: `[qa-reviewer]   ↳ Management Summary Architecture Assessment: schema=<3-col-ok|legacy-5-col|bullets>, <n> rows, <n> format issues`
-
-**Management Summary Mitigations format check:** `### Mitigations` MUST contain two sub-tables under `####` headings. If the legacy heading `### Follow-up Actions` is found instead, **auto-rewrite** it to `### Mitigations` and wrap the existing table as `#### Follow-up Mitigations`, then generate a `#### Prioritized Mitigations` table from the Critical findings in Top Findings.
-
-Both sub-tables MUST use the same five columns: **`ID`, `Mitigation`, `Component`, `Addresses`, `Effort`**. Column mismatch (e.g. Follow-up using `Why` instead of `Addresses`, or retaining the legacy 4-column `Priority | Mitigation | Addresses | Effort` schema) is flagged — the check logs the column mismatch but does NOT auto-rewrite 4-col → 5-col (too destructive).
-
-Verify `#### Prioritized Mitigations`:
-- ID column contains clickable `[M-NNN](#m-NNN)` links.
-- Mitigation column contains the mitigation title (plain text or bold, no M-ID prefix — the ID is in the ID column).
-- Component column contains `[C-NN](#c-NN) <Component name>` links. When a mitigation spans multiple components, stack them with `<br/>` inside the cell.
-- Addresses column contains clickable `[F-NNN](#f-NNN)` links, each followed by a short label: `[F-NNN](#f-NNN) — <short description>` (e.g. `[F-009](#f-009) — SQL injection in product search`). Bare F-NNN links without a label are a format defect — add the label from the Threat Register. Multiple findings are `<br/>`-separated. Legacy `[T-NNN]` IDs in this column are accepted during the transition period but flagged for upgrade to F-NNN.
-- Effort column contains one of Low/Medium/High.
-- Rows are sorted by effort ascending (Low first), then by count of Addresses findings descending (highest-leverage first).
-- Every Critical finding from the Top Findings table has at least one corresponding row in the Prioritized table.
-
-Verify `#### Follow-up Mitigations`:
-- Same five columns as Prioritized (ID, Mitigation, Component, Addresses, Effort).
-- Same content rules apply to the Component and Addresses cells.
-- Same sort order (effort asc, then findings-addressed desc).
-- No M-IDs already covered in the Prioritized Mitigations table appear here.
-
-Print: `[qa-reviewer]   ↳ Management Summary Mitigations: schema=<5-col-ok|legacy-4-col>, prioritized=<n> rows, follow-up=<n> rows, legacy-rewrite=<yes|no>`
-
-**Management Summary Operational Strengths format check:** `### Operational Strengths` MUST contain a table with **exactly five columns**: `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`. A 2-column or 3-column table (e.g., `Control | What it provides | Limitation`) is a **hard fail** — flag for rewrite but do NOT auto-rewrite (the Implementation/Gap/Mitigates content cannot be reconstructed from a collapsed form). The table MUST have at least 5 rows (up to 8 before truncation + footnote). Must end with a `**Bottom line:**` sentence. When more than 8 rows qualify, a truncation footnote `_+N additional controls — see [Section 7](#7-security-architecture)._` sits between the last table row and the `**Bottom line:**` line. When verdict is 🟡 or 🔴, an introductory framing sentence is required before the table.
-Print: `[qa-reviewer]   ↳ Management Summary Operational Strengths: schema=<5-col-ok|legacy-3-col|2-col-FAIL>, <n> rows, truncation-footnote=<present|n/a>, bottom-line=<present|missing>`
-
-**Management Summary prose purity check:** The Verdict opening/closing prose sentences (those outside the red HTML blockquote) and the Architecture Assessment intro prose must contain **no** `[T-` references, `[M-` references, `vscode://` links, or file paths. F-NNN / T-NNN / M-NNN links are allowed in: Verdict blockquote bullets, Top Findings table, Architecture Assessment table (Key Findings / Enables column), Mitigations tables (Prioritized + Follow-up), Requirements Compliance. Print: `[qa-reviewer]   ↳ Management Summary prose purity: <n> references flagged`
+Each sub-check prints its own `[qa-reviewer]   ↳ Management Summary …` summary as documented in `shared/qa-ms-checks.md`.
 
 **CWE linkification check (report-wide):** Every `CWE-NNN` reference in the report MUST be a clickable Markdown link to the MITRE CWE entry: `[CWE-NNN](https://cwe.mitre.org/data/definitions/NNN.html)`. Scan the entire document for bare `CWE-\d+` text (not already inside a `[...](...)`). For each bare reference found, replace it with the linked form. Print: `[qa-reviewer]   ↳ CWE links: <n> bare refs linkified, <n> already linked`
 
@@ -926,7 +701,16 @@ Print: `[qa-reviewer]   ↳ Management Summary Operational Strengths: schema=<5-
 
 The rule: backticks are for **code that a developer would type or grep for**. Titles and descriptions that merely *name* a technology (e.g. "MD5 password hashing", "eval()-based execution") are not code — they are prose.
 
-Print: `[qa-reviewer]   ↳ Code formatting: <n> tokens wrapped, <n> title contexts skipped`
+**Label-as-code (R-7, 2026-05) — INVERSE check:** Unwrap backticks from tokens that are LABELS / FIELD NAMES / bare HTTP-method nouns, NOT code fragments. Specifically the following single-word tokens MUST appear bare (no backticks) in prose:
+
+- **MS / register field labels:** `Why`, `How`, `Effort`, `Priority`, `Severity`, `Addresses`, `Component`, `Components`, `Mitigation`, `Mitigations`, `Notes`, `Vektor`, `Classification`, `Issue`, `Impact`, `Fix`, `Location`, `Evidence`, `Verification`, `Steps`
+- **Lowercase schema field references:** `notes`, `addresses`, `priority`, `effort`, `severity`
+- **Bare HTTP method nouns** when written as a noun, NOT as part of a request: `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS`. (Inside an actual request example like `POST /api/Users` the path stays in backticks but the method itself does not.)
+- **Bare `verify`** — if you mean the JWT verification call, write it as `jwt.verify()` so the parens make it unambiguously code.
+
+If a token in this list appears between `` ` `` in prose, strip the backticks. The deterministic `apply_prose_fixes.py` pass and `qa_checks.py label_as_code` already detect and auto-fix these, but the QA reviewer should still scan and confirm. Print the count in the inline-code summary line.
+
+Print: `[qa-reviewer]   ↳ Code formatting: <n> tokens wrapped, <n> title contexts skipped, <n> label-as-code unwrapped`
 
 **Consistent short-label check (report-wide):** Every `[T-NNN](#t-NNN)` and `[M-NNN](#m-NNN)` in the report is either an **ID** (bare link, no label) or a **reference** (link + ` — <short label>`). Scan the entire document and enforce:
 

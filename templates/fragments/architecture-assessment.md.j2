@@ -1,15 +1,27 @@
-{#- ### Architecture Assessment — renders verdict prose + 3-column defects table. -#}
-{#- Inputs: data.verdict_severity, data.verdict_prose, data.framing, data.defects[{name,description,findings[{ref,label}]}], data.closing_ref_anchor (default #7-security-architecture). -#}
+{#- ### Architecture Assessment — renders verdict prose + 4-column weaknesses table. -#}
+{#- Schema (current — 2026-05): -#}
+{#-   data.verdict_severity, data.verdict_prose, data.framing -#}
+{#-   data.weaknesses[]: -#}
+{#-     - category               (general security domain, e.g. "Cryptography & Secret Management") -#}
+{#-     - description            (design-review prose; explains the structural problem -#}
+{#-                              and how it spans trust boundaries, with reference to -#}
+{#-                              affected file(s) or component(s); avoid SAST-style line-by-line citation) -#}
+{#-     - affected_components[]  (auto-enriched to {id, name} dicts) -#}
+{#-     - findings[]             ({ref, label} dicts) -#}
+{#-   data.closing_ref_anchor  (default #7-security-architecture) -#}
+{#-                                                                                     -#}
+{#- Back-compat: if a fragment still uses `defects[]` with `name`, the renderer maps    -#}
+{#- it to `weaknesses[]` with `category` before this template runs.                      -#}
 ### Architecture Assessment
 
 {{ severity_emoji(data.verdict_severity) }} {{ data.verdict_prose }}
 
 {{ data.framing }}
 
-| Defect | Description | Key Findings |
-|--------|-------------|--------------|
-{%- for d in data.defects %}
-| **{{ d.name }}** | {{ d.description }} | {{ d.findings | format_defect_findings }} |
+| Weakness category | Affected component(s) | Description | Key findings |
+|---|---|---|---|
+{%- for w in data.weaknesses %}
+| **{{ w.category }}** | {{ w.affected_components | format_weakness_components }} | {{ w.description }} | {{ w.findings | format_weakness_findings }} |
 {%- endfor %}
 
 See **[§7 Security Architecture]({{ data.closing_ref_anchor or '#7-security-architecture' }})** for the full per-domain breakdown and control catalog.

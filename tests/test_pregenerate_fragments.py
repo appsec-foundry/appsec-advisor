@@ -386,57 +386,11 @@ class TestArchitectureDataFlows:
         assert "broken" not in md
 
 
-class TestEnforcementColumn:
-    """§2.4 Trust Boundaries Enforcement column must populate via fallback."""
-
-    def test_explicit_enforcement_field_used_directly(self):
-        data = {
-            "meta": {"project": {"name": "x"}},
-            "components": [],
-            "trust_boundaries": [
-                {
-                    "id": "tb-1",
-                    "name": "Public",
-                    "trust_level": "untrusted",
-                    "enforcement": "TLS 1.3 + WAF (Cloudflare)",
-                },
-            ],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        assert "TLS 1.3 + WAF (Cloudflare)" in md
-
-    def test_derived_enforcement_for_internet_boundary(self):
-        data = {
-            "meta": {"project": {"name": "x"}},
-            "components": [],
-            "trust_boundaries": [
-                {
-                    "id": "tb-1",
-                    "name": "Public Internet",
-                    "description": "External browsers",
-                    "trust_level": "untrusted",
-                },
-            ],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        # Heuristic detects 'internet' / 'browser' → TLS · WAF
-        assert "TLS" in md or "WAF" in md
-
-    def test_derived_enforcement_for_data_tier(self):
-        data = {
-            "meta": {"project": {"name": "x"}},
-            "components": [],
-            "trust_boundaries": [
-                {
-                    "id": "data-tier",
-                    "name": "Database",
-                    "description": "Persistence layer",
-                    "trust_level": "restricted",
-                },
-            ],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        assert "ORM" in md or "driver" in md
+# NOTE: TestEnforcementColumn was removed in 2026-05. The Enforcement
+# column on the §2.4 trust-boundary table is no longer rendered — §2.4 is
+# now a compact technology-stack mermaid diagram (Application Tier / Data
+# Tier subgraphs) without per-boundary enforcement strings. Trust boundary
+# detail moved to §1.x infobox metadata + §7.x control catalogue.
 
 
 class TestSecurityArchitectureCWEMapping:
@@ -749,11 +703,12 @@ class TestTechnologyArchitectureDiagram:
     def test_each_boundary_renders_a_subgraph(self):
         md = pf.gen_architecture_diagrams(self._data())
         sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        # Contract v2 uses the compact technology diagram; trust boundaries
-        # stay in the table above it instead of becoming Mermaid subgraphs.
+        # Contract v2 uses the compact technology-stack mermaid diagram with
+        # Application Tier / Data Tier subgraphs. The per-boundary table
+        # (`| public | Public Internet | ... |`) was retired in 2026-05 —
+        # trust-boundary detail now lives in the §1.x infobox + §7.x catalogue.
         assert 'subgraph APP["Application Tier"]' in sec_2_4
         assert 'subgraph DATA["Data Tier"]' in sec_2_4
-        assert "| public | Public Internet |" in sec_2_4
 
     def test_application_components_placed_in_trusted_boundary(self):
         md = pf.gen_architecture_diagrams(self._data())
@@ -761,10 +716,14 @@ class TestTechnologyArchitectureDiagram:
         app_subgraph = sec_2_4.split('subgraph APP["Application Tier"]')[1].split("end")[0]
         assert "Application Code" in app_subgraph
 
-    def test_client_component_placed_in_untrusted_boundary(self):
+    def test_client_component_routed_to_application_tier(self):
+        # Post-2026-05 — the boundary table that used to flag `| public |`
+        # rows is gone; the technology-stack diagram now places the client-
+        # facing entry under the Application Tier subgraph.
         md = pf.gen_architecture_diagrams(self._data())
         sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        assert "| public | Public Internet |" in sec_2_4
+        app_subgraph = sec_2_4.split('subgraph APP["Application Tier"]')[1].split("end")[0]
+        assert "ROUTES" in app_subgraph or "Application Code" in app_subgraph
 
     def test_data_component_placed_in_restricted_boundary(self):
         md = pf.gen_architecture_diagrams(self._data())
@@ -1864,11 +1823,15 @@ class TestSection72ThreatHypothesesTable:
 
     def test_hypothesis_table_not_emitted_inside_section_8(self):
         """§7.2 hypothesis table must NEVER end up in Section 8 register.
-        gen_security_architecture only renders §7, so a presence check is
-        sufficient — Section 8 is a different generator entirely."""
+        gen_security_architecture only renders §7, so a presence check on
+        the `## 8.` heading is sufficient — Section 8 is a different
+        generator entirely. The bare phrase ``Threat Register`` legitimately
+        appears in §7 prose as part of cross-references like
+        ``[§8 Threat Register](#8-threat-register)``; only the actual
+        `## 8.` heading is forbidden."""
         md = pf.gen_security_architecture(_data_with_hyps(_hyp()))
         assert "## 8." not in md
-        assert "Threat Register" not in md
+        assert "## 8. Threat Register" not in md
 
     def test_max_20_hypotheses_listed(self):
         """Defensive cap — 20 rows max so the table stays readable."""

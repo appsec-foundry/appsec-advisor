@@ -91,12 +91,17 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     assert "## Management Summary\n" in rendered
     assert "## 1. Management Summary" not in rendered
 
-    # The five canonical sub-sections must appear, in order.
+    # Post-2026-05 — six canonical sub-sections, in order. `### Mitigations`
+    # was renamed `### Top Mitigations` to distinguish the MS preview from
+    # §9 Mitigation Register (the full P1/P2/P3 catalogue). `### Security
+    # Posture at a Glance` was added between Verdict and Top Findings to
+    # surface the path-grouped heatmap before the per-finding table.
     expected_order = [
         "### Verdict",
+        "### Security Posture at a Glance",
         "### Top Findings",
         "### Architecture Assessment",
-        "### Mitigations",
+        "### Top Mitigations",
         "### Operational Strengths",
     ]
     positions = [rendered.find(h) for h in expected_order]
@@ -165,10 +170,19 @@ def test_top_findings_path_glyphs_link_to_heatmap_anchors(tmp_path: Path) -> Non
         )
 
 
-def test_architecture_assessment_has_three_columns(tmp_path: Path) -> None:
+def test_architecture_assessment_has_four_columns(tmp_path: Path) -> None:
+    """R-7 (2026-05): Architecture Assessment table is now 4 columns —
+    Weakness category | Affected component(s) | Description | Key findings.
+    The legacy 3-column `| Defect | Description | Key Findings |` form is
+    retired; the fixture uses the new `weaknesses[]` schema shape."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    assert "| Defect | Description | Key Findings |" in rendered
+    assert "| Weakness category | Affected component(s) | Description | Key findings |" in rendered
+    # And the retired 3-column form is gone.
+    legacy = "| Defect | Description | Key Findings |"
+    assert legacy not in rendered, (
+        "retired 3-column Architecture Assessment header leaked into the render"
+    )
 
 
 def test_operational_strengths_has_three_columns(tmp_path: Path) -> None:
@@ -269,8 +283,10 @@ def test_threat_register_is_flat_register(tmp_path: Path) -> None:
     # Header is present with Risk + STRIDE summary lines plus the flat register.
     assert "**Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · " in rendered
     assert "**STRIDE Coverage:**" in rendered
-    # Post-2026-05 — 4-column Story-Card layout.
-    assert "| ID | Finding | Vektor | Criticality |" in rendered
+    # Post-2026-05 R-6 — 4-column Story-Card layout with Component column
+    # replacing Vektor (Vektor moved into the Finding cell as a labelled
+    # **Vektor:** field).
+    assert "| ID | Finding | Component | Criticality |" in rendered
     # 8.A "Categories at a glance" subsection was removed in 2026-05; only
     # the invisible anchor block remains. The legacy 8.B Critical
     # Categories heading was also retired.
@@ -399,6 +415,180 @@ def test_chain_map_returns_empty_when_fragment_missing(tmp_path: Path) -> None:
     assert compose._build_finding_to_chain_map(ctx) == {}
 
 
+# ---------------------------------------------------------------------------
+# §8 Story-Card Component anchor + Issue/Impact disjointness regressions
+# These two checks pin bugs that previously shipped to production:
+#   1. _build_finding_cell linked the in-cell Component using the raw slug
+#      (`#express-backend`) while the Component column used the canonical
+#      `#c-01` anchor — two different anchors for the same component.
+#   2. Issue and Impact frequently rendered the SAME sentence because Issue
+#      kept N scenario sentences and Impact then drew the LAST sentence as
+#      its consequence — overlap was the norm, not the exception.
+# ---------------------------------------------------------------------------
+
+
+def _make_threat_for_cell(scenario: str, *, comp_id: str = "rest-api",
+                          file_: str = "routes/login.ts", line: int = 34,
+                          severity: str = "Critical") -> dict:
+    """Threat shape exercising _build_finding_cell end-to-end."""
+    return {
+        "t_id": "T-099",
+        "id": "T-099",
+        "component_id": comp_id,
+        "component": comp_id,
+        "stride": "Tampering",
+        "stride_category": "Tampering",
+        "title": "SQL injection",
+        "scenario": scenario,
+        "severity": severity,
+        "risk": severity,
+        "likelihood": "High",
+        "impact": severity,
+        "cwe": "CWE-89",
+        "evidence": [{"file": file_, "line": line}],
+        "mitigations": ["M-001"],
+        "vektor": "internet-anon",
+        "evidence_check": "verified",
+    }
+
+
+def test_finding_cell_component_uses_canonical_C_NN_anchor(tmp_path: Path) -> None:
+    """The in-cell `**Component:**` link MUST resolve the raw slug to the
+    canonical `C-NN` anchor — matching the Component column on the same row.
+
+    Without this normalisation the cell renders
+    `[express-backend](#express-backend)` while the column carries
+    `[C-01 — Express.js Backend API](#c-01)`. Same component, two different
+    anchors — broken cross-references and a confused reader.
+    """
+    components = {
+        "C-01": {"_canonical_id": "C-01", "_original_id": "rest-api", "name": "REST API"},
+        "rest-api": {"_canonical_id": "C-01", "_original_id": "rest-api", "name": "REST API"},
+    }
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="rest-api")
+
+    cell = compose._build_finding_cell(
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components=components,
+        repo_root=None,
+        ctx=ctx,
+    )
+
+    assert "**Component:** [C-01](#c-01) — REST API" in cell, (
+        "expected canonical C-NN anchor in the in-cell Component link; cell was:\n" + cell
+    )
+    # The raw slug must NOT appear as a link target.
+    assert "(#rest-api)" not in cell, (
+        "raw slug anchor leaked into Component link instead of canonical C-NN"
+    )
+
+
+def test_finding_cell_component_already_canonical_passes_through(tmp_path: Path) -> None:
+    """When the threat already carries `component_id: C-01`, the cell renders
+    the canonical anchor verbatim — no surprise resolution needed."""
+    components = {"C-01": {"name": "REST API"}}
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data={}, triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="C-01")
+    cell = compose._build_finding_cell(
+        t=threat, sev="critical", taxonomy={}, components=components,
+        repo_root=None, ctx=ctx,
+    )
+    assert "**Component:** [C-01](#c-01) — REST API" in cell
+
+
+def test_finding_cell_issue_and_impact_carry_disjoint_sentences(tmp_path: Path) -> None:
+    """Issue and Impact must NEVER share their final sentence.
+
+    Before the carve-out fix, Issue kept up to 4 sentences of the scenario
+    and Impact picked the LAST sentence as the consequence — the last
+    sentence then appeared verbatim under both labels. This regression
+    catches that exact pattern.
+    """
+    scenario = (
+        "An attacker sends a UNION SELECT in the login email field. "
+        "The raw query interpolates the input directly into SQL. "
+        "Authentication is bypassed and the entire Users table is dumped to the response."
+    )
+    components = {"C-01": {"_canonical_id": "C-01", "_original_id": "rest-api", "name": "REST API"}}
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data={}, triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell(scenario, comp_id="C-01")
+
+    cell = compose._build_finding_cell(
+        t=threat, sev="critical", taxonomy={}, components=components,
+        repo_root=None, ctx=ctx,
+    )
+
+    # Locate the two labelled fields. Cells use `<br>` as field separator.
+    parts = cell.split("<br>")
+    issue_part = next(p for p in parts if p.startswith("**Issue:**"))
+    impact_part = next(p for p in parts if p.startswith("**Impact:**"))
+
+    issue_text = issue_part[len("**Issue:**"):].strip().rstrip(".")
+    impact_text = impact_part[len("**Impact:**"):].strip().rstrip(".")
+
+    assert issue_text and impact_text, "Issue and Impact must both be populated for Critical"
+    # The consequence (last sentence) is the one carved into Impact, so it
+    # must NOT be the tail of Issue.
+    assert not issue_text.endswith(impact_text), (
+        "Impact sentence is duplicated as the tail of Issue:\n"
+        f"  Issue:  {issue_text!r}\n  Impact: {impact_text!r}"
+    )
+    # Specifically: the consequence sentence has been removed from Issue.
+    assert "Authentication is bypassed" not in issue_text or "dumped to the response" not in issue_text, (
+        "expected the consequence sentence to live in Impact, not Issue"
+    )
+    assert "Authentication is bypassed" in impact_text or "dumped to the response" in impact_text, (
+        "expected Impact to carry the carved consequence sentence"
+    )
+
+
+def test_finding_cell_explicit_impact_description_does_not_carve_issue(tmp_path: Path) -> None:
+    """When the YAML supplies an explicit `impact_description`, Issue keeps
+    its full N-sentence window — the carve-out only applies when Impact is
+    derived from scenario."""
+    scenario = (
+        "An attacker probes the endpoint. The application accepts the payload. "
+        "No alert fires. Logs do not capture the attempt."
+    )
+    components = {"C-01": {"_canonical_id": "C-01", "_original_id": "rest-api", "name": "REST API"}}
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data={}, triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell(scenario, comp_id="C-01")
+    threat["impact_description"] = "Loss of forensic ability to reconstruct the attack."
+
+    cell = compose._build_finding_cell(
+        t=threat, sev="critical", taxonomy={}, components=components,
+        repo_root=None, ctx=ctx,
+    )
+
+    parts = cell.split("<br>")
+    issue_part = next(p for p in parts if p.startswith("**Issue:**"))
+    impact_part = next(p for p in parts if p.startswith("**Impact:**"))
+
+    # Explicit impact text must appear verbatim under Impact.
+    assert "Loss of forensic ability to reconstruct the attack" in impact_part
+    # Issue still includes its closing scenario sentences — no carve-out
+    # happened because impact was supplied explicitly.
+    assert "Logs do not capture the attempt" in issue_part
+
+
 def test_evidence_snippet_summary_label_is_evidence_not_code(tmp_path: Path) -> None:
     """§8 code snippets use a `<summary><i>Evidence · file:line</i></summary>`
     disclosure widget — the legacy `Code · …` label is gone."""
@@ -432,8 +622,9 @@ def test_attack_walkthroughs_skeleton_includes_section_intros() -> None:
     }
     md = pf.gen_attack_walkthroughs_skeleton(yaml_data)
     # §3 intro hooks
-    assert "This section reconstructs how Critical and High findings" in md
-    assert "Read §3.1 first" in md
+    assert "This section reconstructs how the most-impactful findings" in md
+    # Structure-of-this-section bullet must reference §3.1 as the entry point.
+    assert "§3.1 Attack Chain Overview" in md
     # §3.1 intro hooks
     assert "Each chain below is one realistic path" in md
     assert "Nodes coloured red are attacker-controlled" in md
@@ -441,7 +632,7 @@ def test_attack_walkthroughs_skeleton_includes_section_intros() -> None:
     h2_idx = md.index("## 3. Attack Walkthroughs")
     h3_idx = md.index("### 3.1 Attack Chain Overview")
     chain_idx = md.index("#### Chain 1")
-    intro3_idx = md.index("This section reconstructs how Critical and High findings")
+    intro3_idx = md.index("This section reconstructs how the most-impactful findings")
     intro31_idx = md.index("Each chain below is one realistic path")
     assert h2_idx < intro3_idx < h3_idx < intro31_idx < chain_idx
 
@@ -641,7 +832,11 @@ def test_changelog_full_rebuild_with_baseline_renders_only_nonempty_bullets(tmp_
     assert "**Added:**" not in section
     assert "**Changed:**" not in section
     # Trailing `note` bullet still rendered for the full-rebuild message.
-    assert "- full rebuild — all components re-analyzed" in section
+    # Post-2026-05 — _normalize_emdashes converts em-dashes in plain prose
+    # bullets to ASCII hyphens (heading lines, anchor-link bullets and
+    # GFM table rows are preserved). The note is a plain prose bullet, so
+    # the em-dash in the YAML input is normalised on the way out.
+    assert "- full rebuild - all components re-analyzed" in section
 
 
 def test_changelog_caps_inline_ids_at_five_with_more_suffix(tmp_path: Path) -> None:
@@ -895,9 +1090,12 @@ def test_changelog_table_renders_one_row_per_version(tmp_path: Path) -> None:
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
     # v2 row: delta shorthand, short SHAs, component counts.
-    assert "| v2 | 2026-04-23 | incremental | — | — | `cb6fb8a` → `a1b2c3d` | +2 / ~1 / -1 | 7 files | — |" in section
+    # Empty cells render as ASCII hyphen — `_normalize_emdashes` applies to
+    # changelog table rows because the row carries no anchor links (anchor-
+    # link rows are excluded from normalisation; this one is not).
+    assert "| v2 | 2026-04-23 | incremental | - | - | `cb6fb8a` → `a1b2c3d` | +2 / ~1 / -1 | 7 files | - |" in section
     # v1 row: initial marker and mode=full.
-    assert "| v1 | 2026-04-19 | full | — | — | _(initial)_ | +0 / ~0 / -0 | — | Initial assessment |" in section
+    assert "| v1 | 2026-04-19 | full | - | - | _(initial)_ | +0 / ~0 / -0 | - | Initial assessment |" in section
     # Newest first.
     assert section.index("| v2 |") < section.index("| v1 |")
 
@@ -1066,16 +1264,23 @@ def test_cli_exit_1_on_missing_fragment(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Dollar-operator escape — MongoDB `$where`/`$ne`, jQuery selectors, bash
 # vars must survive KaTeX/MathJax-enabled renderers without being
-# interpreted as math-mode delimiters.
+# interpreted as math-mode delimiters. Post-2026-05 the renderer uses the
+# canonical Markdown backslash-escape (`\$word`) rather than backtick
+# wrapping, so the visible glyph stays in the surrounding font weight.
 # ---------------------------------------------------------------------------
 
 
 class TestEscapeDollarOperators:
     """_escape_dollar_operators is a pure function — exercise it directly."""
 
-    def test_mongodb_operators_are_backticked(self) -> None:
+    def test_mongodb_operators_are_backslash_escaped(self) -> None:
+        # Post-2026-05 — renderer emits the canonical Markdown backslash-escape
+        # (`\$where`) instead of backtick-wrapping. Backslash-escape keeps the
+        # math-mode protection under KaTeX/MathJax while leaving the rendered
+        # text in the surrounding font weight (backticks produced a visible
+        # monospace span that read as literal source code).
         md = "NoSQL $where injection and $ne bypass"
-        assert compose._escape_dollar_operators(md) == ("NoSQL `$where` injection and `$ne` bypass")
+        assert compose._escape_dollar_operators(md) == ("NoSQL \\$where injection and \\$ne bypass")
 
     def test_already_backticked_operator_is_untouched(self) -> None:
         md = "use `$where` to query"
@@ -1111,14 +1316,14 @@ class TestEscapeDollarOperators:
 
     def test_multiple_operators_in_one_line(self) -> None:
         md = "use $regex or $or or $and"
-        assert compose._escape_dollar_operators(md) == ("use `$regex` or `$or` or `$and`")
+        assert compose._escape_dollar_operators(md) == ("use \\$regex or \\$or or \\$and")
 
     def test_operator_inside_markdown_link_label(self) -> None:
         # A link label like `[T-012](#t-012) — NoSQL $where Injection` must
-        # get the `$where` backticked (this is the actual bug observed in
+        # get the `$where` escaped (this is the actual bug observed in
         # the Juice Shop run).
         md = "[T-012](#t-012) — NoSQL $where Injection on Product Reviews"
-        assert compose._escape_dollar_operators(md) == ("[T-012](#t-012) — NoSQL `$where` Injection on Product Reviews")
+        assert compose._escape_dollar_operators(md) == ("[T-012](#t-012) — NoSQL \\$where Injection on Product Reviews")
 
     def test_bare_dollar_sign_alone_untouched(self) -> None:
         # A lone `$` with no identifier must never be altered.
@@ -1559,8 +1764,12 @@ class TestPreRenderRepairPlan:
         assert action["section_id"] == "security_architecture"
         assert ".fragments/security-architecture.md" in action["fragments_to_rewrite"]
         assert action["expected_heading"] == "### 7.8 Real-time / WebSocket"
-        # Remediation must specifically warn about the §7.8/§7.9 drift pattern.
-        assert "7.8" in action["remediation"] and "7.9" in action["remediation"]
+        # Remediation must point at the missing heading (`7.8 Real-time /
+        # WebSocket`) and warn against the two known drift patterns: the
+        # 21-section intermediate scaffold and the 14-section v1 layout.
+        rem = action["remediation"]
+        assert "7.8" in rem
+        assert "21-section" in rem and "14-section" in rem
 
 
 # ---------------------------------------------------------------------------

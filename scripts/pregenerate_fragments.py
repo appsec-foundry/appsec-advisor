@@ -55,6 +55,10 @@ from typing import Any, Iterable
 
 import yaml
 
+# Sibling module — deterministic §3 walkthrough renderer. Imported here
+# (and not lazily) so its GENERATORS entry below resolves at import time.
+from walkthrough_renderer import gen_attack_walkthroughs
+
 # ---------------------------------------------------------------------------
 # Contract-driven compactness rules. The data lives in
 # `data/sections-contract.yaml → sections.architecture_diagrams.diagram_compactness`
@@ -2523,7 +2527,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
     lines = ["## 5. Attack Surface", ""]
     lines.append(
         "Network-reachable entry points classified by authentication requirement. "
-        "Each row links to the threat(s) referenced in its `notes` column. The "
+        "Each row links to the threat(s) referenced in its **Notes** column. The "
         "**Risk** column reflects the highest-severity linked finding."
     )
     lines.append("")
@@ -4008,14 +4012,38 @@ def _chain_label_for_threat(t: dict) -> str:
 
 
 def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
-    """Deterministic §3.1 Attack Chain Overview skeleton.
+    """Deterministic full-§3 skeleton.
 
-    Picks up to 3 distinct Critical findings (falling back to High when
-    Critical pool is small) and emits one `#### Chain N — <name>` block per
-    finding. Each chain follows the canonical template in
-    `agents/appsec-threat-renderer.md → Mermaid templates → §3.1`:
-    classDef risk + classDef impact, ≤6 nodes, T-NNN label derived from
-    threats[].title.
+    Replaces the prior minimal-skeleton form (intros + bare chain graphs)
+    with a complete §3 scaffold the renderer agent fills in by adding
+    repo-specific narrative inside pre-labelled labelled-form blocks.
+
+    Produces:
+      * §3 intro (chain-aware, enumerates the chains that follow + the
+        per-finding §3.x walkthroughs that follow §3.1).
+      * §3.1 Attack Chain Overview with:
+          - Visual-schema explanation paragraph.
+          - "Chains in this section:" enumerated list (chain N → actor → impact).
+          - One `#### Chain N — <name>` block per chain, with:
+              * Intro paragraph (template prose ready for repo-specific fill).
+              * `graph LR` block (classDef + risk-class line).
+              * `**Key takeaway:**` one-sentence summary.
+      * §3.2+ per-finding walkthroughs (one per Critical, then fill with
+        High up to a cap). Each walkthrough is a labelled-form block:
+          - Heading: `### 3.N <canonical title>`
+          - **Attacker Profile** paragraph.
+          - **Prerequisites** bullets.
+          - **Attack Steps** numbered list (3-5 items).
+          - **Sequence Diagram** with mandatory `alt Current state` /
+            `else After mitigation` block.
+          - **Business Impact** paragraph.
+          - **Detection Signals** bullets.
+          - **Defense in Depth** bullets linking to mitigation IDs.
+          - **Cross-references** bullets (links into §3.1, §8, related §3.x).
+
+    The renderer agent reads this skeleton and replaces every
+    `<!-- WALKTHROUGH_FILL: ... -->` placeholder with repo-specific prose.
+    The headings, bullet markers, and Mermaid scaffolding stay verbatim.
     """
     threats = yaml_data.get("threats") or []
     if not isinstance(threats, list):
@@ -4029,34 +4057,52 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
         (t for t in threats if isinstance(t, dict) and t.get("id")),
         key=_risk_rank,
     )
-    picked = ranked[:3]
+    # Cap §3.1 chain blocks at 5 per contract chain_compactness.max_blocks=5.
+    chain_picks = ranked[:5]
+    # §3.2+ — one walkthrough per Critical finding; fill from High up to
+    # a total of 8 sections so the document stays navigable. The contract's
+    # per_critical_subsection requirement still drives the lower bound.
+    crit_only = [t for t in ranked if _risk_rank(t) == 0]
+    high_only = [t for t in ranked if _risk_rank(t) == 1]
+    walkthrough_picks = crit_only + high_only[: max(0, 8 - len(crit_only))]
 
     out: list[str] = []
-    out.append("# Reference: §3.1 Attack Chain Overview (deterministic)")
-    out.append("")
-    out.append(
-        "This file is a helper for the threat-renderer agent. Copy §3.1 "
-        "verbatim into `.fragments/attack-walkthroughs.md`, then author §3.2+ "
-        "per-finding sequenceDiagram blocks for each Critical/High finding "
-        "linked from these chains. Do NOT modify the node labels or the "
-        "classDef blocks — they have been pre-validated against "
-        "`chain_tid_consistency`."
-    )
-    out.append("")
     out.append("## 3. Attack Walkthroughs")
     out.append("")
     out.append(
-        "This section reconstructs how Critical and High findings would "
-        "actually play out as attacks. It has two parts: §3.1 gives a "
-        "high-level chain diagram showing how an attacker reaches impact "
-        "across multiple findings, and §3.2+ walks through each individual "
-        "Critical finding as a sequence diagram contrasting current "
-        "behaviour with the post-mitigation state. Read §3.1 first to "
-        "understand the kill-chains; drill into §3.2+ when you need the "
-        "per-finding mechanics. Medium- and Low-severity findings are not "
-        "walked through here — they are documented in §8 Threat Register."
+        "This section reconstructs how the most-impactful findings actually "
+        "play out as attacks against this codebase. It is the narrative core "
+        "of the threat model — every chain ties one or more §8 Threat-Register "
+        "findings into an end-to-end exploitation sequence with attacker "
+        "actor, prerequisites, runtime mechanics, business impact, and the "
+        "controls that would have broken the chain."
     )
     out.append("")
+    out.append("**Structure of this section:**")
+    out.append("")
+    out.append(
+        "- **§3.1 Attack Chain Overview** — a small Mermaid diagram per "
+        "kill-chain showing how the attacker moves through the application "
+        "to reach business impact. Read these first to understand which "
+        "findings interlock."
+    )
+    out.append(
+        "- **§3.2 onward** — one labelled-form walkthrough per Critical "
+        "finding (and a small number of representative High findings) "
+        "covering Attacker Profile, Prerequisites, Attack Steps (with "
+        "rationale), Sequence Diagram, Business Impact, Detection Signals, "
+        "Defense in Depth, and Cross-references."
+    )
+    out.append("")
+    out.append(
+        "Medium- and Low-severity findings are not walked through here — "
+        "they are documented in [§8 Threat Register](#8-threat-register) "
+        "with the same Story-Card structure but without the kill-chain "
+        "narrative."
+    )
+    out.append("")
+
+    # -- §3.1 ---------------------------------------------------------------
     out.append("### 3.1 Attack Chain Overview")
     out.append("")
     out.append(
@@ -4065,38 +4111,257 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
         "states or actions; nodes coloured dark are impact outcomes. The "
         "arrows encode causality, not timing. A chain typically covers 2–4 "
         "findings — every individual finding keeps its detailed write-up "
-        "in §8 Threat Register and is linked from there back to the chain "
-        "that uses it."
+        "in [§8 Threat Register](#8-threat-register) and is linked back "
+        "from there to the chain that uses it."
     )
     out.append("")
 
-    if not picked:
+    if chain_picks:
+        out.append("**Chains in this section:**")
+        out.append("")
+        for i, t in enumerate(chain_picks, start=1):
+            tid = str(t.get("id") or "").strip()
+            label = _chain_label_for_threat(t)
+            head_tokens = label.split()[:4]
+            head_short = " ".join(head_tokens) or label
+            out.append(
+                f"{i}. **Chain {i} — {head_short}** — anchored by "
+                f"`{tid}`. <!-- WALKTHROUGH_FILL: actor → step → impact in ≤1 line -->"
+            )
+        out.append("")
+    else:
         out.append(
-            "_No Critical or High findings to chain. The renderer should emit "
-            "`### 3.1 Attack Chain Overview` with a one-line note explaining "
-            "the empty pool and proceed to §3.2+ as appropriate._"
+            "_No Critical or High findings present — the chain overview is "
+            "empty for this assessment._"
         )
         out.append("")
         return "\n".join(out) + "\n"
 
-    for i, t in enumerate(picked, start=1):
+    # Per-chain blocks.
+    for i, t in enumerate(chain_picks, start=1):
         tid = str(t.get("id") or "").strip()
         label = _chain_label_for_threat(t)
-        # Two-word headline for the chain's #### heading.
-        head_tokens = label.split()[:3]
+        head_tokens = label.split()[:4]
         head_short = " ".join(head_tokens) or label
+
         out.append(f"#### Chain {i} — {head_short}")
+        out.append("")
+        out.append(
+            "<!-- WALKTHROUGH_FILL: 2-3 sentence intro — who is the attacker, "
+            "what's the entry point, what's the business outcome at the "
+            f"end of this chain? Anchor finding: `{tid}` ({label}). -->"
+        )
         out.append("")
         out.append("```mermaid")
         out.append("graph LR")
-        out.append("    A[Anonymous attacker]:::risk --> B[" + tid + ": " + label + "]:::risk")
+        out.append(f"    A[Anonymous attacker]:::risk --> B[{tid}: {label}]:::risk")
         out.append("    B --> C[Privileged access]:::impact")
         out.append("    classDef risk fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px")
         out.append("    classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px")
         out.append("```")
         out.append("")
+        out.append(
+            "**Key takeaway:** <!-- WALKTHROUGH_FILL: one sentence summarising "
+            "this chain's exposure (what an attacker walks away with). -->"
+        )
+        out.append("")
+
+    # -- §3.2+ per-finding walkthroughs ------------------------------------
+    for idx, t in enumerate(walkthrough_picks, start=2):
+        tid = str(t.get("id") or "").strip()
+        # Build a visible F-NNN form if the id is T-NNN.
+        m = re.match(r"^T-(\d+)$", tid)
+        vid = f"F-{m.group(1)}" if m else tid
+        # Title — canonical short form derived from CWE + evidence.
+        # Mirrors `_canonical_finding_title` in compose_threat_model.py but
+        # the pregenerator stays self-contained.
+        cwe_raw = (t.get("cwe") or "").strip()
+        cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
+            f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
+        )
+        weak_label = _PREGEN_CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
+        if not weak_label:
+            head = _chain_label_for_threat(t)
+            weak_label = head or (t.get("title") or vid)
+        ev = t.get("evidence") or {}
+        ev_file = ""
+        ev_line = None
+        if isinstance(ev, dict):
+            ev_file = (ev.get("file") or "").strip()
+            ev_line = ev.get("line")
+        loc_suffix = ""
+        if ev_file:
+            loc_suffix = f" — `{ev_file}" + (f":{ev_line}" if ev_line else "") + "`"
+        out.append(f"### 3.{idx} {vid} — {weak_label}{loc_suffix}")
+        out.append("")
+
+        # Attacker Profile.
+        out.append("**Attacker Profile**")
+        out.append("")
+        out.append(
+            "<!-- WALKTHROUGH_FILL: 2-3 sentences describing the attacker "
+            "(actor category: anonymous internet user / authenticated user / "
+            "B2B partner / insider; capability: HTTP-only / auth required / "
+            "repo read; goal: takeover / data theft / DoS / etc.). Name the "
+            "attacker's starting position and what tooling they need. -->"
+        )
+        out.append("")
+
+        # Prerequisites.
+        out.append("**Prerequisites**")
+        out.append("")
+        out.append(
+            "<!-- WALKTHROUGH_FILL: bullet list of 2-5 prerequisites — "
+            "auth state, network reachability, prior chain steps, "
+            "application data state. One per bullet. -->"
+        )
+        out.append("- ")
+        out.append("- ")
+        out.append("- ")
+        out.append("")
+
+        # Attack Steps.
+        out.append("**Attack Steps**")
+        out.append("")
+        out.append(
+            "<!-- WALKTHROUGH_FILL: 3-5 numbered steps. Each step states "
+            "the attacker action + the response that confirms success + "
+            "WHY the step works (which property of the code is being "
+            "abused). Cite `file:line` for the code element exercised. -->"
+        )
+        out.append("1. ")
+        out.append("2. ")
+        out.append("3. ")
+        out.append("")
+
+        # Sequence Diagram.
+        out.append("**Sequence Diagram**")
+        out.append("")
+        out.append(
+            "The diagram contrasts the current vulnerable behaviour with "
+            "the post-mitigation state:"
+        )
+        out.append("")
+        out.append("```mermaid")
+        out.append("sequenceDiagram")
+        out.append("    autonumber")
+        out.append("    actor Attacker")
+        out.append("    participant App as Application")
+        out.append("")
+        out.append("    alt Current state")
+        out.append("        Attacker->>App: <!-- WALKTHROUGH_FILL: request payload -->")
+        out.append("        App-->>Attacker: <!-- WALKTHROUGH_FILL: response that confirms exploit -->")
+        out.append("    else After mitigation")
+        out.append("        Attacker->>App: <!-- WALKTHROUGH_FILL: same request -->")
+        out.append("        App-->>Attacker: <!-- WALKTHROUGH_FILL: rejected response -->")
+        out.append("    end")
+        out.append("```")
+        out.append("")
+
+        # Business Impact.
+        out.append("**Business Impact**")
+        out.append("")
+        out.append(
+            "<!-- WALKTHROUGH_FILL: 2-3 sentences naming the CONCRETE "
+            "impact — number of records / sessions / dollars at risk, "
+            "downstream blast radius (lateral movement, data loss, "
+            "regulatory exposure), confidentiality vs integrity vs "
+            "availability dimension. Avoid generic phrases like "
+            "\"sensitive data exposed\". -->"
+        )
+        out.append("")
+
+        # Detection Signals.
+        out.append("**Detection Signals**")
+        out.append("")
+        out.append(
+            "<!-- WALKTHROUGH_FILL: 2-4 bullets — concrete log lines, "
+            "anomaly patterns, metric spikes, SIEM queries that would "
+            "catch this attack in production. Each bullet must name a "
+            "specific signal, not a generic category. -->"
+        )
+        out.append("- ")
+        out.append("- ")
+        out.append("")
+
+        # Defense in Depth.
+        out.append("**Defense in Depth**")
+        out.append("")
+        out.append(
+            "<!-- WALKTHROUGH_FILL: 3-5 bullets. First bullet = primary "
+            "mitigation `[M-NNN](#m-nnn)` (must match the finding's "
+            "mitigations[] field in yaml). Remaining bullets = OTHER "
+            "mitigations (often in different defensive layers) that "
+            "would have broken the chain at intermediate steps. -->"
+        )
+        out.append("- ")
+        out.append("- ")
+        out.append("")
+
+        # Cross-references.
+        out.append("**Cross-references**")
+        out.append("")
+        out.append(
+            f"- [§8 Threat Register entry for {vid}](#{vid.lower()}) — "
+            "evidence, classification, full mitigation list."
+        )
+        out.append(
+            "- <!-- WALKTHROUGH_FILL: §3.1 chain that uses this finding "
+            "(e.g. `[Chain 2](#chain-2-...)`) -->"
+        )
+        out.append(
+            "- <!-- WALKTHROUGH_FILL: related §3.x walkthroughs that "
+            "share findings or actors -->"
+        )
+        out.append("")
 
     return "\n".join(out) + "\n"
+
+
+# Lightweight CWE → class label table for the pregenerator. Kept in sync
+# manually with `_CWE_CLASS_NAMES` in scripts/compose_threat_model.py.
+_PREGEN_CWE_CLASS_NAMES = {
+    "CWE-22":   "Path Traversal",
+    "CWE-23":   "Path Traversal",
+    "CWE-78":   "OS Command Injection",
+    "CWE-79":   "Cross-Site Scripting",
+    "CWE-87":   "Cross-Site Scripting",
+    "CWE-89":   "SQL Injection",
+    "CWE-94":   "Code Injection",
+    "CWE-95":   "Server-Side Template Injection",
+    "CWE-200":  "Information Disclosure",
+    "CWE-269":  "Improper Privilege Management",
+    "CWE-285":  "Improper Authorization",
+    "CWE-287":  "Improper Authentication",
+    "CWE-290":  "Authentication Bypass by Spoofing",
+    "CWE-294":  "Authentication Bypass by Capture-Replay",
+    "CWE-307":  "Missing Rate Limiting (Brute-Force)",
+    "CWE-312":  "Cleartext Storage of Sensitive Data",
+    "CWE-321":  "Hardcoded Cryptographic Key",
+    "CWE-327":  "Use of a Broken or Risky Cryptographic Algorithm",
+    "CWE-328":  "Use of Weak Hash",
+    "CWE-345":  "Insufficient Verification of Data Authenticity",
+    "CWE-347":  "Improper Verification of Cryptographic Signature",
+    "CWE-352":  "Cross-Site Request Forgery (CSRF)",
+    "CWE-400":  "Uncontrolled Resource Consumption",
+    "CWE-434":  "Unrestricted File Upload",
+    "CWE-548":  "Directory Listing Exposure",
+    "CWE-601":  "Open Redirect",
+    "CWE-611":  "XML External Entity (XXE)",
+    "CWE-620":  "Unverified Password Change",
+    "CWE-639":  "Insecure Direct Object Reference (IDOR)",
+    "CWE-693":  "Missing Defense-in-Depth Control",
+    "CWE-798":  "Hardcoded Credentials",
+    "CWE-862":  "Missing Authorization",
+    "CWE-863":  "Incorrect Authorization",
+    "CWE-918":  "Server-Side Request Forgery (SSRF)",
+    "CWE-922":  "Insecure Storage of Sensitive Information",
+    "CWE-942":  "Permissive Cross-Origin (CORS) Policy",
+    "CWE-943":  "NoSQL Injection",
+    "CWE-1021": "Improper Restriction of UI Rendering Layers (Clickjacking)",
+    "CWE-1104": "Use of Unmaintained Third-Party Components",
+    "CWE-1321": "Prototype Pollution",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -4327,35 +4592,107 @@ def _v2_slug(title: str) -> str:
 
 
 _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
+    # 2026-05 R-6/R-7 fix — hints sharpened so they are mutually exclusive
+    # when matched against `control.domain`. Previously "auth" appeared in
+    # §7.2 and matched both `authentication` and `authorization` domains,
+    # leaking authorization controls into §7.2. Likewise "management" in
+    # §7.10 matched "secrets-management" leaking secrets controls into §7.10.
     "7.2 Identity and Authentication Controls": (
-        "identity", "iam", "auth", "login", "password", "jwt", "oauth", "oidc", "totp", "mfa", "2fa"
+        "identity", "iam", "authentication", "identity-auth", "login", "password-login",
+        "jwt-issu", "oauth-adapter", "oidc-adapter", "totp", "mfa", "2fa", "registration",
     ),
-    "7.3 Session and Token Controls": ("session", "token", "cookie", "localstorage", "storage"),
-    "7.4 Authorization Controls": ("authorization", "access control", "role", "rbac", "object"),
-    "7.5 Query Construction and Data Access Controls": ("query", "sql", "nosql", "orm", "data access"),
-    "7.6 Input Boundary Validation Controls": ("input", "validation", "schema", "upload", "parser", "limit"),
-    "7.7 Output Encoding and Rendering Controls": ("output", "encoding", "render", "xss", "sanit"),
-    "7.8 Browser and Cross-Origin Controls": ("browser", "csp", "cors", "csrf", "helmet", "header"),
-    "7.9 Cryptography Secrets and Data Protection": ("crypto", "secret", "key", "hash", "encryption", "data protection"),
-    "7.10 File Parser and Outbound Request Controls": ("file", "parser", "xml", "archive", "ssrf", "redirect", "management"),
-    "7.11 Operations Runtime and Supply Chain Controls": ("audit", "logging", "runtime", "container", "dependency", "supply", "ci"),
-    "7.12 Real-time and Not Applicable Controls": ("websocket", "real-time", "socket.io", "ai", "llm", "graphql", "grpc"),
+    "7.3 Session and Token Controls": (
+        "session", "token-storage", "cookie", "localstorage", "browser-storage",
+    ),
+    "7.4 Authorization Controls": (
+        "authorization", "access-control", "rbac", "object-level", "ownership",
+    ),
+    "7.5 Query Construction and Data Access Controls": (
+        "query", "sql", "nosql", "orm", "data-access",
+    ),
+    "7.6 Input Boundary Validation Controls": (
+        "input-validation", "schema-validation", "upload-validation", "request-body",
+        "parser-limit", "rate-limiting",
+    ),
+    "7.7 Output Encoding and Rendering Controls": (
+        "output-encoding", "render", "xss", "sanit", "dom-sanit",
+    ),
+    "7.8 Browser and Cross-Origin Controls": (
+        "browser", "csp", "cors", "csrf", "helmet", "security-headers", "cors-csrf",
+    ),
+    "7.9 Cryptography Secrets and Data Protection": (
+        "crypto", "cryptography", "secret-manag", "secrets-manag", "key-manag", "kms",
+        "hash", "password-storage", "password hashing", "encryption", "data-protection",
+    ),
+    "7.10 File Parser and Outbound Request Controls": (
+        "file-security", "file-parser", "xml-parser", "archive", "ssrf", "redirect-allow",
+    ),
+    "7.11 Operations Runtime and Supply Chain Controls": (
+        "audit", "logging-monitor", "logging-monitoring", "runtime", "container", "dependency",
+        "supply-chain", "ci-cd",
+    ),
+    "7.12 Real-time and Not Applicable Controls": (
+        "websocket", "real-time", "socket.io", "ai-llm", "llm", "graphql", "grpc",
+    ),
 }
 
 
-def _v2_controls_for_heading(controls: list[dict], heading: str) -> list[dict]:
-    hints = _V2_CONTROL_HINTS.get(heading, ())
-    if not hints:
-        return []
-    out: list[dict] = []
-    for c in controls or []:
-        haystack = " ".join(
-            str(c.get(k) or "").lower()
-            for k in ("domain", "control", "name", "implementation")
-        )
+_V2_HEADING_ORDER: tuple[str, ...] = tuple(h for h, _ in (_V2_CONTROL_HINTS.items()))
+
+
+def _v2_canonical_section_for_control(c: dict) -> str:
+    """Return the SINGLE canonical §7 heading a control belongs to.
+
+    2026-05 R-6/R-7 fix: hint matching is non-exclusive (e.g. a control with
+    `domain=secrets-management` matched both §7.9 (`secret`) and §7.10
+    (`management`), so the same H4 block was emitted in two sections — with
+    identical `<a id="…">` anchors → duplicate-anchor warnings, controls
+    duplicated across §7 categories, and inconsistent verdict-counting).
+
+    Resolution priority:
+      1. Explicit ``section`` / ``v2_section`` field on the control.
+      2. Match against the control's ``domain`` field FIRST (specific —
+         "cryptography" cleanly resolves to §7.9, not §7.2 via "password"
+         leakage). Domain is the Stage-1-authored canonical taxonomy slot.
+      3. Fall back to the broader haystack (control/name/implementation)
+         only when domain matched nothing — preserves backward-compat for
+         older yamls that omit ``domain``.
+    """
+    if not isinstance(c, dict):
+        return ""
+    explicit = (c.get("section") or c.get("v2_section") or "").strip()
+    if explicit and explicit in _V2_CONTROL_HINTS:
+        return explicit
+    domain = (c.get("domain") or "").strip().lower()
+    if domain:
+        for heading in _V2_HEADING_ORDER:
+            hints = _V2_CONTROL_HINTS.get(heading, ())
+            if any(h in domain for h in hints):
+                return heading
+    haystack = " ".join(
+        str(c.get(k) or "").lower()
+        for k in ("control", "name", "implementation")
+    )
+    if not haystack.strip():
+        return ""
+    for heading in _V2_HEADING_ORDER:
+        hints = _V2_CONTROL_HINTS.get(heading, ())
         if any(h in haystack for h in hints):
-            out.append(c)
-    return out
+            return heading
+    return ""
+
+
+def _v2_controls_for_heading(controls: list[dict], heading: str) -> list[dict]:
+    """Return the subset of controls whose canonical §7 section is ``heading``.
+
+    Each control resolves to AT MOST one heading via
+    ``_v2_canonical_section_for_control``; this guarantees that the same
+    sub-control title never appears in two different §7 categories.
+    """
+    if heading not in _V2_CONTROL_HINTS:
+        return []
+    return [c for c in (controls or [])
+            if isinstance(c, dict) and _v2_canonical_section_for_control(c) == heading]
 
 
 def _v2_finding_links(threats: list[dict], section: str, max_links: int = 5) -> list[str]:
@@ -4389,11 +4726,37 @@ def _v2_finding_links(threats: list[dict], section: str, max_links: int = 5) -> 
 # losing the underlying term. Anything not in this map is passed through —
 # the goal is to fix the worst offenders, not to retitle every control.
 _FRIENDLY_SUBCONTROL_TITLE: dict[str, str] = {
+    # Aligns terse Stage-1 names with the canonical security-engineering
+    # vocabulary used in OWASP ASVS v4 / NIST SP 800-63B. Entries are added
+    # ONLY when the raw name is ambiguous or non-standard — controls already
+    # named in their canonical form pass through unchanged.
     "Query Construction":     "Database Query Construction",
     "Output Encoding":        "Output Encoding and Escaping",
     "Container Hardening":    "Container Runtime Hardening",
     "Secret Management":      "Secret and Key Management",
     "Input Validation":       "Request Input Validation",
+    # 2026-05 (user-request point 4): align §7 H4 titles with OWASP ASVS
+    # vocabulary so that "JWT authentication" reads as the token-mechanism
+    # it actually is, and "Route-level auth middleware" disambiguates as
+    # Authorization (the Z) rather than Authentication. Each replacement
+    # keeps the original term in parens so existing cross-refs that grep
+    # for "JWT" / "DomSanitizer" / etc. still find their target.
+    "JWT authentication":                  "Token-Based Session Authentication (JWT)",
+    "JWT authentication (RS256)":          "Token-Based Session Authentication (JWT, RS256)",
+    "Password hashing":                    "Password Hashing and Credential Storage",
+    "Route-level auth middleware":         "Route-Level Authorization Middleware",
+    "Route-level auth middleware (isAuthorized)": "Route-Level Authorization Middleware (isAuthorized)",
+    "ORM parameterized queries":           "Parameterized ORM Queries",
+    "Request body validation":             "Request Body Schema Validation",
+    "Request rate limiting":               "Authentication Rate Limiting",
+    "Angular DomSanitizer":                "Client-Side Output Sanitization (Angular DomSanitizer)",
+    "HTTP security headers":               "HTTP Security Headers (Helmet)",
+    "HTTP security headers (Helmet)":      "HTTP Security Headers (Helmet)",
+    "Cross-origin resource sharing policy": "Cross-Origin Resource Sharing (CORS) Policy",
+    "Access logging":                      "Application Access Logging",
+    "JWT stored in localStorage":          "JWT Storage in Browser localStorage",
+    "Secrets and key management":          "Secret and Key Management",
+    "File upload validation and safe extraction": "File Upload Validation and Safe Archive Extraction",
 }
 
 
@@ -5044,9 +5407,14 @@ GENERATORS = {
     # use-cases.md retired 2026-05 — §6 gap intentional.
     "security-architecture.md": gen_security_architecture,
     "out-of-scope.md": gen_out_of_scope,
-    # Fix-F (M-RCA-2026-05): deterministic chain-overview skeleton consumed
-    # by the renderer agent. Underscore prefix keeps it out of compose's
-    # required-fragments list — it is a reference helper, not a section.
+    # §3 Attack Walkthroughs — rendered deterministically from yaml + per-CWE
+    # templates by `scripts/walkthrough_renderer.py`. The Stage 2 renderer
+    # agent does NOT author this fragment any more; the §3 repair loop was
+    # collapsed because the contract is now satisfied by construction.
+    "attack-walkthroughs.md": gen_attack_walkthroughs,
+    # Kept for one release as a deprecated transitional artifact — the
+    # legacy renderer prompt has a fallback path that reads it. Removed in
+    # the release after the deterministic flip lands.
     "_chain-skeleton.md": gen_attack_walkthroughs_skeleton,
 }
 

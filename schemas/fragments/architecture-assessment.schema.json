@@ -2,9 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/architecture-assessment.schema.json",
   "title": "Management Summary — Architecture Assessment fragment",
-  "description": "Structured data for `### Architecture Assessment`. The renderer emits a 3-column Defect/Description/Key Findings table. The prose intro + closing link to §7 are fixed by the template — the LLM only supplies the verdict sentence + defect rows.",
+  "description": "Structured data for `### Architecture Assessment`. The renderer emits a 4-column 'Weakness category | Affected component(s) | Description | Key findings' table. The prose intro + closing link to §7 are fixed by the template — the LLM only supplies the verdict sentence + weakness rows. Legacy `defects[]` shape is auto-upgraded by the renderer; new fragments MUST use `weaknesses[]`.",
   "type": "object",
-  "required": ["verdict_severity", "verdict_prose", "framing", "defects"],
+  "required": ["verdict_severity", "verdict_prose", "framing"],
+  "oneOf": [
+    { "required": ["weaknesses"] },
+    { "required": ["defects"] }
+  ],
   "additionalProperties": false,
   "properties": {
     "verdict_severity": {
@@ -22,13 +26,72 @@
       "type": "string",
       "minLength": 20,
       "maxLength": 200,
-      "description": "Short framing sentence introducing the defects table (e.g. 'Four cross-cutting defects drive ~40% of all findings:')."
+      "description": "Short framing sentence introducing the weaknesses table (e.g. 'Four cross-cutting weaknesses drive the majority of findings:')."
+    },
+    "weaknesses": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 6,
+      "description": "Cross-cutting architectural weaknesses, grouped by general security domain. Rendered as 4-column table rows.",
+      "items": {
+        "type": "object",
+        "required": ["category", "description", "findings"],
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 80,
+            "description": "General security domain — e.g. 'Cryptography & Secret Management', 'Query Construction and Data Access', 'Authorization and Access Control', 'Output Encoding and Rendering'. NOT a finding restatement or a code-fragment summary."
+          },
+          "affected_components": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 8,
+            "description": "Component-ids (or {id, name} dicts) whose code carries this weakness. The renderer enriches bare ids to '[C-NN](#c-nn) — Component Name' using the components index from threat-model.yaml.",
+            "items": {
+              "oneOf": [
+                { "type": "string", "pattern": "^C-\\d{2,}$" },
+                {
+                  "type": "object",
+                  "required": ["id"],
+                  "properties": {
+                    "id":   { "type": "string", "pattern": "^C-\\d{2,}$" },
+                    "name": { "type": "string", "minLength": 1, "maxLength": 80 }
+                  }
+                }
+              ]
+            }
+          },
+          "description": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 800,
+            "description": "Design-review prose explaining the structural problem — what security boundary is failing, why it spans multiple call-sites, why a single-line patch will not close it. References affected files/components GENERICALLY (no line-by-line SAST listing). Target 2-4 sentences."
+          },
+          "findings": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Linked findings. Each item is {ref, label}; renderer emits '[ref](#anchor) — label' with <br/> between rows.",
+            "items": {
+              "type": "object",
+              "required": ["ref", "label"],
+              "additionalProperties": false,
+              "properties": {
+                "ref":   { "type": "string", "pattern": "^[FTM]-\\d{3,4}$" },
+                "label": { "type": "string", "minLength": 5, "maxLength": 80 }
+              }
+            }
+          }
+        }
+      }
     },
     "defects": {
       "type": "array",
       "minItems": 3,
       "maxItems": 6,
-      "description": "Cross-cutting architectural defects. Rendered as 3-column table rows.",
+      "description": "LEGACY (pre-2026-05) shape. Accepted for back-compat; the renderer maps `defects[]` → `weaknesses[]` on load (aliases `name`→`category`, defaults `affected_components` to `[]`). New fragments MUST use `weaknesses[]`.",
       "items": {
         "type": "object",
         "required": ["name", "description", "findings"],
@@ -37,20 +100,17 @@
           "name": {
             "type": "string",
             "minLength": 5,
-            "maxLength": 60,
-            "description": "Short bold defect name, e.g. 'Secrets in source code'."
+            "maxLength": 60
           },
           "description": {
             "type": "string",
             "minLength": 40,
-            "maxLength": 500,
-            "description": "One-sentence description of the structural weakness."
+            "maxLength": 800
           },
           "findings": {
             "type": "array",
             "minItems": 1,
             "maxItems": 10,
-            "description": "Linked findings. Each item is {ref, label}; renderer emits '[ref](#anchor) — label' with <br/> between rows.",
             "items": {
               "type": "object",
               "required": ["ref", "label"],

@@ -495,7 +495,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             rendered.append(line)
         return "<br/>".join(rendered)
 
-    def format_defect_findings(items: list[dict[str, Any]]) -> str:
+    def format_weakness_findings(items: list[dict[str, Any]]) -> str:
         if not items:
             return "—"
         rendered = []
@@ -511,6 +511,36 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
                 line += f" — {label}"
             rendered.append(line)
         return "<br/>".join(rendered)
+
+    # Back-compat alias: callers in older templates still use the legacy
+    # `format_defect_findings` name. New code uses `format_weakness_findings`.
+    format_defect_findings = format_weakness_findings
+
+    def format_weakness_components(items: list[dict[str, Any]] | list[str]) -> str:
+        """Render `affected_components[]` for Architecture Assessment.
+
+        Accepts either a list of `{id, name}` dicts (preferred) or bare
+        component-id strings (legacy). Component-id resolution against the
+        components dict happens inside ``_render_architecture_assessment``
+        before the template is invoked.
+        """
+        if not items:
+            return "—"
+        parts = []
+        for it in items:
+            if isinstance(it, str):
+                cid = it
+                name = ""
+            else:
+                cid = (it.get("id") or "").strip()
+                name = (it.get("name") or "").strip()
+            if cid and name:
+                parts.append(f"[{cid}](#{cid.lower()}) — {name}")
+            elif cid:
+                parts.append(f"[{cid}](#{cid.lower()})")
+            elif name:
+                parts.append(name)
+        return "<br/>".join(parts) if parts else "—"
 
     def format_component_list(items: list[dict[str, Any]] | str) -> str:
         if isinstance(items, str):
@@ -592,7 +622,9 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
     env.filters["linkify_refs"] = linkify_refs
     env.filters["format_id_list"] = format_id_list
     env.filters["format_mitigations"] = format_mitigations
-    env.filters["format_defect_findings"] = format_defect_findings
+    env.filters["format_defect_findings"] = format_defect_findings   # back-compat alias
+    env.filters["format_weakness_findings"] = format_weakness_findings
+    env.filters["format_weakness_components"] = format_weakness_components
     env.filters["format_component_list"] = format_component_list
     env.filters["format_mitigation_addresses"] = format_mitigation_addresses
     env.filters["format_strengths_mitigates"] = format_strengths_mitigates
@@ -1080,6 +1112,129 @@ def _normalize_register_title(title: str) -> str:
     return re.sub(r"\s*\([^()]*:\d+\)\s*$", "", title or "").strip()
 
 
+# Canonical CWE → weakness-class label map. Lifted from the inline copy in
+# _render_mitigations so both §8 title canonicalisation and §9 CWE-name
+# decoration use the SAME vocabulary.
+_CWE_CLASS_NAMES = {
+    "CWE-22":   "Path Traversal",
+    "CWE-23":   "Path Traversal",
+    "CWE-78":   "OS Command Injection",
+    "CWE-79":   "Cross-Site Scripting",
+    "CWE-87":   "Cross-Site Scripting",
+    "CWE-89":   "SQL Injection",
+    "CWE-94":   "Code Injection",
+    "CWE-95":   "Server-Side Template Injection",
+    "CWE-116":  "Improper Output Encoding",
+    "CWE-200":  "Information Disclosure",
+    "CWE-209":  "Error Message Disclosure",
+    "CWE-269":  "Improper Privilege Management",
+    "CWE-284":  "Improper Access Control",
+    "CWE-285":  "Improper Authorization",
+    "CWE-287":  "Improper Authentication",
+    "CWE-290":  "Authentication Bypass by Spoofing",
+    "CWE-294":  "Authentication Bypass by Capture-Replay",
+    "CWE-306":  "Missing Authentication",
+    "CWE-307":  "Missing Rate Limiting (Brute-Force)",
+    "CWE-310":  "Cryptographic Weakness",
+    "CWE-312":  "Cleartext Storage of Sensitive Data",
+    "CWE-321":  "Hardcoded Cryptographic Key",
+    "CWE-326":  "Inadequate Encryption Strength",
+    "CWE-327":  "Use of a Broken or Risky Cryptographic Algorithm",
+    "CWE-328":  "Use of Weak Hash",
+    "CWE-329":  "Predictable IV / Nonce",
+    "CWE-330":  "Use of Insufficiently Random Values",
+    "CWE-345":  "Insufficient Verification of Data Authenticity",
+    "CWE-346":  "Origin Validation Error",
+    "CWE-347":  "Improper Verification of Cryptographic Signature",
+    "CWE-352":  "Cross-Site Request Forgery (CSRF)",
+    "CWE-359":  "Exposure of Private Personal Information",
+    "CWE-400":  "Uncontrolled Resource Consumption",
+    "CWE-434":  "Unrestricted File Upload",
+    "CWE-441":  "Unintended Proxy or Intermediary (Confused Deputy)",
+    "CWE-502":  "Deserialization of Untrusted Data",
+    "CWE-532":  "Sensitive Data in Log Files",
+    "CWE-538":  "Insertion of Sensitive Information into Externally-Accessible File",
+    "CWE-548":  "Directory Listing Exposure",
+    "CWE-552":  "Files / Directories Accessible to External Parties",
+    "CWE-601":  "Open Redirect",
+    "CWE-611":  "XML External Entity (XXE)",
+    "CWE-620":  "Unverified Password Change",
+    "CWE-639":  "Insecure Direct Object Reference (IDOR)",
+    "CWE-640":  "Weak Password Recovery Mechanism",
+    "CWE-674":  "Uncontrolled Recursion",
+    "CWE-693":  "Missing Defense-in-Depth Control",
+    "CWE-732":  "Incorrect Permission Assignment",
+    "CWE-749":  "Exposed Dangerous Method or Function",
+    "CWE-770":  "Allocation of Resources without Limits",
+    "CWE-778":  "Insufficient Logging",
+    "CWE-798":  "Hardcoded Credentials",
+    "CWE-834":  "Excessive Iteration",
+    "CWE-862":  "Missing Authorization",
+    "CWE-863":  "Incorrect Authorization",
+    "CWE-916":  "Password Hash with Insufficient Effort",
+    "CWE-918":  "Server-Side Request Forgery (SSRF)",
+    "CWE-922":  "Insecure Storage of Sensitive Information",
+    "CWE-942":  "Permissive Cross-Origin (CORS) Policy",
+    "CWE-943":  "NoSQL Injection",
+    "CWE-1004": "Sensitive Cookie without HttpOnly",
+    "CWE-1021": "Improper Restriction of UI Rendering Layers (Clickjacking)",
+    "CWE-1104": "Use of Unmaintained Third-Party Components",
+    "CWE-1321": "Prototype Pollution",
+    "CWE-1395": "Vulnerable Third-Party Component",
+}
+
+
+def _canonical_finding_title(t: dict) -> str:
+    """Return the canonical short title for a finding in `<weakness class>
+    — <file:line>` form.
+
+    Inputs (in priority order):
+      1. ``t['cwe']`` → look up in `_CWE_CLASS_NAMES` for the class label.
+      2. ``t['evidence'].file:line`` → append as the trailing `— file:line`
+         token. Falls back to no suffix when evidence missing.
+      3. ``t['title']`` (legacy narrative form) → used only when CWE is
+         unmapped, in which case the first 5 non-stopword tokens of the
+         existing title are kept as the class label so the result is
+         still a short noun phrase.
+
+    Returns the empty string when no input yields a non-trivial label
+    (caller decides on a placeholder).
+    """
+    cwe_raw = (t.get("cwe") or "").strip()
+    cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
+        f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
+    )
+    class_label = _CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
+    if not class_label:
+        # Fallback — derive a short noun phrase from the existing title
+        # by stripping the file-suffix and keeping ≤5 non-stopword tokens.
+        raw = _normalize_register_title(t.get("title") or t.get("scenario_short") or "")
+        # Drop trailing file-form `— …` if present.
+        raw = re.sub(r"\s+—\s+[A-Za-z0-9_./\-]+(?::\d+)?\s*$", "", raw)
+        stopwords = {"a","an","the","of","in","on","at","to","for","by","via","and","or","but","with","from","into"}
+        tokens = [w for w in raw.split() if w.lower() not in stopwords]
+        class_label = " ".join(tokens[:5]).strip(" ,;:.")
+    if not class_label:
+        return ""
+
+    # Evidence file:line suffix.
+    ev = t.get("evidence") or {}
+    ev_file = ""
+    ev_line = None
+    if isinstance(ev, dict):
+        ev_file = (ev.get("file") or "").strip()
+        ev_line = ev.get("line")
+    elif isinstance(ev, list) and ev:
+        first = ev[0] if isinstance(ev[0], dict) else {}
+        ev_file = (first.get("file") or "").strip()
+        ev_line = first.get("line")
+
+    if ev_file:
+        loc = f"{ev_file}:{ev_line}" if ev_line else ev_file
+        return f"{class_label} — `{loc}`"
+    return class_label
+
+
 def _verbatim_fnnn_refs_match(extracted_section: str, prior_md: str, current_threats: list) -> bool:
     """True iff every ``F-NNN`` reference inside ``extracted_section`` still
     resolves to the same title in the current threat register as it did in
@@ -1349,6 +1504,7 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
         return ""
     meta = (ctx.yaml_data.get("meta") or {})
     cap = meta.get("max_stride_components") or 3
+    skip_walk = bool(ctx.eval_context.get("skip_attack_walkthroughs"))
     lines = [
         "> ⚠ **Quick depth — reduced-scope assessment.**",
         "> ",
@@ -1357,13 +1513,24 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
         f"> - **{cap}/8 components** under full STRIDE analysis (top-priority components only)",
         "> - **Max 2 threats per STRIDE category** per component (vs. unlimited at standard/thorough)",
         "> - **No CVSS vectors**, no per-finding evidence excerpts",
-        "> - **No per-finding sequence diagrams** in §3 (chain overview only)",
+    ]
+    # §3 bullet conditional on `skip_attack_walkthroughs`. When skipped,
+    # §3 is dropped entirely (heading, body, TOC, cross-refs) — naming it
+    # in the quick-mode notice would leak a broken §3 reference. When not
+    # skipped (rare at quick — operator must explicitly request walkthroughs),
+    # the bullet explains the chain-overview-only reduction. See
+    # `data/sections-contract.yaml` for the §3 conditional gate.
+    if skip_walk:
+        lines.append("> - **No §3 Attack Walkthroughs** (entirely skipped at `--quick`)")
+    else:
+        lines.append("> - **No per-finding sequence diagrams** in §3 (chain overview only)")
+    lines.extend([
         "> - **No LLM-enriched §7 architecture narrative** (scaffold + control tables only)",
         "> - **No QA reviewer pass**, no architect-level review",
         "> ",
         "> Re-run with `--standard` (≈ +30 min) for full STRIDE coverage and QA, or",
         "> `--thorough` (≈ +90 min) for architect review and enriched architecture sections.",
-    ]
+    ])
     return "\n".join(lines) + "\n"
 
 
@@ -2274,6 +2441,15 @@ def _build_finding_to_chain_map(ctx: "RenderContext") -> dict[str, tuple[str, st
             out.setdefault(f"T-{digits}", (label, anchor))
 
     # §3.2+ per-finding walkthroughs: `### 3.N Title` (skip 3.1)
+    # ONLY the primary T-NNN/F-NNN named in the heading is registered for
+    # this walkthrough — cross-references inside the body (e.g. "Sibling
+    # findings: T-005" in T-001's walkthrough) MUST NOT overwrite the
+    # mapping of those other findings. The historic bug here matched all
+    # `[FT]-NNN` in the body and called `out[k] = (label, anchor)`
+    # unconditionally, so §3.13 (T-012, mentions T-011) clobbered T-011's
+    # correct §3.12 mapping, §3.11 (T-010, mentions T-002+T-003) clobbered
+    # those, etc. — the Story Card "Walkthrough §3.N" back-link then
+    # pointed at the wrong walkthrough.
     sec_re = re.compile(r"^###\s+3\.(\d+)\s+(.+?)\s*$", re.M)
     sec_matches = list(sec_re.finditer(text))
     for i, m in enumerate(sec_matches):
@@ -2281,18 +2457,22 @@ def _build_finding_to_chain_map(ctx: "RenderContext") -> dict[str, tuple[str, st
         if sub_n == "1":
             continue  # 3.1 is Chain Overview, handled above
         title = m.group(2).strip()
-        start = m.end()
-        # Body until next ### or ## boundary
-        rest = text[start:]
-        nxt = re.search(r"^(?:##\s|###\s)", rest, re.MULTILINE)
-        body = rest[: nxt.start()] if nxt else rest
         heading_text = f"3.{sub_n} {title}"
         anchor = _anchor_from_heading(heading_text)
         label = f"Walkthrough §3.{sub_n}"
-        for digits in set(re.findall(r"\b[FT]-(\d+)\b", body)):
-            # Per-finding walkthrough wins over chain link (more precise).
-            out[f"F-{digits}"] = (label, anchor)
-            out[f"T-{digits}"] = (label, anchor)
+        # Extract the primary T-NNN/F-NNN from the heading title only. The
+        # heading shape produced by walkthrough_renderer.py is
+        # `### 3.<n> T-NNN — <Title>` so the first match is the owner.
+        head_match = re.search(r"\b[FT]-(\d+)\b", title)
+        if not head_match:
+            continue
+        digits = head_match.group(1)
+        # Per-finding walkthrough wins over the §3.1 chain link for its
+        # OWN finding only. setdefault is intentional — if two §3.N
+        # sections claim the same T-NNN (should not happen but defensive),
+        # the first wins.
+        out[f"F-{digits}"] = (label, anchor)
+        out[f"T-{digits}"] = (label, anchor)
 
     return out
 
@@ -2458,8 +2638,8 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "jwt.verify(token, publicKey, { algorithms: ['RS256'] })"
         ),
         "verification": (
-            "Submit a token with `alg: none` (no signature) and confirm `verify` throws "
-            "instead of returning the decoded claims."
+            "Submit a token with `alg:none` (no signature) and confirm `jwt.verify()` "
+            "throws instead of returning the decoded claims."
         ),
     },
     "CWE-916": {
@@ -2482,7 +2662,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] })"
         ),
         "verification": (
-            "Tamper one byte in a valid token's payload and confirm `verify` throws."
+            "Tamper one byte in a valid token's payload and confirm `jwt.verify()` throws."
         ),
     },
     "CWE-862": {
@@ -2980,12 +3160,17 @@ _TITLE_EM_DASH_RE = re.compile(r"\s+—\s+")
 def _normalize_title_to_paren_form(raw_title: str) -> str:
     """M-10c: Convert ``"<weakness> — <file>"`` into ``"<weakness> (<file>)"``.
 
-    Handles three corner cases observed in production output:
+    Handles five corner cases observed in production output:
       • Last segment is a file path  → wrap in parens.
       • Last segment is prose ("XSS accessible") → leave as-is.
       • Multi-em-dash with file at end ("A — B — file.ts") → wrap only the
         trailing file segment: ``"A — B (file.ts)"``.
       • Already-paren form → idempotent no-op.
+      • R-8 fix (2026-05) — Last segment is "<prose-word> <filepath>"
+        ("basket coupon.ts:18"): split on last space; if right half is a
+        file path, treat the left half as a qualifier and move BOTH into the
+        paren tail: ``"IDOR (basket coupon.ts:18)"``. Keeps the qualifier
+        with the file context where it semantically belongs.
 
     Title is also Title-Cased on the leading word ONLY when it starts with
     a lowercase letter — preserves the user-memory convention.
@@ -3001,6 +3186,18 @@ def _normalize_title_to_paren_form(raw_title: str) -> str:
     if len(segments) < 2:
         return text
     tail = segments[-1]
+    # R-8 fix: try the "<qualifier> <filepath>" pattern when the tail
+    # contains a space and isn't a pure file path on its own.
+    if not _looks_like_file_path(tail) and " " in tail:
+        idx = tail.rfind(" ")
+        candidate_path = tail[idx + 1:].strip()
+        if _looks_like_file_path(candidate_path):
+            # Whole tail (qualifier + filepath) goes inside the parens — the
+            # qualifier provides reading context that gets lost if we strip it.
+            head = " — ".join(segments[:-1]).strip()
+            if head and not head.endswith(")"):
+                return f"{head} ({tail})"
+            return text
     if not _looks_like_file_path(tail):
         return text  # last segment is prose — leave the title alone
     head = " — ".join(segments[:-1]).strip()
@@ -4288,7 +4485,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             " Public user registration is open in this app, so attacks that nominally "
             "require an authenticated account are shown originating from the same "
             "anonymous attacker — reaching the \"authenticated\" position takes one "
-            "HTTP `POST`. The §8 Vektor column retains the per-finding distinction."
+            "HTTP POST. The §8 Vektor column retains the per-finding distinction."
         )
 
     diagram_data = {
@@ -4623,7 +4820,11 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                 return c_id, c.get("name") or c_id
         return "C-00", raw
 
-    max_rows = (ctx.contract["sections"].get("top_findings") or {}).get("table", {}).get("rows", {}).get("max", 20)
+    # Fallback matches the contract default. The contract value at
+    # data/sections-contract.yaml:top_findings.table.rows.max is the
+    # single source of truth — the literal here only kicks in when the
+    # contract is missing/corrupt.
+    max_rows = (ctx.contract["sections"].get("top_findings") or {}).get("table", {}).get("rows", {}).get("max", 5)
     rendered: list[dict[str, Any]] = []
     for idx, tid in enumerate(qualifying_ids[:max_rows], start=1):
         t = threats.get(tid) or {}
@@ -4659,19 +4860,21 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                     "kind": (m.get("kind") or "").strip(),
                 }
             )
-        # Finding title — never fallback to the ID itself.
-        title = (t.get("title") or t.get("scenario_short") or "").strip()
+        # Finding title — canonical `<weakness class> — <file:line>` form
+        # so the Top Findings row matches the §8 Threat Register row title.
+        title = _canonical_finding_title(t)
         if not title:
-            sc = (t.get("scenario") or "").strip()
-            if sc:
-                # Split on ". " (sentence boundary) to avoid splitting on dotted
-                # identifiers like `.npmrc`, `lib/insecurity.ts:23`, or version
-                # strings (e.g. `express-jwt@0.1.3`).
-                parts = sc.split(". ", 1)
-                first_sentence = parts[0].strip() if parts[0].strip() else sc
-                title = first_sentence[:80]
-            else:
-                title = tid
+            # Fallback chain matches `_build_finding_cell` for layout
+            # consistency.
+            title = (t.get("title") or t.get("scenario_short") or "").strip()
+            if not title:
+                sc = (t.get("scenario") or "").strip()
+                if sc:
+                    parts = sc.split(". ", 1)
+                    first_sentence = parts[0].strip() if parts[0].strip() else sc
+                    title = first_sentence[:80]
+                else:
+                    title = tid
 
         # Visible label form: F-NNN matches the qa-reviewer canonical
         # contract and the LLM-authored fragments (Verdict bullets, AA
@@ -4699,8 +4902,75 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
 
 
 def _render_architecture_assessment(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """Render the §1 Architecture Assessment block.
+
+    Schema migration (2026-05):
+
+    The historical schema key was ``defects[]`` (each item: ``name`` /
+    ``description`` / ``findings[]``). The current schema key is
+    ``weaknesses[]`` (each item: ``category`` / ``description`` /
+    ``affected_components[]`` / ``findings[]``). Per user request the
+    section now leads with the general security-domain *category* (e.g.
+    "Cryptography & Secret Management"), names the affected components
+    explicitly in their own table column, and uses design-review prose
+    (not SAST line citations) in the description.
+
+    The composer auto-upgrades the legacy ``defects[]`` shape on load so
+    a fragment authored by an older renderer still renders correctly:
+    ``name`` is aliased to ``category`` and ``affected_components`` defaults
+    to ``[]``. The template renders ``Defect`` as a column header only when
+    no ``weaknesses[]`` key is present AND the legacy ``defects[]`` shape
+    is detected — for the current schema the column reads "Weakness category".
+
+    ``affected_components[]`` may be bare strings (component-ids) or
+    ``{id, name}`` dicts; this helper enriches bare strings with the
+    component's display name from ``ctx.yaml_data.components[]`` so the
+    template can render the cell with ``[id](#id) — Name``.
+    """
     data = _load_fragment(ctx, "architecture_assessment", section["fragment"])
     _validate_fragment("architecture_assessment", data, section["schema"])
+
+    # Back-compat: lift `defects` → `weaknesses` if the fragment still
+    # uses the legacy shape. Keep `defects` field for any external reader
+    # that depends on it.
+    if "weaknesses" not in data and "defects" in data:
+        legacy = data.get("defects") or []
+        weaknesses = []
+        for item in legacy:
+            if not isinstance(item, dict):
+                continue
+            weaknesses.append({
+                "category": item.get("name") or item.get("category") or "",
+                "description": item.get("description") or "",
+                "affected_components": item.get("affected_components") or [],
+                "findings": item.get("findings") or [],
+            })
+        data = dict(data)
+        data["weaknesses"] = weaknesses
+
+    # Enrich affected_components: resolve bare component-ids to {id, name}
+    # using the components index from the canonical YAML so the column
+    # renders with the display name.
+    comp_lookup = _component_lookup(ctx)
+    for w in data.get("weaknesses") or []:
+        raw = w.get("affected_components") or []
+        enriched = []
+        for entry in raw:
+            if isinstance(entry, str):
+                cid = entry.strip()
+                if not cid:
+                    continue
+                meta = comp_lookup.get(cid) or {}
+                enriched.append({"id": cid, "name": (meta.get("name") or cid)})
+            elif isinstance(entry, dict):
+                cid = (entry.get("id") or "").strip()
+                name = (entry.get("name") or "").strip()
+                if cid and not name:
+                    meta = comp_lookup.get(cid) or {}
+                    name = meta.get("name") or cid
+                enriched.append({"id": cid, "name": name})
+        w["affected_components"] = enriched
+
     tpl = env.get_template(section["template"])
     return tpl.render(data=data).rstrip() + "\n"
 
@@ -4833,13 +5103,38 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     def _component_sort_key(cid: str) -> tuple[int, str]:
         return (yaml_component_order.get(cid, 10_000), cid or "~cross-cutting")
 
-    def _row_sort_key(r: dict[str, Any]) -> tuple[int, int, int, str]:
+    def _row_sort_key(r: dict[str, Any]) -> tuple[int, int, int, int, str]:
+        # Sort order:
+        #   1. priority           (P1 first)
+        #   2. -addressed_count   (high-leverage mitigations first — closes
+        #                          the historic "P1 fix addressing 1 finding
+        #                          outranks P1 fix addressing 4 findings"
+        #                          symmetry break)
+        #   3. severity rank      (Critical first inside same leverage tier)
+        #   4. effort             (Low first)
+        #   5. id                 (stable tie-break)
         return (
             {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
+            -int(r.get("addressed_count") or 0),
             r.get("max_sev_rank", 9),
             _effort_rank(r.get("effort", "Medium")),
             r.get("id") or "",
         )
+
+    # 2026-05 user-request: cap the Management-Summary mitigations list at
+    # the contract-configured `rows.max` (default 10). Overflow drops into
+    # §9 Mitigation Register which carries the full P1/P2/P3 catalogue with
+    # `Why` / `How` / verification detail. Cap applied AFTER priority-sort
+    # so the highest-priority + highest-leverage items always survive.
+    mit_max = (
+        (ctx.contract["sections"].get("mitigations") or {})
+        .get("table", {})
+        .get("rows", {})
+        .get("max", 5)
+    )
+    p12_total_before_cap = len(p12_rows)
+    p12_rows = sorted(p12_rows, key=_row_sort_key)[:mit_max]
+    p12_dropped = max(0, p12_total_before_cap - len(p12_rows))
 
     # Bucket rows by primary_component_id.
     buckets: dict[str, list[dict[str, Any]]] = {}
@@ -4871,23 +5166,41 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     total_count = len(enriched)
     p1_count = sum(1 for r in p12_rows if r.get("priority") == "P1")
     p2_count = sum(1 for r in p12_rows if r.get("priority") == "P2")
-    rest_count = max(0, total_count - len(p12_rows))
+    # `rest_count` = items NOT eligible for the P1/P2 leader-board (P3+).
+    # Computed against the pre-cap P1/P2 total so the "capped" and
+    # "backlog" footer counters are disjoint and don't double-count.
+    rest_count = max(0, total_count - p12_total_before_cap)
 
+    # 2026-05 user-request: surface BOTH (a) P3 backlog overflow and (b)
+    # P1/P2 entries that did not fit under `rows.max`. The MS leader-board
+    # is the most-impactful subset; the full inventory always lives in §9.
+    overflow_p12 = p12_dropped
+    overflow_p3 = rest_count
     intro = (
-        f"Immediate-action (P1) and sprint-scope (P2) mitigations — "
-        f"{p1_count + p2_count} of {total_count} total, sub-grouped by component "
-        f"inside a single table. P3 items and full per-mitigation detail "
-        f"(`Why` / `How` / verification steps) are in "
+        f"Highest-impact P1 (immediate-action) and P2 (sprint-scope) "
+        f"mitigations — {len(p12_rows)} shown of {p12_total_before_cap} "
+        f"qualifying ({total_count} total). Sub-grouped by component inside "
+        f"a single table. Lower-priority items and full per-mitigation "
+        f"detail (**Why** / **How** / verification steps) are in "
         f"[§9 Mitigation Register](#9-mitigation-register)."
     )
-    footer = (
-        f"*{rest_count} P3 backlog item(s) in "
-        f"[§9 Mitigation Register](#9-mitigation-register). Sorted within each "
-        f"component by priority (P1 first), then severity (Critical first), "
-        f"then effort (Low first).*"
-        if rest_count
-        else None
-    )
+    footer_parts: list[str] = []
+    if overflow_p12:
+        footer_parts.append(
+            f"{overflow_p12} additional P1/P2 mitigation(s) capped from the "
+            f"leader-board"
+        )
+    if overflow_p3:
+        footer_parts.append(f"{overflow_p3} P3 backlog item(s)")
+    if footer_parts:
+        footer = (
+            "*" + " · ".join(footer_parts)
+            + " in [§9 Mitigation Register](#9-mitigation-register). "
+            + "Sorted within each component by priority (P1 first), then "
+            + "severity (Critical first), then effort (Low first).*"
+        )
+    else:
+        footer = None
 
     tpl = env.get_template("mitigations.md.j2")
     return tpl.render(groups=groups, intro=intro, footer=footer).rstrip() + "\n"
@@ -5558,6 +5871,8 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         md = _inject_components_table(ctx, md)
     elif section_id == "security_architecture":
         md = _inject_security_architecture_links(ctx, md)
+    elif section_id == "attack_walkthroughs":
+        md = _inject_attack_walkthroughs_intros(ctx, md)
 
     # Linkify bare CWE-NNN references in every prose fragment so they become
     # clickable links to the MITRE CWE entry.  Runs after the §7-specific
@@ -5584,6 +5899,77 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     md = _escape_dot_tld_identifiers(md)
 
     return md.rstrip() + "\n"
+
+
+_ATTACK_WALKTHROUGHS_DEFAULT_INTRO = (
+    "This section reconstructs how Critical and High findings would actually "
+    "play out as attacks. It has two parts: §3.1 gives a high-level chain "
+    "diagram showing how an attacker reaches impact across multiple findings, "
+    "and §3.2+ walks through each individual Critical finding as a sequence "
+    "diagram contrasting current behaviour with the post-mitigation state. "
+    "Read §3.1 first to understand the kill-chains; drill into §3.2+ when "
+    "you need the per-finding mechanics. Medium- and Low-severity findings "
+    "are not walked through here — they are documented in [§8 Threat Register](#8-threat-register)."
+)
+
+_CHAIN_OVERVIEW_DEFAULT_INTRO = (
+    "Each chain below is one realistic path from an entry point to a "
+    "business-impact outcome. Nodes coloured red are attacker-controlled "
+    "states or actions; nodes coloured dark are impact outcomes. The arrows "
+    "encode causality, not timing. A chain typically covers 2–4 findings — "
+    "every individual finding keeps its detailed write-up in §8 Threat "
+    "Register and is linked from there back to the chain that uses it."
+)
+
+
+def _inject_attack_walkthroughs_intros(ctx: "RenderContext", md: str) -> str:
+    """Ensure §3 / §3.1 carry intro paragraphs even when the LLM-authored
+    fragment skipped them.
+
+    2026-05 user-request fix (points 1, 2): the previous Stage-2 renderer
+    sometimes wrote a fragment that opened directly with the §3.1 mermaid
+    block, leaving §3 with no chapter intro and §3.1 with no explanation of
+    what the chain diagram encodes. The compose step now scaffolds default
+    intros from `_ATTACK_WALKTHROUGHS_DEFAULT_INTRO` and
+    `_CHAIN_OVERVIEW_DEFAULT_INTRO` when missing. LLM-authored intros are
+    preserved as-is (the function detects existing prose between the heading
+    and the next heading / mermaid block).
+
+    Idempotent — a second invocation finds the intros already present and
+    no-ops.
+    """
+    if not md:
+        return md
+
+    def _has_prose_before(heading_match: "re.Match[str]", text: str) -> bool:
+        """Return True when there is at least one line of non-blank, non-fence,
+        non-heading prose immediately after the heading and before the next
+        structural element (another heading or a fenced block)."""
+        tail = text[heading_match.end():]
+        for line in tail.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("```"):
+                return False
+            if stripped.startswith("#"):
+                return False
+            if stripped.startswith("<!--"):
+                continue
+            return True
+        return False
+
+    # §3 chapter intro
+    chap = re.search(r"^## 3\.[ \t]+Attack Walkthroughs\s*$", md, re.MULTILINE)
+    if chap and not _has_prose_before(chap, md):
+        md = md[:chap.end()] + "\n\n" + _ATTACK_WALKTHROUGHS_DEFAULT_INTRO + "\n" + md[chap.end():]
+
+    # §3.1 Attack Chain Overview intro
+    sub = re.search(r"^### 3\.1[ \t]+Attack Chain Overview\s*$", md, re.MULTILINE)
+    if sub and not _has_prose_before(sub, md):
+        md = md[:sub.end()] + "\n\n" + _CHAIN_OVERVIEW_DEFAULT_INTRO + "\n" + md[sub.end():]
+
+    return md
 
 
 def _inject_components_table(ctx: RenderContext, md: str) -> str:
@@ -6032,7 +6418,61 @@ def _linkify_section_refs(md: str) -> str:
         return f"[§{num}](#{slug})"
 
     # Pass 2: walk the document line-by-line, skipping headings + fenced
-    # code blocks, substituting in everything else.
+    # code blocks, substituting in everything else. Section refs that
+    # already sit INSIDE a markdown link label (`[…§3.3…](#…)`) MUST be
+    # left alone — wrapping them would produce a nested `[outer [§3.3](#…) ](#…)`
+    # link that breaks GitHub/Pandoc/most MD renderers. This is the
+    # historical `toc_nested_link` defect: a Story Card back-link
+    # `[Walkthrough §3.3](#33-…)` had its `§3.3` re-linkified by this pass.
+    # apply_repair_plan.py used to scrub the nested result post-hoc; the
+    # cleaner fix is to never produce it.
+    def _sub_outside_link_labels(line: str) -> str:
+        if "§" not in line:
+            return line
+        # Split the line into alternating "outside-link" / "inside-link-label"
+        # spans. A markdown link label is `[label](target)`. We only
+        # substitute §-refs in the outside-link spans. The inside-link-label
+        # spans are passed through verbatim.
+        out_parts: list[str] = []
+        i = 0
+        n = len(line)
+        while i < n:
+            # Find next `[` that opens a link label. A link label is `[X](Y)`
+            # where the matching `]` is followed by `(`.
+            j = line.find("[", i)
+            if j < 0:
+                out_parts.append(_SECTION_REF_RE.sub(_sub_ref, line[i:]))
+                break
+            # Scan for the matching `]` allowing nested `[]` (rare but possible).
+            # Then require the next char to be `(` — otherwise this `[` does
+            # not start a link, treat as ordinary text.
+            depth = 1
+            k = j + 1
+            while k < n and depth > 0:
+                if line[k] == "[":
+                    depth += 1
+                elif line[k] == "]":
+                    depth -= 1
+                if depth == 0:
+                    break
+                k += 1
+            if k >= n or line[k] != "]" or (k + 1 < n and line[k + 1] != "("):
+                # Not a real link label — substitute up to and including `[`
+                # and continue.
+                out_parts.append(_SECTION_REF_RE.sub(_sub_ref, line[i : j + 1]))
+                i = j + 1
+                continue
+            # Find the closing `)` of the link target.
+            close = line.find(")", k + 1)
+            if close < 0:
+                out_parts.append(_SECTION_REF_RE.sub(_sub_ref, line[i:]))
+                break
+            # Outside-link span: substitute. Link span: keep verbatim.
+            out_parts.append(_SECTION_REF_RE.sub(_sub_ref, line[i:j]))
+            out_parts.append(line[j : close + 1])
+            i = close + 1
+        return "".join(out_parts)
+
     out_lines: list[str] = []
     in_fence = False
     for chunk in re.split(r"(```[^\n]*\n.*?\n```|<!--.*?-->)", md, flags=re.DOTALL):
@@ -6044,7 +6484,7 @@ def _linkify_section_refs(md: str) -> str:
             if re.match(r"^\s{0,3}#{1,6}\s", line):
                 # Heading line — never linkify §-refs in headings
                 continue
-            lines[i] = _SECTION_REF_RE.sub(_sub_ref, line)
+            lines[i] = _sub_outside_link_labels(line)
         out_lines.append("\n".join(lines))
     return "".join(out_lines)
 
@@ -7176,14 +7616,44 @@ def _render_composition_notes(ctx: RenderContext, env: jinja2.Environment, secti
     warnings = stats.get("warnings") or []
     section_retries = stats.get("section_retries") or {}
 
+    # R-13 fix — wording was self-contradicting ("completed cleanly … but
+    # reported the following non-blocking issues"). Now we distinguish the
+    # three cases explicitly: only warnings, only retries, both. The "satisfies
+    # the contract" wording stays because by the time this appendix renders
+    # the strict-contract gate has signed off — the warnings here are SOFT
+    # (e.g. mermaid syntax hints, NARRATIVE_PLACEHOLDER leakage) that the
+    # contract treats as informational, not as render failures.
+    if warnings and (section_retries or auto_retries > 0):
+        intro = (
+            "The composition pipeline emitted soft warnings AND re-rendered one "
+            "or more sections before reaching a contract-clean result. Details "
+            "below are surfaced for transparency — the final rendered threat "
+            "model satisfies the strict contract."
+        )
+    elif warnings:
+        intro = (
+            "The composition pipeline emitted the soft warnings listed below. "
+            "These do not block release (the contract still passed) but they "
+            "flag content the renderer could not fully validate — typically "
+            "NARRATIVE_PLACEHOLDER leakage from Stage-2 incomplete authoring or "
+            "Mermaid syntax that downstream parsers may reject."
+        )
+    elif section_retries or auto_retries > 0:
+        intro = (
+            "The composition pipeline re-rendered one or more sections before "
+            "reaching a contract-clean result. The retry count is preserved "
+            "below for plugin-health monitoring; the final rendered threat "
+            "model satisfies the strict contract."
+        )
+    else:
+        intro = (
+            "_The composition pipeline ran cleanly with no warnings or retries._"
+        )
     lines: list[str] = [
         '<a id="appendix-composition-notes"></a>',
         "## Appendix: Composition Notes",
         "",
-        "This run completed cleanly (the rendered threat model satisfies the "
-        "contract) but the composition pipeline reported the following non-"
-        "blocking issues. Listed here for transparency — none of them invalidate "
-        "the threat model. See `CHANGELOG.md` (M2.14) for the design rationale.",
+        intro,
         "",
     ]
 
@@ -7590,6 +8060,79 @@ def _first_n_sentences(text: str, n: int) -> str:
     return " ".join(parts[:n]).strip()
 
 
+# CWE-class → one-sentence "what the code shows" template used by
+# _build_finding_cell when the YAML carries no explicit `evidence_summary`.
+# The synthesised claim is a structural statement about the code that the
+# next-line snippet visually proves — it is NOT a CWE-template substitute
+# for the Issue narrative. Each value names the dangerous code structure
+# concretely so the reader sees `Evidence: <claim>` followed by `<code>`
+# that obviously realises that claim. Keys are bare CWE numbers (no prefix).
+_EVIDENCE_CWE_CLAIMS: dict[str, str] = {
+    "22":  "User-supplied path components are joined without traversal-safe canonicalisation",
+    "78":  "Untrusted input is concatenated into a shell-executed command string",
+    "79":  "User input is rendered as HTML without contextual output encoding",
+    "89":  "SQL is assembled via string concatenation/interpolation of untrusted input",
+    "94":  "User-supplied code is passed to a runtime evaluator without an allow-list of operations",
+    "200": "Sensitive runtime values are served unauthenticated to any caller",
+    "284": "A protected endpoint is reachable without an authentication or authorization check",
+    "287": "The authentication path can be reached without verifying the supplied credential",
+    "295": "External certificates are accepted without verifying the trust chain",
+    "306": "A privileged operation is exposed without authentication",
+    "311": "Sensitive data is persisted or transmitted without encryption-in-transit/at-rest",
+    "319": "Credentials or session material cross the wire over a clear-text channel",
+    "321": "A signing key is embedded as a literal constant in source",
+    "327": "A broken or non-password cryptographic primitive is configured on this path",
+    "338": "A predictable random source is used where cryptographic randomness is required",
+    "352": "A state-changing request can be triggered cross-origin without a synchroniser token",
+    "434": "Uploaded file content is written to disk without type or path validation",
+    "502": "An untrusted serialised payload is deserialised into a live object graph",
+    "522": "Credentials are persisted without an adaptive password-hashing function",
+    "601": "A redirect target is derived from untrusted input without an allow-list",
+    "611": "An XML parser is configured to expand external entities while processing untrusted input",
+    "613": "Session lifetime is unbounded or revocation is impossible on logout",
+    "639": "An object-identity parameter is trusted from the request without server-side ownership check",
+    "640": "The password-reset path accepts an attacker-influenced binding without out-of-band verification",
+    "693": "The control that would block this exposure is absent from the configured stack",
+    "732": "A sensitive resource is created with permissive default permissions",
+    "770": "Resource allocation is unbounded with respect to attacker-controlled input",
+    "778": "Security-relevant events occur with no audit-log entry",
+    "798": "A credential is committed in plaintext to version control",
+    "862": "Route-level authorization middleware is missing on a mutating endpoint",
+    "863": "An authorization decision is made against the wrong identity attribute",
+    "915": "Mass assignment is enabled because the model accepts request fields wholesale",
+    "916": "A non-iterating hash is used for password storage",
+    "918": "An outbound request is issued to a URL derived from untrusted input without an allow-list",
+    "1021": "An HTML response is served without an X-Frame-Options or CSP frame-ancestors directive",
+}
+
+
+def _synthesise_evidence_summary(t: dict, ev_file: str, ev_line: object) -> str:
+    """Build a one-sentence `**Evidence:**` claim when the YAML lacks an
+    explicit ``evidence_summary``.
+
+    The claim is a structural statement about the code that the snippet
+    below the line will visually prove. Sourced from the CWE-class
+    template table; falls back to a generic claim when the CWE is
+    unmapped or absent.
+    """
+    cwe_raw = (t.get("cwe") or "").strip()
+    cwe_num = ""
+    if cwe_raw:
+        m = re.match(r"^(?:CWE-)?(\d+)$", cwe_raw, re.IGNORECASE)
+        if m:
+            cwe_num = m.group(1)
+    claim = _EVIDENCE_CWE_CLAIMS.get(cwe_num, "")
+    if not claim:
+        # Generic fallback — refer to the snippet without making a
+        # CWE-specific structural claim.
+        claim = "The implementation visible in the snippet below realises the weakness described above"
+    # Append the file context so the reader knows the proof is local.
+    if ev_file:
+        loc = ev_file if not ev_line else f"{ev_file}:{ev_line}"
+        return f"{claim} (`{loc}`)"
+    return claim
+
+
 def _build_finding_cell(
     t: dict,
     sev: str,
@@ -7601,76 +8144,139 @@ def _build_finding_cell(
 ) -> str:
     """Build the Story Card for the §8 ``Finding`` cell.
 
-    Layout (single MD line — `<br>` separators inside, `&#124;` for `|`):
+    Layout (single MD line — `<br>` separators inside, `&#124;` for `|`).
+    Reflects the user-adopted security-finding template (R-7, 2026-05):
 
-        **<Title — file suffix stripped>**
-        `<file:line>` · [<C-NN — Component>](#c-nn) · evidence: verified
-        **Attack Walkthrough:** [Chain N — …](#chain-…)            (optional, C/H only)
-        <What the attacker does — 1-2 short sentences, plain prose>
-        **Impact:** <one-sentence consequence>
-        **Fix:** → [M-NNN](#m-nnn) — <mitigation title>
-        _[TH-NN — …](#th-nn) · [CWE-NNN](…) · [OWASP A0X:2021](…)_
-        <details><summary>Evidence · file:line</summary><pre>…</pre></details>
+        **<Title — canonical weakness class + file:line>**
+        **Component:** [C-NN](#c-nn) — <Component Name>
+        **Location:** `<file:line>` · evidence: verified
+        **Issue:** <attack narrative — 1-2 sentences, plain prose>
+        **Attack Walkthrough:** [Chain N — …](#chain-…)            (Critical/High only; omitted when §3 is skipped)
+        **Evidence:** <one-sentence prose summary of what the snippet shows>
+        <details><summary>Evidence code · file:line</summary><pre>…</pre></details>
+        **Impact:** <one-sentence consequence>                      (always rendered for Critical/High)
+        **Fix:** [M-NNN](#m-nnn) — <mitigation title>
+        **Classification:** [TH-NN — …](#th-nn) · [CWE-NNN](…) · [OWASP A0X:2021](…)
 
-    Design choices (post-2026-05):
+    Design choices (R-7 — replaces the R-5 / R-6 sequence):
 
-      * Title strips the redundant `(file.ext)` suffix — the file lives in
-        the location row immediately below; repeating it in the title is
-        noise.
-      * Scenario is sanitised before render: trailing `[CWE-NNN](…)` and
-        `[OWASP …](…)` link tokens removed (those live in the Refs line),
-        and the first N sentences are kept depending on severity.
-      * The legacy `**Root cause:**` block was a CWE-template fallback
-        that reads as filler when accurate ("User input concatenated into
-        SQL strings instead of using parameterised queries") and as
-        outright misinformation when the YAML carries a corrupt CWE
-        field (e.g. an XXE finding rendering "User input rendered into
-        HTML without context-appropriate output encoding"). We now emit
-        a Root cause line **only** when the YAML carries an explicit
-        ``root_cause`` field — never as CWE-derived filler.
-      * `**Fix:**` is its own block so it sits visually next to Impact
-        on the skim path. Refs (TH-NN / CWE / OWASP) drop into a single
-        italic line below — present for citation but not competing for
-        attention with the action.
-      * Code snippet is wrapped in ``<details><summary>…</summary>`` so
-        the cell is compact by default. GitHub, Pandoc HTML and PDF (via
-        weasyprint) all honour the disclosure widget; the PDF rendering
-        defaults to expanded which keeps the audit copy complete.
-      * Old blockquote (`> `) markers are dropped — Markdown blockquotes
+      * **Component** is BOTH a labelled field at the top of the cell AND
+        a separate table column. The duplication is intentional — the
+        column gives at-a-glance scan; the in-cell label gives a stable
+        anchor for the structured form that matches the user's reference
+        template. R-6 removed the in-cell Component label; the user
+        reverted that with R-7 and re-introduced it.
+      * The legacy **Vektor** field was removed from the cell entirely.
+        Reachability information (Repo-Read / Internet-Anon / …) still
+        exists in `Appendix A — Vektor Taxonomy`; per-finding vektor data
+        survives in the YAML for SARIF / pentest-tasks export. Inside the
+        cell it added a fourth labelled row without changing remediation
+        priority and pushed the Issue line below the fold.
+      * **Evidence** now renders TWICE: once as a one-sentence prose
+        summary that explains WHAT the snippet demonstrates, and once as
+        the collapsible code excerpt. When the YAML carries an explicit
+        ``evidence_summary`` / ``evidence_prose`` field, that text is
+        used verbatim; otherwise the renderer synthesises a one-sentence
+        fallback from the finding scenario. The fallback never invents
+        content — it paraphrases the existing Issue prose so the reader
+        sees `Evidence: <claim>` followed by the proof in the snippet.
+      * **Impact** is ALWAYS rendered for Critical and High severity (the
+        R-5 substring-dedup against Issue was producing empty Impact for
+        ~90% of findings). At Medium/Low the dedup still applies because
+        an empty Impact column is acceptable for lower-priority findings
+        where the Issue text already conveys the consequence.
+      * **Classification** uses the `**Classification:** TH-NN · CWE ·
+        OWASP` LABEL form (R-7) — was italic-only `_TH · CWE · OWASP_`
+        in R-5. The label keeps the line readable as part of the
+        structured form rather than a citation footer.
+      * Code snippets remain CWE-gated (``_FINDING_SKIP_SNIPPET_CWES``)
+        and severity-gated (Critical/High by default; Medium opt-in via
+        ``important_snippet: true``).
+      * Title strips the redundant ``(file.ext)`` suffix — the file lives in
+        the **Location** row immediately below; repeating it in the title
+        is noise.
+      * Scenario is sanitised before render: trailing ``[CWE-NNN](…)`` and
+        ``[OWASP …](…)`` link tokens removed (those live in the
+        Classification line), and the first N sentences are kept depending
+        on severity.
+      * The legacy ``**Root cause:**`` block was a CWE-template fallback
+        that read as filler when accurate and as outright misinformation
+        when the YAML carried a corrupt CWE field. Replaced by
+        ``**Evidence:**``.
+      * Old blockquote (``> ``) markers are dropped — Markdown blockquotes
         do not render inside table cells on GitHub, Pandoc PDF, or most
-        VS-Code previewers, so the `> ` characters used to leak through
-        as visible glyphs without producing the intended indent.
-      * Code snippets remain CWE-gated (``_FINDING_SKIP_SNIPPET_CWES``).
+        VS-Code previewers.
     """
     depth = _FINDING_DEPTH.get(sev, _FINDING_DEPTH["medium"])
 
-    # -- 1. Title — strip redundant `(file.ext)` suffix --------------------
-    raw_title = (t.get("title") or t.get("scenario_short") or "").strip()
-    raw_title = _normalize_register_title(raw_title)
+    # -- 1. Title — canonical `<weakness class> — <file:line>` form -------
+    # Per user feedback (feedback_threat_model_finding_titles.md): titles
+    # MUST be `<weakness class> — <file[:line]>` only — no library names,
+    # payload snippets, or narrative fragments. `_canonical_finding_title`
+    # looks up the threat's CWE in `_CWE_CLASS_NAMES` and combines it with
+    # the evidence file:line. If CWE is unmapped, falls back to a short
+    # noun phrase derived from the legacy narrative title (kept on a
+    # best-effort basis so unmapped findings still render something).
+    raw_title = _canonical_finding_title(t)
     if not raw_title:
-        scenario_full = t.get("scenario") or ""
-        raw_title = scenario_full.split(". ", 1)[0][:80] if scenario_full else "—"
-    # Drop trailing ` (filename.ext)` / ` — filename.ext` so the file is
-    # named exactly once per row (in the location line below). Conservative:
-    # only strips when the suffix has a recognised source-file extension.
-    _file_suffix_paren = (
-        r"\s*\(\s*[A-Za-z0-9_./\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|"
-        r"java|kt|cs|cpp|hpp|c|h|sh|json|yaml|yml|toml|md|html|css|scss)\s*\)\s*$"
-    )
-    _file_suffix_dash = (
-        r"\s*[—\-]\s*[A-Za-z0-9_./\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|"
-        r"rs|java|kt|cs|cpp|hpp|c|h|sh|json|yaml|yml|toml|md|html|css|scss)\s*$"
-    )
-    raw_title = re.sub(_file_suffix_paren, "", raw_title)
-    raw_title = re.sub(_file_suffix_dash, "", raw_title)
-    raw_title = raw_title.rstrip(" ,;:")
+        # Last-resort fallback — preserve old behaviour on findings with
+        # neither CWE nor a usable existing title (extremely rare).
+        raw_title = (t.get("title") or t.get("scenario_short") or "").strip()
+        raw_title = _normalize_register_title(raw_title)
+        if not raw_title:
+            scenario_full = t.get("scenario") or ""
+            raw_title = scenario_full.split(". ", 1)[0][:80] if scenario_full else "—"
     ec = (t.get("evidence_check") or "").strip().lower()
     if ec == "refuted":
         title_md = f"**~~{raw_title}~~** ⚠ *(evidence refuted)*"
     else:
         title_md = f"**{raw_title}**"
 
-    # -- 2. Location row ---------------------------------------------------
+    # -- 1b. Component labelled row (R-7 — 2026-05 user request) ----------
+    # The Component is BOTH a column AND an in-cell labelled field. The
+    # duplication is intentional: the column gives at-a-glance scan; the
+    # in-cell label is required so the cell reads as a complete structured
+    # form matching the user's reference template. R-6 had removed the
+    # in-cell label; R-7 reverts that and reintroduces it as the first
+    # body field below the title.
+    component_line = ""
+    comp_id_raw = (t.get("component_id") or t.get("component") or "").strip()
+    if comp_id_raw:
+        # Resolve the canonical C-NN identifier so the in-cell link matches
+        # the Component column (line 8767+) instead of leaking the raw slug.
+        # Without this normalisation the cell renders
+        # `[express-backend](#express-backend)` while the column carries
+        # `[C-01 — Express.js Backend API](#c-01)` — two different anchors
+        # for the same component.
+        comp_meta = (components or {}).get(comp_id_raw) or {}
+        canonical_id = comp_id_raw
+        if re.match(r"^C-\d+$", comp_id_raw):
+            pass  # already canonical
+        elif comp_meta:
+            canonical_id = comp_meta.get("_canonical_id") or comp_id_raw
+        else:
+            for cid_k, c in (components or {}).items():
+                if re.match(r"^C-\d+$", cid_k) and (
+                    c.get("_original_id") == comp_id_raw
+                    or (c.get("name") or "").strip() == comp_id_raw
+                ):
+                    canonical_id = cid_k
+                    comp_meta = c
+                    break
+        comp_name = (comp_meta.get("name") or "").strip() if comp_meta else ""
+        if comp_name:
+            component_line = f"**Component:** [{canonical_id}](#{canonical_id.lower()}) — {comp_name}"
+        else:
+            component_line = f"**Component:** [{canonical_id}](#{canonical_id.lower()})"
+
+    # -- 2. Location labelled row -----------------------------------------
+    # **Location:** stays as a labelled row (file:line).
+    # **Evidence verdict** stays attached to **Location:** so the verified /
+    # ambiguous / refuted status sits next to the file it applies to.
+    # R-7 (2026-05): Vektor field removed from the cell entirely — it was
+    # adding a fourth labelled row without changing remediation priority.
+    # Vektor still exists in the YAML for SARIF / pentest-tasks export and
+    # is documented in `Appendix A — Vektor Taxonomy`.
     ev = t.get("evidence") or {}
     ev_file = ""
     ev_line = None
@@ -7681,40 +8287,39 @@ def _build_finding_cell(
         first = ev[0] if isinstance(ev[0], dict) else {}
         ev_file = (first.get("file") or "").strip()
         ev_line = first.get("line")
-    loc_parts: list[str] = []
-    if ev_file:
-        loc_parts.append(f"`{ev_file}`" + (f":{ev_line}" if ev_line else ""))
-    raw_cid = (t.get("component_id") or t.get("component") or "").strip()
-    comp = components.get(raw_cid, {})
-    if comp and re.match(r"^C-\d+$", raw_cid):
-        comp_id = raw_cid
-    elif comp:
-        comp_id = comp.get("_canonical_id") or raw_cid
-    else:
-        comp_id = ""
-        for cid_k, c in components.items():
-            if re.match(r"^C-\d+$", cid_k) and (
-                c.get("_original_id") == raw_cid or (c.get("name") or "").strip() == raw_cid
-            ):
-                comp_id = cid_k
-                comp = c
-                break
-    comp_name = (comp.get("name") if comp else raw_cid) or ""
-    if comp_id and comp_name:
-        loc_parts.append(f"[{comp_id} — {comp_name}](#{comp_id.lower()})")
-    elif comp_id:
-        loc_parts.append(f"[{comp_id}](#{comp_id.lower()})")
-    elif comp_name:
-        loc_parts.append(comp_name)
+
+    ev_status_token = ""
     if ec in {"verified", "verified-prior"}:
-        loc_parts.append("evidence: verified")
+        ev_status_token = "evidence: verified"
     elif ec == "ambiguous":
-        loc_parts.append("evidence: ambiguous ◌")
+        ev_status_token = "evidence: ambiguous ◌"
     elif ec == "refuted":
-        loc_parts.append("evidence: refuted ⚠")
+        ev_status_token = "evidence: refuted ⚠"
     elif ec:
-        loc_parts.append(f"evidence: {ec}")
-    location_line = " · ".join(loc_parts)
+        ev_status_token = f"evidence: {ec}"
+
+    location_line = ""
+    if ev_file:
+        loc_inner = f"`{ev_file}`" + (f":{ev_line}" if ev_line else "")
+        if ev_status_token:
+            loc_inner += f" · {ev_status_token}"
+        location_line = f"**Location:** {loc_inner}"
+    elif ev_status_token:
+        # No `evidence.file` on the threat but the evidence verdict is
+        # still worth surfacing — emit the location line with an em-dash
+        # placeholder so the evidence: badge always renders. Pre-2026-05
+        # this verdict was attached to a single ` · `-joined location
+        # line that included the Component slot, so it appeared even when
+        # `ev_file` was empty. Dropping it silently when no file exists
+        # broke `test_evidence_check_badge_renders_on_refuted_and_ambiguous`.
+        location_line = f"**Location:** — · {ev_status_token}"
+
+    # R-7 (2026-05): Vektor field is no longer assembled into the cell —
+    # see "Design choices (R-7)" in the docstring. The variable below is
+    # kept assigned but unused so any downstream helper that still imports
+    # `vektor_line` does not break. Set to empty string so the assembly
+    # phase treats it as "skip silently".
+    vektor_line = ""
 
     # -- 2b. Attack walkthrough back-link (Critical/High only) ------------
     # When §3 Attack Walkthroughs covers this finding (via a chain in §3.1
@@ -7786,13 +8391,82 @@ def _build_finding_cell(
     scenario_full = (t.get("scenario") or "").strip()
     scenario_clean = _strip_inline_citations(scenario_full)
     scenario_clean = _strip_redundant_filepath(scenario_clean, ev_file)
-    scenario = _first_n_sentences(scenario_clean, depth["scenario_sentences"])
+
+    # Split scenario into sentences so Issue and Impact draw from disjoint
+    # slices. Without this carve-out the Impact line below picks the last
+    # sentence of `scenario_clean`, and Issue (which keeps the first N
+    # sentences per `scenario_sentences`) usually already contains it —
+    # the cell then renders the same sentence twice under two labels.
+    def _is_link_only_local(s: str) -> bool:
+        stripped = re.sub(r"\[[^\]]+\]\([^)]+\)", "", s).strip(" .,;:!?-—·`*_")
+        return len(stripped) < 10
+
+    scenario_sentences = [
+        s.strip() for s in re.split(r"(?<=[.!?])\s+", scenario_clean) if s.strip()
+    ]
+    has_explicit_impact = bool(
+        (t.get("impact_description") or t.get("impact_summary") or "").strip()
+    )
+    impact_carve = ""
+    if not has_explicit_impact and sev in ("critical", "high") and len(scenario_sentences) >= 2:
+        for idx in range(len(scenario_sentences) - 1, 0, -1):
+            cand = scenario_sentences[idx]
+            if _is_link_only_local(cand):
+                continue
+            if len(cand.strip(" .,;:!?")) >= 12:
+                impact_carve = cand
+                scenario_sentences = scenario_sentences[:idx]
+                break
+
+    n_issue = max(1, depth["scenario_sentences"] - (1 if impact_carve else 0))
+    issue_text = " ".join(scenario_sentences[:n_issue]).strip()
+    scenario = issue_text
     if scenario and not scenario.endswith((".", "!", "?")):
         scenario += "."
+    issue_line = ""
+    if scenario:
+        issue_line = f"**Issue:** {scenario}"
 
-    # -- 4. Optional Root cause — only when YAML carries an explicit field
-    # No CWE-template filler (it produced wrong output when CWE was
-    # corrupted, and was redundant prose when CWE was correct).
+    # -- 4. Evidence summary line + (optional) explicit root_cause --------
+    # R-7 (2026-05): the **Evidence:** prose line is now ALWAYS rendered
+    # for Critical/High severity findings that have an evidence file. The
+    # text is a one-sentence prose summary describing WHAT the snippet
+    # demonstrates — distinct from the **Issue:** attack narrative.
+    #
+    # Source priority:
+    #   1. Explicit ``evidence_summary`` / ``evidence_prose`` YAML field
+    #      (operator-authored; preserved verbatim).
+    #   2. CWE-class fallback — a deterministic short claim derived from
+    #      the CWE category (e.g. "Raw SQL string concatenation with
+    #      user-controlled input is configured on this endpoint."). This
+    #      is NOT CWE-template prose for the Issue field — it's a single
+    #      claim about the code structure that the snippet visually proves.
+    #
+    # The R-5 rationale ("never synthesise from CWE templates") applied
+    # to the legacy `**Root cause:**` block, which was a multi-sentence
+    # narrative substitute. The R-7 fallback is a one-sentence proof
+    # statement; it explicitly references the code structure visible in
+    # the snippet on the next line.
+    evidence_summary_explicit = (
+        t.get("evidence_summary") or t.get("evidence_prose") or ""
+    ).strip()
+    evidence_line = ""
+    if evidence_summary_explicit:
+        text = evidence_summary_explicit
+        if not text.endswith((".", "!", "?")):
+            text += "."
+        evidence_line = f"**Evidence:** {text}"
+    elif sev in ("critical", "high") and ev_file:
+        # Synthesise a one-sentence claim from CWE class + file context.
+        # The next-line snippet is the proof for this claim.
+        fallback = _synthesise_evidence_summary(t, ev_file, ev_line)
+        if fallback:
+            if not fallback.endswith((".", "!", "?")):
+                fallback += "."
+            evidence_line = f"**Evidence:** {fallback}"
+
+    # Back-compat: keep ``**Root cause:**`` when the yaml carried it
+    # explicitly (legacy schema) but only when distinct from Issue.
     root_cause_explicit = (t.get("root_cause") or "").strip()
     root_cause_line = ""
     if root_cause_explicit and root_cause_explicit.lower() not in scenario.lower():
@@ -7807,6 +8481,10 @@ def _build_finding_cell(
         stripped = re.sub(r"\[[^\]]+\]\([^)]+\)", "", s).strip(" .,;:!?-—·`*_")
         return len(stripped) < 10
     impact_text = (t.get("impact_description") or t.get("impact_summary") or "").strip()
+    if not impact_text and impact_carve:
+        # Sentence we already carved out of `scenario` so Impact is the
+        # consequence and Issue is the narrative, without overlap.
+        impact_text = impact_carve
     if not impact_text:
         sentences = re.split(r"(?<=[.!?])\s+", scenario_clean)
         for s in reversed(sentences):
@@ -7819,12 +8497,35 @@ def _build_finding_cell(
     if impact_text:
         impact_text = _strip_inline_citations(impact_text)
         impact_text = re.sub(r"^[•\-\*]\s*", "", impact_text).strip(" ,;")
-        # Skip when the would-be impact equals (or is contained in) the
-        # rendered scenario — duplicate signal helps no reader.
-        if impact_text and impact_text.lower() not in scenario.lower() and len(impact_text) >= 12:
-            if not impact_text.endswith((".", "!", "?")):
-                impact_text += "."
-            impact_line = f"**Impact:** {impact_text}"
+        # R-7 (2026-05): Impact is ALWAYS rendered for Critical/High,
+        # even when it overlaps with the Issue prose. The R-5/iter-2
+        # substring-dedup was eliminating Impact for ~90% of findings on
+        # a typical assessment because LLM-authored `scenario` fields
+        # tend to include the consequence inline. The user-adopted
+        # template requires Impact as a separate structured field so the
+        # reader sees `Issue:` (what happens) and `Impact:` (consequence)
+        # as discrete signals. The dedup still applies for Medium/Low
+        # severities because lower-priority findings can afford a more
+        # compact cell — there `Issue` already implies the consequence
+        # and a duplicated Impact line is noise.
+        def _norm_cmp(s: str) -> str:
+            return re.sub(r"\s+", " ", s.lower().strip(" .,;:!?-—·"))
+        had_explicit_impact = bool((t.get("impact_description") or t.get("impact_summary") or "").strip())
+        if impact_text and len(impact_text) >= 12:
+            norm_impact = _norm_cmp(impact_text)
+            norm_scenario = _norm_cmp(scenario)
+            is_dup = False
+            # Dedup only applies for Medium/Low — never for Critical/High,
+            # and never when the impact text was explicitly authored.
+            if sev not in ("critical", "high") and not had_explicit_impact:
+                if norm_impact == norm_scenario or norm_impact in norm_scenario:
+                    is_dup = True
+            if is_dup:
+                impact_line = ""
+            else:
+                if not impact_text.endswith((".", "!", "?")):
+                    impact_text += "."
+                impact_line = f"**Impact:** {impact_text}"
 
     # -- 6. Fix block — explicit action -----------------------------------
     cwe_raw = (t.get("cwe") or "").strip()
@@ -7837,7 +8538,12 @@ def _build_finding_cell(
     if mit_links:
         fix_line = "**Fix:** " + " · ".join(mit_links)
 
-    # -- 7. References (italic, citation-only) ----------------------------
+    # -- 7. Classification (TH-NN · CWE · OWASP) --------------------------
+    # R-5 (2026-05 user request): renamed from the legacy italicised
+    # ``_TH · CWE · OWASP_`` reference line to a labelled
+    # ``**Classification:**`` row so it reads as part of the structured
+    # form rather than a citation footer. The links themselves are
+    # unchanged.
     cat_id = t.get("_category", "") or ""
     cat_meta = taxonomy.get(cat_id, {})
     cat_title = cat_meta.get("title") or ""
@@ -7853,9 +8559,15 @@ def _build_finding_cell(
     owasp_ref = cat_meta.get("owasp_top10_2021") or ""
     if owasp_ref:
         refs_parts.append(f"[OWASP {owasp_ref}:2021](https://owasp.org/Top10/{owasp_ref}_2021/)")
-    refs_line = ""
+    classification_line = ""
     if refs_parts:
-        refs_line = "_" + " · ".join(refs_parts) + "_"
+        # R-7 (2026-05): switched from italic-only `_…_` form to the
+        # labelled `**Classification:** …` form so the line reads as
+        # part of the structured Story Card. The labelled form matches
+        # the rest of the cell (**Component:** / **Location:** / **Issue:** /
+        # …) and removes the discrepancy where the citation footer was
+        # the only field without a label.
+        classification_line = "**Classification:** " + " · ".join(refs_parts)
 
     # -- 8. Code snippet — collapsed in <details> -------------------------
     # Severity-tier policy (post-2026-05):
@@ -7890,29 +8602,49 @@ def _build_finding_cell(
             escaped = escaped.replace("\n", "&#10;")
             # Compact-by-default disclosure widget. PDF rendering defaults
             # the widget to expanded, so audit-copy completeness survives.
+            # R-5 (2026-05): summary text now says "Evidence code · …" to
+            # match the labelled-field cell layout — the bare "Evidence" was
+            # ambiguous now that there is also an explicit **Evidence:** prose
+            # line above the disclosure widget.
             snippet_html = (
-                f"<details><summary><i>Evidence · {ev_file}:{ev_line}</i></summary>"
+                f"<details><summary><i>Evidence code · {ev_file}:{ev_line}</i></summary>"
                 f"<pre><code{cls}>{escaped}</code></pre></details>"
             )
 
-    # -- Assemble — tight single-<br> spacing throughout -------------------
+    # -- Assemble — labelled-form layout (R-7, 2026-05) -------------------
+    # Order follows the user-adopted security-finding template:
+    #   Title → Component → Location → Issue → Attack Walkthrough → Evidence
+    #   → <details> code → (legacy) Root cause → Impact → Fix → Classification
+    # Component is BOTH a column AND a labelled in-cell field (R-7).
+    # Vektor is dropped from the cell (R-7) — still in YAML + Appendix A.
+    # Empty fields are skipped silently.
+    # Single ``<br>`` between every rendered field — table parsers (GFM,
+    # Pandoc, weasyprint) all honour it.
     blocks: list[str] = [title_md]
+    if component_line:
+        blocks.append(component_line)
     if location_line:
         blocks.append(location_line)
+    if vektor_line:
+        # vektor_line is intentionally empty since R-7; guard kept for
+        # back-compat in case a future revision re-enables it.
+        blocks.append(vektor_line)
+    if issue_line:
+        blocks.append(issue_line)
     if walkthrough_line:
         blocks.append(walkthrough_line)
-    if scenario:
-        blocks.append(scenario)
+    if evidence_line:
+        blocks.append(evidence_line)
+    if snippet_html:
+        blocks.append(snippet_html)
     if root_cause_line:
         blocks.append(root_cause_line)
     if impact_line:
         blocks.append(impact_line)
     if fix_line:
         blocks.append(fix_line)
-    if refs_line:
-        blocks.append(refs_line)
-    if snippet_html:
-        blocks.append(snippet_html)
+    if classification_line:
+        blocks.append(classification_line)
     cell = "<br>".join(blocks)
 
     # Final pipe-escape so Markdown table parsers don't break the row.
@@ -8031,17 +8763,36 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     lines.append(section["heading"])
     lines.append("")
     lines.append(
-        "All findings sorted by criticality, then by attack vektor "
-        "(Repo-Read → Internet-Anon → Internet-User → Victim-Required). "
-        "Each row's **Finding** cell carries the same six elements in "
-        "the same order: title, location (`file:line` · component · "
-        "evidence verdict), one-to-two-sentence attack narrative, "
-        "**Impact** consequence line, **Fix** link to the mitigation, "
-        "and a small italic references line (TH-NN category · CWE · "
-        "OWASP Top 10). When relevant, an evidence code excerpt is "
-        "available as a collapsed `Code · file:line` widget at the "
-        "bottom of the cell — click to expand."
+        "All findings are listed in one table sorted by criticality, then "
+        "by attack vektor (Repo-Read → Internet-Anon → Internet-User → "
+        "Victim-Required). Columns: **ID** (T-NNN/F-NNN dual anchor) · "
+        "**Finding** (the Story Card — see element list below) · "
+        "**Component** (link to the §2.3 component entry) · **Criticality**."
     )
+    lines.append("")
+    lines.append(
+        "Each **Finding** cell is a structured Story Card with these "
+        "labelled fields, in order:"
+    )
+    lines.append("")
+    skip_walk_intro = bool(ctx.eval_context.get("skip_attack_walkthroughs"))
+    intro_bullets: list[str] = [
+        "**Component** — owning component (link to [§2.3](#23-components) entry).",
+        "**Location** — `` `file:line` `` · evidence verdict (`verified` / `ambiguous` / `refuted`).",
+        "**Issue** — one-to-two-sentence attack narrative.",
+    ]
+    if not skip_walk_intro:
+        intro_bullets.append(
+            "**Attack Walkthrough** — back-link into [§3](#3-attack-walkthroughs) (Critical/High only)."
+        )
+    intro_bullets.extend([
+        "**Evidence** — one-sentence prose summary above a collapsible `Code · file:line` widget (Critical/High; gated by CWE class).",
+        "**Impact** — concrete consequence line (always rendered for Critical/High).",
+        "**Fix** — link to the mitigation in [§9](#9-mitigation-register).",
+        "**Classification** — `**Classification:** TH-NN · CWE · OWASP Top 10` reference row.",
+    ])
+    for idx, body in enumerate(intro_bullets, 1):
+        lines.append(f"{idx}. {body}")
     lines.append("")
     lines.append(
         f"**Risk Distribution:** 🔴 Critical: {counts['critical']} · 🟠 High: {counts['high']} · "
@@ -8093,8 +8844,13 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # Mitigation / References were each a single ID link consuming a full
     # column — the Story-Card folds them inline so the description gets
     # room to actually explain *why* each finding matters.
-    lines.append("| ID | Finding | Vektor | Criticality |")
-    lines.append("|----|---------|--------|-------------|")
+    #
+    # R-6 (2026-05 user request): swap the Vektor column for a Component
+    # column so the table groups visually by where the finding lives.
+    # Vektor moves into the Finding cell as a labelled **Vektor:** field
+    # (same anchor target, same label resolution — just rendered inline).
+    lines.append("| ID | Finding | Component | Criticality |")
+    lines.append("|----|---------|-----------|-------------|")
 
     # Vektor sort key — sort dirtier paths first within a severity tier so
     # the reader scans Repo-Read criticals before Victim-Required ones.
@@ -8123,20 +8879,39 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             sev_cell += " *(raw Critical)*"
             has_raw_downgrade = True
 
-        # Vektor cell (column 3).
-        raw_vektor = (t.get("vektor") or "internet-user").strip()
-        vektor_id = raw_vektor.lower().replace(" ", "-")
-        vektor_label = (
-            (t.get("vektor_label") or "").strip()
-            or _VEKTOR_LABEL.get(vektor_id)
-            or raw_vektor.replace("-", " ").title()
-        )
-        vektor_cell = f"[{vektor_label}](#vektor-{vektor_id})"
-
         # Track evidence-drift for the §8 footnote.
         ec = (t.get("evidence_check") or "").strip().lower()
         if ec in {"refuted", "ambiguous"}:
             has_evidence_drift = True
+
+        # Component cell (column 3) — `C-NN — Name` link, replaces the old
+        # Vektor column. The vektor itself now appears as a labelled field
+        # inside the Finding cell (see `_build_finding_cell`).
+        raw_cid_for_col = (t.get("component") or t.get("component_id") or "").strip()
+        comp_for_col = components.get(raw_cid_for_col, {})
+        if comp_for_col and re.match(r"^C-\d+$", raw_cid_for_col):
+            comp_id_col = raw_cid_for_col
+        elif comp_for_col:
+            comp_id_col = comp_for_col.get("_canonical_id") or raw_cid_for_col
+        else:
+            comp_id_col = ""
+            for cid_k, c in components.items():
+                if re.match(r"^C-\d+$", cid_k) and (
+                    c.get("_original_id") == raw_cid_for_col
+                    or (c.get("name") or "").strip() == raw_cid_for_col
+                ):
+                    comp_id_col = cid_k
+                    comp_for_col = c
+                    break
+        comp_name_col = (comp_for_col.get("name") if comp_for_col else raw_cid_for_col) or ""
+        if comp_id_col and comp_name_col:
+            comp_cell = f"[{comp_id_col} — {comp_name_col}](#{comp_id_col.lower()})"
+        elif comp_id_col:
+            comp_cell = f"[{comp_id_col}](#{comp_id_col.lower()})"
+        elif comp_name_col:
+            comp_cell = comp_name_col
+        else:
+            comp_cell = "—"
 
         # Finding cell (column 2) — rich Story Card.
         finding_cell = _build_finding_cell(
@@ -8159,7 +8934,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             visible_id = f"F-{digits}"
         lines.append(
             f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | '
-            f"{finding_cell} | {vektor_cell} | {sev_cell} |"
+            f"{finding_cell} | {comp_cell} | {sev_cell} |"
         )
     lines.append("")
 
@@ -8882,7 +9657,24 @@ def render(
     _mitigations = yaml_data.get("mitigations") or []
 
     # Build reverse indexes.
+    # 2026-05 R-1 fix: `threats[].component` (path-derived, written by
+    # reclassify_components.py) is the canonical source of truth. The legacy
+    # `components[].threat_ids[]` field is built by Stage 1 from STRIDE source
+    # files and reflects sequential T-ID slicing per analyzer, which does NOT
+    # survive reclassification. We therefore build the forward index from
+    # `threats[].component` first; only when a threat lacks both `component`
+    # and `component_id` do we fall back to the reverse index.
     tid_to_component: dict[str, str] = {}
+    # Forward pass — read truth from threats[].component / .component_id.
+    for t in _threats:
+        if not isinstance(t, dict):
+            continue
+        tid = t.get("t_id") or t.get("id") or ""
+        cid = (t.get("component") or t.get("component_id") or "").strip()
+        if tid and cid:
+            tid_to_component[tid] = cid
+    # Fallback pass — only for threats neither field set, use the legacy
+    # reverse index from components[].threat_ids[].
     for c in _components:
         if not isinstance(c, dict):
             continue
@@ -8904,8 +9696,12 @@ def render(
         if not isinstance(t, dict):
             continue
         tid = t.get("t_id") or t.get("id") or ""
-        # Back-resolve component_id from components[].threat_ids.
-        if not t.get("component_id") and tid in tid_to_component:
+        # 2026-05 R-1 fix: only back-fill component_id when BOTH `component`
+        # and `component_id` are empty. If `component` is already set, it's
+        # the authoritative path-derived value — preserve it and back-fill
+        # component_id via the slug match below, not from the legacy reverse
+        # index which would override with stale STRIDE-source values.
+        if not t.get("component_id") and not t.get("component") and tid in tid_to_component:
             t["component_id"] = tid_to_component[tid]
         # Also resolve by component NAME (yaml often stores component: "Auth Service")
         # OR by component SLUG/ID directly (Phase-10b quick-depth runs write
@@ -8930,6 +9726,41 @@ def render(
                 t["mitigations"] = list(dict.fromkeys(inline))
             elif tid in tid_to_mitigations:
                 t["mitigations"] = list(dict.fromkeys(tid_to_mitigations[tid]))
+
+    # 2026-05 R-1 fix: rebuild components[].threat_ids[] from the canonical
+    # threats[].component_id so the §2.3 Components table and the per-component
+    # Linked-Threats cells reflect the post-reclassify truth. Without this,
+    # the table renderer (_inject_components_table) reads stale STRIDE-source
+    # buckets and renders findings under the wrong component.
+    forward_index: dict[str, list[str]] = {}
+    for t in _threats:
+        if not isinstance(t, dict):
+            continue
+        tid = t.get("t_id") or t.get("id") or ""
+        cid = (t.get("component_id") or t.get("component") or "").strip()
+        if tid and cid:
+            forward_index.setdefault(cid, []).append(tid)
+
+    def _sort_tid_key(tid: str) -> tuple[int, str]:
+        try:
+            return (int(tid.split("-", 1)[1]), tid)
+        except (IndexError, ValueError):
+            return (10**9, tid)
+
+    if forward_index:
+        for c in _components:
+            if not isinstance(c, dict):
+                continue
+            cid = c.get("id") or ""
+            if cid in forward_index:
+                # Sort by T-NNN numeric order so the rendered table is stable.
+                c["threat_ids"] = sorted(set(forward_index[cid]), key=_sort_tid_key)
+            elif "threat_ids" in c:
+                # Component has stale threat_ids and no current threats point
+                # at it (e.g. all reassigned away by reclassify) — clear the
+                # list rather than leaving stale references in the rendered
+                # Linked-Threats cell.
+                c["threat_ids"] = []
 
     # Reverse: ensure mitigations[].addresses is populated (some yamls only
     # have the mitigation_ids on the threat side).

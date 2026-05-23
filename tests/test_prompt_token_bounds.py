@@ -33,7 +33,10 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     "agents/phases/phase-group-recon.md": (3_000, 7_500),
     "agents/appsec-qa-reviewer.md": (33_000, 60_000),
     "agents/appsec-threat-analyst.md": (22_000, 45_000),
-    "agents/appsec-stride-analyzer.md": (10_000, 22_000),
+    # Lowered 2026-05-23 after shared-file extraction (finding-title-contract,
+    # supply-chain-patterns, spa-threats, cvss-metrics) and dedup of the
+    # ops/progress sections. Measured 8_040.
+    "agents/appsec-stride-analyzer.md": (6_500, 9_750),
 }
 
 

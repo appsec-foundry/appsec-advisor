@@ -130,3 +130,145 @@ def test_output_dir_via_env(tmp_path, monkeypatch):
     rc = rec.main(argv)
     assert rc == 0
     assert (tmp_path / ".stage-stats.jsonl").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Dispatch-wall derivation tests (--subagent-type + --since-iso)
+# ---------------------------------------------------------------------------
+
+# Synthetic hook log mirroring the 2026-05-23 juice-shop Stage 2 multi-dispatch
+# (two AGENT_SPAWN, one AGENT_INVOKE — earlier Spawn 1 never returned).
+_MULTI_DISPATCH_LOG = """\
+2026-05-23T17:32:13Z  [f13a4710]  INFO   AGENT_SPAWN         appsec-advisor:appsec-threat-analyst         model=sonnet  Threat Analysis & Triage  [REPO_ROOT=/x]
+2026-05-23T18:26:53Z  [f13a4710]  INFO   AGENT_INVOKE        appsec-advisor:appsec-threat-analyst         model=sonnet  Threat Analysis & Triage  [REPO_ROOT=/x]
+2026-05-23T18:28:15Z  [f13a4710]  INFO   AGENT_SPAWN         appsec-advisor:appsec-threat-renderer        model=sonnet  Threat Model Renderer (Stage 2)  [REPO_ROOT=/x]
+2026-05-23T18:36:07Z  [f13a4710]  INFO   AGENT_SPAWN         appsec-advisor:appsec-threat-renderer        model=sonnet  Threat Model Renderer (Stage 2)  [REPO_ROOT=/x]
+2026-05-23T18:44:17Z  [f13a4710]  INFO   AGENT_INVOKE        appsec-advisor:appsec-threat-renderer        model=sonnet  Threat Model Renderer (Stage 2)  [REPO_ROOT=/x]
+"""
+
+
+def _write_hook_log(output_dir: Path, body: str = _MULTI_DISPATCH_LOG) -> None:
+    (output_dir / ".hook-events.log").write_text(body, encoding="utf-8")
+
+
+def test_dispatch_derivation_multi_spawn(tmp_path):
+    """Stage 2 with 2 spawns + 1 clean return → wall covers both spawns."""
+    _write_hook_log(tmp_path)
+    argv = _argv(
+        tmp_path,
+        **{
+            "--stage": "2",
+            "--name": "Report Rendering",
+            "--agent": "appsec-advisor:appsec-threat-renderer",
+            "--duration-ms": "486210",
+            "--subagent-type": "appsec-advisor:appsec-threat-renderer",
+            "--since-iso": "2026-05-23T18:27:00Z",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    # 2 AGENT_SPAWN for the renderer after the since cutoff.
+    assert record["dispatch_count"] == 2
+    # First spawn 18:28:15 → last invoke 18:44:17 = 962 s.
+    assert record["wall_secs_observed"] == 962
+    # Original duration_ms preserved alongside the derived wall.
+    assert record["duration_ms"] == 486210
+
+
+def test_dispatch_derivation_single_spawn(tmp_path):
+    """Stage 1 with 1 spawn + 1 clean return → dispatch_count == 1."""
+    _write_hook_log(tmp_path)
+    argv = _argv(
+        tmp_path,
+        **{
+            "--stage": "1",
+            "--subagent-type": "appsec-advisor:appsec-threat-analyst",
+            "--since-iso": "2026-05-23T17:00:00Z",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert record["dispatch_count"] == 1
+    # 17:32:13 → 18:26:53 = 3280 s.
+    assert record["wall_secs_observed"] == 3280
+
+
+def test_dispatch_derivation_since_filter_excludes_earlier_spawns(tmp_path):
+    """Events earlier than --since-iso are not counted."""
+    _write_hook_log(tmp_path)
+    argv = _argv(
+        tmp_path,
+        **{
+            "--stage": "2",
+            "--name": "Report Rendering",
+            "--agent": "appsec-advisor:appsec-threat-renderer",
+            "--subagent-type": "appsec-advisor:appsec-threat-renderer",
+            # since-iso AFTER the first renderer spawn — only Spawn 2 counts.
+            "--since-iso": "2026-05-23T18:30:00Z",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert record["dispatch_count"] == 1
+    # 18:36:07 → 18:44:17 = 490 s.
+    assert record["wall_secs_observed"] == 490
+
+
+def test_dispatch_derivation_missing_log(tmp_path):
+    """Missing .hook-events.log → derived fields omitted, record still written."""
+    argv = _argv(
+        tmp_path,
+        **{
+            "--subagent-type": "appsec-advisor:appsec-threat-analyst",
+            "--since-iso": "2026-05-23T17:00:00Z",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "dispatch_count" not in record
+    assert "wall_secs_observed" not in record
+
+
+def test_dispatch_derivation_back_compat_no_args(tmp_path):
+    """Without --subagent-type/--since-iso the record matches pre-existing shape."""
+    _write_hook_log(tmp_path)  # log present, args missing — derivation skipped
+    argv = _argv(tmp_path)
+    rc = rec.main(argv)
+    assert rc == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "dispatch_count" not in record
+    assert "wall_secs_observed" not in record
+
+
+def test_dispatch_derivation_partial_args_warn_and_skip(tmp_path, capsys):
+    """Passing only one of the pair surfaces a stderr warning and is otherwise a no-op."""
+    _write_hook_log(tmp_path)
+    argv = _argv(tmp_path, **{"--subagent-type": "appsec-advisor:appsec-threat-analyst"})
+    rc = rec.main(argv)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "--subagent-type and --since-iso must be passed together" in err
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "dispatch_count" not in record
+    assert "wall_secs_observed" not in record
+
+
+def test_dispatch_derivation_unknown_subagent_omits_fields(tmp_path):
+    """No matching subagent events → derivation returns None, fields omitted."""
+    _write_hook_log(tmp_path)
+    argv = _argv(
+        tmp_path,
+        **{
+            "--subagent-type": "appsec-advisor:nonexistent-agent",
+            "--since-iso": "2026-05-23T17:00:00Z",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "dispatch_count" not in record
+    assert "wall_secs_observed" not in record

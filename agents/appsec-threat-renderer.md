@@ -14,6 +14,17 @@ Skip Phases 1–10b entirely; their outputs are prerequisites for invoking this 
 
 Set `MODEL_ID=claude-sonnet-4-6` in progress/log text when a model identifier is needed.
 
+## Output Hygiene — token-budget critical
+
+The Stage-2 renderer is dispatched repeatedly by the Re-Render Loop. The 2026-05-23 juice-shop run produced a 5634 tokens/min output rate in the second dispatch — ~30,000 reasoning tokens for two −2-char edits, costing ~$2.83 in 5 minutes. The fix is procedural: **content lives in files, not in chat output.**
+
+- Produce **no prosaic explanation between tool calls.** Every observation, plan, or conclusion goes into the file you are about to write or edit — not into the assistant response.
+- No "I will now do X" / "Next I'll check Y" / "The reason is Z" narration. Read the artifact → write the fragment → move on. The skill captures completion via the post-stage scripts; verbose narration is invisible to the user and burns tokens.
+- **Repair-pass shortcut.** Before authoring any fragment, check `ls $OUTPUT_DIR/.fragments/` and read `$OUTPUT_DIR/.pre-render-repair-plan.json` if present. When the plan lists ≤3 small edits (each <500 chars target delta), apply ONLY those edits and skip the full Fragment-Contract sweep. The first dispatch already authored the fragments; the second dispatch's job is the repair plan, not re-authoring.
+- The final return value follows the rule in `## Completion` at the bottom — terse status summary only, no editorial.
+
+These rules are enforced by reading the `out=<n>` figure on `SESSION_STOP` in `.hook-events.log` against the FILE_WRITE / FILE_EDIT count. A high tokens-per-write ratio (>2000 tokens per file delta) is a regression signal.
+
 ## Inputs
 
 The skill passes the same run variables as Stage 1, including:
@@ -56,7 +67,7 @@ The outcome must be visible in `.agent-run.log`, `.appsec-progress.json`, and `.
 
 ## Style Anchor
 
-Before authoring `ms-verdict.json`, `ms-architecture-assessment.json`, `attack-walkthroughs.md`, or enriched security-architecture prose, read:
+Before authoring `ms-verdict.json`, `ms-architecture-assessment.json`, or enriched security-architecture prose, read:
 
 ```text
 $CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md
@@ -78,7 +89,6 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 
 - `.fragments/ms-verdict.json`
 - `.fragments/ms-architecture-assessment.json`
-- `.fragments/attack-walkthroughs.md` unless `SKIP_ATTACK_WALKTHROUGHS=true`
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - `.fragments/architecture-diagrams.md` and `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`
 
@@ -87,7 +97,57 @@ Do not overwrite deterministic fragments unless enrichment is explicitly enabled
 - `system-overview.md`
 - `assets.md`
 - `attack-surface.md`
+- `attack-walkthroughs.md` (deterministic from `walkthrough_renderer.py` — see "§3 Attack Walkthroughs — out of your scope" below)
 - `out-of-scope.md`
+
+### `ms-architecture-assessment.json` authoring contract
+
+The Architecture Assessment renders as a 4-column table in §1: `Weakness category | Affected component(s) | Description | Key findings`. The fragment schema is:
+
+```json
+{
+  "verdict_severity": "red | amber | green",
+  "verdict_prose": "**Verdict — <2-3 sentence posture statement>.**",
+  "framing": "<one-line sentence introducing the table>",
+  "weaknesses": [
+    {
+      "category": "<general security domain, NOT a finding restatement>",
+      "affected_components": ["C-01", "C-02"],
+      "description": "<design-review prose — see authoring rules below>",
+      "findings": [
+        { "ref": "T-001", "label": "<short title>" }
+      ]
+    }
+  ]
+}
+```
+
+**Mandatory authoring rules.** These are enforced through reviewer expectations and the section MUST be authored to satisfy all of them:
+
+1. **`category` is a general security domain.** The category is a top-level security architecture concept — not a code-fragment summary, not a finding restatement. Use the same vocabulary as the §7 sub-section titles where appropriate. Reference categories:
+   - `Identity and Authentication` · `Session and Token Lifecycle` · `Authorization and Access Control`
+   - `Query Construction and Data Access` · `Input Validation and Untrusted Input Handling`
+   - `Output Encoding and Rendering` · `Browser and Cross-Origin Controls`
+   - `Cryptography and Secret Management` · `File Parser and Outbound Request Controls`
+   - `Operations, Runtime and Supply Chain` · `Logging, Monitoring and Audit`
+
+   ❌ Bad: `Hardcoded credentials in source` · `bypassSecurityTrustHtml in six components` · `SQL string interpolation in routes/login.ts`
+   ✅ Good: `Cryptography and Secret Management` · `Output Encoding and Rendering` · `Query Construction and Data Access`
+
+2. **`description` is design-review prose, NOT SAST line-listing.** The description explains the *structural* problem — what security boundary is failing, why it spans multiple call-sites, why it cannot be patched at a single line. Reference affected files or component groups *generically*; never enumerate `routes/login.ts:34, routes/search.ts:12` line-by-line — the reader can pull that from the linked findings. Target 2-4 sentences. The reader should be able to understand the architectural shape of the weakness without clicking through to a finding.
+
+   ❌ Bad: `routes/login.ts:34 calls models.sequelize.query() with template literals. routes/search.ts:23 does the same. routes/admin.ts:67 also uses raw SQL.`
+   ✅ Good: `The authentication and catalog-search flows both assemble SQL by string-concatenating untrusted request fields. There is no ORM-mediated parameter binding on these paths, so the same template-literal pattern that exfiltrates the password column also bypasses the credential check — this is the same anti-pattern repeated across multiple routes, not an isolated regression.`
+
+3. **`affected_components[]` MUST contain at least one component-id.** Use the canonical `C-NN` identifiers from `threat-model.yaml` `components[]`. The renderer auto-enriches bare ids to `[C-NN](#c-nn) — Component Name` in the rendered column. Cross-cutting weaknesses spanning multiple components list all relevant ids.
+
+4. **Forbidden words.** Do NOT use `defect`, `defects`, or `vulnerability` in `category` or `description` strings. Use `weakness` only as a noun (`this weakness spans …`) — never as a content-free hedge (`the weakness lies in …` is already banned in `prose-style.md` and applies here verbatim).
+
+5. **Findings list is curation, not exhaustion.** `findings[]` carries the 1-4 most representative findings per weakness (Critical/High preferred). It is NOT every finding routed to that category — those live in §8 Threat Register and §7 control-block trailers.
+
+Legacy fragments using the `defects[]` shape with `name`/`description`/`findings` (no `category`, no `affected_components`) are accepted as back-compat (composer aliases `name` → `category`) but new authoring MUST use the `weaknesses[]` shape with the four fields above.
+
+### `security-architecture.md` authoring
 
 For `security-architecture.md`, preserve the scaffolded v2 13-section control-category structure. Fill placeholders with evidence-grounded prose. **Use the H4 heading form `#### 7.X.Y <Function in plain language> (<Tech / library / mechanism>)`** — the parenthetical is REQUIRED whenever the function name alone is generic (e.g. `Session Token Signing (JWT Based)`) or the library is operationally relevant (e.g. `XML Parser Hardening (libxmljs2)`), and OMITTED only when the function name is already self-locating (e.g. `Password Reset`, `CORS Policy`, `User Registration`). The legacy "`#### 7.3.N <name> Flow`" shape (with the trailing `Flow` literal and a `**Findings in this flow:**` trailer) remains retired — the new numbered form does NOT carry the `Flow` suffix and uses `**Relevant findings**` as the trailer.
 
@@ -95,14 +155,14 @@ For `security-architecture.md`, preserve the scaffolded v2 13-section control-ca
 
 The v1 schema is legacy-only. Do not use v1 headings or the retired 21-section intermediate layout when `.skill-config.json` resolves to v2.
 
-**§7 finding-categorisation discipline (arch3.md §4).** Each finding has exactly ONE primary §7 sub-section. Cross-references between sub-sections are allowed, but the primary listing must reflect the *defect category*, not the surface affected. The mapping below resolves the most common LLM mis-categorisations observed on the 2026-05 juice-shop run:
+**§7 finding-categorisation discipline (arch3.md §4).** Each finding has exactly ONE primary §7 sub-section. Cross-references between sub-sections are allowed, but the primary listing must reflect the *weakness category*, not the surface affected. The mapping below resolves the most common LLM mis-categorisations observed on the 2026-05 juice-shop run:
 
 | Finding type / cue | Primary v2 §7 sub-section | Pitfall to avoid |
 |---|---|---|
 | Password login bypass, missing rate limit, weak password hashing, password reset/change weakness, OAuth/OIDC adapter, TOTP enrollment/verification | §7.2 Identity and Authentication Controls | §7.2 covers **authentication FLOWS** — the paths by which a principal proves identity. Do NOT route token-signing/verification primitives here; those belong in §7.3. Do not route CWE-620/640/916 to input validation or crypto only. |
 | Session-token signing, session-token validation middleware, token storage (browser/cookie), token lifetime/revocation/expiry | §7.3 Session and Token Controls | §7.3 covers the **session-token LIFECYCLE** — Sign → Validate → Store → Revoke → Expire — for the locally-signed session token (commonly called JWT in this codebase) regardless of which §7.2 flow established it. Token storage is session architecture, not XSS root cause. |
 | Missing route middleware, role/object authorization, client-side-only guards, CSRF as action authorization | §7.4 Authorization Controls | Do not hide object authorization gaps under frontend or routing prose. |
-| SQL/NoSQL construction defects | §7.5 Query Construction and Data Access Controls | Injection findings belong with query construction, not generic input validation. |
+| SQL/NoSQL construction weaknesses | §7.5 Query Construction and Data Access Controls | Injection findings belong with query construction, not generic input validation. |
 | Parser limits, upload constraints, URL/path validation, business-rule limits | §7.6 Input Boundary Validation Controls | Keep boundary validation separate from query construction and output encoding. |
 | XSS, sanitizer bypass, unsafe HTML rendering | §7.7 Output Encoding and Rendering Controls | Missing CSP is cross-origin/browser hardening; raw rendering is output encoding. |
 | Wildcard CORS, missing CSP, X-Frame-Options, Helmet/header gaps | §7.8 Browser and Cross-Origin Controls | Browser policy findings are not primary XSS findings. |
@@ -186,7 +246,7 @@ Every H4 subcontrol MUST contain these elements, in this order:
 
 3. `**Security assessment**` — multi-sentence narrative covering what the mechanism does well in this app AND what is broken, with file:line + CWE-grounded evidence. NOT a single-sentence inline tag (the form `**Security assessment:** ❌ Missing - <one sentence>` is a contract violation).
 
-4. **Optional code excerpt — clarity aid, not a mandate.** Include a fenced `ts`/`js`/`py`/`yaml`/`dockerfile`/`ini` block (≤ 6 lines) when the defect concentrates at one short location and the snippet makes the assessment concrete (typical: raw SQL interpolation, `bypassSecurityTrustHtml`, `fetch(user_input)`, hardcoded secrets, permissive `app.use(cors())`, a single insecure config line). Skip the snippet when the defect is structural and a single excerpt would mislead. **When you include a snippet, you MUST introduce it with exactly one sentence that ends in `:`** (reference forms: `The vulnerable login lookup is built as a raw SQL string:`, `This trusted-HTML call demonstrates where Angular's default escaping is bypassed:`, `The archive extraction logic shows the weak path containment check:`). A code fence with no introducing sentence is a contract violation.
+4. **Optional code excerpt — clarity aid, not a mandate.** Include a fenced `ts`/`js`/`py`/`yaml`/`dockerfile`/`ini` block (≤ 6 lines) when the weakness concentrates at one short location and the snippet makes the assessment concrete (typical: raw SQL interpolation, `bypassSecurityTrustHtml`, `fetch(user_input)`, hardcoded secrets, permissive `app.use(cors())`, a single insecure config line). Skip the snippet when the weakness is structural and a single excerpt would mislead. **When you include a snippet, you MUST introduce it with exactly one sentence that ends in `:`** (reference forms: `The vulnerable login lookup is built as a raw SQL string:`, `This trusted-HTML call demonstrates where Angular's default escaping is bypassed:`, `The archive extraction logic shows the weak path containment check:`). A code fence with no introducing sentence is a contract violation.
 
 5. `**Relevant findings**` — BULLET LIST, one `[F-NNN](#f-nnn)` per bullet WITH a per-finding rationale sentence. The inline single-line form `**Relevant findings:** [F-001](#f-001), [F-002](#f-002)` is a contract violation. **Never repeat the finding title in the bullet** — the pregenerator emits bare `[F-NNN](#f-nnn)` links so that adding `— TITLE` here would not result in `[F-001](#f-001) — TITLE — TITLE`. The bullet's trailing text MUST be a one-sentence rationale describing what this finding proves about the control, NOT the finding's title:
 
@@ -362,11 +422,19 @@ sequenceDiagram
 
 Every T-NNN reference embedded in a Mermaid chain node label MUST share at least one content-keyword with that threat's `title` in `threat-model.yaml`. The `qa_checks.py → chain_tid_consistency` checker tokenises both the label and the title (lowercase alphanumeric, stopwords stripped) and refuses to ship when the intersection is empty.
 
-Workflow before authoring `attack-walkthroughs.md`:
+### §3 Attack Walkthroughs — out of your scope
 
-1. **Read the deterministic chain skeleton first.** When `$OUTPUT_DIR/.fragments/_chain-skeleton.md` exists (emitted by `scripts/pregenerate_fragments.py`), it carries a fully-formed §3.1 Attack Chain Overview with classDefs and title-derived T-NNN labels already verified against `chain_tid_consistency`. Copy §3.1 verbatim into `attack-walkthroughs.md`; do not modify the node labels or classDef blocks.
-2. **Author only §3.2+ from scratch.** For each T-NNN referenced in §3.1, write one `### 3.N <T-id> — <short title>` block followed by a `sequenceDiagram` (using the canonical template above with `alt Current state` / `else After mitigation`).
-3. If `_chain-skeleton.md` is absent (legacy run), fall back to manual authoring: read `threat-model.yaml` for the chain's intended T-NNNs, then copy a short noun phrase from each `title` field into the node label (e.g. `T-003: SQL injection on login email` when title is "SQL injection — routes/login.ts"). Never paraphrase the underlying finding; if the title says "Password hashing with MD5", the label must contain "password" or "hashing" or "MD5" — not "credential dump" or "hashes exfiltrated".
+`attack-walkthroughs.md` is written **deterministically** by `scripts/pregenerate_fragments.py` (via `scripts/walkthrough_renderer.py`). The file is already present in `.fragments/` when your session starts and the contract checks (`walkthrough_depth`, `walkthrough_coverage`, `chain_compactness`) pass by construction.
+
+**Do NOT edit `.fragments/attack-walkthroughs.md`.** It is regenerated from `threat-model.yaml` plus the per-CWE templates under `data/walkthrough-templates/`. Any local edit you make is discarded the next time pre-generate runs.
+
+If a §3 walkthrough is wrong, the fix is in one of three places:
+
+- `threat-model.yaml` — the `scenario`, `evidence[]`, `vektor`, and `mitigations[].threat_ids` fields drive the renderer
+- `data/walkthrough-templates/cwe-<NNN>.yaml` — the per-CWE sequence-diagram + detection-signals template
+- `scripts/walkthrough_renderer.py` — the Python renderer itself (pad sizes, slot helpers)
+
+Surface drift through the standard QA repair plan; the **next** pre-generate pass at the top of Stage 2 re-derives §3 from the corrected source — no LLM-authored repair loop runs for §3 any more.
 
 End enriched fragments with:
 

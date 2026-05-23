@@ -84,51 +84,235 @@ _EXTENSIONS = (
     "c", "h", "cpp", "hpp", "swift", "scala",
     "md", "html", "css", "scss", "sql",
     "sh", "bash", "ps1", "toml", "lock", "env",
+    # Common backup / build artefacts (2026-05): the LLM-authored prose
+    # frequently mentions `package.json.bak`, `acquisitions.md`,
+    # `incident-support.kdbx` etc. as bare tokens — wrap them too.
+    "bak", "kdbx", "pem", "crt", "p12", "key", "pub",
 )
 _PATH_RE = re.compile(
     r"(?P<path>[A-Za-z][\w.-]*/[\w./-]+\.(?:"
     + "|".join(_EXTENSIONS)
     + r")(?::\d+)?)"
 )
+# 2026-05 R-7 — additional code-token classes the LLM frequently leaves
+# bare in prose. Each pattern fires INDEPENDENTLY of `_PATH_RE`; all
+# share the same forbidden-zone mask (existing backticks, link URLs,
+# HTML attrs).
+#   - URL paths starting with `/`: `/rest/user/login`, `/etc/passwd`.
+#     Conservative: requires ≥ 2 path segments AND the first segment must
+#     start with a letter so accidental matches like " /etc."  or " /."
+#     are excluded.  Trailing punctuation (`.`, `,`, `;`, `)`, `?`) is left
+#     OUTSIDE the backticked span via a negative-character-class boundary.
+_URL_PATH_RE = re.compile(
+    r"(?<![\w`/])"
+    # First segment requires ≥ 3 chars after `/` so accidental tokens like
+    # `and/or` (`/or` would be only 2 chars) are rejected. Additional
+    # segments are optional so `/ftp` and `/etc/passwd` both match.
+    r"(?P<urlpath>/[A-Za-z][\w-]{2,}(?:/[\w%:&=.-]+)*)"
+    # Allow `.`, `,`, `;`, `)`, `?`, `!` as next character — those are
+    # sentence punctuation that the trailing-punct stripper takes care of.
+    r"(?![\w/`])"
+)
+#   - Bare standalone source-filename tokens (no preceding path):
+#     `login.ts`, `search.ts:23`, `package.json.bak`, `app.guard.ts:54`.
+#     Excludes tokens that already contain a slash (handled by `_PATH_RE`)
+#     and excludes domain-like tokens (`owasp.org`, `juice.shop`, `Node.js`)
+#     by requiring the extension to be one of our recognised source
+#     extensions (a TLD allowlist would be brittle — the extension list IS
+#     the allowlist).
+_BARE_FILENAME_RE = re.compile(
+    r"(?<![\w./`])"
+    # Allow multi-dot filenames like `package.json.bak`. The
+    # ``(?:\.[A-Za-z0-9-]+)*`` allows zero or more middle dot-segments
+    # before the final recognised extension (was ``?`` which capped at
+    # one middle segment).
+    r"(?P<file>[A-Za-z][\w-]+(?:\.[A-Za-z0-9-]+)*\.(?:"
+    + "|".join(_EXTENSIONS)
+    + r")(?::\d+)?)"
+    # Trailing punctuation (period, comma, semicolon, `)`) is allowed —
+    # the trailing-punct stripper handles them.
+    r"(?![\w/`])"
+)
+# 2026-05 — well-known product names that match _BARE_FILENAME_RE but are
+# NOT files. Excluded from wrapping so `Node.js` reads as a product name
+# in prose ("crashes the Node.js process") instead of as a file token.
+# Keep this list narrow — adding a name suppresses wrapping for every
+# context, including legitimate file references.
+_BARE_FILENAME_ALLOWLIST: frozenset[str] = frozenset({
+    "Node.js", "node.js",
+    "Vue.js", "vue.js",
+    "Next.js", "next.js",
+    "Nuxt.js", "nuxt.js",
+    "Express.js", "express.js",
+    "Backbone.js", "backbone.js",
+    "Ember.js", "ember.js",
+    "Three.js", "three.js",
+})
+#   - Function-call tokens: `eval()`, `bypassSecurityTrustHtml()`,
+#     `helmet.noSniff()`, `models.sequelize.query()`. Conservative:
+#     requires the parens AND a leading letter so generic prose ("the
+#     resulting (broken) check") doesn't false-positive.
+_FUNCTION_CALL_RE = re.compile(
+    r"(?<![\w`])"
+    r"(?P<fn>[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\(\s*\))"
+    r"(?![\w`])"
+)
+#   - JWT / HTTP literal allowlist: `alg:none`, `alg:HS256`, `alg:RS256`,
+#     `role:admin`, `role:user`, `role:guest`. Narrow allowlist to avoid
+#     accidentally matching generic prose like "the time is now:".
+_LITERAL_TOKEN_RE = re.compile(
+    r"(?<![\w`])"
+    r"(?P<lit>(?:alg:(?:none|HS256|HS384|HS512|RS256|RS384|RS512|ES256|ES384|ES512|PS256|none)"
+    r"|role:(?:admin|user|guest|root|anonymous|deluxe)"
+    r"|noent:(?:true|false)"
+    r"|method:(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)))"
+    r"(?![\w`])"
+)
+#   - HTTP method + URL path pairs: backtick the path portion of
+#     `GET /support/logs` → `GET \`/support/logs\``.  The method stays
+#     bare so the sentence reads naturally; only the route gets the code
+#     span.
+_HTTP_METHOD_PATH_RE = re.compile(
+    r"\b(?P<method>GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+"
+    r"(?P<route>/[A-Za-z][\w/.:%-]+)"
+    r"(?![\w/`])"
+)
 _BACKTICK_SPAN_RE = re.compile(r"`[^`\n]+`")
 _MD_LINK_URL_RE = re.compile(r"\]\(([^)]+)\)")
 _HTML_ATTR_RE = re.compile(r'(?:href|src|action|formaction)="[^"]+"')
+# 2026-05 — additional forbidden zones for the §8 Threat Register cells.
+# `<details>...</details>` blocks contain a `<pre><code>` snippet that
+# must NEVER be rewritten; `<pre>...</pre>` and `<code>...</code>`
+# (without surrounding details) likewise hold raw source code. We skip the
+# entire span so the inner regex engines never see the embedded tokens.
+_HTML_DETAILS_RE = re.compile(r"<details\b.*?</details>", re.DOTALL)
+_HTML_PRE_RE = re.compile(r"<pre\b.*?</pre>", re.DOTALL)
+_HTML_CODE_INLINE_RE = re.compile(r"<code\b.*?</code>", re.DOTALL)
+# Markdown link LABEL — `[label](url)` — keep the bracketed text raw so
+# multi-word link labels like `[CWE-321](https://…)` aren't broken by
+# accidental backtick injection inside the label.
+_MD_LINK_LABEL_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
 
 
 def _wrap_line(line: str) -> tuple[str, int]:
-    """Return (rewritten_line, n_changes)."""
-    # Build a mask of byte ranges that must NOT be rewritten.
-    forbidden: list[tuple[int, int]] = []
-    for span_re in (_BACKTICK_SPAN_RE, _MD_LINK_URL_RE, _HTML_ATTR_RE):
-        for m in span_re.finditer(line):
-            forbidden.append((m.start(), m.end()))
-    forbidden.sort()
+    """Return (rewritten_line, n_changes).
 
-    def overlaps_forbidden(s: int, e: int) -> bool:
-        for fs, fe in forbidden:
-            if s < fe and e > fs:
-                return True
-        return False
+    Multi-pass wrapper — applies each of the registered code-token regexes
+    in order, refreshing the ``forbidden`` mask after every pass so a token
+    backticked in pass N is treated as forbidden by pass N+1 (prevents
+    nested-backtick artifacts like `` ``login.ts`` ``).
+    """
+    n_total = 0
 
-    matches = list(_PATH_RE.finditer(line))
-    if not matches:
-        return line, 0
-    out: list[str] = []
-    last = 0
-    n_changes = 0
-    for m in matches:
-        s, e = m.start(), m.end()
-        tok = m.group("path")
-        if "*" in tok:
+    # Order matters: HTTP-method-path runs FIRST because its match consumes
+    # both the method and the path; otherwise `_URL_PATH_RE` would
+    # backtick the path while leaving the method bare on the outside.
+    # Then path tokens, then bare filenames, then function calls, then
+    # literal allowlist. _PATH_RE last so it doesn't shadow more-specific
+    # patterns (it only matches `<word>/<file>.<ext>` shapes anyway).
+    pass_order: list[tuple[re.Pattern[str], str]] = [
+        (_HTTP_METHOD_PATH_RE, "_http_method_path"),
+        (_URL_PATH_RE, "urlpath"),
+        (_BARE_FILENAME_RE, "file"),
+        (_FUNCTION_CALL_RE, "fn"),
+        (_LITERAL_TOKEN_RE, "lit"),
+        (_PATH_RE, "path"),
+    ]
+
+    for pat, group_or_special in pass_order:
+        forbidden: list[tuple[int, int]] = []
+        for span_re in (
+            _BACKTICK_SPAN_RE,
+            _MD_LINK_URL_RE,
+            _MD_LINK_LABEL_RE,
+            _HTML_ATTR_RE,
+            _HTML_DETAILS_RE,
+            _HTML_PRE_RE,
+            _HTML_CODE_INLINE_RE,
+        ):
+            for m in span_re.finditer(line):
+                forbidden.append((m.start(), m.end()))
+        forbidden.sort()
+
+        def overlaps_forbidden(s: int, e: int) -> bool:
+            for fs, fe in forbidden:
+                if s < fe and e > fs:
+                    return True
+            return False
+
+        matches = list(pat.finditer(line))
+        if not matches:
             continue
-        if overlaps_forbidden(s, e):
+
+        # Special case: HTTP method + path — backtick only the path
+        # portion, leave the method as bare uppercase text.
+        if group_or_special == "_http_method_path":
+            out: list[str] = []
+            last = 0
+            n_changes = 0
+            for m in matches:
+                # Span of the ROUTE (not the whole match).
+                rs, re_ = m.start("route"), m.end("route")
+                tok = m.group("route")
+                if "*" in tok:
+                    continue
+                if overlaps_forbidden(rs, re_):
+                    continue
+                # Strip trailing punctuation that should sit OUTSIDE the
+                # backtick span (`.`, `,`, `;`, `)`, `?`).
+                trailing = ""
+                while tok.endswith((".", ",", ";", ")", "?", "!")):
+                    trailing = tok[-1] + trailing
+                    tok = tok[:-1]
+                    re_ -= 1
+                if not tok:
+                    continue
+                out.append(line[last:rs])
+                out.append(f"`{tok}`" + trailing)
+                last = re_ + len(trailing)
+                n_changes += 1
+            out.append(line[last:])
+            line = "".join(out)
+            n_total += n_changes
             continue
-        out.append(line[last:s])
-        out.append(f"`{tok}`")
-        last = e
-        n_changes += 1
-    out.append(line[last:])
-    return "".join(out), n_changes
+
+        out2: list[str] = []
+        last = 0
+        n_changes = 0
+        for m in matches:
+            s, e = m.start(), m.end()
+            tok = m.group(group_or_special)
+            # Globs and wildcards never get backticked — they may be
+            # YAML-derived prose like `routes/**`.
+            if "*" in tok:
+                continue
+            # Well-known product names (Node.js, Vue.js, …) match the
+            # bare-filename regex but are NOT files. Skip them so they
+            # read as product names in prose.
+            if group_or_special == "file" and tok in _BARE_FILENAME_ALLOWLIST:
+                continue
+            if overlaps_forbidden(s, e):
+                continue
+            # Strip trailing punctuation (`.`, `,`, `;`, `)`, `?`, `!`).
+            trailing = ""
+            while tok.endswith((".", ",", ";", ")", "?", "!")) and not tok.endswith("()"):
+                # Preserve trailing `()` on function-calls; everything else
+                # (period, comma, semicolon, closing paren in prose) goes
+                # OUTSIDE the backtick span.
+                trailing = tok[-1] + trailing
+                tok = tok[:-1]
+                e -= 1
+            if not tok:
+                continue
+            out2.append(line[last:s])
+            out2.append(f"`{tok}`" + trailing)
+            last = e + len(trailing)
+            n_changes += 1
+        out2.append(line[last:])
+        line = "".join(out2)
+        n_total += n_changes
+
+    return line, n_total
 
 
 _AI_PADDING_SENTENCE_RE = re.compile(
@@ -144,6 +328,40 @@ _RHETORICAL_SEVERITY_RE = re.compile(
     r"\btrivially\s+crackable\b",
     re.IGNORECASE,
 )
+
+# 2026-05 R-7 — Inverse to path-wrapping: strip backticks from tokens that
+# are LABELS / FIELD NAMES / bare HTTP-method nouns, not code fragments.
+# Mirrors ``qa_checks.check_label_as_code`` — same curated allowlist.
+_LABEL_TOKENS_TO_UNWRAP: frozenset[str] = frozenset({
+    # MS / threat-register / mitigation-register field labels
+    "Why", "How", "Effort", "Priority", "Severity",
+    "Addresses", "Component", "Components", "Mitigation", "Mitigations",
+    "Notes", "Vektor", "Classification", "Issue", "Impact", "Fix",
+    "Location", "Evidence",
+    "Verification", "Steps",
+    # Schema column / field names in lower case
+    "notes", "addresses", "priority", "effort", "severity",
+    "verify",
+    # HTTP methods written as bare nouns
+    "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
+})
+_LABEL_AS_CODE_RE = re.compile(r"`(?P<token>[A-Za-z]{3,15})`")
+
+
+def _apply_label_as_code_unwrap(line: str) -> tuple[str, int]:
+    """Strip backticks from single-word tokens that match the label
+    allowlist. Anything outside the allowlist stays backticked (it is
+    likely a legitimate code reference such as ``eval`` or ``null``)."""
+    n = 0
+    def _sub(m: re.Match[str]) -> str:
+        nonlocal n
+        tok = m.group("token")
+        if tok in _LABEL_TOKENS_TO_UNWRAP:
+            n += 1
+            return tok
+        return m.group(0)
+    new_line = _LABEL_AS_CODE_RE.sub(_sub, line)
+    return new_line, n
 
 
 def _apply_ai_padding_fixes(line: str) -> tuple[str, int]:
@@ -348,10 +566,16 @@ def apply_fixes(text: str) -> tuple[str, int]:
         if in_fence:
             out.append(raw)
             continue
-        # Skip headings + table rows for prose-only fix classes;
-        # path-wrapping still runs everywhere except code / blockquote.
-        is_heading_or_table = stripped.startswith("#") or stripped.startswith("|")
-        # Track HTML blockquote blocks (best-effort).
+        # Skip headings; track HTML-blockquote blocks. Table rows used to
+        # be skipped entirely; 2026-05 R-7 fix changes that — the §8
+        # Threat Register cells embed prose ("Issue", "Impact",
+        # "Classification" labelled fields) that benefit from code-token
+        # wrapping just like normal prose. The expanded forbidden-zone
+        # mask in ``_wrap_line`` (now includes <details>, <pre>, <code>
+        # blocks and Markdown link labels) protects the embedded source
+        # snippets from accidental rewriting.
+        is_heading = stripped.startswith("#")
+        is_table_row = stripped.startswith("|")
         if "<blockquote" in stripped:
             in_html_block = True
         if in_html_block:
@@ -359,17 +583,28 @@ def apply_fixes(text: str) -> tuple[str, int]:
                 in_html_block = False
             out.append(raw)
             continue
-        if is_heading_or_table:
+        if is_heading:
             out.append(raw)
             continue
+        # Path-wrapping runs on prose AND table rows. AI-padding /
+        # rhetorical / perimeter passes stay prose-only — they would
+        # change the visible cell content in ways that the table reader
+        # cannot easily reconcile against the YAML source.
         new_line, n1 = _wrap_line(line)
         inline_fixes += n1
-        new_line, n2 = _apply_ai_padding_fixes(new_line)
-        padding_fixes += n2
-        new_line, n3 = _apply_rhetorical_severity(new_line)
-        rhetorical_fixes += n3
-        new_line, n4 = _apply_perimeter_claim_strip(new_line)
-        perimeter_fixes += n4
+        # R-7 (2026-05): unwrap labels / field names / bare HTTP methods
+        # that got incorrectly backticked. Runs on prose AND table rows
+        # so a `**Notes**` column reference (legitimately a label) in §5
+        # Attack Surface or §8 Threat Register doesn't read as code.
+        new_line, n5 = _apply_label_as_code_unwrap(new_line)
+        inline_fixes += n5
+        if not is_table_row:
+            new_line, n2 = _apply_ai_padding_fixes(new_line)
+            padding_fixes += n2
+            new_line, n3 = _apply_rhetorical_severity(new_line)
+            rhetorical_fixes += n3
+            new_line, n4 = _apply_perimeter_claim_strip(new_line)
+            perimeter_fixes += n4
         out.append(new_line + nl)
     body = "".join(out)
     # Whole-document post-processors (need cross-line context).

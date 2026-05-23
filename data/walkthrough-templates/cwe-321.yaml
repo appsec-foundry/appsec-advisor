@@ -1,0 +1,42 @@
+cwe: CWE-321
+category: hardcoded_key
+human_label: "Hardcoded cryptographic key in source"
+
+attacker_profile_overrides:
+  repo-read: |
+    An attacker with read access to the public source repository (clone, blob view, or git history) extracts the cryptographic key from version control. No application-level access is required for the extraction step. The extracted key is then used to forge signatures or decrypt traffic against the live application.
+
+sequence_diagram: |
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      actor Attacker
+      participant Repo as "Public repository"
+      participant Forge as "Local forgery tool"
+      participant App as "{component} ({file}:{line})"
+
+      alt Current state
+          Attacker->>Repo: Clone / browse — read key material from `{file}:{line}`
+          Repo-->>Attacker: Private key returned in source / git history
+          Attacker->>Forge: Sign an arbitrary payload with the extracted key
+          Forge-->>Attacker: Forged token / signature ready
+          Attacker->>App: Submit forged artefact in normal authentication flow
+          App-->>Attacker: Request accepted as authentic — signature validates
+      else After {mitigation_primary}
+          Attacker->>Repo: Clone / browse `{file}`
+          Repo-->>Attacker: Source contains an env-var reference and no key material
+          Attacker->>App: Forgery attempt using guessed key
+          App-->>Attacker: 401 Unauthorized — signature does not validate
+      end
+  ```
+
+detection_signals:
+  - "Pre-commit secret scanner (gitleaks, trufflehog) flagging key material near `{file}`"
+  - "GitHub Secret Scanning push-protection alert on the affected file path"
+  - "Repository search results for `BEGIN.*PRIVATE KEY`, `PRIVATE_KEY_BASE64`, or known key prefixes"
+  - "Audit log entries showing tokens / signatures generated outside the trusted issuer for `{component}`"
+
+attack_steps_template:
+  - "Clone the public repository and locate the cryptographic key at `{file}:{line}`"
+  - "Extract the key material directly from source (no application-level access needed)"
+  - "Use the extracted key to forge a token / signature / encrypted blob accepted by `{component}`"

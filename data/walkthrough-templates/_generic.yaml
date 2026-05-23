@@ -1,0 +1,38 @@
+cwe: GENERIC
+category: generic
+human_label: "Generic weakness — fallback template"
+
+# Generic fallback used when no CWE-specific template exists. Renders a
+# structurally-valid sequence diagram + three SIEM-style detection bullets so
+# the contract checks pass even for unmapped CWE classes. Quality is bounded
+# (intentionally generic) — add a CWE-specific template when a new class
+# starts showing up on real runs.
+
+sequence_diagram: |
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      actor Attacker
+      participant App as "{component} ({file}:{line})"
+      participant Logic as "Vulnerable code path"
+      participant Target as "Asset / Control"
+
+      alt Current state
+          Attacker->>App: Crafted request exercising the weakness at `{file}:{line}`
+          App->>Logic: Dispatch to the unprotected branch
+          Logic->>Target: Operation executes without the missing control
+          Target-->>Logic: Side effect lands despite invalid pre-conditions
+          Logic-->>App: Result propagated back to the caller
+          App-->>Attacker: Response confirms the weakness ({cwe})
+      else After {mitigation_primary}
+          Attacker->>App: Same crafted request
+          App->>Logic: Missing control now enforced before the vulnerable branch
+          Logic-->>App: Operation refused at the pre-condition check
+          App-->>Attacker: Request rejected / safe default returned
+      end
+  ```
+
+detection_signals:
+  - "Static-analysis rule for {cwe} flagging `{file}` in CI pre-merge"
+  - "Application logs at `{component}` showing the input pattern associated with the weakness"
+  - "Anomalous response code or payload-size distribution on the affected endpoint"

@@ -15,7 +15,7 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 >
 > In particular, do **not** create separate `TaskCreate` entries for any of:
 >   - `Resolve config` / `emit .skill-config.json` (preamble Bash)
->   - `Render Pre-flight box` (preamble LLM render)
+>   - `Render Pre-flight summary` (preamble LLM render)
 >   - `Pre-generate structural fragments` (intra-Stage-1 since M2.12;
 >     `pregenerate_fragments.py` runs inside Stage 1 Phase 11 Substeps 1–3
 >     and again inside Stage 2 recovery — never as a user-visible stage)
@@ -846,10 +846,10 @@ The same pre-check is performed by ``scripts/run-headless.sh`` at shell
 level, so CI runners can fast-abort *before* even spawning Claude Code. The
 in-skill version is a safety net for interactive invocations.
 
-### Pre-flight box — render in your response (LLM-side, no extra Bash)
+### Pre-flight summary — render in your response (LLM-side, no extra Bash)
 
 **Render trigger — mandatory in every mode.** The LLM emits the consolidated
-``Threat Model — Pre-flight`` box **directly as response text** as soon as
+``Threat Model — Pre-flight`` summary **directly as response text** as soon as
 `RESOLVED_JSON` is set AND the analysis-version compat gate has set
 `COMPAT_LABEL` (see the next section). This is the user's only "what is
 about to happen" surface before Stage 1 dispatch — never skip it.
@@ -864,13 +864,13 @@ to skip the render.
 
 | Mode at this point | PRE_CHECK_DECISION | DIRTY_SET_DECISION | Action |
 |---|---|---|---|
-| `incremental` | set (noop / noise / changes / plugin-drift / skip) | set when `changes` | render box using verdict-mapping table |
-| `full` / `rebuild` / first run | (empty) | (empty) | render box using the "RUN — full assessment" row |
+| `incremental` | set (noop / noise / changes / plugin-drift / skip) | set when `changes` | render summary using verdict-mapping table |
+| `full` / `rebuild` / first run | (empty) | (empty) | render summary using the "RUN — full assessment" row |
 
-**Why no separate Bash call to render the box:** every Bash tool result
+**Why no separate Bash call to render the summary:** every Bash tool result
 gets folded by the Claude Code UI into a `+N lines (ctrl+o to expand)`
-widget. If the box is computed by Bash, the user sees the box twice
-(once folded, once visible in the response). Computing the box on the
+widget. If the summary is computed by Bash, the user sees it twice
+(once folded, once visible in the response). Computing the summary on the
 LLM side from the JSONs the LLM already has — `FAST_PATH_OUTPUT`,
 `DIRTY_SET_OUTPUT`, `COMPAT_LABEL` — gives a single visible copy.
 
@@ -897,55 +897,55 @@ For `--full` / `--rebuild` / first-run paths the verdict is `RUN — full
 assessment` and the pipeline is `recon -> architecture -> STRIDE -> triage
 -> render -> QA` (plus QA / architect review when those flags are on).
 
-#### Box template
+#### Summary template
 
 Substitute the bracketed `<...>` fields from `RESOLVED_JSON`,
-`FAST_PATH_OUTPUT`, `DIRTY_SET_OUTPUT`, and the verdict mapping. Box
-width is 88 columns; right-pad the section / kv lines with spaces so
-the right border lines up. Skip a section entirely when its precondition
-is false (per the conditional comments).
+`FAST_PATH_OUTPUT`, `DIRTY_SET_OUTPUT`, and the verdict mapping. Skip a
+section entirely when its precondition is false (per the conditional
+comments). Section headers stand alone; key/value rows are indented with
+two spaces. Section blocks are separated by a single blank line.
 
 ```
-╭─ Threat Model — Pre-flight ──────────────────────────────────────────────────────────╮
-│ Target                                                                               │
-│   Repository: <repo_root>                                                            │
-│   Output    : <output_dir>                                                           │
-│                                                                                      │
-│ Plugin                                                                               │
-│   Version   : appsec-advisor <plugin_version> (analysis v<analysis_version>)         │
-│   <if plugin tier ∈ {minor, major}:>Baseline  : <baseline> (tier=<tier>)  ⚠ DRIFT     │
-│   <if compat ∉ {equal, None}:>Schema    : analysis_version drift: <compat_label>     │
-│   Mode      : <mode_line>                                                            │
-│                                                                                      │
-│ Decision                                                                             │
-│   Verdict   : <verdict>                                                              │
-│   Pipeline  : <pipeline>                                                             │
-│   Reason    : <reason>                                                               │
-│                                                                                      │
-│ <if pre-check has files (sec_count + noise_count + excluded > 0):>                    │
-│ Files                                                                                │
-│   Total seen: <sec + noise + excluded>                                               │
-│   Excluded  : <excluded_pre_filter_count> (plugin output / scan-excludes)            │
-│   Noise     : <noise_count> (docs / format-only / non-security)                      │
-│   Relevant  : <security_relevant_change_count>                                       │
-│   <if dirty_set:>Components: <K> known, <D> dirty (<ids>), <K-D> carried forward    │
-│                                                                                      │
-│ <if security_relevant_changes is non-empty:>                                          │
-│ <if will_run:>Why this run is going to launch                                        │
-│ <else:>Why this run will NOT execute Stage 1+2+3                                     │
-│   • <file>  [<comma-joined first 3 reasons from relevance_reasons[file]>]            │
-│   ... (cap at 6; if more, "  • … and M more")                                        │
-│                                                                                      │
-│ <if will_run:>Configuration                                                          │
-│   Depth     : <depth_summary — see _format_depth_summary>                            │
-│   Reasoning : <reasoning_summary>                                                    │
-│   <active options if any (Outputs / Extras / Skips / Run flags / STRIDE / Limits)>   │
-│                                                                                      │
-│ Notes                                                                                │
-│   • <note 1>                                                                         │
-│   • <note 2>                                                                         │
-│   ...                                                                                │
-╰──────────────────────────────────────────────────────────────────────────────────────╯
+Threat Model — Pre-flight
+
+Target
+  Repository: <repo_root>
+  Output    : <output_dir>
+
+Plugin
+  Version   : appsec-advisor <plugin_version> (analysis v<analysis_version>)
+  <if plugin tier ∈ {minor, major}:>Baseline  : <baseline> (tier=<tier>)  ⚠ DRIFT
+  <if compat ∉ {equal, None}:>Schema    : analysis_version drift: <compat_label>
+  Mode      : <mode_line>
+
+Decision
+  Verdict   : <verdict>
+  Pipeline  : <pipeline>
+  Reason    : <reason>
+
+<if pre-check has files (sec_count + noise_count + excluded > 0):>
+Files
+  Total seen: <sec + noise + excluded>
+  Excluded  : <excluded_pre_filter_count> (plugin output / scan-excludes)
+  Noise     : <noise_count> (docs / format-only / non-security)
+  Relevant  : <security_relevant_change_count>
+  <if dirty_set:>Components: <K> known, <D> dirty (<ids>), <K-D> carried forward
+
+<if security_relevant_changes is non-empty:>
+<if will_run:>Why this run is going to launch
+<else:>Why this run will NOT execute Stage 1+2+3
+  • <file>  [<comma-joined first 3 reasons from relevance_reasons[file]>]
+  ... (cap at 6; if more, "  • … and M more")
+
+<if will_run:>Configuration
+  Depth     : <depth_summary — see _format_depth_summary>
+  Reasoning : <reasoning_summary>
+  <active options if any (Outputs / Extras / Skips / Run flags / STRIDE / Limits)>
+
+Notes
+  • <note 1>
+  • <note 2>
+  ...
 ```
 
 **Notes** content (concatenate, in this order, those whose precondition is true):
@@ -959,10 +959,12 @@ is false (per the conditional comments).
   • `compat=older-compatible` → `"Analysis schema drifted (baseline analysis_version older but compatible) — full rebuild applies new categories to ALL findings."`
   • `cfg.repo_size_capped=True` → `"STRIDE component count capped at <N> (would have been 5) due to large repo (<S> source files)."`
 
-Everything between `╭─` and `╰─` goes verbatim into the response text — no
-``` code fence around it (the box drawing characters are the visible delimiters).
+The rendered summary goes verbatim into the response text — no
+``` code fence around it. Section headers (`Target`, `Plugin`, `Decision`, ...)
+are the visible structure; the leading `Threat Model — Pre-flight` heading
+identifies the block to the user.
 
-#### Per-decision next step after rendering the box
+#### Per-decision next step after rendering the summary
 
 ```bash
 case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
@@ -1120,11 +1122,11 @@ Store `COMPAT_LABEL` for the Configuration Summary. The gate runs **after** Incr
 
 ## Configuration Summary
 
-**Replaced by the Pre-flight box** rendered at the §"Pre-flight box — render in your response (LLM-side, no extra Bash)" section above. The legacy `resolve_config.py --config-summary` Python renderer still exists (covered by `tests/test_resolve_config.py`) and is invoked by the `/appsec-advisor:status` and `/appsec-advisor:threat-model-health` skills — but the create-threat-model skill no longer prints it as a separate box. Showing both would render the same configuration twice (once via `--config-summary`, once via the Pre-flight box that follows a few Bash calls later — the "summary multiple times" complaint that drove the 2026-05-09 consolidation).
+**Replaced by the Pre-flight summary** rendered at the §"Pre-flight summary — render in your response (LLM-side, no extra Bash)" section above. The legacy `resolve_config.py --config-summary` Python renderer still exists (covered by `tests/test_resolve_config.py`) and is invoked by the `/appsec-advisor:status` and `/appsec-advisor:threat-model-health` skills — but the create-threat-model skill no longer prints it. Showing both would render the same configuration twice (once via `--config-summary`, once via the Pre-flight summary that follows a few Bash calls later — the "summary multiple times" complaint that drove the 2026-05-09 consolidation).
 
 The `resolve_config.py --emit-file` call at the Configuration Resolution section above writes `.skill-config.json` silently — it does NOT print a Configuration Summary box (see the explicit comment at that call site: *"We deliberately do NOT call --config-summary here"*).
 
-**Mode upgrade re-render.** If the Full-Scan Recommendation Prompt above mutated `MODE` from incremental → full, the user has already seen the Pre-flight box with the pre-upgrade verdict. The skill MUST re-render the Pre-flight box (NOT a separate Configuration Summary) so the post-upgrade state is visible:
+**Mode upgrade re-render.** If the Full-Scan Recommendation Prompt above mutated `MODE` from incremental → full, the user has already seen the Pre-flight summary with the pre-upgrade verdict. The skill MUST re-render the Pre-flight summary (NOT a separate Configuration Summary) so the post-upgrade state is visible:
 
 ```bash
 if [ "$MODE_UPGRADED_BY_PROMPT" = "true" ]; then
@@ -1134,7 +1136,7 @@ if [ "$MODE_UPGRADED_BY_PROMPT" = "true" ]; then
 fi
 ```
 
-Then re-emit the Pre-flight box per the §"Box template" rules above, prefixed with the line `Pre-flight (post mode-upgrade)`. Do **not** call `--config-summary` here — it would print the legacy box on top of the new Pre-flight box, recreating the exact duplication this consolidation removed.
+Then re-emit the Pre-flight summary per the §"Summary template" rules above, prefixed with the line `Pre-flight (post mode-upgrade)`. Do **not** call `--config-summary` here — it would print the legacy Configuration Summary on top of the new Pre-flight summary, recreating the exact duplication this consolidation removed.
 
 ### need_render intercept (G-1 — before Rebuild Pre-flight Wipe)
 
@@ -1531,7 +1533,7 @@ No other text — no explanatory prose, no duplicated mode description — belon
 
 Right after the handoff banner and **before** dispatching Stage 1, pre-create one `TaskCreate` task per stage. Stage 1 runs in the foreground (see "Dispatch" below), so its internal phases stream directly to the chat as the orchestrator executes tool calls — no per-phase task entries are needed. The stage tasks give the user a single top-level checklist to follow.
 
-**This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight box`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the six spec'd rows below — later `TaskUpdate` calls (Stage 1/2/3/4 lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
+**This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight summary`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the six spec'd rows below — later `TaskUpdate` calls (Stage 1/2/3/4 lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
 
 **Subjects must match verbatim.** The condition table below is the source of truth — do not paraphrase ("Stage 1 — dispatch appsec-threat-analyst" is wrong; the correct subject is "Stage 1 — Threat Analysis and Triage"). The exact strings are referenced by downstream `TaskUpdate` calls.
 
@@ -1647,7 +1649,9 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
 
 5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 — Threat Analysis and Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
-6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table:
+6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table.
+
+   **`STAGE1_START_ISO` capture (multi-dispatch wall-time, 2026-05-23 juice-shop forensics).** Before dispatching the Stage 1 agent above, capture the dispatch-start timestamp into `STAGE1_START_ISO` (`STAGE1_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` immediately before the Agent tool call). This is the lower bound the recorder uses to derive `dispatch_count` + `wall_secs_observed` from `.hook-events.log` — without it the recorder cannot tell apart this stage's `AGENT_SPAWN` events from earlier-run residue in incremental mode. The variable is plumbed through to the recorder via `--since-iso` below. When `STAGE1_START_ISO` is empty (e.g. the capture line was skipped), pass nothing and the recorder degrades to the legacy single-dispatch field set (back-compat).
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
@@ -1657,10 +1661,11 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
        --model "$STRIDE_MODEL" \
        --duration-ms <duration_ms_from_usage> \
        --tool-uses <tool_uses_from_usage> \
-       --tokens <total_tokens_from_usage>
+       --tokens <total_tokens_from_usage> \
+       ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst --since-iso "$STAGE1_START_ISO"}
    ```
 
-   The helper is idempotent — re-running it for the same `--stage` is a no-op. Failure of this helper must NOT block the run; if extraction fails, skip the call and continue to the precondition gate.
+   The helper is idempotent — re-running it for the same `--stage` is a no-op. Failure of this helper must NOT block the run; if extraction fails, skip the call and continue to the precondition gate. The optional `--subagent-type` / `--since-iso` pair enriches the JSONL record with `dispatch_count` and `wall_secs_observed`; both are derived from `.hook-events.log` and are robust to multi-spawn auto-retry from the Re-Render / inline-shortcut loops below (`SKILL-impl.md` §"Re-Render Loop" + §"Auto-retry"). `duration_ms` continues to reflect only the final successful Agent return (API-billed); the new fields capture the full wall span including aborted spawns.
 
 ### Phase-10b precondition gate (deterministic, skill-level)
 
@@ -1869,7 +1874,7 @@ Both scripts are **idempotent** — they strip prior auto-emitted entries before
 # pre-script YAML rather than aborting the run after 25+ minutes of Stage 1.
 if [ "$DRY_RUN" = "false" ]; then
   {
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + yaml-hygiene + vektors + open-registration"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + yaml-hygiene + vektors + open-registration + asset-links"
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
@@ -1887,6 +1892,12 @@ if [ "$DRY_RUN" = "false" ]; then
     # internet-anon (registration is one POST away, the spectrum is
     # misleading on the at-a-glance view).
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_open_registration.py" "$OUTPUT_DIR" 2>&1 || true
+    # R-3 (2026-05): rebuild assets[].linked_threats from CWE-class affinity +
+    # keyword overlap. Stage 1 Phase 5 is LLM-authored and routinely produces
+    # links that have nothing to do with the asset (e.g. session-tokens linked
+    # to YAML bomb / CORS / mass assignment instead of XSS + JWT storage).
+    # Idempotent. Hand-set entries preserved via assets[].linked_threats_manual.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/enrich_asset_links.py" "$OUTPUT_DIR" 2>&1 || true
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_END"
   } | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
 fi
@@ -1934,9 +1945,13 @@ Before invoking the Stage 2 agent, run the deterministic pre-generator. The
 ```bash
 # Class 1 — force-regenerate the mechanical fragments. The LLM is no
 # longer trusted to author these (yaml is single source of truth).
+#
+# attack-walkthroughs.md is now in this class: §3 is rendered
+# deterministically by scripts/walkthrough_renderer.py from yaml +
+# data/walkthrough-templates/. The renderer agent does NOT touch it.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --force \
-    --only system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md \
+    --only system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md \
     || true
 
 # Class 2 — idempotent scaffold for security-architecture.md. The depth
@@ -1950,21 +1965,14 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
 
 Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stage 2 will catch any genuine fragment shortage regardless of who was supposed to write it.
 
-**Walkthroughs opt-out (`--no-walkthroughs` or quick depth).** When `SKIP_ATTACK_WALKTHROUGHS=true` (resolved in `.skill-config.json` as `skip_attack_walkthroughs`), pre-write a stub `.fragments/attack-walkthroughs.md` with chain-overview-only content. The agent's idempotency rule (never overwrite an existing fragment) then makes Stage 2 skip the LLM authoring entirely, saving ~1-2 min:
+**Walkthroughs opt-out (`--no-walkthroughs` or quick depth).** When `SKIP_ATTACK_WALKTHROUGHS=true` (resolved in `.skill-config.json` as `skip_attack_walkthroughs`), the §3 section is dropped entirely from the rendered document via the conditional `condition: "not skip_attack_walkthroughs"` gate in `data/sections-contract.yaml` (`document.order` and both `document_sets`). The composer also suppresses the related cross-references:
 
-```bash
-SKIP_WALK=$(python3 -c "import json,sys; d=json.load(open('$OUTPUT_DIR/.skill-config.json')); print(str(d.get('skip_attack_walkthroughs', False)).lower())" 2>/dev/null || echo false)
-if [ "$SKIP_WALK" = "true" ] && [ ! -f "$OUTPUT_DIR/.fragments/attack-walkthroughs.md" ]; then
-  mkdir -p "$OUTPUT_DIR/.fragments"
-  cat > "$OUTPUT_DIR/.fragments/attack-walkthroughs.md" <<'WALKEOF'
-## 3. Attack Walkthroughs
+- §3 heading, body, and TOC entry are removed by the contract gate.
+- The quick-mode notice replaces the "No per-finding sequence diagrams in §3" bullet with "No §3 Attack Walkthroughs (entirely skipped at `--quick`)" so the omission is acknowledged but no broken §3 link is left in the callout.
+- The §8 Threat Register intro element list omits the "Attack Walkthrough — back-link into [§3]" bullet entirely (no orphan reference to a missing section).
+- Per-finding Story Cards never render the `**Attack Walkthrough:**` field (gated on `fid_to_walkthrough` being non-empty — and the map is empty because §3 produces no anchors).
 
-> ⓘ **Walkthroughs omitted at `--quick` depth.** Per-finding sequence diagrams and the chain overview are skipped to keep wall-time short. See [§8 Threat Register](#8-threat-register) for the finding catalog and [§9 Mitigation Register](#9-mitigation-register) for per-finding remediation. Re-run with `--standard` or `--thorough` to author the full walkthrough diagrams.
-
-<!-- sequenceDiagram blocks skipped at quick depth -->
-WALKEOF
-fi
-```
+**No stub fragment is written.** Pre-Sprint-N versions of this skill pre-wrote a chain-overview-only stub `.fragments/attack-walkthroughs.md` to defeat the renderer agent's idempotency rule. With the §3 section now conditional, the stub is unnecessary — the composer no-ops on the missing fragment because the section is skipped from the pipeline before fragment loading. Removing the stub also avoids leaving a `.fragments/attack-walkthroughs.md` file on disk that confuses post-mortem inspection.
 
 ### Dispatch
 
@@ -1987,17 +1995,20 @@ fi
 
 5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 — Report Rendering` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
 
-6. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper:
+6. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper.
+
+   **`STAGE2_START_ISO` capture (mandatory for multi-dispatch wall-time).** Capture the dispatch-start timestamp into `STAGE2_START_ISO` (`STAGE2_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` immediately before the Agent tool call in step 3). Stage 2 is the stage most likely to re-dispatch (auto-retry via `check_inline_shortcut.py` → `MAX_INLINE_RETRIES=2`, see §"Auto-retry — inline shortcut" below, and `STAGE11_CUTOFF` recovery dispatch from the §"Handling turn-budget cut-offs" path). Without this capture, the recorder cannot derive `dispatch_count` / `wall_secs_observed` and Stage 2 wall-time silently under-reports by 50% on multi-spawn runs (observed on 2026-05-23 juice-shop: reported 8m06s, actual 15m58s).
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
        --stage 2 \
        --name "Report Rendering" \
-      --agent appsec-advisor:appsec-threat-renderer \
+       --agent appsec-advisor:appsec-threat-renderer \
        --model "$STRIDE_MODEL" \
        --duration-ms <duration_ms_from_usage> \
        --tool-uses <tool_uses_from_usage> \
-       --tokens <total_tokens_from_usage>
+       --tokens <total_tokens_from_usage> \
+       ${STAGE2_START_ISO:+--subagent-type appsec-advisor:appsec-threat-renderer --since-iso "$STAGE2_START_ISO"}
    ```
 
 ### Handoff banner
@@ -2323,19 +2334,31 @@ The first thing the skill does after Stage 1 returns is check whether the orches
 Before running the hard gate, run ``pregenerate_fragments.py`` so the 6 deterministic structural fragments (system-overview, architecture-diagrams, assets, attack-surface, security-architecture, out-of-scope) are present even when the orchestrator skipped them. **Mechanical fragments are force-regenerated (P2 — A4)** so any LLM drift from Phase 11 substep 4 is overwritten with the yaml-aligned canonical version. **`security-architecture.md` is regenerated idempotently** because its scaffold contains `<!-- NARRATIVE_PLACEHOLDER -->` comments that the Stage 2 LLM legitimately fills in.
 
 ```bash
-# Generate the 6 structural fragments deterministically from threat-model.yaml.
+# Generate the 7 structural fragments deterministically from threat-model.yaml.
 # P2 (A4) — mechanical fragments use --force so LLM drift is overwritten;
 # security-architecture.md keeps its scaffold-fill semantics (idempotent).
 # Failure is non-fatal — the hard gate below catches any genuine missing
 # fragment regardless of who was supposed to write it.
+#
+# attack-walkthroughs.md joined the --force set: §3 is now rendered
+# deterministically by scripts/walkthrough_renderer.py from yaml + per-CWE
+# templates under data/walkthrough-templates/. The walkthrough_depth,
+# walkthrough_coverage, and chain_compactness contract checks pass by
+# construction, so no LLM repair loop runs for §3.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --force \
-    --only system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md \
+    --only system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md \
     || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
-    --only security-architecture.md \
+    --only security-architecture.md,_chain-skeleton.md \
     || true
 ```
+
+`_chain-skeleton.md` is kept for one release as a deprecated transitional
+artifact (the legacy renderer fallback path still reads it). It is no
+longer the source of truth for `attack-walkthroughs.md` — `walkthrough_renderer.py`
+is. Idempotent on purpose: when the agent has already filled it in, the
+scaffold is preserved.
 
 **Hard-gate enforcement (M2.10 — promoted from Bash to standalone script).**
 
@@ -2385,10 +2408,10 @@ GATE_EXIT=$?
    # narrative survives the recovery dispatch.
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
        --force \
-       --only system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md \
+       --only system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md \
        || true
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
-       --only security-architecture.md \
+       --only security-architecture.md,_chain-skeleton.md \
        || true
    ```
 2. **Re-dispatch Stage 2** — fresh `appsec-threat-renderer` session with identical prompt + configuration to the original Stage 2 dispatch. The renderer is idempotent: it sees the partial fragment set on disk and authors only what is still missing.
@@ -2569,7 +2592,9 @@ The QA reviewer runs with its own turn budget and **does not repeat deterministi
 
 **Strict contract gate.** The QA reviewer's Check 14 is a **hard gate** — when it detects any `sections-contract.yaml` violation, it writes a structured `.qa-repair-plan.json` under `$OUTPUT_DIR/`. The presence of this file signals the skill to enter the Re-Render Loop below before proceeding to Stage 4 (or to the Completion Summary when Stage 4 is disabled).
 
-**Record Stage 3 stats (M3.3).** If `QA_AGENT_DISPATCHED=true`, after the QA Agent returns (and the Re-Render Loop has settled, if invoked), extract the `<usage>` block from the QA Agent's return notification and append the Stage 3 record:
+**Record Stage 3 stats (M3.3).** If `QA_AGENT_DISPATCHED=true`, after the QA Agent returns (and the Re-Render Loop has settled, if invoked), extract the `<usage>` block from the QA Agent's return notification and append the Stage 3 record.
+
+**`STAGE3_START_ISO` capture.** Capture `STAGE3_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` immediately before the QA Agent dispatch. The Re-Render Loop may re-dispatch the QA reviewer per iteration; without the lower-bound capture the recorder treats every prior renderer/analyst spawn in `.hook-events.log` as in-scope (`dispatch_count` over-counts).
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
@@ -2579,12 +2604,13 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
     --model "$QA_MODEL" \
     --duration-ms <duration_ms_from_usage> \
     --tool-uses <tool_uses_from_usage> \
-    --tokens <total_tokens_from_usage>
+    --tokens <total_tokens_from_usage> \
+    ${STAGE3_START_ISO:+--subagent-type appsec-advisor:appsec-qa-reviewer --since-iso "$STAGE3_START_ISO"}
 ```
 
 **Pass the actual `$QA_MODEL` value** (not a hardcoded `claude-sonnet-4-6`) so the per-stage breakdown table reflects which model was effectively used — Haiku at haiku-economy/quick+standard, Sonnet at haiku-economy/thorough or whenever a content-class repair iteration switches to `$QA_CONTENT_MODEL`.
 
-Stage 4 (Architect Review) records `--stage 4` analogously when `ARCHITECT_REVIEW=true`.
+Stage 4 (Architect Review) records `--stage 4` analogously when `ARCHITECT_REVIEW=true`, with `STAGE4_START_ISO` captured the same way and `--subagent-type appsec-advisor:appsec-architect-reviewer`.
 
 ### Re-Render Loop — enforce strict contract compliance
 
@@ -2638,6 +2664,35 @@ loop:
   elif repair_iteration >= MAX_REPAIR_ITERATIONS:
        print hard-fail banner (see below); exit 2
   else:
+       # Sprint 3B (M3.7) — mechanical applier short-circuit. Before
+       # dispatching the heavy threat-analyst REPAIR_MODE pass (~16 min,
+       # sonnet), try the deterministic applier first. It handles
+       # composer-output defects like `toc_nested_link` with a regex
+       # substitution on threat-model.md (the source fragment contains
+       # no nested link — the pattern is produced by the Composer's
+       # double-linkification, so a Stage-1 fragment-edit cannot fix it
+       # but a post-compose regex can).
+       #
+       #   exit 0 → every action in the plan was mechanical and applied.
+       #            Skip the REPAIR_MODE dispatch this iteration; just
+       #            refresh .qa-repair-plan.json so the next loop turn
+       #            sees the cleaned document.
+       #   exit 1 → at least one action requires semantic reasoning
+       #            (e.g. control_subsection_coverage). Mechanical
+       #            actions in the plan were still applied; the
+       #            REPAIR_MODE dispatch then only needs to address the
+       #            semantic residue.
+       #   exit 2 → tool error (missing threat-model.md, unreadable
+       #            plan). Log and fall through to the existing path so
+       #            the heavy agent can still try.
+       python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_repair_plan.py "$OUTPUT_DIR"
+       APPLIER_RC=$?
+       if APPLIER_RC == 0:
+           # Refresh the gate so the next loop turn observes the fix.
+           python3 $CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py repair_plan \
+               "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" >/dev/null || true
+           repair_iteration += 1
+           continue  (back to Stage 3 — no heavy LLM dispatch this turn)
        repair_iteration += 1
        dispatch Stage 1 again with REPAIR_MODE=true + REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json
        continue  (back to Stage 3)

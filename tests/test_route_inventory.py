@@ -195,7 +195,7 @@ def test_excludes_build_output(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_output_validates_against_schema(tmp_path: Path) -> None:
+def test_route_inventory_validates_against_schema(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src/app.ts").write_text(
         "app.get('/a', h);\n"
@@ -225,7 +225,7 @@ def test_empty_repo_emits_empty_routes(tmp_path: Path) -> None:
     assert inv["coverage"]["route_count"] == 0
 
 
-def test_writes_to_output_dir(tmp_path: Path) -> None:
+def test_route_inventory_writes_to_output_dir(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src/app.ts").write_text("app.get('/x', h);")
     out = tmp_path / "output"

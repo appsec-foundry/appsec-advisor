@@ -1380,23 +1380,50 @@ def render_run_plan(
                      "unknown" / None).
     """
     width = _summary_width()
-    lines = [_box_heading("Threat Model — Pre-flight", width)]
+    lines: list[str] = ["Threat Model — Pre-flight", ""]
 
     verdict = _run_plan_verdict(cfg, pre_check, dirty_set, compat_label)
 
+    def kv(label: str, value: Any) -> list[str]:
+        prefix = f"  {label:<10}: "
+        value_width = max(20, width - len(prefix))
+        chunks = wrap(
+            str(value),
+            width=value_width,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+        out = [prefix + chunks[0]]
+        cont = " " * len(prefix)
+        out.extend(cont + c for c in chunks[1:])
+        return out
+
+    def bullet(text: str) -> list[str]:
+        prefix = "  • "
+        value_width = max(20, width - len(prefix))
+        chunks = wrap(
+            str(text),
+            width=value_width,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+        out = [prefix + chunks[0]]
+        cont = " " * len(prefix)
+        out.extend(cont + c for c in chunks[1:])
+        return out
+
     # --- Section: Target ---
-    lines.extend(_box_section("Target", width))
-    lines.extend(_box_kv("Repository", cfg["repo_root"], width))
-    lines.extend(_box_kv("Output", cfg["output_dir"], width))
+    lines.append("Target")
+    lines.extend(kv("Repository", cfg["repo_root"]))
+    lines.extend(kv("Output", cfg["output_dir"]))
 
     # --- Section: Plugin ---
-    lines.append(_box_line(width=width))
-    lines.extend(_box_section("Plugin", width))
-    lines.extend(_box_kv(
+    lines.append("")
+    lines.append("Plugin")
+    lines.extend(kv(
         "Version",
         f"appsec-advisor {cfg['plugin_version']} "
         f"(analysis v{cfg['analysis_version']})",
-        width,
     ))
     if pre_check:
         ver = pre_check.get("plugin_version", {}) or {}
@@ -1404,22 +1431,18 @@ def render_run_plan(
         tier = ver.get("tier")
         if baseline_v and baseline_v != cfg["plugin_version"]:
             drift_marker = "  ⚠ DRIFT" if tier in ("minor", "major") else ""
-            lines.extend(_box_kv(
-                "Baseline",
-                f"{baseline_v} (tier={tier}){drift_marker}",
-                width,
-            ))
+            lines.extend(kv("Baseline", f"{baseline_v} (tier={tier}){drift_marker}"))
     if compat_label and compat_label not in ("equal", None, ""):
-        lines.extend(_box_kv("Schema", f"analysis_version drift: {compat_label}", width))
-    lines.extend(_box_kv("Mode", verdict["mode_line"], width))
+        lines.extend(kv("Schema", f"analysis_version drift: {compat_label}"))
+    lines.extend(kv("Mode", verdict["mode_line"]))
 
     # --- Section: Decision ---
-    lines.append(_box_line(width=width))
-    lines.extend(_box_section("Decision", width))
-    lines.extend(_box_kv("Verdict", verdict["verdict"], width))
-    lines.extend(_box_kv("Pipeline", verdict["pipeline"], width))
+    lines.append("")
+    lines.append("Decision")
+    lines.extend(kv("Verdict", verdict["verdict"]))
+    lines.extend(kv("Pipeline", verdict["pipeline"]))
     if verdict.get("reason"):
-        lines.extend(_box_kv("Reason", verdict["reason"], width))
+        lines.extend(kv("Reason", verdict["reason"]))
 
     # --- Section: Files / Components (only when pre-check ran) ---
     if pre_check:
@@ -1428,27 +1451,22 @@ def render_run_plan(
         excluded = pre_check.get("excluded_pre_filter_count", 0)
         total = sec_count + noise_count + excluded
         if total or sec_count or excluded:
-            lines.append(_box_line(width=width))
-            lines.extend(_box_section("Files", width))
-            lines.extend(_box_kv("Total seen", str(total), width))
-            lines.extend(_box_kv(
-                "Excluded", f"{excluded} (plugin output / scan-excludes)", width,
-            ))
-            lines.extend(_box_kv(
-                "Noise", f"{noise_count} (docs / format-only / non-security)", width,
-            ))
-            lines.extend(_box_kv("Relevant", str(sec_count), width))
+            lines.append("")
+            lines.append("Files")
+            lines.extend(kv("Total seen", str(total)))
+            lines.extend(kv("Excluded", f"{excluded} (plugin output / scan-excludes)"))
+            lines.extend(kv("Noise", f"{noise_count} (docs / format-only / non-security)"))
+            lines.extend(kv("Relevant", str(sec_count)))
 
         if dirty_set is not None:
             known = len(dirty_set.get("all_components_known", []) or [])
             dirty_ids = dirty_set.get("dirty_component_ids", []) or []
             carry = max(0, known - len(dirty_ids))
-            lines.extend(_box_kv(
+            lines.extend(kv(
                 "Components",
                 f"{known} known, {len(dirty_ids)} dirty"
                 + (f" ({', '.join(dirty_ids[:5])})" if dirty_ids else "")
                 + f", {carry} carried forward",
-                width,
             ))
 
     # --- Section: Why (file list with reasons) ---
@@ -1456,49 +1474,47 @@ def render_run_plan(
         sec_files = pre_check.get("security_relevant_changes", []) or []
         reasons = pre_check.get("relevance_reasons", {}) or {}
         if sec_files:
-            lines.append(_box_line(width=width))
-            header = (
+            lines.append("")
+            lines.append(
                 "Why this run is going to launch"
                 if verdict["will_run"] else
                 "Why this run will NOT execute Stage 1+2+3"
             )
-            lines.extend(_box_section(header, width))
             for f in sec_files[:6]:
                 rs = reasons.get(f, [])
                 rs_short = ", ".join(rs[:3]) if rs else "no reason recorded"
-                lines.extend(_box_bullet(f"{f}  [{rs_short}]", width))
+                lines.extend(bullet(f"{f}  [{rs_short}]"))
             if len(sec_files) > 6:
-                lines.extend(_box_bullet(f"... and {len(sec_files) - 6} more", width))
+                lines.extend(bullet(f"... and {len(sec_files) - 6} more"))
 
         # When dirty-set returned ambiguous (potential new component),
         # surface the unmapped files so the user knows what to expect.
         if dirty_set and dirty_set.get("decision") == "ambiguous_potential_new_component":
             unmapped = dirty_set.get("unmapped_files", []) or []
             if unmapped:
-                lines.append(_box_line(width=width))
-                lines.extend(_box_section("Unmapped (possible new component)", width))
+                lines.append("")
+                lines.append("Unmapped (possible new component)")
                 for u in unmapped[:6]:
-                    lines.extend(_box_bullet(u, width))
+                    lines.extend(bullet(u))
 
     # --- Section: Configuration (only when pipeline will actually run) ---
     if verdict["will_run"]:
-        lines.append(_box_line(width=width))
-        lines.extend(_box_section("Configuration", width))
-        lines.extend(_box_kv("Depth", _format_depth_summary(cfg), width))
-        lines.extend(_box_kv("Reasoning", _format_reasoning_summary(cfg), width))
+        lines.append("")
+        lines.append("Configuration")
+        lines.extend(kv("Depth", _format_depth_summary(cfg)))
+        lines.extend(kv("Reasoning", _format_reasoning_summary(cfg)))
         active = _summary_active_options(cfg)
         for label, value in active:
-            lines.extend(_box_kv(label, value, width))
+            lines.extend(kv(label, value))
 
     # --- Section: Notes / Recommendations ---
     notes = _run_plan_notes(verdict, cfg, pre_check, dirty_set, compat_label)
     if notes:
-        lines.append(_box_line(width=width))
-        lines.extend(_box_section("Notes", width))
+        lines.append("")
+        lines.append("Notes")
         for n in notes:
-            lines.extend(_box_bullet(n, width))
+            lines.extend(bullet(n))
 
-    lines.append(_box_footer(width))
     return "\n".join(lines) + "\n"
 
 
