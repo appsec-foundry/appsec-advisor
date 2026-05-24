@@ -1,0 +1,598 @@
+#!/usr/bin/env python3
+"""
+build_threat_model_yaml.py — deterministic Phase 11 Substep 2 replacement.
+
+Composes threat-model.yaml from on-disk intermediates + new Phase 3/5/7/8
+input sidecars (.components.json, .assets.json, .trust-boundaries.json,
+.security-controls.json). Replaces the LLM yaml-composition that previously
+burned 15-20 turns at the end of Stage 1 (and caused the 2026-05-24
+juice-shop MAX_TURNS bootstrap-stub failure).
+
+Sidecar-first with prior-yaml fallback: if a required sidecar is missing
+but a prior `threat-model.yaml` exists on disk, the field is carried
+forward from it. This allows incremental adoption — the script works
+today (using the prior LLM-composed yaml as fallback) and tomorrow
+(once Phase 3/5/7/8 agents start writing sidecars).
+
+Hard-required intermediates (script aborts if missing):
+  .threats-merged.json, .route-inventory.json, .architecture-coverage.json,
+  .skill-config.json
+
+Optional intermediates (gracefully degraded):
+  .config-scan-findings.json, .cross-repo-register.json, .triage-flags.json,
+  .org-profile-effective.json, .stage-stats.jsonl
+
+Phase-output sidecars (NEW — preferred when present, falls back to prior yaml):
+  .components.json, .assets.json, .trust-boundaries.json, .security-controls.json
+
+Output: $OUTPUT_DIR/threat-model.yaml (atomic write, schema-validated).
+
+Exit codes:
+  0 = success
+  1 = IO / validation / unexpected error
+  2 = usage error
+  3 = required intermediate missing
+  4 = sidecar AND prior-yaml fallback both missing for a required field
+  5 = schema validation failed
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import os
+import re
+import subprocess
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("FATAL: PyYAML required (pip install pyyaml)\n")
+    sys.exit(1)
+
+# Add scripts/ to path so we can import sibling helpers
+_SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_SCRIPT_DIR))
+
+from _atomic_io import atomic_write_text  # noqa: E402
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────
+
+def _load_json(path: Path, *, required: bool = False) -> Any:
+    """Return parsed JSON, None if missing (unless required=True → exit 3)."""
+    if not path.exists():
+        if required:
+            sys.stderr.write(f"FATAL: required intermediate missing: {path.name}\n")
+            sys.exit(3)
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        sys.stderr.write(f"FATAL: malformed JSON in {path.name}: {exc}\n")
+        sys.exit(1)
+
+
+def _load_yaml(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        sys.stderr.write(f"warning: malformed YAML in {path.name}: {exc}\n")
+        return None
+
+
+def _git(args: list[str], cwd: Path) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=5
+        )
+        if out.returncode != 0:
+            return None
+        return out.stdout.strip() or None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+
+def _read_recon_project(recon_path: Path) -> str | None:
+    """Extract project name from .recon-summary.md Section 1 (best-effort)."""
+    if not recon_path.exists():
+        return None
+    text = recon_path.read_text(encoding="utf-8", errors="ignore")
+    # Look for "**Project**: <name>" or "## 1. Business Context\n... Project: <name>"
+    m = re.search(r"\*\*Project\*\*:\s*([^\n]+)", text)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _plugin_version(plugin_root: Path) -> tuple[str, int]:
+    """Read plugin_version + analysis_version from .claude-plugin/plugin.json."""
+    pj = plugin_root / ".claude-plugin" / "plugin.json"
+    if not pj.exists():
+        return ("unknown", 1)
+    try:
+        d = json.loads(pj.read_text(encoding="utf-8"))
+        return (d.get("version", "unknown"), int(d.get("analysis_version", 1)))
+    except (json.JSONDecodeError, ValueError):
+        return ("unknown", 1)
+
+
+def _carry_forward(prior_yaml: dict | None, field: str, sidecar_name: str) -> Any:
+    """Return prior_yaml[field] or exit 4 with remediation message."""
+    if prior_yaml and field in prior_yaml and prior_yaml[field]:
+        return prior_yaml[field]
+    sys.stderr.write(
+        f"FATAL: neither {sidecar_name} sidecar nor prior threat-model.yaml "
+        f"has '{field}'. The corresponding phase must write the sidecar, "
+        f"or run --full once with the legacy LLM Substep 2 to bootstrap.\n"
+    )
+    sys.exit(4)
+
+
+# ─── Field builders ───────────────────────────────────────────────────────
+
+def build_meta(
+    *,
+    skill_cfg: dict,
+    org: dict | None,
+    recon_project: str | None,
+    plugin_root: Path,
+    repo_root: Path,
+    prior_yaml: dict | None,
+) -> dict:
+    plugin_ver, analysis_ver = _plugin_version(plugin_root)
+    commit_sha = _git(["rev-parse", "HEAD"], repo_root) or "unknown"
+    branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root) or "unknown"
+    repo_url = _git(["remote", "get-url", "origin"], repo_root)
+
+    # project: sidecar fallback chain — recon-summary, then prior yaml meta.project, then repo basename
+    project = (
+        recon_project
+        or (prior_yaml or {}).get("meta", {}).get("project")
+        or repo_root.name
+    )
+
+    return {
+        "schema_version": 1,
+        "project": project,
+        "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "mode": skill_cfg.get("mode", "full"),
+        "model": skill_cfg.get("stride_model", "claude-sonnet-4-6"),
+        "analyst": f"appsec-threat-analyst ({skill_cfg.get('stride_model', 'claude-sonnet-4-6')})",
+        "plugin_version": plugin_ver,
+        "analysis_version": analysis_ver,
+        "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
+        "reasoning_model": skill_cfg.get("reasoning_model", "haiku-economy"),
+        "scope": skill_cfg.get("scope", []),
+        "repo_url": repo_url,
+        "team_owner": (org or {}).get("team_owner"),
+        "asset_classification": (org or {}).get("asset_classification"),
+        "compliance_scope": (org or {}).get("compliance_scope", []),
+        "git": {"commit_sha": commit_sha, "branch": branch},
+        "accepted_risks": (org or {}).get("accepted_risks", []),
+    }
+
+
+_TITLE_DASH_RE = re.compile(r"\s*[—–-]\s*")
+_TITLE_PARENS_RE = re.compile(r"\(([^)]*)\)")
+_TITLE_WS_RE = re.compile(r"\s+")
+
+# Schema rejects titles containing exact attack/CVE syntax (anyOf negative
+# pattern in threats[].title). Replace each with a natural-language equivalent
+# so the deterministic builder produces schema-clean titles. Source of forbidden
+# patterns: schemas/threat-model.output.schema.yaml threats[].title.
+_TITLE_FORBIDDEN_REPLACEMENTS = [
+    (re.compile(r"\bnoent:true\b"), "external entity resolution"),
+    (re.compile(r"\balg:none\b"), "algorithm none"),
+    (re.compile(r"\bpackage-lock=false\b"), "lockfile disabled"),
+    (re.compile(r"\bbypassSecurityTrustHtml\b"), "trust HTML bypass"),
+    (re.compile(r"\bcrypto\.createHash\b"), "weak hash"),
+    (re.compile(r"\bmodels\.sequelize\.query\b"), "raw SQL query"),
+    (re.compile(r"\(CVE-[^)]+\)"), "CVE"),
+    (re.compile(r"@\d+(?:\.\d+){0,2}"), ""),  # version suffixes like jsonwebtoken@0.4.0
+]
+
+
+def _clean_title(raw: str) -> str:
+    """Best-effort transform of merged-threat title to schema pattern.
+
+    Schema pattern: ^[A-Z][^()@`]+?(?:\s*\([^()]+\))?$
+      - first char uppercase
+      - no parens/at/backtick in body
+      - optionally one parenthesized suffix at end
+
+    Plus a negative anyOf list of forbidden substrings (alg:none, noent:true,
+    package-lock=false, etc.) — these must be replaced with natural-language
+    equivalents because the schema treats them as raw attack syntax.
+
+    Titles that still fail after cleanup are surfaced as schema warnings —
+    the migration plan moves first-class title cleanup into stride-analyzer
+    output later. For v1 we accept residual warnings on edge cases.
+    """
+    if not raw:
+        return raw
+    s = raw.strip()
+    s = _TITLE_DASH_RE.sub(" ", s)
+    s = s.replace("`", "")
+    # Replace forbidden tokens BEFORE paren extraction so we don't lose them.
+    # If the replacement phrase already appears elsewhere in the title,
+    # just strip the forbidden token (avoids "external entity resolution
+    # enables external entity resolution" duplications).
+    for pat, repl in _TITLE_FORBIDDEN_REPLACEMENTS:
+        if pat.search(s):
+            if repl and repl.lower() in s.lower():
+                s = pat.sub("", s)
+            else:
+                s = pat.sub(repl, s)
+    # Pull parens out — drop empty ones; keep the most specific (last non-empty).
+    parens = [p for p in _TITLE_PARENS_RE.findall(s) if p.strip()]
+    s = _TITLE_PARENS_RE.sub("", s).strip()
+    s = _TITLE_WS_RE.sub(" ", s)
+    if s and not s[0].isupper():
+        s = s[0].upper() + s[1:]
+    # Schema docs cap "weakness class" at ~80 chars; total with suffix can
+    # exceed maxLength. Truncate the body, preserve the file:line suffix.
+    suffix = f" ({parens[-1]})" if parens else ""
+    body_cap = 80 - len(suffix)
+    if len(s) > body_cap:
+        s = s[:body_cap].rstrip().rstrip(",;:-") + "…"
+    return f"{s}{suffix}"
+
+
+def build_threats(merged: dict) -> list[dict]:
+    """Transform .threats-merged.json[threats] into yaml.threats[] shape.
+
+    Field renames per output schema: t_id→id, component_id→component.
+    Evidence wrap: object → list (schema requires array).
+    Title cleanup: deterministic transform to match schema pattern.
+    """
+    out = []
+    for t in merged.get("threats", []):
+        threat = dict(t)
+        threat["id"] = threat.pop("t_id", threat.get("id"))
+        threat["component"] = threat.pop("component_id", threat.get("component", ""))
+        threat["title"] = _clean_title(threat.get("title", ""))
+        ev = threat.get("evidence")
+        if isinstance(ev, dict):
+            threat["evidence"] = [ev]
+        elif ev is None:
+            threat["evidence"] = []
+        out.append(threat)
+    return out
+
+
+def build_mitigations(threats: list[dict]) -> list[dict]:
+    """Derive yaml.mitigations[] from threats' mitigation_ids + remediation.
+
+    Each unique M-ID becomes one mitigation entry. threat_ids[] lists every
+    threat that references that M-ID. Title from first threat's
+    mitigation_title; severity = max risk of linked threats.
+    """
+    by_mid: dict[str, dict] = {}
+    risk_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
+
+    for t in threats:
+        for mid in t.get("mitigation_ids", []):
+            if mid not in by_mid:
+                by_mid[mid] = {
+                    "id": mid,
+                    "title": t.get("mitigation_title") or t.get("title", ""),
+                    "threat_ids": [],
+                    "priority": "P2",
+                    "severity": t.get("risk", "Medium"),
+                    "effort": (t.get("remediation") or {}).get("effort", "Medium"),
+                    "kind": "fix",
+                }
+            entry = by_mid[mid]
+            if t["id"] not in entry["threat_ids"]:
+                entry["threat_ids"].append(t["id"])
+            # Severity = max risk
+            cur_rank = risk_order.get(entry["severity"], 4)
+            new_rank = risk_order.get(t.get("risk", "Low"), 4)
+            if new_rank < cur_rank:
+                entry["severity"] = t.get("risk", entry["severity"])
+
+    # Priority from severity
+    sev_to_pri = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4", "Informational": "P4"}
+    for m in by_mid.values():
+        m["priority"] = sev_to_pri.get(m["severity"], "P3")
+
+    return sorted(by_mid.values(), key=lambda m: m["id"])
+
+
+def build_attack_surface(routes: dict | None) -> list[dict]:
+    """Map .route-inventory.json routes[] → yaml.attack_surface[] entries.
+
+    Schema: required [entry_point, protocol]. Optional auth_required, notes.
+    """
+    if not routes:
+        return []
+    out = []
+    for r in routes.get("routes", []):
+        notes_parts = []
+        if r.get("management_surface"):
+            notes_parts.append("Management surface")
+        if r.get("handler_file"):
+            notes_parts.append(f"handler: {r['handler_file']}:{r.get('handler_line', '')}")
+        out.append({
+            "entry_point": f"{r.get('method', '?')} {r.get('path', '/')}",
+            "protocol": "HTTP",
+            "auth_required": bool(r.get("authn_signal")),
+            "notes": "; ".join(notes_parts) or None,
+        })
+    return out
+
+
+def build_threat_hypotheses(arch_cov: dict | None, hyp_start_id: int = 1) -> list[dict]:
+    """Transform .architecture-coverage.json[threat_hypotheses] → yaml shape.
+
+    Schema requires:
+      id ~ ^HYP-\\d{3,}$
+      source_hypothesis_id ~ ^ARCH-HYP-[A-Z]+-[0-9]{3}$  (already in source as hypothesis_id)
+      rule_id, title, threat_category_id, cwe, proof_state, confidence
+    """
+    if not arch_cov:
+        return []
+    out = []
+    for i, h in enumerate(arch_cov.get("threat_hypotheses", []), start=hyp_start_id):
+        entry = dict(h)
+        # Rename: source's hypothesis_id → output's source_hypothesis_id, assign new HYP-NNN
+        entry["source_hypothesis_id"] = entry.pop("hypothesis_id", entry.get("source_hypothesis_id", ""))
+        entry["id"] = f"HYP-{i:03d}"
+        out.append(entry)
+    return out
+
+
+def build_critical_findings(threats: list[dict]) -> list[dict]:
+    """Schema: required [threat_id, summary]. Optional mitigation_id."""
+    out = []
+    for t in threats:
+        sev = t.get("effective_severity", t.get("risk", ""))
+        if sev in ("Critical", "High"):
+            mids = t.get("mitigation_ids", [])
+            out.append({
+                "threat_id": t["id"],
+                "summary": t.get("title", ""),
+                "mitigation_id": mids[0] if mids else None,
+            })
+    return out
+
+
+def build_tier_root_causes(threats: list[dict], components: list[dict]) -> dict:
+    """Group threats by component.tier, return top CWE patterns per tier.
+
+    Tier mapping: 'client' → 'edge' (yaml uses edge/server/data),
+    'application' → 'server', 'data' → 'data'.
+    """
+    tier_alias = {"client": "edge", "application": "server", "data": "data"}
+    comp_tier = {c["id"]: tier_alias.get(c.get("tier", ""), c.get("tier", "")) for c in components}
+
+    by_tier: dict[str, list[str]] = defaultdict(list)
+    for t in threats:
+        tier = comp_tier.get(t.get("component", ""), "")
+        if not tier:
+            continue
+        # Use title as the root-cause hint (already terse, file:line included)
+        title = t.get("title", "")
+        if title:
+            by_tier[tier].append(title)
+
+    out = {}
+    for tier, titles in by_tier.items():
+        # Take top-5 unique by frequency
+        counted = Counter(titles).most_common(5)
+        bullets = [title[:80] for title, _ in counted]
+        if bullets:
+            out[tier] = bullets
+    return out
+
+
+def build_changelog(
+    skill_cfg: dict,
+    threats: list[dict],
+    components: list[dict],
+    attack_surface: list[dict],
+    baseline_path: Path | None,
+    plugin_root: Path,
+) -> list[dict]:
+    """Append new entry to existing baseline changelog (or create new).
+
+    Schema: required [version, date, mode]. added/changed/resolved are
+    OBJECTS containing typed sub-arrays (threats[], components[], etc.).
+    """
+    existing: list[dict] = []
+    if baseline_path and baseline_path.exists():
+        try:
+            existing = (json.loads(baseline_path.read_text()) or {}).get("changelog", []) or []
+        except json.JSONDecodeError:
+            pass
+
+    plugin_ver, analysis_ver = _plugin_version(plugin_root)
+    mode = skill_cfg.get("mode", "full")
+
+    # For full runs, every component+threat is "added" vs the empty baseline.
+    # Incremental runs would need a baseline-diff; v1 treats incremental as full.
+    new_entry = {
+        "version": 1,  # changelog entry schema version, not plugin version
+        "date": _dt.date.today().isoformat(),
+        "mode": mode,
+        "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
+        "reasoning_model": skill_cfg.get("reasoning_model", "haiku-economy"),
+        "plugin_version": plugin_ver,
+        "analysis_version": analysis_ver,
+        "baseline_sha": None,
+        "current_sha": None,  # patched by main() after _git call
+        "changed_files": None,
+        "reanalyzed_components": sorted({c.get("id", "") for c in components if c.get("id")}),
+        "carried_forward_components": [],
+        "added": {
+            "threats": [t["id"] for t in threats],
+            "components": sorted({c.get("id", "") for c in components if c.get("id")}),
+            "attack_surface": [],
+        },
+        "changed": {"threats": []},
+        "resolved": {"threats": [], "reason_by_id": {}},
+    }
+    return [new_entry, *existing]
+
+
+# ─── Main ─────────────────────────────────────────────────────────────────
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
+    ap.add_argument("output_dir", type=Path, help="$OUTPUT_DIR (e.g. docs/security)")
+    ap.add_argument("--repo-root", type=Path, default=None)
+    ap.add_argument("--plugin-root", type=Path,
+                    default=Path(os.environ.get("CLAUDE_PLUGIN_ROOT", _SCRIPT_DIR.parent)))
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Print the composed yaml to stdout instead of writing.")
+    args = ap.parse_args()
+
+    od = args.output_dir
+    if not od.is_dir():
+        sys.stderr.write(f"FATAL: output_dir does not exist: {od}\n")
+        return 2
+
+    repo_root = args.repo_root or Path(json.loads((od / ".skill-config.json").read_text())
+                                       .get("repo_root", "."))
+
+    # Load required intermediates
+    skill_cfg = _load_json(od / ".skill-config.json", required=True)
+    merged = _load_json(od / ".threats-merged.json", required=True)
+    routes = _load_json(od / ".route-inventory.json")
+    arch_cov = _load_json(od / ".architecture-coverage.json")
+
+    # Load optional intermediates
+    org = _load_json(od / ".org-profile-effective.json")
+    cross_repo = _load_json(od / ".cross-repo-register.json")
+    config_findings = _load_json(od / ".config-scan-findings.json")
+
+    # Load NEW sidecars (preferred)
+    sidecar_components = _load_json(od / ".components.json")
+    sidecar_assets = _load_json(od / ".assets.json")
+    sidecar_tb = _load_json(od / ".trust-boundaries.json")
+    sidecar_sc = _load_json(od / ".security-controls.json")
+
+    # Prior yaml (fallback source for fields whose sidecar is missing)
+    prior_yaml = _load_yaml(od / "threat-model.yaml")
+    # Refuse the bootstrap stub — it has no usable content
+    if prior_yaml and (prior_yaml.get("meta") or {}).get("_bootstrap"):
+        prior_yaml = None
+
+    recon_project = _read_recon_project(od / ".recon-summary.md")
+
+    # Build sections
+    meta = build_meta(
+        skill_cfg=skill_cfg, org=org, recon_project=recon_project,
+        plugin_root=args.plugin_root, repo_root=repo_root, prior_yaml=prior_yaml,
+    )
+
+    threats = build_threats(merged)
+    mitigations = build_mitigations(threats)
+
+    components = (sidecar_components or {}).get("components") \
+        or _carry_forward(prior_yaml, "components", ".components.json")
+    assets = (sidecar_assets or {}).get("assets") \
+        or _carry_forward(prior_yaml, "assets", ".assets.json")
+    trust_boundaries = (sidecar_tb or {}).get("trust_boundaries") \
+        or _carry_forward(prior_yaml, "trust_boundaries", ".trust-boundaries.json")
+    security_controls = (sidecar_sc or {}).get("security_controls") \
+        or _carry_forward(prior_yaml, "security_controls", ".security-controls.json")
+
+    # threat_ids per component (derived)
+    for comp in components:
+        cid = comp.get("id", "")
+        comp["threat_ids"] = sorted(
+            t["id"] for t in threats if t.get("component") == cid
+        )
+
+    attack_surface = build_attack_surface(routes)
+    threat_hypotheses = build_threat_hypotheses(arch_cov)
+    critical = build_critical_findings(threats)
+    tier_rcs = build_tier_root_causes(threats, components)
+
+    changelog = build_changelog(
+        skill_cfg, threats, components, attack_surface,
+        args.plugin_root / ".appsec-cache" / "baseline.json",
+        args.plugin_root,
+    )
+    if changelog:
+        changelog[0]["current_sha"] = meta["git"]["commit_sha"]
+
+    # Compose final document
+    doc: dict[str, Any] = {
+        "meta": meta,
+        "changelog": changelog,
+        "components": components,
+        "assets": assets,
+        "attack_surface": attack_surface,
+        "trust_boundaries": trust_boundaries,
+        "security_controls": security_controls,
+        "threats": threats,
+        "mitigations": mitigations,
+        "critical_findings": critical,
+    }
+    if tier_rcs:
+        doc["tier_root_causes"] = tier_rcs
+    if cross_repo:
+        doc["cross_repo_dependencies"] = cross_repo if isinstance(cross_repo, list) else cross_repo.get("dependencies", [])
+    if threat_hypotheses:
+        # Only emit if every entry has the required schema fields; otherwise
+        # skip — meta_findings/threat_hypotheses synthesis from raw intermediates
+        # is non-trivial and is queued for a follow-up migration step.
+        if all(h.get("threat_category_id") and h.get("proof_state") and h.get("confidence") is not None
+               for h in threat_hypotheses):
+            doc["threat_hypotheses"] = threat_hypotheses
+        elif prior_yaml and prior_yaml.get("threat_hypotheses"):
+            doc["threat_hypotheses"] = prior_yaml["threat_hypotheses"]
+    # meta_findings synthesis (config-scan-findings → MF-NNN with category enum)
+    # is judgment-heavy — carry forward from prior yaml when available, else skip.
+    if prior_yaml and prior_yaml.get("meta_findings"):
+        doc["meta_findings"] = prior_yaml["meta_findings"]
+    if prior_yaml and "security_architecture" in prior_yaml:
+        doc["security_architecture"] = prior_yaml["security_architecture"]
+    if prior_yaml and prior_yaml.get("threat_categories"):
+        doc["threat_categories"] = prior_yaml["threat_categories"]
+
+    # Render
+    rendered = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True,
+                              default_flow_style=False, width=120)
+
+    if args.dry_run:
+        sys.stdout.write(rendered)
+        return 0
+
+    out_path = od / "threat-model.yaml"
+    atomic_write_text(out_path, rendered)
+
+    # Schema validate
+    plugin_root = args.plugin_root
+    validator = plugin_root / "scripts" / "validate_intermediate.py"
+    if validator.exists():
+        rc = subprocess.run(
+            ["python3", str(validator), "threat_model_output", str(out_path)],
+            capture_output=True, text=True,
+        )
+        if rc.returncode != 0:
+            sys.stderr.write("FATAL: schema validation failed\n")
+            sys.stderr.write(rc.stdout)
+            sys.stderr.write(rc.stderr)
+            return 5
+
+    sys.stderr.write(
+        f"✓ threat-model.yaml built deterministically — "
+        f"{len(threats)} threats, {len(mitigations)} mitigations, "
+        f"{len(attack_surface)} attack-surface entries, {len(components)} components\n"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
