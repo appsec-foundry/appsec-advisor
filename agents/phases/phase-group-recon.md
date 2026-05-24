@@ -231,9 +231,9 @@ recon-summary as input baseline):**
 - `description`: `Configuration & IaC scan`
 - `run_in_background`: `false` (15-turn budget; finishes before Phase 3)
 - `model`: `$CONFIG_SCANNER_MODEL` from `.skill-config.json` (defaults to
-  `claude-sonnet-4-6`; under `--reasoning-model haiku-economy` becomes
-  `claude-haiku-4-5` regardless of depth — pattern-matching against YAML
-  rule list, not Reasoning-heavy)
+  `claude-haiku-4-5` at all reasoning tiers — YAML-rule-engine task,
+  pattern-matching against a static check catalog, Haiku-suitable at every
+  depth. Override via `APPSEC_CONFIG_SCANNER_MODEL`.)
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`,
   `CLAUDE_PLUGIN_ROOT=<plugin root>`, `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 
