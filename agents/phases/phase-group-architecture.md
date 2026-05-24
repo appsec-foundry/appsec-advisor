@@ -1055,6 +1055,60 @@ If your project uses different classification labels, adapt the legend wording b
 
 **Linked Threats column format (mandatory).** Each referenced threat must be rendered as `[T-NNN](#t-nnn) — <short title>`. **When a cell lists two or more threats, separate them with `<br/>`** (one visual line per threat) — never commas, never `<ul>`. This matches the convention used in every other linked-threat table in the document.
 
+### Phase 5 sidecar — `.assets.json` (Substep-2 deterministic migration)
+
+**Why:** Phase 11 Substep 2 historically required the orchestrator to re-author the full `threat-model.yaml` from working memory, including all assets — which routinely consumed 15-20 turns at the end of the pipeline where budget is most constrained (verified MAX_TURNS bootstrap-stub failure on 2026-05-24 juice-shop run). The deterministic yaml builder (`scripts/build_threat_model_yaml.py`) eliminates that turn-burn by reading per-phase sidecars instead. Phase 5 is the PoC pilot. See [docs/substep2-deterministic-migration.md §2.2](../../docs/substep2-deterministic-migration.md).
+
+**Protocol (3 deterministic Bash calls, runs immediately after the §4 table is rendered, BEFORE the PHASE_END log line):**
+
+1. **Reserve A-NNN IDs** for every asset row in the §4 table:
+   ```bash
+   ASSET_IDS=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/reserve_ids.py" \
+       asset --count <N> --output-dir "$OUTPUT_DIR")
+   # ASSET_IDS is a JSON list, e.g. ["A-001","A-002","A-003"]
+   ```
+   `<N>` = exact count of asset rows in the rendered §4 table. The reservation is atomic across parallel phases via fcntl.LOCK_EX.
+
+2. **Write `$OUTPUT_DIR/.assets.json`** via Bash heredoc — one entry per §4 row, in the same order, paired with the reserved A-IDs. Field shape MUST match `schemas/fragments/assets.schema.json`:
+   ```bash
+   cat > "$OUTPUT_DIR/.assets.json" <<'JSON'
+   {
+     "schema_version": 1,
+     "assets": [
+       {
+         "id": "A-001",
+         "name": "<exact asset name from §4 column 1>",
+         "classification": "<Public|Internal|Confidential|Restricted>",
+         "description": "<exact description from §4 column 3>",
+         "linked_threats": []
+       }
+       // ... one entry per §4 row, same order ...
+     ]
+   }
+   JSON
+   ```
+   `linked_threats` stays `[]` here — Phase 9 dispatch and Phase 10 merge populate it via the `evidence` cross-walk; the aggregator picks it up from the merged threats. Do NOT try to fill it now (assets are catalogued before threats are merged).
+
+3. **Validate the sidecar** before emitting PHASE_END:
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+       --type assets "$OUTPUT_DIR/.assets.json"
+   ```
+   On validation failure: log a WARN to `.agent-run.log` and continue (the aggregator falls back to prior `threat-model.yaml`). Do NOT block PHASE_END — sidecar persistence is best-effort during the PoC rollout.
+
+**Rules:**
+- Sidecar is append-only within the run: once written, no later phase modifies `.assets.json`.
+- The §4 markdown table remains the authoritative human-readable rendering — the sidecar is a parallel machine-readable persistence, NOT a replacement.
+- Do NOT inline the schema in the heredoc — reference `schemas/fragments/assets.schema.json` if the LLM forgets the shape; the schema is the single source of truth.
+- All three Bash calls belong INSIDE the same `[Phase 5/11]` PHASE_START/PHASE_END window — they MUST emit before the PHASE_END line so timing analysis sees them attributed to Phase 5.
+
+**Failure modes:**
+| Symptom | Cause | Recovery |
+|---|---|---|
+| `reserve_ids.py` exits non-zero | `.appsec-cache/baseline.json` malformed | Log WARN, skip sidecar write — aggregator falls back to prior yaml |
+| `validate_fragment.py` reports INVALID | sidecar shape diverged from schema (e.g. missing `classification` field) | Log WARN, leave the malformed sidecar on disk for diagnosis — aggregator will detect and fall back |
+| Asset count in `.assets.json` differs from §4 row count | LLM authored the heredoc with stale data | Aggregator emits an advisory warning at validation time; rendered §4 stays authoritative |
+
 ## Phase 6: Attack Surface Mapping
 
 **⚠ Single-read constraint:** Continue using the `.recon-summary.md` snapshot loaded at the start of Phase 5 — do not re-read the file. See "Phases 5–7: Combined single-pass execution" above.

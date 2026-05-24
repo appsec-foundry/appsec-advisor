@@ -71,6 +71,37 @@ required:
     reason: "threat-analyst orchestrator writes this file via Write tool; ** glob does not cover dotfiles"
     category: file
 
+  # Substep-2 deterministic-migration sidecars (see docs/substep2-deterministic-migration.md).
+  # Each is written by exactly one phase agent at PHASE_END via Bash heredoc
+  # and consumed by scripts/build_threat_model_yaml.py. ** glob does not cover dotfiles.
+  - entry: "Write(${OUTPUT_DIR}/.assets.json)"
+    reason: "Phase 5 (Asset Identification) persists structured asset inventory for the deterministic yaml builder; replaces working-memory carry to Phase 11 Substep 2"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.components.json)"
+    reason: "Phase 3 (Architecture Modeling) persists component catalog for the deterministic yaml builder"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.trust-boundaries.json)"
+    reason: "Phase 7 (Trust Boundary Analysis) persists trust-boundary catalog for the deterministic yaml builder"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.security-controls.json)"
+    reason: "Phase 8 (Security Controls Catalog) persists controls inventory for the deterministic yaml builder"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.attack-surface-overrides.json)"
+    reason: "Phase 6 (Attack Surface Mapping) persists curation hints + additions for the deterministic yaml builder"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.mitigation-overrides.json)"
+    reason: "Phase 10b (Triage Validation) persists mitigation splits + additions for the deterministic yaml builder"
+    category: file
+
+  - entry: "Write(${OUTPUT_DIR}/.tier-root-causes.json)"
+    reason: "Phase 10b (Triage Validation) persists per-tier root-cause aggregation for the deterministic yaml builder"
+    category: file
+
   - entry: "Read(${OUTPUT_DIR}/.dispatch-context/**)"
     reason: "STRIDE analyzers read component-scoped volatile context files; ** glob does not cover dot-directories"
     category: file
