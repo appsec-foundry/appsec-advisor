@@ -393,6 +393,65 @@ For full runs (or incremental runs that pass the fast-path check): **Read only `
 
 ---
 
+## Substep-2 Sidecar Protocol (deterministic-migration enabler)
+
+**Why this protocol exists.** Phase 11 Substep 2 (yaml composition) historically required the orchestrator to re-author the full `threat-model.yaml` from working memory at the end of Stage 1, burning 15–20 turns at the budget-critical end of the pipeline. The deterministic builder `scripts/build_threat_model_yaml.py` eliminates that burn — but only if every contributing phase persists its judgement output as a structured JSON sidecar EARLIER in the pipeline, where budget is healthy. This protocol defines what each phase persists. Full design: [`docs/substep2-deterministic-migration.md`](../docs/substep2-deterministic-migration.md).
+
+**Per-phase sidecar map** — each phase MUST write its sidecar at PHASE_END (after its primary output, BEFORE the PHASE_END log line). Each sidecar uses a 3-step Bash protocol detailed below.
+
+| Phase | Sidecar | Schema | Needs reserve_ids? |
+|---|---|---|---|
+| 3  — Architecture Modeling      | `$OUTPUT_DIR/.components.json`              | `schemas/fragments/components.schema.json`            | no (LLM-chosen slugs) |
+| 5  — Asset Identification       | `$OUTPUT_DIR/.assets.json`                  | `schemas/fragments/assets.schema.json`                | **yes** — `asset --count <N>` |
+| 6  — Attack Surface Mapping     | `$OUTPUT_DIR/.attack-surface-overrides.json`| `schemas/fragments/attack-surface-overrides.schema.json` | no (route_ids exist in .route-inventory.json) |
+| 7  — Trust Boundary Analysis    | `$OUTPUT_DIR/.trust-boundaries.json`        | `schemas/fragments/trust-boundaries.schema.json`      | no (LLM-chosen `tb-N` slugs) |
+| 8  — Security Controls Catalog  | `$OUTPUT_DIR/.security-controls.json`       | `schemas/fragments/security-controls.schema.json`     | no (keyed on domain+control) |
+| 10b — Triage Validation         | `$OUTPUT_DIR/.mitigation-overrides.json`    | `schemas/fragments/mitigation-overrides.schema.json`  | **yes** — `mitigation --count <N>` for additions only |
+| 10b — Triage Validation         | `$OUTPUT_DIR/.tier-root-causes.json`        | `schemas/fragments/tier-root-causes.schema.json`      | no |
+
+**3-step protocol per sidecar (every phase, identical pattern):**
+
+```bash
+# Step 1 (ONLY when schema requires reserved IDs): atomic counter assignment.
+# Skip for Phase 3 / 6 / 7 / 8 / 10b-tier-root-causes (no new IDs needed).
+IDS=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/reserve_ids.py" \
+      <asset|mitigation> --count <N> --output-dir "$OUTPUT_DIR")
+# IDS is a JSON list, e.g. ["A-001","A-002","A-003"]
+
+# Step 2: heredoc-write the structured sidecar.
+cat > "$OUTPUT_DIR/.<sidecar>.json" <<'JSON'
+{ "schema_version": 1, ... }
+JSON
+
+# Step 3: schema-validate.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+    --type <type> "$OUTPUT_DIR/.<sidecar>.json"
+```
+
+**Field shapes are defined by `schemas/fragments/<type>.schema.json`**, mirrored from `schemas/threat-model.output.schema.yaml` so the aggregator passes entries through verbatim. Detailed field-by-field schema documentation lives in those schema files — read them when authoring a sidecar.
+
+**Hard invariants** (the aggregator enforces these — sidecar that violates → `build_threat_model_yaml.py` exit 4):
+
+- **ID reservation is atomic.** Always reserve through `reserve_ids.py` — never hand-pick M-/A-/MF-/HYP-IDs. The script holds `fcntl.LOCK_EX` on `.appsec-cache/baseline.json` so parallel phases never collide.
+- **Cross-references must resolve.** `mitigations[].threat_ids[]` and `assets[].linked_threats[]` must reference existing T-IDs from `.threats-merged.json`. `mitigation-overrides.splits[].source_mid` must exist in the Python baseline.
+- **Evidence-grounding for additions.** Every `additions[].threat_ids[]` MUST have ≥1 existing T-ID. Process mitigations (`kind: process`) SHOULD have ≥2 (process gaps are cross-cutting by definition).
+- **Single writer per sidecar.** Phase 5 writes `.assets.json`; no later phase modifies it. Phase 10b writes `.mitigation-overrides.json` AND `.tier-root-causes.json` — but each is written once at PHASE_END, not iteratively.
+
+**Failure modes (non-blocking during PoC rollout):**
+
+| Symptom | Recovery |
+|---|---|
+| `reserve_ids.py` exits non-zero | Log WARN to `.agent-run.log`, skip sidecar write. Aggregator falls back to prior `threat-model.yaml` for that field. |
+| `validate_fragment.py` reports INVALID | Log WARN, leave malformed sidecar on disk for diagnosis. Aggregator detects and falls back. |
+| Sidecar count differs from rendered markdown table count | Aggregator emits an advisory warning at validation time. Rendered markdown remains authoritative. |
+| Phase didn't write sidecar at all | Aggregator falls back to prior yaml. After Substep 2 cutover (migration commit 7), the aggregator will `exit 4` with phase-attribution message — but until then, runs continue normally. |
+
+**WARN semantics**: a missing or malformed sidecar today does NOT block the run — Phase 11 Substep 2 still uses the legacy LLM yaml-composition path. The sidecars are written but not yet CONSUMED by the live pipeline. The cutover (migration commit 7) will switch consumption from LLM to `build_threat_model_yaml.py`. Until that switch, treat sidecar writes as best-effort instrumentation.
+
+**Detailed per-phase wording** lives in the phase-group docs (`phase-group-architecture.md` Phases 3/5/6/7/8, `phase-group-threats.md` Phase 10b). Those docs are deep — your initial top-of-file Read of each phase-group will see a Sidecar Checklist at the top with line numbers pointing to the detailed protocol. When you reach a phase that has a sidecar, Read the relevant section before emitting PHASE_END.
+
+---
+
 ## Process
 
 **Authority rule:** Phase-group files are the **authoritative** source for phase-specific instructions. This file provides the execution flow, parameters, and agent dispatch commands. When in doubt, follow the phase-group file.

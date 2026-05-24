@@ -2,6 +2,17 @@
 
 This file is read by the orchestrator at runtime to load phase instructions.
 
+## ⚠ MANDATORY SIDECAR WRITES (Substep-2 deterministic-migration enabler)
+
+**Phase 10b MUST write two JSON sidecars to `$OUTPUT_DIR` at PHASE_END, BEFORE the PHASE_END log line.** Sidecars persist post-triage LLM judgement so the Phase-11 Substep-2 Python aggregator (`scripts/build_threat_model_yaml.py`) can compose `threat-model.yaml` deterministically. Missing sidecars are non-blocking today (aggregator falls back to prior yaml) — but all sidecars need to land for the Substep-2 cutover to ship. See the orchestrator's "Substep-2 Sidecar Protocol" chapter (in `agents/appsec-threat-analyst.md`) for the canonical 3-step protocol.
+
+| Phase | Sidecar file | Schema | Reserve IDs first? | Detailed protocol at line |
+|---|---|---|---|---|
+| 10b — Triage Validation | `.mitigation-overrides.json` | `schemas/fragments/mitigation-overrides.schema.json` | **yes** (`mitigation --count N` for additions only — splits don't reserve) | ~1620 (`### Phase 10b sidecars`) |
+| 10b — Triage Validation | `.tier-root-causes.json`     | `schemas/fragments/tier-root-causes.schema.json`     | no                                                                       | ~1620 (`### Phase 10b sidecars`) |
+
+Both sidecars run AFTER the triage agent completes (they reflect post-triage judgement). Read the `### Phase 10b sidecars` subsection at the line indicated above before emitting Phase-10b PHASE_END, then write both sidecars and validate.
+
 ## Phase 9: STRIDE Threat Enumeration — via sub-agents
 
 **⚠ SEQUENCING: STRIDE analyzers MUST NOT be dispatched before Phase 9.** They require outputs from Phases 6 (INTERFACES), 7 (TRUST_BOUNDARIES), and 8 (CONTROLS).

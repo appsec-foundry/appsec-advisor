@@ -34,6 +34,25 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_E
 | 7 | `[Phase 7/11] ▶ Trust Boundary Analysis…` | `[Phase 7/11] ✓ Trust Boundary Analysis — <n> boundaries` |
 | 8 | `[Phase 8/11] ▶ Security Controls Catalog…` | `[Phase 8/11] ✓ Security Controls — ✅ <n>  ⚠️ <n>  🔶 <n>  ❌ <n>` |
 
+## ⚠ MANDATORY SIDECAR WRITES (Substep-2 deterministic-migration enabler)
+
+**Every phase listed below MUST write a JSON sidecar to `$OUTPUT_DIR` at PHASE_END, BEFORE the PHASE_END log line.** Sidecars persist the LLM's judgement output so the Phase-11 Substep-2 Python aggregator (`scripts/build_threat_model_yaml.py`) can compose `threat-model.yaml` deterministically without re-authoring from working memory. Missing the sidecar is non-blocking today (aggregator falls back to prior yaml) — but **all sidecars need to land for the Substep-2 cutover to ship**. See the orchestrator's "Substep-2 Sidecar Protocol" chapter (in `agents/appsec-threat-analyst.md`) for the full 3-step protocol (`reserve_ids.py` → heredoc → `validate_fragment.py`).
+
+| Phase | Sidecar file | Schema | Reserve IDs first? | Detailed protocol at line |
+|---|---|---|---|---|
+| 3 — Architecture Modeling     | `.components.json`               | `schemas/fragments/components.schema.json`           | no  | ~776 (`### Phase 3 sidecar`) |
+| 5 — Asset Identification      | `.assets.json`                   | `schemas/fragments/assets.schema.json`               | **yes** (`asset --count N`) | ~1096 (`### Phase 5 sidecar`) |
+| 6 — Attack Surface Mapping    | `.attack-surface-overrides.json` | `schemas/fragments/attack-surface-overrides.schema.json` | no  | ~1238 (`### Phase 6 sidecar`) |
+| 7 — Trust Boundary Analysis   | `.trust-boundaries.json`         | `schemas/fragments/trust-boundaries.schema.json`     | no  | ~1311 (`### Phase 7 sidecar`) |
+| 8 — Security Controls Catalog | `.security-controls.json`        | `schemas/fragments/security-controls.schema.json`    | no  | ~1690 (`### Phase 8 sidecar`) |
+
+**Before emitting `PHASE_END` for any phase above, you MUST**:
+1. (If "Reserve IDs first" = yes) Call `python3 "$CLAUDE_PLUGIN_ROOT/scripts/reserve_ids.py" <type> --count <N> --output-dir "$OUTPUT_DIR"` — atomic counter, returns JSON list of IDs.
+2. Write the sidecar JSON via `cat > "$OUTPUT_DIR/.<sidecar>.json" <<'JSON' ... JSON` — shape per the schema above.
+3. Validate: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" --type <type> "$OUTPUT_DIR/.<sidecar>.json"` — exit 0 expected; non-zero is WARN, not blocking.
+
+When you reach a phase boundary that requires a sidecar, the detailed in-file protocol (with the exact heredoc shape and field constraints) lives at the `### Phase N sidecar` subsection at the line indicated above — Read that subsection at the time you need it, then write the sidecar before PHASE_END.
+
 **For the combined single-pass execution of Phases 5–7** (see "Phases 5–7 combined" below), emit all three `PHASE_START` lines together at the start of the combined pass and all three `PHASE_END` lines together at the end. Do **not** collapse them into a single entry — timing analysis requires per-phase markers.
 
 **⚠ No look-ahead logging — contract violation.** Phases 3, 4, and 8 each get their own `PHASE_START`/`PHASE_END` pair, emitted **immediately before / after** the actual work for that phase. The 5–7 exception above is the **only** legal batching in this file. Pre-emitting `PHASE_START` for phases that have not yet started (e.g. dumping all of 3–8 as a "plan" before doing any work) is **forbidden**: it makes silent-death diagnosis impossible because the log shows phases that never ran. This was the failure mode of the 2026-04-25 juice-shop Run 1 LLM-stall — the orchestrator emitted `PHASE_START` for phases 3, 4, 5, 6, 7, 8 in a single second at 13:02:37 UTC, then hung in Phase 3 for 1h 44m. Without the burst, the diagnosis would have been trivially "died in Phase 3"; with it, we could not tell which phase actually stalled. **Rule:** if you are not about to run the work for phase N right now, do not emit `PHASE_START Phase N/11`.
