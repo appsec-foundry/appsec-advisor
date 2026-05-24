@@ -1674,6 +1674,64 @@ class TestCli:
         result = _run_cli(str(nope))
         assert result.returncode == 2
 
+    def test_force_refuses_narrative_filled_security_architecture(self, output_dir):
+        """RC-3 — `--force security-architecture.md` MUST refuse to overwrite
+        when the on-disk fragment has been narrative-filled (zero
+        NARRATIVE_PLACEHOLDER markers). Operator must explicitly pass
+        `--allow-narrative-loss` to acknowledge the Stage-2-work discard."""
+        # Run once to get the scaffold; then "fill" it manually. The
+        # scaffold's placeholders are HTML comments shaped as
+        # `<!-- NARRATIVE_PLACEHOLDER: section=... -->`, so strip ALL of them
+        # with a regex (not a literal replace).
+        _run_cli(str(output_dir), "--only", "security-architecture.md")
+        filled = output_dir / ".fragments" / "security-architecture.md"
+        scaffold = filled.read_text()
+        filled.write_text(re.sub(r"<!--\s*NARRATIVE_PLACEHOLDER.*?-->", "filled narrative.", scaffold, flags=re.DOTALL))
+        assert "NARRATIVE_PLACEHOLDER" not in filled.read_text()
+        before = filled.read_text()
+        # --force without --allow-narrative-loss → exit 2, file untouched.
+        result = _run_cli(str(output_dir), "--force", "--only", "security-architecture.md")
+        assert result.returncode == 2
+        assert "refusing to --force overwrite security-architecture.md" in result.stderr
+        assert "apply_content_repair.py" in result.stderr
+        assert filled.read_text() == before, "fragment must be untouched on refusal"
+
+    def test_force_allow_narrative_loss_overwrites(self, output_dir):
+        """RC-3 — with the explicit acknowledgement, `--force --allow-narrative-loss`
+        overwrites a narrative-filled fragment back to scaffold."""
+        _run_cli(str(output_dir), "--only", "security-architecture.md")
+        filled = output_dir / ".fragments" / "security-architecture.md"
+        scaffold = filled.read_text()
+        filled.write_text(re.sub(r"<!--\s*NARRATIVE_PLACEHOLDER.*?-->", "filled narrative.", scaffold, flags=re.DOTALL))
+        result = _run_cli(
+            str(output_dir), "--force", "--allow-narrative-loss",
+            "--only", "security-architecture.md",
+        )
+        assert result.returncode == 0
+        # Scaffold restored — NARRATIVE_PLACEHOLDER comments reappear.
+        assert "NARRATIVE_PLACEHOLDER" in filled.read_text()
+
+    def test_force_on_scaffold_with_placeholders_works(self, output_dir):
+        """RC-3 guard fires ONLY when on-disk fragment is narrative-complete.
+        A scaffold-state fragment (placeholders present) is the legitimate
+        re-render case and must overwrite without the extra flag."""
+        _run_cli(str(output_dir), "--only", "security-architecture.md")
+        filled = output_dir / ".fragments" / "security-architecture.md"
+        # Scaffold output already contains NARRATIVE_PLACEHOLDER markers.
+        assert "NARRATIVE_PLACEHOLDER" in filled.read_text()
+        result = _run_cli(str(output_dir), "--force", "--only", "security-architecture.md")
+        assert result.returncode == 0, f"stderr={result.stderr}"
+
+    def test_force_on_other_fragments_unaffected(self, output_dir):
+        """The RC-3 guard targets only security-architecture.md. Other
+        mechanical fragments must still respond to plain --force."""
+        _run_cli(str(output_dir))
+        target = output_dir / ".fragments" / "system-overview.md"
+        target.write_text("MUTATED\n")
+        result = _run_cli(str(output_dir), "--force", "--only", "system-overview.md")
+        assert result.returncode == 0
+        assert "MUTATED" not in target.read_text()
+
     def test_lock_step_with_check_inline_shortcut(self, output_dir):
         """Pre-gen + check_inline_shortcut: after pre-gen, the only
         remaining issues should be ms-verdict.json + ms-architecture-

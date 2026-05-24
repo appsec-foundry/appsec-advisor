@@ -1454,13 +1454,40 @@ Where `<STATUS>` is `pass` or `repair_required` and `<N>` is the issue count.
    - Any other outcome → `status=repair_required`.
    - Write this file LAST, after allowed soft fixes, YAML corrections, and any content-repair plan emission, so it reflects the post-QA state.
 
-5. **Sprint 3A (M3.5) — write `$OUTPUT_DIR/.qa-content-repair-plan.json`** when any of the in-place repair checks (Check 1 link verify, Check 2 file linkification, Check 6 placeholder removal, Check 7 section completion, Check 10 anchor injection) had to be skipped because the PreToolUse hook blocked the `Write/Edit` against `threat-model.md`. The schema is at `schemas/qa-content-repair-plan.schema.json`. Each entry describes:
-   - `check`: the check ID that produced the action (e.g. `"6"`, `"10"`)
-   - `type`: one of `linkify_file_path | linkify_evidence_line | remove_placeholder | inject_anchor | fix_anchor_slug | add_section | add_table_column | fix_xref | other`
+5. **Sprint 3A (M3.5) — write `$OUTPUT_DIR/.qa-content-repair-plan.json`** when any of the in-place repair checks (Check 1 link verify, Check 2 file linkification, Check 6 placeholder removal, Check 7 section completion, Check 10 anchor injection, Check 12 canonical control naming in §7.2) had to be skipped because the PreToolUse hook blocked the `Write/Edit` against `threat-model.md`. The schema is at `schemas/qa-content-repair-plan.schema.json`. Each entry describes:
+   - `check`: the check ID that produced the action (e.g. `"6"`, `"10"`, `"subcontrol_naming_canonical"`)
+   - `type`: one of `linkify_file_path | linkify_evidence_line | remove_placeholder | inject_anchor | fix_anchor_slug | add_section | add_table_column | fix_xref | heading_rename_cascade | other`
    - `fragment`: the path under `.fragments/` to edit (must start with `.fragments/` — the applier hard-rejects anything else)
-   - `operation`: `replace_string` (preferred — uses an exact substring match), `append_after`, `insert_before`, or `regex_replace`
+   - `operation`: `replace_string` (preferred — uses an exact substring match), `append_after`, `insert_before`, `regex_replace`, or `heading_rename_cascade` (renames an H4 control heading AND cascades the rename to `<a id>` anchor, `[Name](#anchor)` link, and `(e.g. Name)` overview-table row — use for `subcontrol_naming_canonical` defects to avoid leaving stale anchor/link references)
    - `rationale`: 1-2 sentence explanation surfaced in the applier's diff log
    - `evidence` (optional): free-form dict (line numbers, T-NNN refs)
+
+   **When to use `heading_rename_cascade`** (post-2026-05): control headings in §7.X are mechanically cross-referenced from three other places in `security-architecture.md` — the §7.1 overview-table "Main reason" cell (`(e.g. <Name>)`), the `**Controls covered:**` markdown link, and the `<a id="<kebab>"></a>` anchor that precedes the heading. A plain `replace_string` op only renames the H4 heading itself; the three cross-references stay stale and trigger a follow-up `control_subsection_coverage` repair on the next compose pass. The cascade op updates all four targets atomically. Use this op (not `replace_string`) for any §7 H4 rename that surfaces from the `subcontrol_naming_canonical` or `auth_method_decomposition` checks.
+
+   Example for a canonical-naming repair:
+   ```json
+   {
+     "schema_version": 1,
+     "generated": "2026-05-24T08:00:00Z",
+     "status": "repair_required",
+     "action_count": 1,
+     "md_path": "/home/.../threat-model.md",
+     "output_dir": "/home/.../docs/security",
+     "actions": [
+       {
+         "check": "subcontrol_naming_canonical",
+         "type": "heading_rename_cascade",
+         "fragment": ".fragments/security-architecture.md",
+         "operation": {
+           "op": "heading_rename_cascade",
+           "old_name": "JWT RS256 Authentication",
+           "new_name": "JWT Bearer Authentication"
+         },
+         "rationale": "§7.2 IAM H4 must use a canonical authentication-mechanism name from method_whitelist — RS256 is the signing algorithm, not the mechanism. Cascade updates the heading, anchor, controls-covered link, and §7.1 table row in one shot."
+       }
+     ]
+   }
+   ```
 
    Example for the linkification check that wanted to wrap a bare `routes/login.ts` mention:
    ```json

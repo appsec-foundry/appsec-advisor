@@ -61,9 +61,10 @@
             "add_section",
             "add_table_column",
             "fix_xref",
+            "heading_rename_cascade",
             "other"
           ],
-          "description": "Coarse category — drives the applier's per-type validation. `other` is the catch-all for one-off fixes that don't fit the canonical taxonomy."
+          "description": "Coarse category — drives the applier's per-type validation. `heading_rename_cascade` (post-2026-05) is used for §7.X control H4 renames that must propagate to anchor, controls-covered link, and §7.1 overview-table row in one atomic step. `other` is the catch-all for one-off fixes that don't fit the canonical taxonomy."
         },
         "fragment": {
           "type": "string",
@@ -75,7 +76,8 @@
             {"$ref": "#/$defs/op_replace_string"},
             {"$ref": "#/$defs/op_append_after"},
             {"$ref": "#/$defs/op_insert_before"},
-            {"$ref": "#/$defs/op_regex_replace"}
+            {"$ref": "#/$defs/op_regex_replace"},
+            {"$ref": "#/$defs/op_heading_rename_cascade"}
           ]
         },
         "rationale": {
@@ -133,6 +135,17 @@
           "default": 0,
           "description": "0 = unlimited. Anything else caps the substitution count to bound blast radius."
         }
+      }
+    },
+    "op_heading_rename_cascade": {
+      "type": "object",
+      "description": "Rename an H4 control heading and cascade the rename to every mechanical reference in security-architecture.md: the `<a id=\"<kebab>\">` anchor preceding the heading, every `[<old_name>](#<old-kebab>)` markdown link, and `(e.g. <old_name>)` mentions in the §7.1 overview-table 'Main reason' cell. A plain `replace_string` would only touch the heading itself and leave the three cross-references stale. Required for `subcontrol_naming_canonical` / `auth_method_decomposition` repairs.",
+      "required": ["op", "old_name", "new_name"],
+      "additionalProperties": false,
+      "properties": {
+        "op": {"const": "heading_rename_cascade"},
+        "old_name": {"type": "string", "description": "The current H4 heading text without the `#### N.M.X ` numbering prefix (the applier matches both forms — numbered and bare)."},
+        "new_name": {"type": "string", "description": "The canonical replacement name. Must match the `method_whitelist` / canonical vocabulary in data/sections-contract.yaml or data/architectural-controls.yaml. `old_name == new_name` is a no-op (idempotent)."}
       }
     }
   }

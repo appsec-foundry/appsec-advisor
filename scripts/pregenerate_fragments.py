@@ -5431,6 +5431,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dry-run", action="store_true", help="Print intended actions without writing.")
     parser.add_argument(
+        "--allow-narrative-loss",
+        action="store_true",
+        help="Acknowledge that --force on security-architecture.md will discard "
+             "any LLM-authored NARRATIVE_PLACEHOLDER fills from Stage 2. Without "
+             "this flag, --force refuses to overwrite security-architecture.md "
+             "when the on-disk version has no remaining NARRATIVE_PLACEHOLDER markers "
+             "(i.e. Stage 2 already filled it). The right tool for surgical updates "
+             "to a Stage-2-filled fragment is scripts/apply_content_repair.py.",
+    )
+    parser.add_argument(
         "--depth",
         type=str,
         default="",
@@ -5521,6 +5531,40 @@ def main(argv: list[str] | None = None) -> int:
         if path.exists() and not args.force:
             skipped.append(name)
             continue
+        # RC-3 guard: --force on security-architecture.md must not silently
+        # discard LLM-authored narratives. A fragment whose NARRATIVE_PLACEHOLDER
+        # count has dropped to zero has been filled by Stage 2 and represents
+        # ~3-8 min of LLM work; --force would replay that work on the next
+        # Stage 2 dispatch. Require --allow-narrative-loss as an explicit
+        # acknowledgement. Operators wanting to update mechanical fields
+        # (table rows, "Controls covered:" lines, anchors) without losing
+        # narrative should use scripts/apply_content_repair.py with the
+        # heading_rename_cascade operator instead.
+        if (
+            args.force
+            and name == "security-architecture.md"
+            and path.exists()
+            and not args.allow_narrative_loss
+        ):
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except OSError:
+                existing = ""
+            if existing and "NARRATIVE_PLACEHOLDER" not in existing:
+                print(
+                    f"Error: refusing to --force overwrite {name} — the on-disk "
+                    f"fragment has been narrative-filled (no NARRATIVE_PLACEHOLDER "
+                    f"markers remain). Overwriting would discard ~3-8 min of "
+                    f"Stage 2 LLM work and require re-dispatching the renderer.\n"
+                    f"  • For surgical updates (heading rename, control name change), "
+                    f"use scripts/apply_content_repair.py with a heading_rename_cascade "
+                    f"operation — preserves narratives.\n"
+                    f"  • To deliberately wipe and regenerate the scaffold, re-run "
+                    f"with --allow-narrative-loss (the operator acknowledges the "
+                    f"narrative work will be lost).",
+                    file=sys.stderr,
+                )
+                return 2
         try:
             # security-architecture takes a depth parameter (P2 — A5);
             # other generators have a (yaml_data) signature. When v2 is

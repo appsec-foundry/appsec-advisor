@@ -113,11 +113,111 @@ def _op_regex_replace(text: str, op: dict) -> str:
     return new_text
 
 
+# ---------------------------------------------------------------------------
+# heading_rename_cascade (RC-2)
+# ---------------------------------------------------------------------------
+#
+# Rename an H4 control heading AND cascade the rename to every mechanical
+# place that references the old name. For ``security-architecture.md`` the
+# referenced places are:
+#
+#   1. The H4 heading itself:                ``#### 7.2.1 <old_name>``
+#   2. The pre-heading anchor tag:           ``<a id="<old-kebab>"></a>``
+#   3. ``**Controls covered:**`` link text:  ``[<old_name>](#<old-kebab>)``
+#   4. §7.1 overview-table row text:         ``(e.g. <old_name>)``
+#
+# The op refuses to write when the H4 heading is not found (no needle to
+# cascade FROM). Anchor / link / table-row cascades are best-effort: a
+# missing cascade target logs a warning but does not abort, because legitimate
+# repository structures may omit one or more of them.
+#
+# Op shape:
+#
+#   {
+#     "op": "heading_rename_cascade",
+#     "old_name": "JWT RS256 Authentication",
+#     "new_name": "JWT Bearer Authentication"
+#   }
+
+
+def _kebab(name: str) -> str:
+    """Same kebab-case rule used by compose_threat_model.py's anchor builder:
+    lowercase, collapse non-alphanumeric runs to a single hyphen, strip
+    leading/trailing hyphens."""
+    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return s
+
+
+def _op_heading_rename_cascade(text: str, op: dict) -> str:
+    old_name = op.get("old_name")
+    new_name = op.get("new_name")
+    if not isinstance(old_name, str) or not old_name.strip():
+        raise ApplyError("heading_rename_cascade: missing/empty `old_name`")
+    if not isinstance(new_name, str) or not new_name.strip():
+        raise ApplyError("heading_rename_cascade: missing/empty `new_name`")
+    if old_name == new_name:
+        # Treat as no-op rather than error: idempotent re-runs of a content
+        # repair plan should not fail just because the cascade already ran.
+        return text
+
+    old_kebab = _kebab(old_name)
+    new_kebab = _kebab(new_name)
+
+    # (1) Heading line — required cascade target. Match `#### N.M.X <old_name>`
+    # with optional intra-line whitespace; the numbering must survive verbatim
+    # and the trailing newline must NOT be consumed (using `\s*$` would let
+    # the greedy class eat newlines and collapse the blank line between the
+    # heading and its **Security assessment** trailer).
+    heading_pat = re.compile(
+        r"^(####[ \t]+\d+\.\d+\.\d+[ \t]+)" + re.escape(old_name) + r"[ \t]*$",
+        re.MULTILINE,
+    )
+    text, h_n = heading_pat.subn(rf"\1{new_name}", text, count=1)
+    if h_n == 0:
+        # Fallback — sometimes the heading has no `N.M.X` numbering (e.g. raw
+        # H4 in a fragment). Try the bare form.
+        bare_heading_pat = re.compile(
+            r"^(####[ \t]+)" + re.escape(old_name) + r"[ \t]*$",
+            re.MULTILINE,
+        )
+        text, h_n = bare_heading_pat.subn(rf"\1{new_name}", text, count=1)
+    if h_n == 0:
+        raise ApplyError(
+            f"heading_rename_cascade: no H4 heading found for "
+            f"old_name={old_name!r:.80} — needle missing"
+        )
+
+    # (2) Anchor tag — best effort. Match `<a id="<old-kebab>"></a>` (HTML).
+    anchor_pat = re.compile(
+        r'<a\s+id="' + re.escape(old_kebab) + r'"\s*>\s*</a>'
+    )
+    text = anchor_pat.sub(f'<a id="{new_kebab}"></a>', text)
+
+    # (3) Markdown link with the old anchor — match `[Some Text](#<old-kebab>)`
+    # — replace BOTH the link text (when it equals old_name) and the anchor.
+    link_text_anchor_pat = re.compile(
+        r"\[" + re.escape(old_name) + r"\]\(#" + re.escape(old_kebab) + r"\)"
+    )
+    text = link_text_anchor_pat.sub(f"[{new_name}](#{new_kebab})", text)
+    # And: link with different text but same anchor (rare; preserve label).
+    bare_anchor_pat = re.compile(r"\]\(#" + re.escape(old_kebab) + r"\)")
+    text = bare_anchor_pat.sub(f"](#{new_kebab})", text)
+
+    # (4) §7.1 overview-table row — `(e.g. <old_name>)`. The §7.1 table is
+    # mechanical-frozen and uses the control name verbatim in its "Main
+    # reason" cell. Cascade replaces all such mentions.
+    eg_pat = re.compile(r"\(e\.g\.\s+" + re.escape(old_name) + r"\)")
+    text = eg_pat.sub(f"(e.g. {new_name})", text)
+
+    return text
+
+
 _OP_HANDLERS = {
     "replace_string": _op_replace_string,
     "append_after": _op_append_after,
     "insert_before": _op_insert_before,
     "regex_replace": _op_regex_replace,
+    "heading_rename_cascade": _op_heading_rename_cascade,
 }
 
 

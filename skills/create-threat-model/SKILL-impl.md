@@ -1905,16 +1905,31 @@ Both scripts are **idempotent** — they strip prior auto-emitted entries before
 #   5. reclassify_components — fixes attack-target-tier vs control-location-
 #      tier drift. Reassigns threats whose evidence.file matches exactly
 #      one other component's paths globs.
+#   6. enforce_control_taxonomy — RC-1 + RC-6 (2026-05): canonicalises
+#      security_controls[].control names (e.g. "JWT RS256 Authentication"
+#      → "JWT Bearer Authentication") and re-routes mis-classified
+#      security_controls[].domain entries (e.g. auth-flow rate limiting
+#      parked in §7.12 Real-time → §7.2 IAM). Must run BEFORE
+#      pregenerate_fragments so the mechanical §7.1 overview table +
+#      `**Controls covered:**` lines are built from a taxonomy-clean yaml.
 # All scripts are idempotent + best-effort: failures fall back to the
 # pre-script YAML rather than aborting the run after 25+ minutes of Stage 1.
 if [ "$DRY_RUN" = "false" ]; then
   {
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + yaml-hygiene + vektors + open-registration + asset-links"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + yaml-hygiene + vektors + open-registration + asset-links + control-taxonomy"
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true
+    # RC-1 + RC-6 (2026-05): canonicalise security_controls[].control names
+    # against forbidden_heading_patterns + alias rewrites, and re-route
+    # security_controls[].domain when token-match against a §7 method_whitelist
+    # contradicts the Stage-1 assignment (specifically: auth controls parked
+    # in §7.12 Real-time and Not Applicable Controls). Closes the cascade
+    # of §7.2.1 heading-rename / §7.1 overview-table inconsistencies that
+    # surfaced in the 2026-05-23 juice-shop run. Idempotent.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/enforce_control_taxonomy.py" "$OUTPUT_DIR" 2>&1 || true
     # Issue-1: deterministic vektor field per threat (CWE + attack_surface
     # auth_required → repo-read / victim-required / internet-anon /
     # internet-user) so §8 Vektor column reflects real reachability rather

@@ -359,3 +359,133 @@ class TestCli:
         rc = acr.main([str(out), "--dry-run"])
         assert rc == 0
         assert frag.read_text() == "OLD", "dry-run must not modify files"
+
+
+# ---------------------------------------------------------------------------
+# heading_rename_cascade (RC-2)
+# ---------------------------------------------------------------------------
+
+
+class TestHeadingRenameCascade:
+    """RC-2 — H4 rename must cascade to all mechanical references:
+    anchor tag, `**Controls covered:**` link, §7.1 overview-table row."""
+
+    _FRAGMENT = (
+        "### 7.1 Security Control Overview\n"
+        "\n"
+        "| Control category | Verdict | Main reason |\n"
+        "|---|---|---|\n"
+        "| [IAM](#72-iam) | 🟠 Weak | catalogued (e.g. JWT RS256 Authentication). |\n"
+        "\n"
+        "### 7.2 Identity and Authentication Controls\n"
+        "\n"
+        "**Controls covered:** [JWT RS256 Authentication](#jwt-rs256-authentication).\n"
+        "\n"
+        "**Implemented controls:** JWT RS256 signing via express-jwt.\n"
+        "\n"
+        "<a id=\"jwt-rs256-authentication\"></a>\n"
+        "\n"
+        "#### 7.2.1 JWT RS256 Authentication\n"
+        "\n"
+        "**Security assessment**\n"
+        "\n"
+        "Broken because of T-001.\n"
+    )
+
+    def _make_plan(self, old: str = "JWT RS256 Authentication", new: str = "JWT Bearer Authentication") -> dict:
+        return {
+            "schema_version": 1,
+            "actions": [
+                {
+                    "check": "subcontrol_naming_canonical",
+                    "type": "heading_rename_cascade",
+                    "fragment": ".fragments/security-architecture.md",
+                    "operation": {
+                        "op": "heading_rename_cascade",
+                        "old_name": old,
+                        "new_name": new,
+                    },
+                }
+            ],
+        }
+
+    def test_cascade_updates_all_four_targets(self, tmp_path):
+        out = _setup_output_dir(tmp_path)
+        frag = _write_fragment(out, "security-architecture.md", self._FRAGMENT)
+        (out / ".qa-content-repair-plan.json").write_text(json.dumps(self._make_plan()))
+        rc = acr.main([str(out)])
+        assert rc == 0
+        result = frag.read_text()
+        # 1. H4 heading renamed
+        assert "#### 7.2.1 JWT Bearer Authentication" in result
+        assert "JWT RS256 Authentication" not in result.split("**Implemented controls:**")[0]
+        # 2. anchor tag updated
+        assert '<a id="jwt-bearer-authentication"></a>' in result
+        assert '<a id="jwt-rs256-authentication"></a>' not in result
+        # 3. `**Controls covered:**` link cascade
+        assert "[JWT Bearer Authentication](#jwt-bearer-authentication)" in result
+        # 4. §7.1 overview-table row mention
+        assert "(e.g. JWT Bearer Authentication)" in result
+        # narrative prose unchanged — RS256 in `**Implemented controls:**` is
+        # a real algorithm name, not a mechanism heading.
+        assert "JWT RS256 signing via express-jwt" in result
+
+    def test_cascade_preserves_blank_line_after_heading(self, tmp_path):
+        out = _setup_output_dir(tmp_path)
+        frag = _write_fragment(out, "security-architecture.md", self._FRAGMENT)
+        (out / ".qa-content-repair-plan.json").write_text(json.dumps(self._make_plan()))
+        acr.main([str(out)])
+        result = frag.read_text()
+        # The blank line between the H4 heading and **Security assessment**
+        # must survive the rename — `\s*$` regex would eat the trailing newline.
+        assert "JWT Bearer Authentication\n\n**Security assessment**" in result
+
+    def test_cascade_rerun_is_noop_idempotent_via_new_plan(self, tmp_path):
+        """A re-run of the SAME plan (old=RS256) must fail because the
+        H4 needle has already been consumed. A plan with the NEW name as
+        `old_name` should also no-op (old==new short-circuits)."""
+        out = _setup_output_dir(tmp_path)
+        frag = _write_fragment(out, "security-architecture.md", self._FRAGMENT)
+        (out / ".qa-content-repair-plan.json").write_text(json.dumps(self._make_plan()))
+        acr.main([str(out)])
+        snapshot = frag.read_text()
+        # Same plan again: H4 needle gone → action skipped, file untouched.
+        rc2 = acr.main([str(out)])
+        assert rc2 == 1  # action skipped because needle missing
+        assert frag.read_text() == snapshot
+        # Plan with old==new is a no-op.
+        identity_plan = self._make_plan(old="JWT Bearer Authentication",
+                                        new="JWT Bearer Authentication")
+        (out / ".qa-content-repair-plan.json").write_text(json.dumps(identity_plan))
+        rc3 = acr.main([str(out)])
+        assert rc3 == 0
+        assert frag.read_text() == snapshot
+
+    def test_cascade_missing_heading_raises(self, tmp_path):
+        out = _setup_output_dir(tmp_path)
+        # Fragment has no `#### N.M.X JWT RS256 Authentication` heading.
+        _write_fragment(out, "security-architecture.md",
+                        "### 7.2 IAM\n\nSome prose without the target heading.\n")
+        (out / ".qa-content-repair-plan.json").write_text(json.dumps(self._make_plan()))
+        rc = acr.main([str(out)])
+        # action skipped → exit code 1
+        assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# kebab helper
+# ---------------------------------------------------------------------------
+
+
+class TestKebabHelper:
+    def test_kebab_basic(self):
+        assert acr._kebab("JWT Bearer Authentication") == "jwt-bearer-authentication"
+
+    def test_kebab_collapses_punctuation(self):
+        assert acr._kebab("Foo / Bar:Baz") == "foo-bar-baz"
+
+    def test_kebab_strips_edges(self):
+        assert acr._kebab("--Foo--") == "foo"
+
+    def test_kebab_numeric_preserved(self):
+        assert acr._kebab("7.2.1 JWT Bearer") == "7-2-1-jwt-bearer"
