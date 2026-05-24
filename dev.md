@@ -99,6 +99,9 @@ flowchart TB
     P8["runtime_cleanup.py"]
     P9["route_inventory.py"]
     P10["pregenerate_fragments.py"]
+    P11["build_threat_model_yaml.py<br/><i>Phase 11 Substep 2 aggregator</i>"]
+    P12["reserve_ids.py<br/><i>atomic ID counter for sidecars</i>"]
+    P13["validate_fragment.py<br/><i>schema gate for sidecars + render-fragments</i>"]
   end
 
   subgraph Data["data/ (Kataloge)"]
@@ -526,7 +529,19 @@ flowchart LR
   R --> FRAG
   FRAG --> CMP["compose_threat_model.py --strict"]
   CMP --> MD["threat-model.md"]:::artifact
-  CMP --> YML["threat-model.yaml"]:::artifact
+
+  %% Substep-2 deterministic migration: sidecars + aggregator
+  %% (see §9a below for protocol detail).
+  P3X["Phase 3 (Architecture)"] -.-> AC[".components.json"]:::artifact
+  P5X["Phase 5 (Assets)"]       -.-> AA[".assets.json"]:::artifact
+  P6X["Phase 6 (Attack Surf.)"] -.-> AAS[".attack-surface-overrides.json"]:::artifact
+  P7X["Phase 7 (Trust Boun.)"]  -.-> ATB[".trust-boundaries.json"]:::artifact
+  P8X["Phase 8 (Sec. Controls)"]-.-> ASC[".security-controls.json"]:::artifact
+  TV -.-> AM[".mitigation-overrides.json"]:::artifact
+  TV -.-> ATR[".tier-root-causes.json"]:::artifact
+
+  AC & AA & AAS & ATB & ASC & AM & ATR & TMJ --> BLD["build_threat_model_yaml.py<br/>(Phase 11 Substep 2)"]
+  BLD --> YML["threat-model.yaml"]:::artifact
   CMP --> CS2[".compose-stats.json"]:::artifact
 
   MD --> QA["qa-reviewer"]
@@ -542,6 +557,102 @@ flowchart LR
 `runtime_cleanup.py` räumt am Ende Transientes auf (Liste:
 `docs/cleanup-whitelist.md`), bewahrt aber Audit-Artefakte und
 Inkrement-Anker.
+
+---
+
+## 9a. Substep-2 Sidecar-Architektur (Hybrid Python + LLM)
+
+**Problem:** Phase 11 Substep 2 hat historisch das komplette
+`threat-model.yaml` vom LLM aus Working-Memory neu komponiert. Das
+kostet 15–20 turns am Pipeline-Ende — exakt dort wo das Budget am
+knappsten ist (verifiziert: 2026-05-24 juice-shop MAX_TURNS @ turn 150
+mid-Phase-11 → bootstrap-stub yaml → forced resume; gleicher root cause
+wie 2026-05-03 API-streaming-stall).
+
+**Lösung:** Deterministischer Python-Aggregator
+(`scripts/build_threat_model_yaml.py`) liest Intermediates + neue
+Phase-Output-Sidecars und schreibt `threat-model.yaml` in 1 turn.
+Vollständige Spec: [`docs/substep2-deterministic-migration.md`](substep2-deterministic-migration.md).
+
+```mermaid
+flowchart TB
+  subgraph EarlyPhases["Phasen 3–10b (LLM, Budget reichlich)"]
+    direction TB
+    L1["Phase 3 — Architecture Modeling"]
+    L2["Phase 5 — Asset Identification (PoC pilot)"]
+    L3["Phase 6 — Attack Surface Mapping"]
+    L4["Phase 7 — Trust Boundary Analysis"]
+    L5["Phase 8 — Security Controls Catalog"]
+    L6["Phase 10b — Triage Validation"]
+  end
+
+  subgraph Sidecars["Sidecars ($OUTPUT_DIR/.X.json)"]
+    direction TB
+    SC1[".components.json"]
+    SC2[".assets.json"]
+    SC3[".attack-surface-overrides.json"]
+    SC4[".trust-boundaries.json"]
+    SC5[".security-controls.json"]
+    SC6[".mitigation-overrides.json"]
+    SC7[".tier-root-causes.json"]
+  end
+
+  subgraph Builder["Phase 11 Substep 2 (Python, 1 turn)"]
+    direction TB
+    B1["build_threat_model_yaml.py<br/>• read intermediates + sidecars<br/>• three-stage merge per field<br/>  (baseline → splits/curations → additions)<br/>• cross-ref validate<br/>• schema validate<br/>• atomic write"]
+  end
+
+  L1 -- "reserve_ids + cat heredoc<br/>+ validate_fragment" --> SC1
+  L2 -- same --> SC2
+  L3 -- same --> SC3
+  L4 -- same --> SC4
+  L5 -- same --> SC5
+  L6 -- same --> SC6
+  L6 -- same --> SC7
+
+  Sidecars --> B1
+  B1 --> YML["threat-model.yaml<br/>(schema-VALID)"]
+```
+
+**Drei-Stufen-Merge pro Feld** (Aggregator):
+1. **Baseline** aus Intermediates (`.threats-merged.json`, `.route-inventory.json`, `.architecture-coverage.json`, …) — deterministisch
+2. **Splits / Curations** aus Sidecar — z.B. M-001 wird zu M-001a + M-001b zerlegt, oder 112 Routes werden auf 21 relevante gefiltert
+3. **Additions** aus Sidecar — z.B. Process-Mitigation "Establish dependency-update SLA" die zu keinem einzelnen threat gehört aber ≥ 2 T-IDs adressiert
+
+**Sidecar-Protokoll pro Phase (3 Bash-Calls am PHASE_END)**:
+```bash
+# 1. ID-Reservierung (atomic via fcntl.LOCK_EX)
+IDS=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/reserve_ids.py" \
+      asset --count <N> --output-dir "$OUTPUT_DIR")
+# 2. Heredoc-Write der strukturierten Daten
+cat > "$OUTPUT_DIR/.assets.json" <<'JSON'
+  { "schema_version": 1, "assets": [...] }
+JSON
+# 3. Schema-Gate
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+      --type assets "$OUTPUT_DIR/.assets.json"
+```
+
+**Wichtige Invarianten**:
+- **Single writer pro sidecar.** Phase 5 schreibt `.assets.json`, keine andere Phase modifiziert sie.
+- **ID-Counter sind atomic.** `reserve_ids.py` nutzt `fcntl.LOCK_EX` — 20 parallele Prozesse × 5 IDs ergeben 100 unique IDs (verifiziert in `tests/test_reserve_ids.py`).
+- **Cross-Refs werden im Aggregator validiert.** Sidecars validieren nur ihre eigene Form. M-IDs in Splits/Additions müssen existierende T-IDs referenzieren (≥1 für evidence-Grounding; ≥2 bei process-Mitigations).
+- **Aggregator ruft nie ein LLM auf.** Determinismus ist non-negotiable. Schema-Validierung ist hartes Pre-Write-Gate.
+- **Fallback-Pfad.** Solange ein Sidecar fehlt UND prior `threat-model.yaml` existiert, übernimmt der Aggregator das Feld aus dem prior yaml. Damit funktioniert die Migration inkrementell: jeder Schritt ist isoliert revertierbar, bestehende Installations brechen nicht.
+
+**Migrations-Status (2026-05-24)**:
+- ✅ `build_threat_model_yaml.py` (Aggregator) — schema-VALID gegen juice-shop
+- ✅ `reserve_ids.py` (atomic ID counters) — 11/11 Tests grün
+- ✅ 7 Sidecar-Schemas in `schemas/fragments/` — roundtrip-validiert
+- ✅ Phase 5 PoC-Wiring — sidecar wird geschrieben, aber Substep 2 nutzt noch LLM-Pfad
+- ⏳ Phase 3/6/7/8/10b Wiring — pending nach Ref-Run-Gate-Validierung des Phase-5-PoC
+- ⏳ Substep-2-Cutover (commit 7 der Migration) — pending nach Phase-Wiring-Complete
+
+Acceptance-Gates pro Ref-Run-Repo (juice-shop, VulnerableApp, ≥1 internal):
+§1-§7 wordcount Δ < 5%, Mermaid-Count identisch, Threat-Count identisch,
+Mitigation-Count Δ ≤ 2, F-NNN gap-free, SARIF identisch, Phase 11 ≤ 3 turns,
+zero MAX_TURNS events. Details in
+[`docs/substep2-deterministic-migration.md` §9](substep2-deterministic-migration.md).
 
 ---
 
