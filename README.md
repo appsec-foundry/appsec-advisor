@@ -58,6 +58,7 @@ Incremental reruns help keep the architecture view and threat model aligned with
 - [Usage examples](#usage-examples)
 - [Assessment depth & cost control](#assessment-depth--cost-control)
 - [CI integration](#ci-integration)
+- [Manual full-run check](#manual-full-run-check)
 - [Cross-repo context](#cross-repo-context)
 - [Architecture](#architecture)
 - [Additional skills](#additional-skills)
@@ -285,6 +286,54 @@ For very large repositories, the advisor automatically switches to an optimized 
 ./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5 --sarif
 ```
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
+
+## Manual full-run check
+
+After a non-trivial refactor (renderer changes, schema bumps, phase-group edits, prompt restructures, hook changes), run the bundled end-to-end check. It exercises the full pipeline against a fixed synthetic fixture and validates ~25 structural invariants on the produced artifacts.
+
+> [!IMPORTANT]
+> This check is **manual-only**. It is deliberately not wired into PR triggers, push hooks, or cron — it consumes real LLM budget (~30–50% of a Pro 5h subscription window, or ~$0.30–1.00 with API-key billing on `quick` depth). The standard `pytest tests/` suite (~50 deterministic tests) remains your per-PR safety net.
+
+**Run it:**
+
+```bash
+make e2e-full
+```
+
+or, from inside a Claude Code session in this repository:
+
+```text
+/e2e-full
+```
+
+Both routes drive `tests/e2e/run-full.sh`, which:
+
+1. Pre-flights the `claude` CLI (uses subscription auth via `~/.claude/` or `ANTHROPIC_API_KEY` if set).
+2. Runs `scripts/run-headless.sh` against `tests/fixtures/e2e/synthetic-repo/` and writes artifacts to `tests/fixtures/e2e/_last-run/` (git-ignored).
+3. Invokes `pytest tests/test_full_run_e2e.py`, which is skipped unless the driver sets `APPSEC_E2E_FULL=1`.
+
+**What's asserted:**
+
+| Group | Checks |
+|---|---|
+| Existence | All canonical outputs present (`threat-model.{md,yaml,sarif.json}`, `.threats-merged.json`, `.triage-flags.json`, `.recon-summary.md`, `.hook-events.log`) and all 11 Stage-2 fragments under `.fragments/`. |
+| Schemas | `validate_intermediate.py` accepts every intermediate artifact (`threats_merged`, `triage_flags`). |
+| Renderer | `compose_threat_model.render()` reproduces the markdown with zero warnings and is byte-idempotent. |
+| Hard Gate | `check_inline_shortcut.py` confirms Stage 2 routed through the deterministic renderer (no LLM bypass). |
+| QA invariants | `qa_checks.py` passes `invariants`, `ms_structure`, `anchors`, `xrefs`, `cell_format`. |
+| Content bands | At least one threat with required fields; placeholder tokens (`TODO`, `PLACEHOLDER`, `lorem ipsum`, …) absent from the markdown. |
+| Audit trail | `.hook-events.log` shows `PHASE_START`/`PHASE_END` progression. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | Pipeline + assertions passed |
+| 1 | Pipeline failed (`run-headless.sh` non-zero) |
+| 2 | Pipeline succeeded but assertions failed |
+| 3 | Pre-flight failed (missing `claude` CLI or fixture) |
+
+**Re-checking without a fresh run:** `make e2e-full-keep` replays the assertions against the previous `_last-run/` artifacts — useful while iterating on an assertion or when debugging a failure without burning another LLM budget.
 
 ## Cross-repo context
 

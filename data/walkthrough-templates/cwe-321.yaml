@@ -11,9 +11,11 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant Repo as "Public repository"
-      participant App as "{component} ({file}:{line})"
-      Attacker->>Repo: Clone / browse — extract private key from `{file}:{line}`
+      participant Repo
+      participant App
+      Note over Repo: Public repository
+      Note over App: {component} — {file}:{line}
+      Attacker->>Repo: Clone or browse — extract private key from {file} line {line}
       Attacker->>Attacker: Sign forged token / signature with the extracted key
       Attacker->>App: Submit forged artefact in normal authentication flow
       App-->>Attacker: Request accepted as authentic — signature validates

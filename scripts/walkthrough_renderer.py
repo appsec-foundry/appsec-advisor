@@ -161,12 +161,25 @@ def _anchor(t_id: str) -> str:
 
 
 def _short_title(title: str, limit: int = 70) -> str:
-    """Trim a finding title to fit a single-line Mermaid label."""
+    """Trim a finding title to fit a single-line Mermaid label.
+
+    Paren-aware: a parenthesised suffix such as ``(lib/insecurity.ts:24)`` is
+    treated as atomic — either fully retained or fully dropped. Truncating
+    mid-paren would leave an unbalanced ``(`` in the label which Mermaid's
+    flowchart parser interprets as the start of round-rect node syntax
+    ``(text)`` inside ``[...]`` and aborts the diagram. The historical
+    2026-05-24 juice-shop run shipped 10 broken chain-overview diagrams
+    because of this.
+    """
 
     title = (title or "").strip()
     if len(title) <= limit:
         return title
-    return title[: limit - 1].rstrip() + "…"
+    truncated = title[: limit - 1].rstrip()
+    # If the truncation cut mid-paren, drop the whole unbalanced suffix.
+    if truncated.count("(") > truncated.count(")"):
+        truncated = re.sub(r"\s*\([^)]*$", "", truncated).rstrip()
+    return truncated + "…"
 
 
 def _mermaid_safe(label: str) -> str:
@@ -479,9 +492,10 @@ def render_sequence_diagram(
             "sequenceDiagram\n"
             "    autonumber\n"
             "    actor Attacker\n"
-            "    participant App as \"{component} ({file}:{line})\"\n"
+            "    participant App\n"
+            "    Note over App: {component} — {file}:{line}\n"
             "    alt Current state\n"
-            "        Attacker->>App: Crafted request exploits the weakness at `{file}:{line}`\n"
+            "        Attacker->>App: Crafted request exploits the weakness at {file} line {line}\n"
             "        App-->>Attacker: Response confirms exploitation\n"
             "    else After {mitigation_primary}\n"
             "        Attacker->>App: Same request\n"

@@ -8,8 +8,9 @@ sequence_diagram: |
       autonumber
       actor Attacker
       actor Victim
-      participant App as "{component} ({file}:{line})"
-      Attacker->>App: {endpoint_guess} with HTML payload (onerror exfiltrates cookies)
+      participant App
+      Note over App: {component} — {file}:{line}
+      Attacker->>App: {endpoint_guess} with HTML payload — onerror handler exfiltrates cookies
       Victim->>App: Loads page rendering the stored / reflected payload
       App-->>Victim: HTML contains the unescaped attacker payload — script executes
       Victim->>Attacker: Outbound request leaks session cookie / token

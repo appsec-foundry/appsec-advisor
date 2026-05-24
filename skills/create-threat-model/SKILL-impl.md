@@ -334,6 +334,57 @@ Scope:
 
 The validator never touches `threat-model.md`, `threat-model.yaml`, or audit logs. It is always safe to run and its exit code is intentionally ignored by the skill — quarantining is best-effort; a move failure leaves the corrupt file in place so the subsequent validation gate (`validate_fragment.py` / `validate_intermediate.py`) can still hard-fail with a useful error.
 
+### Optional QA-validator dependency check
+
+The Stage-3 `qa_checks.py mermaid_syntax` check is two-tier: a permissive regex pre-pass plus an authoritative Mermaid parser (Node `jsdom` polyfill + `@mermaid-js/mermaid-cli`). When the authoritative parser is missing, the regex fallback silently accepts patterns Mermaid then rejects at render time — the 2026-05-24 juice-shop run shipped 24 broken Mermaid blocks because of this gap (`participant X as "..."` quoted aliases × 14; truncated `(path…)` labels × 10). Detecting the missing dependency at run-start surfaces the gap before ~45 min of work end with a silently-degraded QA gate.
+
+Non-blocking: Node / npm are legitimately absent on slim Docker images and barebones WSL, and the threat model still renders; only the mermaid validator coverage drops. Skip with `APPSEC_SKIP_VALIDATOR_CHECK=1` for known-good CI environments.
+
+```bash
+if [ "${APPSEC_SKIP_VALIDATOR_CHECK:-}" != "1" ]; then
+  # The Layer-B validator (scripts/mermaid_validate.mjs) scopes its
+  # require.resolve() calls to $CLAUDE_PLUGIN_ROOT/scripts, NOT to the
+  # default Node module-search path. A globally-installed jsdom or one
+  # in the user's cwd will NOT satisfy it. The preflight check must use
+  # the same scope to avoid a false-positive "OK" verdict here.
+  JSDOM_OK="no"
+  MERMAID_CORE_OK="no"
+  if command -v node >/dev/null 2>&1; then
+    eval "$(node --input-type=module -e "
+      import { createRequire } from 'node:module';
+      const r = createRequire('${CLAUDE_PLUGIN_ROOT}/scripts/package.json');
+      let j='no', m='no';
+      try { r.resolve('jsdom',   { paths: ['${CLAUDE_PLUGIN_ROOT}/scripts'] });   j='yes'; } catch {}
+      try { r.resolve('mermaid', { paths: ['${CLAUDE_PLUGIN_ROOT}/scripts'] }); m='yes'; } catch {}
+      console.log('JSDOM_OK=' + j + ' MERMAID_CORE_OK=' + m);
+    " 2>/dev/null)"
+  fi
+  MMDC_OK="no"
+  command -v mmdc >/dev/null 2>&1 && MMDC_OK="yes"
+  if [ "$JSDOM_OK" = "no" ] || [ "$MERMAID_CORE_OK" = "no" ] || [ "$MMDC_OK" = "no" ]; then
+    MISSING=""
+    [ "$JSDOM_OK" = "no" ]         && MISSING="$MISSING jsdom"
+    [ "$MERMAID_CORE_OK" = "no" ]  && MISSING="$MISSING mermaid"
+    [ "$MMDC_OK" = "no" ]          && MISSING="$MISSING @mermaid-js/mermaid-cli"
+    printf '\n⚠ Optional QA validators missing:%s\n' "$MISSING" >&2
+    printf '    npm install --prefix %s/scripts jsdom mermaid\n' "$CLAUDE_PLUGIN_ROOT" >&2
+    printf '    npm install -g @mermaid-js/mermaid-cli\n' >&2
+    printf '  Without these, qa_checks.py mermaid_syntax falls back to a regex-only check that has\n' >&2
+    printf '  documented false-negatives (sequenceDiagram quoted aliases, unbalanced parens in graph\n' >&2
+    printf '  labels). The threat model still renders, but mermaid bugs may ship to the final report.\n' >&2
+    printf '  Suppress this warning: export APPSEC_SKIP_VALIDATOR_CHECK=1\n\n' >&2
+  fi
+fi
+```
+
+Behaviour contract:
+- Both dependencies present → silent, run proceeds normally.
+- One or both missing → single stderr block listing what's missing plus copy-pasteable install commands, then the run proceeds (non-blocking).
+- `node` itself absent → the `command -v node` guard short-circuits and `JSDOM_OK=no` is reported; the user sees that the runtime is needed before either npm package can be installed.
+- `APPSEC_SKIP_VALIDATOR_CHECK=1` → the entire block is skipped, no stderr output. Intended for CI pipelines where the maintainer has accepted the regex-only fallback as the run's QA contract.
+
+This is the cheapest possible signal: ~50 ms when both deps are present (two `command -v` plus one `node -e`), zero output. The fully-detailed install / verification flow lives in the planned `/appsec-advisor:check-validators` skill (see roadmap); this block intentionally does NOT duplicate that work — it just surfaces the gap.
+
 ### Multi-day skill-session detection (M3.4 — Phase-9-context-bloat fix)
 
 **Problem this solves.** Claude Code skill sessions can persist across days. Repeated `/appsec-advisor:create-threat-model` invocations in one uncleared session grow the conversation prefix, increase compaction pressure, and slow long Phase-9 runs.

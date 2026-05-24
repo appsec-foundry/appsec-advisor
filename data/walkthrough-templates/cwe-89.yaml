@@ -7,9 +7,11 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant API as "{component} ({file}:{line})"
-      participant DB as Database
-      Attacker->>API: {endpoint_guess} with `' OR 1=1 --` payload
+      participant API
+      participant DB
+      Note over API: {component} — {file}:{line}
+      Note over DB: Database
+      Attacker->>API: {endpoint_guess} with classical OR 1=1 payload
       API->>DB: SQL built by string interpolation — payload becomes query
       DB-->>API: First matching row regardless of intended predicate
       API-->>Attacker: 200 OK with authenticated session / leaked rows

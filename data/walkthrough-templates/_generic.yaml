@@ -13,10 +13,11 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant App as "{component} ({file}:{line})"
-      Attacker->>App: Crafted request exercising the weakness at `{file}:{line}`
+      participant App
+      Note over App: {component} — {file}:{line}
+      Attacker->>App: Crafted request exercising the weakness at {file} line {line}
       App->>App: Vulnerable branch executes without the missing control
-      App-->>Attacker: Response confirms the weakness ({cwe})
+      App-->>Attacker: Response confirms the weakness — {cwe}
   ```
 
 detection_signals:

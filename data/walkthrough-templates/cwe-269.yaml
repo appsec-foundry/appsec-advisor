@@ -7,10 +7,12 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant API as "{component} ({file}:{line})"
-      participant DB as "Persistence layer"
-      Attacker->>API: {endpoint_guess} body includes privileged attr (`role=admin`)
-      API->>DB: Spread `req.body` into create/update — no allow-list filter
+      participant API
+      participant DB
+      Note over API: {component} — {file}:{line}
+      Note over DB: Persistence layer
+      Attacker->>API: {endpoint_guess} body includes privileged attr role=admin
+      API->>DB: Spread req.body into create/update — no allow-list filter
       DB-->>API: Row stored with elevated privilege
       API-->>Attacker: 200 OK — privilege now persisted on attacker's principal
   ```

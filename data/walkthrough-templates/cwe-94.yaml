@@ -7,10 +7,12 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant API as "{component} ({file}:{line})"
-      participant Sandbox as "Eval / VM context"
+      participant API
+      participant Sandbox
+      Note over API: {component} — {file}:{line}
+      Note over Sandbox: Eval / VM context
       Attacker->>API: {endpoint_guess} with JS payload escaping the sandbox
-      API->>Sandbox: Pass attacker-controlled code to eval / `vm.runInContext`
+      API->>Sandbox: Pass attacker-controlled code to eval / vm.runInContext
       Sandbox->>Sandbox: Prototype-walk reaches the host realm — RCE
       API-->>Attacker: Command output / arbitrary side effects
   ```

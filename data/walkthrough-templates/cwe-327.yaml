@@ -7,11 +7,13 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant Store as "Credential store"
-      participant App as "{component} ({file}:{line})"
-      Attacker->>Store: Obtain hash dump (SQLi, backup leak, or repo)
+      participant Store
+      participant App
+      Note over Store: Credential store
+      Note over App: {component} — {file}:{line}
+      Attacker->>Store: Obtain hash dump via SQLi, backup leak, or repo
       Store-->>Attacker: Hashes computed with broken algorithm — fast / unsalted
-      Attacker->>Attacker: Offline crack (hashcat / GPU) recovers plaintext credentials
+      Attacker->>Attacker: Offline crack via hashcat / GPU recovers plaintext credentials
       Attacker->>App: Authenticate with recovered credentials
       App-->>Attacker: 200 OK — legitimate session granted
   ```

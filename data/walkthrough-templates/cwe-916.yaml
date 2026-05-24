@@ -7,9 +7,10 @@ sequence_diagram: |
   sequenceDiagram
       autonumber
       actor Attacker
-      participant App as "{component} ({file}:{line})"
-      Attacker->>Attacker: Craft JWT with header `alg=none` and admin claims
-      Attacker->>App: {endpoint_guess} with the unsigned token in `Authorization`
+      participant App
+      Note over App: {component} — {file}:{line}
+      Attacker->>Attacker: Craft JWT with header alg=none and admin claims
+      Attacker->>App: {endpoint_guess} with the unsigned token in Authorization
       App->>App: Validate token without pinning the signing algorithm
       App-->>Attacker: 200 OK — request authorised under forged admin identity
   ```

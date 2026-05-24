@@ -3667,6 +3667,33 @@ def check_mermaid_syntax(md_path: Path) -> Report:
 
             report.ok += 1
 
+    # Layer C — deterministic auto-fix for two known false-negative patterns
+    # that Layer A's regex check accepts but Mermaid's parser rejects:
+    #   1. sequenceDiagram `participant X as "..."` quoted aliases —
+    #      Mermaid's sequenceDiagram grammar does NOT support quoted
+    #      aliases after `as`. The alias must be an unquoted token. The
+    #      regex pre-pass (rule 2) explicitly skipped quoted aliases as
+    #      "OK", letting them ship to the rendered MD.
+    #   2. flowchart `[label]` with unbalanced '(' from `…` truncation —
+    #      typically introduced by `_short_title()` in
+    #      walkthrough_renderer.py when a finding title ending in
+    #      `(<path>)` is cut mid-paren. The `(` is interpreted by
+    #      Mermaid as the start of round-rect node syntax `(text)`
+    #      inside `[...]` and aborts the diagram.
+    #
+    # The template-level fix in walkthrough_renderer.py +
+    # data/walkthrough-templates/*.yaml is the primary remediation.
+    # This Layer C auto-fix is a safety net for: (a) LLM-authored content
+    # at --thorough that re-introduces the patterns; (b) environments
+    # where Layer B (jsdom + @mermaid-js/mermaid-cli) is unavailable.
+    # Both rules are idempotent — running a second time on the patched
+    # text is a no-op.
+    new_raw, autofix_descriptions = _apply_mermaid_autofixes(raw)
+    if new_raw != raw:
+        md_path.write_text(new_raw, encoding="utf-8")
+        raw = new_raw
+        report.fixes.extend(autofix_descriptions)
+
     # Layer B — authoritative parse. Only runs if the Node validator and its
     # optional deps are installed. When it runs, it catches grammar-level
     # breakages the regex layer cannot see. When it can't run (no Node,
@@ -3679,6 +3706,101 @@ def check_mermaid_syntax(md_path: Path) -> Report:
     else:
         report.issues.extend(auth_issues)
     return report
+
+
+# ---------------------------------------------------------------------------
+# Deterministic auto-fix rules for known Mermaid false-negatives.
+# ---------------------------------------------------------------------------
+
+_PARTICIPANT_QUOTED_ALIAS_RE = re.compile(
+    r'^(?P<lead>\s*)(?P<kind>participant|actor)\s+(?P<alias>\w+)\s+as\s+"(?P<text>[^"]+)"\s*$'
+)
+
+# Match a flowchart node label `[...]` whose content contains an opening
+# `(` followed by `…` but no closing `)` — the canonical signature of a
+# mid-paren truncation.
+_FLOWCHART_LABEL_UNBALANCED_RE = re.compile(r"\[(?P<inner>[^\]]*?\([^)]*?…)\]")
+
+
+def _apply_mermaid_autofixes(md_text: str) -> tuple[str, list[str]]:
+    """Patch two known Mermaid false-negative patterns in place.
+
+    Returns ``(new_text, fix_descriptions)``. When no patterns matched, the
+    text is returned unchanged with an empty list. Idempotent: a second
+    invocation on the patched text is a no-op because the post-fix forms
+    no longer match either regex.
+    """
+    fixes: list[str] = []
+
+    def _patch_block(match: re.Match[str]) -> str:
+        body = match.group("body")
+        if not body:
+            return match.group(0)
+        lines = body.splitlines()
+        if not lines:
+            return match.group(0)
+        first_line = lines[0].strip()
+        diagram_type = first_line.split()[0] if first_line else ""
+
+        new_body = body
+
+        # Rule A — strip quoted aliases from sequenceDiagram `participant`
+        # / `actor` declarations. The alias text is preserved as a
+        # `Note over <alias>: <text>` line directly below so the
+        # information is retained in the diagram.
+        if diagram_type == "sequenceDiagram":
+            patched_lines: list[str] = []
+            for line in new_body.splitlines():
+                pm = _PARTICIPANT_QUOTED_ALIAS_RE.match(line)
+                if pm:
+                    lead = pm.group("lead")
+                    kind = pm.group("kind")
+                    alias = pm.group("alias")
+                    text = pm.group("text").strip()
+                    patched_lines.append(f"{lead}{kind} {alias}")
+                    patched_lines.append(f"{lead}Note over {alias}: {text}")
+                    fixes.append(
+                        f"mermaid auto-fix (participant_alias_unquote): "
+                        f"`{kind} {alias} as \"{text[:60]}\"` → "
+                        f"`{kind} {alias}` + Note over {alias}"
+                    )
+                else:
+                    patched_lines.append(line)
+            new_body = "\n".join(patched_lines)
+
+        # Rule B — drop the unbalanced `(` suffix from flowchart / graph
+        # node labels. The truncated path fragment is replaced with a
+        # single `…` so the label remains readable but the parser sees
+        # balanced bracketing.
+        if diagram_type in ("flowchart", "graph"):
+
+            def _balance(label_match: re.Match[str]) -> str:
+                inner = label_match.group("inner")
+                rebuilt = re.sub(r"\s*\([^)]*…\s*$", "…", inner)
+
+                def _ellipsize(s: str, lim: int = 60) -> str:
+                    # Avoid `……` in the description when the slice happens
+                    # to land on the existing `…` truncation marker.
+                    out = s[:lim]
+                    if len(s) > lim and not out.endswith("…"):
+                        out += "…"
+                    return out
+
+                fixes.append(
+                    f"mermaid auto-fix (flowchart_label_balance): "
+                    f"`[{_ellipsize(inner)}]` → `[{_ellipsize(rebuilt)}]` "
+                    f"(stripped unbalanced '(' suffix)"
+                )
+                return f"[{rebuilt}]"
+
+            new_body = _FLOWCHART_LABEL_UNBALANCED_RE.sub(_balance, new_body)
+
+        if new_body == body:
+            return match.group(0)
+        return "```mermaid\n" + new_body + "\n```"
+
+    new_text = _MERMAID_FENCE_RE.sub(_patch_block, md_text)
+    return new_text, fixes
 
 
 def _run_authoritative_mermaid_parse(md_text: str) -> tuple[list[str], Optional[str]]:
