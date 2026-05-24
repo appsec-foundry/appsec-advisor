@@ -62,7 +62,7 @@
       "description": "Cross-cutting / process mitigations not derivable from threats[]. Each M-ID MUST come from scripts/reserve_ids.py mitigation --count N.",
       "items": {
         "type": "object",
-        "required": ["id", "title", "threat_ids", "kind", "priority", "severity"],
+        "required": ["id", "title", "threat_ids", "kind"],
         "additionalProperties": true,
         "properties": {
           "id": {
@@ -82,8 +82,8 @@
             "enum": ["fix", "review", "process", "architectural"],
             "description": "fix = concrete code/config change; review = manual code review; process = SDLC/operational gap; architectural = design-level change."
           },
-          "priority": {"type": "string", "enum": ["P1", "P2", "P3", "P4"]},
-          "severity": {"type": "string", "enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+          "priority": {"type": "string", "enum": ["P1", "P2", "P3", "P4"], "description": "Optional. Defaults to derive-from-severity in the aggregator (P1=Critical, P2=High, P3=Medium, P4=Low)."},
+          "severity": {"type": "string", "enum": ["Critical", "High", "Medium", "Low", "Informational"], "description": "Optional. Aggregator defaults to 'Medium' when omitted — LLM consistently forgets severity for process mitigations, so this is forgiving by design."},
           "effort": {"type": "string", "enum": ["Low", "Medium", "High"]},
           "remediation": {
             "type": "object",

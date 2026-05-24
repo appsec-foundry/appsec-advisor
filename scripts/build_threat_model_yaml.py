@@ -307,6 +307,95 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
     return sorted(by_mid.values(), key=lambda m: m["id"])
 
 
+def apply_mitigation_overrides(
+    baseline: list[dict], sidecar: dict | None
+) -> tuple[list[dict], list[str]]:
+    """Apply .mitigation-overrides.json splits + additions to the baseline.
+
+    Defensive against the common LLM-drift pattern (verified 2026-05-24
+    juice-shop run) where the LLM writes ALL baseline mitigations into
+    additions[], producing duplicate M-IDs and inflated mitigation counts.
+
+    Dedup rules for additions:
+      1. Skip if addition.id collides with an existing baseline M-ID
+      2. Skip if addition.threat_ids is a SUBSET of any baseline mitigation's
+         threat_ids (the addition is just re-describing the baseline)
+
+    Defaults applied to additions missing optional fields:
+      - severity: 'Medium' (LLM consistently forgets — schema relaxed in §2.6)
+      - priority: derived from severity
+      - effort: 'Medium'
+      - kind: 'fix'
+
+    Returns (final_mitigations, warnings_list).
+    """
+    warnings: list[str] = []
+    if not sidecar:
+        return baseline, warnings
+
+    sev_to_pri = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4", "Informational": "P4"}
+    out = {m["id"]: dict(m) for m in baseline}
+
+    # Apply splits — replace baseline M-ID with multiple sub-mitigations
+    for split in sidecar.get("splits", []) or []:
+        src = split.get("source_mid")
+        if src not in out:
+            warnings.append(f"mitigation-overrides.splits: source_mid {src!r} not in baseline — split ignored")
+            continue
+        baseline_entry = out.pop(src)
+        for sub in split.get("into", []) or []:
+            suffix = sub.get("id_suffix", "")
+            new_id = f"{src}{suffix}"
+            out[new_id] = {
+                **baseline_entry,
+                "id": new_id,
+                "title": sub.get("title", baseline_entry["title"]),
+                "threat_ids": sub.get("threat_ids", baseline_entry["threat_ids"]),
+                "remediation": sub.get("remediation", baseline_entry.get("remediation")),
+            }
+
+    # Pre-compute baseline threat_id sets for subset-check
+    baseline_tids = {m["id"]: set(m.get("threat_ids", [])) for m in out.values()}
+
+    # Apply additions — defensive dedup against LLM mistakes
+    skipped_dup = 0
+    skipped_collision = 0
+    added = 0
+    for add in sidecar.get("additions", []) or []:
+        aid = add.get("id", "")
+        # Rule 1: ID collision
+        if aid in out:
+            skipped_collision += 1
+            continue
+        # Rule 2: threat_ids subset of existing baseline mitigation
+        add_tids = set(add.get("threat_ids", []))
+        if add_tids and any(add_tids.issubset(bt) for bt in baseline_tids.values()):
+            skipped_dup += 1
+            continue
+        # Apply defaults for optional fields
+        sev = add.get("severity", "Medium")
+        out[aid] = {
+            "id": aid,
+            "title": add.get("title", ""),
+            "threat_ids": add.get("threat_ids", []),
+            "kind": add.get("kind", "fix"),
+            "priority": add.get("priority", sev_to_pri.get(sev, "P3")),
+            "severity": sev,
+            "effort": add.get("effort", "Medium"),
+            **({"remediation": add["remediation"]} if "remediation" in add else {}),
+        }
+        added += 1
+
+    if skipped_collision:
+        warnings.append(f"mitigation-overrides.additions: {skipped_collision} skipped — ID collides with baseline")
+    if skipped_dup:
+        warnings.append(f"mitigation-overrides.additions: {skipped_dup} skipped — threat_ids already covered by baseline (LLM duplicate-as-addition drift)")
+    if added:
+        warnings.append(f"mitigation-overrides.additions: {added} accepted (true additions)")
+
+    return sorted(out.values(), key=lambda m: m["id"]), warnings
+
+
 def build_attack_surface(routes: dict | None) -> list[dict]:
     """Map .route-inventory.json routes[] → yaml.attack_surface[] entries.
 
@@ -479,6 +568,7 @@ def main() -> int:
     sidecar_assets = _load_json(od / ".assets.json")
     sidecar_tb = _load_json(od / ".trust-boundaries.json")
     sidecar_sc = _load_json(od / ".security-controls.json")
+    sidecar_mo = _load_json(od / ".mitigation-overrides.json")
 
     # Prior yaml (fallback source for fields whose sidecar is missing)
     prior_yaml = _load_yaml(od / "threat-model.yaml")
@@ -496,6 +586,9 @@ def main() -> int:
 
     threats = build_threats(merged)
     mitigations = build_mitigations(threats)
+    mitigations, mit_warnings = apply_mitigation_overrides(mitigations, sidecar_mo)
+    for w in mit_warnings:
+        sys.stderr.write(f"  {w}\n")
 
     components = (sidecar_components or {}).get("components") \
         or _carry_forward(prior_yaml, "components", ".components.json")

@@ -13,6 +13,32 @@ This file is read by the orchestrator at runtime to load phase instructions.
 
 Both sidecars run AFTER the triage agent completes (they reflect post-triage judgement). Read the `### Phase 10b sidecars` subsection at the line indicated above before emitting Phase-10b PHASE_END, then write both sidecars and validate.
 
+### ⚠ `.mitigation-overrides.json` is an OVERLAY — NOT the complete mitigation list
+
+The Python aggregator (`build_threat_model_yaml.py`) derives the baseline `yaml.mitigations[]` from `.threats-merged.json[threats[].mitigation_ids]` — **one mitigation per unique M-ID, automatically**. This baseline is complete: every threat's mitigation is already in it.
+
+`.mitigation-overrides.json` is **only** an overlay that adds two specific things on TOP of that baseline:
+
+- **`splits[]`** — decompose a single baseline M-ID into multiple finer-grained mitigations when its `remediation.steps[]` span different OWASP categories. Example: M-001 "Replace hardcoded RSA key, rotate JWT tokens, update env" → M-001a "Rotate key" + M-001b "Migrate to env-vars". A `split` REPLACES the baseline M-ID — it does not duplicate.
+
+- **`additions[]`** — register cross-cutting / process / architectural mitigations that are NOT derivable from any single threat. Example: M-020 "Establish dependency-update SLA" (process gap), M-021 "Implement WAF rate-limiting" (cross-cutting). Each addition MUST reference ≥1 existing T-ID (evidence-grounding); process mitigations SHOULD reference ≥2 (cross-cutting concerns span multiple findings).
+
+**What `.mitigation-overrides.json` is NOT:**
+- ❌ NOT a re-listing of every M-NNN you've authored elsewhere (the baseline already has them — duplicates will be detected and skipped, with WARN)
+- ❌ NOT a place to write M-001 through M-022 as `additions[]` (that means you misunderstood the overlay pattern — those mitigations are auto-derived from threats and re-stating them as additions is a NOP)
+- ❌ NOT required to be non-empty (if no splits and no genuine cross-cutting additions exist, emit `{"schema_version":1,"splits":[],"additions":[]}`)
+
+**Empty-overlay is normal and correct.** A small repo with simple findings has `splits: []` and `additions: []`. Only emit splits when remediation steps for one M-ID genuinely belong in separate buckets. Only emit additions when you can name a mitigation that no single threat fully captures.
+
+### ⚠ Field-level requirements
+
+| Sidecar | Top-level keys (exact) | Required fields per item |
+|---|---|---|
+| `.mitigation-overrides.json` | `schema_version`, `splits`, `additions` | `splits[].source_mid` + `splits[].into[]`; each `into[]` needs `id_suffix` + `title` + `threat_ids`. `additions[]` needs `id` (M-NNN from `reserve_ids.py`), `title`, `threat_ids[]` (≥1 existing T-ID), `kind` (enum: `fix`/`review`/`process`/`architectural`). `severity` + `priority` are OPTIONAL — aggregator defaults to `Medium`/`P3` when omitted. |
+| `.tier-root-causes.json`     | `schema_version`, `tier_root_causes`    | `tier_root_causes` is an OBJECT with keys `edge`/`server`/`data`. Each value is a list of 1-5 plain-language strings ≤80 chars. **Skip a tier entirely (omit the key)** if it has no threats — do NOT emit empty arrays. |
+
+The aggregator defensively de-duplicates malformed mitigation-overrides additions (skips IDs that collide with baseline OR have `threat_ids` already covered by an existing baseline mitigation) and prints WARN lines per skipped entry. Read the WARN output in your terminal after a build_threat_model_yaml.py run — non-zero skipped counts mean you misused the overlay pattern.
+
 ## Phase 9: STRIDE Threat Enumeration — via sub-agents
 
 **⚠ SEQUENCING: STRIDE analyzers MUST NOT be dispatched before Phase 9.** They require outputs from Phases 6 (INTERFACES), 7 (TRUST_BOUNDARIES), and 8 (CONTROLS).

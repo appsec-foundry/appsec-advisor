@@ -49,9 +49,23 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_E
 **Before emitting `PHASE_END` for any phase above, you MUST**:
 1. (If "Reserve IDs first" = yes) Call `python3 "$CLAUDE_PLUGIN_ROOT/scripts/reserve_ids.py" <type> --count <N> --output-dir "$OUTPUT_DIR"` — atomic counter, returns JSON list of IDs.
 2. Write the sidecar JSON via `cat > "$OUTPUT_DIR/.<sidecar>.json" <<'JSON' ... JSON` — shape per the schema above.
-3. Validate: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" --type <type> "$OUTPUT_DIR/.<sidecar>.json"` — exit 0 expected; non-zero is WARN, not blocking.
+3. Validate: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" <type> "$OUTPUT_DIR/.<sidecar>.json"` (positional arg, no `--type`) — exit 0 expected; non-zero is WARN, not blocking.
 
 When you reach a phase boundary that requires a sidecar, the detailed in-file protocol (with the exact heredoc shape and field constraints) lives at the `### Phase N sidecar` subsection at the line indicated above — Read that subsection at the time you need it, then write the sidecar before PHASE_END.
+
+### ⚠ Field-level requirements (most common LLM-drift patterns — DO NOT skip these)
+
+The schemas are strict (`additionalProperties: false` on top-level). The LLM has historically tripped on these exact field-name and required-field issues — they will fail schema validation:
+
+| Sidecar | Top-level keys (exact names) | Required fields per item |
+|---|---|---|
+| `.components.json`               | `schema_version`, `components`                    | **every component MUST have `tier`** (enum: `client` / `application` / `data`) plus `id`, `name`, `description`, `paths` |
+| `.assets.json`                   | `schema_version`, `assets`                        | `id` (A-NNN from `reserve_ids.py asset --count N`), `name`, `classification` (enum: `Public` / `Internal` / `Confidential` / `Restricted`), `description` |
+| `.attack-surface-overrides.json` | `schema_version`, **`curations`** (NOT `overrides`), `additions` | `curations.include_route_ids[]` (route_ids from `.route-inventory.json`); each `additions[]` entry needs `entry_point` + `protocol` |
+| `.trust-boundaries.json`         | `schema_version`, `trust_boundaries`              | every boundary needs `id` (e.g. `tb-1`) + `name`; `from`/`to` should reference component IDs or `external` |
+| `.security-controls.json`        | `schema_version`, `security_controls`             | every control needs `domain`, `control`, `effectiveness` (enum: `Adequate` / `Partial` / `Weak` / `Missing`) — field names mirror `threat-model.output.schema.yaml` verbatim |
+
+**If you find yourself naming a top-level key that's not in the table above, you are about to fail validation.** Stop and re-read the schema. The aggregator does NOT silently rename keys — `overrides` ≠ `curations`, `categories` ≠ `domain`, `status` ≠ `effectiveness`.
 
 **For the combined single-pass execution of Phases 5–7** (see "Phases 5–7 combined" below), emit all three `PHASE_START` lines together at the start of the combined pass and all three `PHASE_END` lines together at the end. Do **not** collapse them into a single entry — timing analysis requires per-phase markers.
 
