@@ -773,6 +773,44 @@ When a flow crosses a trust boundary, set `data_classification` to a tag that re
 
 The renderer (M3.3 / D1 — `pregenerate_fragments.py:_data_flow_edges`) reads this list and renders one mermaid edge per entry with a `protocol · data_classification` annotation. Without a populated list it falls back to the legacy 1-arrow-per-tier heuristic — which the user has flagged as the dominant defect of §2.2.
 
+### Phase 3 sidecar — `.components.json` (Substep-2 deterministic migration)
+
+**Why:** persist the canonical `components[]` to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly instead of forcing the orchestrator to re-compose from working memory at the budget-critical end of Stage 1. See [docs/substep2-deterministic-migration.md §2.1](../../docs/substep2-deterministic-migration.md).
+
+**Protocol (runs immediately after `components[]` is finalized, BEFORE PHASE_END):**
+
+1. **No ID reservation needed** — component IDs are LLM-chosen slugs canonicalized via `canonicalize_component_id.py` (already done above).
+
+2. **Write `$OUTPUT_DIR/.components.json`** via Bash heredoc — one entry per finalized component, in the same canonical order. Field shape MUST match `schemas/fragments/components.schema.json`:
+   ```bash
+   cat > "$OUTPUT_DIR/.components.json" <<'JSON'
+   {
+     "schema_version": 1,
+     "components": [
+       {
+         "id": "<canonical-slug>",
+         "name": "<human-readable name>",
+         "description": "<1-3 sentence summary>",
+         "paths": ["<glob1>", "<glob2>"],
+         "tier": "<client|application|data>",
+         "complexity": "<simple|moderate|complex>",
+         "framework": "<express|angular|...>"
+       }
+     ]
+   }
+   JSON
+   ```
+   The shape mirrors the in-memory `components[]` exactly — `responsibilities[]`, `data_flows[]`, and `threat_ids[]` stay in working memory (they belong to other yaml fields). Only the fields the aggregator emits into `threat-model.yaml[components[]]` go into the sidecar.
+
+3. **Validate** before emitting PHASE_END:
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+       --type components "$OUTPUT_DIR/.components.json"
+   ```
+   On failure: log WARN to `.agent-run.log`, continue (aggregator falls back to prior yaml). Non-blocking during PoC rollout.
+
+**Rules:** single writer (Phase 3 only), append-only within run, sidecar lives alongside the in-memory `components[]` — both must agree on the canonical ID set.
+
 ## Phase 4: Attack Walkthroughs (renders Section 9)
 
 > **Section assignment.** Phase 4 renders its diagrams into `## 3. Attack Walkthroughs`, positioned after Architecture Diagrams and before Assets. The Phase number stays 4 for orchestrator-ordering reasons — Phase 4 still runs between Phase 3 (architecture) and Phase 5 (assets) because it needs the architectural context — and its output target is Section 3.
@@ -1197,6 +1235,46 @@ attack_surface:
 
 **`notes` is plain prose only — do NOT bake T-NNN/F-NNN/M-NNN tokens into it.** Cross-references belong in `linked_threats[]` (structured field). The renderer joins `linked_threats` (clickable, labelled) with `notes` (supplementary context) into the §5 Notes column. Putting a `(T-NNN)` parenthetical inside `notes` in addition to `linked_threats` produces a duplicate reference in the rendered cell — once linkified as `[F-NNN](#f-nnn) — Title` from `linked_threats`, once as plain text from `notes`. Same rule applies to `controls_in_place`, `assets[].description`, `components[].description`, and `trust_boundaries[].description`: prose only, IDs go in dedicated cross-reference fields.
 
+### Phase 6 sidecar — `.attack-surface-overrides.json` (Substep-2 deterministic migration)
+
+**Why:** the Python aggregator emits `attack_surface[]` baseline from ALL routes in `.route-inventory.json` (typically 100+ entries). The Phase-6 LLM curates that baseline down to the ~20-30 entries that actually represent attack risk (unauthenticated, management surface, novel paths) and adds non-route surfaces (SSH, scheduled jobs, file watchers). This sidecar persists the curation + additions so the aggregator produces the same curated §5 the LLM produces today. See [docs/substep2-deterministic-migration.md §2.3](../../docs/substep2-deterministic-migration.md).
+
+**Protocol (after §5 sub-section tables are rendered, BEFORE PHASE_END):**
+
+1. **Collect the route_ids you kept** from `.route-inventory.json[routes][].route_id` for §5.1 + §5.2. The route_id is the key the aggregator uses to filter the baseline.
+
+2. **Write `$OUTPUT_DIR/.attack-surface-overrides.json`** via Bash heredoc. Field shape MUST match `schemas/fragments/attack-surface-overrides.schema.json`:
+   ```bash
+   cat > "$OUTPUT_DIR/.attack-surface-overrides.json" <<'JSON'
+   {
+     "schema_version": 1,
+     "curations": {
+       "include_route_ids": ["r-042", "r-088", "r-103"],
+       "exclude_route_ids": [],
+       "rationale_by_id": {
+         "r-042": "Unauthenticated user registration — primary attack vector"
+       }
+     },
+     "additions": [
+       {
+         "entry_point": "Admin SSH access",
+         "protocol": "SSH",
+         "auth_required": true,
+         "notes": "Out-of-band management surface not in route-inventory"
+       }
+     ]
+   }
+   JSON
+   ```
+   When `include_route_ids` is omitted/empty, the aggregator falls back to emitting ALL routes — lower-quality but non-breaking.
+
+3. **Validate:**
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+       --type attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
+   ```
+   On failure: log WARN, continue.
+
 ## Phase 7: Trust Boundary Analysis
 
 **⚠ Single-read constraint:** Continue using the `.recon-summary.md` snapshot loaded at the start of Phase 5 — do not re-read the file. See "Phases 5–7: Combined single-pass execution" above. Phase 8 will reset the snapshot; until then, this is the last of the three phases drawing from it.
@@ -1229,6 +1307,41 @@ The `enforcement` value should describe the **observed** enforcement mechanism (
    - `✗ TM missing` — the sibling has no threat model; flag as elevated risk (threats on the other side of this boundary are unanalyzed)
    - `SaaS` — external SaaS service; threat model not applicable but shared-responsibility model applies
 4. **Risk implication:** when a sibling's threat model is missing, add a note: "Threats originating from `<dependency>` cannot be correlated — treat all data crossing this boundary as partially untrusted until a threat model exists for that service."
+
+### Phase 7 sidecar — `.trust-boundaries.json` (Substep-2 deterministic migration)
+
+**Why:** persist the trust-boundary catalog to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly instead of forcing the orchestrator to re-author from working memory. See [docs/substep2-deterministic-migration.md §2.4](../../docs/substep2-deterministic-migration.md).
+
+**Protocol (after the trust-boundary table is finalized, BEFORE PHASE_END):**
+
+1. **No ID reservation needed** — boundary IDs are LLM-chosen `tb-N` slugs.
+
+2. **Write `$OUTPUT_DIR/.trust-boundaries.json`** via Bash heredoc. Field shape MUST match `schemas/fragments/trust-boundaries.schema.json`:
+   ```bash
+   cat > "$OUTPUT_DIR/.trust-boundaries.json" <<'JSON'
+   {
+     "schema_version": 1,
+     "trust_boundaries": [
+       {
+         "id": "tb-1",
+         "name": "Internet → Express API",
+         "from": "external",
+         "to": "express-backend",
+         "controls": ["JWT validation", "rate limiting"],
+         "description": "Public HTTPS endpoint, all client requests cross here"
+       }
+     ]
+   }
+   JSON
+   ```
+   `from`/`to` should reference existing component IDs OR the literal `external`. The aggregator validates cross-refs — non-existent component IDs surface as advisory warnings.
+
+3. **Validate:**
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+       --type trust-boundaries "$OUTPUT_DIR/.trust-boundaries.json"
+   ```
+   On failure: log WARN, continue.
 
 ## Phase 8: Identified Security Controls
 
@@ -1573,6 +1686,44 @@ This domain feeds `### 7.11 Operations, Runtime and Supply Chain Controls` and r
 | **SCA tooling** | Dedicated SCA tool in CI (Snyk, Trivy, Grype, OSV-Scanner, OWASP Dep-Check, or equivalent) with blocking policy | SCA tool present but advisory-only, or only native audit commands (`npm audit`, `pip-audit`) without blocking | No SCA tooling detected in CI |
 
 **Overall domain rating:** Derive from the sub-control ratings. If any sub-control is 🔴, the domain is at most 🟠 Weak. If all are 🟢, rate 🟢 Adequate.
+
+### Phase 8 sidecar — `.security-controls.json` (Substep-2 deterministic migration)
+
+**Why:** persist the security-controls catalog to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly. The aggregator joins this sidecar with `.architecture-coverage.json[control_assessments]` — sidecar wins on conflict (LLM has more context than the static rule engine). See [docs/substep2-deterministic-migration.md §2.5](../../docs/substep2-deterministic-migration.md).
+
+**Protocol (after the 14-domain control loop finishes, BEFORE PHASE_END):**
+
+1. **No ID reservation needed** — controls have no T-/M-style IDs; they key off `(domain, control)`.
+
+2. **Write `$OUTPUT_DIR/.security-controls.json`** via Bash heredoc — one entry per row in the in-memory `security_controls[]`. Field shape MUST match `schemas/fragments/security-controls.schema.json` (which mirrors `threat-model.output.schema.yaml[security_controls[]]` verbatim — required fields are `domain`, `control`, `effectiveness`):
+   ```bash
+   cat > "$OUTPUT_DIR/.security-controls.json" <<'JSON'
+   {
+     "schema_version": 1,
+     "security_controls": [
+       {
+         "domain": "Identity and Authentication Controls",
+         "control": "JWT Authentication",
+         "kind": "mechanism",
+         "effectiveness": "Weak",
+         "assessment": "RS256 used but private key hardcoded in lib/insecurity.ts:24; jws.verify allows alg:none bypass",
+         "linked_threats": ["T-001", "T-002"],
+         "rule_id": "ARCH-AUTH-001"
+       }
+     ]
+   }
+   JSON
+   ```
+   The `rule_id` field (optional) links back to `.architecture-coverage.json[rules_evaluated][].rule_id` for traceability. Include it for every row that was pre-populated from the architectural baseline.
+
+3. **Validate:**
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+       --type security-controls "$OUTPUT_DIR/.security-controls.json"
+   ```
+   On failure: log WARN, continue.
+
+**Rule:** the §7 markdown rendering and `.security-controls.json` MUST agree on the same `(domain, control)` set. The sidecar is the machine-readable persistence; §7 is the human-readable rendering.
 
 ## Phase 8b: Requirements Compliance (conditional)
 
