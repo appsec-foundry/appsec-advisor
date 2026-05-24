@@ -1250,8 +1250,11 @@ def _emit_substep_progress(cmd: str) -> None:
     """Parse a Bash echo command that writes to .agent-run.log and emit the
     human-readable substep description to stderr.
 
-    Only called when _VERBOSE is True.  Does NOT write to the log file —
-    the agent's Bash command already handles that.
+    Called for every PostToolUse Bash whose command writes to .agent-run.log.
+    The internal _PROGRESS_EVENTS regex filters to phase/step boundary
+    keywords (PHASE_*, STEP_*, AGENT_INVOKE/DONE/DISPATCH, ASSESSMENT_*),
+    so default-on operation does not flood the terminal.  Does NOT write
+    to the log file — the agent's Bash command already handles that.
     """
     # The echo command looks like:
     #   echo "<timestamp>  [--------]  INFO   threat-analyst  STEP_START   [Phase 8] Rating Identity and Authentication…" >> ".../.agent-run.log"
@@ -1896,13 +1899,16 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
                 cmd = _mask_secrets(_clip(cmd_str, 80))
                 _write("INFO ", "BASH_OK", f"cmd={cmd}{dur_tail}", sid)
 
-        # --- Verbose-only: surface STEP_START / PHASE_START / PHASE_END from
-        #     orchestrator Bash echo commands.  These are written to
-        #     .agent-run.log by the agent but never pass through the hook
-        #     pipeline, so interactive verbose mode would miss them.  Extract
-        #     the human-readable part and emit it to stderr only (no log file
-        #     write — the agent already wrote the canonical entry).
-        if _VERBOSE and ".agent-run.log" in cmd_str:
+        # --- Surface STEP_START / PHASE_START / PHASE_END / AGENT_INVOKE /
+        #     AGENT_DONE from orchestrator Bash echo commands.  These are
+        #     written to .agent-run.log by the agent but never pass through
+        #     the hook pipeline.  Extract the human-readable part and emit
+        #     to stderr only (no log file write — the agent already wrote
+        #     the canonical entry).  Default-on: the _PROGRESS_EVENTS regex
+        #     filters to a tight set of phase/step boundary keywords, so
+        #     this does not flood the terminal.  Verbose mode adds the
+        #     finer-grained per-tool events (FILE_*, GREP_*, BASH_OK).
+        if ".agent-run.log" in cmd_str:
             _emit_substep_progress(cmd_str)
 
     # ----- Budget watchdog (count this tool call against agent's maxTurns) -----
