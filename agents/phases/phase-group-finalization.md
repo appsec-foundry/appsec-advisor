@@ -30,9 +30,9 @@ The yaml is the **single structured baseline** for incremental runs. It is alway
 - `meta:` — `schema_version: 1`, `commit_sha:` (current HEAD), `baseline_ref:` (prior commit_sha or null), `run_statistics:` (written null, populated by the `render_completion_summary.py --patch-placeholders` call after QA — see RC-3 note below), `repo_url:` (**MUST** be set to `git remote get-url origin` output, or left null only when no remote exists — this populates the Repository field in §1 System Overview).
 - `changelog:` — **append-only**, newest first. Every entry carries `version:`, `baseline_sha:`, `current_sha:`, and the three delta sub-blocks `added:` / `changed:` / `resolved:`.
 - `components:` — list of components with `paths:` (globs — source of truth for Phase 9 dirty-set) and `threat_ids:` (quick-lookup list). Every component **MUST** carry a `tier:` field set to one of `client` / `application` / `data`. The renderer uses this to populate the three-tier heatmap; without it the tier is inferred from keywords and may mis-classify. At least one component with `tier: data` is required whenever the application uses a database, cache, or file store — do not subsume data-layer threats into the `application` component.
-- `attack_surface:` — **MUST include** in the Substep 2 write, populated from in-memory data accumulated during Phase 6. If Phase 6 reported >0 entry points, this list MUST be non-empty. A missing or empty `attack_surface:` causes schema validation to fail (`INVALID: root: 'attack_surface' is a required property`) and renders §5 Attack Surface with "(0)" counts.
-- `trust_boundaries:` — **MUST include** in the Substep 2 write, populated from in-memory data accumulated during Phase 7. At minimum 1 entry if Phase 7 reported >0 boundaries. A missing or empty `trust_boundaries:` causes schema validation to fail.
-- `security_controls:` — **MUST include** in the Substep 2 write, populated from in-memory data accumulated during Phase 8. If Phase 8 reported ✅/⚠/🔶/❌ counts, this list MUST be non-empty. A missing or empty `security_controls:` causes schema validation to fail and renders §7 Operational Strengths empty and layer tables §2.4.1–2.4.4 empty.
+- `attack_surface:` — composed by `build_threat_model_yaml.py` from `$OUTPUT_DIR/.attack-surface-overrides.json` (Phase 6 sidecar) overlaid on the Python-derived baseline. If Phase 6 wrote no sidecar, the builder hard-fails with `MISSING SIDECAR`. A missing or empty `attack_surface:` causes schema validation to fail (`INVALID: root: 'attack_surface' is a required property`) and renders §5 Attack Surface with "(0)" counts.
+- `trust_boundaries:` — composed from `$OUTPUT_DIR/.trust-boundaries.json` (Phase 7 sidecar). Builder hard-fails if the sidecar is absent. A missing or empty `trust_boundaries:` causes schema validation to fail.
+- `security_controls:` — composed from `$OUTPUT_DIR/.security-controls.json` (Phase 8 sidecar). Builder hard-fails if the sidecar is absent. A missing or empty `security_controls:` causes schema validation to fail and renders §7 Operational Strengths empty and layer tables §2.4.1–2.4.4 empty.
 - `tier_root_causes:` — **mandatory when ≥1 threat exists** (else omit). Per-architectural-tier root-cause bullets shown in the `Security Posture at a Glance` heatmap. Three keys: `client:`, `application:` (alias `server`), `data:`. Each is a list of 1–5 strings, **max 80 characters each**, expressing the architectural defect in plain language (e.g. `"missing input neutralization on raw SQL paths"`, `"hardcoded crypto secrets in source"`, `"no auth middleware on management endpoints"`). Derive from the threats grouped by their component's tier — each bullet should aggregate ≥2 findings sharing a root-cause class. **Skip a tier entirely** (omit the key) if it has no threats; **never emit empty arrays** — the renderer's fallback "(no root causes documented)" is only meaningful when the field is genuinely missing for an entire run, not for an individual tier.
 
 **Hard invariants** (enforced by baseline_state.py and by incremental logic in Phase 9):
@@ -46,7 +46,7 @@ The yaml is the **single structured baseline** for incremental runs. It is alway
 6. `meta.plugin_version` and `meta.analysis_version` MUST be read from `$CLAUDE_PLUGIN_ROOT/.claude-plugin/plugin.json` via `plugin_meta.py get` — never hardcoded. Every new `changelog[]` entry carries the same pair that was active at the time of that run, so a user can later reconstruct which analysis version produced which threats.
 7. `meta.recommend_full_rerun` is set to `true` iff the prior baseline's `analysis_version` was older than the current one but still in `compatible_analysis_versions` (i.e. `plugin_meta.py check-compat` returned exit 10). It is set to `false` on full runs and on equal-version incremental runs.
 
-The renderer (`render_threat_model.py`) does not know or care about this schema — the yaml is composed and written directly by the orchestrator in Phase 11. The schema lives here as the authoritative contract.
+The renderer (`render_threat_model.py`) does not know or care about this schema — the yaml is composed by `scripts/build_threat_model_yaml.py` (deterministic Python builder, since 2026-05-24 cutover) from `.threats-merged.json` + 7 sidecar JSON files and written atomically in Phase 11 Substep 2. The schema lives here as the authoritative contract.
 
 ## Mode-Aware Write Gate
 
@@ -241,7 +241,7 @@ Also mirror each step to stdout: `  ↳ [<k>/<N>] <description>  (+${ES})`.
 | `k` | Description template | Condition | Batched with |
 |-----|----------------------|-----------|--------------|
 | 1 | `Pre-computing final counts…` | always | the Bash block below that refreshes the lock heartbeat and runs the count aggregation. The lock is NOT released here — it stays alive through Phase 11 so the anti-stall classifier has a heartbeat to watch. Every subsequent substep's Bash block also refreshes the heartbeat as its first line (see templates). |
-| 2 | `Writing threat-model.yaml (canonical baseline)…` | **always — skip ONLY when `WRITE_YAML=false` (user passed `--no-yaml`).** Yaml is the canonical baseline for future incremental runs; skipping it by default breaks the incremental pipeline. | the `Write` tool call that creates `$OUTPUT_DIR/threat-model.yaml`. **⚠ This MUST run before the md write — see ordering invariant above.** Immediately after the Write succeeds, advance the checkpoint: `echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"` so that a crash during the md compose leaves a recoverable state. |
+| 2 | `Writing threat-model.yaml (canonical baseline)…` | **always — skip ONLY when `WRITE_YAML=false` (user passed `--no-yaml`).** Yaml is the canonical baseline for future incremental runs; skipping it by default breaks the incremental pipeline. | **Single Bash call** to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_threat_model_yaml.py" "$OUTPUT_DIR"` (deterministic builder — since Substep-2 cutover 2026-05-24, see "Substep 2" below). **⚠ This MUST run before the md write.** The builder reads `.threats-merged.json` + 7 sidecars, writes the yaml atomically, and self-validates. Immediately after the Bash exits 0, advance the checkpoint: `echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"`. |
 | 3 | `Updating .appsec-cache/baseline.json…` | always | the Bash call that invokes `baseline_state.py update` — see "Baseline Cache Update" below. This runs here (right after yaml) rather than at the end so the cache is consistent with the yaml even if later md composition fails. |
 | 4 | `Writing data fragments for threat-model.md…` | always | Bash STEP_START + several `Write` tool calls (one per LLM-authored fragment) — see "Fragment-driven composition" below. The LLM emits schema-validated JSON data for the Verdict / Architecture Assessment / Critical Attack Chain sections and prose Markdown for the handful of prose-only sections. Advance checkpoint to `step=4 status=fragments_written` only after `validate_fragment.py` accepts every data fragment. |
 | 4b | `Pre-render fragment gate…` | always | Bash call to `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" pre-render-gate "$OUTPUT_DIR"`. Runs immediately after all fragment Writes and before compose. Validates every known JSON fragment in `.fragments/` in one shot, writes `.pre-render-report.json`, and exits 1 if any schema check fails — preventing a structurally broken document from being committed to the repo. See example Bash block below. |
@@ -329,160 +329,71 @@ echo "ASSESSMENT_COMPLETE"
 
 Use the printed `COUNTS:` line to populate concrete numbers in the Management Summary, Section 8 headings (`### 7.1 Critical (<CRIT>)`, …), and the assessment summary footer. These counts are ground truth — do not recompute them by eye during composition.
 
-**Pre-Substep 2 Data Completeness Check (MUST run before YAML write):**
+**Substep 2 — build threat-model.yaml deterministically (MUST run before md write):**
 
-Before composing the yaml, explicitly verify in working memory that data from Phases 5–8 is available. Run this check in the same Bash block as the Substep 2 STEP_START echo:
+⚠ **Cutover 2026-05-24 — Substep 2 is now a single Bash call, NOT an LLM Write.** The historical 130-line LLM-yaml-composition protocol (compose in memory → narrate → Write 40 KB) burned 13 k output tokens per run and produced silent `YAML_INVARIANT_DRIFT` warnings (stride/title/evidence rewrites). It has been replaced by `scripts/build_threat_model_yaml.py`, a deterministic Python builder that reads on-disk artifacts (`.threats-merged.json` + 7 sidecars) and composes the yaml in <100 ms.
+
+**Required upstream artifacts** — the builder hard-fails if any are missing:
+
+| Artifact | Producer | Reads into |
+|----------|----------|------------|
+| `$OUTPUT_DIR/.threats-merged.json` | Phase 10b | `threats[]`, `mitigations[]` baseline |
+| `$OUTPUT_DIR/.components.json` (sidecar) | Phase 3 | `components[]` with `tier` |
+| `$OUTPUT_DIR/.assets.json` (sidecar) | Phase 5 | `assets[]` |
+| `$OUTPUT_DIR/.trust-boundaries.json` (sidecar) | Phase 7 | `trust_boundaries[]` |
+| `$OUTPUT_DIR/.security-controls.json` (sidecar) | Phase 8 | `security_controls[]` |
+| `$OUTPUT_DIR/.attack-surface-overrides.json` (sidecar) | Phase 6 | `attack_surface[]` (Python baseline + curations/additions overlay) |
+| `$OUTPUT_DIR/.mitigation-overrides.json` (sidecar) | Phase 10b | `mitigations[]` splits/additions overlay |
+| `$OUTPUT_DIR/.tier-root-causes.json` (sidecar) | Phase 10b | `tier_root_causes` |
+
+**Substep 2 Bash block (template):**
 
 ```bash
-# Verify Phase 5–8 data is present in working memory before the YAML write.
-# If any of these are empty despite the earlier phases reporting non-zero counts,
-# re-derive them from .recon-summary.md and the STRIDE outputs NOW — before writing.
-# This prevents the "data held in memory but dropped at write time" failure mode
-# that causes attack_surface/security_controls/trust_boundaries to be absent from
-# the yaml (which fails schema validation and renders §5, §7 Operational Strengths,
-# and §2.4 layer tables empty).
-#
-# 1. attack_surface[]     — from Phase 6 (non-zero if Phase 6 reported >0 entry points)
-# 2. security_controls[]  — from Phase 8 (non-zero if Phase 8 reported ✅/⚠/🔶/❌ counts)
-# 3. trust_boundaries[]   — from Phase 7 (≥1 entry if Phase 7 reported >0 boundaries)
-#
-# If working memory shows these as populated: proceed to write.
-# If any are empty despite phases reporting non-zero counts: re-derive before writing.
-echo "PRE-WRITE-CHECK: verify attack_surface, security_controls, trust_boundaries are non-empty in working memory before yaml write."
-```
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat 2>/dev/null || true
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[Phase 11 +<ES>] [2/<N>] Writing threat-model.yaml (canonical baseline)…"
 
-**Substep 2 — write threat-model.yaml (MUST run before md write):**
+# Deterministic yaml build. Reads sidecars + .threats-merged.json,
+# writes $OUTPUT_DIR/threat-model.yaml atomically. Exits non-zero on:
+#   - missing required sidecar
+#   - schema validation failure
+#   - orphan T-ID / M-ID cross-ref
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_threat_model_yaml.py" "$OUTPUT_DIR" 2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log"
+BUILD_RC=${PIPESTATUS[0]}
+if [ "$BUILD_RC" -ne 0 ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  YAML_BUILD_FAILED  build_threat_model_yaml.py exit=$BUILD_RC — see lines above for missing sidecar / schema failure / orphan ID." >> "$OUTPUT_DIR/.agent-run.log"
+  exit 1
+fi
 
-Compose the full yaml body in memory (schema at top of this file). The Write tool call in this substep carries the yaml `content:` argument.
-
-**Output hygiene — token-budget critical (added 2026-05-23 after 7m 57s Substep-2 measurement):**
-
-The juice-shop run on 2026-05-23 spent ~6 minutes in reasoning prose between STEP_START [2/3] and the Write tool call, generating ~13 k output tokens of internal preamble for a 40 KB yaml write. Same run produced 2× `YAML_INVARIANT_DRIFT` warnings (T-005, T-009) — silent mutation of `stride`/`title`/`evidence` away from `.threats-merged.json`. Both are avoidable.
-
-- **Do not narrate the yaml composition.** No "I will now compose the yaml" / "Let me check the fields" / "Here is my plan" prose. The next action after STEP_START [2/3] is the Write tool call. Cross-checks belong in deterministic Bash steps (which already exist after the Write), not in chat output.
-- **Verbatim copy is non-negotiable.** For every threat in `.threats-merged.json`, copy `stride`, `cwe`, `component_id`, `evidence` **byte-for-byte** into the corresponding yaml entry. Do not rephrase, re-classify, or "improve" these fields — they were locked in upstream and `enforce_yaml_invariants.py` audits the difference. Treating them as editable is what produces the drift warnings.
-- **Single Write call.** The yaml is small enough (~40-50 KB ≈ 13 k–16 k tokens) to fit in one Write. Composing in multiple writes wastes a turn each and risks partial-yaml states that fail schema validation.
-- **Narrative-only fields are yours.** `threats[].title`, `threats[].scenario`, `mitigations[].title`/`steps`/`verification`, asset descriptions — these need LLM synthesis. Spend the token budget here, not on copying mechanical fields you should be transcribing.
-
-**F-NNN ID reflow rule (CRITICAL — non-negotiable):** When transferring threats from `.threats-merged.json` into `yaml.threats[]`:
-
-- **Every** entry in `.threats-merged.json` MUST be present in `yaml.threats[]` with a sequential F-NNN id.
-- F-NNNs MUST be **contiguous starting at F-001** with no gaps. Drop a threat ⇒ shift every subsequent F-NNN down by one.
-- The mapping is `{merged.threats[i].id (T-NNN)} → F-{i+1:03d}`, but **only when `i+1` reflects the position after any drops**, not the original `t_id` slot.
-- If you legitimately omit a threat (e.g. duplicate consolidated into another), reflow IDs and update the `original_id:` field of every later threat to its merged-source `id`. Never leave gaps like `F-013, F-015` — `validate_intermediate.py` flags this as a contract advisory and downstream cross-refs become tombstones.
-
-**Title propagation rule (CRITICAL — schema-required, AGENTS.md §4a):** Every threat in `.threats-merged.json` carries a `title` field — a short action-noun label (≤ 100 chars, e.g. "SQL Injection Authentication Bypass via Login Endpoint") authored by the STRIDE analyzer. **Copy this `title` verbatim into `yaml.threats[].title`** for every threat — it is now schema-required (`schemas/threat-model.output.schema.yaml`). Do NOT replace it with the long `scenario`, do NOT truncate, do NOT omit. The cross-reference labelling invariant (AGENTS.md §4a) depends on `title`: every `[T-NNN](#t-nnn)` and `[F-NNN](#f-nnn)` reference rendered later by `linkify_anchors` reads its `— <short title>` suffix from this field. A yaml without `title` produces `(untitled)`-style bare links throughout the report. If a merged-json entry is missing `title`, hard-fail with a clear error rather than silently emitting bare yaml — this catches upstream STRIDE-analyzer drift early.
-
-**Bad** (the 2026-05-01 juice-shop bug): merged.json has 32 threats including T-014 "Default Admin Credentials Hardcoded in Static Data"; the LLM dropped that one without reflowing, producing `F-001…F-013, F-015…F-032` (F-014 missing, dead `[F-014](#f-014)` link in any place that referenced it).
-
-**Good:** if you drop the same T-014 threat, every subsequent F-NNN shifts: `F-001…F-013, F-014 (was T-015), F-015 (was T-016), …, F-031 (was T-032)`.
-
-**Requirement linkage — populate `violated_requirements` per threat:** When composing `threats[]` in the yaml, for every threat in `.threats-merged.json` that carries a `requirement_id` field, set `violated_requirements: ["<requirement_id>"]` on the corresponding yaml threat entry. For threats without `requirement_id`, emit `violated_requirements: []` (or omit the field — both are valid per the output schema). This is the bridge that lets `audit-security-requirements` look up T-IDs by requirement ID without re-parsing Markdown. Batch it with a `[2/<N>] Writing threat-model.yaml (canonical baseline)…` STEP_START echo **in the same turn**. Yaml composition is ~45 KB and typically completes in one turn; if the model needs a second turn to finish, the checkpoint from substep 1 is enough to recover.
-
-**Mitigation synthesis (mandatory before YAML write — §9 depends on this):**
-
-Before writing `threat-model.yaml`, synthesise `mitigations[]` from the `mitigation_title` strings in `.threats-merged.json`:
-
-1. Read every `mitigation_title` from `.threats-merged.json` entries.
-2. Group entries whose `mitigation_title` describes the same physical fix (same library upgrade, same config change) into one M-NNN record.
-3. Emit each group as a `mitigations[]` entry using **canonical field names** (`title` not `mitigation_title`; `threat_ids` not `addresses`):
-
-```yaml
-mitigations:
-  - id: M-001                    # sequential from M-001 — field MUST be named `id:`, NOT `m_id:`
-    title: "..."                 # cleaned-up from mitigation_title
-    threat_ids: [T-001, T-003]   # all T-IDs this mitigation covers
-    priority: P1                 # MUST be P1/P2/P3/P4 — NEVER use severity words here
-    severity: Critical           # max severity across threat_ids
-    effort: Medium               # from remediation.effort in .threats-merged.json
-    # F4.5 — When the addressed STRIDE findings carry remediation detail,
-    # propagate it INTO the mitigation entry rather than dropping it. The
-    # compose renderer has a per-field harvest fallback, but persisting
-    # these fields here keeps the yaml self-contained (next incremental
-    # run does not have to re-derive from .stride-*.json).
-    how_code: |                  # code snippet showing the fix (from remediation.code_example)
-      # paste the fix snippet — 5–20 lines, language-tagged via how_code_lang
-    how_code_lang: typescript    # syntax-highlight language for how_code
-    verification: "..."          # 1-sentence test (from remediation.verification)
-    steps:                       # ordered action list (from remediation.steps)
-      - "Step 1 — concrete action"
-      - "Step 2 — …"
-    reference: "..."             # optional URL to authoritative docs (from remediation.reference)
-```
-
-4. Back-link each threat: set `threats[i].mitigation_ids: [M-NNN]` for every addressed T-ID so the Top Findings and Threat Register Mitigation columns render M-NNN links instead of "—".
-
-**Field-name invariant:** `title` (not `mitigation_title`), `threat_ids` (not `addresses`). A yaml that ships `mitigation_title:` produces `(untitled)` headings and empty Mitigation columns — the schema validator rejects it.
-
-**`id` field invariant:** The id field MUST be named `id:`, NOT `m_id:`. Using `m_id:` causes schema validation failures (`INVALID: mitigations[0]: 'id' is a required property`) even though the compose renderer tolerates it.
-
-**Priority P1–P4 invariant (CRITICAL — §9 depends on this):** The `priority` field MUST use P1/P2/P3/P4 notation — NEVER use severity words (Critical/High/Medium/Low). The P1–P4 priority is derived from the max severity of addressed threats: Critical→P1, High→P2, Medium→P3, Low→P4. The schema enum is [P1, P2, P3, P4] — using 'Critical' as a priority value causes the entire §9 Mitigation Register to render empty because the renderer filters by exact P-value match.
-
-**Why yaml first:** if the run crashes during the subsequent ~90 KB markdown write (historically the most expensive and failure-prone substep in Phase 11), the canonical structured baseline is already on disk. Any future run — incremental, full, or resume — can read the yaml to know what was found, the markdown can be re-rendered from it, and the incremental pipeline is not broken.
-
-**After the Write succeeds, advance the checkpoint in the next Bash batch:**
-```bash
 echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WRITE   $OUTPUT_DIR/threat-model.yaml" >> "$OUTPUT_DIR/.agent-run.log"
 
-# Schema-validate the freshly-written yaml against schemas/threat-model.output.schema.yaml.
-# Hard gate: a non-zero exit means the yaml is structurally invalid and the
-# downstream md render would silently produce broken cross-references (e.g.
-# `(untitled)` Mitigation Register headings, empty Mitigation columns).
-# Migration advisories for legacy field names (`mitigation_title` →
-# `title`, `addresses` → `threat_ids`) are emitted as `ADVISORY:` lines and
-# do NOT fail the gate — they are surfaced so the producer fixes the
-# upstream source. See agents/phases/phase-group-threats.md →
-# "Build Mitigation Register" → "Canonical yaml shape".
+# Defense-in-depth: re-validate after write. The builder validates internally,
+# but a hard external re-check catches any future builder regressions and
+# anchors the same gate the legacy LLM-write path used.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
   threat_model_output "$OUTPUT_DIR/threat-model.yaml" \
   | tee -a "$OUTPUT_DIR/.agent-run.log"
 VALIDATE_RC=${PIPESTATUS[0]}
 if [ "$VALIDATE_RC" -ne 0 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  YAML_INVALID  threat-model.yaml failed schema validation — see ADVISORY/INVALID lines above. Fix before continuing." >> "$OUTPUT_DIR/.agent-run.log"
-  # If validate_intermediate.py returns non-zero, the required fields were not
-  # populated — the most common causes are:
-  #   - attack_surface/trust_boundaries/security_controls absent (Phases 5–8 data
-  #     held in working memory but not written to yaml)
-  #   - mitigations[].id named m_id instead of id
-  #   - mitigations[].priority using severity words (Critical/High) not P-values
-  # Do NOT proceed to Stage 2 with an invalid yaml — fix and re-write.
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  YAML_INVALID  threat-model.yaml failed schema validation after deterministic build — builder regression, file a bug." >> "$OUTPUT_DIR/.agent-run.log"
   exit 1
 fi
-
-# Self-check: verify the three required Phase 5–8 lists are non-empty.
-python3 -c "
-import sys, yaml
-data = yaml.safe_load(open('$OUTPUT_DIR/threat-model.yaml'))
-warns = []
-for field in ('attack_surface', 'trust_boundaries', 'security_controls'):
-    val = data.get(field)
-    if not val:
-        warns.append(f'WARN: {field} is empty or missing in threat-model.yaml — Phase 5–8 data was not persisted to YAML. Re-derive from .recon-summary.md before continuing.')
-for m in (data.get('mitigations') or []):
-    p = (m.get('priority') or '').strip()
-    if p.lower() in ('critical','high','medium','low'):
-        warns.append(f'WARN: mitigations[].priority contains severity word \"{p}\" — MUST be P1/P2/P3/P4. This causes §9 Mitigation Register to render empty.')
-        break
-for w in warns:
-    print(w)
-sys.exit(1 if warns else 0)
-" 2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log"
-SELFCHECK_RC=${PIPESTATUS[0]}
-if [ "$SELFCHECK_RC" -ne 0 ]; then
-  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  threat-analyst  YAML_SELFCHECK_FAILED  Self-check found fixable issues — correct the yaml and re-validate before continuing." >> "$OUTPUT_DIR/.agent-run.log"
-  exit 1
-fi
-
-# RC.B — the run-stats appendix patch is owned by the SKILL, NOT the agent.
-# An agent cannot know its own duration / tokens (those values are only
-# observable after the Agent tool returns to the skill). Patching here
-# would write a Run Statistics appendix that misses Stage 2's own line
-# and any later stage. The skill's final
-# `render_completion_summary.py --patch-placeholders` call (after all
-# stages have written to .stage-stats.jsonl) is the authoritative patch.
-:  # no-op placeholder; the historic patch call has moved skill-side.
 ```
+
+**No LLM narration in Substep 2.** The next action after STEP_START [2/N] is the Bash block above. Do not compose yaml in chat, do not describe what fields go where — the Python builder owns the entire composition.
+
+**If the builder fails:** Read its stderr line (logged via `tee` into `.agent-run.log`). The 3 common failure modes:
+- **`MISSING SIDECAR <path>`** — a phase did not write its sidecar. Re-read the phase's sidecar instructions in `phase-group-architecture.md` (Phases 3/5/6/7/8) or `phase-group-threats.md` (Phase 10b).
+- **`ORPHAN_TID <T-NNN>` / `ORPHAN_MID <M-NNN>`** — a sidecar references an ID that does not exist in baseline. Fix the sidecar.
+- **`SCHEMA_FAIL <field>: <reason>`** — a sidecar violates its schema. Fix the offending field.
+
+Do NOT hand-write the yaml as a fallback — the LLM-write path is removed for cause (token burn + silent invariant drift).
+
+<!-- LEGACY LLM-WRITE PROTOCOL — REMOVED 2026-05-24 (Substep-2 cutover).
+     130 lines of compose-in-memory / verbatim-copy / F-NNN-reflow / mitigation-synthesis /
+     priority-P1-P4-invariant guidance lived here. All of it is now enforced inside
+     scripts/build_threat_model_yaml.py (deterministic Python). If you are debugging
+     a yaml-build failure, read the script — do NOT reintroduce LLM yaml composition. -->
 
 **Substep 3 — update baseline cache:**
 

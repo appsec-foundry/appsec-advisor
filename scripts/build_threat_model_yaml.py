@@ -246,17 +246,38 @@ def _clean_title(raw: str) -> str:
     return f"{s}{suffix}"
 
 
-def build_threats(merged: dict) -> list[dict]:
+def build_threats(merged: dict) -> tuple[list[dict], list[str]]:
     """Transform .threats-merged.json[threats] into yaml.threats[] shape.
 
     Field renames per output schema: t_id→id, component_id→component.
     Evidence wrap: object → list (schema requires array).
     Title cleanup: deterministic transform to match schema pattern.
+
+    Filters out observation-stub entries (Phase 10b sometimes parks notes
+    in threats[] with id=None, likelihood='info', empty cwe/scenario).
+    These would fail output schema validation; skip them with a warning.
+    Returns (threats, warnings).
     """
-    out = []
+    out: list[dict] = []
+    warnings: list[str] = []
+    skipped_stubs = 0
     for t in merged.get("threats", []):
         threat = dict(t)
         threat["id"] = threat.pop("t_id", threat.get("id"))
+        # Observation-stub filter: Phase 10b's config-scan path sometimes
+        # parks positive observations or low-quality findings in threats[]
+        # with sentinel values likelihood='info'/risk='info' and empty
+        # scenario/cwe. They fail the output schema (likelihood/impact/risk
+        # enum requires Critical/High/Medium/Low/Informational, cwe must
+        # match ^CWE-\d+$). Skip them — they belong in observations[] not
+        # threats[].
+        is_info_stub = (
+            (threat.get("likelihood") or "").lower() == "info"
+            or (threat.get("risk") or "").lower() == "info"
+        )
+        if not threat.get("id") or is_info_stub:
+            skipped_stubs += 1
+            continue
         threat["component"] = threat.pop("component_id", threat.get("component", ""))
         threat["title"] = _clean_title(threat.get("title", ""))
         ev = threat.get("evidence")
@@ -265,7 +286,9 @@ def build_threats(merged: dict) -> list[dict]:
         elif ev is None:
             threat["evidence"] = []
         out.append(threat)
-    return out
+    if skipped_stubs:
+        warnings.append(f"threats: {skipped_stubs} observation-stub entries skipped (id=None — Phase 10b notes mis-parked in threats[])")
+    return out, warnings
 
 
 def build_mitigations(threats: list[dict]) -> list[dict]:
@@ -305,6 +328,16 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
         m["priority"] = sev_to_pri.get(m["severity"], "P3")
 
     return sorted(by_mid.values(), key=lambda m: m["id"])
+
+
+# Sidecar's mitigation kind enum (process/architectural) is broader than
+# threat-model output schema's enum (fix/review/investigate/accept_risk).
+# Coerce sidecar-only kinds to the closest output-schema equivalent so the
+# yaml passes downstream schema validation without losing the LLM's intent.
+_KIND_COERCE = {
+    "process": "review",          # process gaps → human review action
+    "architectural": "investigate",  # arch changes → investigate scope
+}
 
 
 def apply_mitigation_overrides(
@@ -374,11 +407,13 @@ def apply_mitigation_overrides(
             continue
         # Apply defaults for optional fields
         sev = add.get("severity", "Medium")
+        kind_raw = add.get("kind", "fix")
+        kind_out = _KIND_COERCE.get(kind_raw, kind_raw)
         out[aid] = {
             "id": aid,
             "title": add.get("title", ""),
             "threat_ids": add.get("threat_ids", []),
-            "kind": add.get("kind", "fix"),
+            "kind": kind_out,
             "priority": add.get("priority", sev_to_pri.get(sev, "P3")),
             "severity": sev,
             "effort": add.get("effort", "Medium"),
@@ -396,27 +431,90 @@ def apply_mitigation_overrides(
     return sorted(out.values(), key=lambda m: m["id"]), warnings
 
 
-def build_attack_surface(routes: dict | None) -> list[dict]:
-    """Map .route-inventory.json routes[] → yaml.attack_surface[] entries.
+def build_attack_surface(
+    routes: dict | None, sidecar: dict | None = None
+) -> tuple[list[dict], list[str]]:
+    """Compose yaml.attack_surface[] from .route-inventory.json (baseline)
+    overlaid with .attack-surface-overrides.json (Phase-6 sidecar).
+
+    Pipeline:
+      1. Baseline = route inventory routes[] mapped 1:1 to attack_surface entries
+         (tracks each baseline entry's source route_id for sidecar curation lookups).
+      2. Curations (sidecar.curations object):
+         - include_route_ids[] → allowlist filter on baseline
+         - exclude_route_ids[] → denylist filter
+         - rationale_by_id{} → overwrite notes field per route
+      3. Additions (sidecar.additions[]) appended (skipping entry_point collisions).
+
+    If baseline is empty AND sidecar has additions, sidecar IS the source —
+    Phase 6 sidecar can carry the entire surface for repos without route inventory.
 
     Schema: required [entry_point, protocol]. Optional auth_required, notes.
+    Returns (entries, warnings).
     """
-    if not routes:
-        return []
-    out = []
-    for r in routes.get("routes", []):
-        notes_parts = []
-        if r.get("management_surface"):
-            notes_parts.append("Management surface")
-        if r.get("handler_file"):
-            notes_parts.append(f"handler: {r['handler_file']}:{r.get('handler_line', '')}")
-        out.append({
-            "entry_point": f"{r.get('method', '?')} {r.get('path', '/')}",
-            "protocol": "HTTP",
-            "auth_required": bool(r.get("authn_signal")),
-            "notes": "; ".join(notes_parts) or None,
-        })
-    return out
+    warnings: list[str] = []
+    # Pairs of (entry, source_route_id) so curations can address baseline entries.
+    baseline_pairs: list[tuple[dict, str | None]] = []
+    if routes:
+        for r in routes.get("routes", []):
+            notes_parts = []
+            if r.get("management_surface"):
+                notes_parts.append("Management surface")
+            if r.get("handler_file"):
+                notes_parts.append(f"handler: {r['handler_file']}:{r.get('handler_line', '')}")
+            entry = {
+                "entry_point": f"{r.get('method', '?')} {r.get('path', '/')}",
+                "protocol": "HTTP",
+                "auth_required": bool(r.get("authn_signal")),
+                "notes": "; ".join(notes_parts) or None,
+            }
+            baseline_pairs.append((entry, r.get("route_id")))
+
+    if sidecar:
+        cur = sidecar.get("curations") or {}
+        include = set(cur.get("include_route_ids") or [])
+        exclude = set(cur.get("exclude_route_ids") or [])
+        rationale = cur.get("rationale_by_id") or {}
+
+        if include:
+            before = len(baseline_pairs)
+            baseline_pairs = [(e, rid) for (e, rid) in baseline_pairs if rid in include]
+            warnings.append(f"attack-surface-overrides.curations.include: kept {len(baseline_pairs)}/{before} routes")
+        if exclude:
+            before = len(baseline_pairs)
+            baseline_pairs = [(e, rid) for (e, rid) in baseline_pairs if rid not in exclude]
+            warnings.append(f"attack-surface-overrides.curations.exclude: dropped {before - len(baseline_pairs)} routes")
+        if rationale:
+            applied = 0
+            for entry, rid in baseline_pairs:
+                if rid and rid in rationale:
+                    entry["notes"] = rationale[rid]
+                    applied += 1
+            if applied:
+                warnings.append(f"attack-surface-overrides.curations.rationale: applied to {applied} entries")
+
+    out = [e for (e, _rid) in baseline_pairs]
+
+    if sidecar:
+        by_ep = {e["entry_point"]: i for i, e in enumerate(out)}
+        skipped = 0
+        added = 0
+        for add in sidecar.get("additions") or []:
+            ep = add.get("entry_point")
+            if not ep:
+                continue
+            if ep in by_ep:
+                skipped += 1
+                continue
+            out.append(add)
+            by_ep[ep] = len(out) - 1
+            added += 1
+        if added:
+            warnings.append(f"attack-surface-overrides.additions: {added} entries added")
+        if skipped:
+            warnings.append(f"attack-surface-overrides.additions: {skipped} skipped — entry_point already in baseline")
+
+    return out, warnings
 
 
 def build_threat_hypotheses(arch_cov: dict | None, hyp_start_id: int = 1) -> list[dict]:
@@ -454,12 +552,29 @@ def build_critical_findings(threats: list[dict]) -> list[dict]:
     return out
 
 
-def build_tier_root_causes(threats: list[dict], components: list[dict]) -> dict:
-    """Group threats by component.tier, return top CWE patterns per tier.
+def build_tier_root_causes(
+    threats: list[dict], components: list[dict], sidecar: dict | None = None
+) -> dict:
+    """Phase 10b sidecar (.tier-root-causes.json) is the canonical source —
+    architectural-level prose like "missing input neutralization on raw SQL
+    paths" needs LLM synthesis and cannot be derived from threat titles.
+
+    Falls back to title-frequency derivation only when the sidecar is absent
+    (legacy / no-Phase-10b runs).
 
     Tier mapping: 'client' → 'edge' (yaml uses edge/server/data),
     'application' → 'server', 'data' → 'data'.
     """
+    if sidecar:
+        # Sidecar shape: {"schema_version": 1, "tier_root_causes": {"edge|server|data": [...]}}
+        nested = sidecar.get("tier_root_causes") or {}
+        out = {}
+        for tier in ("edge", "server", "data"):
+            bullets = nested.get(tier) or []
+            if bullets:
+                out[tier] = [str(b)[:80] for b in bullets if b]
+        return out
+
     tier_alias = {"client": "edge", "application": "server", "data": "data"}
     comp_tier = {c["id"]: tier_alias.get(c.get("tier", ""), c.get("tier", "")) for c in components}
 
@@ -569,6 +684,8 @@ def main() -> int:
     sidecar_tb = _load_json(od / ".trust-boundaries.json")
     sidecar_sc = _load_json(od / ".security-controls.json")
     sidecar_mo = _load_json(od / ".mitigation-overrides.json")
+    sidecar_as = _load_json(od / ".attack-surface-overrides.json")
+    sidecar_trc = _load_json(od / ".tier-root-causes.json")
 
     # Prior yaml (fallback source for fields whose sidecar is missing)
     prior_yaml = _load_yaml(od / "threat-model.yaml")
@@ -584,7 +701,9 @@ def main() -> int:
         plugin_root=args.plugin_root, repo_root=repo_root, prior_yaml=prior_yaml,
     )
 
-    threats = build_threats(merged)
+    threats, threat_warnings = build_threats(merged)
+    for w in threat_warnings:
+        sys.stderr.write(f"  {w}\n")
     mitigations = build_mitigations(threats)
     mitigations, mit_warnings = apply_mitigation_overrides(mitigations, sidecar_mo)
     for w in mit_warnings:
@@ -606,10 +725,12 @@ def main() -> int:
             t["id"] for t in threats if t.get("component") == cid
         )
 
-    attack_surface = build_attack_surface(routes)
+    attack_surface, as_warnings = build_attack_surface(routes, sidecar_as)
+    for w in as_warnings:
+        sys.stderr.write(f"  {w}\n")
     threat_hypotheses = build_threat_hypotheses(arch_cov)
     critical = build_critical_findings(threats)
-    tier_rcs = build_tier_root_causes(threats, components)
+    tier_rcs = build_tier_root_causes(threats, components, sidecar_trc)
 
     changelog = build_changelog(
         skill_cfg, threats, components, attack_surface,
