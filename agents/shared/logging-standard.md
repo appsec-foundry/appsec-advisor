@@ -22,8 +22,22 @@ All agents (orchestrator + sub-agents) MUST follow this logging standard. Replac
 | Scope | Events |
 |-------|--------|
 | Orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT` |
-| All agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR` |
+| All agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
+| Watchdog-emitted (via PostToolUse hook) | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog (`scripts/budget_watchdog.py`) counts tool calls per session and emits these deterministically — agents do not author them. On `BUDGET_CRITICAL` the watchdog writes `$OUTPUT_DIR/.budget-critical`; agents poll for the file at phase boundaries and execute their wrap-up sequence. The skill-layer post-run banner reads these events. |
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner / dep-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
+
+## Budget wrap-up signal (read at every phase boundary)
+
+Every agent that runs more than a handful of phases (orchestrator, stride-analyzer, threat-renderer, qa-reviewer) MUST check for `$OUTPUT_DIR/.budget-critical` at each phase boundary — same Bash call that refreshes the lock heartbeat. When the file exists:
+
+1. Stop dispatching new work.
+2. Run the agent-specific wrap-up sequence (defined in that agent's `.md` file — typically: finalize current artifact, write minimal-valid output with `partial: true` / `meta.incomplete: true`, emit `WRAP_UP_TRIGGERED` log event with reason + skipped items, exit cleanly).
+3. **Do not** emit further `PHASE_START` for skipped phases — the wrap-up is the terminal action.
+
+The `WRAP_UP_TRIGGERED` event format:
+```
+<ts>  [<sid>]  WARN   <agent>  WRAP_UP_TRIGGERED   reason=budget_critical  skipped=[<comma-separated phase/component list>]
+```
 
 ## Agent purpose reference (user-visible dispatch echos)
 

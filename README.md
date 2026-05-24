@@ -62,6 +62,7 @@ Incremental reruns help keep the architecture view and threat model aligned with
 - [Architecture](#architecture)
 - [Additional skills](#additional-skills)
 - [Enterprise rollout](#enterprise-rollout)
+- [Roadmap](#roadmap)
 - [Related projects](#related-projects)
 - [Contributing](#contributing)
 
@@ -404,6 +405,16 @@ At a high level:
 4. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
 
 Full runbook: [`docs/internal-plugin-packaging.md`](docs/internal-plugin-packaging.md). Profile fields and resolver precedence: [`docs/org-profiles.md`](docs/org-profiles.md).
+
+## Roadmap
+
+Open work items currently shaping the next iterations of the plugin:
+
+- **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents — design draft in [`sharedstate.md`](sharedstate.md).
+
+- **Richer external context.** The pipeline is anchored almost entirely in the repository itself; structured external context is limited to `docs/related-repos.yaml` and the optional requirements catalog. Additional context sources (architecture decision records, runtime and deployment topology, incident history, prior pentest findings) are planned so the analysis can reason beyond the code alone.
+
+- **Stronger threat focus.** The current report mixes architectural observations, compliance signals, and STRIDE findings, which dilutes the threat narrative. Upcoming iterations will sharpen the focus on attacker-goal-driven threat chains, exploitability ranking, and a cleaner separation between threats, weaknesses, and architectural risks.
 
 ## Related projects
 

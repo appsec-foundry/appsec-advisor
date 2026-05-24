@@ -183,11 +183,28 @@ Pfad: `data/actors/default-library.yaml`. Im Plugin gepflegt, exhaustiv genug, d
 
 **Disambiguation ACT-D-07 vs. ACT-D-09:** ACT-D-07 = externer Service, dessen Auth/API der Angreifer kontrolliert (Reach: peer-service, externe API-Antwort). ACT-D-09 = legitimer Co-Tenant innerhalb derselben Multi-Tenant-Instanz (Reach: shared-database, shared-cache, lateral). Wo beide passen, werden beide getagged — `primary_actor`-Algorithmus (§10) entscheidet deterministisch.
 
+### Reach-Äquivalenz (Actor-Collapse)
+
+Zwei Actors können aktiviert und semantisch verschieden sein, aber praktisch ununterscheidbar — der Übergang zwischen ihnen ist so trivial, dass eine getrennte Severity-Modulation und doppeltes Tagging die Bedrohungslage **unterschätzt**, nicht differenziert.
+
+**Kanonischer Fall:** ACT-D-01 (`anonymous-internet-attacker`) und ACT-D-02 (`authenticated-low-priv-user`) bei offener Self-Registration. Jeder Internet-Besucher kann sich in Sekunden registrieren; die Auth-Wand ist keine Reach-Barriere. Ein SQL-Injection hinter Login als reines ACT-D-02-Finding (medium-Multiplier) zu raten, während die Lücke faktisch von ACT-D-01-Reach erreichbar ist, ist ein strukturelles Underrating.
+
+**Signal & Resolver-Regel:**
+
+- Recon emittiert zusätzliches Signal-Flag `has_open_self_registration` (gesetzt wenn Registration-Route ohne Invite-Token, ohne E-Mail-Whitelist, ohne Payment-Gate, ohne Admin-Approval erreichbar ist — deterministische Detection, fällt sonst auf LLM-Fallback mit `_provenance.classification: llm-fallback`).
+- Wenn `has_open_self_registration` gesetzt UND beide ACT-D-01 und ACT-D-02 aktiviert sind, schreibt der Resolver eine **Collapse-Annotation** in beide Actor-Records: `equivalent_to: [ACT-D-01, ACT-D-02]` + `collapse_reason: open-self-registration`. Beide IDs bleiben separat im resolved-Set (keine ID-Mutation, Stable-ID intakt), aber Slicing und STRIDE-Analyzer behandeln sie als Reach-Äquivalenz-Klasse.
+- Findings tragen weiterhin beide IDs in `actor_ids[]`. `primary_actor` wird in diesem Fall **deterministisch auf den Actor mit niedrigster Reach-Distance** gesetzt (hier ACT-D-01), nicht via Likelihood-Argmax. Severity-Modulation nutzt `max(actor.severity_modulation[threat])` über die Äquivalenz-Klasse.
+- Bericht §1.5 zeigt Note: "ACT-D-02 collapsed into ACT-D-01 reach class — open self-registration trivializes auth boundary."
+
+**Erweiterbarkeit:** Das Pattern ist nicht auf ACT-D-01/02 beschränkt. Andere Reach-Äquivalenzen, die in Repo-/Org-Layer auftreten können (z.B. ACT-D-02 → ACT-D-03 bei offenem Role-Upgrade ohne Approval, oder ACT-R-N B2B-Partner → ACT-D-09 bei shared-tenancy für Partner-Accounts), werden über ein optionales Feld `equivalent_when: [<signal-flag>]` im Actor-Datenmodell (§4 optional) deklariert. Plugin-Default-Library liefert nur die ACT-D-01/02-Regel; weitere Äquivalenzen sind Repo-Layer-Sache.
+
+**Was Reach-Äquivalenz NICHT ist:** Kein Actor-Merge auf ID-Ebene (verletzte Stable-ID). Kein automatisches Disable des "redundanten" Actors (Check 15.1 in §11 würde sonst False-Positives melden). Kein Eingriff in `_provenance` — beide Actors behalten ihre ursprüngliche Layer-Herkunft.
+
 `ACT-D-*` Prefix kennzeichnet Default-Library. Enterprise/Repo verwenden `ACT-E-*` und `ACT-R-*`. Discovery vergibt `ACT-X-*` (X für "extension/proposed"). Promotion durch Reviewer behält die ursprüngliche ID per default (`ACT-X-3` bleibt `ACT-X-3` auch im Repo-Layer); optionales Renaming auf `ACT-R-N` erfordert Alias-Pflege `renamed_from: ACT-X-3` (siehe §3 Promotion-ID-Stabilität).
 
 ### Activation-Conditions
 
-Hardcoded im Plugin. Recon-Phase setzt Signal-Flags (`has_public_routes`, `has_auth_surface`, `has_role_concept`, `has_secrets_in_repo`, `has_ci_pipeline`, `has_external_apis`, `has_client_storage`, `has_multi_tenancy_signal`). Resolver aktiviert Default-Actor genau dann, wenn alle benötigten Signale gesetzt sind.
+Hardcoded im Plugin. Recon-Phase setzt Signal-Flags (`has_public_routes`, `has_auth_surface`, `has_role_concept`, `has_secrets_in_repo`, `has_ci_pipeline`, `has_external_apis`, `has_client_storage`, `has_multi_tenancy_signal`, `has_open_self_registration`). Resolver aktiviert Default-Actor genau dann, wenn alle benötigten Signale gesetzt sind. `has_open_self_registration` ist Activation-neutral (triggert keinen eigenen Actor), wird aber von der Reach-Äquivalenz-Regel oben konsumiert.
 
 **Recon-Erweiterung erforderlich.** Diese Signal-Flags werden heute von der Recon-Phase **nicht** emittiert. Implementierung dieses Konzepts setzt voraus, dass `appsec-recon-scanner` einen `signals`-Block pro Repo in das Recon-Output schreibt; die Flag-Namen sind bewusst stable, damit Activation-Conditions im Plugin gegen ein definiertes Vokabular prüfen. Bis dahin laufen alle Default-Actors mit Fallback `signal_missing → activate-with-warning` (sichtbar im Bericht), um Findings-Verlust durch unimplementierte Signale zu vermeiden.
 
@@ -556,6 +573,10 @@ Deterministisch, hardcoded:
 
 ```
 primary_actor = argmax over actor_ids by:
+  0. Reach-Äquivalenz-Override: wenn actor_ids eine Äquivalenz-Klasse mit
+     collapse_reason enthält (§5 Reach-Äquivalenz) → primary_actor = Actor
+     mit niedrigster Reach-Distance der Klasse, severity_modulation = max
+     über die Klasse. Likelihood-Argmax wird in diesem Fall übersprungen.
   1. actor_adjusted_likelihood (höchster gewinnt)
   2. Tiebreak: id-lexikografisch (stabil und reproduzierbar)
 ```

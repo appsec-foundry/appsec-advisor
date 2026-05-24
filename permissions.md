@@ -1,19 +1,26 @@
 # Permission-Cleanup — Umsetzungsplan
 
-Beseitigung von Release-Blocker #1 aus `docs/security-plugin-publish-review.md`:
-committed `.claude/settings.json` raus, Single-Source-of-Truth durchsetzen,
-Self-Dogfooding-Inkonsistenz beheben.
+Beseitigung der `Bash(*)` + `Read(**)/Write(**)/Edit(**)`-Inkonsistenz zwischen
+`data/required-permissions.yaml` und der committed `.claude/settings.json`:
+Single-Source-of-Truth durchsetzen, committed `settings.json` raus,
+Self-Dogfooding-Cat-28b-Finding (siehe `SECURITY.md:81` „Known issues —
+untrusted repositories") auflösen.
+
+> Verifiziert am 2026-05-24. Keine Phase ist umgesetzt. Zahlen und Zeilen
+> spiegeln den aktuellen Git-Stand der Datei (`git ls-files .claude/settings.json`
+> liefert noch einen Treffer).
 
 ## Kontext (Bestandsaufnahme, verifiziert)
 
 | Artefakt | Stand heute | Problem |
 |---|---|---|
-| `data/required-permissions.yaml` | kanonisch laut `AGENTS.md:115`; 32 path-scoped File-Einträge **plus genau eine** Bash-Zeile: `Bash(*)` | argumentiert philosophisch für `Bash(*)`, weil Claude Codes Prefix-Matcher Compound-Commands nicht deckt |
-| `.claude/settings.json` | committed; `Read(**)/Write(**)/Edit(**)` (lockerer als YAML) + 33 kuratierte Bash-Einträge **ohne** `Bash(*)` (strikter als YAML) | widerspricht der YAML in beide Richtungen; Contributor-RCE-Vektor; Self-Dogfooding-Cat-28b |
-| `scripts/check_permissions.py` | liest YAML als SoT, `--scope local` default → `.claude/settings.local.json` | OK, kein Eingriff am Code, aber Default-Bash-Policy wird unverändert in End-User-Settings geschrieben |
-| `tests/test_check_permissions.py` | enthält `test_shipped_settings_is_covered_by_yaml` Drift-Guard auf die committed `.claude/settings.json` | passt heute nur durch `Bash(*)`-Catch-all; muss nach Cleanup refit werden |
+| `data/required-permissions.yaml` | kanonisch laut `AGENTS.md:115`; **34** path-scoped File-Einträge **plus genau eine** Bash-Zeile: `Bash(*)` (line 189) | argumentiert philosophisch für `Bash(*)`, weil Claude Codes Prefix-Matcher Compound-Commands nicht deckt |
+| `.claude/settings.json` | committed; `Read(**)/Write(**)/Edit(**)` (lockerer als YAML) + **30** kuratierte Bash-Einträge **ohne** `Bash(*)` (strikter als YAML) | widerspricht der YAML in beide Richtungen; Contributor-RCE-Vektor; Self-Dogfooding-Cat-28b |
+| `scripts/check_permissions.py` | liest YAML als SoT, `--scope local` default → `.claude/settings.local.json` (`scripts/check_permissions.py:356`) | OK, kein Eingriff am Code, aber Default-Bash-Policy wird unverändert in End-User-Settings geschrieben |
+| `tests/test_check_permissions.py` | enthält `test_shipped_settings_is_covered_by_yaml` (line 228) Drift-Guard auf die committed `.claude/settings.json` | passt heute nur durch `Bash(*)`-Catch-all in YAML; muss nach Cleanup refit werden |
 | `schemas/required-permissions.schema.*` | **existiert nicht** | kein formaler Vertrag für die YAML |
-| `CONTRIBUTING.md:41` | `.claude/settings.json` framed als „Plugin-level Bash permission allow-list" | sachlich falsch — ist Contributor-Convenience, nicht Plugin-Distribution |
+| `CONTRIBUTING.md:64` | `.claude/settings.json` framed als „Plugin-level Bash permission allow-list" | sachlich falsch — ist Contributor-Convenience, nicht Plugin-Distribution |
+| `.gitignore` | enthält bereits `.claude/settings.local.json` (line 43), **nicht aber** `.claude/settings.json` | Schritt 8 muss `.claude/settings.json` ergänzen |
 
 ## Entscheidungsfragen (vor jedem Code-Change zu klären)
 
@@ -28,7 +35,7 @@ Die strategische Frage. Determiniert alle weiteren Schritte.
 | **(c)** Profil-Switch | YAML hat `profiles: {strict: [...curated], permissive: [Bash(*)]}`; User wählt beim `--update`, Default `strict` mit Warnung vor `permissive` | flexibel; Marketplace zeigt strict by default; Power-User können opt-in | komplexer; Drift-Risiko zwischen Profilen; YAML-Schema und `check_permissions.py` brauchen Profil-Logik |
 
 **Empfehlung: (b) light.**
-Pragmatisch: YAML auf den heutigen `.claude/settings.json`-Set umstellen, *ohne* zunächst den Pipeline-Refactor erzwingen. Stattdessen die unbenutzten Bash-Einträge (`rm:*`, `chmod:*`, `mv:*`, `tee:*`, `xargs:*`, `curl:*`) per Audit raus. Compound-Command-Hits werden vom End-User initial geprompted; ein Bug-Report listet konkrete Prompt-Stellen → diese werden zielgerichtet refaktoriert. So gibt es kein big-bang-Refactor und gleichzeitig kein `Bash(*)` mehr in der Distribution.
+Pragmatisch: YAML auf den heutigen `.claude/settings.json`-Set umstellen, *ohne* zunächst den Pipeline-Refactor erzwingen. Welche der 30 Bash-Einträge wirklich genutzt werden, klärt Phase-0-Schritt-2-Audit — vor dem Audit ist nicht belegt, dass `rm:*`, `chmod:*`, `mv:*`, `tee:*`, `xargs:*`, `curl:*` ungenutzt sind; sie wurden aus dem Bauchgefühl der ursprünglichen Risiko-Sortierung herausgegriffen. Compound-Command-Hits werden vom End-User initial geprompted; ein Bug-Report listet konkrete Prompt-Stellen → diese werden zielgerichtet refaktoriert. So gibt es kein big-bang-Refactor und gleichzeitig kein `Bash(*)` mehr in der Distribution.
 
 Falls dieser inkrementelle Pfad zu schmerzhaft ist: fallback auf (c) mit explizitem Default-Strict.
 
@@ -40,7 +47,7 @@ YAML hat `Read(${REPO_ROOT}/**)` etc. (path-scoped). settings.json hat `Read(**)
 
 ### Q3 — Drift-Test-Refit
 
-`test_shipped_settings_is_covered_by_yaml` (`tests/test_check_permissions.py:253`) testet derzeit die committed `.claude/settings.json` gegen die YAML.
+`test_shipped_settings_is_covered_by_yaml` (`tests/test_check_permissions.py:228`) testet derzeit die committed `.claude/settings.json` gegen die YAML.
 
 **Empfehlung:** Test umrouten auf `.claude/settings.example.json` (neue Template-Datei) **und** zusätzlichen Test `test_no_committed_runtime_settings_file` ergänzen, der grep auf `git ls-files` macht und assertiert, dass weder `.claude/settings.json` noch `.claude/settings.local.json` getrackt sind.
 
@@ -64,8 +71,10 @@ Empfehlungen Q1=(b)-light, Q2=path-scoped, Q3=refit+anti-test, Q4=schema.
 
 2. **Bash-Audit der Pipeline.**
    Greppen aller `Bash(...)`-Aufrufe in `agents/`, `skills/`,
-   `scripts/`, und herausfinden, welche Befehle real benutzt werden.
-   `git grep -nE '\\b(rm|chmod|mv|tee|xargs|curl)\\b' agents/ skills/ scripts/`
+   `scripts/`, und herausfinden, welche der 30 heute in
+   `.claude/settings.json` gelisteten Bash-Prefixes real benutzt werden.
+   Für die im Verdacht stehenden Kandidaten:
+   `git grep -nE '\b(rm|chmod|mv|tee|xargs|curl)\b' agents/ skills/ scripts/`
    Für jeden Treffer entscheiden: behalten in YAML / streichen.
    → verify: `docs/permission-audit.md` listet jeden Bash-Befehl aus der
      heutigen settings.json mit Spalte „Used in:" (Pfad+Zeile) oder „UNUSED".
@@ -107,11 +116,13 @@ Empfehlungen Q1=(b)-light, Q2=path-scoped, Q3=refit+anti-test, Q4=schema.
 ### Phase 2 — YAML auf curated Set umstellen (Q1=(b)-light)
 
 6. **`data/required-permissions.yaml` editieren.**
-   - File-Block unverändert.
-   - Bash-Block: `Bash(*)`-Zeile löschen.
+   - File-Block (34 Einträge) unverändert.
+   - Bash-Block: `Bash(*)`-Zeile (line 189) und den darüber stehenden
+     „Why Bash(*) instead…"-Kommentarblock löschen.
    - Stattdessen pro Audit-Ergebnis (Schritt 2) je einen Eintrag mit
-     `category: shell` und kurzer `reason:`. Geschätzte Größenordnung
-     ~20–25 Einträge (heutige settings.json minus 6 ungenutzte).
+     `category: shell` und kurzer `reason:`. Erwartete Größenordnung
+     ~20–30 Einträge (heutige settings.json abzüglich der vom Audit als
+     ungenutzt belegten Prefixes).
    - Kommentar-Block oben anpassen: nicht mehr „nur `Bash(*)` funktioniert",
      sondern „kuratierte Liste; bekannte Prompt-Quellen siehe ADR-0001".
    → verify:
@@ -140,12 +151,15 @@ Empfehlungen Q1=(b)-light, Q2=path-scoped, Q3=refit+anti-test, Q4=schema.
      deterministisches Output (zwei Läufe = byte-gleich); JSON ist valide.
 
 8. **`.gitignore` erweitern.**
-   Block hinzufügen:
+   `.claude/settings.local.json` ist bereits ignoriert (`.gitignore:43`).
+   Ergänzen ist `.claude/settings.json`. Bestehende Zeile entweder ersetzen
+   durch einen kommentierten Block:
    ```
    # Claude Code local permission overrides — never commit
    .claude/settings.json
    .claude/settings.local.json
    ```
+   oder eine einzelne neue Zeile `.claude/settings.json` neben Zeile 43.
    → verify: `git check-ignore -v .claude/settings.json` zeigt die Regel.
 
 9. **`git rm .claude/settings.json`** und commit.
@@ -177,42 +191,46 @@ Empfehlungen Q1=(b)-light, Q2=path-scoped, Q3=refit+anti-test, Q4=schema.
 
 ### Phase 5 — Dokumentation und Cross-Refs
 
-13. **`CONTRIBUTING.md:41` umformulieren.**
-    Zeile ersetzen durch:
-    > `.claude/settings.example.json` — Contributor-Convenience-Template.
-    > Vor dem Öffnen des Repos in Claude Code nach `.claude/settings.local.json`
-    > kopieren (gitignored). End-User installieren Permissions via
-    > `/appsec-advisor:check-permissions --update`. Single-Source-of-Truth:
-    > `data/required-permissions.yaml`.
-    → verify: `git diff CONTRIBUTING.md` zeigt nur diese eine Zeilen-Gruppe.
+13. **`CONTRIBUTING.md:64` umformulieren.**
+    Aktuelle Zeile lautet:
+    > `| `.claude/settings.json` | Plugin-level Bash permission allow-list |`
+    Ersetzen durch:
+    > `| `.claude/settings.example.json` | Contributor-Convenience-Template; nach `.claude/settings.local.json` kopieren (gitignored). End-User installieren Permissions via `/appsec-advisor:check-permissions --update`. SoT: `data/required-permissions.yaml`. |`
+    → verify: `git diff CONTRIBUTING.md` zeigt nur diese eine Tabellen-Zeile.
 
 14. **`SECURITY.md` synchronisieren.**
-    - Issue #1: `Bash(*)`-Text durch „kuratierte Bash-Allow-Liste" ersetzen;
-      Risiko-Profil neu beschreiben (kein `Bash(*)` mehr, aber `python3`,
-      `awk`, `sed` bleiben RCE-Primitives bei Prompt-Injection — ehrlich
-      bleiben).
-    - Recommended-Mitigations-Block: Punkt „Drop the `Bash(*)` requirement"
-      entfernen (erledigt).
-    - Issue #4 ergänzen: „bei diesem Plugin selbst gelöst durch
-      `.claude/settings.local.json`-Konvention".
-    → verify: `grep -nE 'Bash\\(\\*\\)' SECURITY.md README.md` zeigt nur noch
+    Verifizierte Vorkommen: `SECURITY.md:87` (Issue #1 Tabellenzeile) und
+    `SECURITY.md:109` (Recommended-Mitigations).
+    - Issue #1 (`SECURITY.md:87`): `Bash(*)`-Text durch „kuratierte
+      Bash-Allow-Liste" ersetzen; Risiko-Profil neu beschreiben (kein
+      `Bash(*)` mehr, aber `python3`, `awk`, `sed` bleiben RCE-Primitives
+      bei Prompt-Injection — ehrlich bleiben).
+    - Recommended-Mitigations (`SECURITY.md:109`): Punkt „Drop the `Bash(*)`
+      requirement" entfernen (erledigt).
+    - Section „Planned: untrusted-repo mode" (`SECURITY.md:102`): Hinweis
+      ergänzen, dass die Bash-Härtung Teil dieses Cleanups bereits erfolgt
+      ist; der untrusted-repo-Modus bleibt separater Workstream.
+    → verify: `grep -nE 'Bash\(\*\)' SECURITY.md README.md` zeigt nur noch
       Vorkommen, die explizit als Anti-Pattern markiert sind.
 
-15. **`README.md:48`, `README.md:94`** updaten.
-    Warn-Block und Quick-Start: nicht mehr „required `Bash(*)`", sondern
-    „kuratierte Allow-List mit RCE-relevanten Primitives — siehe SECURITY.md".
-    → verify: `grep -nE 'Bash\\(\\*\\)' README.md` zeigt nur dokumentierte
+15. **`README.md:48`** updaten (Warn-Block).
+    Aktuelle Zeile enthält „required `Bash(*)` permission". Ersetzen durch
+    „kuratierte Allow-List mit RCE-relevanten Primitives (`python3`, `awk`,
+    `sed`, …) — siehe SECURITY.md". `README.md:100` („This checks and
+    updates the allow-list…") bleibt unverändert.
+    → verify: `grep -nE 'Bash\(\*\)' README.md` zeigt nur dokumentierte
       Anti-Pattern-Erwähnungen.
 
 16. **`docs/security-hardening-plan.md` P1.3** aktualisieren oder als
     erledigt markieren (Section wird durch diesen Plan obsolet).
     → verify: P1.3-Heading hat `Status: done (resolved by permissions.md)`.
 
-17. **`arch.md:112`, `arch.md:683`, `AGENTS.md:115`, `AGENTS.md:284`**
-    cross-checken — sollten heute schon korrekt auf
-    `data/required-permissions.yaml` zeigen. Nur prüfen, nicht ändern.
-    → verify: `grep -nE 'required-permissions' arch.md AGENTS.md` zeigt
-      unveränderte Referenzen.
+17. **`AGENTS.md:115`, `AGENTS.md:284`** cross-checken — sollten heute schon
+    korrekt auf `data/required-permissions.yaml` zeigen. Nur prüfen, nicht
+    ändern. (`arch.md` ist im aktuellen Branch entfernt (`git status: D arch.md`);
+    die ursprünglichen `arch.md:112`/`arch.md:683`-Referenzen entfallen.)
+    → verify: `grep -nE 'required-permissions' AGENTS.md` zeigt unveränderte
+      Referenzen.
 
 ### Phase 6 — CI-Härtung
 
@@ -263,9 +281,11 @@ Empfehlungen Q1=(b)-light, Q2=path-scoped, Q3=refit+anti-test, Q4=schema.
 
 - Pipeline-Refactor zur Eliminierung aller Compound-Bash-Aufrufe.
   Erfolgt iterativ pro Bug-Report aus Schritt 20.
-- Untrusted-Repo-Modus (Blocker #4 aus Review). Separater Plan.
-- Manifest-Felder (`license`, `repository`, …) — Blocker #2 in Review,
-  separater Plan.
+- Untrusted-Repo-Modus (siehe `SECURITY.md:81` „Known issues — untrusted
+  repositories" und `SECURITY.md:102` „Planned: untrusted-repo mode").
+  Separater Plan.
+- Manifest-Felder (`license`, `repository`, …) — separater Plan, nicht
+  Bestandteil dieses Cleanups.
 
 ## Geschätzter Gesamtaufwand
 

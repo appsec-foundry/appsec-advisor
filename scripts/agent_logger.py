@@ -594,6 +594,9 @@ _HIGH_SIGNAL_EVENTS = frozenset(
         "MAX_TURNS",
         "SESSION_STOP",
         "ASSESSMENT_SUMMARY",
+        "BUDGET_WARN",
+        "BUDGET_CRITICAL",
+        "WRAP_UP_TRIGGERED",
     }
 )
 
@@ -1901,6 +1904,20 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         #     write — the agent already wrote the canonical entry).
         if _VERBOSE and ".agent-run.log" in cmd_str:
             _emit_substep_progress(cmd_str)
+
+    # ----- Budget watchdog (count this tool call against agent's maxTurns) -----
+    # Runs LAST so any earlier early-return paths still count the call. Failures
+    # are swallowed inside the watchdog itself — never blocks the hook.
+    try:
+        from budget_watchdog import tally_and_check, format_detail
+
+        agent = _lookup_session_agent((sid or "")[:8]) or "unknown"
+        crossing = tally_and_check(sid, agent, _output_dir())
+        if crossing is not None:
+            _write("WARN ", crossing["event"], format_detail(crossing), sid)
+    except Exception:
+        # Watchdog must never break a run.
+        pass
 
 
 # ---------------------------------------------------------------------------

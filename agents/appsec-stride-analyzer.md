@@ -445,6 +445,38 @@ Do **not** invent new TH-IDs. The taxonomy is the single authoritative source.
 
 **Validate the written file immediately.** Follow `shared/validation-routine.md` with `schema_type=stride` and `output_file=$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`.
 
+## Budget-critical wrap-up
+
+The watchdog (`scripts/budget_watchdog.py`, fired by the PostToolUse hook) writes `$OUTPUT_DIR/.budget-critical` when ANY agent — orchestrator or sub-agent — crosses 90% of its `maxTurns`. The signal is shared: if it exists, the orchestrator will soon wind down, so finer-grained stride analysis is wasted budget that the merger will never read.
+
+**Check at every STRIDE-category boundary** (between Spoofing → Tampering → Repudiation → InfoDisclosure → DoS → EoP). Combine the check with the Bash call that prints `↳ Checking <category>…`, e.g.:
+
+```bash
+echo "[stride | $COMPONENT_NAME]   ↳ Checking Tampering…" \
+  && [ -f "$OUTPUT_DIR/.budget-critical" ] && exit 99 || true
+```
+
+The `exit 99` is a sentinel — when the orchestrator polls for `.stride-<COMPONENT_ID>.json` and finds it missing, it treats this as a wrap-up signal (not a failure). To make the wrap-up deterministic, run the **abbreviated** Step 4 below instead of exiting raw:
+
+### Abbreviated Step 4 — partial output
+
+When `.budget-critical` exists at the start of a STRIDE-category check, jump immediately to writing the JSON with the threats you have so far:
+
+1. **Log the wrap-up** (do this FIRST, before the write — so the skill-layer banner sees it):
+   ```bash
+   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   stride-analyzer  WRAP_UP_TRIGGERED   reason=budget_critical  component=$COMPONENT_ID  completed_categories=<list>  skipped_categories=<list>" >> "$OUTPUT_DIR/.agent-run.log"
+   ```
+2. **Add two top-level fields to the JSON output:**
+   - `"partial": true`
+   - `"skipped_categories": ["Repudiation", "Denial of Service", "Elevation of Privilege"]` — list the STRIDE letters whose enumeration never started.
+3. **Write the file** with whatever threats were already gathered (Spoofing + Tampering in the example above). Field schema is unchanged — only the two extra top-level keys are added.
+4. **Skip validation** (`shared/validation-routine.md`) — a partial-but-syntactically-valid JSON is acceptable; the orchestrator's merger handles the `partial:true` flag.
+5. **Exit cleanly** with the `AGENT_END` log entry (still required so the orchestrator knows the agent returned).
+
+If the flag flips mid-Step-3 (i.e. you are already inside a category's reasoning), finish the current category and emit any threats you have for it, then jump to abbreviated Step 4.
+
+**Never skip the file write.** A missing `.stride-<COMPONENT_ID>.json` looks identical to a hard crash and will cause the orchestrator to re-dispatch the analyzer — burning more budget. An empty `{ "threats": [], "partial": true, "skipped_categories": ["Spoofing", ...] }` is strictly better.
+
 **Print on success:**
 ```
 [stride | <COMPONENT_NAME>] ✓ Done — <n> threats written to $OUTPUT_DIR/.stride-<COMPONENT_ID>.json (<n> chars)

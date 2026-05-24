@@ -485,6 +485,29 @@ fi
 
 If `WRITE_SARIF=true`, use the existing deterministic SARIF export path from `agents/phases/phase-group-finalization.md`. If `WRITE_PENTEST_TASKS=true`, use the existing deterministic pentest-task renderer. Do not invent alternate output formats.
 
+## Budget-critical wrap-up
+
+The watchdog writes `$OUTPUT_DIR/.budget-critical` when any agent in this run hits 90 % of its `maxTurns`. Renderer maxTurns is 80; the most common trigger is the renderer itself burning budget on optional fragments (attack-walkthroughs, deep enrichment).
+
+**Check the flag before each major action:**
+
+| Before this action | If `.budget-critical` exists, do this instead |
+|---|---|
+| Authoring `ms-verdict.json` | Author with minimal viable content (the schema allows brief prose); skip optional sections |
+| Authoring `ms-architecture-assessment.json` | Same — minimal viable content |
+| Authoring `attack-walkthroughs.md` | **Skip entirely** — optional fragment, downstream renderer omits the section gracefully when missing |
+| Authoring `security-posture-attack-paths.json` | **Skip entirely** — optional |
+| Enriching pre-generated fragments (`ENRICH_ARCH_FRAGMENTS=true`) | **Skip** — use the pre-generated fragments verbatim |
+| Running `compose_threat_model.py --strict` | Run with `--strict` removed (loose mode) so partial fragments compose into something rather than failing the gate |
+| Running `qa_checks.py all` | **Skip** — QA failures on a partial render are noise; the skill-layer banner already surfaces the wrap-up |
+
+When wrap-up triggers, log it BEFORE the next action:
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-renderer  WRAP_UP_TRIGGERED   reason=budget_critical  skipped=[<comma-separated list>]" >> "$OUTPUT_DIR/.agent-run.log"
+```
+
+The Postcondition Gate below still applies — `threat-model.md` MUST exist when the renderer returns. The wrap-up changes WHAT gets composed, not WHETHER it gets composed.
+
 ## Postcondition Gate — MANDATORY before returning
 
 You MUST NOT return until `$OUTPUT_DIR/threat-model.md` exists on disk. Run this exact Bash block as the final action before the Completion section, and refuse to proceed if it fails:

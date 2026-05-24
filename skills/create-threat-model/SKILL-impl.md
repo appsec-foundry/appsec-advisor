@@ -748,6 +748,41 @@ trap 'rm -f "$VERBOSE_MARKER" "$TRACING_MARKER"' EXIT
 
 The `EXIT` trap fires whether the shell exits via `exit N`, `return`, a signal, or an unhandled error. Because the trap is installed right after the marker files are conditionally created, any branch that subsequently calls `exit` — dry-run summary, error-handling, fast-path abort, incremental null-change — is covered automatically. The explicit `rm -f` calls in the Completion Summary and error branches remain in place as belt-and-suspenders (harmless double-removes are idempotent), but they are no longer load-bearing.
 
+## Incremental Pre-Check: reject incomplete baseline
+
+When `MODE=incremental`, **before** anything else (fast-path, dirty-set, compat gate), refuse the run if the baseline `threat-model.yaml` was written during a budget-critical wrap-up — i.e. carries `meta.incomplete: true`. An incomplete baseline has unknown coverage (some components were skipped, some STRIDE categories never ran); building deltas on top of it would compound the gap silently, making it look like everything is fine when in fact whole vulnerability classes have never been analyzed.
+
+```bash
+if [ "$MODE" = "incremental" ] && [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
+  # Match the line `  incomplete: true` (two-space indent under `meta:`).
+  # We only check this single sentinel — the absence of the key on a clean
+  # baseline returns no match (grep exits 1) and the run continues normally.
+  if grep -qE '^  incomplete:\s*true\s*$' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null; then
+    echo "" >&2
+    printf '\033[31m✗ Incremental baseline is marked incomplete — refusing to continue\033[0m\n' >&2
+    echo "" >&2
+    echo "  The previous run did not finish normally (turn-budget exhausted, or" >&2
+    echo "  a sub-agent triggered wrap-up). The resulting threat-model.yaml carries" >&2
+    echo "  meta.incomplete: true and is not safe to use as an incremental baseline" >&2
+    echo "  — coverage gaps in the baseline would propagate silently into the delta." >&2
+    echo "" >&2
+    SKIPPED_LINE=$(grep -E '^  wrap_up_skipped:' "$OUTPUT_DIR/threat-model.yaml" -A 10 2>/dev/null | head -6)
+    if [ -n "$SKIPPED_LINE" ]; then
+      echo "  Skipped in the prior run:" >&2
+      echo "$SKIPPED_LINE" | sed 's/^/    /' >&2
+      echo "" >&2
+    fi
+    echo "  Fix: re-run with --full to refresh the baseline. The next incremental" >&2
+    echo "        run will then have a complete baseline to delta against." >&2
+    echo "" >&2
+    rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+    exit 2
+  fi
+fi
+```
+
+The check is intentionally placed before the fast-path null-change abort: even a no-op delta is wrong when built on an incomplete baseline (it would print "nothing changed" while masking the prior run's coverage gaps).
+
 ## Incremental Fast-Path (null-change abort)
 
 When `MODE=incremental` and a baseline exists, run a **unified pre-check** *before* entering Stage 1. If nothing has changed (or only noise-only files changed) since the last run and the plugin hasn't drifted, exit immediately with a friendly message — no agents dispatched, no tokens burned.
@@ -2909,6 +2944,44 @@ merely observability data.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_run_issues.py" \
     "$OUTPUT_DIR" --depth "${ASSESSMENT_DEPTH:-standard}" || true
 ```
+
+**Budget warning banner (turn-budget exhaustion / wrap-up).**
+
+Before rendering the completion summary, surface any agent that hit its
+turn-budget ceiling or triggered a wrap-up. Without this banner the user
+would have to grep `.agent-run.log` to discover that a sub-agent
+terminated early — the `threat-model.md` would still exist, but with
+`meta.incomplete: true` and skipped components.
+
+The watchdog (`scripts/budget_watchdog.py`, called from the PostToolUse
+hook in `agent_logger.py`) emits `BUDGET_WARN` (75%), `BUDGET_CRITICAL`
+(90%), and `MAX_TURNS` (100%) per session, plus the agent-emitted
+`WRAP_UP_TRIGGERED` when an agent gracefully wound down on a critical
+flag. This block surfaces all of those events.
+
+```bash
+if grep -qE "BUDGET_CRITICAL|MAX_TURNS|WRAP_UP_TRIGGERED" \
+       "$OUTPUT_DIR/.agent-run.log" 2>/dev/null; then
+  printf '\n\033[31m⚠ INCOMPLETE — turn-budget exhausted for one or more agents\033[0m\n' >&2
+  grep -E "BUDGET_CRITICAL|MAX_TURNS|WRAP_UP_TRIGGERED" \
+       "$OUTPUT_DIR/.agent-run.log" | sed 's/^/  /' >&2
+  echo "" >&2
+  echo "  Details: $OUTPUT_DIR/.budget-critical (JSON list of affected sessions)" >&2
+  if [ -f "$OUTPUT_DIR/threat-model.yaml" ] && \
+     grep -q "^  incomplete: true" "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null; then
+    echo "  threat-model.yaml is marked meta.incomplete:true — incremental runs will refuse this baseline." >&2
+    echo "  Re-run with --full once the workload is reduced (smaller scope, --quick, or bumped maxTurns)." >&2
+  fi
+  echo "" >&2
+elif grep -q "BUDGET_WARN" "$OUTPUT_DIR/.agent-run.log" 2>/dev/null; then
+  printf '\n\033[33m⚠ Budget warning — an agent reached 75%% of its turn ceiling\033[0m\n' >&2
+  grep "BUDGET_WARN" "$OUTPUT_DIR/.agent-run.log" | sed 's/^/  /' >&2
+  echo "  Output is complete; consider monitoring future runs for budget drift." >&2
+  echo "" >&2
+fi
+```
+
+The banner is **stderr-only and best-effort** — a missing log or unreadable file silently skips the banner; the run never blocks on the warning emission itself. The same events are also already mirrored to stderr in real-time during the run (via `_HIGH_SIGNAL_EVENTS` in `agent_logger.py`); this banner is the consolidated end-of-run reminder.
 
 **Design intent.** The completion block is the *only* thing the user reliably sees in headless (`claude -p`) mode and the dominant visible artifact in interactive mode. It is rendered by `scripts/render_completion_summary.py` — a single self-contained Python script with full unit tests. **Do not hand-author any part of this block**; invoke the script and print its output verbatim.
 
