@@ -2109,6 +2109,36 @@ if [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
   else
     STAGE1_CUTOFF_NO_STRIDE=true
   fi
+
+  # MAX_TURNS surfacing (RC.B — 2026-05-24). The budget watchdog mirrors
+  # MAX_TURNS to hook-stderr via _HIGH_SIGNAL_EVENTS in agent_logger.py,
+  # but Claude Code's interactive TUI does NOT surface hook stderr; the
+  # orchestrator's own wrap-up Bash call (cat .budget-critical) is
+  # collapsed past ~20 lines so the headline fact is invisible. Print a
+  # short, prominent banner here whenever a cut-off fires AND a
+  # .budget-critical flag is on disk — the user reliably sees this
+  # because it comes from the skill's own stderr (not a hook, not a
+  # collapsed bash output). Fires once, before the recovery dispatch.
+  if [ -f "$OUTPUT_DIR/.budget-critical" ]; then
+    BUDGET_LINE=$(python3 -c "
+import json
+try:
+    with open('$OUTPUT_DIR/.budget-critical') as f:
+        d = json.load(f)
+    if d:
+        e = d[0]
+        print(f\"agent={e.get('agent','?')}  turns={e.get('turns','?')}/{e.get('max','?')}  ({int(e.get('pct',0)*100)}%)\")
+except Exception:
+    pass
+" 2>/dev/null)
+    LAST_PHASE=$(grep 'PHASE_END' "$OUTPUT_DIR/.agent-run.log" 2>/dev/null \
+                 | tail -1 \
+                 | sed -nE 's/.*\[(Phase [0-9a-z]+\/[0-9]+)\].*/\1/p' || true)
+    printf '\n\033[1;31m✗ MAX_TURNS reached — Stage 1 turn budget exhausted\033[0m\n' >&2
+    printf '  %s\n' "${BUDGET_LINE:-(see .budget-critical for details)}" >&2
+    [ -n "$LAST_PHASE" ] && printf '  Last completed: %s\n' "$LAST_PHASE" >&2
+    printf '  Recovery path follows below.\n\n' >&2
+  fi
 fi
 ```
 
