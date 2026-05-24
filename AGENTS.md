@@ -231,7 +231,7 @@ Default (`standard` + `opus-cheap`): Haiku for context/recon/config, Sonnet for 
 |-------|-------|-------------------------------|------------------|
 | 1     | 1 | `phase-group-recon.md`           | `appsec-context-resolver` |
 | 2     | 1 | `phase-group-recon.md`           | `appsec-recon-scanner` |
-| 2.5   | 1 | `phase-group-recon.md`           | `appsec-config-scanner` *(conditional: IaC surface)* |
+| 2.5   | 1 | `phase-group-recon.md`           | `appsec-config-scanner` *(conditional: IaC surface; parallel with Phases 1+2)* |
 | 2.6   | 1 | `phase-group-recon.md`           | orchestrator (script-driven coverage pre-pass) |
 | 3     | 1 | `phase-group-architecture.md`    | orchestrator (architecture modeling) |
 | 3b    | 1 | `phase-group-architecture.md`    | orchestrator (F-only architecture-derived findings) |

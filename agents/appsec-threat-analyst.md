@@ -401,11 +401,11 @@ For full runs (or incremental runs that pass the fast-path check): **Read only `
 
 ### Phases 1–2: Reconnaissance & Context (parallel dispatch)
 
-Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1) and recon-scanner (Phase 2) in parallel** — they have zero data dependencies (context reads external policy; recon analyzes the codebase). If `WITH_SCA=true`, dispatch dep-scanner in background alongside. **Wait for BOTH agents to return before proceeding to Phase 3.** Context-resolver typically returns first (3–6 min); the recon-scanner continues running in the background (5–15 min). **When context-resolver returns and `.recon-summary.md` is not yet on disk, this is EXPECTED — the recon-scanner is still running. Do NOT re-dispatch recon-scanner. Simply continue waiting for the background agent to complete.** Only after recon-scanner itself returns should you read `.recon-summary.md`. If `.recon-summary.md` is still missing after the recon-scanner agent has returned, fall back to minimal inline scan.
+Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1), recon-scanner (Phase 2), and — when `HAS_IAC_SURFACE=true` — config-scanner (Phase 2.5) in parallel** in a single orchestrator turn. The config-scanner has no dependency on Phase 2 output and runs concurrently with Phases 1+2, saving ~30–90 s wall-clock on repos with IaC surface. If `WITH_SCA=true`, dep-scanner runs in background after recon returns (needs `$MANIFESTS` from `.recon-summary.md` — do NOT pull it into the parallel batch). **Wait for all background agents to return before proceeding to Phase 3.** Context-resolver typically returns first (3–6 min); the recon-scanner continues running in the background (5–15 min). **When context-resolver returns and `.recon-summary.md` is not yet on disk, this is EXPECTED — the recon-scanner is still running. Do NOT re-dispatch recon-scanner. Simply continue waiting for the background agent to complete.** Only after recon-scanner itself returns should you read `.recon-summary.md`. If `.recon-summary.md` is still missing after the recon-scanner agent has returned, fall back to minimal inline scan.
 
 ### Phase 2.5: Configuration & IaC Scan *(conditional — when IaC surface exists)*
 
-Follow `phase-group-recon.md` → "Phase 2.5". Sequential after Phase 2 returns. Pre-check skips the agent dispatch entirely on repos without Dockerfile/GH-Actions/docker-compose/Dependabot/Renovate/`.npmrc`. When dispatched, the agent runs ~15 turns and writes `$OUTPUT_DIR/.config-scan-findings.json`. The Phase 9 STRIDE-Analyzer for `ci-cd-pipeline` consumes a component-scoped slice as `CONFIG_SCAN_FINDINGS`; Phase 10 merges entries into `.threats-merged.json` with `source: "config-scan"`.
+Follow `phase-group-recon.md` → "Phase 2.5". **Parallel with Phases 1+2** — dispatched in the same orchestrator turn. `HAS_IAC_SURFACE` pre-check skips the agent dispatch entirely on repos without Dockerfile/GH-Actions/docker-compose/Dependabot/Renovate/`.npmrc`. When dispatched, the agent runs ~15 turns and writes `$OUTPUT_DIR/.config-scan-findings.json`. The Phase 9 STRIDE-Analyzer for `ci-cd-pipeline` consumes a component-scoped slice as `CONFIG_SCAN_FINDINGS`; Phase 10 merges entries into `.threats-merged.json` with `source: "config-scan"`.
 
 ### Phases 3–7: Architecture & Analysis
 
@@ -1013,12 +1013,14 @@ Omit the `8b` line when `CHECK_REQUIREMENTS=false`. This overview is printed **o
 
 Phase 1 (context-resolver) and Phase 2 (recon-scanner) have zero data dependencies and are dispatched in the same orchestrator turn. See `phase-group-recon.md` for the full parallel dispatch protocol.
 
-Print (omit any `⟶` line whose agent is skipped by cache):
+Print (omit any `⟶` line whose agent is skipped by cache or surface check):
 ```
 [Phase 1/11] ▶ Context Resolution — dispatching…
 [Phase 2/11] ▶ Reconnaissance — dispatching…
+[Phase 2.5/11] ▶ Configuration & IaC Scan — dispatching… (parallel with Phases 1+2)
   ⟶ Dispatching context-resolver — extracts team, asset tier, compliance scope, prior findings, known threats, requirements  (expect ~30s)
   ⟶ Dispatching recon-scanner — enumerates 26 security categories (routes, deps, secrets, auth, crypto, logging, IaC, …)  (expect ~4m)
+  ⟶ Dispatching config-scanner — YAML-rule-engine against Dockerfile/GH-Actions/docker-compose/Dependabot/npmrc  (expect ~60s)
 ```
 (Purpose text is pinned in `agents/shared/logging-standard.md` → "Agent purpose reference" — update both in lock-step.)
 
@@ -1041,7 +1043,7 @@ If `CTX_SKIP=true`, **do not dispatch the context resolver**. Print `  ↳ conte
 
 **In full mode (`INCREMENTAL=false`) the context resolver always runs** — `CTX_SKIP` stays `false` regardless of whether `.threat-modeling-context.md` already exists. The Write tool overwrites the file without prompting because `Write(${OUTPUT_DIR}/**)` is in the allow-list.
 
-**Also resolve the recon fingerprint skip** (see `phase-group-recon.md` → "Incremental fingerprint skip") to determine `RECON_SKIP`. Both skip checks run in the same Bash call — one turn total for both decisions.
+**Also resolve the recon fingerprint skip** (see `phase-group-recon.md` → "Incremental fingerprint skip") to determine `RECON_SKIP`. **Also resolve `HAS_IAC_SURFACE`** (see `phase-group-recon.md` → "Pre-check — resolve HAS_IAC_SURFACE") in the same Bash batch — all three flags in one turn.
 
 **Dispatch the agents that need to run — in a single orchestrator turn using parallel Agent tool calls:**
 
@@ -1049,17 +1051,34 @@ If `CTX_SKIP=true`, **do not dispatch the context resolver**. Print `  ↳ conte
 |---|---|---|
 | `CTX_SKIP=false` | `appsec-advisor:appsec-context-resolver` | `true` (parallel) |
 | `RECON_SKIP=false` | `appsec-advisor:appsec-recon-scanner` | `true` (parallel) |
+| `HAS_IAC_SURFACE=true` | `appsec-advisor:appsec-config-scanner` | `true` (parallel) |
 
-If only one agent needs to run, dispatch it with `run_in_background: false` (no need to poll). If both are skipped, jump directly to reading the cached files.
+**State-Matrix — 8 combinations (3 booleans):**
 
-**Log `AGENT_INVOKE` for each dispatched agent** in the same Bash call as the skip-checks above:
+| CTX_SKIP | RECON_SKIP | HAS_IAC | Dispatched agents | `run_in_background` |
+|---|---|---|---|---|
+| false | false | true | context + recon + config | all `true` |
+| false | false | false | context + recon | both `true` |
+| true | false | true | recon + config | both `true` |
+| true | false | false | recon alone | `false` |
+| false | true | true | context + config | both `true` |
+| false | true | false | context alone | `false` |
+| true | true | true | config alone | `false` |
+| true | true | false | none — jump to Phase 3 | n/a |
+
+**Log `PHASE_START` and `AGENT_INVOKE` for each dispatched agent** in the same Bash call as the skip-checks above. Phase 2.5 `PHASE_START` must share the same second-level timestamp as Phase 1/2 so the `ASSESSMENT_PHASES` aggregator detects parallelism:
 ```bash
-# Batch: emit log lines for whichever agents are being dispatched
-[ "$CTX_SKIP" = "false" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   context-resolver  AGENT_INVOKE   Context resolution (model: <model>)" >> "$OUTPUT_DIR/.agent-run.log"
-[ "$RECON_SKIP" = "false" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  AGENT_INVOKE   Reconnaissance scan (model: <model>)" >> "$OUTPUT_DIR/.agent-run.log"
+# Batch: emit PHASE_START + AGENT_INVOKE for all dispatched agents (one Bash call)
+DISPATCH_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+[ "$CTX_SKIP" = "false" ] && echo "$DISPATCH_TS  [--------]  INFO   threat-analyst    PHASE_START   [Phase 1/11] Context Resolution — invoking appsec-context-resolver…  (expect ~30s)" >> "$OUTPUT_DIR/.agent-run.log"
+[ "$CTX_SKIP" = "false" ] && echo "$DISPATCH_TS  [--------]  INFO   context-resolver  AGENT_INVOKE  Context resolution (model: $CONTEXT_RESOLVER_MODEL)" >> "$OUTPUT_DIR/.agent-run.log"
+[ "$RECON_SKIP" = "false" ] && echo "$DISPATCH_TS  [--------]  INFO   threat-analyst    PHASE_START   [Phase 2/11] Reconnaissance — dispatching recon-scanner…  (expect ~4m)" >> "$OUTPUT_DIR/.agent-run.log"
+[ "$RECON_SKIP" = "false" ] && echo "$DISPATCH_TS  [--------]  INFO   recon-scanner     AGENT_INVOKE  Reconnaissance scan (model: $RECON_SCANNER_MODEL)" >> "$OUTPUT_DIR/.agent-run.log"
+[ "$HAS_IAC_SURFACE" = "true" ] && echo "$DISPATCH_TS  [--------]  INFO   threat-analyst    PHASE_START   [Phase 2.5/11] Configuration & IaC Scan — dispatching config-scanner (parallel with Phases 1+2)" >> "$OUTPUT_DIR/.agent-run.log"
+[ "$HAS_IAC_SURFACE" = "true" ] && echo "$DISPATCH_TS  [--------]  INFO   config-scanner    AGENT_INVOKE  Configuration & IaC scan (model: $CONFIG_SCANNER_MODEL)" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
-**Wait for both to complete**, then log `AGENT_DONE` for each.
+**Wait for all background agents to complete**, then log `AGENT_DONE` for each. For the config-scanner, also emit `PHASE_END` with `(parallel with Phases 1+2)` suffix — see `phase-group-recon.md` → Phase 2.5 → "After the agent returns" for the exact template.
 
 **If `CHECK_REQUIREMENTS=true` and `$OUTPUT_DIR/.threat-modeling-context.md` does not exist**, the context-resolver aborted because requirements were unavailable. Print the error and stop the assessment:
 ```
@@ -1197,6 +1216,8 @@ Choose the column matching `ASSESSMENT_DEPTH`. Render durations compactly: `30s`
 | Phase 1 end | `[Phase 1/11] ✓ Context Resolution — .threat-modeling-context.md ready  [Xm YYs]` |
 | Phase 2 start | `[Phase 2/11] ▶ Reconnaissance — dispatching recon-scanner…  (expect ~4m)` |
 | Phase 2 end | `[Phase 2/11] ✓ Reconnaissance — recon-summary ready  [Xm YYs]` + if WITH_SCA: `, dep-scanner dispatched (background)` |
+| Phase 2.5 start | `[Phase 2.5/11] ▶ Configuration & IaC Scan — dispatching config-scanner (parallel with Phases 1+2)` — emitted in same Bash batch as Phase 1/2 PHASE_START (identical timestamp); omitted when `HAS_IAC_SURFACE=false` |
+| Phase 2.5 end | `[Phase 2.5/11] ✓ Configuration & IaC Scan — <n> findings  [Xm YYs] (parallel with Phases 1+2)` — MUST carry `(parallel with Phases 1+2)` suffix |
 | Phase 3 start | `[Phase 3/11] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>  (expect ~1m)` |
 | Phase 3 end | `[Phase 3/11] ✓ Architecture Modeling — <n> diagrams produced  [Xm YYs]` |
 | Phase 4 start | `[Phase 4/11] ▶ Security Use Cases — producing sequence diagrams…  (expect ~1m)` |

@@ -10,8 +10,9 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 
 1. **Before dispatch:** resolve the recon fingerprint skip (see below) to decide whether recon needs to run at all.
 2. **Resolve the context cache hit** (see `appsec-threat-analyst.md` → Phase 1 Step B staleness check) to decide whether the context-resolver needs to run.
-3. **Dispatch both in a single orchestrator turn** using two Agent tool calls. Each call that is needed gets `run_in_background: true` (or `false` if only one is dispatched — the idle one can skip). If both are skipped (cache hits on both), jump directly to Phase 3.
-4. **Wait for BOTH background agents to return** before proceeding to Phase 3. Context-resolver typically finishes in 3–6 min; recon-scanner takes 5–15 min. **CRITICAL: When context-resolver returns first, the recon-scanner is still running in the background — do NOT check `.recon-summary.md` at that point and do NOT re-dispatch recon-scanner. Simply wait for the already-running background agent to complete.** Only after the recon-scanner agent itself returns should you read `.recon-summary.md`.
+2b. **Resolve `HAS_IAC_SURFACE`** — run the `compgen` pre-check (see below, before Step 0a) to decide whether the config-scanner needs to run. This check has no dependency on Phase 2 output and must run before the parallel dispatch turn.
+3. **Dispatch all needed agents in a single orchestrator turn** using up to three Agent tool calls (context-resolver, recon-scanner, config-scanner). Each call that is needed gets `run_in_background: true`; if only one agent is dispatched, use `run_in_background: false`. If all three are skipped, jump directly to Phase 3.
+4. **Wait for all background agents to return** before proceeding to Phase 3. Context-resolver typically finishes in 3–6 min; recon-scanner takes 5–15 min. **CRITICAL: When context-resolver returns first, the recon-scanner is still running in the background — do NOT check `.recon-summary.md` at that point and do NOT re-dispatch recon-scanner. Simply wait for the already-running background agent to complete.** Only after the recon-scanner agent itself returns should you read `.recon-summary.md`.
 
 **Error handling:** If the context-resolver aborts (requirements unavailable + `CHECK_REQUIREMENTS=true`), halt the assessment regardless of whether recon succeeded. If the recon-scanner fails but the context-resolver succeeded, fall back to minimal inline scan (same as before).
 
@@ -74,6 +75,40 @@ fi
 2. After the recon-scanner returns, the updated fingerprint will be written to `.appsec-cache/baseline.json` during Phase 11 — no action needed here.
 
 **Conservative fingerprinting rule:** `baseline_state.py` uses a whitelist of known manifest/Dockerfile/IaC file types. If a new unknown file type shows up that might carry security-relevant changes (e.g. a novel IaC format), the fingerprint check will still say "unchanged" for that file — which is unsafe. Mitigation: when in doubt about coverage, force a full scan with `--full`. The fingerprint is a best-effort optimization, not a correctness guarantee.
+
+### Pre-check — resolve HAS_IAC_SURFACE (before parallel dispatch)
+
+Run this in the same Bash batch as the RECON_SKIP check above — before dispatching any agents. The check is a pure filesystem lookup with no dependency on Phase 2 output.
+
+```bash
+HAS_IAC_SURFACE=false
+for pattern in "Dockerfile" "*.dockerfile" "docker-compose*.yml" "docker-compose*.yaml" \
+               ".github/workflows/*.yml" ".github/workflows/*.yaml" \
+               ".github/dependabot.yml" ".github/dependabot.yaml" \
+               "renovate.json" "renovate.json5" ".renovaterc" \
+               ".npmrc" ".yarnrc.yml"; do
+  if compgen -G "$REPO_ROOT/$pattern" > /dev/null 2>&1 \
+     || compgen -G "$REPO_ROOT/**/$pattern" > /dev/null 2>&1; then
+    HAS_IAC_SURFACE=true
+    break
+  fi
+done
+echo "HAS_IAC_SURFACE=$HAS_IAC_SURFACE"
+```
+
+If `HAS_IAC_SURFACE=false` → write a schema-valid stub immediately so downstream phases see a consistent shape:
+
+```bash
+if [ "$HAS_IAC_SURFACE" = "false" ]; then
+  cat > "$OUTPUT_DIR/.config-scan-findings.json" <<'JSON'
+{"parse_error": "skipped: no IaC surface detected", "findings": []}
+JSON
+fi
+```
+
+The error-stub branch requires only `[parse_error, findings]` — both consumers (Phase 9 / Phase 10) treat findings as authoritative and a `parse_error` key as "no findings to merge". No agent is dispatched when `HAS_IAC_SURFACE=false`.
+
+**R5 check:** On large monorepos the `compgen -G "**/..."` globs may be slow cold-cache. If the time between pre-phase start and `HAS_IAC_SURFACE` resolution exceeds 500 ms, switch to top-level-only globs (drop `**/`).
 
 ### Step 0 — Deterministic pattern pre-pass (M3.1)
 
@@ -175,61 +210,30 @@ Do **not** wait — continue through Phases 3–8. Phase 10 will `wait` on the P
 
 ## Phase 2.5: Configuration & IaC Scan (M3.5)
 
-After Phase 2 (recon-scanner) returns and `.recon-summary.md` is on disk,
-dispatch the config-scanner if any IaC/CI surface exists. Phase 2.5 catches
+Runs **in parallel with Phases 1 and 2** (no recon dependency). The config-scanner
+reads `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` and filesystem globs
+directly — it does not consume `.recon-summary.md`. Phase 2.5 catches
 configuration-level security issues that the per-component STRIDE analyzers
 in Phase 9 would miss (Dockerfile hardening, GH Actions privilege, docker-compose
 trust boundaries, Dependabot/Renovate disablement, `.npmrc` TLS bypass).
 
-### Pre-check — skip Phase 2.5 when no IaC surface exists
+### Pre-check
 
-Cheap deterministic check: skip the agent dispatch entirely if the repo has
-no Dockerfile, no GitHub Actions, no docker-compose, no Dependabot/Renovate
-config, AND no committed `.npmrc`/`.yarnrc.yml` files. This prevents wasting
-~15 turns on repos with no config-scan surface (typical for pure libraries).
-
-```bash
-HAS_IAC_SURFACE=false
-for pattern in "Dockerfile" "*.dockerfile" "docker-compose*.yml" "docker-compose*.yaml" \
-               ".github/workflows/*.yml" ".github/workflows/*.yaml" \
-               ".github/dependabot.yml" ".github/dependabot.yaml" \
-               "renovate.json" "renovate.json5" ".renovaterc" \
-               ".npmrc" ".yarnrc.yml"; do
-  if compgen -G "$REPO_ROOT/$pattern" > /dev/null 2>&1 \
-     || compgen -G "$REPO_ROOT/**/$pattern" > /dev/null 2>&1; then
-    HAS_IAC_SURFACE=true
-    break
-  fi
-done
-```
-
-If `HAS_IAC_SURFACE=false` → write a schema-valid stub to
-`$OUTPUT_DIR/.config-scan-findings.json` so downstream phases (Phase 9 STRIDE
-`CONFIG_SCAN_FINDINGS` parameter, Phase 10 merge) see a consistent shape
-rather than `{}` (which fails schema validation against
-`schemas/config-scan-findings.schema.yaml`):
-
-```bash
-cat > "$OUTPUT_DIR/.config-scan-findings.json" <<'JSON'
-{"parse_error": "skipped: no IaC surface detected", "findings": []}
-JSON
-```
-
-Then log a one-line "Phase 2.5 skipped (no IaC surface detected)" and proceed
-to Phase 3. The error-stub branch of the schema requires only
-`[parse_error, findings]` — both consumers (Phase 9 / Phase 10) treat the
-findings array as authoritative and a `parse_error` key as "no findings to
-merge", so downstream behaviour is identical to the historical missing-file
-case but schema-conformant.
+`HAS_IAC_SURFACE` is resolved before the parallel dispatch — see "Pre-check —
+resolve HAS_IAC_SURFACE" section above (before Step 0a). The stub file is also
+written there when `HAS_IAC_SURFACE=false`. No further action needed here when
+`HAS_IAC_SURFACE=false` — proceed to Phase 3 after all background agents return.
 
 ### Dispatch — when IaC surface exists
 
-**→ TOOL CALL REQUIRED (sequential, NOT parallel — Phase 2.5 needs Phase 2's
-recon-summary as input baseline):**
+**→ TOOL CALL REQUIRED (parallel with Phases 1+2 — dispatched in the same
+orchestrator turn as context-resolver and recon-scanner):**
 
 - `subagent_type`: `appsec-advisor:appsec-config-scanner`
 - `description`: `Configuration & IaC scan`
-- `run_in_background`: `false` (15-turn budget; finishes before Phase 3)
+- `run_in_background`: `true` (parallel with Phases 1+2; use `false` only when
+  config-scanner is the sole dispatched agent — see State-Matrix in
+  `appsec-threat-analyst.md` Step B)
 - `model`: `$CONFIG_SCANNER_MODEL` from `.skill-config.json` (defaults to
   `claude-haiku-4-5` at all reasoning tiers — YAML-rule-engine task,
   pattern-matching against a static check catalog, Haiku-suitable at every
@@ -237,9 +241,29 @@ recon-summary as input baseline):**
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`,
   `CLAUDE_PLUGIN_ROOT=<plugin root>`, `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 
-Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.
+Log `AGENT_INVOKE` and `PHASE_START [Phase 2.5/N]` in the **same Bash batch**
+as Phase 1/2 `AGENT_INVOKE` lines — identical second-level timestamp lets the
+`ASSESSMENT_PHASES` aggregator detect parallelism. Example:
 
-After the agent returns: validate the output against the schema:
+```bash
+[ "$HAS_IAC_SURFACE" = "true" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    PHASE_START   [Phase 2.5/11] Configuration & IaC Scan — dispatching config-scanner (parallel with Phases 1+2)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+[ "$HAS_IAC_SURFACE" = "true" ] && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   config-scanner    AGENT_INVOKE  Configuration & IaC scan (model: $CONFIG_SCANNER_MODEL)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+After the agent returns — log `AGENT_DONE` and `PHASE_END` with parallel suffix:
+
+```bash
+CONFIG_SCAN_DONE_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+echo "$CONFIG_SCAN_DONE_TS  [--------]  INFO   config-scanner    AGENT_DONE    Configuration & IaC scan complete" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$CONFIG_SCAN_DONE_TS  [--------]  INFO   threat-analyst    PHASE_END     [Phase 2.5/11] Configuration & IaC Scan complete (parallel with Phases 1+2)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+The `PHASE_END` label **MUST** carry the `(parallel with Phases 1+2)` suffix so
+the `ASSESSMENT_PHASES` aggregator (see `phase-group-finalization.md:1142`) does
+not add Phase 2.5 wall-clock to the sequential total. Without the suffix, every
+run statistics appendix overstates total wall-clock by ~30–90 s.
+
+Then validate the output against the schema:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
