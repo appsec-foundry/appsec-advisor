@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/tier-root-causes.schema.json",
+  "title": "Phase 10b sidecar — tier root causes",
+  "description": "Phase-10b LLM persists at PHASE_END. Natural-language aggregation of root-cause patterns per architectural tier (edge/server/data). Rendered in the §1 Security Posture at a Glance heatmap. The Python aggregator can derive a fallback (top-N threat titles per tier), but the LLM produces better cross-finding pattern recognition (e.g. 'missing input neutralization on raw SQL paths' aggregating 4 separate injection findings). See docs/substep2-deterministic-migration.md §2.8.",
+  "type": "object",
+  "required": ["schema_version", "tier_root_causes"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "tier_root_causes": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Per-tier bullets. Skip a tier entirely (omit the key) if it has no threats — DO NOT emit empty arrays; the renderer fallback '(no root causes documented)' is only meaningful for a tier without threats.",
+      "properties": {
+        "edge": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": "Client-tier root causes (Angular SPA, mobile, browser-side JS). Plain language, no file:line citations — those belong in threats[]."
+        },
+        "server": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": "Application-tier root causes (REST API, middleware, auth, business logic)."
+        },
+        "data": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80},
+          "description": "Data-tier root causes (database, cache, queues, storage)."
+        }
+      }
+    }
+  }
+}

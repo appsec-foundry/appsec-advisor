@@ -43,6 +43,21 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     "compound-chains": "compound-chains.schema.json",
     "operational-strengths-overrides": "operational-strengths-overrides.schema.json",
     "security-posture-attack-paths": "security-posture-attack-paths.schema.json",
+    # Substep 2 deterministic migration sidecars (see
+    # docs/substep2-deterministic-migration.md). These are INPUTS to
+    # scripts/build_threat_model_yaml.py, NOT render fragments — they
+    # live at $OUTPUT_DIR/.X.json (dot-prefix, repo root of output_dir)
+    # rather than $OUTPUT_DIR/.fragments/X.json. They share the validator
+    # because the underlying JSON-Schema machinery is identical; the
+    # fragment_filename map below stays empty for them so the pre-render
+    # gate keeps ignoring them.
+    "components": "components.schema.json",
+    "assets": "assets.schema.json",
+    "trust-boundaries": "trust-boundaries.schema.json",
+    "security-controls": "security-controls.schema.json",
+    "attack-surface-overrides": "attack-surface-overrides.schema.json",
+    "mitigation-overrides": "mitigation-overrides.schema.json",
+    "tier-root-causes": "tier-root-causes.schema.json",
 }
 
 # Reverse map: schema file stem → fragment type (used by pre-render-gate to
@@ -51,6 +66,8 @@ _STEM_TO_TYPE: dict[str, str] = {v.replace(".schema.json", ""): k for k, v in FR
 
 # Canonical fragment filenames used by the renderer (from sections-contract.yaml
 # + phase-group-finalization.md). Keyed by fragment type for reverse lookup.
+# Substep-2 sidecars are intentionally NOT listed here — they are NOT render
+# fragments, they are aggregator inputs (live at OUTPUT_DIR/.X.json).
 _FRAGMENT_FILENAMES: dict[str, str] = {
     "verdict": "ms-verdict.json",
     "architecture-assessment": "ms-architecture-assessment.json",

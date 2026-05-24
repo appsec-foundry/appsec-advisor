@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/mitigation-overrides.schema.json",
+  "title": "Phase 10b sidecar — mitigation splits + additions",
+  "description": "Phase-10b LLM persists at PHASE_END. Refines the Python aggregator's 1:1 mitigation grouping with semantic splits (one M-ID into multiple distinct mitigations when remediation steps span different OWASP categories) and additions (process / cross-cutting mitigations not derivable from any single threat — e.g. 'Establish dependency-update SLA', 'Adopt centralized secrets manager'). See docs/substep2-deterministic-migration.md §2.6.",
+  "type": "object",
+  "required": ["schema_version"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "splits": {
+      "type": "array",
+      "default": [],
+      "description": "Splits an existing baseline M-ID into multiple finer-grained mitigations. Union of split.threat_ids[] MUST equal source M-ID's threat_ids[] (no dropped threats — aggregator validates).",
+      "items": {
+        "type": "object",
+        "required": ["source_mid", "into"],
+        "additionalProperties": false,
+        "properties": {
+          "source_mid": {
+            "type": "string",
+            "pattern": "^M-\\d{3,}$",
+            "description": "M-ID present in the Python baseline. Cross-ref validated — orphan source_mid = hard fail."
+          },
+          "into": {
+            "type": "array",
+            "minItems": 2,
+            "description": "≥2 sub-mitigations. Aggregator assigns final ID = source_mid + id_suffix (M-001 + 'a' = M-001a).",
+            "items": {
+              "type": "object",
+              "required": ["id_suffix", "title", "threat_ids"],
+              "additionalProperties": true,
+              "properties": {
+                "id_suffix": {
+                  "type": "string",
+                  "pattern": "^[a-z]$",
+                  "description": "Lowercase letter (a, b, c, ...) appended to source_mid. Must be unique within this split's into[]."
+                },
+                "title": {"type": "string", "minLength": 1, "maxLength": 100},
+                "threat_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {"type": "string", "pattern": "^T-\\d{3,}$"}
+                },
+                "remediation": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "effort": {"type": "string", "enum": ["Low", "Medium", "High"]},
+                    "steps": {"type": "array", "items": {"type": "string"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "additions": {
+      "type": "array",
+      "default": [],
+      "description": "Cross-cutting / process mitigations not derivable from threats[]. Each M-ID MUST come from scripts/reserve_ids.py mitigation --count N.",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "threat_ids", "kind", "priority", "severity"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^M-\\d{3,}$",
+            "description": "Reserved via scripts/reserve_ids.py. Aggregator validates ID ≤ current counter AND not colliding with baseline."
+          },
+          "title": {"type": "string", "minLength": 1, "maxLength": 100},
+          "threat_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "pattern": "^T-\\d{3,}$"},
+            "description": "≥1 existing T-ID required (evidence-grounding — no hallucinated mitigations). Process mitigations (kind=process) SHOULD have ≥2."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["fix", "review", "process", "architectural"],
+            "description": "fix = concrete code/config change; review = manual code review; process = SDLC/operational gap; architectural = design-level change."
+          },
+          "priority": {"type": "string", "enum": ["P1", "P2", "P3", "P4"]},
+          "severity": {"type": "string", "enum": ["Critical", "High", "Medium", "Low", "Informational"]},
+          "effort": {"type": "string", "enum": ["Low", "Medium", "High"]},
+          "remediation": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "effort": {"type": "string", "enum": ["Low", "Medium", "High"]},
+              "steps": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

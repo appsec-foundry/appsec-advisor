@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/assets.schema.json",
+  "title": "Phase 5 sidecar — assets",
+  "description": "Structured asset inventory the Phase-5 (Asset Identification) LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[assets[]] without re-composing from working memory in Phase 11. See docs/substep2-deterministic-migration.md §2.2.",
+  "type": "object",
+  "required": ["schema_version", "assets"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "assets": {
+      "type": "array",
+      "minItems": 0,
+      "description": "Assets requiring protection — Restricted/Confidential/Internal data, key material, credentials.",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "classification", "description"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^A-\\d{3,}$",
+            "description": "Stable asset ID — MUST come from scripts/reserve_ids.py asset --count N. Never hand-pick; collides with prior runs in incremental mode."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "classification": {
+            "type": "string",
+            "enum": ["Public", "Internal", "Confidential", "Restricted"],
+            "description": "Data classification per common 4-tier policy. Renders in §4 Assets Register column 2."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "1-3 sentence summary of what the asset is, where it lives, why it matters."
+          },
+          "linked_threats": {
+            "type": "array",
+            "items": {"type": "string", "pattern": "^T-\\d{3,}$"},
+            "description": "T-IDs of threats that target this asset. Cross-ref validated by aggregator — orphan T-IDs surface as advisory warnings."
+          },
+          "evidence_flags": {
+            "type": "array",
+            "default": [],
+            "items": {"type": "string"},
+            "description": "Optional audit flags (e.g. inferred_classification, predates_threat_discovery)."
+          }
+        }
+      }
+    },
+    "additions": {
+      "type": "array",
+      "default": [],
+      "description": "Assets emerging from later phases (e.g., build artifacts identified in Phase 10 cross-phase synthesis). Same item schema as assets[].",
+      "items": {"type": "object"}
+    }
+  }
+}

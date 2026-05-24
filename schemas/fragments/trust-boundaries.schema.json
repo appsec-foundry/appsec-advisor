@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/trust-boundaries.schema.json",
+  "title": "Phase 7 sidecar — trust boundaries",
+  "description": "Structured trust-boundary catalog the Phase-7 (Trust Boundary Analysis) LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[trust_boundaries[]] without re-composing in Phase 11. See docs/substep2-deterministic-migration.md §2.4.",
+  "type": "object",
+  "required": ["schema_version", "trust_boundaries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "trust_boundaries": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Network/process/identity transitions where data crosses a trust line.",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^tb-\\d+$",
+            "description": "Stable boundary ID, lowercase + digits (e.g. tb-1, tb-2)."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Human-readable boundary description (e.g. 'Internet → Express API')."
+          },
+          "from": {
+            "type": "string",
+            "description": "Origin side — existing component ID or the literal 'external' (network ingress). Cross-ref validated by aggregator — non-existent components surface as advisory warnings."
+          },
+          "to": {
+            "type": "string",
+            "description": "Destination side — existing component ID or 'external'."
+          },
+          "controls": {
+            "type": "array",
+            "default": [],
+            "items": {"type": "string"},
+            "description": "Controls enforced at this boundary (e.g. ['JWT validation', 'rate limiting', 'TLS termination'])."
+          },
+          "description": {
+            "type": ["string", "null"],
+            "description": "Optional 1-2 sentence elaboration shown in §6 Trust Boundaries section."
+          }
+        }
+      }
+    },
+    "additions": {
+      "type": "array",
+      "default": [],
+      "items": {"type": "object"}
+    }
+  }
+}

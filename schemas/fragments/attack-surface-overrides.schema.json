@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/attack-surface-overrides.schema.json",
+  "title": "Phase 6 sidecar — attack surface curations + additions",
+  "description": "Phase-6 LLM persists curation hints + additions at PHASE_END. The Python aggregator (build_threat_model_yaml.py) emits baseline attack_surface[] from .route-inventory.json[routes] (all 112+ routes), then applies these overrides: curations[] filter the noisy baseline to ~20-30 high-signal entries; additions[] adds non-route surfaces (SSH, file watchers, scheduled jobs, cloud events) absent from route-inventory. See docs/substep2-deterministic-migration.md §2.3.",
+  "type": "object",
+  "required": ["schema_version"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "curations": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Filtering hints applied to the baseline route-inventory. When omitted, aggregator emits ALL routes (lower quality but non-breaking).",
+      "properties": {
+        "include_route_ids": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Allowlist of route_ids to keep from .route-inventory.json[routes][].route_id. When non-empty, all OTHER routes are dropped from attack_surface[]."
+        },
+        "exclude_route_ids": {
+          "type": "array",
+          "default": [],
+          "items": {"type": "string"},
+          "description": "Denylist applied AFTER include_route_ids (or to the full baseline if include is empty). Use for explicit drops (e.g. health-check endpoints)."
+        },
+        "rationale_by_id": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "description": "Optional per-route rationale rendered as the `notes` field in §5 Attack Surface."
+        }
+      }
+    },
+    "additions": {
+      "type": "array",
+      "default": [],
+      "description": "Attack surfaces NOT in route-inventory (out-of-band management, scheduled jobs, cloud events). Each entry follows the threat-model.output.schema.yaml attack_surface[] shape.",
+      "items": {
+        "type": "object",
+        "required": ["entry_point", "protocol"],
+        "additionalProperties": true,
+        "properties": {
+          "entry_point": {"type": "string", "minLength": 1},
+          "protocol": {"type": "string", "minLength": 1, "description": "HTTP / HTTPS / gRPC / SSH / SMTP / MQTT / Cron / FileWatch / etc."},
+          "auth_required": {"type": ["boolean", "null"]},
+          "notes": {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}
