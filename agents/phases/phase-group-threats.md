@@ -1616,3 +1616,115 @@ if [ ! -f "$OUTPUT_DIR/.triage-flags.json" ]; then
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  AGENT_ERROR   Triage validator did not produce .triage-flags.json — continuing without triage flags" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 fi
 ```
+
+### Phase 10b sidecars — `.mitigation-overrides.json` + `.tier-root-causes.json` (Substep-2 deterministic migration)
+
+**Why:** the Python aggregator (`scripts/build_threat_model_yaml.py`) derives a baseline `mitigations[]` (1:1 grouping per M-ID) and `tier_root_causes` (top-N threat titles per tier) deterministically. The Phase-10b LLM refines both:
+- **mitigation-overrides**: splits baseline M-IDs into finer-grained mitigations when remediation steps span different OWASP categories, AND adds cross-cutting / process mitigations not derivable from any single threat (e.g. "Establish dependency-update SLA")
+- **tier-root-causes**: replaces the title-list fallback with cross-finding pattern aggregation (e.g. "missing input neutralization on raw SQL paths" aggregating 4 separate injection findings)
+
+See [docs/substep2-deterministic-migration.md §2.6 and §2.8](../../docs/substep2-deterministic-migration.md). Both sidecars run AFTER the triage agent completes — they consume `.triage-flags.json` and the annotated `.threats-merged.json`.
+
+#### `.mitigation-overrides.json`
+
+**Protocol (after triage agent returns, BEFORE Phase 10b PHASE_END):**
+
+1. **Reserve M-NNN IDs for additions** (process / cross-cutting mitigations that don't trace to a single threat). Count the number of additions you'll emit:
+   ```bash
+   ADDITION_COUNT=<N>   # number of process/cross-cutting mitigations to add
+   if [ "$ADDITION_COUNT" -gt 0 ]; then
+     M_IDS=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/reserve_ids.py" \
+       mitigation --count "$ADDITION_COUNT" --output-dir "$OUTPUT_DIR")
+     # M_IDS is a JSON list e.g. ["M-020","M-021"]
+   fi
+   ```
+   Splits do NOT reserve new M-IDs — the aggregator constructs the split IDs as `source_mid + id_suffix` (M-001 + 'a' = M-001a).
+
+2. **Write `$OUTPUT_DIR/.mitigation-overrides.json`** via Bash heredoc. Field shape MUST match `schemas/fragments/mitigation-overrides.schema.json`:
+   ```bash
+   cat > "$OUTPUT_DIR/.mitigation-overrides.json" <<'JSON'
+   {
+     "schema_version": 1,
+     "splits": [
+       {
+         "source_mid": "M-001",
+         "into": [
+           {"id_suffix": "a", "title": "Rotate JWT private key",
+            "threat_ids": ["T-001"],
+            "remediation": {"effort": "Medium", "steps": ["Remove hardcoded RSA key", "Generate new 2048-bit pair"]}},
+           {"id_suffix": "b", "title": "Migrate JWT secrets to env-vars",
+            "threat_ids": ["T-001", "T-011"],
+            "remediation": {"effort": "Low", "steps": ["Update config loader", "Rotate cookie secret"]}}
+         ]
+       }
+     ],
+     "additions": [
+       {
+         "id": "M-020",
+         "title": "Establish dependency-update SLA",
+         "threat_ids": ["T-009", "T-010", "T-011"],
+         "kind": "process",
+         "priority": "P2",
+         "severity": "Medium",
+         "remediation": {"effort": "Medium", "steps": ["Define monthly review cadence", "Wire Dependabot/Renovate"]}
+       }
+     ]
+   }
+   JSON
+   ```
+
+   **Hard constraints validated by the aggregator** (`exit 4` on violation):
+   - Every `source_mid` in `splits[]` must exist in the Python baseline mitigations
+   - Every `into[].id_suffix` must be unique within its split (a/b/c/d)
+   - Union of `into[].threat_ids[]` must equal the source M-ID's threat_ids (no dropped threats)
+   - Every `additions[].id` must be ≤ the reserved counter (no hallucinated IDs)
+   - Every `additions[].threat_ids[]` must have ≥1 existing T-ID (evidence-grounding)
+   - Process mitigations (`kind: process`) SHOULD have ≥2 T-IDs (architectural concerns span multiple findings)
+
+3. **Validate:**
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+       --type mitigation-overrides "$OUTPUT_DIR/.mitigation-overrides.json"
+   ```
+   On failure: log WARN, continue. Aggregator falls back to baseline mitigations only.
+
+   When you have neither splits nor additions, emit an empty overrides file rather than skipping (cleaner state for the aggregator):
+   ```bash
+   echo '{"schema_version":1,"splits":[],"additions":[]}' > "$OUTPUT_DIR/.mitigation-overrides.json"
+   ```
+
+#### `.tier-root-causes.json`
+
+**Protocol (after triage agent returns, BEFORE Phase 10b PHASE_END):**
+
+1. **No ID reservation needed** — root-cause bullets are plain text.
+
+2. **Group threats by component tier** using the `tier` field from `.components.json` (Phase 3 sidecar). For each tier (edge / server / data), aggregate 1-5 cross-finding root-cause patterns. Each bullet ≤80 characters.
+
+3. **Write `$OUTPUT_DIR/.tier-root-causes.json`** via Bash heredoc. Field shape MUST match `schemas/fragments/tier-root-causes.schema.json`:
+   ```bash
+   cat > "$OUTPUT_DIR/.tier-root-causes.json" <<'JSON'
+   {
+     "schema_version": 1,
+     "tier_root_causes": {
+       "edge": ["missing CSP allows JS injection (frontend/src/about)"],
+       "server": [
+         "hardcoded crypto secrets in source",
+         "missing input neutralization on raw SQL paths",
+         "no auth middleware on management endpoints"
+       ],
+       "data": ["SQLite with no row-level encryption for PII"]
+     }
+   }
+   JSON
+   ```
+   **Skip a tier entirely** (omit the key) if it has no threats — DO NOT emit empty arrays. The renderer fallback `(no root causes documented)` is only meaningful when the tier genuinely has no findings.
+
+4. **Validate:**
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
+       --type tier-root-causes "$OUTPUT_DIR/.tier-root-causes.json"
+   ```
+   On failure: log WARN, continue. Aggregator falls back to top-N threat titles per tier.
+
+**Rule:** both sidecars are single-writer (Phase 10b only), append-only within run. They MUST be written AFTER the triage agent populates `.triage-flags.json` (the mitigation splits + additions reflect post-triage judgement, not raw merge output).
