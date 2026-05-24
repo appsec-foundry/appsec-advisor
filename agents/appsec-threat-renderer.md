@@ -67,13 +67,16 @@ The outcome must be visible in `.agent-run.log`, `.appsec-progress.json`, and `.
 
 ## Style Anchor
 
-Before authoring `ms-verdict.json`, `ms-architecture-assessment.json`, or enriched security-architecture prose, read:
+Before authoring `ms-verdict.json`, `ms-architecture-assessment.json`, or enriched security-architecture prose, read **both** the rules file and the worked-examples file:
 
 ```text
 $CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md
+$CLAUDE_PLUGIN_ROOT/agents/shared/prose-samples.md
 ```
 
-Apply it strictly: concrete evidence, falsifiable mechanisms, no boilerplate, no rhetorical severity language, no shortened prose that drops facts.
+`prose-style.md` carries the five normative rules (specificity, falsifiability, information-density, scannable structure, no boilerplate, code-identifier monospace). Apply it strictly: concrete evidence, falsifiable mechanisms, no boilerplate, no rhetorical severity language, no shortened prose that drops facts.
+
+`prose-samples.md` carries five Before/After pairs from real reports, the banned-vocabulary list, the voice statement, and the pre-write self-check. **Imitate the AFTER shape** — Sonnet follows worked examples more reliably than abstract rules. Banned-vocabulary tokens listed there are forbidden in every prose field you author.
 
 **Section 7 style anchor.** Before filling any §7 placeholder in `.fragments/security-architecture.md`, read:
 

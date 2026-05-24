@@ -536,6 +536,7 @@ class TestScanExcludesCentralization:
 # ---------------------------------------------------------------------------
 
 PROSE_STYLE_FILE = AGENTS_DIR / "shared" / "prose-style.md"
+PROSE_SAMPLES_FILE = AGENTS_DIR / "shared" / "prose-samples.md"
 
 AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "appsec-threat-renderer.md",
@@ -544,10 +545,23 @@ AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "shared" / "ms-template.md",
 ]
 
+# Subset that authors the Management-Summary prose fields (verdict +
+# architecture-assessment) and therefore MUST load the worked Before/After
+# pairs in prose-samples.md, not just the rules in prose-style.md. The
+# stride-analyzer authors scenario/mitigation strings and the ms-template
+# is template prose only — both are covered by prose-style.md alone for now.
+AGENT_FILES_AUTHORING_MS_PROSE = [
+    AGENTS_DIR / "appsec-threat-renderer.md",
+    AGENTS_DIR / "phases" / "phase-group-finalization.md",
+]
+
 
 class TestProseStyleAnchor:
     """Drift guard: prose-authoring agents must reference the prose-style
-    anchor so the casework stays loaded at generation time.
+    anchor AND, for MS-prose authors, the prose-samples worked-examples
+    file. The two files load together — examples without rules drift,
+    rules without examples drift, both must remain wired at generation
+    time.
 
     Anchored by AGENTS.md Rule 10. Removing the reference without removing
     the rule produces prose drift that is invisible until the next report
@@ -558,6 +572,14 @@ class TestProseStyleAnchor:
         assert PROSE_STYLE_FILE.is_file(), (
             f"missing prose-style anchor file: {PROSE_STYLE_FILE.relative_to(AGENTS_DIR.parent)}. "
             f"It is referenced by AGENTS.md Rule 10 and the prose-authoring agents."
+        )
+
+    def test_prose_samples_file_exists(self):
+        assert PROSE_SAMPLES_FILE.is_file(), (
+            f"missing prose-samples companion file: {PROSE_SAMPLES_FILE.relative_to(AGENTS_DIR.parent)}. "
+            f"It carries the worked Before/After pairs that the MS-prose authoring "
+            f"agents (renderer, phase-group-finalization) embed alongside prose-style.md. "
+            f"See prose-style.md → 'Companion file' for the rationale."
         )
 
     @pytest.mark.parametrize(
@@ -574,4 +596,21 @@ class TestProseStyleAnchor:
             f"Add a `cat $CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md` block at the "
             f"prose-authoring step so the style rules load at runtime. See AGENTS.md "
             f"Rule 10 for the policy."
+        )
+
+    @pytest.mark.parametrize(
+        "agent_file",
+        AGENT_FILES_AUTHORING_MS_PROSE,
+        ids=lambda p: str(p.relative_to(AGENTS_DIR.parent)),
+    )
+    def test_ms_prose_authoring_files_reference_samples(self, agent_file):
+        assert agent_file.exists(), f"expected file missing: {agent_file}"
+        text = agent_file.read_text(encoding="utf-8")
+        assert "shared/prose-samples.md" in text, (
+            f"{agent_file.relative_to(AGENTS_DIR.parent)} authors Management-Summary "
+            f"prose (ms-verdict.json / ms-architecture-assessment.json) but does not "
+            f"reference `agents/shared/prose-samples.md`. Add a "
+            f"`cat $CLAUDE_PLUGIN_ROOT/agents/shared/prose-samples.md` block alongside "
+            f"the prose-style.md load so worked Before/After pairs load at runtime. "
+            f"Sonnet imitates examples more reliably than it follows abstract rules."
         )

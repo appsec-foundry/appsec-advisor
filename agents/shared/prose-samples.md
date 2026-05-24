@@ -1,13 +1,18 @@
-# Prose-Polisher — Empirische Before/After-Pairs
+# Report prose — worked Before/After pairs
 
-> Echte Prosa-Passagen aus `juice-shop/docs/security/threat-model.md`
-> (Run vom 2026-05-23) als Trainings-/Referenzmaterial für den
-> `appsec-prose-polisher` Agenten. Jedes Pair zeigt: was im
-> Original AI-flavored ist, wie ein menschlicher Reviewer das schreiben
-> würde, und welche konkrete Regel daraus folgt.
+> Companion to `prose-style.md`. That file states the rules; this file
+> shows them applied to real prose. Each pair is a passage that was
+> actually rendered into a threat-model report, the AI-flavored pattern
+> it exhibited, the human-style rewrite, and the rule that follows.
 >
-> Stand: 2026-05-24. Geht in den Polisher-System-Prompt als
-> Beispiele (Sonnet imitiert Beispiele besser als Regeln).
+> Loaded by the renderer and finalization agents before authoring
+> `ms-verdict.json` and `ms-architecture-assessment.json` — Claude
+> Sonnet imitates worked examples more reliably than it follows
+> abstract rules.
+>
+> When a new AI-tell shows up in a real run, add it here as a pair —
+> not as a new rule in `prose-style.md`. Rules without examples drift;
+> examples don't.
 
 ---
 
@@ -155,9 +160,9 @@ Generische Schluss-Kadenzen: `X is Y across the Z`, `X requires Y at the A, B, a
 
 ---
 
-## Voice-Statement (für Polisher-System-Prompt)
+## Voice statement (apply when authoring any prose field)
 
-> You are polishing prose that a technical reviewer would write in a PR
+> You are writing prose that a technical reviewer would put in a PR
 > comment thread — not a compliance report, not a consulting deck, not
 > marketing copy. The reader is a software engineer or security reviewer
 > who is time-pressed and allergic to filler. Write the way you would
@@ -171,19 +176,20 @@ Generische Schluss-Kadenzen: `X is Y across the Z`, `X requires Y at the A, B, a
 
 ---
 
-## Acceptance-Heuristik (für Self-Check-Pass)
+## Pre-write self-check (run before saving any prose fragment)
 
-Nach jedem Edit der Polisher fragt sich:
+Five questions to ask about each prose field you just wrote:
 
 1. **Could this sentence appear in a report about a different app?**
-   Wenn ja: zu generisch, behalt das Original.
-2. **Does it use any banned-vocabulary word?**
-   Wenn ja: rewrite oder skip.
+   If yes: too generic — add concrete evidence (file path, function name, count, version).
+2. **Does it use any banned-vocabulary word?** (see list above)
+   If yes: rewrite using a concrete verb or noun.
 3. **Is the punchline in the first 8 words?**
-   Wenn nein: re-order.
+   If no: re-order so the main claim leads.
 4. **Are all sentences in the same length-bracket (±2 words)?**
-   Wenn ja: vermutlich AI-rhythm, break it.
+   If yes: AI-rhythm — break it with a short sentence or a colon.
 5. **Does the final sentence diagnose something, or just summarize?**
-   Summary-Schluss → ersetzen durch Diagnose oder weglassen.
+   Summary endings ("X is Y across the Z") are AI tells — replace with
+   a diagnosis ("the missing piece is X") or drop the sentence.
 
-Wenn ≥2 der 5 Punkte negativ sind → rollback Edit, behalt das Original.
+≥2 negative answers → rewrite the field before saving.

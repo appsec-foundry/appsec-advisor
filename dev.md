@@ -456,6 +456,26 @@ Architect einen strukturierten Repair-Plan schreiben, wird der Renderer mit
 `REPAIR_MODE=true` *erneut* aufgerufen. Er überspringt dann Phasen 1–10
 komplett und arbeitet nur die im Plan benannten Fragmente neu auf.
 
+**Prose-Qualität — zwei Style-Anchors.** Vor jedem Fragment-Write mit
+LLM-Prosa (`ms-verdict.json`, `ms-architecture-assessment.json`,
+enriched §7-Narrativ) lädt der Renderer ZWEI Files:
+- `agents/shared/prose-style.md` — 6 normative Regeln
+  (Specificity, Falsifiability, Information-density, Scannable
+  structure, No boilerplate, Code identifiers in monospace).
+- `agents/shared/prose-samples.md` — 5 Before/After-Pairs aus echten
+  Reports plus Banned-Vocabulary-Liste, Voice-Statement, 5-Frage
+  Pre-Write Self-Check.
+
+Diese Trennung ist Absicht: prose-style.md trägt die Regeln, prose-samples.md
+zeigt sie angewandt. Sonnet imitiert konkrete Beispiele zuverlässiger als
+es abstrakten Regeln folgt. Beide Files sind drift-guarded durch
+`tests/test_agent_definitions.py::TestProseStyleAnchor` — Renderer und
+phase-group-finalization MÜSSEN beide referenzieren, sonst CI rot.
+
+Neue AI-Floskeln, die im Output auftauchen, werden als neues
+Before/After-Pair in `prose-samples.md` ergänzt (nicht als neue Regel
+in prose-style.md). Regeln ohne Beispiele driften; Beispiele nicht.
+
 ---
 
 ## 8. Stage 3 + 4 — QA und Architect Review (Ebene 3)

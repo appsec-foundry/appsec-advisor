@@ -1,8 +1,42 @@
 # Prose-Polisher Agent — Implementierungsplan
 
+> **STATUS (2026-05-24): VERWORFEN zugunsten einer einfacheren Lösung.**
+>
+> Nach Re-Evaluation: ein nachgelagerter Polisher behandelt das Symptom,
+> nicht die Ursache. Statt einen zweiten LLM-Pass zu bauen, der hinter
+> dem Renderer aufräumt, werden die Prosa-Verbesserungen **direkt im
+> Renderer-Prompt verankert**. Implementiert wurde:
+>
+> - **`agents/shared/prose-samples.md`** — 5 Before/After-Pairs aus
+>   echten Reports, Banned-Vocabulary, Voice-Statement, Pre-Write
+>   Self-Check. Companion zu `prose-style.md`.
+> - **`agents/appsec-threat-renderer.md`** Style Anchor erweitert: lädt
+>   prose-samples.md zusätzlich zu prose-style.md.
+> - **`agents/phases/phase-group-finalization.md`** substep-4-Block
+>   erweitert: lädt beide Files vor dem ersten Fragment-Write.
+> - **`agents/shared/prose-style.md`** "Where this file applies" +
+>   neuer Abschnitt "Companion file" mit Verweis auf prose-samples.md.
+> - **`tests/test_agent_definitions.py`** drift-guard erweitert: prüft
+>   prose-samples.md-Existenz und Referenz in renderer +
+>   phase-group-finalization (8/8 tests grün).
+>
+> **Kosten der gewählten Lösung**: ~30 Minuten Arbeit, null Runtime-
+> Overhead, null neue Infrastruktur. Sonnet schreibt Prosa erste-
+> Generation besser, kein zweiter Pass nötig.
+>
+> **Wann dieser Plan reaktiviert wird**: nur wenn 5–10 Runs nach der
+> Renderer-Prompt-Erweiterung zeigen, dass die Prosa weiterhin
+> AI-flavored bleibt UND ein gemessenes Business-Problem entsteht
+> (Stakeholder-Feedback, A/B-Vergleich). Bis dahin: hier dokumentiert
+> als "Plan B".
+>
+> ---
+>
+> **Original-Plan (für die Historie aufbewahrt):**
+>
 > Plan-Dokument für einen neuen `appsec-prose-polisher` Agenten, der LLM-authored Prosa in Fragment-Dateien stilistisch verbessert, ohne IDs, Ratings, Evidence, Tabellen, Code-Blöcke oder Links zu verändern.
 >
-> Stand: 2026-05-24. Status: Plan, noch nicht implementiert.
+> Stand: 2026-05-24. Status: Plan, NICHT implementiert (siehe Header).
 
 ---
 

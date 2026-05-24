@@ -4888,6 +4888,21 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                 "mitigations": mit_cells,
             }
         )
+
+    # Annotate consecutive same-component runs with comp_rowspan:
+    # first row of a run gets rowspan=N, subsequent rows get 0 (skip cell).
+    for i, row in enumerate(rendered):
+        if i == 0 or rendered[i - 1]["component_id"] != row["component_id"]:
+            count = 1
+            for j in range(i + 1, len(rendered)):
+                if rendered[j]["component_id"] == row["component_id"]:
+                    count += 1
+                else:
+                    break
+            row["comp_rowspan"] = count
+        else:
+            row["comp_rowspan"] = 0
+
     return rendered, len(qualifying_ids)
 
 

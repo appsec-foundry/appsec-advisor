@@ -278,7 +278,18 @@ Loaded explicitly by:
 - `agents/phases/phase-group-finalization.md` — before authoring
   `ms-verdict.json` and `ms-architecture-assessment.json`, and before
   filling the §7 narrative placeholders.
+- `agents/appsec-threat-renderer.md` — same set of fragments at Stage 2.
 - `agents/shared/ms-template.md` — referenced as the authority for prose
   rules cited from the Management Summary template.
 
 Drift from this anchor is guarded by `tests/test_agent_definitions.py`.
+
+## Companion file
+
+`agents/shared/prose-samples.md` carries the worked **Before/After
+pairs** — concrete passages from real reports showing the AI-flavored
+shape and the human-style rewrite, the banned-vocabulary list, the
+voice statement, and a pre-write self-check. The two files are loaded
+together: this file is the rules, that file is the examples. Sonnet
+imitates examples more reliably than it follows rules — keep both
+current.
