@@ -3005,7 +3005,37 @@ hook in `agent_logger.py`) emits `BUDGET_WARN` (75%), `BUDGET_CRITICAL`
 flag. This block surfaces all of those events.
 
 ```bash
-if grep -qE "BUDGET_CRITICAL|MAX_TURNS|WRAP_UP_TRIGGERED" \
+# Sub-agent vs orchestrator distinction (RC.B — 2026-05-24). The existing
+# INCOMPLETE banner below conflates orchestrator MAX_TURNS (= run did not
+# produce a usable deliverable) with sub-agent MAX_TURNS (= deliverable is
+# fine, only that sub-agent's output is reduced-depth). When md exists AND
+# .budget-critical is on disk, surface a less alarming INFO note and
+# suppress the louder INCOMPLETE banner. The threat-model.yaml meta.incomplete
+# check below still fires for the truly-incomplete case.
+SUPPRESS_INCOMPLETE_BANNER=false
+if [ -f "$OUTPUT_DIR/threat-model.md" ] && [ -f "$OUTPUT_DIR/.budget-critical" ]; then
+  AGENTS_AFFECTED=$(python3 -c "
+import json
+try:
+    with open('$OUTPUT_DIR/.budget-critical') as f:
+        d = json.load(f)
+    print(', '.join(sorted({e.get('agent','?') for e in d if e.get('agent')})))
+except Exception:
+    pass
+" 2>/dev/null)
+  if [ -n "$AGENTS_AFFECTED" ]; then
+    printf '\n\033[33mℹ Budget critical during run — deliverable complete\033[0m\n' >&2
+    printf '  Agents affected: %s\n' "$AGENTS_AFFECTED" >&2
+    printf '  threat-model.md was produced; per-agent output may be reduced-depth.\n' >&2
+    printf '  Details: %s/.budget-critical\n\n' "$OUTPUT_DIR" >&2
+    SUPPRESS_INCOMPLETE_BANNER=true
+  fi
+  # Clean up stale flag so the next run's banner reflects only that run's events.
+  rm -f "$OUTPUT_DIR/.budget-critical"
+fi
+
+if [ "$SUPPRESS_INCOMPLETE_BANNER" = "false" ] && \
+   grep -qE "BUDGET_CRITICAL|MAX_TURNS|WRAP_UP_TRIGGERED" \
        "$OUTPUT_DIR/.agent-run.log" 2>/dev/null; then
   printf '\n\033[31m⚠ INCOMPLETE — turn-budget exhausted for one or more agents\033[0m\n' >&2
   grep -E "BUDGET_CRITICAL|MAX_TURNS|WRAP_UP_TRIGGERED" \
