@@ -244,3 +244,40 @@ class TestCLI:
     def test_cli_missing_yaml_returns_1(self, tmp_path):
         rc = ect.main([str(tmp_path)])
         assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# Fix F (2026-05-25) — CONTROL_TAXONOMY_DRIFT is logged at INFO (not WARN).
+# These drifts are deterministic alias-map normalisations (Stage-1 LLM emits
+# 'Identity and Authentication', canonical is 'Identity and Authentication
+# Controls'). Logging as WARN produced 4-8 false alarms per run in the audit
+# trail; INFO keeps the audit signal without the alarm tone.
+# ---------------------------------------------------------------------------
+
+
+class TestLogLevelInfoNotWarn:
+    def test_drift_logged_as_info(self, tmp_path):
+        """When a domain rename fires, the .agent-run.log line is INFO-level."""
+        _write_yaml(tmp_path, [
+            # Domain that needs renaming: legacy alias →
+            # canonical "Identity and Authentication Controls" for
+            # password-reset rate limiting (per architectural-controls.yaml).
+            {"id": "SC-001", "domain": "Real-time and Not Applicable Controls",
+             "control": "Rate limiting on password reset + 2FA", "verdict": "Adequate"},
+        ])
+        rc = ect.main([str(tmp_path)])
+        assert rc == 0
+        log_path = tmp_path / ".agent-run.log"
+        assert log_path.is_file(), "expected an audit-log entry for the rename"
+        log_lines = [
+            ln for ln in log_path.read_text(encoding="utf-8").splitlines()
+            if "CONTROL_TAXONOMY_DRIFT" in ln
+        ]
+        assert log_lines, "expected at least one CONTROL_TAXONOMY_DRIFT entry"
+        for line in log_lines:
+            assert " INFO " in line, (
+                f"taxonomy drift must be INFO-level (routine normalisation), got: {line!r}"
+            )
+            assert " WARN " not in line, (
+                f"taxonomy drift must NOT be WARN-level, got: {line!r}"
+            )

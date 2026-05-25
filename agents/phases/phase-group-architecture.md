@@ -112,6 +112,32 @@ if [ -n "$BURST_LINE" ]; then
   printf '{"timestamp":"%s","phase_count":%s,"phases":"3-8","severity":"contract_violation","detected_by":"phase-group-architecture"}\n' \
     "$BURST" "$BURST_COUNT" > "$OUTPUT_DIR/.phase-burst-flag.json"
 fi
+
+# STEP_START burst detector (Phase 8 batched-emit pattern, 2026-05-25 juice-shop
+# run). Phase 8 is supposed to iterate 13 control domains serially (each is an
+# LLM judgement against the recon snapshot). Observed failure: all 13
+# STEP_START lines AND the PHASE_END line landed at the same timestamp
+# (10:42:58Z) — the orchestrator dumped the entire phase log AT phase end as
+# a summary list rather than interleaved with the actual rating work. The
+# `.security-controls.json` sidecar (8.3 KB, 14 entries) confirms the work
+# ran; only the per-step logging is dishonest. This makes timing diagnostics
+# in the Run Statistics appendix impossible at the step level.
+#
+# Threshold: >5 distinct STEP_START events at the same timestamp within a
+# single Phase is a contract violation. (5+ is the safe cutoff — Phases 5+6+7
+# legally share PHASE_START timestamps and may legitimately co-emit a small
+# burst of STEP_STARTs; Phase 8's 13-domain burst is far above this.) The
+# detector emits a WARN (not ERROR) because the underlying work has still
+# completed correctly — only observability is degraded.
+STEP_BURST=$(grep -E 'STEP_START.*\[Phase [3-8]\]' "$OUTPUT_DIR/.agent-run.log" \
+  | awk '{print $1}' | sort | uniq -c | awk '$1 > 5 {print $1, $2}' | head -1)
+if [ -n "$STEP_BURST" ]; then
+  STEP_COUNT=$(echo "$STEP_BURST" | awk '{print $1}')
+  STEP_TS=$(echo "$STEP_BURST" | awk '{print $2}')
+  echo "$PHASE_GROUP_END  [--------]  WARN   threat-analyst  STEP_BURST    $STEP_TS has $STEP_COUNT STEP_START lines in the same second (logs were batched at phase end instead of emitted as work progressed — per-step timing diagnostics unavailable for that phase)" >> "$OUTPUT_DIR/.agent-run.log"
+  printf '{"timestamp":"%s","step_count":%s,"severity":"observability_degradation","detected_by":"phase-group-architecture","remedy":"emit STEP_START via log_event.py BEFORE the step work begins, not as a post-hoc summary list"}\n' \
+    "$STEP_TS" "$STEP_COUNT" > "$OUTPUT_DIR/.step-burst-flag.json"
+fi
 ```
 
 Prefer still emitting the true `PHASE_START`/`PHASE_END` pairs during phase execution — the auto-repair synthesises zero-length intervals, which distorts per-phase timing in the Run Statistics appendix. The auto-repair is a safety net against the historic gap, not a licence to skip real logging.

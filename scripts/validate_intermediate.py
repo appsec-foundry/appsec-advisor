@@ -60,6 +60,7 @@ _SCHEMA_FILES = {
     "known_threats": "known-threats.schema.yaml",
     "pentest_tasks": "pentest-tasks.schema.yaml",
     "config_scan_findings": "config-scan-findings.schema.yaml",
+    "source_auth_findings": "source-auth-findings.schema.yaml",
 }
 
 
@@ -1006,6 +1007,28 @@ def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def validate_source_auth_findings(data: Any) -> tuple[bool, list[str]]:
+    """Validate `.source-auth-findings.json` written by
+    `scripts/source_auth_scanner.py`. Same error-stub-or-normal pattern
+    as dep_scan and config_scan_findings."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("source_auth_findings", data)
+    if "parse_error" not in data:
+        seen: set[str] = set()
+        for i, f in enumerate(data.get("findings", []) or []):
+            if not isinstance(f, dict):
+                continue
+            lid = f.get("local_id")
+            if not isinstance(lid, str):
+                continue
+            if lid in seen:
+                errors.append(f"findings[{i}].local_id '{lid}' is duplicated")
+            else:
+                seen.add(lid)
+    return len(errors) == 0, errors
+
+
 _VALIDATORS = {
     "dep_scan": validate_dep_scan,
     "stride": validate_stride,
@@ -1015,6 +1038,7 @@ _VALIDATORS = {
     "known_threats": validate_known_threats,
     "pentest_tasks": validate_pentest_tasks,
     "config_scan_findings": validate_config_scan_findings,
+    "source_auth_findings": validate_source_auth_findings,
 }
 
 

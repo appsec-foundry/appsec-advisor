@@ -8333,6 +8333,54 @@ _EVIDENCE_CWE_CLAIMS: dict[str, str] = {
 }
 
 
+# Abbreviations and dotted-identifier shapes that the naive
+# `(?<=[.!?])\s+` splitter mis-handles, breaking the Story Card's
+# Issue/Impact carve-out (review-recommendations §3.1 row d). When the
+# splitter cuts inside `(e.g. …)`, `Node.js`, `child_process.exec()` or
+# similar, the trailing payload fragment becomes the carved Impact, and
+# the cell renders:
+#
+#     **Impact:** require('child_process').exec()).
+#
+# instead of a real consequence. `_safe_sentence_split` masks these
+# shapes with a non-splitting unicode sentinel before splitting, then
+# restores them. The masking is purely textual — we never rely on it for
+# semantic disambiguation, only for the splitter's boundary decision.
+_SENTENCE_DOT_PLACEHOLDER = " "
+_SENTENCE_ABBREVIATIONS: tuple[str, ...] = (
+    "e.g.",
+    "i.e.",
+    "cf.",
+    "vs.",
+    "etc.",
+    "Inc.",
+    "Ltd.",
+    "Co.",
+)
+
+
+def _safe_sentence_split(text: str) -> list[str]:
+    """Split ``text`` into sentences, but never inside common abbreviations
+    or dotted identifiers (`Node.js`, `child_process.exec()`, hostnames).
+
+    Returns a list of stripped sentence strings. Empty input → ``[]``.
+    """
+    if not text:
+        return []
+    masked = text
+    # Mask common Latin abbreviations whole-word (case-sensitive — these
+    # are the canonical forms).
+    for abbr in _SENTENCE_ABBREVIATIONS:
+        masked = masked.replace(abbr, abbr.replace(".", _SENTENCE_DOT_PLACEHOLDER))
+    # Mask dotted identifiers / member expressions / file extensions /
+    # hostnames: a dot that sits BETWEEN two word/identifier characters
+    # is never a sentence boundary in this corpus. Mask all such dots.
+    masked = re.sub(r"(?<=[\w\)\]])\.(?=\w)", _SENTENCE_DOT_PLACEHOLDER, masked)
+    # Now split on terminal punctuation followed by whitespace.
+    raw = re.split(r"(?<=[.!?])\s+", masked)
+    return [s.replace(_SENTENCE_DOT_PLACEHOLDER, ".").strip() for s in raw if s.strip()]
+
+
 def _synthesise_evidence_summary(t: dict, ev_file: str, ev_line: object) -> str:
     """Build a one-sentence `**Evidence:**` claim when the YAML lacks an
     explicit ``evidence_summary``.
@@ -8350,9 +8398,13 @@ def _synthesise_evidence_summary(t: dict, ev_file: str, ev_line: object) -> str:
             cwe_num = m.group(1)
     claim = _EVIDENCE_CWE_CLAIMS.get(cwe_num, "")
     if not claim:
-        # Generic fallback — refer to the snippet without making a
-        # CWE-specific structural claim.
-        claim = "The implementation visible in the snippet below realises the weakness described above"
+        # 2026-05 (review-recommendations §3.1 row c): the previous
+        # generic fallback ("The implementation visible in the snippet
+        # below realises the weakness described above") added zero
+        # information — the <details> widget already says "Evidence code
+        # · file:line". Return empty so the caller skips the **Evidence:**
+        # prose line entirely and just renders the code widget.
+        return ""
     # Append the file context so the reader knows the proof is local.
     if ev_file:
         loc = ev_file if not ev_line else f"{ev_file}:{ev_line}"
@@ -8628,9 +8680,7 @@ def _build_finding_cell(
         stripped = re.sub(r"\[[^\]]+\]\([^)]+\)", "", s).strip(" .,;:!?-—·`*_")
         return len(stripped) < 10
 
-    scenario_sentences = [
-        s.strip() for s in re.split(r"(?<=[.!?])\s+", scenario_clean) if s.strip()
-    ]
+    scenario_sentences = _safe_sentence_split(scenario_clean)
     has_explicit_impact = bool(
         (t.get("impact_description") or t.get("impact_summary") or "").strip()
     )
@@ -8713,7 +8763,7 @@ def _build_finding_cell(
         # consequence and Issue is the narrative, without overlap.
         impact_text = impact_carve
     if not impact_text:
-        sentences = re.split(r"(?<=[.!?])\s+", scenario_clean)
+        sentences = _safe_sentence_split(scenario_clean)
         for s in reversed(sentences):
             if _is_link_only(s):
                 continue
@@ -9306,15 +9356,62 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
 
         # Actor cell (column 4) — actors.md §10 & §14:
         #   primary_actor (link to §1.5) + optional +N extras,
-        #   [obsolete-actor] marker when actor_ids list is empty (§10 Fall 2),
-        #   _dormant_ marker when finding is preserved past actor disable (§10 Fall 3).
+        #   [obsolete-actor] marker ONLY when actor_ids list is empty AND
+        #   provenance shows the finding once had attribution (§10 Fall 2 —
+        #   actor was tagged, then disabled).
+        #   _dormant_ marker when finding is preserved past actor disable
+        #   (§10 Fall 3).
+        #
+        # 2026-05 (review-recommendations §4.5 Guard 1): the previous
+        # branch emitted `_[obsolete-actor]_` for ANY empty actor_ids,
+        # including first-run findings where the STRIDE analyzer simply
+        # never populated the field. That collapsed two structurally
+        # different states (Fall 2 = legitimate disable vs. data-gap =
+        # pipeline defect) into the same Fall-2 marker. The precondition
+        # below requires evidence of a prior-attribution state before
+        # emitting the marker; otherwise the cell renders neutrally as
+        # "—" so the missing data is visible without falsely claiming the
+        # finding was ever actor-tagged.
         actor_ids = t.get("actor_ids") or []
         primary_actor = t.get("primary_actor")
         status_lower = (t.get("_status") or "").strip().lower()
-        if status_lower == "dormant":
+        prov = t.get("_provenance") or {}
+        had_actor_history = (
+            bool(prov.get("run_count_empty"))
+            or bool(prov.get("disabled_actor_ids"))
+            or bool(prov.get("previous_actor_ids"))
+        )
+        # 2026-05 (review-recommendations §4.6 + risk-assessment B): the
+        # `_dormant_` marker is a state-transition marker (actors.md §10
+        # Fall 3 — finding's structurally-required actor was disabled, the
+        # finding is preserved for review). Just like `_[obsolete-actor]_`,
+        # it must NOT be rendered without provenance evidence — otherwise
+        # an upstream pipeline bug that writes `_status: dormant` without
+        # corresponding history would silently masquerade as a legitimate
+        # Fall-3 case. Require either prior-actor-history fields OR an
+        # explicit dormancy reason in provenance before honouring the
+        # status string.
+        dormant_provenance_ok = (
+            had_actor_history
+            or bool(prov.get("dormancy_reason"))
+            or bool(prov.get("dormant_since"))
+        )
+        if status_lower == "dormant" and dormant_provenance_ok:
             actor_cell = "_dormant_"
-        elif not actor_ids:
+        elif status_lower == "dormant":
+            # Status flag set without supporting provenance — neutral render
+            # plus a (silent) signal. The composer doesn't have direct access
+            # to .run-issues.json here, but the architect-reviewer's actor
+            # checks pick up the inconsistency in the next pass.
+            actor_cell = "—"
+        elif not actor_ids and had_actor_history:
             actor_cell = "_[obsolete-actor]_"
+        elif not actor_ids:
+            # First-run / data-gap state — render neutrally rather than
+            # fabricate a Fall-2 history. Architect-reviewer Sub-Check 15.3
+            # already raises the upstream issue; the renderer must not paper
+            # over it with a misleading marker.
+            actor_cell = "—"
         elif primary_actor:
             actor_cell = f"[`{primary_actor}`](#identified-actors)"
             extras = [a for a in actor_ids if a != primary_actor]
@@ -10714,6 +10811,14 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
 
     Shares the project-name derivation with `_render_infobox` via
     `_derive_project_name()` so the title and the infobox never disagree.
+
+    Emits a one-line italic subtitle directly under the H1 naming the
+    plugin version that produced the report (e.g. `_Generated by
+    appsec-advisor v0.4.0-beta (analysis v2)_`). The same value also
+    appears in the §Appendix Run Statistics row, but readers shouldn't
+    have to scroll to the bottom to learn which tool version emitted
+    the artefact. Falls back to title-only when plugin.json is
+    unreadable.
     """
     title_tpl = title_template_override or ctx.contract["document"].get("title_template", "Threat Model")
     project = ctx.yaml_data.get("project")
@@ -10722,6 +10827,25 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
     project.setdefault("name", _derive_project_name(ctx))
     env = jinja2.Environment(autoescape=False)
     title = env.from_string(title_tpl).render(project=project)
+
+    plugin_v: str | None = None
+    analysis_v: int | None = None
+    try:
+        plugin_v, analysis_v = _read_live_plugin_meta()
+    except Exception:
+        pass
+    if not plugin_v:
+        meta = ctx.yaml_data.get("meta") or {}
+        plugin_v = meta.get("plugin_version") or None
+        if analysis_v is None:
+            av = meta.get("analysis_version")
+            if isinstance(av, int):
+                analysis_v = av
+
+    if plugin_v:
+        suffix = f" (analysis v{analysis_v})" if analysis_v else ""
+        subtitle = f"_Generated by appsec-advisor v{plugin_v}{suffix}_\n"
+        return f"# {title}\n\n{subtitle}"
     return f"# {title}\n"
 
 

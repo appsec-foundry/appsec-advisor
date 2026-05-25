@@ -202,7 +202,7 @@ def _minimal_cfg(reasoning_mode="sonnet", stride_label="full", reasoning_label=N
     return {
         "repo_root": "/repo",
         "output_dir": "/repo/docs/security",
-        "plugin_version": "0.9.0-beta",
+        "plugin_version": "0.4.0-beta",
         "analysis_version": 2,
         "mode_label": "full",
         "mode": "full",

@@ -437,7 +437,7 @@ class TestComposeSmokeAllFourInvariants:
         yml = {
             "meta": {
                 "schema_version": 1,
-                "plugin_version": "0.9.0-beta",
+                "plugin_version": "0.4.0-beta",
                 "analysis_version": 2,
                 "generated": "2026-05-07T00:00:00Z",
                 "git": {"commit_sha": "deadbeef", "branch": "test"},
@@ -456,7 +456,7 @@ class TestComposeSmokeAllFourInvariants:
                     "version": 1,
                     "date": "2026-05-07",
                     "mode": "full",
-                    "plugin_version": "0.9.0-beta",
+                    "plugin_version": "0.4.0-beta",
                     "current_sha": "x",
                     "note": "smoke",
                 }

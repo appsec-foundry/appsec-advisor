@@ -1,6 +1,6 @@
 meta:
   schema_version: 1
-  plugin_version: "0.9.0-beta"
+  plugin_version: "0.4.0-beta"
   analysis_version: 2
   generated: "2026-04-19T13:06:37Z"
   git:
@@ -21,7 +21,7 @@ changelog:
   - version: 1
     date: "2026-04-19"
     mode: full
-    plugin_version: "0.9.0-beta"
+    plugin_version: "0.4.0-beta"
     current_sha: "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f"
     note: "Initial assessment"
 

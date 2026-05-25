@@ -272,3 +272,187 @@ def test_dispatch_derivation_unknown_subagent_omits_fields(tmp_path):
     record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
     assert "dispatch_count" not in record
     assert "wall_secs_observed" not in record
+
+
+# ---------------------------------------------------------------------------
+# Fix B (2026-05-25) — hybrid-record sanity gate. A record that claims a
+# deterministic agent/model but carries non-zero token/tool counts is
+# impossible by construction and indicates the skill conflated two stages
+# (e.g. QA fast-path label + Re-Render-Loop REPAIR_MODE token counts).
+# ---------------------------------------------------------------------------
+
+
+def test_hybrid_record_flagged_when_deterministic_label_carries_llm_tokens(tmp_path, capsys):
+    """Reproduces the juice-shop 2026-05-25 Stage-3 record shape."""
+    argv = _argv(
+        tmp_path,
+        **{
+            "--stage": "3",
+            "--name": "QA Review",
+            "--agent": "deterministic:qa_checks.py",
+            "--model": "none",
+            "--duration-ms": "545553",
+            "--tool-uses": "95",
+            "--tokens": "119662",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0  # non-fatal, record still written
+    err = capsys.readouterr().err
+    assert "claims deterministic" in err
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "_inconsistency" in record, "record must carry structured inconsistency annotation"
+    assert "tokens=119662" in record["_inconsistency"]
+
+
+def test_hybrid_record_clean_when_deterministic_and_zero_tokens(tmp_path, capsys):
+    """The canonical deterministic-skip path (tokens=0, tool_uses=0) must NOT trip."""
+    argv = _argv(
+        tmp_path,
+        **{
+            "--stage": "3",
+            "--agent": "deterministic:qa_checks.py",
+            "--model": "none",
+            "--duration-ms": "5000",
+            "--tool-uses": "0",
+            "--tokens": "0",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "claims deterministic" not in err
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "_inconsistency" not in record
+
+
+def test_hybrid_record_clean_when_llm_agent_with_tokens(tmp_path, capsys):
+    """The canonical LLM-dispatch path (model=sonnet, tokens=N) must NOT trip."""
+    argv = _argv(
+        tmp_path,
+        **{
+            "--stage": "2",
+            "--agent": "appsec-advisor:appsec-threat-renderer",
+            "--model": "claude-sonnet-4-6",
+            "--duration-ms": "481000",
+            "--tool-uses": "47",
+            "--tokens": "93240",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "claims deterministic" not in err
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert "_inconsistency" not in record
+
+
+# ---------------------------------------------------------------------------
+# Fix C (2026-05-25) — --variant lets multiple records per stage coexist
+# without --allow-duplicates (e.g. Stage 3 = QA fast-path + repair-mode).
+# ---------------------------------------------------------------------------
+
+
+def test_variant_allows_second_record_for_same_stage(tmp_path):
+    """Two records for stage=3 differentiated by --variant are both written."""
+    rec.main(_argv(tmp_path, **{"--stage": "3", "--name": "QA Review",
+                                 "--tokens": "0", "--tool-uses": "0",
+                                 "--agent": "deterministic:qa_checks.py",
+                                 "--model": "none", "--duration-ms": "5000"}))
+    rc2 = rec.main(_argv(tmp_path, **{"--stage": "3", "--variant": "repair",
+                                       "--name": "Re-Render Loop",
+                                       "--agent": "appsec-advisor:appsec-threat-analyst",
+                                       "--model": "claude-sonnet-4-6",
+                                       "--duration-ms": "545553",
+                                       "--tool-uses": "95",
+                                       "--tokens": "119662"}))
+    assert rc2 == 0
+    records = [json.loads(l) for l in (tmp_path / ".stage-stats.jsonl").read_text().splitlines() if l.strip()]
+    assert len(records) == 2, "variant must coexist with default record without --allow-duplicates"
+    assert records[0].get("variant", "") == ""
+    assert records[1].get("variant") == "repair"
+
+
+def test_variant_same_key_still_idempotent(tmp_path, capsys):
+    """Two records with same (stage, variant) → still no-op on duplicate."""
+    rec.main(_argv(tmp_path, **{"--stage": "3", "--variant": "repair"}))
+    rc = rec.main(_argv(tmp_path, **{"--stage": "3", "--variant": "repair",
+                                      "--tokens": "999"}))
+    assert rc == 0
+    records = [json.loads(l) for l in (tmp_path / ".stage-stats.jsonl").read_text().splitlines() if l.strip()]
+    assert len(records) == 1
+    err = capsys.readouterr().err
+    assert "variant='repair'" in err
+
+
+# ---------------------------------------------------------------------------
+# Fix D (2026-05-25) — _HOOK_EVENT_RE matches SCAN_START + SCAN_COMPLETE
+# (subagent after `agent=`), not only AGENT_SPAWN/AGENT_INVOKE (positional).
+# Without this, wall_secs_observed=0 on hooks that emit only SCAN_* events.
+# ---------------------------------------------------------------------------
+
+
+_SCAN_EVENT_LOG = """\
+2026-05-25T06:46:14Z  [1b5162a8]  INFO   AGENT_SPAWN         appsec-advisor:appsec-threat-analyst         model=sonnet  Threat Analysis & Triage (repair-mode)  [REPO_ROOT=/x]
+2026-05-25T06:46:14Z  [1b5162a8]  INFO   SCAN_START          repo=/x  agent=appsec-advisor:appsec-threat-analyst  model=sonnet
+2026-05-25T06:55:22Z  [1b5162a8]  INFO   SCAN_COMPLETE       repo=/x  agent=appsec-advisor:appsec-threat-analyst  model=sonnet
+"""
+
+
+def test_match_hook_event_handles_scan_complete(tmp_path):
+    """SCAN_COMPLETE has subagent after `agent=`; the matcher must capture it."""
+    m = rec._match_hook_event(
+        "2026-05-25T06:55:22Z  [1b5162a8]  INFO   SCAN_COMPLETE  "
+        "repo=/x  agent=appsec-advisor:appsec-threat-analyst  model=sonnet\n"
+    )
+    assert m is not None
+    assert m.group("event") == "SCAN_COMPLETE"
+    assert m.group("subagent") == "appsec-advisor:appsec-threat-analyst"
+
+
+def test_match_hook_event_handles_scan_start(tmp_path):
+    m = rec._match_hook_event(
+        "2026-05-25T06:46:14Z  [x]  INFO   SCAN_START  repo=/x  "
+        "agent=appsec-advisor:appsec-threat-analyst  model=sonnet\n"
+    )
+    assert m is not None
+    assert m.group("event") == "SCAN_START"
+    assert m.group("subagent") == "appsec-advisor:appsec-threat-analyst"
+
+
+def test_match_hook_event_agent_spawn_unchanged(tmp_path):
+    """AGENT_SPAWN regex path (positional subagent) must keep its semantics."""
+    m = rec._match_hook_event(
+        "2026-05-25T06:46:14Z  [x]  INFO   AGENT_SPAWN  "
+        "appsec-advisor:appsec-threat-analyst  model=sonnet  desc\n"
+    )
+    assert m is not None
+    assert m.group("event") == "AGENT_SPAWN"
+    assert m.group("subagent") == "appsec-advisor:appsec-threat-analyst"
+
+
+def test_dispatch_derivation_with_only_scan_events_now_yields_wall(tmp_path):
+    """Hook log with AGENT_SPAWN + SCAN_COMPLETE (no AGENT_INVOKE) — pre-fix
+    would have returned wall_secs_observed=0 because SCAN_COMPLETE wasn't
+    matched. Post-fix the spread reflects the full SPAWN→SCAN_COMPLETE
+    interval (~9 min for the juice-shop repair-mode dispatch)."""
+    _write_hook_log(tmp_path, body=_SCAN_EVENT_LOG)
+    argv = _argv(
+        tmp_path,
+        **{
+            "--stage": "3",
+            "--variant": "repair",
+            "--agent": "appsec-advisor:appsec-threat-analyst",
+            "--subagent-type": "appsec-advisor:appsec-threat-analyst",
+            "--since-iso": "2026-05-25T06:45:00Z",
+            "--duration-ms": "545553",
+            "--tool-uses": "95",
+            "--tokens": "119662",
+        },
+    )
+    rc = rec.main(argv)
+    assert rc == 0
+    record = json.loads((tmp_path / ".stage-stats.jsonl").read_text().strip())
+    assert record["dispatch_count"] == 1
+    # 06:46:14 → 06:55:22 = 548 seconds
+    assert record["wall_secs_observed"] == 548

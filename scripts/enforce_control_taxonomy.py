@@ -328,10 +328,19 @@ def _now() -> str:
 
 
 def _log(output_dir: Path, msg: str) -> None:
+    # Severity is INFO (not WARN) because these drifts are deterministic
+    # alias-map normalisations — Stage-1 LLM emits a domain name like
+    # `'Identity and Authentication'`, the canonical form (per
+    # `data/architectural-controls.yaml`) is
+    # `'Identity and Authentication Controls'`, this script normalises.
+    # That is by-design behaviour, not a failure signal — surfacing each
+    # one as WARN produces 4-8 false alarms in the audit trail per run.
+    # Promote to WARN if the drift indicates an UNKNOWN domain (i.e. a
+    # real Stage-1 misclassification rather than a routine suffix fix).
     log = output_dir / ".agent-run.log"
     try:
         with log.open("a", encoding="utf-8") as f:
-            f.write(f"{_now()}  [--------]  WARN   skill  CONTROL_TAXONOMY_DRIFT  {msg}\n")
+            f.write(f"{_now()}  [--------]  INFO   skill  CONTROL_TAXONOMY_DRIFT  {msg}\n")
     except OSError:
         pass
 

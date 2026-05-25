@@ -52,7 +52,7 @@ def _minimal_yaml() -> dict:
     return {
         "meta": {
             "schema_version": 1,
-            "plugin_version": "0.9.0-beta",
+            "plugin_version": "0.4.0-beta",
             "analysis_version": 2,
             "git": {"commit_sha": "x"},
         },

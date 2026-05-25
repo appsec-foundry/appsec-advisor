@@ -1,6 +1,6 @@
 # appsec-advisor
 
-[![Version](https://img.shields.io/badge/version-0.9.0--beta-orange.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.4.0--beta-orange.svg)](#)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
@@ -43,7 +43,7 @@ Findings should be validated by an AppSec engineer or security architect before 
 
 Incremental reruns help keep the architecture view and threat model aligned with code changes.
 
-> **Status:** 0.9.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
+> **Status:** 0.4.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
 
 > ⚠ **Run only against repositories you trust.** Source files flow into the LLM context (prompt injection) and the required `Bash(*)` permission can turn that into command execution. An untrusted-repo mode is planned — until then, run scans in an isolated container. See [SECURITY.md → Known issues](SECURITY.md#known-issues--untrusted-repositories).
 

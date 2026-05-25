@@ -30,7 +30,7 @@ def _make_threat_model_yaml() -> dict:
     return {
         "meta": {
             "schema_version": 1,
-            "plugin_version": "0.9.0-beta",
+            "plugin_version": "0.4.0-beta",
             "project": "skill-test",
             "generated": "2026-05-12T00:00:00Z",
             "mode": "full",

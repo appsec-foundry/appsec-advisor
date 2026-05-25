@@ -39,7 +39,7 @@ SARIF_SCHEMA_URL = (
 )
 SARIF_VERSION = "2.1.0"
 TOOL_NAME = "appsec-advisor"
-DEFAULT_TOOL_VERSION = "0.9.0-beta"
+DEFAULT_TOOL_VERSION = "0.4.0-beta"
 
 RISK_TO_LEVEL = {
     "Critical": "error",

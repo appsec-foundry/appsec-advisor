@@ -478,7 +478,16 @@ cwe_to_th:
   CWE-359: [TH-17]               # PII Exposure
   CWE-532: [TH-16, TH-17]        # Log-file info insert
   CWE-613: [TH-02]               # Insufficient Session Expiration
-  CWE-693: [TH-11, TH-03]        # Protection Mechanism Failure (e.g. missing CSP)
+  # CWE-693 is a structural PILLAR ("Protection Mechanism Failure") that
+  # spans missing-CSP, missing-HEALTHCHECK, missing-rate-limit and many
+  # operational defense-in-depth gaps. The old mapping put TH-11 (XSS)
+  # first because the author only had CSP in mind, which then misclassified
+  # availability findings like F-031 (Dockerfile HEALTHCHECK) as XSS in the
+  # rendered Classification line. The reordered list favours operational
+  # availability/integrity gaps; STRIDE field still wins via the
+  # STRIDE-bridge fallback when the finding carries an explicit
+  # `stride: Denial of Service` / etc.
+  CWE-693: [TH-12, TH-11, TH-03]   # Protection Mechanism Failure (availability / missing CSP / crypto)
   CWE-778: [TH-16]               # Insufficient Logging
   CWE-1104: [TH-14]              # Unmaintained 3rd party
   CWE-829: [TH-14, TH-08]        # Inclusion from untrusted sphere

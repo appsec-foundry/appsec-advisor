@@ -67,7 +67,9 @@ fatal during a tick (filesystem error, permission denied) is logged with
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -108,6 +110,175 @@ def _log(output_dir: Path, level: str, event: str, detail: str) -> None:
             fh.write(line)
     except Exception:
         pass
+
+
+def _log_error_loud(output_dir: Path, event: str, detail: str, remedy: str) -> None:
+    """Loudly escalate a watchdog defect — ERROR-level log + stderr banner +
+    sentinel file + structured run-issue entry.
+
+    Used for hard-limit conditions (SUBSTEP2_IDLE etc.) where a WARN line
+    buried in ``.agent-run.log`` is not loud enough. The user must see this
+    in their terminal and the orchestrator's downstream code must be able
+    to detect the defect via sentinel file or ``.run-issues.json``.
+
+    Failures are swallowed (same contract as ``_log``) — the watchdog
+    never breaks the run because of an emit error.
+    """
+    # 1. ERROR-level line in .agent-run.log
+    _log(output_dir, "ERROR", event, detail)
+
+    # 2. Bright stderr banner so the terminal user sees it without grepping
+    try:
+        banner = (
+            f"\n"
+            f"⛔  {event} — {detail}\n"
+            f"    Remedy: {remedy}\n"
+            f"\n"
+        )
+        sys.stderr.write(banner)
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+    # 3. Sentinel file so downstream code can branch on "stall happened"
+    try:
+        sentinel = output_dir / f".{event.lower().replace('_', '-')}"
+        sentinel.write_text(
+            f"{_ts_now()}\n{detail}\nremedy: {remedy}\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+    # 4. Append a structured defect to .run-issues.json so the orchestrator's
+    #    final assessment summary surfaces the failure to the user.
+    try:
+        runissues_path = output_dir / ".run-issues.json"
+        if runissues_path.exists():
+            try:
+                payload = json.loads(runissues_path.read_text(encoding="utf-8"))
+                if not isinstance(payload, list):
+                    payload = []
+            except (json.JSONDecodeError, OSError):
+                payload = []
+        else:
+            payload = []
+        payload.append(
+            {
+                "source": _AGENT_NAME,
+                "severity": "defect",
+                "type": event.lower(),
+                "detail": detail,
+                "remedy": remedy,
+                "timestamp": _ts_now(),
+            }
+        )
+        runissues_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+_SUBSTEP2_START_RE = re.compile(
+    r"STEP_START\s+\[Phase\s*11\]\s+\[2/\d+\]\s+Writing\s+threat-model\.yaml"
+)
+_SUBSTEP2_DONE_RE = re.compile(
+    r"FILE_WRITE\s+\S*threat-model\.yaml\b"
+)
+_ISO_LEAD_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
+
+
+def _find_substep2_start(output_dir: Path) -> str | None:
+    """Return the timestamp (ISO 8601 string) of the most recent Substep 2
+    STEP_START in ``.agent-run.log``, or None if Substep 2 hasn't started.
+
+    Scanning is by line — the log appends only, so a forward iteration is
+    cheap. We return the LAST match so re-entry after a recovered run
+    starts a fresh idle window.
+    """
+    log_path = output_dir / _LOG_NAME
+    if not log_path.exists():
+        return None
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    last_ts: str | None = None
+    for line in content.splitlines():
+        if _SUBSTEP2_START_RE.search(line):
+            m = _ISO_LEAD_RE.match(line)
+            if m:
+                last_ts = m.group(1)
+    return last_ts
+
+
+def _substep2_completed_after(output_dir: Path, started_at_iso: str) -> bool:
+    """True when ``.agent-run.log`` carries a FILE_WRITE of threat-model.yaml
+    whose timestamp is >= ``started_at_iso``.
+
+    ISO 8601 strings sort lexicographically — no parsing needed.
+    """
+    log_path = output_dir / _LOG_NAME
+    if not log_path.exists():
+        return False
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    for line in content.splitlines():
+        if _SUBSTEP2_DONE_RE.search(line):
+            m = _ISO_LEAD_RE.match(line)
+            if m and m.group(1) >= started_at_iso:
+                return True
+    return False
+
+
+def _log_idle_seconds(output_dir: Path, started_at_iso: str) -> float:
+    """Seconds since the last NON-watchdog event was appended to
+    ``.agent-run.log`` at or after ``started_at_iso``.
+
+    Mtime-based idle would be wrong here because the watchdog itself
+    writes ``WATCHDOG_START`` (once at boot) and may write other
+    progress/escalation lines during a run — each of those updates the
+    file mtime and would mask a genuine orchestrator stall. Instead we
+    scan the log content for the latest timestamped line whose agent
+    field is not ``skill-watchdog`` and compute the delta to now.
+
+    Falls back to ``started_at_iso`` when no non-watchdog event has
+    landed since the substep started (= "no progress at all"). Returns
+    0.0 conservatively on any I/O error so a transient glitch never
+    false-positives.
+    """
+    log_path = output_dir / _LOG_NAME
+    if not log_path.exists():
+        return 0.0
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return 0.0
+    last_non_watchdog_ts: str | None = None
+    needle = f"  {_AGENT_NAME}  "
+    for line in content.splitlines():
+        m = _ISO_LEAD_RE.match(line)
+        if not m:
+            continue
+        ts = m.group(1)
+        if ts < started_at_iso:
+            continue
+        if needle in line:
+            # Watchdog's own line — does not count as "agent still alive".
+            continue
+        last_non_watchdog_ts = ts
+    baseline_iso = last_non_watchdog_ts or started_at_iso
+    try:
+        dt = datetime.strptime(baseline_iso, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return 0.0
+    return max(0.0, time.time() - dt.timestamp())
 
 
 def _bump_tick(output_dir: Path, n: int) -> None:
@@ -228,6 +399,8 @@ def watch(
     stride_canary_seconds: int,
     component_timeout_seconds: int,
     max_iterations: int | None,
+    *,
+    substep2_idle_seconds: int = 0,
 ) -> int:
     lock_path = output_dir / ".appsec-lock"
     if not output_dir.is_dir():
@@ -241,7 +414,8 @@ def watch(
         f"interval={heartbeat_interval}s  "
         f"stride_stale={stride_stale_seconds}s  "
         f"canary={stride_canary_seconds}s  "
-        f"component_timeout={component_timeout_seconds}s",
+        f"component_timeout={component_timeout_seconds}s  "
+        f"substep2_idle={substep2_idle_seconds}s",
     )
 
     last_count = 0
@@ -252,6 +426,14 @@ def watch(
     canary_fired = False
     stale_fired = False
     component_fired: set[str] = set()
+    # Substep-2 idle tracking — see _log_error_loud + _find_substep2_start.
+    # `substep2_start_iso` is the ISO timestamp of the most recent Substep-2
+    # STEP_START log entry; None until detected, "complete" once the
+    # corresponding FILE_WRITE threat-model.yaml has landed (so we stop
+    # scanning the log on every tick once Substep 2 is done).
+    substep2_start_iso: str | None = None
+    substep2_complete = False
+    substep2_idle_fired = False
     iteration = 0
 
     while lock_path.exists():
@@ -276,8 +458,19 @@ def watch(
             phase9_start = time.time()
             _log(output_dir, "INFO", "PHASE9_DETECTED", f"progress_files={pg}  stride_files={sc}")
 
-        # 4 — STRIDE progress mirror line (silent once stagnation has fired).
-        if (sc > 0 or pg > 0) and not stale_fired:
+        # Determine whether Phase 9 is still the active phase BEFORE the
+        # STRIDE-progress mirror. Once `_is_past_stride_phase` returns True
+        # (checkpoint at phase 10 / 11 / repair / completed), the .stride-*.json
+        # snapshot is frozen — emitting a STRIDE_PROGRESS heartbeat every 60s
+        # for the rest of Stage 2 / Stage 3 / repair-mode is observability
+        # noise that drowns the actual stage events in the run log.
+        past_stride = _is_past_stride_phase(output_dir)
+
+        # 4 — STRIDE progress mirror line. Suppressed once Phase 9 has
+        # advanced (otherwise emits identical lines through Stage 2 / 3 /
+        # repair, ~17+ false-progress entries per run). Also silent once
+        # stagnation has fired (avoids piling further noise after WARN).
+        if (sc > 0 or pg > 0) and not stale_fired and not past_stride:
             _log(output_dir, "INFO", "STRIDE_PROGRESS", f"stride_files={sc}  total_bytes={sb}  progress_files={pg}")
 
         # 5 — stagnation tracking (only after Phase 9 has started, and only
@@ -286,7 +479,6 @@ def watch(
         # `phase=10`, `phase=11`, `phase=repair/*`, or any non-9 marker —
         # the .stride-*.json files are intentionally frozen and a flat
         # progress curve is the expected state, not a hang.)
-        past_stride = _is_past_stride_phase(output_dir)
         if phase9_detected and not past_stride:
             if sc == last_count and sb == last_bytes:
                 stagnant_seconds += heartbeat_interval
@@ -340,6 +532,60 @@ def watch(
                     )
                     component_fired.add(comp)
 
+        # 7b — Substep 2 idle detection (review-recommendations §4 Fix 3).
+        #
+        # Phase 11 Substep 2 is, by spec (phase-group-finalization.md:264),
+        # a single Bash call to `build_threat_model_yaml.py` expected to
+        # complete in under 5 seconds. The 2026-05-25 juice-shop run hung
+        # for 1 h 39 min in Substep 2 because the LLM followed an
+        # obsolete pre-cutover instruction in appsec-threat-analyst.md
+        # (pre-validate intermediates, clip titles, then call Write) — the
+        # entire stall was idle (no non-watchdog log events for 1h 38m 58s).
+        #
+        # Detection: once a Substep-2 STEP_START line appears in
+        # `.agent-run.log`, compute idle as "time since the most recent
+        # non-watchdog log entry at or after that STEP_START". If idle
+        # exceeds threshold AND the corresponding FILE_WRITE
+        # threat-model.yaml has not yet landed, escalate loudly via
+        # `_log_error_loud` (ERROR log + stderr banner + sentinel +
+        # `.run-issues.json` defect entry). Fires once per substep.
+        # `substep2_idle_seconds <= 0` disables the check entirely
+        # (parity with `--component-timeout-seconds 0`).
+        if substep2_idle_seconds > 0 and not substep2_complete and not substep2_idle_fired:
+            if substep2_start_iso is None:
+                substep2_start_iso = _find_substep2_start(output_dir)
+            if substep2_start_iso is not None:
+                if _substep2_completed_after(output_dir, substep2_start_iso):
+                    substep2_complete = True
+                else:
+                    idle = _log_idle_seconds(output_dir, substep2_start_iso)
+                    if idle >= substep2_idle_seconds:
+                        _log_error_loud(
+                            output_dir,
+                            "SUBSTEP2_IDLE",
+                            (
+                                f"Phase 11 Substep 2 idle for {int(idle)}s "
+                                f"(threshold={substep2_idle_seconds}s).  "
+                                f"STEP_START at {substep2_start_iso}.  "
+                                f"No FILE_WRITE threat-model.yaml has occurred and "
+                                f".agent-run.log has not been touched in this window — "
+                                f"the orchestrator appears stuck."
+                            ),
+                            (
+                                "Substep 2 must be a SINGLE Bash call to "
+                                "`build_threat_model_yaml.py` "
+                                "(phase-group-finalization.md:264). If the agent is "
+                                "pre-inspecting `.stride-*.json` / `.threats-merged.json` "
+                                "or clipping titles, that is a spec violation introduced "
+                                "by stale pre-cutover prose in appsec-threat-analyst.md. "
+                                "Either: (a) abort and re-run with `--resume` so a "
+                                "fresh Stage-1 session picks up the corrected spec, or "
+                                "(b) inspect `.agent-run.log` to see what Bash the "
+                                "agent issued last and steer it to call the builder directly."
+                            ),
+                        )
+                        substep2_idle_fired = True
+
         # 8 — self-liveness tick.
         _bump_tick(output_dir, iteration)
 
@@ -388,6 +634,17 @@ def main(argv: list[str]) -> int:
         "(default 480 = 8 min). 0 disables per-component checks.",
     )
     p.add_argument(
+        "--substep2-idle-seconds",
+        type=int,
+        default=int(os.environ.get("APPSEC_SUBSTEP2_IDLE_SECONDS", "300")),
+        help="Idle window (seconds since last .agent-run.log update) after a "
+        "Phase 11 Substep 2 STEP_START before SUBSTEP2_IDLE fires "
+        "(default 300 = 5 min, override via env APPSEC_SUBSTEP2_IDLE_SECONDS). "
+        "Set 0 to disable. Catches the 1h 39m stall pattern observed in the "
+        "2026-05-25 juice-shop run where the LLM ignored the Substep-2 "
+        "single-Bash-call rule and pre-validated intermediates instead.",
+    )
+    p.add_argument(
         "--max-iterations", type=int, default=None, help="Optional cap on iterations (test hook; not for production)."
     )
     args = p.parse_args(argv[1:])
@@ -402,6 +659,7 @@ def main(argv: list[str]) -> int:
         stride_canary_seconds=args.stride_canary_seconds,
         component_timeout_seconds=args.component_timeout_seconds,
         max_iterations=args.max_iterations,
+        substep2_idle_seconds=args.substep2_idle_seconds,
     )
 
 

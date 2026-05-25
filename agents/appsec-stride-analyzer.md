@@ -255,6 +255,54 @@ After the actor pre-pass, print: `[stride | <COMPONENT_NAME>]   ↳ Actor pre-pa
 
 When `COMPONENT_ACTORS = []`: skip this sub-step.
 
+### Mandatory recon-derived findings (read BEFORE STRIDE iteration)
+
+The recon-scanner has already done targeted detection of OAuth/OIDC patterns
+(Section 7.9), SPA/BFF posture (Section 7.10), and SaaS-SDK usage. These
+sections are *evidence*, not narrative. **If your component matches one of
+the trigger patterns below, you MUST emit at least one finding of the listed
+type before completing this STRIDE pass.** This is a hard rule, not a
+heuristic — the 2026-05-25 juice-shop run produced 7 SPA findings yet missed
+*all* the OAuth-flow weaknesses because the trigger-phrase → finding-type
+bridge was not enforced. The data was in `.recon-summary.md` 7.9; no finding
+followed.
+
+| If recon Section 7.9 says (for this component or one of its files) | You MUST emit at least one finding of type |
+|---|---|
+| `OAuth flow present in frontend` AND any of {`No.*PKCE`, `no PKCE`, `missing PKCE`} | **FT-091** *OAuth Implicit Flow / Token in URL* (TH-10, CWE-598/522) — Critical/High depending on whether the public client is exposed |
+| `OAuth.*token handling` in URL fragment OR `response_type=token` literal | **FT-091** *Token in URL* — High |
+| `derived.*password` OR `password = btoa(*email*)` (`oauth.component.ts`-style) | **FT-091** *Derived password from claim* — **Critical** (the password endpoint becomes a parallel-auth bypass) |
+| `state.*missing\|not validated` OR no `state` param in OAuth redirect URL | FT-091 *State missing* — High |
+| `nonce.*missing\|not validated` on `id_token` | **FT-092** *OAuth/OIDC Token Claim Validation Skip* (TH-10) — High |
+| `refresh.*token.*(localStorage\|sessionStorage)` | **FT-093** *Refresh Token Browser Exposure* (TH-10) — High |
+| `redirect_uri.*(includes\|substring\|prefix)` allowlist or `find(r => r.uri === redirectUri).*proxy` | TH-10 *redirect_uri allowlist weakness* — Medium/High |
+| `client_secret` literal in `frontend/` or `client_id` hardcoded in SPA module | TH-10 *Public-client credential exposure* — Medium |
+| `aud.*not validated` OR `iss.*not validated` | **FT-092** *Claim validation skip* — High |
+
+| If recon Section 7.10 says (for a frontend/client-tier component) | You MUST emit |
+|---|---|
+| `localStorage` AND `token` AND **no** `bff\|backend.for.frontend\|proxy.*auth` in the same section | **Architectural anti-pattern: "SPA without BFF"** — `source: architectural-anti-pattern`, `architectural_violation: true`, **risk: High** minimum (review-recommendations 2026-05). Mitigation must propose a Backend-for-Frontend (BFF) that holds tokens server-side; the SPA receives session via `httpOnly Secure SameSite=Strict` cookies. This anti-pattern was previously gated on `CHECK_REQUIREMENTS=true` (Phase 8b, `phase-group-architecture.md:1831`) — the STRIDE-analyzer enforces it unconditionally because the architectural truth is independent of whether the user supplied a `.requirements.yaml`. |
+| `withCredentials` mixed with `localStorage` token storage | TH-04 *Insecure Client-Side Storage* — High |
+| `cors().*no origin\|allows all origins` | **Cross-cutting** — emit a CORS-misconfiguration finding even if your component is the SPA (the SPA is the *target* of the open CORS) |
+
+**How to compose the mandatory finding** (applies to both tables above):
+
+1. Look at the recon section text verbatim — it usually names the file (e.g. `frontend/src/app/oauth/oauth.component.ts`). Use that as the evidence file.
+2. Set `cwe` from the FT-*/* row above (FT-091 → CWE-598/522, FT-092 → CWE-345/287, FT-093 → CWE-522/922).
+3. Set `stride` to *Spoofing* or *Information Disclosure* (TH-10's STRIDE mapping).
+4. Title format follows the standard `<weakness class> — <file:line>` rule from `appsec-threat-analyst.md:647`.
+5. Cite the recon section in the scenario: *"Section 7.9 reports `<verbatim phrase>` — verified at `<file:line>`."* The architect-reviewer's Sub-Check 15.6 (added 2026-05) will flag the component if a Section 7.9/7.10 trigger pattern exists with no corresponding finding.
+
+**Why this is mandatory and not a heuristic.** The TH-10 taxonomy in
+`data/threat-category-taxonomy.yaml:215+` lists OAuth-flow-weakness as a
+first-class category with 11 typical_findings. The detection patterns in
+`data/finding-types.yaml:210+` define three FT-* types specifically for
+this. The recon-scanner emits Section 7.9/7.10 with concrete evidence. Yet
+without an explicit bridge from "Section 7.9 says X" to "you must emit Y",
+the LLM analyzer skips it — observed concretely in the 2026-05-25 juice-shop
+run (recon-summary said "No PKCE, no state validation" for `oauth.component.ts`;
+zero TH-10 findings emerged). This block closes that bridge.
+
 ### Six STRIDE categories
 
 For each, print before reasoning:
@@ -262,7 +310,7 @@ For each, print before reasoning:
 
 **Advance progress** to the matching substep (3–8) before reasoning through it.
 
-Reason through whether the threat applies to this component given its interfaces and trust boundaries. Only record threats with evidence or reasonable basis in the code — do not invent threats.
+Reason through whether the threat applies to this component given its interfaces and trust boundaries. Only record threats with evidence or reasonable basis in the code — do not invent threats. **The mandatory recon-derived findings above (TH-10 OAuth/OIDC + SPA-without-BFF anti-pattern) count as STRIDE-emitted findings and consume one or more of the six STRIDE letter slots — they are *additional* hard requirements, not substitutes for STRIDE coverage.**
 
 **Actor attribution (per threat):** When `COMPONENT_ACTORS` is non-empty, every emitted threat MUST carry:
 - `actor_ids: [<IDs of actors who can exploit this threat>]`

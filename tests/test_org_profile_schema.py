@@ -139,13 +139,13 @@ def test_skill_toggle_disabled_requires_reason(acme_profile):
 
 def test_compatibility_accepts_current_plugin_version(acme_profile):
     # Fixture uses ">=0.0 <999.0" which always accepts the local plugin.
-    errors = vop.validate(acme_profile, FIXTURE_DIR, plugin_version="0.9.0-beta")
+    errors = vop.validate(acme_profile, FIXTURE_DIR, plugin_version="0.4.0-beta")
     assert errors == [], errors
 
 
 def test_compatibility_rejects_unsupported_core(acme_profile):
     acme_profile["compatibility"]["core"] = ">=99.0"
-    errors = vop.validate(acme_profile, FIXTURE_DIR, plugin_version="0.9.0-beta")
+    errors = vop.validate(acme_profile, FIXTURE_DIR, plugin_version="0.4.0-beta")
     assert any("compatibility" in e for e in errors), errors
 
 
@@ -163,5 +163,5 @@ def test_validator_returns_nonzero_on_errors(tmp_path):
 
 
 def test_validator_returns_zero_on_success():
-    rc = vop.main([str(FIXTURE_PATH), "--plugin-version", "0.9.0-beta"])
+    rc = vop.main([str(FIXTURE_PATH), "--plugin-version", "0.4.0-beta"])
     assert rc == 0

@@ -49,17 +49,20 @@ def renderer_text() -> str:
 
 
 def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
-    assert "Stage 2 — Report Rendering" in skill_impl_text, (
+    assert "Stage 2 - Report Rendering" in skill_impl_text, (
         "Bootstrap table must list Stage 2 (Report Rendering) as an always-created task (M2.12)"
     )
 
 
 def test_stage_1_task_named_threat_analysis_and_triage(skill_impl_text):
     # TaskCreate subject row must use "and" (not `&`) — the Claude Code
-    # TaskList UI HTML-escapes `&` → `&amp;` in subjects. The canonical
-    # name with `&` may still appear elsewhere (headings, prose, CLI args
-    # to record_stage_stats) where the rendering path is unaffected.
-    assert "`Stage 1 — Threat Analysis and Triage`" in skill_impl_text
+    # TaskList UI HTML-escapes `&` → `&amp;` in subjects. Subjects also
+    # use hyphen-minus (`-`), not em-dash (`—`), because the TodoWrite
+    # renderer mis-handles multi-byte em-dash widths and bleeds adjacent
+    # task labels into each other. The canonical name with `&` and em-dash
+    # may still appear in headings/prose where the rendering path is
+    # unaffected.
+    assert "`Stage 1 - Threat Analysis and Triage`" in skill_impl_text
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +108,7 @@ def test_composition_documents_pre_generator_call(skill_impl_text):
 
 
 def test_composition_handoff_banner_documented(skill_impl_text):
-    assert "Stage 2 — Report Rendering starting" in skill_impl_text
+    assert "Stage 2 - Report Rendering starting" in skill_impl_text
     assert "renderer budget" in skill_impl_text
 
 
