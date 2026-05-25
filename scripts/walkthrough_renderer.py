@@ -235,9 +235,35 @@ def _excerpt(evidence: dict | None, limit: int = 120) -> str:
     return raw
 
 
-def _endpoint_guess(scenario: str, fallback: str = "Crafted HTTP request to the affected endpoint") -> str:
-    """Recover a concrete `METHOD /path` phrase from the scenario text."""
+_INJECTION_VECTOR_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bsearch\b.*\b(query|param|input|term)\b|\?q=", re.IGNORECASE),
+     "Crafted search query (HTML payload in `q=` parameter)"),
+    (re.compile(r"\bregister(?:ation)?\b.*\bemail\b|\bemail\b.*\bpayload\b", re.IGNORECASE),
+     "Stored attacker-controlled email at registration (HTML payload)"),
+    (re.compile(r"\bfeedback\b.*\bcomment\b|\bcomment\b.*\b(submit|post)\b|\buser feedback\b", re.IGNORECASE),
+     "Stored feedback / comment submission (HTML payload)"),
+    (re.compile(r"\bproduct\b.*\b(description|name|review)\b", re.IGNORECASE),
+     "Stored product description / review (HTML payload)"),
+    (re.compile(r"\bprofile\b.*\b(image|name|bio)\b", re.IGNORECASE),
+     "Stored profile field (HTML payload)"),
+    (re.compile(r"\b(stored|persisted)\b", re.IGNORECASE),
+     "Stored attacker-controlled content (HTML payload)"),
+    (re.compile(r"\b(reflected|url|querystring)\b", re.IGNORECASE),
+     "Reflected attacker-controlled input (HTML payload)"),
+)
 
+
+def _endpoint_guess(scenario: str, fallback: str = "Crafted HTTP request to the affected endpoint") -> str:
+    """Recover a concrete `METHOD /path` phrase from the scenario text.
+
+    When the scenario lacks an explicit `METHOD /path` token, fall back
+    to a vector-class hint derived from keyword patterns in the scenario
+    (search query, registration email, feedback comment, etc.). Without
+    the keyword fallback, every XSS / CSRF template renders the same
+    generic "Crafted HTTP request to the affected endpoint" line, which
+    reads as boilerplate template padding across 3+ distinct findings
+    (verified juice-shop T-005/6/7 2026-05-25 run).
+    """
     if not scenario:
         return fallback
     m = _ENDPOINT_RX.search(scenario)
@@ -245,6 +271,9 @@ def _endpoint_guess(scenario: str, fallback: str = "Crafted HTTP request to the 
         verb = m.group(0).split()[0].upper()
         path = m.group(1)
         return f"{verb} {path}"
+    for pattern, hint in _INJECTION_VECTOR_HINTS:
+        if pattern.search(scenario):
+            return hint
     return fallback
 
 
@@ -277,8 +306,25 @@ def load_templates(template_dir: Path) -> dict[str, dict]:
     return out
 
 
-def _template_for(cwe: str, templates: dict[str, dict]) -> dict:
-    return templates.get((cwe or "").upper()) or templates.get("_generic") or {}
+def _template_for(cwe: str, templates: dict[str, dict], threat: dict | None = None) -> dict:
+    """Resolve the per-CWE walkthrough template, with content-aware variants.
+
+    CWE-327 (Broken / Risky Crypto Algorithm) covers two structurally
+    distinct attack flows:
+      - **Password-hashing**: dump → offline crack → reuse credentials
+      - **JWT algorithm confusion**: HS256-vs-RS256 swap, alg=none
+    A single template produces a wrong-narrative sequence diagram for
+    the other half (verified juice-shop T-003 2026-05-25 run). When the
+    threat title contains JWT-specific tokens, prefer the JWT variant
+    template if one is loaded (`CWE-327-JWT`).
+    """
+    cwe_key = (cwe or "").upper()
+    title = ((threat or {}).get("title") or "").lower()
+    if cwe_key == "CWE-327" and ("jwt" in title or "algorithm confusion" in title or "alg confusion" in title):
+        variant = templates.get("CWE-327-JWT")
+        if variant:
+            return variant
+    return templates.get(cwe_key) or templates.get("_generic") or {}
 
 
 # ---------------------------------------------------------------------------
@@ -587,13 +633,10 @@ def render_defense_in_depth(threat: dict, mitigations_by_threat: dict[str, list[
         # drop the ` — <file>` Stage-1-LLM tail.
         short_title = title.split(" — ", 1)[0].strip()[:160]
         bullets.append(f"{label}: [{mid}](#{_anchor(mid)}) ({short_title})")
-    # Always carry a third "compensating control" bullet to keep this section
-    # substantive even when only one mitigation is linked.
-    if len(bullets) < 3:
-        bullets.append(
-            "Compensating control: detection signals listed below act as the "
-            "fallback layer until the primary mitigation lands in production."
-        )
+    # No padding bullet — bullets list is intentionally short when only one
+    # mitigation is linked. The Detection Signals subsection below already
+    # provides the layered-defense complement; appending a generic
+    # "compensating control" sentence here is filler that erodes signal.
     return bullets, str(mits[0].get("id") or "mitigation")
 
 
@@ -820,7 +863,7 @@ def _render_walkthrough_block(
     tid = str(threat.get("id") or "")
     title = (threat.get("title") or "untitled finding").strip()
     cwe = (threat.get("cwe") or "").upper()
-    template = _template_for(cwe, templates)
+    template = _template_for(cwe, templates, threat)
 
     evidence = (threat.get("evidence") or [{}])[0] or {}
     file_hint = (evidence.get("file") or "").strip()
@@ -830,15 +873,23 @@ def _render_walkthrough_block(
     steps = render_attack_steps(threat, template)
     diagram = render_sequence_diagram(threat, template, primary_mit_id)
 
-    heading = f"### 3.{walkthrough_index} {tid} — {_short_title(title, 90)}"
+    # Heading HARD RULE (per agents/phases/phase-group-finalization.md §3
+    # heading-format contract): 2-6 words, ≤60 chars, NO T-NNN prefix.
+    # The T-NNN appears once in the **Source:** line below — wrapping it
+    # into the heading inflates the line to 70+ chars and trips
+    # qa_checks.py:check_heading_hygiene. The previous behaviour
+    # (`### 3.X {tid} — {title}` with `_short_title(title, 90)`) violated
+    # both rules.
+    heading = f"### 3.{walkthrough_index} {_short_title(title, 60)}"
 
     lines: list[str] = []
     lines.append(heading)
     lines.append("")
+    lines.append(f"**Source:** [{tid}](#{_anchor(tid)}) — `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`")
+    lines.append("")
     lines.append(
         f"Severity **{(threat.get('risk') or 'High').strip()}** "
         f"({cwe or 'CWE-?'}). STRIDE: {threat.get('stride') or 'n/a'}. "
-        f"Code anchor: `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`. "
         f"See [§8 {tid}](#{_anchor(tid)}) for the full register row."
     )
     lines.append("")

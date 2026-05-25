@@ -1402,12 +1402,12 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     # the accept-list so reports rendered by old code are flagged.
     table_checks = [
         ("top_findings", "Top Findings", [
-            "| # | Criticality | Pfad | Finding | Component | Primary Mitigations |",
+            "| # | Criticality | Path | Finding | Component | Primary Mitigations |",
         ]),
         ("architecture_assessment", "Architecture Assessment", [
             "| Defect | Description | Key Findings |",
             # Post-2026-05 weaknesses[] shape — 4-column table
-            "| Weakness category | Affected component(s) | Description | Key findings |",
+            "| Weakness category | Affected components | Description | Key findings |",
         ]),
         ("operational_strengths", "Operational Strengths", [
             # M3.10 — categorical-cluster layout

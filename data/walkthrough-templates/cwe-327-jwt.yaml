@@ -1,0 +1,29 @@
+cwe: CWE-327-JWT
+category: broken_crypto_jwt
+human_label: "JWT algorithm confusion (HS256 ↔ RS256, alg=none)"
+
+# Content-aware variant of the cwe-327 template. Dispatched by
+# _template_for() in walkthrough_renderer.py when the threat title
+# contains "JWT" / "algorithm confusion" / "alg confusion". The
+# default cwe-327.yaml assumes a password-hashing flow (dump → crack)
+# which is wrong-narrative for algorithm-confusion JWT attacks.
+
+sequence_diagram: |
+  ```mermaid
+  sequenceDiagram
+      autonumber
+      actor Attacker
+      participant App
+      Note over App: {component} — {file}:{line}
+      Attacker->>App: GET /jwks or read RSA public key from the repo
+      App-->>Attacker: Public RSA key (intended for RS256 verification)
+      Attacker->>Attacker: Sign forged JWT with HS256 using the RSA public key as the HMAC secret (or set alg=none and drop the signature)
+      Attacker->>App: Authenticated request carrying the forged token
+      App-->>Attacker: 200 OK — server accepts the forged token because it does not enforce algorithm binding
+  ```
+
+detection_signals:
+  - "JWT decoder log alert on tokens whose `alg` header value differs from the server's configured signing algorithm at `{file}`"
+  - "WAF / API-gateway rule on `Authorization: Bearer eyJhbGciOiJub25lI…` (base64 of `alg:none`)"
+  - "Dependency-audit finding referencing `jsonwebtoken < 9.0.0`, `express-jwt < 6.0.0`, or any library missing algorithm allow-list enforcement"
+  - "Anomalous successful authentication followed immediately by privilege-sensitive actions from an account that never authenticated via the normal login flow"

@@ -4,15 +4,15 @@
 {#-                mitigations[{id,action,priority}]}], total_qualifying. -#}
 ### Top Findings
 
-**{{ rows | length }} highest-risk items.** Full catalogue in [§8 Threat Register](#8-threat-register). **Pfad** links to the attack path in [Security Posture at a Glance](#security-posture-at-a-glance); mitigation IDs jump to [§9](#9-mitigation-register).
+**{{ rows | length }} highest-risk items.** Full catalogue in [§8 Threat Register](#8-threat-register). **Path** links to the attack path in [Security Posture at a Glance](#security-posture-at-a-glance); mitigation IDs jump to [§9](#9-mitigation-register).
 
-| # | Criticality | Pfad | Finding | Component | Primary Mitigations |
+| # | Criticality | Path | Finding | Component | Primary Mitigations |
 |---|-------------|------|---------|-----------|---------------------|
 {%- for r in rows %}
 | {{ r.rank }} | {{ severity_emoji(r.criticality) }} {{ severity_label(r.criticality) }} | {% if r.path_glyph %}[{{ r.path_glyph }}](#{{ r.path_anchor }}){% else %}—{% endif %} | [{{ r.finding_id }}](#{{ r.finding_id | lower }}) — {{ r.finding_title }} | [{{ r.component_id }}](#{{ r.component_id | lower }}) — {{ r.component_name }} | {{ r.mitigations | format_mitigations }} |
 {%- endfor %}
 
 {% if total_qualifying > (rows | length) -%}
-_+{{ total_qualifying - (rows | length) }} additional ≥High findings — see [§8 Threat Register](#8-threat-register)._
+_{{ total_qualifying - (rows | length) }} further ≥High findings are catalogued in [§8 Threat Register](#8-threat-register) beyond the top {{ rows | length }} shown here._
 {% endif %}
-_Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Pfad** glyphs ①–⑦ link back to the matching bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
+_Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High (significant impact; exploit requires preconditions or a chained step). **Path** glyphs ①–⑦ link back to the matching bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._

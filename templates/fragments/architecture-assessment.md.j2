@@ -18,7 +18,7 @@
 
 {{ data.framing }}
 
-| Weakness category | Affected component(s) | Description | Key findings |
+| Weakness category | Affected components | Description | Key findings |
 |---|---|---|---|
 {%- for w in data.weaknesses %}
 | **{{ w.category }}** | {{ w.affected_components | format_weakness_components }} | {{ w.description }} | {{ w.findings | format_weakness_findings }} |

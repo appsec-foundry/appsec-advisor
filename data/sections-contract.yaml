@@ -436,7 +436,7 @@ sections:
       columns:
         - { key: rank,        header: "#",                   width: narrow,  required: true }
         - { key: criticality, header: "Criticality",         render: severity_badge, required: true }
-        - { key: path,        header: "Pfad",                render: path_glyph,     required: true }
+        - { key: path,        header: "Path",                render: path_glyph,     required: true }
         - { key: finding,     header: "Finding",             render: finding_ref,    required: true }
         - { key: component,   header: "Component",           render: component_ref,  required: true }
         - { key: mitigations, header: "Primary Mitigations", render: mitigation_list, required: true }
@@ -452,7 +452,7 @@ sections:
       _+{{ total_qualifying - rendered_count }} additional ≥High findings — see [§8 Threat Register](#8-threat-register)._
       {% endif %}
 
-      _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High. **Pfad** glyphs ①–⑦ link to the matching attack-path bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
+      _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High (significant impact; exploit requires preconditions or chained step). **Path** glyphs ①–⑦ link to the matching attack-path bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
 
   architecture_assessment:
     heading: "### Architecture Assessment"
