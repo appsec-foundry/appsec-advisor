@@ -1,0 +1,437 @@
+# source-auth-checks.yaml — deterministic source-code authorization checks
+#
+# Used by `scripts/source_auth_scanner.py`. Each check targets a specific
+# privilege-escalation / broken-access-control pattern in Node.js + Express
+# source code and emits a finding when the pattern matches AND no
+# counter-pattern is found within the configured window.
+#
+# Designed to complement (not replace) the LLM-driven Phase-9 STRIDE
+# analyzer: these patterns have very low false-positive rates and produce
+# reproducible per-file, per-line findings the LLM would otherwise either
+# miss entirely or collapse into a single generic-bucket entry.
+#
+# Check structure:
+#   id                       — AUTHZ-NNN stable identifier
+#   name                     — short check name (becomes finding title)
+#   description              — 1-2 sentence why-it-matters
+#   file_patterns            — list of globs to scan
+#   exclude_file_patterns    — list of globs to skip (tests, fixtures, ...)
+#   pattern                  — primary regex (must match for finding)
+#   counter_window           — lines AFTER match to scan for counter-pattern
+#                              (0 = same line only; default 5)
+#   counter_scope            — line | window | call (default: window)
+#                              `line`  : only the matched line
+#                              `window`: match_line .. match_line + counter_window
+#                              `call`  : match_line until balanced close-paren
+#                                        or counter_window lines (whichever first)
+#   counter_patterns         — list of regexes; ANY match suppresses the finding
+#   severity_if_violated     — Critical | High | Medium | Low
+#   cwe                      — primary CWE
+#   finding_type             — FT-NNN from finding-types.yaml
+#   breach_vector            — Internet Anon | Internet User | Internet Priv User | Victim-Required
+#   rationale                — 1-2 sentences for scenario field
+#   remediation              — short fix text (becomes mitigation_title_hint)
+
+schema_version: 1
+
+checks:
+
+  # ===================================================================
+  # AUTHZ-001 — BFLA (Broken Function-Level Authorization)
+  # Attacker-controlled owner-key in WHERE/filter clauses lets one user
+  # query, modify, or destroy another user's resources by submitting a
+  # different UserId/ownerId in the request body.
+  # ===================================================================
+  - id: AUTHZ-001
+    name: "Broken authorization — attacker-controlled owner ID in resource query"
+    description: >
+      A WHERE/filter clause binds an ownership column to a value from
+      req.body / req.query / req.params instead of the authenticated
+      session identity. Any logged-in user can pass a different ID and
+      reach another tenant's data.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: '\b(UserId|userId|user_id|ownerId|owner_id|tenantId|tenant_id|accountId|account_id|customerId|customer_id|orgId|org_id|workspaceId|workspace_id)\s*:\s*req\.(body|query|params)\.[A-Za-z_][A-Za-z0-9_]*'
+    counter_scope: window
+    counter_window: 10
+    counter_patterns:
+      - 'req\.user\.(id|userId|sub|_id|UserId)'
+      - 'req\.session\.user'
+      - 'req\.auth\.(sub|userId|user|uid)'
+      - 'res\.locals\.user'
+      - 'getCurrentUser\s*\('
+      - 'requireOwnership|ensureOwner|assertOwnership|verifyOwner'
+    severity_if_violated: Critical
+    cwe: CWE-639
+    finding_type: FT-040
+    breach_vector: "Internet User"
+    rationale: >
+      Server-side authorization MUST derive the resource owner from the
+      authenticated session (req.user / req.session / req.auth), never
+      from attacker-controlled request data. Trusting req.body.UserId
+      etc. enables horizontal privilege escalation across all
+      authenticated tenants.
+    remediation: "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause."
+
+  # ===================================================================
+  # AUTHZ-002 — IDOR (Insecure Direct Object Reference)
+  # Resource lookup by primary key from URL parameter without an
+  # ownership/role gate in the same call.
+  # ===================================================================
+  - id: AUTHZ-002
+    name: "IDOR — resource lookup by URL parameter without ownership filter"
+    description: >
+      An ORM call (findOne / findByPk / findById / findUnique /
+      findFirst / update / destroy / delete / remove) is parameterized
+      with req.params.X but the same WHERE/filter clause does not
+      restrict the result to the calling user's owned records.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    # ORM mutation/read by raw param. Match across up to ~200 chars after
+    # the call to capture short multi-arg invocations.
+    pattern: '\.(findOne|findByPk|findById|findUnique|findFirst|update|destroy|delete|deleteOne|updateOne|deleteMany|updateMany|remove|save)\s*\([^)]{0,200}?req\.params\.[A-Za-z_][A-Za-z0-9_]*'
+    counter_scope: window
+    counter_window: 5
+    counter_patterns:
+      - '\b(UserId|userId|user_id|ownerId|owner_id|tenantId|tenant_id|accountId|customerId)\s*:'
+      - 'isAuthorized\s*\(\s*[''"]admin'
+      - 'requireRole\s*\('
+      - 'ensureAdmin\s*\(|requireAdmin\s*\(|isAdmin\s*\(\s*\)'
+      - 'requireOwnership|ensureOwner|assertOwnership|verifyOwner'
+    severity_if_violated: High
+    cwe: CWE-639
+    finding_type: FT-040
+    breach_vector: "Internet User"
+    rationale: >
+      Any authenticated user can substitute another user's resource ID
+      in the URL and read or modify the target record because the query
+      filter has no ownership clause. Admin-only routes are excluded
+      via the counter-pattern allowlist.
+    remediation: "Add an owner column to the WHERE clause (UserId: req.user.id) or wrap the route in an ensureOwnership/requireRole middleware."
+
+  # ===================================================================
+  # AUTHZ-003 — Mass assignment of privileged fields
+  # Direct references to req.body.{role,isAdmin,permissions,...} accept
+  # role-elevating data without server-side stripping or allowlisting.
+  # ===================================================================
+  - id: AUTHZ-003
+    name: "Mass assignment — privileged field accepted from request body"
+    description: >
+      The handler reads or persists a privileged attribute (role /
+      isAdmin / permissions / scope / privileges / roleId / tenantId)
+      directly from req.body. Without an allowlist filter the client
+      can self-elevate by including the field in the JSON payload.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+      # Verification / challenge-detection code reads req.body.role to
+      # detect attempted attacks — skip those files explicitly.
+      - "**/verify*.ts"
+      - "**/verify*.js"
+      - "**/verify/**"
+      - "**/challenge*.ts"
+      - "**/challenge*.js"
+    pattern: 'req\.body\.(role|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|admin|administrator|permissions?|privileges?|scopes?|roleId|role_id|userType|user_type)\b'
+    counter_scope: window
+    counter_window: 8
+    counter_patterns:
+      - 'delete\s+req\.body\.(role|isAdmin|permissions|scope|admin)'
+      - '_\.(pick|omit)\s*\(\s*req\.body'
+      - 'allowedFields\s*[:=]\s*\['
+      - 'sanitize\s*\(\s*req\.body'
+      - '(joi|Joi|yup|z|zod|Schema|validator|class-validator)\b[^;]{0,60}\.(validate|parse|safeParse|validateAsync)\s*\('
+      - 'stripPrivileged|stripUnsafe|filterBody'
+    severity_if_violated: Critical
+    cwe: CWE-915
+    finding_type: FT-041
+    breach_vector: "Internet User"
+    rationale: >
+      Server code that consumes req.body.role / req.body.isAdmin / etc.
+      without an explicit allowlist trusts the client to behave. An
+      attacker simply adds {"role":"admin"} to their request to escalate.
+    remediation: "Apply an allowlist filter (Joi/Zod/yup schema, _.pick, or explicit field copy) before passing the body to any model, and strip privilege fields before persistence."
+
+  # ===================================================================
+  # AUTHZ-004 — Whole-body mass assignment to ORM
+  # Passing req.body as-is to Model.create / .update / .build / .insert
+  # bypasses any field allowlist if no schema validator runs first.
+  # ===================================================================
+  - id: AUTHZ-004
+    name: "Mass assignment — request body passed unfiltered to ORM create/update"
+    description: >
+      The full req.body object is forwarded into an ORM persistence
+      call without a preceding allowlist/schema filter. Any extra field
+      the client sends becomes a database column write.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: '\.(create|update|build|insert|insertMany|insertOne|save|bulkCreate)\s*\(\s*req\.body\s*[,)]'
+    counter_scope: window
+    counter_window: 10
+    counter_patterns:
+      - '_\.(pick|omit)\s*\(\s*req\.body'
+      - 'allowedFields\s*[:=]\s*\['
+      - 'sanitize\s*\(\s*req\.body'
+      - '(joi|Joi|yup|z|zod|Schema|validator|class-validator)\b[^;]{0,60}\.(validate|parse|safeParse|validateAsync)\s*\('
+      - 'stripPrivileged|stripUnsafe|filterBody|pickAllowed'
+    severity_if_violated: High
+    cwe: CWE-915
+    finding_type: FT-041
+    breach_vector: "Internet User"
+    rationale: >
+      ORM models that auto-map attribute names to columns (Sequelize,
+      Mongoose, Prisma with spread, TypeORM with merge) accept every
+      key in req.body. Without an allowlist the client controls
+      arbitrary columns including role / status / verified flags.
+    remediation: "Replace Model.create(req.body) with an explicit field-by-field assignment, a Joi/Zod schema, or _.pick(req.body, allowedFields)."
+
+  # ===================================================================
+  # AUTHZ-005 — JWT verify call missing algorithms allowlist
+  # Without explicit `algorithms: [...]` the library will accept whatever
+  # alg the token declares — including HS256-when-key-is-RSA-pubkey
+  # (the algorithm confusion class).
+  # ===================================================================
+  - id: AUTHZ-005
+    name: "JWT verify call missing algorithms allowlist (algorithm confusion)"
+    description: >
+      `jwt.verify(token, key)` is called without an `algorithms:` option.
+      Pre-9.x jsonwebtoken accepted the alg field from the token header
+      itself, enabling the classic RSA-public-key-as-HMAC-secret
+      algorithm-confusion attack and alg:none bypasses.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.js"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: '\bjwt\.verify\s*\('
+    counter_scope: call
+    counter_window: 6
+    counter_patterns:
+      - 'algorithms\s*:\s*\['
+    severity_if_violated: Critical
+    cwe: CWE-347
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: >
+      Without an explicit algorithm allowlist, attackers can forge
+      tokens with alg:none (older lib versions) or use the public key
+      as an HMAC secret to mint valid signatures.
+    remediation: "Always pass `algorithms: ['RS256']` (or the project's chosen alg) as the third argument's options object to jwt.verify."
+
+  # ===================================================================
+  # AUTHZ-006 — JWT decode used without subsequent verify
+  # `jwt.decode` / `jws.decode` reads the payload WITHOUT verifying the
+  # signature. Authorization decisions based on decoded-only tokens
+  # accept any forged token.
+  # ===================================================================
+  - id: AUTHZ-006
+    name: "JWT decode used without signature verification"
+    description: >
+      `jwt.decode(token)` or `jws.decode(token)` only base64-decodes the
+      payload — it performs NO signature check. Using decoded claims to
+      drive authorization is equivalent to trusting the client.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.js"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: '\b(jwt|jws|jsonwebtoken)\.decode\s*\('
+    counter_scope: window
+    counter_window: 40   # function-body approximation
+    counter_patterns:
+      - '\bjwt\.verify\s*\('
+      - 'jsonwebtoken\.verify\s*\('
+      - 'jws\.verify\s*\('
+      - 'expressJwt\s*\('
+    severity_if_violated: High
+    cwe: CWE-345
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: >
+      Decode-only flows let an attacker construct a token with any
+      claims (admin, sub=victim, scope=*) — no key material required.
+    remediation: "Replace `.decode(token)` with `.verify(token, key, { algorithms: [...] })` and gate authorization on the verified payload only."
+
+  # ===================================================================
+  # AUTHZ-007 — express-jwt middleware missing algorithms
+  # Same algorithm-confusion risk as AUTHZ-005, on the middleware side.
+  # ===================================================================
+  - id: AUTHZ-007
+    name: "express-jwt middleware missing algorithms allowlist"
+    description: >
+      `expressJwt({...})` is configured without an `algorithms:` field.
+      Pre-6.x express-jwt then accepts the alg field from the token,
+      enabling algorithm confusion. Modern versions throw at startup
+      when omitted — but bundled-with-old-version repos still ship the
+      vulnerable path.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.js"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+    pattern: '\bexpressJwt\s*\(\s*\{'
+    counter_scope: call
+    counter_window: 12
+    counter_patterns:
+      - 'algorithms\s*:\s*\['
+    severity_if_violated: High
+    cwe: CWE-347
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: >
+      The middleware is the gate for every authenticated route — a
+      mis-configured expressJwt undermines the entire authorization
+      surface.
+    remediation: "Add `algorithms: ['RS256']` (or matching) to the expressJwt() options object."
+
+  # ===================================================================
+  # AUTHZ-008 — Sensitive REST route registered without auth middleware
+  # State-changing methods on sensitive resource paths without
+  # isAuthorized / requireAuth / passport.authenticate in the chain.
+  # ===================================================================
+  - id: AUTHZ-008
+    name: "Sensitive REST route registered without authentication middleware"
+    description: >
+      A POST/PUT/DELETE/PATCH handler is registered on a sensitive
+      resource path (Users, Admin, Orders, Payments, Cards, Addresses,
+      Wallets, Billing, Keys, Tokens, Settings, Profile) without an
+      authentication middleware in the same route registration line.
+    file_patterns:
+      - "**/server.ts"
+      - "**/server.js"
+      - "**/app.ts"
+      - "**/app.js"
+      - "**/index.ts"
+      - "**/index.js"
+      - "**/router.ts"
+      - "**/router.js"
+      - "**/routes/**/*.ts"
+      - "**/routes/**/*.js"
+      - "**/router/**/*.ts"
+      - "**/router/**/*.js"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+      - "**/frontend/**"
+      - "**/client/**"
+    # State-changing call on a sensitive path. Case-insensitive on
+    # resource segment to catch /api/Users vs /api/users.
+    pattern: '(?i)\bapp\.(post|put|delete|patch)\s*\(\s*[''"]/?(?:api|rest|v[0-9]+)?/?[a-z0-9_/-]*?(users?|admin|orders?|payments?|cards?|addresses|wallets?|billing|keys?|tokens?|settings?|profile)s?\b'
+    counter_scope: line
+    counter_window: 0
+    counter_patterns:
+      - 'isAuthorized|isAuthenticated|requireAuth|denyAll|requireRole|ensureAdmin|authMiddleware|passport\.authenticate|verifyToken|jwtAuth|verifyJWT|csrf|protect\s*\(|requireUser'
+    severity_if_violated: High
+    cwe: CWE-862
+    finding_type: FT-042
+    breach_vector: "Internet Anon"
+    rationale: >
+      State-changing operations on sensitive resources MUST require a
+      proven session. A registration line that lacks any auth marker
+      either trusts the URL itself or relies on a downstream check that
+      the static signature cannot prove exists.
+    remediation: "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only."

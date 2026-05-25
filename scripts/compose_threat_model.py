@@ -672,8 +672,25 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
     env.filters["format_mitigation_addresses"] = format_mitigation_addresses
     env.filters["format_strengths_mitigates"] = format_strengths_mitigates
     env.filters["bullet_list"] = bullet_list
+    env.globals["pluralize"] = pluralize
 
     return env
+
+
+def pluralize(n: int, singular: str, plural: str | None = None) -> str:
+    """Return "{n} singular" or "{n} plural" depending on count.
+
+    Eliminates the "(s)"-suffix anti-pattern ("5 component(s)",
+    "1 item(s)") that surfaces across the rendered report. English
+    pluralisation is naive but covers the cases that actually appear in
+    output: default plural is `singular + "s"`; pass `plural` explicitly
+    for irregulars (`pluralize(n, "finding", "findings")` is the same as
+    default, but `pluralize(n, "category", "categories")` needs the
+    explicit form).
+    """
+    if plural is None:
+        plural = singular + "s"
+    return f"{n} {singular if n == 1 else plural}"
 
 
 def bullet_list(items: list, *, prefix: str = "- ") -> str:
@@ -3059,8 +3076,11 @@ def _build_tier_cards(
             sev_parts.append(f"🟠 {sev_counts['high']} High")
         if sev_counts["medium"]:
             sev_parts.append(f"🟡 {sev_counts['medium']} Medium")
-        sev_line = " · ".join(sev_parts) if sev_parts else "(no findings)"
-        # Root-causes line.
+        # Defer sev_line composition until after rcs is resolved so the
+        # "(no findings)" fallback only fires when neither severity
+        # counts NOR root-cause bullets are available. Previously the
+        # heatmap rendered a contradiction: root-cause bullets like
+        # "MD5 used for password hashing…" above a "(no findings)" tag.
         rcs = (tier_root_causes or {}).get(key) or []
         # Legacy yaml may use "edge"/"server" keys; map them onto the new
         # tier vocabulary.
@@ -3089,6 +3109,16 @@ def _build_tier_cards(
                 allow = None
             rcs = _derive_tier_root_causes(tier_threats, attack_class_cwes=allow)
         rc_line = ("⚠ " + " · ".join(rcs)) if rcs else "⚠ (no root causes documented)"
+        # Compose sev_line now that rcs is final. Suppress the
+        # "(no findings)" fallback when rcs is non-empty — the root-cause
+        # bullets already convey tier-level posture and the fallback
+        # would contradict them.
+        if sev_parts:
+            sev_line = " · ".join(sev_parts)
+        elif rcs:
+            sev_line = ""
+        else:
+            sev_line = "(no findings)"
         # Components line. Component IDs are emitted plain (no <b>) — bold
         # is reserved for the column-header HDR_A/T/I cells inside the heatmap
         # so headers and content render with distinguishable weights.
@@ -3347,7 +3377,7 @@ def _format_manual_review_hint(threat: dict, tid: str) -> dict[str, str] | None:
     }
 
 
-def _shorten_title_for_xref(raw_title: str, threat: dict | None = None) -> str:
+def _shorten_title_for_xref(raw_title: str, threat: dict | None = None, *, compact: bool = False) -> str:
     """Return the cross-reference form of a threat title.
 
     Output format (M3.13 — post-2026-05 simplified):
@@ -3355,6 +3385,13 @@ def _shorten_title_for_xref(raw_title: str, threat: dict | None = None) -> str:
         - Without param, with file: `<Weakness> in file <path>`
         - With non-file path (directory): `<Weakness> in <path>`
         - Cross-cutting (no path, no param): `<Weakness>`
+
+    ``compact=True`` switches to a parens form for table cells where a
+    single mitigation row may stack 4-5 findings via `<br/>` — the
+    "in file" form repeated per finding reads as bloat. Compact form:
+        - With param + file: `<Weakness> (<path>, "<name>")`
+        - Without param, with file: `<Weakness> (<path>)`
+        - Cross-cutting: `<Weakness>` (unchanged)
 
     The bare `("<name>")` parameter token replaces the previous
     `(param "<name>")` form — the `param ` prefix added noise without
@@ -3413,6 +3450,11 @@ def _shorten_title_for_xref(raw_title: str, threat: dict | None = None) -> str:
 
     # Compose the new form.
     if path:
+        if compact:
+            # Parens form for table-cell contexts (Top Mitigations).
+            if final_param:
+                return f'{weakness} ({path}, "{final_param}")'
+            return f"{weakness} ({path})"
         # "in file <path>" when path looks like a file; "in <path>" otherwise.
         in_phrase = "in file" if re.search(r"\.[A-Za-z0-9]{1,6}$", path) else "in"
         if final_param:
@@ -5092,7 +5134,10 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             # `routes/login.ts:34`). The §8 register still carries the
             # full file:line for click-through detail.
             raw_title = (t.get("title") or t.get("scenario_short") or "").strip()
-            short_label = _shorten_title_for_xref(raw_title, t)
+            # compact=True — Top Mitigations Addresses cells stack 4-5
+            # findings via `<br/>`; the parens form is more scannable
+            # than 4 repeated "in file" phrases per row.
+            short_label = _shorten_title_for_xref(raw_title, t, compact=True)
             addressed.append({"ref": tid, "label": short_label})
         comp_ids = m.get("components") or []
         if not comp_ids:
@@ -5229,9 +5274,9 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         bucket = sorted(buckets[cid], key=_row_sort_key)
         if cid:
             comp_name = (components_meta.get(cid) or {}).get("name", cid)
-            divider_label = f"↳ {comp_name} ({cid}) — {len(bucket)} item(s)"
+            divider_label = f"↳ {comp_name} ({cid}) — {pluralize(len(bucket), 'item')}"
         else:
-            divider_label = f"↳ Cross-cutting — {len(bucket)} item(s)"
+            divider_label = f"↳ Cross-cutting — {pluralize(len(bucket), 'item')}"
         # Continuous numbering across groups (1..N), so the # column reads
         # as a global leader-board rank rather than per-component 1..N.
         group_rows: list[dict[str, Any]] = []
@@ -5268,11 +5313,11 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     footer_parts: list[str] = []
     if overflow_p12:
         footer_parts.append(
-            f"{overflow_p12} additional P1/P2 mitigation(s) capped from the "
-            f"leader-board"
+            f"{pluralize(overflow_p12, 'additional P1/P2 mitigation', 'additional P1/P2 mitigations')} "
+            f"capped from the leader-board"
         )
     if overflow_p3:
-        footer_parts.append(f"{overflow_p3} P3 backlog item(s)")
+        footer_parts.append(f"{pluralize(overflow_p3, 'P3 backlog item')}")
     if footer_parts:
         footer = (
             "*" + " · ".join(footer_parts)
@@ -5457,6 +5502,15 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     rendered_rows: list[dict[str, Any]] = []
     if clusters:
         for cl in clusters:
+            # Skip the `_unmapped` catch-all cluster (label
+            # "Other Operational Controls"). The cluster exists so the
+            # renderer can map every control somewhere internally, but
+            # presenting it as a strength row reads as "uncategorised
+            # leftover" rather than a categorical strength. The §7
+            # per-control breakdown still lists every control with its
+            # effectiveness — readers who need the detail go there.
+            if cl.get("id") == "_unmapped":
+                continue
             members = cl.get("members") or []
             eff = cl.get("effectiveness") or "partial"
             # "What's in Place" cell composition (post-2026-05):
@@ -6935,19 +6989,18 @@ def _escape_dot_tld_identifiers(md: str) -> str:
     """
     out_chunks: list[str] = []
 
-    # Zero-Width-Space (U+200B) — invisible character that breaks the
-    # GFM auto-link contiguous-word-char requirement without changing
-    # the visible appearance of the token.
-    _ZWSP = "​"
-
     def _wrap_if_unknown(m: re.Match[str]) -> str:
         word, tld = m.group(1), m.group(2)
         full = f"{word}.{tld}"
         if full.lower() in _DOT_TLD_KNOWN_NAMES:
-            # Known-safe brand / framework name. Insert ZWSP between word
-            # and dot so the token stays visually `Socket.IO` but GFM
-            # cannot detect it as a URL.
-            return f"{word}{_ZWSP}.{tld}"
+            # Known-safe brand / framework name. Backtick-wrap to defeat
+            # GFM auto-link without inserting invisible characters. The
+            # legacy ZWSP (U+200B) approach is retired — see
+            # agents/appsec-threat-renderer.md §"Brand-token escape":
+            # ZWSP is fragile across PDF/HTML/RSS/IDE renderer pipelines
+            # and invisible to authors editing source. Backtick-wrap
+            # renders unchanged in every downstream format.
+            return f"`{full}`"
         if tld.lower() in _FILE_EXTENSION_SUFFIXES:
             # Bare file name (e.g. `login.ts`, `script.py`). GFM does not
             # auto-link these; backtick-wrap would corrupt path tokens
@@ -7073,11 +7126,20 @@ _SECRET_PATTERNS: list[tuple[str, str, str]] = [
 ]
 
 
-_QUICK_MODE_NOTICE = (
+_QUICK_MODE_NOTICE_QUICK = (
     "> ⓘ **Section narrative not rendered** — this section contains unfilled "
-    "placeholders. At `--assessment-depth quick` this is by design. At standard "
-    "or thorough depth re-run with `--enrich-arch` (or `--thorough`) to fill "
-    "the per-domain narrative."
+    "placeholders. At `--assessment-depth quick` this is by design. Re-run with "
+    "`--standard` or `--thorough` to fill the per-domain narrative."
+)
+
+_QUICK_MODE_NOTICE_STANDARD = (
+    "> ⚠ **Section narrative incomplete** — this section contains unfilled "
+    "placeholders at standard/thorough depth, which means the Stage-2 fill "
+    "step did not author them. Common causes: turn budget exhausted before "
+    "§7 fill, or scaffold-fill instructions not loaded by the renderer agent. "
+    "Check `.agent-run.log` for `BUDGET_CRITICAL` / `WRAP_UP_TRIGGERED` "
+    "around the §7 substep, and `agents/phases/phase-group-finalization.md` "
+    "→ scaffold-fill protocol."
 )
 
 
@@ -7142,7 +7204,7 @@ def _quote_mermaid_edge_labels(md: str) -> tuple[str, int]:
     return out, rewrites
 
 
-def _annotate_quick_mode_gaps(md: str) -> str:
+def _annotate_quick_mode_gaps(md: str, depth: str = "quick") -> str:
     """Inject a notice into any top-level section that still contains unfilled
     `<!-- NARRATIVE_PLACEHOLDER -->` HTML comments.
 
@@ -7151,6 +7213,13 @@ def _annotate_quick_mode_gaps(md: str) -> str:
     Idempotent — chunks that already start with the notice are left alone.
     Section-level only; sub-section gaps roll up to their parent §N notice.
     """
+    # Depth-aware banner selection. At quick depth, unfilled placeholders
+    # are by design (LLM enrichment off for §7.4-§7.12). At standard /
+    # thorough, the LLM scaffold-fill step is supposed to author them —
+    # surviving placeholders signal an enrichment failure, not a config
+    # choice. The banner text + emoji differ to make this distinction
+    # visible to the reader.
+    notice = _QUICK_MODE_NOTICE_QUICK if depth == "quick" else _QUICK_MODE_NOTICE_STANDARD
     lines = md.splitlines(keepends=False)
     out: list[str] = []
     i = 0
@@ -7165,14 +7234,14 @@ def _annotate_quick_mode_gaps(md: str) -> str:
                 j += 1
             section_body = "\n".join(lines[i + 1 : j])
             has_gap = "<!-- NARRATIVE_PLACEHOLDER" in section_body
-            already_noted = "Quick-Mode assessment" in section_body[:400]
+            already_noted = "Section narrative" in section_body[:400]
             out.append(line)
             if has_gap and not already_noted:
                 # Insert one blank line + the notice + one blank line so the
                 # callout stays visually separate from the heading and the
                 # following body content.
                 out.append("")
-                out.append(_QUICK_MODE_NOTICE)
+                out.append(notice)
             i += 1
         else:
             out.append(line)
@@ -8264,6 +8333,54 @@ _EVIDENCE_CWE_CLAIMS: dict[str, str] = {
 }
 
 
+# Abbreviations and dotted-identifier shapes that the naive
+# `(?<=[.!?])\s+` splitter mis-handles, breaking the Story Card's
+# Issue/Impact carve-out (review-recommendations §3.1 row d). When the
+# splitter cuts inside `(e.g. …)`, `Node.js`, `child_process.exec()` or
+# similar, the trailing payload fragment becomes the carved Impact, and
+# the cell renders:
+#
+#     **Impact:** require('child_process').exec()).
+#
+# instead of a real consequence. `_safe_sentence_split` masks these
+# shapes with a non-splitting unicode sentinel before splitting, then
+# restores them. The masking is purely textual — we never rely on it for
+# semantic disambiguation, only for the splitter's boundary decision.
+_SENTENCE_DOT_PLACEHOLDER = " "
+_SENTENCE_ABBREVIATIONS: tuple[str, ...] = (
+    "e.g.",
+    "i.e.",
+    "cf.",
+    "vs.",
+    "etc.",
+    "Inc.",
+    "Ltd.",
+    "Co.",
+)
+
+
+def _safe_sentence_split(text: str) -> list[str]:
+    """Split ``text`` into sentences, but never inside common abbreviations
+    or dotted identifiers (`Node.js`, `child_process.exec()`, hostnames).
+
+    Returns a list of stripped sentence strings. Empty input → ``[]``.
+    """
+    if not text:
+        return []
+    masked = text
+    # Mask common Latin abbreviations whole-word (case-sensitive — these
+    # are the canonical forms).
+    for abbr in _SENTENCE_ABBREVIATIONS:
+        masked = masked.replace(abbr, abbr.replace(".", _SENTENCE_DOT_PLACEHOLDER))
+    # Mask dotted identifiers / member expressions / file extensions /
+    # hostnames: a dot that sits BETWEEN two word/identifier characters
+    # is never a sentence boundary in this corpus. Mask all such dots.
+    masked = re.sub(r"(?<=[\w\)\]])\.(?=\w)", _SENTENCE_DOT_PLACEHOLDER, masked)
+    # Now split on terminal punctuation followed by whitespace.
+    raw = re.split(r"(?<=[.!?])\s+", masked)
+    return [s.replace(_SENTENCE_DOT_PLACEHOLDER, ".").strip() for s in raw if s.strip()]
+
+
 def _synthesise_evidence_summary(t: dict, ev_file: str, ev_line: object) -> str:
     """Build a one-sentence `**Evidence:**` claim when the YAML lacks an
     explicit ``evidence_summary``.
@@ -8281,9 +8398,13 @@ def _synthesise_evidence_summary(t: dict, ev_file: str, ev_line: object) -> str:
             cwe_num = m.group(1)
     claim = _EVIDENCE_CWE_CLAIMS.get(cwe_num, "")
     if not claim:
-        # Generic fallback — refer to the snippet without making a
-        # CWE-specific structural claim.
-        claim = "The implementation visible in the snippet below realises the weakness described above"
+        # 2026-05 (review-recommendations §3.1 row c): the previous
+        # generic fallback ("The implementation visible in the snippet
+        # below realises the weakness described above") added zero
+        # information — the <details> widget already says "Evidence code
+        # · file:line". Return empty so the caller skips the **Evidence:**
+        # prose line entirely and just renders the code widget.
+        return ""
     # Append the file context so the reader knows the proof is local.
     if ev_file:
         loc = ev_file if not ev_line else f"{ev_file}:{ev_line}"
@@ -8559,9 +8680,7 @@ def _build_finding_cell(
         stripped = re.sub(r"\[[^\]]+\]\([^)]+\)", "", s).strip(" .,;:!?-—·`*_")
         return len(stripped) < 10
 
-    scenario_sentences = [
-        s.strip() for s in re.split(r"(?<=[.!?])\s+", scenario_clean) if s.strip()
-    ]
+    scenario_sentences = _safe_sentence_split(scenario_clean)
     has_explicit_impact = bool(
         (t.get("impact_description") or t.get("impact_summary") or "").strip()
     )
@@ -8644,7 +8763,7 @@ def _build_finding_cell(
         # consequence and Issue is the narrative, without overlap.
         impact_text = impact_carve
     if not impact_text:
-        sentences = re.split(r"(?<=[.!?])\s+", scenario_clean)
+        sentences = _safe_sentence_split(scenario_clean)
         for s in reversed(sentences):
             if _is_link_only(s):
                 continue
@@ -9237,15 +9356,62 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
 
         # Actor cell (column 4) — actors.md §10 & §14:
         #   primary_actor (link to §1.5) + optional +N extras,
-        #   [obsolete-actor] marker when actor_ids list is empty (§10 Fall 2),
-        #   _dormant_ marker when finding is preserved past actor disable (§10 Fall 3).
+        #   [obsolete-actor] marker ONLY when actor_ids list is empty AND
+        #   provenance shows the finding once had attribution (§10 Fall 2 —
+        #   actor was tagged, then disabled).
+        #   _dormant_ marker when finding is preserved past actor disable
+        #   (§10 Fall 3).
+        #
+        # 2026-05 (review-recommendations §4.5 Guard 1): the previous
+        # branch emitted `_[obsolete-actor]_` for ANY empty actor_ids,
+        # including first-run findings where the STRIDE analyzer simply
+        # never populated the field. That collapsed two structurally
+        # different states (Fall 2 = legitimate disable vs. data-gap =
+        # pipeline defect) into the same Fall-2 marker. The precondition
+        # below requires evidence of a prior-attribution state before
+        # emitting the marker; otherwise the cell renders neutrally as
+        # "—" so the missing data is visible without falsely claiming the
+        # finding was ever actor-tagged.
         actor_ids = t.get("actor_ids") or []
         primary_actor = t.get("primary_actor")
         status_lower = (t.get("_status") or "").strip().lower()
-        if status_lower == "dormant":
+        prov = t.get("_provenance") or {}
+        had_actor_history = (
+            bool(prov.get("run_count_empty"))
+            or bool(prov.get("disabled_actor_ids"))
+            or bool(prov.get("previous_actor_ids"))
+        )
+        # 2026-05 (review-recommendations §4.6 + risk-assessment B): the
+        # `_dormant_` marker is a state-transition marker (actors.md §10
+        # Fall 3 — finding's structurally-required actor was disabled, the
+        # finding is preserved for review). Just like `_[obsolete-actor]_`,
+        # it must NOT be rendered without provenance evidence — otherwise
+        # an upstream pipeline bug that writes `_status: dormant` without
+        # corresponding history would silently masquerade as a legitimate
+        # Fall-3 case. Require either prior-actor-history fields OR an
+        # explicit dormancy reason in provenance before honouring the
+        # status string.
+        dormant_provenance_ok = (
+            had_actor_history
+            or bool(prov.get("dormancy_reason"))
+            or bool(prov.get("dormant_since"))
+        )
+        if status_lower == "dormant" and dormant_provenance_ok:
             actor_cell = "_dormant_"
-        elif not actor_ids:
+        elif status_lower == "dormant":
+            # Status flag set without supporting provenance — neutral render
+            # plus a (silent) signal. The composer doesn't have direct access
+            # to .run-issues.json here, but the architect-reviewer's actor
+            # checks pick up the inconsistency in the next pass.
+            actor_cell = "—"
+        elif not actor_ids and had_actor_history:
             actor_cell = "_[obsolete-actor]_"
+        elif not actor_ids:
+            # First-run / data-gap state — render neutrally rather than
+            # fabricate a Fall-2 history. Architect-reviewer Sub-Check 15.3
+            # already raises the upstream issue; the renderer must not paper
+            # over it with a misleading marker.
+            actor_cell = "—"
         elif primary_actor:
             actor_cell = f"[`{primary_actor}`](#identified-actors)"
             extras = [a for a in actor_ids if a != primary_actor]
@@ -10321,7 +10487,8 @@ def render(
     # (ENRICH_ARCH_FRAGMENTS was off or Stage 2 did not complete the fill).
     # HTML comments are kept (invisible in rendered output) so a re-run
     # with --enrich-arch can fill them in-place.
-    rendered = _annotate_quick_mode_gaps(rendered)
+    depth_val = ((ctx.yaml_data.get("meta") or {}).get("assessment_depth") or "quick").lower()
+    rendered = _annotate_quick_mode_gaps(rendered, depth=depth_val)
 
     # F1.4 — surface a compose-stats warning when any NARRATIVE_PLACEHOLDER
     # comment survived into the final render. _annotate_quick_mode_gaps
@@ -10644,6 +10811,14 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
 
     Shares the project-name derivation with `_render_infobox` via
     `_derive_project_name()` so the title and the infobox never disagree.
+
+    Emits a one-line italic subtitle directly under the H1 naming the
+    plugin version that produced the report (e.g. `_Generated by
+    appsec-advisor v0.4.0-beta (analysis v2)_`). The same value also
+    appears in the §Appendix Run Statistics row, but readers shouldn't
+    have to scroll to the bottom to learn which tool version emitted
+    the artefact. Falls back to title-only when plugin.json is
+    unreadable.
     """
     title_tpl = title_template_override or ctx.contract["document"].get("title_template", "Threat Model")
     project = ctx.yaml_data.get("project")
@@ -10652,6 +10827,25 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
     project.setdefault("name", _derive_project_name(ctx))
     env = jinja2.Environment(autoescape=False)
     title = env.from_string(title_tpl).render(project=project)
+
+    plugin_v: str | None = None
+    analysis_v: int | None = None
+    try:
+        plugin_v, analysis_v = _read_live_plugin_meta()
+    except Exception:
+        pass
+    if not plugin_v:
+        meta = ctx.yaml_data.get("meta") or {}
+        plugin_v = meta.get("plugin_version") or None
+        if analysis_v is None:
+            av = meta.get("analysis_version")
+            if isinstance(av, int):
+                analysis_v = av
+
+    if plugin_v:
+        suffix = f" (analysis v{analysis_v})" if analysis_v else ""
+        subtitle = f"_Generated by appsec-advisor v{plugin_v}{suffix}_\n"
+        return f"# {title}\n\n{subtitle}"
     return f"# {title}\n"
 
 

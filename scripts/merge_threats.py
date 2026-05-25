@@ -377,6 +377,115 @@ def _load_dep_scan_findings(output_dir: Path) -> list[dict]:
     return [_dep_finding_to_threat(f) for f in findings if isinstance(f, dict)]
 
 
+# ---------------------------------------------------------------------------
+# Source-auth ingestion (scripts/source_auth_scanner.py →
+# .source-auth-findings.json). Deterministic AUTHZ-NNN pattern findings
+# for IDOR / BFLA / mass-assignment / JWT-verify pitfalls / sensitive-route
+# auth-middleware coverage. Loaded only when the sidecar file exists; the
+# scanner is opt-in and the merger degrades gracefully when absent.
+# ---------------------------------------------------------------------------
+
+# AUTHZ check-id → STRIDE category. Conservative mapping — the scanner
+# produces deterministic findings whose STRIDE class is fixed by the
+# pattern semantics (so we do not have to LLM-classify after the fact).
+_AUTHZ_TO_STRIDE: dict[str, str] = {
+    "AUTHZ-001": "Tampering",                # BFLA via attacker-controlled owner ID
+    "AUTHZ-002": "Tampering",                # IDOR via raw URL parameter
+    "AUTHZ-003": "Elevation of Privilege",   # Mass assign privilege field
+    "AUTHZ-004": "Elevation of Privilege",   # Mass assign whole body
+    "AUTHZ-005": "Spoofing",                 # JWT verify without algorithms
+    "AUTHZ-006": "Spoofing",                 # JWT decode without verify
+    "AUTHZ-007": "Spoofing",                 # express-jwt without algorithms
+    "AUTHZ-008": "Elevation of Privilege",   # Missing auth middleware
+}
+
+
+def _guess_component_from_path(file_path: str) -> tuple[str, str]:
+    """Best-guess initial (component_id, component_name) from the file path.
+
+    reclassify_components.py later refines this against the orchestrator's
+    actual components[].paths globs — when exactly one component matches
+    the evidence file the threat is reassigned automatically. The values
+    we emit here only matter when the auto-reassignment can't decide.
+    """
+    p = file_path.replace("\\", "/").lower()
+    if any(p.startswith(prefix) for prefix in (
+        "frontend/", "client/", "web/", "ui/", "src/app/", "app/components/",
+    )):
+        return ("frontend", "Frontend SPA")
+    if any(p.startswith(prefix) for prefix in (
+        "models/", "db/", "database/", "schema/", "prisma/", "migrations/",
+    )):
+        return ("data-layer", "Data Layer")
+    # Default for everything else (routes/, lib/, controllers/, server.ts,
+    # app.ts, …) — the dominant case for Node.js backend apps.
+    return ("backend-api", "Backend API")
+
+
+def _source_auth_finding_to_threat(f: dict) -> dict:
+    """Convert one `.source-auth-findings.json` finding into the merged-threats
+    threat record shape used by Phase 10/11."""
+    cwes = f.get("cwe") or []
+    cwe = cwes[0] if cwes else ""
+    check_id = f.get("check_id") or ""
+    stride = _AUTHZ_TO_STRIDE.get(check_id, "Tampering")
+    severity = f.get("severity") or "Medium"
+    file_path = f.get("file") or ""
+    component_id, component_name = _guess_component_from_path(file_path)
+    return {
+        "title": f.get("title") or "",
+        "scenario": f.get("scenario") or "",
+        "stride": stride,
+        "risk": severity,
+        "likelihood": severity,
+        "impact": severity,
+        "cwe": cwe,
+        "evidence": {
+            "file": file_path,
+            "line": f.get("line"),
+        },
+        "source": "source-scan",
+        "architectural_violation": False,
+        "component_id": component_id,
+        "component_name": component_name,
+        "source_scan_ref": f.get("local_id"),
+        "source_check_id": check_id,
+        "source_type": f.get("source_type"),
+        "breach_distance": _BREACH_VECTOR_TO_DISTANCE.get(f.get("breach_vector") or "n/a"),
+        "mitigation_title": f.get("recommended_mitigation_title"),
+        "finding_type_id": f.get("finding_type_id"),
+    }
+
+
+def _load_source_auth_findings(output_dir: Path) -> list[dict]:
+    """Load `.source-auth-findings.json` (output of
+    `scripts/source_auth_scanner.py`) and convert each finding into a
+    merged-threats threat record.
+
+    Missing file → empty list (the scanner is opt-in; absence is the
+    default state on repos that have not yet adopted it).
+    """
+    path = output_dir / ".source-auth-findings.json"
+    if not path.exists():
+        return []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.stderr.write(
+            f"merge_threats: failed to read {path}: {exc}\n"
+            f"  recovery: the source-auth ingestion is non-fatal — continuing "
+            f"with STRIDE-only / config-scan threats.\n"
+        )
+        return []
+    if isinstance(doc, dict) and doc.get("parse_error"):
+        return []
+    findings = doc.get("findings") or [] if isinstance(doc, dict) else []
+    if not isinstance(findings, list):
+        return []
+    return [_source_auth_finding_to_threat(f) for f in findings if isinstance(f, dict)]
+
+
 def _load_config_scan_findings(output_dir: Path) -> list[dict]:
     """Load `.config-scan-findings.json` (Phase 2.5 output) and convert each
     finding into a merged-threats threat record.
@@ -932,6 +1041,12 @@ def cmd_collect(args: argparse.Namespace) -> int:
     config_threats = _load_config_scan_findings(out_dir)
     if config_threats:
         flat.extend(config_threats)
+    # Source-auth: deterministic AUTHZ-NNN findings from
+    # `scripts/source_auth_scanner.py`. Loaded only when
+    # `.source-auth-findings.json` is on disk (the scanner is opt-in).
+    source_auth_threats = _load_source_auth_findings(out_dir)
+    if source_auth_threats:
+        flat.extend(source_auth_threats)
     # M-3: Phase 2 SCA findings, when `--with-sca` produced `.dep-scan.json`.
     # Each becomes a dedicated `source: dep-scan` threat — never re-derived
     # from STRIDE analysis.

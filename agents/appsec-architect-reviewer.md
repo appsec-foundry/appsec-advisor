@@ -462,6 +462,19 @@ For each analyzed component (from `threat-model.yaml` `components[]`):
 - Does at least one finding for this component have `actor_ids != []`?
 - If NO → emit issue `component_findings_no_actor_attribution`, severity `advisory`
 
+**Sub-Check 15.3b — Whole-model actor attribution gap (defect-level):**
+
+Count findings in `threat-model.yaml` `findings[]` with `actor_ids != []` vs. total findings.
+- If `findings_with_actor_ids == 0` AND `total_findings > 0` → emit issue
+  `whole_model_no_actor_attribution`, severity `defect`. Repair plan:
+  the §8 Threat Register Actor column will otherwise render
+  `_[obsolete-actor]_` for every row (review-recommendations §4.5).
+  Composer must either drop the column or re-run STRIDE fan-out with
+  explicit `actor_ids` requirement before render.
+- If `findings_with_actor_ids / total_findings < 0.25` → emit issue
+  `pervasive_actor_attribution_gap`, severity `advisory`. Most findings
+  lack attribution; the Actor column is misleading.
+
 **Sub-Check 15.4 — Discovery proposals without findings (when `.actors-discovered.json` exists):**
 
 For each entry in `.actors-discovered.json` `proposed_additional[]`:
@@ -474,6 +487,32 @@ For each actor in `.actors-discovered.json` `inputs_questioned[]`:
 - Does the actor still appear in `.actors-resolved.json` active set?
 - If YES and this is not the first run → emit `questioned_actor_not_reviewed`, severity `advisory`
 - Escalate to `defect` when `_provenance.questioned_run_count >= 3`
+
+**Sub-Check 15.6 — Recon-derived TH-10 / BFF mandates honoured (2026-05):**
+
+The STRIDE-analyzer prompt (`appsec-stride-analyzer.md`, *Mandatory recon-derived findings* block) lists hard-required findings that MUST be emitted when specific phrases appear in `.recon-summary.md` Section 7.9 (OAuth/OIDC) or 7.10 (SPA/BFF). This sub-check verifies the bridge actually held:
+
+For each component in `threat-model.yaml` `components[]`:
+
+1. Read its slice of `.recon-summary.md` Section 7.9. If the section text contains any of the following trigger phrases AND the component is the responsible owner (frontend/SPA tier OR backend tier owning the OAuth callback):
+   - `No.*PKCE` / `no PKCE` / `missing PKCE`
+   - `OAuth.*token handling` combined with `URL fragment` / `response_type=token`
+   - `derived.*password` / `password = btoa.*email`
+   - `state.*missing` / `state.*not validated`
+   - `nonce.*missing` / `nonce.*not validated`
+   - `refresh.*token.*(localStorage|sessionStorage)`
+   - `redirect_uri.*(includes|substring|prefix)` allowlist
+   - `client_secret` literal in `frontend/`
+   
+   AND the component has zero findings carrying `cwe` ∈ {CWE-598, CWE-522, CWE-345, CWE-287} AND `threat_category_id == TH-10` (or `finding_type_id` ∈ {FT-091, FT-092, FT-093}):
+   
+   - emit issue `th10_mandate_skipped`, severity `defect`, with the verbatim trigger phrase and the recon-section line number. Repair plan: re-prompt the STRIDE-analyzer for the affected component with the trigger excerpt and explicit instruction to emit the corresponding FT-091/092/093 finding.
+
+2. Read its slice of `.recon-summary.md` Section 7.10. If the component is `tier=client` (Angular SPA, React, Vue, etc.) AND the section text contains `localStorage` and a `token` reference AND does NOT contain `bff` / `backend.for.frontend` / `proxy.*auth`:
+   - The "SPA without BFF" anti-pattern is present. If no finding with `source == "architectural-anti-pattern"` AND `architectural_violation == true` exists for this component:
+   - emit issue `bff_mandate_skipped`, severity `defect`, with the verbatim Section 7.10 excerpt. Repair plan: re-prompt the STRIDE-analyzer with the BFF mandate excerpt; the resulting finding's mitigation must reference a Backend-for-Frontend pattern (server-side token holding, `httpOnly Secure SameSite=Strict` cookie session).
+
+**Why this check is needed.** The 2026-05-25 juice-shop run had Section 7.9 saying *"No server-side PKCE or state validation evident"* and Section 7.10 saying *"JWT stored in `localStorage` — vulnerable to XSS exfiltration"* — both for `angular-spa`. Yet the STRIDE-analyzer emitted 7 findings, none of which were TH-10 OAuth-Misconfiguration or "SPA without BFF" anti-pattern. The taxonomy and recon coverage existed; the LLM-bridge did not enforce. This sub-check makes the gap visible at audit time and produces a deterministic repair plan.
 
 **Output:** Append all Check 15 findings as a `## Check 15 — Actor Coverage` section in `.architect-review.md`. Also write structured results to `.architect-review.json` under key `check_15` (array of `{sub_check, issue_class, severity, actor_id, component_id, detail}` objects).
 

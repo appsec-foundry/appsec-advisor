@@ -186,7 +186,7 @@ For unknown types, `slice_taxonomy.py` writes a full passthrough slice (exit 1, 
 
 ### Dispatch
 
-**Pre-dispatch echo (user-visible manifest, once per run — mandatory since v0.9.1):** Immediately before the parallel `Agent` dispatch block (and together with the `AGENT_INVOKE` batch below), print **one purpose line plus one line per component** so the user sees exactly what is about to be analyzed in parallel. The per-component line includes id, complexity tier, and turn budget so the expected wall-clock differences are visible up front.
+**Pre-dispatch echo (user-visible manifest, once per run — mandatory):** Immediately before the parallel `Agent` dispatch block (and together with the `AGENT_INVOKE` batch below), print **one purpose line plus one line per component** so the user sees exactly what is about to be analyzed in parallel. The per-component line includes id, complexity tier, and turn budget so the expected wall-clock differences are visible up front.
 
 Format:
 ```

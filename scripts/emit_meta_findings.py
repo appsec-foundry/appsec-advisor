@@ -35,7 +35,7 @@ META_CATEGORIES: list[dict] = [
         "title": "Insufficient Patch Management",
         "category": "Insufficient Patch Management",
         "summary_template": (
-            "{count} finding(s) trace to outdated dependencies with published "
+            "{count} {finding_word} trace to outdated dependencies with published "
             "CVEs. The architectural concern is not the individual libraries — "
             "they can be upgraded — but the absence of a dependency-update "
             "process: no SLA on advisory-to-upgrade time, no scheduled SCA "
@@ -50,7 +50,7 @@ META_CATEGORIES: list[dict] = [
         "title": "Insufficient Secret Management",
         "category": "Insufficient Secret Management",
         "summary_template": (
-            "{count} finding(s) trace to secrets, keys, or tokens stored "
+            "{count} {finding_word} trace to secrets, keys, or tokens stored "
             "directly in source code. The architectural concern is not the "
             "individual values — they can be rotated — but the absence of a "
             "secret-management substrate: no env-var convention, no vault/KMS "
@@ -102,7 +102,10 @@ def _emit_meta_findings(yaml_data: dict) -> list[dict]:
                 "id": mf_id,
                 "title": spec["title"],
                 "category": spec["category"],
-                "summary": spec["summary_template"].format(count=len(tids)),
+                "summary": spec["summary_template"].format(
+                    count=len(tids),
+                    finding_word="finding" if len(tids) == 1 else "findings",
+                ),
                 "derived_from": tids,
                 "severity": spec["severity"],
                 "recommended_mitigation_id": None,

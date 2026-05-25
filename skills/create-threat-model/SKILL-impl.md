@@ -23,9 +23,9 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 >     foreground Agent runs)
 >
 > The only `TaskCreate` calls allowed are the six rows defined in
-> `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1 — Threat
-> Analysis and Triage`, `Stage 2 — Report Rendering`, conditional
-> `Stage 3 — QA Review`, conditional `Stage 4 — Architect Review`,
+> `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1 - Threat
+> Analysis and Triage`, `Stage 2 - Report Rendering`, conditional
+> `Stage 3 - QA Review`, conditional `Stage 4 - Architect Review`,
 > `Final summary + cleanup`). Subjects must match **verbatim** — later
 > `TaskUpdate` calls match by subject and silently no-op on drift.
 
@@ -61,7 +61,7 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 └──────────────────────────────────┬──────────────────────────────────┘
                                    │
 ┌──────────────────────────────────▼──────────────────────────────────┐
-│  Stage 2 — Report Rendering (M2.12 — fresh renderer budget)         │
+│  Stage 2 - Report Rendering (M2.12 — fresh renderer budget)         │
 │  Agent: appsec-threat-renderer (Sonnet)                             │
 │  Env  : Stage-2 render configuration                                │
 │  Does : write 2 LLM fragments (ms-verdict, ms-architecture-         │
@@ -90,13 +90,13 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
                    │ gate finally passed               │
                    ▼                                   ▼
                    ┌─────────────────────────────────────┐
-                   │  Stage 3 — QA Review (sonnet, 120)  │
+                   │  Stage 3 - QA Review (sonnet, 120)  │
                    │  + Re-Render Loop (max 3 iter.)     │
                    └────────────────┬────────────────────┘
                                     │
                                     ▼
                    ┌─────────────────────────────────────┐
-                   │  Stage 4 — Architect Review         │
+                   │  Stage 4 - Architect Review         │
                    │  (only at depth=thorough or         │
                    │   --architect-review)               │
                    └────────────────┬────────────────────┘
@@ -1621,7 +1621,7 @@ Right after the handoff banner and **before** dispatching Stage 1, pre-create on
 
 **This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight summary`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the six spec'd rows below — later `TaskUpdate` calls (Stage 1/2/3/4 lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
 
-**Subjects must match verbatim.** The condition table below is the source of truth — do not paraphrase ("Stage 1 — dispatch appsec-threat-analyst" is wrong; the correct subject is "Stage 1 — Threat Analysis and Triage"). The exact strings are referenced by downstream `TaskUpdate` calls.
+**Subjects must match verbatim.** The condition table below is the source of truth — do not paraphrase ("Stage 1 — dispatch appsec-threat-analyst" is wrong; the correct subject is "Stage 1 - Threat Analysis and Triage"). The exact strings are referenced by downstream `TaskUpdate` calls.
 
 **Ordering invariant.** Task IDs are handed out monotonically by `TaskCreate`, so create the tasks in the exact order below.
 
@@ -1634,10 +1634,10 @@ TaskCreate subject="Preparing workspace"
 
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
-| always | `Stage 1 — Threat Analysis and Triage` | `Running threat analysis and triage` |
-| always (M2.12) | `Stage 2 — Report Rendering` | `Rendering threat model report` |
-| `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 — QA Review` | `Running QA review` |
-| `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 — Architect Review` | `Running architect review` |
+| always | `Stage 1 - Threat Analysis and Triage` | `Running threat analysis and triage` |
+| always (M2.12) | `Stage 2 - Report Rendering` | `Rendering threat model report` |
+| `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA Review` | `Running QA review` |
+| `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 - Architect Review` | `Running architect review` |
 | always | `Final summary + cleanup` | `Writing final summary` |
 
 **Stage 2 is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. The skill now splits Phase 11 at the Substep-3 / Substep-4 boundary: `STAGE1_PHASE_LIMIT=10b` keeps the deterministic Substeps 1–3 (counts, yaml write, baseline cache) in Stage 1, while the LLM compose work (Substeps 4–N) goes into a separate `appsec-threat-renderer` session so render-only work does not carry the full analyst prompt.
@@ -1718,7 +1718,7 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
    export YAML_PRE_STAGE1 MD_PRE_STAGE1
    ```
 
-1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 — Threat Analysis and Triage` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`). Note: the TaskCreate subject uses the word "and" (not `&`) because the Claude Code TaskList UI HTML-escapes `&` → `&amp;` in subjects.
+1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 - Threat Analysis and Triage` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`). Note: the TaskCreate subject uses the word "and" (not `&`) because the Claude Code TaskList UI HTML-escapes `&` → `&amp;` in subjects. The subject also uses hyphen-minus (`-`), not em-dash (`—`), because the TodoWrite TUI renderer mis-handles the em-dash's UTF-8 width (1 column / 3 bytes) on partial redraws — adjacent task labels visibly bleed into the em-dash position (e.g. `Final summary` + `Stage 3 — QA Review` rendered as `Final 3ummQA Review`). Same precedent: do not "fix" `-` → `—` in any of the six stage subjects.
 
 2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
 
@@ -1733,7 +1733,7 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
    ```
    Then immediately call `TaskStop` with `HEARTBEAT_TASK_ID` to terminate the background heartbeat loop. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip both calls silently.
 
-5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 — Threat Analysis and Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
+5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 - Threat Analysis and Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
 6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table.
 
@@ -2021,7 +2021,7 @@ Behaviour contract:
 
 The YAML integrity gate that runs before this section will still pass after the emitter writes; the schema permits every field the emitters touch.
 
-## Stage 2 — Report Rendering (M2.12 — Sprint 3)
+## Stage 2 - Report Rendering (M2.12 — Sprint 3)
 
 Dispatched **always** after a successful Stage 1 (`PHASE10B_OK=true`) **and** when the no-op gate above did not skip it. Stage 2 runs Phase 11 (Finalization) with its own renderer budget. This is the architectural fix for Phase-11 budget exhaustion.
 
@@ -2077,7 +2077,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
 ### Dispatch
 
-1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 2 — Report Rendering` task to set status `in_progress` (skip when `DRY_RUN=true`).
+1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 2 - Report Rendering` task to set status `in_progress` (skip when `DRY_RUN=true`).
 
 2. **Restart the heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` invocation with `run_in_background:true` (same flags as Stage 1 — see "Skill-layer heartbeat watchdog" above). Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
 
@@ -2094,7 +2094,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    ```
    Then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip both calls silently if `HEARTBEAT_TASK_ID` is unset.
 
-5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 — Report Rendering` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
+5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 - Report Rendering` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
 
 6. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper.
 
@@ -2117,7 +2117,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 Before dispatching Stage 2, print:
 
 ```
-▶ Stage 2 — Report Rendering starting  (expect ~<EST_STAGE2> min, model: sonnet, renderer budget)
+▶ Stage 2 - Report Rendering starting  (expect ~<EST_STAGE2> min, model: sonnet, renderer budget)
   ⟶ Authoring 2 LLM fragments + invoking compose_threat_model.py
   ⟶ Structural fragments prepared from YAML before rendering
 ```
@@ -2195,13 +2195,13 @@ fi
 
 **Late-phase crash (Phase 11 partial) — Stage 2 auto-dispatch.** The `STAGE11_CUTOFF=true` branch fires when at least three fragments are present in `.fragments/` but `threat-model.md` is missing — meaning the orchestrator entered Phase 11, wrote part of the fragment set, then died before `compose_threat_model.py` ran. This is the 2026-04-25 juice-shop case: 5 of 12 fragments written, no yaml, no composed Markdown. The recovery is **not** the same as `STAGE1_CUTOFF` (which assumes Phase 9 still has merge work to do); here the threats are already merged and the only missing work is composition.
 
-**Stage 2 — Report Rendering (recovery dispatch).** Instead of exiting with a banner and forcing the user to manually re-invoke `--resume`, the skill dispatches `appsec-threat-renderer` with a Phase-11-only scope and a fresh turn budget. This keeps the large Stage-1 analyst prompt out of render-only recovery. Stage 2 runs **once** (no retry counter — if it fails, fall through to the banner-and-exit path so we don't burn tokens recursively).
+**Stage 2 - Report Rendering (recovery dispatch).** Instead of exiting with a banner and forcing the user to manually re-invoke `--resume`, the skill dispatches `appsec-threat-renderer` with a Phase-11-only scope and a fresh turn budget. This keeps the large Stage-1 analyst prompt out of render-only recovery. Stage 2 runs **once** (no retry counter — if it fails, fall through to the banner-and-exit path so we don't burn tokens recursively).
 
 ```bash
 if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" ]; then
   STAGE1B_DISPATCHED=true
   printf '\n' >&2
-  printf '▶ Stage 2 — Report Rendering recovery starting…\n' >&2
+  printf '▶ Stage 2 - Report Rendering recovery starting…\n' >&2
   printf '  Reason: Stage 1 wrote %s fragments but did not reach compose.\n' "$FRAGMENT_COUNT" >&2
   printf '  This is a fresh-budget Phase-11-only dispatch.\n\n' >&2
 
@@ -2454,7 +2454,7 @@ Key behaviors:
 - Stage 3 (QA reviewer) is skipped — the output is transient and does not need QA
 - After the console summary, the temp directory is deleted: `rm -rf "$OUTPUT_DIR"`
 
-## Stage 3 — QA Review
+## Stage 3 - QA Review
 
 After the orchestrator completes (and `DRY_RUN` is `false`), verify that `$OUTPUT_DIR/threat-model.md` exists. Before dispatching the QA-reviewer agent the skill runs two **deterministic pre-agent gates** so the agent's turn budget is spent on qualitative checks rather than on finding drift that a Python script can detect in 200 ms.
 
@@ -2677,7 +2677,7 @@ When one of those conditions holds, set `QA_AGENT_DISPATCHED=true`, dispatch the
 
 Where `<total_stages>` is `4` when `ARCHITECT_REVIEW=true`, otherwise `3`.
 
-Immediately before dispatching, call `TaskUpdate` on the `Stage 3 — QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`. If `QA_AGENT_DISPATCHED=false`, mark the task completed after writing the deterministic `.qa-status.json` and skip this handoff.
+Immediately before dispatching, call `TaskUpdate` on the `Stage 3 - QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`. If `QA_AGENT_DISPATCHED=false`, mark the task completed after writing the deterministic `.qa-status.json` and skip this handoff.
 
 **Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
 
@@ -2937,6 +2937,41 @@ The orchestrator's repair-mode branch must:
 4. Re-run the QA contract gate (Phase 11 Substep 6) as before.
 5. Log `REPAIR_END` with the iteration number, the fragment paths that were rewritten, and the final `qa_checks.py contract` exit code.
 
+**Record the repair-mode dispatch as a SEPARATE stage-stats entry** so the
+9-min sonnet REPAIR cost is not conflated with the deterministic Stage-3
+QA fast-path record. The QA fast-path runs first (deterministic, 5s,
+`tokens=0`, `model=none`); when the gate trips and REPAIR_MODE fires,
+the repair dispatch is its OWN stat with `--variant repair`. Without
+`--variant`, the second `record_stage_stats.py --stage 3 …` call
+silently no-ops via the (stage, variant) idempotency key — the JSONL
+ends up with only the fast-path record and the LLM-token costs are
+invisible. With `--variant repair`, both records coexist and
+`render_completion_summary.py` can surface "Stage 3 QA (deterministic,
+5s) + Stage 3 Repair (sonnet, 9m, 119k tokens)" instead of one hybrid
+mislabeled record.
+
+Capture `STAGE3_REPAIR_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` right
+before each repair-mode Agent dispatch (per iteration if the loop runs
+multiple times — last value wins). After the Agent returns:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+    --stage 3 --variant repair \
+    --name "Re-Render Loop (REPAIR_MODE)" \
+    --agent appsec-advisor:appsec-threat-analyst \
+    --model "$STRIDE_MODEL" \
+    --duration-ms <duration_ms_from_usage> \
+    --tool-uses <tool_uses_from_usage> \
+    --tokens <total_tokens_from_usage> \
+    ${STAGE3_REPAIR_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst --since-iso "$STAGE3_REPAIR_START_ISO"}
+```
+
+The recorder's hybrid-record sanity gate (Fix B, 2026-05-25) will warn
+on stderr if a future skill change accidentally passes
+`--agent deterministic:* --model none` together with non-zero tokens,
+catching the regression that produced the juice-shop 2026-05-25
+Stage-3 record with `model=none` + `tokens=119662`.
+
 **Hard-fail banner (printed when the loop exhausts its iterations):**
 
 ```
@@ -2967,7 +3002,7 @@ Then `rm -f` the verbose marker and exit 2.
 
 Both cases fall through to the Completion Summary directly.
 
-## Stage 4 — Architect Review (auto-on at thorough, else opt-in)
+## Stage 4 - Architect Review (auto-on at thorough, else opt-in)
 
 Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Resolution section above — auto-enabled at `ASSESSMENT_DEPTH=thorough`, otherwise requires explicit `--architect-review`) **and** `DRY_RUN=false`. Verify that `$OUTPUT_DIR/threat-model.md` and `$OUTPUT_DIR/threat-model.yaml` both exist. If either is missing, skip Stage 4 silently (the QA reviewer or orchestrator already surfaced the underlying failure).
 
@@ -2978,7 +3013,7 @@ Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
   ⟶ Dispatching architect-reviewer — advisory review: architecture coherence, control realism, chain plausibility (13 checks); never rewrites output — emits .architect-review.md
 ```
 
-Immediately before dispatching, call `TaskUpdate` on the `Stage 4 — Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
+Immediately before dispatching, call `TaskUpdate` on the `Stage 4 - Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
 
 **Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the architect agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`.
 

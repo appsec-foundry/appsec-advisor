@@ -229,7 +229,7 @@ def gen_system_overview(yaml_data: dict) -> str:
     lines.append("### Scope")
     lines.append("")
     lines.append(
-        f"This threat model covers {len(components)} component(s) of {name}: "
+        f"This threat model covers {len(components)} {'component' if len(components) == 1 else 'components'} of {name}: "
         + ", ".join(f"**{c.get('name', c.get('id', '?'))}**" for c in components)
         + "."
     )
@@ -412,7 +412,7 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         "Application / Data); solid green arrows show legitimate data flow, "
         "dashed red arrows mark intrusion vectors. The component table "
         "directly below holds source paths and linked threats per `C-NN`; "
-        "per-tech defects are itemised in the §2.4.1–§2.4.4 layer tables."
+        "per-finding evidence is in [§8 Threat Register](#8-threat-register)."
     )
     lines.append("")
     lines.extend(_components_diagram_compact(yaml_data, by_tier))
@@ -3485,7 +3485,8 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
     lines.append("### 7.1 Overview")
     lines.append("")
     lines.append(
-        f"Across {len(components)} component(s) the assessment catalogued {len(controls)} security control(s)."
+        f"Across {len(components)} {'component' if len(components) == 1 else 'components'} "
+        f"the assessment catalogued {len(controls)} security {'control' if len(controls) == 1 else 'controls'}."
     )
     lines.append("")
     if controls:
@@ -3536,7 +3537,7 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
             if len(weak_domains) > 4:
                 domain_phrase += f", +{len(weak_domains) - 4} more"
             lines.append(
-                f"The following {len(weak_controls)} control(s) across "
+                f"The following {len(weak_controls)} {'control' if len(weak_controls) == 1 else 'controls'} across "
                 f"{domain_phrase} are rated **Weak** or **Missing** and "
                 f"drive the highest-leverage structural risks. Each row is "
                 f"sourced from §7.3-§7.14 below."
@@ -5131,26 +5132,28 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         )
         if verdict.startswith("🔴 Missing"):
             reason = (
-                f"{n_routed} routed finding(s); no controls catalogued for this category."
+                f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no controls catalogued for this category."
                 if n_routed
                 else "No controls catalogued for this category."
             )
         elif verdict.startswith("🟠 Weak"):
             if n_controls:
                 reason = (
-                    f"{n_routed} routed finding(s); catalogued controls are weak{example_clause}."
+                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; catalogued controls are weak{example_clause}."
                 )
             else:
                 reason = (
-                    f"{n_routed} routed finding(s); no compensating controls catalogued."
+                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no compensating controls catalogued."
                 )
         elif verdict.startswith("🟡 Partial"):
             reason = (
-                f"{n_routed} routed finding(s); {n_controls} partial control(s){example_clause} leave gaps."
+                f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; "
+                f"{n_controls} partial {'control' if n_controls == 1 else 'controls'}{example_clause} leave gaps."
             )
         elif verdict.startswith("🟢 Adequate"):
             reason = (
-                f"{n_controls} adequate control(s){example_clause}; no routed findings in this category."
+                f"{n_controls} adequate {'control' if n_controls == 1 else 'controls'}{example_clause}; "
+                f"no routed findings in this category."
             )
         else:
             reason = "No controls or findings routed to this category."

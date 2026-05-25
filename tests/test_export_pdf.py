@@ -113,8 +113,7 @@ class TestRenderMermaid:
 
             # Side effect: pretend mmdc wrote the SVG file.
             def fake_run(cmd, **kw):
-                # cmd[3] is the -i path, cmd[5] is the -o path
-                Path(cmd[5]).write_text("<svg/>")
+                Path(cmd[cmd.index("-o") + 1]).write_text("<svg/>")
                 return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
             run.side_effect = fake_run
@@ -244,7 +243,7 @@ class TestMainCli:
             if seen_programs is not None:
                 seen_programs.append(program)
             if program == "mmdc":
-                Path(cmd[5]).write_text(svg_content)
+                Path(cmd[cmd.index("-o") + 1]).write_text(svg_content)
                 return subprocess.CompletedProcess(cmd, 0, b"", b"")
             if program == "pandoc":
                 if "--version" in cmd:

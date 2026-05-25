@@ -2,6 +2,26 @@
 
 This file is read by the orchestrator at runtime to load phase instructions.
 
+## ⚠ MANDATORY §7 SCAFFOLD-FILL — at standard/thorough depth
+
+At `--assessment-depth standard` or `thorough`, the Phase 11 Substep 4 fragment-authoring step **MUST fill every `<!-- NARRATIVE_PLACEHOLDER -->` comment** in `$OUTPUT_DIR/.fragments/security-architecture.md`. The pre-generator emits the scaffold structure (headings, tables, control rows); the LLM authors only the per-placeholder prose **in place** — never re-emits headings, never rewrites tables, never deletes the scaffold structure.
+
+**Hard contract** (verified juice-shop 2026-05-25 standard-depth run failed this — every §7.4-§7.12 placeholder shipped unfilled with a `⚠ Section narrative incomplete` banner in the rendered md):
+
+| Required action | Where | When | Quick check |
+|---|---|---|---|
+| Read `prose-style.md` once | `agents/shared/prose-style.md` | Substep 4 entry | one Bash `cat` call before first Write |
+| Fill `**Verdict:** <icon>` for §7.2-§7.12 | each domain heading | per subsection | choose one of `🟢 Adequate` / `🟡 Partial` / `🟠 Weak` / `🔴 Unsafe` / `🔴 Missing` |
+| Fill `**Implemented controls:**` | each domain heading | per subsection | positive inventory; forbidden openers: `None`, `No `, `Missing`, `Not implemented` |
+| Fill `**Assessment:**` | each domain heading | per subsection | 2-4 sentences; specific defects with file:line evidence |
+| Fill per-control `1-2 sentences in plain language` + `**Security assessment**` | each `#### 7.X.Y` | per control | 2-4 sentence evidence-grounded prose |
+
+**Failure mode if skipped:** the renderer emits a `⚠ Section narrative incomplete` banner in §7 of the final report. The banner explicitly calls out "Stage-2 fill step did not author them" — visible to every reader and an embarrassment-quality signal. At quick depth this is suppressed (different banner: `ⓘ ... by design`).
+
+**Budget check:** if `BUDGET_CRITICAL` fires before Substep 4 completes, the WRAP_UP_TRIGGERED path still REQUIRES authoring §7.1 (Overview synthesis) — the per-domain narratives are P2 (deferrable) but §7.1 is P1. Do not let the run end with §7.1 unfilled.
+
+See "Authoring `security-architecture.md` — scaffold-fill protocol" section below for the detailed authoring rules + per-domain checklist.
+
 ## Progress visibility helper — `scripts/log_event.py`
 
 Every `PHASE_START` / `PHASE_END` / `STEP_START` / `STEP_END` echo in this phase group **MUST** go through `scripts/log_event.py` rather than a raw `echo … >> .agent-run.log` call. The helper:

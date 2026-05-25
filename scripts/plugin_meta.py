@@ -3,7 +3,7 @@
 plugin_meta.py — single source of truth for plugin version metadata.
 
 Reads .claude-plugin/plugin.json and exposes:
-  - plugin_version         (SemVer string, e.g. "0.9.0-beta")
+  - plugin_version         (SemVer string, e.g. "0.4.0-beta")
   - analysis_version       (int, bumped when STRIDE prompts / recon categories /
                             severity logic / CWE mapping change in a way that
                             makes prior baselines semantically stale)
@@ -286,7 +286,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "compare-plugin-versions",
         help="Classify plugin_version drift (equal/patch/minor/major).",
     )
-    pv.add_argument("--baseline", required=True, help="Baseline plugin_version (e.g. 0.9.0-beta).")
+    pv.add_argument("--baseline", required=True, help="Baseline plugin_version (e.g. 0.4.0-beta).")
     pv.add_argument("--current", default=None, help="Current plugin_version (defaults to the one in plugin.json).")
     pv.set_defaults(func=cmd_compare_plugin_versions)
 

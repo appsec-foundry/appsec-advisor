@@ -1,0 +1,130 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/source-auth-findings.schema.yaml
+title: Source-code authorization scan findings
+description: |
+  Output written by `scripts/source_auth_scanner.py` to
+  `$OUTPUT_DIR/.source-auth-findings.json`. Contains per-file
+  violations of the rule catalog `data/source-auth-checks.yaml`.
+
+  Phase 10 may merge these findings into `.threats-merged.json` as
+  `F-NNN` entries with `source: "source-scan"`, complementing the
+  per-component STRIDE results from Phase 9 and the IaC findings
+  from Phase 2.5 (`.config-scan-findings.json`).
+
+# Error stubs (objects containing `parse_error`) are accepted so the
+# orchestrator can degrade gracefully when the scanner fails. The
+# pre-render gate routes validation through the if/then/else so error
+# messages reference actual missing fields.
+type: object
+if:
+  required: [parse_error]
+then:
+  $ref: "#/$defs/errorStub"
+else:
+  $ref: "#/$defs/normal"
+
+$defs:
+
+  severity:
+    type: string
+    enum: [Critical, High, Medium, Low]
+
+  sourceType:
+    type: string
+    enum:
+      - nodejs_source
+      - typescript_source
+      - python_source
+      - java_source
+
+  breachVector:
+    type: string
+    enum:
+      - "Internet Anon"
+      - "Internet User"
+      - "Internet Priv User"
+      - "Victim-Required"
+      - "Build-Time"
+      - "Repo-Read"
+      - "n/a"
+
+  errorStub:
+    type: object
+    required: [parse_error, findings]
+    properties:
+      parse_error:
+        type: string
+      findings:
+        type: array
+        items: {}
+    additionalProperties: true
+
+  normal:
+    type: object
+    required: [version, generated_at, checks_run, violations, findings]
+    additionalProperties: false
+    properties:
+      version:
+        type: integer
+        minimum: 1
+      generated_at:
+        type: string
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+      checks_run:
+        type: integer
+        minimum: 0
+      violations:
+        type: integer
+        minimum: 0
+      findings:
+        type: array
+        items:
+          $ref: "#/$defs/finding"
+
+  finding:
+    type: object
+    required:
+      - local_id
+      - check_id
+      - source_type
+      - file
+      - line
+      - title
+      - severity
+    additionalProperties: false
+    properties:
+      local_id:
+        # Component-scoped IDs like SAF-001, SAF-002, ...
+        type: string
+        pattern: "^SAF-[0-9]{3,4}$"
+      check_id:
+        # AUTHZ-NNN from data/source-auth-checks.yaml
+        type: string
+        pattern: "^AUTHZ-[0-9]{3}$"
+      finding_type_id:
+        type: ["string", "null"]
+        pattern: "^FT-[0-9]{3}$|^$"
+      source_type:
+        $ref: "#/$defs/sourceType"
+      file:
+        type: string
+      line:
+        type: ["integer", "null"]
+        minimum: 0
+      evidence_snippet:
+        type: string
+      title:
+        type: string
+      scenario:
+        type: string
+      severity:
+        $ref: "#/$defs/severity"
+      cwe:
+        type: array
+        items:
+          type: string
+          pattern: "^CWE-[0-9]+$"
+      recommended_mitigation_title:
+        type: string
+      breach_vector:
+        $ref: "#/$defs/breachVector"

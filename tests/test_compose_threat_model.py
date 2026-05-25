@@ -2009,3 +2009,118 @@ class TestVerbatimFnnnStabilityGate:
         assert result is not None and result != "", f"expected verbatim §7 preserved when stable, got: {result!r}"
         assert result.startswith("## 7. Security Architecture")
 
+
+# ---------------------------------------------------------------------------
+# §8 Actor cell — Guard 1 (review-recommendations §4.5):
+# `_[obsolete-actor]_` is a STATE-TRANSITION marker (actors.md §10 Fall 2).
+# It must NEVER be the default rendering for findings whose `actor_ids` is
+# empty without prior-attribution provenance. The previous behaviour fired
+# the marker on every first-run finding that the STRIDE analyzer never
+# tagged, producing 31× `_[obsolete-actor]_` rows in the juice-shop run.
+# ---------------------------------------------------------------------------
+
+
+class TestActorCellGuard:
+    """Guard 1 from review-recommendations §4.5: prevent the
+    `_[obsolete-actor]_` marker from leaking into first-run / data-gap
+    findings. The marker is reserved for Fall 2 (actor was tagged, then
+    disabled) — every other empty-actor_ids state must render as `—`.
+    """
+
+    def test_first_run_empty_actor_ids_renders_neutral_dash(self) -> None:
+        """State (B): findings have `actor_ids=[]` AND no provenance trace.
+        Renderer MUST emit `—`, not `_[obsolete-actor]_`."""
+        ns = compose
+        # Drive the same branch the §8 renderer takes at line ~9311.
+        # We don't need the full render path — just the actor-cell decision.
+        t = {"actor_ids": [], "primary_actor": None, "_provenance": {}}
+        # Re-derive the cell value using the same logic the renderer uses.
+        prov = t.get("_provenance") or {}
+        had_actor_history = (
+            bool(prov.get("run_count_empty"))
+            or bool(prov.get("disabled_actor_ids"))
+            or bool(prov.get("previous_actor_ids"))
+        )
+        assert had_actor_history is False, "fixture must have no prior attribution"
+        # Render expectation: the renderer code under test (compose_threat_model.py
+        # circa line 9311) must NOT emit the Fall-2 marker for this state.
+        # Read the renderer source and assert the precondition guard exists.
+        src = Path(ns.__file__).read_text(encoding="utf-8")
+        assert "had_actor_history" in src, (
+            "renderer must guard `_[obsolete-actor]_` behind a prior-attribution "
+            "precondition (review-recommendations §4.5 Guard 1)"
+        )
+        assert (
+            'elif not actor_ids and had_actor_history:\n            actor_cell = "_[obsolete-actor]_"'
+            in src
+        ), "Fall-2 marker must require prior-attribution provenance"
+        assert (
+            'elif not actor_ids:\n            # First-run / data-gap state'
+            in src
+        ), "first-run / data-gap empty actor_ids must render neutrally as `—`"
+
+    def test_dormant_marker_requires_provenance(self) -> None:
+        """State (Fall 3, guarded): explicit `_status=dormant` only emits
+        `_dormant_` when provenance backs the claim (had prior actors, OR
+        carries `dormancy_reason` / `dormant_since`). Without provenance the
+        cell renders neutrally as `—`. Mirrors Guard 1 logic for
+        `_[obsolete-actor]_` so the same class of bug (state-marker as
+        default for missing data) cannot leak in via the dormant path
+        either (review-recommendations §4.6 + risk-assessment B)."""
+        src = Path(compose.__file__).read_text(encoding="utf-8")
+        assert (
+            'if status_lower == "dormant" and dormant_provenance_ok:\n'
+            '            actor_cell = "_dormant_"'
+        ) in src, (
+            "dormant marker must be guarded behind provenance evidence; "
+            "the unconditional branch is the same anti-pattern that produced "
+            "the 31× `_[obsolete-actor]_` defect in juice-shop"
+        )
+        assert (
+            'elif status_lower == "dormant":\n'
+            "            # Status flag set without supporting provenance"
+        ) in src, (
+            "dormant-without-provenance must render neutrally as `—`, not "
+            "fabricate a Fall-3 state"
+        )
+        # Compose the provenance-check expression itself to make sure all
+        # three signals participate.
+        assert "dormancy_reason" in src
+        assert "dormant_since" in src
+        assert "had_actor_history" in src
+
+    def test_evidence_summary_no_generic_boilerplate(self) -> None:
+        """`_synthesise_evidence_summary` must return empty string (skipping
+        the Evidence line) when no CWE class claim is available — not the
+        old generic "implementation visible in the snippet below" boilerplate
+        (review-recommendations §3.1 row c)."""
+        result = compose._synthesise_evidence_summary({"cwe": ""}, "some/file.ts", 42)
+        assert result == "", (
+            "evidence-summary fallback for unmapped/missing CWE must be empty "
+            "so the caller drops the **Evidence:** prose line entirely"
+        )
+        result2 = compose._synthesise_evidence_summary({"cwe": "CWE-99999"}, "x.ts", 1)
+        assert result2 == ""
+
+    def test_safe_sentence_split_does_not_break_on_abbreviations(self) -> None:
+        """`_safe_sentence_split` must keep `(e.g. require('child_process').exec())`
+        as a single sentence so the Story-Card impact_carve does not start
+        with payload fragments (review-recommendations §3.1 row d)."""
+        text = (
+            "An attacker escapes the sandbox and executes arbitrary Node.js "
+            "code on the server (e.g. require('child_process').exec()). "
+            "Full container takeover follows."
+        )
+        sents = compose._safe_sentence_split(text)
+        assert len(sents) == 2, f"expected 2 sentences, got {len(sents)}: {sents!r}"
+        assert "require('child_process').exec()" in sents[0]
+        assert sents[1].startswith("Full container takeover")
+
+    def test_safe_sentence_split_handles_dotted_identifiers(self) -> None:
+        """Dotted identifiers (Node.js, file.ext) and member chains
+        (foo.bar.baz()) must not produce false sentence boundaries."""
+        text = "Node.js process loads config.yaml. Then the server starts."
+        sents = compose._safe_sentence_split(text)
+        assert len(sents) == 2
+        assert "Node.js process loads config.yaml" in sents[0]
+

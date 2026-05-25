@@ -31,7 +31,7 @@
 
 {% if rows -%}
 {% if show_intro -%}
-Despite the {{ overrides.intentionally_vulnerable_or_deficient or 'structurally deficient' }} design, the project carries a baseline of categorical strengths. The table below groups individual controls into broad-stroke clusters (full per-control breakdown in [Section 7](#7-security-architecture)). Only clusters that genuinely rate as a strength (Adequate or Partial) appear here — clusters demoted to Weak by open Critical/High findings in their defensive remit are excluded from this section and live in §7 instead.
+Operational controls rated Adequate or Partial — grouped into broad clusters (full per-control breakdown in [§7](#7-security-architecture)). Clusters demoted to Weak by open Critical/High findings appear in [§7](#7-security-architecture) instead, not here.
 {% endif %}
 | Strength | What's in Place | Effectiveness{% if show_gap %} | Gap{% endif %}{% if show_mitigates %} | Mitigates{% endif %} |
 |---|---|---{% if show_gap %}|---{% endif %}{% if show_mitigates %}|---{% endif %}|

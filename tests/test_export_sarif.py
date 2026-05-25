@@ -75,7 +75,7 @@ def _make_doc(threats: list[dict], mitigations: list[dict] | None = None) -> dic
     return {
         "meta": {
             "schema_version": 1,
-            "plugin_version": "0.9.0-beta",
+            "plugin_version": "0.4.0-beta",
             "generated": "2026-05-12T00:00:00Z",
             "project": "test",
             "mode": "full",

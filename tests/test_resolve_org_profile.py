@@ -48,7 +48,7 @@ def isolated_root(tmp_path: Path) -> Path:
     (root / "scripts").symlink_to(REPO_ROOT / "scripts")
     (root / ".claude-plugin").mkdir()
     (root / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "0.9.0-beta"})
+        json.dumps({"version": "0.4.0-beta"})
     )
     return root
 

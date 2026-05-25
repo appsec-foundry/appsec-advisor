@@ -1475,8 +1475,8 @@ class TestPluginVersionDrift:
         assert "tier=unknown" in r.stdout
 
     def test_prerelease_suffix_ignored(self):
-        """0.9.0-beta and 0.9.0 should be treated as equal (pre-release stripped)."""
-        r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "0.9.0-beta", "--current", "0.9.0"])
+        """0.4.0-beta and 0.4.0 should be treated as equal (pre-release stripped)."""
+        r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "0.4.0-beta", "--current", "0.4.0"])
         assert r.returncode == 0
         assert "tier=equal" in r.stdout or "tier=patch" in r.stdout
 

@@ -269,6 +269,20 @@ The rules are about narrative *shape* (concept-then-implementation-then-gap), no
 
 ---
 
+## Rule 6 — Pluralise correctly; the `(s)` suffix is forbidden
+
+When emitting a count of an inflected noun, branch on the count: "1 component" vs "5 components". Never use the slash form "1 component(s)" / "5 component(s)" — that is technical-docs filler dialect, not professional prose. Same rule for "item / items", "finding / findings", "control / controls".
+
+**Avoid:**
+> This threat model covers 5 component(s); 3 finding(s) trace to outdated dependencies.
+
+**Prefer:**
+> This threat model covers 5 components; 3 findings trace to outdated dependencies.
+
+The pluralize helper in `scripts/compose_threat_model.py:pluralize()` exists for generator code; LLM-authored prose should branch inline.
+
+---
+
 ## Where this file applies
 
 Loaded explicitly by:

@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased — Actor Layer (Phase 2.7, org-profile v2, §1.5 Actor table)
+## Unreleased
+
+**TodoWrite subjects: em-dash → hyphen-minus.** The six top-level stage subjects (`Preparing workspace`, `Stage 1 - Threat Analysis and Triage`, `Stage 2 - Report Rendering`, `Stage 3 - QA Review`, `Stage 4 - Architect Review`, `Final summary + cleanup`) now use hyphen-minus (`-`) instead of em-dash (`—`). The Claude Code TodoWrite TUI renderer mis-handles the em-dash's UTF-8 width (1 column / 3 bytes) on partial redraws, causing adjacent task labels to bleed together (observed: `Final summary` + `Stage 3 — QA Review` rendered as `Final 3ummQA Review`). Section headers and prose in `SKILL-impl.md` keep em-dashes where rendering is unaffected.
+
+## 0.4.0-beta — 2026-05-25
+
+> **Version reset.** Internal dev tagging ran up to 0.9.x during private
+> development. The first public release is published as `0.4.0-beta` to
+> better reflect actual maturity. Versions 0.5.x–0.9.x existed only in
+> internal development and were never publicly released. Subsequent
+> releases follow normal SemVer.
+
+### Actor Layer (Phase 2.7, org-profile v2, §1.5 Actor table)
 
 New actor modeling layer adds structured threat-actor attribution to every finding.
 
@@ -52,7 +64,7 @@ New actor modeling layer adds structured threat-actor attribution to every findi
 
 > **Note:** the §13 edge-case "split `profile_fingerprint` into core+actors" is already addressed: actor files were never part of `profile_fingerprint` (it covers only the profile YAML and `llm_context_documents`), so `actors_inputs_fingerprint` (new in this release) is the de-facto independent actor fingerprint the spec asks for.
 
-## Unreleased — Triage validator downgraded from Opus to Sonnet at `opus-cheap`
+### Triage validator downgraded from Opus to Sonnet at `opus-cheap`
 
 `MODEL_MATRIX["opus-cheap"]["triage"]` is now `claude-sonnet-4-6` (was
 `claude-opus-4-7`). Rationale: `scripts/triage_validate_ratings.py`
@@ -68,7 +80,7 @@ Cost impact: at default `standard` / `thorough` runs, triage tokens
 shift from Opus pricing to Sonnet pricing. `_MODEL_FACTOR["opus-cheap"]`
 in `scripts/estimate_duration.py` lowered from 1.10 → 1.05.
 
-## Unreleased — Documentation: flat stage numbering
+### Documentation: flat stage numbering
 
 The intermediate "Stage 1b" label was a migration artifact from the
 M2.12 Phase-11 split — it implied a sub-relationship to Stage 1 that
@@ -91,7 +103,7 @@ their original "Stage 1b" wording as historical record.
 Test file renamed: `tests/test_skill_stage1b.py` →
 `tests/test_skill_composition_split.py`.
 
-## Unreleased — User-facing stage labels
+### User-facing stage labels
 
 The visible stage/task labels were tightened up to read like a pipeline rather
 than an implementation detail dump:
@@ -108,7 +120,7 @@ remain unchanged: `STAGE1_PHASE_LIMIT=10b`, `phase=10b status=completed
 need_render=true`, `Phase-10b precondition gate`, `Phase 10b Triage
 Validation`, and `Phase 11 Finalization`.
 
-## Unreleased — Stage-D contract enforcement (M2.9 – M2.13)
+### Stage-D contract enforcement (M2.9 – M2.13)
 
 The 2026-04-25 juice-shop Run 4 incident exposed that a single Sonnet
 orchestrator session, under Phase-11 turn-budget pressure, can quietly
@@ -324,10 +336,10 @@ through repeated production runs.
 on successful completion — the canonical persistence is the §Run Issues
 appendix in `threat-model.md`.
 
-## 0.9.0-beta — 2026-04-23
+### First public release foundation
 
-First public release. Works well enough for guided use; not yet something
-I'd leave unattended in CI overnight.
+Works well enough for guided use; not yet something I'd leave unattended
+in CI overnight.
 
 - New `publish-threat-model` skill so reports don't get committed by accident.
 - Multi-repo scanning (`--repo`, `--output`).
