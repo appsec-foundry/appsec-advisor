@@ -6,9 +6,9 @@ the plugin **without forking the core**. Profiles are validated and
 resolved deterministically before Stage 1 of any scan; they never inject
 agent instructions and never replace renderer / QA / schema pipelines.
 
-This page documents the MVP scope. The contract is fixed at
-`api_version: appsec-advisor.org-profile/v1`. Future fields will land
-behind a new `api_version` rather than mutating the v1 surface.
+The current profile contract is `api_version: appsec-advisor.org-profile/v2`
+which adds the `actors:` block. v1 profiles are auto-upgraded on load with
+an `info` notice in run-issues.json.
 
 ## What an org profile can and cannot do
 
@@ -181,6 +181,52 @@ JSON Schema:
 - `requirements_yaml_url` must not embed credentials and must be http/s.
 - `skill_toggles` keys must be known user-facing skill names; disabled
   toggles must carry a reason.
+
+## Actors
+
+Org profiles can extend or restrict the plugin's default actor library
+(ACT-D-01 through ACT-D-09) via the `actors:` block (v2+ profiles):
+
+```yaml
+actors:
+  inherit_defaults: true              # keep plugin's 9 default actors (default)
+  disable: []                          # explicitly deactivate by ID (with audit)
+  add: actors/*.yaml                  # glob for custom actor definition files
+```
+
+Actor definition files live in `org-profile/<name>/actors/` (parallel to `context/`).
+Each file contains a top-level `actors:` array of actor objects:
+
+```yaml
+# org-profile/acme/actors/insiders.yaml
+actors:
+  - id: ACT-E-1
+    label: acme-privileged-contractor
+    access: [internal-network, ci-cd-secrets, staging-env]
+    capabilities:
+      sophistication: medium
+      tooling: [off-the-shelf]
+      dwell_time: weeks
+      surface_reach: [local, lateral]
+    motivation: financial
+    heatmap_slug: repo-read
+    description: "External contractor with temporary elevated access."
+```
+
+**Override semantics:**
+- Enterprise actors additively merge with plugin defaults (field-level deep merge on ID match).
+- Enterprise-disable is **terminal** — repo layer cannot re-enable a disabled enterprise actor.
+- When disabling, `disable_reason` is required for audit.
+
+**`inherit_defaults: false`** (regulated environments): the tool reports which of the 9 default
+actor classes are covered by your enterprise actors. Use `replaces: ACT-D-NN` on custom actors
+to mark a class as covered.
+
+**v2 profile fingerprint:** includes all actor definition files — changes to actor files invalidate
+the actor-layer cache and trigger a per-component slice re-run (not a full recon re-run).
+
+**v1 → v2 migration:** `appsec-advisor:migrate-org-profile <path>` adds the `actors:` block
+with defaults. Until migrated, profiles are auto-treated as v2 with `actors: {inherit_defaults: true}`.
 
 ## Markdown context
 

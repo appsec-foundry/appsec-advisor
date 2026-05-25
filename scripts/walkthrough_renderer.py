@@ -579,7 +579,14 @@ def render_defense_in_depth(threat: dict, mitigations_by_threat: dict[str, list[
         title = (m.get("title") or "").strip()
         if not title:
             title = "mitigation entry"
-        bullets.append(f"{label}: [{mid}](#{_anchor(mid)}) — {title[:160]}")
+        # Parens form: `[M-001](#m-001) (Upgrade JWT libraries …)`. Inline-
+        # prose context where the em-dash form would be downgraded to a
+        # hyphen by _normalize_emdashes (the bullet starts with "Primary
+        # mitigation:" not "- [M-…", so the whitelist there doesn't fire).
+        # Short-label rule mirrors RenderContext.linkify_with_short_label:
+        # drop the ` — <file>` Stage-1-LLM tail.
+        short_title = title.split(" — ", 1)[0].strip()[:160]
+        bullets.append(f"{label}: [{mid}](#{_anchor(mid)}) ({short_title})")
     # Always carry a third "compensating control" bullet to keep this section
     # substantive even when only one mitigation is linked.
     if len(bullets) < 3:
@@ -720,9 +727,19 @@ def derive_attack_chains(
         nodes = nodes[:MAX_CHAIN_NODES]
 
         chain_name = _short_title(anchor.get("title") or f"Chain {idx}", 70)
+        # Emit anchor TID as a bracketed link so the composer's
+        # _linkify_bare_refs_in_prose can attach the parens-label form
+        # `[T-005](#t-005) (Reflected XSS via search query parameter)`.
+        # Without the brackets the takeaway would ship as plain `T-005`
+        # text — readable but not clickable from MS / §3.1.
+        anchor_link = f"[{anchor_tid}](#{anchor_tid.lower()})"
+        pivot_link = ""
+        if pivot:
+            pivot_tid_str = str(pivot.get("id") or "")
+            pivot_link = f"[{pivot_tid_str}](#{pivot_tid_str.lower()})"
         takeaway = (
-            f"Chain {idx} aggregates {anchor_tid} "
-            + (f"with {str(pivot.get('id') or '')} via a shared asset surface" if pivot else "into the impacted asset surface")
+            f"Chain {idx} aggregates {anchor_link} "
+            + (f"with {pivot_link} via a shared asset surface" if pivot else "into the impacted asset surface")
             + "; closing the primary mitigation breaks the kill-chain."
         )
 

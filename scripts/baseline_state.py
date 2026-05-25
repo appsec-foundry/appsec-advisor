@@ -208,6 +208,19 @@ def _hash_stride_files(output_dir: Path) -> dict[str, dict]:
     return out
 
 
+def _hash_slice_files(output_dir: Path) -> dict[str, dict]:
+    """Hash per-component actor slices for incremental STRIDE re-dispatch (actors.md §13)."""
+    out: dict[str, dict] = {}
+    for p in sorted(output_dir.glob(".actors-for-*.json")):
+        # .actors-for-<component-id>.json
+        stem = p.name[len(".actors-for-") : -len(".json")]
+        out[stem] = {
+            "path": p.name,
+            "sha256": _sha256(p),
+        }
+    return out
+
+
 def _read_existing(cache_path: Path) -> dict:
     if not cache_path.is_file():
         return {}
@@ -284,6 +297,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         out_rel = _output_dir_relative_to_repo(output_dir, repo_root)
         fingerprint = _compute_recon_fingerprint(repo_root, exclude_rel_prefix=out_rel)
     stride_files = _hash_stride_files(output_dir)
+    slice_files = _hash_slice_files(output_dir)
 
     plugin_meta = _load_plugin_meta() if _load_plugin_meta else {}
     plugin_version = plugin_meta.get("plugin_version", "unknown")
@@ -302,6 +316,7 @@ def cmd_update(args: argparse.Namespace) -> int:
             "next_mitigation_id": next_mitigation_id,
         },
         "stride_files": stride_files,
+        "slice_files": slice_files,
         "last_run_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
@@ -317,6 +332,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         f"dockerfiles={len(fingerprint['dockerfiles'])}, "
         f"iac={len(fingerprint['iac'])}, "
         f"stride={len(stride_files)}, "
+        f"slice={len(slice_files)}, "
         f"next_T={next_threat_id}, next_M={next_mitigation_id})"
     )
     return 0

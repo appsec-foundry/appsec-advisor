@@ -88,7 +88,7 @@ The org profile is the company layer: requirements catalog, default preset, outp
 
 ```yaml
 # org-profile/org-profile.yaml
-api_version: appsec-advisor.org-profile/v1
+api_version: appsec-advisor.org-profile/v2
 
 organization: { id: acme, name: Acme Corp, profile_version: 2026.05.1 }
 compatibility: { core: ">=0.12 <0.14" }
@@ -102,6 +102,11 @@ requirements:
 llm_context:
   documents:
     - { id: organization, path: context/organization.md, purpose: company_background, max_bytes: 50000 }
+
+actors:
+  inherit_defaults: true
+  disable: []
+  add: actors/*.yaml
 
 presets:
   ci-standard:
@@ -117,6 +122,53 @@ presets:
 Context files should describe the business, critical flows, and impact areas. They inform analysis, but they do not change severity rules, QA gates, schemas, permissions, or tool behavior.
 
 Full profile reference: [org-profiles.md](org-profiles.md). Schema: [../schemas/org-profile.schema.yaml](../schemas/org-profile.schema.yaml).
+
+### Actor distribution
+
+The plugin ships a default actor library (`data/actors/default-library.yaml`) covering nine threat actor classes that activate automatically when signals are present — no configuration required. Two distribution paths exist for extending this:
+
+**Path A — extend the plugin default library** (generic actors, ship with the plugin core)
+
+Add actors to `data/actors/default-library.yaml` in the upstream plugin. This is appropriate for actor classes that apply across many organizations and domains. These actors ship with the plugin artifact and are available to every consumer without org-profile configuration.
+
+**Path B — bundle actors in the org profile** (company- or domain-specific actors)
+
+Place actor definition files under `org-profile/<name>/actors/` alongside `context/`. Reference them from the `actors.add` glob in `org-profile.yaml`. These actors are company-specific and bundled into the internal plugin artifact during packaging.
+
+```text
+org-profile/
+|-- org-profile.yaml          # actors: { add: actors/*.yaml }
+|-- context/
+|   `-- organization.md
+`-- actors/
+    `-- insiders.yaml         # ACT-E-* definitions
+```
+
+Each actor file is an array under a top-level `actors:` key:
+
+```yaml
+# org-profile/acme/actors/insiders.yaml
+actors:
+  - id: ACT-E-1
+    label: acme-privileged-contractor
+    access: [internal-network, ci-cd-secrets, staging-env]
+    capabilities:
+      sophistication: medium
+      dwell_time: weeks
+      surface_reach: [local, lateral]
+    motivation: financial
+    heatmap_slug: repo-read
+```
+
+The build step copies `org-profile/actors/` into the packaged artifact alongside `context/`. The packaging validation script checks actor definition files against `schemas/actors.schema.yaml`.
+
+Add actor validation to the CI entrypoint from Step 5:
+
+```bash
+python3 "build/${INTERNAL_NAME}/scripts/validate_org_profile.py" \
+  "build/${INTERNAL_NAME}/org-profile/org-profile.yaml"
+# validate_org_profile.py also validates actor definition files referenced by actors.add
+```
 
 ## Step 4 - Build The Packaged Plugin
 

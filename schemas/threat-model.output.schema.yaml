@@ -541,6 +541,38 @@ properties:
         risk:
           type: string
           enum: [Critical, High, Medium, Low, Informational]
+        # ---- Actor Layer fields (actors.md §10) — additive, optional ----
+        actor_ids:
+          # Stable ACT-* IDs of actors who can exploit this threat. Empty list
+          # means no plausible actor from the component's slice produced this
+          # finding; composer renders [obsolete-actor] marker when a previously
+          # tagged threat lands here in a re-run.
+          type: array
+          items:
+            type: string
+            pattern: "^ACT-[A-Z]-\\d+$"
+        primary_actor:
+          # Single ACT-* ID — argmax actor_adjusted_likelihood with
+          # lexicographic tiebreak (reach-equivalence override per actors.md §10).
+          type: [string, "null"]
+          pattern: "^ACT-[A-Z]-\\d+$"
+        base_likelihood:
+          # Numeric mapping of `likelihood` enum (Critical=1.0…Informational=0.2).
+          type: [number, "null"]
+          minimum: 0.0
+          maximum: 1.0
+        actor_adjusted_likelihood:
+          # base_likelihood × primary_actor.severity_modulation[threat_category_id];
+          # multiplier constrained to [0.5, 1.5] by the plugin schema.
+          type: [number, "null"]
+          minimum: 0.0
+          maximum: 1.5
+        _status:
+          # Stable-ID lifecycle marker (actors.md §10 Fall 3): "dormant" when a
+          # finding's structurally-required actor was disabled — preserved for
+          # review instead of removed.
+          type: [string, "null"]
+          enum: [active, dormant, null]
         cwe:
           type: [string, "null"]
           pattern: "^CWE-\\d+$"

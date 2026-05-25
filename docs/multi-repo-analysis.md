@@ -4,6 +4,8 @@ Status: Variante X (Consumer-Pull-Erweiterung der `related-repos.yaml`-Strecke) 
 
 **Diese Doc listet nur noch, was *nicht* umgesetzt ist.**
 
+> **Actor-Layer Non-Goal (actors.md §15.4):** Cross-Repo Actor Resolution ist explizit **nicht** im Scope des Actor-Layer-Konzepts. `related-repos.yaml` triggert keinen Actor-Pull aus Nachbar-Repos. ACT-D-07 (compromised-third-party-service) wird ausschließlich über erkennbare externe API-Calls im Hauptrepo aktiviert, nicht über `related-repos.yaml`. Föderierte Actor-Modelle (Profile B erbt Actor-Definitionen aus Repo A) sind Phase 2.
+
 ---
 
 ## 1. Offene Schicht-1-Aufgaben (Security Charter)

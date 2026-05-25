@@ -1,0 +1,197 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://appsec-advisor/schemas/actors.schema.yaml"
+title: AppSec Advisor Actor Definition
+description: |
+  Schema for a single threat actor record as used in default-library.yaml,
+  org-profile actors/*.yaml, and <repo>/.appsec/actors.yaml.
+  IDs are stable across runs; never reuse a retired ID.
+
+type: object
+additionalProperties: false
+required:
+  - id
+  - label
+  - access
+  - capabilities
+  - motivation
+
+properties:
+  id:
+    type: string
+    pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+    description: "Stable actor ID. Prefix: D=default-library, E=enterprise, R=repo, X=discovery."
+
+  label:
+    type: string
+    pattern: "^[a-z][a-z0-9-]{1,62}$"
+    description: "Kebab-case short name, human-readable slug."
+
+  access:
+    type: array
+    minItems: 1
+    items:
+      type: string
+    description: |
+      Zones/systems the actor can reach. Predefined enum + custom strings allowed.
+      Known values: internet, dmz, internal-network, authenticated-user-session,
+      authenticated-admin-session, local-fs, ci-cd-secrets, ci-cd-runtime,
+      staging-env, prod-env, prod-readonly-db, prod-write-db, build-pipeline,
+      deployment-pipeline, client-device, mobile-device, adjacent-tenant, peer-service.
+
+  capabilities:
+    type: object
+    additionalProperties: false
+    required:
+      - sophistication
+      - dwell_time
+      - surface_reach
+    properties:
+      sophistication:
+        type: string
+        enum: [high, medium, low]
+      tooling:
+        type: array
+        items:
+          type: string
+        description: |
+          Known values (enum for default-library): debugger, network-sniffer,
+          off-the-shelf, custom-malware, social-eng.
+          Repo/discovery actors may use free strings; validator emits warning.
+      dwell_time:
+        type: string
+        enum: [short, weeks, months]
+      surface_reach:
+        type: array
+        minItems: 1
+        items:
+          type: string
+          enum: [local, lateral, persistent, internet]
+
+  motivation:
+    type: string
+    enum: [financial, disruption, espionage, curiosity, accidental]
+
+  description:
+    type: string
+    maxLength: 600
+    description: "Human-readable context for reviewers. Not used in LLM prompts."
+
+  activation_conditions:
+    type: object
+    additionalProperties: false
+    properties:
+      required_signals:
+        type: array
+        items:
+          type: string
+        description: "Signal flags from recon scanner that must be set for this actor to activate."
+      signal_logic:
+        type: string
+        enum: [all, any]
+        default: all
+        description: "Whether ALL or ANY of required_signals must be set. Default: all."
+    description: |
+      When absent, actor is always active (default for custom repo/org actors).
+      Reported as 'always-active im Repo-Scope' in run output.
+
+  severity_modulation:
+    type: object
+    additionalProperties:
+      type: number
+      minimum: 0.5
+      maximum: 1.5
+    description: |
+      Likelihood multiplier per threat-category ID (TH-NN).
+      Multiplier range [0.5, 1.5] — prevents jumping full severity bands.
+      Plugin-library provides per-actor defaults; layers override additively.
+
+  heatmap_slug:
+    type: string
+    enum:
+      - internet-anon
+      - internet-user
+      - internet-priv-user
+      - build-time
+      - repo-read
+      - victim-required
+    description: |
+      Maps this actor to one of the 6 heatmap display slugs.
+      Required for custom actors (ACT-E-*, ACT-R-*, ACT-X-*).
+      Default actors (ACT-D-*) are covered by data/actor-id-to-heatmap-slug.yaml.
+
+  evidence:
+    type: object
+    additionalProperties: false
+    properties:
+      files:
+        type: array
+        items:
+          type: string
+        description: "Glob patterns for files that should evidence this actor's presence."
+      pattern:
+        type: string
+        description: "Regex pattern matched against file contents (via ripgrep)."
+    description: |
+      Optional stale-detection block. When pattern no longer matches, actor is
+      marked _provenance.stale=true and run-issues reports stale_actor_evidence.
+
+  replaces:
+    type: string
+    pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+    description: |
+      For inherit_defaults=false org profiles: declares that this actor covers
+      the named default-library actor class (marks it 'covered' in coverage report).
+
+  renamed_from:
+    type: string
+    pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+    description: |
+      When a Discovery actor (ACT-X-N) was renamed to ACT-R-M during promotion,
+      carry the original ID here for stable back-reference.
+
+  equivalent_when:
+    type: array
+    items:
+      type: string
+    description: |
+      Signal flags that trigger a reach-equivalence collapse with another actor.
+      Declared in default-library; repo/org layers may add custom equivalences.
+
+  disable_reason:
+    type: string
+    maxLength: 400
+    description: "Required when actor appears in a disable: list. Audit trail."
+
+  _provenance:
+    type: object
+    additionalProperties: false
+    properties:
+      layer:
+        type: string
+        enum: [plugin, enterprise, repo, discovery]
+      source_file:
+        type: string
+      introduced_at:
+        type: string
+      modified_by:
+        type: array
+        items:
+          type: string
+      disabled_by:
+        type: string
+      disable_reason:
+        type: string
+      promoted_from_discovery:
+        type: boolean
+      promoted_at:
+        type: string
+      proposed:
+        type: boolean
+      stale:
+        type: boolean
+      signal_status:
+        type: string
+        enum: [normal, activate-with-warning, signal-missing]
+      classification:
+        type: string
+        enum: [deterministic, llm-fallback]

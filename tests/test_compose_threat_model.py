@@ -283,10 +283,12 @@ def test_threat_register_is_flat_register(tmp_path: Path) -> None:
     # Header is present with Risk + STRIDE summary lines plus the flat register.
     assert "**Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · " in rendered
     assert "**STRIDE Coverage:**" in rendered
-    # Post-2026-05 R-6 — 4-column Story-Card layout with Component column
-    # replacing Vektor (Vektor moved into the Finding cell as a labelled
-    # **Vektor:** field).
-    assert "| ID | Finding | Component | Criticality |" in rendered
+    # Post-2026-05 R-6 — Story-Card layout with Component column replacing
+    # Vektor (Vektor moved into the Finding cell as a labelled **Vektor:**
+    # field). Post-actors.md §14 the Actor column was added between Component
+    # and Criticality, surfacing primary_actor + [obsolete-actor] / _dormant_
+    # markers per §10 Stable-ID-Garantie Fälle 2 & 3.
+    assert "| ID | Finding | Component | Actor | Criticality |" in rendered
     # 8.A "Categories at a glance" subsection was removed in 2026-05; only
     # the invisible anchor block remains. The legacy 8.B Critical
     # Categories heading was also retired.
@@ -645,47 +647,60 @@ def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:
 
 
 def test_mitigations_section_uses_single_table_with_component_dividers(tmp_path: Path) -> None:
-    """The Management Summary Top Mitigations section is a single central
-    table sub-grouped by component via divider rows (post-2026-05 — per
-    user request, to keep all P1+P2 mitigations in one scannable block
-    instead of N per-component sub-tables).
+    """The Management Summary Top Mitigations section uses per-component
+    sub-tables with a bold paragraph divider per group (2026-05 update —
+    the previous in-table divider-row form `| label | | | | |` rendered
+    as one cell + 4 visually broken empty cells because Markdown
+    pipe-tables have no colspan; the per-component `####` H4 form was
+    rejected in a prior iteration as too noisy).
 
-    Divider rows take the form
-        | **↳ <Component Name> (<c-id>) — N item(s)** | | | |
-    and introduce the mitigation rows that belong to that component.
-    Data rows have 4 columns:
-        | Priority | Mitigation | Addresses | Effort |
-    Legacy per-component `####` sub-headers and the older
-    `#### Prioritized Mitigations` / `#### Follow-up Mitigations` split
-    are both forbidden in the new layout.
+    Layout:
+        **↳ <Component Name> (<c-id>) — N item(s)**           ← paragraph
+        | # | Priority | Mitigation | Addresses | Effort |   ← per-bucket pipe table
+        |---|---|---|---|---|
+        | 1 | **P1** | ... |
+        ...
+        **↳ <Next Component> (<c-id>) — M item(s)**           ← next divider
+        | # | Priority | Mitigation | Addresses | Effort |
+        ...
+
+    Numbering is continuous (1..N across all buckets) so the leader-board
+    rank reads globally. Each pipe-table carries its own canonical header
+    line so the contract checker (qa_checks.py table_checks for
+    Top Mitigations) is satisfied — it only needs one occurrence.
     """
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
 
     # Slice the Top Mitigations section out of the Management Summary.
-    # Heading is `### Top Mitigations` post-2026-05 (single source of truth
-    # in `templates/fragments/mitigations.md.j2`). The legacy `### Mitigations`
-    # form is no longer emitted by the composer.
     ms_slice = rendered.split("### Top Mitigations", 1)[1].split("\n### ", 1)[0]
 
-    # Legacy headers are gone.
+    # Legacy headers from earlier layouts are gone.
     assert "#### Prioritized Mitigations" not in ms_slice
     assert "#### Follow-up Mitigations" not in ms_slice
     # Per-component `####` sub-headers were retired in favour of inline
-    # divider rows.
-    assert "####" not in ms_slice, "single-table layout must not emit per-component sub-headers"
+    # paragraph dividers (less noisy than H4 headers).
+    assert "####" not in ms_slice, "per-component layout must not emit `####` sub-headers"
 
-    # New layout: a single 4-column table.
-    assert "| Priority | Mitigation | Addresses | Effort |" in ms_slice
+    # Canonical 5-column pipe-table header (with leading `#` column).
+    assert "| # | Priority | Mitigation | Addresses | Effort |" in ms_slice
 
-    # Component divider rows appear as `| **↳ <Name> (...) — N item(s)** | | | |`.
-    # Accept both em-dash and ASCII hyphen — the prose-style normaliser
-    # downgrades em-dashes to hyphens in some viewers.
+    # 2026-05 layout: paragraph dividers OUTSIDE the table, of the form
+    # `**↳ <Name> (<c-id>) — N item(s)**`. Accept both em-dash and ASCII
+    # hyphen — the prose-style normaliser downgrades em-dashes mid-line.
     import re as _re
     assert _re.search(
+        r"^\*\*↳\s+.+?\s+\([\w-]+\)\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*$",
+        ms_slice,
+        flags=_re.MULTILINE,
+    ), "expected at least one bold paragraph divider"
+
+    # Old in-table divider-row form must NOT appear (regression guard —
+    # the `| label | | | | |` pattern broke visually in pipe-tables).
+    assert not _re.search(
         r"\|\s*\*\*↳\s+.+\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|\s*\|\s*\|\s*\|",
         ms_slice,
-    ), "expected at least one component divider row"
+    ), "in-table divider-row form is retired"
 
     # A priority cell renders as **P1** / **P2** in data rows.
     assert any(f"**P{n}**" in ms_slice for n in (1, 2)), "expected a bold P1/P2 priority cell"

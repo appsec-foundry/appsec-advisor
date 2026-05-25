@@ -113,6 +113,8 @@ By default, the plugin analyzes the current Git repository and writes output to 
 
 To analyze a different repository or output directory, use `--repo` and `--output`; see [Usage examples](#usage-examples).
 
+The default actor library (nine threat actor classes covering anonymous attackers, authenticated users, insiders, supply-chain actors, and adjacent tenants) is active without any configuration. For company-specific actors, see [`docs/org-profiles.md`](docs/org-profiles.md). For repo-specific actors such as B2B partners, place definitions in `.appsec/actors.yaml`.
+
 ### 4. Optional: Publish the report
 
 Generated reports are not committed automatically. For a local review, you can stop after the assessment completes. If your team intentionally tracks reviewed threat models in git, run the publish helper:
@@ -177,6 +179,7 @@ Before running STRIDE, `appsec-advisor` performs a reconnaissance pass that coll
 | **Operations & Configuration** | CORS configuration, security headers, exposed management/debug endpoints, verbose errors, and stack-trace leakage. |
 | **Supply Chain** | Dependency and lockfile signals, unpinned GitHub Actions, container image pinning, and build/deployment configuration. |
 | **GenAI / LLM Security** | Prompt-injection surfaces, tool or agent boundaries, vector-store access patterns, LLM API usage, and OWASP LLM Top 10 related risks. |
+| **Threat Actors** | Actor-driven threat classes: insider threats (privileged dev/ops), supply-chain actors (build-time compromise), B2B-partner abuse, and adjacent-tenant attacks in multi-tenancy architectures. Each finding is attributed to a threat actor class; the report includes an actor table and actor-adjusted likelihood scores. |
 
 > [!NOTE]
 > The reconnaissance checks provide the starting context for the STRIDE analysis. They are not intended to replace a dedicated SAST, SCA, secrets, or IaC scanner. Instead, the findings are used as entry points for deeper reasoning across related files, flows, and trust boundaries.
@@ -341,6 +344,8 @@ Both routes drive `tests/e2e/run-full.sh`, which:
 
 Declare the services this repo depends on in `docs/related-repos.yaml`.
 
+> **Note:** Actor pull from `related-repos.yaml` is not supported. Declaring a related repo does not import its actor definitions. `ACT-D-07` (compromised-third-party-service) is activated only when the scan detects external API calls in the repo itself, not through `related-repos.yaml` declarations.
+
 ### Add context for services you call
 
 If this repo calls another internal service, add that service's threat model to `docs/related-repos.yaml`:
@@ -377,7 +382,7 @@ These fields are optional. Without them, the scan still uses the upstream model 
 
 `appsec-advisor` runs as a staged pipeline rather than one large prompt. Each stage has a narrow job, and the final report is rendered from validated structured data.
 
-- **Stages** — Reconnaissance -> STRIDE analysis and triage -> rendering -> QA review. Thorough assessments add an advisory architect review for compound attack chains and architectural assumptions.
+- **Stages** — Reconnaissance -> actor layer resolution and discovery (Phase 2.7) -> STRIDE analysis and triage -> rendering -> QA review. Thorough assessments add an advisory architect review for compound attack chains and architectural assumptions (including Actor Coverage check, Check 15).
 
 - **Assessment depth** — the selected mode controls component budget, walkthrough detail, QA, architect review, and model mix. Most teams should choose the mode by review intent and override models only when they have a specific cost or routing policy.
 

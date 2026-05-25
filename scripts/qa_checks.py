@@ -106,6 +106,9 @@ RISK_DIST_RE = re.compile(
     + _DELIM
     + _SEV_ICON
     + r"Low:\s*(\d+)"
+    # Optional Info cell (only rendered when count > 0). Captured into
+    # group(5); the rest of the parser must treat None as 0.
+    + r"(?:" + _DELIM + _SEV_ICON + r"Info:\s*(\d+))?"
     # Both `**Total: N**` and `**Total findings: N**` accepted.
     + _DELIM
     + r"\**Total(?:\s+findings)?:\s*(\d+)\**"
@@ -761,13 +764,23 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             # Two patterns because F/T/M ids are 3-4 digits while TH-NN
             # is 2-3 digits; one combined regex would lose the digit-count
             # distinction. Keep them separate for clarity + idempotency.
+            #
+            # Lookahead `(?!\s+[—(])` skips refs already followed by either
+            # em-dash form (`[ID](#id) — Label`) OR parens form
+            # (`[ID](#id) (short_label)` — produced by
+            # `compose._linkify_bare_refs_in_prose` via
+            # `linkify_with_short_label`). Without the `(` exclusion the
+            # pass appends `— full_title — file` between the link and the
+            # existing parens, producing the duplicate-title form
+            # `[F-001](#f-001) — Title — file (Title)` flagged by
+            # `check_section7_finding_link_duplicate`.
             new_line = re.sub(
-                r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?! — )",
+                r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?!\s+[—(])",
                 sub_existing,
                 new_line,
             )
             new_line = re.sub(
-                r"\[(TH-\d{2,3})\]\(#th-\d+\)(?! — )",
+                r"\[(TH-\d{2,3})\]\(#th-\d+\)(?!\s+[—(])",
                 sub_existing,
                 new_line,
             )
@@ -907,10 +920,14 @@ def check_invariants(md_path: Path) -> Report:
     if not rd:
         report.issues.append("Risk Distribution line not found")
     else:
-        crit, high, med, low, total = (int(x) for x in rd.groups())
-        if crit + high + med + low != total:
+        # Group 5 is the optional Info cell (None when omitted). Group 6 is Total.
+        crit, high, med, low = (int(rd.group(i)) for i in (1, 2, 3, 4))
+        info = int(rd.group(5)) if rd.group(5) is not None else 0
+        total = int(rd.group(6))
+        rd_sum = crit + high + med + low + info
+        if rd_sum != total:
             report.issues.append(
-                f"Risk Distribution sum mismatch: {crit}+{high}+{med}+{low}={crit + high + med + low} != Total {total}"
+                f"Risk Distribution sum mismatch: {crit}+{high}+{med}+{low}+{info}={rd_sum} != Total {total}"
             )
         sub_counts = {int(m.group(1)): int(m.group(3)) for m in SECTION_8_SUB_RE.finditer(text)}
         for idx, (label, n) in enumerate((("Critical", crit), ("High", high), ("Medium", med), ("Low", low)), start=1):
@@ -922,7 +939,8 @@ def check_invariants(md_path: Path) -> Report:
         report.issues.append("STRIDE Coverage line not found")
     elif rd:
         s_sum = sum(int(x) for x in sc.groups())
-        total = int(rd.group(5))
+        # Group 6 is now Total (was 5 before the optional Info cell was added).
+        total = int(rd.group(6))
         if s_sum != total:
             report.issues.append(f"STRIDE Coverage sum ({s_sum}) != Threat Register Total ({total})")
 

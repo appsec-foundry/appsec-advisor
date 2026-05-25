@@ -1,4 +1,4 @@
-api_version: appsec-advisor.org-profile/v1
+api_version: appsec-advisor.org-profile/v2
 
 organization:
   id: acme
@@ -41,6 +41,11 @@ llm_context:
 security_coach:
   enabled_by_default: true
   max_requirements_per_topic: 3
+
+actors:
+  inherit_defaults: true
+  disable: []
+  add: actors/*.yaml
 
 skill_toggles:
   create-threat-model: true

@@ -2399,6 +2399,8 @@ Pass the following variables to the agent prompt:
 - `QA_ROUTINE_MODEL=<model>` (haiku-economy tier QA-split; default `claude-sonnet-4-6`. Used at the skill level for routine repair iterations. Override via `$APPSEC_QA_ROUTINE_MODEL`.)
 - `QA_CONTENT_MODEL=<model>` (haiku-economy tier QA-split; default `claude-sonnet-4-6`. Used for content-class repair iterations. Override via `$APPSEC_QA_CONTENT_MODEL`.)
 - `CONFIG_SCANNER_MODEL=<model>` (defaults to `claude-haiku-4-5` at all reasoning tiers. Read by Phase 2.5 dispatch in `phase-group-recon.md`. Override via `$APPSEC_CONFIG_SCANNER_MODEL`.)
+- `ACTOR_DISCOVERY_MODEL=<model>` (defaults to `claude-sonnet-4-6`. Read by Phase 2.7 dispatch. Override via `$APPSEC_ACTOR_DISCOVERY_MODEL`.)
+- `REFRESH_ACTOR_DISCOVERY=<true|false>` (when `true`, Phase 2.7 passes `--refresh-discovery` to resolve_actors.py and forces a new LLM discovery run even when the cache key is unchanged. Set by `--refresh-discovery` flag.)
 - `ORCHESTRATOR_MODEL=<model>` (haiku-economy tier; always `claude-sonnet-4-6` per matrix — informational only.)
 - `STRIDE_PROFILE_JSON=<inline-json>` (depth-reduction profile; default `{"stride_profile_label":"full"}`. Read by Phase 9 dispatch in `phase-group-threats.md` and forwarded to each STRIDE analyzer in Group A. Quick + haiku-economy contains the A-F reduction flags.)
 - `REASONING_LABEL=<resolved summary>`

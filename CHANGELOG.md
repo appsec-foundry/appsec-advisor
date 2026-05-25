@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased — Actor Layer (Phase 2.7, org-profile v2, §1.5 Actor table)
+
+New actor modeling layer adds structured threat-actor attribution to every finding.
+
+**`api_version: appsec-advisor.org-profile/v2`** — additive extension. v1 profiles are auto-upgraded on load with an `info` notice in run-issues.json; no manual migration required. Adds an `actors:` block with `inherit_defaults`, `disable` (with required `disable_reason`), and `add` (glob to actor definition files).
+
+**Default actor library** (`data/actors/default-library.yaml`) — nine threat actor classes (ACT-D-01 through ACT-D-09) ship with the plugin and activate automatically from recon signals (no configuration required):
+
+| ID | Label | Typical activation |
+|---|---|---|
+| ACT-D-01 | anonymous-internet-attacker | has_public_routes |
+| ACT-D-02 | authenticated-low-priv-user | has_auth_surface |
+| ACT-D-03 | authenticated-high-priv-user | has_role_concept |
+| ACT-D-04 | malicious-insider-dev | has_secrets_in_repo or has_ci_pipeline |
+| ACT-D-05 | malicious-insider-ops | has_ci_pipeline |
+| ACT-D-06 | supply-chain-attacker | has_ci_pipeline |
+| ACT-D-07 | compromised-third-party-service | has_external_apis |
+| ACT-D-08 | physical-device-holder | has_client_storage |
+| ACT-D-09 | tenant-from-adjacent-tenancy | has_multi_tenancy_signal (two-signal) |
+
+**New pipeline phase: Phase 2.7 — Actor Layer Resolution & Discovery** — runs between config-iac-scan (Phase 2.5) and architecture modeling (Phase 3). Resolves four actor layers (plugin → enterprise → repo → LLM-discovery) and writes `.actors-resolved.json`. Quick-mode skips LLM discovery; static layers remain active.
+
+**Per-finding actor attribution** — every finding now carries `actor_ids[]`, `primary_actor`, and `actor_adjusted_likelihood`. Primary actor is selected by argmax adjusted likelihood; reach-equivalence collapses ACT-D-01 and ACT-D-02 when open self-registration is detected.
+
+**New report section §1.5 — Identified Actors** — table of all active actors per run including layer, status, finding counts, and relevant components. Proposed actors from discovery appear in a "please confirm" sub-section.
+
+**Architect review Check 15 — Actor Coverage** — five sub-checks validate activated-but-unused actors, disabled-without-rationale actors, components without actor attribution, discovery proposals without findings, and unreviewed `inputs_questioned` flags.
+
+**New scripts:** `scripts/resolve_actors.py`, `scripts/slice_actors.py`.
+
+**New agent:** `agents/appsec-actor-discoverer.md` (Phase 2.7 LLM-discovery step).
+
+**Heatmap slug mapping** (`data/actor-id-to-heatmap-slug.yaml`) — maps ACT-D-* IDs to the six existing §0/§1 display slugs. Custom actors use an optional `heatmap_slug:` field; missing slug falls back to `internet-user` with a run-issue (`actor_missing_heatmap_slug`, severity info).
+
+**Repo-layer overrides:** `<repo>/.appsec/actors.yaml` now honors `inherit_org: false` (excludes enterprise actors with an `info` run-issue), accepts `disable:` as either a flat ID list or `{id, reason}` objects (missing `disable_reason` emits a `defect` run-issue per actors.md §6/§7), and exposes `renamed_from` aliases through `_provenance.aliases` plus a top-level `alias_map` in `.actors-resolved.json`.
+
+**Incremental cache fingerprint:** `scripts/resolve_actors.py` now writes `.actor-fingerprints.json` with `actors_inputs_fingerprint` (sha256 over plugin default-library + enterprise actor files + repo `.appsec/actors.yaml`). Re-runs without input drift produce identical fingerprints; any input file edit flips the fingerprint — foundation for the §13 incremental scan behaviour.
+
+**Discovery cache key — five-input composition (actors.md §8):** Phase 2.7 Step 2 now hashes recon-summary + config-scan + `actors_inputs_fingerprint` + sha(discoverer agent file) + explicit `DISCOVERY_PROMPT_VERSION` semver marker. Bumping any of the five invalidates the discovery cache and forces re-discovery on the next run.
+
+**Default-library audit visibility (Done-criterion #1):** plugin-layer actors that fail their activation conditions now emit `default_actor_skipped` info run-issues with the missing signal name, so no default class disappears silently between runs.
+
+**§1.5 Identified Actors report section (actors.md §14):** new `identified_actors` section rendered between §1 System Overview and §2 Architecture Diagrams. Computed from `.actors-resolved.json` + `threat-model.yaml.threats[].actor_ids[]` — table of every active actor with layer, status, finding count, and per-component relevance. Sub-sections for proposed (discovery), inputs-questioned (flag-for-review), disabled (with rationale), and dormant findings. Conditional on `has_resolved_actors`; legacy / pre-Phase-2.7 runs gracefully skip. Sections contract bumped to `contract_version: 4`.
+
+**§8 Threat Register Actor column + obsolete/dormant markers (actors.md §10):** `_render_threat_register` adds an Actor column between Component and Criticality. Each row shows `primary_actor` (link to §1.5) plus a `<sub>+N</sub>` badge when more than one actor was tagged. Findings whose `actor_ids` list is empty render `_[obsolete-actor]_`; findings with `_status: dormant` render `_dormant_` (Stable-ID-Garantie Fälle 2 & 3).
+
+**Threat schema hardening:** `schemas/threat-model.output.schema.yaml` now declares the actor fields explicitly (`actor_ids`, `primary_actor`, `base_likelihood`, `actor_adjusted_likelihood`, `_status`) with `ACT-[A-Z]-\d+` pattern enforcement and `_status` enum constrained to `[active, dormant, null]`. STRIDE outputs that previously slipped through `additionalProperties: true` now validate explicitly.
+
+**Per-component slice-diff STRIDE re-dispatch (actors.md §13):** `baseline_state.py` now hashes `.actors-for-*.json` into `baseline.json.slice_files`. `phase-group-threats.md` and `appsec-threat-analyst.md` extend the incremental decision tree with a 5th condition: components whose actor slice changed are re-dispatched even when no code diff exists — pure actor-input edits now trigger surgical per-component STRIDE re-runs instead of either full-scan or stale carry-forward.
+
+> **Note:** the §13 edge-case "split `profile_fingerprint` into core+actors" is already addressed: actor files were never part of `profile_fingerprint` (it covers only the profile YAML and `llm_context_documents`), so `actors_inputs_fingerprint` (new in this release) is the de-facto independent actor fingerprint the spec asks for.
+
 ## Unreleased — Triage validator downgraded from Opus to Sonnet at `opus-cheap`
 
 `MODEL_MATRIX["opus-cheap"]["triage"]` is now `claude-sonnet-4-6` (was

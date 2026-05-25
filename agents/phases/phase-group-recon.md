@@ -364,3 +364,150 @@ inputs (no repo root, no valid output dir). On any other failure, log
 `AGENT_WARN` and continue — downstream phases all guard on missing files
 ("if .route-inventory.json exists, prefer it; otherwise fall back"). The
 architecture-coverage delivery is enrichment, not blocking.
+
+## Phase 2.7: Actor Layer Resolution & Discovery
+
+**Skip when:** `ASSESSMENT_DEPTH = quick`.
+
+After Phase 2.6 completes, run the Actor Layer. This phase is fully
+deterministic for the static layers and conditionally LLM-driven for
+discovery.
+
+### Step 1 — Resolve static actor layers (deterministic)
+
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    PHASE_START   [Phase 2.7/N] Actor Layer Resolution" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_actors.py" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+    --repo-root "$REPO_ROOT" \
+    --output-dir "$OUTPUT_DIR" \
+    ${ORG_PROFILE_EFFECTIVE:+--org-profile-effective "$ORG_PROFILE_EFFECTIVE"} \
+    --signals "$OUTPUT_DIR/.recon-signals.json"
+
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    STEP_END   Actor static resolution → .actors-merged-static.json" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+`ORG_PROFILE_EFFECTIVE` is the path to `.org-profile-effective.json` when an org
+profile is active; skip the flag when no profile is configured.
+
+Outputs: `$OUTPUT_DIR/.actors-merged-static.json` (input for discovery).
+
+### Step 2 — Compute discovery cache key
+
+Five-input composition per actors.md §8 — any change invalidates the discovery cache:
+
+1. `recon-summary-content` — `.recon-summary.md`
+2. `config-scan-content` — `.config-scan-findings.json`
+3. `actors_inputs_fingerprint` — read from `.actor-fingerprints.json` (written by Step 1's resolve_actors.py)
+4. `plugin_version` — sha of `agents/appsec-actor-discoverer.md` (catches prompt edits and agent-config changes)
+5. `discovery_prompt_version` — explicit semver from the `DISCOVERY_PROMPT_VERSION` HTML-comment marker in the discoverer agent file (bump by hand on any semantic prompt change)
+
+```bash
+DISCOVERY_CACHE_KEY=$(python3 - <<'EOF'
+import hashlib, os, json, re
+
+output_dir = os.environ.get("OUTPUT_DIR", "")
+plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+
+def sha_file(path):
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    return ""
+
+def read_actors_fingerprint():
+    p = os.path.join(output_dir, ".actor-fingerprints.json")
+    if not os.path.exists(p):
+        return ""
+    try:
+        return json.load(open(p)).get("actors_inputs_fingerprint", "")
+    except Exception:
+        return ""
+
+def read_discovery_prompt_version():
+    p = os.path.join(plugin_root, "agents", "appsec-actor-discoverer.md")
+    if not os.path.exists(p):
+        return ""
+    m = re.search(r"DISCOVERY_PROMPT_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)", open(p).read())
+    return m.group(1) if m else ""
+
+parts = [
+    sha_file(os.path.join(output_dir, ".recon-summary.md")),
+    sha_file(os.path.join(output_dir, ".config-scan-findings.json")),
+    read_actors_fingerprint(),
+    sha_file(os.path.join(plugin_root, "agents", "appsec-actor-discoverer.md")),
+    read_discovery_prompt_version(),
+]
+print(hashlib.sha256("||".join(parts).encode()).hexdigest())
+EOF
+)
+```
+
+### Step 3 — LLM Actor Discovery (when not cached and not quick)
+
+Check if discovery output is current:
+
+```bash
+DISCOVERY_CACHED=$(python3 - <<'EOF'
+import json, os
+p = os.path.join(os.environ.get("OUTPUT_DIR",""), ".actors-discovered.json")
+if not os.path.exists(p):
+    print("miss")
+    raise SystemExit(0)
+with open(p) as f:
+    d = json.load(f)
+print("hit" if d.get("discovery_cache_key") == os.environ.get("DISCOVERY_CACHE_KEY","") else "miss")
+EOF
+)
+```
+
+When `DISCOVERY_CACHED=hit` AND `REFRESH_ACTOR_DISCOVERY != true`: skip Step 3 (cache valid).
+
+When `DISCOVERY_CACHED=miss` OR `REFRESH_ACTOR_DISCOVERY=true`: dispatch the discovery agent:
+
+```
+Agent(
+  subagent_type: "appsec-advisor:appsec-actor-discoverer",
+  description: "Actor Discovery (Phase 2.7)",
+  prompt: "
+OUTPUT_DIR=$OUTPUT_DIR
+REPO_ROOT=$REPO_ROOT
+ASSESSMENT_DEPTH=$ASSESSMENT_DEPTH
+DISCOVERY_CACHE_KEY=$DISCOVERY_CACHE_KEY
+MODEL_ID=$ACTOR_DISCOVERY_MODEL
+  "
+)
+```
+
+After the agent returns, verify `.actors-discovered.json` exists and is valid JSON.
+On failure: log `AGENT_WARN`, write an empty discovery sentinel, continue without
+blocking the assessment.
+
+### Step 4 — Finalize resolved actor set (with discovery)
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_actors.py" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+    --repo-root "$REPO_ROOT" \
+    --output-dir "$OUTPUT_DIR" \
+    ${ORG_PROFILE_EFFECTIVE:+--org-profile-effective "$ORG_PROFILE_EFFECTIVE"} \
+    --signals "$OUTPUT_DIR/.recon-signals.json" \
+    --discovery-output "$OUTPUT_DIR/.actors-discovered.json"
+
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst    PHASE_END   [Phase 2.7/N] Actor Layer complete → .actors-resolved.json" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+
+Outputs: `$OUTPUT_DIR/.actors-resolved.json` (consumed by per-component slicing).
+
+### Quick-mode handling
+
+When `ASSESSMENT_DEPTH=quick`: call `resolve_actors.py --quick` which runs only
+the static layers and writes `.discovery-skipped.json`. Skip Steps 2–3 entirely.
+The resolved set still drives actor-tagging in the STRIDE analyzers.
+
+### Failure handling
+
+`resolve_actors.py` is idempotent. On any failure: log `AGENT_WARN` and continue.
+STRIDE analysis runs without actor attribution when `.actors-resolved.json` is
+absent (`RELEVANT_ACTORS_INDEX_PATH=none`).

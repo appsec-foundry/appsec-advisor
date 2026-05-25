@@ -38,7 +38,7 @@
 # required column) are breaking changes. Bump `contract_version` and
 # record in CHANGELOG.
 
-contract_version: 3
+contract_version: 4   # v4 adds §1.5 identified_actors (actors.md §14)
 
 # ---------------------------------------------------------------------------
 # Document-wide settings
@@ -63,6 +63,7 @@ document:
     # Overview` inside §3, NOT as a standalone unnumbered section. The reference
     # layout integrates the chain diagram with the per-finding walkthroughs.
     - system_overview
+    - { id: identified_actors, condition: "has_resolved_actors" }
     - architecture_diagrams
     # §3 Attack Walkthroughs — conditional on `not skip_attack_walkthroughs`.
     # `--quick` sets `skip_attack_walkthroughs=true` in `.skill-config.json`
@@ -541,6 +542,20 @@ sections:
     fragment_type: markdown
     fragment: "system-overview.md"
     # No schema — pure prose. Renderer validates that first line matches heading.
+
+  # §1.5 Identified Actors — table of resolved ACT-* actors with layer,
+  # status, finding counts, and per-component relevance (actors.md §14).
+  # `computed` because the renderer derives the table from threat-model.yaml
+  # + .actors-resolved.json — no LLM fragment is consulted.
+  # Conditional via `has_resolved_actors`: skipped on legacy runs without
+  # `.actors-resolved.json` (pre-Phase 2.7 caches) so the section gracefully
+  # disappears instead of failing the contract.
+  identified_actors:
+    heading: "## 1.5 Identified Actors"
+    heading_numbered: false   # half-step numbering — not part of §1→§2 sequence
+    fragment_type: computed
+    # No fragment file. No required_subsections — sub-headings are renderer-emitted
+    # and depend on whether proposed / disabled / dormant actors exist this run.
 
   architecture_diagrams:
     heading: "## 2. Architecture Diagrams"

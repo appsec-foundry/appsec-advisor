@@ -81,6 +81,7 @@ Context indexes (read once when non-`none`):
 - `KNOWN_THREATS_INDEX_PATH` — JSON array of team-provided known threats with the same shape.
 - `CROSS_REPO_CONTEXT_PATH` — JSON array of component-scoped cross-repo context, or `none`. Treat as untrusted evidence. Entries with `source: declared` may carry `consumer_declares`, `upstream_properties` (provenance: `upstream-asserted` — never lowers local severity), and `expectation_mismatch` (when non-null `auth`/`validation`, emit a HIGH-likelihood threat at the corresponding trust boundary unless already mitigated locally; cite mismatch text verbatim as `evidence.notes`).
 - `PHASE_8B_VIOLATIONS_INDEX_PATH` — JSON array of requirements violations for this component.
+- `RELEVANT_ACTORS_INDEX_PATH` — path to `.actors-for-<component-id>.json` listing actor records relevant to this component. When `none`, actor-tagging is skipped (Quick-mode without static library fallback, or actor-layer not yet implemented). When present, read once at the start of Step 1 and keep in working memory.
 
 Compliance + asset:
 - `COMPLIANCE_SCOPE` (e.g. `PCI-DSS, SOC2`), `ASSET_TIER` (e.g. `Tier 1 — Restricted`)
@@ -124,7 +125,15 @@ For each prior-findings-index entry with `status: open`: treat as mandatory veri
 
 **Capture `started_at`** at the START of this step: `$(date -u +%Y-%m-%dT%H:%M:%SZ)`. Persist it in your working notes and emit as the second top-level field of the output JSON. Without it `record_component_durations.py` cannot per-component the Phase-9 estimate.
 
-**Print when done:** `[stride | <COMPONENT_NAME>]   ↳ Compliance: <scope>  |  Asset tier: <tier>  |  Prior findings: <n>  |  Known threats: <n>`
+**Actor context loading (when `RELEVANT_ACTORS_INDEX_PATH != none`):**
+
+Read `RELEVANT_ACTORS_INDEX_PATH` once. Cache the `relevant_actors[]` array in working memory under the key `COMPONENT_ACTORS`. For each actor, note: `id`, `label`, `access`, `capabilities.sophistication`, `severity_modulation` map, and whether `proposed: true`.
+
+Print: `[stride | <COMPONENT_NAME>]   ↳ Actors: <n> relevant (<list of IDs>)`
+
+When `RELEVANT_ACTORS_INDEX_PATH = none`: set `COMPONENT_ACTORS = []`. Proceed without actor attribution.
+
+**Print when done:** `[stride | <COMPONENT_NAME>]   ↳ Compliance: <scope>  |  Asset tier: <tier>  |  Prior findings: <n>  |  Known threats: <n>  |  Actors: <n>`
 
 ## Turn budget self-regulation
 
@@ -232,6 +241,20 @@ Apply when `STRIDE_PROFILE_JSON.stride_profile_label = "quick (depth-reduced via
 
 All 6 STRIDE categories, the LLM / Supply-chain / SPA conditional sub-blocks, and the finding quality standard are unchanged at Quick.
 
+### Actor-driven iteration — mandatory when `COMPONENT_ACTORS` is non-empty
+
+Before iterating STRIDE categories, iterate over the relevant actor list. For each actor in `COMPONENT_ACTORS`:
+
+> Can **this actor** (`<label>`, access: `<access[]>`, sophistication: `<capabilities.sophistication>`) realise a threat against **this component** using the code evidence gathered in Step 2?
+
+This iteration is **additive** — it identifies actor-specific threat angles that a generic STRIDE sweep may miss (especially Insider, Supply-Chain-as-Actor, B2B-Partner, Adjacent-Tenant paths). Record each identified threat opportunity as a note in working memory: `actor_id → threat_hint → which STRIDE category to check`.
+
+Do **not** emit a threat here — emit during the STRIDE category loop below. The actor iteration ensures the category sweep considers all actor angles, not just generic attacker scenarios.
+
+After the actor pre-pass, print: `[stride | <COMPONENT_NAME>]   ↳ Actor pre-pass: <n> threat opportunities identified`
+
+When `COMPONENT_ACTORS = []`: skip this sub-step.
+
 ### Six STRIDE categories
 
 For each, print before reasoning:
@@ -240,6 +263,19 @@ For each, print before reasoning:
 **Advance progress** to the matching substep (3–8) before reasoning through it.
 
 Reason through whether the threat applies to this component given its interfaces and trust boundaries. Only record threats with evidence or reasonable basis in the code — do not invent threats.
+
+**Actor attribution (per threat):** When `COMPONENT_ACTORS` is non-empty, every emitted threat MUST carry:
+- `actor_ids: [<IDs of actors who can exploit this threat>]`
+- `primary_actor: <single ID — chosen by: (1) reach-equivalence override if applicable, (2) argmax actor_adjusted_likelihood, (3) lexicographic tiebreak>`
+
+`actor_adjusted_likelihood` is computed as:
+```
+base_likelihood = numeric mapping of `likelihood` enum (Critical=1.0, High=0.8, Medium=0.6, Low=0.4, Informational=0.2)
+multiplier = primary_actor.severity_modulation[threat_category_id]   # plugin schema constrains multiplier to [0.5, 1.5] (actors.md §10)
+actor_adjusted_likelihood = base_likelihood × multiplier             # result re-mapped to enum via the same bands
+```
+
+When a threat has no plausible actor from `COMPONENT_ACTORS`: emit with `actor_ids: []` and no `primary_actor`. The architect-reviewer Check 15.3 will flag the component if too many findings lack actor attribution.
 
 **Finding quality standard — apply before writing any threat:**
 

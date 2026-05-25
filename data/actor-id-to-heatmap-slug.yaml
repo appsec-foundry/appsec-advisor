@@ -1,0 +1,24 @@
+# Actor ID → Heatmap Slug mapping
+# Used by compose step to map primary_actor ACT-* IDs to the 6 fixed heatmap slugs
+# defined in data/posture-actor-labels.yaml and schemas/fragments/security-posture-attack-paths.schema.json
+#
+# Custom actors (ACT-E-*, ACT-R-*, ACT-X-*) should declare heatmap_slug: in their
+# actor definition; if absent, the mapper falls back to "internet-user" and emits
+# a run-issue: actor_missing_heatmap_slug (severity: info).
+
+schema_version: 1
+
+mappings:
+  ACT-D-01: internet-anon
+  ACT-D-02: internet-user
+  ACT-D-03: internet-priv-user
+  ACT-D-04: repo-read
+  ACT-D-05: repo-read
+  ACT-D-06: build-time
+  ACT-D-07: internet-anon
+  ACT-D-08: victim-required
+  ACT-D-09: internet-user
+
+# Fallback when actor has no explicit mapping and no heatmap_slug field
+fallback_slug: internet-user
+fallback_run_issue: actor_missing_heatmap_slug

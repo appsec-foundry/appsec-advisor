@@ -20,7 +20,10 @@ required:
 
 properties:
   api_version:
-    const: appsec-advisor.org-profile/v1
+    type: string
+    enum:
+      - appsec-advisor.org-profile/v1
+      - appsec-advisor.org-profile/v2
 
   organization:
     type: object
@@ -153,6 +156,35 @@ properties:
             reason:
               type: string
               maxLength: 240
+
+  actors:
+    type: object
+    additionalProperties: false
+    description: |
+      Actor-layer configuration for this org profile (api_version v2+).
+      v1 profiles are treated as if actors: {inherit_defaults: true, disable: [], add: []}.
+    properties:
+      inherit_defaults:
+        type: boolean
+        default: true
+        description: >
+          Whether to activate the plugin's 9 default actor classes (ACT-D-*).
+          Set false only for regulated environments needing a fully controlled
+          actor stack — the tool will report coverage gaps vs. default classes.
+      disable:
+        type: array
+        items:
+          type: string
+          pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+        description: >
+          Actor IDs to deactivate. Each deactivated default actor is logged in
+          run-issues.json. Enterprise-disable is terminal — repo layer cannot re-enable.
+      add:
+        type: string
+        default: "actors/*.yaml"
+        description: >
+          Glob (relative to profile directory) for additional actor definition files.
+          Each file contains a top-level `actors:` array of actor objects.
 
   presets:
     type: object

@@ -104,14 +104,23 @@ _PATH_RE = re.compile(
 #     are excluded.  Trailing punctuation (`.`, `,`, `;`, `)`, `?`) is left
 #     OUTSIDE the backticked span via a negative-character-class boundary.
 _URL_PATH_RE = re.compile(
-    r"(?<![\w`/])"
+    # Lookbehind also rejects `<` so long HTML closing tags `</thead>`,
+    # `</tbody>`, `</table>` are not mis-matched as `/thead`/`/tbody`/`/table`
+    # URL paths and wrapped in backticks. The Top Findings table emitted
+    # these tags structurally; the wrapper produced `<`/thead`>` etc. and
+    # broke contract validation. Adding `<` to the negative class closes
+    # this without affecting any legitimate `/path` match (prose URL paths
+    # are never adjacent to `<`).
+    r"(?<![\w`/<])"
     # First segment requires ≥ 3 chars after `/` so accidental tokens like
     # `and/or` (`/or` would be only 2 chars) are rejected. Additional
     # segments are optional so `/ftp` and `/etc/passwd` both match.
     r"(?P<urlpath>/[A-Za-z][\w-]{2,}(?:/[\w%:&=.-]+)*)"
     # Allow `.`, `,`, `;`, `)`, `?`, `!` as next character — those are
     # sentence punctuation that the trailing-punct stripper takes care of.
-    r"(?![\w/`])"
+    # Symmetric tightening: also reject `>` so the closing-bracket end of
+    # an HTML tag boundary is rejected, mirroring the lookbehind.
+    r"(?![\w/`>])"
 )
 #   - Bare standalone source-filename tokens (no preceding path):
 #     `login.ts`, `search.ts:23`, `package.json.bak`, `app.guard.ts:54`.
@@ -636,10 +645,18 @@ def main(argv: list[str]) -> int:
     if n_fixes:
         md_path.write_text(new_text, encoding="utf-8")
         print(
+            # Note: `rhetorical-severity` here only rewrites the one phrase
+            # `trivially crackable` → `recoverable by GPU dictionary attack
+            # within seconds`. The full prose-style.md Rule 2 vocabulary
+            # (catastrophic / devastating / wreaks havoc / …) is DETECTED by
+            # `qa_checks.check_rhetorical_severity` (9 patterns) but is NOT
+            # auto-rewritten here because those phrases require context to
+            # replace meaningfully. Treat residual `rhetorical_severity`
+            # QA issues as Stage-2-LLM authoring drift, not a fixer gap.
             f"apply_prose_fixes: applied {n_fixes} fix(es) in {md_path.name} "
-            f"(path-backticks + ai-padding + rhetorical-severity + perimeter-claim "
-            f"+ controls-covered-anchors + title-path-normalization + "
-            f"relevant-findings-bullets)"
+            f"(path-backticks + ai-padding + rhetorical-severity[crackable-phrase only] "
+            f"+ perimeter-claim + controls-covered-anchors + title-path-normalization "
+            f"+ relevant-findings-bullets)"
         )
     else:
         print("apply_prose_fixes: no fixable prose-style violations found")

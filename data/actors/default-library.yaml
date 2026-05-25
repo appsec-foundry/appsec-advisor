@@ -1,0 +1,361 @@
+# Actor Default Library — Plugin-managed
+# Path: data/actors/default-library.yaml
+# Do NOT edit per-repo; use <repo>/.appsec/actors.yaml or org-profile actors/ for overrides.
+#
+# Activation signals emitted by appsec-recon-scanner (signals block):
+#   has_public_routes, has_auth_surface, has_role_concept, has_secrets_in_repo,
+#   has_ci_pipeline, has_external_apis, has_client_storage, has_multi_tenancy_signal,
+#   has_open_self_registration
+#
+# Fallback: when a signal is missing (recon did not emit it), actor activates with
+#   _provenance.signal_status: activate-with-warning  (reported in run-issues.json)
+
+schema_version: 1
+library_version: "1.0.0"
+
+actors:
+  - id: ACT-D-01
+    label: anonymous-internet-attacker
+    access:
+      - internet
+      - dmz
+    capabilities:
+      sophistication: medium
+      tooling:
+        - off-the-shelf
+        - social-eng
+      dwell_time: short
+      surface_reach:
+        - internet
+    motivation: financial
+    description: >
+      Unauthenticated attacker with internet access. Exploits publicly reachable
+      endpoints via automated scanning, credential stuffing, or injection attacks.
+    activation_conditions:
+      required_signals:
+        - has_public_routes
+    severity_modulation:
+      TH-01: 1.2   # Spoofing on public surface
+      TH-02: 1.0
+      TH-03: 0.8   # Repudiation — anon attacker less relevant
+      TH-04: 1.2   # Info disclosure — public endpoints
+      TH-05: 1.3   # DoS — internet-scale
+      TH-06: 0.9   # EoP — typically needs auth first
+    heatmap_slug: internet-anon
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+  - id: ACT-D-02
+    label: authenticated-low-priv-user
+    access:
+      - internet
+      - authenticated-user-session
+    capabilities:
+      sophistication: low
+      tooling:
+        - off-the-shelf
+      dwell_time: short
+      surface_reach:
+        - internet
+        - lateral
+    motivation: curiosity
+    description: >
+      Authenticated user with standard (non-admin) privileges. Exploits IDOR,
+      broken object-level authorization, or self-registration abuse.
+    activation_conditions:
+      required_signals:
+        - has_auth_surface
+    severity_modulation:
+      TH-01: 0.9
+      TH-02: 1.0
+      TH-03: 1.0
+      TH-04: 1.1
+      TH-05: 0.9
+      TH-06: 1.2   # EoP — primary threat class for low-priv users
+    equivalent_when:
+      - has_open_self_registration   # collapse into ACT-D-01 when self-reg open
+    heatmap_slug: internet-user
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+  - id: ACT-D-03
+    label: authenticated-high-priv-user
+    access:
+      - internet
+      - authenticated-user-session
+      - authenticated-admin-session
+    capabilities:
+      sophistication: medium
+      tooling:
+        - off-the-shelf
+        - debugger
+      dwell_time: weeks
+      surface_reach:
+        - internet
+        - lateral
+        - persistent
+    motivation: disruption
+    description: >
+      Admin or privileged operator. Exploits admin-only endpoints, abuses elevated
+      permissions, or performs privilege-escalation from standard role.
+    activation_conditions:
+      required_signals:
+        - has_role_concept
+    severity_modulation:
+      TH-01: 0.8
+      TH-02: 1.1
+      TH-03: 1.2   # Repudiation — admin actions harder to audit
+      TH-04: 1.2
+      TH-05: 1.0
+      TH-06: 1.3   # EoP — already high-priv, escalation to full admin
+    heatmap_slug: internet-priv-user
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+  - id: ACT-D-04
+    label: malicious-insider-dev
+    access:
+      - local-fs
+      - ci-cd-secrets
+      - ci-cd-runtime
+      - internal-network
+      - staging-env
+    capabilities:
+      sophistication: high
+      tooling:
+        - debugger
+        - network-sniffer
+        - off-the-shelf
+      dwell_time: months
+      surface_reach:
+        - local
+        - lateral
+        - persistent
+    motivation: financial
+    description: >
+      Developer or contractor with repository read access, local dev environment,
+      and typically CI/CD access. Can exfiltrate secrets, inject malicious code,
+      or pivot from staging to production.
+    activation_conditions:
+      required_signals:
+        - has_secrets_in_repo
+    severity_modulation:
+      TH-01: 1.0
+      TH-02: 1.4   # Tampering — can inject code
+      TH-03: 0.9
+      TH-04: 1.3   # Info disclosure — has direct repo access
+      TH-05: 0.8
+      TH-06: 1.2
+    heatmap_slug: repo-read
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+  - id: ACT-D-05
+    label: malicious-insider-ops
+    access:
+      - prod-env
+      - prod-readonly-db
+      - prod-write-db
+      - deployment-pipeline
+      - internal-network
+    capabilities:
+      sophistication: high
+      tooling:
+        - off-the-shelf
+        - debugger
+      dwell_time: months
+      surface_reach:
+        - lateral
+        - persistent
+    motivation: disruption
+    description: >
+      Operator or SRE with production access. Can exfiltrate prod data, tamper
+      with running configuration, bypass audit trails, or abuse deployment rights.
+    activation_conditions:
+      required_signals:
+        - has_secrets_in_repo   # proxy: deploy/infra code presence
+    severity_modulation:
+      TH-01: 0.8
+      TH-02: 1.3
+      TH-03: 1.4   # Repudiation — can suppress logs
+      TH-04: 1.5   # Info disclosure — direct prod-db access
+      TH-05: 1.1
+      TH-06: 1.2
+    heatmap_slug: repo-read
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+  - id: ACT-D-06
+    label: supply-chain-attacker
+    access:
+      - build-pipeline
+      - ci-cd-runtime
+      - internet
+    capabilities:
+      sophistication: high
+      tooling:
+        - custom-malware
+        - off-the-shelf
+      dwell_time: weeks
+      surface_reach:
+        - persistent
+    motivation: espionage
+    description: >
+      External attacker targeting the software supply chain: dependency confusion,
+      maintainer account takeover, build artifact tampering, or malicious package
+      publication.
+    activation_conditions:
+      required_signals:
+        - has_ci_pipeline
+    severity_modulation:
+      TH-01: 0.8
+      TH-02: 1.5   # Tampering — build artifact injection
+      TH-03: 0.7
+      TH-04: 1.1
+      TH-05: 0.9
+      TH-06: 1.3   # EoP — pipeline runs as privileged system user
+    heatmap_slug: build-time
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+  - id: ACT-D-07
+    label: compromised-third-party-service
+    access:
+      - internet
+      - peer-service
+    capabilities:
+      sophistication: high
+      tooling:
+        - custom-malware
+        - off-the-shelf
+      dwell_time: weeks
+      surface_reach:
+        - lateral
+    motivation: espionage
+    description: >
+      An external service that this application integrates with, whose API or
+      webhook delivery has been compromised. Reach via malicious API responses,
+      poisoned webhook payloads, or SSRF redirections.
+      Note: cross-repo actor pulls (related-repos.yaml) are NOT supported — Phase 2.
+    activation_conditions:
+      required_signals:
+        - has_external_apis
+    severity_modulation:
+      TH-01: 1.1   # Spoofing — compromised identity of trusted service
+      TH-02: 1.2
+      TH-03: 0.7
+      TH-04: 1.2
+      TH-05: 1.0
+      TH-06: 1.1
+    heatmap_slug: internet-anon
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+  - id: ACT-D-08
+    label: physical-device-holder
+    access:
+      - client-device
+      - mobile-device
+      - local-fs
+    capabilities:
+      sophistication: low
+      tooling:
+        - off-the-shelf
+        - debugger
+      dwell_time: short
+      surface_reach:
+        - local
+    motivation: financial
+    description: >
+      Attacker with physical or logical access to an end-user device: extracts
+      locally cached credentials, tokens in localStorage/IndexedDB, or sensitive
+      data from offline storage.
+    activation_conditions:
+      required_signals:
+        - has_client_storage
+    severity_modulation:
+      TH-01: 1.0
+      TH-02: 0.8
+      TH-03: 0.7
+      TH-04: 1.3   # Info disclosure — local data extraction
+      TH-05: 0.6
+      TH-06: 1.1
+    heatmap_slug: victim-required
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+  - id: ACT-D-09
+    label: tenant-from-adjacent-tenancy
+    access:
+      - authenticated-user-session
+      - adjacent-tenant
+    capabilities:
+      sophistication: medium
+      tooling:
+        - off-the-shelf
+      dwell_time: weeks
+      surface_reach:
+        - lateral
+    motivation: financial
+    description: >
+      Legitimate co-tenant within the same multi-tenant instance. Attempts
+      cross-tenant data access via IDOR, shared-cache poisoning, or missing
+      RLS policies.
+      Activation requires BOTH: (a) tenant ID field in schema (tenant_id,
+      organization_id, workspace_id, etc.) AND (b) tenant-scoping pattern
+      (middleware/context, RLS policy, FK to tenants table).
+    activation_conditions:
+      required_signals:
+        - has_multi_tenancy_signal
+      signal_logic: all   # both signals required — see actors.md §5
+    severity_modulation:
+      TH-01: 0.9
+      TH-02: 1.2
+      TH-03: 0.8
+      TH-04: 1.4   # Info disclosure — cross-tenant data leak
+      TH-05: 0.7
+      TH-06: 1.3   # EoP — tenant privilege boundary breach
+    heatmap_slug: internet-user
+    _provenance:
+      layer: plugin
+      source_file: data/actors/default-library.yaml
+
+# Reach-equivalence rules (evaluated by resolve_actors.py)
+reach_equivalence_rules:
+  - condition_signal: has_open_self_registration
+    actor_ids:
+      - ACT-D-01
+      - ACT-D-02
+    collapse_reason: open-self-registration
+    primary_actor: ACT-D-01   # lowest reach-distance wins
+    note: >
+      When self-registration is open, any internet visitor becomes a
+      low-priv authenticated user in seconds — auth wall is not a real
+      reach barrier. Severity modulation uses max() over the equivalence class.
+
+# COMPONENT_ALWAYS_RELEVANT lookup table (additive per layer)
+component_always_relevant:
+  ci-cd-pipeline:
+    - ACT-D-06   # supply-chain-attacker
+    - ACT-D-05   # malicious-insider-ops
+  auth-service:
+    - ACT-D-01   # anonymous-internet-attacker
+    - ACT-D-02   # authenticated-low-priv-user
+  admin-interface:
+    - ACT-D-03   # authenticated-high-priv-user
+    - ACT-D-04   # malicious-insider-dev
+  payment-handler:
+    - ACT-D-01
+    - ACT-D-02
+    - ACT-D-04
+  developer-workstation:
+    - ACT-D-04   # malicious-insider-dev
+    - ACT-D-06   # supply-chain-attacker

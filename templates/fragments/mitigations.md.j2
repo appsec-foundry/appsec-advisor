@@ -1,26 +1,37 @@
-{#- ### Top Mitigations — single central table, sub-grouped by component.
+{#- ### Top Mitigations — per-component sub-tables with paragraph divider.
+
+    Layout (2026-05 update — replaces the in-table divider-row form because
+    Markdown pipe-tables have no colspan and the `| label | | | | |`
+    render produced one cell + 4 visually broken empty cells; per-component
+    `####` H4 sub-headers were rejected in a prior iteration as too noisy):
+
+      ↳ <Component Name> (<c-id>) — N item(s)         ← bold paragraph
+      | # | Priority | Mitigation | Addresses | Effort |
+      |---|---|---|---|---|
+      | 1 | P1 | ...                                   ← rows for that bucket
+      | 2 | P1 | ...
+
+      ↳ <Next Component> (<c-id>) — M item(s)         ← next paragraph divider
+      | # | Priority | Mitigation | Addresses | Effort |
+      |---|---|---|---|---|
+      | 3 | P1 | ...
+
+    The `↳ … N item(s)` paragraph sits OUTSIDE the table, visually spanning
+    the full table width without needing colspan. Each pipe-table has its
+    own header so the contract checker (qa_checks.py table_checks) still
+    sees the canonical `| # | Priority | Mitigation | Addresses | Effort |`
+    header — one occurrence is enough.
+
     Inputs:
-      groups    : list of { header, include_affects_column, mitigations[] }
-                  Post-2026-05 layout uses a single group with header=None.
-                  `mitigations[]` holds two row kinds:
-                    * Divider row (is_divider=True, divider_label="<Component
-                      Name> (<C-NN>) — N item(s)") — visually introduces a
-                      component bucket.
-                    * Data row (is_divider=False) with
-                      { id, title, primary_component_id, addresses[{ref,label}],
-                        effort, priority }
-                  Data rows are pre-sorted: P1 → P2, severity, effort, ID.
+      groups    : list of { header, divider_label, include_affects_column, mitigations[] }
+                  - header:        optional `####` sub-header (legacy); usually None
+                  - divider_label: paragraph divider text per group (NEW 2026-05)
+                  - mitigations[]: data rows with continuous global numbering
+                                   { number, id, title, primary_component_id,
+                                     addresses[{ref,label}], effort, priority }
+                                   Pre-sorted: P1 → P2, severity, effort, ID.
       intro     : top-of-section paragraph string (mentions §9 register)
       footer    : optional italic footer line under the table (may be None)
-
-    Rendered table (Component column dropped — divider rows carry it):
-      | # | Priority | Mitigation | Addresses | Effort |
-        - #:          sequential number across data rows (1, 2, 3, …);
-                      divider rows leave this cell empty
-        - Priority:   bold P1/P2 marker
-        - Mitigation: `[M-NNN](#m-nnn) — <title>`
-        - Addresses:  one finding per line, `[F-NNN](#f-nnn) — <weakness>`
-        - Effort:     Low / Medium / High
 -#}
 ### Top Mitigations
 
@@ -30,14 +41,14 @@
 #### {{ g.header }}
 
 {% endif -%}
+{%- if g.divider_label %}
+**{{ g.divider_label }}**
+
+{% endif -%}
 | # | Priority | Mitigation | Addresses | Effort |
 |---|---|---|---|---|
 {%- for m in g.mitigations %}
-{%- if m.is_divider %}
-| **↳ {{ m.divider_label }}** | | | | |
-{%- else %}
 | **{{ m.number }}** | **{{ m.priority }}** | [{{ m.id }}](#{{ m.id | lower }}) — {{ m.title }} | {% for a in m.addresses %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
-{%- endif %}
 {%- endfor %}
 {% endfor -%}
 {%- if footer %}

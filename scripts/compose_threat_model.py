@@ -133,6 +133,7 @@ _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
     "operational_strengths": [".fragments/operational-strengths-overrides.json"],
     "system_overview": [".fragments/system-overview.md"],
+    "identified_actors": [],  # computed — no LLM fragment (actors.md §14)
     "architecture_diagrams": [".fragments/architecture-diagrams.md"],
     "attack_walkthroughs": [".fragments/attack-walkthroughs.md"],
     "assets": [".fragments/assets.md"],
@@ -302,6 +303,48 @@ class RenderContext:
         """Placeholder — kept so downstream imports do not break if they
         referenced the old split-on-dot behaviour. The real logic lives in
         the module-level helper ``_synthesise_label`` below."""
+
+    def linkify_with_short_label(self, ref: str, label_override: str | None = None) -> str:
+        """Inline-prose form of cross-references: `[ID](#anchor) (short_label)`.
+
+        Use this in chain takeaways, walkthrough bullets, and any other
+        inline-prose context where the full `[ID](#anchor) — title — file`
+        form (emitted by `linkify_with_label`) reads as a torn-link
+        construct because `_normalize_emdashes` mid-line eats the em-dash
+        separator AND the title carries its own ` — <file>` suffix.
+
+        Short-label rule handles BOTH title forms produced by upstream
+        processing — without this, `_normalize_title_to_paren_form`
+        (M-10c, runs during compose's per-threat title rewrite) would
+        leave the file segment INSIDE the parens span and we'd render
+        the visually broken nested-parens form
+        `[F-005](#f-005) (Reflected XSS (search-result.component.ts))`:
+
+          - ``<weakness> — <file>``   (raw Stage-1 LLM form)
+            → split on ` — `, take leading segment
+          - ``<weakness> (<file>)``   (post-_normalize_title_to_paren_form)
+            → strip trailing ``(…)`` group
+
+        When neither separator is present, the whole label is used.
+        Empty label degrades to ``[ID](#anchor)`` (no parens), same as
+        ``linkify_with_label``.
+        """
+        if not ref:
+            return ""
+        r = ref.strip()
+        if not r:
+            return ""
+        m = re.match(r"^T-(\d+)$", r)
+        if m:
+            r = f"F-{m.group(1)}"
+        anchor = r.lower()
+        label = (label_override or self.lookup_label(r) or "").strip()
+        # Strip the file-path tail in either em-dash or parens form.
+        short = label.split(" — ", 1)[0].strip()
+        short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()
+        if short:
+            return f"[{r}](#{anchor}) ({short})"
+        return f"[{r}](#{anchor})"
 
     def linkify_with_label(self, ref: str, label_override: str | None = None) -> str:
         """Emit `[ID](#id-lower) — label`. If label is empty or unknown,
@@ -4889,20 +4932,13 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
             }
         )
 
-    # Annotate consecutive same-component runs with comp_rowspan:
-    # first row of a run gets rowspan=N, subsequent rows get 0 (skip cell).
-    for i, row in enumerate(rendered):
-        if i == 0 or rendered[i - 1]["component_id"] != row["component_id"]:
-            count = 1
-            for j in range(i + 1, len(rendered)):
-                if rendered[j]["component_id"] == row["component_id"]:
-                    count += 1
-                else:
-                    break
-            row["comp_rowspan"] = count
-        else:
-            row["comp_rowspan"] = 0
-
+    # Top Findings is rendered as a Markdown pipe-table (contract-aligned with
+    # qa_checks.py table_checks + tests/test_compose_threat_model.py); the
+    # legacy HTML <table>+rowspan grouping was retired because pipe-tables
+    # have no rowspan and apply_prose_fixes._URL_PATH_RE mangled the long
+    # closing tags `</thead>`, `</tbody>`, `</table>`. The Component cell now
+    # repeats per row — standard Markdown practice and equivalent across
+    # GitHub, pandoc→PDF, and weasyprint.
     return rendered, len(qualifying_ids)
 
 
@@ -4957,8 +4993,36 @@ def _render_architecture_assessment(ctx: RenderContext, env: jinja2.Environment,
     # using the components index from the canonical YAML so the column
     # renders with the display name.
     comp_lookup = _component_lookup(ctx)
+
+    # Auto-derive `affected_components` when the Stage-2 LLM fragment left
+    # them empty. We walk `weaknesses[].findings[].ref`, map each F-/T-NNN
+    # back to its `threats[].component` via the YAML, and emit a unique
+    # list. The fallback runs ONLY when the LLM-provided list is empty —
+    # explicit author-set values are preserved.
+    threats_by_id: dict[str, str] = {}
+    for t in (ctx.yaml_data.get("threats") or []):
+        tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+        comp = (t.get("component") or "").strip()
+        if not tid or not comp:
+            continue
+        threats_by_id[tid] = comp
+        # Register both T-NNN and F-NNN aliases so findings carrying either
+        # form resolve cleanly.
+        if tid.startswith("T-"):
+            threats_by_id.setdefault("F-" + tid[2:], comp)
+        elif tid.startswith("F-"):
+            threats_by_id.setdefault("T-" + tid[2:], comp)
+
     for w in data.get("weaknesses") or []:
         raw = w.get("affected_components") or []
+        if not raw:
+            derived: list[str] = []
+            for f in (w.get("findings") or []):
+                ref = (f.get("ref") or "").strip().upper() if isinstance(f, dict) else ""
+                cid = threats_by_id.get(ref)
+                if cid and cid not in derived:
+                    derived.append(cid)
+            raw = derived
         enriched = []
         for entry in raw:
             if isinstance(entry, str):
@@ -5152,31 +5216,36 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         (c.get("id") or "").strip(): c
         for c in (ctx.yaml_data.get("components", []) or [])
     }
-    flat_rows: list[dict[str, Any]] = []
+    # 2026-05 — per-component groups with a paragraph divider per group
+    # (no `####` H4 sub-headers per prior user guidance; no in-table
+    # divider rows because Markdown pipe-tables have no colspan and the
+    # `| label | | | | |` form rendered as one cell + 4 empty cells.
+    # The new layout emits one pipe-table per component bucket, separated
+    # by a bold paragraph divider — visually the component label spans
+    # the full table width because it sits OUTSIDE the table.
+    groups: list[dict[str, Any]] = []
+    _row_number = 0
     for cid in sorted(buckets.keys(), key=_component_sort_key):
         bucket = sorted(buckets[cid], key=_row_sort_key)
         if cid:
             comp_name = (components_meta.get(cid) or {}).get("name", cid)
-            divider_label = f"{comp_name} ({cid}) — {len(bucket)} item(s)"
+            divider_label = f"↳ {comp_name} ({cid}) — {len(bucket)} item(s)"
         else:
-            divider_label = f"Cross-cutting — {len(bucket)} item(s)"
-        flat_rows.append({"is_divider": True, "divider_label": divider_label})
+            divider_label = f"↳ Cross-cutting — {len(bucket)} item(s)"
+        # Continuous numbering across groups (1..N), so the # column reads
+        # as a global leader-board rank rather than per-component 1..N.
+        group_rows: list[dict[str, Any]] = []
         for r in bucket:
             r["is_divider"] = False
-            flat_rows.append(r)
-
-    # Assign a sequential 1..N number to non-divider data rows so the
-    # rendered table can show a `#` column. Divider rows leave the cell
-    # blank (handled by the j2 template).
-    _row_number = 0
-    for r in flat_rows:
-        if r.get("is_divider"):
-            continue
-        _row_number += 1
-        r["number"] = _row_number
-
-    # Single group, no `####` header — divider rows carry the bucketing.
-    groups = [{"header": None, "include_affects_column": False, "mitigations": flat_rows}]
+            _row_number += 1
+            r["number"] = _row_number
+            group_rows.append(r)
+        groups.append({
+            "header": None,
+            "divider_label": divider_label,
+            "include_affects_column": False,
+            "mitigations": group_rows,
+        })
 
     total_count = len(enriched)
     p1_count = sum(1 for r in p12_rows if r.get("priority") == "P1")
@@ -5909,6 +5978,11 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # linkify passes above see the raw text first.
     md = _escape_dollar_operators(md)
     md = _escape_dot_tld_identifiers(md)
+    # `_escape_html_payloads_in_prose` is intentionally NOT called here —
+    # markdown fragments are only one of several section types and the
+    # §8 Threat Register (computed section) bypasses this wrapper. The
+    # escape pass runs in the END-OF-RENDER pipeline (see `render()` near
+    # the bottom of this file) so every section type is covered.
 
     return md.rstrip() + "\n"
 
@@ -6774,6 +6848,69 @@ _DOT_TLD_KNOWN_NAMES: frozenset[str] = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# _escape_html_payloads_in_prose — wrap unescaped attacker-payload HTML tags
+# in inline backticks so the rendered HTML/PDF report does not interpret
+# them as live `<script>` / `<img onerror=…>` / `<svg onload=…>` elements.
+# Without this pass, prose like `q=<script>...</script>` ships RAW into the
+# final document; pandoc / weasyprint then emit literal <script> elements
+# that browsers execute. The threat report becomes its own XSS sink.
+#
+# Scope:
+#   * Match every bare opening, closing, or self-closing form of the
+#     dangerous-tag set below.
+#   * Wrap each match in `` ` … ` `` so it renders as inline code.
+#
+# Forbidden zones (never rewritten):
+#   * Fenced code blocks (``` ... ```)
+#   * <details>...</details> blocks (Story Card collapsible code snippets)
+#   * <pre>...</pre> and inline <code>...</code>
+#   * Existing inline backtick spans (`...`) so the pass is idempotent
+#   * HTML attribute values (`href="..."`, `id="..."`) — defensive: the only
+#     tag in our document that uses these is the legitimate `<a id="t-NNN">`
+#     anchor declaration, which is not in the dangerous-tag set anyway.
+# ---------------------------------------------------------------------------
+_DANGEROUS_HTML_TAG_RE = re.compile(
+    r"</?(?:script|iframe|svg|object|embed|form|style|link|meta)\b[^>]*/?>"
+    r"|<img\b[^>]*onerror\s*=[^>]*>"
+    r"|<img\b[^>]*/?>"  # bare <img …> — payload context only since legit <img> never appears in our prose
+    r"|<[A-Za-z][\w]*\s+(?:onerror|onload|onclick|onmouseover)\s*=[^>]*/?>",
+    re.IGNORECASE,
+)
+
+
+def _escape_html_payloads_in_prose(md: str) -> str:
+    """Wrap unescaped `<script>` / `<img onerror=…>` / similar payload tags
+    in inline backticks so the rendered HTML/PDF report cannot execute them.
+
+    Idempotent: tags already inside `` `…` ``, fenced code blocks,
+    <details>/<pre>/<code> spans are skipped.
+    """
+    if not md:
+        return md
+    # Split into protected and unprotected chunks. Protected chunks are
+    # passed through verbatim; unprotected chunks get the tag wrap.
+    PROTECTED_RE = re.compile(
+        r"(```[^\n]*\n.*?\n```"        # fenced code
+        r"|<details\b.*?</details>"    # Story Card code blocks
+        r"|<pre\b.*?</pre>"            # raw <pre>
+        r"|<code\b.*?</code>"          # raw <code>
+        r"|`[^`\n]+`)",                # inline code span
+        flags=re.DOTALL,
+    )
+    out_chunks: list[str] = []
+    for chunk in PROTECTED_RE.split(md):
+        if not chunk:
+            continue
+        if (chunk.startswith("```") or chunk.startswith("<details")
+                or chunk.startswith("<pre") or chunk.startswith("<code")
+                or (chunk.startswith("`") and chunk.endswith("`"))):
+            out_chunks.append(chunk)
+            continue
+        out_chunks.append(_DANGEROUS_HTML_TAG_RE.sub(lambda m: f"`{m.group(0)}`", chunk))
+    return "".join(out_chunks)
+
+
 def _escape_dot_tld_identifiers(md: str) -> str:
     """Wrap word.xx patterns in backticks when xx is 2-4 chars (TLD-length)
     to prevent markdown renderers from auto-linking them as bare URLs.
@@ -6848,13 +6985,18 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
     cache: dict[str, str] = {}
 
     def resolve(ref: str) -> str:
+        # Use parens form for inline prose so the rendered text reads as
+        # `[T-005](#t-005) (Reflected XSS via search query parameter)`
+        # rather than `… — Reflected XSS … — search-result.component.ts`
+        # (the latter is a torn-link construct after _normalize_emdashes
+        # converts the separator em-dash to a hyphen mid-line).
         if ref not in cache:
-            cache[ref] = ctx.linkify_with_label(ref)
+            cache[ref] = ctx.linkify_with_short_label(ref)
         return cache[ref]
 
-    # Find every bare `[X-NNN](#x-nnn)` that is NOT followed by em-dash label.
-    # Use negative-lookahead `(?! — )`. Bullet-list lines `- [ID](#…) — label`
-    # are NOT matched because they have the em-dash.
+    # Find every bare `[X-NNN](#x-nnn)` that is NOT followed by an existing
+    # em-dash label OR an existing parens label — both are signs the link
+    # has already been enriched and re-expanding would double-label.
     def sub_ref(m: re.Match) -> str:
         ref = m.group(1)
         # Skip citation style `*([F-009](#f-009))*` — check surrounding chars.
@@ -6881,7 +7023,11 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
                 # Heading — do not expand refs.
                 continue
             lines[i] = re.sub(
-                r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?! — )",
+                # Skip refs already followed by ` — <label>` (em-dash form,
+                # produced by linkify_with_label in table cells / register
+                # builders) AND refs already followed by ` (<label>)` (parens
+                # form, produced by linkify_with_short_label in prose).
+                r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?!\s+[—(])",
                 sub_ref,
                 line,
             )
@@ -8664,6 +8810,144 @@ def _build_finding_cell(
     return cell
 
 
+def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """§1.5 Identified Actors — table of resolved ACT-* actors with layer, status,
+    finding counts, and per-component relevance (actors.md §14). Conditional on
+    `has_resolved_actors`; gracefully renders empty on legacy / pre-Phase-2.7 runs.
+    """
+    resolved_path = ctx.output_dir / ".actors-resolved.json"
+    if not resolved_path.is_file():
+        return ""
+    try:
+        resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+    actors = resolved.get("resolved_actors", []) or []
+    threats = ctx.yaml_data.get("threats") or []
+
+    # Tabulate per-actor finding counts and components.
+    counts: dict[str, int] = {}
+    components: dict[str, set[str]] = {}
+    for t in threats:
+        comp = t.get("component", "")
+        for aid in (t.get("actor_ids") or []):
+            counts[aid] = counts.get(aid, 0) + 1
+            if comp:
+                components.setdefault(aid, set()).add(comp)
+
+    # Load discovery output for inputs_questioned (optional).
+    inputs_questioned: list[dict] = []
+    discovery_path = ctx.output_dir / ".actors-discovered.json"
+    if discovery_path.is_file():
+        try:
+            disc = json.loads(discovery_path.read_text(encoding="utf-8"))
+            inputs_questioned = disc.get("inputs_questioned", []) or []
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    lines: list[str] = ['<a id="identified-actors"></a>', "## 1.5 Identified Actors", ""]
+
+    # Quick-mode transparency notice (actors.md §12).
+    if (ctx.output_dir / ".discovery-skipped.json").is_file():
+        lines.append(
+            "> _Note: This run used the static actor library only. "
+            "Re-run with `--standard` or `--thorough` to enable LLM-based actor discovery "
+            "for repo-specific actor identification._"
+        )
+        lines.append("")
+
+    active = [a for a in actors if (a.get("_provenance") or {}).get("active")]
+    if active:
+        lines.append("| ID | Label | Layer | Status | Findings | Relevant for |")
+        lines.append("|---|---|---|---|---|---|")
+        for a in sorted(active, key=lambda x: x.get("id", "")):
+            aid = a.get("id", "?")
+            label = a.get("label", "")
+            prov = a.get("_provenance") or {}
+            layer = prov.get("layer", "?")
+            proposed = bool(prov.get("proposed"))
+            status = "proposed" if proposed else "active"
+            if prov.get("stale"):
+                status += " (stale)"
+            display_layer = f"{layer} (proposed)" if proposed else layer
+            comps = sorted(components.get(aid, set()))
+            comps_str = ", ".join(comps) if comps else "_(no findings)_"
+            lines.append(f"| `{aid}` | {label} | {display_layer} | {status} | {counts.get(aid, 0)} | {comps_str} |")
+        lines.append("")
+    else:
+        lines.append("_No actors resolved for this run._")
+        lines.append("")
+
+    proposed_actors = [a for a in active if (a.get("_provenance") or {}).get("proposed")]
+    if proposed_actors:
+        lines.append("### Newly identified actors — please confirm")
+        lines.append("")
+        lines.append(
+            "The following actors were proposed by LLM discovery (Phase 2.7) and are "
+            "active in this run. Promote them to `.appsec/actors.yaml` to stabilize "
+            "them across re-runs (actors.md §8)."
+        )
+        lines.append("")
+        for a in proposed_actors:
+            aid = a.get("id", "?")
+            label = a.get("label", "")
+            rationale = a.get("rationale") or a.get("description", "")
+            suffix = f" — {rationale}" if rationale else ""
+            lines.append(f"- **`{aid}` ({label})**{suffix}")
+        lines.append("")
+
+    if inputs_questioned:
+        lines.append("### Actors flagged for review")
+        lines.append("")
+        lines.append(
+            "Discovery flagged these actors as questionable — recon shows no plausible "
+            "reach for them in this repo. Consider disabling in your next run."
+        )
+        lines.append("")
+        for q in inputs_questioned:
+            qid = q.get("id", "?")
+            reason = q.get("reason", "")
+            rec = q.get("recommendation", "")
+            tail = f" _(recommendation: {rec})_" if rec else ""
+            lines.append(f"- **`{qid}`** — {reason}{tail}")
+        lines.append("")
+
+    disabled = [a for a in actors if (a.get("_provenance") or {}).get("disabled_by")]
+    if disabled:
+        lines.append("### Disabled actors")
+        lines.append("")
+        lines.append("| ID | Label | Disabled by | Reason |")
+        lines.append("|---|---|---|---|")
+        for a in sorted(disabled, key=lambda x: x.get("id", "")):
+            aid = a.get("id", "?")
+            label = a.get("label", "")
+            prov = a.get("_provenance") or {}
+            by = prov.get("disabled_by", "")
+            reason = prov.get("disable_reason") or "_(no reason given)_"
+            lines.append(f"| `{aid}` | {label} | {by} | {reason} |")
+        lines.append("")
+
+    dormant_threats = [t for t in threats if t.get("_status") == "dormant"]
+    if dormant_threats:
+        lines.append("### Dormant findings")
+        lines.append("")
+        lines.append(
+            "Findings preserved across re-runs whose structurally-required actor was "
+            "disabled (actors.md §10 Stable-ID Garantie Fall 3). Re-enable the actor "
+            "in your next run to surface them as live findings again."
+        )
+        lines.append("")
+        for t in dormant_threats:
+            tid = t.get("id", "?")
+            title = t.get("title", "")
+            ca = (t.get("_provenance") or {}).get("created_by_actor", "?")
+            lines.append(f"- **{tid}** — {title} _(was tagged: `{ca}`)_")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §8 Threat Register in the canonical 8.A/B/C/D layout.
 
@@ -8715,9 +8999,16 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     fid_to_walkthrough = _build_finding_to_chain_map(ctx)
 
     # Severity + STRIDE aggregates.
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    # `info` is canonical (severity-taxonomy.yaml key); `informational` is the
+    # schema enum value (threat-model.output.schema.yaml). Alias them so the
+    # §8 opener's Total matches the STRIDE Coverage sum below (the historic
+    # 43-vs-41 invariants drift was Informational threats being silently
+    # excluded from `counts` while still counted in stride_map).
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for t in threats:
         sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        if sev == "informational":
+            sev = "info"
         if sev in counts:
             counts[sev] += 1
     total = sum(counts.values())
@@ -8806,9 +9097,20 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     for idx, body in enumerate(intro_bullets, 1):
         lines.append(f"{idx}. {body}")
     lines.append("")
+    # Risk Distribution: always show Critical/High/Medium/Low; show Info
+    # only when at least one Informational threat is present (keeps the
+    # opener tight for the common case while keeping the sum honest when
+    # Info threats exist).
+    rd_parts = [
+        f"🔴 Critical: {counts['critical']}",
+        f"🟠 High: {counts['high']}",
+        f"🟡 Medium: {counts['medium']}",
+        f"🟢 Low: {counts['low']}",
+    ]
+    if counts.get("info", 0) > 0:
+        rd_parts.append(f"⚪ Info: {counts['info']}")
     lines.append(
-        f"**Risk Distribution:** 🔴 Critical: {counts['critical']} · 🟠 High: {counts['high']} · "
-        f"🟡 Medium: {counts['medium']} · 🟢 Low: {counts['low']} · **Total findings: {total}**"
+        f"**Risk Distribution:** " + " · ".join(rd_parts) + f" · **Total findings: {total}**"
     )
     lines.append(
         f"**STRIDE Coverage:** Spoofing: {stride_map['spoofing']} · "
@@ -8861,8 +9163,10 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # column so the table groups visually by where the finding lives.
     # Vektor moves into the Finding cell as a labelled **Vektor:** field
     # (same anchor target, same label resolution — just rendered inline).
-    lines.append("| ID | Finding | Component | Criticality |")
-    lines.append("|----|---------|-----------|-------------|")
+    # 5 columns since actors.md §14 — Actor column links to §1.5 and surfaces
+    # [obsolete-actor] / _dormant_ markers (§10 Stable-ID-Garantie Fälle 2 & 3).
+    lines.append("| ID | Finding | Component | Actor | Criticality |")
+    lines.append("|----|---------|-----------|-------|-------------|")
 
     # Vektor sort key — sort dirtier paths first within a severity tier so
     # the reader scans Repo-Read criticals before Victim-Required ones.
@@ -8931,6 +9235,28 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             fid_to_walkthrough=fid_to_walkthrough,
         )
 
+        # Actor cell (column 4) — actors.md §10 & §14:
+        #   primary_actor (link to §1.5) + optional +N extras,
+        #   [obsolete-actor] marker when actor_ids list is empty (§10 Fall 2),
+        #   _dormant_ marker when finding is preserved past actor disable (§10 Fall 3).
+        actor_ids = t.get("actor_ids") or []
+        primary_actor = t.get("primary_actor")
+        status_lower = (t.get("_status") or "").strip().lower()
+        if status_lower == "dormant":
+            actor_cell = "_dormant_"
+        elif not actor_ids:
+            actor_cell = "_[obsolete-actor]_"
+        elif primary_actor:
+            actor_cell = f"[`{primary_actor}`](#identified-actors)"
+            extras = [a for a in actor_ids if a != primary_actor]
+            if extras:
+                actor_cell += f" <sub>+{len(extras)}</sub>"
+        else:
+            # actor_ids present but no primary chosen — degenerate but valid; show first.
+            actor_cell = f"[`{actor_ids[0]}`](#identified-actors)"
+            if len(actor_ids) > 1:
+                actor_cell += f" <sub>+{len(actor_ids) - 1}</sub>"
+
         # ID cell (column 1) — dual T+F anchor, F-NNN visible label.
         # See pre-2026-05 commentary preserved further down in this file:
         # F-NNN is the canonical user-visible finding ID in LLM-authored
@@ -8946,7 +9272,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             visible_id = f"F-{digits}"
         lines.append(
             f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | '
-            f"{finding_cell} | {comp_cell} | {sev_cell} |"
+            f"{finding_cell} | {comp_cell} | {actor_cell} | {sev_cell} |"
         )
     lines.append("")
 
@@ -9554,6 +9880,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "toc": _render_toc,
         "management_summary": _render_management_summary,
         "verdict": _render_verdict,
+        "identified_actors": _render_identified_actors,
         "security_posture_at_a_glance": _render_security_posture_at_a_glance,
         "skipped_sections_placeholder": _render_skipped_sections_placeholder,
         "top_findings": _render_top_findings,
@@ -9854,6 +10181,10 @@ def render(
             # perf anomalies / recovery events). Drives the §Run Issues
             # appendix include/skip decision.
             "run_warned": _run_warned_signal(output_dir),
+            # §1.5 Identified Actors gate (actors.md §14). True iff Phase 2.7
+            # produced .actors-resolved.json — legacy runs and pre-Phase-2.7
+            # caches gracefully skip the section instead of failing the contract.
+            "has_resolved_actors": (output_dir / ".actors-resolved.json").is_file(),
             # Quick-mode §7 gate. False suppresses §7 in both TOC and body
             # (resolver returned `""` — current depth is quick and no rich
             # prior content was found). True keeps §7 — either via the
@@ -10055,6 +10386,15 @@ def render(
     # document for `##` / `###` / `####` headings, builds a number → slug
     # map, and rewrites `§N(.M(.K)?)?` in non-heading prose.
     rendered = _linkify_section_refs(rendered)
+
+    # Wrap unescaped `<script>` / `<img onerror=…>` attacker-payload tags
+    # in inline backticks so the rendered HTML/PDF report does not interpret
+    # them as live HTML elements (the report would otherwise become its own
+    # XSS sink — see _escape_html_payloads_in_prose for the full rationale).
+    # MUST run at the global pipeline (not per-section) because the §8
+    # Threat Register cells with attacker payloads live inside a computed
+    # section that bypasses _render_markdown_fragment.
+    rendered = _escape_html_payloads_in_prose(rendered)
 
     # Final em-dash normalization — convert " — " (U+2014 surrounded by
     # spaces) to " - " (ASCII hyphen) outside fenced code blocks. Em dashes

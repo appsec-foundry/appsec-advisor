@@ -36,6 +36,8 @@ You are a **senior software architect** reviewing a completed threat model as if
 
 **Conditional Check 14:** §7 narrative quality bar (post-render gate).
 
+**Conditional Check 15:** Actor Coverage — runs only when `.actors-resolved.json` exists (i.e. not in Quick-mode). Verifies that the Actor Layer configuration is consistent with the finding distribution.
+
 The output is advisory for **content** observations (insufficient mitigation realism, rating coherence, ROI) but **normative** for **technical defects** that break the `sections-contract.yaml` at an architect-visible level (missing attack walkthrough per Critical, §7.3 missing per-flow `####` blocks, broken Mermaid syntax that survived rendering, diagram labels contradicting the recon summary). When a technical defect is detected, the agent emits a structured repair plan so the skill can re-render from fragments — the agent itself still never edits the threat model.
 
 ## Preservation constraint — CRITICAL
@@ -419,11 +421,63 @@ Runs only when `.config-scan-findings.json` exists OR `config-iac-checks.yaml` h
 
 ### Check 14 — §7 Security Architecture narrative quality bar
 
-**Print now:** `[architect]   ↳ Check 14/14 — §7 narrative quality bar…`
+**Print now:** `[architect]   ↳ Check 14/15 — §7 narrative quality bar…`
 
 Read `shared/sec7-quality-bar-rules.md` for the 6 per-block validation codes and severities. Scope is the rendered `threat-model.md` §7 body — H3 sections `### 7.1` through `### 7.13`, plus every H4 subcontrol under §7.2–§7.12.
 
 **Skip when:** the rendered `threat-model.md` does not yet exist (pre-render run) — the check is a post-render gate.
+
+---
+
+### Check 15 — Actor Coverage (conditional)
+
+**Print now:** `[architect]   ↳ Check 15/15 — Actor coverage…`
+
+**Skip when:** `.actors-resolved.json` does not exist in `$OUTPUT_DIR` (Quick-mode or actor-layer not yet enabled).
+
+**Inputs to read (once each):**
+
+- `$OUTPUT_DIR/.actors-resolved.json` — resolved actor set with provenance
+- `$OUTPUT_DIR/.actors-discovered.json` — discovery output (optional; skip sub-checks 15.4/15.5 when absent)
+- `threat-model.yaml` — findings with `actor_ids` and `primary_actor` fields
+- Per-component slice files `$OUTPUT_DIR/.actors-for-*.json` (glob, read all)
+
+**Sub-Check 15.1 — Activated-but-unused actors:**
+
+For each actor in `.actors-resolved.json` where `_provenance.layer != "discovery"`:
+- Does at least one finding in `threat-model.yaml` carry this actor ID in `actor_ids[]`?
+- If NO and actor was slice-relevant for ≥1 component → emit issue `actor_activated_no_findings`
+  - Severity: `info` on first occurrence; escalate to `advisory` if `_provenance.run_count_empty >= 2`
+
+**Sub-Check 15.2 — Disabled without rationale:**
+
+For each actor with `_provenance.disabled_by != null`:
+- Does `_provenance.disable_reason` exist and contain non-trivial text?
+- If NO → emit issue `actor_disabled_without_rationale`, severity `defect`
+- If YES → emit `info` listing actor ID + reason (audit trail)
+
+**Sub-Check 15.3 — Components without actor attribution:**
+
+For each analyzed component (from `threat-model.yaml` `components[]`):
+- Does at least one finding for this component have `actor_ids != []`?
+- If NO → emit issue `component_findings_no_actor_attribution`, severity `advisory`
+
+**Sub-Check 15.4 — Discovery proposals without findings (when `.actors-discovered.json` exists):**
+
+For each entry in `.actors-discovered.json` `proposed_additional[]`:
+- Does at least one finding carry this actor's `id` in `actor_ids[]`?
+- If NO → emit issue `proposed_actor_no_findings`, severity `info` (no escalation)
+
+**Sub-Check 15.5 — Inputs-questioned actors not reviewed (when `.actors-discovered.json` exists):**
+
+For each actor in `.actors-discovered.json` `inputs_questioned[]`:
+- Does the actor still appear in `.actors-resolved.json` active set?
+- If YES and this is not the first run → emit `questioned_actor_not_reviewed`, severity `advisory`
+- Escalate to `defect` when `_provenance.questioned_run_count >= 3`
+
+**Output:** Append all Check 15 findings as a `## Check 15 — Actor Coverage` section in `.architect-review.md`. Also write structured results to `.architect-review.json` under key `check_15` (array of `{sub_check, issue_class, severity, actor_id, component_id, detail}` objects).
+
+Severity vocabulary: `info | advisory | defect` (lowercase, matching run-issues convention).
 
 ---
 

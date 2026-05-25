@@ -68,6 +68,20 @@ CLEANUP
   --clean-all                  Delete everything in the output directory
   --force                      Skip confirmation prompt for --clean-all
 
+ACTOR LAYER
+  --refresh-discovery          Force a fresh LLM actor discovery run even when the
+                               discovery cache is current. Use after significant
+                               recon-summary changes that the cache key does not capture.
+                               (Default: reuse cached .actors-discovered.json when
+                               discovery_inputs_fingerprint is unchanged)
+
+  Actor discovery runs at standard/thorough depth. At --quick, the static
+  default library (ACT-D-01 through ACT-D-09) is used without LLM discovery.
+  Actor-tagged findings are produced at all depths.
+
+  Custom actors: place <repo>/.appsec/actors.yaml in the target repository.
+  Org-wide actors: use org-profile actors/ directory (see docs/org-profiles.md).
+
 ADVANCED
   --keep-runtime-files         Preserve transient files after a successful run
   --no-tracing                 Disable per-agent token/cost/timing trace
@@ -85,9 +99,14 @@ ADVANCED
 
 PIPELINE
   Stage 1   Threat Analysis & Triage
-  Stage 2   Report Rendering
+              Phase 1    Recon scan (+ .recon-signals.json for Actor Layer)
+              Phase 2.5  Config/IaC scan
+              Phase 2.7  Actor discovery (standard/thorough only)
+              Phase 3+   Architecture modeling, STRIDE fan-out with actor attribution
+  Stage 2   Report Rendering (§1.5 Actor table included)
   Stage 3   QA Review
   Stage 4   Architect Review (depth=thorough only, or --architect-review)
+              incl. Check 15 — Actor Coverage (when .actors-resolved.json exists)
 
   No malformed threat-model.md is ever persisted. The skill either produces a
   contract-clean document or aborts with a structured repair plan.

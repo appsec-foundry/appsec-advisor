@@ -561,11 +561,62 @@ Run all 7 patterns listed in category 12 separately (they target different secre
 
 ## Step 4 — Write Summary
 
-**Print:** `[recon-scanner] Step 4/4 — Writing .recon-summary.md…`
+**Print:** `[recon-scanner] Step 4/4 — Writing .recon-summary.md and .recon-signals.json…`
 
 Write results to `$OUTPUT_DIR/.recon-summary.md` (create directory if needed).
 
 Use the exact Markdown structure defined in `shared/recon-output-template.md`. Apply that template verbatim and fill every `<placeholder>` from the Step 1–3 findings. The template covers Sections 1–10 plus the Security-Relevant Code sub-sections 7.1–7.32 (numbering canonicalised after merging earlier duplicate 7.27 / 7.28 / 7.31 blocks). Section rules, the 200-line cap, and the legacy-numbering crosswalk all live in that file.
+
+### Signals block — mandatory (Actor-Layer input)
+
+After writing `.recon-summary.md`, write a second file `$OUTPUT_DIR/.recon-signals.json` containing the boolean signal flags that drive Actor activation in the Actor Layer (Phase 2.7). These flags must be **deterministic** — set based on concrete evidence from Steps 1–3, not LLM inference. Use the evidence you already gathered; do not issue additional Grep calls.
+
+```json
+{
+  "schema_version": 1,
+  "signals": {
+    "has_public_routes": "<bool> — true when Cat 11 found ≥1 unauthenticated public HTTP route",
+    "has_auth_surface": "<bool> — true when Cat 1 Auth & session found authentication patterns",
+    "has_role_concept": "<bool> — true when Cat 2 Authorization found role/permission/admin concept",
+    "has_secrets_in_repo": "<bool> — true when Cat 12 found ≥1 hardcoded secret or .env in repo",
+    "has_ci_pipeline": "<bool> — true when Cat 14 found ≥1 CI/CD pipeline file (.github/workflows, .gitlab-ci.yml, Jenkinsfile, etc.)",
+    "has_external_apis": "<bool> — true when Cat 25b found ≥1 SaaS integration OR Cat 7 found external HTTP client patterns",
+    "has_client_storage": "<bool> — true when Cat 10 found localStorage/sessionStorage/IndexedDB usage OR Cat 8 found client-side patterns",
+    "has_multi_tenancy_signal": "<bool> — true ONLY when BOTH conditions met: (a) tenant ID field detected (tenant_id, tenantId, organization_id, orgId, workspace_id, customer_id, realm_id or camelCase variants) AND (b) tenant scoping pattern (tenantContext/current_tenant middleware, RLS policy reference, FK to tenants table). Single tenant_id field without scoping pattern → false.",
+    "has_open_self_registration": "<bool> — true when registration route exists WITHOUT invite-token, email-whitelist, payment gate, or admin-approval requirement. Deterministic detection via Cat 11 route listing + Cat 1/2 auth pattern cross-check; falls back to llm-fallback classification when ambiguous."
+  },
+  "signal_evidence": {
+    "has_public_routes": "<file:line or 'none'>",
+    "has_auth_surface": "<file:line or 'none'>",
+    "has_role_concept": "<file:line or 'none'>",
+    "has_secrets_in_repo": "<file:line or 'none'>",
+    "has_ci_pipeline": "<file:line or 'none'>",
+    "has_external_apis": "<file:line or 'none'>",
+    "has_client_storage": "<file:line or 'none'>",
+    "has_multi_tenancy_signal": "<file:line describing BOTH conditions or 'none'>",
+    "has_open_self_registration": "<file:line or 'none'>"
+  },
+  "signal_classification": {
+    "has_open_self_registration": "deterministic | llm-fallback"
+  },
+  "component_hints": [
+    {
+      "component_id": "<kebab-case-id>",
+      "component_type": "<auth-service|admin-interface|payment-handler|ci-cd-pipeline|developer-workstation|data-store|api-endpoint|web-frontend|worker|gateway>",
+      "deployment_zones": ["<zone from access-enum>"],
+      "classification": "deterministic | llm-fallback"
+    }
+  ]
+}
+```
+
+**Signal assignment rules:**
+- `has_multi_tenancy_signal` requires **both** sub-conditions — this is the most commonly over-triggered signal. When only a tenant_id column exists without scoping middleware, set to `false` and note in `signal_evidence`.
+- `has_open_self_registration` classification: deterministic when a registration route is found AND it clearly lacks gating (no invite/payment/approval patterns in the same file/module). Ambiguous cases → `llm-fallback` classification.
+- All other signals are deterministic from existing Grep evidence — do not call LLM inference.
+- Missing evidence for a signal → `false` (conservative). The Actor resolver will activate actors with `signal_status: activate-with-warning` as fallback only for signals that are structurally unknowable (e.g. single-file repos with no package.json).
+
+**component_hints** — enumerate each major deployable unit (max 8). `component_type` from enum; `deployment_zones` from the known access-zone enum in `data/actors/default-library.yaml`. Flag `llm-fallback` when classification is ambiguous.
 
 
 ---
@@ -583,4 +634,6 @@ Use the exact Markdown structure defined in `shared/recon-output-template.md`. A
   ↳ AI/LLM integration: <detected — <provider> via <framework> | not detected>
   ↳ Cross-repo dependencies: <n> SCM siblings, <n> SaaS integrations
   ↳ Preliminary components: <n>
+  ↳ Actor signals: <list active signals, e.g. "has_public_routes has_auth_surface has_ci_pipeline">
+  ↳ .recon-signals.json written
 ```

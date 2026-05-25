@@ -1,0 +1,29 @@
+# Acme Corp — Enterprise Actor Definitions
+# Extends the plugin default-library with Acme-specific insider actors.
+# Layer: enterprise (ACT-E-* prefix)
+
+actors:
+  - id: ACT-E-1
+    label: acme-privileged-contractor
+    access:
+      - internal-network
+      - ci-cd-secrets
+      - staging-env
+    capabilities:
+      sophistication: medium
+      tooling:
+        - off-the-shelf
+        - debugger
+      dwell_time: weeks
+      surface_reach:
+        - local
+        - lateral
+    motivation: financial
+    description: >
+      External contractor with temporary elevated access to Acme's internal
+      tooling and staging environment. Access is time-boxed but often
+      under-revoked.
+    heatmap_slug: repo-read
+    _provenance:
+      layer: enterprise
+      source_file: actors/insiders.yaml
