@@ -19,6 +19,7 @@ Usage:
     qa_checks.py contract      <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py repair_plan   <threat-model.md> <output-dir> [<sections-contract.yaml>]
     qa_checks.py evidence_integrity <output-dir> <repo-root>
+    qa_checks.py unmasked_secrets <threat-model.md> [<output-dir>]
     qa_checks.py relevant_findings <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py all           <threat-model.md> <repo-root>
 
@@ -79,6 +80,7 @@ from typing import Any, Optional
 
 import _safe_cond
 from perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
+from secret_scan import scan_file as _scan_file_for_secrets
 
 VSCODE_LINK_RE = re.compile(r"vscode://file/([^)\s]+?)(?::(\d+))?(?=[)\s])")
 T_ID_RE = re.compile(r"\bT-(\d{3,4})\b")
@@ -872,6 +874,32 @@ def check_strengths_row_quality(md_path: Path) -> Report:
         if flagged >= 25:
             break
     if not flagged:
+        report.ok = 1
+    return report
+
+
+def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Report:
+    """Hard QA gate — scan rendered artifacts for raw, unmasked secrets.
+
+    Scans ``threat-model.md`` (always) plus ``threat-model.yaml`` (when an
+    ``output_dir`` is given and the file exists). A hit blocks release.
+
+    Masked values (``AIza****``, ``**** (12 chars)``, ``[REDACTED]``) are
+    skipped — see ``scripts/secret_scan.py`` for the marker list.
+    """
+    report = Report(check="unmasked_secrets")
+    targets: list[Path] = [md_path]
+    if output_dir is not None:
+        yaml_path = output_dir / "threat-model.yaml"
+        if yaml_path.exists():
+            targets.append(yaml_path)
+    for target in targets:
+        for hit in _scan_file_for_secrets(target):
+            report.issues.append(
+                f"{target.name}: {hit.render()} — mask the value "
+                "(tokens: first 4 chars + ****; passwords: **** plus length only)"
+            )
+    if not report.issues:
         report.ok = 1
     return report
 
@@ -3158,6 +3186,10 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # "no WAF", "missing IDS", "no secret scanning" that a source-tree
     # scan has no signal on. Positive identification is allowed.
     perimeter_report = check_unfounded_perimeter_claims(md)
+    # Hard secret-leak gate — scans threat-model.md AND threat-model.yaml for
+    # raw, unmasked secrets. Properly redacted snippets (`AIza****`,
+    # `**** (12 chars)`) are ignored. A hit blocks release.
+    unmasked_secrets_report = check_unmasked_secrets(md, md.parent)
     # Operational Strengths quality — flag rows naming HTTP response-header
     # hardening or other tactical baseline hygiene instead of architectural
     # strengths. The renderer filters these via `excluded_from_strengths`;
@@ -3221,6 +3253,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "hypothesis_validation_objective": hypothesis_validation_report.as_dict(),
         "evidence_integrity": evidence_integrity_report.as_dict(),
         "unfounded_perimeter_claims": perimeter_report.as_dict(),
+        "unmasked_secrets": unmasked_secrets_report.as_dict(),
         "strengths_row_quality": strengths_report.as_dict(),
         "finding_range_homogeneous": range_homogeneous_report.as_dict(),
         "dependency_cross_ref": dependency_cross_ref_report.as_dict(),
@@ -8547,6 +8580,14 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py perimeter_claims <threat-model.md>", file=sys.stderr)
             return 2
         report = check_unfounded_perimeter_claims(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "unmasked_secrets":
+        if len(argv) not in (3, 4):
+            print("usage: qa_checks.py unmasked_secrets <threat-model.md> [<output-dir>]", file=sys.stderr)
+            return 2
+        out_dir = Path(argv[3]) if len(argv) == 4 else None
+        report = check_unmasked_secrets(Path(argv[2]), out_dir)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "relevant_findings":

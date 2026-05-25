@@ -26,11 +26,14 @@ Primary user-facing skill: `skills/create-threat-model`. Downstream helpers re-e
 Agents must not write `threat-model.md` directly. The canonical flow is:
 
 ```text
-agents produce structured fragments
-→ fragments are schema-validated
-→ compose_threat_model.py renders threat-model.md
-→ qa_checks.py validates the final output
+agents          ─┐
+                 ├─► structured fragments
+deterministic    │   → schema-validated
+emitters (.py)  ─┘   → compose_threat_model.py renders threat-model.md
+                     → qa_checks.py validates the final output
 ```
+
+Fragments can originate from an LLM agent *or* from a deterministic Python emitter (see Non-obvious Design Decision "Deterministic threat sources" below). The composition and QA path is the same for both.
 
 If report structure changes, update the contract, templates, schemas, renderer, and tests together:
 
@@ -161,6 +164,7 @@ Examples:
 - Schema validation failure → fix the producing agent or update the schema deliberately, not by deleting/loosening the assertion.
 - Mermaid syntax error → fix the diagram template or the data that feeds it, not the rendered output.
 - Fragment composition glitch → fix the fragment producer or `compose_threat_model.py`, not by manually rewriting `.fragments/`.
+- Unmasked secret in rendered report → fix the producing agent's masking discipline (see `agents/shared/secret-handling.md`); `scripts/secret_scan.py` (wired into `qa_checks.py:check_unmasked_secrets`) is the deterministic backstop that blocks release, not the place to add allow-list entries.
 
 If you catch yourself adding a workaround downstream of the originator, stop and trace back — a surviving symptom-fix is technical debt other agents copy.
 
@@ -184,6 +188,13 @@ These should not be undone without understanding the trigger that created them.
 - **Phase 2.5 (config/IaC scan) is conditional** on IaC surface (Dockerfile, GH Actions, docker-compose, Dependabot/Renovate, `.npmrc`/`.yarnrc.yml`). Do not unconditionally enable it.
 - **Authoritative Mermaid validation is batched.** `qa_checks.py` must call `scripts/mermaid_validate.mjs --batch-json` once per report, not once per Mermaid block. Preserve the old single-diagram validator mode for probes and compatibility.
 - **Stage-2 QA is mode-aware.** The renderer runs full `qa_checks.py all` only when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`). Otherwise Stage 2 uses only the fast contract check; the skill-level `repair_plan` gate and QA reviewer own full QA.
+- **Threats enter the pipeline from two parallel sources.** Phase 9 `appsec-stride-analyzer` is the LLM side (per-component STRIDE enumeration). The deterministic side runs in parallel and contributes threat-shaped candidates that merge into the same `.threats-merged.json` before triage and rendering:
+  - `scripts/dep_scan.py` — SCA against npm audit / pip-audit / govulncheck / osv.dev. **Replaces** the former `appsec-dep-scanner` LLM agent; output schema is byte-compatible.
+  - `scripts/arch_coverage_to_threats.py` — converts confirmed `threat_hypotheses` and `anti_pattern_candidates` from `.architecture-coverage.json` into mergeable threats (Phase-9 bridge).
+  - `scripts/emit_meta_findings.py` — cross-cutting architectural meta-findings (`MF-NNN`).
+  - `scripts/emit_threat_vektors.py` — CWE-class → breach-vector classification (`internet-anon` / `repo-read` / …). Replaces the LLM's `internet-user` fallback.
+  - `scripts/emit_review_mitigations.py` — synthesizes review/investigate-class mitigations (M-15/16/17/20).
+  Implication for design changes: before adding a new LLM-driven threat category, check whether a deterministic emitter can cover it. Adding an emitter is cheaper, faster, audit-friendlier, and does not consume token budget. The `appsec-threat-merger` (Phase 10) is the single fan-in point — every new emitter writes into the same merge contract.
 
 ## Drift-Guarded Runtime Contracts
 

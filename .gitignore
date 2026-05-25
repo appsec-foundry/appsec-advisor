@@ -55,7 +55,20 @@ scripts/.venv/
 scripts/harvest-config.json
 __pycache__/
 *.pyc
-.pytest_cache/*
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# ----------------------------------------------------------------------------
+# Secrets / env
+# ----------------------------------------------------------------------------
+.env
+.env.*
 
 # ----------------------------------------------------------------------------
 # Logs

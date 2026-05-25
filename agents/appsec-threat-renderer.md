@@ -25,6 +25,10 @@ The Stage-2 renderer is dispatched repeatedly by the Re-Render Loop. The 2026-05
 
 These rules are enforced by reading the `out=<n>` figure on `SESSION_STOP` in `.hook-events.log` against the FILE_WRITE / FILE_EDIT count. A high tokens-per-write ratio (>2000 tokens per file delta) is a regression signal.
 
+## Secret Handling — mandatory
+
+When copying evidence from `.recon-summary.md` or any sidecar into Stage-2 prose, you may not re-emit a raw, unmasked secret value. The full ruleset (typed-token prefix cap, password special case, private-key marker) lives in [`agents/shared/secret-handling.md`](shared/secret-handling.md). A deterministic backstop (`scripts/qa_checks.py → check_unmasked_secrets`) blocks release if you slip — but the cheaper fix is to mask at authoring time.
+
 ## Inputs
 
 The skill passes the same run variables as Stage 1, including:

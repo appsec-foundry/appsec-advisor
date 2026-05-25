@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
+
+from secret_scan import scan_file as _scan_file_for_secrets
 
 # ---------------------------------------------------------------------------
 # Publishable files — tiers
@@ -39,12 +40,8 @@ NEVER_PUBLISH = [
     ".stride-*.json",
 ]
 
-# Patterns that suggest accidental secret exposure in the threat model
-_SECRET_PATTERNS = [
-    re.compile(r"(?i)(password|passwd|secret|api[_-]?key|token|bearer|private[_-]?key)\s*[=:]\s*\S{8,}"),
-    re.compile(r"(?i)-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-    re.compile(r"(?i)(AWS|AZURE|GCP)_[A-Z_]{3,}\s*=\s*[A-Za-z0-9+/]{16,}"),
-]
+# Secret-leak detection lives in scripts/secret_scan.py and is shared with
+# the per-run QA gate (qa_checks.py → check_unmasked_secrets).
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,17 +81,12 @@ def check_repo_visibility(repo_root: Path) -> tuple[bool, str]:
 
 
 def scan_for_secrets(md_path: Path) -> list[str]:
-    """Return list of warning lines if suspicious patterns found."""
-    try:
-        text = md_path.read_text(errors="replace")
-    except OSError:
-        return []
-    hits = []
-    for pat in _SECRET_PATTERNS:
-        for m in pat.finditer(text):
-            snippet = m.group(0)[:60].replace("\n", " ")
-            hits.append(f"   Possible secret near: {snippet!r}")
-    return hits
+    """Return formatted warning lines for any unmasked secret hits.
+
+    Delegates to ``secret_scan.scan_file``. Properly masked snippets
+    (``AIza****``, ``**** (12 chars)``, ``[REDACTED]``) are ignored.
+    """
+    return [f"   Possible secret near: {hit.render()}" for hit in _scan_file_for_secrets(md_path)]
 
 
 def patch_gitignore(gitignore_path: Path, output_dir: Path, files_to_publish: list[Path]) -> bool:
