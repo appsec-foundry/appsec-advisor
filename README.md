@@ -45,7 +45,6 @@ Incremental reruns help keep the architecture view and threat model aligned with
 
 > **Status:** 0.4.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
 
-
 > [!IMPORTANT]
 > ⚠ **Run only against repositories you trust.** Source files flow into the LLM context (prompt injection) and the required `Bash(*)` permission can turn that into command execution. An untrusted-repo mode is planned — until then, run scans in an isolated container. See [SECURITY.md → Known issues](SECURITY.md#known-issues--untrusted-repositories).
 
@@ -165,7 +164,7 @@ The following example shows the output of a thorough-mode assessment against [OW
 
 **Full example:** [OWASP Juice Shop threat model report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 
-The report shows the architecture diagram, trust boundaries, STRIDE findings, evidence links, mitigation register, and attack-path discussion in the format developers review after a run.
+The report shows the architecture diagram, trust boundaries, STRIDE findings, evidence links, mitigation register, and attack-path discussion in the format that developers review after a run.
 
 ## What it checks
 
@@ -334,13 +333,17 @@ These fields are optional. Without them, the scan still uses the upstream model 
 
 ## Architecture
 
-`appsec-advisor` runs as a staged pipeline rather than one large prompt. Each stage has a narrow job, and the final report is rendered from validated structured data.
+`appsec-advisor` runs as a staged pipeline rather than one large prompt. Each stage has a narrow task, and the final report is generated from validated, structured data.
 
-- **Stages** — Reconnaissance -> actor layer resolution and discovery (Phase 2.7) -> STRIDE analysis and triage -> rendering -> QA review. Thorough assessments add an advisory architect review for compound attack chains and architectural assumptions (including Actor Coverage check, Check 15).
+- **Repository-driven input:** The pipeline starts from the code repository and extracts application context, components, routes, controls, IaC config, and trust actors.
 
-- **Assessment depth** — the selected mode controls component budget, walkthrough detail, QA, architect review, and model mix. Most teams should choose the mode by review intent and override models only when they have a specific cost or routing policy.
+- **Multi-agent threat analysis:** Specialized agents analyze threats per component using STRIDE and a shared threat library.
 
-- **Evidence-anchored output** — Findings reference files, routes, and configuration entries from the recon phase, so each threat traces back to the implementation that produced it.
+- **Evidence-backed output:** Findings are merged, deduplicated, and verified against code evidence before being reported.
+
+- **Prioritized threat model:** Valid threats are triaged into priority levels and rendered into `threat-model.md` and `.yaml`.
+
+- **Quality gates:** Deterministic QA checks run by default; optional architect review adds deeper technical validation.
 
 ![Threat Model Pipeline](docs/images/threat-model-pipeline.png)
 
