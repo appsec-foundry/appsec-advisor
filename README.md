@@ -199,6 +199,90 @@ flowchart TD
 ```
 
 
+
+```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%
+flowchart LR
+    subgraph ACTORS[" "]
+        direction TB
+        HDR_A["<b>Threat Actors</b>"]:::columnHeader
+        SHOPUSER(["fa:fa-user Shop User<br/><i>legitimate customer; target of CSRF</i>"]):::actorShopUser
+        ANON(["fa:fa-user-secret Anonymous Internet Attacker<br/><i>no account; registers in seconds when needed</i>"]):::actorAnon
+        INTERNET_USER(["fa:fa-user-secret Authenticated Internet Attacker<br/><i>owns a regular account; logged in</i>"]):::actorAnon
+        REPO_READ(["fa:fa-user-secret Repository Reader<br/><i>anyone with read access to the source repository</i>"]):::actorAnon
+    end
+
+    subgraph TIERS[" "]
+        direction TB
+        HDR_T["<b>Architecture Tiers</b>"]:::columnHeader
+        BROWSER["fa:fa-window-restore Client Tier (angular-spa) · 7 findings<br/>🔴 Multiple XSS / CSP Issues<br/>🟠 Sensitive Data Exposure"]:::tierClient
+        SERVER["fa:fa-server Application Tier (data-layer, express-backend, file-upload-service, +2 more) · 27 findings<br/>🔴 Multiple Injections (e.g. SQLi)<br/>🔴 Multiple Authorization Gaps (e.g. privilege)<br/>🔴 Weak Cryptography<br/>🔴 Broken Authentication<br/>+3 more (see §8)"]:::tierApp
+        DATA["fa:fa-database Data Tier (data-layer) · 1 findings<br/>🔴 Sensitive Data Exposure"]:::tierData
+    end
+
+    subgraph IMPACT[" "]
+        direction TB
+        HDR_I["<b>Impact</b>"]:::columnHeader
+        CUSTOMER_SESSION_HIJACK[["🟠 Customer Session Hijack"]]:::impact
+        FULL_ADMIN_TAKEOVER[["🔴 Full Admin Takeover"]]:::impact
+        FULL_SERVER_COMPROMISE[["🔴 Full Server Compromise"]]:::impact
+        CUSTOMER_DATA_EXFILTRATION[["🔴 Customer Data Exfiltration"]]:::impact
+    end
+
+    %% Invisible alignment hints. Two purposes:
+    %%   (a) keep the per-component alignment edges (e.g. SHOPUSER --- BROWSER,
+    %%       ANON --- SERVER) so attack arrows route horizontally without
+    %%       crossing tier boxes;
+    %%   (b) chain the three column headers (HDR_A, HDR_T, HDR_I) across
+    %%       subgraph boundaries so ELK pins them on the same Y line.
+    HDR_A --- HDR_T
+    HDR_T --- HDR_I
+    SHOPUSER --- BROWSER
+    ANON --- SERVER
+
+    %% Attack arrows
+    ANON ==>|" ① Injection "| SERVER
+    REPO_READ ==>|" ② Auth Bypass "| SERVER
+    ANON ==>|" ③ Privilege Escalation "| SERVER
+    ANON ==>|" ④ Secret Exposure "| SERVER
+    INTERNET_USER ==>|" ⑤ RCE "| SERVER
+    INTERNET_USER ==>|" ⑥ XSS "| BROWSER
+    ANON ==>|" ⑦ CSRF "| BROWSER
+
+    %% Relay arrows (client tier → victim; delivery half of victim-targeting paths)
+    BROWSER ==>|" ⑦ CSRF "| SHOPUSER
+
+    %% Consequence arrows (tier → business impact, all LR-forward)
+    SERVER -.-> CUSTOMER_DATA_EXFILTRATION
+    SERVER -.-> FULL_ADMIN_TAKEOVER
+    SERVER -.-> CUSTOMER_SESSION_HIJACK
+    SERVER -.-> FULL_SERVER_COMPROMISE
+    BROWSER -.-> CUSTOMER_SESSION_HIJACK
+
+    %% Subgraph frames invisible - column headers are emitted as the
+    %% FIRST node of each subgraph (HDR_A / HDR_T / HDR_I) and pinned
+    %% on the same Y line by the cross-subgraph alignment edges above.
+    style ACTORS fill:none,stroke:none
+    style TIERS  fill:none,stroke:none
+    style IMPACT fill:none,stroke:none
+
+    classDef tierClient fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
+    classDef tierApp    fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
+    classDef tierData   fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
+
+    classDef actorAnon     fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px,font-size:12px
+    classDef actorShopUser fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:2px,font-size:12px
+    classDef impact        fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:12px
+
+    classDef columnHeader  fill:none,stroke:none,color:#111,font-size:14px
+
+    linkStyle 0,1,2,3     stroke:transparent,stroke-width:0px
+    linkStyle 4,5,6,7,8,9,10,11     stroke:#b71c1c,stroke-width:3px
+    linkStyle 12,13,14,15,16     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+
+```
+
+
 ## What it checks
 
 Before running STRIDE, `appsec-advisor` performs a reconnaissance pass that collects security-relevant signals from the repository. Those signals give the analysis a concrete starting point: routes, trust boundaries, auth flows, risky sinks, security controls, deployment files, and supply-chain configuration.
