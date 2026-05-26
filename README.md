@@ -45,6 +45,8 @@ Incremental reruns help keep the architecture view and threat model aligned with
 
 > **Status:** 0.4.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
 
+
+> [!IMPORTANT]
 > ⚠ **Run only against repositories you trust.** Source files flow into the LLM context (prompt injection) and the required `Bash(*)` permission can turn that into command execution. An untrusted-repo mode is planned — until then, run scans in an isolated container. See [SECURITY.md → Known issues](SECURITY.md#known-issues--untrusted-repositories).
 
 ---
@@ -138,9 +140,9 @@ Findings are rendered from structured artifacts and checked before release, so t
 
 | File | Enable with | Description |
 |---|---|---|
-| `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
 | `threat-model.pdf` | `--pdf` | Print-ready PDF report. |
 | `threat-model.html` | via `export-threat-model --formats html` | Self-contained HTML5 (pandoc-only, no weasyprint) for browser viewing, wiki attachments, or as a styling-pipeline input. |
+| `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
 | `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for AI pentesters such as Strix, including finding verification plus architecture-driven probes. |
 
 All optional deliverables can also be generated after an assessment. This is useful when CI runs the analysis in one job and publishes exports in another, or when you re-export after approved, schema-valid updates to `threat-model.yaml`:
@@ -214,7 +216,7 @@ Target specific components to reduce noise and optimize token usage. This is the
 /appsec-advisor:create-threat-model focus on the /services/payment-gateway
 ```
 
-### Requirements catalog
+### Testing against internal requirements catalog
 
 Ground the threat model in your organization's security requirements catalog. The plugin fetches a structured YAML from a URL, grades the codebase against each requirement, and incorporates compliance findings into the report. See [`docs/harvester.md`](docs/harvester.md) for how to produce that YAML from existing Confluence, Antora, or wiki pages.
 
@@ -290,54 +292,6 @@ For very large repositories, the advisor automatically switches to an optimized 
 ```
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
-## Manual full-run check
-
-After a non-trivial refactor (renderer changes, schema bumps, phase-group edits, prompt restructures, hook changes), run the bundled end-to-end check. It exercises the full pipeline against a fixed synthetic fixture and validates ~25 structural invariants on the produced artifacts.
-
-> [!IMPORTANT]
-> This check is **manual-only**. It is deliberately not wired into PR triggers, push hooks, or cron — it consumes real LLM budget (~30–50% of a Pro 5h subscription window, or ~$0.30–1.00 with API-key billing on `quick` depth). The standard `pytest tests/` suite (~50 deterministic tests) remains your per-PR safety net.
-
-**Run it:**
-
-```bash
-make e2e-full
-```
-
-or, from inside a Claude Code session in this repository:
-
-```text
-/e2e-full
-```
-
-Both routes drive `tests/e2e/run-full.sh`, which:
-
-1. Pre-flights the `claude` CLI (uses subscription auth via `~/.claude/` or `ANTHROPIC_API_KEY` if set).
-2. Runs `scripts/run-headless.sh` against `tests/fixtures/e2e/synthetic-repo/` and writes artifacts to `tests/fixtures/e2e/_last-run/` (git-ignored).
-3. Invokes `pytest tests/test_full_run_e2e.py`, which is skipped unless the driver sets `APPSEC_E2E_FULL=1`.
-
-**What's asserted:**
-
-| Group | Checks |
-|---|---|
-| Existence | All canonical outputs present (`threat-model.{md,yaml,sarif.json}`, `.threats-merged.json`, `.triage-flags.json`, `.recon-summary.md`, `.hook-events.log`) and all 11 Stage-2 fragments under `.fragments/`. |
-| Schemas | `validate_intermediate.py` accepts every intermediate artifact (`threats_merged`, `triage_flags`). |
-| Renderer | `compose_threat_model.render()` reproduces the markdown with zero warnings and is byte-idempotent. |
-| Hard Gate | `check_inline_shortcut.py` confirms Stage 2 routed through the deterministic renderer (no LLM bypass). |
-| QA invariants | `qa_checks.py` passes `invariants`, `ms_structure`, `anchors`, `xrefs`, `cell_format`. |
-| Content bands | At least one threat with required fields; placeholder tokens (`TODO`, `PLACEHOLDER`, `lorem ipsum`, …) absent from the markdown. |
-| Audit trail | `.hook-events.log` shows `PHASE_START`/`PHASE_END` progression. |
-
-**Exit codes:**
-
-| Code | Meaning |
-|---|---|
-| 0 | Pipeline + assertions passed |
-| 1 | Pipeline failed (`run-headless.sh` non-zero) |
-| 2 | Pipeline succeeded but assertions failed |
-| 3 | Pre-flight failed (missing `claude` CLI or fixture) |
-
-**Re-checking without a fresh run:** `make e2e-full-keep` replays the assertions against the previous `_last-run/` artifacts — useful while iterating on an assertion or when debugging a failure without burning another LLM budget.
-
 ## Cross-repo context
 
 `appsec-advisor` scans one repository at a time. If your service calls another service, you can still give the scan useful cross-repo context.
@@ -392,6 +346,55 @@ These fields are optional. Without them, the scan still uses the upstream model 
 
 > [!TIP]
 > For the current flag reference, run `/appsec-advisor:create-threat-model --help` or read [`skills/create-threat-model/HELP.txt`](skills/create-threat-model/HELP.txt).
+
+
+## Manual full-run (end-to-end) test
+
+After a non-trivial refactor (renderer changes, schema bumps, phase-group edits, prompt restructures, hook changes), run the bundled end-to-end check. It exercises the full pipeline against a fixed synthetic fixture and validates ~25 structural invariants on the produced artifacts.
+
+> [!IMPORTANT]
+> This check is **manual-only**. It is deliberately not wired into PR triggers, push hooks, or cron — it consumes real LLM budget (~30–50% of a Pro 5h subscription window, or ~$0.30–1.00 with API-key billing on `quick` depth). The standard `pytest tests/` suite (~50 deterministic tests) remains your per-PR safety net.
+
+**Run it:**
+
+```bash
+make e2e-full
+```
+
+or, from inside a Claude Code session in this repository:
+
+```text
+/e2e-full
+```
+
+Both routes drive `tests/e2e/run-full.sh`, which:
+
+1. Pre-flights the `claude` CLI (uses subscription auth via `~/.claude/` or `ANTHROPIC_API_KEY` if set).
+2. Runs `scripts/run-headless.sh` against `tests/fixtures/e2e/synthetic-repo/` and writes artifacts to `tests/fixtures/e2e/_last-run/` (git-ignored).
+3. Invokes `pytest tests/test_full_run_e2e.py`, which is skipped unless the driver sets `APPSEC_E2E_FULL=1`.
+
+**What's asserted:**
+
+| Group | Checks |
+|---|---|
+| Existence | All canonical outputs present (`threat-model.{md,yaml,sarif.json}`, `.threats-merged.json`, `.triage-flags.json`, `.recon-summary.md`, `.hook-events.log`) and all 11 Stage-2 fragments under `.fragments/`. |
+| Schemas | `validate_intermediate.py` accepts every intermediate artifact (`threats_merged`, `triage_flags`). |
+| Renderer | `compose_threat_model.render()` reproduces the markdown with zero warnings and is byte-idempotent. |
+| Hard Gate | `check_inline_shortcut.py` confirms Stage 2 routed through the deterministic renderer (no LLM bypass). |
+| QA invariants | `qa_checks.py` passes `invariants`, `ms_structure`, `anchors`, `xrefs`, `cell_format`. |
+| Content bands | At least one threat with required fields; placeholder tokens (`TODO`, `PLACEHOLDER`, `lorem ipsum`, …) absent from the markdown. |
+| Audit trail | `.hook-events.log` shows `PHASE_START`/`PHASE_END` progression. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | Pipeline + assertions passed |
+| 1 | Pipeline failed (`run-headless.sh` non-zero) |
+| 2 | Pipeline succeeded but assertions failed |
+| 3 | Pre-flight failed (missing `claude` CLI or fixture) |
+
+**Re-checking without a fresh run:** `make e2e-full-keep` replays the assertions against the previous `_last-run/` artifacts — useful while iterating on an assertion or when debugging a failure without burning another LLM budget.
 
 ## Additional skills
 
@@ -464,11 +467,11 @@ Full runbook: [`docs/internal-plugin-packaging.md`](docs/internal-plugin-packagi
 
 Open work items currently shaping the next iterations of the plugin:
 
-- **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents — design draft in [`sharedstate.md`](sharedstate.md).
+- **Stronger threat focus.** The current report mixes architectural observations, compliance signals, and STRIDE findings, which dilutes the threat narrative. Upcoming iterations will sharpen the focus on attacker-goal-driven threat chains, exploitability ranking, and a cleaner separation between threats, weaknesses, and architectural risks.
 
 - **Richer external context.** The pipeline is anchored almost entirely in the repository itself; structured external context is limited to `docs/related-repos.yaml` and the optional requirements catalog. Additional context sources (architecture decision records, runtime and deployment topology, incident history, prior pentest findings) are planned so the analysis can reason beyond the code alone.
 
-- **Stronger threat focus.** The current report mixes architectural observations, compliance signals, and STRIDE findings, which dilutes the threat narrative. Upcoming iterations will sharpen the focus on attacker-goal-driven threat chains, exploitability ranking, and a cleaner separation between threats, weaknesses, and architectural risks.
+- **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents — design draft in [`sharedstate.md`](sharedstate.md).
 
 ## Related projects
 

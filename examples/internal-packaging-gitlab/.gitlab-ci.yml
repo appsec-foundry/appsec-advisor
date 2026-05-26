@@ -1,0 +1,106 @@
+# .gitlab-ci.yml — internal packaging pipeline for a company-branded
+# build of appsec-advisor.
+#
+# Mirrors docs/internal-plugin-packaging.md steps 4 and 5:
+#   1. vendor the upstream plugin into build/$INTERNAL_NAME
+#   2. overlay the company org-profile/ and patch plugin.json + config.json
+#   3. validate the packaged copy (config + org profile + namespace rewrite)
+#   4. tar the build directory and publish it as a job artifact
+#
+# Repository layout this pipeline assumes:
+#   .gitlab-ci.yml                (this file)
+#   scripts/package.sh            (build script — vendors + patches + tars)
+#   org-profile/                  (custom config payload)
+#     org-profile.yaml
+#     context/organization.md
+#     actors/*.yaml               (optional)
+#   upstream/appsec-advisor/      (vendored upstream — submodule or rsync)
+#
+# Required CI/CD variables (Settings > CI/CD > Variables):
+#   APPSEC_ADVISOR_URL   git URL of the upstream appsec-advisor repo
+#   APPSEC_ADVISOR_REF   upstream tag/commit to pin (e.g. v0.4.0-beta)
+#
+# Optional:
+#   INTERNAL_NAME        plugin name override (default: acme-appsec)
+#   VERSION              artifact version (default: derived from CI metadata)
+
+stages:
+  - prepare
+  - validate
+  - publish
+
+variables:
+  INTERNAL_NAME: "acme-appsec"
+  # Default version: <upstream-ref>-<commit-short-sha>. Override per pipeline
+  # via a manual trigger if you need a specific release string.
+  VERSION: "${APPSEC_ADVISOR_REF}-${CI_COMMIT_SHORT_SHA}"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+default:
+  image: python:3.11-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git rsync ripgrep tar
+    - pip install --quiet pyyaml jsonschema packaging
+
+# ---------------------------------------------------------------------------
+# Stage 1 — vendor upstream + apply org overlay
+# ---------------------------------------------------------------------------
+package:
+  stage: prepare
+  script:
+    - test -n "$APPSEC_ADVISOR_URL" || { echo "APPSEC_ADVISOR_URL not set"; exit 2; }
+    - test -n "$APPSEC_ADVISOR_REF" || { echo "APPSEC_ADVISOR_REF not set"; exit 2; }
+    - git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" "$APPSEC_ADVISOR_URL" upstream/appsec-advisor
+    - ./scripts/package.sh
+  artifacts:
+    name: "${INTERNAL_NAME}-build-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - build/
+    expire_in: 1 day
+
+# ---------------------------------------------------------------------------
+# Stage 2 — validate the packaged copy
+# ---------------------------------------------------------------------------
+validate:
+  stage: validate
+  needs: [package]
+  script:
+    # Config (config.json) and org profile (org-profile.yaml) must pass schema.
+    - python3 "build/${INTERNAL_NAME}/scripts/validate_config.py" "build/${INTERNAL_NAME}"
+    - python3 "build/${INTERNAL_NAME}/scripts/validate_org_profile.py" "build/${INTERNAL_NAME}/org-profile/org-profile.yaml"
+    # Hard fail if any upstream namespace leaked into the packaged skills/agents.
+    # rg exits 1 when nothing matches — invert so "no matches" passes the job.
+    - |
+      if rg -n "appsec-advisor:" "build/${INTERNAL_NAME}/skills" "build/${INTERNAL_NAME}/agents"; then
+        echo "ERROR: upstream namespace 'appsec-advisor:' still present in packaged copy"
+        exit 1
+      fi
+
+# ---------------------------------------------------------------------------
+# Stage 3 — tarball + publish as job artifact
+# ---------------------------------------------------------------------------
+# Swap the artifact step for `curl --upload-file` against your artifact
+# registry (GitLab Generic Packages, Artifactory, Nexus, S3, etc.) if you
+# distribute through one. The tar layout stays the same either way.
+publish:
+  stage: publish
+  needs: [validate]
+  script:
+    - mkdir -p dist
+    - tar -czf "dist/${INTERNAL_NAME}-${VERSION}.tgz" -C build "${INTERNAL_NAME}"
+    - sha256sum "dist/${INTERNAL_NAME}-${VERSION}.tgz" | tee "dist/${INTERNAL_NAME}-${VERSION}.tgz.sha256"
+    # Example: push to GitLab Generic Packages registry.
+    # - 'curl --header "JOB-TOKEN: $CI_JOB_TOKEN"
+    #        --upload-file "dist/${INTERNAL_NAME}-${VERSION}.tgz"
+    #        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${INTERNAL_NAME}/${VERSION}/${INTERNAL_NAME}-${VERSION}.tgz"'
+  artifacts:
+    name: "${INTERNAL_NAME}-${VERSION}"
+    paths:
+      - "dist/${INTERNAL_NAME}-${VERSION}.tgz"
+      - "dist/${INTERNAL_NAME}-${VERSION}.tgz.sha256"
+    expire_in: 30 days
+  rules:
+    # Publish on tags and protected default branch runs only.
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'

@@ -1,0 +1,17 @@
+# Example company-specific actor. Bundled into the packaged plugin and
+# validated against schemas/actors.schema.yaml during the validate stage.
+actors:
+  - id: ACT-E-1
+    label: acme-privileged-contractor
+    access:
+      - internal-network
+      - ci-cd-secrets
+      - staging-env
+    capabilities:
+      sophistication: medium
+      dwell_time: weeks
+      surface_reach:
+        - local
+        - lateral
+    motivation: financial
+    heatmap_slug: repo-read
