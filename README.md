@@ -166,39 +166,7 @@ The following example shows the output of a thorough-mode assessment against [OW
 
 The report shows the architecture diagram, trust boundaries, STRIDE findings, evidence links, mitigation register, and attack-path discussion in a format that developers review after a run.
 
-Example component diagram from that report:
-```mermaid
-flowchart TD
-    subgraph EXT["Untrusted Zone - Internet"]
-        INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
-        VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
-        REPO_READ["fa:fa-user-secret Repository Reader"]:::threat
-    end
-    subgraph CLIENT["Client Tier"]
-        angular_spa["fa:fa-window-restore angular-spa Angular SPA Frontend<br/><i>7 threats</i>"]:::risk
-    end
-    subgraph APP["Application Tier"]
-        express_backend["fa:fa-server express-backend Express Backend API<br/>+ file-upload-service + b2b-api + ci-cd-pipeline<br/><i>13 threats</i>"]:::risk
-    end
-    subgraph DATA["Data Tier"]
-        data_layer[("fa:fa-database data-layer Data Layer (SQLite + MarsDB)<br/><i>3 threats</i>")]:::risk
-    end
-    VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
-    angular_spa -->|"REST · JWT Bearer"| express_backend
-    express_backend -->|"ORM · queries"| data_layer
-    INTERNET_ANON -.->|"injection · auth bypass · RCE"| express_backend
-    INTERNET_ANON -.->|"XSS · client tampering · token theft"| angular_spa
-    REPO_READ -.->|"leaked credentials · auth bypass"| express_backend
-
-    classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
-    classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
-    classDef external fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px
-    classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
-    linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
-    linkStyle 3,4,5 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
-```
-
-
+Example security posture diagram from the report:
 
 ```mermaid
 %%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%
@@ -281,7 +249,37 @@ flowchart LR
     linkStyle 12,13,14,15,16     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
 
 ```
+Example component diagram from the report:
+```mermaid
+flowchart TD
+    subgraph EXT["Untrusted Zone - Internet"]
+        INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
+        VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
+        REPO_READ["fa:fa-user-secret Repository Reader"]:::threat
+    end
+    subgraph CLIENT["Client Tier"]
+        angular_spa["fa:fa-window-restore angular-spa Angular SPA Frontend<br/><i>7 threats</i>"]:::risk
+    end
+    subgraph APP["Application Tier"]
+        express_backend["fa:fa-server express-backend Express Backend API<br/>+ file-upload-service + b2b-api + ci-cd-pipeline<br/><i>13 threats</i>"]:::risk
+    end
+    subgraph DATA["Data Tier"]
+        data_layer[("fa:fa-database data-layer Data Layer (SQLite + MarsDB)<br/><i>3 threats</i>")]:::risk
+    end
+    VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
+    angular_spa -->|"REST · JWT Bearer"| express_backend
+    express_backend -->|"ORM · queries"| data_layer
+    INTERNET_ANON -.->|"injection · auth bypass · RCE"| express_backend
+    INTERNET_ANON -.->|"XSS · client tampering · token theft"| angular_spa
+    REPO_READ -.->|"leaked credentials · auth bypass"| express_backend
 
+    classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
+    classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef external fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px
+    classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
+    linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
+    linkStyle 3,4,5 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
+```
 
 ## What it checks
 
