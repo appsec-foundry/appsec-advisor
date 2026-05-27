@@ -4763,7 +4763,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             "dependency tree and the build environment, not the live endpoint."
         ),
         "repo-read": (
-            "has read access to the source repository (public or leaked); "
+            "has source-repository access as an internal developer or through an exposed clone; "
             "extracts committed secrets, hardcoded keys, and algorithm details "
             "offline without touching the running service."
         ),

@@ -45,8 +45,15 @@ Incremental reruns help keep the architecture view and threat model aligned with
 
 > **Status:** 0.4.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
 
+## Security notes
+
 > [!IMPORTANT]
 > ⚠ **Run only against repositories you trust.** Source files flow into the LLM context (prompt injection) and the required `Bash(*)` permission can turn that into command execution. An untrusted-repo mode is planned — until then, run scans in an isolated container. See [SECURITY.md → Known issues](SECURITY.md#known-issues--untrusted-repositories).
+
+- **Main risks:** repository content is untrusted input to the LLM, source snippets may be sent to the Anthropic API, and generated reports/intermediates contain security findings or references to committed secrets. Treat the output directory as sensitive.
+- **Permission boundary:** required file permissions are path-scoped (`Read(${REPO_ROOT}/**)`, `Read(${PLUGIN_ROOT}/**)`, `Write/Edit(${OUTPUT_DIR}/**)`). `Bash(*)` is still high privilege, so use trusted repos or isolate the run.
+- **Built-in safeguards:** the plugin runs from a local checkout, does not fetch plugin code at runtime, writes final reports through deterministic Python, validates schemas/fragments, masks detected secret values before reporting them, scans rendered reports for unmasked secrets, and uses a small condition parser instead of `eval()`.
+- **Recommended use:** run in a clean worktree or container/VM, avoid exposing cloud tokens or SSH agents, pass `--output` outside the repo for stricter write isolation, and publish only reviewed artifacts; pentest tasks and intermediate evidence stay ignored by default.
 
 ---
 
@@ -177,7 +184,7 @@ flowchart LR
         SHOPUSER(["fa:fa-user Shop User<br/><i>legitimate customer; target of CSRF</i>"]):::actorShopUser
         ANON(["fa:fa-user-secret Anonymous Internet Attacker<br/><i>no account; registers in seconds when needed</i>"]):::actorAnon
         INTERNET_USER(["fa:fa-user-secret Authenticated Internet Attacker<br/><i>owns a regular account; logged in</i>"]):::actorAnon
-        REPO_READ(["fa:fa-user-secret Repository Reader<br/><i>anyone with read access to the source repository</i>"]):::actorAnon
+        REPO_READ(["fa:fa-user-secret Internal Developer<br/><i>developer with source-repository access</i>"]):::actorAnon
     end
 
     subgraph TIERS[" "]
@@ -255,7 +262,7 @@ flowchart TD
     subgraph EXT["Untrusted Zone - Internet"]
         INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
         VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
-        REPO_READ["fa:fa-user-secret Repository Reader"]:::threat
+        REPO_READ["fa:fa-user-secret Internal Developer"]:::threat
     end
     subgraph CLIENT["Client Tier"]
         angular_spa["fa:fa-window-restore angular-spa Angular SPA Frontend<br/><i>7 threats</i>"]:::risk

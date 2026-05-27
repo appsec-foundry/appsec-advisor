@@ -332,7 +332,7 @@ flowchart TD
     subgraph EXT["Untrusted Zone — Internet"]
         INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
         VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
-        REPO_READ["fa:fa-user-secret Repository Reader"]:::threat
+        REPO_READ["fa:fa-user-secret Internal Developer"]:::threat
     end
     subgraph APP["Application Tier"]
         backend_api["fa:fa-server backend-api Express Backend API<br/>+ b2b-api<br/><i>8 threats</i>"]:::risk

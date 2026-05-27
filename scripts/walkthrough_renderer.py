@@ -139,7 +139,7 @@ VEKTOR_ACTOR_LABEL: dict[str, str] = {
     "internet-anon": "Anonymous attacker",
     "internet-user": "Authenticated attacker",
     "victim-required": "Anonymous attacker + victim",
-    "repo-read": "Repo-read attacker",
+    "repo-read": "Internal developer",
 }
 
 # Heuristic regex set used to recover a concrete HTTP endpoint URL from the

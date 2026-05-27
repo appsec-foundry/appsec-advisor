@@ -108,7 +108,7 @@ flowchart LR
         SHOPUSER(["fa:fa-user Shop User<br/><i>legitimate customer; victim of XSS / CSRF</i>"]):::actorShopUser
         ANON(["fa:fa-user-secret Anonymous Internet Attacker<br/><i>no account; registers in seconds when needed</i>"]):::actorAnon
         INTERNET_USER(["fa:fa-user-secret Authenticated Internet Attacker<br/><i>owns a regular account; logged in</i>"]):::actorAnon
-        REPO_READ(["fa:fa-user-secret Repository Reader<br/><i>anyone with read access to the source repository</i>"]):::actorAnon
+        REPO_READ(["fa:fa-user-secret Internal Developer<br/><i>developer with source-repository access</i>"]):::actorAnon
     end
 
     subgraph TIERS[" "]
@@ -186,7 +186,7 @@ flowchart LR
 - **Shop User** — legitimate registered customer whose session and PII are the actual target; receives the victim-targeting attack arrows (XSS, CSRF) as victim, not attacker.
 - **Anonymous Internet Attacker** — no account, no foothold; reaches every unauthenticated route, registers a throw-away account in seconds when needed, and can clone the public repository to obtain any committed secret offline. Initiates the outgoing attack arrows.
 - **Authenticated Internet Attacker** — owns a valid registered account and an active session; can reach all authenticated endpoints and exploit post-authentication vulnerabilities (IDOR, privilege escalation, SSTI, SSRF, stored XSS injection). Initiates the outgoing attack arrows.
-- **Repository Reader** — has read access to the source repository (public or leaked); extracts committed secrets, hardcoded keys, and algorithm details offline without touching the running service.
+- **Internal Developer** — has source-repository access as an internal developer or through an exposed clone; extracts committed secrets, hardcoded keys, and algorithm details offline without touching the running service.
 
 **Attack paths (numbered arrows in the diagram):**
 
@@ -200,7 +200,7 @@ flowchart LR
     - [CC-03](#cc-03) — 
   - Impact: Full Admin Takeover, Customer Data Exfiltration
 
-- <a id="path-auth-bypass"></a>**② Auth Bypass** (Repository Reader → Application Tier) — Authentication relies on cryptographic material (RSA private key, HMAC secret) committed to the public repository and on a JWT library version that accepts unsigned alg:none tokens.
+- <a id="path-auth-bypass"></a>**② Auth Bypass** (Internal Developer → Application Tier) — Authentication relies on cryptographic material (RSA private key, HMAC secret) committed to the public repository and on a JWT library version that accepts unsigned alg:none tokens.
   - Findings:
     - [F-001](#f-001) — JWT alg:none bypass via express-jwt@0.1.3
     - [F-002](#f-002) — Hardcoded RSA private key enables offline JWT forgery
@@ -355,13 +355,13 @@ This threat model covers 8 component(s) of OWASP Juice Shop: **`Express.js` Back
 
 ### 2.1 System Context
 
-Who interacts with OWASP Juice Shop from the outside, and through which channels. Solid arrows show normal usage; dashed red arrows mark unauthenticated probing or exploit paths (C4 Level 1). The repository-reader actor is separate from the network attacker because the RSA private key at `lib/insecurity.ts:23` is publicly committed — no HTTP connection required to obtain it.
+Who interacts with OWASP Juice Shop from the outside, and through which channels. Solid arrows show normal usage; dashed red arrows mark unauthenticated probing or exploit paths (C4 Level 1). The internal-developer actor is separate from the network attacker because the RSA private key at `lib/insecurity.ts:23` is publicly committed — no HTTP connection required to obtain it.
 
 ```mermaid
 flowchart LR
     USER["End User<br/>(browser)"]
     ATTACKER["Anonymous<br/>Internet Attacker"]
-    REPO_READ["Repository Reader<br/>(GitHub public)"]
+    REPO_READ["Internal Developer<br/>(source access)"]
     ADMIN["Admin User"]
     SYSTEM["OWASP Juice Shop"]
     EXTERNAL["External HTTP Services<br/>(SSRF target)"]
@@ -429,7 +429,7 @@ flowchart TD
     subgraph EXT["Untrusted Zone — Internet"]
         INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
         VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
-        REPO_READ["fa:fa-user-secret Repository Reader"]:::threat
+        REPO_READ["fa:fa-user-secret Internal Developer"]:::threat
     end
     subgraph CLIENT["Client Tier"]
         angular_spa["fa:fa-window-restore angular-spa Angular SPA Frontend<br/>+ websocket-service"]:::risk

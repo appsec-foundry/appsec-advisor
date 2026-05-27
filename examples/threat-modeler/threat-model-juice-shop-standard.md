@@ -110,7 +110,7 @@ flowchart LR
         SHOPUSER(["fa:fa-user Shop User<br/><i>legitimate customer; victim of XSS / CSRF</i>"]):::actorShopUser
         ANON(["fa:fa-user-secret Anonymous Internet Attacker<br/><i>no account; registers in seconds when needed</i>"]):::actorAnon
         INTERNET_USER(["fa:fa-user-secret Authenticated Internet Attacker<br/><i>owns a regular account; logged in</i>"]):::actorAnon
-        REPO_READ(["fa:fa-user-secret Repository Reader<br/><i>anyone with read access to the source repository</i>"]):::actorAnon
+        REPO_READ(["fa:fa-user-secret Internal Developer<br/><i>developer with source-repository access</i>"]):::actorAnon
     end
 
     subgraph TIERS[" "]
@@ -186,7 +186,7 @@ flowchart LR
 - **Shop User** — legitimate registered customer whose session and PII are the actual target; receives the victim-targeting attack arrows (XSS, CSRF) as victim, not attacker.
 - **Anonymous Internet Attacker** — no account, no foothold; reaches every unauthenticated route, registers a throw-away account in seconds when needed, and can clone the public repository to obtain any committed secret offline. Initiates the outgoing attack arrows.
 - **Authenticated Internet Attacker** — owns a valid registered account and an active session; can reach all authenticated endpoints and exploit post-authentication vulnerabilities (IDOR, privilege escalation, SSTI, SSRF, stored XSS injection). Initiates the outgoing attack arrows.
-- **Repository Reader** — has read access to the source repository (public or leaked); extracts committed secrets, hardcoded keys, and algorithm details offline without touching the running service.
+- **Internal Developer** — has source-repository access as an internal developer or through an exposed clone; extracts committed secrets, hardcoded keys, and algorithm details offline without touching the running service.
 
 **Attack paths (numbered arrows in the diagram):**
 
@@ -197,7 +197,7 @@ flowchart LR
     - [F-016](#f-016) — NoSQL Injection in Product Reviews
   - Impact: Customer Data Exfiltration, Full Admin Takeover
 
-- <a id="path-auth-bypass"></a>**② Auth Bypass** (Repository Reader → Application Tier) — authentication can be circumvented or forged because the RSA signing key is committed to the public repository and express-jwt 0.1.3 accepts alg:none tokens.
+- <a id="path-auth-bypass"></a>**② Auth Bypass** (Internal Developer → Application Tier) — authentication can be circumvented or forged because the RSA signing key is committed to the public repository and express-jwt 0.1.3 accepts alg:none tokens.
   - Findings:
     - [F-001](#f-001) — JWT Forgery via Hardcoded RSA Private Key
     - [F-002](#f-002) — alg:none JWT Algorithm Bypass
@@ -422,7 +422,7 @@ flowchart TD
     subgraph EXT["Untrusted Zone — Internet"]
         INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
         VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
-        REPO_READ["fa:fa-user-secret Repository Reader"]:::threat
+        REPO_READ["fa:fa-user-secret Internal Developer"]:::threat
     end
     subgraph CLIENT["Client Tier"]
         angular_frontend["fa:fa-window-restore angular-frontend Angular SPA Frontend<br/><i>9 threats</i>"]:::risk

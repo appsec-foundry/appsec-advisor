@@ -68,8 +68,8 @@ actors:
     fa_icon: "fa:fa-code-branch"
 
   repo-read:
-    label: "Repository Reader"
-    default_subtitle: "anyone with read access to the source repository"
+    label: "Internal Developer"
+    default_subtitle: "developer with source-repository access"
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
