@@ -1,0 +1,184 @@
+"""Regression tests for the GitLab internal-packaging example."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import tarfile
+from pathlib import Path
+
+import yaml
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE_ROOT = REPO_ROOT / "examples" / "internal-packaging-gitlab"
+PACKAGER = REPO_ROOT / "scripts" / "package_internal_plugin.py"
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_upstream_packager_excludes_vcs_and_local_outputs(tmp_path: Path) -> None:
+    shutil.copytree(EXAMPLE_ROOT / "org-profile", tmp_path / "org-profile")
+
+    upstream = tmp_path / "upstream" / "appsec-advisor"
+    _write(
+        upstream / ".claude-plugin" / "plugin.json",
+        json.dumps(
+            {
+                "name": "appsec-advisor",
+                "version": "0.0.0",
+                "description": "Upstream plugin",
+            }
+        ),
+    )
+    _write(upstream / "config.json", "{}")
+    (upstream / "schemas").mkdir(parents=True)
+    _write(
+        upstream / "skills" / "create-threat-model" / "SKILL.md",
+        "Run /appsec-advisor:create-threat-model.\n"
+        "Schema appsec-advisor.org-profile/v2 must stay unchanged.\n",
+    )
+    _write(upstream / "agents" / "dispatch.yaml", "agent: appsec-advisor:worker\n")
+    _write(
+        upstream / ".git" / "config",
+        "[remote \"origin\"]\nurl = https://token@gitlab.internal/appsec.git\n",
+    )
+    _write(upstream / ".agents" / "local.txt", "local")
+    _write(upstream / ".codex" / "local.txt", "local")
+    _write(upstream / ".pytest_cache" / "README.md", "cache")
+    _write(upstream / "build" / "old.txt", "local build")
+    _write(upstream / "dist" / "old.tgz", "local dist")
+    _write(upstream / "docs" / "security" / "threat-model.md", "sensitive")
+    _write(upstream / "scripts" / "docs" / "security" / "threat-model.md", "sensitive")
+    _write(upstream / "tests" / "fixtures" / "e2e" / "_last-run" / "threat-model.md", "sensitive")
+    _write(upstream / "scripts" / "__pycache__" / "x.pyc", "cache")
+
+    subprocess.run(
+        [
+            "python3",
+            str(PACKAGER),
+            "--source",
+            str(upstream),
+            "--org-profile",
+            str(tmp_path / "org-profile"),
+            "--name",
+            "acme-appsec",
+            "--version",
+            "1.2.3-test",
+            "--skip-validation",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    build = tmp_path / "build" / "acme-appsec"
+    plugin = json.loads((build / ".claude-plugin" / "plugin.json").read_text())
+    config = json.loads((build / "config.json").read_text())
+
+    assert plugin["name"] == "acme-appsec"
+    assert plugin["version"] == "1.2.3-test"
+    assert config["organization_profile"] == {
+        "enabled": True,
+        "path": "org-profile/org-profile.yaml",
+    }
+    assert not (build / ".git").exists()
+    assert not (build / ".agents").exists()
+    assert not (build / ".codex").exists()
+    assert not (build / ".pytest_cache").exists()
+    assert not (build / "build").exists()
+    assert not (build / "dist").exists()
+    assert not (build / "docs" / "security").exists()
+    assert not (build / "scripts" / "docs").exists()
+    assert not (build / "tests" / "fixtures" / "e2e" / "_last-run").exists()
+    assert not (build / "scripts" / "__pycache__").exists()
+    assert (build / "org-profile" / "org-profile.yaml").exists()
+
+    skill_text = (build / "skills" / "create-threat-model" / "SKILL.md").read_text()
+    agent_text = (build / "agents" / "dispatch.yaml").read_text()
+    assert "/acme-appsec:create-threat-model" in skill_text
+    assert "appsec-advisor:" not in skill_text
+    assert "appsec-advisor.org-profile/v2" in skill_text
+    assert "agent: acme-appsec:worker" in agent_text
+
+    artifact = tmp_path / "dist" / "acme-appsec-1.2.3-test.tgz"
+    checksum = tmp_path / "dist" / "acme-appsec-1.2.3-test.tgz.sha256"
+    assert artifact.exists()
+    assert checksum.exists()
+    with tarfile.open(artifact) as archive:
+        names = archive.getnames()
+    forbidden = [
+        name
+        for name in names
+        if name == "acme-appsec/.git"
+        or name.startswith("acme-appsec/.git/")
+        or name == "acme-appsec/.agents"
+        or name.startswith("acme-appsec/.agents/")
+        or name == "acme-appsec/.codex"
+        or name.startswith("acme-appsec/.codex/")
+        or name == "acme-appsec/.pytest_cache"
+        or name.startswith("acme-appsec/.pytest_cache/")
+        or name == "acme-appsec/build"
+        or name.startswith("acme-appsec/build/")
+        or name == "acme-appsec/dist"
+        or name.startswith("acme-appsec/dist/")
+        or name == "acme-appsec/docs/security"
+        or name.startswith("acme-appsec/docs/security/")
+        or name == "acme-appsec/scripts/docs"
+        or name.startswith("acme-appsec/scripts/docs/")
+        or name == "acme-appsec/tests/fixtures/e2e/_last-run"
+        or name.startswith("acme-appsec/tests/fixtures/e2e/_last-run/")
+        or "/__pycache__/" in name
+    ]
+    assert forbidden == []
+
+
+def test_upstream_packager_rejects_slashes_in_version(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            "python3",
+            str(PACKAGER),
+            "--source",
+            str(tmp_path / "missing-source"),
+            "--org-profile",
+            str(EXAMPLE_ROOT / "org-profile"),
+            "--name",
+            "acme-appsec",
+            "--version",
+            "feature/example",
+        ],
+        cwd=tmp_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 2
+    assert "VERSION must not contain '/'" in result.stderr
+
+
+def test_gitlab_ci_fetches_ref_after_clone_for_commit_sha_support() -> None:
+    pipeline = yaml.safe_load((EXAMPLE_ROOT / ".gitlab-ci.yml").read_text())
+    script_lines = pipeline["package"]["script"]
+    script = "\n".join(script_lines)
+
+    assert not (EXAMPLE_ROOT / "scripts" / "package.sh").exists()
+    assert pipeline["stages"] == ["package"]
+    assert pipeline["variables"]["VERSION"] == "0.4.0-internal.${CI_COMMIT_SHORT_SHA}"
+    assert 'apt-get install -y -qq --no-install-recommends git' in "\n".join(
+        pipeline["default"]["before_script"]
+    )
+    assert "rsync" not in script
+    assert "ripgrep" not in script
+    assert "tar -czf" not in script
+    assert 'git clone --depth 1 "$APPSEC_ADVISOR_URL" upstream/appsec-advisor' in script
+    assert (
+        'git -C upstream/appsec-advisor fetch --depth 1 origin "$APPSEC_ADVISOR_REF"'
+        in script
+    )
+    assert "git -C upstream/appsec-advisor checkout --detach FETCH_HEAD" in script
+    assert "scripts/package_internal_plugin.py" in script
+    assert not any("--branch" in line for line in script_lines if "APPSEC_ADVISOR_REF" in line)

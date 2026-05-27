@@ -39,7 +39,9 @@ Upstream still owns:
 
 ## Step 1 - Create An Internal Packaging Repository
 
-Keep the upstream plugin, your company profile, and the packaging script in one internal repository.
+Keep the upstream plugin reference and your company profile in one internal
+repository. The packaging logic itself ships with upstream `appsec-advisor` as
+`scripts/package_internal_plugin.py`.
 
 ```text
 acme-appsec-plugin/
@@ -49,11 +51,11 @@ acme-appsec-plugin/
 |   |-- org-profile.yaml       # Acme defaults, presets, requirements source
 |   `-- context/
 |       `-- organization.md    # short business context, treated as untrusted data
-`-- scripts/
-    `-- package.sh             # builds the installable internal plugin
 ```
 
-The package script copies the upstream plugin into a build directory, applies Acme-specific packaging changes there, validates the packaged copy, and publishes that build output.
+The upstream packager copies the plugin into a build directory, overlays
+`org-profile/`, applies the internal namespace, validates the packaged copy,
+and writes the tarball.
 
 ## Step 2 - Choose The Internal Plugin Name
 
@@ -80,7 +82,7 @@ In the packaged copy, set `.claude-plugin/plugin.json` to that internal name.
 
 Changing only `plugin.json` is not enough. Some skills dispatch agents by namespaced IDs such as `appsec-advisor:appsec-threat-analyst`. During packaging, rewrite `appsec-advisor:` to your internal namespace in the packaged copy.
 
-Do not rewrite schema identifiers such as `appsec-advisor.org-profile/v1`.
+Do not rewrite schema identifiers such as `appsec-advisor.org-profile/v2`.
 
 ## Step 3 - Add The Company Profile
 
@@ -160,38 +162,41 @@ actors:
     heatmap_slug: repo-read
 ```
 
-The build step copies `org-profile/actors/` into the packaged artifact alongside `context/`. The packaging validation script checks actor definition files against `schemas/actors.schema.yaml`.
-
-Add actor validation to the CI entrypoint from Step 5:
-
-```bash
-python3 "build/${INTERNAL_NAME}/scripts/validate_org_profile.py" \
-  "build/${INTERNAL_NAME}/org-profile/org-profile.yaml"
-# validate_org_profile.py also validates actor definition files referenced by actors.add
-```
+The upstream packager copies `org-profile/actors/` into the packaged artifact
+alongside `context/`, then validates actor definition files against
+`schemas/actors.schema.yaml`.
 
 ## Step 4 - Build The Packaged Plugin
 
-The packaged plugin should be self-contained. Copy the upstream plugin into a build directory, copy `org-profile/` into that plugin root, enable the profile in `config.json`, set the plugin name, then rewrite namespaced command references.
+The packaged plugin should be self-contained. Use the upstream packager rather
+than duplicating copy, patch, rewrite, validation, tar, and checksum logic in
+your CI repository.
 
 Minimal build sequence:
 
 ```bash
 INTERNAL_NAME="acme-appsec"
-BUILD="build/${INTERNAL_NAME}"
+VERSION="${VERSION:-0.9.0-acme.20260517}"
 
-mkdir -p build
-rsync -a --delete upstream/appsec-advisor/ "${BUILD}/"
-rsync -a --delete org-profile/ "${BUILD}/org-profile/"
+python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
+  --source upstream/appsec-advisor \
+  --org-profile org-profile \
+  --name "${INTERNAL_NAME}" \
+  --version "${VERSION}"
 ```
 
-After that copy step, patch `build/acme-appsec/.claude-plugin/plugin.json` as shown in Step 2.
+The script handles:
 
-Set `build/acme-appsec/config.json` to enable the bundled profile:
-
-```json
-{ "organization_profile": { "enabled": true, "path": "org-profile/org-profile.yaml" } }
-```
+- copying upstream into `build/${INTERNAL_NAME}/` without VCS metadata, local
+  `build/` / `dist/` directories, runtime threat-model outputs, or Python
+  cache files
+- overlaying `org-profile/`
+- setting `.claude-plugin/plugin.json` `name`, `version`, and description
+- enabling `organization_profile` in `config.json`
+- rewriting `appsec-advisor:` references in packaged text artifacts
+- validating `config.json`, `org-profile.yaml`, actor files, and namespace
+  rewrite completeness
+- writing `dist/${INTERNAL_NAME}-${VERSION}.tgz` and `.sha256`
 
 Target build output:
 
@@ -206,24 +211,15 @@ build/acme-appsec/
 `-- org-profile/
     |-- org-profile.yaml
     `-- context/organization.md
-```
-
-Rewrite namespaced references in the packaged copy:
-
-```bash
-find build/acme-appsec -type f \( -name "*.md" -o -name "*.txt" \) \
-  -exec sed -i 's/appsec-advisor:/acme-appsec:/g' {} +
-```
-
-Then fail the build if old namespaced references remain in skills or agents:
-
-```bash
-rg -n "appsec-advisor:" build/acme-appsec/skills build/acme-appsec/agents && exit 1
+dist/
+|-- acme-appsec-0.9.0-acme.20260517.tgz
+`-- acme-appsec-0.9.0-acme.20260517.tgz.sha256
 ```
 
 ## Step 5 - Validate In CI And Publish The Artifact
 
-Put this step in the CI/CD pipeline for the internal packaging repository. The job builds the packaged copy from Step 4, validates that packaged copy, and publishes the `.tgz` only if validation passes.
+Put the Step 4 command in your CI pipeline. The packager exits non-zero before
+writing a release artifact if validation fails.
 
 This catches:
 
@@ -242,16 +238,11 @@ set -euo pipefail
 INTERNAL_NAME="acme-appsec"
 VERSION="${VERSION:-0.9.0-acme.20260517}"
 
-# Build steps from Step 4 run before validation.
-
-python3 "build/${INTERNAL_NAME}/scripts/validate_config.py" "build/${INTERNAL_NAME}"
-python3 "build/${INTERNAL_NAME}/scripts/validate_org_profile.py" \
-  "build/${INTERNAL_NAME}/org-profile/org-profile.yaml"
-
-rg -n "appsec-advisor:" "build/${INTERNAL_NAME}/skills" "build/${INTERNAL_NAME}/agents" && exit 1
-
-mkdir -p dist
-tar -czf "dist/${INTERNAL_NAME}-${VERSION}.tgz" -C build "${INTERNAL_NAME}"
+python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
+  --source upstream/appsec-advisor \
+  --org-profile org-profile \
+  --name "${INTERNAL_NAME}" \
+  --version "${VERSION}"
 ```
 
 Publish the resulting artifact through the mechanism your organization already trusts:

@@ -1,5 +1,5 @@
 # Example company-specific actor. Bundled into the packaged plugin and
-# validated against schemas/actors.schema.yaml during the validate stage.
+# validated against schemas/actors.schema.yaml by the upstream packager.
 actors:
   - id: ACT-E-1
     label: acme-privileged-contractor
