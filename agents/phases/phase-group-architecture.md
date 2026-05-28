@@ -1730,6 +1730,23 @@ The QA reviewer's Check 7d surfaces these suggestions in a consolidated list at 
 
 ### Operations, Runtime and Supply Chain — sub-controls
 
+**⚡ Deterministic pre-assessment (run this Bash block FIRST — saves ~4 orchestrator turns):**
+
+Before reasoning over the supply-chain sub-controls, run the deterministic assessor. It reads `.recon-summary.md` and evaluates the 9 rule-based sub-controls (lockfile pinning, CI install integrity, Actions pinning, container hygiene, CVE scanning, SCA tooling, dependency confusion, postinstall scripts, Renovate/Dependabot) without LLM involvement, and writes the result to `.supply-chain-assessment.json`.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/assess_supply_chain_controls.py" \
+    "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" || true
+```
+
+**How to use the pre-assessment output:**
+
+1. Read `$OUTPUT_DIR/.supply-chain-assessment.json` (written by the script above).
+2. For each `sub_controls[]` entry: adopt the script's `effectiveness` and `reason` verbatim into the control row — do NOT re-evaluate these rule-based sub-controls yourself.
+3. Override a script rating ONLY when you have direct evidence from the recon snapshot that contradicts it (e.g. a CI workflow with a blocking trivy step that the script missed because the keyword regex didn't match). Log the override reason in the control's `assessment` field.
+4. Derive the domain's overall effectiveness from the sub-control ratings per the rule below.
+5. Augment the domain entry with any **runtime hardening**, **logging**, and **CI/CD permission** evidence that the script cannot detect (those are LLM-territory — check recon-summary sections 7.14–7.17, 7.26–7.28 for relevant signals).
+
 This domain feeds `### 7.11 Operations, Runtime and Supply Chain Controls` and requires checking **all** of the following supply-chain sub-controls, plus any observable runtime hardening, logging, and CI/CD permission evidence from the recon baseline. Use recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28 as baseline (same token-saving rule as other domains).
 
 | Sub-control | 🟢 Adequate | 🟡 Partial | 🔴 Missing |

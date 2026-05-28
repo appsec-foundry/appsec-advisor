@@ -317,10 +317,8 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WR
 # mirrors a compact progress line ("↳ (+2m15s) Phase 11/11 · step 1/<N> · Pre-computing final counts…")
 # to stderr so the user sees it in the Bash tool card even without --verbose.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[Phase 11] [1/<N>] Pre-computing final counts…"
-# Refresh lock heartbeat — keeps the anti-stall classifier seeing progress.
-# The lock is released only at the final substep (see N/N below).
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat 2>/dev/null || true
-echo 'CHECKPOINT phase=11 step=1 status=counts_computed' > "$OUTPUT_DIR/.appsec-checkpoint"
+# batch_checkpoint combines checkpoint write + heartbeat into one call (saves 1 turn vs. the prior 2-call pattern).
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/batch_checkpoint.py" "$OUTPUT_DIR" --phase 11 --step 1 --status counts_computed 2>/dev/null || true
 CRIT=$(grep -c '"risk": *"Critical"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
 HIGH=$(grep -c '"risk": *"High"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
 MED=$(grep -c '"risk": *"Medium"' "$OUTPUT_DIR"/.stride-*.json 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
@@ -369,7 +367,7 @@ Use the printed `COUNTS:` line to populate concrete numbers in the Management Su
 **Substep 2 Bash block (template):**
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat 2>/dev/null || true
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/batch_checkpoint.py" "$OUTPUT_DIR" --phase 11 --step 2 --status yaml_writing 2>/dev/null || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[Phase 11 +<ES>] [2/<N>] Writing threat-model.yaml (canonical baseline)…"
 
 # Deterministic yaml build. Reads sidecars + .threats-merged.json,
@@ -384,7 +382,7 @@ if [ "$BUILD_RC" -ne 0 ]; then
   exit 1
 fi
 
-echo 'CHECKPOINT phase=11 step=2 status=yaml_written' > "$OUTPUT_DIR/.appsec-checkpoint"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/batch_checkpoint.py" "$OUTPUT_DIR" --phase 11 --step 2 --status yaml_written 2>/dev/null || true
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  FILE_WRITE   $OUTPUT_DIR/threat-model.yaml" >> "$OUTPUT_DIR/.agent-run.log"
 
 # Defense-in-depth: re-validate after write. The builder validates internally,
