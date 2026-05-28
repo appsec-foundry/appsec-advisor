@@ -206,8 +206,12 @@ def test_attack_chain_overview_in_section_3(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     # Reference layout: the cross-chain diagram lives as ### 3.1 Attack Chain
-    # Overview inside §3 — NOT as a standalone `## Critical Attack Chain`.
+    # Overview inside §3 — NOT as a standalone `## Critical Attack Chain` /
+    # `## Critical Attack Tree`. The unnumbered block (post-2026-05 hybrid
+    # migration renamed Chain → Tree) is LLM-authored prose in
+    # attack-walkthroughs.md, not rendered by the deterministic composer.
     assert "## Critical Attack Chain\n" not in rendered
+    assert "## Critical Attack Tree\n" not in rendered
     assert "### 3.1 Attack Chain Overview" in rendered
     # §3.1 must carry graph LR Mermaid blocks (one per chain, no mega subgraph).
     assert re.search(r"```mermaid\s*\n\s*graph LR", rendered), "§3.1 must contain at least one `graph LR` Mermaid block"

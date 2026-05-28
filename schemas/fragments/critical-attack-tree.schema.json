@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/critical-attack-tree.schema.json",
+  "title": "Critical Attack Tree fragment",
+  "description": "Data-driven attack-tree section rendered as the unnumbered `## Critical Attack Tree` block between the Management Summary and Section 1. The renderer produces the Mermaid graph block (vertical, top-down), the 'Key takeaway' paragraph, and the Stage/Finding/Mitigation reference table. Replaces the dormant critical-attack-chain.schema.json (2026-05 hybrid migration — §3.1 Attack Chain Overview retains chain semantics).",
+  "type": "object",
+  "required": ["intro", "mermaid", "key_takeaway", "stages"],
+  "additionalProperties": false,
+  "properties": {
+    "intro": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 600,
+      "description": "One-paragraph intro describing the attacker goal at the root and how to read the tree top-down."
+    },
+    "root_goal": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 120,
+      "description": "Short business-impact statement that names the attacker's terminal objective (e.g. 'Full admin takeover', 'Customer PII exfiltration'). Rendered as the root node label."
+    },
+    "mermaid": {
+      "type": "object",
+      "required": ["orientation", "nodes", "edges"],
+      "additionalProperties": false,
+      "properties": {
+        "orientation": {
+          "type": "string",
+          "enum": ["TD", "TB"],
+          "description": "Trees render top-down. `LR` is forbidden — that layout belongs to §3.1 chain semantics."
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "class"],
+            "additionalProperties": false,
+            "properties": {
+              "id":    { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+              "label": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "class": {
+                "type": "string",
+                "enum": ["goal", "and_node", "or_node", "leaf", "attacker", "crit", "high", "medium", "low", "impact", "system"],
+                "description": "Tree-shape classes: `goal` (root), `and_node` / `or_node` (internal refinement), `leaf` (primitive finding ref). Legacy chain classes are retained for backwards compatibility during the hybrid transition."
+              },
+              "finding_ref": {
+                "type": "string",
+                "pattern": "^[FT]-\\d{3,4}$",
+                "description": "Optional F-NNN or T-NNN backlink. Required when `class` is `leaf` so the renderer can emit a deep link into §8 Threat Register."
+              }
+            }
+          }
+        },
+        "edges": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 60,
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "additionalProperties": false,
+            "properties": {
+              "from":  { "type": "string" },
+              "to":    { "type": "string" },
+              "label": { "type": "string", "maxLength": 60 },
+              "refinement": {
+                "type": "string",
+                "enum": ["AND", "OR"],
+                "description": "Optional AND/OR semantic annotation. AND = all children required; OR = any child suffices. The renderer surfaces this on the edge label so reviewers can read the tree without re-deriving the boolean structure."
+              }
+            }
+          }
+        }
+      }
+    },
+    "key_takeaway": {
+      "type": "string",
+      "minLength": 60,
+      "maxLength": 800,
+      "description": "Paragraph beginning with '**Key takeaway:**'. The renderer auto-prepends that prefix; supply only the content."
+    },
+    "mitigation_breakpoints": {
+      "type": "array",
+      "maxItems": 8,
+      "description": "Optional list of mitigations (M-NNN) whose deployment severs at least one subtree. Rendered as a sub-bullet list under the key takeaway when non-empty.",
+      "items": {
+        "type": "object",
+        "required": ["mitigation", "breaks"],
+        "additionalProperties": false,
+        "properties": {
+          "mitigation": { "type": "string", "pattern": "^M-\\d{3,4}$" },
+          "breaks":     { "type": "string", "minLength": 10, "maxLength": 200 }
+        }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 12,
+      "description": "Rows of the Stage/Finding/Mitigation reference table — the linear walk through the most-likely path from root to leaves, kept for quick-reference parity with the prior chain layout.",
+      "items": {
+        "type": "object",
+        "required": ["stage", "findings", "mitigations"],
+        "additionalProperties": false,
+        "properties": {
+          "stage":       { "type": "string", "minLength": 5, "maxLength": 80 },
+          "findings":    {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items":     { "type": "string", "pattern": "^[FT]-\\d{3,4}$" }
+          },
+          "mitigations": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items":     { "type": "string", "pattern": "^M-\\d{3,4}$" }
+          }
+        }
+      }
+    }
+  }
+}

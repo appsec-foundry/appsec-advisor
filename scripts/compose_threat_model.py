@@ -10,7 +10,7 @@ architecture. It reads:
     3. ``<output>/.triage-flags.json`` — triage ranking v2+ (optional).
     4. ``<output>/.fragments/*.json`` and ``*.md`` — LLM-authored data and
        prose fragments for sections the LLM is allowed to supply content
-       for (verdict, architecture-assessment, critical-attack-chain, prose
+       for (verdict, architecture-assessment, critical-attack-tree, prose
        sections like system-overview).
 
 And emits ``<output>/threat-model.md`` deterministically. Identical inputs
@@ -152,9 +152,9 @@ _KNOWN_JSON_FRAGMENT_SCHEMAS: dict[str, tuple[str, str]] = {
         "architecture_assessment",
         "architecture-assessment.schema.json",
     ),
-    "ms-critical-attack-chain.json": (
-        "critical_attack_chain",
-        "critical-attack-chain.schema.json",
+    "ms-critical-attack-tree.json": (
+        "critical_attack_tree",
+        "critical-attack-tree.schema.json",
     ),
     "compound-chains.json": ("threat_register", "compound-chains.schema.json"),
     "operational-strengths-overrides.json": (
@@ -5799,9 +5799,9 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
     return "\n\n".join(parts) + "\n"
 
 
-def _render_critical_attack_chain(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    data = _load_fragment(ctx, "critical_attack_chain", section["fragment"])
-    _validate_fragment("critical_attack_chain", data, section["schema"])
+def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    data = _load_fragment(ctx, "critical_attack_tree", section["fragment"])
+    _validate_fragment("critical_attack_tree", data, section["schema"])
     tpl = env.get_template(section["template"])
     return tpl.render(data=data).rstrip() + "\n"
 

@@ -120,11 +120,11 @@ def mutate_architecture_assessment_bad_severity(out: Path) -> None:
     p.write_text(json.dumps(d))
 
 
-def mutate_critical_attack_chain_invalid_breach(out: Path) -> None:
-    p = out / ".fragments" / "critical-attack-chain.json"
+def mutate_critical_attack_tree_invalid_breach(out: Path) -> None:
+    p = out / ".fragments" / "ms-critical-attack-tree.json"
     d = json.loads(p.read_text())
     # Stage breach_distance not used directly, but mermaid orientation is enumerated.
-    d["mermaid"]["orientation"] = "XY"  # enum is [LR, TD, TB]
+    d["mermaid"]["orientation"] = "XY"  # enum is [TD, TB]
     p.write_text(json.dumps(d))
 
 
@@ -191,9 +191,13 @@ MUTATIONS = [
     ("verdict-too-many-bullets", mutate_verdict_too_many_bullets, "bullets"),
     ("verdict-bad-ref-pattern", mutate_verdict_bad_ref_pattern, "does not match"),
     ("arch-ass-bad-severity", mutate_architecture_assessment_bad_severity, "verdict_severity"),
-    # NB: critical-attack-chain fragment is currently dormant — the §3.1
-    # Attack Chain Overview content is authored in the prose fragment, not
-    # from a JSON data fragment. Schema exists for forward-compatibility.
+    # NB: ms-critical-attack-tree fragment is currently dormant — the
+    # `## Critical Attack Tree` block (post-2026-05 hybrid migration) is
+    # LLM-authored as prose inside attack-walkthroughs.md per the layout
+    # rules in agents/phases/phase-group-threats.md. The schema +
+    # mutation fn exist for forward-compatibility when the renderer is
+    # activated. §3.1 Attack Chain Overview chain content is also
+    # authored in the prose fragment, not from a JSON data fragment.
     # ---- Fragment presence ----
     ("verdict-missing", mutate_remove_required_fragment, "verdict"),
     ("yaml-missing", mutate_yaml_missing, "threat-model.yaml"),

@@ -92,7 +92,7 @@ REQUIRED_FILES = [
 REQUIRED_FRAGMENTS = [
     "ms-verdict.json",
     "ms-architecture-assessment.json",
-    "critical-attack-chain.json",
+    "ms-critical-attack-tree.json",
     "attack-walkthroughs.md",
     "system-overview.md",
     "assets.md",

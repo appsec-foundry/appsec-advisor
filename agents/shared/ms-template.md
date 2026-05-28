@@ -179,7 +179,7 @@ If you're tempted to add an HTTP-header row because the table looks thin, prefer
 
 **Bottom line:** <One sentence summarizing that these controls narrow specific attack surfaces but none eliminates a Critical finding on its own.>
 
-→ *Full details: [Section 2](#2-architecture-diagrams) · [Critical Attack Chain](#critical-attack-chain) · [Section 7](#7-threat-register) · [Section 9](#9-mitigation-register).*
+→ *Full details: [Section 2](#2-architecture-diagrams) · [Critical Attack Tree](#critical-attack-tree) · [Section 7](#7-threat-register) · [Section 9](#9-mitigation-register).*
 ```
 
 **Column semantics:**
@@ -212,4 +212,4 @@ If you're tempted to add an HTTP-header row because the table looks thin, prefer
   - `#### Structural Defects` → merged into the Architecture Assessment table.
   - `### 1.1 Verdict` / `### 1.2 Top Findings` / any `### <digit>.<digit> <Name>` inside Management Summary → auto-strip the numeric prefix, keep the heading text.
 - **No file paths or vscode:// links anywhere in the Management Summary.** F-NNN / M-NNN / T-NNN / TH-NN / C-NN links are allowed in the Verdict blockquote, Top Findings, Architecture Assessment (Key Findings / Enables column), and Mitigations. File references live in the Threat Register and Mitigation Register only.
-- **No duplication — three roles, three places:** Management Summary = verdict-with-scenarios / top findings table / architecture defects table / mitigations / strengths. `## Critical Attack Chain` = attack-chain diagrams (visual). Threat Register = full per-finding detail (tabular).
+- **No duplication — three roles, three places:** Management Summary = verdict-with-scenarios / top findings table / architecture defects table / mitigations / strengths. `## Critical Attack Tree` = attack-tree diagram (goal-decomposition with AND/OR refinement, visual). Threat Register = full per-finding detail (tabular).

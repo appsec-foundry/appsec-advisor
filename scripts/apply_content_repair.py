@@ -11,7 +11,7 @@ reviewer's most useful checks (linkification, placeholder removal,
 anchor injection) ran in read-only mode — the findings were enumerated
 in `.qa-status.json` but never actually applied. The 2026-04-27 run
 shipped 18 NARRATIVE_PLACEHOLDER comments, missing Linked Threats
-columns in §4/§5, and a missing Critical Attack Chain section because
+columns in §4/§5, and a missing Critical Attack Tree section because
 the reviewer's edits were silently dropped.
 
 The new flow:

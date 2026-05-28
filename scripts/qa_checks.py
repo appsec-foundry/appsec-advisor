@@ -1053,7 +1053,10 @@ _VERDICT_BLOCKQUOTE_RE = re.compile(
     r"<blockquote\s+style=\"[^\"]*border-left:\s*3px\s+solid\s+#dc2626[^\"]*\"",
     re.IGNORECASE,
 )
-_CRITICAL_CHAIN_RE = re.compile(r"^##\s+Critical Attack Chain\s*$", re.MULTILINE)
+# Matches the unnumbered promoted block above §1. Accepts both the canonical
+# `## Critical Attack Tree` heading (post-2026-05 hybrid migration) and the
+# legacy `## Critical Attack Chain` heading (auto-renamed by the QA reviewer).
+_CRITICAL_CHAIN_RE = re.compile(r"^##\s+Critical Attack (?:Tree|Chain)\s*$", re.MULTILINE)
 
 
 def _slice_management_summary(text: str) -> tuple[int, int, str] | None:
@@ -1092,7 +1095,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     Flagged but NOT auto-rewritten (too destructive — require a full rerun):
         * Missing required sub-sections from the canonical set.
         * Missing red HTML blockquote inside the Verdict section.
-        * Missing `## Critical Attack Chain` section after MS when ≥2 Criticals.
+        * Missing `## Critical Attack Tree` section after MS when ≥2 Criticals.
     """
     report = Report("ms_structure")
     original = md_path.read_text(encoding="utf-8")
@@ -1130,7 +1133,8 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         "Immediate Actions Required (P1)": "Mitigations",
         "Risk Distribution": None,  # forbidden — strip entire heading
         "STRIDE Coverage": None,  # forbidden — strip entire heading
-        "Critical Attack Chain": None,  # must be ## (promoted), not ### inside MS
+        "Critical Attack Tree": None,  # must be ## (promoted), not ### inside MS
+        "Critical Attack Chain": None,  # legacy heading — must be ## (promoted), not ### inside MS
         "Overall Security Rating": None,  # Verdict already carries the rating
         "Executive Overview": "Verdict",  # narrative-only → rename, body usually works as Verdict prose
         "Top Threats by Risk": "Top Findings",
@@ -1227,8 +1231,9 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
 
     # --- Check 4: Attack Chain Overview is present.
     # Canonical layout places the chain overview as `### 3.1 Attack Chain
-    # Overview` inside §3 (not as a standalone `## Critical Attack Chain`
-    # section). Accept either form for backward compatibility.
+    # Overview` inside §3 (not as a standalone `## Critical Attack Tree`
+    # block). Accept either form for backward compatibility, including the
+    # legacy `## Critical Attack Chain` heading (the regex above matches both).
     # Skipped when .skill-config.json sets SKIP_ATTACK_WALKTHROUGHS=true —
     # in that case a skip-notice stub is intentional and no chain is expected.
     rd = RISK_DIST_RE.search(text)
@@ -1246,9 +1251,10 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     has_chain = _CRITICAL_CHAIN_RE.search(text) or re.search(r"^###\s+3\.1\s+Attack Chain Overview", text, re.MULTILINE)
     if critical_count >= 2 and not has_chain and not _skip_walkthroughs:
         report.issues.append(
-            "Attack Chain Overview missing — required when Critical count ≥ 2. "
-            "Expected either `## Critical Attack Chain` (legacy) or "
-            "`### 3.1 Attack Chain Overview` inside §3 (canonical)."
+            "Attack Tree / Chain Overview missing — required when Critical count ≥ 2. "
+            "Expected either `## Critical Attack Tree` (canonical post-2026-05), "
+            "the legacy `## Critical Attack Chain` heading, or "
+            "`### 3.1 Attack Chain Overview` inside §3."
         )
 
     # --- Check 5: MS sub-sections should not carry numeric prefixes anymore.

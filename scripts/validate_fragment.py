@@ -39,7 +39,7 @@ SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
 FRAGMENT_SCHEMAS: dict[str, str] = {
     "verdict": "verdict.schema.json",
     "architecture-assessment": "architecture-assessment.schema.json",
-    "critical-attack-chain": "critical-attack-chain.schema.json",
+    "critical-attack-tree": "critical-attack-tree.schema.json",
     "compound-chains": "compound-chains.schema.json",
     "operational-strengths-overrides": "operational-strengths-overrides.schema.json",
     "security-posture-attack-paths": "security-posture-attack-paths.schema.json",
@@ -71,7 +71,7 @@ _STEM_TO_TYPE: dict[str, str] = {v.replace(".schema.json", ""): k for k, v in FR
 _FRAGMENT_FILENAMES: dict[str, str] = {
     "verdict": "ms-verdict.json",
     "architecture-assessment": "ms-architecture-assessment.json",
-    "critical-attack-chain": "ms-critical-attack-chain.json",
+    "critical-attack-tree": "ms-critical-attack-tree.json",
     "compound-chains": "compound-chains.json",
     "operational-strengths-overrides": "operational-strengths-overrides.json",
     "security-posture-attack-paths": "security-posture-attack-paths.json",

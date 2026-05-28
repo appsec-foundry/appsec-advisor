@@ -587,11 +587,17 @@ class TestLegacyBaselineBootstrap:
         _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
 
 
-class TestCriticalAttackChainPromotion:
-    """The unnumbered ## Critical Attack Chain block is the executive-level
+class TestCriticalAttackTreePromotion:
+    """The unnumbered ## Critical Attack Tree block is the executive-level
     overview placed directly after the Management Summary. It contains the
-    high-level Mermaid graph LR + the Quick-reference table. This class pins
-    that layout + the forbidden Management Summary subsections.
+    high-level Mermaid graph TD (goal-decomposition with AND/OR refinement)
+    + the Quick-reference table. This class pins that layout + the forbidden
+    Management Summary subsections.
+
+    Renamed from TestCriticalAttackChainPromotion in the 2026-05 hybrid
+    migration. §3.1 Attack Chain Overview (chain semantics) is untouched and
+    covered separately. Legacy `#critical-attack-chain` anchor is preserved
+    via a dual HTML anchor; both anchors must appear above the heading.
 
     Section 3/9 layout is covered in TestSection3StubAndSection9Walkthroughs.
     """
@@ -619,28 +625,30 @@ class TestCriticalAttackChainPromotion:
         went is worse than saying nothing. Verify each forbidden heading
         points to its replacement."""
         txt = _read(THREATS_MD)
-        assert "Top Findings" in txt and "Critical Attack Chain" in txt
+        assert "Top Findings" in txt and "Critical Attack Tree" in txt
         assert "Recommended Priority Actions" in txt
         assert "Key Strengths" in txt and "Operational Strengths" in txt
 
-    # ---- ## Critical Attack Chain layout ----
+    # ---- ## Critical Attack Tree layout ----
 
-    def test_critical_attack_chain_layout_documented(self):
+    def test_critical_attack_tree_layout_documented(self):
         txt = _read(THREATS_MD)
-        assert "## Critical Attack Chain" in txt
+        assert "## Critical Attack Tree" in txt
+        assert "#critical-attack-tree" in txt
+        # Legacy anchor preserved per AGENTS.md §5 ID stability
         assert "#critical-attack-chain" in txt
         assert "unnumbered" in txt.lower()
 
-    def test_critical_attack_chain_position_documented(self):
+    def test_critical_attack_tree_position_documented(self):
         """Position: directly after Management Summary, before Section 1."""
         txt = _read(THREATS_MD)
         lower = txt.lower()
         assert "immediately after the management summary" in lower or "directly after the management summary" in lower
         assert "before section 1" in lower
 
-    def test_critical_attack_chain_forbids_per_finding_blocks(self):
-        """The Mermaid chain + quick-reference table are the only allowed
-        formats in the Attack Chain block. Per-finding prose blocks belong
+    def test_critical_attack_tree_forbids_per_finding_blocks(self):
+        """The Mermaid tree + quick-reference table are the only allowed
+        formats in the Attack Tree block. Per-finding prose blocks belong
         in Section 9 Attack Walkthroughs, not here."""
         txt = _read(THREATS_MD)
         assert "No per-finding prose blocks" in txt
@@ -649,29 +657,29 @@ class TestCriticalAttackChainPromotion:
             or "Quick-reference table is the only per-finding presentation" in txt
         )
 
-    def test_finalization_section_order_places_attack_chain_after_mgmt_summary(self):
+    def test_finalization_section_order_places_attack_tree_after_mgmt_summary(self):
         """The numbered composition-order list in phase-group-finalization.md
-        must place Management Summary first, Critical Attack Chain second,
+        must place Management Summary first, Critical Attack Tree second,
         and Section 1 (System Overview) after.
 
         Matches the numbered-list form produced by the ToC generator
-        (`1. Management Summary`, `2. Critical Attack Chain`, `3. 1. System Overview`)
+        (`1. Management Summary`, `2. Critical Attack Tree`, `3. 1. System Overview`)
         rather than a bold-markered list — bold markers were used by an older
         spec version and would be over-specified here."""
         txt = _read(FINAL_MD)
         mgmt_idx = txt.find("1. Management Summary")
-        chain_idx = txt.find("2. Critical Attack Chain", mgmt_idx) if mgmt_idx != -1 else -1
-        # Find the first mention of "Section 1" or "1. System Overview" AFTER the chain line
+        tree_idx = txt.find("2. Critical Attack Tree", mgmt_idx) if mgmt_idx != -1 else -1
+        # Find the first mention of "Section 1" or "1. System Overview" AFTER the tree line
         s1_idx = -1
         for needle in ("1. System Overview", "Section 1"):
-            candidate = txt.find(needle, chain_idx) if chain_idx != -1 else -1
+            candidate = txt.find(needle, tree_idx) if tree_idx != -1 else -1
             if candidate != -1:
                 s1_idx = candidate if s1_idx == -1 else min(s1_idx, candidate)
         assert mgmt_idx != -1, "Composition order must include '1. Management Summary'"
-        assert chain_idx != -1, "Composition order must include '2. Critical Attack Chain' after Management Summary"
-        assert s1_idx != -1, "Composition order must reference Section 1 after the chain"
-        assert mgmt_idx < chain_idx < s1_idx, (
-            "Section order must be: Management Summary → Critical Attack Chain → Section 1"
+        assert tree_idx != -1, "Composition order must include '2. Critical Attack Tree' after Management Summary"
+        assert s1_idx != -1, "Composition order must reference Section 1 after the tree"
+        assert mgmt_idx < tree_idx < s1_idx, (
+            "Section order must be: Management Summary → Critical Attack Tree → Section 1"
         )
 
     # ---- QA reviewer: no auto-fix back into old Section 9 format ----
@@ -682,7 +690,9 @@ class TestCriticalAttackChainPromotion:
         old language is gone."""
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
         assert "### 🔴 T-NNN — <short title" not in txt
-        assert "ATTACK_CHAIN_TABLE" in txt
+        # ATTACK_TREE_TABLE is the post-migration name; ATTACK_CHAIN_TABLE may
+        # still appear in legacy-handling instructions but TREE is canonical.
+        assert "ATTACK_TREE_TABLE" in txt
         assert "Add it to Section 9 in-place" not in txt
 
 

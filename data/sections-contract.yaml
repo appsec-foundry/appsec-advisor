@@ -10,7 +10,7 @@
 #   * `.fragments/<section-id>.json` → LLM-authored data fragments for
 #                                       sections that need prose (verdict,
 #                                       architecture-assessment themes,
-#                                       critical-attack-chain, …)
+#                                       critical-attack-tree, …)
 #   * `.fragments/<section-id>.md`   → LLM-authored raw-markdown fragments
 #                                       for the few sections that are pure
 #                                       prose (system-overview, assets,
@@ -59,9 +59,12 @@ document:
     - { id: quick_mode_notice, condition: "is_quick_depth" }
     - toc
     - management_summary
-    # Note: Critical Attack Chain content is rendered as `### 3.1 Attack Chain
-    # Overview` inside §3, NOT as a standalone unnumbered section. The reference
-    # layout integrates the chain diagram with the per-finding walkthroughs.
+    # Note: The unnumbered `## Critical Attack Tree` block (hybrid migration,
+    # 2026-05) is LLM-authored as prose inside `attack-walkthroughs.md` per
+    # the layout rules in agents/phases/phase-group-threats.md. §3.1 Attack
+    # Chain Overview retains chain semantics (linear graph LR, max 5 chains).
+    # The tree block lives between Management Summary and Section 1 and shows
+    # goal-decomposition for Critical findings (graph TD, AND/OR refinement).
     - system_overview
     - { id: identified_actors, condition: "has_resolved_actors" }
     - architecture_diagrams

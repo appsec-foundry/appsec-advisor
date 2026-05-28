@@ -61,7 +61,7 @@ The `### Verdict` section MUST contain an embedded red HTML `<blockquote>` with 
    - Convert scenario paragraphs into single-line bullets (`- **<Name>** — <sentence>. *([F-NNN](#f-NNN))*`) if necessary.
    - **Auto-strip** the standalone heading and its surrounding `<blockquote>` wrapper.
    - **Auto-merge** the extracted bullets into the Verdict blockquote. When the Verdict already has its own bullets, append the migrated ones; deduplicate by scenario name.
-   - Drop any "See [Critical Attack Chain]" trailing link from the migrated content — that link is not part of the new Verdict format.
+   - Drop any "See [Critical Attack Chain]" or "See [Critical Attack Tree]" trailing link from the migrated content — that link is not part of the new Verdict format.
 
 3. **Content checks (inside Verdict blockquote):**
    - Contains between 2 and 5 bold bullet names (lines matching `- **<Name>** — …`).

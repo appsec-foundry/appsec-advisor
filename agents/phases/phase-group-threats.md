@@ -673,7 +673,7 @@ After Merge (steps 0–8) and Coverage Checks complete — and **before** emitti
 - `component_name` — canonical name after step 8 normalization
 - `stride` — full word (`Spoofing`, `Tampering`, `Repudiation`, `Information Disclosure`, `Denial of Service`, `Elevation of Privilege`); never single-letter
 - `risk`, `likelihood`, `impact` — one of `Critical`, `High`, `Medium`, `Low`
-- `title` — **2–6 word noun phrase, MAXIMUM 60 characters total**. This is a *headline*, NOT a sentence: drop articles, drop the impact clause, drop CWE descriptors. **MUST NOT contain backtick code identifiers** — no `` `lib/insecurity.ts` ``, no `` `bypassSecurityTrustHtml()` ``. **MUST NOT contain file paths, route paths, line numbers, or function call expressions.** The location part (after "in") names the feature/endpoint in plain English: "in login", "in search", "in file upload". Bad: `"MD5 Password Hashing Combined with SQL Injection Enables Full Account Takeover"` (88 chars, full sentence). Bad: `` "SQL injection in `routes/login.ts:34`" `` (has file path+line). Good: `"MD5 Password Hashing"` (20 chars, noun phrase). Good: `"SQL Injection in Login"`. The full impact narrative belongs in `scenario:`, not in `title`. For Critical threats, use the identical text that appears in the `## Critical Attack Chain` Quick-reference Title column. For non-Critical threats, derive by converting the remediation title from imperative to noun phrase (e.g. "Remove hardcoded RSA key" → "Hardcoded RSA Private Key"). **Hard limit enforced by `qa_checks.py:check_heading_hygiene` — titles > 100 chars trip the repair gate.**
+- `title` — **2–6 word noun phrase, MAXIMUM 60 characters total**. This is a *headline*, NOT a sentence: drop articles, drop the impact clause, drop CWE descriptors. **MUST NOT contain backtick code identifiers** — no `` `lib/insecurity.ts` ``, no `` `bypassSecurityTrustHtml()` ``. **MUST NOT contain file paths, route paths, line numbers, or function call expressions.** The location part (after "in") names the feature/endpoint in plain English: "in login", "in search", "in file upload". Bad: `"MD5 Password Hashing Combined with SQL Injection Enables Full Account Takeover"` (88 chars, full sentence). Bad: `` "SQL injection in `routes/login.ts:34`" `` (has file path+line). Good: `"MD5 Password Hashing"` (20 chars, noun phrase). Good: `"SQL Injection in Login"`. The full impact narrative belongs in `scenario:`, not in `title`. For Critical threats, use the identical text that appears in the `## Critical Attack Tree` Quick-reference Title column. For non-Critical threats, derive by converting the remediation title from imperative to noun phrase (e.g. "Remove hardcoded RSA key" → "Hardcoded RSA Private Key"). **Hard limit enforced by `qa_checks.py:check_heading_hygiene` — titles > 100 chars trip the repair gate.**
 - `cwe` — mandatory, must match the CWE reference in the Section 7 Scenario cell
 - `evidence` — `{file, line}`; `file` repo-relative, `line` integer or `null`
 - `source` — one of `stride`, `requirements-compliance`, `architectural-anti-pattern`, `known-vuln`, `coverage-gap`
@@ -911,7 +911,7 @@ The threat register lists every confirmed STRIDE finding with its evidence, curr
 
 ### 7.1 Critical (<N>)
 
-These findings combine high exploitability with maximum impact. Every entry here is referenced by T-NNN from the `## Critical Attack Chain` block (placed directly after the Management Summary) and is the source of the P1 rollout actions in the Management Summary's Immediate Actions table. Section 7.1 is the authoritative per-finding source — the Attack Chain block links back here, never duplicates this content.
+These findings combine high exploitability with maximum impact. Every entry here is referenced by T-NNN from the `## Critical Attack Tree` block (placed directly after the Management Summary) and is the source of the P1 rollout actions in the Management Summary's Immediate Actions table. Section 7.1 is the authoritative per-finding source — the Attack Tree block links back here, never duplicates this content.
 
 | ID | Component | STRIDE | Threat Scenario | Likelihood | Impact | Risk | Controls in Place | Mitigations |
 |----|-----------|--------|-----------------|------------|--------|------|-------------------|-------------|
@@ -987,60 +987,57 @@ Example row in Threat Register for T-009 (SQL injection in product search):
 
 **Section 7 — Threat Register: Violated Requirements**
 
-For **every** threat row that has associated requirement IDs from Phase 8b (not just Critical threats), append a `Violated: [ID](url), …` note inside the Threat Scenario cell, after the CWE reference. This ensures requirement violations are visible at all severity levels — not just for Critical threats surfaced in the `## Critical Attack Chain` block. Format example: `... file read. [CWE-611](https://cwe.mitre.org/data/definitions/611.html). Violated: [IV-002](url)`.
+For **every** threat row that has associated requirement IDs from Phase 8b (not just Critical threats), append a `Violated: [ID](url), …` note inside the Threat Scenario cell, after the CWE reference. This ensures requirement violations are visible at all severity levels — not just for Critical threats surfaced in the `## Critical Attack Tree` block. Format example: `... file read. [CWE-611](https://cwe.mitre.org/data/definitions/611.html). Violated: [IV-002](url)`.
 
-**Critical Attack Chain layout (mandatory) — rendered directly after the Management Summary:**
+**Critical Attack Tree layout (mandatory) — rendered directly after the Management Summary:**
 
-The Critical Attack Chain is a **thin, promoted section** placed **immediately after the Management Summary, before Section 1**. It is **unnumbered** (heading: `## Critical Attack Chain`, anchor `#critical-attack-chain`) because it serves as the visual extension of the Management Summary's `### Worst Case Scenarios` bullet list — the bullets describe *what* happens in prose, this section shows *how* it happens as a diagram.
+The Critical Attack Tree is a **thin, promoted section** placed **immediately after the Management Summary, before Section 1**. It is **unnumbered** (heading: `## Critical Attack Tree`, canonical anchor `#critical-attack-tree`, with the legacy anchor `#critical-attack-chain` preserved as an explicit HTML anchor immediately above the heading for backwards compatibility with prior reports). It serves as the visual extension of the Management Summary's `### Worst Case Scenarios` bullet list — the bullets describe *what* happens in prose, this section shows *how* it happens as a goal-decomposition tree.
 
-Its job is to show the *chain(s)* — how Critical (and optionally High) findings combine into attacker workflows — and to link back to the detailed rows in Section 8.1 and the step-by-step walkthroughs in Section 3. Full narrative detail (Scenario, Current state, Violated Requirements) lives in Section 8.1; detailed sequenceDiagrams per Critical finding live in Section 3 (Attack Walkthroughs), rendered by Phase 4 of the orchestrator.
+Its job is to show the *tree* — how Critical (and optionally High) findings combine via AND/OR refinement into the attacker's terminal business-impact goal — and to link back to the detailed rows in Section 8.1 and the step-by-step walkthroughs in Section 3. Full narrative detail (Scenario, Current state, Violated Requirements) lives in Section 8.1; detailed sequenceDiagrams per Critical finding live in Section 3 (Attack Walkthroughs), rendered by Phase 4 of the orchestrator.
 
-**Multiple chains are allowed and encouraged when they exist.** The old template rendered exactly one diagram. The new template renders **1 to 3 chains**, one per distinct end-to-end attack path identified in the Management Summary's Worst Case Scenarios. If two scenarios share the same root (e.g. both start from unauthenticated SQL injection on the login form) but diverge at the second step, they count as two distinct chains and MUST be rendered as two separate `graph LR` blocks — do not merge them into one mega-diagram with branching subgraphs, which is unreadable.
+**One tree per report, rooted at the business-impact goal.** The diagram is a single `graph TD` block — top-down, root at the top. Internal nodes are subgoals annotated with `AND` or `OR` refinement; leaves are individual Critical (and optionally High) findings labeled with their T-NNN. AND-refinement means every child subgoal must be achieved for the parent to fall; OR-refinement means any one child suffices. When two Worst Case Scenarios share a root step but diverge later, they share the upper subtree and branch only where they diverge — that branching is the entire point of using a tree instead of separate chains.
 
-**Section 3 (Attack Walkthroughs)** holds the detailed `sequenceDiagram` blocks — one per Critical finding, rendered by Phase 4 of the orchestrator. The `## Critical Attack Chain` block remains the thin executive-level overview, and Section 3 remains distinct from it: the Attack Chain shows *how Criticals chain together* (one `graph LR` per scenario, max 3), Section 3 shows *each Critical in detail* (one `sequenceDiagram` per finding). Do not duplicate the Mermaid chain diagram or the quick-reference table in Section 3 — they live **only** in `## Critical Attack Chain`.
+**Section 3 (Attack Walkthroughs)** holds the detailed `sequenceDiagram` blocks — one per Critical finding, rendered by Phase 4 of the orchestrator. The `## Critical Attack Tree` block remains the thin executive-level overview, and Section 3 remains distinct from it: the Attack Tree shows *how Criticals decompose into a single attacker goal* (one `graph TD` per report), Section 3 shows *each Critical in detail* (one `sequenceDiagram` per finding). Do not duplicate the Mermaid tree diagram or the quick-reference table in Section 3 — they live **only** in `## Critical Attack Tree`.
 
-When there are 0 or 1 Critical findings, skip the `## Critical Attack Chain` section entirely — a single Critical cannot form a "chain" with itself. Section 3 still renders in that case: if `CRIT_COUNT == 1` it contains one attack walkthrough for that single Critical finding; if `CRIT_COUNT == 0` it contains the empty-state stub documented in Phase 4.
+When there are 0 or 1 Critical findings, skip the `## Critical Attack Tree` section entirely — a single Critical cannot form a meaningful tree (the leaf and the root would coincide). Section 3 still renders in that case: if `CRIT_COUNT == 1` it contains one attack walkthrough for that single Critical finding; if `CRIT_COUNT == 0` it contains the empty-state stub documented in Phase 4.
 
 ```markdown
-## Critical Attack Chain
+<a id="critical-attack-chain"></a>
+<a id="critical-attack-tree"></a>
+## Critical Attack Tree
 
-The diagrams below show how Critical findings combine into distinct attacker workflows. Each chain corresponds to one bullet under *Worst Case Scenarios* in the Management Summary. Nodes link directly to their full detail row in Section 7.1 — no finding is re-described here.
-
-### Chain 1 — Unauthenticated RCE
-
-```mermaid
-graph LR
-    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-    Start(["Unauthenticated<br/>attacker"]):::crit
-    T1["T-001<br/>Hardcoded RSA key"]:::crit
-    T2["T-003<br/>JWT forgery"]:::crit
-    T3["T-006<br/>RCE via eval"]:::crit
-    Goal(["Shell on host"]):::crit
-    Start -->|"public repo"| T1
-    T1 -->|"sign admin JWT"| T2
-    T2 -->|"admin session"| T3
-    T3 -->|"code execution"| Goal
-```
-
-**Key takeaway:** <one sentence — e.g. "A single HTTP request with a self-signed administrator JWT is enough to land a shell on the server, because every step of the chain sits on the public attack surface.">
-
-### Chain 2 — Mass data exfiltration
+The tree below decomposes the attacker's terminal goal into the Critical findings that realise it. Read top-down: the root names the business impact, internal nodes are subgoals annotated `AND` (all children required) or `OR` (any child suffices), leaves are individual Critical findings linked to their Section 7.1 row.
 
 ```mermaid
-graph LR
-    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-    Start(["Unauthenticated<br/>attacker"]):::crit
-    T4["T-002<br/>SQLi login bypass"]:::crit
-    T5["T-007<br/>UNION SELECT dump"]:::crit
-    Goal(["Full customer DB"]):::crit
-    Start -->|"login form"| T4
-    T4 -->|"admin session"| T5
-    T5 -->|"40k accounts"| Goal
+graph TD
+    classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px
+    classDef and_node fill:#7c3aed,stroke:#5b21b6,color:#fff,stroke-width:2px
+    classDef or_node fill:#2563eb,stroke:#1e40af,color:#fff,stroke-width:2px
+    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+
+    GOAL(["Full admin takeover + customer DB exfiltration"]):::goal
+    SUB_RCE["Land shell on host"]:::or_node
+    SUB_EXFIL["Exfiltrate customer DB"]:::or_node
+    PRE_JWT["Forge administrator JWT"]:::and_node
+    T1["T-001 Hardcoded RSA key"]:::leaf
+    T3["T-003 JWT forgery"]:::leaf
+    T6["T-006 RCE via eval"]:::leaf
+    T2["T-002 SQLi login bypass"]:::leaf
+    T7["T-007 UNION SELECT dump"]:::leaf
+
+    GOAL -->|"OR"| SUB_RCE
+    GOAL -->|"OR"| SUB_EXFIL
+    SUB_RCE -->|"AND"| PRE_JWT
+    SUB_RCE -->|"AND"| T6
+    PRE_JWT --> T1
+    PRE_JWT --> T3
+    SUB_EXFIL --> T2
+    SUB_EXFIL --> T7
 ```
 
-**Key takeaway:** <one sentence — e.g. "Unauthenticated SQL injection on the login endpoint yields the complete customer database including weakly-hashed passwords in under a minute.">
+**Key takeaway:** <one sentence — e.g. "Either path (admin shell OR customer-DB exfiltration) requires only Critical findings that sit on the public attack surface; breaking either OR-branch with M-001/M-002 collapses that whole subtree.">
 
-<Optional Chain 3 — render only when a third distinct end-to-end path exists (e.g. supply-chain, stored XSS → session theft, SSRF → cloud metadata). Never pad — if fewer than 3 distinct chains exist, stop after the last real one.>
+**Mitigation breakpoints:** optional sub-bullet list naming the M-NNN mitigations that sever at least one subtree (e.g. `[M-001](#m-001) — removing the hardcoded RSA key collapses the JWT-forgery AND subtree, eliminating the shell-on-host path`).
 
 ### Quick reference — Critical findings
 
@@ -1051,20 +1048,21 @@ graph LR
 | … | | | | |
 ```
 
-**Rules for `## Critical Attack Chain`:**
+**Rules for `## Critical Attack Tree`:**
 
 - **No per-finding prose blocks — ever.** The old template had a `### 🔴 T-NNN — Title` heading with a Scenario / Current state / Violated Requirements / Mitigation block for each finding. Do **not** emit those blocks — they duplicate Section 7.1. The Quick-reference table is the only per-finding presentation allowed.
-- **Heading is unnumbered.** Render as `## Critical Attack Chain` (anchor `#critical-attack-chain`), not `## 9. Critical Attack Chain` and not `## 1.5 …`. The absence of a number is deliberate and tells the reader this is part of the executive summary, not a numbered finding section.
+- **Heading is unnumbered.** Render as `## Critical Attack Tree` (canonical anchor `#critical-attack-tree`), not `## 9. Critical Attack Tree` and not `## 1.5 …`. The absence of a number is deliberate and tells the reader this is part of the executive summary, not a numbered finding section.
+- **Dual anchor mandatory.** Emit `<a id="critical-attack-chain"></a>` and `<a id="critical-attack-tree"></a>` on their own lines **immediately before** the `## Critical Attack Tree` heading. The legacy `#critical-attack-chain` anchor preserves external deep-links from prior reports (AGENTS.md §5 — ID stability).
 - **Position is non-negotiable.** Immediately after the Management Summary, immediately before Section 1. Never after Section 7.
-- The intro sentence is mandatory and must come before the first chain heading.
-- **Render between 1 and 3 chains** — one per distinct end-to-end attack path. Each chain is a `### Chain <N> — <Scenario name>` heading followed by exactly one `graph LR` block followed by exactly one `**Key takeaway:**` sentence. The chain headings match the Scenario names used in the Management Summary's `### Worst Case Scenarios` bullet list, one-to-one, so the reader can map the textual bullet to its visual diagram without guessing.
-- **Chain count rules:** emit 0 chains (skip the whole section) when `CRIT_COUNT <= 1`. Emit exactly 1 chain when `CRIT_COUNT == 2` (one linear path). Emit 2 or 3 chains when distinct end-to-end paths exist. Never merge two distinct chains into one branching diagram.
-- The chain diagrams use `graph LR` (the only place where LR is allowed — chains read like sequences) and the `crit` classDef shown above.
-- Each chain node is one Critical finding labeled with its T-NNN and a 2–3 word summary; edges describe the attacker capability gained at each step.
-- Each chain MUST have exactly one `**Key takeaway:**` sentence immediately under its diagram — this is what the QA reviewer looks for, not a single shared takeaway at the section level.
-- The Quick-reference table is rendered **once**, at the end of the section (after the last chain) — not per chain. It lists every Critical finding that appears in any of the chains. Columns: ID, Title, Component, Mitigation. Word severity only (no emoji) — severity is implicit. Include `Violated Requirements` as comma-separated clickable IDs *only when* `CHECK_REQUIREMENTS=true`; otherwise drop the column.
+- The intro sentence is mandatory and must come before the Mermaid block.
+- **Exactly one tree per report.** A single `graph TD` block — no second tree, no merged side-by-side trees. When multiple Worst Case Scenarios exist, they share the upper subtree and branch only where they diverge.
+- **Tree-shape rules:** `graph TD` (top-down) is the only allowed layout (`graph LR` is forbidden under this section — that layout belongs to §3.1 chain semantics). The diagram MUST contain at least one `goal` root node and at least three `leaf` finding nodes. Internal nodes use the `and_node` (purple) or `or_node` (blue) classDef and carry `AND` / `OR` edge labels so the boolean refinement is explicit on the wire.
+- **Skip rule:** emit 0 trees (skip the whole section) when `CRIT_COUNT <= 1`. Emit 1 tree otherwise.
+- Each leaf node is one Critical finding labeled with its T-NNN and a 2–3 word summary; internal-node labels are subgoals (1–4 words) phrased as capabilities the attacker must achieve.
+- The block MUST have exactly one `**Key takeaway:**` sentence immediately under the diagram, and may have an optional `**Mitigation breakpoints:**` bullet list naming M-NNN mitigations that sever subtrees.
+- The Quick-reference table is rendered **once**, at the end of the section (after the takeaway and any breakpoints) — not per subtree. It lists every Critical finding that appears as a leaf in the tree. Columns: ID, Title, Component, Mitigation. Word severity only (no emoji) — severity is implicit. Include `Violated Requirements` as comma-separated clickable IDs *only when* `CHECK_REQUIREMENTS=true`; otherwise drop the column.
 - **Mitigation column MUST include a short explanation** after the M-NNN link: `[M-NNN](#m-NNN) — <short action>` (e.g. `[M-001](#m-001) — Parameterized queries`). Bare M-NNN links without an explanation are a format defect.
-- Section 8.1 remains the authoritative per-finding source — any reader clicking a T-NNN link in the Quick-reference table or in a chain node lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
+- Section 8.1 remains the authoritative per-finding source — any reader clicking a T-NNN link in the Quick-reference table or in a leaf node lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
 
 **Section 3 — Attack Walkthroughs:**
 
@@ -1088,7 +1086,7 @@ _No critical-severity attack walkthroughs — the highest-severity findings are 
 
 | Where | What | For whom |
 |---|---|---|
-| `## Critical Attack Chain` (after Mgmt Summary) | 1 high-level `graph LR` showing how Critical findings chain together | Executive — 30 seconds |
+| `## Critical Attack Tree` (after Mgmt Summary) | 1 high-level `graph TD` decomposing the attacker goal via AND/OR refinement into Critical-finding leaves | Executive — 30 seconds |
 | Section 8.1 Critical | Tabular per-finding rows with Evidence, CWE, Mitigation | Engineer — 5 minutes |
 | **Section 3 Attack Walkthroughs** | 1 detailed `sequenceDiagram` per Critical finding, alt=current / else=post-mitigation | Reviewer walking through the exploit — 15 minutes |
 
@@ -1319,7 +1317,7 @@ When T-NNN or M-NNN appears in a column named **"ID"** in a table, it is an **id
 | [T-001](#t-001) | SQL injection — authentication bypass | ...
 ```
 
-This applies to: Top Findings table (# column — rank, not ID), Critical Attack Chain quick-reference table (ID column), Attack Walkthrough summary table (ID column), Threat Register (ID column).
+This applies to: Top Findings table (# column — rank, not ID), Critical Attack Tree quick-reference table (ID column), Attack Walkthrough summary table (ID column), Threat Register (ID column).
 
 Also no label on: anchor definition sites (`<a id="t-001"></a>T-001`), inside Mermaid diagram blocks (node labels carry their own text), Mitigation Register headings (`### M-001 — <full title>`).
 
@@ -1361,7 +1359,7 @@ When listing linked threats outside of table cells (e.g. after `**Linked threats
 
 This applies to all `**Linked threats:**` blocks in the architecture assessment themes (2.5.3–2.5.9). The label is on its own line preceded by `**Linked threats:**` as a standalone paragraph, followed by a blank line, then the bullet list.
 
-**Consistency rule:** Each T-NNN or M-NNN MUST use the **same short label everywhere** it appears in the report. The label is a 2–5 word summary of the threat or mitigation title. Decide the label once (during Phase 9 when composing the Threat Register) and reuse it verbatim in every subsequent reference — Management Summary, Critical Attack Chain, Architecture Assessment, Assets, Attack Surface, Trust Boundaries, Controls, Threat Register (Mitigations column), and Mitigation Register (Addresses field).
+**Consistency rule:** Each T-NNN or M-NNN MUST use the **same short label everywhere** it appears in the report. The label is a 2–5 word summary of the threat or mitigation title. Decide the label once (during Phase 9 when composing the Threat Register) and reuse it verbatim in every subsequent reference — Management Summary, Critical Attack Tree, Architecture Assessment, Assets, Attack Surface, Trust Boundaries, Controls, Threat Register (Mitigations column), and Mitigation Register (Addresses field).
 
 **Mitigation Register `**Addresses:**` field — special case.** The Mitigation Register lives under `## 9.` (prose/list context, not inside a table). The `**Addresses:**` line therefore MUST follow the "outside tables" rule — render every addressed threat as a Markdown bullet on its own line, each shaped `- [T-NNN](#t-NNN) — <short label>`. When exactly one threat is addressed, a single inline form `[T-NNN](#t-NNN) — <short label>` on the same line as `**Addresses:**` is acceptable. **Never** emit bare `T-NNN`, **never** emit comma-separated prose lists. The QA reviewer's Check 3c enforces this and auto-repairs violations.
 
@@ -1381,7 +1379,7 @@ The template is ~4 k tokens. Load it in the same Bash call that reads `.triage-f
 
 - 🔴/🟡/🟢 severity cue in `### Verdict` + red HTML blockquote with worst-case bullets (F-NNN links) — no separate `### ⚠ Worst Case Scenarios` heading.
 - `### Top Findings` is a 7-column table (not bullets): `#`, `Criticality`, `Finding`, `Component`, `Threat`, `Vektor`, `Primary Mitigations`. Max 15–20 rows; every Vektor cell is a link to Appendix A.
-- Do not emit legacy Management Summary subsections: `### Top Critical Findings`, `### Critical Findings`, `### Recommended Priority Actions`, `### Key Strengths`, or `### Overall Security Rating`. Content that used to live there is replaced by `### Top Findings`, `## Critical Attack Chain`, `#### Prioritized Mitigations`, and `### Operational Strengths`.
+- Do not emit legacy Management Summary subsections: `### Top Critical Findings`, `### Critical Findings`, `### Recommended Priority Actions`, `### Key Strengths`, or `### Overall Security Rating`. Content that used to live there is replaced by `### Top Findings`, `## Critical Attack Tree`, `#### Prioritized Mitigations`, and `### Operational Strengths`.
 - `### Architecture Assessment` uses a 3-column table (`Defect` / `Description` / `Key Findings`) with a closing §7 reference line.
 - `### Mitigations` has two sub-tables (`#### Prioritized` + `#### Follow-up`), both 5 columns: `ID`, `Mitigation`, `Component`, `Addresses`, `Effort`.
 - `### Operational Strengths` is a mandatory 5-column table (5–8 rows min): `Architectural Control`, `Implementation`, `Effectiveness`, `Gap`, `Mitigates`.

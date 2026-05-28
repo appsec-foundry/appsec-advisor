@@ -1,0 +1,48 @@
+{#- ## Critical Attack Tree — unnumbered section, conditional (critical_count >= 2). -#}
+{#- Inputs: data.intro, data.root_goal (optional), data.mermaid {orientation,nodes[],edges[]}, -#}
+{#-         data.key_takeaway, data.mitigation_breakpoints[{mitigation,breaks}] (optional), -#}
+{#-         data.stages[{stage,findings,mitigations}]. -#}
+{#- Dual anchor: legacy #critical-attack-chain preserved for external deep-links (AGENTS.md §5). -#}
+<a id="critical-attack-chain"></a>
+<a id="critical-attack-tree"></a>
+## Critical Attack Tree
+
+{{ data.intro }}
+
+```mermaid
+graph {{ data.mermaid.orientation }}
+{%- for n in data.mermaid.nodes %}
+    {{ n.id }}["{{ n.label }}"]:::{{ n.class }}
+{%- endfor %}
+
+{%- for e in data.mermaid.edges %}
+    {{ e.from }} {% if e.label %}-->|"{{ e.label }}"|{% elif e.refinement %}-->|"{{ e.refinement }}"|{% else %}-->{% endif %} {{ e.to }}
+{%- endfor %}
+
+    classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px
+    classDef and_node fill:#7c3aed,stroke:#5b21b6,color:#fff,stroke-width:2px
+    classDef or_node fill:#2563eb,stroke:#1e40af,color:#fff,stroke-width:2px
+    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef attacker fill:#555,stroke:#333,color:#fff
+    classDef crit fill:#c00,stroke:#900,color:#fff,stroke-width:2px
+    classDef high fill:#e67700,stroke:#c25700,color:#fff,stroke-width:2px
+    classDef medium fill:#ffd43b,stroke:#e8a203,color:#000,stroke-width:2px
+    classDef low fill:#2f9e44,stroke:#1e6b2f,color:#fff,stroke-width:2px
+    classDef system fill:#1168BD,stroke:#0E5CA8,color:#fff
+    classDef impact fill:#1b5e20,stroke:#0d3d10,color:#fff,stroke-width:2px
+```
+
+**Key takeaway:** {{ data.key_takeaway }}
+{%- if data.mitigation_breakpoints %}
+
+**Mitigation breakpoints:**
+{%- for mb in data.mitigation_breakpoints %}
+- {{ mb.mitigation | format_id_list }} — {{ mb.breaks }}
+{%- endfor %}
+{%- endif %}
+
+| Stage | Finding | Primary Mitigation |
+|-------|---------|--------------------|
+{%- for s in data.stages %}
+| {{ s.stage }} | {{ s.findings | format_id_list }} | {{ s.mitigations | format_id_list }} |
+{%- endfor %}

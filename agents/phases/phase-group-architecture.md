@@ -247,7 +247,7 @@ Derive the system's architecture from code and config. Determine complexity:
 | DIAGRAM_DEPTH | C4 diagrams produced | Attack walkthroughs (Phase 4 → Section 9) |
 |---------------|---------------------|--------------------------------------------|
 | `minimal` | Context + Technology Architecture only (skip Containers/Components even if Complex) | Up to 3 — top 3 Critical findings only, no walkthroughs for High/Medium/Low |
-| `standard` | By detected complexity tier (default behavior) | Up to 5 — one per Critical finding, ordered to match `## Critical Attack Chain` nodes |
+| `standard` | By detected complexity tier (default behavior) | Up to 5 — one per Critical finding, ordered to match `## Critical Attack Tree` leaves |
 | `extended` | By detected complexity tier + additional drill-down for security-critical services | Up to 5 — full curation + `Note over` mitigation commentary in each `else` branch |
 
 **⚠ Section numbering is FIXED by `data/sections-contract.yaml:459-463` — not by complexity tier.** Every Section 2 fragment, regardless of `complexity_tier` (Simple / Moderate / Complex), MUST contain exactly these four subsections in this order:
@@ -946,7 +946,7 @@ The previous spec emitted one diagram per recon category (auth, authz, input val
 - **Count Critical findings after Phase 9 merge.** Call that `CRIT_COUNT`.
 - **`CRIT_COUNT == 0`** → Section 3 is a 2-line empty-state stub: `_No critical-severity attack walkthroughs — the highest-severity findings are documented in [Section 8 — Threat Register](#8-threat-register)._`. No Mermaid, no sub-sections.
 - **`CRIT_COUNT == 1`** → Section 3 has exactly one walkthrough, for the single Critical finding.
-- **`CRIT_COUNT >= 2`** → One walkthrough per Critical finding, in the **same order as the nodes of the `## Critical Attack Chain` Mermaid diagram** (after the Management Summary). This lets a reader jump from a chain node to the detailed walkthrough. Cap at **5** — if there are more than 5 Criticals, keep the 5 that appear as nodes in the chain diagram; document the skipped ones with a trailing footnote `_N additional Critical findings (T-NNN, T-NNN, …) are documented in Section 8.1 without a dedicated walkthrough._`
+- **`CRIT_COUNT >= 2`** → One walkthrough per Critical finding, in the **same order as the leaves of the `## Critical Attack Tree` Mermaid diagram** (after the Management Summary), traversed depth-first left-to-right. This lets a reader jump from a tree leaf to the detailed walkthrough. Cap at **5** — if there are more than 5 Criticals, keep the 5 that appear as leaves in the tree diagram; document the skipped ones with a trailing footnote `_N additional Critical findings (T-NNN, T-NNN, …) are documented in Section 8.1 without a dedicated walkthrough._`
 
 **Phase 4 does not add walkthroughs for High-, Medium-, or Low-severity findings.** Non-Critical findings are surfaced via the Section 8 table only. If a reviewer wants to understand a High finding in detail, they follow the link from Section 8.2 into the per-threat row; no sequenceDiagram is generated automatically.
 
