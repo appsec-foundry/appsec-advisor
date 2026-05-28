@@ -31,7 +31,12 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     "agents/phases/phase-group-architecture.md": (25_000, 45_000),
     "agents/phases/phase-group-threats.md": (24_000, 45_000),
     "agents/phases/phase-group-recon.md": (3_000, 7_500),
-    "agents/appsec-qa-reviewer.md": (33_000, 60_000),
+    # Lowered 2026-05-28: deterministic-first migration. All mechanical
+    # checks already covered by qa_checks.py (53 check functions) were
+    # collapsed to thin "consume PRE_PASS_JSON" pointers. Detailed §2.4
+    # theme rules and MS layout rules moved to shared/qa-section24-themes.md
+    # and shared/qa-ms-checks.md. Measured 11_096 tokens at the cut.
+    "agents/appsec-qa-reviewer.md": (8_500, 13_500),
     "agents/appsec-threat-analyst.md": (22_000, 45_000),
     # Lowered 2026-05-23 after shared-file extraction (finding-title-contract,
     # supply-chain-patterns, spa-threats, cvss-metrics) and dedup of the
