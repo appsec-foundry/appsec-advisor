@@ -567,6 +567,13 @@ Write results to `$OUTPUT_DIR/.recon-summary.md` (create directory if needed).
 
 Use the exact Markdown structure defined in `shared/recon-output-template.md`. Apply that template verbatim and fill every `<placeholder>` from the Step 1–3 findings. The template covers Sections 1–10 plus the Security-Relevant Code sub-sections 7.1–7.32 (numbering canonicalised after merging earlier duplicate 7.27 / 7.28 / 7.31 blocks). Section rules, the 200-line cap, and the legacy-numbering crosswalk all live in that file.
 
+**SCHEMA COMPLIANCE — HARD GATE (item 10, 2026-05-28).** The downstream pipeline (Phase 8 IAM coverage, security-architecture authoring, STRIDE analyzers) reads `.recon-summary.md` by section number. **Every** §7.1 through §7.32 heading from `shared/recon-output-template.md` MUST appear in the output, in order, even when the corresponding pattern matched zero hits — in that case the section body MUST be `**Mechanism:** _none detected_` (or the per-section "none" form documented in the template), NEVER an omitted heading.
+
+Particular care required for §7.9 OAuth / OIDC and §7.10 SPA / BFF:
+- §7.9 must be present even when the codebase has NO server-side OAuth — the template's "Frontend integrations" bullet point covers the SPA-only case. The `oauthLogin` / `googleapis.com/oauth2` / `accounts.google.com/o/oauth2` / `loginWithRedirect` / `loginWithPopup` patterns in row 9 of the regex table catch all common frontend integrations.
+- Verify by running `grep -nE "^### 7\.9 OAuth" "$OUTPUT_DIR/.recon-summary.md"` AFTER the write. If the grep returns zero matches, the write failed schema compliance — re-emit the file. Same check for §7.2 Authorization, §7.10 SPA / BFF, §7.24 Client-side routing & auth guards, and §7.31 Service-to-Service & Cloud-IAM Authentication.
+- LEGACY top-level numbering ("## Section 1 — Technology Stack", "## Section 4 — Authentication and Authorization", "## Section 7 — Security Controls Assessment", "## Section 9 — Component List") is FORBIDDEN — the legacy schema collapsed §7.1-§7.32 into a single bullet block and lost the per-mechanism granularity that Phase 8 IAM coverage depends on. Always emit the template's structured §7.1-§7.32 headings as separate H3 blocks.
+
 ### Signals block — mandatory (Actor-Layer input)
 
 After writing `.recon-summary.md`, write a second file `$OUTPUT_DIR/.recon-signals.json` containing the boolean signal flags that drive Actor activation in the Actor Layer (Phase 2.7). These flags must be **deterministic** — set based on concrete evidence from Steps 1–3, not LLM inference. Use the evidence you already gathered; do not issue additional Grep calls.

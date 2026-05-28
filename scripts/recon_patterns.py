@@ -254,7 +254,8 @@ def _walk_repo(
     If *manifest* is a list, each scanned file's repo-relative path is
     appended to it so the caller can write a scan-manifest log.
     """
-    for dirpath, dirnames, filenames in os.walk(repo_root):
+    root_resolved = Path(repo_root).resolve(strict=False)
+    for dirpath, dirnames, filenames in os.walk(repo_root, followlinks=False):
         # Prune excluded directories up-front for speed
         rel_dir = str(Path(dirpath).relative_to(repo_root)).replace("\\", "/")
         dirnames[:] = [d for d in dirnames if not _is_excluded(f"{rel_dir}/{d}" if rel_dir != "." else d)]
@@ -263,6 +264,15 @@ def _walk_repo(
             if _is_excluded(rel):
                 continue
             p = Path(dirpath) / name
+            # Skip symlinks whose target escapes the repo root — they
+            # would otherwise let an attacker-controlled symlink leak
+            # ~/.ssh/id_rsa or similar into recon evidence.
+            if p.is_symlink():
+                try:
+                    target = p.resolve(strict=False)
+                    target.relative_to(root_resolved)
+                except (OSError, RuntimeError, ValueError):
+                    continue
             if not _should_read(p):
                 continue
             if manifest is not None:

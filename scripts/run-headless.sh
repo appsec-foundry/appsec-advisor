@@ -25,6 +25,13 @@
 #   --fail-on <level>       Exit non-zero when delta contains threats at or above
 #                           <level> (critical, high, medium); PR-gate friendly
 #   --no-qa                 Skip the Stage-3 QA reviewer (faster CI runs)
+#   --trust-mode <mode>     trusted (default) | untrusted — when untrusted, runs
+#                           preflight_untrusted.py first (rejects repo-owned hooks
+#                           and out-of-repo symlinks), enforces --strict-urls on
+#                           related-repos fetches, enables APPSEC_LOG_REDACT_PATHS,
+#                           and aborts the pipeline on preflight findings
+#   --strict-urls           Require APPSEC_URL_ALLOWLIST for all remote fetches
+#                           (implied by --trust-mode untrusted)
 #   --restore-from <path>   Hydrate $OUTPUT_DIR from a prior-run artifact before
 #                           running (CI cache restore)
 #   --max-duration <sec>    Abort the run if it exceeds <sec> seconds
@@ -177,6 +184,8 @@ INCREMENTAL_REQUESTED=0
 CLEAN_MODE=""
 CLEAN_FORCE=0
 CLEAN_DRY_RUN=0
+TRUST_MODE="trusted"
+STRICT_URLS=0
 
 # CI mode auto-detect — when running under a CI runner we prefer silent,
 # deterministic defaults.
@@ -212,6 +221,14 @@ while [ $# -gt 0 ]; do
             ;;
         --no-qa)
             NO_QA=1; shift ;;
+        --trust-mode)
+            case "$2" in
+                trusted|untrusted) TRUST_MODE="$2"; shift 2 ;;
+                *) die "Invalid --trust-mode value: $2 (must be trusted or untrusted)" ;;
+            esac
+            ;;
+        --strict-urls)
+            STRICT_URLS=1; shift ;;
         --restore-from)
             RESTORE_FROM="$2"; shift 2 ;;
         --max-duration)
@@ -312,6 +329,28 @@ if [ -n "$OUTPUT_PATH" ]; then
     OUTPUT_PATH="$(cd "$OUTPUT_PATH" && pwd)"
 else
     OUTPUT_PATH="$REPO_PATH/docs/security"
+fi
+
+# ── Trust mode: preflight + strict defaults ─────────────────────────
+# --trust-mode untrusted forces every defence we have today: reject
+# repo-owned Claude hooks, refuse out-of-repo symlinks, require an
+# explicit URL allowlist for related-repos fetches, redact paths in
+# the run log. Findings abort the assessment before any LLM dispatch.
+if [ "$TRUST_MODE" = "untrusted" ]; then
+    STRICT_URLS=1
+    export APPSEC_LOG_REDACT_PATHS=1
+    info "trust-mode: untrusted — running preflight safety checks"
+    PREFLIGHT_SCRIPT="$PLUGIN_DIR/scripts/preflight_untrusted.py"
+    if [ ! -f "$PREFLIGHT_SCRIPT" ]; then
+        die "preflight script not found: $PREFLIGHT_SCRIPT"
+    fi
+    if ! python3 "$PREFLIGHT_SCRIPT" --repo-root "$REPO_PATH" --strict --strict-urls --format text --output - >/dev/null; then
+        die "preflight findings present — refusing to scan in untrusted mode (run preflight_untrusted.py manually for details)"
+    fi
+    info "preflight: clean"
+fi
+if [ "$STRICT_URLS" = "1" ]; then
+    export APPSEC_RELATED_REPOS_STRICT_URLS=1
 fi
 
 # ── Cleanup-only mode (--clean-cache / --clean-all) ────────────────
@@ -583,6 +622,23 @@ else
     err "Assessment exited with code $EXIT_CODE"
     [ -n "$ASSESSMENT_DURATION" ] && echo "  Duration: $ASSESSMENT_DURATION"
     warn "Check intermediate files or run with --resume to continue."
+fi
+
+# ── Post-scan unmasked-secret check ────────────────────────────────
+# Runs scripts/postscan_secret_check.py over the rendered report and
+# headline intermediates. Catches the case where the agent forgot to
+# redact a secret in prose (validate_intermediate.py only catches the
+# structured `hardcoded_secrets[].snippet` field). Always-on so the
+# trusted-mode default also gets the protection; fails the run when a
+# real secret value lands in a published artefact.
+if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
+    POSTSCAN_SCRIPT="$PLUGIN_DIR/scripts/postscan_secret_check.py"
+    if [ -f "$POSTSCAN_SCRIPT" ]; then
+        if ! python3 "$POSTSCAN_SCRIPT" --output-dir "$OUTPUT_PATH"; then
+            err "post-scan secret check failed — see stderr above"
+            EXIT_CODE=21
+        fi
+    fi
 fi
 
 # ── PR Gate: --fail-on <level> ──────────────────────────────────────

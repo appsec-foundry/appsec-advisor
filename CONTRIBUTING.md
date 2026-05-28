@@ -61,7 +61,7 @@ python3 scripts/harvest-requirements.py           # regenerate fallback requirem
 | Path | What it is |
 |------|-----------|
 | `.claude-plugin/plugin.json` | Plugin manifest — required by Claude Code |
-| `.claude/settings.json` | Plugin-level Bash permission allow-list |
+| `.claude/settings.json` | Contributor-convenience permission allow-list for working on this repo in Claude Code. Mirrors `data/required-permissions.yaml` (the single source of truth). End-users install permissions via `/appsec-advisor:check-permissions --update`; the committed file is **not** what ships to end-users. Drift between the two is caught by `tests/test_check_permissions.py`. |
 | `agents/` | Agent definitions (Markdown with YAML frontmatter) |
 | `agents/phases/` | Phase-group reference files (authoritative phase instructions) |
 | `agents/shared/` | Shared standards (logging format, validation routines) |

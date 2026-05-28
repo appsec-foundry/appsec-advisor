@@ -36,6 +36,7 @@ except ImportError:
 HERE = Path(__file__).resolve().parent
 PLUGIN_ROOT = HERE.parent
 DATA_FILE = PLUGIN_ROOT / "data" / "required-permissions.yaml"
+SCHEMA_FILE = PLUGIN_ROOT / "schemas" / "required-permissions.schema.yaml"
 
 SCOPE_PATHS = {
     # resolved lazily against --repo-root so tests can override
@@ -48,6 +49,34 @@ SCOPE_PATHS = {
 # ---------- data loading -------------------------------------------------
 
 
+def _validate_against_schema(doc: dict, doc_path: Path, schema_path: Path = SCHEMA_FILE) -> None:
+    """Validate the loaded required-permissions doc against the JSON
+    Schema in ``schemas/required-permissions.schema.yaml``.
+
+    Skipped silently when ``jsonschema`` is not importable or when the
+    schema file is missing — both are non-fatal so the loader still
+    works in bare environments. The schema file is the authoritative
+    spec; tests pin the schema-validation path.
+    """
+    try:
+        import jsonschema  # type: ignore
+    except ImportError:
+        return
+    if not schema_path.is_file():
+        return
+    try:
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise SystemExit(f"error: cannot read schema {schema_path}: {exc}")
+    try:
+        jsonschema.validate(doc, schema)
+    except jsonschema.ValidationError as exc:
+        path = "/".join(str(p) for p in exc.absolute_path) or "<root>"
+        raise SystemExit(
+            f"error: {doc_path} does not match schema at {path}: {exc.message}"
+        )
+
+
 def load_required(path: Path = DATA_FILE) -> list[dict]:
     try:
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -57,6 +86,7 @@ def load_required(path: Path = DATA_FILE) -> list[dict]:
         raise SystemExit(f"error: invalid YAML in {path}: {e}")
     if not isinstance(doc, dict) or "required" not in doc:
         raise SystemExit(f"error: {path} missing top-level 'required' list")
+    _validate_against_schema(doc, path)
     entries = doc["required"]
     if not isinstance(entries, list):
         raise SystemExit(f"error: {path} 'required' is not a list")

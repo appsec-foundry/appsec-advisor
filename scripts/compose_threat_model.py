@@ -5800,7 +5800,27 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
 
 
 def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    data = _load_fragment(ctx, "critical_attack_tree", section["fragment"])
+    # Item 3 (2026-05-28): tree section is a soft-required fragment.
+    # The renderer activation is in place, but legacy runs (and most of
+    # the test fixtures) do not ship `.fragments/ms-critical-attack-tree.json`
+    # yet. Soft-skip the section when the fragment is missing so the
+    # contract activation does not regress any prior assessment artefact.
+    # Once the Phase 11 substep-4 LLM authoring of this fragment is
+    # mandated everywhere, this guard can be lifted and the missing
+    # fragment will raise the normal FragmentError again.
+    try:
+        data = _load_fragment(ctx, "critical_attack_tree", section["fragment"])
+    except FragmentError:
+        # Soft-skip — log via the render-warning channel and return "".
+        try:
+            ctx.warnings.append(
+                "critical_attack_tree: fragment missing — section soft-skipped. "
+                "Once Phase 11 substep-4 authors `.fragments/ms-critical-attack-tree.json` "
+                "consistently, lift the guard in _render_critical_attack_tree."
+            )
+        except Exception:
+            pass
+        return ""
     _validate_fragment("critical_attack_tree", data, section["schema"])
     tpl = env.get_template(section["template"])
     return tpl.render(data=data).rstrip() + "\n"
@@ -8412,6 +8432,148 @@ def _synthesise_evidence_summary(t: dict, ev_file: str, ev_line: object) -> str:
     return claim
 
 
+# Item 8 (2026-05-28): CWE-class → one-sentence imperative fix action.
+# Used by `_build_finding_cell` to prepend a generic remediation lead
+# before the M-NNN mitigation link. Maps from canonical CWE numbers to
+# a sentence so the Story Card's **Fix** field always carries actionable
+# guidance even when the linked M-NNN block lives in §9.
+_FIX_ACTION_LEADS: dict[str, str] = {
+    "89":   "Switch all SQL execution to parameterised queries or ORM-bound parameters",
+    "564":  "Switch all SQL execution to parameterised queries or ORM-bound parameters",
+    "943":  "Replace string concatenation in query operators with parameter binding",
+    "78":   "Replace shell invocations with an argv-list API and validate every input",
+    "94":   "Replace runtime code generation (eval/Function/template render) with a data-only execution path",
+    "95":   "Replace runtime code generation (eval/Function/template render) with a data-only execution path",
+    "917":  "Replace dynamic expression evaluation with safe template rendering or a static lookup",
+    "79":   "Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls",
+    "80":   "Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls",
+    "611":  "Disable external entity resolution on every XML parser and reject DOCTYPE declarations",
+    "918":  "Validate the URL scheme + host against an explicit allow-list before issuing outbound requests",
+    "22":   "Resolve and normalise every constructed path and reject anything that escapes the intended base directory",
+    "23":   "Resolve and normalise every constructed path and reject anything that escapes the intended base directory",
+    "352":  "Enforce a same-origin or signed CSRF token on every state-changing endpoint",
+    "284":  "Add explicit server-side authorisation checks on every protected route",
+    "285":  "Add explicit server-side authorisation checks on every protected route",
+    "639":  "Tie every object lookup to the requesting user's identity and reject cross-tenant references",
+    "287":  "Strengthen authentication: enforce a vetted JWT verifier with explicit algorithm, MFA where appropriate",
+    "347":  "Pin the signature algorithm explicitly and reject `alg:none` and unknown algorithms",
+    "798":  "Move the credential out of source control into a secret store and rotate it",
+    "321":  "Move the cryptographic key out of source control into a managed secret store and rotate it",
+    "259":  "Move the credential out of source control into a secret store and rotate it",
+    "327":  "Replace the broken algorithm with a vetted modern primitive (AES-GCM / Argon2id / Ed25519)",
+    "328":  "Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id)",
+    "916":  "Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id)",
+    "330":  "Switch to a cryptographically secure RNG (`crypto.randomBytes` / OS `/dev/urandom`)",
+    "311":  "Encrypt the data in transit and at rest with vetted primitives",
+    "319":  "Force TLS on every transport channel and reject downgrades",
+    "521":  "Enforce a length and complexity policy and reject reused / breached passwords",
+    "307":  "Apply rate limiting and lock-out thresholds on authentication endpoints",
+    "770":  "Bound the request rate and the per-request resource budget on this endpoint",
+    "400":  "Bound the request rate and the per-request resource budget on this endpoint",
+    "434":  "Validate uploaded file type, size, and storage path; never execute uploaded content",
+    "502":  "Use a strict allow-list deserialiser and never accept untrusted gadget chains",
+    "532":  "Strip secrets and PII from every log sink and rotate any token that already leaked",
+    "200":  "Restrict the response to the minimum fields needed and never echo secrets",
+    "209":  "Replace developer error pages with a generic message in production responses",
+    "942":  "Replace the wildcard CORS origin with an explicit allow-list",
+    "1021": "Add a frame-ancestors directive to the Content Security Policy",
+    "693":  "Add the missing protection mechanism for this surface (CSP / CSRF token / headers)",
+    "1004": "Set `HttpOnly` on every session cookie",
+    "614":  "Set `Secure` on every session cookie and enforce HTTPS-only delivery",
+    "1275": "Set `SameSite=Lax` or `Strict` on every session cookie",
+    "1104": "Replace the unmaintained dependency with a maintained equivalent or fork it under ownership",
+    "1395": "Replace the unmaintained dependency with a maintained equivalent or fork it under ownership",
+    "937":  "Upgrade the dependency to a current, supported major version and pin via lockfile",
+    "1035": "Upgrade the dependency to a current, supported major version and pin via lockfile",
+}
+
+
+def _fix_action_lead(cwe_norm: str) -> str:
+    """Return a one-sentence imperative fix action for ``cwe_norm``
+    (e.g. ``CWE-89``). Empty when no mapping exists — caller renders the
+    M-NNN link only."""
+    if not cwe_norm:
+        return ""
+    m = re.match(r"^(?:CWE-)?(\d+)$", cwe_norm.strip(), re.IGNORECASE)
+    if not m:
+        return ""
+    return _FIX_ACTION_LEADS.get(m.group(1), "")
+
+
+# Item 9 (2026-05-28): auto-wrap unmarked code identifiers in `backticks`
+# so Issue/Impact prose renders file paths, function names, and config
+# keys as code. Conservative — only wraps tokens that look strongly like
+# code references (file extensions, function-call shape, env-var case)
+# and never doubles existing backticks.
+_CODE_FILE_RE = re.compile(
+    r"(?<![`/\w])"                                       # not already in backticks or inside a path
+    r"([A-Za-z_][A-Za-z0-9_./\\-]*\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|"
+    r"yml|yaml|json|xml|toml|ini|env|sh|sql|html|css|scss|md|conf)"
+    r"(?::\d+(?:-\d+)?)?)"                                # optional :line[-end]
+    r"(?![`\w.])"
+)
+_CODE_CALL_RE = re.compile(
+    r"(?<![`\w])"
+    r"([A-Za-z_][A-Za-z0-9_]*"
+    r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+\(\))"                 # foo.bar() / a.b.c()
+    r"(?![`\w])"
+)
+_CODE_BARE_CALL_RE = re.compile(
+    r"(?<![`\w])"
+    r"([A-Za-z_][A-Za-z0-9_]{2,}\(\))"                    # plain identifier()
+    r"(?![`\w])"
+)
+_CODE_DOTTED_RE = re.compile(
+    r"(?<![`\w/])"
+    r"([a-z][a-zA-Z0-9_]*"
+    r"(?:\.[a-z][a-zA-Z0-9_]*){1,3})"                     # req.body / sequelize.query
+    r"(?![`\w(.])"
+)
+
+
+def _codify_inline_identifiers(text: str) -> str:
+    """Wrap unmarked code identifiers (file paths, calls, dotted refs)
+    in `backticks` so Story Card prose renders them as inline code.
+
+    Skips text inside existing backticks and existing Markdown link
+    targets so we never double-wrap or break links.
+    """
+    if not text:
+        return text
+
+    # Tokenise: keep already-quoted segments (backtick-spans and
+    # parenthesised link targets) opaque, wrap only the prose runs in
+    # between. This avoids double-wrapping `` `foo` `` → `` ``foo`` ``
+    # and never edits a Markdown URL like `(https://example.com)`.
+    parts: list[str] = []
+    pos = 0
+    span_re = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
+    for m in span_re.finditer(text):
+        if m.start() > pos:
+            parts.append(text[pos:m.start()])      # prose run
+            parts.append("\x00")                   # marker
+        parts.append(m.group(0))                   # passthrough span
+        pos = m.end()
+    if pos < len(text):
+        parts.append(text[pos:])
+        parts.append("\x00")
+
+    out_parts: list[str] = []
+    for p in parts:
+        if p == "\x00":
+            continue
+        if p.startswith("`") or p.startswith("](") or p.startswith("<") or p.startswith("&#"):
+            out_parts.append(p)
+            continue
+        run = p
+        run = _CODE_FILE_RE.sub(lambda mm: f"`{mm.group(1)}`", run)
+        run = _CODE_CALL_RE.sub(lambda mm: f"`{mm.group(1)}`", run)
+        run = _CODE_BARE_CALL_RE.sub(lambda mm: f"`{mm.group(1)}`", run)
+        run = _CODE_DOTTED_RE.sub(lambda mm: f"`{mm.group(1)}`", run)
+        out_parts.append(run)
+    return "".join(out_parts)
+
+
 def _build_finding_cell(
     t: dict,
     sev: str,
@@ -8543,10 +8705,16 @@ def _build_finding_cell(
                     comp_meta = c
                     break
         comp_name = (comp_meta.get("name") or "").strip() if comp_meta else ""
+        # Item 5 (2026-05-28): de-bold redundant labels — Component/Location/
+        # Walkthrough/Evidence/Classification render with italic labels so
+        # the visual emphasis goes to Issue/Impact/Fix (the actionable
+        # signals). Component remains a labelled in-cell field for
+        # structural parity with the user's reference template, but only
+        # Issue/Impact/Fix carry full bold weight.
         if comp_name:
-            component_line = f"**Component:** [{canonical_id}](#{canonical_id.lower()}) — {comp_name}"
+            component_line = f"_Component:_ [{canonical_id}](#{canonical_id.lower()}) — {comp_name}"
         else:
-            component_line = f"**Component:** [{canonical_id}](#{canonical_id.lower()})"
+            component_line = f"_Component:_ [{canonical_id}](#{canonical_id.lower()})"
 
     # -- 2. Location labelled row -----------------------------------------
     # **Location:** stays as a labelled row (file:line).
@@ -8582,16 +8750,12 @@ def _build_finding_cell(
         loc_inner = f"`{ev_file}`" + (f":{ev_line}" if ev_line else "")
         if ev_status_token:
             loc_inner += f" · {ev_status_token}"
-        location_line = f"**Location:** {loc_inner}"
+        location_line = f"_Location:_ {loc_inner}"
     elif ev_status_token:
         # No `evidence.file` on the threat but the evidence verdict is
         # still worth surfacing — emit the location line with an em-dash
-        # placeholder so the evidence: badge always renders. Pre-2026-05
-        # this verdict was attached to a single ` · `-joined location
-        # line that included the Component slot, so it appeared even when
-        # `ev_file` was empty. Dropping it silently when no file exists
-        # broke `test_evidence_check_badge_renders_on_refuted_and_ambiguous`.
-        location_line = f"**Location:** — · {ev_status_token}"
+        # placeholder so the evidence: badge always renders.
+        location_line = f"_Location:_ — · {ev_status_token}"
 
     # R-7 (2026-05): Vektor field is no longer assembled into the cell —
     # see "Design choices (R-7)" in the docstring. The variable below is
@@ -8622,7 +8786,7 @@ def _build_finding_cell(
             hit = fid_to_walkthrough.get(k)
             if hit:
                 label, anchor = hit
-                walkthrough_line = f"**Attack Walkthrough:** [{label}](#{anchor})"
+                walkthrough_line = f"_Walkthrough:_ [{label}](#{anchor})"
                 break
 
     # -- 3. What the attacker does — cleaned scenario ---------------------
@@ -8671,6 +8835,27 @@ def _build_finding_cell(
     scenario_clean = _strip_inline_citations(scenario_full)
     scenario_clean = _strip_redundant_filepath(scenario_clean, ev_file)
 
+    # Issue 1 (2026-05-28 follow-up): strip LLM-authored "Evidence: ..."
+    # tails from the scenario. The STRIDE analyzer sometimes appends an
+    # `Evidence: file:line (...), file:line (...)` clause at the end of
+    # the scenario for traceability. The renderer's `impact_carve` logic
+    # then picks the tail as Impact, producing useless rows like
+    # `**Impact:** Evidence: lib/insecurity.ts:22 (private key literal),
+    # ...`. The Evidence claim already renders in the **Evidence** line
+    # above the code snippet; carrying it through the scenario is pure
+    # duplication.
+    #
+    # Sentence-aware stripping is unreliable because the Evidence clause
+    # routinely contains file paths with `.` that prematurely terminate
+    # any naive `[^.!?]+\.` regex (e.g. `lib/insecurity.ts:22`). Strip
+    # from the first `Evidence:` token to the end of the scenario
+    # instead — anything after the marker is provenance, not narrative.
+    _ev_strip_idx = re.search(r"(?:^|\s)Evidence:\s", scenario_clean, flags=re.IGNORECASE)
+    if _ev_strip_idx:
+        scenario_clean = scenario_clean[: _ev_strip_idx.start()].rstrip(" ,;.")
+        if scenario_clean and not scenario_clean.endswith((".", "!", "?")):
+            scenario_clean += "."
+
     # Split scenario into sentences so Issue and Impact draw from disjoint
     # slices. Without this carve-out the Impact line below picks the last
     # sentence of `scenario_clean`, and Issue (which keeps the first N
@@ -8700,6 +8885,10 @@ def _build_finding_cell(
     scenario = issue_text
     if scenario and not scenario.endswith((".", "!", "?")):
         scenario += "."
+    # Item 9 (2026-05-28): auto-wrap inline code identifiers in
+    # backticks so file paths, function names, and dotted references
+    # render as inline code instead of plain prose.
+    scenario = _codify_inline_identifiers(scenario)
     issue_line = ""
     if scenario:
         issue_line = f"**Issue:** {scenario}"
@@ -8732,7 +8921,7 @@ def _build_finding_cell(
         text = evidence_summary_explicit
         if not text.endswith((".", "!", "?")):
             text += "."
-        evidence_line = f"**Evidence:** {text}"
+        evidence_line = f"_Evidence:_ {text}"
     elif sev in ("critical", "high") and ev_file:
         # Synthesise a one-sentence claim from CWE class + file context.
         # The next-line snippet is the proof for this claim.
@@ -8740,14 +8929,14 @@ def _build_finding_cell(
         if fallback:
             if not fallback.endswith((".", "!", "?")):
                 fallback += "."
-            evidence_line = f"**Evidence:** {fallback}"
+            evidence_line = f"_Evidence:_ {fallback}"
 
-    # Back-compat: keep ``**Root cause:**`` when the yaml carried it
+    # Back-compat: keep ``Root cause`` when the yaml carried it
     # explicitly (legacy schema) but only when distinct from Issue.
     root_cause_explicit = (t.get("root_cause") or "").strip()
     root_cause_line = ""
     if root_cause_explicit and root_cause_explicit.lower() not in scenario.lower():
-        root_cause_line = f"**Root cause:** {root_cause_explicit}"
+        root_cause_line = f"_Root cause:_ {root_cause_explicit}"
 
     # -- 5. Impact one-liner ----------------------------------------------
     # Sources, in order: explicit `impact_description` / `impact_summary`
@@ -8774,6 +8963,15 @@ def _build_finding_cell(
     if impact_text:
         impact_text = _strip_inline_citations(impact_text)
         impact_text = re.sub(r"^[•\-\*]\s*", "", impact_text).strip(" ,;")
+        # Issue 1 (2026-05-28 follow-up): reject impact candidates that
+        # are clearly evidence prose, not consequence prose. An impact
+        # line should answer "what does this enable for the attacker /
+        # cost the defender", not enumerate evidence locations.
+        if re.match(r"^\s*Evidence:\s+", impact_text, re.IGNORECASE):
+            impact_text = ""
+        # Item 9: auto-wrap inline code identifiers in backticks.
+        if impact_text:
+            impact_text = _codify_inline_identifiers(impact_text)
         # R-7 (2026-05): Impact is ALWAYS rendered for Critical/High,
         # even when it overlaps with the Issue prose. The R-5/iter-2
         # substring-dedup was eliminating Impact for ~90% of findings on
@@ -8792,11 +8990,22 @@ def _build_finding_cell(
             norm_impact = _norm_cmp(impact_text)
             norm_scenario = _norm_cmp(scenario)
             is_dup = False
-            # Dedup only applies for Medium/Low — never for Critical/High,
-            # and never when the impact text was explicitly authored.
+            # Dedup applies (a) for Medium/Low impacts that overlap the
+            # scenario — the original R-5 dedup, and (b) for ALL
+            # severities when impact is *exactly* equal to issue.
+            # Issue 2 (2026-05-28 follow-up): findings like CORS or FTP
+            # directory listing were rendering Issue and Impact as the
+            # same single sentence — pure duplication. The R-5 dedup
+            # carved Critical/High out to keep Impact always rendering
+            # for high-severity rows, but that left "Issue == Impact"
+            # exact-duplicates running, which is the worst of both
+            # worlds. Exact equality means the Impact line carries no
+            # additional information at any severity.
             if sev not in ("critical", "high") and not had_explicit_impact:
                 if norm_impact == norm_scenario or norm_impact in norm_scenario:
                     is_dup = True
+            if not is_dup and norm_impact == norm_scenario:
+                is_dup = True
             if is_dup:
                 impact_line = ""
             else:
@@ -8813,7 +9022,23 @@ def _build_finding_cell(
     mit_ids = t.get("mitigation_ids") or t.get("mitigations") or []
     mit_links = [ctx.linkify_with_label(mid) for mid in mit_ids[:2]]
     if mit_links:
-        fix_line = "**Fix:** " + " · ".join(mit_links)
+        # Item 8 (2026-05-28): prepend a CWE-class-derived one-sentence
+        # imperative action so the **Fix** field carries actionable
+        # guidance before the M-NNN link.  Falls back to a neutral
+        # "Apply the remediation" lead when the CWE is unknown or
+        # outside the curated map.
+        lead = _fix_action_lead(cwe_norm)
+        if lead:
+            lead = _codify_inline_identifiers(lead)
+            fix_line = (
+                "**Fix:** "
+                + lead
+                + ". See "
+                + " · ".join(mit_links)
+                + "."
+            )
+        else:
+            fix_line = "**Fix:** Apply the remediation in " + " · ".join(mit_links) + "."
 
     # -- 7. Classification (TH-NN · CWE · OWASP) --------------------------
     # R-5 (2026-05 user request): renamed from the legacy italicised
@@ -8825,11 +9050,17 @@ def _build_finding_cell(
     cat_meta = taxonomy.get(cat_id, {})
     cat_title = cat_meta.get("title") or ""
     refs_parts: list[str] = []
+    # Item 7 (2026-05-28): the TH-NN identifier + anchor link were noisy
+    # filler — the threat-category anchors are dead targets, and the
+    # `[TH-03 — Cryptographic Failures](#th-03)` form bolted a useless
+    # ID onto an otherwise descriptive label. We keep the classification
+    # NAME (the part the reader actually needs) and drop the bracket
+    # link + ID prefix. CWE and OWASP links remain — those point to
+    # external authoritative pages.
     if cat_id:
         if cat_title:
-            refs_parts.append(f"[{cat_id} — {cat_title}](#{cat_id.lower()})")
-        else:
-            refs_parts.append(f"[{cat_id}](#{cat_id.lower()})")
+            refs_parts.append(cat_title)
+        # else: omit — no useful text left without an anchor target.
     if cwe_norm:
         cwe_num = cwe_norm.split("-", 1)[-1] if "-" in cwe_norm else cwe_norm
         refs_parts.append(f"[CWE-{cwe_num}](https://cwe.mitre.org/data/definitions/{cwe_num}.html)")
@@ -8838,13 +9069,10 @@ def _build_finding_cell(
         refs_parts.append(f"[OWASP {owasp_ref}:2021](https://owasp.org/Top10/{owasp_ref}_2021/)")
     classification_line = ""
     if refs_parts:
-        # R-7 (2026-05): switched from italic-only `_…_` form to the
-        # labelled `**Classification:** …` form so the line reads as
-        # part of the structured Story Card. The labelled form matches
-        # the rest of the cell (**Component:** / **Location:** / **Issue:** /
-        # …) and removes the discrepancy where the citation footer was
-        # the only field without a label.
-        classification_line = "**Classification:** " + " · ".join(refs_parts)
+        # Item 5: classification label is italic, not bold — the
+        # actionable triad (Issue / Impact / Fix) carries bold weight;
+        # reference citations sit one notch quieter.
+        classification_line = "_Classification:_ " + " · ".join(refs_parts)
 
     # -- 8. Code snippet — collapsed in <details> -------------------------
     # Severity-tier policy (post-2026-05):
@@ -9087,6 +9315,29 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     and a unique anchor.
     """
     threats = ctx.yaml_data.get("threats") or []
+    # Issue 3 (2026-05-28 follow-up): drop self-declared duplicate
+    # threats whose scenario explicitly cross-references another
+    # surviving threat (e.g. `"Duplicate of T-001 — config-scan
+    # detection of hardcoded RSA key"`). These rows are config-scan
+    # detections of the same root finding that the STRIDE analyzer
+    # already authored; the threat-merger left them through because
+    # its similarity scoring does not bridge stride↔config-scan sources
+    # even when the same file:line is cited. Filtering at render time
+    # is the conservative fix — the YAML still carries every threat
+    # for SARIF/pentest-tasks downstream, but §8 shows each weakness
+    # once.
+    threat_ids = {(t.get("id") or t.get("t_id") or "").strip().upper() for t in threats}
+    _dup_ref_re = re.compile(r"^\s*Duplicate of \[?(T-\d+)\]?", re.IGNORECASE)
+    deduped: list[dict] = []
+    for t in threats:
+        scenario = (t.get("scenario") or "").strip()
+        m = _dup_ref_re.match(scenario)
+        if m and m.group(1).upper() in threat_ids and m.group(1).upper() != (
+            (t.get("id") or t.get("t_id") or "").strip().upper()
+        ):
+            continue
+        deduped.append(t)
+    threats = deduped
     # Tracks whether any finding row carries the `(raw Critical)`
     # annotation — set inside the per-row loop. When True we emit a
     # one-line footnote at the end of §8 explaining the convention.
@@ -9282,10 +9533,16 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # column so the table groups visually by where the finding lives.
     # Vektor moves into the Finding cell as a labelled **Vektor:** field
     # (same anchor target, same label resolution — just rendered inline).
-    # 5 columns since actors.md §14 — Actor column links to §1.5 and surfaces
-    # [obsolete-actor] / _dormant_ markers (§10 Stable-ID-Garantie Fälle 2 & 3).
-    lines.append("| ID | Finding | Component | Actor | Criticality |")
-    lines.append("|----|---------|-----------|-------|-------------|")
+    # Item 6 (2026-05-28): Actor column dropped — upstream STRIDE
+    # analyzers do not populate `actor_ids` / `primary_actor`, so the
+    # column rendered as 100% em-dashes and added noise without signal.
+    # The Story Card already carries actor attribution inside the Issue
+    # narrative when the LLM has it; rendering an empty structural column
+    # was a deferred deletion from the actors.md §14 contract. When the
+    # STRIDE prompt + threat-merger start populating `actor_ids` reliably,
+    # reinstate the column via the `_render_threat_register` history.
+    lines.append("| ID | Finding | Component | Criticality |")
+    lines.append("|----|---------|-----------|-------------|")
 
     # Vektor sort key — sort dirtier paths first within a severity tier so
     # the reader scans Repo-Read criticals before Victim-Required ones.
@@ -9354,74 +9611,11 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             fid_to_walkthrough=fid_to_walkthrough,
         )
 
-        # Actor cell (column 4) — actors.md §10 & §14:
-        #   primary_actor (link to §1.5) + optional +N extras,
-        #   [obsolete-actor] marker ONLY when actor_ids list is empty AND
-        #   provenance shows the finding once had attribution (§10 Fall 2 —
-        #   actor was tagged, then disabled).
-        #   _dormant_ marker when finding is preserved past actor disable
-        #   (§10 Fall 3).
-        #
-        # 2026-05 (review-recommendations §4.5 Guard 1): the previous
-        # branch emitted `_[obsolete-actor]_` for ANY empty actor_ids,
-        # including first-run findings where the STRIDE analyzer simply
-        # never populated the field. That collapsed two structurally
-        # different states (Fall 2 = legitimate disable vs. data-gap =
-        # pipeline defect) into the same Fall-2 marker. The precondition
-        # below requires evidence of a prior-attribution state before
-        # emitting the marker; otherwise the cell renders neutrally as
-        # "—" so the missing data is visible without falsely claiming the
-        # finding was ever actor-tagged.
-        actor_ids = t.get("actor_ids") or []
-        primary_actor = t.get("primary_actor")
-        status_lower = (t.get("_status") or "").strip().lower()
-        prov = t.get("_provenance") or {}
-        had_actor_history = (
-            bool(prov.get("run_count_empty"))
-            or bool(prov.get("disabled_actor_ids"))
-            or bool(prov.get("previous_actor_ids"))
-        )
-        # 2026-05 (review-recommendations §4.6 + risk-assessment B): the
-        # `_dormant_` marker is a state-transition marker (actors.md §10
-        # Fall 3 — finding's structurally-required actor was disabled, the
-        # finding is preserved for review). Just like `_[obsolete-actor]_`,
-        # it must NOT be rendered without provenance evidence — otherwise
-        # an upstream pipeline bug that writes `_status: dormant` without
-        # corresponding history would silently masquerade as a legitimate
-        # Fall-3 case. Require either prior-actor-history fields OR an
-        # explicit dormancy reason in provenance before honouring the
-        # status string.
-        dormant_provenance_ok = (
-            had_actor_history
-            or bool(prov.get("dormancy_reason"))
-            or bool(prov.get("dormant_since"))
-        )
-        if status_lower == "dormant" and dormant_provenance_ok:
-            actor_cell = "_dormant_"
-        elif status_lower == "dormant":
-            # Status flag set without supporting provenance — neutral render
-            # plus a (silent) signal. The composer doesn't have direct access
-            # to .run-issues.json here, but the architect-reviewer's actor
-            # checks pick up the inconsistency in the next pass.
-            actor_cell = "—"
-        elif not actor_ids and had_actor_history:
-            actor_cell = "_[obsolete-actor]_"
-        elif not actor_ids:
-            # First-run / data-gap state — render neutrally rather than
-            # fabricate a Fall-2 history. Architect-reviewer Sub-Check 15.3
-            # already raises the upstream issue; the renderer must not paper
-            # over it with a misleading marker.
-            actor_cell = "—"
-        elif primary_actor:
-            actor_cell = f"[`{primary_actor}`](#identified-actors)"
-            extras = [a for a in actor_ids if a != primary_actor]
-            if extras:
-                actor_cell += f" <sub>+{len(extras)}</sub>"
-        else:
-            # actor_ids present but no primary chosen — degenerate but valid; show first.
-            actor_cell = f"[`{actor_ids[0]}`](#identified-actors)"
-            if len(actor_ids) > 1:
-                actor_cell += f" <sub>+{len(actor_ids) - 1}</sub>"
+        # Item 6 (2026-05-28): Actor cell construction removed — see the
+        # header-column commentary above for the rationale (data-gap, not
+        # a design decision). actors.md §10 markers (`_dormant_`,
+        # `_[obsolete-actor]_`) live in YAML provenance and surface via
+        # `_render_identified_actors` in §1.5 when present.
 
         # ID cell (column 1) — dual T+F anchor, F-NNN visible label.
         # See pre-2026-05 commentary preserved further down in this file:
@@ -9438,7 +9632,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             visible_id = f"F-{digits}"
         lines.append(
             f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | '
-            f"{finding_cell} | {comp_cell} | {actor_cell} | {sev_cell} |"
+            f"{finding_cell} | {comp_cell} | {sev_cell} |"
         )
     lines.append("")
 
@@ -10045,6 +10239,10 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "quick_mode_notice": _render_quick_mode_notice,
         "toc": _render_toc,
         "management_summary": _render_management_summary,
+        # Item 3 (2026-05-28): wired the dormant Critical Attack Tree
+        # renderer into the dispatcher. Section is gated on
+        # `critical_count >= 2` via sections-contract.yaml conditional.
+        "critical_attack_tree": _render_critical_attack_tree,
         "verdict": _render_verdict,
         "identified_actors": _render_identified_actors,
         "security_posture_at_a_glance": _render_security_posture_at_a_glance,
@@ -10322,6 +10520,13 @@ def render(
             "high_count": severity_counts["high"],
             "medium_count": severity_counts["medium"],
             "low_count": severity_counts["low"],
+            # Item 3 (2026-05-28): precomputed bool flag for the
+            # `critical_attack_tree` section conditional. The contract
+            # grammar (`scripts/_safe_cond.py`) does not support
+            # numeric comparisons (`critical_count >= 2`) — precompute
+            # the gate here so the contract can reference it as a bare
+            # boolean.
+            "has_multi_critical": severity_counts["critical"] >= 2,
             # category-level counts (active TH categories grouped by
             # their effective-severity). Used by §8.B sub-section
             # conditionals (e.g. `low_category_count > 0`).

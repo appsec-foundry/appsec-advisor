@@ -1,21 +1,38 @@
 # Permissions required for /appsec-advisor:create-threat-model to run without
-# prompts. Consumed by /appsec-advisor:check-permissions (scripts/check_permissions.py).
+# prompts in an INTERACTIVE Claude Code session. Consumed by
+# /appsec-advisor:check-permissions (scripts/check_permissions.py).
 #
-# Security model
-# ──────────────
-# File tool permissions (Read/Write/Edit) ARE path-scoped:
-#   • Read(${REPO_ROOT}/**)   — agents read files in the target repo only
-#   • Read(${PLUGIN_ROOT}/**) — agents/scripts read plugin data/schemas/templates
-#   • Write/Edit(${OUTPUT_DIR}/**) — all output goes to docs/security/ only
+# What this list is — and is NOT
+# ──────────────────────────────
+# This is a PROMPT-SUPPRESSION allow-list, not a security boundary.
+#   • Its only job is to stop Claude Code from prompting on each Read/Write/
+#     Edit/Bash tool call during an interactive run.
+#   • The unattended path (scripts/run-headless.sh) launches with
+#     `--permission-mode bypassPermissions` and does NOT consult settings.json
+#     at all. None of these entries take effect there.
+#   • Because the plugin requires Bash(*) (see the shell entry below), an agent
+#     can read/write any path via the shell (cat/cp/curl). The path-scoped
+#     Read/Write/Edit entries therefore provide NO containment — they only
+#     channel tool-mediated file ops so they don't prompt. Do not treat the
+#     ${REPO_ROOT}/${OUTPUT_DIR} scoping as a sandbox.
 #
-# Bash tool permissions are command-prefix scoped only (Claude Code limitation —
-# there is no path restriction on shell execution). A single Bash(*) entry covers
-# all shell commands unconditionally. Per-command entries like Bash(git:*) only
-# cover the FIRST TOKEN of a simple command — any compound command, pipeline, or
-# shell built-in with a variable assignment as the first token will not match and
-# will still prompt. The only way to guarantee prompt-free compound commands is
-# Bash(*). This is safe here because the real security boundary is the Read/Write/
-# Edit path restrictions, not shell command whitelisting.
+# Where the actual security boundary lives
+# ────────────────────────────────────────
+# Containment is enforced in code, not by this allow-list:
+#   • scripts/preflight_untrusted.py  — rejects repo-owned hooks/settings and
+#     out-of-repo symlinks before an untrusted scan (run-headless.sh
+#     --trust-mode untrusted)
+#   • scripts/_path_guard.py          — blocks symlink escapes during file reads
+#   • scripts/_url_guard.py           — SSRF / cloud-metadata defence on fetches
+#   • scripts/postscan_secret_check.py — fails the run on leaked secret values
+# For real isolation, run against a throwaway git worktree (see below) or in a
+# container.
+#
+# Bash entry: command-prefix scoping is a Claude Code limitation — per-command
+# entries like Bash(git:*) match only the FIRST TOKEN of a simple command, so
+# compound commands / pipelines / VAR=$(...) chains still prompt. A single
+# Bash(*) is the only way to keep an interactive run prompt-free. It is wide
+# open by design; the guards above are what bound the blast radius.
 #
 # Placeholders expanded at check-time:
 #   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / <repo>/docs/security
@@ -215,8 +232,11 @@ required:
   #   dozens of compound shell constructs (phase-epoch arithmetic, dep-scan
   #   background launch, lock/mkdir sequences, etc.) that cannot be broken apart
   #   without introducing extra Bash turns. A single Bash(*) is the only way to
-  #   achieve fully prompt-free runs. The real security boundary is the Read/Write/
-  #   Edit path restrictions above — not shell command whitelisting.
+  #   achieve fully prompt-free interactive runs.
+  #   NOTE: Bash(*) is unrestricted shell access and subsumes all file access, so
+  #   the path-scoped file entries above are prompt-suppression only, not a
+  #   containment boundary. Real containment lives in the guard scripts — see the
+  #   header comment at the top of this file.
   - entry: "Bash(*)"
     reason: "all shell commands used by agents, scripts, and phase-group files; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
     category: shell

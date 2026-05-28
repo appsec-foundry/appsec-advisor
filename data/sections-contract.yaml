@@ -59,12 +59,17 @@ document:
     - { id: quick_mode_notice, condition: "is_quick_depth" }
     - toc
     - management_summary
-    # Note: The unnumbered `## Critical Attack Tree` block (hybrid migration,
-    # 2026-05) is LLM-authored as prose inside `attack-walkthroughs.md` per
-    # the layout rules in agents/phases/phase-group-threats.md. §3.1 Attack
-    # Chain Overview retains chain semantics (linear graph LR, max 5 chains).
-    # The tree block lives between Management Summary and Section 1 and shows
-    # goal-decomposition for Critical findings (graph TD, AND/OR refinement).
+    # Item 3 (2026-05-28): activate the previously dormant Critical
+    # Attack Tree fragment producer. The unnumbered `## Critical Attack
+    # Tree` section sits between the Management Summary and §1 and
+    # carries one `graph TD` goal-decomposition Mermaid tree for the
+    # Critical findings. Producer = Phase 11 substep 4 (LLM-authored
+    # fragment `.fragments/ms-critical-attack-tree.json`). The renderer
+    # path (`_render_critical_attack_tree`), schema, and template all
+    # exist; this entry wires them into the document order. The section
+    # is gated on `critical_count >= 2` so a single-Critical assessment
+    # does not render a degenerate one-node tree.
+    - { id: critical_attack_tree, condition: "has_multi_critical" }
     - system_overview
     - { id: identified_actors, condition: "has_resolved_actors" }
     - architecture_diagrams
@@ -133,6 +138,8 @@ document:
         - { id: quick_mode_notice, condition: "is_quick_depth" }
         - toc
         - management_summary
+        # Item 3 — activated dormant Critical Attack Tree fragment producer.
+        - { id: critical_attack_tree, condition: "has_multi_critical" }
         - system_overview
         - architecture_diagrams
         # §3 conditional on `not skip_attack_walkthroughs` — see main `order:` block.
@@ -330,6 +337,24 @@ sections:
       - "^Follow-up Actions$"
       - "^Overall Security Rating$"
       - "^⚠ Worst Case Scenarios$"
+
+  # -- Critical Attack Tree (post-MS, unnumbered) --------------------------
+  # Item 3 (2026-05-28): activated dormant section. The renderer
+  # function `_render_critical_attack_tree`, schema, and Jinja template
+  # all existed before — only the wiring was missing.
+  critical_attack_tree:
+    heading: "## Critical Attack Tree"
+    heading_numbered: false
+    anchor: "critical-attack-tree"
+    fragment_type: data
+    fragment: "ms-critical-attack-tree.json"
+    schema:   "critical-attack-tree.schema.json"
+    template: "critical-attack-tree.md.j2"
+    # Skipped when there are 0 or 1 Critical findings — a single-node
+    # decomposition tree adds noise without insight. The condition
+    # grammar only supports bare names, so the >=2 check is computed
+    # in compose_threat_model.py and exposed as `has_multi_critical`.
+    conditional: "has_multi_critical"
 
   # -- MS sub-sections ------------------------------------------------------
 

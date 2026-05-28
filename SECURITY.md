@@ -84,33 +84,35 @@ The current threat model assumes the scanned repository is **trusted** (your own
 
 | # | Issue | Vector |
 |---|-------|--------|
-| 1 | Prompt injection via repo content | Source files, comments, markdown read by agents flow into the LLM context. Attacker-controlled instructions there can steer the agent. Combined with the required `Bash(*)` permission this can become arbitrary command execution on the reviewer's machine. |
-| 2 | SSRF via `docs/related-repos.yaml` | If the scanned repo contains this file, `scripts/load_related_repos.py` will fetch its URLs. No host allowlist, no RFC1918/metadata blackhole. Auth headers from `RELATED_REPOS_AUTH_HEADER` are sent on every fetch. |
-| 3 | Symlink-driven file reads | Symlinks inside the repo (e.g. `./policy.md` → `/home/user/.ssh/id_rsa`) are followed when agents read files. Contents can land in the LLM context and in `.recon-summary.md`. |
-| 4 | Repo-owned Claude Code hooks | A `.claude/settings.json` shipped inside the scanned repo is loaded by Claude Code itself, before the plugin runs. The recon-scanner flags this as Cat 28 but only after the hooks have already executed. |
+| 1 | Prompt injection via repo content | Source files, comments, markdown read by agents flow into the LLM context. Attacker-controlled instructions there can steer the agent. The shipped Bash allow-list still includes RCE-capable primitives (`python3`, `awk`, `sed`); successful prompt injection can therefore become arbitrary command execution on the reviewer's machine. |
+| 2 | SSRF via `docs/related-repos.yaml` | *(Hardened 2026-05.)* `scripts/load_related_repos.py` validates the target URL through `scripts/_url_guard.py` — RFC1918, loopback, link-local (incl. `169.254.169.254`), multicast, reserved IPs are rejected, and cross-host redirects strip `Authorization`/`Cookie` headers. For stricter control, set `APPSEC_URL_ALLOWLIST=host1,host2` and pass `--strict-urls` (auto-enabled in `--trust-mode untrusted`). |
+| 3 | Symlink-driven file reads | *(Hardened 2026-05.)* The recon walker (`scripts/recon_patterns.py`) runs `os.walk(..., followlinks=False)` and the new `scripts/_path_guard.py` helper drops symlinks whose target escapes the repo root. Free-form agent reads via the Read tool are *not* sandboxed at the harness level — `scripts/preflight_untrusted.py` enumerates escaping symlinks before the run begins and refuses to proceed in untrusted mode. |
+| 4 | Repo-owned Claude Code hooks | A `.claude/settings.json`, `.claude/hooks/`, or `.vscode/tasks.json` shipped inside the scanned repo is loaded by the host tool **before** the plugin runs. Run `scripts/preflight_untrusted.py --strict` (or `--trust-mode untrusted` on `run-headless.sh`) before scanning a third-party repo; the recon-scanner still flags it as Cat 28 for after-the-fact visibility. |
 | 5 | Argument injection in subprocess calls | Filenames and refs from the repo flow into `git` (and, when the GitHub CLI is available, optional `gh pr list`) without consistent `--` separators or strict character validation. *(Reduced 2026-05: `npm audit` / `pip-audit` / `govulncheck` are no longer invoked — the plugin runs supply-chain detection passively, never spawns package-manager or CVE-database tools.)* |
 | 6 | ~~Third-party scanner RCEs~~ | **Resolved 2026-05** — `dep_scan.py` was removed. The plugin no longer invokes external audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) on attacker-controlled manifests. Supply-chain posture is now produced by `scripts/emit_sca_practice.py` + `scripts/emit_known_bad_libs.py` + `scripts/emit_dep_update_activity.py` — all three are pure file-system inspection plus `git log`. |
 
-### Recommended mitigations until the untrusted-repo mode ships
+### Recommended mitigations for untrusted repos
 
 1. Run the assessment inside an ephemeral container or VM, not on the reviewer's main workstation.
-2. Block outbound network egress except `api.anthropic.com` during the scan.
-3. Before scanning, reject repos that contain `.claude/settings.json`, `.claude/hooks/`, or symlinks pointing outside the repo root.
-4. Pass `--related-repos disable` (or remove `docs/related-repos.yaml`) when the repo is not fully trusted.
+2. Block outbound network egress except `api.anthropic.com` (and, when in use, your `APPSEC_URL_ALLOWLIST` hosts) during the scan.
+3. Before scanning, run `python3 scripts/preflight_untrusted.py --repo-root <path> --strict --strict-urls`. It exits non-zero on repo-owned Claude/IDE hooks, out-of-repo symlinks, and unvalidated `docs/related-repos.yaml` URLs. The headless runner does this automatically when invoked with `--trust-mode untrusted`.
+4. Remove `docs/related-repos.yaml` (or set `APPSEC_URL_ALLOWLIST` and run with `--strict-urls`) when the repo is not fully trusted. There is no `--related-repos disable` flag today.
 5. Treat the reviewer's environment as compromised after a scan: no plain-text credentials in env vars, no SSH-agent forwarding, no cached cloud-CLI tokens.
 
-### Planned: untrusted-repo mode
+### Trust mode (`--trust-mode untrusted`)
 
-A future release will add a `--untrusted-repo` flag (working title) that flips these defaults:
+`scripts/run-headless.sh --trust-mode untrusted` and the interactive equivalent in `create-threat-model` flip several defences on at once:
 
-- Mandatory worktree-into-container isolation, refuses to run otherwise.
-- Pre-scan reject on repo-owned hooks, suspicious symlinks, and oversized manifests.
-- Disable `load_related_repos.py` and external-context fetch by default.
-- Drop the `Bash(*)` requirement in favour of a tighter command allow-list (slower runs, but no shell escape).
-- SSRF-hardened HTTP client (host allowlist, RFC1918 + metadata blackhole, disabled redirects).
-- Symlink-aware file reads (no traversal outside repo root).
+- Runs `scripts/preflight_untrusted.py --strict --strict-urls` first; any finding aborts the assessment before LLM dispatch.
+- Sets `APPSEC_RELATED_REPOS_STRICT_URLS=1` so `load_related_repos.py` requires `APPSEC_URL_ALLOWLIST`.
+- Sets `APPSEC_LOG_REDACT_PATHS=1` so `.agent-run.log` records `<redacted:<basename>:<sha8>>` instead of absolute file paths.
+- Refuses to proceed when an escaping symlink, repo-owned `.claude/` artifact, or unvalidated related-repo URL is present.
 
-Tracking: open a GitHub issue if you need this sooner than the current roadmap allows — it helps prioritise.
+What is still out of scope for the current trust-mode (file a GitHub issue if you need any of these sooner):
+
+- Mandatory worktree-into-container isolation (today the script trusts the caller to provide isolation).
+- A stricter Bash allow-list that removes `python3`, `awk`, `sed` from the prompt-free path (would require deep pipeline refactor — see `permissions.md`).
+- Pre-scan size or extension caps on individual manifests beyond what `scan_excludes.py` already enforces.
 
 ## Scope
 

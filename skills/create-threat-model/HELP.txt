@@ -67,6 +67,20 @@ CLEANUP
   --clean-all                  Delete everything in the output directory
   --force                      Skip confirmation prompt for --clean-all
 
+TRUST MODE (untrusted repos — see SECURITY.md → Known issues)
+  --trust-mode <mode>          trusted (default) | untrusted
+                               In untrusted mode the run will:
+                                 - run preflight_untrusted.py first and abort
+                                   if the repo contains its own Claude Code
+                                   hooks/settings, out-of-repo symlinks, or
+                                   suspicious docs/related-repos.yaml URLs;
+                                 - enforce --strict-urls;
+                                 - set APPSEC_LOG_REDACT_PATHS=1 so the run
+                                   log does not record sensitive paths.
+  --strict-urls                Require APPSEC_URL_ALLOWLIST for any remote
+                               threat_model URL in docs/related-repos.yaml
+                               (implied by --trust-mode untrusted).
+
 ACTOR LAYER
   --refresh-discovery          Force a fresh LLM actor discovery run even when the
                                discovery cache is current. Use after significant

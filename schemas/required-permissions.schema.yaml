@@ -1,0 +1,48 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://appsec-advisor.dev/schemas/required-permissions.schema.yaml"
+title: required-permissions
+description: |
+  Contract for data/required-permissions.yaml — the single source of
+  truth for Claude Code permissions the plugin needs to run prompt-free.
+
+  Consumed by:
+    - scripts/check_permissions.py     (writes user / project / local settings)
+    - scripts/render_settings_example.py  (renders .claude/settings.example.json)
+    - tests/test_check_permissions.py  (drift guard on the template)
+
+type: object
+required: [version, required]
+additionalProperties: false
+properties:
+  version:
+    type: integer
+    enum: [1]
+    description: schema version
+  required:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [entry, reason, category]
+      additionalProperties: false
+      properties:
+        entry:
+          type: string
+          minLength: 3
+          description: |
+            Verbatim Claude Code permission rule, e.g.
+            "Read(${REPO_ROOT}/**)" or "Bash(git:*)". Placeholders
+            (${REPO_ROOT}, ${PLUGIN_ROOT}, ${OUTPUT_DIR}) are resolved
+            at check-time by check_permissions.py.
+        reason:
+          type: string
+          minLength: 10
+          description: |
+            Why the plugin needs this rule. Surfaced in
+            check-permissions output and audit logs.
+        category:
+          type: string
+          enum: [file, shell]
+          description: |
+            file  — Read/Write/Edit/MultiEdit rules (path-scoped)
+            shell — Bash rules (command-prefix scoped)

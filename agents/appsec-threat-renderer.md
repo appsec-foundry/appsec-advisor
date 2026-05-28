@@ -96,6 +96,7 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 
 - `.fragments/ms-verdict.json`
 - `.fragments/ms-architecture-assessment.json`
+- `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - `.fragments/architecture-diagrams.md` and `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`
 
@@ -153,6 +154,57 @@ The Architecture Assessment renders as a 4-column table in §1: `Weakness catego
 5. **Findings list is curation, not exhaustion.** `findings[]` carries the 1-4 most representative findings per weakness (Critical/High preferred). It is NOT every finding routed to that category — those live in §8 Threat Register and §7 control-block trailers.
 
 Legacy fragments using the `defects[]` shape with `name`/`description`/`findings` (no `category`, no `affected_components`) are accepted as back-compat (composer aliases `name` → `category`) but new authoring MUST use the `weaknesses[]` shape with the four fields above.
+
+### `ms-critical-attack-tree.json` authoring contract
+
+The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` section between the Management Summary and Section 1. It is a **goal-decomposition** tree (root = worst-case business impact, leaves = individual Critical findings, internal nodes = AND/OR refinement of preconditions) — NOT a linear attack chain. Linear chain semantics live in §3.1 Attack Chain Overview; do not duplicate them here.
+
+**When to author.** Only when `threat-model.yaml` contains ≥ 2 `threats[].risk == Critical` entries. With 0 or 1 Critical the composer's `has_multi_critical` gate is false and the section is silently skipped — do not write the fragment in that case (an empty / one-leaf tree adds noise without insight).
+
+**Schema** (full: `schemas/fragments/critical-attack-tree.schema.json`, template: `templates/fragments/critical-attack-tree.md.j2`):
+
+```json
+{
+  "intro": "<paragraph (40-600 chars) — what is the attacker goal at the root, how to read the tree top-down>",
+  "root_goal": "<optional, 5-120 chars — short business-impact statement, e.g. 'Full admin takeover'>",
+  "mermaid": {
+    "orientation": "TD",
+    "nodes": [
+      { "id": "G_ROOT",  "label": "Full admin takeover",                  "class": "goal" },
+      { "id": "AND_JWT", "label": "Forge admin JWT",                      "class": "and_node" },
+      { "id": "L_T001",  "label": "T-001 Hardcoded RSA key",              "class": "leaf", "finding_ref": "T-001" },
+      { "id": "L_T011",  "label": "T-011 JWT alg:none accepted",          "class": "leaf", "finding_ref": "T-011" }
+    ],
+    "edges": [
+      { "from": "AND_JWT", "to": "G_ROOT", "refinement": "OR" },
+      { "from": "L_T001",  "to": "AND_JWT", "refinement": "AND" },
+      { "from": "L_T011",  "to": "AND_JWT", "refinement": "AND" }
+    ]
+  },
+  "key_takeaway": "<paragraph (60-800 chars) — the renderer auto-prepends '**Key takeaway:**'; supply only the content>",
+  "mitigation_breakpoints": [
+    { "mitigation": "M-001", "breaks": "Rotating the JWT signing key out of source eliminates the entire AND_JWT subtree" }
+  ],
+  "stages": [
+    { "stage": "Initial access",       "findings": ["T-001"], "mitigations": ["M-001"] },
+    { "stage": "Privilege escalation", "findings": ["T-011"], "mitigations": ["M-007"] },
+    { "stage": "Impact",               "findings": ["T-008"], "mitigations": ["M-003"] }
+  ]
+}
+```
+
+**Mandatory authoring rules.**
+
+1. **Build the tree from `threats[].risk == Critical` rows.** Each Critical finding becomes a `leaf` node with `finding_ref: "T-NNN"` (or `F-NNN` for findings-shaped models). Internal `and_node` / `or_node` entries describe the **preconditions** that combine the leaves into a higher-level capability (e.g. `T-001 hardcoded key` AND `T-011 alg:none` → `Forge admin JWT`). The single `goal` node at the root names the worst-case impact and SHOULD match one of the Worst-Case-Scenario bullets in `ms-verdict.json`.
+2. **AND vs OR is load-bearing.** `refinement: "AND"` means all child leaves are required to satisfy the parent capability; `refinement: "OR"` means any one child suffices. Use AND for "attacker needs all of these primitives" and OR for "any of these paths leads to the same capability". The renderer surfaces these on the edge labels; do not encode the boolean structure only in prose.
+3. **`orientation` is `TD` or `TB`.** Trees render top-down. `LR` is rejected by the schema — that layout belongs to the §3.1 chain Mermaid.
+4. **Node id grammar.** Mermaid node ids match `^[A-Z][A-Z0-9_]*$`. Use semantic prefixes (`G_`, `AND_`, `OR_`, `L_`) so the structure is readable in the raw JSON without rendering the diagram.
+5. **`stages[]` is the linear walk for the reference table.** Pick the most-likely path from root to impact and list it as 3–12 stages, each citing the relevant `T-NNN` finding(s) and the primary `M-NNN` mitigation(s). This is what the post-tree table renders; it complements the graph rather than restating it.
+6. **`mitigation_breakpoints[]` is curation, not exhaustion.** Up to 8 entries naming mitigations that **sever a subtree** when deployed — the highest-leverage actions a reader can take. Leave empty if every Critical needs its own dedicated mitigation.
+7. **No code fragments in node labels.** Labels read as prose (`Forge admin JWT`, `Hardcoded RSA key`) — never `jwt.sign(..., {algorithm:'none'})` or other source snippets. Same rule as finding titles (`prose-style.md`).
+8. **Dual anchor preserved.** The template emits both `#critical-attack-tree` (canonical) and `#critical-attack-chain` (legacy back-compat). External deep-links to the legacy anchor continue to resolve; cross-references inside the model should use the canonical anchor.
+
+The fragment is validated against `schemas/fragments/critical-attack-tree.schema.json` at compose time; a schema-invalid fragment falls back to the soft-skip path. The deterministic `walkthrough_renderer.py` does NOT author this fragment — the LLM judgement on which preconditions combine into which capability is required.
 
 ### `security-architecture.md` authoring
 
@@ -502,6 +554,7 @@ The watchdog writes `$OUTPUT_DIR/.budget-critical` when any agent in this run hi
 |---|---|
 | Authoring `ms-verdict.json` | Author with minimal viable content (the schema allows brief prose); skip optional sections |
 | Authoring `ms-architecture-assessment.json` | Same — minimal viable content |
+| Authoring `ms-critical-attack-tree.json` | **Skip entirely** — the composer soft-skips the section with a warning; safer than a half-built tree |
 | Authoring `attack-walkthroughs.md` | **Skip entirely** — optional fragment, downstream renderer omits the section gracefully when missing |
 | Authoring `security-posture-attack-paths.json` | **Skip entirely** — optional |
 | Enriching pre-generated fragments (`ENRICH_ARCH_FRAGMENTS=true`) | **Skip** — use the pre-generated fragments verbatim |

@@ -37,6 +37,28 @@ def test_yaml_loads_and_has_required_shape():
         assert isinstance(e["reason"], str)
 
 
+def test_yaml_validates_against_schema(tmp_path):
+    """required-permissions.yaml must satisfy the JSON Schema contract.
+
+    Also asserts that a deliberately invalid entry (unknown `category`)
+    fails schema validation — proves the validator is wired in, not a
+    no-op when jsonschema is missing.
+    """
+    pytest.importorskip("jsonschema")
+    cp.load_required(cp.DATA_FILE)
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(
+        "version: 1\n"
+        "required:\n"
+        "  - entry: 'Bash(git:*)'\n"
+        "    reason: 'a sufficiently long reason'\n"
+        "    category: bogus\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit):
+        cp.load_required(bad)
+
+
 def test_yaml_entries_are_unique():
     entries = cp.load_required(cp.DATA_FILE)
     raw_entries = [e["entry"] for e in entries]

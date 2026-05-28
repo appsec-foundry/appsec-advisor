@@ -85,7 +85,15 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, warnings = compose.render(CONTRACT, out)
 
-    assert warnings == [], f"unexpected warnings: {warnings}"
+    # Item 3 (2026-05-28): the dormant Critical Attack Tree fragment
+    # producer was activated but the test fixture predates the fragment
+    # producer. Soft-skip warnings for it are expected — filter them
+    # out before asserting the warnings list is otherwise empty.
+    filtered = [
+        w for w in warnings
+        if not w.startswith("critical_attack_tree: fragment missing")
+    ]
+    assert filtered == [], f"unexpected warnings: {filtered}"
 
     # Management Summary must be unnumbered.
     assert "## Management Summary\n" in rendered
@@ -292,7 +300,10 @@ def test_threat_register_is_flat_register(tmp_path: Path) -> None:
     # field). Post-actors.md §14 the Actor column was added between Component
     # and Criticality, surfacing primary_actor + [obsolete-actor] / _dormant_
     # markers per §10 Stable-ID-Garantie Fälle 2 & 3.
-    assert "| ID | Finding | Component | Actor | Criticality |" in rendered
+    # Item 6 (2026-05-28): Actor column dropped — 4-column header is
+    # canonical now. STRIDE analyzers never populated actor_ids, so the
+    # column rendered as 100% em-dashes.
+    assert "| ID | Finding | Component | Criticality |" in rendered
     # 8.A "Categories at a glance" subsection was removed in 2026-05; only
     # the invisible anchor block remains. The legacy 8.B Critical
     # Categories heading was also retired.
@@ -330,7 +341,10 @@ def test_finding_cell_links_critical_finding_to_attack_walkthrough(tmp_path: Pat
     # Fixture chains: Chain 1 references T-001; Chain 2 references T-003.
     # §3.2 covers SQL Injection bypass (matches T-001 / T-002). Per-finding
     # walkthrough (§3.2) outranks the chain link when both resolve.
-    assert "**Attack Walkthrough:**" in section8, "expected at least one walkthrough back-link in §8"
+    # Item 5 (2026-05-28): walkthrough label is now italic (`_Walkthrough:_`)
+    # — story card non-action labels were demoted from bold to italic so
+    # Issue / Impact / Fix carry the visual emphasis.
+    assert "_Walkthrough:_" in section8, "expected at least one walkthrough back-link in §8"
     # Chain 2 → T-003 (no §3.2 entry for T-003 in the fixture) renders as
     # the chain link.
     assert "[Chain 2 — Admin Takeover](#chain-2-admin-takeover)" in section8
@@ -355,7 +369,7 @@ def test_finding_cell_omits_walkthrough_line_when_no_chains_resolve(tmp_path: Pa
     )
     rendered, _ = compose.render(CONTRACT, out)
     section8 = _slice_threat_register(rendered)
-    assert "**Attack Walkthrough:**" not in section8
+    assert "_Walkthrough:_" not in section8
 
 
 def test_chain_map_extracts_chain_anchors_from_fixture(tmp_path: Path) -> None:
@@ -489,8 +503,9 @@ def test_finding_cell_component_uses_canonical_C_NN_anchor(tmp_path: Path) -> No
         ctx=ctx,
     )
 
-    assert "**Component:** [C-01](#c-01) — REST API" in cell, (
-        "expected canonical C-NN anchor in the in-cell Component link; cell was:\n" + cell
+    assert "_Component:_ [C-01](#c-01) — REST API" in cell, (
+        "expected canonical C-NN anchor in the in-cell Component link "
+        "(label demoted from bold to italic by item 5, 2026-05-28); cell was:\n" + cell
     )
     # The raw slug must NOT appear as a link target.
     assert "(#rest-api)" not in cell, (
@@ -511,7 +526,7 @@ def test_finding_cell_component_already_canonical_passes_through(tmp_path: Path)
         t=threat, sev="critical", taxonomy={}, components=components,
         repo_root=None, ctx=ctx,
     )
-    assert "**Component:** [C-01](#c-01) — REST API" in cell
+    assert "_Component:_ [C-01](#c-01) — REST API" in cell
 
 
 def test_finding_cell_issue_and_impact_carry_disjoint_sentences(tmp_path: Path) -> None:
@@ -689,22 +704,33 @@ def test_mitigations_section_uses_single_table_with_component_dividers(tmp_path:
     # Canonical 5-column pipe-table header (with leading `#` column).
     assert "| # | Priority | Mitigation | Addresses | Effort |" in ms_slice
 
-    # 2026-05 layout: paragraph dividers OUTSIDE the table, of the form
-    # `**↳ <Name> (<c-id>) — N item(s)**`. Accept both em-dash and ASCII
-    # hyphen — the prose-style normaliser downgrades em-dashes mid-line.
+    # Item 2 (2026-05-28): single-table layout with bold in-table divider
+    # rows. Per-component sub-tables and paragraph-outside-table dividers
+    # are retired — the user wants ONE table grouped by component so the
+    # at-a-glance scan reads as a single ranked list. Divider rows take
+    # the form `| **↳ <Name> (<c-id>) — N item(s)** | | | | |` (the four
+    # trailing empty cells let the table parser handle the row natively
+    # without colspan support).
     import re as _re
-    assert _re.search(
-        r"^\*\*↳\s+.+?\s+\([\w-]+\)\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*$",
+    # The legacy paragraph-outside-table form must NOT appear (regression
+    # guard — per-component sub-tables fragmented the at-a-glance scan).
+    assert not _re.search(
+        r"^\*\*↳\s+.+?\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*$",
         ms_slice,
         flags=_re.MULTILINE,
-    ), "expected at least one bold paragraph divider"
-
-    # Old in-table divider-row form must NOT appear (regression guard —
-    # the `| label | | | | |` pattern broke visually in pipe-tables).
-    assert not _re.search(
-        r"\|\s*\*\*↳\s+.+\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|\s*\|\s*\|\s*\|",
+    ), "paragraph-divider-outside-table form is retired (item 2, 2026-05-28)"
+    # Dividers render only when ≥2 component groups contribute mitigations.
+    # The test fixture has a single group, so no divider row is expected;
+    # the assertion below verifies the row SHAPE when one is present.
+    divider_hits = _re.findall(
+        r"^\|\s*\*\*↳\s+.+?\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|\s*\|\s*\|\s*\|\s*\|\s*$",
         ms_slice,
-    ), "in-table divider-row form is retired"
+        flags=_re.MULTILINE,
+    )
+    # When present, every divider row must carry exactly 5 cells (4 empty
+    # trailing) — guard against accidental colspan-style HTML or short rows.
+    for hit in divider_hits:
+        assert hit.count("|") == 6, f"divider row must have 5 cells: {hit!r}"
 
     # A priority cell renders as **P1** / **P2** in data rows.
     assert any(f"**P{n}**" in ms_slice for n in (1, 2)), "expected a bold P1/P2 priority cell"
@@ -2024,6 +2050,15 @@ class TestVerbatimFnnnStabilityGate:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(
+    reason="Item 6 (2026-05-28): Actor column removed from §8 Threat "
+    "Register because upstream STRIDE analyzers do not populate "
+    "`actor_ids` / `primary_actor`, rendering the column as 100% em-dash "
+    "noise. The `_[obsolete-actor]_` / `_dormant_` markers no longer "
+    "render in the table (deferred until STRIDE prompt + threat-merger "
+    "reliably populate actor_ids). Re-enable these tests when the Actor "
+    "column is reinstated — see _render_threat_register history."
+)
 class TestActorCellGuard:
     """Guard 1 from review-recommendations §4.5: prevent the
     `_[obsolete-actor]_` marker from leaking into first-run / data-gap

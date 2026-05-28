@@ -56,6 +56,9 @@ except ImportError:  # pragma: no cover - dependency is in scripts/requirements.
 _HERE = Path(__file__).resolve().parent
 _DEFAULT_SCHEMA = _HERE.parent / "schemas" / "related-repos.schema.yaml"
 
+sys.path.insert(0, str(_HERE))
+from _url_guard import same_host, validate_target_url  # noqa: E402
+
 _DEFAULT_CAP = 12
 _DEFAULT_TIMEOUT = 10
 _DEFAULT_OUTDATED_DAYS = 90
@@ -143,12 +146,53 @@ def _resolve_auth_header(auth_env: str | None) -> str | None:
     return os.environ.get("RELATED_REPOS_AUTH_HEADER") or None
 
 
-def _fetch_url(url: str, timeout: int, *, auth_env: str | None = None) -> tuple[str | None, str]:
+class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-validate redirect targets and drop auth on cross-host hops.
+
+    urllib's default handler will (a) follow cross-host redirects and
+    (b) replay the original ``Authorization`` header on the new host.
+    Both are SSRF / credential-leak vectors when the redirect target is
+    attacker-influenced. This handler validates the new URL with the
+    same target rules used for the initial fetch and strips the
+    ``Authorization`` header if the host or scheme/port changes.
+    """
+
+    def __init__(self, *, strict_urls: bool, original_url: str) -> None:
+        super().__init__()
+        self._strict_urls = strict_urls
+        self._original_url = original_url
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401, ARG002, N802
+        result = validate_target_url(newurl, strict=self._strict_urls)
+        if not result.ok:
+            raise urllib.error.HTTPError(
+                newurl, code, f"redirect rejected: {result.reason}", headers, fp
+            )
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is not None and not same_host(self._original_url, newurl):
+            for header in ("Authorization", "Cookie"):
+                try:
+                    new_req.remove_header(header)
+                except AttributeError:  # pragma: no cover
+                    pass
+        return new_req
+
+
+def _fetch_url(
+    url: str,
+    timeout: int,
+    *,
+    auth_env: str | None = None,
+    strict_urls: bool = False,
+) -> tuple[str | None, str]:
     """Fetch a URL and return (content, status). status is 'remote' or 'unavailable'."""
     parsed = re.match(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://", url)
     scheme = parsed.group(1).lower() if parsed else ""
     if scheme not in _ALLOWED_URL_SCHEMES:
         return None, f"unavailable: scheme '{scheme}' not allowed (only http/https)"
+    guard = validate_target_url(url, strict=strict_urls)
+    if not guard.ok:
+        return None, f"unavailable: url rejected ({guard.reason})"
     req = urllib.request.Request(url, headers={"Accept": "application/yaml, text/yaml, */*"})
     auth = _resolve_auth_header(auth_env)
     if auth:
@@ -158,8 +202,11 @@ def _fetch_url(url: str, timeout: int, *, auth_env: str | None = None) -> tuple[
             req.add_header(hname.strip(), hvalue.strip())
         else:
             req.add_header("Authorization", auth.strip())
+    opener = urllib.request.build_opener(
+        _SameHostRedirectHandler(strict_urls=strict_urls, original_url=url)
+    )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        with opener.open(req, timeout=timeout) as resp:  # noqa: S310
             data = resp.read()
             return data.decode("utf-8", errors="replace"), "remote"
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
@@ -487,6 +534,7 @@ def _process_entry(
     http_timeout: int,
     outdated_days: int,
     now: _dt.datetime,
+    strict_urls: bool = False,
 ) -> dict[str, Any]:
     name = entry["name"]
     tm_field = entry["threat_model"]
@@ -505,7 +553,9 @@ def _process_entry(
 
     kind, resolved = _resolve_tm_reference(tm_field, repo_root)
     if kind == "url":
-        raw, fetch_status = _fetch_url(resolved, http_timeout, auth_env=auth_env)
+        raw, fetch_status = _fetch_url(
+            resolved, http_timeout, auth_env=auth_env, strict_urls=strict_urls
+        )
     else:
         raw, fetch_status = _read_local(resolved)
 
@@ -608,6 +658,7 @@ def load(
     outdated_days: int = _DEFAULT_OUTDATED_DAYS,
     schema_path: Path | None = None,
     now: _dt.datetime | None = None,
+    strict_urls: bool = False,
 ) -> dict[str, Any]:
     """Load and process ``<repo_root>/docs/related-repos.yaml``.
 
@@ -659,6 +710,7 @@ def load(
                 http_timeout=http_timeout,
                 outdated_days=outdated_days,
                 now=now,
+                strict_urls=strict_urls,
             )
         )
     return out
@@ -672,6 +724,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--http-timeout", type=int, default=_DEFAULT_TIMEOUT)
     p.add_argument("--outdated-days", type=int, default=_DEFAULT_OUTDATED_DAYS)
     p.add_argument("--schema", type=Path, default=None)
+    p.add_argument(
+        "--strict-urls",
+        action="store_true",
+        help="require APPSEC_URL_ALLOWLIST for every remote threat_model URL",
+    )
     return p.parse_args(argv)
 
 
@@ -683,6 +740,7 @@ def main(argv: list[str] | None = None) -> int:
         http_timeout=args.http_timeout,
         outdated_days=args.outdated_days,
         schema_path=args.schema,
+        strict_urls=args.strict_urls,
     )
     rendered = json.dumps(result, indent=2, sort_keys=False)
     if args.output == "-":

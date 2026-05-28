@@ -49,6 +49,7 @@ Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / 
   PostToolUse SCAN_START which incorrectly appeared *after* SESSION_STOP.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -490,19 +491,53 @@ def _active_tool_path(tool_use_id: str) -> str:
     return os.path.join(_active_tools_dir(), f"{safe[:64]}.json")
 
 
+def _path_redact_enabled() -> bool:
+    """Opt-in: replace concrete file paths in logs with a stable hash.
+
+    Enabled when ``APPSEC_LOG_REDACT_PATHS`` is truthy. Useful when the
+    log file leaves the reviewer's machine and ``.agent-run.log``
+    entries like ``FILE_WRITE /path/to/secrets.ts`` would otherwise
+    reveal sensitive filenames.
+    """
+    return os.environ.get("APPSEC_LOG_REDACT_PATHS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _redact_path(path_str: str) -> str:
+    """Replace an absolute path with ``<basename>:<sha8>`` while keeping
+    enough signal for log correlation and debugging."""
+    if not path_str:
+        return path_str
+    try:
+        digest = hashlib.sha256(path_str.encode("utf-8", errors="replace")).hexdigest()[:8]
+    except Exception:
+        digest = "????????"
+    base = os.path.basename(path_str.rstrip("/")) or "path"
+    return f"<redacted:{base}:{digest}>"
+
+
 def _summarise_tool_input(tool: str, inp: dict, max_len: int = 160) -> str:
     """One-line summary of a tool call's payload — never exposes secrets.
 
     Uses the existing ``_mask_secrets`` + ``_clip`` helpers so any token /
     credential in a Bash command body or Read path is redacted before it
-    lands on disk.
+    lands on disk. When ``APPSEC_LOG_REDACT_PATHS`` is set, file paths
+    in Read/Write/Edit summaries are additionally replaced with a
+    deterministic hash so the log carries no sensitive filenames.
     """
     if not isinstance(inp, dict):
         return ""
     if tool == "Bash":
         return _mask_secrets(_clip(str(inp.get("command", "")), max_len))
     if tool in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit"):
-        return _mask_secrets(_clip(str(inp.get("file_path", "")), max_len))
+        raw = str(inp.get("file_path", ""))
+        if _path_redact_enabled():
+            raw = _redact_path(raw)
+        return _mask_secrets(_clip(raw, max_len))
     if tool == "Agent":
         subtype = inp.get("subagent_type", "")
         desc = inp.get("description", "")
