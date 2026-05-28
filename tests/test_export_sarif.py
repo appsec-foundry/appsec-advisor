@@ -249,7 +249,7 @@ class TestBuildSarif:
                 "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
                 "base_score": 8.8,
                 "severity": "High",
-                "source": "dep-scan",
+                "source": "known-vuln",
                 "version_fallback": "3.1",
             }
         )

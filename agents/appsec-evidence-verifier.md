@@ -62,7 +62,7 @@ Findings outside the sample set keep their incoming `evidence_check` value (`unc
 - `evidence` is `null` or missing → leave as `unchecked`; the QA reviewer's `evidence_integrity` check has already flagged it if relevant.
 - `evidence.file` does not exist on disk → leave as `unchecked`; covered by Check 1b's `evidence_missing_file`.
 - `evidence_check` already set to `verified-prior` by the STRIDE analyzer → leave alone (the analyzer re-read the file at scan time; double-reading wastes turns).
-- `source` in `{dep-scan, known-vuln}` → leave as `unchecked`; these are upstream-curated by SCA tools and the evidence is the advisory, not a code line.
+- `source` == `known-vuln` → leave as `unchecked`; these are upstream-curated by external SCA tools and the evidence is the advisory, not a code line. (The `dep-scan` source was removed in 2026-05; supply-chain posture is now in `meta_findings[]` and verified at the architecture level, not via evidence sampling.)
 
 Print: `[evidence-verifier]   ↳ Sampled <N> of <M> findings (depth=<d>, tier-rule=<r>)`.
 

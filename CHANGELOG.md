@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Supply-chain scope refactor (sca.md) — **Breaking change**
+
+The pre-2026-05 `scripts/dep_scan.py` SCA producer is **removed**. The plugin no longer competes with dedicated SCA tools (Snyk / Trivy / Dependabot / OSV-Scanner / language-native audit) on per-CVE reporting — that lane is solved industry and the plugin's bundled 17-entry heuristic list never won on freshness. Supply-chain risk is now surfaced where it belongs: as architectural posture.
+
+**The plugin is now passive-only for supply-chain detection.** It never runs `npm audit` / `pip-audit` / `govulncheck` / `snyk` / any package-manager or CVE-database tool, and never makes a network request to npmjs / PyPI / osv.dev. Detection is pure file-system inspection plus `git log` (commit-cadence signal) plus an optional best-effort `gh pr list` (skipped silently when unavailable).
+
+**Three new deterministic emitters run in Phase 10:**
+
+- `scripts/emit_dep_update_activity.py` — passive `git log` over a 90-day window on dependency manifests. Classifies cadence as `active` / `sporadic` / `inactive` / `unknown` based on commit count + bot-authored commit count (`dependabot[bot]` / `renovate[bot]`). Optional `gh pr list` count when GitHub CLI is on PATH.
+- `scripts/emit_sca_practice.py` — three §7.11 *Operations Runtime and Supply Chain Controls* rows: **Automated SCA scanning** / **Automated dependency updates** / **Lockfile hygiene**. Each is rated `Adequate` / `Partial` / `Missing` by walking `.github/workflows/*.yml`, `.gitlab-ci.yml`, `azure-pipelines.yml`, `.circleci/config.yml`, `Jenkinsfile`, `.github/dependabot.yml`, `renovate.json*`, and the per-ecosystem lockfiles. **The dep-update activity sidecar lifts the "Automated dependency updates" rating** for repos that patch on cadence without Dependabot / Renovate config files — covers Renovate hosted-app mode, Dependabot security-updates-only, and disciplined manual updates. When any row is `Missing` / `Partial`, MF-NNN candidates are written to `.sca-practice-findings.json` with severity scaled by `asset_tier` via `data/sca-practice-severity.yaml`.
+- `scripts/emit_known_bad_libs.py` — matches manifest dependencies against `data/known-bad-libs.yaml` (curated 30-entry initial list across npm / pip / go / maven / gem / composer; track-record framing — abandoned, protestware incidents, unfixed critical CVEs, sandboxed-deprecated). Each hit emits an MF-NNN architectural-choice finding routed to §7.11. Names are keyed by `(ecosystem, package)` tuple — `request` (npm) does not collide with `requests` (python). Severity capped by asset tier.
+
+A single derived **patch-management posture** row is rendered in §7.13 Defense-in-Depth Summary as the worst-of-three across the new control rows.
+
+**Migration / hard-removal:**
+
+- `--with-sca` / `--no-sca` CLI flags: **hard-removed**. argparse rejects the flag with an error; users must drop it from their invocations. No deprecation alias.
+- Org-profile `with_sca: true|false`: **hard-removed** from the schema. `additionalProperties: false` rejects org-profiles that still carry the field — they must be updated to drop the `with_sca` line. Supply-chain posture is always produced now; there is no opt-in/opt-out.
+- Persisted threats with `source: dep-scan` are no longer valid — the source enum value was removed from `schemas/threats-merged.schema.yaml`. The first run after migration produces a one-time `_resolved` / `_new` cohort shift in the incremental delta: old dep-scan T-IDs disappear; SCA posture appears as MF-NNNs and §7.11 rows.
+- SARIF rule-IDs that previously carried `source: dep-scan` no longer emit; downstream consumers (GitHub Security tab, DefectDojo, …) will see those rules close. Acceptable because users were already running dedicated SCA tooling in CI for the per-CVE coverage.
+
+**Files removed (since 2026-05-28):**
+
+- `scripts/dep_scan.py`
+- `data/dep-scan-heuristics.yaml`
+- `schemas/dep-scan.schema.yaml`
+- `tests/test_dep_scan.py` + `tests/fixtures/dep_scan_error_stub.json` + `tests/fixtures/valid_dep_scan.json`
+- `tests/fixtures/e2e/frozen-run/.dep-scan.json`
+- Phase 2 Step 2 background dep-scan launch (`phase-group-recon.md`)
+- Phase 9 STRIDE-Merge `known_vulns_seen` dedup index (no longer needed — no CVE-shaped feed to dedup against)
+
+**Files added:**
+
+- `data/sca-practice-severity.yaml`
+- `data/known-bad-libs.yaml`
+- `scripts/_lib_manifest.py`
+- `scripts/emit_sca_practice.py`
+- `scripts/emit_known_bad_libs.py`
+- `scripts/emit_dep_update_activity.py`
+
+**Renovate parity (related):** `data/config-iac-checks.yaml` ships three Renovate config-detection rules (IAC-033 / IAC-034 / IAC-035) covering `renovate.json`, `.github/renovate.json`, and `.renovaterc.json`. Renovate is now first-class peer of Dependabot for the auto-updates indicator. Hosted-app mode (no file in repo) remains a known false-negative — flagged in the IAC rule's `rationale`.
+
+See `sca.md` for the full scope rationale and design proposal that motivated this change.
+
+---
+
 **TodoWrite subjects: em-dash → hyphen-minus.** The six top-level stage subjects (`Preparing workspace`, `Stage 1 - Threat Analysis and Triage`, `Stage 2 - Report Rendering`, `Stage 3 - QA Review`, `Stage 4 - Architect Review`, `Final summary + cleanup`) now use hyphen-minus (`-`) instead of em-dash (`—`). The Claude Code TodoWrite TUI renderer mis-handles the em-dash's UTF-8 width (1 column / 3 bytes) on partial redraws, causing adjacent task labels to bleed together (observed: `Final summary` + `Stage 3 — QA Review` rendered as `Final 3ummQA Review`). Section headers and prose in `SKILL-impl.md` keep em-dashes where rendering is unaffected.
 
 ## 0.4.0-beta — 2026-05-25

@@ -579,12 +579,13 @@ If `OUTPUT_DIR` is inside `REPO_ROOT`, compute the relative path from `REPO_ROOT
 REL_OUTPUT_DIR="${OUTPUT_DIR#$REPO_ROOT/}"
 ```
 
-Then check whether `$REPO_ROOT/.gitignore` already contains `$REL_OUTPUT_DIR/.dep-scan.json`. If not, append the following block (using the computed relative path):
+Then check whether `$REPO_ROOT/.gitignore` already contains `$REL_OUTPUT_DIR/.stride-*.json`. If not, append the following block (using the computed relative path):
 
 ```
 # AppSec plugin intermediate files (auto-added by appsec-context-resolver)
-<REL_OUTPUT_DIR>/.dep-scan.json
 <REL_OUTPUT_DIR>/.stride-*.json
+<REL_OUTPUT_DIR>/.sca-practice-findings.json
+<REL_OUTPUT_DIR>/.known-bad-libs-findings.json
 <REL_OUTPUT_DIR>/.requirements.yaml
 <REL_OUTPUT_DIR>/.threat-modeling-context.md
 <REL_OUTPUT_DIR>/.appsec-lock

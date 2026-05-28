@@ -1,0 +1,83 @@
+# sca-practice-severity.yaml
+#
+# Tier-driven severity matrix for "missing SCA practice" MF-NNN findings
+# emitted by scripts/emit_sca_practice.py.
+#
+# Three independent control rows (scanning / dep_updates / lockfile_hygiene)
+# are evaluated per repo (§7.11 Operations Runtime and Supply Chain
+# Controls). When the row is `missing`, an MF-NNN is emitted at the severity
+# from this matrix, capped by asset_tier resolved by context-resolver in
+# Phase 1.
+#
+# Rationale: impact varies by tier. Missing SCA on a regulated customer-
+# facing API is a Critical posture gap; the same gap on a sample/prototype
+# is informational. Routing severity through tier here lets ops-people
+# tune the policy without code changes.
+#
+# Asset-tier definitions (mirrors agents/appsec-context-resolver.md):
+#   T1 — production, customer-facing, regulated
+#   T2 — internal production
+#   T3 — internal tools, demos
+#   T4 — samples, prototypes
+#
+# Fallback: when asset_tier cannot be resolved, the T2 column is used (the
+# conservative-middle assumption — neither alarmist nor dismissive).
+
+version: 1
+
+# Per-control severity by asset tier. `missing` keys mirror the control
+# names used in security-controls.json[].control verbatim — emit_sca_practice
+# looks the row up by control name.
+missing_severity:
+
+  "Automated SCA scanning":
+    T1: Critical
+    T2: High
+    T3: Medium
+    T4: Low
+
+  "Automated dependency updates":
+    T1: High
+    T2: Medium
+    T3: Low
+    T4: Informational
+
+  "Lockfile hygiene":
+    T1: High
+    T2: Medium
+    T3: Low
+    T4: Informational
+
+# Severity for `partial` rows. Always one step below `missing` for the same
+# tier — partial-coverage is still a gap but less severe than absence.
+partial_severity:
+
+  "Automated SCA scanning":
+    T1: High
+    T2: Medium
+    T3: Low
+    T4: Informational
+
+  "Automated dependency updates":
+    T1: Medium
+    T2: Low
+    T3: Informational
+    T4: Informational
+
+  "Lockfile hygiene":
+    T1: Medium
+    T2: Low
+    T3: Informational
+    T4: Informational
+
+# Default tier when context-resolver could not classify. Conservative middle.
+default_tier: T2
+
+# Severity ordering — used by the §7.13 derived "patch management posture"
+# row to pick the worst-of-three across the three controls (worst wins).
+severity_order:
+  - Informational
+  - Low
+  - Medium
+  - High
+  - Critical

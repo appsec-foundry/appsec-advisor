@@ -101,7 +101,6 @@ For tri-state output toggles:
 | `--no-sarif` | disable SARIF even if a preset enables it |
 | `--no-pdf` | disable PDF even if a preset enables it |
 | `--no-pentest-tasks` | disable pentest-tasks even if a preset enables it |
-| `--no-sca` | disable SCA scan even if a preset enables it |
 
 Environment variables mirror the CLI for headless / CI use:
 

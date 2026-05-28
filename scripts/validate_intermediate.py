@@ -13,11 +13,10 @@ Draft 2020-12 cannot express are enforced as Python post-checks:
 Can be used in two ways:
 
   1. As a module:
-       from validate_intermediate import validate_dep_scan, validate_stride
-       ok, errors = validate_dep_scan(data)
+       from validate_intermediate import validate_stride
+       ok, errors = validate_stride(data)
 
   2. As a CLI tool (called from agent shell steps):
-       python3 validate_intermediate.py dep_scan /path/to/.dep-scan.json
        python3 validate_intermediate.py stride   /path/to/.stride-auth.json
 
 Exit codes: 0 = valid, 1 = invalid, 2 = usage error.
@@ -52,7 +51,6 @@ from _shared_sources import (  # noqa: E402
 _SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
 
 _SCHEMA_FILES = {
-    "dep_scan": "dep-scan.schema.yaml",
     "stride": "stride.schema.yaml",
     "threats_merged": "threats-merged.schema.yaml",
     "triage_flags": "triage-flags.schema.yaml",
@@ -105,7 +103,9 @@ _PT_ID_RE = re.compile(r"^PT-(\d{3,})$")
 _CWE_RE = re.compile(r"^CWE-(\d+)$")
 
 # Sources for which a CVSS v4 vector is required rather than optional.
-_CVSS_REQUIRED_SOURCES = {"dep-scan", "known-vuln"}
+# `dep-scan` was removed in 2026-05 — the in-tree SCA producer no longer
+# exists. `known-vuln` remains for externally ingested advisories.
+_CVSS_REQUIRED_SOURCES = {"known-vuln"}
 # Sources for which a CVSS v4 vector MUST NOT be attached — these describe
 # design/policy/coverage/architecture-coverage gaps that cannot be honestly
 # scored on the CVSS Base metrics.
@@ -140,7 +140,7 @@ def _eligible_cwes() -> frozenset[str]:
 def _check_cvss_eligibility(data: dict) -> list[str]:
     """Enforce CVSS v4 eligibility rules on merged threats:
 
-      * source in {dep-scan, known-vuln}  → cvss_v4 required
+      * source == known-vuln               → cvss_v4 required
       * source == stride                   → allowed iff CWE in positive
                                              list AND evidence.line set
       * source in {requirements-compliance,
@@ -149,6 +149,9 @@ def _check_cvss_eligibility(data: dict) -> list[str]:
 
     Also verifies that cvss.severity is within one band of the threat's
     risk rating — a larger gap indicates inconsistent scoring.
+
+    Note: `dep-scan` source was removed in 2026-05. Supply-chain frame
+    is now meta-finding-shaped (not CVSS-eligible).
     """
     errors: list[str] = []
     eligible = _eligible_cwes()
@@ -250,7 +253,7 @@ def _check_threat_category_id_set(data: dict) -> list[str]:
       * Architecture-coverage / threat-hypothesis sources already enforce
         the field via ``_check_architecture_coverage_invariants``; this
         check defers to that callsite.
-      * Other sources (dep-scan, known-vuln, configuration-defect,
+      * Other sources (known-vuln, configuration-defect,
         requirements-compliance) are exempt — they predate the v2 schema.
 
     Set ``APPSEC_SKIP_TH_CHECK=1`` to downgrade to a warning while data
@@ -445,17 +448,6 @@ def _check_known_threats_unique_ids(data: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 # Public validators
 # ---------------------------------------------------------------------------
-
-
-def validate_dep_scan(data: Any) -> tuple[bool, list[str]]:
-    """Validate a parsed .dep-scan.json object."""
-    if not isinstance(data, dict):
-        return False, ["root must be a JSON object"]
-    errors = _schema_errors("dep_scan", data)
-    # Redaction rule applies only to normal (non-error-stub) payloads.
-    if "parse_error" not in data:
-        errors.extend(_check_snippet_redaction(data))
-    return len(errors) == 0, errors
 
 
 def validate_stride(data: Any) -> tuple[bool, list[str]]:
@@ -987,7 +979,7 @@ def validate_known_threats(data: Any) -> tuple[bool, list[str]]:
 
 def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
     """Validate `.config-scan-findings.json` written by appsec-config-scanner
-    in Phase 2.5. Same error-stub-or-normal pattern as dep_scan."""
+    in Phase 2.5. Error-stub-or-normal pattern."""
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
     errors = _schema_errors("config_scan_findings", data)
@@ -1010,7 +1002,7 @@ def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
 def validate_source_auth_findings(data: Any) -> tuple[bool, list[str]]:
     """Validate `.source-auth-findings.json` written by
     `scripts/source_auth_scanner.py`. Same error-stub-or-normal pattern
-    as dep_scan and config_scan_findings."""
+    as config_scan_findings."""
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
     errors = _schema_errors("source_auth_findings", data)
@@ -1030,7 +1022,6 @@ def validate_source_auth_findings(data: Any) -> tuple[bool, list[str]]:
 
 
 _VALIDATORS = {
-    "dep_scan": validate_dep_scan,
     "stride": validate_stride,
     "threats_merged": validate_threats_merged,
     "triage_flags": validate_triage_flags,

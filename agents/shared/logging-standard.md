@@ -1,6 +1,6 @@
 # Shared Logging Standard
 
-All agents (orchestrator + sub-agents) MUST follow this logging standard. Replace `<AGENT>` with the agent's short name (e.g. `threat-analyst`, `stride-analyzer`, `recon-scanner`, `context-resolver`, `dep-scanner`, `triage-validator`, `qa-reviewer`) and `<MODEL>` with the model identifier.
+All agents (orchestrator + sub-agents) MUST follow this logging standard. Replace `<AGENT>` with the agent's short name (e.g. `threat-analyst`, `stride-analyzer`, `recon-scanner`, `context-resolver`, `triage-validator`, `qa-reviewer`) and `<MODEL>` with the model identifier.
 
 ## Structured log format
 
@@ -24,7 +24,7 @@ All agents (orchestrator + sub-agents) MUST follow this logging standard. Replac
 | Orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT` |
 | All agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
 | Watchdog-emitted (via PostToolUse hook) | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog (`scripts/budget_watchdog.py`) counts tool calls per session and emits these deterministically — agents do not author them. On `BUDGET_CRITICAL` the watchdog writes `$OUTPUT_DIR/.budget-critical`; agents poll for the file at phase boundaries and execute their wrap-up sequence. The skill-layer post-run banner reads these events. |
-| Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner / dep-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
+| Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
 ## Budget wrap-up signal (read at every phase boundary)
 
@@ -47,7 +47,6 @@ Single source of truth for the one-line **purpose** the orchestrator prints imme
 |-------|---------------------------------------------------------|
 | `context-resolver` | extracts team, asset tier, compliance scope, prior findings, known threats, requirements → `.threat-modeling-context.md` |
 | `recon-scanner` | enumerates 26 security categories (routes, dependencies, secrets, auth, crypto, logging, IaC, …) → `.recon-summary.md` |
-| `dep-scanner` (script) | runs native SCA (`npm audit`, `pip-audit`, `govulncheck`, …) with heuristic fallback → `.dep-scan.json` |
 | `stride-analyzer` | per component: enumerates Spoofing / Tampering / Repudiation / Information-Disclosure / DoS / EoP threats with CWE + evidence → `.stride-<id>.json` |
 | `threat-merger` | deduplicates candidate threats via CWE + component + title fingerprint → merge decisions feed `.threats-merged.json` |
 | `triage-validator` | infers breach distance, detects compound attack chains, computes effective severity, re-ranks top threats → `.triage-flags.json` |

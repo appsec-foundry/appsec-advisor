@@ -21,8 +21,6 @@ Why a standalone script:
 Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
 
   Always-cleanup (orchestrator Phase 11 artifacts):
-    .dep-scan.pid
-    .dep-scan.stdout
     .merge-candidates.json
     .merge-decisions.json
     .management-summary-draft.md
@@ -69,7 +67,9 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
   NEVER cleaned (audit trail and baseline cache):
     .threat-modeling-context.md
     .recon-summary.md
-    .dep-scan.json
+    .sca-practice-findings.json      (Phase 10 — sca-practice MF sidecar)
+    .known-bad-libs-findings.json    (Phase 10 — known-bad-libs MF sidecar)
+    .dep-update-activity.json        (Phase 10 — passive git-log cadence)
     .threats-merged.json
     .triage-flags.json
     .architect-review.md
@@ -113,8 +113,6 @@ from typing import Any
 # --- whitelist -------------------------------------------------------------
 
 ALWAYS_FILES = [
-    ".dep-scan.pid",
-    ".dep-scan.stdout",
     ".merge-candidates.json",
     ".merge-decisions.json",
     ".management-summary-draft.md",
@@ -215,7 +213,9 @@ POST_ARCH_FILES_IF_PASS = [
 NEVER = {
     ".threat-modeling-context.md",
     ".recon-summary.md",
-    ".dep-scan.json",
+    ".sca-practice-findings.json",
+    ".known-bad-libs-findings.json",
+    ".dep-update-activity.json",
     ".threats-merged.json",
     ".triage-flags.json",
     ".architect-review.md",

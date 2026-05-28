@@ -73,30 +73,6 @@
       "source": "stride",
       "architectural_violation": false,
       "threat_category_id": "TH-11"
-    },
-    {
-      "t_id": "T-005",
-      "component_id": "C-01",
-      "component_name": "REST API",
-      "stride": "Tampering",
-      "risk": "High",
-      "likelihood": "Medium",
-      "impact": "High",
-      "title": "Prototype pollution via lodash 4.17.10",
-      "cwe": "CWE-1321",
-      "evidence": {
-        "file": "package.json",
-        "line": null
-      },
-      "source": "dep-scan",
-      "architectural_violation": false,
-      "cvss_v4": {
-        "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
-        "base_score": 8.8,
-        "severity": "High",
-        "source": "dep-scan"
-      },
-      "threat_category_id": "TH-09"
     }
   ]
 }

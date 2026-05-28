@@ -524,10 +524,14 @@ class TestCLI:
         # informational "Tip:" post-line is fine).
         assert "Requirements " not in out
 
-    def test_summary_shows_with_sca_when_set(self, tmp_path, monkeypatch):
+    def test_with_sca_flag_is_rejected(self, tmp_path, monkeypatch):
+        """--with-sca / --no-sca were removed in 2026-05. argparse must
+        reject them as unknown flags (exit 2). Verifies the hard cutover
+        is in place — no deprecation alias, no no-op acceptance."""
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--with-sca")
-        assert "Extras    : SCA" in r.stdout
+        assert r.returncode != 0, "--with-sca must be rejected by argparse"
+        assert "unrecognized arguments" in r.stderr or "error" in r.stderr.lower()
 
     def test_summary_shows_architect_when_thorough(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

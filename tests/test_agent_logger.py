@@ -97,7 +97,7 @@ class TestAgentInvoke:
         event = make_post_tool_event(
             "Agent",
             {
-                "subagent_type": "appsec-advisor:appsec-dep-scanner",
+                "subagent_type": "appsec-advisor:appsec-recon-scanner",
                 "description": "Scan dependencies",
                 "prompt": "REPO_ROOT=/tmp/repo",
                 "run_in_background": True,
@@ -241,7 +241,7 @@ class TestAgentSpawn:
         event = make_pre_tool_event(
             "Agent",
             {
-                "subagent_type": "appsec-advisor:appsec-dep-scanner",
+                "subagent_type": "appsec-advisor:appsec-recon-scanner",
                 "description": "Dep scan",
                 "prompt": "REPO_ROOT=/tmp/repo",
                 "run_in_background": True,
@@ -263,7 +263,7 @@ class TestAgentSpawn:
         event = make_pre_tool_event(
             "Agent",
             {
-                "subagent_type": "appsec-advisor:appsec-dep-scanner",
+                "subagent_type": "appsec-advisor:appsec-recon-scanner",
                 "description": "Dep scan with opus",
                 "prompt": "REPO_ROOT=/tmp/repo",
                 "run_in_background": False,

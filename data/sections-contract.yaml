@@ -1218,13 +1218,14 @@ sections:
           enforcement: "warning"
 
         - rule: "dependency_cross_ref"
-          # Findings with source=dep-scan, cluster=outdated_deps, OR
-          # titles/excerpts naming a known vulnerable library token
-          # (express-jwt, notevil, libxmljs2, sanitize-html, etc.) MUST
-          # be referenced in §7.12 Dependency & Supply Chain. Without
-          # this, F-014/F-003-style findings ship under a non-dep
-          # cluster (crypto / injection) and §7.12 stays empty even
-          # though dep-relevant findings exist.
+          # Findings whose cluster=outdated_deps or whose title/excerpt
+          # names a known vulnerable library token (express-jwt, notevil,
+          # libxmljs2, sanitize-html, etc.) MUST be referenced in §7.11
+          # Operations Runtime and Supply Chain Controls. Since 2026-05
+          # the in-tree `dep-scan` source is gone — supply-chain posture
+          # flows via emit_sca_practice.py + emit_known_bad_libs.py to
+          # meta_findings[]; this cross-ref rule catches non-MF
+          # dep-relevant findings that still need to surface in §7.11.
           enforcement: "warning"
 
         - rule: "na_against_recon"
@@ -1467,6 +1468,30 @@ sections:
             forbidden_constructs:
               - "markdown_table"
             enforcement: "error"
+          # Patch-management posture derivation (since 2026-05). When the
+          # three §7.11 SCA-practice control rows are present (Automated
+          # SCA scanning / Automated dependency updates / Lockfile
+          # hygiene), §7.13 MUST surface a single "patch management
+          # posture" line whose effectiveness is the worst (lowest
+          # ranking) of the three control rows. Order:
+          #   Adequate > Partial > Missing > Weak
+          # Rationale: the converging-signals frame (sca.md §1.5)
+          # treats patch-management as a single architectural property —
+          # one derived rating across process + outcome indicators is
+          # the user-facing summary, not three independent rows.
+          - rule: "patch_management_derived_rating"
+            controls:
+              - "Automated SCA scanning"
+              - "Automated dependency updates"
+              - "Lockfile hygiene"
+            aggregation: "worst-of"
+            severity_order:
+              # Worst → best (worst-of-three picks the leftmost present)
+              - Missing
+              - Weak
+              - Partial
+              - Adequate
+            enforcement: "warning"
 
       # Per-section semantic constraints — used by qa_checks v2.
       # `forbidden_categories`: a finding routed elsewhere by this map

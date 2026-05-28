@@ -216,7 +216,6 @@ def flatten_preset(
         "write_pentest_tasks": outputs.get("pentest_tasks"),
         "pentest_format": outputs.get("pentest_format"),
         "pentest_target": outputs.get("pentest_target"),
-        "with_sca": scan.get("with_sca"),
         "incremental": scan.get("incremental"),
         "scan_manifest": scan.get("scan_manifest"),
         "check_requirements": requirements.get("enabled"),

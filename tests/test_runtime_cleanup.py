@@ -43,8 +43,6 @@ RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
 # to ``runtime_cleanup.ALWAYS_FILES`` / ``ALWAYS_DIRS`` and are also listed in
 # the Phase-11 doc table.
 EXPECTED_WHITELIST_FILES = {
-    ".dep-scan.pid",
-    ".dep-scan.stdout",
     ".merge-candidates.json",
     ".merge-decisions.json",
     ".management-summary-draft.md",
@@ -127,7 +125,9 @@ EXPECTED_POST_ARCH_FILES_IF_PASS = {
 NEVER_CLEANUP = {
     ".threat-modeling-context.md",
     ".recon-summary.md",
-    ".dep-scan.json",
+    ".sca-practice-findings.json",
+    ".known-bad-libs-findings.json",
+    ".dep-update-activity.json",
     ".threats-merged.json",
     ".triage-flags.json",
     ".architect-review.md",

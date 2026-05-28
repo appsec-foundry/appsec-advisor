@@ -393,11 +393,13 @@ class TestCvssRisk:
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         assert r["findings"] == []
 
-    def test_dep_scan_critical_without_cvss_accepted(self, out_dir):
-        """Only 'source: stride' threats are flagged — dep-scan / known-vuln
-        critical-without-cvss entries are handled elsewhere."""
+    def test_known_vuln_critical_without_cvss_accepted(self, out_dir):
+        """Only 'source: stride' threats are flagged — known-vuln
+        critical-without-cvss entries are handled elsewhere. The dep-scan
+        source was removed in 2026-05 (this test previously asserted on
+        source=dep-scan)."""
         _write_json(
-            out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-005", "risk": "Critical", "source": "dep-scan"}]}
+            out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-005", "risk": "Critical", "source": "known-vuln"}]}
         )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         assert [f for f in r["findings"] if f["kind"] == "critical_without_cvss"] == []

@@ -217,7 +217,6 @@ _CREATE_THREAT_MODEL_INVARIANTS = [
     ("supports-dry-run", ["--dry-run", "DRY_RUN"], False),
     ("supports-resume", ["--resume", "checkpoint"], True),
     ("supports-incremental", ["--incremental", "INCREMENTAL"], False),
-    ("supports-with-sca", ["--with-sca", "WITH_SCA"], False),
 ]
 
 
@@ -318,7 +317,8 @@ class TestIntermediateFileCoverage:
 
     INTERMEDIATE_PATTERNS = [
         ".recon-summary.md",
-        ".dep-scan.json",
+        ".sca-practice-findings.json",
+        ".known-bad-libs-findings.json",
         ".stride-",  # stride-*.json
         ".threat-modeling-context.md",
         ".appsec-lock",

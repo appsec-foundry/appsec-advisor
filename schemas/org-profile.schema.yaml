@@ -252,8 +252,6 @@ $defs:
     type: object
     additionalProperties: false
     properties:
-      with_sca:
-        type: boolean
       incremental:
         enum: ["auto", true, false]
       scan_manifest:

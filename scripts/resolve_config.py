@@ -853,7 +853,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--incremental", action="store_true")
     p.add_argument("--full",      action="store_true")
     p.add_argument("--rebuild",   action="store_true")
-    p.add_argument("--with-sca",  action="store_true")
     p.add_argument("--keep-runtime-files", action="store_true")
     p.add_argument("--verbose",   action="store_true")
     # Tracing default flipped to ON in M3.6 (was opt-in pre-M3.6). Per-agent
@@ -965,8 +964,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Disable SARIF export even if a preset enables it.")
     p.add_argument("--no-pentest-tasks", action="store_true", dest="no_pentest_tasks",
                    help="Disable pentest-tasks export even if a preset enables it.")
-    p.add_argument("--no-sca", action="store_true", dest="no_sca",
-                   help="Disable SCA scan even if a preset enables it.")
     p.add_argument("--no-pdf", action="store_true", dest="no_pdf",
                    help="Disable PDF export even if a preset enables it.")
 
@@ -1045,7 +1042,6 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "write_pentest_tasks": ns.pentest_tasks,
         "pentest_format":  ns.pentest_format,
         "pentest_target":  ns.pentest_target,
-        "with_sca":        ns.with_sca,
         "keep_runtime_files": ns.keep_runtime_files,
         "verbose":         ns.verbose,
         "tracing":         ns.tracing,
@@ -1252,9 +1248,6 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
     org_block["write_pentest_tasks"] = _resolve_bool(
         ns.pentest_tasks, ns.no_pentest_tasks, defaults.get("write_pentest_tasks"),
         cfg["write_pentest_tasks"],
-    )
-    org_block["with_sca"] = _resolve_bool(
-        ns.with_sca, ns.no_sca, defaults.get("with_sca"), cfg["with_sca"]
     )
 
     # Tracing / scan_manifest: preset wins when user did not pass the flag.
@@ -1896,8 +1889,6 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     extras: list[str] = []
     if cfg.get("check_requirements"):
         extras.append(f"requirements ({cfg['requirements_label']})")
-    if cfg.get("with_sca"):
-        extras.append("SCA")
     if cfg.get("architect_review"):
         extras.append(f"architect review ({cfg['architect_label']})")
     if extras:

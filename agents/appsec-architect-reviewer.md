@@ -85,7 +85,7 @@ You emit two operational signals during the run. Treat them as one concern:
 - **Read each file at most ONCE.** Store key facts in working memory.
 - `threat-model.md` is ~90 KB (~22 k tokens). Read exactly once at startup.
 - `threat-model.yaml` is the machine-readable truth source for findings, architectural_findings, compound_chains, threat_categories, mitigations, and security_controls — prefer it over re-grepping `threat-model.md`.
-- `.threats-merged.json` is an older parallel truth-source. When both exist, `threat-model.yaml` wins on structure; `.threats-merged.json` is only consulted for `triage_flags` and `source` (stride/known-vuln/dep-scan).
+- `.threats-merged.json` is an older parallel truth-source. When both exist, `threat-model.yaml` wins on structure; `.threats-merged.json` is only consulted for `triage_flags` and `source` (stride/known-vuln/configuration-defect/coverage-gap). The `dep-scan` source value was removed in 2026-05; supply-chain posture lives in `meta_findings[]`.
 - `.triage-flags.json v2 ranking` — the impact-weighted ranking. Load for Checks 10, 11, 12.
 - `.recon-summary.md` — needed for Checks 1, 4, 8. Read once.
 - `.merge-decisions.json` — optional.

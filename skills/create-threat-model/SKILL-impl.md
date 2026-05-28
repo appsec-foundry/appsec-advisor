@@ -576,7 +576,6 @@ Parse the user's arguments for the following flags:
 | `--incremental` | `INCREMENTAL=true` — assertion that a baseline exists (hard abort otherwise) | auto-detected from baseline |
 | `--full` | `INCREMENTAL=false` — force full scan even when prior output exists. Conflicts with `--incremental`. Preserves prior `changelog[]` history and surfaces a delta against the previous baseline in the completion summary. | `false` |
 | `--rebuild` | `REBUILD=true` — superset of `--full`: wipes prior model (md/yaml/sarif), cache (`.appsec-cache/`), and all intermediate files before running, then performs a fresh full assessment with no history carry-over. No delta computation, no T-ID stability. Conflicts with `--incremental` and `--resume`. Redundant with `--full` (implicitly forces full). | `false` |
-| `--with-sca` | `WITH_SCA=true` | `false` |
 | `--keep-runtime-files` | `KEEP_RUNTIME_FILES=true` (suppresses Phase 11 cleanup of transient artifacts — useful for debugging) | `false` |
 | `--max-resumes <N>` | `MAX_STAGE1_RESUMES=<N>` — hard cap on automatic Stage 1 resume dispatches after turn-budget cut-offs. `0` disables resume entirely (single-shot run). See "Handling turn-budget cut-offs" below. | `1` |
 | `--max-wall-time <duration>` | `MAX_WALL_TIME_SECONDS=<seconds>` — hard wall-time deadline for the watchdog (for example `3600`, `60m`, `1h`). | (none) |
@@ -1268,7 +1267,8 @@ Print the wipe header:
 Rebuild: discarding prior threat model and all cached state.
   Removing from <OUTPUT_DIR>:
     threat-model.md / threat-model.yaml / threat-model.sarif.json / pentest-tasks.yaml (if present)
-    .architect-review.md, .threat-modeling-context.md, .recon-summary.md, .dep-scan.json
+    .architect-review.md, .threat-modeling-context.md, .recon-summary.md
+    .sca-practice-findings.json, .known-bad-libs-findings.json
     .stride-*.json, .threats-merged.json, .triage-flags.json, .triage-ranking.json, .merge-*.json
     .fragments/ (compose inputs from prior contract version — must not survive a rebuild)
     .appsec-cache/ (baseline cache directory)
@@ -1298,7 +1298,8 @@ cd "$OUTPUT_DIR" 2>/dev/null || true
 WIPED_COUNT=$(find . -maxdepth 1 \
   \( -name "threat-model.md" -o -name "threat-model.yaml" -o -name "threat-model.sarif.json" \
      -o -name "pentest-tasks.yaml" -o -name ".architect-review.md" \
-     -o -name ".threat-modeling-context.md" -o -name ".recon-summary.md" -o -name ".dep-scan.json" \
+     -o -name ".threat-modeling-context.md" -o -name ".recon-summary.md" \
+     -o -name ".sca-practice-findings.json" -o -name ".known-bad-libs-findings.json" \
      -o -name ".stride-*.json" -o -name ".threats-merged.json" -o -name ".triage-flags.json" \
      -o -name ".merge-*.json" -o -name ".appsec-checkpoint" \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
@@ -1680,7 +1681,8 @@ Behaviour:
      Available intermediate files:
        .threat-modeling-context.md : <exists|missing>
        .recon-summary.md          : <exists|missing>
-       .dep-scan.json             : <exists|missing>
+       .sca-practice-findings.json : <exists|missing>
+       .known-bad-libs-findings.json : <exists|missing>
        .stride-*.json             : <n files>
    ```
 3. Ask the user whether to resume from the last completed phase or start fresh.
@@ -1926,7 +1928,7 @@ This gate complements the SKILL-level fast-abort (exit codes 0/2 from `baseline_
 
 Runs **after** the Stage-2 no-op gate has decided to proceed AND **before** the Stage-2 fragment pre-generator. Two deterministic Python helpers append derived content to `threat-model.yaml` so the Stage-2 renderer agent sees an enriched canonical YAML on its first read:
 
-1. **`emit_meta_findings.py`** — aggregates `threats[]` by `source` and emits cross-cutting `meta_findings[]` (`Insufficient Patch Management` when ≥2 `dep-scan` threats; `Insufficient Secret Management` when ≥2 `configuration-defect` threats). MF-NNN IDs allocated in their own namespace, no T-ID-contiguity impact.
+1. **`emit_meta_findings.py`** — aggregates `threats[]` by `source` and emits cross-cutting `meta_findings[]`. Today it surfaces `Insufficient Secret Management` when ≥2 `configuration-defect` threats land. The `Insufficient Patch Management` MF used to fire on ≥2 `dep-scan` threats, but the `dep-scan` source was removed in 2026-05; patch-management posture is now produced directly by `emit_sca_practice.py` (Phase 10) and merged here via the `.sca-practice-findings.json` + `.known-bad-libs-findings.json` sidecars. MF-NNN IDs allocated in their own namespace, no T-ID-contiguity impact.
 2. **`emit_review_mitigations.py`** — synthesises `kind: review` mitigations for findings with `evidence_check ∈ {ambiguous, refuted}` (M-15/M-16), clustered `kind: investigate` mitigations for `source ∈ {architectural-anti-pattern, coverage-gap}` (M-17 — one card per `architectural_theme` to control §9 volume), and `poc_hint` annotations on threats with `affected_parameter` in injection-class CWEs (M-20).
 3. **`emit_threat_vektors.py`** — assigns `threats[].vektor` deterministically from CWE class (798/321/312/540 → `repo-read`; 79/352/601/1021 → `victim-required`) plus the evidence file's auth_required (matched against `attack_surface[]` by camelCase-token overlap). Closes the bug where the composer renders `"internet-user"` for every threat in §8 because Stage 1 never populates the field. Idempotent — hand-set values preserved.
 4. **`detect_open_registration.py`** — scans `attack_surface[]` for an unauthenticated registration route (POST /register, /signup, /api/Users, etc.). Writes `meta.open_user_registration: true | false`. Read by the §6 heatmap renderer to collapse `internet-user` / `internet-priv-user` actor cards into `internet-anon` (the three-tier attacker spectrum is misleading when registration is one POST away). The §8 Vektor column keeps its granularity.
@@ -2388,7 +2390,6 @@ Pass the following variables to the agent prompt:
 - `REQUIREMENTS_URL_OVERRIDE=<url>` (only if `--requirements <url>` was provided)
 - `INCREMENTAL=<true|false>`
 - `REBUILD=<true|false>` (when `true`, Phase 11 writes a `note: "full rebuild — prior threat model and changelog history were discarded on user request (--rebuild)"` into the fresh `v1` changelog entry — the pre-flight wipe already removed the baseline so the orchestrator itself runs as if first-ever)
-- `WITH_SCA=<true|false>`
 - `KEEP_RUNTIME_FILES=<true|false>` (default `false`; when `true` Phase 11 skips cleanup of transient artifacts — useful for debugging)
 - `SCAN_MANIFEST=<true|false>` (default `false`; when `true` the recon-scanner writes every processed file path to `$OUTPUT_DIR/.scan-manifest.txt`)
 - `STRIDE_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `--stride-model` or `$APPSEC_STRIDE_MODEL` when set)
@@ -3160,7 +3161,6 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     $( [ "$WRITE_PENTEST_TASKS" = "true"  ] && echo "--write-pentest-tasks" || echo "--no-write-pentest-tasks" ) \
     $( [ "$CHECK_REQUIREMENTS" = "true"  ] && echo "--check-requirements" || echo "--no-check-requirements" ) \
     $( [ "$ARCHITECT_REVIEW"   = "true"  ] && echo "--architect-review"   || echo "--no-architect-review" ) \
-    $( [ "$WITH_SCA"           = "true"  ] && echo "--with-sca"           || echo "--no-with-sca" ) \
     $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \
     --patch-placeholders
 ```

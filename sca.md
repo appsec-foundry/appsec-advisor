@@ -1,8 +1,18 @@
 # SCA Scope in appsec-advisor — Analysis and Proposal
 
-**Status:** Analysis / design proposal — no code changes yet.
-**Date:** 2026-05-25
+**Status:** **IMPLEMENTED 2026-05-28 (hard cutover).** Phase A (`emit_sca_practice.py` + §7.11 control rows), Phase B (removal of `dep_scan.py` and the `--with-sca` / `--no-sca` / `with_sca:` org-profile field — **hard-removed, not deprecated**), Phase C (`emit_known_bad_libs.py` + curated 30-entry list), plus `emit_dep_update_activity.py` (`git log`-based cadence signal that lifts repos patching manually without Dependabot / Renovate files). No deprecation alias remains: argparse rejects `--with-sca`, schema rejects `with_sca:` in org-profiles.
+**Date:** 2026-05-25 (proposal) / 2026-05-28 (implementation)
 **Audience:** Plugin maintainers deciding on the supply-chain scope of the threat-modeling pipeline.
+
+## Passive-only contract — non-negotiable
+
+The plugin **never** runs `npm audit` / `pip-audit` / `govulncheck` / `snyk` / `trivy fs` or any other package-manager or CVE-database tool, and **never** makes a network request to npmjs / PyPI / osv.dev / similar. Detection is purely:
+
+1. File-system inspection (CI workflow YAML, repo-config files, manifests, lockfiles).
+2. `git log` over a configurable look-back window on manifest paths (commit subjects + author).
+3. Optional `gh pr list` when the GitHub CLI is available — best-effort, fails silently when unavailable. This is the only network-adjacent call and is gated behind `--no-gh` (which can disable it entirely).
+
+Per-CVE reporting is intentionally out of scope. Users must run a dedicated SCA tool (Snyk / Trivy / Dependabot / OSV-Scanner / language-native audit) in their CI for that signal — the plugin only surfaces whether such a tool is *configured to run* and whether the *team's update cadence* shows ongoing patching activity.
 
 ---
 

@@ -91,7 +91,7 @@ Run these in parallel where possible:
 2. **Package manifests** — Glob for each:
    `package.json`, `requirements.txt`, `Pipfile`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `Gemfile`, `composer.json`
    
-   **Do NOT read lock files** (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Pipfile.lock`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`) — they are too large and contain no information beyond what the manifest provides. The dep-scanner uses lock files directly via native audit tools.
+   **Do NOT read lock files** (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Pipfile.lock`, `composer.lock`, `Cargo.lock`, `Gemfile.lock`, `poetry.lock`) — they are too large and contain no information beyond what the manifest provides. The §7.11 lockfile-hygiene control row (`emit_sca_practice.py`) only checks *existence* of these files, not their contents.
    
    Read each found manifest to extract dependency names and versions.
 
@@ -486,7 +486,7 @@ Report as **Informational** but surface under 7.28 output — it's a signal that
 
 **Category 25 (Cross-repo & SaaS dependencies) — detailed instructions:**
 
-This category identifies two types of external dependencies that cross repository boundaries: (1) **SCM sibling projects** — other repositories in the same organization that this project communicates with at runtime, and (2) **SaaS service integrations** — third-party cloud services consumed via SDK or API. Do NOT include generic open-source libraries (lodash, Express, Spring) — those are covered by the dep-scanner.
+This category identifies two types of external dependencies that cross repository boundaries: (1) **SCM sibling projects** — other repositories in the same organization that this project communicates with at runtime, and (2) **SaaS service integrations** — third-party cloud services consumed via SDK or API. Do NOT include generic open-source libraries (lodash, Express, Spring) — those are out of scope (the plugin does not run a CVE scanner; users should run a dedicated SCA tool — Snyk / Trivy / Dependabot / OSV-Scanner — in CI).
 
 **25a — SCM sibling projects.** Run these searches in parallel:
 

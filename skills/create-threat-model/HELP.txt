@@ -50,7 +50,6 @@ TARGET & SCAN
   --no-requirements            Skip requirements check even if configured
                                Deprecated aliases: --with-requirements,
                                --ignore-requirements, --requirements-url <url>
-  --with-sca                   Run a dependency CVE scan
 
 INCREMENTAL / CI
   --incremental                Re-analyze only components changed since last run

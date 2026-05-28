@@ -460,7 +460,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
 
 ### Phases 1–2: Reconnaissance & Context (parallel dispatch)
 
-Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1), recon-scanner (Phase 2), and — when `HAS_IAC_SURFACE=true` — config-scanner (Phase 2.5) in parallel** in a single orchestrator turn. The config-scanner has no dependency on Phase 2 output and runs concurrently with Phases 1+2, saving ~30–90 s wall-clock on repos with IaC surface. If `WITH_SCA=true`, dep-scanner runs in background after recon returns (needs `$MANIFESTS` from `.recon-summary.md` — do NOT pull it into the parallel batch). **Wait for all background agents to return before proceeding to Phase 3.** Context-resolver typically returns first (3–6 min); the recon-scanner continues running in the background (5–15 min). **When context-resolver returns and `.recon-summary.md` is not yet on disk, this is EXPECTED — the recon-scanner is still running. Do NOT re-dispatch recon-scanner. Simply continue waiting for the background agent to complete.** Only after recon-scanner itself returns should you read `.recon-summary.md`. If `.recon-summary.md` is still missing after the recon-scanner agent has returned, fall back to minimal inline scan.
+Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1), recon-scanner (Phase 2), and — when `HAS_IAC_SURFACE=true` — config-scanner (Phase 2.5) in parallel** in a single orchestrator turn. The config-scanner has no dependency on Phase 2 output and runs concurrently with Phases 1+2, saving ~30–90 s wall-clock on repos with IaC surface. (The pre-2026-05 background dep-scanner launch is gone — supply-chain posture is produced deterministically in Phase 10 by `emit_sca_practice.py` / `emit_known_bad_libs.py`, no background dispatch needed.) **Wait for all background agents to return before proceeding to Phase 3.** Context-resolver typically returns first (3–6 min); the recon-scanner continues running in the background (5–15 min). **When context-resolver returns and `.recon-summary.md` is not yet on disk, this is EXPECTED — the recon-scanner is still running. Do NOT re-dispatch recon-scanner. Simply continue waiting for the background agent to complete.** Only after recon-scanner itself returns should you read `.recon-summary.md`. If `.recon-summary.md` is still missing after the recon-scanner agent has returned, fall back to minimal inline scan.
 
 ### Phase 2.5: Configuration & IaC Scan *(conditional — when IaC surface exists)*
 
@@ -624,7 +624,7 @@ Write the threat model output to `$OUTPUT_DIR/`:
 3. **`components:`** — MANDATORY list; one entry per component that appears in `threats[]`. Every component has `paths:` globs (source of truth for Phase 9 dirty-set) and `threat_ids:` (quick lookup into `threats[]`). IDs stable across runs.
 4. **`changelog:`** — MANDATORY, append-only, newest entry first. Historical entries are never rewritten, even on `--rebuild` — prepend a new `mode: full` entry instead. Every changelog entry carries `version:`, `baseline_sha:`, `current_sha:`, and `added:` / `changed:` / `resolved:` sub-blocks.
 5. **`threats[].id`** uses the canonical **`T-NNN`** scheme in the output YAML (regex `^T-\d{3,}$` enforced by `schemas/threat-model.output.schema.yaml:340`). The merged-threats intermediate carries both `id: F-NNN` (legacy) and `t_id: T-NNN` (canonical); always emit the `t_id` value as `threats[].id` in the output. `M-NNN` for mitigations. IDs stable across runs — carried-forward findings keep their `t_id`. The rendered Markdown displays `F-NNN` visible labels (composer responsibility, not yours).
-6. **`threats[].source`** — MANDATORY for every threat, copy verbatim from `.threats-merged.json[].source` (one of `stride` / `dep-scan` / `known-vuln` / `requirements-compliance` / `architectural-anti-pattern` / `coverage-gap` / `known-threats`). Without it, downstream consumers cannot run the eligibility filter — `scripts/export_sarif.py` and `scripts/render_pentest_tasks.py` (yaml-only path) both depend on it to distinguish pentest-eligible code-level findings from design/policy gaps. A missing `source` silently degrades pentest-tasks generation to zero rows.
+6. **`threats[].source`** — MANDATORY for every threat, copy verbatim from `.threats-merged.json[].source` (one of `stride` / `known-vuln` / `requirements-compliance` / `architectural-anti-pattern` / `coverage-gap` / `known-threats`). Without it, downstream consumers cannot run the eligibility filter — `scripts/export_sarif.py` and `scripts/render_pentest_tasks.py` (yaml-only path) both depend on it to distinguish pentest-eligible code-level findings from design/policy gaps. A missing `source` silently degrades pentest-tasks generation to zero rows. (The `dep-scan` source enum value was removed in 2026-05; supply-chain output now flows via `meta_findings[]`, not `threats[]`.)
 
 The schema file is the canonical spec for every section (`assets`, `attack_surface`, `trust_boundaries`, `security_controls`, `threats`, `mitigations`, `critical_findings`, and `requirements_compliance` when `CHECK_REQUIREMENTS=true`). Do not invent new top-level keys without updating both the schema and `scripts/validate_intermediate.py`.
 
@@ -947,10 +947,10 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
    echo "GIT_STATE: sha=$CURRENT_SHA branch=$CURRENT_BRANCH remote=$CURRENT_REMOTE"
    ```
    If `CURRENT_SHA` comes back empty (e.g. non-git repo), yaml `meta.git.commit_sha` will be `null` — accept that, but warn the user: `⚠ Repository is not a git checkout — incremental mode will not work on future runs`.
-4. **Check for RESUME_FROM_PHASE** — if set, skip steps 5–6 and jump directly to the specified phase. (Note: step numbers refer to this checklist.) Reuse existing intermediate files (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`). Log: `↳ Resuming from Phase <N> (checkpoint-based resume)`.
+4. **Check for RESUME_FROM_PHASE** — if set, skip steps 5–6 and jump directly to the specified phase. (Note: step numbers refer to this checklist.) Reuse existing intermediate files (`.threat-modeling-context.md`, `.recon-summary.md`, `.stride-*.json`, `.sca-practice-findings.json`, `.known-bad-libs-findings.json`). Log: `↳ Resuming from Phase <N> (checkpoint-based resume)`.
 6. **Initialize the assessment log** — this **overwrites** any previous log (`>`, not `>>`). The ASSESSMENT_START entry includes the analysis mode and all flags so the log is self-contained:
    ```bash
-   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental>  flags=[WITH_SCA=<true|false>, CHECK_REQUIREMENTS=<true|false>, REQUIREMENTS_URL_OVERRIDE=<url|none>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   threat-analyst  ASSESSMENT_START   Assessment started (CET: $(TZ=Europe/Berlin date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo n/a))  mode=<full|incremental>  flags=[CHECK_REQUIREMENTS=<true|false>, REQUIREMENTS_URL_OVERRIDE=<url|none>, WRITE_YAML=<true|false>, WRITE_SARIF=<true|false>]" > "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
    ```
    Replace `<full|incremental>` and each `<true|false>` with the actual values from the invocation parameters.
 7. **Mode-aware stale file cleanup** — intermediate files are the **carry-forward source** in incremental mode, so they must NOT be deleted when `INCREMENTAL=true`. Only the volatile per-phase files (`.phase-epoch`, `.progress/`) are reset in both modes.
@@ -958,11 +958,11 @@ Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
    if [ "$INCREMENTAL" != "true" ]; then
      # Full scan — wipe carry-forward state so nothing stale leaks in.
      find "$OUTPUT_DIR" -maxdepth 1 \
-       \( -name ".stride-*.json" -o -name ".dep-scan.json" -o -name ".recon-summary.md" \) -delete 2>/dev/null
+       \( -name ".stride-*.json" -o -name ".sca-practice-findings.json" -o -name ".known-bad-libs-findings.json" -o -name ".recon-summary.md" \) -delete 2>/dev/null
      find "$OUTPUT_DIR/.appsec-cache" -maxdepth 1 -name "baseline.json" -delete 2>/dev/null
      echo "↳ Cleaned up stale intermediate files (full scan)"
    else
-     echo "↳ Preserving .stride-*.json, .dep-scan.json, .recon-summary.md, .appsec-cache/ (incremental mode — used as carry-forward source)"
+     echo "↳ Preserving .stride-*.json, .sca-practice-findings.json, .known-bad-libs-findings.json, .recon-summary.md, .appsec-cache/ (incremental mode — used as carry-forward source)"
    fi
    # Volatile per-phase files are always reset.
    # acquire_lock.py recreates .progress (and .appsec-cache, .fragments) when called
@@ -1038,7 +1038,7 @@ When invoked, execute the following startup sequence in this exact order — do 
   Output      : <OUTPUT_DIR>/threat-model.md  +  threat-model.yaml<if WRITE_SARIF=true>  +  threat-model.sarif.json</if><if WRITE_YAML=false>  (yaml suppressed by --no-yaml)</if>
   Orchestrator: <own model, e.g. claude-sonnet-4-6>  (75 turns)
   Agents      : context-resolver (<model>) · recon-scanner (<model>)
-                dep-scanner (<model>) · stride-analyzer (<model>)
+                stride-analyzer (<model>)
                 qa-reviewer (<model>, skill-level)
 
 ──────────────────────────────────────────────────────────────
@@ -1051,7 +1051,7 @@ Immediately after the banner, print an overview of the 11 phases and what each o
 ```
 Phase overview — 11 phases, ~<total>m for depth=<ASSESSMENT_DEPTH>:
   1  Context Resolution   context-resolver — team, assets, compliance, prior findings  (~30s)
-  2  Reconnaissance       recon-scanner — routes, deps, secrets, IaC; [dep-scanner bg if --with-sca]  (~4m)
+  2  Reconnaissance       recon-scanner — routes, deps, secrets, IaC  (~4m)
   3  Architecture         C4 Context/Container/Component + Technology diagrams  (~1m)
   4  Security Use Cases   sequence diagrams for auth / input / output flows  (~1m)
   5  Asset Identification data + infrastructure asset catalogue  (~30s)
@@ -1271,11 +1271,11 @@ Choose the column matching `ASSESSMENT_DEPTH`. Render durations compactly: `30s`
 
 | Point | Line |
 |-------|------|
-| Assessment start | ASSESSMENT_START in log (written with `>` — overwrites file). Includes CET time, mode (`full`/`incremental`), and all flags (`WITH_SCA`, `CHECK_REQUIREMENTS`, `WRITE_YAML`, `WRITE_SARIF`). |
+| Assessment start | ASSESSMENT_START in log (written with `>` — overwrites file). Includes CET time, mode (`full`/`incremental`), and all flags (`CHECK_REQUIREMENTS`, `WRITE_YAML`, `WRITE_SARIF`). |
 | Phase 1 start | `[Phase 1/11] ▶ Context Resolution — invoking appsec-context-resolver…  (expect ~30s)` |
 | Phase 1 end | `[Phase 1/11] ✓ Context Resolution — .threat-modeling-context.md ready  [Xm YYs]` |
 | Phase 2 start | `[Phase 2/11] ▶ Reconnaissance — dispatching recon-scanner…  (expect ~4m)` |
-| Phase 2 end | `[Phase 2/11] ✓ Reconnaissance — recon-summary ready  [Xm YYs]` + if WITH_SCA: `, dep-scanner dispatched (background)` |
+| Phase 2 end | `[Phase 2/11] ✓ Reconnaissance — recon-summary ready  [Xm YYs]` |
 | Phase 2.5 start | `[Phase 2.5/11] ▶ Configuration & IaC Scan — dispatching config-scanner (parallel with Phases 1+2)` — emitted in same Bash batch as Phase 1/2 PHASE_START (identical timestamp); omitted when `HAS_IAC_SURFACE=false` |
 | Phase 2.5 end | `[Phase 2.5/11] ✓ Configuration & IaC Scan — <n> findings  [Xm YYs] (parallel with Phases 1+2)` — MUST carry `(parallel with Phases 1+2)` suffix |
 | Phase 3 start | `[Phase 3/11] ▶ Architecture Modeling — complexity tier: <Simple\|Moderate\|Complex>  (expect ~1m)` |
@@ -1357,7 +1357,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_ST
 | **8** | `N` = number of §7.2-§7.12 control categories plus the defense-in-depth summary pass (typically 12; may be fewer in `quick` mode). One step per category: `[1/12] Rating Identity and Authentication…` · `[2/12] Rating Session and Token Controls…` · `[3/12] Rating Authorization Controls…` · `[4/12] Rating Query Construction and Data Access…` · `[5/12] Rating Input Boundary Validation…` · `[6/12] Rating Output Encoding and Rendering…` · `[7/12] Rating Browser and Cross-Origin Controls…` · `[8/12] Rating Cryptography, Secrets and Data Protection…` · `[9/12] Rating File, Parser and Outbound Request Controls…` · `[10/12] Rating Operations, Runtime and Supply Chain…` · `[11/12] Rating Real-time and Not Applicable Controls…` · `[12/12] Summarizing Defense-in-Depth…`. Append the rating inline on the same print: `[1/12] Rating Identity and Authentication… (+0m12s) 🔴 Unsafe` |
 | **8b** | `N` = 2 + number of requirement categories. `[1/N] Loading requirements (<n> from <source>)…` · `[2/N] Detecting architectural anti-patterns…` · one `[k/N] Checking <category-id> (<n> requirements)…` per category · final summary line (not counted): `Requirements: <n> PASS, <n> FAIL, <n> ANTI-PATTERN, <n> PARTIAL` |
 | **9** | `N` = <components dispatched> + 4 merge/coverage/output substeps. One `[k/N] Dispatching STRIDE: <component-name> (<complexity>, <n> turns)…` per component · then `[<C+1>/N] Watching <n> STRIDE analyzers…` (this step runs the deterministic progress watcher — see "Phase 9 progress watcher" below) · `[<C+2>/N] Merging <n> raw threats → <n> after dedup…` · `[<C+3>/N] Running coverage checks (OWASP Top 10, business logic)…` · `[<C+4>/N] Building Mitigation Register (<n> mitigations)…` — where `C` is the component count |
-| **10** | `N` = 2. `[1/2] Incorporating <n> hardcoded secrets from recon…` · `[2/2] SCA scan: <reading .dep-scan.json (<n> findings) \| skipped (--with-sca not set)>` |
+| **10** | `N` = 2. `[1/2] Incorporating <n> hardcoded secrets from recon…` · `[2/2] Supply-chain posture: <n> §7.11 control rows, <n> sca-practice MF, <n> known-bad-libs MF` |
 | **11** | **Authoritative order is `phase-group-finalization.md:264` — yaml FIRST, then cache, then fragments, then md render, then qa, then optional sarif/pentest, then lock release.** Read that file for the exact `[k/N]` template; this row only summarises shape. Base `N` ≈ 6–7 substeps (counts, yaml-build, baseline-cache-update, fragment-author, pre-render-gate, compose, qa) with +1 per optional exporter (`--sarif`, `--pentest-tasks`). The md is **never** authored by the LLM and **never** written before the yaml — both are post-2026-05-24 invariants (Substep-2 cutover) and post-M2.7 (yaml-before-md ordering). The legacy `[2/N] Composing threat-model.md content (expect 1–3 min silence) · [3/N] Writing threat-model.md · [4/N] Writing threat-model.yaml` description was the **pre-cutover** layout and is no longer valid — do **not** emit those step labels, do **not** Write the md, and do **not** Write the yaml. Substep 2 is a single Bash call to `build_threat_model_yaml.py`; Substep 5 is a single Bash call to `compose_threat_model.py`. |
 
 ### Phase 9 progress watcher

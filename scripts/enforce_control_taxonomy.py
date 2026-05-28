@@ -191,6 +191,15 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("dependabot",),       "Operations Runtime and Supply Chain Controls"),
     (("renovate",),         "Operations Runtime and Supply Chain Controls"),
     (("npm", "audit"),      "Operations Runtime and Supply Chain Controls"),
+    # New control names emitted by scripts/emit_sca_practice.py (2026-05).
+    # The token-routing also catches these via "automated"+"sca" etc., but
+    # explicit entries keep the routing unambiguous when the LLM names a
+    # control as e.g. "SCA scanning" with extra adjectives.
+    (("automated", "sca"),       "Operations Runtime and Supply Chain Controls"),
+    (("sca", "scanning"),        "Operations Runtime and Supply Chain Controls"),
+    (("dependency", "updates"),  "Operations Runtime and Supply Chain Controls"),
+    (("lockfile",),              "Operations Runtime and Supply Chain Controls"),
+    (("library", "track", "record"), "Operations Runtime and Supply Chain Controls"),
     # §7.12 Real-time / Not Applicable — ONLY when explicitly real-time
     (("websocket",),    "Real-time and Not Applicable Controls"),
     (("socket", "io"),  "Real-time and Not Applicable Controls"),

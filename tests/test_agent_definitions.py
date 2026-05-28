@@ -288,7 +288,8 @@ GITIGNORE_TEMPLATE = Path(__file__).parent.parent / "scripts" / ".gitignore-temp
 # Keep this list in sync with AGENTS.md "Intermediate Files" table and agent definitions.
 EXPECTED_GITIGNORE_ENTRIES = [
     ".recon-summary.md",
-    ".dep-scan.json",
+    ".sca-practice-findings.json",
+    ".known-bad-libs-findings.json",
     ".stride-*.json",
     ".triage-flags.json",
     ".threat-modeling-context.md",

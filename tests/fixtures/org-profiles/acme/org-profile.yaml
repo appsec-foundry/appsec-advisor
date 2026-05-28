@@ -69,7 +69,6 @@ presets:
       pdf: false
       pentest_tasks: false
     scan:
-      with_sca: true
       incremental: auto
       scan_manifest: false
     requirements:
@@ -94,7 +93,6 @@ presets:
       pdf: false
       pentest_tasks: false
     scan:
-      with_sca: true
       incremental: auto
       scan_manifest: false
     requirements:
@@ -123,7 +121,6 @@ presets:
       pentest_tasks: true
       pentest_format: generic
     scan:
-      with_sca: true
       incremental: false
       scan_manifest: true
     requirements:
@@ -152,7 +149,6 @@ presets:
       pentest_tasks: true
       pentest_format: generic
     scan:
-      with_sca: true
       incremental: false
       scan_manifest: true
     requirements:

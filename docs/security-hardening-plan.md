@@ -19,7 +19,7 @@ Drei Behauptungen aus der vorangegangenen Analyse mussten korrigiert werden:
 **Verifiziert wie behauptet:**
 
 - `scripts/load_related_repos.py:146-166` nutzt `urllib.request.urlopen` ohne Redirect-Override → folgt Redirects per Default. URL-Scheme-Allowlist (http/https) existiert; IP-/Host-Allowlist nicht. `RELATED_REPOS_AUTH_HEADER` + per-entry `auth_env` werden ohne Host-Bindung gesetzt.
-- `scripts/dep_scan.py:245-260, 379, 392, 407` invokiert `npm audit`, `pip-audit`, `govulncheck` auf attacker-kontrollierten Manifests.
+- ~~`scripts/dep_scan.py:245-260, 379, 392, 407` invokiert `npm audit`, `pip-audit`, `govulncheck` auf attacker-kontrollierten Manifests.~~ **Aufgelöst 2026-05** — `dep_scan.py` entfernt; Supply-Chain-Detection ist jetzt passiv (`emit_sca_practice.py` + `emit_known_bad_libs.py` + `emit_dep_update_activity.py`), keinerlei externe Audit-Tool-Calls mehr. Damit entfällt der Third-Party-Scanner-RCE-Vektor komplett.
 - **Kein Dockerfile / kein Container-Setup** im Repo.
 - `eval()` in `compose_threat_model.py:363` und `qa_checks.py:1114` — bereits im Refactor-Plan als M10 adressiert, nicht in diesem Plan.
 
@@ -170,22 +170,19 @@ Integration: Im Plugin-Entry-Point (Slash-Command oder README-Empfehlung) als er
 
 ---
 
-## P4 — Argument-Injection-Härtung in `dep_scan.py`
+## P4 — ~~Argument-Injection-Härtung in `dep_scan.py`~~ — OBSOLET 2026-05
 
-**Aufwand:** 0,5 d
-**Risiko:** Niedrig (kein bekannter Exploit, vorsorgliche Härtung)
+**Status: aufgelöst durch Entfernung von `dep_scan.py`.**
 
-**Was:** Audit der `_run_tool`-Aufrufe in `dep_scan.py:379, 392, 407` — Manifests stehen in `cwd=manifest.parent`, Tool-Args sind statisch. Vektor wäre, wenn `manifest.parent` Sonderzeichen enthält oder wenn `manifest.name` (für Output-Tagging) in spätere Calls fließt.
-
-Konkret:
-
-- `cwd`-Pfad validieren: muss unter Target-Repo-Root liegen, keine `..`-Components nach `resolve()`
-- Manifest-Filename-Validierung: nur `[A-Za-z0-9._-]+`, keine Leerzeichen/Quotes
-- Bei zukünftigen Tool-Erweiterungen `--` als Separator zwischen Optionen und Positionals erzwingen
-
-**Wo:** `scripts/dep_scan.py`, plus generisches Helper in einem neuen `scripts/_subprocess_safe.py`, das andere Skripte adoptieren können.
-
-**Verifikation:** Test mit Fixture-Repo, das ein File namens `pkg; rm -rf /.json` enthält — muss reject oder safely-quote.
+Das Plugin invokiert keine externen Audit-Tools (`npm audit`, `pip-audit`,
+`govulncheck`, …) mehr. Supply-Chain-Detection läuft passiv über
+`emit_sca_practice.py`, `emit_known_bad_libs.py` und
+`emit_dep_update_activity.py` — alle drei machen ausschließlich
+File-System-Reads und `git log`. Der Argument-Injection-Vektor in
+SCA-Tool-Calls entfällt damit komplett; die generische
+`_subprocess_safe.py`-Idee bleibt für andere subprocess-Aufrufe
+(`git`, optional `gh`) sinnvoll und ist als eigenständiges Ticket
+weiterzuverfolgen wenn Bedarf besteht.
 
 ---
 

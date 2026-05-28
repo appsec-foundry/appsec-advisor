@@ -66,8 +66,7 @@ fi
 
 1. Log and print: `[Phase 2/11] ⟳ Recon cached — fingerprint unchanged since previous run, reusing .recon-summary.md`
 2. Read the existing `.recon-summary.md` directly (skip Step 1 below).
-3. Still run Step 2 (dep-scanner dispatch) if `WITH_SCA=true` — the dep-scanner has its own cache and will fast-path if manifests are unchanged.
-4. Jump to Phase 3 (or wait for Phase 1 to complete if it is still running in background).
+3. Jump to Phase 3 (or wait for Phase 1 to complete if it is still running in background).
 
 **If `RECON_SKIP=false`:**
 
@@ -158,7 +157,7 @@ Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.
 - `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>` and `SCAN_MANIFEST=<value of SCAN_MANIFEST variable — true or false>`
 
 After both Phase 1 and Phase 2 have returned, read `$OUTPUT_DIR/.recon-summary.md`. Store contents for Phases 3–11:
-- **Manifest list** (Section 3) → needed for dep-scanner dispatch
+- **Manifest list** (Section 3) → needed by Phase 10 emit_known_bad_libs.py manifest walk
 - **Preliminary components** (Section 9) → starting point for Phase 3
 - **Security findings** (Section 7) → used in Phases 4, 6, 7, 8, 9
 - **Business context** (Section 1) → System Overview and Asset Identification
@@ -184,29 +183,6 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_cross_repo_register.py" \
 ```
 
 Declared entries win over sibling/submodule, which win over recon-discovered entries when names collide. Drift-guarded by `tests/test_build_cross_repo_register.py::TestDeclaredMerge`.
-
-### Step 2 — Launch dep-scan in background (only when `WITH_SCA=true`):
-
-**Skip this step if `WITH_SCA` is not set or `false`.** SCA is optional — hardcoded secrets are already covered by the recon-scanner (category 12), insecure defaults by Phase 8.
-
-**If `WITH_SCA=true`:**
-
-The dep-scan is now a deterministic Python script (`scripts/dep_scan.py`) — **no Agent dispatch**, no LLM turns consumed. It honors the same `.dep-scan.json` schema as the former agent and uses the same manifest-hash cache (1-hour TTL).
-
-Launch it as a background process so it runs in parallel with Phases 3–8. Log `AGENT_DISPATCH` for visibility in `.agent-run.log` even though no agent is dispatched — downstream tooling expects the line.
-
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scan  AGENT_DISPATCH   SCA dependency scan (script: dep_scan.py)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-nohup python3 "$CLAUDE_PLUGIN_ROOT/scripts/dep_scan.py" \
-  --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" \
-  --manifests "$MANIFESTS" \
-  > "$OUTPUT_DIR/.dep-scan.stdout" 2>&1 &
-echo $! > "$OUTPUT_DIR/.dep-scan.pid"
-```
-
-`$MANIFESTS` is the comma-separated relative-path list captured from the recon summary (Section 3). When omitted, `dep_scan.py` auto-discovers manifests by walking the repo — but passing the recon-curated list is preferred (faster, more accurate scope).
-
-Do **not** wait — continue through Phases 3–8. Phase 10 will `wait` on the PID and read `.dep-scan.json`.
 
 ## Phase 2.5: Configuration & IaC Scan (M3.5)
 

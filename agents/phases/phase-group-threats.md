@@ -552,8 +552,7 @@ The hybrid path produces a `.threats-merged.json` whose schema is byte-compatibl
 
 ### Merge
 
-0. **Build the `known_vulns_seen` set** for Phase 10 pre-filtering. While iterating the raw STRIDE outputs, collect every `(component_id, cve_id, evidence.file)` tuple from threats whose source is `KNOWN_VULNS`. Keep the set in working memory — Phase 10 Step 2 uses it to deduplicate SCA findings in O(1) per candidate.
-1. Merge all threat lists + Phase 8b threat candidates (if requirements enabled)
+1. Merge all threat lists + Phase 8b threat candidates (if requirements enabled). (The `known_vulns_seen` pre-filter set was removed in 2026-05 alongside the in-tree SCA producer — Phase 10 no longer ingests CVE-shaped findings that need deduping against STRIDE `KNOWN_VULNS` inputs.)
 2. **Priority-aware risk for requirement threats:** For threats sourced from `requirements-compliance` or `architectural-anti-pattern`, apply the priority-derived minimum risk from Phase 8b (MUST FAIL ≥ High, architectural violations escalated by one level). If the standard Likelihood × Impact risk is already higher, keep the higher value.
 3. **Assign global IDs deterministically.** Apply the full lexicographic sort key below to the merged threat list, then iterate once and assign `T-001`, `T-002`, … in order. Every field must be evaluated — no tie-breaker is optional. Two runs on an unchanged codebase MUST produce the same T-NNN for the same underlying threat.
 
@@ -677,9 +676,9 @@ After Merge (steps 0–8) and Coverage Checks complete — and **before** emitti
 - `title` — **2–6 word noun phrase, MAXIMUM 60 characters total**. This is a *headline*, NOT a sentence: drop articles, drop the impact clause, drop CWE descriptors. **MUST NOT contain backtick code identifiers** — no `` `lib/insecurity.ts` ``, no `` `bypassSecurityTrustHtml()` ``. **MUST NOT contain file paths, route paths, line numbers, or function call expressions.** The location part (after "in") names the feature/endpoint in plain English: "in login", "in search", "in file upload". Bad: `"MD5 Password Hashing Combined with SQL Injection Enables Full Account Takeover"` (88 chars, full sentence). Bad: `` "SQL injection in `routes/login.ts:34`" `` (has file path+line). Good: `"MD5 Password Hashing"` (20 chars, noun phrase). Good: `"SQL Injection in Login"`. The full impact narrative belongs in `scenario:`, not in `title`. For Critical threats, use the identical text that appears in the `## Critical Attack Chain` Quick-reference Title column. For non-Critical threats, derive by converting the remediation title from imperative to noun phrase (e.g. "Remove hardcoded RSA key" → "Hardcoded RSA Private Key"). **Hard limit enforced by `qa_checks.py:check_heading_hygiene` — titles > 100 chars trip the repair gate.**
 - `cwe` — mandatory, must match the CWE reference in the Section 7 Scenario cell
 - `evidence` — `{file, line}`; `file` repo-relative, `line` integer or `null`
-- `source` — one of `stride`, `requirements-compliance`, `architectural-anti-pattern`, `known-vuln`, `dep-scan`, `coverage-gap`
+- `source` — one of `stride`, `requirements-compliance`, `architectural-anti-pattern`, `known-vuln`, `coverage-gap`
 - `architectural_violation` — `true` when the Phase 9 escalation rule was applied, else `false`
-- `requirement_id` — **only for requirement-sourced threats** (`source` in `{requirements-compliance, architectural-anti-pattern}`). Carry this field through unchanged from the Phase 8b threat candidate — it holds the requirement ID (e.g. `"SEC-AUTH-1"`) that generated the threat. Do **not** invent or synthesize requirement IDs; emit only what Phase 8b set. Omit the field entirely for all other sources (`stride`, `known-vuln`, `dep-scan`, `coverage-gap`).
+- `requirement_id` — **only for requirement-sourced threats** (`source` in `{requirements-compliance, architectural-anti-pattern}`). Carry this field through unchanged from the Phase 8b threat candidate — it holds the requirement ID (e.g. `"SEC-AUTH-1"`) that generated the threat. Do **not** invent or synthesize requirement IDs; emit only what Phase 8b set. Omit the field entirely for all other sources (`stride`, `known-vuln`, `coverage-gap`).
 
 **Ordering:** rows MUST appear in the same order as the global T-NNN assignment from Merge step 3 (`T-001` first, `T-NNN` last). Two runs on an unchanged codebase MUST produce byte-identical output modulo the `generated_at` timestamp.
 
@@ -1427,61 +1426,66 @@ If `CRIT`/`HIGH`/`MED`/`LOW` are not yet in scope, substitute the actual counts 
 
 ---
 
-## Phase 10: Secret & Dependency Scan Synthesis
+## Phase 10: Secret & Supply-Chain Posture Synthesis
 
 **Log `PHASE_START` before Step 1** (mandatory — without this the `ASSESSMENT_PHASES` aggregator drops Phase 10 from the per-phase cost breakdown; the 2026-05-04 juice-shop run lost Phase 10 from telemetry for exactly this reason). Batch with the first Bash call of Step 1:
 
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10/11] Scan Synthesis — secrets + dep-scan results" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10/11] Scan Synthesis — secrets + supply-chain posture" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Step 1 — Hardcoded Secrets (always):** Read Section 7.12 and Section 7 from `$OUTPUT_DIR/.recon-summary.md`. Incorporate Critical/High secrets as threats (Information Disclosure / Spoofing). Use only file:line references and redacted snippets.
 
-**Step 2 — SCA Results (only when `WITH_SCA=true`):** The dep-scan is now produced by the deterministic Python script `scripts/dep_scan.py` (launched in Phase 2 Step 2 as a background process), not by an agent. Wait for it to finish, then read `.dep-scan.json`:
+**Step 2 — Supply-chain posture (always, passive only):** Three deterministic Python emitters write sidecars that the Phase 11 aggregator (`build_threat_model_yaml.py`) merges into the final report.
+
+**The plugin never runs `npm audit` / `pip-audit` / `govulncheck` / `snyk` / any package-manager or CVE-database tool.** Detection is purely file-system inspection (CI workflow YAML, repo-config files, manifests, lockfiles) and `git log` (commit cadence on manifests). Per-CVE reporting is intentionally out of scope — users must run a dedicated SCA tool (Snyk / Trivy / Dependabot / OSV-Scanner / language-native audit) in their CI; this plugin only surfaces the **architectural-posture** signal.
 
 ```bash
-if [ -f "$OUTPUT_DIR/.dep-scan.pid" ]; then
-  DEP_SCAN_PID=$(cat "$OUTPUT_DIR/.dep-scan.pid" 2>/dev/null | tr -d '[:space:]')
-  # Validate the PID before polling. An empty file or non-numeric content
-  # would make `kill -0 ""` exit 1 instantly — the loop would still run
-  # 120 iterations of useless `sleep 1`. Worse, a numeric-but-stale PID
-  # from a killed prior run could be recycled by an unrelated process,
-  # causing us to wait up to 120 s for a stranger's workload.
-  if ! printf '%s' "$DEP_SCAN_PID" | grep -qE '^[0-9]+$' \
-      || ! kill -0 "$DEP_SCAN_PID" 2>/dev/null; then
-    echo "DEP_SCAN_SKIP: .dep-scan.pid missing, malformed, or already exited (pid='$DEP_SCAN_PID')" >&2
-    rm -f "$OUTPUT_DIR/.dep-scan.pid"
-  else
-    # Bound the wait at 120s — dep_scan.py has its own per-tool 90s timeout,
-    # so a clean run finishes well within this window even on slow networks.
-    for _ in $(seq 1 120); do
-      kill -0 "$DEP_SCAN_PID" 2>/dev/null || break
-      sleep 1
-    done
-    rm -f "$OUTPUT_DIR/.dep-scan.pid"
-  fi
-fi
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_DISPATCH   passive supply-chain posture emitters" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+
+# Activity probe FIRST — emit_sca_practice consumes its output to lift
+# the "Automated dependency updates" rating for repos that patch on
+# cadence even without Dependabot / Renovate config files (covers
+# Renovate hosted-app mode and Dependabot security-updates-only).
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_dep_update_activity.py" \
+  --repo-root  "$REPO_ROOT" \
+  --output-dir "$OUTPUT_DIR" \
+  >> "$OUTPUT_DIR/.agent-run.log" 2>&1 \
+  || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  emit_dep_update_activity failed — cadence signal missing this run" >> "$OUTPUT_DIR/.agent-run.log"
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_sca_practice.py" \
+  --repo-root  "$REPO_ROOT" \
+  --output-dir "$OUTPUT_DIR" \
+  --asset-tier "$ASSET_TIER" \
+  >> "$OUTPUT_DIR/.agent-run.log" 2>&1 \
+  || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  emit_sca_practice failed — §7.11 SCA-practice rows missing this run" >> "$OUTPUT_DIR/.agent-run.log"
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_known_bad_libs.py" \
+  --repo-root  "$REPO_ROOT" \
+  --output-dir "$OUTPUT_DIR" \
+  --asset-tier "$ASSET_TIER" \
+  >> "$OUTPUT_DIR/.agent-run.log" 2>&1 \
+  || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-analyst  emit_known_bad_libs failed — known-bad-libs MF findings missing this run" >> "$OUTPUT_DIR/.agent-run.log"
+
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  AGENT_DONE     supply-chain posture emitters complete" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-Then validate `.dep-scan.json` against the schema (same `validate_intermediate.py --schema dep_scan` path as before). Incorporate:
-- `vulnerable_dependencies` → Tampering/Supply Chain threats
+Outputs written by these emitters:
+- `$OUTPUT_DIR/.dep-update-activity.json` — passive `git log` cadence signal (active | sporadic | inactive | unknown) plus optional `gh pr list` count when the GitHub CLI is available. Drives the §7.11 "Automated dependency updates" lift.
+- `$OUTPUT_DIR/.security-controls.json` (extended) — three §7.11 control rows (Automated SCA scanning, Automated dependency updates, Lockfile hygiene), each rated `Adequate | Partial | Missing`.
+- `$OUTPUT_DIR/.sca-practice-findings.json` — MF-NNN candidates when any of the three control rows is `Partial` / `Missing`. Severity tier-driven via `data/sca-practice-severity.yaml`.
+- `$OUTPUT_DIR/.known-bad-libs-findings.json` — MF-NNN candidates for any dependency matched against `data/known-bad-libs.yaml`. Severity capped by asset tier.
 
-Log `AGENT_DONE` for the dep-scan after the wait completes (parity with the legacy agent's logging contract):
+All three emitters are idempotent — re-running rewrites the sidecars from current repo state. The aggregator in Phase 11 (`build_threat_model_yaml.py`) consumes the sidecars to materialise `meta_findings[]` with deterministic MF-NNN ids.
 
-```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   dep-scan  AGENT_DONE     SCA dependency scan complete" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
-```
+`--asset-tier "$ASSET_TIER"` substitutes the value resolved by `appsec-context-resolver` in Phase 1 (e.g. `Tier 1 — Restricted`); when unset, the emitters fall back to `T2` (conservative middle).
 
-**Pre-built dedup index (mandatory, built during STRIDE Merge):** During the Phase 9 Merge step, the orchestrator MUST build a `known_vulns_seen` set while iterating the merged threat list — a set of `(component_id, cve_id, evidence.file)` tuples for every threat that originated from the STRIDE analyzers' `KNOWN_VULNS` input. Keep this set in working memory. In Phase 10 Step 2, iterate `vulnerable_dependencies` once and drop any entry whose `(component, cve, manifest)` tuple is already in the set. Do not re-compare threat-by-threat — the pre-built set makes dedup O(1) per candidate.
-
-If the `known_vulns_seen` set was not built (e.g. no STRIDE analyzers used KNOWN_VULNS), fall back to a linear scan but log a `BASH_WARN` that the pre-filter was skipped.
-
-If `WITH_SCA` is not set: skip SCA incorporation entirely.
+Failure of any emitter is **logged as a warning, not treated as fatal** — supply-chain posture rows degrade to "not surfaced this run" rather than blocking the report.
 
 ### Phase 10 completion — refresh merged dump, annotate diagrams, log PHASE_END
 
 **Step A — refresh `.threats-merged.json` (mandatory when Phase 10 added threats).**
-If Phase 10 added any hardcoded-secret or SCA threats to the register, re-write `$OUTPUT_DIR/.threats-merged.json` so the file reflects the **final** threat list including the new T-NNN entries. Use the same deterministic dump protocol as the Phase 9 dump step. If Phase 10 added no threats (pure STRIDE run with SCA disabled and no hardcoded secrets), leave the file as-is.
+If Phase 10 Step 1 added any hardcoded-secret threats to the register, re-write `$OUTPUT_DIR/.threats-merged.json` so the file reflects the **final** threat list including the new T-NNN entries. Use the same deterministic dump protocol as the Phase 9 dump step. If Phase 10 Step 1 added no secret threats, leave the file as-is. (Step 2 emitters write to dedicated sidecars — they do not touch `.threats-merged.json`; their output reaches the report via the Phase 11 aggregator.)
 
 **Step B — annotate diagrams (mandatory, non-fatal).**
 Invoke both diagram annotators against the rendered `threat-model.md`. They read the merged JSON and rewrite Mermaid blocks in place:
@@ -1510,10 +1514,11 @@ A non-zero exit code from either script is **logged as a warning, not treated as
 **Step C — log PHASE_END (⚠ MANDATORY — emit for Phase 10 here, after synthesis completes, NOT deferred to Phase 11):**
 
 ```bash
-SCA_STATUS="${WITH_SCA:-false}"
-if [ "$SCA_STATUS" = "true" ]; then SCA_MSG="SCA incorporated"; else SCA_MSG="SCA skipped"; fi
 SECRET_COUNT=$(grep -c "HARDCODED_SECRET\|hardcoded" "$OUTPUT_DIR/.recon-summary.md" 2>/dev/null || echo 0)
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10/11] Scan Synthesis — ${SECRET_COUNT} secrets from recon, ${SCA_MSG}" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+SCA_PRAC_COUNT=$(python3 -c "import json,sys; d=json.load(open('$OUTPUT_DIR/.sca-practice-findings.json')); print(len(d.get('findings',[])))" 2>/dev/null || echo 0)
+KBL_COUNT=$(python3 -c "import json,sys; d=json.load(open('$OUTPUT_DIR/.known-bad-libs-findings.json')); print(len(d.get('findings',[])))" 2>/dev/null || echo 0)
+CADENCE=$(python3 -c "import json,sys; d=json.load(open('$OUTPUT_DIR/.dep-update-activity.json')); print(d.get('cadence','unknown'))" 2>/dev/null || echo unknown)
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10/11] Scan Synthesis — ${SECRET_COUNT} secrets from recon, ${SCA_PRAC_COUNT} sca-practice MF, ${KBL_COUNT} known-bad-libs MF, dep-update cadence=${CADENCE}" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 ## Phase 10a: Evidence Verification — sampled re-check of cited evidence (M2)

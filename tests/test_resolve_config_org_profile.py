@@ -4,7 +4,7 @@ Asserts that:
   * legacy invocations without an org profile keep their existing output
   * --org-profile activates the resolver and emits org_profile blocks
   * preset defaults apply only where the CLI did not toggle the flag
-  * --no-sarif / --no-pdf / --no-pentest-tasks / --no-sca override
+  * --no-sarif / --no-pdf / --no-pentest-tasks override
     preset-enabled outputs
   * --org-profile + --no-org-profile cancel out
 """
@@ -148,7 +148,6 @@ def test_validate_only_accepts_documented_skill_flags(tmp_path):
             "--no-sarif",
             "--no-pdf",
             "--no-pentest-tasks",
-            "--no-sca",
             "--no-org-profile",
         ],
         capture_output=True,

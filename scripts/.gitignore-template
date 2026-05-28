@@ -4,7 +4,8 @@
 # Usage: append this file to <analyzed-repo>/.gitignore
 #
 docs/security/.recon-summary.md
-docs/security/.dep-scan.json
+docs/security/.sca-practice-findings.json
+docs/security/.known-bad-libs-findings.json
 docs/security/.stride-*.json
 docs/security/.triage-flags.json
 docs/security/.requirements.yaml

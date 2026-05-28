@@ -296,7 +296,6 @@ class TestNextSteps:
             "write_pentest_tasks": False,
             "check_requirements": False,
             "architect_review": False,
-            "with_sca": False,
         }
         base.update(overrides)
         return base
@@ -379,7 +378,6 @@ class TestNextSteps:
                 reasoning_model="sonnet",
                 architect_review=True,
                 write_sarif=True,
-                with_sca=False,
             ),
         )
         assert len(lines) <= 5

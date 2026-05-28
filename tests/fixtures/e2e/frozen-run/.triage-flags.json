@@ -1,21 +1,12 @@
 {
   "version": 2,
   "generated_at": "2026-04-19T13:06:30Z",
-  "flags": [
-    {
-      "flag_id": "TF-001",
-      "type": "priority",
-      "severity": "info",
-      "threat_ids": ["T-020"],
-      "message": "Dep-scan finding T-020 is High but only reachable if attacker controls input to a known sink — verify before elevating to Critical.",
-      "suggested_action": "Confirm the lodash.merge call is reachable from an untrusted input path."
-    }
-  ],
+  "flags": [],
   "summary": {
-    "total_flags": 1,
+    "total_flags": 0,
     "warnings": 0,
-    "info": 1,
-    "threats_reviewed": 5
+    "info": 0,
+    "threats_reviewed": 4
   },
   "ranking": {
     "method": "impact-weighted-v2",

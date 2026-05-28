@@ -1,7 +1,7 @@
 """Tests for CVSS v4 vector eligibility rules in validate_intermediate.py.
 
 Locks in the policy that:
-  * dep-scan / known-vuln threats MUST carry a vector
+  * known-vuln threats MUST carry a vector (dep-scan source removed 2026-05)
   * design / policy / coverage-gap threats MUST NOT
   * stride threats may carry one only when the CWE is on the positive list
     AND evidence.line is set
@@ -63,12 +63,12 @@ class TestEligibilityList:
 
 
 # ---------------------------------------------------------------------------
-# Required sources (dep-scan / known-vuln)
+# Required sources (known-vuln only since 2026-05; dep-scan source removed)
 # ---------------------------------------------------------------------------
 
 
 class TestRequiredSources:
-    @pytest.mark.parametrize("source", ["dep-scan", "known-vuln"])
+    @pytest.mark.parametrize("source", ["known-vuln"])
     def test_missing_cvss_for_required_source(self, vi, source):
         data = {"threats": [{"id": "T-001", "source": source, "risk": "High"}]}
         errors = vi._check_cvss_eligibility(data)
@@ -79,7 +79,7 @@ class TestRequiredSources:
             "threats": [
                 {
                     "id": "T-001",
-                    "source": "dep-scan",
+                    "source": "known-vuln",
                     "risk": "High",
                     "cvss_v4": {
                         "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",

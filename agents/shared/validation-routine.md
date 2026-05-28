@@ -1,6 +1,6 @@
 # Shared Validation Routine for Intermediate Files
 
-Use this routine to validate `.stride-*.json` and `.dep-scan.json` files immediately after writing them.
+Use this routine to validate `.stride-*.json` files immediately after writing them. (The `.dep-scan.json` validation pathway was removed in 2026-05 alongside the in-tree SCA producer.)
 
 ## Step 1 — Locate the validation script
 
@@ -21,7 +21,7 @@ fi
 python3 "$VALIDATE_SCRIPT" <schema_type> "<output_file>"
 ```
 
-Where `<schema_type>` is `stride` for `.stride-*.json` or `dep_scan` for `.dep-scan.json`.
+Where `<schema_type>` is `stride` for `.stride-*.json`.
 
 ## Step 3 — Handle result
 
@@ -39,13 +39,3 @@ Where `<schema_type>` is `stride` for `.stride-*.json` or `dep_scan` for `.dep-s
 }
 ```
 
-### Error stub format for dep-scan:
-```json
-{
-  "scanned_at": "<ISO 8601 timestamp>",
-  "repo_root": "<REPO_ROOT>",
-  "parse_error": "<first validation error message>",
-  "summary": {"vulnerable_dependencies": 0},
-  "vulnerable_dependencies": []
-}
-```

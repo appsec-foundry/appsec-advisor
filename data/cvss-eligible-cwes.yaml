@@ -8,7 +8,10 @@
 #
 # Rules (enforced by scripts/validate_intermediate.py and the
 # triage-validator):
-#   - threat.source == "dep-scan" or "known-vuln"  →  cvss_v4 REQUIRED
+#   - threat.source == "known-vuln"               →  cvss_v4 REQUIRED
+#     (externally ingested advisory; the upstream supplies the vector.
+#     The in-tree `dep-scan` source was removed in 2026-05 — supply-chain
+#     posture now lives in meta_findings[], not CVSS-eligible.)
 #   - threat.source == "stride"                    →  cvss_v4 ALLOWED iff
 #         (a) threat.cwe is listed below AND
 #         (b) threat.evidence.file AND evidence.line are both set
@@ -176,7 +179,7 @@ eligible_cwes:
     name: Insecure Temporary File
     rationale: mktemp-style call observable in code.
 
-  # --- Resource / memory safety (relevant for dep-scan findings too) -----
+  # --- Resource / memory safety ----------------------------------------
   - cwe: CWE-400
     name: Uncontrolled Resource Consumption
     rationale: Only when a concrete amplification path exists in code.

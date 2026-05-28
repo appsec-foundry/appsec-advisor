@@ -81,7 +81,6 @@ properties:
             - requirements-compliance
             - architectural-anti-pattern
             - known-vuln
-            - dep-scan
             - coverage-gap
             - architecture-coverage
             - threat-hypothesis
@@ -89,11 +88,17 @@ properties:
             # M-3: Implementation-defect threats that originate from an
             # otherwise-sound architecture. Examples: hardcoded secret in
             # source, mis-configured TLS, weak cookie flags. Distinct from
-            # `stride` (architectural reasoning) and `dep-scan` (vulnerable
-            # library version) so downstream consumers can group them
-            # under "Insufficient Configuration / Secret Management" meta
-            # findings instead of degrading architectural ratings.
+            # `stride` (architectural reasoning) so downstream consumers
+            # can group them under "Insufficient Configuration / Secret
+            # Management" meta findings instead of degrading architectural
+            # ratings.
             - configuration-defect
+            # NOTE: `dep-scan` was removed in 2026-05. Supply-chain posture
+            # is surfaced as §7.11 control rows (emit_sca_practice.py) and
+            # meta-findings (emit_known_bad_libs.py + sca-practice), not as
+            # per-CVE threats. Persisted threats from prior runs with
+            # `source: dep-scan` are no longer valid — see CHANGELOG for
+            # the migration path.
         architectural_violation:
           type: boolean
         requirement_id:
@@ -191,7 +196,11 @@ properties:
                   enum: [None, Low, Medium, High, Critical]
                 source:
                   type: string
-                  enum: [stride-analyzer, dep-scan, nvd, osv, known-vuln, manual]
+                  # `dep-scan` removed 2026-05 (no in-tree SCA producer);
+                  # `nvd` / `osv` / `known-vuln` retained for externally
+                  # ingested advisories where a CVSS vector is supplied
+                  # by the upstream advisory.
+                  enum: [stride-analyzer, nvd, osv, known-vuln, manual]
                 version_fallback:
                   type: [string, "null"]
                   enum: ["3.1", null]
@@ -201,10 +210,13 @@ properties:
 #   - t_id values are unique within threats[]
 #   - t_id values form a contiguous sequence starting at T-001
 #   - cvss_v4 eligibility per source/cwe/evidence (see cvss-eligible-cwes.yaml):
-#       * source in {dep-scan, known-vuln}        → cvss_v4 REQUIRED
+#       * source == known-vuln                     → cvss_v4 REQUIRED
+#         (externally ingested advisory; advisory supplies the vector)
 #       * source == stride + cwe in eligibility list + evidence.line set
 #                                                  → cvss_v4 ALLOWED
 #       * otherwise                                → cvss_v4 FORBIDDEN
+#         (note: dep-scan was removed 2026-05; the supply-chain frame
+#         now lives in meta_findings[], which is not eligible for CVSS)
 #         (this explicitly includes architecture-coverage and
 #         threat-hypothesis — design/architectural gaps cannot be
 #         honestly scored on CVSS Base metrics)

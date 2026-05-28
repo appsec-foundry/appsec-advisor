@@ -36,7 +36,6 @@ Flags:
     --write-pentest-tasks / --no-write-pentest-tasks
     --check-requirements / --no-check-requirements
     --architect-review / --no-architect-review
-    --with-sca / --no-with-sca
     --reasoning-model {opus-cheap,sonnet,opus,haiku-economy}
                                 Used only to decide whether the "re-run
                                 with --reasoning-model opus" Next Steps
@@ -689,10 +688,6 @@ def build_next_steps(
         lines.append(
             "Re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)"
         )
-
-    # dep-scan was skipped and a manifest exists.
-    if not cfg.get("with_sca") and _has_dependency_manifest(repo_root):
-        lines.append("Re-run with --with-sca to include CVE data from dependency advisories")
 
     # First-run baseline established.
     if not (output_dir / ".appsec-cache" / "baseline.json").is_file() and cfg.get("mode") == "full":
@@ -1537,7 +1532,6 @@ def main(argv: list[str] | None = None) -> int:
     _bool_pair(p, "write-pentest-tasks", "write_pentest_tasks", False)
     _bool_pair(p, "check-requirements", "check_requirements", False)
     _bool_pair(p, "architect-review", "architect_review", False)
-    _bool_pair(p, "with-sca", "with_sca", False)
     p.add_argument(
         "--plugin-dev",
         action="store_true",
@@ -1568,7 +1562,6 @@ def main(argv: list[str] | None = None) -> int:
         "write_pentest_tasks": args.write_pentest_tasks,
         "check_requirements": args.check_requirements,
         "architect_review": args.architect_review,
-        "with_sca": args.with_sca,
         "plugin_dev": args.plugin_dev,
     }
 

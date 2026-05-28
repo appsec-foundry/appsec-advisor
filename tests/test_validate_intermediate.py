@@ -1,8 +1,9 @@
 """Unit tests for scripts/validate_intermediate.py.
 
 validate_intermediate.py is the schema + invariant gate for all intermediate
-JSON artifacts (stride, dep_scan, threats_merged, triage_flags, …). These
-tests exercise the public API and CLI contract directly.
+JSON artifacts (stride, threats_merged, triage_flags, …). These tests
+exercise the public API and CLI contract directly. The dep_scan validator
+was removed in 2026-05 alongside the in-tree SCA producer.
 """
 
 from __future__ import annotations
@@ -79,28 +80,6 @@ def test_unknown_kind_exits_2(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# dep_scan validation
-# ---------------------------------------------------------------------------
-
-
-def test_dep_scan_empty_object_fails():
-    ok, errors = vi.validate_dep_scan({})
-    assert not ok
-    assert errors
-
-
-def test_dep_scan_minimal_valid():
-    minimal = {
-        "scanned_at": "2026-04-22T10:00:00Z",
-        "repo_root": "/repo",
-        "summary": {"vulnerable_dependencies": 0},
-        "vulnerable_dependencies": [],
-    }
-    ok, errors = vi.validate_dep_scan(minimal)
-    assert ok, f"Expected valid dep_scan, got errors: {errors}"
-
-
-# ---------------------------------------------------------------------------
 # stride validation
 # ---------------------------------------------------------------------------
 
@@ -128,7 +107,7 @@ def test_stride_minimal_valid():
 
 
 def test_missing_file_exits_nonzero():
-    result = _run(["dep_scan", "/nonexistent/path.json"])
+    result = _run(["stride", "/nonexistent/path.json"])
     assert result.returncode != 0
 
 

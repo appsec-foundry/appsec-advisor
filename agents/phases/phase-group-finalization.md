@@ -919,7 +919,7 @@ At the end of Part D, after Section 10 (Out of Scope), append a horizontal rule 
 
 Extract per-phase durations from `$OUTPUT_DIR/.agent-run.log` by pairing `PHASE_START` and `PHASE_END` timestamps for each phase. **Prefer actual timestamps from the log.** When log-parsing succeeds, render exact `Xm YYs` / `YYs` forms. When a PHASE_START/PHASE_END pair is missing or malformed, **rounded approximate values in the form `~30s` / `~2m` / `~1m 30s` are acceptable as a fallback** — they come from the wall-clock estimates the orchestrator carries during the run. Only write `n/a` when no timing signal exists at all (neither log pairs nor wall-clock estimates). The reference output at `examples/threat-modeler/threat-model-juice-shop-thorough.md` uses the `~`-prefixed rounded form — that output format is canonical for the baseline four-subsection appendix described below.
 
-Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in `.agent-run.log`. Only include agents that actually ran — omit context-resolver on cache hit, omit dep-scanner when `WITH_SCA=false`.
+Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in `.agent-run.log`. Only include agents that actually ran — omit context-resolver on cache hit. (The `dep-scanner` row no longer appears as of 2026-05; supply-chain posture is produced by deterministic emitters in Phase 10, not by a dispatched agent.)
 
 The `Tokens` and `Cost Estimate` tables are written entirely as `_pending_` in the extended 7-section form — they are patched by the QA reviewer's Check 12 (via `verify_run_costs.py`). The `Assessment Total`, `QA Review`, and `Grand Total` duration rows are also `_pending_` — patched by the skill layer after Stage 3 completes.
 
@@ -952,11 +952,10 @@ Format — the appendix has up to 7 subsections (Run Metadata, Agents & Models, 
 | threat-analyst | <model> | Orchestrator — architecture, controls, synthesis, finalization | 1, 3-8, 10-11 |
 | context-resolver | <model> | Resolves repo context and business docs | 1 |
 | recon-scanner | <model> | Tech stack and security pattern reconnaissance | 2 |
-| dep-scanner | <model> | SCA dependency vulnerability scan | 2 |
 | stride-analyzer | <model> | Per-component STRIDE threat analysis | 9 (<N> instances) |
 | qa-reviewer | _pending_ | Cross-reference validation, link fixes, consistency | Post-assessment |
 
-Only include agents that actually ran. The `qa-reviewer` row is always included with `_pending_` model — patched by the skill layer after Stage 3. The `dep-scanner` row is only included when `WITH_SCA=true`. The `context-resolver` row is only included when context resolution was not a cache hit.
+Only include agents that actually ran. The `qa-reviewer` row is always included with `_pending_` model — patched by the skill layer after Stage 3. The `context-resolver` row is only included when context resolution was not a cache hit. (The dispatched `dep-scanner` agent was removed in 2026-05.)
 
 ### Phase Duration Breakdown
 
@@ -1052,7 +1051,6 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 | appsec-context-resolver | <model> | External context + requirements |
 | appsec-recon-scanner | <model> | Codebase reconnaissance |
 | appsec-stride-analyzer × <N> | <model> | STRIDE threat enumeration per component |
-| appsec-dep-scanner | <model> | SCA dependency vulnerability scan *(only when `WITH_SCA=true`)* |
 | appsec-triage-validator | <model> | Cross-component rating consistency *(only when analysis v2+)* |
 | appsec-qa-reviewer | <model> | Post-assessment validation and link repair |
 ```
@@ -1061,7 +1059,7 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 - **Purpose column** is prose — not the phase number or the YAML role name. Describe what the agent did in this run.
 - **Model column** uses the canonical model ID (`claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5`). When a model override applied, show the override.
 - **× <N>** multiplier on `appsec-stride-analyzer` reflects the number of dispatched component-level instances.
-- **Conditional rows** — skip `appsec-dep-scanner` when `WITH_SCA=false`, skip `appsec-context-resolver` on a cache hit, skip `appsec-triage-validator` when `analysis_version < 2`.
+- **Conditional rows** — skip `appsec-context-resolver` on a cache hit, skip `appsec-triage-validator` when `analysis_version < 2`. (The `appsec-dep-scanner` row was removed in 2026-05; supply-chain emitters in Phase 10 are deterministic scripts that do not appear in agent dispatch tables.)
 - **Qa-reviewer row** — emitted unconditionally with the model the skill layer will use in Stage 3 (sonnet by default).
 
 **Cost Estimate column headers:** dynamically determined from `agent_models` in the YAML — one column per unique model used. When only one model is used (no `agent_models` override), show a single value column with that model's name as header. The pricing reference table is static and always included.
@@ -1105,7 +1103,6 @@ Extract agent names and models from `AGENT_INVOKE` / `AGENT_START` lines in the 
 | `threat-analyst` (ASSESSMENT_START) | Orchestrator — architecture, controls, synthesis, finalization | 1, 3-8, 10-11 |
 | `context-resolver` (AGENT_INVOKE) | Resolves repo context and business docs | 1 |
 | `recon-scanner` (AGENT_INVOKE) | Tech stack and security pattern reconnaissance | 2 |
-| `dep-scanner` (AGENT_INVOKE) | SCA dependency vulnerability scan | 2 |
 | `stride-analyzer` (AGENT_INVOKE, multiple) | Per-component STRIDE threat analysis | 9 (<count> instances) |
 
 Count stride-analyzer instances from the number of `stride-analyzer.*AGENT_INVOKE` lines. The `qa-reviewer` row is always written with `_pending_` model — it is patched by the skill layer after Stage 3 provides the QA reviewer's model.
@@ -1401,8 +1398,8 @@ If any condition is not met, leave every transient file in place — the user is
 
 | Path | Origin |
 |---|---|
-| `$OUTPUT_DIR/.dep-scan.pid` | `dep_scan.py` background launch (Phase 2) |
-| `$OUTPUT_DIR/.dep-scan.stdout` | `dep_scan.py` background launch (Phase 2) |
+| `$OUTPUT_DIR/.sca-practice-findings.json` | `emit_sca_practice.py` (Phase 10) — merged into final yaml |
+| `$OUTPUT_DIR/.known-bad-libs-findings.json` | `emit_known_bad_libs.py` (Phase 10) — merged into final yaml |
 | `$OUTPUT_DIR/.merge-candidates.json` | `merge_threats.py collect` (Phase 9) |
 | `$OUTPUT_DIR/.merge-decisions.json` | `appsec-threat-merger` (Phase 9) |
 | `$OUTPUT_DIR/.management-summary-draft.md` | Phase 9 → Phase 11 handoff |
@@ -1433,7 +1430,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.merge-context/` (directory) | focused volatile context passed to threat-merger |
 | `$OUTPUT_DIR/.active-tool-calls/` (directory) | per-tool-call liveness markers |
 
-**Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.dep-scan.json`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
+**Explicitly NOT removed by Phase 11** — the audit trail (`.threat-modeling-context.md`, `.recon-summary.md`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `.architect-review.md`), the incremental cache (`.appsec-cache/`), QA/architect status files (removed later by the skill-level post-QA and post-architect cleanup — see SKILL.md → Completion Summary), the compose-input `.fragments/` directory and the pre-render gate report `.pre-render-report.json` (both removed by post-QA cleanup once QA has verified the rendered MD), and all log files (`.agent-run.log[.1.2]`, `.hook-events.log[.1.2]`).
 
 **Cleanup call — the orchestrator MUST invoke the standalone script instead of hand-rolling Bash:**
 
@@ -1474,7 +1471,7 @@ The post-QA wave additionally removes `.fragments/` (compose inputs). The post-a
   Depth          : <quick | standard | thorough>
   Baseline compat: <equal|older-compatible|incompatible|legacy|n/a>  ← n/a for full runs
                    ← when older-compatible or legacy: "Recommendation: re-run with --full"
-  Flags          : WITH_SCA=<true|false>  CHECK_REQUIREMENTS=<true|false>
+  Flags          : CHECK_REQUIREMENTS=<true|false>
                    WRITE_YAML=<true|false>  WRITE_SARIF=<true|false>
   Baseline SHA   : <BASELINE_SHA | n/a>           ← only for incremental modes
   Current SHA    : <CURRENT_SHA>
@@ -1511,9 +1508,7 @@ The post-QA wave additionally removes `.fragments/` (compose inputs). The post-a
   Pipeline (agent · model · maxTurns · status):
     context-resolver : <model> · <maxTurns> turns · .threat-modeling-context.md written
     recon-scanner    : <model> · <maxTurns> turns · .recon-summary.md written (<n> lines)
-    dep-scanner      : <model> · <maxTurns> turns · .dep-scan.json (<n> vulnerable deps)
-                       ← if WITH_SCA=false: "skipped (SCA not requested)"
-                       ← if cache hit: "cache hit (age: <N>m)"
+    sca-emitters     : deterministic scripts · .sca-practice-findings.json + .known-bad-libs-findings.json (Phase 10)
     stride-analyzer  : <model> · <maxTurns> turns × <n> components — <n> threats total
                        Components: <component-id-1>, <component-id-2>, …
     qa-reviewer      : <model> · <maxTurns> turns (runs next, skill-level)
@@ -1552,7 +1547,8 @@ The post-QA wave additionally removes `.fragments/` (compose inputs). The post-a
   Intermediate Files:
     <OUTPUT_DIR>/.threat-modeling-context.md  (<n> chars)
     <OUTPUT_DIR>/.recon-summary.md            (<n> chars)
-    <OUTPUT_DIR>/.dep-scan.json               (<n> chars)  ← only if WITH_SCA
+    <OUTPUT_DIR>/.sca-practice-findings.json  (<n> chars)
+    <OUTPUT_DIR>/.known-bad-libs-findings.json (<n> chars)
     <OUTPUT_DIR>/.stride-*.json               <n> files
 
   Tokens & Cost:

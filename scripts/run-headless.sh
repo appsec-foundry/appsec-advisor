@@ -14,7 +14,6 @@
 #   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
 #   --requirements [<url>]   Enable requirements check (optionally from URL)
 #   --no-requirements        Skip requirements even when enabled in config
-#   --with-sca              Run dependency vulnerability scan (npm audit, etc.)
 #   --dry-run               Preview scope without running the full pipeline
 #   --incremental           Force delta analysis based on git diff
 #   --full                  Force full scan even when prior output exists
@@ -80,7 +79,6 @@ Options:
   --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
   --requirements [<url>]     Enable requirements check, optionally from URL
   --no-requirements          Skip requirements even when enabled in config
-  --with-sca                 Run dependency vulnerability scan (npm audit, etc.)
   --dry-run                  Preview scope without running the full pipeline
   --incremental              Force delta analysis based on git diff
   --full                     Force full scan even when prior output exists
@@ -194,7 +192,7 @@ while [ $# -gt 0 ]; do
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
-        --yaml|--no-yaml|--sarif|--no-requirements|--with-sca|--dry-run|--full|--resume)
+        --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--full|--resume)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --incremental)
             INCREMENTAL_REQUESTED=1

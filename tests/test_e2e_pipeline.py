@@ -19,7 +19,8 @@ What is covered:
                          idempotently on the rendered output (ok exit).
     * QA loop          — qa_checks.py all converges to zero fixable issues.
     * Intermediates    — validate_intermediate.py accepts every artifact
-                         (threats_merged, dep_scan, triage_flags, stride).
+                         (threats_merged, triage_flags, stride). The
+                         legacy dep_scan validator was removed 2026-05.
     * Pentest pipeline — render_pentest_tasks.py consumes .threats-merged.json
                          and emits a schema-valid pentest-tasks.yaml.
     * Incremental      — baseline_state.py update + check_fingerprint round
@@ -209,7 +210,6 @@ def test_qa_checks_all_converges(rendered_run: Path) -> None:
     ("schema", "filename"),
     [
         ("threats_merged", ".threats-merged.json"),
-        ("dep_scan", ".dep-scan.json"),
         ("triage_flags", ".triage-flags.json"),
         ("stride", ".stride-C-01.json"),
         ("stride", ".stride-C-02.json"),
@@ -255,9 +255,10 @@ def test_pentest_pipeline_produces_schema_valid_tasks(e2e_run: Path) -> None:
 
     doc = yaml.safe_load(out.read_text(encoding="utf-8"))
 
-    # Two CWE-89 SQLi threats + one CWE-79 XSS threat + one dep-scan
-    # (CWE-1321) are pentest-eligible in the fixture. CWE-321 hardcoded-key
-    # is static-only and must be filtered out.
+    # Two CWE-89 SQLi threats + one CWE-79 XSS threat are pentest-eligible
+    # in the fixture. CWE-321 hardcoded-key is static-only and must be
+    # filtered out. (The legacy CWE-1321 dep-scan fixture row was removed
+    # when the in-tree SCA producer was retired in 2026-05.)
     task_cwes = {t["cwe"] for t in doc["tasks"]}
     assert "CWE-89" in task_cwes, "SQLi threats should produce pentest tasks"
     assert "CWE-321" not in task_cwes, "static-only CWE-321 must be filtered out of pentest tasks"

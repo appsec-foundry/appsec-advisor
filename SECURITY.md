@@ -88,8 +88,8 @@ The current threat model assumes the scanned repository is **trusted** (your own
 | 2 | SSRF via `docs/related-repos.yaml` | If the scanned repo contains this file, `scripts/load_related_repos.py` will fetch its URLs. No host allowlist, no RFC1918/metadata blackhole. Auth headers from `RELATED_REPOS_AUTH_HEADER` are sent on every fetch. |
 | 3 | Symlink-driven file reads | Symlinks inside the repo (e.g. `./policy.md` → `/home/user/.ssh/id_rsa`) are followed when agents read files. Contents can land in the LLM context and in `.recon-summary.md`. |
 | 4 | Repo-owned Claude Code hooks | A `.claude/settings.json` shipped inside the scanned repo is loaded by Claude Code itself, before the plugin runs. The recon-scanner flags this as Cat 28 but only after the hooks have already executed. |
-| 5 | Argument injection in subprocess calls | Filenames and refs from the repo flow into `git`, `npm audit`, `pip-audit`, etc. without consistent `--` separators or strict character validation. |
-| 6 | Third-party scanner RCEs | `dep_scan.py` invokes external audit tools on attacker-controlled manifests (`package.json`, `setup.py`, `go.mod`). Any RCE in those tools becomes an RCE in the plugin run. |
+| 5 | Argument injection in subprocess calls | Filenames and refs from the repo flow into `git` (and, when the GitHub CLI is available, optional `gh pr list`) without consistent `--` separators or strict character validation. *(Reduced 2026-05: `npm audit` / `pip-audit` / `govulncheck` are no longer invoked — the plugin runs supply-chain detection passively, never spawns package-manager or CVE-database tools.)* |
+| 6 | ~~Third-party scanner RCEs~~ | **Resolved 2026-05** — `dep_scan.py` was removed. The plugin no longer invokes external audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) on attacker-controlled manifests. Supply-chain posture is now produced by `scripts/emit_sca_practice.py` + `scripts/emit_known_bad_libs.py` + `scripts/emit_dep_update_activity.py` — all three are pure file-system inspection plus `git log`. |
 
 ### Recommended mitigations until the untrusted-repo mode ships
 

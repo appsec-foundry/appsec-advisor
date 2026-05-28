@@ -102,8 +102,8 @@ cd /path/to/my-project
 # Re-analyse only affected components after code changes
 /path/to/appsec-advisor/scripts/run-headless.sh --incremental
 
-# Full assessment with SCA dependency scan
-/path/to/appsec-advisor/scripts/run-headless.sh --sarif --with-sca
+# Full assessment with SARIF export
+/path/to/appsec-advisor/scripts/run-headless.sh --sarif
 ```
 
 Result: `docs/security/threat-model.md` (+ `.yaml`, `.sarif.json` when requested). YAML is always emitted unless `--no-yaml` is passed, because subsequent incremental runs need it as baseline.
@@ -167,7 +167,7 @@ When `--output` points outside the target repo, nothing is written into the team
 ./scripts/run-headless.sh \
   --repo /repos/team-api \
   --output /appsec-reports/team-api \
-  --sarif --requirements --with-sca \
+  --sarif --requirements \
   --max-budget 10 \
   --max-duration 2400
 ```
@@ -223,7 +223,6 @@ Thorough deep-dive with Opus reasoning, SCA, custom requirements, verbose stream
   --stride-model opus \
   --sarif \
   --requirements https://security.example.com/appsec-requirements.yaml \
-  --with-sca \
   --max-budget 15 \
   --verbose
 ```
@@ -545,7 +544,9 @@ All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
 | `.hook-events.log` | Always | Hook events, token usage, cost per agent |
 | `.threat-modeling-context.md` | Always | Combined context from all sources |
 | `.recon-summary.md` | Always | Repository structure and security findings |
-| `.dep-scan.json` | `--with-sca` | SCA dependency scan results |
+| `.sca-practice-findings.json` | Always | Supply-chain posture: §7.11 control rows (SCA practice, auto-updates, lockfile) — passive, no tool calls |
+| `.known-bad-libs-findings.json` | Always | Known-bad-library matches against curated `data/known-bad-libs.yaml` |
+| `.dep-update-activity.json` | Always | Passive `git log` cadence signal for dep-update commits |
 | `.stride-*.json` | Always | Per-component STRIDE threat analysis |
 | `.threats-merged.json` | Always | Canonical merged threat list (annotated with triage flags) |
 | `.triage-flags.json` | Always | Triage validation flags (rating consistency, plausibility) |
@@ -589,7 +590,6 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 | `--assessment-depth quick\|standard\|thorough` | Depth control (3/5/8 STRIDE components); quick also skips Stage-3 QA and detailed walkthroughs by default |
 | `--requirements [<url>]` | Enable Phase 8b requirements compliance check |
 | `--no-requirements` | Skip requirements even when enabled in config |
-| `--with-sca` | Run SCA dependency scan (`npm audit`, `pip-audit`, …) |
 
 ### Models
 

@@ -231,6 +231,55 @@ checks:
     rationale: "Docker ecosystem must be tracked when Dockerfile is present — base-image updates need review."
     remediation: "Add docker ecosystem entry to track Dockerfile updates"
 
+  # ============ Renovate (added 2026-05 — first-class parity with Dependabot) ============
+  # Renovate is detected from any of: renovate.json, renovate.json5,
+  # .renovaterc, .renovaterc.json, .renovaterc.json5, .github/renovate.json.
+  # The `expect: present_any` semantics means the check passes if ANY of
+  # the file_pattern globs resolves. config-scanner glob-walks each entry
+  # and reports the first match.
+  #
+  # Note: Renovate's hosted-app mode can enable updates without any file
+  # in the repo (the GitHub App reads config from a central location).
+  # Detection is therefore best-effort — file absence is a "warning"
+  # severity, not "missing". emit_sca_practice.py also surfaces this as
+  # the §7.11 "Automated dependency updates" control row.
+
+  - id: IAC-033
+    name: "Renovate config present (file-mode detection)"
+    iac_type: renovate
+    file_pattern: "renovate.json"
+    pattern: ".*"
+    expect: present
+    severity_if_violated: Low
+    cwe: CWE-1104
+    finding_type: FT-170
+    rationale: "Renovate is a first-class peer of Dependabot for automated dependency updates. File-mode detection is best-effort; hosted-app mode is not detectable from the repo."
+    remediation: "Add renovate.json with a baseline preset (extends: [\"config:base\"]) OR confirm Renovate hosted-app is enabled at the repo / org level."
+
+  - id: IAC-034
+    name: "Renovate config alternative location (.github/renovate.json)"
+    iac_type: renovate
+    file_pattern: ".github/renovate.json"
+    pattern: ".*"
+    expect: present
+    severity_if_violated: Low
+    cwe: CWE-1104
+    finding_type: FT-170
+    rationale: "Mirror of IAC-033 for the .github/ subdirectory location (Renovate accepts both)."
+    remediation: "Place renovate.json at repo root or under .github/. Either is accepted by Renovate."
+
+  - id: IAC-035
+    name: "Renovate config alternative dotfile (.renovaterc[.json])"
+    iac_type: renovate
+    file_pattern: ".renovaterc.json"
+    pattern: ".*"
+    expect: present
+    severity_if_violated: Low
+    cwe: CWE-1104
+    finding_type: FT-170
+    rationale: "Mirror of IAC-033 for the legacy .renovaterc.json dotfile location."
+    remediation: "Either consolidate to renovate.json or keep .renovaterc.json — both are recognised."
+
   # ============ SBOM & Provenance ============
   - id: IAC-040
     name: "Container image signing via cosign or attest-build-provenance"
