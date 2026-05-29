@@ -1857,8 +1857,31 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
 def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     data = _load_fragment(ctx, "verdict", section["fragment"])
     _validate_fragment("verdict", data, section["schema"])
+    # Deterministic severity tally injected under the opening. The LLM verdict
+    # prose must NOT cite exact counts (they drift — a 2026-05 run claimed
+    # "eleven High" when there were 17); this authoritative line is computed
+    # from threats[] so the Critical/High/Medium/Low breakdown is always exact.
+    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    for t in ctx.yaml_data.get("threats") or []:
+        sev = (t.get("risk") or t.get("severity") or "").strip().lower()
+        if sev in counts:
+            counts[sev] += 1
+        elif sev in ("informational", "information"):
+            counts["info"] += 1
+    total = sum(counts.values())
+    rd_parts = [
+        f"🔴 Critical: {counts['critical']}",
+        f"🟠 High: {counts['high']}",
+        f"🟡 Medium: {counts['medium']}",
+        f"🟢 Low: {counts['low']}",
+    ]
+    if counts["info"] > 0:
+        rd_parts.append(f"⚪ Info: {counts['info']}")
+    risk_distribution = (
+        "**Risk distribution:** " + " · ".join(rd_parts) + f" · **Total: {total}**"
+    )
     tpl = env.get_template(section["template"])
-    return tpl.render(data=data).rstrip() + "\n"
+    return tpl.render(data=data, risk_distribution=risk_distribution).rstrip() + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -5083,6 +5106,44 @@ def _render_architecture_assessment(ctx: RenderContext, env: jinja2.Environment,
     return tpl.render(data=data).rstrip() + "\n"
 
 
+def _curate_top_mitigations(
+    floor: list[dict[str, Any]],
+    extras_sorted: list[dict[str, Any]],
+    llm_order: list[str],
+    mit_min: int,
+    mit_max: int,
+) -> list[dict[str, Any]]:
+    """Select the §1 Top-Mitigations leader-board: Critical-floor + curation.
+
+    `floor` (always shown, coverage guarantee) + the most important extras.
+    Extras are ordered by the LLM `llm_order` first (valid + de-duped against
+    the floor), then by the caller's deterministic `extras_sorted` so the soft
+    minimum can always be met and the no-fragment fallback is deterministic.
+    `mit_max` is a SOFT clamp — the floor is never truncated even if it alone
+    exceeds `mit_max` (Critical coverage wins). Pure function — unit-tested.
+    """
+    floor_ids = {m["id"] for m in floor}
+    extras_by_id = {m["id"]: m for m in extras_sorted}
+    ordered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for mid in llm_order:
+        m = extras_by_id.get(mid)
+        if m and mid not in seen and mid not in floor_ids:
+            ordered.append(m)
+            seen.add(mid)
+    for m in extras_sorted:
+        if m["id"] not in seen and m["id"] not in floor_ids:
+            ordered.append(m)
+            seen.add(m["id"])
+    budget = max(0, mit_max - len(floor))
+    display = list(floor) + ordered[:budget]
+    for m in ordered[budget:]:
+        if len(display) >= mit_min:
+            break
+        display.append(m)
+    return display
+
+
 def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render the §1.x Management Summary Mitigations block as a SINGLE
     table covering only the immediate-action (P1) items, with a `Component`
@@ -5243,8 +5304,54 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         .get("rows", {})
         .get("max", 5)
     )
+    mit_min = (
+        (ctx.contract["sections"].get("mitigations") or {})
+        .get("table", {})
+        .get("rows", {})
+        .get("min", 3)
+    )
     p12_total_before_cap = len(p12_rows)
-    p12_rows = sorted(p12_rows, key=_row_sort_key)[:mit_max]
+
+    # ── Top-Mitigations selection: Critical-floor + LLM curation ──────────
+    # The Management-Summary leader-board is no longer a blind top-N cut.
+    #   1. Critical-floor (deterministic, non-negotiable): every mitigation
+    #      that fixes at least one Critical finding is ALWAYS shown, so no
+    #      Critical is left without a surfaced remediation — even if the LLM
+    #      curation omits it.
+    #   2. LLM curation (optional `.fragments/ms-top-mitigations.json`,
+    #      authored by the Stage-2 renderer): an ordered list of the most
+    #      important *additional* mitigations + a one-line rationale. The
+    #      composer honours the LLM order for the extras but validates the
+    #      ids, drops unknowns/dupes, and clamps to `rows.max`.
+    #   3. Fallback (no fragment, e.g. quick mode): extras are ordered by the
+    #      deterministic `_row_sort_key` — byte-identical to the legacy
+    #      behaviour except the Critical-floor guarantee is now explicit.
+    threats_by_id = _threat_lookup(ctx)
+
+    def _is_critical(tid: str) -> bool:
+        t = threats_by_id.get(tid) or {}
+        return (t.get("risk") or t.get("severity") or "").strip().lower() == "critical"
+
+    def _covers_critical(m: dict[str, Any]) -> bool:
+        return any(_is_critical(a.get("ref")) for a in (m.get("addresses") or []))
+
+    floor = sorted([m for m in p12_rows if _covers_critical(m)], key=_row_sort_key)
+    extras = [m for m in p12_rows if not _covers_critical(m)]
+
+    llm_order: list[str] = []
+    curation_rationale = ""
+    try:
+        _sel = _load_fragment(ctx, "top_mitigations", "ms-top-mitigations.json")
+        if isinstance(_sel, dict):
+            llm_order = [s for s in (_sel.get("selected") or []) if isinstance(s, str)]
+            curation_rationale = (_sel.get("rationale") or "").strip()
+    except FragmentError:
+        pass  # optional — fall back to deterministic extras ordering
+
+    p12_rows = _curate_top_mitigations(
+        floor, sorted(extras, key=_row_sort_key), llm_order, mit_min, mit_max
+    )
+    p12_curated = bool(llm_order)
     p12_dropped = max(0, p12_total_before_cap - len(p12_rows))
 
     # Bucket rows by primary_component_id.
@@ -5265,14 +5372,36 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     # The new layout emits one pipe-table per component bucket, separated
     # by a bold paragraph divider — visually the component label spans
     # the full table width because it sits OUTSIDE the table.
+    # Canonical C-NN resolution for the linked Component column. `cid` is the
+    # mitigation's primary_component_id, which may be a slug (`express-backend`)
+    # or already-canonical (`C-01`); `_component_lookup` aliases both and carries
+    # `_canonical_id`. The link target matches the §8 register and the
+    # Architecture Assessment "Affected components" cell: `[C-NN](#c-nn) — Name`.
+    comp_lookup = _component_lookup(ctx)
+
+    def _component_cell_label(cid: str) -> str:
+        if not cid:
+            return "Cross-cutting"
+        c = comp_lookup.get(cid) or {}
+        name = (c.get("name") or cid).strip()
+        if re.match(r"^C-\d+$", cid):
+            canonical = cid
+        else:
+            canonical = (c.get("_canonical_id") or "").strip()
+        if canonical:
+            return f"[{canonical}](#{canonical.lower()}) — {name}"
+        return name
+
     groups: list[dict[str, Any]] = []
     _row_number = 0
     for cid in sorted(buckets.keys(), key=_component_sort_key):
         bucket = sorted(buckets[cid], key=_row_sort_key)
         if cid:
             comp_name = (components_meta.get(cid) or {}).get("name", cid)
+            component_label = _component_cell_label(cid)
             divider_label = f"↳ {comp_name} ({cid}) — {pluralize(len(bucket), 'item')}"
         else:
+            component_label = "Cross-cutting"
             divider_label = f"↳ Cross-cutting — {pluralize(len(bucket), 'item')}"
         # Continuous numbering across groups (1..N), so the # column reads
         # as a global leader-board rank rather than per-component 1..N.
@@ -5284,6 +5413,12 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             group_rows.append(r)
         groups.append({
             "header": None,
+            # `component_label` feeds the dedicated `Component` column (post-
+            # 2026-05-29 layout — user request: the per-component label looked
+            # displaced jammed into the `#`/ID column of an in-table divider
+            # row, so it now lives in its own column shown once per group).
+            # `divider_label` retained for any legacy template path.
+            "component_label": component_label,
             "divider_label": divider_label,
             "include_affects_column": False,
             "mitigations": group_rows,
@@ -5302,11 +5437,22 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     # is the most-impactful subset; the full inventory always lives in §9.
     overflow_p12 = p12_dropped
     overflow_p3 = rest_count
+    _floor_n = sum(1 for r in p12_rows if _covers_critical(r))
     intro = (
         f"Highest-impact P1/P2 mitigations — {len(p12_rows)} of "
         f"{p12_total_before_cap} qualifying ({total_count} total). "
         f"Full detail in [§9 Mitigation Register](#9-mitigation-register)."
     )
+    if _floor_n:
+        intro += (
+            f" All {_floor_n} mitigation(s) that fix a Critical finding are "
+            f"always listed here"
+            + (
+                f"; the remaining entries are curated by impact: {curation_rationale}"
+                if (p12_curated and curation_rationale)
+                else "."
+            )
+        )
     footer_parts: list[str] = []
     if overflow_p12:
         footer_parts.append(
@@ -5796,6 +5942,225 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
     return "\n\n".join(parts) + "\n"
 
 
+_ATTACK_TREE_CLASSDEFS = (
+    "    classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px\n"
+    "    classDef and_node fill:#7c3aed,stroke:#5b21b6,color:#fff,stroke-width:2px\n"
+    "    classDef or_node fill:#2563eb,stroke:#1e40af,color:#fff,stroke-width:2px\n"
+    "    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px\n"
+    "    classDef attacker fill:#555,stroke:#333,color:#fff\n"
+    "    classDef crit fill:#c00,stroke:#900,color:#fff,stroke-width:2px\n"
+    "    classDef high fill:#e67700,stroke:#c25700,color:#fff,stroke-width:2px\n"
+    "    classDef medium fill:#ffd43b,stroke:#e8a203,color:#000,stroke-width:2px\n"
+    "    classDef low fill:#2f9e44,stroke:#1e6b2f,color:#fff,stroke-width:2px\n"
+    "    classDef system fill:#1168BD,stroke:#0E5CA8,color:#fff\n"
+    "    classDef impact fill:#1b5e20,stroke:#0d3d10,color:#fff,stroke-width:2px"
+)
+
+# A single attack-tree diagram is "too wide to read" once more than this many
+# leaf findings share the canvas — `graph TD/TB` lays sibling leaves out
+# horizontally, so 8 leaves under 3 capability nodes renders as an 8-column
+# row that overflows the page. Above the threshold the renderer splits the
+# tree into an overview diagram (goal ← capabilities) plus one compact
+# per-capability subtree diagram, each of which only ever shows the leaves of
+# a single capability. See `_build_attack_tree_blocks`.
+_ATTACK_TREE_SPLIT_LEAF_THRESHOLD = 5
+_ATTACK_TREE_SPLIT_NODE_THRESHOLD = 9
+
+
+def _attack_tree_edge_line(edge: dict[str, Any]) -> str:
+    """Render one mermaid edge line, mirroring critical-attack-tree.md.j2."""
+    label = edge.get("label") or edge.get("refinement")
+    src, dst = edge.get("from"), edge.get("to")
+    if label:
+        return f'    {src} -->|"{label}"| {dst}'
+    return f"    {src} --> {dst}"
+
+
+def _attack_tree_block(
+    orientation: str,
+    node_ids: list[str],
+    edges: list[dict[str, Any]],
+    nodes_by_id: dict[str, dict[str, Any]],
+) -> str:
+    """Build a complete mermaid `graph` source (header + nodes + edges +
+    classDefs) for the given node subset, preserving the fragment's node
+    declaration order for stability."""
+    lines = [f"graph {orientation}"]
+    for nid in node_ids:
+        n = nodes_by_id.get(nid)
+        if not n:
+            continue
+        lines.append(f'    {nid}["{n.get("label", nid)}"]:::{n.get("class", "leaf")}')
+    lines.append("")
+    for e in edges:
+        lines.append(_attack_tree_edge_line(e))
+    lines.append("")
+    lines.append(_ATTACK_TREE_CLASSDEFS)
+    return "\n".join(lines)
+
+
+def _build_attack_tree_blocks(data: dict[str, Any]) -> list[dict[str, str]]:
+    """Decompose a critical-attack-tree fragment into one or more renderable
+    mermaid blocks.
+
+    Small trees render as a single diagram (unchanged behaviour). Wide trees
+    — too many sibling leaves to read at a glance — are split into:
+      * an overview diagram: the goal plus its direct capability nodes; and
+      * one compact subtree diagram per capability, carrying only that
+        capability, the goal, and the capability's own descendant leaves.
+
+    Each returned block is ``{"title": str|None, "src": <mermaid source>}``.
+    The split keeps the fragment's own `TD`/`TB` orientation (the schema
+    forbids `LR`, and per-capability splitting already bounds each diagram's
+    width to a single capability's fan-out).
+    """
+    mermaid = data.get("mermaid") or {}
+    orientation = mermaid.get("orientation") or "TD"
+    nodes = mermaid.get("nodes") or []
+    edges = mermaid.get("edges") or []
+    nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
+    order = [n.get("id") for n in nodes if n.get("id")]
+
+    def _single() -> list[dict[str, str]]:
+        return [{"title": None, "src": _attack_tree_block(orientation, order, edges, nodes_by_id)}]
+
+    # Edge direction in the fragment is child --> parent (leaf -> capability
+    # -> goal), so a node's "children" in tree terms are its edge *sources*.
+    children: dict[str, list[str]] = {}
+    has_outgoing: set[str] = set()
+    for e in edges:
+        src, dst = e.get("from"), e.get("to")
+        if src is None or dst is None:
+            continue
+        children.setdefault(dst, []).append(src)
+        has_outgoing.add(src)
+
+    # Root = the goal node (class goal); fall back to the unique pure sink.
+    root = next((nid for nid, n in nodes_by_id.items() if n.get("class") == "goal"), None)
+    if root is None:
+        sinks = [nid for nid in order if nid not in has_outgoing]
+        root = sinks[0] if len(sinks) == 1 else None
+
+    leaf_count = sum(1 for n in nodes if n.get("class") == "leaf")
+    node_count = len(nodes)
+    too_wide = leaf_count > _ATTACK_TREE_SPLIT_LEAF_THRESHOLD or node_count > _ATTACK_TREE_SPLIT_NODE_THRESHOLD
+    if root is None or not too_wide:
+        return _single()
+
+    top_children = children.get(root, [])
+    capability_ids = [c for c in top_children if nodes_by_id.get(c, {}).get("class") in ("or_node", "and_node")]
+    if not capability_ids:
+        # No clean capability layer to split on — keep the single diagram.
+        return _single()
+
+    blocks: list[dict[str, str]] = []
+
+    # Overview: goal + its direct children (capabilities and any direct leaf).
+    overview_set = {root, *top_children}
+    overview_ids = [nid for nid in order if nid in overview_set]
+    overview_edges = [e for e in edges if e.get("to") == root and e.get("from") in overview_set]
+    blocks.append({
+        "title": "Overview — capability paths to the goal",
+        "src": _attack_tree_block(orientation, overview_ids, overview_edges, nodes_by_id),
+    })
+
+    # One subtree per capability: capability + goal + all descendants.
+    for cap in capability_ids:
+        subset = {root, cap}
+        stack = [cap]
+        while stack:
+            cur = stack.pop()
+            for ch in children.get(cur, []):
+                if ch not in subset:
+                    subset.add(ch)
+                    stack.append(ch)
+        sub_ids = [nid for nid in order if nid in subset]
+        sub_edges = [e for e in edges if e.get("from") in subset and e.get("to") in subset]
+        cap_label = nodes_by_id.get(cap, {}).get("label", cap)
+        blocks.append({
+            "title": f"Path: {cap_label}",
+            "src": _attack_tree_block(orientation, sub_ids, sub_edges, nodes_by_id),
+        })
+
+    return blocks
+
+
+def _derive_attack_tree_stages(data: dict[str, Any], ctx: RenderContext) -> list[dict[str, Any]] | None:
+    """Build the Stage | Finding | Primary Mitigation table deterministically
+    from the tree's capability decomposition + the canonical
+    `mitigations[].threat_ids` map.
+
+    This replaces the LLM-authored free-form `stages[]` (which could — and did —
+    contradict the tree grouping and the canonical mitigation mappings, e.g.
+    claiming M-002 fixes a finding that M-002.threat_ids never listed). One row
+    per capability subtree; findings are that capability's leaves; mitigations
+    are exactly those whose `threat_ids` cover one of those leaves. Returns
+    None when the tree has no resolvable capability layer (caller falls back to
+    the fragment's `stages`).
+    """
+    mermaid = data.get("mermaid") or {}
+    nodes = mermaid.get("nodes") or []
+    edges = mermaid.get("edges") or []
+    nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
+    order = [n.get("id") for n in nodes if n.get("id")]
+
+    children: dict[str, list[str]] = {}
+    has_outgoing: set[str] = set()
+    for e in edges:
+        src, dst = e.get("from"), e.get("to")
+        if src is None or dst is None:
+            continue
+        children.setdefault(dst, []).append(src)
+        has_outgoing.add(src)
+
+    root = next((nid for nid, n in nodes_by_id.items() if n.get("class") == "goal"), None)
+    if root is None:
+        sinks = [nid for nid in order if nid not in has_outgoing]
+        root = sinks[0] if len(sinks) == 1 else None
+    if root is None:
+        return None
+
+    # Canonical threat -> [mitigation-id] reverse map.
+    rev: dict[str, list[str]] = {}
+    for m in (ctx.yaml_data.get("mitigations") or []):
+        mid = m.get("id")
+        if not mid:
+            continue
+        for tid in (m.get("threat_ids") or []):
+            rev.setdefault(tid, []).append(mid)
+
+    stages: list[dict[str, Any]] = []
+    for cap in children.get(root, []):
+        if nodes_by_id.get(cap, {}).get("class") not in ("or_node", "and_node"):
+            continue
+        subset = {cap}
+        stack = [cap]
+        while stack:
+            cur = stack.pop()
+            for ch in children.get(cur, []):
+                if ch not in subset:
+                    subset.add(ch)
+                    stack.append(ch)
+        leaf_tids: list[str] = []
+        for nid in order:
+            if nid in subset and nodes_by_id.get(nid, {}).get("class") == "leaf":
+                mt = re.search(r"T-\d{3,}", nodes_by_id[nid].get("label", ""))
+                if mt and mt.group(0) not in leaf_tids:
+                    leaf_tids.append(mt.group(0))
+        mids: list[str] = []
+        for tid in leaf_tids:
+            for mid in rev.get(tid, []):
+                if mid not in mids:
+                    mids.append(mid)
+        mids.sort()
+        stages.append({
+            "stage": nodes_by_id.get(cap, {}).get("label", cap),
+            "findings": leaf_tids,
+            "mitigations": mids,
+        })
+    return stages or None
+
+
 def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     # Item 3 (2026-05-28): tree section is a soft-required fragment.
     # The renderer activation is in place, but legacy runs (and most of
@@ -5819,8 +6184,10 @@ def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, se
             pass
         return ""
     _validate_fragment("critical_attack_tree", data, section["schema"])
+    blocks = _build_attack_tree_blocks(data)
+    stages = _derive_attack_tree_stages(data, ctx)
     tpl = env.get_template(section["template"])
-    return tpl.render(data=data).rstrip() + "\n"
+    return tpl.render(data=data, blocks=blocks, stages=stages).rstrip() + "\n"
 
 
 def _subsection_drift_hint(md: str, section: dict, level: int) -> str:
@@ -8510,6 +8877,26 @@ _CODE_DOTTED_RE = re.compile(
 )
 
 
+_CODE_SPAN_MASK_RE = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
+
+
+def _sub_outside_spans(pattern: re.Pattern[str], s: str) -> str:
+    """Wrap `pattern` group(1) in backticks, but ONLY in the parts of `s`
+    that are not already inside a backtick span / link target / HTML tag /
+    entity. Prevents a later code matcher from re-wrapping a token inside a
+    span an earlier matcher just created."""
+    out: list[str] = []
+    pos = 0
+    for m in _CODE_SPAN_MASK_RE.finditer(s):
+        if m.start() > pos:
+            out.append(pattern.sub(lambda mm: f"`{mm.group(1)}`", s[pos:m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    if pos < len(s):
+        out.append(pattern.sub(lambda mm: f"`{mm.group(1)}`", s[pos:]))
+    return "".join(out)
+
+
 def _codify_inline_identifiers(text: str) -> str:
     """Wrap unmarked code identifiers (file paths, calls, dotted refs)
     in `backticks` so Story Card prose renders them as inline code.
@@ -8544,11 +8931,17 @@ def _codify_inline_identifiers(text: str) -> str:
         if p.startswith("`") or p.startswith("](") or p.startswith("<") or p.startswith("&#"):
             out_parts.append(p)
             continue
+        # Apply the four code matchers in priority order, but each one ONLY
+        # outside spans already wrapped by an earlier matcher in this same
+        # run. Without this, `_CODE_FILE_RE` wraps a full path
+        # (`frontend/…/administration.component.html:26`) and then
+        # `_CODE_DOTTED_RE` re-matches `component.html` INSIDE that fresh span,
+        # producing mid-token backticks (`administration.`component.html`:26`).
+        # The outer span mask only knows about backticks present before this
+        # run; spans created here must be protected too.
         run = p
-        run = _CODE_FILE_RE.sub(lambda mm: f"`{mm.group(1)}`", run)
-        run = _CODE_CALL_RE.sub(lambda mm: f"`{mm.group(1)}`", run)
-        run = _CODE_BARE_CALL_RE.sub(lambda mm: f"`{mm.group(1)}`", run)
-        run = _CODE_DOTTED_RE.sub(lambda mm: f"`{mm.group(1)}`", run)
+        for _rx in (_CODE_FILE_RE, _CODE_CALL_RE, _CODE_BARE_CALL_RE, _CODE_DOTTED_RE):
+            run = _sub_outside_spans(_rx, run)
         out_parts.append(run)
     return "".join(out_parts)
 
@@ -8684,16 +9077,17 @@ def _build_finding_cell(
                     comp_meta = c
                     break
         comp_name = (comp_meta.get("name") or "").strip() if comp_meta else ""
-        # Item 5 (2026-05-28): de-bold redundant labels — Component/Location/
-        # Walkthrough/Evidence/Classification render with italic labels so
-        # the visual emphasis goes to Issue/Impact/Fix (the actionable
-        # signals). Component remains a labelled in-cell field for
-        # structural parity with the user's reference template, but only
-        # Issue/Impact/Fix carry full bold weight.
+        # 2026-05-29 (supersedes Item 5 / 2026-05-28): ALL Story-Card field
+        # labels render in uniform **bold** — Component / Location / Issue /
+        # Attack Walkthrough / Evidence / Impact / Fix / Classification. The
+        # earlier mixed scheme (italic metadata + bold actionable fields) read
+        # as inconsistent/unstructured; uniform bold matches the §8 intro
+        # element list and the §9 Mitigation Register label style, giving the
+        # cell a single, predictable visual grammar.
         if comp_name:
-            component_line = f"_Component:_ [{canonical_id}](#{canonical_id.lower()}) — {comp_name}"
+            component_line = f"**Component:** [{canonical_id}](#{canonical_id.lower()}) — {comp_name}"
         else:
-            component_line = f"_Component:_ [{canonical_id}](#{canonical_id.lower()})"
+            component_line = f"**Component:** [{canonical_id}](#{canonical_id.lower()})"
 
     # -- 2. Location labelled row -----------------------------------------
     # **Location:** stays as a labelled row (file:line).
@@ -8729,12 +9123,12 @@ def _build_finding_cell(
         loc_inner = f"`{ev_file}`" + (f":{ev_line}" if ev_line else "")
         if ev_status_token:
             loc_inner += f" · {ev_status_token}"
-        location_line = f"_Location:_ {loc_inner}"
+        location_line = f"**Location:** {loc_inner}"
     elif ev_status_token:
         # No `evidence.file` on the threat but the evidence verdict is
         # still worth surfacing — emit the location line with an em-dash
         # placeholder so the evidence: badge always renders.
-        location_line = f"_Location:_ — · {ev_status_token}"
+        location_line = f"**Location:** — · {ev_status_token}"
 
     # R-7 (2026-05): Vektor field is no longer assembled into the cell —
     # see "Design choices (R-7)" in the docstring. The variable below is
@@ -8765,7 +9159,7 @@ def _build_finding_cell(
             hit = fid_to_walkthrough.get(k)
             if hit:
                 label, anchor = hit
-                walkthrough_line = f"_Walkthrough:_ [{label}](#{anchor})"
+                walkthrough_line = f"**Attack Walkthrough:** [{label}](#{anchor})"
                 break
 
     # -- 3. What the attacker does — cleaned scenario ---------------------
@@ -8900,7 +9294,7 @@ def _build_finding_cell(
         text = evidence_summary_explicit
         if not text.endswith((".", "!", "?")):
             text += "."
-        evidence_line = f"_Evidence:_ {text}"
+        evidence_line = f"**Evidence:** {text}"
     elif sev in ("critical", "high") and ev_file:
         # Synthesise a one-sentence claim from CWE class + file context.
         # The next-line snippet is the proof for this claim.
@@ -8908,7 +9302,7 @@ def _build_finding_cell(
         if fallback:
             if not fallback.endswith((".", "!", "?")):
                 fallback += "."
-            evidence_line = f"_Evidence:_ {fallback}"
+            evidence_line = f"**Evidence:** {fallback}"
 
     # Back-compat: keep ``Root cause`` when the yaml carried it
     # explicitly (legacy schema) but only when distinct from Issue.
@@ -9051,7 +9445,7 @@ def _build_finding_cell(
         # Item 5: classification label is italic, not bold — the
         # actionable triad (Issue / Impact / Fix) carries bold weight;
         # reference citations sit one notch quieter.
-        classification_line = "_Classification:_ " + " · ".join(refs_parts)
+        classification_line = "**Classification:** " + " · ".join(refs_parts)
 
     # -- 8. Code snippet — collapsed in <details> -------------------------
     # Severity-tier policy (post-2026-05):
@@ -9418,33 +9812,22 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         "All findings are listed in one table sorted by criticality, then "
         "by attack vektor (Repo-Read → Internet-Anon → Internet-User → "
         "Victim-Required). Columns: **ID** (T-NNN/F-NNN dual anchor) · "
-        "**Finding** (the Story Card — see element list below) · "
-        "**Component** (link to the §2.3 component entry) · **Criticality**."
+        "**Finding** (a structured Story Card) · **Component** (link to the "
+        "§2.3 entry) · **Criticality**."
     )
     lines.append("")
-    lines.append(
-        "Each **Finding** cell is a structured Story Card with these "
-        "labelled fields, in order:"
-    )
-    lines.append("")
+    # 2026-05-29: the §8 intro used to spell out an 8-item element list with
+    # inline-code examples per field — it read as cluttered "meta-doc" above
+    # the actual findings. Compressed to a single field-order sentence; the
+    # uniform **bold** labels inside each Story Card make the structure
+    # self-evident without a legend.
     skip_walk_intro = bool(ctx.eval_context.get("skip_attack_walkthroughs"))
-    intro_bullets: list[str] = [
-        "**Component** — owning component (link to [§2.3](#23-components) entry).",
-        "**Location** — `` `file:line` `` · evidence verdict (`verified` / `ambiguous` / `refuted`).",
-        "**Issue** — one-to-two-sentence attack narrative.",
-    ]
-    if not skip_walk_intro:
-        intro_bullets.append(
-            "**Attack Walkthrough** — back-link into [§3](#3-attack-walkthroughs) (Critical/High only)."
-        )
-    intro_bullets.extend([
-        "**Evidence** — one-sentence prose summary above a collapsible `Code · file:line` widget (Critical/High; gated by CWE class).",
-        "**Impact** — concrete consequence line (always rendered for Critical/High).",
-        "**Fix** — link to the mitigation in [§9](#9-mitigation-register).",
-        "**Classification** — `**Classification:** TH-NN · CWE · OWASP Top 10` reference row.",
-    ])
-    for idx, body in enumerate(intro_bullets, 1):
-        lines.append(f"{idx}. {body}")
+    _walk_field = "Attack Walkthrough → " if not skip_walk_intro else ""
+    lines.append(
+        "Each Story Card carries these bold-labelled fields in order: "
+        f"Component → Location → Issue → {_walk_field}Evidence → Impact → "
+        "Fix → Classification."
+    )
     lines.append("")
     # Risk Distribution: always show Critical/High/Medium/Low; show Info
     # only when at least one Informational threat is present (keeps the
@@ -10125,13 +10508,19 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 if not how:
                     lines.append("**How:**")
                     lines.append("")
+                # `steps[]` are sequential remediation actions — render as an
+                # ORDERED list (1. 2. 3.) so the implied execution order is
+                # explicit (2026-05-29 user request). A bullet list reads as an
+                # unordered set; remediation is a procedure.
+                _step_n = 0
                 for step in steps:
                     s = (step or "").strip() if isinstance(step, str) else ""
                     if s:
                         # Inline-code-fence single-quotes that surround
                         # short identifiers so list items survive markdown
                         # renderers (some viewers eat unescaped backticks).
-                        lines.append(f"- {_wrap_inline_code(s)}")
+                        _step_n += 1
+                        lines.append(f"{_step_n}. {_wrap_inline_code(s)}")
                 lines.append("")
             if how_code:
                 lines.append(f"```{how_lang}")

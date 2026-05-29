@@ -343,10 +343,10 @@ def test_finding_cell_links_critical_finding_to_attack_walkthrough(tmp_path: Pat
     # Fixture §3.1–3.3 are per-finding walkthroughs for T-001 / T-002 / T-003,
     # each declaring its owner on a `**Source:** [T-NNN]` line. The §8 Story
     # Card surfaces the back-link to the owning walkthrough.
-    # Item 5 (2026-05-28): walkthrough label is now italic (`_Walkthrough:_`)
-    # — story card non-action labels were demoted from bold to italic so
-    # Issue / Impact / Fix carry the visual emphasis.
-    assert "_Walkthrough:_" in section8, "expected at least one walkthrough back-link in §8"
+    # 2026-05-29 (supersedes Item 5): all Story-Card labels render in uniform
+    # **bold**, and the walkthrough label is spelled "Attack Walkthrough" to
+    # match the §8 intro element list.
+    assert "**Attack Walkthrough:**" in section8, "expected at least one walkthrough back-link in §8"
     # T-003's card links to its own §3.3 walkthrough (the §3.1 chain overview
     # was retired — there are no `Chain N` links any more).
     assert "[Walkthrough §3.3](#33-hardcoded-rsa-private-key)" in section8
@@ -372,7 +372,7 @@ def test_finding_cell_omits_walkthrough_line_when_no_chains_resolve(tmp_path: Pa
     )
     rendered, _ = compose.render(CONTRACT, out)
     section8 = _slice_threat_register(rendered)
-    assert "_Walkthrough:_" not in section8
+    assert "**Attack Walkthrough:**" not in section8
 
 
 def test_chain_map_extracts_walkthrough_anchors_from_fixture(tmp_path: Path) -> None:
@@ -508,9 +508,9 @@ def test_finding_cell_component_uses_canonical_C_NN_anchor(tmp_path: Path) -> No
         ctx=ctx,
     )
 
-    assert "_Component:_ [C-01](#c-01) — REST API" in cell, (
+    assert "**Component:** [C-01](#c-01) — REST API" in cell, (
         "expected canonical C-NN anchor in the in-cell Component link "
-        "(label demoted from bold to italic by item 5, 2026-05-28); cell was:\n" + cell
+        "(all Story-Card labels uniform bold, 2026-05-29); cell was:\n" + cell
     )
     # The raw slug must NOT appear as a link target.
     assert "(#rest-api)" not in cell, (
@@ -531,7 +531,7 @@ def test_finding_cell_component_already_canonical_passes_through(tmp_path: Path)
         t=threat, sev="critical", taxonomy={}, components=components,
         repo_root=None, ctx=ctx,
     )
-    assert "_Component:_ [C-01](#c-01) — REST API" in cell
+    assert "**Component:** [C-01](#c-01) — REST API" in cell
 
 
 def test_finding_cell_issue_and_impact_carry_disjoint_sentences(tmp_path: Path) -> None:
@@ -663,28 +663,163 @@ def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:
         assert f'<a id="{mid}"></a>' in rendered
 
 
-def test_mitigations_section_uses_single_table_with_component_dividers(tmp_path: Path) -> None:
-    """The Management Summary Top Mitigations section uses per-component
-    sub-tables with a bold paragraph divider per group (2026-05 update —
-    the previous in-table divider-row form `| label | | | | |` rendered
-    as one cell + 4 visually broken empty cells because Markdown
-    pipe-tables have no colspan; the per-component `####` H4 form was
-    rejected in a prior iteration as too noisy).
+def _attack_tree_data(n_leaves: int) -> dict:
+    """Synthesize a critical-attack-tree fragment with `n_leaves` leaves spread
+    across two capability OR-nodes feeding a single goal."""
+    nodes = [
+        {"id": "G_ROOT", "label": "Full takeover", "class": "goal"},
+        {"id": "OR_A", "label": "Capability A", "class": "or_node"},
+        {"id": "OR_B", "label": "Capability B", "class": "or_node"},
+    ]
+    edges = [
+        {"from": "OR_A", "to": "G_ROOT", "label": "OR"},
+        {"from": "OR_B", "to": "G_ROOT", "label": "OR"},
+    ]
+    for i in range(n_leaves):
+        lid = f"L_T{i:03d}"
+        cap = "OR_A" if i % 2 == 0 else "OR_B"
+        nodes.append({"id": lid, "label": f"T-{i:03d} finding", "class": "leaf"})
+        edges.append({"from": lid, "to": cap, "label": "OR"})
+    return {"mermaid": {"orientation": "TD", "nodes": nodes, "edges": edges}}
+
+
+def test_attack_tree_small_renders_single_block() -> None:
+    """A narrow tree (<= threshold leaves) renders as one diagram, unchanged."""
+    blocks = compose._build_attack_tree_blocks(_attack_tree_data(4))
+    assert len(blocks) == 1
+    assert blocks[0]["title"] is None
+    src = blocks[0]["src"]
+    assert src.startswith("graph TD")
+    assert "classDef goal" in src
+    # All 4 leaves present in the single diagram.
+    assert all(f"L_T{i:03d}" in src for i in range(4))
+
+
+def test_attack_tree_wide_splits_into_overview_plus_subtrees() -> None:
+    """A wide tree splits into an overview + one diagram per capability, each
+    carrying only that capability's leaves, its own classDefs, and never an
+    `LR` orientation (schema-forbidden + the §3 graph-LR guard)."""
+    blocks = compose._build_attack_tree_blocks(_attack_tree_data(8))
+    # overview + 2 capability subtrees
+    assert len(blocks) == 3
+    titles = [b["title"] for b in blocks]
+    assert titles[0].startswith("Overview")
+    assert any("Capability A" in (t or "") for t in titles)
+    assert any("Capability B" in (t or "") for t in titles)
+
+    overview = blocks[0]["src"]
+    # Overview shows the goal + both capabilities but NO leaves.
+    assert "G_ROOT" in overview and "OR_A" in overview and "OR_B" in overview
+    assert "L_T000" not in overview
+
+    for b in blocks:
+        assert "classDef goal" in b["src"], "each split diagram must carry classDefs"
+        assert "graph LR" not in b["src"], "split sub-diagrams must not use graph LR"
+
+    # Every leaf appears in exactly one subtree block (no loss, no dup).
+    subtree_src = "\n".join(b["src"] for b in blocks[1:])
+    for i in range(8):
+        assert subtree_src.count(f'L_T{i:03d}["') == 1
+
+
+def test_codify_inline_identifiers_no_mid_token_backticks() -> None:
+    """Story-Card prose path wrapping must not split a path/extension mid-token.
+
+    Regression: `_CODE_FILE_RE` wraps the whole path, then `_CODE_DOTTED_RE`
+    used to re-match `component.html` INSIDE that fresh span, yielding
+    `administration.` `component.html` `:26` (mid-token backticks). Each code
+    matcher now runs only outside existing spans.
+    """
+    out = compose._codify_inline_identifiers(
+        "HTML (frontend/src/app/administration/administration.component.html:26) renders user.email."
+    )
+    assert "`frontend/src/app/administration/administration.component.html:26`" in out
+    assert "administration.`component" not in out
+    assert out.count("`") % 2 == 0  # all spans balanced
+
+    out2 = compose._codify_inline_identifiers(
+        "comp (frontend/src/app/last-login-ip/last-login-ip.component.ts:39) uses bypassSecurityTrustHtml()."
+    )
+    assert "`frontend/src/app/last-login-ip/last-login-ip.component.ts:39`" in out2
+    assert "last-login-`ip" not in out2
+    assert "`bypassSecurityTrustHtml()`" in out2
+
+
+def test_curate_top_mitigations_floor_and_llm_order() -> None:
+    """Critical-floor always shown; LLM curates the extras within the soft max."""
+    floor = [{"id": "M-001"}, {"id": "M-002"}]
+    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}, {"id": "M-008"}, {"id": "M-009"}]
+    # LLM prefers M-008 then M-006; max 4 → floor(2) + 2 extras.
+    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-008", "M-006"], 3, 4)
+    assert [m["id"] for m in out] == ["M-001", "M-002", "M-008", "M-006"]
+
+
+def test_curate_top_mitigations_no_fragment_is_deterministic() -> None:
+    """No LLM order → extras in caller's deterministic order; clamped to max."""
+    floor = [{"id": "M-001"}]
+    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}, {"id": "M-008"}]
+    out = compose._curate_top_mitigations(floor, extras_sorted, [], 3, 3)
+    assert [m["id"] for m in out] == ["M-001", "M-006", "M-007"]
+
+
+def test_curate_top_mitigations_floor_never_truncated() -> None:
+    """Coverage wins: a floor larger than max is shown in full (no truncation)."""
+    floor = [{"id": "M-001"}, {"id": "M-002"}, {"id": "M-003"}, {"id": "M-004"}]
+    extras_sorted = [{"id": "M-009"}]
+    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-009"], 3, 2)
+    assert [m["id"] for m in out] == ["M-001", "M-002", "M-003", "M-004"]  # extras dropped, floor intact
+
+
+def test_curate_top_mitigations_drops_unknown_and_floor_dupes() -> None:
+    """Unknown ids and floor ids listed by the LLM are ignored in the extras slot."""
+    floor = [{"id": "M-001"}]
+    extras_sorted = [{"id": "M-006"}, {"id": "M-007"}]
+    out = compose._curate_top_mitigations(floor, extras_sorted, ["M-001", "M-999", "M-007"], 3, 10)
+    # M-001 (floor dupe) + M-999 (unknown) ignored; M-007 first, then remaining M-006.
+    assert [m["id"] for m in out] == ["M-001", "M-007", "M-006"]
+
+
+def test_attack_tree_stages_derived_from_canonical_mappings() -> None:
+    """The Stage|Finding|Primary Mitigation table is derived deterministically
+    from the tree capabilities + canonical `mitigations[].threat_ids`, so it
+    can never contradict the tree grouping or claim a mitigation the YAML does
+    not map (the historic `F-006 -> M-002` divergence)."""
+    from types import SimpleNamespace
+    data = _attack_tree_data(8)  # OR_A: T000,T002,T004,T006 ; OR_B: T001,T003,T005,T007
+    ctx = SimpleNamespace(yaml_data={"mitigations": [
+        {"id": "M-001", "threat_ids": ["T-000", "T-002"]},
+        {"id": "M-002", "threat_ids": ["T-001", "T-003"]},
+        {"id": "M-099", "threat_ids": ["T-999"]},  # maps to nothing in the tree
+    ]})
+    stages = compose._derive_attack_tree_stages(data, ctx)
+    assert stages and len(stages) == 2  # one row per capability (OR_A, OR_B)
+    by_stage = {s["stage"]: s for s in stages}
+    a = by_stage["Capability A"]
+    # OR_A leaves are the even-indexed Ts: T-000, T-002, T-004, T-006
+    assert a["findings"] == ["T-000", "T-002", "T-004", "T-006"]
+    # only M-001 covers OR_A leaves (T-000, T-002); the unrelated M-099 never appears
+    assert a["mitigations"] == ["M-001"]
+    b = by_stage["Capability B"]
+    assert b["mitigations"] == ["M-002"]
+    assert "M-099" not in {m for s in stages for m in s["mitigations"]}
+
+
+def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
+    """The Management Summary Top Mitigations section is a single ranked table
+    with a dedicated `Component` column (2026-05-29 update).
+
+    The earlier in-table divider-row form `| **↳ Component …** | | | | |`
+    rendered the component label jammed into the `#`/ID column with four empty
+    trailing cells — it looked displaced. The component label now lives in its
+    own column, printed once per group (blank on continuation rows), so the
+    table reads as grouped-by-component while every value sits in a real
+    column. Matches the sibling Top Findings table.
 
     Layout:
-        **↳ <Component Name> (<c-id>) — N item(s)**           ← paragraph
-        | # | Priority | Mitigation | Addresses | Effort |   ← per-bucket pipe table
-        |---|---|---|---|---|
-        | 1 | **P1** | ... |
-        ...
-        **↳ <Next Component> (<c-id>) — M item(s)**           ← next divider
-        | # | Priority | Mitigation | Addresses | Effort |
-        ...
-
-    Numbering is continuous (1..N across all buckets) so the leader-board
-    rank reads globally. Each pipe-table carries its own canonical header
-    line so the contract checker (qa_checks.py table_checks for
-    Top Mitigations) is satisfied — it only needs one occurrence.
+        | # | Priority | Component               | Mitigation | Addresses | Effort |
+        |---|---|---|---|---|---|
+        | 1 | **P1** | **Express Backend (c-…)**  | ...        | ...       | ...    |
+        | 2 | **P1** |                            | ...        | ...       | ...    |
     """
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
@@ -695,43 +830,40 @@ def test_mitigations_section_uses_single_table_with_component_dividers(tmp_path:
     # Legacy headers from earlier layouts are gone.
     assert "#### Prioritized Mitigations" not in ms_slice
     assert "#### Follow-up Mitigations" not in ms_slice
-    # Per-component `####` sub-headers were retired in favour of inline
-    # paragraph dividers (less noisy than H4 headers).
-    assert "####" not in ms_slice, "per-component layout must not emit `####` sub-headers"
+    assert "####" not in ms_slice, "Top Mitigations layout must not emit `####` sub-headers"
 
-    # Canonical 5-column pipe-table header (with leading `#` column).
-    assert "| # | Priority | Mitigation | Addresses | Effort |" in ms_slice
+    # Canonical 6-column pipe-table header with the dedicated Component column.
+    assert "| # | Priority | Component | Mitigation | Addresses | Effort |" in ms_slice
 
-    # Item 2 (2026-05-28): single-table layout with bold in-table divider
-    # rows. Per-component sub-tables and paragraph-outside-table dividers
-    # are retired — the user wants ONE table grouped by component so the
-    # at-a-glance scan reads as a single ranked list. Divider rows take
-    # the form `| **↳ <Name> (<c-id>) — N item(s)** | | | | |` (the four
-    # trailing empty cells let the table parser handle the row natively
-    # without colspan support).
     import re as _re
-    # The legacy paragraph-outside-table form must NOT appear (regression
-    # guard — per-component sub-tables fragmented the at-a-glance scan).
+    # The retired in-table divider-row form must NOT appear (regression guard).
     assert not _re.search(
-        r"^\*\*↳\s+.+?\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*$",
+        r"^\|\s*\*\*↳\s+.+?\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|",
         ms_slice,
         flags=_re.MULTILINE,
-    ), "paragraph-divider-outside-table form is retired (item 2, 2026-05-28)"
-    # Dividers render only when ≥2 component groups contribute mitigations.
-    # The test fixture has a single group, so no divider row is expected;
-    # the assertion below verifies the row SHAPE when one is present.
-    divider_hits = _re.findall(
-        r"^\|\s*\*\*↳\s+.+?\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|\s*\|\s*\|\s*\|\s*\|\s*$",
-        ms_slice,
-        flags=_re.MULTILINE,
-    )
-    # When present, every divider row must carry exactly 5 cells (4 empty
-    # trailing) — guard against accidental colspan-style HTML or short rows.
-    for hit in divider_hits:
-        assert hit.count("|") == 6, f"divider row must have 5 cells: {hit!r}"
+    ), "in-table `↳ Component — N item(s)` divider row is retired (2026-05-29)"
+    # No `↳` group glyph anywhere in the section any more.
+    assert "↳" not in ms_slice, "component grouping no longer uses the ↳ glyph"
 
     # A priority cell renders as **P1** / **P2** in data rows.
     assert any(f"**P{n}**" in ms_slice for n in (1, 2)), "expected a bold P1/P2 priority cell"
+
+    # The Component column carries a label on the first row of each group,
+    # linked to the component anchor exactly like the Architecture Assessment
+    # "Affected components" cell: `[C-NN](#c-nn) — Name` (or the unlinked
+    # "Cross-cutting" sentinel when a mitigation maps to no component).
+    data_rows = [
+        ln for ln in ms_slice.splitlines()
+        if _re.match(r"^\|\s*\*\*\d+\*\*\s*\|", ln)  # rows whose # cell is **N**
+    ]
+    assert data_rows, "expected at least one numbered data row"
+    first_cells = [c.strip() for c in data_rows[0].split("|")]
+    # cells: ['', '**1**', '**P1**', '[C-NN](#c-nn) — Name', '<mitigation>', ...]
+    comp_cell = first_cells[3]
+    assert _re.match(r"^\[C-\d+\]\(#c-\d+\)\s+—\s+.+", comp_cell) or comp_cell == "Cross-cutting", (
+        f"first row's Component cell must be a `[C-NN](#c-nn) — Name` link "
+        f"(matching Architecture Assessment) or 'Cross-cutting', got {comp_cell!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

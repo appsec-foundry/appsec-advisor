@@ -514,22 +514,29 @@ sections:
         sort: [effort_rank:asc, addressed_count:desc]
         intro: "The mitigations below address the remaining High/Medium findings not covered above and should be scheduled within the current or next sprint. Same ordering rule applies (effort ascending, findings-addressed descending)."
     table:
-      # Post-2026-05 — Top Mitigations is a single central table sub-grouped
-      # by component via divider rows. The Component column is dropped from
-      # the data rows because the divider row carries the bucket label.
+      # Post-2026-05-29 — Top Mitigations is a single ranked table with a
+      # dedicated `Component` column (printed once per component group, blank
+      # on continuation rows). The earlier in-table divider-row form jammed
+      # the component label into the `#`/ID column with empty trailing cells
+      # and rendered as displaced; the column form keeps proper alignment and
+      # matches the sibling Top Findings table.
       columns:
         - { key: priority,   header: "Priority",   render: priority_badge,    required: true, enum: [P1, P2] }
+        - { key: component,  header: "Component",   render: plain_text,        required: false }
         - { key: mitigation, header: "Mitigation", render: mitigation_id,     required: true }
         - { key: addresses,  header: "Addresses",  render: finding_list,      required: true }
         - { key: effort,     header: "Effort",     render: effort_badge,      required: true, enum: [Low, Medium, High] }
       rows:
-        # 2026-05 user-request (second iteration): cap Top Mitigations
-        # at 5 (was 10). Overflow falls through to §9 Mitigation Register
-        # which carries the full P1/P2/P3 catalogue with `Why` / `How` /
-        # verification detail. The §1 surface keeps only the highest-
-        # leverage P1 entries.
+        # 2026-05-29 — Top Mitigations selection is Critical-floor + LLM
+        # curation (see _render_mitigations). `max` is the SOFT upper clamp
+        # for the curated leader-board: every mitigation that fixes a Critical
+        # finding is always shown (the floor can exceed `max` if there are
+        # more Critical-fixing mitigations than the cap), and the Stage-2
+        # renderer curates the most important additional P1/P2 entries up to
+        # this bound via `.fragments/ms-top-mitigations.json`. Overflow falls
+        # through to §9 Mitigation Register (the full P1/P2/P3 catalogue).
         min: 3
-        max: 5
+        max: 10
 
   operational_strengths:
     heading: "### Operational Strengths"

@@ -93,6 +93,12 @@ _PATH_RE = re.compile(
     r"(?P<path>[A-Za-z][\w.-]*/[\w./-]+\.(?:"
     + "|".join(_EXTENSIONS)
     + r")(?::\d+)?)"
+    # Trailing boundary (mirrors _BARE_FILENAME_RE): without it the extension
+    # alternation stops at a PREFIX extension — `.h` is tried before `.html`
+    # and matches `administration.component.h`, leaving a bare `tml`. The
+    # `(?![\w/`])` lookahead forces backtracking to the longest extension that
+    # ends at a real token boundary, so `.html` / `.ts` match in full.
+    + r"(?![\w/`])"
 )
 # 2026-05 R-7 — additional code-token classes the LLM frequently leaves
 # bare in prose. Each pattern fires INDEPENDENTLY of `_PATH_RE`; all
@@ -130,7 +136,12 @@ _URL_PATH_RE = re.compile(
 #     extensions (a TLD allowlist would be brittle — the extension list IS
 #     the allowlist).
 _BARE_FILENAME_RE = re.compile(
-    r"(?<![\w./`])"
+    # `-` is in the negative lookbehind so a hyphen-joined path component is
+    # not re-matched mid-token: in `frontend/.../last-login-ip.component.ts`
+    # the bare pattern must NOT start at `login-ip.component.ts` (preceded by
+    # `-`), otherwise it wraps the tail before _PATH_RE can wrap the whole
+    # path and the leading `last-` is left dangling outside the code span.
+    r"(?<![\w./`-])"
     # Allow multi-dot filenames like `package.json.bak`. The
     # ``(?:\.[A-Za-z0-9-]+)*`` allows zero or more middle dot-segments
     # before the final recognised extension (was ``?`` which capped at

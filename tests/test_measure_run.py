@@ -41,9 +41,15 @@ def _seed_fixture(d: Path) -> None:
     (d / ".hook-events.log").write_text(
         "\n".join(
             [
-                "2026-05-15 12:00:00 SESSION_STOP reason=end_turn cost=0.01",
-                "2026-05-15 12:01:00 SESSION_STOP reason=max_turns cost=0.05",
-                "2026-05-15 12:02:00 REPAIR_MODE attempt=1",
+                # Real emitter format (agent_logger.py): "stop_reason=" with a
+                # timestamped "[sid] INFO" prefix — NOT a bare "reason=". The
+                # parser must match this or the stop-reason metric is silently
+                # empty on every real run.
+                "2026-05-15T12:00:00Z [abc12345] INFO  SESSION_STOP stop_reason=end_turn  in=1,000  out=500  cost=$0.0100",
+                "2026-05-15T12:01:00Z [abc12345] INFO  SESSION_STOP stop_reason=max_turns  in=2,000  out=800  cost=$0.0500",
+                # Non-SESSION_STOP line must not be counted as a stop reason.
+                "2026-05-15T12:01:00Z [abc12345] ERROR MAX_TURNS Agent terminated — maxTurns limit reached.",
+                "2026-05-15T12:02:00Z [abc12345] INFO  REPAIR_MODE attempt=1",
             ]
         ),
         encoding="utf-8",

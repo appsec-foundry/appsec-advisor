@@ -8,6 +8,23 @@
 ## Critical Attack Tree
 
 {{ data.intro }}
+{#- A wide tree (many sibling leaves) is split by the composer into an
+    overview diagram + one compact per-capability subtree diagram so each
+    fenced block stays readable. `blocks` carries pre-rendered mermaid source
+    (header + nodes + edges + classDefs). When the composer passes no blocks
+    (legacy callers), fall back to the single inline diagram below. -#}
+{%- if blocks %}
+{%- for b in blocks %}
+{%- if b.title %}
+
+**{{ b.title }}**
+{%- endif %}
+
+```mermaid
+{{ b.src }}
+```
+{%- endfor %}
+{%- else %}
 
 ```mermaid
 graph {{ data.mermaid.orientation }}
@@ -31,6 +48,7 @@ graph {{ data.mermaid.orientation }}
     classDef system fill:#1168BD,stroke:#0E5CA8,color:#fff
     classDef impact fill:#1b5e20,stroke:#0d3d10,color:#fff,stroke-width:2px
 ```
+{%- endif %}
 
 **Key takeaway:** {{ data.key_takeaway }}
 {%- if data.mitigation_breakpoints %}
@@ -40,9 +58,17 @@ graph {{ data.mermaid.orientation }}
 - {{ mb.mitigation | format_id_list }} — {{ mb.breaks }}
 {%- endfor %}
 {%- endif %}
+{#- Prefer the composer-derived `stages` (one row per capability subtree, with
+    mitigations resolved from the canonical mitigations[].threat_ids map) so the
+    table can never contradict the tree grouping or the YAML mitigation
+    mappings. Fall back to the fragment's LLM-authored `data.stages` only when
+    the composer could not derive a capability layer.
+    A blank line MUST separate the breakpoints list above from this table —
+    Markdown renderers do not parse a table glued to a preceding list item. -#}
+{%- set _stages = stages if (stages is defined and stages) else data.stages %}
 
 | Stage | Finding | Primary Mitigation |
 |-------|---------|--------------------|
-{%- for s in data.stages %}
+{%- for s in _stages %}
 | {{ s.stage }} | {{ s.findings | format_id_list }} | {{ s.mitigations | format_id_list }} |
 {%- endfor %}

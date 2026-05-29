@@ -1453,6 +1453,11 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
             "No defensive cluster currently rates above Weak",
         ]),
         ("mitigations", "Top Mitigations", [
+            # Post-2026-05-29 — numbered table with a dedicated Component
+            # column (label printed once per group, blank on continuation
+            # rows). Replaces the in-table divider-row form, which rendered
+            # the component label displaced in the `#`/ID column.
+            "| # | Priority | Component | Mitigation | Addresses | Effort |",
             # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
             # added so each data row carries an at-a-glance position; divider
             # rows continue to carry the component label in the first cell.
@@ -4385,7 +4390,20 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
             # whole-token match (so "JWT Authentication" matches
             # "7.2.1 JWT Authentication" but not "Old JWT Authentication
             # Was Replaced").
+            #
+            # Both sides must be markdown-normalized before comparison: the
+            # link text is already `_strip_md`-ed (line ~4373), but the
+            # heading comes raw from `_parse_subsections`. Without stripping
+            # the heading too, a control whose name contains a backtick-wrapped
+            # token (e.g. "WebSocket Event Bus (`Socket.IO`)", produced when
+            # apply_prose_fixes.py code-spans the token in BOTH the link and
+            # the heading) never matches — `_strip_md` removes the backticks
+            # from the link side only, so the comparison is asymmetric and the
+            # control_subsection_coverage gate raises a false positive that the
+            # re-render loop can never converge on.
             def _heading_matches(target: str, heading: str) -> bool:
+                target = _strip_md(target)
+                heading = _strip_md(heading)
                 if target == heading:
                     return True
                 # Allow `<number> <target>` form (e.g. `7.2.1 JWT Authentication`).

@@ -60,6 +60,8 @@ Jede Phase ist eigenständig wertvoll. Stop nach Phase A, nach dem B1-Pilot oder
 **Aufwand:** 0,5–1 Tag
 **Risiko:** niedrig
 
+**Status (2026-05-29):** `scripts/measure_run.py` + `tests/test_measure_run.py` existieren und sind grün — der Consolidator faltet `.stage-stats.jsonl`, `verify_run_costs.py --json` (cumulative-safe) und `.hook-events.log`-Signale in ein `.run-metrics.json`. Verifizierter Bugfix: `_read_hook_events` matchte nur `reason=`, der reale Emitter (`agent_logger.py:1684`) schreibt aber `stop_reason=` → die Stop-Grund-Metrik war auf echten Logs **immer leer**. Parser auf `(?:stop_)?reason=` erweitert, Test-Fixture auf das reale Log-Format umgestellt. Capture-Runbook: `docs/baselines/README.md`. **Offen (manuell, kostet je einen Run):** die 2-Repo-Baseline tatsächlich aufnehmen und unter `docs/baselines/` einchecken.
+
 **Was:** Vorhandene Telemetrie in eine reproduzierbare Run-Messung zusammenführen. Das ist **kein Greenfield-Parser**: Das Repo hat bereits `scripts/record_stage_stats.py`, `scripts/verify_run_costs.py`, `scripts/cost_running_total.py`, `.stage-stats.jsonl`, `.hook-events.log`, `SESSION_STOP` und `ASSESSMENT_TOKENS`.
 
 Die Baseline soll erfassen:

@@ -129,6 +129,26 @@ def _sync_component_threat_ids(components: list, changes: list[dict]) -> None:
             new["threat_ids"] = [tid]
 
 
+def _primary_component_id(components: list) -> str:
+    """Best-effort 'primary application component' — the one whose paths host
+    the server entrypoint. Used as the reassignment target for non-DFD
+    pseudo-component threats (Dockerfile / CI findings) whose evidence file
+    matches no component glob, so their §8 Component link resolves to a real
+    `#c-NN` anchor instead of dangling at `#ci-cd-pipeline`. Falls back to the
+    first component with an id."""
+    entry_re = re.compile(r"(?:^|/)(?:server|app|main|index)\.(?:ts|js)\b")
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        for g in (c.get("paths") or []):
+            if isinstance(g, str) and entry_re.search(g):
+                return (c.get("id") or "").strip()
+    for c in components:
+        if isinstance(c, dict) and (c.get("id") or "").strip():
+            return (c.get("id") or "").strip()
+    return ""
+
+
 def reclassify(data: dict) -> tuple[dict, list[dict]]:
     components = data.get("components") or []
     if not isinstance(components, list) or not components:
@@ -139,6 +159,8 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
     if not matchers:
         return data, []
     matcher_index = {cid: pats for cid, pats in matchers}
+    known_ids = {(c.get("id") or "").strip() for c in components if isinstance(c, dict)}
+    primary_id = _primary_component_id(components)
 
     changes: list[dict] = []
     threats = data.get("threats") or []
@@ -165,16 +187,34 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
                 if cid == current:
                     continue
                 candidate_hits[cid] = candidate_hits.get(cid, 0) + 1
-        if len(candidate_hits) != 1:
-            # 0 or 2+ candidates — too ambiguous to reassign deterministically.
+        if len(candidate_hits) == 1:
+            new_cid = next(iter(candidate_hits))
+            token = f"tier_reclassified_from_{current or 'unknown'}"
+        elif (
+            not candidate_hits
+            and current
+            and current not in known_ids
+            and primary_id
+            and primary_id != current
+        ):
+            # Fallback: `current` is a non-DFD pseudo-component (e.g.
+            # "ci-cd-pipeline") with no §2.3 anchor, and its evidence file
+            # (Dockerfile, .github/*) matches no component glob, so the
+            # candidate search above found nothing. Map it to the primary
+            # application component so the §8 Component link resolves to a real
+            # `#c-NN` anchor instead of dangling at `#ci-cd-pipeline`. This
+            # mirrors the existing behaviour for CI/Docker findings whose
+            # evidence DID glob-match a real component (e.g. server.ts).
+            new_cid = primary_id
+            token = f"pseudo_component_reassigned_from_{current}"
+        else:
+            # 0 or 2+ real candidates — too ambiguous to reassign.
             continue
-        new_cid = next(iter(candidate_hits))
         if t.get("component"):
             t["component"] = new_cid
         if t.get("component_id"):
             t["component_id"] = new_cid
         flags = list(t.get("evidence_flags") or [])
-        token = f"tier_reclassified_from_{current or 'unknown'}"
         if token not in flags:
             flags.append(token)
         t["evidence_flags"] = flags

@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ms-top-mitigations",
+  "description": "LLM curation of the Management-Summary Top-Mitigations leader-board. The composer always shows every Critical-covering mitigation (coverage floor); this fragment orders the most important ADDITIONAL mitigations up to the rows.max clamp. Optional — absence falls back to deterministic ordering.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["selected"],
+  "properties": {
+    "selected": {
+      "type": "array",
+      "description": "Ordered, most-important-first list of mitigation ids to surface beyond the Critical floor.",
+      "items": {
+        "type": "string",
+        "pattern": "^M-\\d{3,}$"
+      }
+    },
+    "rationale": {
+      "type": "string",
+      "description": "One-sentence reason the selected extras matter most. Rendered into the section intro. No id enumeration.",
+      "maxLength": 280
+    }
+  }
+}

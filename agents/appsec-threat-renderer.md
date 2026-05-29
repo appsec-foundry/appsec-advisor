@@ -94,9 +94,10 @@ That file is **not** a template to be rendered — it is the proven reference sh
 
 Author only the fragments that require LLM judgement or explicitly requested enrichment:
 
-- `.fragments/ms-verdict.json`
+- `.fragments/ms-verdict.json` — do NOT cite exact severity counts in the `opening` prose (e.g. "eight Critical and eleven High"); those drift from the real totals. The composer injects an authoritative deterministic `**Risk distribution:** 🔴 Critical: N · 🟠 High: M · …` line directly under the opening. Describe posture + consequence in words; let the injected line carry the numbers.
 - `.fragments/ms-architecture-assessment.json`
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
+- `.fragments/ms-top-mitigations.json` — curate the Management-Summary Top-Mitigations leader-board (see authoring contract below)
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - `.fragments/architecture-diagrams.md` and `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`
 
@@ -154,6 +155,26 @@ The Architecture Assessment renders as a 4-column table in §1: `Weakness catego
 5. **Findings list is curation, not exhaustion.** `findings[]` carries the 1-4 most representative findings per weakness (Critical/High preferred). It is NOT every finding routed to that category — those live in §8 Threat Register and §7 control-block trailers.
 
 Legacy fragments using the `defects[]` shape with `name`/`description`/`findings` (no `category`, no `affected_components`) are accepted as back-compat (composer aliases `name` → `category`) but new authoring MUST use the `weaknesses[]` shape with the four fields above.
+
+### `ms-top-mitigations.json` authoring contract
+
+The §1 Top-Mitigations table is a curated leader-board, not a blind top-N cut. You decide which mitigations are *most important to surface*, within hard guardrails the composer enforces:
+
+- **Coverage floor (composer-enforced, you cannot override):** every mitigation in `mitigations[]` whose `threat_ids` include a Critical finding is ALWAYS shown — you do not need to (and cannot) drop those. Do **not** list them; the composer adds them automatically and de-dupes.
+- **Your job:** pick the most important *additional* (typically P2 / High-severity) mitigations to fill the remaining slots up to the `rows.max` clamp (currently 10). Order them most-important-first. Choose by real-world leverage — how much High-severity exposure each removes, how many findings it covers, how broad the affected surface is — not by raw count.
+
+Schema (`schemas/fragments/ms-top-mitigations.schema.json`):
+
+```json
+{
+  "selected": ["M-007", "M-006", "M-010"],
+  "rationale": "one sentence on why these extras matter most"
+}
+```
+
+- `selected`: ordered M-NNN ids that exist in `mitigations[]`. Unknown / duplicate ids are dropped by the composer. You MAY include Critical-floor ids (they are harmless — de-duped) but it is cleaner to list only the extras.
+- `rationale`: ≤ 1 sentence, rendered into the section intro. No finding/threat id enumeration; describe the *theme* (e.g. "broad access-control, stored-XSS, and SSRF exposure").
+- Omit the fragment entirely (or at quick depth) → the composer falls back to deterministic extra-ordering (`_row_sort_key`). The Critical-floor still applies.
 
 ### `ms-critical-attack-tree.json` authoring contract
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -113,14 +114,18 @@ def _read_hook_events(output_dir: Path) -> dict[str, Any]:
     path = output_dir / ".hook-events.log"
     if not path.is_file():
         return {"present": False}
+    # The real emitter (agent_logger.py) writes "stop_reason=<r>" on SESSION_STOP
+    # lines; tolerate a bare "reason=" too. The \b before the optional "stop_"
+    # is a word boundary, so "reason=" never matches *inside* "stop_reason=".
+    reason_re = re.compile(r"\b(?:stop_)?reason=(\S+)")
     stop_reasons: dict[str, int] = {}
     retries = 0
     for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         if "SESSION_STOP" in raw:
-            for tok in raw.split():
-                if tok.startswith("reason="):
-                    reasons = tok.split("=", 1)[1]
-                    stop_reasons[reasons] = stop_reasons.get(reasons, 0) + 1
+            m = reason_re.search(raw)
+            if m:
+                reason = m.group(1)
+                stop_reasons[reason] = stop_reasons.get(reason, 0) + 1
         if "RETRY" in raw or "REPAIR_MODE" in raw:
             retries += 1
     return {

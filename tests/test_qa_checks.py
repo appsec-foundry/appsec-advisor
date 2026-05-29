@@ -332,6 +332,50 @@ def test_control_subsection_coverage_accepts_v2_shape(monkeypatch, tmp_path: Pat
     assert report.ok == 1
 
 
+def test_control_subsection_coverage_matches_code_spanned_control_name(monkeypatch, tmp_path: Path):
+    """Regression: a control whose name carries a backtick-wrapped token must
+    match between the `**Controls covered:**` link and its `####` heading.
+
+    apply_prose_fixes.py code-spans tokens like `Socket.IO` in BOTH the link
+    text and the heading. The link text is `_strip_md`-normalized before the
+    lookup, so the heading must be normalized identically — otherwise the
+    backtick-asymmetric comparison raises a false-positive
+    `control_subsection_coverage` failure the re-render loop cannot converge on.
+    """
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [WebSocket Event Bus (`Socket.IO`)](#websocket-event-bus-socketio).
+
+            **Implemented controls:** Socket.IO event bus.
+
+            **Assessment:** Partial.
+
+            #### WebSocket Event Bus (`Socket.IO`)
+
+            **Security assessment**
+
+            Present but not assessed.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_control_subsection_coverage(md, contract)
+
+    assert report.issues == []
+    assert report.ok == 1
+
+
 def test_relevant_findings_bullet_list_rejects_inline_form(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
