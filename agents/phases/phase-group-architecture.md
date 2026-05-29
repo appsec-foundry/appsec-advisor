@@ -1403,6 +1403,17 @@ Control categories: Identity and Authentication; Session and Token Controls; Aut
 
 Rate each: 🟢 Adequate | 🟡 Partial | 🟠 Weak | 🔴 Unsafe | 🔴 Missing — these tokens are the single source of truth, mirrored from `data/sections-contract.yaml → verdict_icons`. The legacy `✅/⚠️/🔶/❌` mapping is retired; do not emit those forms.
 
+**🔴 Unsafe vs 🔴 Missing — the decision that sets the remediation (mandatory).** The two red verdicts are NOT interchangeable, and choosing wrong misleads the reader about what to do:
+
+- **🔴 Unsafe** (`effectiveness: Unsafe`) — the control **exists in the code and is relied upon, but does not hold**: it is defeated or trivially bypassable. The remediation is to **FIX the existing control**. Use this for: an MD5/unsalted password hash, a raw-SQL query path that bypasses the ORM, a hardcoded JWT signing key, an `alg:none`-accepting JWT library, a parser configured with unsafe options (`noent:true`), an `includes()` path-containment check, an unconstrained `fetch(userURL)`. The control is there — it is wrong.
+- **🔴 Missing** (`effectiveness: Missing`) — the control **was never built**. The remediation is to **ADD the control**. Use this only for genuinely absent controls: no Content-Security-Policy header, no CSRF middleware, no schema-validation layer.
+
+When a category mixes the two, the §7.1 verdict shows **Unsafe** (a relied-upon-but-broken control is the more urgent headline). The architecture-coverage scan only emits `{partial, weak, missing, anti_pattern}`; promoting a `missing` coverage row to `Unsafe` is a deliberate judgement you make when the control is present-but-broken in the code you read — do it.
+
+**`status_note` (per control + per subcontrol).** For every `security_controls[]` row (and every `subcontrols[]` entry), populate a one-clause `status_note` — the bottom line that renders into the §7 H4 `**Status:**` badge (what holds, or what is defeated and how). For 🔴 rows the clause must make FIX-vs-ADD obvious.
+
+**Password lifecycle — ONE grouped mechanism row, not five.** Emit the password family as a SINGLE `Password-Based Authentication` row with `group_subcontrols: true` and a `subcontrols[]` list of lifecycle stages (`Login`, `Registration / Initial Password Set`, `Password Reset`, `Password Change`, `Password Storage`) — each stage carries its own `effectiveness`, `status_note`, and `relevant_findings`. Password Storage is a one-line cross-reference here; its deep dive stays in the §7.9 Cryptography row. `OAuth / Federated Login` and `Multi-Factor (TOTP)` remain their own rows (TOTP with `Enrollment` / `Verification` subcontrols). This renders as the grouped, bulleted §7.2 the renderer prompt describes — it does NOT contradict "one row per mechanism": the password lifecycle is ONE mechanism whose stages are subcontrols, not five peer mechanisms.
+
 **IAM domain — auth-mechanism coverage rule (Sprint 2C / M3.5; generalised post-2026-05).** The IAM domain MUST emit one `security_controls[]` entry **per discovered authentication mechanism** — *not* a single aggregate row. A mechanism is "discovered" when one of recon §7.1 (Auth & session), §7.9 (OAuth/OIDC), §7.24 (Client-side routing & auth guards), or §7.31 (Service-to-Service & Cloud-IAM Authentication) lists evidence for it. Frontend-only flows (e.g. a Google OAuth client component without server callback) STILL count.
 
 The catalog MUST emit one row per detected mechanism from the union of these tables:

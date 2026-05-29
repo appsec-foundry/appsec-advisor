@@ -4789,6 +4789,168 @@ def _friendly_subcontrol_title(name: str) -> str:
     return _FRIENDLY_SUBCONTROL_TITLE.get(cleaned, cleaned)
 
 
+_V2_STATUS_TOKENS = {
+    "adequate": "🟢 Adequate",
+    "partial": "🟡 Partial",
+    "weak": "🟠 Weak",
+    "unsafe": "🔴 Unsafe",
+    "missing": "🔴 Missing",
+    "not_applicable": "—",
+    "na": "—",
+    "n/a": "—",
+}
+
+
+def _v2_status_line(eff: str, note: str = "") -> str:
+    """Build the per-sub-control `**Status:**` badge line for §7 H4 blocks.
+
+    The badge is the reader's at-a-glance verdict — it answers "is this
+    sub-control a positive or a negative finding?" without making them read
+    the whole assessment. `eff` is the control/subcontrol effectiveness;
+    `note` is an optional one-clause bottom line.
+
+      * `eff` unknown  → the LLM fills the whole line (icon + clause).
+      * `eff` known, no note → the LLM fills only the trailing clause.
+      * `eff` + note → fully deterministic.
+
+    The line is placed immediately under the H4 heading; `check_section7_h4_
+    positive_intro` skips a leading `**Status:**` line so the positive intro
+    paragraph that follows is still the one validated.
+    """
+    token = _V2_STATUS_TOKENS.get((eff or "").strip().lower())
+    if not token:
+        return (
+            "**Status:** <!-- NARRATIVE_PLACEHOLDER: choose one of "
+            "`🟢 Adequate` / `🟡 Partial` / `🟠 Weak` / `🔴 Unsafe` / "
+            "`🔴 Missing`, then add one clause stating the bottom line. "
+            "present-but-broken → Unsafe; never-built → Missing. -->"
+        )
+    if note:
+        return f"**Status:** {token} — {note}"
+    return (
+        f"**Status:** {token} — <!-- NARRATIVE_PLACEHOLDER: one clause — the "
+        f"bottom line for this sub-control (what holds, or what is defeated "
+        f"and how). -->"
+    )
+
+
+def _v2_lifecycle_bullets(subs: list, threats: list, heading: str) -> list[str]:
+    """Render a grouped control's lifecycle stages as scannable bullets.
+
+    Each stage bullet leads with the stage name in bold, its own Status
+    token, a one-clause note, and the routed finding links — so a reader
+    sees every stage's verdict in one pass before the prose assessment.
+    """
+    out: list[str] = []
+    for sub in subs[:9]:
+        name = (sub.get("title") or sub.get("name") or "Stage").strip()
+        eff = (sub.get("effectiveness") or sub.get("status") or "").strip().lower()
+        token = _V2_STATUS_TOKENS.get(eff, "")
+        note = (sub.get("status_note") or sub.get("assessment") or "").strip()
+        # Keep the bullet to a single clause — full prose belongs in the
+        # control-level Security assessment block below the bullets.
+        if note:
+            note = note.split(". ")[0].rstrip(".") + "."
+        raw_findings = sub.get("relevant_findings") or []
+        if isinstance(raw_findings, str):
+            raw_findings = [raw_findings]
+        flinks = []
+        for entry in raw_findings[:4]:
+            tid = entry.get("id") if isinstance(entry, dict) else entry
+            if isinstance(tid, str) and tid.strip():
+                fid = _to_canonical_finding_label(tid)
+                flinks.append(f"[{fid}](#{fid.lower()})")
+        tail = f" → {', '.join(flinks)}" if flinks else ""
+        prefix = f"**{name}** — {token}." if token else f"**{name}** —"
+        body = f" {note}" if note else (
+            " <!-- NARRATIVE_PLACEHOLDER: one clause: what this stage does / "
+            "where it breaks. -->"
+        )
+        out.append(f"- {prefix}{body}{tail}")
+    return out
+
+
+def _emit_v2_grouped_control(lines: list, c: dict, subs: list, threats: list,
+                             heading: str, section_id: str = "", idx: int = 0) -> None:
+    """Emit ONE H4 that folds a control's lifecycle stages into bullets.
+
+    Used when a `security_controls[]` row sets `group_subcontrols: true`
+    (or `kind: lifecycle`) — e.g. "Password-Based Authentication" with its
+    Login / Registration / Reset / Change / Storage stages. The stages
+    render as a bulleted lifecycle under one heading rather than as peer
+    H4s, which is the structure the `auth_method_decomposition` gate itself
+    recommends (fold aspects as bullets, not peer headings) and which keeps
+    the shared root cause (one hashing primitive, one query path) visible in
+    one place.
+    """
+    name = (c.get("control") or c.get("name") or c.get("domain") or "Control").strip()
+    title = _friendly_subcontrol_title(name)
+    if section_id and idx:
+        for slug in sorted({_v2_slug(name), _v2_slug(title)}):
+            lines.append(f'<a id="{slug}"></a>')
+        lines.append(f"#### {section_id}.{idx} {title}")
+    else:
+        lines.append(f"#### {title}")
+    lines.append("")
+    lines.append(_v2_status_line(
+        (c.get("effectiveness") or "").strip(),
+        (c.get("effectiveness_reason") or c.get("status_note") or "").strip(),
+    ))
+    lines.append("")
+    impl = (c.get("implementation") or "").strip()
+    if impl:
+        lines.append(impl)
+    else:
+        lines.append(
+            "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences naming the shared "
+            "mechanism this control family routes through (e.g. one hashing "
+            "primitive, one query path) — POSITIVE-CASE, no gaps yet. The "
+            "lifecycle bullets below carry the per-stage verdicts. -->"
+        )
+    lines.append("")
+    bullets = _v2_lifecycle_bullets(subs, threats, heading)
+    if bullets:
+        lines.extend(bullets)
+        lines.append("")
+    lines.append("**Security assessment**")
+    lines.append("")
+    assess = (c.get("assessment") or "").strip()
+    if assess:
+        lines.append(assess)
+    else:
+        lines.append(
+            "<!-- NARRATIVE_PLACEHOLDER: 2-4 sentences (or a short bullet "
+            "list when there are ≥2 discrete weaknesses). Name the shared "
+            "root cause and the most important code paths with file:line "
+            "evidence. The per-stage detail is in the bullets above. -->"
+        )
+    lines.append("")
+    lines.append("**Relevant findings**")
+    lines.append("")
+    # Aggregate findings across stages, de-duplicated, preserving order.
+    seen: set[str] = set()
+    agg: list[str] = []
+    for sub in subs:
+        raw = sub.get("relevant_findings") or []
+        if isinstance(raw, str):
+            raw = [raw]
+        for entry in raw:
+            tid = entry.get("id") if isinstance(entry, dict) else entry
+            if isinstance(tid, str) and tid.strip():
+                fid = _to_canonical_finding_label(tid)
+                if fid not in seen:
+                    seen.add(fid)
+                    agg.append(f"[{fid}](#{fid.lower()})")
+    if not agg:
+        agg = _v2_finding_links(threats, heading, max_links=4)
+    if agg:
+        for link in agg:
+            lines.append(f"- {link}")
+    else:
+        lines.append("- No dedicated finding routed in this assessment.")
+    lines.append("")
+
+
 def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: str,
                               section_id: str = "", idx: int = 0) -> None:
     """Emit one §7.x #### block from a `security_controls[].subcontrols[]` entry.
@@ -4831,6 +4993,11 @@ def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: st
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
         lines.append(f"#### {title}")
+    lines.append("")
+    lines.append(_v2_status_line(
+        (sub.get("effectiveness") or sub.get("status") or "").strip(),
+        (sub.get("status_note") or sub.get("effectiveness_reason") or "").strip(),
+    ))
     lines.append("")
     impl = (sub.get("implementation") or "").strip()
     if impl:
@@ -4982,6 +5149,11 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
     else:
         lines.append(f"#### {title}")
     lines.append("")
+    lines.append(_v2_status_line(
+        eff,
+        (c.get("effectiveness_reason") or c.get("status_note") or "").strip(),
+    ))
+    lines.append("")
     if impl_text:
         # Stage 1 supplied an implementation paragraph — use it verbatim;
         # the LLM does not need to author a placeholder.
@@ -5071,6 +5243,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     n_adequate = eff_counts.get("adequate", 0)
     n_partial = eff_counts.get("partial", 0)
     n_weak = eff_counts.get("weak", 0)
+    n_unsafe = eff_counts.get("unsafe", 0)
     n_missing = eff_counts.get("missing", 0)
 
     threats_by_section: dict[str, list[dict]] = {}
@@ -5091,8 +5264,35 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     lines.append(
         f"_§7 schema v2 (13-section control-category layout). Cataloged "
         f"controls: {len(controls)} total — {n_adequate} adequate, "
-        f"{n_partial} partial, {n_weak} weak, {n_missing} missing. "
-        f"Linked threats: {len(threats)}._"
+        f"{n_partial} partial, {n_weak} weak, {n_unsafe} unsafe, "
+        f"{n_missing} missing. Linked threats: {len(threats)}._"
+    )
+    lines.append("")
+    # Verdict legend — the two red verdicts are not interchangeable, and the
+    # distinction tells the reader whether to FIX an existing control or ADD a
+    # new one. Emitted once, deterministically, so every §7 reader has the key.
+    lines.append(
+        "**How to read the verdicts.** Every control category (and every "
+        "sub-control below it) carries exactly one status. The two red "
+        "verdicts do **not** mean the same thing — this is the distinction "
+        "that decides what you have to do about a finding:"
+    )
+    lines.append("")
+    lines.append("| Status | Meaning | What it asks of you |")
+    lines.append("|---|---|---|")
+    lines.append("| 🟢 Adequate | Control is present and sound | Nothing — keep it |")
+    lines.append("| 🟡 Partial | Present, but with meaningful gaps | Close the gap |")
+    lines.append("| 🟠 Weak | Present, but has exploitable gaps | Strengthen it |")
+    lines.append("| 🔴 Unsafe | **Present and relied upon, but defeated / trivially bypassable** | **Fix the existing control** |")
+    lines.append("| 🔴 Missing | **Control was never built** | **Add the control** |")
+    lines.append("| — | Not applicable to this codebase | — |")
+    lines.append("")
+    lines.append(
+        "So \"🔴 Unsafe\" on a control category does *not* mean the control is "
+        "absent — it means the control exists but does not hold (e.g. an MD5 "
+        "password hash, a raw-SQL query path, a hardcoded signing key). \"🔴 "
+        "Missing\" is reserved for controls that were never built (e.g. no "
+        "Content-Security-Policy header)."
     )
     lines.append("")
 
@@ -5111,7 +5311,11 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     for h in overview_rows:
         matched_controls = _v2_controls_for_heading(controls, h)
         routed = threats_by_section.get(h) or []
-        if any((c.get("effectiveness") or "").lower() == "missing" for c in matched_controls):
+        if any((c.get("effectiveness") or "").lower() == "unsafe" for c in matched_controls):
+            # Present-but-broken takes the headline over absent: a control the
+            # app relies on but that does not hold is the more urgent message.
+            verdict = "🔴 Unsafe"
+        elif any((c.get("effectiveness") or "").lower() == "missing" for c in matched_controls):
             verdict = "🔴 Missing"
         elif any((c.get("effectiveness") or "").lower() == "weak" for c in matched_controls) or routed:
             verdict = "🟠 Weak"
@@ -5139,7 +5343,15 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         example_clause = (
             f" (e.g. {', '.join(control_names)})" if control_names else ""
         )
-        if verdict.startswith("🔴 Missing"):
+        if verdict.startswith("🔴 Unsafe"):
+            if n_routed:
+                reason = (
+                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; "
+                    f"catalogued controls are present but defeated{example_clause}."
+                )
+            else:
+                reason = f"Catalogued controls are present but defeated{example_clause}."
+        elif verdict.startswith("🔴 Missing"):
             reason = (
                 f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no controls catalogued for this category."
                 if n_routed
@@ -5316,7 +5528,17 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 # False to signal H4 suppression (effectiveness=Missing AND
                 # no linked threats — nothing meaningful to anchor).
                 subs = c.get("subcontrols") or []
-                if subs:
+                grouped = bool(c.get("group_subcontrols")) or (c.get("kind") or "").strip().lower() == "lifecycle"
+                if subs and grouped:
+                    # Fold the lifecycle stages into ONE H4 with bulleted
+                    # sub-points (e.g. Password-Based Authentication →
+                    # Login / Registration / Reset / Change / Storage).
+                    h4_idx += 1
+                    _emit_v2_grouped_control(
+                        lines, c, subs, threats, heading,
+                        section_id=section_id, idx=h4_idx,
+                    )
+                elif subs:
                     for sub in subs[:9]:
                         h4_idx += 1
                         _emit_v2_subcontrol_block(
@@ -5372,6 +5594,8 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             for slug in sorted({_v2_slug(default_mech_raw), _v2_slug(default_mech)}):
                 lines.append(f'<a id="{slug}"></a>')
             lines.append(f"#### {section_id}.1 {default_mech}")
+            lines.append("")
+            lines.append(_v2_status_line(""))
             lines.append("")
             lines.append(
                 "<!-- NARRATIVE_PLACEHOLDER: 1-2 sentences in plain language. "

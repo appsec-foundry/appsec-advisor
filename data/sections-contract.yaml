@@ -217,7 +217,8 @@ effectiveness_taxonomy:
   adequate: { emoji: "✅", label: "Adequate", rank: 0 }
   partial:  { emoji: "⚠️", label: "Partial",  rank: 1 }
   weak:     { emoji: "🔶", label: "Weak",     rank: 2 }
-  missing:  { emoji: "❌", label: "Missing",  rank: 3 }
+  unsafe:   { emoji: "⛔", label: "Unsafe",   rank: 3 }
+  missing:  { emoji: "❌", label: "Missing",  rank: 4 }
 
 # ---------------------------------------------------------------------------
 # Per-section contracts
@@ -249,6 +250,20 @@ effectiveness_taxonomy:
 # reference-style 🔴/🟠/🟡/🟢 set because it provides four distinct hue steps
 # (severity-graded) instead of three icons + one checkmark.
 # ---------------------------------------------------------------------------
+# Verdict semantics — the two red verdicts are NOT interchangeable, and the
+# distinction decides the remediation the reader must take:
+#   🟢 adequate       — control present and sound (nothing to do)
+#   🟡 partial        — control present, meaningful gaps remain (close the gap)
+#   🟠 weak           — control present, has exploitable gaps (strengthen it)
+#   🔴 unsafe         — control present and relied upon, but defeated /
+#                       trivially bypassable → FIX THE EXISTING CONTROL
+#   🔴 missing        — control was never built → ADD THE CONTROL
+#   — not_applicable  — control category does not apply to this codebase
+# "Unsafe" must be used (not "Missing") whenever the control exists in the
+# code but does not hold — e.g. an MD5 password hash, a raw-SQL query layer,
+# a hardcoded JWT signing key, a parser configured with unsafe options.
+# Reserve "Missing" for controls that are genuinely absent (no CSP header,
+# no CSRF middleware, no schema-validation layer).
 verdict_icons:
   adequate:        "🟢 Adequate"
   partial:         "🟡 Partial"
@@ -1307,6 +1322,12 @@ sections:
               - "user registration"
               - "password login"
               - "password-based login"
+              # Grouped form — when the password lifecycle (login, reset,
+              # change, registration, storage) is folded under ONE heading
+              # with the stages as bullets (preferred for clarity), the
+              # heading reads "Password-Based Authentication".
+              - "password authentication"
+              - "password-based authentication"
               - "password reset"
               - "password change"
               - "change password"

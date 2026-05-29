@@ -29,8 +29,8 @@
           },
           "effectiveness": {
             "type": "string",
-            "enum": ["Adequate", "Partial", "Weak", "Missing"],
-            "description": "Implementation/effectiveness rating. Adequate = good; Partial = covers some surfaces; Weak = present but flawed (e.g. RS256 with hardcoded key); Missing = control absent."
+            "enum": ["Adequate", "Partial", "Weak", "Unsafe", "Missing"],
+            "description": "Implementation/effectiveness rating. Adequate = present and sound; Partial = covers some surfaces, meaningful gaps remain; Weak = present but has exploitable gaps; Unsafe = present and relied upon but defeated / trivially bypassable (FIX the existing control); Missing = control was never built (ADD the control). Unsafe vs Missing is the distinction that decides the remediation."
           },
           "kind": {
             "type": "string",
@@ -51,6 +51,31 @@
             "type": ["string", "null"],
             "pattern": "^ARCH-[A-Z]+-\\d{3}$",
             "description": "Optional link to .architecture-coverage.json[rules_evaluated][].rule_id for traceability."
+          },
+          "status_note": {
+            "type": ["string", "null"],
+            "description": "Optional one-clause bottom line rendered into the §7 H4 `**Status:**` badge. When absent the renderer authors it from `effectiveness` + `assessment`."
+          },
+          "group_subcontrols": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true (or kind=='lifecycle'), the control's subcontrols[] render as a bulleted lifecycle under ONE §7 H4 (e.g. 'Password-Based Authentication' → Login / Registration / Reset / Change / Storage) instead of one H4 per subcontrol."
+          },
+          "subcontrols": {
+            "type": "array",
+            "description": "Optional lifecycle/flow stages of this control. Each carries its own title, effectiveness, status_note, and relevant_findings[]. Rendered grouped (when group_subcontrols) or as peer H4 blocks.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "title": {"type": "string"},
+                "effectiveness": {"type": "string", "enum": ["Adequate", "Partial", "Weak", "Unsafe", "Missing"]},
+                "status_note": {"type": ["string", "null"]},
+                "assessment": {"type": ["string", "null"]},
+                "implementation": {"type": ["string", "null"]},
+                "relevant_findings": {"type": "array", "items": {"type": ["string", "object"]}}
+              }
+            }
           }
         }
       }

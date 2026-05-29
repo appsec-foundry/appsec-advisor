@@ -178,116 +178,44 @@ The report shows the architecture diagram, trust boundaries, STRIDE findings, ev
 Example security posture diagram from the report:
 
 ```mermaid
-%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%
-flowchart LR
-    subgraph ACTORS[" "]
-        direction TB
-        HDR_A["<b>Threat Actors</b>"]:::columnHeader
-        SHOPUSER(["fa:fa-user Shop User<br/><i>legitimate customer; target of CSRF</i>"]):::actorShopUser
-        ANON(["fa:fa-user-secret Anonymous Internet Attacker<br/><i>no account; registers in seconds when needed</i>"]):::actorAnon
-        INTERNET_USER(["fa:fa-user-secret Authenticated Internet Attacker<br/><i>owns a regular account; logged in</i>"]):::actorAnon
-        REPO_READ(["fa:fa-user-secret Internal Developer<br/><i>developer with source-repository access</i>"]):::actorAnon
+flowchart TB
+    ANON["fa:fa-user-secret Anonymous<br/>Internet Attacker"]:::ext
+    USER["fa:fa-user Shop User<br/>(victim)"]:::ext
+    REPO["fa:fa-code-branch Public Source Repo<br/><i>hardcoded RSA key · HMAC · cookie secret</i>"]:::ext
+
+    subgraph CLIENT["Client Tier — browser"]
+        SPA["C-02 · Angular SPA"]:::comp
     end
-
-    subgraph TIERS[" "]
-        direction TB
-        HDR_T["<b>Architecture Tiers</b>"]:::columnHeader
-        BROWSER["fa:fa-window-restore Client Tier (angular-spa) · 7 findings<br/>🔴 Multiple XSS / CSP Issues<br/>🟠 Sensitive Data Exposure"]:::tierClient
-        SERVER["fa:fa-server Application Tier (data-layer, express-backend, file-upload-service, +2 more) · 27 findings<br/>🔴 Multiple Injections (e.g. SQLi)<br/>🔴 Multiple Authorization Gaps (e.g. privilege)<br/>🔴 Weak Cryptography<br/>🔴 Broken Authentication<br/>+3 more (see §8)"]:::tierApp
-        DATA["fa:fa-database Data Tier (data-layer) · 1 findings<br/>🔴 Sensitive Data Exposure"]:::tierData
-    end
-
-    subgraph IMPACT[" "]
-        direction TB
-        HDR_I["<b>Impact</b>"]:::columnHeader
-        CUSTOMER_SESSION_HIJACK[["🟠 Customer Session Hijack"]]:::impact
-        FULL_ADMIN_TAKEOVER[["🔴 Full Admin Takeover"]]:::impact
-        FULL_SERVER_COMPROMISE[["🔴 Full Server Compromise"]]:::impact
-        CUSTOMER_DATA_EXFILTRATION[["🔴 Customer Data Exfiltration"]]:::impact
-    end
-
-    %% Invisible alignment hints. Two purposes:
-    %%   (a) keep the per-component alignment edges (e.g. SHOPUSER --- BROWSER,
-    %%       ANON --- SERVER) so attack arrows route horizontally without
-    %%       crossing tier boxes;
-    %%   (b) chain the three column headers (HDR_A, HDR_T, HDR_I) across
-    %%       subgraph boundaries so ELK pins them on the same Y line.
-    HDR_A --- HDR_T
-    HDR_T --- HDR_I
-    SHOPUSER --- BROWSER
-    ANON --- SERVER
-
-    %% Attack arrows
-    ANON ==>|" ① Injection "| SERVER
-    REPO_READ ==>|" ② Auth Bypass "| SERVER
-    ANON ==>|" ③ Privilege Escalation "| SERVER
-    ANON ==>|" ④ Secret Exposure "| SERVER
-    INTERNET_USER ==>|" ⑤ RCE "| SERVER
-    INTERNET_USER ==>|" ⑥ XSS "| BROWSER
-    ANON ==>|" ⑦ CSRF "| BROWSER
-
-    %% Relay arrows (client tier → victim; delivery half of victim-targeting paths)
-    BROWSER ==>|" ⑦ CSRF "| SHOPUSER
-
-    %% Consequence arrows (tier → business impact, all LR-forward)
-    SERVER -.-> CUSTOMER_DATA_EXFILTRATION
-    SERVER -.-> FULL_ADMIN_TAKEOVER
-    SERVER -.-> CUSTOMER_SESSION_HIJACK
-    SERVER -.-> FULL_SERVER_COMPROMISE
-    BROWSER -.-> CUSTOMER_SESSION_HIJACK
-
-    %% Subgraph frames invisible - column headers are emitted as the
-    %% FIRST node of each subgraph (HDR_A / HDR_T / HDR_I) and pinned
-    %% on the same Y line by the cross-subgraph alignment edges above.
-    style ACTORS fill:none,stroke:none
-    style TIERS  fill:none,stroke:none
-    style IMPACT fill:none,stroke:none
-
-    classDef tierClient fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
-    classDef tierApp    fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
-    classDef tierData   fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
-
-    classDef actorAnon     fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px,font-size:12px
-    classDef actorShopUser fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:2px,font-size:12px
-    classDef impact        fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:12px
-
-    classDef columnHeader  fill:none,stroke:none,color:#111,font-size:14px
-
-    linkStyle 0,1,2,3     stroke:transparent,stroke-width:0px
-    linkStyle 4,5,6,7,8,9,10,11     stroke:#b71c1c,stroke-width:3px
-    linkStyle 12,13,14,15,16     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
-
-```
-Example component diagram from the report:
-```mermaid
-flowchart TD
-    subgraph EXT["Untrusted Zone - Internet"]
-        INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
-        VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
-        REPO_READ["fa:fa-user-secret Internal Developer"]:::threat
-    end
-    subgraph CLIENT["Client Tier"]
-        angular_spa["fa:fa-window-restore angular-spa Angular SPA Frontend<br/><i>7 threats</i>"]:::risk
-    end
-    subgraph APP["Application Tier"]
-        express_backend["fa:fa-server express-backend Express Backend API<br/>+ file-upload-service + b2b-api + ci-cd-pipeline<br/><i>13 threats</i>"]:::risk
+    subgraph APP["Application Tier — Node / Express"]
+        API["C-01 · Express Backend API"]:::comp
+        B2B["C-05 · B2B Order API"]:::comp
+        UP["C-04 · File Upload &amp; Static Files"]:::comp
     end
     subgraph DATA["Data Tier"]
-        data_layer[("fa:fa-database data-layer Data Layer (SQLite + MarsDB)<br/><i>3 threats</i>")]:::risk
+        DB["C-03 · SQLite + MarsDB"]:::comp
+        FS["Filesystem<br/>FTP · key · log dirs"]:::comp
     end
-    VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
-    angular_spa -->|"REST · JWT Bearer"| express_backend
-    express_backend -->|"ORM · queries"| data_layer
-    INTERNET_ANON -.->|"injection · auth bypass · RCE"| express_backend
-    INTERNET_ANON -.->|"XSS · client tampering · token theft"| angular_spa
-    REPO_READ -.->|"leaked credentials · auth bypass"| express_backend
 
-    classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
-    classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
-    classDef external fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px
-    classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
-    linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
-    linkStyle 3,4,5 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
+    USER --> SPA
+    SPA -->|authenticated API calls| API
+    REPO ==>|"② forge admin JWT"| API
+    ANON ==>|"③ RCE via eval"| B2B
+    ANON ==>|"④ broken authZ / IDOR"| API
+    ANON ==>|"⑤ XXE · SSRF · ZIP-slip"| UP
+    ANON ==>|"⑦ browse secret files"| FS
+    ANON ==>|"⑧ CSRF (CORS *)"| API
+    API ==>|"① SQL / NoSQL injection"| DB
+    API ==>|"⑥ unescaped HTML"| SPA
+    SPA ==>|"⑥ XSS executes / steals token"| USER
+    UP -->|reads / writes| FS
+
+    style CLIENT fill:none,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
+    style APP fill:none,stroke:#b71c1c,stroke-width:2px,stroke-dasharray:5
+    style DATA fill:none,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
+    classDef comp fill:#eef2f7,stroke:#334155,color:#0f172a,stroke-width:1.5px
+    classDef ext  fill:#ffffff,stroke:#94a3b8,color:#334155,stroke-width:1.5px
+    linkStyle 0,1,11 stroke:#6b7280,stroke-width:1.5px
+    linkStyle 2,3,4,5,6,7,8,9,10 stroke:#b71c1c,stroke-width:2.5px
 ```
 
 ## What it checks

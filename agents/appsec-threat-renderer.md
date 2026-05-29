@@ -286,15 +286,20 @@ Each `### 7.2` through `### 7.12` block uses this exact section-level structure:
 
 **§7.2/§7.3 topology — authoritative.** §7.2 enumerates authentication **flows** (the ways identity is established); §7.3 traces the **session token lifecycle** that follows every successful flow. JWT-handling sub-sections belong in §7.3 (not §7.2), because the token in this codebase is the local session token regardless of which §7.2 flow issued it. OAuth here is a frontend identity hint terminating in local login — it does NOT consume an IdP-issued id_token — so JWT Issuance / Verification are NOT subordinate to OAuth.
 
-The canonical §7.2 sub-sections (and their numbering) are:
+The canonical §7.2 sub-sections group authentication by **factor**, so the reader sees at a glance *where* authentication is broken (the knowledge factor) and *what* holds (the possession factor). Do NOT emit one flat H4 per password flow — fold the password lifecycle into ONE grouped sub-control with the stages as bullets:
 
-- `7.2.1 User Registration`
-- `7.2.2 Password-Based Login`
-- `7.2.3 Social Login Adapter (OAuth / OIDC)` — or `7.2.3 OAuth Login Adapter` when no OIDC is configured
-- `7.2.4 Multi-Factor Enrollment (TOTP)` — split from the previous combined TOTP block
-- `7.2.5 Multi-Factor Verification (TOTP)`
-- `7.2.6 Password Reset`
-- `7.2.7 Password Change`
+- `7.2.1 Password-Based Authentication` — the knowledge factor. ONE H4 covering the whole password lifecycle. After the Status badge and a positive intro that names the shared root-cause sink(s) (e.g. one hashing primitive + one query path), render the stages as a **bulleted lifecycle**, one bullet per stage, each led by the stage name in bold + its own status token + a one-clause note + its finding links:
+  - **Login** — verifies the credential
+  - **Registration / Initial Password Set** — sets the credential
+  - **Password Reset** — recovers the credential
+  - **Password Change** — rotates the credential
+  - **Password Storage** — persists the credential (one-line + cross-link to `§7.9.2 Password Storage`; the deep dive stays in §7.9, not duplicated here)
+- `7.2.2 Federated / Social Login (OAuth)` — or `OAuth Login Adapter` when it is a frontend adapter terminating in local login
+- `7.2.3 Multi-Factor Authentication (TOTP)` — the possession factor. ONE H4; render `Enrollment` and `Verification` as two bullets, each with its own status token (enrollment is often 🟢 Adequate while the overall control is 🟡 Partial because TOTP is optional / not enforced for admins).
+
+This grouping is the structure the `auth_method_decomposition` QA gate itself recommends ("fold aspects … as bullets, not as peer headings"). The grouped headings are whitelisted (`password-based authentication`, `oauth`, `totp`). When a `security_controls[]` row sets `group_subcontrols: true` (or `kind: lifecycle`), the pregenerator emits this grouped shape for you — fill the bullets and the control-level Security assessment.
+
+If you must fall back to flat per-flow H4s (e.g. the controls catalog did not group them), the legacy flat names remain valid: `User Registration`, `Password-Based Login`, `Social Login Adapter (OAuth / OIDC)`, `Multi-Factor Enrollment (TOTP)`, `Multi-Factor Verification (TOTP)`, `Password Reset`, `Password Change`.
 
 The canonical §7.3 sub-sections (lifecycle order) are:
 
@@ -313,6 +318,8 @@ The §7.2 Assessment paragraph MUST close with a one-sentence handoff that names
 > *Each successful flow above terminates in the server issuing a session token; the signing, validation, propagation, storage, and lifecycle of that token are described in [§7.3 Session and Token Controls](#73-session-and-token-controls).*
 
 Every H4 subcontrol MUST contain these elements, in this order:
+
+0. **Status badge (REQUIRED)** — the FIRST line under the `#### 7.X.Y …` heading, before the intro paragraph: `**Status:** <icon> <word> — <one clause>`. Use the verdict vocabulary (`🟢 Adequate` / `🟡 Partial` / `🟠 Weak` / `🔴 Unsafe` / `🔴 Missing`); pick the icon from the control's `effectiveness`. The trailing clause is the bottom line — what holds, or what is defeated and how — so the reader gets the verdict before reading the assessment. For the two red verdicts the clause MUST make the remediation obvious: **Unsafe** = the control exists but is defeated/bypassable (FIX the existing control); **Missing** = the control was never built (ADD it). Never tag a present-but-broken control "Missing" — an MD5 hash, a raw-SQL query path, a hardcoded signing key, or a parser with unsafe options is **Unsafe**, not Missing. The pregenerator emits this line (deterministically from `effectiveness`); keep it and fill any placeholder clause.
 
 1. **Positive-case intro paragraph (REQUIRED)** — 1-3 sentences describing how this control actually works in THIS codebase: which routes or components are involved, which library performs the operation, what the intended successful flow is. NEVER start with the attack or the missing protection. The reader uses this paragraph to understand the mechanism BEFORE reading the security assessment below.
 

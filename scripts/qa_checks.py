@@ -2830,6 +2830,13 @@ def check_section7_h4_positive_intro(md_path: Path) -> Report:
                 break
             if ls.startswith("**Security assessment") or ls.startswith("**Relevant findings"):
                 break
+            # A `**Status:**` badge line is metadata, not the intro prose —
+            # it sits directly under the H4 heading. Skip it so the positive
+            # intro paragraph that follows is the one validated.
+            if ls.startswith("**Status:"):
+                if intro_lines:
+                    break
+                continue
             # An HTML comment is not prose — keep scanning.
             if ls.startswith("<!--"):
                 if intro_lines:
@@ -2862,6 +2869,44 @@ def check_section7_h4_positive_intro(md_path: Path) -> Report:
                     f"what the control IS, not what is missing."
                 )
                 break
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
+def check_section7_h4_status(md_path: Path) -> Report:
+    """Every §7 H4 sub-control carries a `**Status:**` verdict badge.
+
+    The badge (`**Status:** 🟢/🟡/🟠/🔴 <word> — <one clause>`) is the
+    reader's at-a-glance signal of whether a sub-control is a positive or a
+    negative finding, and — for the two red verdicts — whether the control
+    must be FIXED (Unsafe: present but defeated) or ADDED (Missing: never
+    built). The pregenerator emits it deterministically under each H4; this
+    check flags any sub-control that lost it during Stage-2 enrichment.
+    Warning-level: a missing badge degrades scannability but does not corrupt
+    the document, so it should not hard-fail an otherwise valid render.
+    """
+    report = Report(check="section7_h4_status")
+    if not md_path.is_file():
+        report.issues.append(f"file not found: {md_path}")
+        return report
+    text = md_path.read_text(encoding="utf-8")
+    section, start_line = _extract_section7(text)
+    if not section:
+        report.ok = 1
+        return report
+    for title, body, h4_line in _walk_h4_blocks(section):
+        stripped_body = _strip_code_fences(body)
+        has_status = any(
+            line.strip().startswith("**Status:") for line in stripped_body.splitlines()
+        )
+        if not has_status:
+            absolute_line = start_line + h4_line - 1
+            report.warnings.append(
+                f"§7 #### {title} (line {absolute_line}) — missing "
+                f"`**Status:**` verdict badge. Open every sub-control with "
+                f"`**Status:** <icon> <word> — <one clause>` so the reader "
+                f"sees the verdict (and FIX-vs-ADD for red) before the prose."
+            )
     report.ok = 1 if not report.issues else 0
     return report
 
@@ -3230,6 +3275,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # that the pre-existing structural checks did not catch.
     section7_placeholders_report = check_section7_narrative_placeholders(md)
     section7_h4_intro_report = check_section7_h4_positive_intro(md)
+    section7_h4_status_report = check_section7_h4_status(md)
     section7_fence_intro_report = check_section7_fence_intro_sentence(md)
     section7_finding_dup_report = check_section7_finding_link_duplicate(md)
     section7_finding_sem_report = check_section7_finding_reference_semantic(md)
@@ -3281,6 +3327,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "ai_padding_phrases": ai_padding_report.as_dict(),
         "section7_narrative_placeholders": section7_placeholders_report.as_dict(),
         "section7_h4_positive_intro": section7_h4_intro_report.as_dict(),
+        "section7_h4_status": section7_h4_status_report.as_dict(),
         "section7_fence_intro_sentence": section7_fence_intro_report.as_dict(),
         "section7_finding_link_duplicate": section7_finding_dup_report.as_dict(),
         "section7_finding_reference_semantic": section7_finding_sem_report.as_dict(),
@@ -8722,6 +8769,13 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py toc_closure <md>", file=sys.stderr)
             return 2
         report = check_toc_closure(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "section7_h4_status":
+        if len(argv) != 3:
+            print("usage: qa_checks.py section7_h4_status <md>", file=sys.stderr)
+            return 2
+        report = check_section7_h4_status(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "mermaid_syntax":

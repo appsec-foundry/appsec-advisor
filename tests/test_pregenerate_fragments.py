@@ -1897,3 +1897,84 @@ class TestSection72ThreatHypothesesTable:
         md = pf.gen_security_architecture(_data_with_hyps(*many))
         assert "HYP-020" in md
         assert "HYP-021" not in md
+
+
+class TestSecurityArchitectureV2:
+    """§7 v2 generator — verdict semantics (Unsafe vs Missing), the verdict
+    legend, per-sub-control Status badges, and grouped password lifecycle.
+    Added 2026-05 with the §7 verdict/structure redesign."""
+
+    @staticmethod
+    def _data():
+        return {
+            "components": [],
+            "threats": [
+                {"id": "T-001", "cwe": "CWE-89", "title": "SQLi"},
+                {"id": "T-012", "cwe": "CWE-916", "title": "MD5"},
+                {"id": "T-008", "cwe": "CWE-942", "title": "CORS"},
+            ],
+            "security_controls": [
+                {
+                    "domain": "Identity and Authentication Controls",
+                    "control": "Password-Based Authentication",
+                    "effectiveness": "Unsafe",
+                    "group_subcontrols": True,
+                    "effectiveness_reason": "present but defeated at every stage",
+                    "implementation": "The email/password credential routes through one MD5 sink and one raw-SQL path.",
+                    "assessment": "Login interpolates user input; the current-password check is skippable.",
+                    "subcontrols": [
+                        {"title": "Login", "effectiveness": "Unsafe",
+                         "status_note": "raw SQL login lookup allows authentication bypass",
+                         "relevant_findings": ["T-001"]},
+                        {"title": "Password Storage", "effectiveness": "Unsafe",
+                         "status_note": "unsalted MD5", "relevant_findings": ["T-012"]},
+                    ],
+                },
+                {
+                    "domain": "Browser and Cross-Origin Controls",
+                    "control": "Content Security Policy",
+                    "effectiveness": "Missing",
+                    "status_note": "no CSP header is set",
+                    "linked_threats": ["T-008"],
+                },
+            ],
+        }
+
+    def test_verdict_legend_present(self):
+        md = pf.gen_security_architecture_v2(self._data())
+        assert "How to read the verdicts" in md
+        assert "Fix the existing control" in md
+        assert "Add the control" in md
+
+    def test_count_line_includes_unsafe(self):
+        md = pf.gen_security_architecture_v2(self._data())
+        line = next(l for l in md.splitlines() if "Cataloged controls" in l)
+        assert "unsafe" in line and "missing" in line
+
+    def test_overview_unsafe_vs_missing(self):
+        md = pf.gen_security_architecture_v2(self._data())
+        rows = [l for l in md.splitlines() if l.startswith("| [")]
+        auth = next(l for l in rows if "Identity and Authentication" in l)
+        csp = next(l for l in rows if "Browser and Cross-Origin" in l)
+        assert "🔴 Unsafe" in auth, auth
+        assert "🔴 Missing" in csp, csp
+
+    def test_status_badge_on_every_h4(self):
+        md = pf.gen_security_architecture_v2(self._data())
+        import re as _re
+        h4s = _re.findall(r"^#### .+$", md, _re.MULTILINE)
+        assert h4s, "expected at least one H4"
+        # one **Status:** line per emitted H4
+        assert md.count("**Status:**") >= len(h4s)
+
+    def test_grouped_password_lifecycle_bullets(self):
+        md = pf.gen_security_architecture_v2(self._data())
+        # Split on the H3 with a trailing space so the needle does NOT also
+        # match the H4 `#### 7.2.1 …` (which contains the substring "### 7.2").
+        seg = md.split("\n### 7.2 ")[1].split("\n### 7.3 ")[0]
+        assert "Password-Based Authentication" in seg
+        # the lifecycle stages render as bullets, NOT as peer H4s
+        assert any(l.startswith("- **Login** — 🔴 Unsafe") for l in seg.splitlines())
+        assert seg.count("\n#### ") == 1, "password lifecycle must be ONE grouped H4"
+        # grouped H4 still carries the two required labels
+        assert "**Security assessment**" in seg and "**Relevant findings**" in seg
