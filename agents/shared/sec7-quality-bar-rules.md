@@ -13,6 +13,7 @@ Used by `appsec-architect-reviewer` Check 14 (and indirectly by the threat-rende
 | `sec7_v2_control_links` | Every `**Controls covered:**` link text in §7.2-§7.12 has a matching H4 heading in the same section. | error |
 | `sec7_v2_h4_labels` | Every H4 subcontrol contains `**Security assessment**` and `**Relevant findings**`. | error |
 | `sec7_v2_no_legacy_flows` | No `#### 7.3.N ... Flow` headings and no `**Findings in this flow:**` trailers under v2. | error |
-| `qb7_no_floskeln` | §7 prose avoids templated filler such as `leverages`, `robust`, `comprehensive`, `in essence`, `seamless`, `security posture`, and related banned phrases. | warning when repeated; info otherwise |
+| `qb7_no_floskeln` | §7 prose avoids templated filler such as `leverages`, `robust`, `comprehensive`, `in essence`, `seamless`, `security posture`, and textbook-purpose padding (`with the intention that`, `with the expectation that`, `is expected/intended to`). | warning when repeated; info otherwise |
+| `qb7_concrete_openers` | H4 control intros lead with the concrete route/file/library/component — not the formulaic `The application/system/server …` stem. Flagged when ≥3 H4 intros across §7 share that stem. | warning |
 
 **Aggregation:** count of violations per block × per rule. When any block has ≥ 1 `error` violation, write `[W-XX] §7 narrative quality bar` to `.architect-repair-plan.json` so the re-render loop can reshape that block. Lower-severity violations roll up into the existing `report.warnings` / `report.info` pipeline.

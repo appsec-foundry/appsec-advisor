@@ -564,7 +564,28 @@ Do NOT touch `threat-model.md` or `threat-model.yaml` in this check.
    }
    ```
    `status=pass` iff `REPAIR_EXIT=0` AND `threat_count_in == threat_count_out` AND no content-repair actions were emitted. Write this file LAST.
-5. **`.qa-content-repair-plan.json`** — emit when any in-place repair check (Check 1 link verify, Check 2 file linkification, Check 6 placeholder removal, Check 7 section completion, Check 10 anchor injection, Check 12 canonical control naming) was BLOCKED. Schema at `schemas/qa-content-repair-plan.schema.json`. Each action specifies `check`, `type` (`linkify_file_path | linkify_evidence_line | remove_placeholder | inject_anchor | fix_anchor_slug | add_section | add_table_column | fix_xref | heading_rename_cascade | other`), `fragment` (must start with `.fragments/`), `operation` (`replace_string` preferred, also `append_after`, `insert_before`, `regex_replace`, `heading_rename_cascade`), `rationale`, optional `evidence`.
+5. **`.qa-content-repair-plan.json`** — emit when any in-place repair check (Check 1 link verify, Check 2 file linkification, Check 6 placeholder removal, Check 7 section completion, Check 10 anchor injection, Check 12 canonical control naming) was BLOCKED. Schema at `schemas/qa-content-repair-plan.schema.json`. The plan MUST use this top-level envelope — `schema_version` (integer `1`) and `status` are REQUIRED. Do NOT invent `plan_version`, `issue_category`, or `issue_count`; `apply_content_repair.py` rejects any plan whose `schema_version != 1`:
+
+   ```json
+   {
+     "schema_version": 1,
+     "generated": "<ISO 8601 UTC>",
+     "status": "repair_required",
+     "actions": [
+       {
+         "check": "toc_closure",
+         "type": "linkify_file_path",
+         "fragment": ".fragments/<name>.md",
+         "operation": "replace_string",
+         "search_text": "...",
+         "replace_text": "...",
+         "rationale": "..."
+       }
+     ]
+   }
+   ```
+
+   Each action specifies `check`, `type` (`linkify_file_path | linkify_evidence_line | remove_placeholder | inject_anchor | fix_anchor_slug | add_section | add_table_column | fix_xref | heading_rename_cascade | other`), `fragment` (must start with `.fragments/`), `operation` (`replace_string` preferred, also `append_after`, `insert_before`, `regex_replace`, `heading_rename_cascade`), `rationale`, optional `evidence`.
 
    **`heading_rename_cascade`** is mandatory for §7 H4 renames (the `subcontrol_naming_canonical` defect). Plain `replace_string` only renames the H4; cascade additionally rewrites the `<a id="<kebab>"></a>` anchor, the `**Controls covered:**` `[Name](#anchor)` link, and the §7.1 overview-table `(e.g. <Name>)` row in one shot.
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/critical-attack-tree.schema.json",
   "title": "Critical Attack Tree fragment",
-  "description": "Data-driven attack-tree section rendered as the unnumbered `## Critical Attack Tree` block between the Management Summary and Section 1. The renderer produces the Mermaid graph block (vertical, top-down), the 'Key takeaway' paragraph, and the Stage/Finding/Mitigation reference table. Replaces the dormant critical-attack-chain.schema.json (2026-05 hybrid migration — §3.1 Attack Chain Overview retains chain semantics).",
+  "description": "Data-driven attack-tree section rendered as the unnumbered `## Critical Attack Tree` block between the Management Summary and Section 1. The renderer produces the Mermaid graph block (vertical, top-down), the 'Key takeaway' paragraph, and the Stage/Finding/Mitigation reference table. Replaces the dormant critical-attack-chain.schema.json (2026-05 hybrid migration). This is the report's single cross-finding view — the §3.1 Attack Chain Overview was retired; §3 is per-Critical sequenceDiagram walkthroughs only.",
   "type": "object",
   "required": ["intro", "mermaid", "key_takeaway", "stages"],
   "additionalProperties": false,
@@ -27,7 +27,7 @@
         "orientation": {
           "type": "string",
           "enum": ["TD", "TB"],
-          "description": "Trees render top-down. `LR` is forbidden — that layout belongs to §3.1 chain semantics."
+          "description": "Trees render top-down. `LR` is forbidden (the horizontal layout belonged to the retired §3.1 chains)."
         },
         "nodes": {
           "type": "array",

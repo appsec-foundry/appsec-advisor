@@ -6,9 +6,11 @@
 > it exhibited, the human-style rewrite, and the rule that follows.
 >
 > Loaded by the renderer and finalization agents before authoring
-> `ms-verdict.json` and `ms-architecture-assessment.json` — Claude
-> Sonnet imitates worked examples more reliably than it follows
-> abstract rules.
+> `ms-verdict.json`, `ms-architecture-assessment.json`, **and the §7
+> Security Architecture control narratives** (H4 intro paragraphs and
+> `**Security assessment**` blocks) — Claude Sonnet imitates worked
+> examples more reliably than it follows abstract rules. Pairs A–E
+> target Management-Summary fields; Pairs F–G target §7 control prose.
 >
 > When a new AI-tell shows up in a real run, add it here as a pair —
 > not as a new rule in `prose-style.md`. Rules without examples drift;
@@ -132,6 +134,54 @@ Schon ziemlich gut — konkret, file-path drin, Punchline am Ende. Aber:
 
 ---
 
+## Pair F — §7 H4 Control Intro (`security-architecture.md` H4 positive-case intro)
+
+### BEFORE (40 Wörter, 1 Satz, AI-flavored)
+
+> The application uses Sequelize as an ORM layer to query SQLite, with the intention that user-supplied values are passed as bound parameters rather than concatenated into query strings, preventing query structure from being altered by attacker-controlled input.
+
+### Diagnose
+- Opener "The application uses …" — formelhafter Subjekt-Stem; 9 von 13 §7-Intros im selben Report starten so
+- "with the intention that … rather than … " — Textbook-Zweck der Kontrollklasse, nicht was DIESE App tut
+- "preventing query structure from being altered by attacker-controlled input" — derselbe Zweck nochmal, in Worten umschrieben
+- Ein 40-Wort-Satz; der konkrete Fakt (welche Routes ORM umgehen) fehlt ganz
+
+### AFTER (32 Wörter, 2 Sätze, menschlich)
+
+> Sequelize backs most relational queries in this codebase. Two routes opt out and build SQL by hand — the password login (`routes/login.ts:34`) and product search (`routes/search.ts:23`) call raw `models.sequelize.query()`.
+
+### Regel
+19. **Konkretes Subjekt zuerst**: "Sequelize backs most queries …" statt "The application uses Sequelize …" — der Domain-Experte benennt das Artefakt, nicht den generischen Akteur
+20. **Zweck-Padding streichen**: kein "with the intention that … preventing …" — der Leser weiß, wofür parametrisierte Queries da sind
+21. **Den eigentlichen Fakt liefern**: WELCHE Routes weichen ab, mit file:line — das ist die Information, die nur in DIESEN Report gehört
+
+---
+
+## Pair G — §7 Security-Assessment Block (`security-architecture.md` `**Security assessment**`)
+
+### BEFORE (1 dichter Absatz, 2 verschweißte Schwächen)
+
+> The login query at `routes/login.ts:34` builds its SQL string by directly interpolating `req.body.email` and the pre-hashed password into a raw `models.sequelize.query()` call, bypassing Sequelize's parameter binding entirely. A `' OR 1=1--` payload in the email field short-circuits the WHERE clause and returns the first database row, which is the seeded admin account. Separately, `lib/insecurity.ts:43` hashes passwords with unsalted MD5, so any database dump obtained through injection immediately yields recoverable plaintext credentials for all accounts.
+
+### Diagnose
+- Zwei unabhängige Schwächen (SQLi + MD5) in einem 70-Wort-Block; "Separately, …" ist der Naht-Marker
+- Der Leser muss den Absatz parsen, um zwei getrennte Findings zu erkennen
+- Kausal NICHT verkettet — SQLi und MD5 sind unabhängig → gehören in getrennte Bullets
+
+### AFTER (Framing-Satz + 2 Bullets)
+
+> Two independent weaknesses sit on the login path:
+>
+> - `routes/login.ts:34` interpolates `req.body.email` into a raw `models.sequelize.query()` string. `' OR 1=1--` short-circuits the WHERE clause and returns the seeded admin row.
+> - `lib/insecurity.ts:43` hashes passwords with unsalted MD5, so any dump from that injection yields plaintext for every account.
+
+### Regel
+22. **≥2 getrennte Schwächen → Bullet-Liste** mit einem Framing-Satz; ein Bullet pro Schwäche
+23. **"Separately, …" / "In addition, …" als Naht-Signal lesen**: taucht es auf, war es wahrscheinlich schon eine Liste
+24. **Fließtext nur bei Kausalkette behalten**: "key committed → forged token passes → route guard moot" liest sich als Narrativ besser; unabhängige Schwächen nicht
+
+---
+
 ## Abgeleitetes Vocabulary
 
 ### Banned (in Polisher-Output, weil AI-Tells)
@@ -147,6 +197,10 @@ Transitions: `furthermore`, `moreover`, `additionally`, `in essence`, `in summar
 Meta-Floskeln: `it is worth noting`, `it should be noted`, `it is important to note`, `the table below shows`, `as can be seen`
 
 Generische Schluss-Kadenzen: `X is Y across the Z`, `X requires Y at the A, B, and C layers`, `X are prerequisites for any Y`
+
+Formelhafte Opener-Stems (max. 1× pro §7.X-Sektion): `The application <verb>s …`, `The system …`, `The server …`, `The framework …` — stattdessen mit Route/Datei/Library/Komponente beginnen
+
+Zweck-Padding-Klauseln (immer streichen): `with the intention that …`, `with the expectation that …`, `is expected to …`, `is intended to …`, `preventing X from being Y`, `so that <generischer Zweck>`
 
 ### Preferred Idioms (positive)
 

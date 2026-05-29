@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### §3.1 Attack Chain Overview — removed (consolidated into the Critical Attack Tree)
+
+The report narrated attack paths in three places: the top-level `## Critical Attack Tree` (AND/OR goal decomposition), the §3.1 Attack Chain Overview (linear `graph LR` kill-chains), and the §3.2+ per-finding walkthroughs. §3.1 was the redundant middle layer — it re-expressed the tree's cross-finding logic in a weaker linear form (the tree already carries a "Path to admin" table), it did not have the per-finding exploit steps of §3.2+, and it was the most error-prone surface (false causal edges between independent findings, mirror-duplicate chains, cryptic node labels). **§3.1 is removed.** §3 is now a flat list of per-Critical walkthroughs (`### 3.1`, `### 3.2`, …); the single cross-finding/strategic view is the `## Critical Attack Tree`.
+
+- **`scripts/walkthrough_renderer.py`** — `render_attack_walkthroughs_md` no longer emits §3.1; walkthroughs renumber from `### 3.1`; the §3 intro points to the Critical Attack Tree. The deterministic chain catalogue (`derive_attack_chains`), the per-chain renderer, the chain label helpers, the `MAX_CHAINS`/`CHAIN_CLASSDEFS` constants, and the now-orphaned `VEKTOR_ACTOR_LABEL` table are deleted.
+- **`data/sections-contract.yaml`** — the §3.1 required subsection, the `graph LR` required pattern, the entire `chain_compactness` block, and the chain-specific `walkthrough_depth` keys (`min_chain_overview_nodes_per_block`, `require_chain_key_takeaway`, `require_chain_subsection_heading`) are removed. §3 coverage is enforced solely by `per_critical_subsection` + the `sequenceDiagram` required pattern.
+- **`scripts/compose_threat_model.py`** — `_build_finding_to_chain_map` drops the `#### Chain N` parser and now reads each walkthrough's owner from its `**Source:** [T-NNN]` line (robust to the deterministic renderer keeping headings T-NNN-free); the §3 default intro and `_inject_attack_walkthroughs_intros` lose their §3.1 branch.
+- **`scripts/qa_checks.py`** — `check_walkthrough_coverage` / `check_walkthrough_depth` no longer skip §3.1 (every §3.N is a walkthrough now); the Critical-Attack-Tree presence check (Check 4) no longer accepts §3.1 as a substitute. `check_chain_compactness` / `check_chain_tid_consistency` degrade to no-ops once the contract block is gone.
+- **`scripts/pregenerate_fragments.py`** — the now-unconsumed `_chain-skeleton.md` helper (`gen_attack_walkthroughs_skeleton`) delegates to the deterministic per-Critical generator so it can never reintroduce §3.1.
+- **Agent prompts / schemas** — the §3.1 authoring section in `phase-group-architecture.md`, the §3.1 chain palette/keyword rules in `appsec-threat-analyst.md`, the §3.1 `graph LR` template + mentions in `appsec-threat-renderer.md`, the §3 contract row in `phase-group-finalization.md`, and the §3.1 references in `phase-group-threats.md` and the fragment schemas are all updated to describe the per-finding-only §3 and point cross-finding analysis at the Critical Attack Tree.
+
+Net test delta: zero new failures (verified against the pre-change baseline).
+
+**Critical Attack Tree residual** — the authoring example in `agents/appsec-threat-renderer.md` referenced an internal node id (`AND_JWT subtree`) in prose, which the model imitated (`… subtree (OR_FORGE)`). The example is corrected, a "never expose a node id in prose" rule added, and `scripts/qa_checks.py` gains `check_attack_tree_node_id_leak` (warning-only) to catch regressions.
+
+### §7 control-narrative readability — concrete openers, no purpose-padding, multi-issue bullets
+
+Generated §7 Security Architecture narratives drifted into a recognisable AI shape: nearly every H4 control intro opened with the formulaic `The application <verb>s …` stem, padded with a textbook-purpose tail (`with the intention that …`, `with the expectation that …`, `preventing X from being Y`), and every `**Security assessment**` welded multiple discrete weaknesses into one dense paragraph. The contract and structure are unchanged; the prose-authoring guidance is tightened so the output reads like a seasoned architect wrote it.
+
+- **`agents/appsec-threat-renderer.md`** — the §7.X authoring pattern now requires each H4 intro to lead with the concrete artifact (route / file / library / component), caps the `The application/system/server …` stem at ≤1 per §7.X section, and bans textbook-purpose padding clauses. `**Security assessment**` blocks covering ≥2 discrete weaknesses should use a short bullet list (one weakness per bullet) instead of one dense paragraph. Self-check item 4 and the banned-vocabulary list updated; the §7.5.1 worked example re-led with a concrete subject.
+- **`agents/shared/prose-style.md`** — new Rule 7 (*Lead with the concrete thing; cut the textbook purpose*) with before/after pairs, plus a rejection-list entry.
+- **`agents/shared/prose-samples.md`** — new worked Pairs F (H4 intro opener) and G (dense assessment → framing sentence + bullets); loader scope note widened to cover §7 narratives; banned-vocabulary list extended with the opener stems and padding clauses.
+- **`scripts/qa_checks.py` → `check_architectural_prose`** — `_ARCH_PROSE_BANNED_PATTERNS` gains the padding clauses; a new aggregated warning fires when ≥3 H4 intros across §7 share the formulaic stem. Documented in `agents/shared/sec7-quality-bar-rules.md` as `qb7_concrete_openers` / extended `qb7_no_floskeln`. Warnings only — flows through the existing QA pipeline, no new hard-fail gate.
+
 ### Supply-chain scope refactor (sca.md) — **Breaking change**
 
 The pre-2026-05 `scripts/dep_scan.py` SCA producer is **removed**. The plugin no longer competes with dedicated SCA tools (Snyk / Trivy / Dependabot / OSV-Scanner / language-native audit) on per-CVE reporting — that lane is solved industry and the plugin's bundled 17-entry heuristic list never won on freshness. Supply-chain risk is now surfaced where it belongs: as architectural posture.

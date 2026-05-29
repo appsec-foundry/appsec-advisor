@@ -4045,7 +4045,16 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
     The renderer agent reads this skeleton and replaces every
     `<!-- WALKTHROUGH_FILL: ... -->` placeholder with repo-specific prose.
     The headings, bullet markers, and Mermaid scaffolding stay verbatim.
+
+    NOTE (§3.1 retired): the §3.1 Attack Chain Overview was removed — the
+    cross-finding view is the `## Critical Attack Tree`. §3 is now produced
+    deterministically by `gen_attack_walkthroughs` (per-Critical walkthroughs
+    only) and no agent consumes `_chain-skeleton.md` any more. This helper now
+    mirrors the deterministic generator so it can never reintroduce §3.1; the
+    legacy chain-skeleton body below is retained, unreachable, for history.
     """
+    return gen_attack_walkthroughs(yaml_data)
+
     threats = yaml_data.get("threats") or []
     if not isinstance(threats, list):
         threats = []

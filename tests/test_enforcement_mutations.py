@@ -153,11 +153,14 @@ def mutate_system_overview_wrong_heading(out: Path) -> None:
     p.write_text("\n".join(lines))
 
 
-def mutate_attack_walkthroughs_missing_overview(out: Path) -> None:
+def mutate_attack_walkthroughs_missing_seqdiagram(out: Path) -> None:
     p = out / ".fragments" / "attack-walkthroughs.md"
     txt = p.read_text()
-    # Remove the Attack Chain Overview heading entirely.
-    txt = txt.replace("### 3.1 Attack Chain Overview\n", "")
+    # Strip every `sequenceDiagram` — §3 walkthroughs MUST carry one
+    # (contract required_patterns). The §3.1 Attack Chain Overview was
+    # retired, so the old "missing §3.1" enforcement no longer applies;
+    # the live §3 enforcement is the per-Critical sequenceDiagram.
+    txt = txt.replace("sequenceDiagram", "noteDiagram")
     p.write_text(txt)
 
 
@@ -204,7 +207,7 @@ MUTATIONS = [
     # ---- Contract-level enforcement (markdown fragments) ----
     ("arch-diagrams-missing-2-3", mutate_arch_diagrams_missing_components_subsection, "2.3 Components"),
     ("system-overview-wrong-head", mutate_system_overview_wrong_heading, "must begin with"),
-    ("walkthroughs-missing-3-1", mutate_attack_walkthroughs_missing_overview, "3.1 Attack Chain Overview"),
+    ("walkthroughs-missing-seqdiagram", mutate_attack_walkthroughs_missing_seqdiagram, "sequenceDiagram"),
     ("attack-surface-rename-5-1", mutate_attack_surface_rename_5_1, "5.1 Unauthenticated Entry Points"),
     ("sec-arch-rename-7-3", mutate_sec_arch_rename_7_3, "7.3 Identity"),
 ]

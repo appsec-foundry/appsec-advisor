@@ -157,7 +157,7 @@ Legacy fragments using the `defects[]` shape with `name`/`description`/`findings
 
 ### `ms-critical-attack-tree.json` authoring contract
 
-The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` section between the Management Summary and Section 1. It is a **goal-decomposition** tree (root = worst-case business impact, leaves = individual Critical findings, internal nodes = AND/OR refinement of preconditions) — NOT a linear attack chain. Linear chain semantics live in §3.1 Attack Chain Overview; do not duplicate them here.
+The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` section between the Management Summary and Section 1. It is a **goal-decomposition** tree (root = worst-case business impact, leaves = individual Critical findings, internal nodes = AND/OR refinement of preconditions) — NOT a linear attack chain. It is the report's single cross-finding view; the per-finding detail (one `sequenceDiagram` each) lives in §3 Attack Walkthroughs.
 
 **When to author.** Only when `threat-model.yaml` contains ≥ 2 `threats[].risk == Critical` entries. With 0 or 1 Critical the composer's `has_multi_critical` gate is false and the section is silently skipped — do not write the fragment in that case (an empty / one-leaf tree adds noise without insight).
 
@@ -183,7 +183,7 @@ The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` sect
   },
   "key_takeaway": "<paragraph (60-800 chars) — the renderer auto-prepends '**Key takeaway:**'; supply only the content>",
   "mitigation_breakpoints": [
-    { "mitigation": "M-001", "breaks": "Rotating the JWT signing key out of source eliminates the entire AND_JWT subtree" }
+    { "mitigation": "M-001", "breaks": "Rotating the JWT signing key out of source eliminates every offline token-forgery path" }
   ],
   "stages": [
     { "stage": "Initial access",       "findings": ["T-001"], "mitigations": ["M-001"] },
@@ -197,8 +197,8 @@ The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` sect
 
 1. **Build the tree from `threats[].risk == Critical` rows.** Each Critical finding becomes a `leaf` node with `finding_ref: "T-NNN"` (or `F-NNN` for findings-shaped models). Internal `and_node` / `or_node` entries describe the **preconditions** that combine the leaves into a higher-level capability (e.g. `T-001 hardcoded key` AND `T-011 alg:none` → `Forge admin JWT`). The single `goal` node at the root names the worst-case impact and SHOULD match one of the Worst-Case-Scenario bullets in `ms-verdict.json`.
 2. **AND vs OR is load-bearing.** `refinement: "AND"` means all child leaves are required to satisfy the parent capability; `refinement: "OR"` means any one child suffices. Use AND for "attacker needs all of these primitives" and OR for "any of these paths leads to the same capability". The renderer surfaces these on the edge labels; do not encode the boolean structure only in prose.
-3. **`orientation` is `TD` or `TB`.** Trees render top-down. `LR` is rejected by the schema — that layout belongs to the §3.1 chain Mermaid.
-4. **Node id grammar.** Mermaid node ids match `^[A-Z][A-Z0-9_]*$`. Use semantic prefixes (`G_`, `AND_`, `OR_`, `L_`) so the structure is readable in the raw JSON without rendering the diagram.
+3. **`orientation` is `TD` or `TB`.** Trees render top-down. `LR` is rejected by the schema (the horizontal layout belonged to the retired §3.1 chains).
+4. **Node id grammar.** Mermaid node ids match `^[A-Z][A-Z0-9_]*$`. Use semantic prefixes (`G_`, `AND_`, `OR_`, `L_`) so the structure is readable in the raw JSON without rendering the diagram. **Never expose a node id in prose.** The reader sees the rendered diagram, not its source — `intro`, `key_takeaway`, and `mitigation_breakpoints[].breaks` must name a subtree by what it represents ("the offline token-forgery paths", "the SQL-injection branch"), never by its raw id (`AND_JWT`, `OR_FORGE`, `G_ROOT`). A parenthetical `(OR_FORGE)` in the takeaway is a defect.
 5. **`stages[]` is the linear walk for the reference table.** Pick the most-likely path from root to impact and list it as 3–12 stages, each citing the relevant `T-NNN` finding(s) and the primary `M-NNN` mitigation(s). This is what the post-tree table renders; it complements the graph rather than restating it.
 6. **`mitigation_breakpoints[]` is curation, not exhaustion.** Up to 8 entries naming mitigations that **sever a subtree** when deployed — the highest-leverage actions a reader can take. Leave empty if every Critical needs its own dedicated mitigation.
 7. **No code fragments in node labels.** Labels read as prose (`Forge admin JWT`, `Hardcoded RSA key`) — never `jwt.sign(..., {algorithm:'none'})` or other source snippets. Same rule as finding titles (`prose-style.md`).
@@ -293,10 +293,17 @@ The §7.2 Assessment paragraph MUST close with a one-sentence handoff that names
 
 Every H4 subcontrol MUST contain these elements, in this order:
 
-1. **Positive-case intro paragraph (REQUIRED)** — 1-3 sentences describing how this control normally functions in this application: which routes or components are involved, which library performs the operation, what the intended successful flow is. NEVER start with the attack or the missing protection. The reader uses this paragraph to understand the mechanism BEFORE reading the security assessment below.
+1. **Positive-case intro paragraph (REQUIRED)** — 1-3 sentences describing how this control actually works in THIS codebase: which routes or components are involved, which library performs the operation, what the intended successful flow is. NEVER start with the attack or the missing protection. The reader uses this paragraph to understand the mechanism BEFORE reading the security assessment below.
 
-   Good (control description first):
+   **Lead with the concrete subject — not a formulaic stem.** A domain expert names the thing first: the route, file, library, component, or middleware. The opener `The application <present-tense-verb>s …` (and its clones `The system …`, `The server …`, `The framework …`) is a templated AI stem — if more than one H4 in the same §7.X section opens that way, you are pattern-filling, not describing. Vary the subject — lead with the artifact: "`oauth.component.ts` reads …", "Sequelize backs most queries; the login and search routes call raw `models.sequelize.query()` …", "RS256-signed JWTs are issued by `lib/insecurity.ts` on every login …".
+
+   **Do not pad the intro with the control's textbook purpose.** Trailing clauses that restate why the control category exists in general — `with the intention that user-supplied values are passed as bound parameters`, `with the expectation that the token limits access to the owner`, `preventing user-controlled content from being interpreted as markup`, `so that a database breach does not directly yield credentials`, `is expected to reject or sanitise values that …` — add no information about THIS app and are the single biggest source of sprawl in §7. The reader already knows what parameterized queries or output encoding are for. State what this codebase does and stop; the gap goes in the assessment.
+
+   Good (concrete subject, no purpose-padding):
    > "The OAuth flow is implemented in the Angular frontend as a frontend identity adapter, not a server-side OAuth/OIDC authorization-code flow. `oauth.component.ts` reads the access token from the redirect URL and calls `UserService.oauthLogin()` to exchange it for a local session JWT."
+
+   Bad (formulaic stem + textbook-purpose padding):
+   > "The application uses Sequelize as an ORM layer to query SQLite, with the intention that user-supplied values are passed as bound parameters rather than concatenated into query strings, preventing query structure from being altered by attacker-controlled input."
 
    Bad (jumps straight to the gap):
    > "**Security assessment:** ❌ Missing — OAuth is not properly implemented because..."
@@ -304,6 +311,8 @@ Every H4 subcontrol MUST contain these elements, in this order:
 2. **Optional Mermaid sequence diagram — clarity aid, not a mandate.** Diagrams are valuable when the mechanism has ≥ 3 steps between ≥ 2 components and prose alone would be unclear. Typical §7.2 flows: User Registration, Password-Based Login, Social Login Adapter (OAuth/OIDC), SAML, Multi-Factor Enrollment (TOTP), Multi-Factor Verification (TOTP), Password Reset, Password Change, mTLS Handshake, Webhook HMAC Verification, multi-step upload pipelines. Typical §7.3 lifecycle steps that benefit from a diagram: Session Token Signing (JWT Based) and Session Token Validation (JWT Based) — when the surrounding routes / middleware chain has ≥ 3 hops. Diagrams add noise when the control is a pure primitive (hashing, signature-verification-as-algorithm, rate limiting, cookie flag hardening, a single header value) — skip the diagram there. **When you include a diagram, you MUST introduce it with exactly one sentence that ends in `:`** (reference form: `The diagram shows the positive password-login path, including the branch into TOTP verification:`). A `sequenceDiagram` fence with no introducing sentence is a contract violation.
 
 3. `**Security assessment**` — multi-sentence narrative covering what the mechanism does well in this app AND what is broken, with file:line + CWE-grounded evidence. NOT a single-sentence inline tag (the form `**Security assessment:** ❌ Missing - <one sentence>` is a contract violation).
+
+   **When the block covers two or more discrete weaknesses, break them out as a short bullet list** — one bullet per weakness, led by a single framing sentence. A reader scans "SQL injection at `routes/login.ts:34`" and "unsalted MD5 at `lib/insecurity.ts:43`" as two separate items far faster than as two clauses welded into a 60-word paragraph. Keep flowing prose only when the weaknesses form one causal chain that reads better as a narrative (e.g. "the key is committed, so any forged token passes, so the route guard is moot"). The bullet form satisfies the multi-sentence requirement — it is not the banned single-line inline tag. One main clause per bullet; do not chain three weaknesses through comma-and-semicolon strings.
 
 4. **Optional code excerpt — clarity aid, not a mandate.** Include a fenced `ts`/`js`/`py`/`yaml`/`dockerfile`/`ini` block (≤ 6 lines) when the weakness concentrates at one short location and the snippet makes the assessment concrete (typical: raw SQL interpolation, `bypassSecurityTrustHtml`, `fetch(user_input)`, hardcoded secrets, permissive `app.use(cors())`, a single insecure config line). Skip the snippet when the weakness is structural and a single excerpt would mislead. **When you include a snippet, you MUST introduce it with exactly one sentence that ends in `:`** (reference forms: `The vulnerable login lookup is built as a raw SQL string:`, `This trusted-HTML call demonstrates where Angular's default escaping is bypassed:`, `The archive extraction logic shows the weak path containment check:`). A code fence with no introducing sentence is a contract violation.
 
@@ -345,6 +354,8 @@ For `### 7.13 Defense-in-Depth Summary`, write two short cross-cutting prose par
 - `architectural anti-pattern`, `defense-in-depth posture`, `security posture` → say what is broken, in one sentence.
 - `the weakness lies in`, `at its core`, `fundamentally`, `in essence` → start the sentence with the subject.
 - `comprehensive`, `robust`, `leverages`, `seamless`, `cutting-edge`, `ensures`, `facilitates` → already banned by QB-7; the rule still applies.
+- **Textbook-purpose padding** — `with the intention that …`, `with the expectation that …`, `is expected to …`, `is intended to …`, and trailing `preventing <X> from being <Y>` / `so that <generic consequence>` clauses that restate why the control class exists → delete them. Describe what THIS app does, not what the control is for in the abstract.
+- **Formulaic intro stems** — opening an H4 with `The application <verb>s …` / `The system …` / `The server …` / `The framework …` more than once per §7.X section signals pattern-filling → lead with the concrete route, file, library, or component instead.
 
 The `qa_checks.py → architectural_prose` check flags these phrases as warnings; repeated occurrences in the same §7.X promote to an error.
 
@@ -390,7 +401,7 @@ This is not a full server-side OAuth control. It uses OAuth as a frontend identi
 ```markdown
 #### 7.5.1 SQL Query Construction (Sequelize + Raw Queries)
 
-The application mostly uses Sequelize models for relational data, but key routes bypass the ORM abstraction and call raw `models.sequelize.query()`. The product review update path uses MarsDB and passes a request-body field directly into the selector.
+Sequelize models back most relational data access, but the login and search routes bypass the ORM and call raw `models.sequelize.query()` directly. The product-review update path uses MarsDB and passes a request-body field straight into the selector.
 
 **Security assessment**
 
@@ -422,7 +433,7 @@ models.sequelize.query(`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%'
 1. The H3 headings are exactly the v2 13-section list from `schema_v2.required_subsections`.
 2. The §7.1 overview table is the pregenerator-emitted block — preserve it verbatim including the `<!-- §7.1 MECHANICAL-FROZEN -->` markers. Column 1 must be Markdown links (`[Identity and Authentication](#72-identity-and-authentication-controls)`), NOT plain text. Verdict icons must be from `data/sections-contract.yaml → verdict_icons` (🟢/🟡/🟠/🔴).
 3. Every §7.2-§7.12 `**Controls covered:**` link has a matching `#### <Control Name>` heading using the canonical github-flavoured slug.
-4. **Every H4 control block opens with a positive intro paragraph (≥ 25 words).** Order is: positive-case intro paragraph → optional `sequenceDiagram` (preceded by one introducing sentence ending in `:`) → `**Security assessment**` (multi-sentence) → optional code excerpt (preceded by one introducing sentence ending in `:`) → `**Relevant findings**` BULLET list. The intro paragraph MUST NOT open with `No `, `None`, `Missing`, `Not implemented`, `There is no ` — gaps are described in the assessment, not in the intro. Every H4 — even a primitive one with no diagram and no code — needs the intro paragraph that explains what the control IS and HOW it works in this codebase, BEFORE the assessment line.
+4. **Every H4 control block opens with a positive intro paragraph (≥ 25 words).** Order is: positive-case intro paragraph → optional `sequenceDiagram` (preceded by one introducing sentence ending in `:`) → `**Security assessment**` (multi-sentence) → optional code excerpt (preceded by one introducing sentence ending in `:`) → `**Relevant findings**` BULLET list. The intro paragraph MUST NOT open with `No `, `None`, `Missing`, `Not implemented`, `There is no ` — gaps are described in the assessment, not in the intro. Every H4 — even a primitive one with no diagram and no code — needs the intro paragraph that explains what the control IS and HOW it works in this codebase, BEFORE the assessment line. **Scan the §7.X section as a whole: no more than one H4 intro may open with the `The application/system/server/framework <verb>s …` stem, and no intro may carry a textbook-purpose tail (`with the intention/expectation that …`, `is expected to …`, `preventing X from being Y`).** Lead each intro with its own concrete subject (route, file, library, component). A Security-assessment block covering ≥2 discrete weaknesses should use a short bullet list, not one dense paragraph.
 5. §7.X headings use the canonical `<Function> (<Tech>)` pattern with sequential `7.X.Y` numbering. §7.2 (auth flows) contains only flow-level mechanisms: `User Registration`, `Password-Based Login`, `Social Login Adapter (OAuth / OIDC)`, `Multi-Factor Enrollment (TOTP)`, `Multi-Factor Verification (TOTP)`, `Password Reset`, `Password Change`, `SAML SSO`, `WebAuthn / Passkey Sign-In`, `mTLS Handshake`, `Webhook HMAC Verification`. §7.3 (session-token lifecycle) contains: `Session Token Signing (JWT Based)`, `Session Token Validation (JWT Based)`, `Session Token Storage (Browser localStorage)`, `Session Token Revocation`, `Session Token Expiry`. NEVER use `JWT Issuance` / `JWT Verification` as standalone §7.2 headings (they moved to §7.3 with lifecycle-aware names), NEVER use bare-tech headings (`JWT *`, `TOTP *`, `MarsDB *`), NEVER use token-format-only or vulnerability-class headings (`JWT-RS256`, `JWT library`, `Authentication bypass prevention`, `Credential storage`) — these are contract violations.
 6. `**Implemented controls:**` opens with a positive inventory ("Angular template escaping, Helmet noSniff, multer file-size limit") — NEVER with "None", "No ", "Missing", "Not implemented". Concrete gaps belong in the Assessment block.
 7. §7.13 is two short prose paragraphs — NO Markdown table, NO speculative perimeter-absence claims (`No WAF`, `No firewall`).
@@ -444,19 +455,7 @@ When enriching diagrams:
 
 Use these exact templates. Substitute T-NNN ids and titles from `threat-model.yaml → threats[].id / .title`. Do not invent labels.
 
-**§3.1 Attack Chain Overview — `graph LR` template.** Required `classDef` pair plus `class … risk` line. ≤6 nodes per chain; one chain per `#### Chain N — <name>` block.
-
-```mermaid
-graph LR
-    A[Anonymous HTTP client] --> B[T-003: SQL injection on login email]
-    B --> C[Admin JWT issued by server]
-    C --> D[T-007: Admin API access via valid token]
-    D --> E[Full admin takeover]:::impact
-
-    classDef risk fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
-    classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px
-    class B,D risk
-```
+_(The §3.1 Attack Chain Overview `graph LR` template was removed with the §3.1 sub-section. The cross-finding view is the `## Critical Attack Tree` `graph TD` above §1; §3 carries only the per-threat `sequenceDiagram` walkthroughs below.)_
 
 **§3.N per-threat `sequenceDiagram` template.** Required `alt Current state` / `else After mitigation` pair — these labels are the canonical conventional form expected by `qa_checks.py → mermaid_syntax`. Do NOT use natural-language labels like `alt role allowed`.
 
@@ -479,11 +478,11 @@ sequenceDiagram
 
 ### Node-label derivation rule — MANDATORY
 
-Every T-NNN reference embedded in a Mermaid chain node label MUST share at least one content-keyword with that threat's `title` in `threat-model.yaml`. The `qa_checks.py → chain_tid_consistency` checker tokenises both the label and the title (lowercase alphanumeric, stopwords stripped) and refuses to ship when the intersection is empty.
+Every T-NNN reference embedded in a Mermaid node label (e.g. a Critical Attack Tree `leaf` node) MUST share at least one content-keyword with that threat's `title` in `threat-model.yaml`, so the cross-reference is verifiable rather than invented.
 
 ### §3 Attack Walkthroughs — out of your scope
 
-`attack-walkthroughs.md` is written **deterministically** by `scripts/pregenerate_fragments.py` (via `scripts/walkthrough_renderer.py`). The file is already present in `.fragments/` when your session starts and the contract checks (`walkthrough_depth`, `walkthrough_coverage`, `chain_compactness`) pass by construction.
+`attack-walkthroughs.md` is written **deterministically** by `scripts/pregenerate_fragments.py` (via `scripts/walkthrough_renderer.py`). The file is already present in `.fragments/` when your session starts and the contract checks (`walkthrough_depth`, `walkthrough_coverage`) pass by construction. (§3 is a flat list of per-Critical `sequenceDiagram` walkthroughs — the §3.1 Attack Chain Overview was retired.)
 
 **Do NOT edit `.fragments/attack-walkthroughs.md`.** It is regenerated from `threat-model.yaml` plus the per-CWE templates under `data/walkthrough-templates/`. Any local edit you make is discarded the next time pre-generate runs.
 

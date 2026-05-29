@@ -7,15 +7,19 @@ Inputs: parsed `threat-model.yaml` + per-CWE template files under
 `attack_walkthroughs` contract (sections-contract.yaml) by construction —
 no repair loop, no QA-fixer pass.
 
+§3 is a flat list of per-Critical walkthroughs (`### 3.1`, `### 3.2`, …).
+The §3.1 "Attack Chain Overview" cross-finding view (graph LR kill-chains)
+was retired — the cross-finding/strategic picture is the standalone
+`## Critical Attack Tree` section above §1, so attack paths are not narrated
+in two competing places.
+
 Contract (see `data/sections-contract.yaml → sections.attack_walkthroughs`):
 
-  * `### 3.1 Attack Chain Overview` heading is mandatory.
-  * Each Critical T-NNN gets a `### 3.<n> T-NNN — <title>` heading.
+  * Each Critical finding gets a `### 3.<n> <title>` heading; the owning
+    T-NNN is named on the `**Source:** [T-NNN]` line below the heading.
   * Each §3.x body is ≥ 5 lines and contains a `sequenceDiagram`.
   * Labelled sections in fixed order (bold-header form):
     Attack Steps, Sequence Diagram, Defense in Depth.
-  * §3.1 chain blocks render `graph LR` with risk + impact classDefs,
-    4–6 nodes per chain, max 5 chains, each chain cites ≥ 1 T-NNN.
 
 The forbidden placeholder `WALKTHROUGH_FILL` MUST NOT appear in the
 output (every slot is substituted at render time).
@@ -33,10 +37,6 @@ import yaml
 # Constants — bound the output and pin contract-required strings.
 # ---------------------------------------------------------------------------
 
-MAX_CHAINS = 5
-MAX_CHAIN_NODES = 6
-MIN_CHAIN_NODES = 4
-
 # 2026-05 iteration 3: walkthroughs are now short and concise. Only
 # Criticals get a walkthrough; Highs are covered by their §8 Threat
 # Register row.
@@ -49,14 +49,6 @@ MAX_HIGH_WALKTHROUGHS = 0
 MIN_PREREQS = 0
 MIN_ATTACK_STEPS = 3
 MIN_DETECTION_SIGNALS = 0
-
-# §3.1 chain classDef block — MUST match `chain_compactness.required_classdefs`
-# verbatim (sections-contract.yaml). The QA check string-matches the colour
-# spec, so keep these in sync if the contract ever changes.
-CHAIN_CLASSDEFS = (
-    "    classDef risk fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px\n"
-    "    classDef impact fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px"
-)
 
 # Severity-phrase table feeding the Business Impact paragraph. Severity is
 # taken from `threat.risk` (falls back to `threat.impact`).
@@ -132,14 +124,6 @@ PREREQS: dict[str, list[str]] = {
         "Read access to the public source repository (clone, blob view, or git history)",
         "Network reachability of the application to use the extracted artefact",
     ],
-}
-
-# Vektor → short label used inside §3.1 chain Mermaid nodes.
-VEKTOR_ACTOR_LABEL: dict[str, str] = {
-    "internet-anon": "Anonymous attacker",
-    "internet-user": "Authenticated attacker",
-    "victim-required": "Anonymous attacker + victim",
-    "repo-read": "Internal developer",
 }
 
 # Heuristic regex set used to recover a concrete HTTP endpoint URL from the
@@ -668,185 +652,16 @@ def render_cross_references(
 
 
 # ---------------------------------------------------------------------------
-# §3.1 Chain catalogue derivation — inline, deterministic.
+# (§3.1 Attack Chain Overview was retired — the Critical Attack Tree above
+# §1 is the single cross-finding/strategic view. The deterministic chain
+# catalogue, its label helpers, and the per-chain renderer were removed with
+# it; §3 now renders only the per-finding walkthroughs below.)
 # ---------------------------------------------------------------------------
-
-
-def _impact_label_for(threat: dict, asset_ids: list[str]) -> str:
-    """Short, single-line impact label for the terminal node of a chain."""
-
-    if asset_ids:
-        return _short_title(f"Compromised {asset_ids[0]}", 60)
-    component = threat.get("component") or "asset"
-    return _short_title(f"Compromised {component}", 60)
-
-
-def _exploit_label_for(threat: dict) -> str:
-    """Short exploit-class label for the middle node of a chain."""
-
-    cwe = (threat.get("cwe") or "").strip()
-    title_short = _short_title(threat.get("title") or "weakness", 50)
-    if cwe:
-        return _short_title(f"{cwe} — {title_short}", 60)
-    return title_short
-
-
-def derive_attack_chains(
-    yaml_data: dict,
-    walkthrough_picks: list[dict],
-    assets_by_threat: dict[str, list[dict]],
-) -> tuple[list[dict], dict[str, list[int]]]:
-    """Produce up to MAX_CHAINS deterministic chains from yaml data.
-
-    Strategy (cheap, single-pass):
-
-      * Anchor each chain on one of the top Critical threats.
-      * If the anchor shares an asset with another Critical/High threat, the
-        chain links the two threats (5 nodes: actor → entry → anchor →
-        pivot-threat → impact). Otherwise it's a 4-node single-finding chain.
-      * Hard cap at MAX_CHAINS, hard cap at MAX_CHAIN_NODES nodes.
-
-    Returns ``(chains, chain_membership)`` where ``chain_membership`` is a
-    ``tid -> [chain_indexes]`` map used by Cross-references rendering.
-    """
-
-    chains: list[dict] = []
-    membership: dict[str, list[int]] = defaultdict(list)
-
-    # Anchors: take Criticals first; if fewer than MAX_CHAINS, top up with
-    # the highest-rated Highs from the walkthrough picks list (already
-    # sorted critical → high → id-ascending).
-    anchors = [t for t in walkthrough_picks if _risk_of(t) == "critical"][:MAX_CHAINS]
-    if len(anchors) < MAX_CHAINS:
-        spillover = [t for t in walkthrough_picks if _risk_of(t) == "high"]
-        anchors.extend(spillover[: MAX_CHAINS - len(anchors)])
-    anchors = anchors[:MAX_CHAINS]
-
-    # Build a "shares-an-asset" index so we can compute pivots cheaply.
-    asset_to_threats: dict[str, list[str]] = defaultdict(list)
-    for tid, assets in assets_by_threat.items():
-        for a in assets:
-            asset_to_threats[str(a.get("id") or "")].append(tid)
-
-    for idx, anchor in enumerate(anchors, start=1):
-        anchor_tid = str(anchor.get("id") or "")
-        vektor = (anchor.get("vektor") or "internet-user").strip()
-        actor_label = VEKTOR_ACTOR_LABEL.get(vektor, "Attacker")
-        entry_component = (anchor.get("component") or "Application surface").strip()
-        anchor_assets = [str(a.get("id") or "") for a in assets_by_threat.get(anchor_tid, [])]
-
-        # Find a pivot: another Critical/High threat that shares an asset.
-        pivot: dict | None = None
-        for asset_id in anchor_assets:
-            for cand_tid in asset_to_threats.get(asset_id, []):
-                if cand_tid == anchor_tid:
-                    continue
-                cand = next(
-                    (t for t in walkthrough_picks if str(t.get("id") or "") == cand_tid),
-                    None,
-                )
-                if cand and _risk_of(cand) in {"critical", "high"}:
-                    pivot = cand
-                    break
-            if pivot:
-                break
-
-        nodes: list[tuple[str, str, str]] = []
-        # (node_id, label, css_class) — css_class in {"risk", "impact"}.
-        nodes.append(("A", actor_label, "risk"))
-        nodes.append(("B", _short_title(entry_component, 60), "risk"))
-        nodes.append(("C", f"{anchor_tid}: {_exploit_label_for(anchor)}", "risk"))
-        if pivot:
-            pivot_tid = str(pivot.get("id") or "")
-            nodes.append(("D", f"{pivot_tid}: {_exploit_label_for(pivot)}", "risk"))
-            nodes.append(("E", _impact_label_for(anchor, anchor_assets), "impact"))
-            membership[pivot_tid].append(idx)
-        else:
-            nodes.append(("D", _impact_label_for(anchor, anchor_assets), "impact"))
-
-        # Guarantee node count stays within contract bounds.
-        if len(nodes) < MIN_CHAIN_NODES:
-            nodes.insert(-1, ("X", "Lateral movement", "risk"))
-        nodes = nodes[:MAX_CHAIN_NODES]
-
-        chain_name = _short_title(anchor.get("title") or f"Chain {idx}", 70)
-        # Emit anchor TID as a bracketed link so the composer's
-        # _linkify_bare_refs_in_prose can attach the parens-label form
-        # `[T-005](#t-005) (Reflected XSS via search query parameter)`.
-        # Without the brackets the takeaway would ship as plain `T-005`
-        # text — readable but not clickable from MS / §3.1.
-        anchor_link = f"[{anchor_tid}](#{anchor_tid.lower()})"
-        pivot_link = ""
-        if pivot:
-            pivot_tid_str = str(pivot.get("id") or "")
-            pivot_link = f"[{pivot_tid_str}](#{pivot_tid_str.lower()})"
-        takeaway = (
-            f"Chain {idx} aggregates {anchor_link} "
-            + (f"with {pivot_link} via a shared asset surface" if pivot else "into the impacted asset surface")
-            + "; closing the primary mitigation breaks the kill-chain."
-        )
-
-        chains.append(
-            {
-                "index": idx,
-                "name": chain_name,
-                "intro": (
-                    f"Anchor finding: `{anchor_tid}`. "
-                    + (
-                        f"Compound with `{str(pivot.get('id') or '')}` through a shared asset. "
-                        if pivot
-                        else ""
-                    )
-                    + "The graph below traces the attacker path from initial reach to terminal impact."
-                ),
-                "nodes": nodes,
-                "takeaway": takeaway,
-            }
-        )
-        membership[anchor_tid].append(idx)
-
-    return chains, dict(membership)
 
 
 # ---------------------------------------------------------------------------
 # Top-level rendering — assemble the final §3 fragment.
 # ---------------------------------------------------------------------------
-
-
-def _render_chain_block(chain: dict) -> str:
-    """Render one §3.1 `#### Chain N — <name>` block (intro + mermaid + takeaway).
-
-    Layout (verbatim required by `chain_compactness`):
-
-        graph LR
-            A[label] --> B[label] --> ...
-            class A risk
-            ...
-            classDef risk fill:...
-            classDef impact fill:...
-    """
-
-    nodes = chain["nodes"]
-    lines: list[str] = []
-    lines.append(f"#### Chain {chain['index']} — {chain['name']}")
-    lines.append("")
-    lines.append(chain["intro"])
-    lines.append("")
-    lines.append("```mermaid")
-    lines.append("graph LR")
-    for nid, label, _cls in nodes:
-        lines.append(f"    {nid}[{_mermaid_safe(label)}]")
-    for i in range(1, len(nodes)):
-        prev_id = nodes[i - 1][0]
-        curr_id = nodes[i][0]
-        lines.append(f"    {prev_id} --> {curr_id}")
-    for nid, _label, cls in nodes:
-        lines.append(f"    class {nid} {cls}")
-    lines.append(CHAIN_CLASSDEFS)
-    lines.append("```")
-    lines.append("")
-    lines.append(f"**Key takeaway:** {chain['takeaway']}")
-    return "\n".join(lines)
 
 
 def _render_walkthrough_block(
@@ -933,7 +748,6 @@ def render_attack_walkthroughs_md(
     }
 
     crit_picks = [t for t in picks if _risk_of(t) == "critical"]
-    chains, chain_membership = derive_attack_chains(yaml_data, picks, indexes["assets"])
     peers_by_cwe = _peers_by_cwe(crit_picks + [t for t in picks if _risk_of(t) == "high"])
 
     out: list[str] = []
@@ -941,37 +755,25 @@ def render_attack_walkthroughs_md(
     out.append("")
     out.append(
         "This section walks through how the highest-risk findings are "
-        "exploited. §3.1 traces the cross-finding chains; §3.2 onwards "
-        "gives one short walkthrough per Critical — attack steps, a "
-        "focused sequence diagram, and the primary mitigation. Full "
-        "context (severity rationale, assets, detection signals, "
-        "cross-references) is in the §8 Threat Register row for each "
-        "finding."
+        "exploited — one short walkthrough per Critical, each with attack "
+        "steps, a focused sequence diagram, and the primary mitigation. The "
+        "cross-finding view (which weaknesses combine toward the worst-case "
+        "goal, and where one fix severs several paths) is in the "
+        "[Critical Attack Tree](#critical-attack-tree). Full per-finding "
+        "context — severity rationale, assets, detection signals — is in the "
+        "[§8 Threat Register](#8-threat-register) row for each finding."
     )
     out.append("")
 
-    # §3.1 Attack Chain Overview
-    out.append("### 3.1 Attack Chain Overview")
-    out.append("")
-    out.append(
-        "The compound chains below aggregate the Critical findings into linear "
-        "kill-chains. Each chain is one Mermaid graph; the `risk` nodes are the "
-        "attacker-controlled steps, the `impact` node names the asset / outcome "
-        "at the end of the chain."
-    )
-    out.append("")
-    for chain in chains:
-        out.append(_render_chain_block(chain))
-        out.append("")
-
-    # §3.2+ per-finding walkthroughs
-    for i, threat in enumerate(picks, start=2):
+    # §3.1+ per-finding walkthroughs (the cross-finding chain overview was
+    # retired — the Critical Attack Tree above §1 is the single strategic view).
+    for i, threat in enumerate(picks, start=1):
         block = _render_walkthrough_block(
             threat,
             yaml_data,
             indexes,
             templates,
-            chain_membership,
+            {},  # chain_membership retired with §3.1
             peers_by_cwe,
             walkthrough_index=i,
         )
@@ -997,7 +799,6 @@ __all__ = [
     "render_attack_walkthroughs_md",
     "gen_attack_walkthroughs",
     "select_walkthrough_picks",
-    "derive_attack_chains",
     "load_templates",
     "render_attacker_profile",
     "render_prerequisites",

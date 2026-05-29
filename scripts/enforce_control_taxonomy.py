@@ -58,13 +58,18 @@ import yaml
 # data/architectural-controls.yaml or data/sections-contract.yaml's
 # method_whitelist. New entries are additive.
 _NAME_REWRITE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    # JWT + algorithm-name conflation: "JWT RS256 Authentication" → "JWT Bearer Authentication".
-    # The §7.2 method_whitelist accepts {jwt, bearer token} but the
-    # forbidden_heading_patterns hard-rejects the format-only "JWT-RS256" /
-    # "JWT RS256 Signing Flow" shapes.
+    # JWT is a SESSION-TOKEN primitive, not a §7.2 authentication mechanism
+    # (see data/architectural-controls.yaml: "JWT Authentication" is an alias
+    # of "Session Token Validation (JWT Based)", domain SessionMgmt → §7.3).
+    # All JWT-format / JWT-"authentication" shapes therefore canonicalise to a
+    # SessionMgmt lifecycle primitive — NOT to a §7.2 mechanism string. This
+    # keeps enforce_control_taxonomy consistent with the Phase-8 catalog rule
+    # and the auth_method_decomposition contract gate, both of which reject a
+    # JWT/token-format heading under §7.2 (2026-05 reconciliation).
+    #   "JWT RS256 Authentication" → per-request bearer-token validation.
     (
         re.compile(r"^jwt\s+(rs|hs|es|ps)\d{3}\s+authentication$", re.IGNORECASE),
-        "JWT Bearer Authentication",
+        "Session Token Validation (JWT Based)",
     ),
     (
         re.compile(r"^jwt\s+(rs|hs|es|ps)\d{3}\s+signing$", re.IGNORECASE),
@@ -74,10 +79,13 @@ _NAME_REWRITE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"^jwt\s+(rs|hs|es|ps)\d{3}\s+verification$", re.IGNORECASE),
         "Session Token Validation (JWT Based)",
     ),
-    # Bare token-format names — keep "JWT Bearer" as the canonical
-    # mechanism string used in §7.2.
-    (re.compile(r"^jwt\s*-?\s*rs\d{3}$", re.IGNORECASE), "JWT Bearer Authentication"),
-    (re.compile(r"^jwt\s+library$", re.IGNORECASE), "JWT Bearer Authentication"),
+    # Bare token-format / library names also describe the validation primitive.
+    (re.compile(r"^jwt\s*-?\s*rs\d{3}$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
+    (re.compile(r"^jwt\s+library$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
+    # Bare "JWT Bearer Authentication" / "JWT Authentication" left over from an
+    # older catalog: also a validation primitive, not a §7.2 mechanism.
+    (re.compile(r"^jwt\s+bearer\s+authentication$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
+    (re.compile(r"^jwt\s+authentication$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
 )
 
 
@@ -136,11 +144,13 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("mutual", "tls"),         "Identity and Authentication Controls"),
     (("api", "key"),            "Identity and Authentication Controls"),
     (("hmac",),                 "Identity and Authentication Controls"),
-    # §7.3 Session and Token Controls — token LIFECYCLE only.
-    # Note: bare "JWT Bearer Authentication" is intentionally routed to §7.2
-    # (matched by the ("jwt",) entry below) since the §7.2 method_whitelist
-    # explicitly accepts "jwt" as a mechanism. §7.3 only catches the lifecycle
-    # primitives: storage, revocation, expiry, sign+validate pairs.
+    # §7.3 Session and Token Controls — token lifecycle + JWT.
+    # JWT is a session-token primitive, NOT a §7.2 authentication mechanism
+    # (data/architectural-controls.yaml: JWT sign/validate → domain SessionMgmt).
+    # Any control whose name carries a bare "jwt" token therefore routes to
+    # §7.3, consistent with the Phase-8 catalog rule and the
+    # auth_method_decomposition gate which reject JWT/token-format headings
+    # under §7.2 (2026-05 reconciliation).
     (("session", "token"),      "Session and Token Controls"),
     (("token", "storage"),      "Session and Token Controls"),
     (("token", "revocation"),   "Session and Token Controls"),
@@ -150,8 +160,7 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("session", "expiry"),     "Session and Token Controls"),
     (("session", "token", "signing"),    "Session and Token Controls"),
     (("session", "token", "validation"), "Session and Token Controls"),
-    # JWT used as a mechanism token → §7.2 IAM (matches method_whitelist).
-    (("jwt",),                  "Identity and Authentication Controls"),
+    (("jwt",),                  "Session and Token Controls"),
     # §7.4 Authorization
     (("role", "based", "access"),     "Authorization Controls"),
     (("rbac",),                       "Authorization Controls"),
@@ -292,7 +301,25 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
             # Controls"). The §7 title list lives in sections-contract.yaml.
             known_domain_strings = {d for _, d in _DOMAIN_TOKEN_INDEX}
             current_norm = current_domain
-            if current_norm and not current_norm.endswith(" Controls"):
+            # Targeted exception to the "don't shuffle IAM↔Session" rule: a
+            # control whose canonical name is an UNAMBIGUOUS session-token
+            # primitive ("Session Token …") belongs in §7.3 even when Stage 1
+            # parked it in §7.2 IAM. This is the JWT-reconciliation path — the
+            # name is no longer ambiguous once canonicalised, so the LLM's §7.2
+            # placement is simply wrong, not a defensible narrative choice.
+            # Computed BEFORE suffix-normalisation so a short-form IAM domain
+            # ("Identity and Authentication") on a session-token control
+            # re-routes to §7.3 in a SINGLE pass (idempotency — otherwise pass 1
+            # would only suffix-normalise and pass 2 would re-route).
+            session_primitive_reroute = (
+                inferred == "Session and Token Controls"
+                and re.match(r"(?i)^session token\b", (c.get("control") or "").strip()) is not None
+            )
+            if (
+                not session_primitive_reroute
+                and current_norm
+                and not current_norm.endswith(" Controls")
+            ):
                 if (current_norm + " Controls") in known_domain_strings:
                     # Stage 1 wrote a short form of a known §7 domain. Treat
                     # this as a stylistic (not semantic) drift — normalise
@@ -314,6 +341,7 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
             if (
                 current_norm == "Real-time and Not Applicable Controls"
                 or current_norm not in known_domain_strings
+                or session_primitive_reroute
             ):
                 c["domain"] = inferred
                 domain_changes.append({

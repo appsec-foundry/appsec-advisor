@@ -1592,7 +1592,7 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
     if skip_walk:
         lines.append("> - **No §3 Attack Walkthroughs** (entirely skipped at `--quick`)")
     else:
-        lines.append("> - **No per-finding sequence diagrams** in §3 (chain overview only)")
+        lines.append("> - **§3 Attack Walkthroughs** limited to Critical findings")
     lines.extend([
         "> - **No LLM-enriched §7 architecture narrative** (scaffold + control tables only)",
         "> - **No QA reviewer pass**, no architect-level review",
@@ -2471,9 +2471,10 @@ def _build_finding_to_chain_map(ctx: "RenderContext") -> dict[str, tuple[str, st
     """Map finding-id (F-NNN / T-NNN) → (link_label, anchor_slug) for §3
     Attack Walkthroughs back-links.
 
-    Parses ``.fragments/attack-walkthroughs.md`` for:
-      * §3.1 ``#### Chain N — Title`` headings  (one entry per chain)
-      * §3.2+ ``### 3.N Title`` per-finding sub-sections
+    Parses ``.fragments/attack-walkthroughs.md`` for the §3.1+
+    ``### 3.N Title`` per-finding walkthrough sub-sections (the §3.1 Attack
+    Chain Overview was retired — the cross-finding view is the Critical
+    Attack Tree).
 
     For each block, every ``F-NNN`` / ``T-NNN`` reference in the body is
     registered under both id forms. Anchors are derived via the canonical
@@ -2494,22 +2495,7 @@ def _build_finding_to_chain_map(ctx: "RenderContext") -> dict[str, tuple[str, st
 
     out: dict[str, tuple[str, str]] = {}
 
-    # §3.1 chains: `#### Chain N — Title`
-    chain_re = re.compile(r"^####\s+Chain\s+(\d+)\s*[—\-:]\s*(.+?)\s*$", re.M)
-    chain_matches = list(chain_re.finditer(text))
-    for i, m in enumerate(chain_matches):
-        n, title = m.group(1), m.group(2).strip()
-        start = m.end()
-        end = chain_matches[i + 1].start() if i + 1 < len(chain_matches) else len(text)
-        body = text[start:end]
-        heading_text = f"Chain {n} — {title}"
-        anchor = _anchor_from_heading(heading_text)
-        label = heading_text
-        for digits in set(re.findall(r"\b[FT]-(\d+)\b", body)):
-            out.setdefault(f"F-{digits}", (label, anchor))
-            out.setdefault(f"T-{digits}", (label, anchor))
-
-    # §3.2+ per-finding walkthroughs: `### 3.N Title` (skip 3.1)
+    # §3.1+ per-finding walkthroughs: `### 3.N Title`.
     # ONLY the primary T-NNN/F-NNN named in the heading is registered for
     # this walkthrough — cross-references inside the body (e.g. "Sibling
     # findings: T-005" in T-001's walkthrough) MUST NOT overwrite the
@@ -2523,23 +2509,25 @@ def _build_finding_to_chain_map(ctx: "RenderContext") -> dict[str, tuple[str, st
     sec_matches = list(sec_re.finditer(text))
     for i, m in enumerate(sec_matches):
         sub_n = m.group(1)
-        if sub_n == "1":
-            continue  # 3.1 is Chain Overview, handled above
         title = m.group(2).strip()
         heading_text = f"3.{sub_n} {title}"
         anchor = _anchor_from_heading(heading_text)
         label = f"Walkthrough §3.{sub_n}"
-        # Extract the primary T-NNN/F-NNN from the heading title only. The
-        # heading shape produced by walkthrough_renderer.py is
-        # `### 3.<n> T-NNN — <Title>` so the first match is the owner.
-        head_match = re.search(r"\b[FT]-(\d+)\b", title)
-        if not head_match:
+        # Determine the owning finding. The deterministic renderer keeps the
+        # heading short and T-NNN-free (check_heading_hygiene) and names the
+        # owner on the `**Source:** [T-NNN]` line, so read that line first;
+        # fall back to a T-NNN in the heading title for legacy fragments.
+        # Either way ONLY the owner is registered — body cross-references
+        # (e.g. "Sibling findings: T-005") MUST NOT overwrite other findings'
+        # mappings.
+        block_start = m.end()
+        block_end = sec_matches[i + 1].start() if i + 1 < len(sec_matches) else len(text)
+        block = text[block_start:block_end]
+        src_match = re.search(r"\*\*Source:\*\*\s*\[[FT]-(\d+)\]", block)
+        owner = src_match or re.search(r"\b[FT]-(\d+)\b", title)
+        if not owner:
             continue
-        digits = head_match.group(1)
-        # Per-finding walkthrough wins over the §3.1 chain link for its
-        # OWN finding only. setdefault is intentional — if two §3.N
-        # sections claim the same T-NNN (should not happen but defensive),
-        # the first wins.
+        digits = owner.group(1)
         out[f"F-{digits}"] = (label, anchor)
         out[f"T-{digits}"] = (label, anchor)
 
@@ -6071,40 +6059,27 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
 
 
 _ATTACK_WALKTHROUGHS_DEFAULT_INTRO = (
-    "This section reconstructs how Critical and High findings would actually "
-    "play out as attacks. It has two parts: §3.1 gives a high-level chain "
-    "diagram showing how an attacker reaches impact across multiple findings, "
-    "and §3.2+ walks through each individual Critical finding as a sequence "
-    "diagram contrasting current behaviour with the post-mitigation state. "
-    "Read §3.1 first to understand the kill-chains; drill into §3.2+ when "
-    "you need the per-finding mechanics. Medium- and Low-severity findings "
-    "are not walked through here — they are documented in [§8 Threat Register](#8-threat-register)."
-)
-
-_CHAIN_OVERVIEW_DEFAULT_INTRO = (
-    "Each chain below is one realistic path from an entry point to a "
-    "business-impact outcome. Nodes coloured red are attacker-controlled "
-    "states or actions; nodes coloured dark are impact outcomes. The arrows "
-    "encode causality, not timing. A chain typically covers 2–4 findings — "
-    "every individual finding keeps its detailed write-up in §8 Threat "
-    "Register and is linked from there back to the chain that uses it."
+    "This section reconstructs how each Critical finding would actually play "
+    "out as an attack — one short walkthrough per finding, with attack steps "
+    "and a sequence diagram contrasting current behaviour with the "
+    "post-mitigation state. The cross-finding view (which weaknesses combine "
+    "toward the worst-case goal, and where one fix severs several paths) is "
+    "in the [Critical Attack Tree](#critical-attack-tree) above §1. Medium- "
+    "and Low-severity findings are not walked through here — they are "
+    "documented in [§8 Threat Register](#8-threat-register)."
 )
 
 
 def _inject_attack_walkthroughs_intros(ctx: "RenderContext", md: str) -> str:
-    """Ensure §3 / §3.1 carry intro paragraphs even when the LLM-authored
-    fragment skipped them.
+    """Ensure §3 carries a chapter intro paragraph even when the
+    LLM-authored fragment skipped it.
 
-    2026-05 user-request fix (points 1, 2): the previous Stage-2 renderer
-    sometimes wrote a fragment that opened directly with the §3.1 mermaid
-    block, leaving §3 with no chapter intro and §3.1 with no explanation of
-    what the chain diagram encodes. The compose step now scaffolds default
-    intros from `_ATTACK_WALKTHROUGHS_DEFAULT_INTRO` and
-    `_CHAIN_OVERVIEW_DEFAULT_INTRO` when missing. LLM-authored intros are
-    preserved as-is (the function detects existing prose between the heading
-    and the next heading / mermaid block).
+    The compose step scaffolds a default intro from
+    `_ATTACK_WALKTHROUGHS_DEFAULT_INTRO` when missing. An author-written
+    intro is preserved as-is (the function detects existing prose between the
+    heading and the next heading / mermaid block).
 
-    Idempotent — a second invocation finds the intros already present and
+    Idempotent — a second invocation finds the intro already present and
     no-ops.
     """
     if not md:
@@ -6132,11 +6107,6 @@ def _inject_attack_walkthroughs_intros(ctx: "RenderContext", md: str) -> str:
     chap = re.search(r"^## 3\.[ \t]+Attack Walkthroughs\s*$", md, re.MULTILINE)
     if chap and not _has_prose_before(chap, md):
         md = md[:chap.end()] + "\n\n" + _ATTACK_WALKTHROUGHS_DEFAULT_INTRO + "\n" + md[chap.end():]
-
-    # §3.1 Attack Chain Overview intro
-    sub = re.search(r"^### 3\.1[ \t]+Attack Chain Overview\s*$", md, re.MULTILINE)
-    if sub and not _has_prose_before(sub, md):
-        md = md[:sub.end()] + "\n\n" + _CHAIN_OVERVIEW_DEFAULT_INTRO + "\n" + md[sub.end():]
 
     return md
 
@@ -8601,7 +8571,7 @@ def _build_finding_cell(
         **Component:** [C-NN](#c-nn) — <Component Name>
         **Location:** `<file:line>` · evidence: verified
         **Issue:** <attack narrative — 1-2 sentences, plain prose>
-        **Attack Walkthrough:** [Chain N — …](#chain-…)            (Critical/High only; omitted when §3 is skipped)
+        **Attack Walkthrough:** [Walkthrough §3.N](#3n-…)          (Critical/High only; omitted when §3 is skipped)
         **Evidence:** <one-sentence prose summary of what the snippet shows>
         <details><summary>Evidence code · file:line</summary><pre>…</pre></details>
         **Impact:** <one-sentence consequence>                      (always rendered for Critical/High)

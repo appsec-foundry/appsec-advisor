@@ -447,7 +447,7 @@ sections:
       - { id: B3, rule: "each attack-class bullet ends with `Impact:` line (single line, comma-separated outcome names from data/business-impact-taxonomy.yaml)" }
       - { id: B5, rule: "if attack_chains is non-empty: `Attack chain:` sub-bullet list, each entry `[Chain N](#chain-N) — Title`" }
       - { id: L1, rule: "every F-NNN reference inside a Findings sub-bullet is a markdown link `[F-NNN](#f-nnn) — Title`" }
-      - { id: L3, rule: "every chain reference inside an Attack-chain sub-bullet is a markdown link `[Chain N](#chain-N)` resolving to a `<a id=\"chain-N\">` anchor in §3.1" }
+      - { id: L3, rule: "every chain reference inside an Attack-chain sub-bullet is a markdown link `[CC-NN](#cc-nn)` resolving to a `<a id=\"cc-nn\">` anchor in the §8.F Compound Attack Chains sub-section" }
 
   top_findings:
     heading: "### Top Findings"
@@ -747,28 +747,18 @@ sections:
     heading_numbered: true
     fragment_type: markdown
     fragment: "attack-walkthroughs.md"
-    # §3.1 is ALWAYS "Attack Chain Overview". It MUST contain ONE `graph LR`
-    # block PER attack chain — NOT a single mega-graph with subgraphs. Each
-    # chain is headed `#### Chain N — <name>` and followed by one `graph LR`
-    # block + one `**Key takeaway:**` sentence.
-    #
-    # BANNED: a single `graph TD` or `graph LR` that uses `subgraph` clusters
-    # to merge all chains into one diagram. These are horizontal, unreadably
-    # wide, and cannot be navigated on a standard screen. The QA reviewer
-    # flags any §3.1 graph with > 8 nodes as a readability defect and raises
-    # a repair-plan entry. See §7.4 Diagram readability checks in the QA agent.
-    #
-    # From §3.2 onwards, one numbered sub-section per Critical finding with a
+    # §3 is a flat list of per-Critical walkthroughs: `### 3.1`, `### 3.2`, …
+    # one numbered sub-section per Critical finding, each with a
     # `sequenceDiagram` showing `alt Current state` / `else After mitigation`.
-    required_subsections:
-      - { level: 3, title_pattern: "^3\\.1 Attack Chain Overview" }
-    # The §3.1 subsection requirement, the per-Critical sequenceDiagrams,
-    # and the chain-overview `graph LR` pattern check ALL apply only when
-    # walkthroughs are actually being authored. At quick depth
-    # SKIP_ATTACK_WALKTHROUGHS=true and the §3 body is reduced to a one-
-    # line notice with no §3.1 heading - the user gains nothing from a
-    # heading whose only body is "see §8 Threat Register".
-    required_subsections_condition: "not skip_attack_walkthroughs"
+    #
+    # The retired §3.1 "Attack Chain Overview" cross-finding view (graph LR
+    # kill-chains) has been removed — the cross-finding/strategic picture now
+    # lives solely in the `## Critical Attack Tree` section above §1, so the
+    # plugin no longer narrates attack paths in two competing places.
+    #
+    # No specific sub-section is mandated by title here; the per-Critical
+    # coverage is enforced by `per_critical_subsection` + check_walkthrough_coverage.
+    required_subsections: []
     # required_patterns and per_critical_subsection apply only when
     # SKIP_ATTACK_WALKTHROUGHS is not set. When that flag is true, the
     # fragment contains only a skip notice — no Mermaid diagrams are expected.
@@ -776,7 +766,6 @@ sections:
     # determine whether to enforce these patterns.
     required_patterns:
       - "sequenceDiagram"                           # per-Critical walkthrough
-      - '```mermaid\s*\n\s*graph LR'               # §3.1 chain-overview MUST use graph LR
     required_patterns_condition: "not skip_attack_walkthroughs"
     per_critical_subsection: true                   # §3.2+ = one per Critical finding
     per_critical_subsection_condition: "not skip_attack_walkthroughs"
@@ -799,14 +788,9 @@ sections:
     #       - body line count (between the `### 3.x` heading and the next
     #         H3 / H2) must be ≥ `min_body_lines`. Stub renderings score
     #         < 10 lines; a real walkthrough is 25+.
-    #     §3.1 chain overview blocks additionally must carry ≥
-    #     `min_chain_overview_nodes_per_block` distinct nodes. This is
-    #     stricter than the existing `max_nodes_per_block` (which is the
-    #     upper bound).
     # ---------------------------------------------------------------------
     walkthrough_depth:
-      # Per §3.x walkthrough (skipped for §3.1 — that block is governed by
-      # chain_compactness above).
+      # Per §3.x walkthrough.
       #
       # 2026-05 iteration 3: shrunk back to ~5 lines after reader feedback
       # that the 70-100 line walkthroughs drowned the actual attack story
@@ -817,10 +801,6 @@ sections:
       # already carries the same data).
       min_body_lines: 5
       require_alt_else_block: false
-      # §3.1 Attack Chain Overview chains — minimum non-trivial size.
-      # The chain_compactness block above caps the UPPER bound at 6 nodes;
-      # this is the LOWER bound. Together they pin the corridor.
-      min_chain_overview_nodes_per_block: 4
       # Per-§3.x section structure — every walkthrough MUST carry these
       # labelled-form blocks in this order. Consumed by
       # `qa_checks.py:check_walkthrough_structure`.
@@ -835,80 +815,17 @@ sections:
         - "Sequence Diagram"
         - "Defense in Depth"
       # The labelled-form sections must be **bold-headed** (`**Title**`),
-      # not `####` H4 headings — `####` are reserved for §3.1 Chain blocks.
+      # not `####` H4 headings.
       labelled_section_format: bold
       # Renderer must replace every `<!-- WALKTHROUGH_FILL: ... -->` placeholder
       # before composing. A surviving placeholder is a contract violation.
       forbidden_placeholders:
         - "WALKTHROUGH_FILL"
-      # Each chain block under §3.1 must carry a `**Key takeaway:**` line
-      # after its `graph LR` block.
-      require_chain_key_takeaway: true
-      # Each chain block under §3.1 must be headed by `#### Chain N — <name>`
-      # (NOT a flat `- Chain N` bullet, NOT a level-3 heading).
-      require_chain_subsection_heading: true
     per_critical_subsection_condition: "not skip_attack_walkthroughs"
 
-    # ---------------------------------------------------------------------
-    # §3.1 Attack Chain compactness — Single-Source-of-Truth (post-2026-05-05).
-    # ---------------------------------------------------------------------
-    # Same SoT pattern as §2.x diagram_compactness (sections.architecture_
-    # diagrams.diagram_compactness above) but tailored to §3.1's MULTI-
-    # block structure: each attack chain is its own `graph LR` block under
-    # a `#### Chain N — <name>` heading. The constraints below are
-    # consumed by:
-    #
-    #   * scripts/qa_checks.py:check_chain_compactness — parses every
-    #     `graph LR` block under §3.1, validates count + node count
-    #     per block + classDef + threat-traceability per chain.
-    #   * Phase-11 LLM authoring: chains stay narrative + repo-specific,
-    #     so `skip_phase11_enrichment: false` (the LLM still authors).
-    #
-    # The contract is the SoT — never re-implement these limits in code.
-    chain_compactness:
-      "3.1 Attack Chain Overview":
-        # Each chain block must use `graph LR` (sequence reads left→right).
-        layout_keyword: "graph LR"
-        # `graph TD` and any other layout keyword are forbidden under §3.1
-        # because vertical chain layouts break the read pattern.
-        forbidden_layout_keywords:
-          - "graph TD"
-          - "graph TB"
-          - "flowchart TD"
-          - "flowchart TB"
-        # Hard cap on the number of chains. >5 chains usually means the
-        # author tried to enumerate every Critical finding individually —
-        # those belong as standalone walkthroughs in §3.2+, not as
-        # chain-overview entries. Top-5 most impactful chains is the
-        # design intent.
-        max_blocks: 5
-        # Per-chain node count. 6 covers entry-point + 2-3 finding nodes
-        # + impact node + (optional) intermediate stage. Anything more is
-        # a sign the chain is actually two chains spliced together.
-        max_nodes_per_block: 6
-        # No subgraph clusters allowed under §3.1 — each chain MUST be
-        # its own clean `graph LR` block. Subgraph-merged mega-graphs
-        # (the historic anti-pattern) are explicitly forbidden.
-        max_subgraphs_per_block: 0
-        # Label limits — chain nodes are typically `T-NNN <short title>`
-        # or `<entry point name>` or `<impact label>`; one line of ~70
-        # chars is plenty.
-        max_label_lines: 1
-        max_label_chars_per_line: 70
-        # Audit palette — verbatim. `risk` for finding nodes, `impact`
-        # for the chain's terminal business-impact node.
-        required_classdefs:
-          risk:   "fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px"
-          impact: "fill:#0f172a,stroke:#000,color:#fff,stroke-width:2px"
-        # Per-block threat traceability: every chain must contain at
-        # least one T-NNN reference whose §8 entry exists. Chains
-        # without any threat reference aren't attack chains — they're
-        # generic data-flow diagrams that belong in §2.x.
-        require_threat_per_block: true
-        # Phase-11 authoring stays enabled — chains carry repo-specific
-        # narrative ("RSA private key in lib/insecurity.ts:25 leaks to
-        # GitHub clone") that cannot be derived from the yaml alone.
-        skip_phase11_enrichment: false
+    # (The §3.1 Attack Chain compactness block was removed with the §3.1
+    # Attack Chain Overview. The cross-finding view is the `## Critical
+    # Attack Tree`; §3 is now per-Critical walkthroughs only.)
 
   assets:
     heading: "## 4. Assets"
@@ -1401,10 +1318,13 @@ sections:
               - "passwordless"
               - "session cookie"
               - "session"
-              # Standard JWT operations (Reference §7.2 uses these as ####)
-              - "jwt issuance"
-              - "jwt verification"
-              - "protected route"
+              # NOTE (2026-05 reconciliation): JWT operations (issuance /
+              # verification / protected-route middleware) are SESSION-TOKEN
+              # PRIMITIVES and belong in §7.3 Session and Token Controls, NOT
+              # as §7.2 authentication mechanisms — mirrors
+              # data/architectural-controls.yaml (domain SessionMgmt) and the
+              # Phase-8 catalog rule. They are intentionally NOT whitelisted
+              # here, and the forbidden_heading_patterns below reject them.
               # Service-to-service / cloud-IAM
               - "mtls"
               - "mutual tls"
@@ -1434,6 +1354,11 @@ sections:
               - "(?i)^#?#?#?#?\\s*authentication bypass( prevention)?\\s*$"
               - "(?i)^#?#?#?#?\\s*credential storage\\s*$"
               - "(?i)^#?#?#?#?\\s*password hashing\\s*$"   # primitive, not mechanism
+              - "(?i)^#?#?#?#?\\s*login\\s+rate[\\s-]*limiting\\s*$"  # primitive, not mechanism
+              # JWT is a §7.3 session-token primitive, not a §7.2 mechanism.
+              - "(?i)^#?#?#?#?\\s*jwt\\s+bearer\\s+authentication\\s*$"
+              - "(?i)^#?#?#?#?\\s*jwt\\s+authentication\\s*$"
+              - "(?i)^#?#?#?#?\\s*jwt\\s+(issuance|verification|validation|signing)\\s*$"
               - "(?i)\\b(bypass flow|forgery flow|hijack flow|attack flow|exploit flow)\\b"
               - "(?i)alg[:=]none"
             enforcement: "error"

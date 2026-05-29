@@ -54,12 +54,15 @@ def _write_yaml(tmp_path: Path, controls: list[dict]) -> Path:
 
 class TestNameCanonicalisation:
     def test_jwt_rs256_authentication_rewritten(self):
-        assert ect._canonicalize_name("JWT RS256 Authentication") == "JWT Bearer Authentication"
+        # 2026-05 reconciliation: JWT is a §7.3 session-token primitive, not a
+        # §7.2 mechanism — all JWT-"authentication" shapes canonicalise to the
+        # SessionMgmt validation primitive (mirrors architectural-controls.yaml).
+        assert ect._canonicalize_name("JWT RS256 Authentication") == "Session Token Validation (JWT Based)"
 
     def test_jwt_hs256_authentication_rewritten(self):
         # The check is alg-token-agnostic: HS256, ES256, PS256 must also match.
-        assert ect._canonicalize_name("JWT HS256 Authentication") == "JWT Bearer Authentication"
-        assert ect._canonicalize_name("JWT ES256 Authentication") == "JWT Bearer Authentication"
+        assert ect._canonicalize_name("JWT HS256 Authentication") == "Session Token Validation (JWT Based)"
+        assert ect._canonicalize_name("JWT ES256 Authentication") == "Session Token Validation (JWT Based)"
 
     def test_jwt_signing_rewritten(self):
         assert ect._canonicalize_name("JWT RS256 Signing") == "Session Token Signing (JWT Based)"
@@ -68,7 +71,11 @@ class TestNameCanonicalisation:
         assert ect._canonicalize_name("JWT HS256 Verification") == "Session Token Validation (JWT Based)"
 
     def test_already_canonical_returns_none(self):
-        assert ect._canonicalize_name("JWT Bearer Authentication") is None
+        # "JWT Bearer Authentication" is no longer a canonical form — it is a
+        # legacy §7.2-mechanism name and now canonicalises to the SessionMgmt
+        # validation primitive (2026-05 reconciliation).
+        assert ect._canonicalize_name("JWT Bearer Authentication") == "Session Token Validation (JWT Based)"
+        assert ect._canonicalize_name("Session Token Validation (JWT Based)") is None
         assert ect._canonicalize_name("Password Login") is None
 
     def test_unknown_name_returns_none(self):
@@ -92,10 +99,13 @@ class TestDomainInference:
     def test_password_login_routes_to_iam(self):
         assert ect._infer_domain("Password Login") == "Identity and Authentication Controls"
 
-    def test_jwt_bearer_routes_to_iam(self):
-        """The rewritten canonical form must NOT be re-routed to §7.3."""
+    def test_jwt_routes_to_session_token_controls(self):
+        """2026-05 reconciliation: JWT is a session-token primitive, so any
+        JWT-named control routes to §7.3 Session and Token Controls, NOT §7.2."""
         assert ect._infer_domain("JWT Bearer Authentication") == \
-            "Identity and Authentication Controls"
+            "Session and Token Controls"
+        assert ect._infer_domain("Session Token Validation (JWT Based)") == \
+            "Session and Token Controls"
 
     def test_token_storage_routes_to_session(self):
         assert ect._infer_domain("JWT Token Storage") == "Session and Token Controls"
@@ -141,33 +151,38 @@ class TestEnforceEndToEnd:
         assert domains[0]["from"] == "Real-time and Not Applicable Controls"
         assert domains[0]["to"] == "Identity and Authentication Controls"
 
-    def test_sc001_jwt_rs256_canonicalised_keeps_iam_domain(self, tmp_path):
-        """SC-001 'JWT RS256 Authentication' must be renamed AND stay in §7.2
-        (it must not get re-routed to §7.3 just because the name now contains
-        'bearer' which used to be in the §7.3 entry)."""
+    def test_sc001_jwt_rs256_canonicalised_and_rerouted_to_session(self, tmp_path):
+        """2026-05 reconciliation: SC-001 'JWT RS256 Authentication' is renamed
+        to the SessionMgmt validation primitive AND re-routed §7.2 IAM → §7.3
+        Session and Token Controls (JWT is a session-token primitive, not a
+        §7.2 mechanism). The targeted 'Session Token …' reroute exception fires
+        even though IAM and Session are normally not shuffled."""
         data = _make_yaml([
             {"id": "SC-001", "domain": "Identity and Authentication Controls",
              "control": "JWT RS256 Authentication", "verdict": "Weak"},
         ])
         out, names, domains = ect.enforce(data)
         assert len(names) == 1
-        assert names[0]["to"] == "JWT Bearer Authentication"
-        # domain change list is empty when domain already matches inferred
-        assert domains == []
+        assert names[0]["to"] == "Session Token Validation (JWT Based)"
+        assert len(domains) == 1
+        assert domains[0]["from"] == "Identity and Authentication Controls"
+        assert domains[0]["to"] == "Session and Token Controls"
         # post-state confirms
-        assert out["security_controls"][0]["domain"] == "Identity and Authentication Controls"
-        assert out["security_controls"][0]["control"] == "JWT Bearer Authentication"
+        assert out["security_controls"][0]["domain"] == "Session and Token Controls"
+        assert out["security_controls"][0]["control"] == "Session Token Validation (JWT Based)"
 
     def test_short_form_domain_normalised(self, tmp_path):
         """'Identity and Authentication' (without 'Controls' suffix) must be
-        treated as the canonical '... Controls' form, not re-routed."""
+        treated as the canonical '... Controls' form, not semantically
+        re-routed. Uses a genuine IAM mechanism ('Password Login') so the test
+        isolates suffix-normalisation from the JWT→§7.3 reroute."""
         data = _make_yaml([
             {"id": "SC-001", "domain": "Identity and Authentication",
-             "control": "JWT RS256 Authentication", "verdict": "Weak"},
+             "control": "Password Login", "verdict": "Weak"},
         ])
         out, names, domains = ect.enforce(data)
-        # name rewrite happens
-        assert any(n["to"] == "JWT Bearer Authentication" for n in names)
+        # Password Login is already canonical — no name rewrite.
+        assert names == []
         # domain gets suffix normalised, not semantically re-routed
         assert any(
             d["from"] == "Identity and Authentication"

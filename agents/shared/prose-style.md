@@ -190,6 +190,45 @@ author, the gate catches the highest-cost misses.
 
 ---
 
+## Rule 7 — Lead with the concrete thing; cut the textbook purpose
+
+This rule governs the *opening* of any descriptive paragraph — most visibly the §7 control intros, but the same defect appears in scenario and remediation prose. Two AI tells dominate:
+
+**Formulaic subject stem.** `The application <verb>s …`, `The system …`, `The server …`, `The framework …`. One such opener in a section is fine; a column of them down a section is the signature of a model filling a template. A domain expert names the artifact first.
+
+**Avoid (every intro starts the same way):**
+> The application authenticates users by comparing a submitted password hash …
+> The application offers an optional second factor …
+> The application uses Sequelize as an ORM layer …
+
+**Prefer (lead with the route, file, library, component):**
+> `routes/login.ts` checks a submitted password hash against the `Users` table …
+> TOTP is available as an opt-in second factor via `routes/2fa.ts` …
+> Sequelize backs most queries; the login and search routes call raw `models.sequelize.query()` …
+
+**Textbook-purpose padding.** Trailing clauses that explain why the control category exists in the abstract — `with the intention that …`, `with the expectation that …`, `is expected to …`, `preventing X from being interpreted as Y`, `so that a breach does not directly yield credentials`. The reader knows what parameterized queries and output encoding are for. These clauses add zero facts about THIS app and are the biggest single source of paragraph sprawl.
+
+**Avoid:**
+> The application stores a hashed form of each password so that a database breach does not directly yield usable credentials, with the hashing algorithm providing a work factor that slows offline recovery attempts.
+
+**Prefer:**
+> Passwords are hashed before storage in the `Users` table. The algorithm is unsalted MD5 (`lib/insecurity.ts:43`) — a single fast hash, no work factor.
+
+State what the code does, then stop. The gap goes in the assessment, not in a purpose clause.
+
+**Multi-issue blocks become bullets.** When an assessment covers two or more discrete weaknesses, a short framing sentence plus one bullet per weakness scans far faster than the same facts welded into a 60-word paragraph. Keep flowing prose only when the weaknesses form one causal chain.
+
+**Avoid (two unrelated weaknesses fused):**
+> The login query at `routes/login.ts:34` interpolates `req.body.email` into raw SQL, and separately `lib/insecurity.ts:43` hashes passwords with unsalted MD5, so any dump obtained through injection immediately yields recoverable credentials.
+
+**Prefer:**
+> Two independent weaknesses sit on the login path:
+>
+> - `routes/login.ts:34` interpolates `req.body.email` into raw SQL — `' OR 1=1--` returns the seeded admin row.
+> - `lib/insecurity.ts:43` hashes passwords with unsalted MD5, so a dump yields plaintext directly.
+
+---
+
 ## What gets rejected
 
 QA review treats these as content defects, not stylistic preferences:
@@ -199,6 +238,7 @@ QA review treats these as content defects, not stylistic preferences:
 - Section openers that restate the heading (Rule 3)
 - Sentences with 3+ comma-separated clauses where a list would do (Rule 4)
 - Repeated boilerplate across rows or paragraphs (Rule 5)
+- Formulaic `The application <verb>s …` openers repeated down a section, or textbook-purpose padding clauses (Rule 7)
 
 A measure that shortens prose without preserving information is **not**
 an improvement. Optimise for the engineer's time-to-understand, not for

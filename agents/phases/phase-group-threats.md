@@ -1056,7 +1056,7 @@ graph TD
 - **Position is non-negotiable.** Immediately after the Management Summary, immediately before Section 1. Never after Section 7.
 - The intro sentence is mandatory and must come before the Mermaid block.
 - **Exactly one tree per report.** A single `graph TD` block — no second tree, no merged side-by-side trees. When multiple Worst Case Scenarios exist, they share the upper subtree and branch only where they diverge.
-- **Tree-shape rules:** `graph TD` (top-down) is the only allowed layout (`graph LR` is forbidden under this section — that layout belongs to §3.1 chain semantics). The diagram MUST contain at least one `goal` root node and at least three `leaf` finding nodes. Internal nodes use the `and_node` (purple) or `or_node` (blue) classDef and carry `AND` / `OR` edge labels so the boolean refinement is explicit on the wire.
+- **Tree-shape rules:** `graph TD` (top-down) is the only allowed layout (`graph LR` is forbidden under this section). The diagram MUST contain at least one `goal` root node and at least three `leaf` finding nodes. Internal nodes use the `and_node` (purple) or `or_node` (blue) classDef and carry `AND` / `OR` edge labels so the boolean refinement is explicit on the wire.
 - **Skip rule:** emit 0 trees (skip the whole section) when `CRIT_COUNT <= 1`. Emit 1 tree otherwise.
 - Each leaf node is one Critical finding labeled with its T-NNN and a 2–3 word summary; internal-node labels are subgoals (1–4 words) phrased as capabilities the attacker must achieve.
 - The block MUST have exactly one `**Key takeaway:**` sentence immediately under the diagram, and may have an optional `**Mitigation breakpoints:**` bullet list naming M-NNN mitigations that sever subtrees.

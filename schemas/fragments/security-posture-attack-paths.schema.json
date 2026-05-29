@@ -91,7 +91,7 @@
             "type": "array",
             "uniqueItems": true,
             "maxItems": 5,
-            "description": "Compound-chain ids that materialise this attack class. Use the canonical CC-NN slug (`cc-01`, `cc-02`, …) — same anchor as the §8.F Compound Attack Chains headers and the §3.1 walkthroughs. The renderer emits a sub-bullet only when this list is non-empty.",
+            "description": "Compound-chain ids that materialise this attack class. Use the canonical CC-NN slug (`cc-01`, `cc-02`, …) — same anchor as the §8.F Compound Attack Chains headers. The renderer emits a sub-bullet only when this list is non-empty.",
             "items": {
               "type": "string",
               "pattern": "^cc-[0-9]{2}$"

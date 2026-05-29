@@ -1,32 +1,46 @@
 ## 3. Attack Walkthroughs
 
-### 3.1 Attack Chain Overview
+This section walks through how each Critical finding would be exploited. The cross-finding view is the [Critical Attack Tree](#critical-attack-tree) above §1.
 
-The diagrams below show how Critical findings combine into distinct attacker workflows.
+### 3.1 SQL Injection in Product Search
 
-#### Chain 1 — DB Compromise
+**Source:** [T-001](#t-001) — `routes/search.ts:23`
+
+Severity **Critical** (CWE-89). STRIDE: Tampering. See [§8 T-001](#t-001) for the full register row.
+
+**Attack Steps**
+
+- Submit a crafted `q` parameter to the product search endpoint.
+- Break out of the string literal with a UNION SELECT.
+- Read the Users table from the response body.
+
+**Sequence Diagram**
 
 ```mermaid
-graph LR
-    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-    A0(["Internet Attacker"]):::crit --> A1["T-001 SQL Injection"]:::crit
-    A1 --> A2(["Full DB access"]):::crit
+sequenceDiagram
+    participant ATK as Attacker
+    participant API as /rest/products/search
+    ATK->>API: q=')) UNION SELECT * FROM Users--
+    API-->>ATK: 200 OK (user rows)
 ```
 
-**Key takeaway:** SQL injection on the login endpoint gives the attacker direct read access to the full user database.
+**Defense in Depth**
 
-#### Chain 2 — Admin Takeover
-
-```mermaid
-graph LR
-    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-    B0(["Internet Attacker"]):::crit --> B1["T-003 Hardcoded RSA key"]:::crit
-    B1 --> B2["Forge admin JWT"]:::crit --> B3(["Full admin access"]):::crit
-```
-
-**Key takeaway:** A single fix does not break the chain — parameterized queries plus secret rotation must both land simultaneously.
+- [M-001](#m-001) — switch the search query to parameterized binding.
 
 ### 3.2 SQL Injection Authentication Bypass
+
+**Source:** [T-002](#t-002) — `routes/login.ts:34`
+
+Severity **Critical** (CWE-89). STRIDE: Tampering. See [§8 T-002](#t-002) for the full register row.
+
+**Attack Steps**
+
+- Send `email=admin'--` with any password to the login endpoint.
+- The injected comment truncates the password check.
+- Receive an admin session JWT.
+
+**Sequence Diagram**
 
 ```mermaid
 sequenceDiagram
@@ -35,3 +49,34 @@ sequenceDiagram
     ATK->>API: email=admin'--&password=x
     API-->>ATK: 200 OK (admin JWT)
 ```
+
+**Defense in Depth**
+
+- [M-002](#m-002) — parameterize the login query.
+
+### 3.3 Hardcoded RSA Private Key
+
+**Source:** [T-003](#t-003) — `lib/insecurity.ts:23`
+
+Severity **Critical** (CWE-321). STRIDE: Spoofing. See [§8 T-003](#t-003) for the full register row.
+
+**Attack Steps**
+
+- Clone the public repository and read the committed private key.
+- Sign a JWT with `role: admin` offline.
+- Present the forged token to any authenticated endpoint.
+
+**Sequence Diagram**
+
+```mermaid
+sequenceDiagram
+    participant ATK as Attacker
+    participant API as backend-api
+    ATK->>ATK: jwt.sign(payload, privateKey, RS256)
+    ATK->>API: Authorization: Bearer (forged admin JWT)
+    API-->>ATK: 200 OK (admin access)
+```
+
+**Defense in Depth**
+
+- [M-003](#m-003) — rotate the signing key out of source control.

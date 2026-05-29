@@ -1229,13 +1229,12 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
                 'style="border-left: 3px solid #dc2626; …"> worst-case-scenarios block'
             )
 
-    # --- Check 4: Attack Chain Overview is present.
-    # Canonical layout places the chain overview as `### 3.1 Attack Chain
-    # Overview` inside §3 (not as a standalone `## Critical Attack Tree`
-    # block). Accept either form for backward compatibility, including the
-    # legacy `## Critical Attack Chain` heading (the regex above matches both).
-    # Skipped when .skill-config.json sets SKIP_ATTACK_WALKTHROUGHS=true —
-    # in that case a skip-notice stub is intentional and no chain is expected.
+    # --- Check 4: Critical Attack Tree is present.
+    # The cross-finding/strategic view is the standalone `## Critical Attack
+    # Tree` block between the Management Summary and §1 (the legacy
+    # `## Critical Attack Chain` heading is also accepted; the §3.1 Attack
+    # Chain Overview was retired). Skipped when .skill-config.json sets
+    # SKIP_ATTACK_WALKTHROUGHS=true — a skip-notice stub is intentional then.
     rd = RISK_DIST_RE.search(text)
     critical_count = int(rd.group(1)) if rd else 0
     _skip_walkthroughs = False
@@ -1248,13 +1247,13 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
             _skip_walkthroughs = bool(_cfg.get("SKIP_ATTACK_WALKTHROUGHS") or _cfg.get("skip_attack_walkthroughs"))
     except Exception:
         pass
-    has_chain = _CRITICAL_CHAIN_RE.search(text) or re.search(r"^###\s+3\.1\s+Attack Chain Overview", text, re.MULTILINE)
+    has_chain = bool(_CRITICAL_CHAIN_RE.search(text))
     if critical_count >= 2 and not has_chain and not _skip_walkthroughs:
         report.issues.append(
-            "Attack Tree / Chain Overview missing — required when Critical count ≥ 2. "
-            "Expected either `## Critical Attack Tree` (canonical post-2026-05), "
-            "the legacy `## Critical Attack Chain` heading, or "
-            "`### 3.1 Attack Chain Overview` inside §3."
+            "Critical Attack Tree missing — required when Critical count ≥ 2. "
+            "Expected the `## Critical Attack Tree` section between the "
+            "Management Summary and §1 (legacy `## Critical Attack Chain` "
+            "heading also accepted)."
         )
 
     # --- Check 5: MS sub-sections should not carry numeric prefixes anymore.
@@ -3214,6 +3213,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # mechanism-language and the old "What this control does" definitional
     # opening so the new code-first §7.X authoring pattern is enforced.
     architectural_prose_report = check_architectural_prose(md)
+    attack_tree_node_id_report = check_attack_tree_node_id_leak(md)
     section_713_no_table_report = check_section_713_no_table(md)
     subcontrol_naming_report = check_subcontrol_naming_canonical(md)
     generic_phrases_report = check_generic_phrases(md)
@@ -3267,6 +3267,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "dependency_cross_ref": dependency_cross_ref_report.as_dict(),
         "na_against_recon": na_against_recon_report.as_dict(),
         "architectural_prose": architectural_prose_report.as_dict(),
+        "attack_tree_node_id_leak": attack_tree_node_id_report.as_dict(),
         "section_713_no_table": section_713_no_table_report.as_dict(),
         "subcontrol_naming_canonical": subcontrol_naming_report.as_dict(),
         "generic_phrases": generic_phrases_report.as_dict(),
@@ -4214,15 +4215,47 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
         report.issues.append(f"cannot read {md_path}: {e}")
         return _finalize_auth_report(report, enforcement)
 
-    sec73_body = _extract_section_body(text, r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b")
-    if sec73_body is None:
-        # §7.3 absent — a different contract check flags missing sections, so
-        # this rule stays silent and clean to avoid double-reporting.
+    # Derive the IAM-section heading from the discovered `domain_title` so the
+    # rule runs under BOTH layouts:
+    #   v1 → "7.3 Identity & Access Management"
+    #   v2 → "7.2 Identity and Authentication Controls"
+    # This used to be hardcoded to §7.3, which made the ENTIRE rule a silent
+    # no-op under v2 (the IAM section is §7.2 there) — the forbidden-heading
+    # and method-whitelist gates never ran, so primitive headings like
+    # "Password Hashing" / "Login Rate Limiting" and token-format names
+    # shipped unflagged (2026-05 juice-shop §7.2 regression).
+    _num_m = re.match(r"\s*(\d+(?:\.\d+)*)\s", (domain_title or "") + " ")
+    section_re = (
+        r"^###\s+" + re.escape(_num_m.group(1)) + r"\b"
+        if _num_m
+        else r"^###\s+7\.3\s+Identity\s*&\s*Access\s+Management\b"
+    )
+    iam_body = _extract_section_body(text, section_re)
+    if iam_body is None:
+        # IAM section absent — a different contract check flags missing
+        # sections, so this rule stays silent and clean to avoid double-report.
         report.ok = 1
         return report
 
-    table_rows = _parse_domain_controls_table(sec73_body, control_column=table_column)
-    subsections = _parse_subsections(sec73_body, level=heading_level)
+    # Layout detection. v1 (§7.3) uses a `Control` pipe-table + per-method
+    # `sequenceDiagram` + `**Findings in this flow:**` trailer. v2 (§7.2) uses
+    # a `**Controls covered:**` link line (no pipe table) and optional
+    # diagrams, so the v1 matching/structural gates would false-positive there.
+    # The rule's `table_column` is the discriminator ("Control" → v1,
+    # "Controls covered" → v2).
+    if table_column.strip().lower() != "control":
+        _run_auth_v2_structural_checks(
+            report=report,
+            iam_body=iam_body,
+            heading_level=heading_level,
+            method_whitelist=method_whitelist,
+            forbidden_heading_patterns=forbidden_heading_patterns,
+            section_label=(domain_title or "7.2 Identity and Authentication Controls"),
+        )
+        return _finalize_auth_report(report, enforcement)
+
+    table_rows = _parse_domain_controls_table(iam_body, control_column=table_column)
+    subsections = _parse_subsections(iam_body, level=heading_level)
 
     # Sprint 2B (M3.5) — narrow `table_rows` to actual auth methods. Rows
     # like "Password Hashing", "Login Rate Limiting", or "express-jwt
@@ -4474,6 +4507,86 @@ def check_relevant_findings_bullet_list(md_path: Path, contract_path: Path = DEF
     return _finalize_auth_report(report, enforcement)
 
 
+def _run_auth_v2_structural_checks(
+    *,
+    report: Report,
+    iam_body: str,
+    heading_level: int,
+    method_whitelist: list,
+    forbidden_heading_patterns: list,
+    section_label: str,
+) -> None:
+    """v2 (§7.2 "… Authentication Controls") enforcement for
+    ``auth_method_decomposition``.
+
+    The v2 layout has no ``Control`` pipe-table and no per-method
+    ``sequenceDiagram`` / ``**Findings in this flow:**`` trailer (the
+    ``**Security assessment**`` / ``**Relevant findings**`` labels are owned by
+    ``control_subsection_coverage``). This path therefore enforces only the two
+    gates that are meaningful for v2:
+
+      * every ``####`` heading must name a real authentication MECHANISM from
+        ``method_whitelist`` (Password-Based Login, OAuth/OIDC, MFA/TOTP, JWT
+        Issuance/Verification, …). Primitives/aspects like "Password Hashing"
+        or "Login Rate Limiting" are not mechanisms — they belong folded into a
+        mechanism block, not promoted to a peer heading;
+      * no heading may match ``forbidden_heading_patterns`` (token-format-only
+        names, library names, vulnerability-class names, "Password Hashing").
+
+    Heading matching strips a leading ``7.2.N`` numeric prefix first, so the
+    rule fires on the numbered headings the composer emits — the missing prefix
+    handling is exactly why the forbidden-pattern regexes silently passed
+    ``#### 7.2.2 Password Hashing``.
+    """
+    sl = "§" + (section_label.split()[0] if section_label.strip() else "7.2")
+    hashes = "#" * heading_level
+    subsections = _parse_subsections(iam_body, level=heading_level)
+    if not subsections:
+        # control_subsection_coverage already flags a missing-subsection §7.2;
+        # stay silent here to avoid double-reporting.
+        report.ok = 1
+        return
+
+    compiled_forbidden = []
+    for pattern in forbidden_heading_patterns or []:
+        if not isinstance(pattern, str) or not pattern:
+            continue
+        try:
+            compiled_forbidden.append((pattern, re.compile(pattern)))
+        except re.error as err:
+            report.issues.append(
+                f"{sl}: invalid `forbidden_heading_patterns` entry {pattern!r} "
+                f"in contract ({err}) — fix data/sections-contract.yaml"
+            )
+
+    for heading in subsections:
+        heading_norm = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip()
+        flagged = False
+        for raw, forbid in compiled_forbidden:
+            if forbid.search(heading) or forbid.search(heading_norm):
+                report.issues.append(
+                    f"{sl} {hashes} {heading!r}: heading matches forbidden "
+                    f"pattern {raw!r}. §7.2 sub-blocks must name authentication "
+                    f"MECHANISMS (Password-Based Login, OAuth/OIDC, MFA/TOTP, "
+                    f"JWT Issuance/Verification, …), not primitives (hashing), "
+                    f"libraries (express-jwt), token formats (JWT-RS256), or "
+                    f"vulnerability classes."
+                )
+                flagged = True
+                break
+        if flagged:
+            continue
+        if method_whitelist and not _row_is_auth_method(heading_norm, method_whitelist):
+            report.issues.append(
+                f"{sl} {hashes} {heading!r}: not a recognized authentication "
+                f"mechanism. Structure §7.2 by real auth method (e.g. "
+                f"Password-Based Login, OAuth/OIDC, MFA/TOTP, JWT "
+                f"Issuance/Verification) and fold aspects such as password "
+                f"hashing or login rate-limiting into the relevant mechanism "
+                f"block as bullets, not as peer headings."
+            )
+
+
 def _run_auth_structural_checks(
     *,
     report: Report,
@@ -4508,7 +4621,8 @@ def _run_auth_structural_checks(
             )
             continue
         for heading in subsections:
-            if forbid.search(heading):
+            heading_norm = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip()
+            if forbid.search(heading) or forbid.search(heading_norm):
                 report.issues.append(
                     f"§7.3 IAM {hashes} subsection {heading!r}: heading "
                     f"matches forbidden attack-shape pattern {pattern!r}. "
@@ -5401,16 +5515,16 @@ def check_walkthrough_coverage(
     sec3 = tail[: nxt.start()] if nxt else tail
 
     # Collect per-Critical §3.x sub-sections as full-text blocks (heading +
-    # body up to the next §3.x heading), excluding §3.1 chain overview. We scan
-    # each block's `**Source:** [T-NNN]` line — NOT the heading — for the owning
-    # Critical id (see the docstring: the deterministic renderer keeps the
-    # heading short and T-NNN-free to satisfy check_heading_hygiene).
+    # body up to the next §3.x heading). §3 is a flat list of per-Critical
+    # walkthroughs (§3.1, §3.2, …) — the §3.1 chain overview was retired, so
+    # every §3.N is now a walkthrough. We scan each block's `**Source:**
+    # [T-NNN]` line — NOT the heading — for the owning Critical id (the
+    # deterministic renderer keeps the heading short and T-NNN-free to
+    # satisfy check_heading_hygiene).
     h3_re = re.compile(r"^###\s+3\.(\d+)\s+(.+?)$", re.MULTILINE)
     h3_matches = list(h3_re.finditer(sec3))
     subsection_blocks: list[str] = []
     for idx, mh in enumerate(h3_matches):
-        if int(mh.group(1)) == 1:
-            continue  # §3.1 is the chain overview, not a per-Critical walkthrough
         block_end = (
             h3_matches[idx + 1].start() if idx + 1 < len(h3_matches) else len(sec3)
         )
@@ -5589,8 +5703,6 @@ def check_walkthrough_depth(
     matches = list(h3_re.finditer(sec3))
     for i, mh in enumerate(matches):
         sub_num = int(mh.group(1))
-        if sub_num == 1:
-            continue
         heading = mh.group(2).strip()
         body_start = mh.end()
         body_end = matches[i + 1].start() if i + 1 < len(matches) else len(sec3)
@@ -6279,6 +6391,11 @@ _ARCH_PROSE_BANNED_PATTERNS: list[tuple[str, str]] = [
     (r"\bensures? that\b",                    "ensures that"),
     (r"\bfacilitates?\b",                     "facilitates"),
     (r"\brobust(?:ly)?\b",                    "robust"),
+    # Textbook-purpose padding — trailing clauses restating why the
+    # control class exists in the abstract. Add no fact about THIS app.
+    (r"\bwith the intention that\b",          "with the intention that"),
+    (r"\bwith the expectation that\b",        "with the expectation that"),
+    (r"\bis (?:expected|intended) to\b",      "is expected/intended to"),
 ]
 
 # Definitional opener regex — first sentence of a §7.X body whose first
@@ -6292,10 +6409,36 @@ _DEFINITIONAL_OPENER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Formulaic generic-actor opener for H4 control intros. Flags the
+# templated "The application <verb>s …" stem — and adjective-prefixed
+# variants ("The Angular frontend …") — that signals pattern-filling
+# when it repeats across §7's H4 intro paragraphs. A concrete opener
+# ("The login query at …", "Sequelize backs …") does NOT match.
+_FORMULAIC_OPENER_RE = re.compile(
+    r"^The (?:[A-Z][a-z]+ )?"
+    r"(?:application|system|server|framework|backend|frontend|service|platform|codebase)\b",
+)
+
+# H4 subcontrol heading inside §7.X (numbered or bare).
+_SEC7_H4_HEADING_RE = re.compile(r"^#### .+$", re.MULTILINE)
+
 # Section heading regex for §7.X — captures the section number + title.
 _SEC7_HEADING_RE = re.compile(
     r"^### (7\.\d+(?:\.\d+)?)\s+(.*?)\s*$", re.MULTILINE
 )
+
+
+def _first_prose_line(segment: str) -> str:
+    """First non-blank narrative line of a segment, skipping headings,
+    anchors, label lines, tables, bullets, comments and code fences."""
+    for line in segment.splitlines():
+        t = line.strip()
+        if not t:
+            continue
+        if t.startswith(("|", "-", "*", "```", "#", "<!--", "<a", "**", ">")):
+            continue
+        return t
+    return ""
 
 
 def _iter_sec7_bodies(text: str):
@@ -6323,9 +6466,25 @@ def check_architectural_prose(md_path: Path) -> Report:
 
     compiled = [(re.compile(p, re.IGNORECASE), name) for p, name in _ARCH_PROSE_BANNED_PATTERNS]
 
+    # Accumulate H4 intro openers across all of §7 so we can flag the
+    # "every control starts with The application …" template drift once.
+    formulaic_openers: list[str] = []
+
     for num, title, body in _iter_sec7_bodies(text):
         # Strip fenced code blocks — code is allowed to use any vocabulary.
         body_no_code = re.sub(r"```.*?```", "", body, flags=re.DOTALL)
+
+        # 0. Formulaic H4 intro openers — split this §7.X body on its H4
+        # headings and test the first prose line (the intro paragraph) of
+        # each subcontrol against the generic-actor stem.
+        h4_starts = [m.start() for m in _SEC7_H4_HEADING_RE.finditer(body_no_code)]
+        for i, h4_start in enumerate(h4_starts):
+            h4_end = h4_starts[i + 1] if i + 1 < len(h4_starts) else len(body_no_code)
+            # Drop the heading line itself before reading the intro.
+            seg = body_no_code[h4_start:h4_end].split("\n", 1)
+            intro = _first_prose_line(seg[1] if len(seg) > 1 else "")
+            if intro and _FORMULAIC_OPENER_RE.match(intro):
+                formulaic_openers.append(f"§{num}")
 
         # 1. Definitional opener — only fire when the first non-blank line
         # of the body is prose (not a bullet, table, or code fence).
@@ -6358,7 +6517,57 @@ def check_architectural_prose(md_path: Path) -> Report:
                 f"middleware name, env var)."
             )
 
+    # Aggregate formulaic-opener warning across §7 (template drift).
+    if len(formulaic_openers) >= 3:
+        report.warnings.append(
+            f"§7: {len(formulaic_openers)} H4 control intros open with the "
+            f"formulaic `The application/system/server …` stem. A domain "
+            f"expert leads with the concrete route, file, library, or "
+            f"component — vary the opener (≤1 such stem per §7.X section)."
+        )
+
     if not report.warnings:
+        report.ok = 1
+    return report
+
+
+_TREE_NODE_ID_RE = re.compile(r"\b(?:G|AND|OR|L)_[A-Z0-9_]{2,}\b")
+
+
+def check_attack_tree_node_id_leak(md_path: Path) -> Report:
+    """Warn when the `## Critical Attack Tree` prose exposes a raw Mermaid
+    node id (`G_ROOT`, `AND_JWT`, `OR_FORGE`, `L_T001`).
+
+    The reader sees the rendered diagram, not its source. A subtree must be
+    named by what it represents ("the offline token-forgery paths"), never
+    by its node id. The defect originated from an authoring example that
+    itself referenced `AND_JWT` in prose; this guard catches regressions.
+
+    Warning-only — node ids inside the ```mermaid``` fence are legitimate
+    and are stripped before scanning.
+    """
+    report = Report("attack_tree_node_id_leak")
+    text = _read_md(md_path)
+
+    m = re.search(r"^##\s+Critical Attack (?:Tree|Chain)\b.*$", text, re.MULTILINE)
+    if not m:
+        report.ok = 1
+        return report
+    start = m.end()
+    nxt = re.search(r"^(?:##\s|#\s)", text[start:], re.MULTILINE)
+    body = text[start : start + nxt.start()] if nxt else text[start:]
+
+    # Strip fenced blocks — node ids belong inside the diagram source.
+    prose = re.sub(r"```.*?```", "", body, flags=re.DOTALL)
+
+    leaked = sorted(set(_TREE_NODE_ID_RE.findall(prose)))
+    if leaked:
+        report.warnings.append(
+            "Critical Attack Tree prose exposes raw Mermaid node id(s) — "
+            f"{', '.join(leaked)}. Name the subtree by what it represents "
+            "(e.g. 'the offline token-forgery paths'), not by its node id."
+        )
+    else:
         report.ok = 1
     return report
 

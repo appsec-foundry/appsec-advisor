@@ -210,20 +210,22 @@ def test_operational_strengths_has_three_columns(tmp_path: Path) -> None:
     )
 
 
-def test_attack_chain_overview_in_section_3(tmp_path: Path) -> None:
+def test_section_3_is_per_finding_walkthroughs(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    # Reference layout: the cross-chain diagram lives as ### 3.1 Attack Chain
-    # Overview inside §3 — NOT as a standalone `## Critical Attack Chain` /
-    # `## Critical Attack Tree`. The unnumbered block (post-2026-05 hybrid
-    # migration renamed Chain → Tree) is LLM-authored prose in
-    # attack-walkthroughs.md, not rendered by the deterministic composer.
-    assert "## Critical Attack Chain\n" not in rendered
-    assert "## Critical Attack Tree\n" not in rendered
-    assert "### 3.1 Attack Chain Overview" in rendered
-    # §3.1 must carry graph LR Mermaid blocks (one per chain, no mega subgraph).
-    assert re.search(r"```mermaid\s*\n\s*graph LR", rendered), "§3.1 must contain at least one `graph LR` Mermaid block"
-    assert "**Key takeaway:**" in rendered
+    # §3 is a flat list of per-Critical walkthroughs (`### 3.1`, `### 3.2`, …),
+    # each with a `sequenceDiagram`. The retired §3.1 "Attack Chain Overview"
+    # cross-finding view (graph LR kill-chains, `#### Chain N` blocks) is gone
+    # — the cross-finding/strategic picture now lives solely in the
+    # standalone `## Critical Attack Tree` section above §1.
+    assert "### 3.1 Attack Chain Overview" not in rendered
+    assert "#### Chain " not in rendered
+    assert "### 3.1 SQL Injection in Product Search" in rendered
+    # Each walkthrough carries a sequenceDiagram (no `graph LR` chain blocks).
+    assert re.search(r"```mermaid\s*\n\s*sequenceDiagram", rendered)
+    assert not re.search(r"```mermaid\s*\n\s*graph LR", rendered), (
+        "§3 must not contain `graph LR` chain blocks any more"
+    )
 
 
 def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -> None:
@@ -338,16 +340,17 @@ def test_finding_cell_links_critical_finding_to_attack_walkthrough(tmp_path: Pat
     rendered, _ = compose.render(CONTRACT, out)
     section8 = _slice_threat_register(rendered)
 
-    # Fixture chains: Chain 1 references T-001; Chain 2 references T-003.
-    # §3.2 covers SQL Injection bypass (matches T-001 / T-002). Per-finding
-    # walkthrough (§3.2) outranks the chain link when both resolve.
+    # Fixture §3.1–3.3 are per-finding walkthroughs for T-001 / T-002 / T-003,
+    # each declaring its owner on a `**Source:** [T-NNN]` line. The §8 Story
+    # Card surfaces the back-link to the owning walkthrough.
     # Item 5 (2026-05-28): walkthrough label is now italic (`_Walkthrough:_`)
     # — story card non-action labels were demoted from bold to italic so
     # Issue / Impact / Fix carry the visual emphasis.
     assert "_Walkthrough:_" in section8, "expected at least one walkthrough back-link in §8"
-    # Chain 2 → T-003 (no §3.2 entry for T-003 in the fixture) renders as
-    # the chain link.
-    assert "[Chain 2 — Admin Takeover](#chain-2-admin-takeover)" in section8
+    # T-003's card links to its own §3.3 walkthrough (the §3.1 chain overview
+    # was retired — there are no `Chain N` links any more).
+    assert "[Walkthrough §3.3](#33-hardcoded-rsa-private-key)" in section8
+    assert "(#chain-" not in section8  # no §3.1 chain back-links any more
 
 
 def test_finding_cell_omits_walkthrough_line_when_no_chains_resolve(tmp_path: Path) -> None:
@@ -372,10 +375,12 @@ def test_finding_cell_omits_walkthrough_line_when_no_chains_resolve(tmp_path: Pa
     assert "_Walkthrough:_" not in section8
 
 
-def test_chain_map_extracts_chain_anchors_from_fixture(tmp_path: Path) -> None:
-    """`_build_finding_to_chain_map` parses `#### Chain N — Title` headings
-    in the fixture and registers every T-NNN / F-NNN reference found in
-    each chain body under the canonical `github_slug` anchor."""
+def test_chain_map_extracts_walkthrough_anchors_from_fixture(tmp_path: Path) -> None:
+    """`_build_finding_to_chain_map` parses the §3.N per-finding walkthrough
+    sub-sections in the fixture and registers each owner (from its
+    `**Source:** [T-NNN]` line) under the canonical `github_slug` anchor.
+    The §3.1 Attack Chain Overview was retired — there are no `#### Chain N`
+    entries any more."""
     out = _prepare_output_dir(tmp_path)
     ctx = compose.RenderContext(
         output_dir=out,
@@ -385,27 +390,25 @@ def test_chain_map_extracts_chain_anchors_from_fixture(tmp_path: Path) -> None:
         fragments_dir=out / ".fragments",
     )
     chain_map = compose._build_finding_to_chain_map(ctx)
-    # Fixture Chain 1 references T-001; Chain 2 references T-003.
-    assert chain_map.get("T-001") == ("Chain 1 — DB Compromise", "chain-1-db-compromise")
-    assert chain_map.get("T-003") == ("Chain 2 — Admin Takeover", "chain-2-admin-takeover")
+    assert chain_map.get("T-001") == ("Walkthrough §3.1", "31-sql-injection-in-product-search")
+    assert chain_map.get("T-003") == ("Walkthrough §3.3", "33-hardcoded-rsa-private-key")
     # F-NNN alias mirrors T-NNN for every registered id.
-    assert chain_map.get("F-001") == ("Chain 1 — DB Compromise", "chain-1-db-compromise")
-    assert chain_map.get("F-003") == ("Chain 2 — Admin Takeover", "chain-2-admin-takeover")
+    assert chain_map.get("F-001") == ("Walkthrough §3.1", "31-sql-injection-in-product-search")
+    assert chain_map.get("F-003") == ("Walkthrough §3.3", "33-hardcoded-rsa-private-key")
 
 
-def test_chain_map_prefers_per_finding_walkthrough_over_chain(tmp_path: Path) -> None:
-    """When a finding appears in BOTH §3.1 (Chain) and §3.2+ (per-finding
-    sequenceDiagram), the §3.2+ entry wins — it is the more specific
-    walkthrough."""
+def test_chain_map_reads_owner_from_source_line(tmp_path: Path) -> None:
+    """The owning finding is read from the `**Source:** [T-NNN]` line, not
+    from the heading (which the deterministic renderer keeps T-NNN-free to
+    satisfy heading hygiene). A T-NNN that only appears as a body
+    cross-reference must NOT claim the walkthrough."""
     frag_dir = tmp_path / ".fragments"
     frag_dir.mkdir()
     (frag_dir / "attack-walkthroughs.md").write_text(
         "## 3. Attack Walkthroughs\n\n"
-        "### 3.1 Attack Chain Overview\n\n"
-        "#### Chain 1 — DB Compromise\n\n"
-        "```mermaid\ngraph LR\n  A --> B[T-001 SQLi]\n```\n\n"
-        "### 3.2 SQL Injection Detail\n\n"
-        "Walks through T-001 step by step.\n",
+        "### 3.1 SQL Injection Detail\n\n"
+        "**Source:** [T-001](#t-001) — `routes/login.ts:34`\n\n"
+        "Walks through T-001 step by step; sibling finding T-005 is related.\n",
         encoding="utf-8",
     )
     ctx = compose.RenderContext(
@@ -417,8 +420,10 @@ def test_chain_map_prefers_per_finding_walkthrough_over_chain(tmp_path: Path) ->
     )
     chain_map = compose._build_finding_to_chain_map(ctx)
     label, anchor = chain_map["T-001"]
-    assert label == "Walkthrough §3.2"
-    assert anchor == "32-sql-injection-detail"
+    assert label == "Walkthrough §3.1"
+    assert anchor == "31-sql-injection-detail"
+    # The body cross-reference to T-005 must not register it as the owner.
+    assert "T-005" not in chain_map
 
 
 def test_chain_map_returns_empty_when_fragment_missing(tmp_path: Path) -> None:
@@ -627,12 +632,13 @@ def test_evidence_snippet_summary_label_is_evidence_not_code(tmp_path: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_attack_walkthroughs_skeleton_includes_section_intros() -> None:
-    """The pregenerator skeleton emits two intro paragraphs: one under
-    `## 3. Attack Walkthroughs` explaining the §3.1/§3.2+ split, and one
-    under `### 3.1 Attack Chain Overview` explaining how to read a chain
-    diagram. Both must appear so the LLM (which copies the skeleton
-    verbatim) carries them into the rendered fragment."""
+def test_attack_walkthroughs_skeleton_has_no_chain_overview() -> None:
+    """The §3.1 Attack Chain Overview was retired — the cross-finding view is
+    the `## Critical Attack Tree`. `_chain-skeleton.md` is no longer consumed
+    by any agent, so the skeleton generator now mirrors the deterministic
+    per-Critical walkthrough generator: a §3 chapter intro plus `### 3.N`
+    walkthroughs, with NO `### 3.1 Attack Chain Overview` / `#### Chain N`
+    / `graph LR` kill-chain blocks."""
     pregen_path = REPO_ROOT / "scripts" / "pregenerate_fragments.py"
     pf = _load_module("pregenerate_fragments", pregen_path)
     yaml_data = {
@@ -642,20 +648,12 @@ def test_attack_walkthroughs_skeleton_includes_section_intros() -> None:
         ]
     }
     md = pf.gen_attack_walkthroughs_skeleton(yaml_data)
-    # §3 intro hooks
-    assert "This section reconstructs how the most-impactful findings" in md
-    # Structure-of-this-section bullet must reference §3.1 as the entry point.
-    assert "§3.1 Attack Chain Overview" in md
-    # §3.1 intro hooks
-    assert "Each chain below is one realistic path" in md
-    assert "Nodes coloured red are attacker-controlled" in md
-    # Intros sit between the headings, not after the chain blocks.
-    h2_idx = md.index("## 3. Attack Walkthroughs")
-    h3_idx = md.index("### 3.1 Attack Chain Overview")
-    chain_idx = md.index("#### Chain 1")
-    intro3_idx = md.index("This section reconstructs how the most-impactful findings")
-    intro31_idx = md.index("Each chain below is one realistic path")
-    assert h2_idx < intro3_idx < h3_idx < intro31_idx < chain_idx
+    assert "## 3. Attack Walkthroughs" in md
+    assert "### 3.1 Attack Chain Overview" not in md
+    assert "#### Chain " not in md
+    assert "graph LR" not in md
+    # Per-finding walkthroughs are present (the first owns §3.1's number now).
+    assert "### 3.1 " in md
 
 
 def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:

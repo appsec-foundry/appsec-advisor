@@ -874,55 +874,11 @@ The renderer (M3.3 / D1 — `pregenerate_fragments.py:_data_flow_edges`) reads t
 
 > **Section assignment.** Phase 4 renders its diagrams into `## 3. Attack Walkthroughs`, positioned after Architecture Diagrams and before Assets. The Phase number stays 4 for orchestrator-ordering reasons — Phase 4 still runs between Phase 3 (architecture) and Phase 5 (assets) because it needs the architectural context — and its output target is Section 3.
 
-### §3.1 Attack Chain Overview — mandatory opening sub-section
+### Section 3 layout — per-Critical walkthroughs only
 
-`### 3.1 Attack Chain Overview` is ALWAYS the first sub-section of Section 3. It gives the reader a high-level visual of how Critical findings chain together before the per-finding `sequenceDiagram` blocks that follow.
+Section 3 is a flat list of per-Critical walkthroughs: `### 3.1`, `### 3.2`, … one `sequenceDiagram` walkthrough per Critical finding. There is **no** §3.1 "Attack Chain Overview" cross-finding sub-section — the cross-finding/strategic view (how findings combine toward the worst-case goal, and where one fix severs several paths) lives solely in the standalone `## Critical Attack Tree` section above §1 (authored per `agents/appsec-threat-renderer.md → "Critical Attack Tree" authoring`). Do not re-introduce a `### 3.1 Attack Chain Overview` heading or `#### Chain N` / `graph LR` kill-chain blocks inside §3 — narrating attack paths in two competing places is exactly the redundancy this layout removed.
 
-**Layout rule (enforced by QA and sections-contract):**
-
-Render **one `graph LR` block per attack chain** — never a single mega-graph that merges all chains via `subgraph` clusters. A monolithic graph with 4+ subgraphs is unreadably wide on a standard screen and cannot be navigated. Each chain gets:
-
-1. A `#### Chain N — <Scenario name>` heading (matching the Worst Case Scenario names in the Management Summary)
-2. One `graph LR` block, max 6 nodes (start node → 3–4 intermediate nodes → impact node)
-3. One `**Key takeaway:**` sentence immediately after the closing ` ``` ` fence
-
-**BANNED patterns (QA writes a repair-plan entry for each):**
-
-- `graph TD` in §3.1 — chains always use `graph LR` (sequences read left-to-right)
-- A single `graph LR/TD` with ≥ 3 `subgraph` clusters — split into separate blocks
-- Any graph in §3.1 with > 8 nodes total — trim or split
-
-**Example structure:**
-
-```markdown
-### 3.1 Attack Chain Overview
-
-The chains below show how Critical findings combine into attacker workflows. Each chain maps to one bullet in the Management Summary Worst Case Scenarios.
-
-#### Chain 1 — Admin Takeover via JWT Forgery
-
-```mermaid
-graph LR
-    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-    A1(["Public repo clone"]):::crit --> A2["T-001 Hardcoded RSA key"]:::crit
-    A2 --> A3["T-002 Forge admin JWT"]:::crit --> A4(["Full admin access"]):::crit
-```
-
-**Key takeaway:** Extracting the committed RSA key and calling `jwt.sign()` offline grants admin access without touching the running application.
-
-#### Chain 2 — Full DB Dump via SQL Injection
-
-```mermaid
-graph LR
-    classDef crit fill:#FFB6C1,stroke:#c00,color:#000,stroke-width:2px
-    B1(["Unauthenticated attacker"]):::crit --> B2["T-003 SQLi login bypass"]:::crit
-    B2 --> B3["T-006 UNION SELECT dump"]:::crit --> B4(["40k accounts exfiltrated"]):::crit
-```
-
-**Key takeaway:** SQL injection on the login form bypasses authentication and exposes the entire user database in one request.
-```
-
-After §3.1 comes `### 3.2`, `### 3.3`, … — one `sequenceDiagram` walkthrough per Critical finding.
+`### 3.1`, `### 3.2`, … — one `sequenceDiagram` walkthrough per Critical finding.
 
 **⚠ Batched-diagram rule (mandatory):** Phase 4 composes all applicable sequence diagrams in a **single pass** using the data already in working memory from Phase 2 (recon) and Phase 3 (architecture), plus the pre-estimate of Critical threats from Phase 9 (see "Curation — Critical only" below). Do not re-read source files per diagram — the recon scanner's Section 7.1 (auth), 7.2 (authz), 7.4 (input handling), 7.9 (OAuth), and 7.10 (SPA/BFF) provide the flow-relevant file:line references. Write all sequence diagrams as one contiguous Section 9 block.
 
@@ -1485,10 +1441,18 @@ The catalog MUST emit one row per detected mechanism from the union of these tab
 **Mechanism vs. primitive vs. token format.** Three categories must NOT be confused:
 
 - A **mechanism** establishes identity end-to-end (Password Login, OAuth, mTLS, AWS IAM Role, Webhook HMAC). Each detected mechanism earns one `security_controls[]` row with `kind: mechanism` and, in v2 rendering, appears as a named H4 subcontrol under the relevant §7 control-category section.
-- A **primitive** is a building block used inside a mechanism: Password Hashing, JWT Signature Verification, Rate Limiting, Cookie-Flag Hardening, Token Storage. Each gets a `kind: primitive` row and appears ONLY in the §7.3 overview controls table — never as a Flow sub-block.
+- A **primitive** is a building block used inside a mechanism: Password Hashing, JWT Signature Verification, Rate Limiting, Cookie-Flag Hardening, Token Storage. Each gets a `kind: primitive` row and appears ONLY in the §7.1 Security Control Overview table — and, in v2 rendering, folded as a bullet aspect inside the owning mechanism's H4 subcontrol — **never as its own §7.2 H4 / Flow sub-block**. (Session-token primitives — JWT signing/validation/storage/revocation/expiry — carry `domain: SessionMgmt` and render under §7.3, not §7.2.)
 - A **token format** (JWT RS256, PASETO, opaque session ID, SAML assertion) is a transport detail, NOT a mechanism. Do not emit a control row whose name is just a token format. JWT validation is captured by the `JWT Signature Verification` primitive; JWT issuance belongs inside the mechanism that issues it.
 
-The 2026-04-27 juice-shop run shipped a §7.3 with `#### 7.3.1 JWT RS256 Signing Flow` instead of the actual mechanisms (`Password Login`, `2FA/TOTP`, `Session Cookie`). Root cause: Phase 8 emitted only primitive rows (`JWT Authentication`, `Password Hashing`, `Login Rate Limiting`) — no `kind: mechanism` rows. The pregenerator then produced one Flow sub-block per row, which is correct for mechanisms but absurd for primitives. The `kind` discriminator below makes this distinction enforceable.
+The 2026-04-27 juice-shop run shipped a §7.3 with `#### 7.3.1 JWT RS256 Signing Flow` instead of the actual mechanisms (`Password Login`, `2FA/TOTP`, `Session Cookie`). Root cause: Phase 8 emitted only primitive rows (`JWT Authentication`, `Password Hashing`, `Login Rate Limiting`) — no `kind: mechanism` rows. The pregenerator then produced one Flow sub-block per row, which is correct for mechanisms but absurd for primitives. The `kind` discriminator below makes this distinction enforceable. **The 2026-05 juice-shop run reproduced this exact failure** (§7.2 shipped `JWT Bearer Authentication` / `Password Hashing` / `Login Rate Limiting` as peer mechanisms; OAuth and TOTP were never cataloged at all even though `oauth.component.ts` and `routes/2fa.ts` exist) — the guidance above was present but ignored. The self-check below is therefore **mandatory**, not advisory.
+
+**⚠ Phase 8 IAM self-check (mandatory — perform before emitting `PHASE_END`).** After writing the IAM rows to `.security-controls.json`, inspect them and do not close Phase 8 until all three hold:
+
+1. **Mechanism floor.** If recon §7.1 / §7.9 / §7.24 show ANY login, OAuth/OIDC, or TOTP/2FA evidence (a `/login` route, `oauth*.component`, `routes/2fa.ts`, `otplib`/`speakeasy`, a `password` form field, …), the IAM domain MUST contain at least one row with `kind: mechanism` drawn from the mechanism table above (`Password-Based Login`, `Federated Identity / OAuth`, `Multi-Factor Authentication`, …). An IAM domain that contains ONLY `kind: primitive` rows is the regression described above — add the missing mechanism row(s) before `PHASE_END`.
+2. **No primitive- or token-format-as-mechanism.** The control names `JWT Bearer Authentication`, `JWT Authentication`, `Password Hashing`, and `Login Rate Limiting` are NEVER valid IAM `kind: mechanism` rows. `Password Hashing` → `kind: primitive`; rate limiting → `Authentication Rate Limiting`, `kind: primitive`; JWT signing/validation → `domain: SessionMgmt`, `kind: primitive` (renders under §7.3). If one of these is your only IAM row, you have mis-cataloged: re-derive the real mechanism it serves (almost always `Password-Based Login`) and demote these to `kind: primitive` aspects of it.
+3. **OAuth/2FA are easy to miss.** They frequently appear ONLY in the frontend (`oauth.component.ts`) or a dedicated route (`routes/2fa.ts`) with no server-side callback — a frontend-only OAuth client STILL earns a `Federated Identity / OAuth` mechanism row (rule (a) above). Actively confirm each mechanism's presence/absence against recon §7.1/§7.9/§7.24 rather than defaulting to "not present".
+
+This self-check is the **data-side counterpart** to the `auth_method_decomposition` contract gate in `qa_checks.py`: that gate now hard-fails §7.2 when a primitive, library, or token-format heading appears there, so a Phase 8 that skips this check will trip the downstream Re-Render Loop and cost a full sonnet repair pass. Catching it here is cheap; catching it in the loop is not.
 
 **Linked Threats column:** The controls table MUST include a "Linked Threats" column. For controls rated 🟡 Partial, 🟠 Weak, 🔴 Unsafe, or 🔴 Missing, reference the T-NNN IDs of threats exploiting that control gap as clickable links (`[F-NNN](#f-nnn)`). For 🟢 Adequate controls, use `—`. **When multiple threat references appear in one cell, separate them with `<br/>`** (one per visual line) — never commas. This matches every other linked-threat table in the document.
 

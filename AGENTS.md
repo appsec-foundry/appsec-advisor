@@ -131,11 +131,13 @@ Generated reports (`threat-model.md`, `pentest-tasks.yaml`, exports) target tech
 
 Write in plain, understandable language. Necessary detail (file path, line number, config key, API call, library name) anchors the finding — keep it. Unnecessary detail (unexplained acronyms, framework-internal class chains, full version-tag noise, jargon that does not advance understanding of *what* the attacker does or *how* to fix it) buries it — cut it.
 
+The prose must read like a seasoned architect wrote it, not like LLM output. The recurring AI tells to design out: paragraphs that all open with the same stem (`The application <verb>s …`, `The system …`), trailing clauses that restate a control's textbook purpose (`with the intention that …`, `preventing X from being Y`), symmetric triplets (`X, Y, and Z`), and meta-narration (`the table below shows …`). Lead with the concrete thing — the route, file, library, or component — then stop. When a block carries two or more discrete weaknesses, a short bullet list beats one dense paragraph. Worked before/after pairs for these tells live in `agents/shared/prose-samples.md`; the §7 Security Architecture control narratives are the most prose-heavy surface and the most exposed to this drift.
+
 Report priority: help readers understand, verify, and act; do not maximize technical fullness for its own sake.
 
 Authoritative style anchor with rules and before/after examples: `agents/shared/prose-style.md` — loaded at runtime by prose-generating agents. **Update the style anchor, not this file, when adding examples.**
 
-When editing report-prose prompts — mainly `agents/appsec-stride-analyzer.md`, `agents/phases/phase-group-finalization.md`, and `agents/shared/ms-template.md` — verify the style-anchor reference remains. Drift-guarded by `tests/test_agent_definitions.py`.
+When editing report-prose prompts — `agents/appsec-stride-analyzer.md`, `agents/phases/phase-group-finalization.md`, `agents/shared/ms-template.md`, and `agents/appsec-threat-renderer.md` (the §7 Security Architecture narrative author) — verify the `prose-style.md` + `prose-samples.md` anchor reference remains. Drift-guarded by `tests/test_agent_definitions.py`.
 
 A measure that shortens prose without preserving information is not a clarity improvement. Optimise for the engineer's time-to-understand, not for token count.
 
