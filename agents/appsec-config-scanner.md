@@ -101,6 +101,15 @@ Write `$OUTPUT_DIR/.config-scan-findings.json`:
 
 **Write protocol:** single `python3 -c` Bash call, load yaml + glob + Python regex matching, emit JSON. Deterministic — identical input produces identical output.
 
+**Mandatory fields per finding.** The downstream pipeline depends on every emitted finding carrying the full field set above — **not the leaner `{id, check, severity, file, line, detail}` shape** that some earlier prototype versions of this agent produced. Specifically:
+
+- `check_id` MUST be the canonical `IAC-NNN` / `CFG-NNN` from `data/config-iac-checks.yaml` when the violation maps to an entry there. When the agent synthesises a finding for a runtime-config issue NOT covered by the yaml (e.g. CORS wildcard, missing CSP, missing HSTS, public directory listing, hardcoded secrets in Express runtime code), set `check_id: null` AND populate `check_slug` with a stable kebab-case identifier (`cors-wildcard`, `csp-missing`, `hsts-missing`, `ftp-directory-listing`, `secrets-in-source`, …) so the downstream auto-emitter (`scripts/emit_config_scan_mitigations.py`) can resolve a remediation from its built-in slug map.
+- `recommended_mitigation_title` MUST be populated on every finding. Use the canonical `remediation` text from the matched IAC entry when available; otherwise author a short imperative title yourself (`"Restrict CORS to an explicit origin allow-list"`, `"Configure a strict Content-Security-Policy header"`). Never emit `null` or an empty string — the downstream Mitigation Register `**Fix:**` column reads from this field.
+- `cwe` MUST be a list (even when it contains a single CWE) — the downstream merger normalises `cwe[0]` into the threat dict.
+- `breach_vector` MUST be one of the enum values defined in the "Breach-vector mapping" section below.
+
+Findings missing `recommended_mitigation_title` are caught by the auto-emitter's fallback path (generic remediation prose), but the user-visible §8 Fix column reads markedly weaker text in that case. Emit the field at authoring time; do not rely on the fallback.
+
 ### Step 5 — Handoff to orchestrator
 
 The orchestrator's Phase 9 STRIDE merge step reads `.config-scan-findings.json` alongside the per-component `.stride-*.json` files and merges the `findings[]` entries into the unified register. Each config finding becomes an `F-NNN` entry with `finding_type_id` set from the check, `breach_distance` derived from the `breach_vector` (Build-Time → 3, Internet Anon → 1, etc.), and `source: "config-scan"` for traceability.

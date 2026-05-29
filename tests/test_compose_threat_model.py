@@ -2163,3 +2163,44 @@ class TestActorCellGuard:
         assert len(sents) == 2
         assert "Node.js process loads config.yaml" in sents[0]
 
+
+class TestFormatIdListScalarString:
+    """format_id_list must treat a scalar string as a SINGLE id, not iterate
+    it character-by-character.
+
+    Regression for the 2026-05-28 juice-shop run: the critical-attack-tree
+    template renders the singular `mitigation_breakpoints[].mitigation` field
+    (a string like "M-002") through the list filter `format_id_list`. Before
+    the fix, "M-002" rendered as
+    `[M](#m)<br/>[-](#-)<br/>[0](#0)<br/>[0](#0)<br/>[2](#2)` and spawned bogus
+    #m / #- / #0 anchors that broke toc_closure.
+    """
+
+    def _env(self, tmp_path: Path):
+        frag = tmp_path / ".fragments"
+        frag.mkdir(parents=True, exist_ok=True)
+        ctx = compose.RenderContext(
+            output_dir=tmp_path,
+            contract={},
+            yaml_data={},
+            triage={},
+            fragments_dir=frag,
+        )
+        return compose._build_jinja_env(ctx)
+
+    def test_scalar_string_renders_as_single_link(self, tmp_path: Path) -> None:
+        env = self._env(tmp_path)
+        out = env.filters["format_id_list"]("M-002")
+        assert "#m-002" in out
+        # No per-character split artefacts.
+        assert "[M](#m)" not in out
+        assert "[-](#-)" not in out
+        assert "[0](#0)" not in out
+        assert "<br/>" not in out  # single id → no stacking
+
+    def test_list_input_still_stacks_with_br(self, tmp_path: Path) -> None:
+        env = self._env(tmp_path)
+        out = env.filters["format_id_list"](["M-001", "M-002"])
+        assert "#m-001" in out and "#m-002" in out
+        assert "<br/>" in out
+

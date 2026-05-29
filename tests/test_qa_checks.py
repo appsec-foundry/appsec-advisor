@@ -2779,3 +2779,99 @@ class TestStrengthsRendererExcludesTacticalHygiene:
         assert norm("Response Headers") in excluded
         # Architectural-only controls must NOT be in the set.
         assert norm("Multi-Factor Authentication") not in excluded
+
+
+class TestWalkthroughCoverageSourceLineMatch:
+    """check_walkthrough_coverage must identify each per-Critical §3.x
+    sub-section by the T-NNN on its `**Source:** [T-NNN]` line, NOT by the
+    heading.
+
+    Regression for the 2026-05-28 juice-shop run: walkthrough_renderer.py
+    deliberately emits short, T-NNN-free headings (`### 3.2 <title>`) to stay
+    under check_heading_hygiene's length limit and puts the T-NNN on the
+    `**Source:**` line. The previous heading-only match reported all 12
+    present walkthroughs as "missing", driving an unnecessary REPAIR_MODE
+    re-render loop.
+    """
+
+    def _write_yaml_one_critical(self, output_dir: Path) -> None:
+        (output_dir / "threat-model.yaml").write_text(
+            textwrap.dedent(
+                """\
+                meta:
+                  generated: 2026-05-28T00:00:00Z
+                threats:
+                  - id: T-001
+                    title: Hardcoded RSA Private Key
+                    risk: Critical
+                    cwe: CWE-321
+                """
+            ),
+            encoding="utf-8",
+        )
+
+    def _wrap_section3(self, body: str) -> str:
+        return (
+            "## 3. Attack Walkthroughs\n\n"
+            "### 3.1 Attack Chain Overview\n\nChains.\n\n"
+            + body
+            + "\n\n## 4. Assets\n"
+        )
+
+    def test_source_line_satisfies_coverage_without_tnnn_in_heading(self, output_dir):
+        qa = _load_qa_checks()
+        self._write_yaml_one_critical(output_dir)
+        section = (
+            "### 3.2 Hardcoded RSA Private Key lib/insecurity.ts:23\n\n"
+            "**Source:** [T-001](#t-001) — `lib/insecurity.ts:23`\n\n"
+            "**Attack Steps**\n\n1. step\n\n"
+            "**Sequence Diagram**\n\n```mermaid\nsequenceDiagram\n  A->>B: x\n```\n\n"
+            "**Defense in Depth**\n\n- mitigation\n"
+        )
+        md = output_dir / "threat-model.md"
+        md.write_text(self._wrap_section3(section), encoding="utf-8")
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert report.issues == [], report.issues
+        assert report.ok == 1
+
+    def test_genuinely_missing_critical_is_flagged_with_coherent_count(self, output_dir):
+        qa = _load_qa_checks()
+        self._write_yaml_one_critical(output_dir)
+        # §3.2's Source line points at a DIFFERENT threat, so T-001 is missing.
+        section = (
+            "### 3.2 Some Other Finding\n\n"
+            "**Source:** [T-002](#t-002) — `x.ts:1`\n\n"
+            "**Attack Steps**\n\n1. step\n"
+        )
+        md = output_dir / "threat-model.md"
+        md.write_text(self._wrap_section3(section), encoding="utf-8")
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert any("T-001" in i for i in report.issues)
+        # No contradictory "1/1 present" — coherent "0/1 ... have a walkthrough".
+        assert any("0/1 Critical findings have a walkthrough" in i for i in report.issues)
+
+    def test_heading_tnnn_fallback_still_accepted(self, output_dir):
+        qa = _load_qa_checks()
+        self._write_yaml_one_critical(output_dir)
+        # Legacy fragment shape: T-NNN in the heading, no **Source:** line.
+        section = "### 3.2 T-001 — Hardcoded RSA Private Key\n\n**Attack Steps**\n\n1. step\n"
+        md = output_dir / "threat-model.md"
+        md.write_text(self._wrap_section3(section), encoding="utf-8")
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert report.issues == [], report.issues
+
+    def test_compound_chain_crossref_does_not_count_as_own_walkthrough(self, output_dir):
+        qa = _load_qa_checks()
+        self._write_yaml_one_critical(output_dir)
+        # §3.2 belongs to T-002 and merely mentions T-001 in prose ("compound
+        # with T-001") — that cross-reference must NOT satisfy T-001's coverage.
+        section = (
+            "### 3.2 Some Other Finding\n\n"
+            "**Source:** [T-002](#t-002) — `x.ts:1`\n\n"
+            "Compound with T-001 through a shared asset.\n\n"
+            "**Attack Steps**\n\n1. step\n"
+        )
+        md = output_dir / "threat-model.md"
+        md.write_text(self._wrap_section3(section), encoding="utf-8")
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert any("T-001" in i for i in report.issues), report.issues

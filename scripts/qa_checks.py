@@ -1772,17 +1772,19 @@ def build_repair_plan(
                 "section_id": "attack_walkthroughs",
                 "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
                 "remediation": (
-                    "Edit `.fragments/attack-walkthroughs.md` so EVERY Critical "
-                    "threat in `threat-model.yaml` has its own `### 3.x T-NNN "
-                    "— <title>` sub-section. Each sub-section MUST contain "
-                    "(1) one prose paragraph explaining the attack narrative, "
-                    "(2) a `sequenceDiagram` mermaid block with an "
-                    "`alt Current state — T-NNN` / `else After M-NNN — "
-                    "<short fix>` branch contrasting vulnerable vs. mitigated, "
-                    "(3) an `**Impact:**` paragraph naming the business "
-                    "consequence, (4) a `**Recommended fix:**` line linking "
-                    "the relevant M-NNN. After editing, re-run "
-                    "compose_threat_model.py."
+                    "Re-generate `.fragments/attack-walkthroughs.md` "
+                    "deterministically — `python3 scripts/pregenerate_fragments.py "
+                    "<output-dir> --force --only attack-walkthroughs.md` — which "
+                    "emits one `### 3.x` sub-section per Critical threat that is "
+                    "contract-clean by construction. Each sub-section declares its "
+                    "owning threat on a `**Source:** [T-NNN]` line directly under "
+                    "the heading and carries the `**Attack Steps**`, `**Sequence "
+                    "Diagram**`, and `**Defense in Depth**` labelled sections that "
+                    "`walkthrough_depth` requires. Do NOT replace those three "
+                    "labelled sections with `**Impact:**`/`**Recommended fix:**` — "
+                    "that satisfies this check but breaks `walkthrough_depth`. Only "
+                    "hand-edit if a specific Critical is genuinely absent. After "
+                    "editing, re-run compose_threat_model.py."
                 ),
             }
         )
@@ -5339,12 +5341,17 @@ def check_walkthrough_coverage(
       * Counts `### 3.<n> ...` H3 sub-sections inside `## 3. Attack Walkthroughs`
         excluding `### 3.1 Attack Chain Overview` (the chain overview is NOT a
         per-Critical walkthrough).
-      * Flags each Critical T-NNN whose ID does not appear in any §3.x heading.
+      * Flags each Critical T-NNN whose ID does not appear in any §3.x
+        sub-section.
 
-    The check intentionally matches on T-NNN in the heading (e.g.
-    `### 3.2 T-001 — SQL injection authentication bypass`) — the renderer
-    standardises this format, so a missing T-NNN means the walkthrough was
-    not authored at all.
+    The check matches the owning T-NNN on each sub-section's canonical
+    `**Source:** [T-NNN]` line — NOT the heading. The deterministic renderer
+    (walkthrough_renderer.py) keeps the H3 heading short and T-NNN-free so it
+    stays under check_heading_hygiene's length limit, and emits the T-NNN on
+    the `**Source:**` line directly under the heading. A heading of the form
+    `### 3.2 T-001 — …` is still accepted via the heading-line fallback. A
+    missing T-NNN therefore means the walkthrough was not authored at all,
+    independent of how long the finding title is.
     """
     report = Report("walkthrough_coverage")
     contract = _read_contract(contract_path)
@@ -5393,20 +5400,39 @@ def check_walkthrough_coverage(
     nxt = re.search(r"^##\s+\d+\.\s", tail, re.MULTILINE)
     sec3 = tail[: nxt.start()] if nxt else tail
 
-    # Collect H3 sub-sections, excluding §3.1 chain overview.
+    # Collect per-Critical §3.x sub-sections as full-text blocks (heading +
+    # body up to the next §3.x heading), excluding §3.1 chain overview. We scan
+    # each block's `**Source:** [T-NNN]` line — NOT the heading — for the owning
+    # Critical id (see the docstring: the deterministic renderer keeps the
+    # heading short and T-NNN-free to satisfy check_heading_hygiene).
     h3_re = re.compile(r"^###\s+3\.(\d+)\s+(.+?)$", re.MULTILINE)
-    walkthrough_headings: list[str] = []
-    for mh in h3_re.finditer(sec3):
-        sub_num = int(mh.group(1))
-        if sub_num == 1:
+    h3_matches = list(h3_re.finditer(sec3))
+    subsection_blocks: list[str] = []
+    for idx, mh in enumerate(h3_matches):
+        if int(mh.group(1)) == 1:
             continue  # §3.1 is the chain overview, not a per-Critical walkthrough
-        walkthrough_headings.append(mh.group(2).strip())
+        block_end = (
+            h3_matches[idx + 1].start() if idx + 1 < len(h3_matches) else len(sec3)
+        )
+        subsection_blocks.append(sec3[mh.start():block_end])
 
-    # Collect T-NNN ids referenced in those headings (T-001 / F-001 both count).
+    # Each per-Critical block declares its owning threat on the canonical
+    # `**Source:** [T-NNN]` line; fall back to a T-NNN/F-NNN token in the
+    # heading line when the Source line is absent (legacy fragments). Matching
+    # the Source line (not "any T-NNN in the block") avoids counting a
+    # compound-chain cross-reference (e.g. "compound with T-009") as if it
+    # were T-009's own walkthrough.
+    source_re = re.compile(r"\*\*Source:\*\*\s*\[[TF]-(\d{3,4})\]")
     seen_t_ids: set[str] = set()
-    for h in walkthrough_headings:
-        for m in _T_ID_RE_LOCAL.finditer(h):
-            seen_t_ids.add(f"T-{m.group(1).zfill(3)}")
+    for block in subsection_blocks:
+        ms = source_re.search(block)
+        if ms:
+            seen_t_ids.add(f"T-{ms.group(1).zfill(3)}")
+            continue
+        head_line = block.splitlines()[0] if block else ""
+        mh = _T_ID_RE_LOCAL.search(head_line)
+        if mh:
+            seen_t_ids.add(f"T-{mh.group(1).zfill(3)}")
 
     missing: list[dict] = []
     for t in crits:
@@ -5421,14 +5447,14 @@ def check_walkthrough_coverage(
             missing.append({"id": tid, "title": (t.get("title") or "").strip()})
 
     if missing:
-        n_have = len([w for w in walkthrough_headings if w])
+        n_covered = len(crits) - len(missing)
         report.issues.append(
-            f"§3 Attack Walkthroughs: {n_have}/{len(crits)} Critical-finding "
-            f"walkthroughs present — missing "
+            f"§3 Attack Walkthroughs: {n_covered}/{len(crits)} Critical findings "
+            f"have a walkthrough — missing "
             f"{', '.join(m['id'] for m in missing)}. Contract requires one "
-            f"`### 3.x T-NNN — <title>` sub-section per Critical threat with "
-            f"its own `sequenceDiagram` (alt Current state / else After "
-            f"mitigation)."
+            f"`### 3.x` sub-section per Critical threat, each declaring its "
+            f"T-NNN on a `**Source:** [T-NNN]` line and carrying its own "
+            f"`sequenceDiagram`."
         )
         # Per-missing entries for repair-plan granularity.
         for m in missing:

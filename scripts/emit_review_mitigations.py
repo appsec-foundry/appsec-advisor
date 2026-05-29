@@ -139,16 +139,23 @@ def _allocate_next_m_id(state: dict) -> str:
 
 
 def _link_threat_to_mitigation(threats_by_id: dict, tid: str, mid: str) -> None:
-    """Append `mid` to `threats[tid].mitigations[]` if not already there."""
+    """Append `mid` to `threats[tid].mitigation_ids[]` if not already there.
+
+    The canonical threat-side field per `threat-model.output.schema.yaml` is
+    `mitigation_ids` (`_ids` suffix). Earlier revisions of this helper wrote
+    to a field named `mitigations` which is not part of the output schema —
+    the renderer accepts both as a back-compat read, but yaml downstream
+    consumers (and `build_mitigations` cross-referencing) only look at
+    `mitigation_ids`. Writing the canonical name unblocks both."""
     t = threats_by_id.get(tid)
     if t is None:
         return
-    mitigations = t.get("mitigations")
-    if not isinstance(mitigations, list):
-        mitigations = []
-        t["mitigations"] = mitigations
-    if mid not in mitigations:
-        mitigations.append(mid)
+    mit_ids = t.get("mitigation_ids")
+    if not isinstance(mit_ids, list):
+        mit_ids = []
+        t["mitigation_ids"] = mit_ids
+    if mid not in mit_ids:
+        mit_ids.append(mid)
 
 
 # ---------------------------------------------------------------------------

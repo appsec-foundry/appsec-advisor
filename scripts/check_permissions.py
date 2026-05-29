@@ -178,18 +178,16 @@ def _rule_covers(rule: str, needed: str) -> bool:
         cmd_prefix = rule_arg[:-2]  # strip ":*" to get the command name
         if need_arg == cmd_prefix or need_arg.startswith(cmd_prefix + ":") or need_arg.startswith(cmd_prefix + " "):
             return True
-    # Path globs: ".../**" covers deeper paths, but NOT dotfiles.
-    # Claude Code's ** glob does not match files/dirs whose name starts with '.'.
-    # Required dotfile entries must be listed as explicit paths in required-permissions.yaml
-    # and as explicit entries in settings.json — there is no wildcard that covers them.
+    # Path globs: ".../**" covers deeper paths, INCLUDING dotfiles.
+    # Claude Code's Read/Write/Edit path rules follow gitignore semantics, where
+    # ** matches dot-prefixed names too — so a single ${DIR}/** rule subsumes any
+    # .sidecar.json or .dot-dir/** beneath it. (Earlier versions of this checker
+    # special-cased dotfiles as uncovered; that was incorrect.)
     if rule_arg.endswith("/**"):
         base = rule_arg[:-3]
         if need_arg == base:
             return True
         if need_arg.startswith(base + "/") or need_arg.startswith(base):
-            remainder = need_arg[len(base) :].lstrip("/")
-            if remainder.startswith("."):
-                return False
             return True
     return False
 

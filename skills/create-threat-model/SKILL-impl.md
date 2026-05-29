@@ -1969,9 +1969,22 @@ Both scripts are **idempotent** — they strip prior auto-emitted entries before
 # pre-script YAML rather than aborting the run after 25+ minutes of Stage 1.
 if [ "$DRY_RUN" = "false" ]; then
   {
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + yaml-hygiene + vektors + open-registration + asset-links + control-taxonomy"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + config-scan-mitigations + yaml-hygiene + vektors + open-registration + asset-links + control-taxonomy"
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
+    # M-RCA-2026-05 — `kind: fix` mitigations for config-scan threats.
+    # Stage 1's appsec-config-scanner emits findings without remediation
+    # prose (the agent's actual output schema is leaner than its docs imply)
+    # and merge_threats._config_finding_to_threat does not populate
+    # `mitigation_ids[]` or `remediation`. As a result, build_mitigations
+    # never produced an M-NNN card for them and the §8 Threat Register
+    # shipped with empty **Fix:** cells on every config-scan row. This
+    # emitter looks up canonical remediation prose (config-iac-checks.yaml
+    # by `config_check_id` → built-in slug map for scanner-synthesised
+    # checks → generic fallback), allocates a new M-NNN per threat, and
+    # links it back via threats[].mitigation_ids. Idempotent: prior
+    # auto_source="config-scan" cards are cleared before re-computing.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_config_scan_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true

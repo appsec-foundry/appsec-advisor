@@ -248,6 +248,13 @@ def _config_finding_to_threat(f: dict) -> dict:
         "component_name": "CI/CD pipeline",
         "config_scan_ref": f.get("local_id"),
         "config_check_id": f.get("check_id"),
+        # The scanner's slug (`cors-wildcard`, `csp-missing`, …) used by the
+        # downstream `emit_config_scan_mitigations.py` to look up canonical
+        # remediation prose from its built-in slug map. Falls back to the
+        # `check` field, which is the slug form some scanner versions emit.
+        # Without this carry-through, the auto-emitter has to guess the slug
+        # from the threat title — fragile when the LLM rewrites the title.
+        "config_check_slug": f.get("check_slug") or f.get("check"),
         "iac_type": f.get("iac_type"),
         "breach_distance": _BREACH_VECTOR_TO_DISTANCE.get(f.get("breach_vector") or "n/a"),
         "mitigation_title": f.get("recommended_mitigation_title"),

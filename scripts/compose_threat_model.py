@@ -500,6 +500,15 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         labelled links — used in multi-ref table cells so each entry is on its
         own line instead of comma-joined.  Single-item lists skip the `<br/>`.
         """
+        # Defensive: a scalar string (e.g. a singular `mitigation: "M-002"`
+        # field rendered through this list filter, as in
+        # templates/fragments/critical-attack-tree.md.j2 →
+        # `mitigation_breakpoints[].mitigation`) must be treated as ONE id, not
+        # iterated character-by-character — otherwise "M-002" renders as
+        # `[M](#m)<br/>[-](#-)<br/>[0](#0)<br/>[0](#0)<br/>[2](#2)`, which also
+        # spawns bogus #m / #- / #0 anchors that break toc_closure.
+        if isinstance(refs, str):
+            refs = [refs]
         if not refs:
             return "—"
         parts = [ctx.linkify_with_label(r.strip()) for r in refs]
