@@ -146,7 +146,7 @@ Findings are rendered from structured artifacts and checked before release, so t
 | File | Enable with | Description |
 |---|---|---|
 | `threat-model.pdf` | `--pdf` | Print-ready PDF report. |
-| `threat-model.html` | via `export-threat-model --formats html` | Self-contained HTML5 (pandoc-only, no weasyprint) for browser viewing, wiki attachments, or as a styling-pipeline input. |
+| `threat-model.html` | `--html` (or `export-threat-model --formats html`) | Self-contained HTML5 (pandoc-only, no weasyprint) for browser viewing, wiki attachments, or as a styling-pipeline input. |
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
 | `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for AI pentesters such as Strix, including finding verification plus architecture-driven probes. |
 

@@ -99,7 +99,7 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
 - `.fragments/ms-top-mitigations.json` — curate the Management-Summary Top-Mitigations leader-board (see authoring contract below)
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
-- `.fragments/top-threats-architecture.md` (Figure 1 of the Security Posture section) unless `SKIP_ATTACK_PATHS_AUTHORING=true` or quick depth — see authoring contract below. When absent, the composer falls back to a deterministic builder; your hand-authored version is preferred because it can express semantic edge labels and internal data flows the fallback cannot derive.
+- ~~`.fragments/top-threats-architecture.md` (Figure 1)~~ — **DO NOT author this fragment.** Figure 1 is built **deterministically** by the composer (`_render_top_threats_architecture`), which is the authoritative single source of truth for that diagram. Hand-authoring is retired: the LLM repeatedly drifted from the agreed format (unstructured layout, missing per-component finding badges, un-annotated actors, attacker→data edges, and out-of-range `linkStyle` indices that crash Mermaid). Skip it — the composer ignores any file you write here except as a no-attack-paths fallback.
 - `.fragments/architecture-diagrams.md` and `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`
 
 Do not overwrite deterministic fragments unless enrichment is explicitly enabled or the pre-generated fragment is materially wrong:
@@ -110,78 +110,31 @@ Do not overwrite deterministic fragments unless enrichment is explicitly enabled
 - `attack-walkthroughs.md` (deterministic from `walkthrough_renderer.py` — see "§3 Attack Walkthroughs — out of your scope" below)
 - `out-of-scope.md`
 
-### `top-threats-architecture.md` authoring contract (Figure 1)
+### Figure 1 (`top-threats-architecture.md`) — OUT OF YOUR SCOPE (deterministic)
 
-Figure 1 of the **Security Posture & Top Threats** section is an architecture
-diagram showing components grouped by trust boundary with the attacker-controlled
-data flows drawn as labelled red edges. The composer inlines this fragment as
-"Figure 1" directly above the deterministic risk-flow heatmap (Figure 2). Author
-it as a raw-markdown fragment: a one-line caption sentence, then one ` ```mermaid `
-block. Do NOT include the `**Figure 1 — …**` bold caption (the composer adds it).
+Figure 1 of the **Security Posture & Top Threats** section is built
+**deterministically** by the composer (`_render_top_threats_architecture` in
+`scripts/compose_threat_model.py`). You do **not** author it. The builder is the
+authoritative single source of truth and guarantees the prescribed format on
+every run:
 
-**Glyph contract (load-bearing).** The red edges MUST carry the same ①–⑦ glyphs
-as Figure 2 and the Top Threats table. Glyphs are assigned **positionally over the
-attack classes in `data/attack-class-taxonomy.yaml` declaration order, restricted
-to classes that have ≥1 finding in `threat-model.yaml`** — i.e. the first non-empty
-class is ①, the second ②, and so on. Read `threat-model.yaml threats[]` (each has
-`cwe`, `component`, `vektor`), map each threat's CWE to its class via the taxonomy
-`classes[].cwes`, and derive the same ordered, non-empty class list the heatmap uses.
+- external **actor band on top** (red `:::actorbad` attackers, green
+  `:::actorgood` legitimate user/victim — every actor annotated with icon +
+  subtitle), then the `CLIENT → APP → DATA` tier stack (`flowchart TB`);
+- each component box carries a **finding-count badge** (`🔴 <Critical> 🟠 <High>`);
+- **no actor→data edges** — data-tier attacks (injection, secret/file exposure)
+  route as internal `app ⇒ data` edges; victim-targeting classes route
+  `app ⇒ client ⇒ Shop User`;
+- one red attacker edge per attack class, glyph-labelled ①–⑦ in the SAME order as
+  Figure 2 and the Top Threats table;
+- `linkStyle` index ranges computed from the actual edge count (never out of
+  range — the historic crash mode).
 
-**Structure (model on the reference in `docs/analysis-top-threats-merge.md` →
-"Figure 1"). The LAYOUT below is PRESCRIBED — keep it identical so every report's
-Figure 1 reads the same way; only the edge wording is yours. The deterministic
-fallback builder (`_render_top_threats_architecture`) emits this exact shape, so a
-hand-authored fragment MUST match it (you just supply richer edge labels):**
-
-1. `flowchart TB`.
-2. External nodes above the tiers:
-   - One **Anonymous Internet Attacker** node (`fa:fa-user-secret`).
-   - The **Shop User** victim node (`fa:fa-user`, subtitle "victim — XSS/CSRF
-     target") whenever any victim-targeting (XSS/CSRF) class exists.
-   - **Collapse attacker actors to match the Figure 2 heatmap** using the `meta`
-     flags: when `open_user_registration: true`, fold authenticated / privileged
-     attackers into the anonymous attacker; when `public_source_repo: true`, the
-     committed secret is readable by anyone, so do NOT draw a separate repo-reader
-     attacker — the anonymous attacker drives the secret-forgery class. You MAY add a
-     NON-attacker **Public Source Repo** source node (`fa:fa-code-branch`, subtitle
-     naming the committed secrets) joined to the attacker by a DOTTED grey edge
-     (`-.->`, e.g. "secrets readable by anyone") to show where the key comes from —
-     never an attack (`==>`) edge from the repo. A `repo-read` *attacker* node is
-     only legitimate when the repo is private (`public_source_repo` unset/false).
-3. One subgraph per architecture tier PRESENT, in order — `CLIENT["Client Tier — browser"]`,
-   `APP["Application Tier — …"]`, `DATA["Data Tier"]` — each holding its `C-NN · Name`
-   component nodes (`:::comp`). **Omit components that host no findings** — a box
-   reachable only by a benign edge is noise (canonical `C-NN` numbering is by the full
-   `components[]` order, so omitting one never renumbers the rest). You MAY add a
-   data-tier sub-node for a finding's real infrastructure sink not in `components[]`
-   (e.g. `DB["C-03 · SQLite + MarsDB"]`, `FS["Filesystem<br/>FTP · key · log dirs"]`).
-4. Grey benign backbone edges (`-->`, `stroke:#6b7280`): Shop User → client component,
-   client → primary application component, application → data sink.
-5. Red attacker edges (`==>`, `stroke:#b71c1c`), one per attack class, each labelled
-   `"<glyph> <short semantic action>"` — a concise, accurate verb phrase, NOT the
-   generic class name (e.g. `② forge admin JWT`, `① SQL / NoSQL injection`,
-   `④ browse secret files`, `⑤ RCE via eval`, `⑥ unescaped HTML`). **Route by where the
-   attack LANDS (impact tier)** so the threats spread across tiers instead of piling on
-   one box:
-   - A class whose impact is in the DATA tier (injection, secret/file exposure) is
-     drawn as an INTERNAL application→data edge (`API ==> DB`, `API ==> FS`), even
-     though the finding's component is the application — this mirrors the reference and
-     stops the edge spanning the actor column across the app tier.
-   - A victim-targeting class (XSS/CSRF) is drawn as application→client (injection,
-     `API ==> SPA`) PLUS client→Shop User (delivery, `SPA ==> Shop User`), so the
-     victim is VISIBLY attacked — never an edge originating at the victim node.
-   - Every other class is an actor→component edge to each application component that
-     hosts a finding of that class (so a specialised component like the B2B Order API
-     gets its own RCE edge instead of being an orphaned box).
-   Never leave a shown component without an edge; never invent an edge to a component
-   with no findings of that class.
-6. Close with `style`/`classDef` for the tier subgraphs (dashed borders) and
-   `comp`/`ext` classes, and `linkStyle` ranges separating the grey benign edges from
-   the red attacker edges.
-
-Keep it readable: ≤ ~12 edges. If the deterministic data is too flat to express
-internal flows (e.g. all findings collapsed onto one component, empty `evidence.file`),
-prefer fewer, correct edges over inventing structure.
+This was moved out of LLM scope because hand-authored versions repeatedly drifted
+from the agreed structure and emitted out-of-range `linkStyle` indices that crash
+Mermaid (`TypeError: Cannot set properties of undefined (setting 'style')`). Do
+not write `.fragments/top-threats-architecture.md`; if the format needs to change,
+edit `_render_top_threats_architecture` (and its tests), not this agent prompt.
 
 ### `ms-architecture-assessment.json` authoring contract
 

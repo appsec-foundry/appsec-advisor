@@ -567,6 +567,7 @@ Parse the user's arguments for the following flags:
 | `--pentest-format <generic\|strix>` | `PENTEST_FORMAT=<value>` | `generic` |
 | `--pentest-target <url>` | `PENTEST_TARGET_URL=<url>` (base URL injected into meta.target) | (none) |
 | `--pdf` | `WRITE_PDF=true` (calls `scripts/export_pdf.py` after all stages — see PDF Export below) | `false` |
+| `--html` | `WRITE_HTML=true` (calls `scripts/export_html.py` after all stages — see HTML Export below) | `false` |
 | `--requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
@@ -3335,7 +3336,31 @@ The exporter's own preflight handles missing dependencies with a clear message; 
 
 `scripts/runtime_cleanup.py` already lists `threat-model.pdf` in its NEVER-touch set — so this output survives all subsequent cleanup invocations the same way `threat-model.md` and `threat-model.sarif.json` do.
 
-**Explicit success exit.** After the PDF block (or after the cleanup block when `WRITE_PDF=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
+### HTML Export (only when `WRITE_HTML=true`)
+
+The HTML export runs **after** the PDF block, under the same rationale: `threat-model.md` is final, so the standalone `threat-model.html` can never go stale. The export script is the same one used by `/appsec-advisor:export-threat-model --formats html`. `--pdf` and `--html` are independent and may both be set in one run.
+
+**Non-fatal.** HTML export failures must not fail the assessment, identically to PDF. The threat model itself was already written; a conversion error or a missing optional `mmdc` (Mermaid pre-render) is a warning, not an error. Log and continue.
+
+```bash
+if [ "$WRITE_HTML" = "true" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" \
+        --input  "$OUTPUT_DIR/threat-model.md" \
+        --output "$OUTPUT_DIR/threat-model.html" \
+        2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
+    HTML_RC=${PIPESTATUS[0]}
+    if [ "$HTML_RC" -eq 0 ]; then
+        printf '\n  HTML: %s/threat-model.html\n' "$OUTPUT_DIR" >&2
+    else
+        printf '\n  HTML export skipped (exit %s — see preflight output above)\n' "$HTML_RC" >&2
+        printf '  Run `/appsec-advisor:export-threat-model --formats html --check-only` for the install hints.\n' >&2
+    fi
+fi
+```
+
+`scripts/runtime_cleanup.py` already lists `threat-model.html` in its NEVER-touch set, so this output survives subsequent cleanup the same way `threat-model.pdf` does.
+
+**Explicit success exit.** After the HTML block (or after the cleanup block when both `WRITE_PDF=false` and `WRITE_HTML=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
 
 ```bash
 exit 0

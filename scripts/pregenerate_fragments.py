@@ -2162,8 +2162,12 @@ def gen_assets(yaml_data: dict) -> str:
     any_linked = any(a.get("linked_threats") for a in assets)
     if any_linked:
         lines.append("| Asset | ID | Classification | Description | Linked Threats |")
-        # Narrow ID/Classification; give Description and (wider) Linked Threats room.
-        lines.append(_proportional_separator(16, 6, 13, 28, 34))
+        # Narrow ID/Classification; cap Description and give Linked Threats more
+        # room. Linked Threats is rendered INLINE (` · `) below rather than
+        # `<br/>`-stacked so the column claims width proportional to its content
+        # in content-sizing renderers (2026-05-30 user request — stacked links
+        # left it the narrowest column while Description dominated).
+        lines.append(_proportional_separator(18, 6, 12, 24, 34))
     else:
         lines.append("| Asset | ID | Classification | Description |")
         lines.append(_proportional_separator(18, 6, 14, 40))
@@ -2179,7 +2183,10 @@ def gen_assets(yaml_data: dict) -> str:
         desc = (a.get("description") or "").replace("\n", " ").strip()
         if any_linked:
             lt = [_to_canonical_finding_label(t) for t in (a.get("linked_threats") or [])]
-            lt_cell = "<br/>".join(f"[{t}](#{t.lower()})" for t in lt) if lt else "—"
+            # Inline (` · `) rather than `<br/>`-stacked so the Linked Threats
+            # column claims width proportional to its content (2026-05-30 user
+            # request). check_cell_format skips this table (see its §4 guard).
+            lt_cell = " · ".join(f"[{t}](#{t.lower()})" for t in lt) if lt else "—"
             lines.append(f"| {name} | {aid} | {clazz} | {desc} | {lt_cell} |")
         else:
             lines.append(f"| {name} | {aid} | {clazz} | {desc} |")
@@ -4933,8 +4940,7 @@ def _emit_v2_grouped_control(lines: list, c: dict, subs: list, threats: list,
     name = (c.get("control") or c.get("name") or c.get("domain") or "Control").strip()
     title = _friendly_subcontrol_title(name)
     if section_id and idx:
-        for slug in sorted({_v2_slug(name), _v2_slug(title)}):
-            lines.append(f'<a id="{slug}"></a>')
+        lines.append("".join(f'<a id="{s}"></a>' for s in sorted({_v2_slug(name), _v2_slug(title)})))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
         lines.append(f"#### {title}")
@@ -5035,8 +5041,10 @@ def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: st
     # covered:**` link targets); the side anchors close that gap.
     if section_id and idx:
         anchors = {_v2_slug(original_title), _v2_slug(title)}
-        for slug in sorted(anchors):
-            lines.append(f'<a id="{slug}"></a>')
+        # All anchors on ONE line: stacked empty <a id> lines render with
+        # inconsistent vertical gaps before a heading (1 vs 2 anchors → uneven
+        # whitespace, 2026-05-30 user "Freiräume" fix).
+        lines.append("".join(f'<a id="{s}"></a>' for s in sorted(anchors)))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
         lines.append(f"#### {title}")
@@ -5190,8 +5198,10 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
     # side anchors close that gap.
     if section_id and idx:
         anchors = {_v2_slug(name), _v2_slug(title)}
-        for slug in sorted(anchors):
-            lines.append(f'<a id="{slug}"></a>')
+        # All anchors on ONE line: stacked empty <a id> lines render with
+        # inconsistent vertical gaps before a heading (1 vs 2 anchors → uneven
+        # whitespace, 2026-05-30 user "Freiräume" fix).
+        lines.append("".join(f'<a id="{s}"></a>' for s in sorted(anchors)))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
         lines.append(f"#### {title}")
@@ -5640,8 +5650,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # Emit BOTH the un-friendly slug AND the friendly slug as side
             # anchors so `**Controls covered:**` link variants (LLM-filled
             # placeholder vs. mechanical) both resolve to this H4.
-            for slug in sorted({_v2_slug(default_mech_raw), _v2_slug(default_mech)}):
-                lines.append(f'<a id="{slug}"></a>')
+            lines.append("".join(f'<a id="{s}"></a>' for s in sorted({_v2_slug(default_mech_raw), _v2_slug(default_mech)})))
             lines.append(f"#### {section_id}.1 {default_mech}")
             lines.append("")
             lines.append(_v2_status_line(""))

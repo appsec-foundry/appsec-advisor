@@ -22,6 +22,10 @@ OUTPUT
                                (requires pandoc + weasyprint; mmdc optional)
                                See /appsec-advisor:export-threat-model --formats pdf
                                for the standalone form
+  --html                       Also export standalone threat-model.html
+                               (mmdc optional for Mermaid pre-render)
+                               See /appsec-advisor:export-threat-model --formats html
+                               for the standalone form
   --verbose                    Append a Run Statistics section to the report
   --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
 

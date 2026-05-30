@@ -562,6 +562,73 @@ def _normalize_title_path_tail(text: str) -> tuple[str, int]:
     return "\n".join(new_lines), n
 
 
+_ANCHOR_ONLY_LINE = re.compile(r'^[ \t]*(?:<a id="[^"]*"></a>)+[ \t]*$')
+
+
+def _collapse_consecutive_anchors(text: str) -> tuple[str, int]:
+    """Join runs of consecutive anchor-only lines (``<a id="x"></a>``) into ONE
+    line. Stacked empty-anchor blocks render with inconsistent vertical gaps
+    before headings (a heading with 2 alias anchors gets more whitespace than
+    one with 1 — the 2026-05-30 "uneinheitliche Freiräume vor 7.8.1" report).
+    Collapsing every run to a single line makes the pre-heading spacing uniform.
+    Skips fenced code blocks."""
+    lines = text.split("\n")
+    out: list[str] = []
+    fixes = 0
+    i = 0
+    in_fence = False
+    while i < len(lines):
+        ln = lines[i]
+        if ln.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out.append(ln)
+            i += 1
+            continue
+        if not in_fence and _ANCHOR_ONLY_LINE.match(ln):
+            run = [ln.strip()]
+            j = i + 1
+            while (
+                j < len(lines)
+                and not lines[j].lstrip().startswith("```")
+                and _ANCHOR_ONLY_LINE.match(lines[j])
+            ):
+                run.append(lines[j].strip())
+                j += 1
+            fixes += len(run) - 1
+            out.append("".join(run))
+            i = j
+        else:
+            out.append(ln)
+            i += 1
+    return "\n".join(out), fixes
+
+
+def _escape_bare_dollars(text: str) -> tuple[str, int]:
+    """Escape unescaped ``$`` in prose so a ``$where``-style token cannot open a
+    KaTeX/LaTeX math span in math-enabled markdown viewers — which then swallows
+    everything up to the next ``$``/``#`` and throws a parse error (the
+    2026-05-30 "ParseError: KaTeX … got '#'" report in the Findings index).
+    Skips fenced code blocks AND inline code spans (``$`` is literal there).
+    ``\\$`` also renders as a plain ``$`` in non-math markdown, so this is safe
+    everywhere. Runs LAST so no earlier transform re-introduces a bare ``$``."""
+    fixes = 0
+    out_parts: list[str] = []
+    for chunk in re.split(r"(```.*?```)", text, flags=re.DOTALL):
+        if chunk.startswith("```"):
+            out_parts.append(chunk)
+            continue
+        sub: list[str] = []
+        for piece in re.split(r"(`[^`\n]*`)", chunk):
+            if len(piece) >= 2 and piece.startswith("`") and piece.endswith("`"):
+                sub.append(piece)
+            else:
+                new, n = re.subn(r"(?<!\\)\$", r"\\$", piece)
+                fixes += n
+                sub.append(new)
+        out_parts.append("".join(sub))
+    return "".join(out_parts), fixes
+
+
 def apply_fixes(text: str) -> tuple[str, int]:
     """Apply all prose-fix classes outside fenced blocks. Returns
     (new_text, n_fixes_total)."""
@@ -631,6 +698,8 @@ def apply_fixes(text: str) -> tuple[str, int]:
     body, anchor_fixes = _rewrite_controls_covered_anchors(body)
     body, title_fixes = _normalize_title_path_tail(body)
     body, bullet_fixes = _bulletize_relevant_findings(body)
+    body, anchor_collapse_fixes = _collapse_consecutive_anchors(body)
+    body, dollar_fixes = _escape_bare_dollars(body)  # run LAST
     total = (
         inline_fixes
         + padding_fixes
@@ -639,6 +708,8 @@ def apply_fixes(text: str) -> tuple[str, int]:
         + anchor_fixes
         + title_fixes
         + bullet_fixes
+        + anchor_collapse_fixes
+        + dollar_fixes
     )
     return body, total
 

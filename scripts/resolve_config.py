@@ -982,6 +982,8 @@ def build_parser() -> argparse.ArgumentParser:
     # directly from argv.
     p.add_argument("--pdf", action="store_true",
                    help="Skill-layer flag — exports threat-model.pdf after Stage 4.")
+    p.add_argument("--html", action="store_true",
+                   help="Skill-layer flag — exports threat-model.html after Stage 4.")
     p.add_argument("--max-resumes", type=int, default=None,
                    help="Skill-layer flag — cap on Stage 1 auto-resume dispatches.")
     p.add_argument("--clean-cache", action="store_true",

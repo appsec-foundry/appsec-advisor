@@ -133,8 +133,8 @@ if [ "$RUN_STATUS" -ne 0 ]; then
 fi
 
 # ── Stage 1b: HTML export (best-effort; needs pandoc) ────────────────────────
-# PDF is produced in-pipeline via --pdf; HTML has no create-threat-model flag,
-# so we drive export_html.py directly here (deterministic, no LLM tokens).
+# PDF is produced in-pipeline via --pdf. A --html flag exists too, but here we
+# drive export_html.py directly to keep this deterministic (no LLM tokens).
 HTML_DONE=0
 if [ "$HTML_CAPABLE" -eq 1 ]; then
     echo ""

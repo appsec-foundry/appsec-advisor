@@ -343,6 +343,11 @@ class RenderContext:
         short = label.split(" — ", 1)[0].strip()
         short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()
         if short:
+            # Escape unescaped `$` so a token like `$where` does not open a
+            # KaTeX/LaTeX math span in math-enabled markdown viewers (which then
+            # swallows everything up to the next `$`/`#` and throws a parse
+            # error). `\$` renders as a literal `$` in plain markdown too.
+            short = re.sub(r"(?<!\\)\$", r"\\$", short)
             return f"[{r}](#{anchor}) ({short})"
         return f"[{r}](#{anchor})"
 
@@ -373,6 +378,9 @@ class RenderContext:
         anchor = r.lower()
         label = (label_override or self.lookup_label(r) or "").strip()
         if label:
+            # Escape unescaped `$` (see linkify_with_short_label) so a `$where`-
+            # style token cannot open a KaTeX math span in math-enabled viewers.
+            label = re.sub(r"(?<!\\)\$", r"\\$", label)
             return f"[{r}](#{anchor}) — {label}"
         return f"[{r}](#{anchor})"
 
@@ -4356,6 +4364,22 @@ def _build_impact_cards(attack_paths_data: dict, impact_taxonomy: dict) -> list[
     return cards
 
 
+# Compact attack-class label overrides shared by Figure 1 (architecture diagram)
+# and Figure 2 (risk-flow heatmap) so both NAME attacks identically. Only
+# abbreviate genuinely-long labels, and never to a bare noun ("Secrets" reads as
+# a thing, not an attack → keep "Secret Exposure"). Do NOT mutate the taxonomy
+# `short_label` itself (other consumers depend on it) — this is render-only.
+_POSTURE_LABEL_ABBREV = {
+    "Privilege Escalation": "Priv-Esc",
+    "Sensitive File & Secret Exposure": "Secret Exposure",
+}
+
+
+def _posture_short_label(name: str) -> str:
+    """Render-only compact form of an attack-class label (see _POSTURE_LABEL_ABBREV)."""
+    return _POSTURE_LABEL_ABBREV.get((name or "").strip(), name)
+
+
 def _build_attack_arrows(
     attack_paths_data: dict,
     taxonomy: dict,
@@ -4445,12 +4469,12 @@ def _build_attack_arrows(
                 }
             )
 
-    # Reference form (2026-05): collapse the per-class arrows into ONE grouped
-    # arrow per (src, dst) — glyphs joined in sequence order, no per-class text
-    # label. Matches Figure 2 in docs/analysis-top-threats-merge.md
-    # (e.g. `A_ANON ==>|"① ③ ④ ⑤"| T_APP`). Keeps the diagram readable when one
-    # actor drives several classes against the same tier.
+    # Collapse the per-class arrows into ONE grouped arrow per (src, dst). Each
+    # glyph is NAMED ONCE (same form as Figure 1): a single-class arrow reads
+    # "③ Priv-Esc"; a multi-class arrow STACKS its names vertically (one per
+    # line via <br/>) so it stays a tidy list rather than a long horizontal run.
     glyph_rank = {g: i for i, g in enumerate(glyph_seq)}
+    glyph_to_name = {a["glyph"]: _posture_short_label(a["label"]) for a in arrows}
     grouped: dict[tuple[str, str], list[str]] = {}
     order: list[tuple[str, str]] = []
     for a in arrows:
@@ -4459,15 +4483,16 @@ def _build_attack_arrows(
             grouped[key] = []
             order.append(key)
         grouped[key].append(a["glyph"])
-    grouped_arrows = [
-        {
-            "src": src,
-            "dst": dst,
-            "glyph": " ".join(sorted(grouped[(src, dst)], key=lambda g: glyph_rank.get(g, 99))),
-            "label": "",
-        }
-        for (src, dst) in order
-    ]
+    grouped_arrows = []
+    for (src, dst) in order:
+        glyphs = sorted(grouped[(src, dst)], key=lambda g: glyph_rank.get(g, 99))
+        stacked = "<br/>".join(f"{g} {glyph_to_name.get(g, '')}".strip() for g in glyphs)
+        grouped_arrows.append({"src": src, "dst": dst, "glyph": stacked, "label": ""})
+    # Relay (delivery) arrows are the CONTINUATION of a victim-targeting path —
+    # reference by bare NUMBER only (the class is already named on its attack
+    # arrow), matching Figure 1's dotted-propagation labelling.
+    for r in relay_arrows:
+        r["label"] = ""
     return grouped_arrows, relay_arrows
 
 
@@ -4582,19 +4607,44 @@ def _render_top_threats_architecture(
     Threats** from ``threat-model.yaml`` + the *already-reconciled*
     ``attack_paths_data``.
 
-    Layout: a ``flowchart TB`` with one subgraph per architecture tier
-    (Client / Application / Data), each holding its ``C-NN`` components;
-    external actor nodes above; grey edges for the legitimate request
-    backbone (user → client → application → data, derivable from tier
-    ordering and corroborated by ``trust_boundaries``); and one red
-    attacker edge per attack class, routed from the class actor to the
-    component that hosts the majority of the class's findings.
+    Layout: a ``flowchart TB`` with an actor band on top, then one subgraph
+    per architecture tier (Client / Application / Data), each holding its
+    ``C-NN`` components.
 
-    Glyph assignment (① ② … ⑦) is **positional over the same
-    ``attack_paths`` ordering** that drives Figure 2 and the Top Threats
-    table (see ``_build_finding_to_path_map``), so the numbering agrees
-    across all three. Returns an empty string when there is nothing to
-    draw (no components or no attack paths).
+    RULES (enforced by construction — keep them; they are why the diagram is
+    both structured and technically correct):
+
+    Technical correctness
+      T1. Every SOLID red edge originates at an ACTOR node. Built only via
+          ``_add(attack_glyphs, actor_nid, …)`` where ``actor_nid`` always comes
+          from ``_actor()`` → no component can ever be the source of an attack.
+      T2. Each attack class lands on EXACTLY ONE solid target = the
+          representative component of its TARGET TIER (data target fronted by
+          the app rep). No scatter across every tangential finding-host — that
+          is what wrongly drew "privilege-escalation ⇒ SPA".
+      T3. No direct actor⇒data edge. Reaching the data tier is shown as a
+          DOTTED propagation edge ``app rep ··> data rep`` (fires when the class
+          targets data OR has any data-tier finding).
+      T4. DOTTED ``client ··> Shop User`` (victim) only for victim-targeting
+          (XSS/CSRF) classes — never for a class that merely has a client-tier
+          finding (e.g. a client-side authz bypass).
+      T5. Glyph assignment (① ② … ⑦) is positional over the same
+          ``attack_paths`` order that drives Figure 2 and the Top Threats table,
+          so the numbering agrees across all three.
+
+    Presentation
+      P1. Tiers stack top→down: Actors → Client → Application → Data.
+      P2. At most ONE solid edge per (actor, component) pair — all glyphs going
+          that way are merged into a single glyph-only label ("① ② ④ ⑤"),
+          exactly like Figure 2. Never two parallel edges between a node pair
+          (this is what keeps it from looking cluttered / overlapping).
+      P3. At most ONE dotted edge per (component, target) pair — glyphs merged.
+      P4. Solid red = attack; dotted red = propagation; grey = benign backbone.
+      P5. Each component box carries a 🔴/🟠 finding-count badge; actors are
+          red (attacker) / green (legitimate user-victim), all annotated.
+
+    Returns an empty string when there is nothing to draw (no components or no
+    attack paths).
     """
     components = ctx.yaml_data.get("components") or []
     threats = ctx.yaml_data.get("threats") or []
@@ -4607,6 +4657,20 @@ def _render_top_threats_architecture(
         c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)
     }
     actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
+
+    # Actor collapse: when self-registration is open, an "authenticated" internet
+    # attacker is one trivial POST away from an account, so it is not meaningfully
+    # distinct from the anonymous attacker. Fold internet-user / internet-priv-user
+    # into internet-anon and annotate the merged node. Driven by
+    # meta.open_user_registration (set by detect_open_registration.py). Same
+    # principle the Figure-2 heatmap uses, applied here so both figures agree.
+    collapse_authed = bool((ctx.yaml_data.get("meta") or {}).get("open_user_registration"))
+    _COLLAPSIBLE_AUTHED = {"internet-user", "internet-priv-user"}
+
+    def _collapse_slug(slug: str) -> str:
+        if collapse_authed and (slug or "").strip() in _COLLAPSIBLE_AUTHED:
+            return "internet-anon"
+        return slug
 
     # Threat count per component, taken from the threat list (the optional
     # ``threat_ids`` array is not always populated). Drives the representative
@@ -4625,18 +4689,17 @@ def _render_top_threats_architecture(
                 d[sev] += 1
 
     # Component bookkeeping: canonical C-NN by the FULL component-array order
-    # (so omitting a component here never renumbers the others — C-05 stays
-    # C-05 even if C-04 is dropped), mermaid node id, tier. Components with no
-    # findings are omitted: Figure 1 is a threat diagram, and a box reachable
-    # only by a benign edge reads as noise.
+    # (so the numbering is stable), mermaid node id, tier. ALL components are
+    # shown so the architecture is complete (2026-05-30 user request — several
+    # application-tier components, e.g. file-upload / B2B, were being dropped).
+    # A component with no findings simply renders as a box with no badge and no
+    # attack edge — it is part of the architecture, just not (yet) a threat host.
     comp_node: dict[str, str] = {}
     comp_label: dict[str, str] = {}
     comp_tier: dict[str, str] = {}
     for idx, c in enumerate(components, start=1):
         cid = (c.get("id") or "").strip()
         if not cid:
-            continue
-        if comp_threat_count.get(cid, 0) == 0:
             continue
         tier = (c.get("tier") or "application").strip().lower()
         if tier not in _FIG1_TIER_ORDER:
@@ -4692,6 +4755,9 @@ def _render_top_threats_architecture(
             fa = meta.get("fa_icon") or "fa:fa-user-secret"
             lbl = _FIG1_ACTOR_LABEL.get(slug) or meta.get("label") or slug
             sub = meta.get("default_subtitle") or ""
+            if collapse_authed and slug == "internet-anon":
+                # The authenticated / privileged attacker folds into this node.
+                sub = "incl. self-registered users — open registration makes authenticated ≈ anonymous"
             actor_node[slug] = _fig1_node_id("ACT", slug)
             txt = f"{fa} {_fig1_label(lbl)}"
             if sub:
@@ -4702,7 +4768,6 @@ def _render_top_threats_architecture(
     client_comps = [cid for cid in comp_node if comp_tier[cid] == "client"]
     app_comps = [cid for cid in comp_node if comp_tier[cid] == "application"]
     data_comps = [cid for cid in comp_node if comp_tier[cid] == "data"]
-    app_fallback = next((cid for cid, t in comp_tier.items() if t == "application"), next(iter(comp_node)))
 
     def _rep(cids: list[str]) -> str | None:
         if not cids:
@@ -4726,26 +4791,35 @@ def _render_top_threats_architecture(
             tt = "client"
         return tt if tt in _FIG1_TIER_ORDER else "application"
 
-    # Red attacker edges — ONE labelled edge per attack class so the diagram is
-    # self-explanatory without the table (label = "<glyph> <short class name>",
-    # e.g. "① Injection"). Routing keeps the actors→client→app→data structure
-    # readable and distributes the threats across the components they actually
-    # hit, instead of piling every class onto one box:
-    #   * target = data  → internal app⇒data edge ("API ⇒ DB · ① Injection"),
-    #     so a data-tier attack never spans from the actor column across the
-    #     application tier (no crossing).
-    #   * target = client/victim → app⇒client (injection) PLUS client⇒Shop User
-    #     (delivery), so the victim is visibly attacked, not a passive node.
-    #   * target = application → actor⇒every app component that hosts a finding,
-    #     so a specialised component (e.g. the B2B Order API hosting the RCE) is
-    #     reached directly instead of being an orphaned box.
-    attack_edges: list[tuple[str, str, str]] = []  # (src, dst, label)
+    # Attacker flows use TWO edge styles so the diagram reads correctly:
+    #   * SOLID red (==>)  — the attack itself. ALWAYS originates at a threat
+    #     ACTOR and lands on the app/client component the attacker directly
+    #     reaches. No component⇒component solid edge ever exists (that would read
+    #     as "the API attacks the DB", which is wrong — components do not attack).
+    #   * DOTTED red (-.->) — the consequence/propagation path. From the hit
+    #     component onward to where the attack ultimately lands: into the DATA
+    #     tier (injection reaches the DB THROUGH the app tier) or onto the VICTIM
+    #     (Shop User) for XSS/CSRF. Dotted = "the attack continues here", not a
+    #     fresh attack launched by the component. We still never draw a direct
+    #     actor⇒data edge — data is always reached via the application tier.
+    # Each red edge is labelled "<glyph> <short class name>" (e.g. "① Injection").
+    # Attacker flows are collected as glyph LISTS keyed by edge, so that many
+    # classes sharing one (source → target) render as a SINGLE edge labelled
+    # with all their glyphs (e.g. "① ② ④ ⑤") — exactly like Figure 2. This is
+    # the rule that keeps the diagram structured: never two parallel edges
+    # between the same pair of nodes.
+    #   attack_glyphs[(actor, comp)] → SOLID red  (the attack; src is ALWAYS an actor)
+    #   prop_glyphs[(comp, target)]  → DOTTED red (propagation onto data tier / victim)
+    attack_glyphs: dict[tuple[str, str], list[str]] = {}
+    prop_glyphs: dict[tuple[str, str], list[str]] = {}
     victim_present = False
-    victim_deliveries: list[tuple[str, str]] = []  # (client node, label)
+    victim_props: list[tuple[str, str]] = []  # (client node, glyph) → dotted ··> Shop User
 
-    def _emit(src: str, dst: str, label: str) -> None:
+    def _add(bucket: dict[tuple[str, str], list[str]], src: str, dst: str, glyph: str) -> None:
         if src and dst and src != dst:
-            attack_edges.append((src, dst, label))
+            lst = bucket.setdefault((src, dst), [])
+            if glyph not in lst:
+                lst.append(glyph)
 
     for idx, ap in enumerate(attack_paths):
         if idx >= len(glyph_seq):
@@ -4753,32 +4827,46 @@ def _render_top_threats_architecture(
         glyph = glyph_seq[idx]
         slug = (ap.get("class") or "").strip()
         cls = cls_by_id.get(slug) or {}
-        short = cls.get("short_label") or cls.get("label") or slug or "attack"
-        label = f"{glyph} {_fig1_label(short)}"
-        actor_slug = (ap.get("actor") or cls.get("default_actor") or "internet-anon").strip()
+        actor_slug = _collapse_slug((ap.get("actor") or cls.get("default_actor") or "internet-anon").strip())
+        if actor_slug == "victim-required":
+            actor_slug = "internet-anon"
+        actor_nid = _actor(actor_slug)
         tt = _target_tier(ap, cls)
-
-        if tt == "data" and rep_app and rep_data:
-            _emit(comp_node[rep_app], comp_node[rep_data], label)
-        elif tt == "client" and rep_client:
+        if tt in ("client", "victim"):
             victim_present = True
-            src_slug = "internet-anon" if actor_slug == "victim-required" else actor_slug
-            inj_src = comp_node[rep_app] if rep_app else _actor(src_slug)
-            _emit(inj_src, comp_node[rep_client], label)
-            victim_deliveries.append((comp_node[rep_client], label))
-        else:
-            if actor_slug == "victim-required":
-                actor_slug = "internet-anon"
-            actor_nid = _actor(actor_slug)
-            app_hosts: list[str] = []
-            for fid in ap.get("findings") or []:
-                comp = fid_component.get((fid or "").upper())
-                if comp in comp_node and comp_tier.get(comp) == "application" and comp not in app_hosts:
-                    app_hosts.append(comp)
-            if not app_hosts and rep_app:
-                app_hosts = [rep_app]
-            for h in app_hosts:
-                _emit(actor_nid, comp_node[h], label)
+
+        # Which components do this class's findings actually touch? (used only
+        # to decide whether a data-tier propagation edge is warranted).
+        touches_data = any(
+            comp_tier.get(fid_component.get((f or "").upper())) == "data"
+            for f in (ap.get("findings") or [])
+        )
+
+        # T2 — ONE primary SOLID target per class = the representative component
+        # of the class's TARGET TIER. A data target is fronted by the app rep
+        # (attackers never reach data directly). This is deterministic and
+        # collapses to one edge per class — no scatter across every tangential
+        # finding-host (which is what wrongly drew "priv-esc ⇒ SPA").
+        if tt == "client":
+            primary = rep_client or rep_app
+        else:  # "application" or "data" → the attack lands on the app tier
+            primary = rep_app or rep_client
+        if not primary:
+            primary = next(iter(comp_node), None)
+        if primary:
+            _add(attack_glyphs, actor_nid, comp_node[primary], glyph)  # T1: src is an actor
+
+        # T3 — dotted propagation into the data tier when the class reaches data
+        # (declared data target OR a data-tier finding), drawn app rep ··> data rep.
+        if (tt == "data" or touches_data) and rep_app and rep_data:
+            _add(prop_glyphs, comp_node[rep_app], comp_node[rep_data], glyph)
+
+        # T4 — dotted propagation onto the victim, ONLY for victim-targeting
+        # (XSS/CSRF) classes (deferred until user_node is resolved below).
+        if tt in ("client", "victim"):
+            vsrc = comp_node[rep_client] if rep_client else (comp_node[primary] if primary else None)
+            if vsrc:
+                victim_props.append((vsrc, glyph))
 
     # Grey legitimate-flow backbone (tier-ordered; corroborated by
     # trust_boundaries). The legitimate user IS the Shop User when a
@@ -4790,9 +4878,11 @@ def _render_top_threats_architecture(
         if victim_present
         else "fa:fa-user Legitimate User"
     )
-    # Delivery half of victim-targeting classes: client component → Shop User.
-    for cnode, label in victim_deliveries:
-        _emit(cnode, user_node, label)
+    # Dotted propagation onto the victim: client component ··> Shop User. Same
+    # consequence-path styling as the data-tier propagation (the XSS lands on
+    # the user via the client tier — not a fresh attack the SPA launches).
+    for cnode, glyph in victim_props:
+        _add(prop_glyphs, cnode, user_node, glyph)
     benign_edges: list[tuple[str, str, str]] = []
     if client_comps:
         for cid in client_comps:
@@ -4807,12 +4897,16 @@ def _render_top_threats_architecture(
             benign_edges.append((comp_node[rep_app], comp_node[cid], " reads/writes "))
 
     # ---- Emit the Mermaid block -------------------------------------------
-    # `subGraphTitleMargin` gives each band's title label a little air above and
-    # below so it stays readable; a small `rankSpacing` bump separates the bands
-    # without making the diagram sprawl (2026-05-30 request — modest, not airy).
+    # Use the ELK layered renderer (same as Figure 2): its crossing-minimisation
+    # routes the actor→tier and propagation edges with far fewer edge/box
+    # crossings than the default dagre renderer (2026-05-30 request — "Pfeile
+    # sollen nach Möglichkeit keine anderen Boxen/Pfeile schneiden"). ELK also
+    # aligns same-rank nodes (the actor row, each tier's components) on one line.
+    # NB Mermaid flowchart has no fixed node-width — box widths stay content-
+    # driven; ELK only equalises their row placement, not their pixel size.
     lines: list[str] = [
         "```mermaid",
-        "%%{init: {'flowchart': {'subGraphTitleMargin': {'top': 8, 'bottom': 8}, 'rankSpacing': 55}}}%%",
+        '%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%',
         "flowchart TB",
     ]
     # External actors are grouped into their OWN band (a subgraph, like every
@@ -4847,6 +4941,30 @@ def _render_top_threats_architecture(
         lines.append("    end")
     lines.append("")
 
+    # Glyph → compact class-name map (positional order). Each attack class is
+    # NAMED ONCE — on its (solid) actor-originated edge — and referenced by bare
+    # number everywhere else (dotted propagation edges). Names use the shared
+    # _posture_short_label() so Figure 1 and Figure 2 abbreviate identically.
+    glyph_name: dict[str, str] = {}
+    for i, ap in enumerate(attack_paths):
+        if i >= len(glyph_seq):
+            break
+        c = cls_by_id.get((ap.get("class") or "").strip()) or {}
+        nm = c.get("short_label") or c.get("label") or (ap.get("class") or "attack")
+        glyph_name[glyph_seq[i]] = _fig1_label(_posture_short_label(nm))
+
+    def _attack_label(glyphs: list[str]) -> str:
+        # SOLID (actor-originated) edges name every class they carry — this is
+        # the single place each attack is named. When an edge carries several
+        # classes they are STACKED VERTICALLY (one per line via <br/>) so the
+        # label reads as a tidy list instead of one long horizontal run:
+        #     ① Injection
+        #     ② Auth Bypass
+        #     ④ Secrets
+        #     ⑤ RCE
+        # Compact short-forms (see _POSTURE_LABEL_ABBREV) keep each line short.
+        return "<br/>".join(f"{g} {glyph_name.get(g, '')}".strip() for g in glyphs)
+
     edge_idx = 0
     benign_idx: list[int] = []
     attack_idx: list[int] = []
@@ -4856,11 +4974,18 @@ def _render_top_threats_architecture(
             lines.append(f'    {src} -->|"{lbl.strip()}"| {dst}')
             benign_idx.append(edge_idx)
             edge_idx += 1
-    if attack_edges:
-        lines.append("    %% attacker-controlled flows (glyphs match Figure 2 / Top Threats)")
-        for src, dst, label in attack_edges:
-            lines.append(f'    {src} ==>|"{label}"| {dst}')
+    if attack_glyphs:
+        lines.append("    %% attacks (solid) — each originates at a threat actor; glyphs match Figure 2 / Top Threats")
+        for (src, dst), glyphs in attack_glyphs.items():
+            lines.append(f'    {src} ==>|"{_attack_label(glyphs)}"| {dst}')
             attack_idx.append(edge_idx)
+            edge_idx += 1
+    prop_idx: list[int] = []
+    if prop_glyphs:
+        lines.append("    %% propagation (dotted) — how the attack reaches the data tier / victim")
+        for (src, dst), glyphs in prop_glyphs.items():
+            lines.append(f'    {src} -.->|"{" ".join(glyphs)}"| {dst}')
+            prop_idx.append(edge_idx)
             edge_idx += 1
     lines.append("")
     for tier, sg, stroke in (
@@ -4886,14 +5011,27 @@ def _render_top_threats_architecture(
         lines.append(
             f"    linkStyle {','.join(str(i) for i in attack_idx)} stroke:#b71c1c,stroke-width:2.5px"
         )
+    if prop_idx:
+        # Dotted, slightly thinner red — the consequence path, visually
+        # subordinate to the solid attack edges but clearly part of the same flow.
+        lines.append(
+            f"    linkStyle {','.join(str(i) for i in prop_idx)} stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5"
+        )
     lines.append("```")
 
     intro = (
         "Components grouped by trust boundary (architecture tier). Grey edges are the "
-        "legitimate request backbone; red edges are attacker-controlled data flows, each "
-        "labelled with the threat glyph(s) it carries — the same numbering as Figure 2 "
-        "and the Top Threats table below."
+        "legitimate request backbone. **Solid red** edges are attacker-controlled attacks — "
+        "each originates at a threat actor and lands on the component it directly reaches. "
+        "**Dotted red** edges are the consequence path: how that attack propagates through "
+        "the application tier onto the data tier or the victim. Each red edge carries the "
+        "threat glyph(s) — the same numbering as Figure 2 and the Top Threats table below."
     )
+
+    # No separate glyph legend: each attack class is NAMED ONCE on its solid
+    # actor-originated edge (e.g. "① Injection · ② Auth Bypass · …") and
+    # referenced by bare number on the dotted propagation edges, so a standalone
+    # legend would just name everything a second time.
     return intro + "\n\n" + "\n".join(lines) + "\n"
 
 
@@ -5347,22 +5485,30 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # → Figure 2 (the risk-flow heatmap above) → Top Threats table.
     _ = paths_template_data  # built above; intentionally not rendered as bullets
 
+    # Figure 1 is built DETERMINISTICALLY from yaml + the SAME reconciled
+    # attack_paths order that drives Figure 2's glyphs, so ①–⑦ agree across
+    # both figures and the Top Threats table. The deterministic builder is the
+    # AUTHORITATIVE source: it guarantees the agreed format every run — actor
+    # band on top, Client→Application→Data tier stack, per-component finding
+    # badges (🔴/🟠), red attackers / green users, no actor→data edges, and
+    # in-range linkStyle indices. An LLM/operator-authored
+    # `.fragments/top-threats-architecture.md` is consulted ONLY as a fallback
+    # when the builder yields nothing (e.g. no attack_paths). This precedence
+    # is intentional: when the LLM fragment was preferred it produced free-form
+    # diagrams that ignored the prescribed structure and emitted out-of-range
+    # `linkStyle` indices that crash Mermaid (2026-05-30 regression). Best-effort:
+    # a builder failure must never break the section (Figure 2 + table still render).
     figure1_md = ""
-    fig1_path = ctx.fragments_dir / "top-threats-architecture.md"
     try:
-        if fig1_path.is_file():
-            figure1_md = fig1_path.read_text(encoding="utf-8").strip()
-    except OSError:
+        figure1_md = _render_top_threats_architecture(ctx, attack_paths_data, attack_taxonomy).strip()
+    except Exception:  # noqa: BLE001 — Figure 1 is non-essential
         figure1_md = ""
     if not figure1_md:
-        # No operator/LLM-authored fragment on disk — build Figure 1
-        # deterministically from yaml + the SAME reconciled attack_paths
-        # order that drives Figure 2's glyphs, so ①–⑦ agree across both
-        # figures and the Top Threats table. Best-effort: a builder failure
-        # must never break the section (Figure 2 + table still render).
+        fig1_path = ctx.fragments_dir / "top-threats-architecture.md"
         try:
-            figure1_md = _render_top_threats_architecture(ctx, attack_paths_data, attack_taxonomy).strip()
-        except Exception:  # noqa: BLE001 — Figure 1 is non-essential
+            if fig1_path.is_file():
+                figure1_md = fig1_path.read_text(encoding="utf-8").strip()
+        except OSError:
             figure1_md = ""
 
     table_md = _render_top_threats(ctx, env, {"template": "top-threats.md.j2"}).rstrip()
@@ -6793,10 +6939,14 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
 # Only the four classes the tree actually uses (goal · capability AND/OR ·
 # leaf). The retired overview/subtree split used to carry a full palette of
 # unused classDefs — that boilerplate is gone with the single-diagram render.
+# Palette aligned with Figures 1 & 2 (slate/navy + red): the goal node reuses
+# the impact-node navy (#0f172a); intermediate AND/OR capability nodes use two
+# slate shades (darker = AND/all-required, lighter = OR/alternatives) instead of
+# the off-palette purple/blue; leaf (threat) nodes keep the attacker red.
 _ATTACK_TREE_CLASSDEFS = (
     "    classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px\n"
-    "    classDef and_node fill:#7c3aed,stroke:#5b21b6,color:#fff,stroke-width:2px\n"
-    "    classDef or_node fill:#2563eb,stroke:#1e40af,color:#fff,stroke-width:2px\n"
+    "    classDef and_node fill:#334155,stroke:#1e293b,color:#fff,stroke-width:2px\n"
+    "    classDef or_node fill:#64748b,stroke:#334155,color:#fff,stroke-width:2px\n"
     "    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px"
 )
 
@@ -10946,6 +11096,26 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     )
     lines.append("")
 
+    # ---- Findings index (jump-list) --------------------------------------
+    # A compact, ID-ordered list of every finding card in §8 so the reader can
+    # jump straight to an entry instead of scrolling the severity groups
+    # (2026-05-30 user request). Each chip targets the `<a id="f-NNN">` anchor
+    # the Story Card below declares, so the link always resolves.
+    _idx_nums = sorted(
+        {
+            int(m.group(1))
+            for t in threats
+            if (m := re.search(r"(\d+)$", (t.get("id") or t.get("t_id") or "").strip()))
+        }
+    )
+    if _idx_nums:
+        # One entry per line (2026-05-30 user request) — header, then each
+        # finding link on its own line (<br/>-stacked). The post-compose
+        # linkifier appends each finding's short title (with `$` escaped).
+        _idx = "<br/>".join(f"[F-{n:03d}](#f-{n:03d})" for n in _idx_nums)
+        lines.append(f"**Findings index:**<br/>{_idx}")
+        lines.append("")
+
     # ---- Category anchors (invisible) ------------------------------------
     # Each TH-NN gets an `<a id="th-NN"></a>` anchor declared exactly once
     # at the top of §8 so that `[TH-NN — Title](#th-nn)` links inside the
@@ -11229,6 +11399,25 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         "[§8 Threat Register](#8-threat-register) for the underlying weakness."
     )
     lines.append("")
+
+    # ---- Mitigations index (jump-list) -----------------------------------
+    # A compact, ID-ordered list of every M-NNN block so the reader can jump
+    # straight to a mitigation instead of scrolling the priority buckets
+    # (2026-05-30 user request). Each chip targets the `<a id="m-NNN">` anchor
+    # the block below declares.
+    _m_nums = sorted(
+        {
+            int(mm2.group(1))
+            for mm in mitigations
+            if (mm2 := re.search(r"(\d+)$", (mm.get("m_id") or mm.get("id") or "").strip()))
+        }
+    )
+    if _m_nums:
+        # One entry per line (2026-05-30 user request) — see §8 Findings index.
+        _midx = "<br/>".join(f"[M-{n:03d}](#m-{n:03d})" for n in _m_nums)
+        lines.append(f"**Mitigations index:**<br/>{_midx}")
+        lines.append("")
+
     # Normalise severity-word priorities that the orchestrator sometimes
     # emits instead of P-values (e.g. "Critical" → "P1").
     _sev_to_prio = {"critical": "P1", "high": "P2", "medium": "P3", "low": "P4"}

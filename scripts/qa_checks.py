@@ -502,6 +502,9 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
         label = (t.get("title") or t.get("scenario_short") or "").strip()
         if not label:
             continue
+        # Escape unescaped `$` so a `$where`-style title cannot open a KaTeX
+        # math span when this label is re-emitted into a `— <title>` xref.
+        label = re.sub(r"(?<!\\)\$", r"\\$", label)
         canonical_anchor = tid.lower()
         idx[tid] = (label, canonical_anchor)
         # F-NNN alias: every T-NNN threat is dual-anchored as `<a id="t-NNN">`
@@ -529,6 +532,7 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
         if mid:
             label = (m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip()
             if label:
+                label = re.sub(r"(?<!\\)\$", r"\\$", label)
                 idx[mid] = (label, mid.lower())
     return idx
 
@@ -8624,6 +8628,14 @@ def check_cell_format(md_path: Path) -> tuple[Report, str]:
     issues_remaining: list[str] = []
 
     for start_line, block in _iter_table_blocks(text):
+        # §4 Assets deliberately renders its "Linked Threats" column INLINE
+        # (` · `-separated) rather than `<br/>`-stacked, so the column claims
+        # enough width in content-sizing renderers — stacked links made it the
+        # narrowest column while the prose Description dominated (2026-05-30 user
+        # request). Skip the stacking auto-fix for that one table.
+        header_cells = {c.lower() for c in _split_table_cells(block[0])} if block else set()
+        if {"asset", "classification", "description", "linked threats"} <= header_cells:
+            continue
         # Header + separator + body rows.  We only rewrite body rows.
         for offset, row in enumerate(block[2:], start=2):
             line_idx = start_line + offset
