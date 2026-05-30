@@ -1,0 +1,246 @@
+"""Tests for the deterministic requirement → finding → mitigation traceability
+mapping in scripts/compose_threat_model.py.
+
+These pin the behaviour of the §7b "Requirements Traceability" table and the
+compact Management-Summary variant, both built purely from threat-model.yaml
+threats[] (no fragment parsing):
+
+  * threats sharing a requirement collapse into one row, max-severity wins
+  * findings link to §8 (#f-nnn), mitigations to §9 (#m-nnn)
+  * the legacy singular `requirement_id` field is honoured as a fallback
+  * threats with no requirement link are excluded
+  * an empty row set renders nothing (no orphan table header)
+  * the MS `limit` caps rows and emits an overflow pointer to §7b
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import shutil
+import sys
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).parent.parent
+SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
+CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
+FIXTURE = Path(__file__).parent / "fixtures" / "compose"
+
+
+def _load_module(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+compose = _load_module("compose_threat_model", SCRIPT_PATH)
+
+
+def _ctx(threats: list[dict], mitigations: list[dict] | None = None):
+    return compose.RenderContext(
+        output_dir=Path("/tmp"),
+        contract={},
+        yaml_data={"threats": threats, "mitigations": mitigations or []},
+        triage={},
+        fragments_dir=Path("/tmp"),
+    )
+
+
+_THREATS = [
+    {
+        "id": "T-001",
+        "risk": "critical",
+        "violated_requirements": ["SEC-AUTH-1"],
+        "mitigation_ids": ["M-001", "M-002"],
+    },
+    {
+        "id": "T-002",
+        "risk": "high",
+        "violated_requirements": ["SEC-AUTH-1", "SEC-SQL-1"],
+        "mitigation_ids": ["M-003"],
+        "remediation": {"blueprint": {"id": "BP-API", "url": "https://x/bp", "section": "API Auth"}},
+    },
+    # Legacy singular field, no mitigations.
+    {"id": "T-003", "risk": "medium", "requirement_id": "SEC-LOG-1"},
+    # No requirement link — excluded.
+    {"id": "T-100", "risk": "high", "source": "stride"},
+]
+
+
+def test_rows_group_by_requirement_and_take_max_severity() -> None:
+    rows = compose._build_requirements_mapping_rows(_ctx(_THREATS))
+    assert [r["req_id"] for r in rows] == ["SEC-AUTH-1", "SEC-SQL-1", "SEC-LOG-1"]
+
+    auth = rows[0]
+    # T-001 (critical) + T-002 (high) → critical wins.
+    assert auth["risk_word"] == "critical"
+    assert [fid for fid, _ in auth["findings"]] == ["F-001", "F-002"]
+    # Mitigations unioned across both threats, order-preserving.
+    assert auth["measures"] == ["M-001", "M-002", "M-003"]
+    assert "BP-API" in auth["blueprint"]
+
+
+def test_legacy_requirement_id_is_honoured_and_unlinked_threats_excluded() -> None:
+    rows = compose._build_requirements_mapping_rows(_ctx(_THREATS))
+    req_ids = {r["req_id"] for r in rows}
+    assert "SEC-LOG-1" in req_ids       # singular requirement_id picked up
+    assert "T-100" not in req_ids       # stride threat without requirement excluded
+    log = next(r for r in rows if r["req_id"] == "SEC-LOG-1")
+    assert log["measures"] == []
+
+
+def test_reverse_fulfills_requirements_adds_measure() -> None:
+    # A mitigation that declares fulfills_requirements is included even though
+    # no threat lists it in mitigation_ids.
+    threats = [{"id": "T-001", "risk": "high", "violated_requirements": ["SEC-AUTH-1"]}]
+    mitigations = [
+        {"id": "M-001", "fulfills_requirements": ["SEC-AUTH-1"]},
+        {"id": "M-099", "fulfills_requirements": ["SEC-OTHER-9"]},  # different req → excluded
+    ]
+    rows = compose._build_requirements_mapping_rows(_ctx(threats, mitigations))
+    auth = next(r for r in rows if r["req_id"] == "SEC-AUTH-1")
+    assert auth["measures"] == ["M-001"]
+
+
+def test_mapping_is_prefix_agnostic_for_requirement_ids() -> None:
+    # Requirement IDs are used verbatim (dict keys, no regex) — any org prefix
+    # works, not just SEC-*. Findings/mitigations keep the system's fixed
+    # F-/M- namespace.
+    threats = [
+        {"id": "T-001", "risk": "high", "violated_requirements": ["AC-001"], "mitigation_ids": ["M-001"]},
+        {"id": "T-002", "risk": "critical", "violated_requirements": ["ISO27K-9", "SSLM-WAF"]},
+        {"id": "T-003", "risk": "medium", "requirement_id": "OWASP-A01"},  # legacy singular field
+    ]
+    ctx = _ctx(threats)
+    rows = compose._build_requirements_mapping_rows(ctx)
+    assert {r["req_id"] for r in rows} == {"AC-001", "ISO27K-9", "SSLM-WAF", "OWASP-A01"}
+
+    table = compose._render_requirements_mapping_table(ctx, rows)
+    for rid in ("AC-001", "ISO27K-9", "SSLM-WAF", "OWASP-A01"):
+        assert f"| `{rid}` |" in table
+    assert "[F-001](#f-001)" in table and "[M-001](#m-001)" in table
+
+
+def test_no_requirement_linked_threats_yields_empty() -> None:
+    rows = compose._build_requirements_mapping_rows(_ctx([{"id": "T-1", "source": "stride"}]))
+    assert rows == []
+    assert compose._render_requirements_mapping_table(_ctx([]), rows) == ""
+
+
+def test_table_has_five_columns_and_links_findings_and_mitigations() -> None:
+    ctx = _ctx(_THREATS)
+    table = compose._render_requirements_mapping_table(ctx, compose._build_requirements_mapping_rows(ctx))
+    header = table.splitlines()[0]
+    assert header.count("|") == 6  # 5 columns → 6 pipes
+    assert "Requirement" in header and "Maßnahmen" in header and "Blueprint" in header
+    assert "| `SEC-AUTH-1` |" in table
+    assert "[F-001](#f-001)" in table
+    assert "[M-002](#m-002)" in table
+    assert "[BP-API](https://x/bp) · API Auth" in table
+
+
+def test_ms_limit_caps_rows_and_emits_overflow_pointer() -> None:
+    ctx = _ctx(_THREATS)
+    rows = compose._build_requirements_mapping_rows(ctx)  # 3 rows
+    table = compose._render_requirements_mapping_table(ctx, rows, limit=2)
+    assert table.count("\n| `") == 2  # only 2 data rows rendered
+    assert "1 further requirement(s)" in table
+    assert "#7b-requirements-compliance" in table
+
+
+# --- Wiring: §7b hybrid renderer + Management-Summary subsection -------------
+# Exercises the dispatcher-wired renderers directly against the compose fixture
+# (a full render() is avoided here: it trips an unrelated §7 fixture/contract
+# subsection-count drift that has nothing to do with requirements).
+
+
+def _fixture_ctx_with_requirements(tmp_path: Path):
+    out = tmp_path / "output"
+    shutil.copytree(FIXTURE, out)
+
+    data = yaml.safe_load((out / "threat-model.yaml").read_text())
+    data.setdefault("meta", {})["check_requirements"] = True
+    threats = data["threats"]
+    threats[0]["violated_requirements"] = ["SEC-AUTH-1"]
+    threats[0].setdefault("mitigation_ids", threats[0].get("mitigation_ids") or ["M-001"])
+    threats[1]["violated_requirements"] = ["SEC-AUTH-1", "SEC-SQL-1"]
+    threats[1]["remediation"] = {"blueprint": {"id": "BP-API", "url": "https://x/bp", "section": "API Auth"}}
+
+    frag = out / ".fragments" / "requirements-compliance.md"
+    frag.parent.mkdir(parents=True, exist_ok=True)
+    frag.write_text(
+        "## 7b. Requirements Compliance\n\n"
+        "Compliance from the [OWASP ASVS](https://owasp.org/asvs) baseline.\n\n"
+        "**Summary:** 3 requirements checked — 1 PASS · 2 FAIL · 0 ANTI-PATTERN · 0 PARTIAL\n"
+    )
+    contract = yaml.safe_load(CONTRACT.read_text())
+    ctx = compose.RenderContext(
+        output_dir=out,
+        contract=contract,
+        yaml_data=data,
+        triage={},
+        fragments_dir=out / ".fragments",
+        eval_context={"check_requirements": True},
+    )
+    return ctx, contract["sections"]["requirements_compliance"]
+
+
+def test_7b_hybrid_inlines_fragment_and_appends_traceability(tmp_path: Path) -> None:
+    ctx, section = _fixture_ctx_with_requirements(tmp_path)
+    body = compose._render_requirements_compliance(ctx, None, section)
+    assert "OWASP ASVS" in body                       # LLM narrative preserved
+    assert "### Requirements Traceability" in body    # deterministic table appended
+    assert "| Requirement | Risk | Findings | Maßnahmen | Blueprint |" in body
+    assert "[F-001](#f-001)" in body and "[M-001](#m-001)" in body
+    assert "[BP-API](https://x/bp) · API Auth" in body
+
+
+def test_ms_subsection_carries_summary_and_links(tmp_path: Path) -> None:
+    ctx, _section = _fixture_ctx_with_requirements(tmp_path)
+    ms = compose._render_requirements_compliance_ms(ctx)
+    assert ms.startswith("### Requirements Compliance")
+    assert "OWASP ASVS" in ms                          # baseline from fragment
+    assert "3 requirements checked" in ms              # summary counts preserved
+    assert "**Violated requirements → findings & mitigations:**" in ms
+    assert "[F-001](#f-001)" in ms                     # G2 fix: links now present
+    assert "#7b-requirements-compliance" in ms
+
+
+def _prepare_req_output_dir(tmp_path: Path) -> Path:
+    """Copy the fixture to a temp output dir and patch it on disk for a full
+    compose.render (check_requirements on, threats requirement-linked, fragment
+    present). Runs under the suite-wide APPSEC_SCHEMA_V1 pin (see conftest)."""
+    out = tmp_path / "output"
+    shutil.copytree(FIXTURE, out)
+    data = yaml.safe_load((out / "threat-model.yaml").read_text())
+    data.setdefault("meta", {})["check_requirements"] = True
+    data["threats"][0]["violated_requirements"] = ["SEC-AUTH-1"]
+    data["threats"][0].setdefault(
+        "mitigation_ids", data["threats"][0].get("mitigation_ids") or ["M-001"]
+    )
+    (out / "threat-model.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
+    frag = out / ".fragments" / "requirements-compliance.md"
+    frag.parent.mkdir(parents=True, exist_ok=True)
+    frag.write_text(
+        "## 7b. Requirements Compliance\n\n"
+        "Compliance from the [OWASP ASVS](https://owasp.org/asvs) baseline.\n\n"
+        "**Summary:** 1 requirements checked — 1 PASS\n"
+    )
+    return out
+
+
+def test_full_render_emits_traceability_in_7b_and_ms(tmp_path: Path) -> None:
+    out = _prepare_req_output_dir(tmp_path)
+    rendered, _warnings = compose.render(CONTRACT, out)
+    # §7b: LLM narrative + deterministic table, end-to-end through the dispatcher.
+    assert "## 7b. Requirements Compliance" in rendered
+    assert "### Requirements Traceability" in rendered
+    assert "| Requirement | Risk | Findings | Maßnahmen | Blueprint |" in rendered
+    assert "[F-001](#f-001)" in rendered
+    # MS subsection rendered via the document.order conditional.
+    assert "### Requirements Compliance" in rendered
+    assert "**Violated requirements → findings & mitigations:**" in rendered

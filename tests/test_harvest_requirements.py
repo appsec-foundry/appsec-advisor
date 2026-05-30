@@ -80,3 +80,68 @@ def test_blueprint_source_deduplicates_index_page_from_discovered_links(monkeypa
 
     assert len(blueprints) == 1
     assert blueprints[0]["id"] == "BP-BLUEPRINTS"
+
+
+# ---------------------------------------------------------------------------
+# Blueprint ↔ requirement cross-reference resolution
+# (resolve_references / add_references_to_blueprints) — the link that the §7b
+# audit and the threat-model report rely on for "mapping bei Blueprints".
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_references_keeps_known_skips_unknown_and_dedupes():
+    harvester = load_harvester()
+    req_url_map = {
+        "SEC-AUTH-1": "https://req.example/sec-auth-1",
+        "SSLM-WAF": "https://req.example/sslm-waf",
+    }
+    text = (
+        "Authenticate via SEC-AUTH-1 and protect with SSLM-WAF. "
+        "See SEC-AUTH-1 again. UNKNOWN-99 is not in the catalog."
+    )
+    refs = harvester.resolve_references(text, req_url_map)
+
+    # Known IDs resolved (order-preserving, first-seen), duplicate collapsed,
+    # unknown ID skipped.
+    assert refs == [
+        {"id": "SEC-AUTH-1", "url": "https://req.example/sec-auth-1"},
+        {"id": "SSLM-WAF", "url": "https://req.example/sslm-waf"},
+    ]
+
+
+def test_resolve_references_handles_arbitrary_org_prefixes():
+    # The ID grammar is generic (_ID_BODY) — no hardcoded SEC- prefix. Diverse
+    # real-world org prefixes must all resolve.
+    harvester = load_harvester()
+    req_url_map = {
+        "AC-001": "https://req/ac-001",
+        "ISO27K-9": "https://req/iso27k-9",
+        "SSLM-WAF": "https://req/sslm-waf",
+        "OWASP-A01": "https://req/owasp-a01",
+    }
+    text = "Apply AC-001, ISO27K-9, SSLM-WAF and OWASP-A01 across the stack."
+    refs = harvester.resolve_references(text, req_url_map)
+    assert [r["id"] for r in refs] == ["AC-001", "ISO27K-9", "SSLM-WAF", "OWASP-A01"]
+
+
+def test_add_references_to_blueprints_annotates_only_matching_sections():
+    harvester = load_harvester()
+    req_url_map = {"SEC-AUTH-1": "https://req.example/sec-auth-1"}
+    blueprints = [
+        {
+            "id": "BP-API",
+            "sections": [
+                {"title": "Auth", "content": "Follow SEC-AUTH-1 for API auth."},
+                {"title": "Misc", "content": "No requirement IDs here."},
+            ],
+        }
+    ]
+    total = harvester.add_references_to_blueprints(blueprints, req_url_map)
+
+    assert total == 1
+    secs = blueprints[0]["sections"]
+    assert secs[0]["references"] == [
+        {"id": "SEC-AUTH-1", "url": "https://req.example/sec-auth-1"}
+    ]
+    # A section with no resolvable ID is left untouched (no empty references key).
+    assert "references" not in secs[1]

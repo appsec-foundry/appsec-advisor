@@ -1916,6 +1916,7 @@ These findings represent **systemic architectural gaps** — missing patterns or
 - Each requirement ID is a clickable link using the `url` from the requirements YAML. If no URL, render as plain text
 - The "Evidence" column is brief (one line) — cite the file:line or config that proves compliance or violation
 - The "Architectural Violations" subsection provides executive visibility into systemic gaps — keep each row to 1-2 sentences
+- **Do NOT author a separate requirement→finding→mitigation mapping/traceability table.** The composer (`compose_threat_model.py:_render_requirements_compliance`) deterministically appends a `### Requirements Traceability` table to §7b — built from `threat-model.yaml` (`violated_requirements`, `mitigation_ids`, `mitigation.fulfills_requirements`, `remediation.blueprint`) and validated by construction. Your Full Compliance Table owns the human view (Status / Priority / Evidence); the appended table owns the verified links (Findings / Maßnahmen / Blueprint). The Management Summary's `### Requirements Compliance` subsection renders a compact variant of the same deterministic table.
 
 ---
 

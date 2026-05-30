@@ -6342,16 +6342,168 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     )
 
 
-def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
-    """Derive the ### Requirements Compliance MS subsection from the
-    .fragments/requirements-compliance.md fragment.
+def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]:
+    """Deterministic requirement → finding → mitigation traceability.
 
-    Extracts:
-    - Baseline URL from the first "from the [name](url) baseline" line
-    - Summary line (PASS/FAIL/ANTI-PATTERN/PARTIAL counts)
-    - Up to 3 architectural violation bullets, ordered:
-        ANTI-PATTERN MUST → ANTI-PATTERN SHOULD → FAIL architectural MUST
-        → FAIL architectural SHOULD → FAIL MUST → FAIL SHOULD
+    Reads `threat-model.yaml` threats[] (no fragment parsing). A requirement
+    that FAILED in Phase 8b became a threat carrying `violated_requirements`
+    (the requirement IDs it evidences) plus `mitigation_ids` (the measures that
+    remediate it). Group those threats by requirement ID so each requirement
+    maps to its findings (F-NNN), its mitigations (M-NNN), a blueprint (when a
+    `architectural-anti-pattern` / `remediation.blueprint` threat supplied one),
+    and the max severity across its findings. The measure set is also augmented
+    via the reverse link `mitigation.fulfills_requirements` so a mitigation that
+    declares the requirement is included even if no threat lists it.
+
+    Rows are sorted critical → low, then by requirement ID. Returns [] when no
+    requirement-linked threat exists (e.g. all requirements PASS).
+    """
+    threats = list((ctx.yaml_data or {}).get("threats", []) or [])
+    by_req: dict[str, dict[str, Any]] = {}
+    for t in threats:
+        reqs = list(t.get("violated_requirements") or [])
+        if not reqs and t.get("requirement_id"):
+            reqs = [t["requirement_id"]]
+        if not reqs:
+            continue
+        tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+        m = re.match(r"^[TF]-(\d+)$", tid)
+        visible = f"F-{m.group(1)}" if m else tid
+        if not visible:
+            continue
+        risk = (t.get("risk") or t.get("severity") or "").strip().lower()
+        mids = [mid for mid in (t.get("mitigation_ids") or t.get("mitigations") or []) if mid]
+        rem = t.get("remediation") if isinstance(t.get("remediation"), dict) else {}
+        blueprint = _format_blueprint_cell(rem.get("blueprint")) if rem else ""
+        for rid in reqs:
+            rid_s = (rid or "").strip()
+            if not rid_s:
+                continue
+            slot = by_req.setdefault(
+                rid_s,
+                {"req_id": rid_s, "findings": [], "measures": [], "blueprint": ""},
+            )
+            if visible not in (f[0] for f in slot["findings"]):
+                slot["findings"].append((visible, risk))
+            for mid in mids:
+                if mid not in slot["measures"]:
+                    slot["measures"].append(mid)
+            if blueprint and not slot["blueprint"]:
+                slot["blueprint"] = blueprint
+
+    # Augment measures via the reverse link: a mitigation may declare
+    # `fulfills_requirements: [REQ-ID]` even when no threat names it in
+    # `mitigation_ids`. Only enrich requirements that already have a finding
+    # row (the table is violated-requirement scoped); append after the
+    # threat-derived measures so ordering stays deterministic.
+    if by_req:
+        for m in (ctx.yaml_data or {}).get("mitigations", []) or []:
+            if not isinstance(m, dict):
+                continue
+            mid = m.get("m_id") or m.get("id")
+            if not mid:
+                continue
+            for rid in m.get("fulfills_requirements") or []:
+                slot = by_req.get((rid or "").strip())
+                if slot and mid not in slot["measures"]:
+                    slot["measures"].append(mid)
+
+    rows = list(by_req.values())
+    for r in rows:
+        best = min(r["findings"], key=lambda f: _severity_rank(f[1]), default=("", ""))
+        r["risk_word"] = best[1]
+        r["risk_rank"] = _severity_rank(best[1])
+    rows.sort(key=lambda r: (r["risk_rank"], r["req_id"]))
+    return rows
+
+
+def _format_blueprint_cell(blueprint: Any) -> str:
+    """Render a threat's `remediation.blueprint` value as a table cell.
+
+    Accepts either the STRIDE-attached dict ({id, url, title, section}) or a
+    pre-formatted string. Returns "" when absent so callers can fall back to a
+    dash.
+    """
+    if not blueprint:
+        return ""
+    if isinstance(blueprint, str):
+        return blueprint.strip()
+    if isinstance(blueprint, dict):
+        bid = (blueprint.get("id") or "").strip()
+        url = (blueprint.get("url") or "").strip()
+        title = (blueprint.get("section") or blueprint.get("title") or "").strip()
+        label = bid or title or "blueprint"
+        link = f"[{label}]({url})" if url else label
+        if title and title != label:
+            link = f"{link} · {title}"
+        return link
+    return ""
+
+
+def _render_requirements_mapping_table(
+    ctx: RenderContext, rows: list[dict[str, Any]], *, limit: int | None = None
+) -> str:
+    """Render the requirement→finding→mitigation rows as a Markdown table.
+
+    Columns: Requirement · Risk · Findings · Maßnahmen · Blueprint. Finding
+    cells link to §8 (`#f-nnn`); mitigation cells link to §9 (`#m-nnn`). The
+    requirement ID is code-styled (the yaml carries no requirement URL — the
+    §7b full compliance table from the fragment links each ID to its source).
+    Returns "" for an empty row set.
+    """
+    if not rows:
+        return ""
+    shown = rows[:limit] if limit else rows
+    lines = [
+        "| Requirement | Risk | Findings | Maßnahmen | Blueprint |",
+        "|-------------|------|----------|-----------|-----------|",
+    ]
+    for r in shown:
+        risk_word = (r.get("risk_word") or "").strip()
+        emoji = _TOP_THREATS_SEVERITY_EMOJI.get(risk_word.lower(), "")
+        risk_cell = f"{emoji} {risk_word.title()}".strip() or "—"
+        find_cell = ", ".join(f"[{fid}](#{fid.lower()})" for fid, _ in r["findings"]) or "—"
+        meas_cell = ", ".join(f"[{mid}](#{mid.lower()})" for mid in r["measures"]) or "—"
+        bp_cell = r.get("blueprint") or "—"
+        lines.append(f"| `{r['req_id']}` | {risk_cell} | {find_cell} | {meas_cell} | {bp_cell} |")
+    out = "\n".join(lines)
+    if limit and len(rows) > limit:
+        out += (
+            f"\n\n_{len(rows) - limit} further requirement(s) in "
+            "[§7b — Requirements Compliance](#7b-requirements-compliance)._"
+        )
+    return out
+
+
+def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """§7b — inline the LLM compliance narrative (status/priority/evidence,
+    which the yaml does not carry) then append a deterministic Requirements
+    Traceability table built from threat-model.yaml threats."""
+    body = _render_markdown_fragment(ctx, "requirements_compliance", section)
+    rows = _build_requirements_mapping_rows(ctx)
+    table = _render_requirements_mapping_table(ctx, rows)
+    if table:
+        body = (
+            body.rstrip()
+            + "\n\n### Requirements Traceability\n\n"
+            + "Deterministic mapping of each violated requirement to the findings that "
+            + "evidence it and the mitigations that remediate it — derived from the "
+            + "[Threat Register](#8-threat-register) and [Mitigation Register](#9-mitigation-register).\n\n"
+            + table
+            + "\n"
+        )
+    return body
+
+
+def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
+    """Derive the ### Requirements Compliance MS subsection.
+
+    Extracts the baseline link + PASS/FAIL/ANTI-PATTERN/PARTIAL summary line
+    from the fragment (the only data threat-model.yaml does not carry), then
+    appends a deterministic compact traceability table — violated requirement
+    → findings (F-NNN) → mitigations (M-NNN) — built from threat-model.yaml so
+    the Management Summary surfaces the actual links (the prior regex-scraped
+    bullets silently dropped the Linked-finding column).
 
     Returns empty string when the fragment is missing or malformed.
     """
@@ -6380,44 +6532,24 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
     )
     result_line = summary_m.group(1).strip() if summary_m else ""
 
-    # --- Extract up to 3 architectural violation bullets ---
-    # Parse the Architectural Violations table (if present).
-    # Table rows: | [ID](url) — title | MUST/SHOULD | evidence | risk | linked |
-    arch_rows: list[tuple[str, str, str]] = []  # (priority, id_link, evidence)
-    in_arch_table = False
-    for line in text.splitlines():
-        if "### Architectural Violations" in line:
-            in_arch_table = True
-            continue
-        if in_arch_table:
-            if line.startswith("### "):
-                break  # left the table section
-            # Match table data rows (skip header and separator rows)
-            row_m = re.match(
-                r"\|\s*(\[.+?\]\(.+?\)(?:\s*—\s*.+?)?)\s*\|\s*(MUST|SHOULD|MAY)\s*\|(.+?)\|",
-                line,
-            )
-            if row_m:
-                id_cell = row_m.group(1).strip()
-                priority = row_m.group(2).strip()
-                evidence = row_m.group(3).strip()
-                arch_rows.append((priority, id_cell, evidence))
-
-    # Order: MUST first, then SHOULD, then MAY (stable sort preserves file order within tier)
-    _priority_order = {"MUST": 0, "SHOULD": 1, "MAY": 2}
-    arch_rows.sort(key=lambda r: _priority_order.get(r[0], 9))
-    top3 = arch_rows[:3]
-
     # --- Compose the subsection ---
     lines: list[str] = ["### Requirements Compliance", ""]
     lines.append(f"**Baseline:** {baseline}")
     if result_line:
         lines.append(f"**Result:** {result_line}")
     lines.append("")
-    if top3:
-        for priority, id_cell, evidence in top3:
-            lines.append(f"- **{id_cell} `{priority}`:** {evidence}")
+
+    # Deterministic compact traceability table (violated requirements only,
+    # highest-risk first, capped) built from threat-model.yaml — replaces the
+    # prior regex-scraped bullets that dropped the Linked-finding column.
+    rows = _build_requirements_mapping_rows(ctx)
+    table = _render_requirements_mapping_table(ctx, rows, limit=6)
+    if table:
+        lines.append("**Violated requirements → findings & mitigations:**")
         lines.append("")
+        lines.append(table)
+        lines.append("")
+
     lines.append("→ *Full compliance details in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*")
     return "\n".join(lines)
 
@@ -11540,6 +11672,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "operational_strengths": _render_operational_strengths,
         "threat_register": _render_threat_register,
         "mitigation_register": _render_mitigation_register,
+        "requirements_compliance": _render_requirements_compliance,
         "appendix_run_statistics": _render_appendix_run_statistics,
         "composition_notes": _render_composition_notes,
         # M3.3 — `run_issues` no longer rendered into threat-model.md.
