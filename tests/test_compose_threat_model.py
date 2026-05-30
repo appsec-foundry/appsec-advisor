@@ -263,11 +263,11 @@ def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -
 
     rendered, _ = compose.render(CONTRACT, out)
 
-    # Visible markers.
-    assert "⚠ *(evidence refuted)*" in rendered, "refuted marker missing"
-    assert "evidence: ambiguous ◌" in rendered, "ambiguous marker missing"
-    # Verified rows show the verdict in the LOC line.
-    assert "evidence: verified" in rendered
+    # Card layout (2026-05): refuted → strikethrough card heading + ⚠;
+    # ambiguous / verified → a glyph in the **Evidence:** field.
+    assert re.search(r"#### F-\d+ · ~~.+~~ ⚠", rendered), "refuted heading marker missing"
+    assert "◌ ambiguous" in rendered, "ambiguous marker missing"
+    assert "✓ verified" in rendered
     # The unchecked verdict stays silent.
     assert "(evidence unchecked)" not in rendered
 
@@ -285,44 +285,29 @@ def test_evidence_check_footnote_omitted_when_no_drift(tmp_path: Path) -> None:
     assert "**Evidence verification:**" not in rendered
 
 
-def test_threat_register_is_flat_register(tmp_path: Path) -> None:
-    """§8 Threat Register uses the post-2026-05 4-column Story-Card layout.
+def test_threat_register_is_card_layout(tmp_path: Path) -> None:
+    """§8 Threat Register uses the 2026-05 severity-grouped card layout.
 
-    The legacy 9-column header (`ID | Finding | Threat Category | Component
-    | Criticality | CVSS | Vektor | Mitigation | References`) was retired —
-    every per-row attribute (category, component, mitigation links, CWE/
-    OWASP/TH references, code excerpt) now folds into the rich Finding
-    cell. The columns shown to the reader are therefore:
-
-        ID | Finding | Vektor | Criticality
-
-    Per-TH anchors are emitted as an invisible block at the top of §8
-    (no visible "Categories at a glance" catalogue since 2026-05).
+    The flat 4-column table (`ID | Finding | Component | Criticality`) was
+    replaced by one card per finding under `### <emoji> <Severity> (n)`
+    group headers, mirroring §9. Per-TH anchors are still emitted as an
+    invisible block at the top of §8.
     """
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    # Header is present with Risk + STRIDE summary lines plus the flat register.
+    # Header is present with Risk + STRIDE summary lines.
     assert "**Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · " in rendered
     assert "**STRIDE Coverage:**" in rendered
-    # Post-2026-05 R-6 — Story-Card layout with Component column replacing
-    # Vektor (Vektor moved into the Finding cell as a labelled **Vektor:**
-    # field). Post-actors.md §14 the Actor column was added between Component
-    # and Criticality, surfacing primary_actor + [obsolete-actor] / _dormant_
-    # markers per §10 Stable-ID-Garantie Fälle 2 & 3.
-    # Item 6 (2026-05-28): Actor column dropped — 4-column header is
-    # canonical now. STRIDE analyzers never populated actor_ids, so the
-    # column rendered as 100% em-dashes.
-    assert "| ID | Finding | Component | Criticality |" in rendered
-    # 8.A "Categories at a glance" subsection was removed in 2026-05; only
-    # the invisible anchor block remains. The legacy 8.B Critical
-    # Categories heading was also retired.
+    # The legacy flat table header must be gone.
+    assert "| ID | Finding | Component | Criticality |" not in rendered
+    # Severity group headers + per-finding card headings.
+    assert "### 🔴 Critical (3)" in rendered
+    assert re.search(r"#### F-\d+ · ", rendered), "expected per-finding card headings"
+    # Legacy 8.A/8.B sub-sections never appear.
     assert "### 8.A Categories at a glance" not in rendered
     assert "### 8.B Critical Categories" not in rendered
-    # Per-TH anchors are emitted in the invisible anchor block at the
-    # top of §8 (the visible "Categories at a glance:" catalogue line
-    # was removed).
+    # Per-TH anchors + every threat anchor still emitted.
     assert 'id="th-01"' in rendered or 'id="th-03"' in rendered
-    # Every threat anchor is still emitted inside the register.
     for tid in ("t-001", "t-002", "t-003", "t-010"):
         assert f'<a id="{tid}"></a>' in rendered
 
@@ -353,10 +338,9 @@ def test_finding_cell_links_critical_finding_to_attack_walkthrough(tmp_path: Pat
     # 2026-05-29 (supersedes Item 5): all Story-Card labels render in uniform
     # **bold**, and the walkthrough label is spelled "Attack Walkthrough" to
     # match the §8 intro element list.
-    assert "**Attack Walkthrough:**" in section8, "expected at least one walkthrough back-link in §8"
-    # T-003's card links to its own §3.3 walkthrough (the §3.1 chain overview
-    # was retired — there are no `Chain N` links any more).
-    assert "[Walkthrough §3.3](#33-hardcoded-rsa-private-key)" in section8
+    # Card layout (2026-05): the walkthrough back-link rides as a tail on the
+    # Classification line (`· walkthrough [Walkthrough §3.N](#…)`).
+    assert "walkthrough [Walkthrough §3.3](#33-hardcoded-rsa-private-key)" in section8
     assert "(#chain-" not in section8  # no §3.1 chain back-links any more
 
 
@@ -506,7 +490,7 @@ def test_finding_cell_component_uses_canonical_C_NN_anchor(tmp_path: Path) -> No
     )
     threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="rest-api")
 
-    cell = compose._build_finding_cell(
+    cell = compose._build_threat_card(
         t=threat,
         sev="critical",
         taxonomy={},
@@ -534,21 +518,16 @@ def test_finding_cell_component_already_canonical_passes_through(tmp_path: Path)
         fragments_dir=tmp_path,
     )
     threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="C-01")
-    cell = compose._build_finding_cell(
+    cell = compose._build_threat_card(
         t=threat, sev="critical", taxonomy={}, components=components,
         repo_root=None, ctx=ctx,
     )
     assert "**Component:** [C-01](#c-01) — REST API" in cell
 
 
-def test_finding_cell_issue_and_impact_carry_disjoint_sentences(tmp_path: Path) -> None:
-    """Issue and Impact must NEVER share their final sentence.
-
-    Before the carve-out fix, Issue kept up to 4 sentences of the scenario
-    and Impact picked the LAST sentence as the consequence — the last
-    sentence then appeared verbatim under both labels. This regression
-    catches that exact pattern.
-    """
+def test_finding_card_folds_consequence_into_issue(tmp_path: Path) -> None:
+    """The card has no separate **Impact:** field — the consequence is folded
+    into the **Issue:** line so it is never lost (2026-05 card layout)."""
     scenario = (
         "An attacker sends a UNION SELECT in the login email field. "
         "The raw query interpolates the input directly into SQL. "
@@ -561,32 +540,16 @@ def test_finding_cell_issue_and_impact_carry_disjoint_sentences(tmp_path: Path) 
     )
     threat = _make_threat_for_cell(scenario, comp_id="C-01")
 
-    cell = compose._build_finding_cell(
+    cell = compose._build_threat_card(
         t=threat, sev="critical", taxonomy={}, components=components,
         repo_root=None, ctx=ctx,
     )
 
-    # Locate the two labelled fields. Cells use `<br>` as field separator.
-    parts = cell.split("<br>")
-    issue_part = next(p for p in parts if p.startswith("**Issue:**"))
-    impact_part = next(p for p in parts if p.startswith("**Impact:**"))
-
-    issue_text = issue_part[len("**Issue:**"):].strip().rstrip(".")
-    impact_text = impact_part[len("**Impact:**"):].strip().rstrip(".")
-
-    assert issue_text and impact_text, "Issue and Impact must both be populated for Critical"
-    # The consequence (last sentence) is the one carved into Impact, so it
-    # must NOT be the tail of Issue.
-    assert not issue_text.endswith(impact_text), (
-        "Impact sentence is duplicated as the tail of Issue:\n"
-        f"  Issue:  {issue_text!r}\n  Impact: {impact_text!r}"
-    )
-    # Specifically: the consequence sentence has been removed from Issue.
-    assert "Authentication is bypassed" not in issue_text or "dumped to the response" not in issue_text, (
-        "expected the consequence sentence to live in Impact, not Issue"
-    )
-    assert "Authentication is bypassed" in impact_text or "dumped to the response" in impact_text, (
-        "expected Impact to carry the carved consequence sentence"
+    # No standalone Impact field; the Issue line carries the consequence.
+    assert "**Impact:**" not in cell
+    issue_line = next(l for l in cell.splitlines() if l.startswith("**Issue:**"))
+    assert "Authentication is bypassed" in issue_line or "dumped to the response" in issue_line, (
+        "expected the consequence folded into the Issue line:\n" + issue_line
     )
 
 
@@ -606,20 +569,16 @@ def test_finding_cell_explicit_impact_description_does_not_carve_issue(tmp_path:
     threat = _make_threat_for_cell(scenario, comp_id="C-01")
     threat["impact_description"] = "Loss of forensic ability to reconstruct the attack."
 
-    cell = compose._build_finding_cell(
+    cell = compose._build_threat_card(
         t=threat, sev="critical", taxonomy={}, components=components,
         repo_root=None, ctx=ctx,
     )
 
-    parts = cell.split("<br>")
-    issue_part = next(p for p in parts if p.startswith("**Issue:**"))
-    impact_part = next(p for p in parts if p.startswith("**Impact:**"))
-
-    # Explicit impact text must appear verbatim under Impact.
-    assert "Loss of forensic ability to reconstruct the attack" in impact_part
-    # Issue still includes its closing scenario sentences — no carve-out
-    # happened because impact was supplied explicitly.
-    assert "Logs do not capture the attempt" in issue_part
+    issue_line = next(l for l in cell.splitlines() if l.startswith("**Issue:**"))
+    # Card layout: explicit impact is folded into the Issue line (no separate
+    # Impact field), and the full scenario is retained (no carve-out).
+    assert "Loss of forensic ability to reconstruct the attack" in issue_line
+    assert "Logs do not capture the attempt" in issue_line
 
 
 def test_evidence_snippet_summary_label_is_evidence_not_code(tmp_path: Path) -> None:

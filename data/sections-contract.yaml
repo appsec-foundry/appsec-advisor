@@ -1486,35 +1486,26 @@ sections:
     heading_numbered: true
     fragment_type: computed
     data_source: "threat-model.yaml#threats"
-    # Reference §8 layout is category-grouped (TH-NN taxonomy), NOT severity-split.
-    # Each severity tier gets its own letter so all sub-sections have unique
-    # anchors (right-side TOC outline panels showed four indistinguishable
-    # `#8b-…` entries in contract v1).
-    # - 8.A "Categories at a glance"   : one row per active TH, impact-weighted
     header_template: |
       **Risk Distribution:** {{ risk_dist_line }}
 
       **STRIDE Coverage:** {{ stride_line }}
     sub_sections: []
-    # Schema for the flat finding table.
-    #
-    # History:
-    #  * Pre-2026-05 had 9 columns (ID, Finding, Threat Category, Component,
-    #    Criticality, CVSS, Vektor, Mitigation, References). CVSS was
-    #    always empty and the four ID-only columns crowded the prose out
-    #    of the Finding cell.
-    #  * 2026-05 R-5 folded Threat Category / Component / Mitigation /
-    #    References inline inside Finding (Story Card layout in
-    #    `_build_finding_cell` in `compose_threat_model.py`).
-    #  * 2026-05 R-6 swapped the trailing Vektor column for a Component
-    #    column so the table groups visually by where the finding lives;
-    #    Vektor moved inside the Story Card as a labelled field.
-    finding_table:
-      columns:
-        - { key: id,          header: "ID",          render: finding_anchor }
-        - { key: finding,     header: "Finding",     render: story_card }
-        - { key: component,   header: "Component",   render: component_ref }
-        - { key: criticality, header: "Criticality", render: severity_badge }
+    # 2026-05 CARD layout (replaces the flat table). Findings are grouped by
+    # severity under `### <emoji> <Severity> (n)` headers (mirroring the §9
+    # Mitigation-Register block style); each finding is one card built by
+    # `_build_threat_card` in `compose_threat_model.py` with a fixed field
+    # skeleton, every card identical:
+    #   #### F-NNN · <Title>
+    #   **Severity:** … · **Component:** [C-NN] … · **Location:** `file:line`
+    #   **Issue:** …                     (consequence folded in; no Impact field)
+    #   **Root cause:** …                (attack-class taxonomy description)
+    #   **Evidence:** <✓|◌|⚠> … (+ fenced code snippet when one exists)
+    #   **Fix:** <plain remediation> → [M-NNN]
+    #   **Classification:** Category · [CWE-NNN](cwe.mitre.org) · [OWASP A0X:2021](owasp.org)
+    # History: pre-2026-05 was a 9-col then 4-col flat table (Story Card in the
+    # Finding cell); the table was retired for cards on 2026-05-30.
+    card_fields: [severity, component, location, issue, root_cause, evidence, fix, classification]
 
   # -------------------------------------------------------------------------
   # F. Mitigation Register — 100% computed from yaml

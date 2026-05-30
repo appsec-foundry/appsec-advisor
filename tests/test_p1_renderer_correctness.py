@@ -645,24 +645,19 @@ class TestComposeSmokeAllFourInvariants:
         # keeps the classification NAME). The CWE→TH mapping logic itself is
         # unit-tested separately (test_cwe_*_maps_to_th*); here we assert the
         # rendered `**Classification:**` NAME per the fixture's CWEs.
-        # T-001 (CWE-321) → "Cryptographic Failures"
-        t001_row = next(
-            (l for l in rendered.splitlines() if '<a id="t-001">' in l),
-            "",
-        )
-        assert "Cryptographic Failures" in t001_row, f"T-001 (CWE-321) classification; got row: {t001_row[:200]}"
-        # T-002 (CWE-89) → "Injection"
-        t002_row = next(
-            (l for l in rendered.splitlines() if '<a id="t-002">' in l),
-            "",
-        )
-        assert "Injection" in t002_row
-        # T-003 (CWE-94) → "Code Execution via Unsafe Deserialization or Eval"
-        t003_row = next(
-            (l for l in rendered.splitlines() if '<a id="t-003">' in l),
-            "",
-        )
-        assert "Code Execution" in t003_row
+        # 2026-05 card layout: a finding is a multi-line card, so slice from
+        # its anchor to the next card/heading and assert the Classification
+        # NAME appears inside that block.
+        def _card_block(tnnn: str) -> str:
+            i = rendered.find(f'<a id="{tnnn}">')
+            if i < 0:
+                return ""
+            nxt = rendered.find('<a id="t-', i + 1)
+            return rendered[i : nxt if nxt > 0 else i + 800]
+
+        assert "Cryptographic Failures" in _card_block("t-001"), "T-001 (CWE-321) classification"
+        assert "Injection" in _card_block("t-002")  # T-002 (CWE-89)
+        assert "Code Execution" in _card_block("t-003")  # T-003 (CWE-94)
 
         # === B1 — diagram nodes carry no `<b>` except for the three column
         # headers HDR_A / HDR_T / HDR_I in the heatmap.

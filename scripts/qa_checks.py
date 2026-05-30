@@ -4996,7 +4996,11 @@ def _collect_threat_register_t_ids(text: str) -> set[str]:
     """Set of T-NNN IDs that have an `<a id="t-NNN"></a>` anchor under
     §8 Threat Register or appear as a row in the threat table.
     """
-    body = _extract_section_body(text, r"^##\s+8\.\s+Threat\s+Register\b")
+    # Use the h2-spanning extractor: the 2026-05 card layout groups findings
+    # under `### <emoji> <Severity>` (h3) sub-headers, so the section body
+    # extends across several h3 blocks — stopping at the first `### ` would
+    # drop every card anchor.
+    body = _extract_h2_section_body(text, r"^##\s+8\.\s+Threat\s+Register\b")
     if body is None:
         return set()
     out: set[str] = set()
@@ -5008,20 +5012,25 @@ def _collect_threat_register_t_ids(text: str) -> set[str]:
 
 
 def _collect_critical_high_t_ids(text: str) -> set[str]:
-    """T-IDs whose §8 row is rated Critical or High. The threat table
-    column ordering is `| ID | ... | Severity | ...`; we scan for
-    `🔴` (Critical) and `🟠` (High) emoji which the renderer always
-    emits in the severity cell of the per-tier 8.B/8.C tables.
+    """T-IDs whose §8 finding is rated Critical or High.
+
+    2026-05 card layout: findings are grouped under `### 🔴 Critical (n)` /
+    `### 🟠 High (n)` headers, one card each opening with `<a id="t-NNN">`.
+    Track the current severity group and collect the card anchors under the
+    Critical / High groups.
     """
-    body = _extract_section_body(text, r"^##\s+8\.\s+Threat\s+Register\b")
+    body = _extract_h2_section_body(text, r"^##\s+8\.\s+Threat\s+Register\b")
     if body is None:
         return set()
     out: set[str] = set()
-    # Each row containing 🔴 or 🟠 is critical/high. The T-NNN appears
-    # in the ID column at the row's start.
+    crit_high = False
     for line in body.splitlines():
-        if "🔴" in line or "🟠" in line:
-            for m in _T_ID_RE_LOCAL.finditer(line):
+        h = re.match(r"^###\s+([🔴🟠🟡🟢⚪])", line)
+        if h:
+            crit_high = h.group(1) in ("🔴", "🟠")
+            continue
+        if crit_high:
+            for m in re.finditer(r'<a id="t-(\d{3,4})"></a>', line):
                 out.add(f"T-{m.group(1).zfill(3)}")
     return out
 
@@ -7926,10 +7935,10 @@ _MD_THREAT_ROW_RE = re.compile(
     # deduplication (re-references in compound-chain tables, etc.) still
     # works correctly across both forms.
     r"(?:"
-    r"\|\s*\[(?:F|T)-(\d{3,4})\]"  # form 1: markdown-link
+    r"\|\s*\[(?:F|T)-(\d{3,4})\]"  # form 1: markdown-link in a table cell
     r"|"
-    r"\|\s*<a\s+id=\"[ft]-(\d{3,4})\">"  # form 2: anchor-tag (no link wrap)
-    r")",
+    r"<a\s+id=\"[ft]-(\d{3,4})\">"  # form 2: anchor-tag — table ID cell OR
+    r")",                            #         card heading (2026-05); no `|` prefix
     re.IGNORECASE,
 )
 _MD_MITIGATION_HEADING_RE = re.compile(

@@ -317,8 +317,9 @@ def test_risk_distribution_matches_threat_register_rows(tmp_path: Path) -> None:
     s9 = re.search(r"^## 9\. Mitigation Register", rendered, re.MULTILINE)
     assert s8 and s9
     register = rendered[s8.end() : s9.start()]
-    finding_rows = [line for line in register.splitlines() if re.match(r'\| <a id="[tf]-\d+"></a>', line)]
-    # Each finding gets one §8 register row. Rows may carry both T-NNN and
-    # F-NNN alias anchors for the same numeric suffix.
+    # 2026-05 card layout: one card per finding, each opening with a distinct
+    # `<a id="f-NNN"></a>` anchor (paired with `<a id="t-NNN">`). Count the
+    # F-anchors so the §8 finding count is independent of table-vs-card form.
+    finding_ids = set(re.findall(r'<a id="f-(\d+)"></a>', register))
     total = c + h + med + low
-    assert len(finding_rows) == total, f"Risk Distribution total ({total}) != §8 row count ({len(finding_rows)})"
+    assert len(finding_ids) == total, f"Risk Distribution total ({total}) != §8 finding count ({len(finding_ids)})"

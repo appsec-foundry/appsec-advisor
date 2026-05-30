@@ -1161,15 +1161,16 @@ def _extract_section_verbatim(md: str, *, top_level_number: int) -> str:
 # Title group goes into group(2) [new] or group(4) [old]; digits into
 # group(1) or group(3). Use `_extract_fnnn_row(match)` to coalesce.
 _FNNN_REGISTER_ROW = re.compile(
-    r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*\*\*([^*\n]+?)\*\*'   # arm A — bold title
-    r'|<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|'       # arm B — bare title
+    r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*\*\*([^*\n]+?)\*\*'   # arm A — table, bold title
+    r'|<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|'       # arm B — table, bare title
+    r'|<a id="f-(\d+)"></a>\s*\n#### F-\d+ · ([^\n]+)'         # arm C — card heading (2026-05)
 )
 
 
 def _extract_fnnn_row(match: re.Match[str]) -> tuple[str, str]:
     """Return ``(digit_suffix, title)`` from an ``_FNNN_REGISTER_ROW`` match."""
-    digits = match.group(1) or match.group(3) or ""
-    title = (match.group(2) or match.group(4) or "").strip()
+    digits = match.group(1) or match.group(3) or match.group(5) or ""
+    title = (match.group(2) or match.group(4) or match.group(6) or "").strip()
     return digits, title
 
 
@@ -9894,7 +9895,7 @@ def _codify_inline_identifiers(text: str) -> str:
     return "".join(out_parts)
 
 
-def _build_finding_cell(
+def _build_threat_card(
     t: dict,
     sev: str,
     taxonomy: dict[str, dict],
@@ -9902,6 +9903,7 @@ def _build_finding_cell(
     repo_root: Path | None,
     ctx: "RenderContext",
     fid_to_walkthrough: dict[str, tuple[str, str]] | None = None,
+    attack_taxonomy: dict | None = None,
 ) -> str:
     """Build the Story Card for the §8 ``Finding`` cell.
 
@@ -9988,10 +9990,6 @@ def _build_finding_cell(
             scenario_full = t.get("scenario") or ""
             raw_title = scenario_full.split(". ", 1)[0][:80] if scenario_full else "—"
     ec = (t.get("evidence_check") or "").strip().lower()
-    if ec == "refuted":
-        title_md = f"**~~{raw_title}~~** ⚠ *(evidence refuted)*"
-    else:
-        title_md = f"**{raw_title}**"
 
     # -- 1b. Component labelled row (R-7 — 2026-05 user request) ----------
     # The Component is BOTH a column AND an in-cell labelled field. The
@@ -10056,34 +10054,10 @@ def _build_finding_cell(
         ev_file = (first.get("file") or "").strip()
         ev_line = first.get("line")
 
-    ev_status_token = ""
-    if ec in {"verified", "verified-prior"}:
-        ev_status_token = "evidence: verified"
-    elif ec == "ambiguous":
-        ev_status_token = "evidence: ambiguous ◌"
-    elif ec == "refuted":
-        ev_status_token = "evidence: refuted ⚠"
-    elif ec:
-        ev_status_token = f"evidence: {ec}"
-
-    location_line = ""
-    if ev_file:
-        loc_inner = f"`{ev_file}`" + (f":{ev_line}" if ev_line else "")
-        if ev_status_token:
-            loc_inner += f" · {ev_status_token}"
-        location_line = f"**Location:** {loc_inner}"
-    elif ev_status_token:
-        # No `evidence.file` on the threat but the evidence verdict is
-        # still worth surfacing — emit the location line with an em-dash
-        # placeholder so the evidence: badge always renders.
-        location_line = f"**Location:** — · {ev_status_token}"
-
-    # R-7 (2026-05): Vektor field is no longer assembled into the cell —
-    # see "Design choices (R-7)" in the docstring. The variable below is
-    # kept assigned but unused so any downstream helper that still imports
-    # `vektor_line` does not break. Set to empty string so the assembly
-    # phase treats it as "skip silently".
-    vektor_line = ""
+    # Card layout: the evidence verdict renders as a glyph in the **Evidence:**
+    # field (built below from ``ec``); the location is the meta line's
+    # **Location:** part built from ``ev_file``/``ev_line``. No separate
+    # location/status line is assembled here.
 
     # -- 2b. Attack walkthrough back-link (Critical/High only) ------------
     # When §3 Attack Walkthroughs covers this finding (via a chain in §3.1
@@ -10252,12 +10226,9 @@ def _build_finding_cell(
                 fallback += "."
             evidence_line = f"**Evidence:** {fallback}"
 
-    # Back-compat: keep ``Root cause`` when the yaml carried it
-    # explicitly (legacy schema) but only when distinct from Issue.
+    # Explicit YAML ``root_cause`` (legacy schema) — used as the card's Root
+    # cause fallback below when the attack-class lookup yields nothing.
     root_cause_explicit = (t.get("root_cause") or "").strip()
-    root_cause_line = ""
-    if root_cause_explicit and root_cause_explicit.lower() not in scenario.lower():
-        root_cause_line = f"_Root cause:_ {root_cause_explicit}"
 
     # -- 5. Impact one-liner ----------------------------------------------
     # Sources, in order: explicit `impact_description` / `impact_summary`
@@ -10334,32 +10305,16 @@ def _build_finding_cell(
                     impact_text += "."
                 impact_line = f"**Impact:** {impact_text}"
 
-    # -- 6. Fix block — explicit action -----------------------------------
+    # -- 6. CWE + mitigation links (used by the card's Fix + Classification) --
+    # The card's **Fix:** line is assembled later (plain remediation lead via
+    # `_fix_action_lead` → mitigation link); here we only normalise the CWE and
+    # resolve the mitigation links.
     cwe_raw = (t.get("cwe") or "").strip()
     cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
         f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
     )
-    fix_line = ""
     mit_ids = t.get("mitigation_ids") or t.get("mitigations") or []
     mit_links = [ctx.linkify_with_label(mid) for mid in mit_ids[:2]]
-    if mit_links:
-        # Item 8 (2026-05-28): prepend a CWE-class-derived one-sentence
-        # imperative action so the **Fix** field carries actionable
-        # guidance before the M-NNN link.  Falls back to a neutral
-        # "Apply the remediation" lead when the CWE is unknown or
-        # outside the curated map.
-        lead = _fix_action_lead(cwe_norm)
-        if lead:
-            lead = _codify_inline_identifiers(lead)
-            fix_line = (
-                "**Fix:** "
-                + lead
-                + ". See "
-                + " · ".join(mit_links)
-                + "."
-            )
-        else:
-            fix_line = "**Fix:** Apply the remediation in " + " · ".join(mit_links) + "."
 
     # -- 7. Classification (TH-NN · CWE · OWASP) --------------------------
     # R-5 (2026-05 user request): renamed from the legacy italicised
@@ -10413,69 +10368,140 @@ def _build_finding_cell(
         and cwe_norm.upper() not in _FINDING_SKIP_SNIPPET_CWES
         and snippet_severity_ok
     )
-    snippet_html = ""
+    # Card layout: the evidence proof renders as a normal fenced code block
+    # (a few lines, not a <details> fold — see threatdemo.md). No table-cell
+    # `&#10;` encoding is needed since a card is a markdown block, not a cell.
+    snippet_block = ""
     if snippet_relevant:
         snippet_text = _read_evidence_snippet(
             repo_root, ev_file, ev_line, depth["snippet_context"]
         )
         if snippet_text:
-            lang = _lang_class_for_file(ev_file)
-            cls = f' class="{lang}"' if lang else ""
-            header = f"// {ev_file}:{ev_line}"
-            escaped = _html_escape_for_pre(f"{header}\n{snippet_text}")
-            # Markdown table cells must occupy one physical line. Encode raw
-            # LFs as `&#10;`; browsers decode the entity inside <pre>.
-            escaped = escaped.replace("\n", "&#10;")
-            # Compact-by-default disclosure widget. PDF rendering defaults
-            # the widget to expanded, so audit-copy completeness survives.
-            # R-5 (2026-05): summary text now says "Evidence code · …" to
-            # match the labelled-field cell layout — the bare "Evidence" was
-            # ambiguous now that there is also an explicit **Evidence:** prose
-            # line above the disclosure widget.
-            snippet_html = (
-                f"<details><summary><i>Evidence code · {ev_file}:{ev_line}</i></summary>"
-                f"<pre><code{cls}>{escaped}</code></pre></details>"
+            lang = (_lang_class_for_file(ev_file) or "").replace("language-", "")
+            snippet_block = f"```{lang}\n// {ev_file}:{ev_line}\n{snippet_text}\n```"
+
+    # ---- Assemble the card (threatdemo.md layout) -----------------------
+    # Fixed field order, every card identical:
+    #   #### F-NNN · Title
+    #   **Severity:** … · **Component:** … · **Location:** …
+    #   **Issue:** …
+    #   **Root cause:** …
+    #   **Evidence:** <glyph> <status> — … (+ fenced snippet)
+    #   **Fix:** <plain remediation> → [M-NNN]
+    #   **Classification:** Category · [CWE](…) · [OWASP](…) [· walkthrough]
+    tid = (t.get("t_id") or t.get("id") or "-").strip()
+    m_id = re.match(r"^T-(\d+)$", tid, re.IGNORECASE)
+    digits = m_id.group(1) if m_id else None
+    visible_id = f"F-{digits}" if digits else tid
+    anchors = f'<a id="{tid.lower()}"></a>' + (f'<a id="f-{digits}"></a>' if digits else "")
+
+    # Heading title = canonical class label without the trailing "— file:line"
+    # (the file lives in the Location field); strike-through when refuted.
+    head_title = re.sub(r"\s+—\s+\S.*$", "", raw_title).strip() or raw_title
+    if ec == "refuted":
+        head_title = f"~~{head_title}~~ ⚠"
+    heading = f"#### {visible_id} · {head_title}"
+
+    # Meta line — Severity · Component · Location.
+    sev_disp = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
+    if (t.get("impact") or "").strip().lower() == "critical" and sev != "critical":
+        sev_disp += " _(raw Critical)_"
+    comp_part = (
+        component_line[len("**Component:** "):]
+        if component_line.startswith("**Component:** ")
+        else "—"
+    )
+    loc_part = (f"`{ev_file}`" + (f":{ev_line}" if ev_line else "")) if ev_file else "—"
+    meta_line = f"**Severity:** {sev_disp}  ·  **Component:** {comp_part}  ·  **Location:** {loc_part}"
+
+    # Root cause — systemic control failure from the attack-class taxonomy
+    # (findings of one class share it); fall back to explicit YAML root_cause.
+    root_cause = ""
+    if attack_taxonomy:
+        _cls_slug = _classify_finding_class(t, attack_taxonomy)
+        if _cls_slug:
+            _cls = next(
+                (c for c in (attack_taxonomy.get("classes") or []) if c.get("id") == _cls_slug),
+                {},
             )
+            root_cause = " ".join((_cls.get("description") or "").split())
+    if not root_cause and root_cause_explicit:
+        root_cause = root_cause_explicit
+    if root_cause:
+        root_cause = root_cause[0].upper() + root_cause[1:]
+    root_card = f"**Root cause:** {root_cause}" if root_cause else ""
 
-    # -- Assemble — labelled-form layout (R-7, 2026-05) -------------------
-    # Order follows the user-adopted security-finding template:
-    #   Title → Component → Location → Issue → Attack Walkthrough → Evidence
-    #   → <details> code → (legacy) Root cause → Impact → Fix → Classification
-    # Component is BOTH a column AND a labelled in-cell field (R-7).
-    # Vektor is dropped from the cell (R-7) — still in YAML + Appendix A.
-    # Empty fields are skipped silently.
-    # Single ``<br>`` between every rendered field — table parsers (GFM,
-    # Pandoc, weasyprint) all honour it.
-    blocks: list[str] = [title_md]
-    if component_line:
-        blocks.append(component_line)
-    if location_line:
-        blocks.append(location_line)
-    if vektor_line:
-        # vektor_line is intentionally empty since R-7; guard kept for
-        # back-compat in case a future revision re-enables it.
-        blocks.append(vektor_line)
-    if issue_line:
-        blocks.append(issue_line)
-    if walkthrough_line:
-        blocks.append(walkthrough_line)
-    if evidence_line:
-        blocks.append(evidence_line)
-    if snippet_html:
-        blocks.append(snippet_html)
-    if root_cause_line:
-        blocks.append(root_cause_line)
-    if impact_line:
-        blocks.append(impact_line)
-    if fix_line:
-        blocks.append(fix_line)
-    if classification_line:
-        blocks.append(classification_line)
-    cell = "<br>".join(blocks)
+    # Evidence — status glyph + one-sentence prose; the fenced snippet (if any)
+    # follows on its own lines.
+    ev_glyph = {"verified": "✓", "verified-prior": "✓", "ambiguous": "◌", "refuted": "⚠"}.get(ec, "")
+    ev_word = {
+        "verified": "verified", "verified-prior": "verified",
+        "ambiguous": "ambiguous", "refuted": "refuted",
+    }.get(ec, "")
+    ev_prose = (
+        evidence_line[len("**Evidence:** "):]
+        if evidence_line.startswith("**Evidence:** ")
+        else ""
+    )
+    # The Location is already in the meta line — drop any redundant
+    # `(\`file:line\`)` parenthetical the evidence summary appended.
+    ev_prose = re.sub(r"\s*\(`[^`]*`\)", "", ev_prose).strip()
+    ev_parts: list[str] = []
+    if ev_glyph:
+        ev_parts.append(f"{ev_glyph} {ev_word}")
+    if ev_prose:
+        ev_parts.append(ev_prose)
+    evidence_card = ("**Evidence:** " + " — ".join(ev_parts)) if ev_parts else ""
 
-    # Final pipe-escape so Markdown table parsers don't break the row.
-    cell = cell.replace("|", "&#124;")
-    return cell
+    # Fix — remediation in a few plain words, then the mitigation link(s).
+    _lead_raw = _fix_action_lead(cwe_norm)
+    lead = _codify_inline_identifiers(_lead_raw) if _lead_raw else ""
+    if mit_links:
+        fix_card = "**Fix:** " + (f"{lead} → " if lead else "") + " · ".join(mit_links)
+    elif lead:
+        fix_card = f"**Fix:** {lead} → _not yet mapped ([§9](#9-mitigation-register))_"
+    else:
+        fix_card = "**Fix:** _no mitigation mapped — see [§9](#9-mitigation-register)_"
+
+    # Classification — category + external CWE/OWASP links + optional
+    # walkthrough tail (classification_line already carries the linked refs).
+    classification_card = classification_line
+    if walkthrough_line.startswith("**Attack Walkthrough:** "):
+        wt = walkthrough_line[len("**Attack Walkthrough:** "):]
+        classification_card = (classification_card or "**Classification:**") + f" · walkthrough {wt}"
+
+    # The card has no separate Impact field — fold the carved consequence
+    # back into the Issue line so it is never lost (see threatdemo.md).
+    issue_card = issue_line
+    if impact_line.startswith("**Impact:** "):
+        imp_txt = impact_line[len("**Impact:** "):].strip()
+        if imp_txt and imp_txt.rstrip(" .").lower() not in (issue_card or "").lower():
+            if issue_card:
+                if not issue_card.rstrip().endswith((".", "!", "?")):
+                    issue_card = issue_card.rstrip() + "."
+                issue_card = f"{issue_card} {imp_txt}"
+            else:
+                issue_card = f"**Issue:** {imp_txt}"
+
+    # Each field is a separate paragraph (blank-line separated), exactly like
+    # the §9 Mitigation-Register blocks. A single newline would NOT survive
+    # CommonMark / Pandoc / weasyprint (the PDF path) — soft breaks there
+    # collapse adjacent lines into one paragraph. Blank lines render correctly
+    # in GFM, Pandoc and weasyprint alike.
+    fields = [meta_line]
+    if issue_card:
+        fields.append(issue_card)
+    if root_card:
+        fields.append(root_card)
+    if evidence_card:
+        fields.append(evidence_card)
+    if snippet_block:
+        fields.append(snippet_block)
+    if fix_card:
+        fields.append(fix_card)
+    if classification_card:
+        fields.append(classification_card)
+    return f"{anchors}\n{heading}\n\n" + "\n\n".join(fields)
 
 
 def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -10757,24 +10783,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     lines.append(section["heading"])
     lines.append("")
     lines.append(
-        "All findings are listed in one table sorted by criticality, then "
-        "by attack vektor (Repo-Read → Internet-Anon → Internet-User → "
-        "Victim-Required). Columns: **ID** (T-NNN/F-NNN dual anchor) · "
-        "**Finding** (a structured Story Card) · **Component** (link to the "
-        "§2.3 entry) · **Criticality**."
-    )
-    lines.append("")
-    # 2026-05-29: the §8 intro used to spell out an 8-item element list with
-    # inline-code examples per field — it read as cluttered "meta-doc" above
-    # the actual findings. Compressed to a single field-order sentence; the
-    # uniform **bold** labels inside each Story Card make the structure
-    # self-evident without a legend.
-    skip_walk_intro = bool(ctx.eval_context.get("skip_attack_walkthroughs"))
-    _walk_field = "Attack Walkthrough → " if not skip_walk_intro else ""
-    lines.append(
-        "Each Story Card carries these bold-labelled fields in order: "
-        f"Component → Location → Issue → {_walk_field}Evidence → Impact → "
-        "Fix → Classification."
+        "Findings are grouped by severity (Critical → High → Medium → Low); "
+        "within a tier they are ordered by attack vektor (Repo-Read → "
+        "Internet-Anon → Internet-User → Victim-Required). Each finding is a "
+        "card with the same fixed fields, in order: **Severity · Component · "
+        "Location** → **Issue** → **Root cause** → **Evidence** → **Fix** → "
+        "**Classification** (with external CWE / OWASP links)."
     )
     lines.append("")
     # Risk Distribution: always show Critical/High/Medium/Low; show Info
@@ -10831,37 +10845,17 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     except (OSError, ValueError):
         repo_root_path = None
 
-    # ---- Single flat table — 4 columns, Story-Card layout ----------------
-    # Pre-2026-05 layout had 9 columns (ID | Finding | Threat Category |
-    # Component | Criticality | CVSS | Vektor | Mitigation | References).
-    # CVSS was unused (always "—"), Threat Category / Component /
-    # Mitigation / References were each a single ID link consuming a full
-    # column — the Story-Card folds them inline so the description gets
-    # room to actually explain *why* each finding matters.
-    #
-    # R-6 (2026-05 user request): swap the Vektor column for a Component
-    # column so the table groups visually by where the finding lives.
-    # Vektor moves into the Finding cell as a labelled **Vektor:** field
-    # (same anchor target, same label resolution — just rendered inline).
-    # Item 6 (2026-05-28): Actor column dropped — upstream STRIDE
-    # analyzers do not populate `actor_ids` / `primary_actor`, so the
-    # column rendered as 100% em-dashes and added noise without signal.
-    # The Story Card already carries actor attribution inside the Issue
-    # narrative when the LLM has it; rendering an empty structural column
-    # was a deferred deletion from the actors.md §14 contract. When the
-    # STRIDE prompt + threat-merger start populating `actor_ids` reliably,
-    # reinstate the column via the `_render_threat_register` history.
-    lines.append("| ID | Finding | Component | Criticality |")
-    lines.append("|----|---------|-----------|-------------|")
+    # ---- Findings as severity-grouped cards ------------------------------
+    # 2026-05: the flat 4-column table (ID | Finding | Component | Criticality)
+    # was replaced by one card per finding, grouped by severity — mirroring the
+    # §9 Mitigation-Register block style (see threatdemo.md). Each card is built
+    # by ``_build_threat_card`` with a fixed field skeleton:
+    #   #### F-NNN · Title → Severity/Component/Location → Issue → Root cause →
+    #   Evidence (+ fenced snippet) → Fix → Classification (external CWE/OWASP).
+    attack_tax = _load_attack_class_taxonomy()
 
-    # Vektor sort key — sort dirtier paths first within a severity tier so
-    # the reader scans Repo-Read criticals before Victim-Required ones.
-    vektor_order = {
-        "repo-read": 0,
-        "internet-anon": 1,
-        "internet-user": 2,
-        "victim-required": 3,
-    }
+    # Vektor sort key — within a severity tier, scan dirtier paths first.
+    vektor_order = {"repo-read": 0, "internet-anon": 1, "internet-user": 2, "victim-required": 3}
     all_threats_sorted = sorted(
         threats,
         key=lambda t: (
@@ -10870,81 +10864,45 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             t.get("t_id") or t.get("id") or "",
         ),
     )
+
+    # Footnote conditions (raw-Critical caps, evidence drift) — detected up
+    # front so the footnotes below render once.
     for t in all_threats_sorted:
-        tid = t.get("t_id") or t.get("id") or "-"
-        sev = (t.get("risk") or t.get("severity") or "").lower()
-        impact = (t.get("impact") or "").lower()
-
-        # Criticality cell (column 4) — emoji + label + optional raw-cap note.
-        sev_cell = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
-        if impact == "critical" and sev != "critical":
-            sev_cell += " *(raw Critical)*"
+        sev_t = (t.get("risk") or t.get("severity") or "").lower()
+        if (t.get("impact") or "").strip().lower() == "critical" and sev_t != "critical":
             has_raw_downgrade = True
-
-        # Track evidence-drift for the §8 footnote.
-        ec = (t.get("evidence_check") or "").strip().lower()
-        if ec in {"refuted", "ambiguous"}:
+        if (t.get("evidence_check") or "").strip().lower() in {"refuted", "ambiguous"}:
             has_evidence_drift = True
 
-        # Component cell (column 3) — `C-NN — Name` link, replaces the old
-        # Vektor column. The vektor itself now appears as a labelled field
-        # inside the Finding cell (see `_build_finding_cell`).
-        raw_cid_for_col = (t.get("component") or t.get("component_id") or "").strip()
-        comp_for_col = components.get(raw_cid_for_col, {})
-        if comp_for_col and re.match(r"^C-\d+$", raw_cid_for_col):
-            comp_id_col = raw_cid_for_col
-        elif comp_for_col:
-            comp_id_col = comp_for_col.get("_canonical_id") or raw_cid_for_col
-        else:
-            comp_id_col = ""
-            for cid_k, c in components.items():
-                if re.match(r"^C-\d+$", cid_k) and (
-                    c.get("_original_id") == raw_cid_for_col
-                    or (c.get("name") or "").strip() == raw_cid_for_col
-                ):
-                    comp_id_col = cid_k
-                    comp_for_col = c
-                    break
-        comp_name_col = (comp_for_col.get("name") if comp_for_col else raw_cid_for_col) or ""
-        if comp_id_col and comp_name_col:
-            comp_cell = f"[{comp_id_col} — {comp_name_col}](#{comp_id_col.lower()})"
-        elif comp_id_col:
-            comp_cell = f"[{comp_id_col}](#{comp_id_col.lower()})"
-        elif comp_name_col:
-            comp_cell = comp_name_col
-        else:
-            comp_cell = "—"
+    # Group by severity (desc) and emit a card per finding under a tier header.
+    by_sev: dict[str, list[dict]] = {}
+    for t in all_threats_sorted:
+        s = (t.get("risk") or t.get("severity") or "").strip().lower()
+        if s == "informational":
+            s = "info"
+        by_sev.setdefault(s, []).append(t)
 
-        # Finding cell (column 2) — rich Story Card.
-        finding_cell = _build_finding_cell(
-            t, sev, taxonomy, components, repo_root_path, ctx,
-            fid_to_walkthrough=fid_to_walkthrough,
-        )
-
-        # Item 6 (2026-05-28): Actor cell construction removed — see the
-        # header-column commentary above for the rationale (data-gap, not
-        # a design decision). actors.md §10 markers (`_dormant_`,
-        # `_[obsolete-actor]_`) live in YAML provenance and surface via
-        # `_render_identified_actors` in §1.5 when present.
-
-        # ID cell (column 1) — dual T+F anchor, F-NNN visible label.
-        # See pre-2026-05 commentary preserved further down in this file:
-        # F-NNN is the canonical user-visible finding ID in LLM-authored
-        # fragments (Verdict bullets, Architecture Assessment, Asset Linked-
-        # Threats); T-NNN is the YAML-internal id. Emitting both anchors keeps
-        # `[F-001](#f-001)` and `[T-001](#t-001)` resolving to this row.
-        fid_alias = ""
-        visible_id = tid
-        m = re.match(r"^T-(\d+)$", tid)
-        if m:
-            digits = m.group(1)
-            fid_alias = f'<a id="f-{digits}"></a>'
-            visible_id = f"F-{digits}"
-        lines.append(
-            f'| <a id="{tid.lower()}"></a>{fid_alias}{visible_id} | '
-            f"{finding_cell} | {comp_cell} | {sev_cell} |"
-        )
-    lines.append("")
+    for sev_key, emoji, label in (
+        ("critical", "🔴", "Critical"),
+        ("high", "🟠", "High"),
+        ("medium", "🟡", "Medium"),
+        ("low", "🟢", "Low"),
+        ("info", "⚪", "Informational"),
+    ):
+        bucket = by_sev.get(sev_key) or []
+        if not bucket:
+            continue
+        lines.append(f"### {emoji} {label} ({len(bucket)})")
+        lines.append("")
+        for t in bucket:
+            lines.append(
+                _build_threat_card(
+                    t, sev_key, taxonomy, components, repo_root_path, ctx,
+                    fid_to_walkthrough=fid_to_walkthrough,
+                    attack_taxonomy=attack_tax,
+                )
+            )
+            lines.append("")
 
     # ---- §8 footnote: raw-severity convention ----------------------------
     if has_raw_downgrade:

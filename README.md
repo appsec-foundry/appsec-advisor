@@ -526,6 +526,8 @@ Open work items currently shaping the next iterations of the plugin:
 
 - **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents — design draft in [`sharedstate.md`](sharedstate.md).
 
+- **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input* — its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. Only being weighed, not committed — goal and reservations in [`proposal-external-threat-model-ingestion.md`](docs/proposal-external-threat-model-ingestion.md).
+
 ## Related projects
 
 - **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)**: A threat-modeling sidecar for software projects. It analyzes architecture descriptions with specialized agents and generates outputs such as STRIDE findings, attack trees, SARIF, risk scoring data, narrative reports, and PDF reports.
