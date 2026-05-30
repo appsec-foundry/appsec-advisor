@@ -77,6 +77,11 @@ pre code { background: transparent; padding: 0; }
 table {
   border-collapse: collapse;
   width: 100%;
+  /* Honour the injected <colgroup> widths exactly (export_pdf.py computes
+   * content-aware per-column widths and emits <col style="width:N%">).
+   * Without `fixed`, the auto algorithm re-expands long Description/Finding
+   * columns and the distribution is lost. */
+  table-layout: fixed;
   margin: 0.6em 0;
   font-size: 0.92em;
   page-break-inside: avoid;
@@ -87,12 +92,19 @@ th, td {
   padding: 5px 8px;
   text-align: left;
   vertical-align: top;
+  /* Wrap long prose within the fixed column rather than overflowing. */
+  overflow-wrap: break-word;
 }
 th {
   background: #f6f8fa;
   font-weight: 600;
 }
 tr:nth-child(even) td { background: #fafbfc; }
+
+/* Keep short ID links (`F-001`) intact; let long inline-code (`file:line`,
+ * `$where`) break only when it would otherwise overflow a fixed column. */
+td a { white-space: nowrap; }
+td code { overflow-wrap: anywhere; }
 
 img {
   max-width: 100%;

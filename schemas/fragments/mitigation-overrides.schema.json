@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/mitigation-overrides.schema.json",
   "title": "Phase 10b sidecar — mitigation splits + additions",
-  "description": "Phase-10b LLM persists at PHASE_END. Refines the Python aggregator's 1:1 mitigation grouping with semantic splits (one M-ID into multiple distinct mitigations when remediation steps span different OWASP categories) and additions (process / cross-cutting mitigations not derivable from any single threat — e.g. 'Establish dependency-update SLA', 'Adopt centralized secrets manager'). See docs/substep2-deterministic-migration.md §2.6.",
+  "description": "Phase-10b LLM persists at PHASE_END. Refines the Python aggregator's 1:1 mitigation grouping with semantic splits (one M-ID into multiple distinct mitigations when remediation steps span different OWASP categories) and additions (process / cross-cutting mitigations not derivable from any single threat — e.g. 'Establish dependency-update SLA', 'Adopt centralized secrets manager').",
   "type": "object",
   "required": ["schema_version"],
   "additionalProperties": false,

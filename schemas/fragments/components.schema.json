@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/components.schema.json",
   "title": "Phase 3 sidecar — components",
-  "description": "Structured component catalog the Phase-3 (Architecture Modeling) LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[components[]] without re-composing from working memory in Phase 11. See docs/substep2-deterministic-migration.md §2.1.",
+  "description": "Structured component catalog the Phase-3 (Architecture Modeling) LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[components[]] without re-composing from working memory in Phase 11.",
   "type": "object",
   "required": ["schema_version", "components"],
   "additionalProperties": false,

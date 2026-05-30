@@ -1,0 +1,106 @@
+# package.yml — internal packaging pipeline for a company-branded
+# build of appsec-advisor.
+#
+# Mirrors docs/internal-plugin-packaging.md:
+#   1. clone pinned upstream appsec-advisor
+#   2. run the upstream package_internal_plugin.py helper
+#   3. publish dist/*.tgz + sha256 as a workflow artifact
+#
+# Repository layout this workflow assumes:
+#   .github/workflows/package.yml   (this file)
+#   org-profile/                    (custom config payload)
+#     org-profile.yaml
+#     context/organization.md
+#     actors/*.yaml                 (optional)
+#   upstream/appsec-advisor/        (cloned by the workflow)
+#
+# Required repository variables (Settings > Secrets and variables > Actions > Variables):
+#   APPSEC_ADVISOR_URL   git URL of the upstream appsec-advisor repo
+#   APPSEC_ADVISOR_REF   upstream tag/commit to pin (e.g. v0.4.0-beta)
+#
+# Optional repository variables:
+#   INTERNAL_NAME        plugin name override (default: acme-appsec)
+#   VERSION              artifact version (default: tag name, else CI snapshot)
+
+name: package-internal-plugin
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed only if you enable the GitHub Release publish step below
+
+env:
+  INTERNAL_NAME: ${{ vars.INTERNAL_NAME || 'acme-appsec' }}
+  PYTHONDONTWRITEBYTECODE: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build deps
+        run: pip install --quiet pyyaml jsonschema packaging
+
+      - name: Resolve version
+        id: ver
+        env:
+          VERSION: ${{ vars.VERSION }}
+        run: |
+          if [ -n "${VERSION}" ]; then
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.4.0-internal.${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clone pinned upstream appsec-advisor
+        env:
+          APPSEC_ADVISOR_URL: ${{ vars.APPSEC_ADVISOR_URL }}
+          APPSEC_ADVISOR_REF: ${{ vars.APPSEC_ADVISOR_REF }}
+        run: |
+          test -n "${APPSEC_ADVISOR_URL}" || { echo "APPSEC_ADVISOR_URL not set"; exit 2; }
+          test -n "${APPSEC_ADVISOR_REF}" || { echo "APPSEC_ADVISOR_REF not set"; exit 2; }
+          git clone --depth 1 "${APPSEC_ADVISOR_URL}" upstream/appsec-advisor
+          git -C upstream/appsec-advisor fetch --depth 1 origin "${APPSEC_ADVISOR_REF}"
+          git -C upstream/appsec-advisor checkout --detach FETCH_HEAD
+
+      - name: Package internal plugin
+        run: |
+          python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
+            --source upstream/appsec-advisor \
+            --org-profile org-profile \
+            --name "${INTERNAL_NAME}" \
+            --version "${{ steps.ver.outputs.version }}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.INTERNAL_NAME }}-${{ steps.ver.outputs.version }}
+          path: |
+            dist/${{ env.INTERNAL_NAME }}-${{ steps.ver.outputs.version }}.tgz
+            dist/${{ env.INTERNAL_NAME }}-${{ steps.ver.outputs.version }}.tgz.sha256
+          retention-days: 30
+
+      # Example: attach the tarball to a GitHub Release when building from a tag.
+      # Swap for a push to GitHub Packages, Artifactory, Nexus, S3, or whatever
+      # your org already trusts.
+      # - name: Publish to GitHub Release
+      #   if: github.ref_type == 'tag'
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: |
+      #       dist/${{ env.INTERNAL_NAME }}-${{ steps.ver.outputs.version }}.tgz
+      #       dist/${{ env.INTERNAL_NAME }}-${{ steps.ver.outputs.version }}.tgz.sha256

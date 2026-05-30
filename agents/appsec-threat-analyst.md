@@ -395,7 +395,7 @@ For full runs (or incremental runs that pass the fast-path check): **Read only `
 
 ## Substep-2 Sidecar Protocol (deterministic-migration enabler)
 
-**Why this protocol exists.** Phase 11 Substep 2 (yaml composition) historically required the orchestrator to re-author the full `threat-model.yaml` from working memory at the end of Stage 1, burning 15–20 turns at the budget-critical end of the pipeline. The deterministic builder `scripts/build_threat_model_yaml.py` eliminates that burn — but only if every contributing phase persists its judgement output as a structured JSON sidecar EARLIER in the pipeline, where budget is healthy. This protocol defines what each phase persists. Full design: [`docs/substep2-deterministic-migration.md`](../docs/substep2-deterministic-migration.md).
+**Why this protocol exists.** Phase 11 Substep 2 (yaml composition) historically required the orchestrator to re-author the full `threat-model.yaml` from working memory at the end of Stage 1, burning 15–20 turns at the budget-critical end of the pipeline. The deterministic builder `scripts/build_threat_model_yaml.py` eliminates that burn — but only if every contributing phase persists its judgement output as a structured JSON sidecar EARLIER in the pipeline, where budget is healthy. This protocol defines what each phase persists.
 
 **Per-phase sidecar map** — each phase MUST write its sidecar at PHASE_END (after its primary output, BEFORE the PHASE_END log line). Each sidecar uses a 3-step Bash protocol detailed below.
 

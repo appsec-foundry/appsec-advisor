@@ -36,7 +36,7 @@
 |---|---|---|---|---|---|
 {%- for g in groups %}
 {%- for m in g.mitigations %}
-| **{{ m.number }}** | **{{ m.priority }}** | {% if g.component_label %}{{ g.component_label }}{% endif %} | [{{ m.id }}](#{{ m.id | lower }}) — {{ m.title }} | {% for a in m.addresses %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
+| **{{ m.number }}** | **{{ m.priority }}** | {% if g.component_label %}{{ g.component_label }}{% elif m.component_label %}{{ m.component_label }}{% endif %} | [{{ m.id }}](#{{ m.id | lower }}) — {{ m.title }} | {% for a in m.addresses %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
 {%- endfor %}
 {%- endfor %}
 {%- if footer %}

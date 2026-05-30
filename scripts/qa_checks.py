@@ -1033,8 +1033,7 @@ def check_invariants(md_path: Path) -> Report:
 # defect the renderer must fix before releasing the file.
 _MS_REQUIRED_SUBSECTIONS: tuple[str, ...] = (
     "Verdict",
-    "Top Findings",
-    "Architecture Assessment",
+    "Security Posture & Top Threats",
     "Top Mitigations",
     "Operational Strengths",
 )
@@ -1120,11 +1119,19 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     ms_block = lines[ms_start:ms_end]
 
     # --- Auto-repair #2: rename well-known legacy sub-section headings.
+    # 2026-05 — the canonical merged section is "Security Posture & Top
+    # Threats" (heatmap + the Top Threats table). It replaced the legacy
+    # "Security Posture at a Glance" + "Top Findings" + "Architecture
+    # Assessment" trio. Legacy heading names are folded into it.
     _LEGACY_RENAMES: dict[str, str] = {
-        "Top Threats": "Top Findings",
-        "Top Critical Findings": "Top Findings",
-        "Top Risks": "Top Findings",
-        "Critical Findings": "Top Findings",
+        "Security Posture at a Glance": "Security Posture & Top Threats",
+        "Top Threats": "Security Posture & Top Threats",
+        "Top Findings": "Security Posture & Top Threats",
+        "Architecture Assessment": "Security Posture & Top Threats",
+        "Top Critical Findings": "Security Posture & Top Threats",
+        "Top Risks": "Security Posture & Top Threats",
+        "Critical Findings": "Security Posture & Top Threats",
+        "Top Threats by Risk": "Security Posture & Top Threats",
         "Key Strengths": "Operational Strengths",
         "Follow-up Actions": "Mitigations",
         "Recommended Priority Actions": "Mitigations",
@@ -1137,7 +1144,6 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         "Critical Attack Chain": None,  # legacy heading — must be ## (promoted), not ### inside MS
         "Overall Security Rating": None,  # Verdict already carries the rating
         "Executive Overview": "Verdict",  # narrative-only → rename, body usually works as Verdict prose
-        "Top Threats by Risk": "Top Findings",
     }
 
     # --- Auto-repair #3: strip numeric prefixes on all MS sub-section headings.
@@ -1434,13 +1440,10 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     # switched layouts in M3.10; the legacy form is intentionally NOT in
     # the accept-list so reports rendered by old code are flagged.
     table_checks = [
-        ("top_findings", "Top Findings", [
-            "| # | Criticality | Path | Finding | Component | Primary Mitigations |",
-        ]),
-        ("architecture_assessment", "Architecture Assessment", [
-            "| Defect | Description | Key Findings |",
-            # Post-2026-05 weaknesses[] shape — 4-column table
-            "| Weakness category | Affected components | Description | Key findings |",
+        # 2026-05 — Top Threats is the merged section that replaced Top
+        # Findings + Architecture Assessment. One row per attack class.
+        ("top_threats", "Top Threats", [
+            "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |",
         ]),
         ("operational_strengths", "Operational Strengths", [
             # M3.10 — categorical-cluster layout
@@ -3543,8 +3546,15 @@ def check_mermaid_syntax(md_path: Path) -> Report:
         # Heuristic: only lint sequenceDiagram/flowchart/graph blocks. Skip
         # other diagram types (gantt, erDiagram, journey, …) to avoid false
         # positives on syntaxes we do not model.
-        first_line = body.splitlines()[0] if body else ""
-        diagram_type = first_line.strip().split()[0] if first_line.strip() else ""
+        # Diagram type = first line that isn't a `%%{init}%%` directive or a
+        # `%%` comment (a leading init directive must not hide the type).
+        diagram_type = ""
+        for _l in body.splitlines():
+            _s = _l.strip()
+            if not _s or _s.startswith("%%"):
+                continue
+            diagram_type = _s.split()[0]
+            break
         if diagram_type not in {"sequenceDiagram", "flowchart", "graph"}:
             continue
 
@@ -8118,30 +8128,31 @@ REQUIRED_FRAGMENTS = (
 
 
 def check_security_posture_structure(md_path: Path) -> Report:
-    """Validate the Security Posture at a Glance section against
-    contract v2 invariants (D / E / C / F / G / N / B / L) declared in
+    """Validate the Security Posture & Top Threats section against the
+    invariants declared in
     `data/sections-contract.yaml > security_posture_at_a_glance.invariants`.
 
-    Contract v2 (2026-04) layout: 4-column Mermaid heatmap with
-    explicit attack arrows + dashed consequence arrows + cross-subgraph
-    header-alignment edges, followed by 1–7 numbered attack-class
-    bullets each carrying Findings / optional Architectural-root-cause /
-    optional Attack-chain / Impact (comma-sep) sub-elements.
+    Layout: the forward-only Mermaid heatmap (Figure 2) — 3 columns
+    (ACTORS / TIERS / IMPACT) with explicit attack arrows, dashed
+    consequence arrows and cross-subgraph header-alignment edges —
+    followed by the **Top Threats** table.
+
+    2026-05: the legacy per-attack-class BULLET list (former N / B / L
+    invariants) was replaced by the Top Threats table, so this check now
+    validates the table (T-rules) instead of the bullets.
 
     Categories:
       D1–D6  Diagram structure (mermaid block, subgraphs, direction)
-      E1–E4  Edge structure (alignment, attack arrows, consequence, linkStyle)
-      C1–C3  Card label structure (br count, tier-card content, HTML allowed)
+      E1–E5  Edge structure (alignment, attack arrows, consequence, linkStyle, undeclared nodes)
+      C1     Card label structure (≤6 <br/> per label; HTML emphasis allowed)
       F1–F3  Column population (HDR + content cards per column)
-      G1–G3  Glyph consistency (uniqueness, order, diagram↔bullets)
-      N1–N4  Narrative below the diagram (intro, actor bullets, attack-paths header)
-      B1–B5  Per-attack-class bullet structure
-      L1, L3  Linking format for F-NNN / chain-N
+      G1–G2  Glyph consistency on the attack arrows (uniqueness, contiguous order)
+      T1–T3  Top Threats table (header present, diagram↔table glyph parity, F-NNN links)
     """
     report = Report("posture_structure")
     text = md_path.read_text(encoding="utf-8")
 
-    sec_start = text.find("### Security Posture at a Glance")
+    sec_start = text.find("### Security Posture & Top Threats")
     if sec_start < 0:
         report.ok = 1
         return report
@@ -8152,7 +8163,14 @@ def check_security_posture_structure(md_path: Path) -> Report:
         sec_end = len(text)
     section = text[sec_start:sec_end]
 
-    m_start = section.find("```mermaid")
+    # Locate the heatmap (Figure 2) mermaid block specifically — an optional
+    # Figure 1 architecture diagram may precede it, so we anchor on the
+    # ACTORS subgraph and take the ```mermaid fence that opens its block.
+    heatmap_anchor = section.find("subgraph ACTORS")
+    if heatmap_anchor >= 0:
+        m_start = section.rfind("```mermaid", 0, heatmap_anchor)
+    else:
+        m_start = section.find("```mermaid")
     if m_start < 0:
         report.issues.append("D2: section has no ```mermaid block")
         return report
@@ -8233,18 +8251,31 @@ def check_security_posture_structure(md_path: Path) -> Report:
             in_relay = True
         elif re.search(r"%%\s*(Consequence|Attack)", ln):
             in_relay = False
-        if not in_relay and "==>" in ln and re.search(r'\|\s*"?\s*[①②③④⑤⑥⑦]', ln):
+        if not in_relay and "==>" in ln and re.search(r"[①②③④⑤⑥⑦]", ln):
             attack_lines.append(ln)
     if not (1 <= len(attack_lines) <= 7):
-        report.issues.append(f"E2: expected 1–7 attack arrows with ① ⑦ labels, found {len(attack_lines)}")
-    expected_glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"][: len(attack_lines)]
+        report.issues.append(f"E2: expected 1–7 attack arrows with ①–⑦ labels, found {len(attack_lines)}")
+    # Reference form (2026-05): a single grouped arrow per (actor, tier) may
+    # carry SEVERAL glyphs in its label, e.g. `|" ① ③ ④ ⑤ "|`. Collect every
+    # glyph that appears inside an attack-arrow's edge label; the UNION must be
+    # the contiguous run ① ② … N with no duplicates (G1) and no gaps (G2).
+    _GLYPHS = "①②③④⑤⑥⑦"
     actual_glyphs: list[str] = []
     for ln in attack_lines:
-        m = re.search(r'\|\s*"?\s*([①②③④⑤⑥⑦])', ln)
-        if m:
-            actual_glyphs.append(m.group(1))
-    if actual_glyphs != expected_glyphs:
-        report.issues.append(f"E2/G2: attack-arrow glyph order must be ① ② … without gaps — got {actual_glyphs!r}")
+        mlab = re.search(r"\|([^|]*)\|", ln)
+        scan = mlab.group(1) if mlab else ln
+        actual_glyphs.extend(ch for ch in scan if ch in _GLYPHS)
+    seen: list[str] = []
+    dupes: list[str] = []
+    for g in actual_glyphs:
+        (dupes if g in seen else seen).append(g)
+    if dupes:
+        report.issues.append(f"G1: glyph(s) {sorted(set(dupes))!r} appear on more than one attack arrow")
+    ordered = sorted(seen, key=lambda g: _GLYPHS.index(g))
+    if ordered != list(_GLYPHS[: len(seen)]):
+        report.issues.append(
+            f"E2/G2: attack-arrow glyphs must be the contiguous run ① ② … without gaps — got {ordered!r}"
+        )
 
     # E3: consequence arrows (-.->).
     cons_lines = [ln for ln in mermaid.splitlines() if "-.->" in ln]
@@ -8295,94 +8326,31 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # This is what produced the "SERVER" box in the 2026-05-08 juice-shop run.
     _check_heatmap_undeclared_nodes(report, mermaid, tiers_block or "")
 
-    # ---- N-rules: narrative section below the diagram ----------------------
-    # N1: `**Threat actors.**` intro paragraph.
-    if "**Threat actors.**" not in after_mermaid:
-        report.issues.append("N1: missing `**Threat actors.**` intro paragraph below the diagram")
-    # N2: ≥1 actor bullet `- **<Actor Name>**`.
-    actor_bullets = re.findall(r"^- \*\*[^*]+\*\* —", after_mermaid, re.MULTILINE)
-    if len(actor_bullets) < 1:
-        report.issues.append(f"N2: expected ≥1 actor bullet `- **<Actor Name>** — …`, found {len(actor_bullets)}")
-    # N3: `**Attack paths (numbered arrows in the diagram):**` header.
-    if "**Attack paths (numbered arrows in the diagram):**" not in after_mermaid:
-        report.issues.append("N3: missing `**Attack paths (numbered arrows in the diagram):**` header")
-    # N4: 1–7 attack-class bullets. The renderer prefixes each bullet with an
-    # `<a id="path-…"></a>` anchor for cross-references (`[Path ①](#path-…)`),
-    # so the optional non-capturing group accepts both forms.
-    class_bullets = re.findall(
-        r'^- (?:<a id="[^"]+"></a>)?\*\*([①②③④⑤⑥⑦])\s+([^*]+?)\*\*',
+    # ---- T-rules: Top Threats table below the diagram ----------------------
+    # 2026-05 — the merged section renders the **Top Threats** table after
+    # Figure 2 (not the legacy attack-path bullet list). Validate the table is
+    # present, that its row glyphs agree 1:1 with the diagram's attack-arrow
+    # glyphs (G3, now diagram↔table), and that finding/mitigation/component
+    # cross-references are linked.
+    # T1: table header present.
+    if "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |" not in after_mermaid:
+        report.issues.append("T1: missing Top Threats table header below the diagram")
+    # T2/G3: every diagram arrow glyph appears exactly once as a table-row `#`
+    # glyph (the row carries `<a id="path-…"></a>①`), and vice versa.
+    table_glyphs = re.findall(
+        r'^\|\s*(?:<a id="[^"]+"></a>)?\s*([①②③④⑤⑥⑦])\s*\|',
         after_mermaid,
         re.MULTILINE,
     )
-    if not (1 <= len(class_bullets) <= 7):
-        report.issues.append(f"N4: expected 1–7 attack-class bullets, found {len(class_bullets)}")
-    # G3: every glyph used in attack arrows appears as a bullet.
-    bullet_glyphs = [g for g, _ in class_bullets]
     arrow_glyph_set = set(actual_glyphs)
-    if arrow_glyph_set and arrow_glyph_set != set(bullet_glyphs):
-        report.issues.append(f"G3: arrow glyphs {arrow_glyph_set} ≠ attack-class bullet glyphs {set(bullet_glyphs)}")
-
-    # ---- B-rules: per-attack-class bullet structure ------------------------
-    # Slice out each bullet block (from a class-bullet header up to the next
-    # one or the end of after_mermaid) and run sub-bullet checks.
-    bullet_starts = [
-        m.start()
-        for m in re.finditer(
-            r'^- (?:<a id="[^"]+"></a>)?\*\*[①②③④⑤⑥⑦]\s',
-            after_mermaid,
-            re.MULTILINE,
+    if arrow_glyph_set and arrow_glyph_set != set(table_glyphs):
+        report.issues.append(
+            f"T2/G3: diagram arrow glyphs {arrow_glyph_set} ≠ Top Threats row glyphs {set(table_glyphs)}"
         )
-    ]
-    bullet_starts.append(len(after_mermaid))
-    for i in range(len(bullet_starts) - 1):
-        block = after_mermaid[bullet_starts[i] : bullet_starts[i + 1]]
-        # B1: bullet header format `- **<glyph> <class>** (<actor> → <target>) — <description>`.
-        # Anchor prefix `<a id="path-…"></a>` between the dash and `**` is
-        # tolerated (renderer-injected for cross-refs).
-        first_line = block.splitlines()[0] if block else ""
-        if not re.match(
-            r'- (?:<a id="[^"]+"></a>)?\*\*[①②③④⑤⑥⑦] [^*]+?\*\*\s+\([^)]+→[^)]+\)\s+—',
-            first_line,
-        ):
-            report.issues.append(f"B1: attack-class bullet header malformed: {first_line[:120]!r}")
-        # B2: Findings sub-bullet exists and has ≥1 finding link.
-        # Sprint 2A (M3.5): the renderer historically emitted F-NNN links
-        # ([F-001](#f-001)) but switched to T-NNN ([T-001](#t-001)) once
-        # threat-IDs became the canonical addressable identifier in
-        # threat-model.yaml. The checker accepts both — drift here would
-        # produce a long tail of false-positive B2 violations every run
-        # (the 2026-04-27 juice-shop run hit 7 of them, blocking a clean
-        # contract-pass until we generalised the regex).
-        if "  - Findings:" not in block:
-            report.issues.append(f"B2: attack-class bullet missing `Findings:` sub-bullet — {first_line[:80]!r}")
-        finding_links_in_block = re.findall(
-            r"\[(F|T)-\d+\]\(#(f|t)-\d+\)",
-            block,
-        )
-        if len(finding_links_in_block) < 1:
-            report.issues.append(f"B2: attack-class bullet has no F-NNN/T-NNN link — {first_line[:80]!r}")
-        # B3: `Impact:` line, comma-separated.
-        if not re.search(r"^\s*-\s*Impact:\s+\S", block, re.MULTILINE):
-            report.issues.append(f"B3: attack-class bullet missing `Impact:` line — {first_line[:80]!r}")
-
-    # ---- L-rules: link format ----------------------------------------------
-    # L1: every finding link in the narrative is `[F-NNN](#f-nnn)` or
-    # `[T-NNN](#t-nnn)` (ID-only) and is followed by ` — Title`. Accept both
-    # prefixes for the same Sprint 2A reason as B2 above.
-    for m in re.finditer(
-        r"^    - \[(F|T)-(\d+)\]\(#(?:f|t)-\d+\)(\s+—\s+\S[^\n]*)?",
-        after_mermaid,
-        re.MULTILINE,
-    ):
-        if not m.group(3):
-            report.issues.append(f"L1: Findings sub-bullet {m.group(1)}-{m.group(2)} missing ` — Title` after the link")
-    # L3: chain-N sub-bullets resolve to `<a id="chain-N">` anchors.
-    for m in re.finditer(r"\[Chain\s+(\d+)\]\(#chain-(\d+)\)", after_mermaid):
-        n_label, n_anchor = m.group(1), m.group(2)
-        if n_label != n_anchor:
-            report.issues.append(
-                f"L3: Attack-chain link mismatch — label says Chain {n_label} but anchor is #chain-{n_anchor}"
-            )
+    # T3: at least one finding is linked into §8 (`[F-NNN](#f-nnn)`); the table
+    # is the canonical place those cross-references now live.
+    if table_glyphs and not re.search(r"\[F-\d+\]\(#f-\d+\)", after_mermaid):
+        report.issues.append("T3: Top Threats findings are not linked to §8 (`[F-NNN](#f-nnn)`)")
 
     if not report.issues:
         report.ok = 1

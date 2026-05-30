@@ -1,0 +1,20 @@
+{#- ### Top Threats — merged Management-Summary section (replaces Top Findings -#}
+{#- + Architecture Assessment). One row per attack-class (threat). All cells -#}
+{#- are pre-rendered strings produced by _compute_top_threats_rows: -#}
+{#-   num_cell        — glyph linked to the Security Posture path bullet -#}
+{#-   description_cell — bold threat title + STRIDE + one-line general weakness -#}
+{#-   findings_cell    — `•[F-NNN](#f-nnn) <short> → [C-NN](#c-nn)` per finding -#}
+{#-   risk_cell        — severity badge + business impact -#}
+{#-   fix_cell         — linked mitigation(s) + priority token -#}
+{#- NOTE: no `### Top Threats` heading — this table is rendered under the -#}
+{#- combined `### Security Posture & Top Threats` section heading, directly -#}
+{#- after Figure 2. -#}
+**{{ rows | length }} structural threats**, grouped by weakness class — each row is one threat, not one finding. *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to [§8 Threat Register](#8-threat-register) with its component; *Risk & Impact* combines severity with business consequence.
+
+| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |
+|---|--------------------|------------------------|---------------|-----|
+{%- for r in rows %}
+| {{ r.num_cell }} | {{ r.description_cell }} | {{ r.findings_cell }} | {{ r.risk_cell }} | {{ r.fix_cell }} |
+{%- endfor %}
+
+_STRIDE: S spoofing · T tampering · R repudiation · I information disclosure · D denial of service · E elevation of privilege. Risk, findings, components, impact and Fix are derived deterministically; only the one-line weakness description is authored._

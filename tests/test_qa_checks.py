@@ -503,7 +503,21 @@ def test_risk_dist_re_parses_counts():
     assert m is not None
     assert m.group(1) == "2"  # Critical
     assert m.group(2) == "5"  # High
-    assert m.group(5) == "11"  # Total
+    assert m.group(3) == "3"  # Medium
+    assert m.group(4) == "1"  # Low
+    # group(5) is the OPTIONAL Info cell (absent here → None); Total is group(6).
+    assert m.group(5) is None  # Info (omitted)
+    assert m.group(6) == "11"  # Total
+
+
+def test_risk_dist_re_parses_info_cell():
+    """When the optional Info cell is present it occupies group(5) and Total
+    stays group(6)."""
+    line = "**Risk Distribution:** Critical: 2 · High: 5 · Medium: 3 · Low: 1 · Info: 4 · **Total: 15**"
+    m = qa.RISK_DIST_RE.search(line)
+    assert m is not None
+    assert m.group(5) == "4"  # Info
+    assert m.group(6) == "15"  # Total
 
 
 def test_risk_dist_re_no_match_on_empty():
@@ -1675,7 +1689,7 @@ class TestSecurityPostureStructureRegexes:
     # anchor-prefixed narrative bullets. Mirrors the fragment template at
     # ``templates/fragments/security-posture-diagram.md.j2``.
     _CLEAN_POSTURE_SECTION = textwrap.dedent("""\
-        ### Security Posture at a Glance
+        ### Security Posture & Top Threats
 
         ```mermaid
         %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
@@ -1714,27 +1728,13 @@ class TestSecurityPostureStructureRegexes:
             linkStyle 5,6 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
         ```
 
-        **Threat actors.** Two actors sit on the left.
+        **3 structural threats** — Top Threats table (merged section).
 
-        - **Shop User** — legitimate registered customer.
-        - **Anonymous Internet Attacker** — no account.
-
-        **Attack paths (numbered arrows in the diagram):**
-
-        - <a id="path-injection"></a>**① Injection** (Anonymous Internet Attacker → Application Tier) — user input flows into a server-side interpreter.
-          - Findings:
-            - [F-001](#f-001) — SQL Injection
-          - Impact: Full Admin Takeover
-
-        - <a id="path-auth-bypass"></a>**② Auth Bypass** (Anonymous Internet Attacker → Application Tier) — credentials weak.
-          - Findings:
-            - [F-002](#f-002) — JWT alg:none
-          - Impact: Full Admin Takeover
-
-        - <a id="path-xss"></a>**③ XSS** (Shop User → Client Tier) — scripts in stored content.
-          - Findings:
-            - [F-003](#f-003) — Stored XSS
-          - Impact: Customer Session Hijack
+        | # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |
+        |---|--------------------|------------------------|---------------|-----|
+        | <a id="path-injection"></a>① | **Injection** _(T·I)_<br/>input flows into an interpreter | •&nbsp;[F-001](#f-001)&nbsp;SQL&nbsp;Injection&nbsp;→&nbsp;[C-01](#c-01) | 🔴 **Critical**<br/>Full Admin Takeover | [M-001](#m-001) (P1) |
+        | <a id="path-auth-bypass"></a>② | **Auth Bypass** _(S·E)_<br/>weak credentials | •&nbsp;[F-002](#f-002)&nbsp;JWT&nbsp;alg:none&nbsp;→&nbsp;[C-01](#c-01) | 🔴 **Critical**<br/>Full Admin Takeover | [M-002](#m-002) (P1) |
+        | <a id="path-xss"></a>③ | **XSS** _(T·I)_<br/>scripts in stored content | •&nbsp;[F-003](#f-003)&nbsp;Stored&nbsp;XSS&nbsp;→&nbsp;[C-02](#c-02) | 🟠 **High**<br/>Customer Session Hijack | [M-003](#m-003) (P2) |
         """)
 
     # ---- _count_cards: standalone unit test of the card-counting helper ----
@@ -1819,25 +1819,16 @@ class TestSecurityPostureStructureRegexes:
 
     # ---- regression on negatives: malformed inputs MUST still be caught ----
 
-    def test_n4_flags_missing_attack_class_bullets(self, tmp_path):
-        """If the narrative has no glyph bullets at all, N4 must still fire."""
-        broken = (
-            self._CLEAN_POSTURE_SECTION.replace(
-                '- <a id="path-injection"></a>**① Injection**',
-                "- **Injection** (no glyph)",
-            )
-            .replace(
-                '- <a id="path-auth-bypass"></a>**② Auth Bypass**',
-                "- **Auth Bypass** (no glyph)",
-            )
-            .replace(
-                '- <a id="path-xss"></a>**③ XSS**',
-                "- **XSS** (no glyph)",
-            )
+    def test_t1_flags_missing_top_threats_table(self, tmp_path):
+        """2026-05: the bullet list was replaced by the Top Threats table.
+        If that table header is absent, T1 must fire."""
+        broken = self._CLEAN_POSTURE_SECTION.replace(
+            "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |",
+            "| # | Threat | Findings |",  # wrong/legacy header
         )
         md = _write_minimal_model(tmp_path, broken)
         report = qa.check_security_posture_structure(md)
-        assert any(i.startswith("N4:") for i in report.issues), report.issues
+        assert any(i.startswith("T1:") for i in report.issues), report.issues
 
     def test_e2_flags_missing_glyph_on_attack_arrow(self, tmp_path):
         """If attack arrows have no glyphs, E2 must still fire."""
@@ -2122,10 +2113,11 @@ class TestPostureB2IdConvention:
         report = qa.check_security_posture_structure(md)
         assert not any(i.startswith("B2:") for i in report.issues), report.issues
 
-    def test_b2_still_flags_bullet_with_no_finding_links(self, tmp_path):
-        """Negative regression: a bullet without ANY F-/T-link must still fire B2."""
+    def test_t3_flags_table_without_finding_links(self, tmp_path):
+        """2026-05: bullets were replaced by the Top Threats table. A table
+        whose findings are not linked into §8 (`[F-NNN](#f-nnn)`) must fire T3."""
         section = textwrap.dedent("""\
-            ### Security Posture at a Glance
+            ### Security Posture & Top Threats
 
             ```mermaid
             %%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
@@ -2154,20 +2146,13 @@ class TestPostureB2IdConvention:
                 linkStyle 3 stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
             ```
 
-            **Threat actors.** One.
-
-            - **Anonymous** — no account.
-
-            **Attack paths (numbered arrows in the diagram):**
-
-            - <a id="path-injection"></a>**① Injection** (Anonymous → Server) — flows.
-              - Findings:
-                - SQL Injection (no link)
-              - Impact: Full Takeover
+            | # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |
+            |---|--------------------|------------------------|---------------|-----|
+            | <a id="path-injection"></a>① | **Injection** _(T·I)_<br/>flows | •&nbsp;SQL Injection (no link) | 🔴 **Critical**<br/>Full Takeover | — |
             """)
         md = _write_minimal_model(tmp_path, section)
         report = qa.check_security_posture_structure(md)
-        assert any(i.startswith("B2:") and "no F-NNN/T-NNN link" in i for i in report.issues), report.issues
+        assert any(i.startswith("T3:") for i in report.issues), report.issues
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/trust-boundaries.schema.json",
   "title": "Phase 7 sidecar — trust boundaries",
-  "description": "Structured trust-boundary catalog the Phase-7 (Trust Boundary Analysis) LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[trust_boundaries[]] without re-composing in Phase 11. See docs/substep2-deterministic-migration.md §2.4.",
+  "description": "Structured trust-boundary catalog the Phase-7 (Trust Boundary Analysis) LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[trust_boundaries[]] without re-composing in Phase 11.",
   "type": "object",
   "required": ["schema_version", "trust_boundaries"],
   "additionalProperties": false,

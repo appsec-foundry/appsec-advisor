@@ -33,6 +33,12 @@ classes:
   - id: injection
     label: "Injection"
     short_label: "Injection"
+    # threat_label / stride feed the Management-Summary **Top Threats** table
+    # (compose_threat_model._compute_top_threats). threat_label is the
+    # architecture-level threat title; stride is the dot-separated STRIDE
+    # letter code shown after the title.
+    threat_label: "Insecure Query Construction & Data Access"
+    stride: "T·I"
     description: >-
       user input flows into a server-side interpreter (SQL, NoSQL, XML,
       YAML, LDAP, OS shell) without parameterisation or schema
@@ -55,6 +61,8 @@ classes:
   - id: auth-bypass
     label: "Auth Bypass"
     short_label: "Auth Bypass"
+    threat_label: "Hardcoded Secrets & Weak Cryptography"
+    stride: "S·E"
     description: >-
       authentication can be circumvented or forged because credentials,
       signing keys, or password hashes are weak, missing, or exposed.
@@ -81,6 +89,8 @@ classes:
   - id: privilege-escalation
     label: "Privilege Escalation"
     short_label: "Privilege Escalation"
+    threat_label: "Broken Authorization & Access Control"
+    stride: "E·I"
     description: >-
       authorisation checks are absent or bypassable, allowing horizontal
       and vertical privilege jumps from a self-registered or low-rights
@@ -105,6 +115,8 @@ classes:
   - id: sensitive-data-exposure
     label: "Sensitive File & Secret Exposure"
     short_label: "Secret Exposure"
+    threat_label: "Sensitive File & Secret Exposure"
+    stride: "I"
     description: >-
       confidential files, credentials, and management-plane endpoints
       are reachable on unauthenticated routes; SSRF lets the server
@@ -133,6 +145,8 @@ classes:
   - id: remote-code-execution
     label: "Remote Code Execution (RCE)"
     short_label: "RCE"
+    threat_label: "Remote Code Execution (unsafe eval)"
+    stride: "E"
     description: >-
       user-supplied data reaches a server-side code-execution sink
       (`eval`, sandbox primitives, deserialisation, prototype-pollution
@@ -153,6 +167,8 @@ classes:
   - id: cross-site-scripting
     label: "Cross-Site Scripting (XSS)"
     short_label: "XSS"
+    threat_label: "Output Encoding / Cross-Site Scripting"
+    stride: "T·I"
     description: >-
       attacker-controlled content is rendered in the victim's browser
       without sanitisation; combined with session tokens held in
@@ -174,6 +190,8 @@ classes:
   - id: cross-site-request-forgery
     label: "Cross-Site Request Forgery (CSRF)"
     short_label: "CSRF"
+    threat_label: "CSRF / Permissive CORS"
+    stride: "S·T"
     description: >-
       a permissive CORS policy plus missing anti-CSRF tokens let any
       external page issue authenticated state-changing requests in the

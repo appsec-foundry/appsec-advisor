@@ -223,6 +223,80 @@ def rewrite_vscode_links(md_text: str) -> str:
 
 PANDOC_FORMAT = "gfm+pipe_tables+task_lists+autolink_bare_uris"
 
+# Table column-width injection. Pandoc's `gfm` reader (correctly) ignores the
+# relative dash widths in a pipe-table separator, so the compose-stage width
+# hints have no effect on the HTML/PDF on their own. We therefore compute each
+# table's column widths HERE — directly from the rendered HTML cell content —
+# and inject an explicit <colgroup>, which WeasyPrint/browsers honour. Widths
+# are content-aware, clamped into a per-role band so finding/link columns get
+# room and short ID/severity columns stay compact (mirrors compose's
+# _TBL_ROLE_BOUNDS — keep the two in sync).
+_COLW_ROLE_BOUNDS: dict[str, tuple[int, int]] = {
+    "narrow": (3, 8),
+    "medium": (7, 14),
+    "default": (8, 22),
+    "desc": (14, 36),
+    "links": (16, 48),
+}
+
+
+def _colw_role(header: str) -> str:
+    h = re.sub(r"[`*_]", "", header or "").strip().lower()
+    if not h:
+        return "default"
+    if h in {"#", "id", "ids", "auth", "effort", "priority", "protocol", "method", "factor", "level", "p", "sev"}:
+        return "narrow"
+    if h in {"risk", "severity", "cwe", "cwes", "status", "verdict", "classification", "required role", "role"}:
+        return "medium"
+    if any(t in h for t in ("description", "notes", "scenario", "reason", "rationale", "details", "meaning", "impact", "assessment", "what it asks")):
+        return "desc"
+    if any(t in h for t in ("finding", "threat", "addresses", "mitigat", "covers", "linked")):
+        return "links"
+    return "default"
+
+
+def _colw_cell_text(cell_html: str) -> int:
+    """Widest visible line in an HTML table cell (split on <br>, strip tags)."""
+    longest = 0
+    for seg in re.split(r"<br\s*/?>", cell_html or "", flags=re.IGNORECASE):
+        txt = re.sub(r"<[^>]+>", "", seg)
+        txt = re.sub(r"&[a-zA-Z#0-9]+;", "x", txt).strip()
+        longest = max(longest, len(txt))
+    return longest
+
+
+def _inject_table_colgroups(html: str) -> str:
+    """Insert a content-aware <colgroup> into every <table> that lacks one."""
+    cell_re = re.compile(r"<t[hd][^>]*>(.*?)</t[hd]>", re.DOTALL | re.IGNORECASE)
+    row_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
+
+    def _one(m: "re.Match[str]") -> str:
+        open_tag, inner = m.group(1), m.group(2)
+        if "<colgroup" in inner.lower():
+            return m.group(0)
+        rows = row_re.findall(inner)
+        if not rows:
+            return m.group(0)
+        header_cells = cell_re.findall(rows[0])
+        ncol = len(header_cells)
+        if ncol < 2:
+            return m.group(0)
+        content = [_colw_cell_text(re.sub(r"<[^>]+>", " ", h)) for h in header_cells]
+        roles = [_colw_role(re.sub(r"<[^>]+>", "", h)) for h in header_cells]
+        for r in rows[1:]:
+            cells = cell_re.findall(r)
+            for i in range(min(ncol, len(cells))):
+                content[i] = max(content[i], _colw_cell_text(cells[i]))
+        weights = []
+        for i in range(ncol):
+            lo, hi = _COLW_ROLE_BOUNDS.get(roles[i], (8, 22))
+            weights.append(max(3, min(hi, max(lo, content[i]))))
+        total = sum(weights) or 1
+        cols = "".join(f'<col style="width: {round(100 * w / total)}%" />' for w in weights)
+        return f"{open_tag}\n<colgroup>{cols}</colgroup>{inner}</table>"
+
+    return re.sub(r"(<table[^>]*>)(.*?)</table>", _one, html, flags=re.DOTALL | re.IGNORECASE)
+
 
 def pandoc_supports_embed_resources() -> bool:
     """`--embed-resources` was added in pandoc 2.19.0 (Aug 2022).
@@ -264,6 +338,14 @@ def md_to_html(md_path: Path, html_path: Path, css_path: Path, title: str) -> No
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"pandoc failed (exit {result.returncode}):\n{result.stderr.strip()}")
+    # Inject content-aware <colgroup> widths (gfm drops the pipe-table dash
+    # hints, so columns would otherwise all size to content). Best-effort: any
+    # failure leaves the pandoc HTML untouched.
+    try:
+        html_text = html_path.read_text(encoding="utf-8")
+        html_path.write_text(_inject_table_colgroups(html_text), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def html_to_pdf(html_path: Path, pdf_path: Path) -> None:

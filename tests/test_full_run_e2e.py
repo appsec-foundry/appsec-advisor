@@ -45,6 +45,11 @@ pytestmark = pytest.mark.skipif(
     reason="manual E2E test — run via `make e2e-full` (sets APPSEC_E2E_FULL=1)",
 )
 
+# Driver signals whether the export converters were available so the pdf/html
+# assertions skip (rather than fail) on a box without pandoc/weasyprint.
+PDF_ATTEMPTED = os.environ.get("APPSEC_E2E_PDF") == "1"
+HTML_DONE = os.environ.get("APPSEC_E2E_HTML") == "1"
+
 
 def _output_dir() -> Path:
     raw = os.environ.get("APPSEC_E2E_OUTPUT_DIR")
@@ -83,6 +88,7 @@ REQUIRED_FILES = [
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",  # driver passes --sarif
+    "pentest-tasks.yaml",       # driver passes --pentest-tasks
     ".threats-merged.json",
     ".triage-flags.json",
     ".recon-summary.md",
@@ -307,3 +313,103 @@ def test_meta_block_populated(threat_model_yaml: dict) -> None:
     assert meta.get("schema_version"), "meta.schema_version missing"
     assert meta.get("generated"), "meta.generated missing"
     assert meta.get("plugin_version"), "meta.plugin_version missing"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10. Pentest tasks — driver passes --pentest-tasks
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_pentest_tasks_structure(out_dir: Path) -> None:
+    """pentest-tasks.yaml must parse and carry meta + schema_version + a tasks
+    list. (Top-level keys are meta/schema_version/tasks; endpoints are embedded
+    per-task.) The file's existence is covered by REQUIRED_FILES; this asserts
+    its shape so a malformed export is caught."""
+    doc = yaml.safe_load((out_dir / "pentest-tasks.yaml").read_text())
+    assert isinstance(doc, dict), "pentest-tasks.yaml is not a mapping"
+    assert doc.get("meta"), "pentest-tasks.yaml missing meta block"
+    assert doc.get("schema_version"), "pentest-tasks.yaml missing schema_version"
+    assert isinstance(doc.get("tasks"), list), "pentest-tasks.yaml 'tasks' is not a list"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. Requirements compliance — driver passes --requirements
+#     (resolves offline against skills/audit-security-requirements/cache/)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_requirements_check_ran(out_dir: Path, threat_model_yaml: dict) -> None:
+    """The driver passes --requirements; the context-resolver resolves a source
+    (a URL, or the bundled data/appsec-requirements-fallback.yaml offline) and
+    Phase 8b runs. When that happens, meta.check_requirements flips True and the
+    resolved source + compliance fragment land on disk — assert that full
+    contract.
+
+    If no source resolves at all (offline with no fallback reachable), Phase 8b
+    is *skipped* (not aborted) per phase-group-architecture.md, leaving
+    check_requirements falsy and no .requirements.yaml. Treat that as a skip,
+    not a failure, so the E2E stays green on a source-less box."""
+    ran = threat_model_yaml.get("meta", {}).get("check_requirements") is True
+    has_source = (out_dir / ".requirements.yaml").is_file()
+    if not ran and not has_source:
+        pytest.skip("requirements source did not resolve (offline) — Phase 8b skipped")
+    assert ran, (
+        "meta.check_requirements is not True but .requirements.yaml exists — "
+        "requirements resolved yet the flag did not propagate"
+    )
+    assert has_source, (
+        "missing .requirements.yaml — context-resolver did not write the source"
+    )
+    assert (out_dir / ".fragments" / "requirements-compliance.md").is_file(), (
+        "missing requirements-compliance fragment — Phase 8b did not write it"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12. keep-runtime-files — driver passes --keep-runtime-files
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_keep_runtime_files_honored(out_dir: Path) -> None:
+    """The driver passes --keep-runtime-files, so runtime_cleanup must self-skip
+    and record that as a RUNTIME_CLEANUP opt-out line in .agent-run.log. If the
+    log isn't present (non-verbose headless can omit it) or cleanup never ran in
+    this path, the signal is unobservable — skip rather than guess."""
+    log = out_dir / ".agent-run.log"
+    if not log.is_file():
+        pytest.skip("no .agent-run.log to inspect for the cleanup decision")
+    text = log.read_text(encoding="utf-8", errors="ignore")
+    if "RUNTIME_CLEANUP" not in text:
+        pytest.skip("runtime_cleanup did not run in this pipeline path")
+    assert ("opt-out" in text) or ("skipped" in text), (
+        "runtime_cleanup ran but did not honor --keep-runtime-files"
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 13. PDF / HTML export — conditional on converter tooling (driver-signalled)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_pdf_exported(out_dir: Path) -> None:
+    """When the driver attempted --pdf (pandoc + weasyprint present), a valid
+    PDF must exist."""
+    if not PDF_ATTEMPTED:
+        pytest.skip("driver did not attempt --pdf (pandoc/weasyprint missing)")
+    pdf = out_dir / "threat-model.pdf"
+    assert pdf.is_file(), "threat-model.pdf missing despite --pdf"
+    assert pdf.stat().st_size > 1024, (
+        f"threat-model.pdf suspiciously small ({pdf.stat().st_size} bytes)"
+    )
+    assert pdf.read_bytes()[:5] == b"%PDF-", "threat-model.pdf lacks a %PDF- header"
+
+
+def test_html_exported(out_dir: Path) -> None:
+    """When the driver exported HTML (pandoc present), a self-contained HTML
+    document must exist."""
+    if not HTML_DONE:
+        pytest.skip("driver did not export HTML (pandoc missing or export failed)")
+    html = out_dir / "threat-model.html"
+    assert html.is_file(), "threat-model.html missing despite HTML export"
+    text = html.read_text(encoding="utf-8", errors="ignore")
+    assert "<html" in text.lower(), "threat-model.html has no <html> element"

@@ -1,13 +1,14 @@
-# Internal Packaging — GitLab CI example
+# Internal Packaging — GitHub Actions example
 
-Runnable GitLab CI/CD pipeline that builds a **company-branded** Claude Code
+Runnable GitHub Actions workflow that builds a **company-branded** Claude Code
 plugin from upstream [`appsec-advisor`](../../) with a custom org profile and
 config, then publishes it as a tarball for internal distribution.
 
 Uses the upstream packager described in
 [`docs/internal-plugin-packaging.md`](../../docs/internal-plugin-packaging.md).
-Copy this directory into a new GitLab project, fill in the two required CI
-variables, and the pipeline runs end-to-end.
+Copy this directory into a new GitHub repository, set the two required
+repository variables, and the workflow runs end-to-end. This is the GitHub
+counterpart of [`../internal-packaging-gitlab`](../internal-packaging-gitlab).
 
 ## What it does
 
@@ -26,7 +27,7 @@ package
 ## Repository layout
 
 ```
-.gitlab-ci.yml                  ← pipeline definition
+.github/workflows/package.yml   ← workflow definition
 org-profile/
   org-profile.yaml              ← presets, requirements source, guardrails
   context/organization.md       ← business context (untrusted data)
@@ -34,22 +35,25 @@ org-profile/
 ```
 
 The package job clones upstream into `upstream/appsec-advisor/`.
-`APPSEC_ADVISOR_REF` may be a branch, tag, or commit SHA; the CI job fetches
-that ref and checks out `FETCH_HEAD`. If you prefer a pinned submodule instead
-of a fresh clone per run, replace the clone, fetch, and checkout lines with
+`APPSEC_ADVISOR_REF` may be a branch, tag, or commit SHA; the job fetches that
+ref and checks out `FETCH_HEAD`. If you prefer a pinned submodule instead of a
+fresh clone per run, replace the clone, fetch, and checkout lines with
 `git submodule update`.
 
 ## Setup
 
-1. Push this directory to a new GitLab project.
-2. Configure the upstream source in **Settings → CI/CD → Variables**:
+1. Push this directory to a new GitHub repository.
+2. Configure the upstream source in
+   **Settings → Secrets and variables → Actions → Variables**:
    - `APPSEC_ADVISOR_URL` — e.g. `https://github.com/your-fork/appsec-advisor.git`
    - `APPSEC_ADVISOR_REF` — pinned tag or commit, e.g. `v0.4.0-beta`
-3. (Optional) Override `INTERNAL_NAME` if you don't want the `acme-appsec` default.
-   Override `VERSION` for releases, e.g. `0.4.0-acme.20260527`; the built-in
-   CI snapshot default is `0.4.0-internal.${CI_COMMIT_SHORT_SHA}`.
-4. Run a pipeline and download the `dist/${INTERNAL_NAME}-${VERSION}.tgz`
-   artifact from the `package` job.
+3. (Optional) Add an `INTERNAL_NAME` variable if you don't want the
+   `acme-appsec` default. Add a `VERSION` variable for releases, e.g.
+   `0.4.0-acme.20260527`. With no override, a tag build uses the tag name
+   (minus the `v` prefix) and any other run uses the CI snapshot default
+   `0.4.0-internal.${GITHUB_SHA::8}`.
+4. Run the workflow from the **Actions** tab (`Run workflow`) or push a `v*`
+   tag, then download the `${INTERNAL_NAME}-${VERSION}` artifact from the run.
 
 ## Customizing the config
 
@@ -67,10 +71,10 @@ at runtime.
 
 ## Publishing the tarball
 
-The example writes the tarball to a job artifact (`dist/*.tgz`, 30-day expiry).
-For real distribution, uncomment the `curl --upload-file` block in the
-`package` job — it pushes to the GitLab Generic Packages registry of the same
-project using `$CI_JOB_TOKEN`. Swap the URL for Artifactory, Nexus, S3, or
+The example writes the tarball to a workflow artifact (`dist/*.tgz`, 30-day
+retention). For real distribution, uncomment the `Publish to GitHub Release`
+step in `package.yml` — it attaches the tarball to the release for a `v*` tag
+build. Swap it for a push to GitHub Packages, Artifactory, Nexus, S3, or
 whatever your org already trusts.
 
 ## Local build (no tarball)

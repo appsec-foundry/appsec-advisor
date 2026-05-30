@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/security-controls.schema.json",
   "title": "Phase 8 sidecar — security controls",
-  "description": "Structured security-controls catalog the Phase-8 LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[security_controls[]] without re-composing in Phase 11. Field names mirror the output schema (threat-model.output.schema.yaml) so the aggregator can pass entries through verbatim. Augments .architecture-coverage.json[control_assessments] — sidecar wins on conflict (LLM has more context). See docs/substep2-deterministic-migration.md §2.5.",
+  "description": "Structured security-controls catalog the Phase-8 LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[security_controls[]] without re-composing in Phase 11. Field names mirror the output schema (threat-model.output.schema.yaml) so the aggregator can pass entries through verbatim. Augments .architecture-coverage.json[control_assessments] — sidecar wins on conflict (LLM has more context).",
   "type": "object",
   "required": ["schema_version", "security_controls"],
   "additionalProperties": false,

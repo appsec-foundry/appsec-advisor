@@ -2223,6 +2223,16 @@ def _load_attack_paths_fragment(ctx: RenderContext, taxonomy: dict, threats: lis
                     )
                 except (FragmentError, ContractError):
                     return _derive_attack_paths_fallback(threats, taxonomy)
+                # Preserve the LLM's original (impact-tier) target before the
+                # control-tier reconciliation below overwrites it. Figure 1
+                # (architecture data-flow) routes by impact — injection shown
+                # reaching the DB — while Figure 2 (control responsibility) uses
+                # the reconciled control tier. This mirrors the reference design,
+                # where the same class sits on the app tier in the heatmap but
+                # flows into the data tier in the architecture diagram.
+                for _ap in data.get("attack_paths") or []:
+                    if isinstance(_ap, dict):
+                        _ap.setdefault("_llm_target", (_ap.get("target") or "").strip().lower())
                 # M-2-Refit: reconcile LLM-authored `target` against the
                 # canonical attack-class-taxonomy.default_target_tier.
                 _reconcile_attack_path_targets(data, taxonomy, ctx)
@@ -3139,11 +3149,17 @@ def _build_tier_cards(
             sev_line = ""
         else:
             sev_line = "(no findings)"
-        # Components line. Component IDs are emitted plain (no <b>) — bold
-        # is reserved for the column-header HDR_A/T/I cells inside the heatmap
-        # so headers and content render with distinguishable weights.
-        if comp_ids:
-            comp_line = " · ".join(comp_ids)
+        # Components line. Reference form (2026-05): list the tier's components
+        # as `C-NN Name` (global C-NN order), matching Figure 2 in
+        # docs/analysis-top-threats-merge.md where each tier box simply lists
+        # the components it contains. Component IDs are emitted plain (no <b>)
+        # — bold is reserved for the column-header HDR_A/T/I cells.
+        _cnn = {(_c.get("id") or "").strip(): f"C-{_i:02d}" for _i, _c in enumerate(components, start=1)}
+        if comps_in_tier:
+            comp_line = " · ".join(
+                f"{_cnn.get((c.get('id') or '').strip(), '')} {(c.get('name') or c.get('id') or '').strip()}".strip()
+                for c in comps_in_tier
+            )
         else:
             comp_line = "(no components)"
         display_name, node_id, css_class, tier_icon = _TIER_DISPLAY[key]
@@ -3188,17 +3204,15 @@ def _build_tier_cards(
                     ),
                     len(threats_by_target_tier.get(key, [])),
                 ),
-                # M3.11 — Use the cluster-routed threat list so each
-                # cluster appears in exactly ONE tier box (Injection in
-                # Application, Weak Crypto in Data, etc.).
-                # 2026-05 — Also pass the per-tier arrow-CWE allow-set so
-                # cluster bullets stay consistent with the arrows that
-                # actually point at this tier; bullets without a matching
-                # arrow are dropped (they're still in §8).
-                "cluster_label_lines": _build_tier_cluster_lines(
-                    threats_by_target_tier.get(key, []),
-                    arrow_cwe_allow=(cwe_allow_by_tier.get(key) or None),
-                ),
+                # Reference form (2026-05): tier boxes list their COMPONENTS
+                # only (see comp_line above), not weakness-cluster bullets, to
+                # match Figure 2 in docs/analysis-top-threats-merge.md. The
+                # legacy cluster bullets are intentionally suppressed (empty
+                # list → template uses the name + components_line branch). The
+                # per-class weakness detail lives in the Top Threats table and
+                # §7/§8. `_build_tier_cluster_lines` is retained for reference
+                # but no longer wired into the heatmap.
+                "cluster_label_lines": [],
             }
         )
     return cards
@@ -4188,6 +4202,40 @@ def _collapse_open_registration_actors(attack_paths_data: dict) -> None:
             ap["actor"] = "internet-anon"
 
 
+def _collapse_public_repo_actors(attack_paths_data: dict) -> None:
+    """Fold ``repo-read`` into ``internet-anon`` when the source repository is
+    public. Mutates the dict in place.
+
+    Reason: a secret committed to a PUBLIC repo (e.g. a hardcoded signing key)
+    is readable by anyone who clones it — there is no privileged "internal
+    developer" gate, so a distinct repo-reader actor overstates the access an
+    attacker needs. The reader of committed secrets IS the anonymous internet
+    attacker. (A malicious *contributor* who opens a pull request to inject
+    malicious or insecure code is a different actor, mapped to ``build-time``
+    and driven by repo visibility upstream — see recon 7.27a / the
+    untrusted-external-contribution supply-chain pattern. That threat is NOT
+    folded here: this collapse only touches ``repo-read`` (the secret-reader),
+    so the contributor threat survives into the heatmap intact.)
+    """
+    collapse_from = {"repo-read"}
+
+    actors = attack_paths_data.get("actors") or []
+    new_actors: list[str] = []
+    seen: set[str] = set()
+    for slug in actors:
+        target = "internet-anon" if slug in collapse_from else slug
+        if target not in seen:
+            seen.add(target)
+            new_actors.append(target)
+    if any(s in collapse_from for s in actors) and "internet-anon" not in seen:
+        new_actors.insert(0, "internet-anon")
+    attack_paths_data["actors"] = new_actors
+
+    for ap in attack_paths_data.get("attack_paths") or []:
+        if (ap.get("actor") or "") in collapse_from:
+            ap["actor"] = "internet-anon"
+
+
 def _build_actor_cards(
     attack_paths_data: dict,
     actor_labels: dict,
@@ -4395,7 +4443,31 @@ def _build_attack_arrows(
                     "dst": dst,
                 }
             )
-    return arrows, relay_arrows
+
+    # Reference form (2026-05): collapse the per-class arrows into ONE grouped
+    # arrow per (src, dst) — glyphs joined in sequence order, no per-class text
+    # label. Matches Figure 2 in docs/analysis-top-threats-merge.md
+    # (e.g. `A_ANON ==>|"① ③ ④ ⑤"| T_APP`). Keeps the diagram readable when one
+    # actor drives several classes against the same tier.
+    glyph_rank = {g: i for i, g in enumerate(glyph_seq)}
+    grouped: dict[tuple[str, str], list[str]] = {}
+    order: list[tuple[str, str]] = []
+    for a in arrows:
+        key = (a["src"], a["dst"])
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(a["glyph"])
+    grouped_arrows = [
+        {
+            "src": src,
+            "dst": dst,
+            "glyph": " ".join(sorted(grouped[(src, dst)], key=lambda g: glyph_rank.get(g, 99))),
+            "label": "",
+        }
+        for (src, dst) in order
+    ]
+    return grouped_arrows, relay_arrows
 
 
 def _build_consequence_arrows(
@@ -4476,6 +4548,402 @@ def _build_alignment_edges(actor_cards: list[dict], tier_cards: list[dict]) -> l
     return edges
 
 
+_FIG1_TIER_ORDER = ["client", "application", "data"]
+_FIG1_TIER_LABEL = {
+    "client": "Client Tier — browser",
+    "application": "Application Tier — Node / Express",
+    "data": "Data Tier",
+}
+# Figure-1-specific actor label overrides. Kept as an extension point but
+# intentionally empty: the repo-read actor renders as the canonical
+# posture-actor-labels label ("Internal Developer"), the same name used by
+# the Figure-2 heatmap card and the actor legend, so a single actor never
+# appears under two different names across the section.
+_FIG1_ACTOR_LABEL: dict[str, str] = {}
+
+
+def _fig1_node_id(prefix: str, raw: str) -> str:
+    """Mermaid-safe node id: ``<PREFIX>_<UPPER_ALNUM>``."""
+    core = re.sub(r"[^A-Za-z0-9]+", "_", (raw or "").strip()).strip("_").upper()
+    return f"{prefix}_{core}" if core else f"{prefix}_N"
+
+
+def _fig1_label(text: str) -> str:
+    """Escape a string for use inside a quoted Mermaid node/edge label."""
+    s = " ".join((text or "").split())
+    return s.replace("&", "&amp;").replace('"', "'")
+
+
+def _render_top_threats_architecture(
+    ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict
+) -> str:
+    """Deterministically build **Figure 1 — Architecture, Trust Boundaries &
+    Threats** from ``threat-model.yaml`` + the *already-reconciled*
+    ``attack_paths_data``.
+
+    Layout: a ``flowchart TB`` with one subgraph per architecture tier
+    (Client / Application / Data), each holding its ``C-NN`` components;
+    external actor nodes above; grey edges for the legitimate request
+    backbone (user → client → application → data, derivable from tier
+    ordering and corroborated by ``trust_boundaries``); and one red
+    attacker edge per attack class, routed from the class actor to the
+    component that hosts the majority of the class's findings.
+
+    Glyph assignment (① ② … ⑦) is **positional over the same
+    ``attack_paths`` ordering** that drives Figure 2 and the Top Threats
+    table (see ``_build_finding_to_path_map``), so the numbering agrees
+    across all three. Returns an empty string when there is nothing to
+    draw (no components or no attack paths).
+    """
+    components = ctx.yaml_data.get("components") or []
+    threats = ctx.yaml_data.get("threats") or []
+    attack_paths = attack_paths_data.get("attack_paths") or []
+    if not components or not attack_paths:
+        return ""
+
+    glyph_seq = attack_taxonomy.get("glyph_sequence") or ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+    cls_by_id = {
+        c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)
+    }
+    actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
+
+    # Threat count per component, taken from the threat list (the optional
+    # ``threat_ids`` array is not always populated). Drives the representative
+    # pick and the "omit clean components" filter below.
+    comp_threat_count: dict[str, int] = {}
+    comp_sev_count: dict[str, dict[str, int]] = {}
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        comp = (t.get("component") or t.get("component_id") or "").strip()
+        if comp:
+            comp_threat_count[comp] = comp_threat_count.get(comp, 0) + 1
+            sev = (t.get("risk") or t.get("severity") or t.get("impact") or "").strip().title()
+            if sev in ("Critical", "High"):
+                d = comp_sev_count.setdefault(comp, {"Critical": 0, "High": 0})
+                d[sev] += 1
+
+    # Component bookkeeping: canonical C-NN by the FULL component-array order
+    # (so omitting a component here never renumbers the others — C-05 stays
+    # C-05 even if C-04 is dropped), mermaid node id, tier. Components with no
+    # findings are omitted: Figure 1 is a threat diagram, and a box reachable
+    # only by a benign edge reads as noise.
+    comp_node: dict[str, str] = {}
+    comp_label: dict[str, str] = {}
+    comp_tier: dict[str, str] = {}
+    for idx, c in enumerate(components, start=1):
+        cid = (c.get("id") or "").strip()
+        if not cid:
+            continue
+        if comp_threat_count.get(cid, 0) == 0:
+            continue
+        tier = (c.get("tier") or "application").strip().lower()
+        if tier not in _FIG1_TIER_ORDER:
+            tier = "application"
+        comp_node[cid] = _fig1_node_id("CMP", cid)
+        # Compact per-component weakness badge: Critical/High finding counts on
+        # a second line (e.g. "🔴 3 🟠 5"). Shows WHERE weaknesses concentrate
+        # alongside the attack-flow edges, without listing individual findings
+        # (2026-05-30 request — keep it short, omit zero counts and Med/Low).
+        _sev = comp_sev_count.get(cid) or {}
+        _badge = " ".join(
+            p for p in (
+                f"🔴 {_sev['Critical']}" if _sev.get("Critical") else "",
+                f"🟠 {_sev['High']}" if _sev.get("High") else "",
+            ) if p
+        )
+        _name = f"C-{idx:02d} · {_fig1_label(c.get('name') or cid)}"
+        comp_label[cid] = f"{_name}<br/><i>{_badge}</i>" if _badge else _name
+        comp_tier[cid] = tier
+    if not comp_node:
+        return ""
+    comp_order = {cid: i for i, cid in enumerate(comp_node)}
+
+    # finding-id (F-NNN/T-NNN, both aliases) → component id.
+    fid_component: dict[str, str] = {}
+    for t in threats:
+        if not isinstance(t, dict):
+            continue
+        comp = (t.get("component") or "").strip()
+        if not comp:
+            continue
+        keys: set[str] = set()
+        for kn in ("id", "t_id", "original_id"):
+            v = (t.get(kn) or "").strip().upper()
+            if v.startswith(("F-", "T-")):
+                keys.add(v)
+        for v in list(keys):
+            m = re.match(r"^[FT]-(\d+)$", v)
+            if m:
+                keys.add(f"F-{m.group(1)}")
+                keys.add(f"T-{m.group(1)}")
+        for k in keys:
+            fid_component.setdefault(k, comp)
+
+    # Actor nodes (created on demand, deduped).
+    actor_node: dict[str, str] = {}
+    actor_label: dict[str, str] = {}
+
+    def _actor(slug: str) -> str:
+        slug = (slug or "internet-anon").strip()
+        if slug not in actor_node:
+            meta = actor_labels.get(slug) or {}
+            fa = meta.get("fa_icon") or "fa:fa-user-secret"
+            lbl = _FIG1_ACTOR_LABEL.get(slug) or meta.get("label") or slug
+            sub = meta.get("default_subtitle") or ""
+            actor_node[slug] = _fig1_node_id("ACT", slug)
+            txt = f"{fa} {_fig1_label(lbl)}"
+            if sub:
+                txt += f"<br/><i>{_fig1_label(sub)}</i>"
+            actor_label[slug] = txt
+        return actor_node[slug]
+
+    client_comps = [cid for cid in comp_node if comp_tier[cid] == "client"]
+    app_comps = [cid for cid in comp_node if comp_tier[cid] == "application"]
+    data_comps = [cid for cid in comp_node if comp_tier[cid] == "data"]
+    app_fallback = next((cid for cid, t in comp_tier.items() if t == "application"), next(iter(comp_node)))
+
+    def _rep(cids: list[str]) -> str | None:
+        if not cids:
+            return None
+        return sorted(cids, key=lambda cid: (-comp_threat_count.get(cid, 0), comp_order[cid]))[0]
+
+    rep_app = _rep(app_comps)
+    rep_client = _rep(client_comps)
+    rep_data = _rep(data_comps)
+
+    def _target_tier(ap: dict, cls: dict) -> str:
+        # Route by the IMPACT tier (the LLM's original target — where the attack
+        # lands: injection ⇒ data) so Figure 1 distributes threats across the
+        # components they hit, rather than the reconciled control tier (which
+        # would pile every application-control failure onto one box). The victim
+        # pseudo-tier is delivered through the client tier.
+        tt = (
+            ap.get("_llm_target") or ap.get("target") or cls.get("default_target_tier") or "application"
+        ).strip().lower()
+        if tt == "victim":
+            tt = "client"
+        return tt if tt in _FIG1_TIER_ORDER else "application"
+
+    # Red attacker edges — ONE labelled edge per attack class so the diagram is
+    # self-explanatory without the table (label = "<glyph> <short class name>",
+    # e.g. "① Injection"). Routing keeps the actors→client→app→data structure
+    # readable and distributes the threats across the components they actually
+    # hit, instead of piling every class onto one box:
+    #   * target = data  → internal app⇒data edge ("API ⇒ DB · ① Injection"),
+    #     so a data-tier attack never spans from the actor column across the
+    #     application tier (no crossing).
+    #   * target = client/victim → app⇒client (injection) PLUS client⇒Shop User
+    #     (delivery), so the victim is visibly attacked, not a passive node.
+    #   * target = application → actor⇒every app component that hosts a finding,
+    #     so a specialised component (e.g. the B2B Order API hosting the RCE) is
+    #     reached directly instead of being an orphaned box.
+    attack_edges: list[tuple[str, str, str]] = []  # (src, dst, label)
+    victim_present = False
+    victim_deliveries: list[tuple[str, str]] = []  # (client node, label)
+
+    def _emit(src: str, dst: str, label: str) -> None:
+        if src and dst and src != dst:
+            attack_edges.append((src, dst, label))
+
+    for idx, ap in enumerate(attack_paths):
+        if idx >= len(glyph_seq):
+            break
+        glyph = glyph_seq[idx]
+        slug = (ap.get("class") or "").strip()
+        cls = cls_by_id.get(slug) or {}
+        short = cls.get("short_label") or cls.get("label") or slug or "attack"
+        label = f"{glyph} {_fig1_label(short)}"
+        actor_slug = (ap.get("actor") or cls.get("default_actor") or "internet-anon").strip()
+        tt = _target_tier(ap, cls)
+
+        if tt == "data" and rep_app and rep_data:
+            _emit(comp_node[rep_app], comp_node[rep_data], label)
+        elif tt == "client" and rep_client:
+            victim_present = True
+            src_slug = "internet-anon" if actor_slug == "victim-required" else actor_slug
+            inj_src = comp_node[rep_app] if rep_app else _actor(src_slug)
+            _emit(inj_src, comp_node[rep_client], label)
+            victim_deliveries.append((comp_node[rep_client], label))
+        else:
+            if actor_slug == "victim-required":
+                actor_slug = "internet-anon"
+            actor_nid = _actor(actor_slug)
+            app_hosts: list[str] = []
+            for fid in ap.get("findings") or []:
+                comp = fid_component.get((fid or "").upper())
+                if comp in comp_node and comp_tier.get(comp) == "application" and comp not in app_hosts:
+                    app_hosts.append(comp)
+            if not app_hosts and rep_app:
+                app_hosts = [rep_app]
+            for h in app_hosts:
+                _emit(actor_nid, comp_node[h], label)
+
+    # Grey legitimate-flow backbone (tier-ordered; corroborated by
+    # trust_boundaries). The legitimate user IS the Shop User when a
+    # victim-targeting class is present (same persona), so the node is
+    # labelled accordingly and described in the actor legend below.
+    user_node = "EXT_SHOPUSER" if victim_present else "EXT_USER"
+    user_label = (
+        "fa:fa-user Shop User<br/><i>legitimate customer — XSS/CSRF target</i>"
+        if victim_present
+        else "fa:fa-user Legitimate User"
+    )
+    # Delivery half of victim-targeting classes: client component → Shop User.
+    for cnode, label in victim_deliveries:
+        _emit(cnode, user_node, label)
+    benign_edges: list[tuple[str, str, str]] = []
+    if client_comps:
+        for cid in client_comps:
+            benign_edges.append((user_node, comp_node[cid], " uses "))
+        if rep_app:
+            for cid in client_comps:
+                benign_edges.append((comp_node[cid], comp_node[rep_app], " API calls "))
+    elif rep_app:
+        benign_edges.append((user_node, comp_node[rep_app], " uses "))
+    if rep_app:
+        for cid in data_comps:
+            benign_edges.append((comp_node[rep_app], comp_node[cid], " reads/writes "))
+
+    # ---- Emit the Mermaid block -------------------------------------------
+    # `subGraphTitleMargin` gives each band's title label a little air above and
+    # below so it stays readable; a small `rankSpacing` bump separates the bands
+    # without making the diagram sprawl (2026-05-30 request — modest, not airy).
+    lines: list[str] = [
+        "```mermaid",
+        "%%{init: {'flowchart': {'subGraphTitleMargin': {'top': 8, 'bottom': 8}, 'rankSpacing': 55}}}%%",
+        "flowchart TB",
+    ]
+    # External actors are grouped into their OWN band (a subgraph, like every
+    # architecture tier below) and laid out left-to-right so all actors sit on
+    # one row at the same height. This replaces the loose top-level actor nodes,
+    # which dagre ranked at different heights and rendered as a cramped, uneven
+    # top edge (2026-05-30 request for a uniform, professional structure).
+    actor_emit: list[str] = []
+    if benign_edges:
+        # The legitimate user / victim is a GOOD actor → green (2026-05-30).
+        actor_emit.append(f'        {user_node}["{user_label}"]:::actorgood')
+    for slug, nid in actor_node.items():
+        # Colour malicious actors red, benign actors green by their catalogued
+        # role (attacker → red; victim/legitimate → green).
+        role = ((actor_labels.get(slug) or {}).get("role") or "attacker").strip().lower()
+        cls = "actorgood" if role in ("victim", "legitimate", "user", "good") else "actorbad"
+        actor_emit.append(f'        {nid}["{actor_label[slug]}"]:::{cls}')
+    if actor_emit:
+        lines.append('    subgraph ZONE_ACTORS["External Actors"]')
+        lines.append("        direction LR")
+        lines.extend(actor_emit)
+        lines.append("    end")
+    lines.append("")
+    for tier in _FIG1_TIER_ORDER:
+        tier_cids = [cid for cid in comp_node if comp_tier[cid] == tier]
+        if not tier_cids:
+            continue
+        sg = {"client": "CLIENT", "application": "APP", "data": "DATA"}[tier]
+        lines.append(f'    subgraph {sg}["{_fig1_label(_FIG1_TIER_LABEL[tier])}"]')
+        for cid in tier_cids:
+            lines.append(f'        {comp_node[cid]}["{comp_label[cid]}"]:::comp')
+        lines.append("    end")
+    lines.append("")
+
+    edge_idx = 0
+    benign_idx: list[int] = []
+    attack_idx: list[int] = []
+    if benign_edges:
+        lines.append("    %% legitimate request flow")
+        for src, dst, lbl in benign_edges:
+            lines.append(f'    {src} -->|"{lbl.strip()}"| {dst}')
+            benign_idx.append(edge_idx)
+            edge_idx += 1
+    if attack_edges:
+        lines.append("    %% attacker-controlled flows (glyphs match Figure 2 / Top Threats)")
+        for src, dst, label in attack_edges:
+            lines.append(f'    {src} ==>|"{label}"| {dst}')
+            attack_idx.append(edge_idx)
+            edge_idx += 1
+    lines.append("")
+    for tier, sg, stroke in (
+        ("client", "CLIENT", "#475569"),
+        ("application", "APP", "#b71c1c"),
+        ("data", "DATA", "#475569"),
+    ):
+        if any(comp_tier[cid] == tier for cid in comp_node):
+            width = "2px" if tier == "application" else "1.5px"
+            lines.append(f"    style {sg} fill:none,stroke:{stroke},stroke-width:{width},stroke-dasharray:5")
+    if actor_emit:
+        # Same dashed-band styling as the (non-app) tiers, so the actor zone
+        # reads as one more layer in a uniform stack.
+        lines.append("    style ZONE_ACTORS fill:none,stroke:#94a3b8,stroke-width:1.5px,stroke-dasharray:5")
+    lines.append("    classDef comp fill:#eef2f7,stroke:#334155,color:#0f172a,stroke-width:1.5px")
+    lines.append("    classDef ext  fill:#ffffff,stroke:#94a3b8,color:#334155,stroke-width:1.5px")
+    # Actor colouring: malicious red, benign/victim green (2026-05-30 request).
+    lines.append("    classDef actorbad  fill:#fde8e8,stroke:#b71c1c,color:#7f0000,stroke-width:2px")
+    lines.append("    classDef actorgood fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px")
+    if benign_idx:
+        lines.append(f"    linkStyle {','.join(str(i) for i in benign_idx)} stroke:#6b7280,stroke-width:1.5px")
+    if attack_idx:
+        lines.append(
+            f"    linkStyle {','.join(str(i) for i in attack_idx)} stroke:#b71c1c,stroke-width:2.5px"
+        )
+    lines.append("```")
+
+    intro = (
+        "Components grouped by trust boundary (architecture tier). Grey edges are the "
+        "legitimate request backbone; red edges are attacker-controlled data flows, each "
+        "labelled with the threat glyph(s) it carries — the same numbering as Figure 2 "
+        "and the Top Threats table below."
+    )
+    return intro + "\n\n" + "\n".join(lines) + "\n"
+
+
+def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonomy: dict) -> str:
+    """Build the ``**Threat actors.**`` legend rendered below the two figures.
+
+    Lists every actor present in ``attack_paths`` (attackers AND the
+    victim-required Shop User), each with its subtitle and the numbered
+    attack paths it drives / is targeted by. Glyphs use the same positional
+    ①–⑦ order as the figures and the Top Threats table.
+    """
+    aps = attack_paths_data.get("attack_paths") or []
+    if not aps:
+        return ""
+    glyph_seq = attack_taxonomy.get("glyph_sequence") or ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+    cls_by_id = {c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)}
+    labels = _load_posture_actor_labels() or {}
+    actor_meta = labels.get("actors") or {}
+    order = labels.get("order") or []
+
+    drives: dict[str, list[str]] = {}
+    for idx, ap in enumerate(aps):
+        if idx >= len(glyph_seq):
+            break
+        g = glyph_seq[idx]
+        cls = cls_by_id.get((ap.get("class") or "").strip()) or {}
+        title = cls.get("threat_label") or cls.get("label") or (ap.get("class") or "").strip()
+        actor = (ap.get("actor") or "internet-anon").strip()
+        drives.setdefault(actor, []).append(f"{g} {title}")
+    if not drives:
+        return ""
+
+    present = [a for a in order if a in drives] + [a for a in drives if a not in order]
+    out = [
+        "**Threat actors.** The actors below drive the numbered attack paths in the "
+        "figures above; the Shop User is the *victim* of client-side attacks (XSS / CSRF), "
+        "not an attacker.",
+        "",
+    ]
+    for a in present:
+        meta = actor_meta.get(a) or {}
+        name = _FIG1_ACTOR_LABEL.get(a) or meta.get("label") or a
+        sub = meta.get("default_subtitle") or ""
+        is_victim = meta.get("role") == "victim" or a == "victim-required"
+        verb = "target of" if is_victim else "drives"
+        paths = ", ".join(drives[a])
+        sub_part = f"{sub}; " if sub else ""
+        out.append(f"- **{name}** — {sub_part}{verb} {paths}.")
+    return "\n".join(out) + "\n"
+
+
 def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Emit the `### Security Posture at a Glance` section per contract v2.
 
@@ -4524,6 +4992,11 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     open_user_registration = bool((ctx.yaml_data.get("meta") or {}).get("open_user_registration"))
     if open_user_registration:
         _collapse_open_registration_actors(attack_paths_data)
+    # A committed secret in a PUBLIC repo is readable by any anonymous attacker,
+    # so the repo-reader vektor collapses into internet-anon (see function doc).
+    public_source_repo = bool((ctx.yaml_data.get("meta") or {}).get("public_source_repo"))
+    if public_source_repo:
+        _collapse_public_repo_actors(attack_paths_data)
 
     # Build the per-column input data.
     threats_by_component = _group_threats_by_component(threats)
@@ -4547,6 +5020,21 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     consequence_arrows = _build_consequence_arrows(attack_paths_data, impact_cards, tier_cards)
     alignment_edges = _build_alignment_edges(actor_cards, tier_cards)
 
+    # Figure 2 is FORWARD-ONLY (actor → tier → impact): no edge ever returns
+    # to the actor column. The victim outcome of XSS/CSRF is already carried
+    # by the Customer-Session-Hijack IMPACT node (a forward consequence
+    # arrow from the Client tier), so we drop the backward relay arrows
+    # (client → victim), the victim actor card, and any alignment edge that
+    # referenced it. This keeps every arrow horizontal and prevents the
+    # relay hop from crossing a tier box.
+    _victim_nodes = {c.get("id") for c in actor_cards if c.get("slug") == "victim-required"}
+    if _victim_nodes:
+        actor_cards = [c for c in actor_cards if c.get("slug") != "victim-required"]
+        relay_arrows = []
+        alignment_edges = [
+            e for e in alignment_edges if e.get("src") not in _victim_nodes and e.get("dst") not in _victim_nodes
+        ]
+
     # Continuous link-style index ranges. Mermaid numbers edges in the
     # order they appear in the source; we emit alignment edges first,
     # then attack arrows, then relay arrows (same red style), then consequence.
@@ -4566,21 +5054,28 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # explicit note that Low-severity findings are tracked in §8 but
     # omitted from the heatmap (per contract v2 tier_severity_floor).
     glyph_seq = attack_taxonomy.get("glyph_sequence") or ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
-    # Count UNIQUE glyphs (P3 — B2: multi-arrow victim-targeting classes
-    # share a glyph between their injection and consequence edges; using
-    # ``len(attack_arrows)`` would overcount and produce a broken intro
-    # like "arrows ①–⑦" when only six numbered classes exist).
-    glyphs_used = {a["glyph"] for a in attack_arrows if a.get("glyph")}
-    n_glyphs = len(glyphs_used)
-    if n_glyphs > 0:
-        last_idx = min(n_glyphs, len(glyph_seq)) - 1
+    # Span the intro range to the highest INDIVIDUAL glyph actually drawn.
+    # attack_arrows are grouped per (src,dst), so one arrow may carry several
+    # space-joined glyphs (e.g. "① ③ ④ ⑤"); counting arrows would understate
+    # the range. Split every arrow's glyph string (attack + relay edges) into
+    # individual glyphs and take the max taxonomy position so the range ends
+    # at the real last threat (①–⑥), not the number of grouped arrows.
+    glyph_rank = {g: i for i, g in enumerate(glyph_seq)}
+    glyphs_used = {
+        g
+        for a in (attack_arrows + relay_arrows)
+        for g in (a.get("glyph") or "").split()
+        if g in glyph_rank
+    }
+    if glyphs_used:
+        last_idx = max(glyph_rank[g] for g in glyphs_used)
         glyph_range = f"①–{glyph_seq[last_idx]}"
     else:
         glyph_range = "①"
     intro_paragraph = (
         "Heatmap: **actors** (left) → **architecture tiers** (middle, "
         "Client → Application → Data) → **impact** (right). "
-        f"Numbered red arrows {glyph_range} are the attack paths listed below."
+        f"Numbered red arrows {glyph_range} are the threats enumerated in the Top Threats table below."
     )
     if open_user_registration:
         intro_paragraph += (
@@ -4599,7 +5094,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             "cards": tier_cards,
         },
         "subgraph_impact": {
-            "header_label": "Impact",
+            "header_label": "Business Impact",
             "cards": impact_cards,
         },
         "alignment_edges": alignment_edges,
@@ -4843,9 +5338,48 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "attack_paths": attack_paths_rendered,
     }
 
-    paths_md = env.get_template("security-posture-attack-paths.md.j2").render(data=paths_template_data)
+    # ---- Compose the merged "Security Posture & Top Threats" section --------
+    # The standalone attack-path bullet list is no longer rendered: the
+    # Top Threats table below carries the same per-class detail (general
+    # architectural weakness + linked findings/components/mitigations). The
+    # section now reads: heading → Figure 1 (optional architecture diagram)
+    # → Figure 2 (the risk-flow heatmap above) → Top Threats table.
+    _ = paths_template_data  # built above; intentionally not rendered as bullets
 
-    return diagram_md.rstrip() + "\n\n" + paths_md.rstrip() + "\n"
+    figure1_md = ""
+    fig1_path = ctx.fragments_dir / "top-threats-architecture.md"
+    try:
+        if fig1_path.is_file():
+            figure1_md = fig1_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        figure1_md = ""
+    if not figure1_md:
+        # No operator/LLM-authored fragment on disk — build Figure 1
+        # deterministically from yaml + the SAME reconciled attack_paths
+        # order that drives Figure 2's glyphs, so ①–⑦ agree across both
+        # figures and the Top Threats table. Best-effort: a builder failure
+        # must never break the section (Figure 2 + table still render).
+        try:
+            figure1_md = _render_top_threats_architecture(ctx, attack_paths_data, attack_taxonomy).strip()
+        except Exception:  # noqa: BLE001 — Figure 1 is non-essential
+            figure1_md = ""
+
+    table_md = _render_top_threats(ctx, env, {"template": "top-threats.md.j2"}).rstrip()
+
+    parts: list[str] = ["### Security Posture & Top Threats", ""]
+    if figure1_md:
+        parts += ["**Figure 1 — Architecture, Trust Boundaries & Threats**", "", figure1_md, ""]
+    parts += [
+        "**Figure 2 — Risk Flow: Actor → Tier → Impact**",
+        "",
+        diagram_md.rstrip(),
+        "",
+    ]
+    legend_md = _build_security_posture_actor_legend(attack_paths_data, attack_taxonomy)
+    if legend_md:
+        parts += [legend_md.rstrip(), ""]
+    parts += [table_md]
+    return "\n".join(parts).rstrip() + "\n"
 
 
 def _render_top_findings(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -5354,24 +5888,6 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     p12_curated = bool(llm_order)
     p12_dropped = max(0, p12_total_before_cap - len(p12_rows))
 
-    # Bucket rows by primary_component_id.
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for r in p12_rows:
-        primary = r.get("primary_component_id") or ""
-        buckets.setdefault(primary, []).append(r)
-
-    # Flatten into one row list with divider markers between buckets.
-    components_meta = {
-        (c.get("id") or "").strip(): c
-        for c in (ctx.yaml_data.get("components", []) or [])
-    }
-    # 2026-05 — per-component groups with a paragraph divider per group
-    # (no `####` H4 sub-headers per prior user guidance; no in-table
-    # divider rows because Markdown pipe-tables have no colspan and the
-    # `| label | | | | |` form rendered as one cell + 4 empty cells.
-    # The new layout emits one pipe-table per component bucket, separated
-    # by a bold paragraph divider — visually the component label spans
-    # the full table width because it sits OUTSIDE the table.
     # Canonical C-NN resolution for the linked Component column. `cid` is the
     # mitigation's primary_component_id, which may be a slug (`express-backend`)
     # or already-canonical (`C-01`); `_component_lookup` aliases both and carries
@@ -5392,37 +5908,42 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             return f"[{canonical}](#{canonical.lower()}) — {name}"
         return name
 
-    groups: list[dict[str, Any]] = []
+    # 2026-05-30 user request: the leader-board is sorted PRIORITY-FIRST, THEN
+    # by component — i.e. all P1 rows (across components, in canonical component
+    # order) come before any P2 row, rather than grouping all of one component's
+    # rows together. The Component value is therefore carried PER ROW (the
+    # template falls back to the row-level `component_label` when the group has
+    # none) instead of as a once-per-component group label.
+    def _display_sort_key(r: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
+            _component_sort_key(r.get("primary_component_id") or ""),
+            -int(r.get("addressed_count") or 0),
+            r.get("max_sev_rank", 9),
+            _effort_rank(r.get("effort", "Medium")),
+            r.get("id") or "",
+        )
+
+    group_rows: list[dict[str, Any]] = []
     _row_number = 0
-    for cid in sorted(buckets.keys(), key=_component_sort_key):
-        bucket = sorted(buckets[cid], key=_row_sort_key)
-        if cid:
-            comp_name = (components_meta.get(cid) or {}).get("name", cid)
-            component_label = _component_cell_label(cid)
-            divider_label = f"↳ {comp_name} ({cid}) — {pluralize(len(bucket), 'item')}"
-        else:
-            component_label = "Cross-cutting"
-            divider_label = f"↳ Cross-cutting — {pluralize(len(bucket), 'item')}"
-        # Continuous numbering across groups (1..N), so the # column reads
-        # as a global leader-board rank rather than per-component 1..N.
-        group_rows: list[dict[str, Any]] = []
-        for r in bucket:
-            r["is_divider"] = False
-            _row_number += 1
-            r["number"] = _row_number
-            group_rows.append(r)
-        groups.append({
+    for r in sorted(p12_rows, key=_display_sort_key):
+        r["is_divider"] = False
+        _row_number += 1
+        r["number"] = _row_number
+        r["component_label"] = _component_cell_label(r.get("primary_component_id") or "")
+        group_rows.append(r)
+    groups: list[dict[str, Any]] = [
+        {
             "header": None,
-            # `component_label` feeds the dedicated `Component` column (post-
-            # 2026-05-29 layout — user request: the per-component label looked
-            # displaced jammed into the `#`/ID column of an in-table divider
-            # row, so it now lives in its own column shown once per group).
-            # `divider_label` retained for any legacy template path.
-            "component_label": component_label,
-            "divider_label": divider_label,
+            # Group-level label is None now — the Component column is filled
+            # per row (see `component_label` on each row) so priority-first
+            # ordering can interleave components.
+            "component_label": None,
+            "divider_label": None,
             "include_affects_column": False,
             "mitigations": group_rows,
-        })
+        }
+    ]
 
     total_count = len(enriched)
     p1_count = sum(1 for r in p12_rows if r.get("priority") == "P1")
@@ -5465,8 +5986,9 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         footer = (
             "*" + " · ".join(footer_parts)
             + " in [§9 Mitigation Register](#9-mitigation-register). "
-            + "Sorted within each component by priority (P1 first), then "
-            + "severity (Critical first), then effort (Low first).*"
+            + "Sorted by priority (P1 first), then component, then leverage "
+            + "(most findings first), severity (Critical first), and effort "
+            + "(Low first).*"
         )
     else:
         footer = None
@@ -5899,6 +6421,197 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Top Threats — merged Management-Summary section (replaces Top Findings +
+# Architecture Assessment). One row per attack-class (threat), threat-modeling
+# altitude: each row carries the general architectural weakness + STRIDE, the
+# concrete findings (linked, each with its component), the derived Risk &
+# Impact, and the primary mitigation(s). All columns except the one-line
+# class description are derived deterministically from threat-model.yaml +
+# the attack-paths fragment, so the section never drifts.
+# ---------------------------------------------------------------------------
+
+# Trailing file/location token stripped from a finding title to produce the
+# short Findings-cell label (e.g. "SQL Injection routes/login.ts:34" → "SQL
+# Injection"). Matches a path ending in a known source extension, optionally
+# followed by `:line` or `:start-end`.
+_FINDING_LOCATION_RE = re.compile(
+    r"\s+[\w./@+-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|ya?ml|html|py|java|go|rb|php|env|conf|xml|dockerfile)"
+    r"(?::[0-9]+(?:-[0-9]+)?)?$",
+    re.IGNORECASE,
+)
+
+_TOP_THREATS_SEVERITY_EMOJI = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+
+
+def _strip_finding_location(title: str) -> str:
+    """Strip a trailing `path/file.ext[:line]` token from a finding title."""
+    t = (title or "").strip()
+    stripped = _FINDING_LOCATION_RE.sub("", t).strip()
+    return stripped or t
+
+
+def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
+    """Build the Top Threats rows — one per non-empty attack class.
+
+    Joins the attack-paths fragment (class taxonomy → glyph, generic
+    description, curated finding membership, business impacts) with the
+    deterministic threat/mitigation/component data:
+
+      * Glyph ①–⑦ + `#path-<class>` anchor — agrees with the heatmap and
+        the Security Posture bullets (same positional rule as
+        `_build_finding_to_path_map`).
+      * Threat title + STRIDE — from `attack-class-taxonomy.yaml`
+        (`threat_label` / `stride`).
+      * Findings — each member finding rendered as `[F-NNN](#f-nnn) <short>
+        → [C-NN](#c-nn)`, linking into §8 Threat Register and §2.3 Components.
+      * Risk — the MAX severity across the class's member findings.
+      * Impact — business-impact labels from the fragment.
+      * Fix — the union of the member findings' mitigations, linked
+        `[M-NNN](#m-nnn)`, with a `(P1)` / `(P1/P2)` priority token.
+    """
+    taxonomy = _load_attack_class_taxonomy()
+    class_meta = {c.get("id"): c for c in taxonomy.get("classes", []) if isinstance(c, dict)}
+    threats = _threat_lookup(ctx)
+    mitigations = _mitigation_lookup(ctx)
+    components = _component_lookup(ctx)
+    impact_tax = _load_business_impact_taxonomy()
+    impact_label = {
+        i.get("id"): (i.get("label") or i.get("id"))
+        for i in impact_tax.get("impacts", [])
+        if isinstance(i, dict)
+    }
+
+    attack_paths_data = _load_attack_paths_fragment(ctx, taxonomy, list(threats.values()))
+    paths = attack_paths_data.get("attack_paths") or []
+    glyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+
+    def resolve_component(slug: str | None) -> tuple[str, str]:
+        if not slug:
+            return "C-00", "—"
+        raw = slug.strip()
+        if raw in components:
+            comp = components[raw]
+            canonical = comp.get("_canonical_id") or (raw if re.match(r"^C-\d+$", raw) else raw)
+            return canonical, (comp.get("name") or raw)
+        for c_id, c in components.items():
+            if re.match(r"^C-\d+$", c_id) and (c.get("name") or "").strip() == raw:
+                return c_id, c.get("name") or c_id
+        return "C-00", raw
+
+    def lookup_threat(fid: str) -> tuple[str, dict[str, Any]]:
+        """Return (visible F-NNN, threat dict) for a fragment finding id."""
+        key = (fid or "").strip().upper()
+        m = re.match(r"^[TF]-(\d+)$", key)
+        digits = m.group(1) if m else None
+        t = {}
+        if digits:
+            t = threats.get(f"T-{digits}") or threats.get(f"F-{digits}") or {}
+        if not t:
+            t = threats.get(key, {})
+        visible = f"F-{digits}" if digits else key
+        return visible, t
+
+    rows: list[dict[str, Any]] = []
+    for idx, ap in enumerate(paths):
+        if idx >= len(glyphs):
+            break
+        cls = ap.get("class") or ""
+        meta = class_meta.get(cls, {})
+        glyph = glyphs[idx]
+        anchor = f"path-{cls}" if cls else ""
+        title = meta.get("threat_label") or meta.get("label") or cls
+        stride = meta.get("stride") or ""
+        description = (ap.get("description") or meta.get("description") or "").strip()
+
+        finding_cells: list[str] = []
+        member_threats: list[dict[str, Any]] = []
+        seen_fids: set[str] = set()
+        for fid in ap.get("findings") or []:
+            visible, t = lookup_threat(fid)
+            if not visible or visible in seen_fids:
+                continue
+            seen_fids.add(visible)
+            member_threats.append(t)
+            short = _strip_finding_location(
+                t.get("title") or t.get("scenario_short") or _canonical_finding_title(t) or visible
+            )
+            c_anchor, _c_name = resolve_component(t.get("component") or t.get("component_id"))
+            # Keep the atomic units non-breaking — the bullet+finding id and the
+            # `→ component` link — but let the title wrap on normal spaces so a
+            # long finding name flows onto the next line instead of forcing the
+            # whole Findings column wide (and never breaks inside an F-NNN id).
+            finding_cells.append(
+                f"•&nbsp;[{visible}](#{visible.lower()}) {short} →&nbsp;"
+                f"[{c_anchor}](#{c_anchor.lower()})"
+            )
+
+        # Risk = max severity across member findings.
+        if member_threats:
+            top_t = min(member_threats, key=lambda t: _severity_rank(t.get("risk") or t.get("severity")))
+            risk_word = (top_t.get("risk") or top_t.get("severity") or "").strip()
+        else:
+            risk_word = ""
+        risk_emoji = _TOP_THREATS_SEVERITY_EMOJI.get(risk_word.lower(), "")
+
+        # Fix = the member findings' primary mitigations, highest priority
+        # first, capped at 2 (mirrors the Top Findings `[:2]` rule so the
+        # summary stays a primary-action surface; the full set lives in §9).
+        fix_ids: list[str] = []
+        for t in member_threats:
+            for mid in t.get("mitigation_ids") or t.get("mitigations") or []:
+                if mid and mid not in fix_ids:
+                    fix_ids.append(mid)
+
+        def _prio_rank(mid: str) -> int:
+            p = (mitigations.get(mid, {}).get("priority") or "").strip().upper()
+            return {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(p, 9)
+
+        fix_ids.sort(key=_prio_rank)
+        shown = fix_ids[:2]
+        fix_links = ", ".join(f"[{mid}](#{mid.lower()})" for mid in shown)
+        priorities: list[str] = []
+        for mid in shown:
+            p = (mitigations.get(mid, {}).get("priority") or "").strip()
+            if p and p not in priorities:
+                priorities.append(p)
+        if fix_links and priorities:
+            fix_cell = f"{fix_links} ({'/'.join(priorities)})"
+        elif fix_links:
+            fix_cell = fix_links
+        else:
+            fix_cell = "—"
+
+        impacts = [impact_label.get(s, s) for s in (ap.get("impact") or [])]
+        impact_str = " · ".join(impacts)
+
+        rows.append(
+            {
+                # Emit the `path-<class>` anchor on the row itself (the heatmap
+                # bullets that used to define it are gone in the merged section);
+                # the glyph then agrees positionally with the Figure 2 arrows.
+                "num_cell": f'<a id="{anchor}"></a>{glyph}' if anchor else glyph,
+                "description_cell": (
+                    f"**{title}** _({stride})_<br/>{description}" if stride else f"**{title}**<br/>{description}"
+                ),
+                "findings_cell": "<br/>".join(finding_cells) if finding_cells else "—",
+                "risk_cell": (
+                    f"{risk_emoji} **{risk_word}**<br/>{impact_str}".strip()
+                    if risk_word
+                    else (impact_str or "—")
+                ),
+                "fix_cell": fix_cell,
+            }
+        )
+    return rows
+
+
+def _render_top_threats(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    rows = _compute_top_threats_rows(ctx)
+    tpl = env.get_template(section.get("template", "top-threats.md.j2"))
+    return tpl.render(rows=rows).rstrip() + "\n"
+
+
 def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     # Explicit composition ensures the canonical subsection order is enforced.
     # `security_posture_at_a_glance` is rendered between `verdict` and
@@ -5910,9 +6623,11 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
     sections = ctx.contract["sections"]
     for sid in (
         "verdict",
+        # security_posture_at_a_glance now renders the merged
+        # "### Security Posture & Top Threats" section (Figure 1 + Figure 2
+        # heatmap + the Top Threats table); the standalone top_threats child
+        # was folded into it.
         "security_posture_at_a_glance",
-        "top_findings",
-        "architecture_assessment",
         "mitigations",
         "requirements_compliance_ms",
         "operational_strengths",
@@ -5942,35 +6657,58 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
     return "\n\n".join(parts) + "\n"
 
 
+# Only the four classes the tree actually uses (goal · capability AND/OR ·
+# leaf). The retired overview/subtree split used to carry a full palette of
+# unused classDefs — that boilerplate is gone with the single-diagram render.
 _ATTACK_TREE_CLASSDEFS = (
     "    classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px\n"
     "    classDef and_node fill:#7c3aed,stroke:#5b21b6,color:#fff,stroke-width:2px\n"
     "    classDef or_node fill:#2563eb,stroke:#1e40af,color:#fff,stroke-width:2px\n"
-    "    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px\n"
-    "    classDef attacker fill:#555,stroke:#333,color:#fff\n"
-    "    classDef crit fill:#c00,stroke:#900,color:#fff,stroke-width:2px\n"
-    "    classDef high fill:#e67700,stroke:#c25700,color:#fff,stroke-width:2px\n"
-    "    classDef medium fill:#ffd43b,stroke:#e8a203,color:#000,stroke-width:2px\n"
-    "    classDef low fill:#2f9e44,stroke:#1e6b2f,color:#fff,stroke-width:2px\n"
-    "    classDef system fill:#1168BD,stroke:#0E5CA8,color:#fff\n"
-    "    classDef impact fill:#1b5e20,stroke:#0d3d10,color:#fff,stroke-width:2px"
+    "    classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px"
 )
 
-# A single attack-tree diagram is "too wide to read" once more than this many
-# leaf findings share the canvas — `graph TD/TB` lays sibling leaves out
-# horizontally, so 8 leaves under 3 capability nodes renders as an 8-column
-# row that overflows the page. Above the threshold the renderer splits the
-# tree into an overview diagram (goal ← capabilities) plus one compact
-# per-capability subtree diagram, each of which only ever shows the leaves of
-# a single capability. See `_build_attack_tree_blocks`.
-_ATTACK_TREE_SPLIT_LEAF_THRESHOLD = 5
-_ATTACK_TREE_SPLIT_NODE_THRESHOLD = 9
+
+def _attack_tree_node_label(node: dict[str, Any]) -> str:
+    """Display label for a tree node. Leaf nodes show their finding id PLUS a
+    short title (`T-NNN — <title>`) so the diagram is self-describing instead
+    of a wall of bare IDs (2026-05-30 user request); the full title still lives
+    in the Branch table below. The title is truncated so leaf boxes stay
+    readable rather than ballooning. Goal/capability nodes keep their label."""
+    label = node.get("label", node.get("id", ""))
+    if node.get("class") == "leaf":
+        m = re.search(r"T-\d{3,}", label)
+        if m:
+            tid = m.group(0)
+            # Title = the label with the id (and any leading separators) removed.
+            title = (label[: m.start()] + label[m.end():]).strip(" -—:·\t")
+            if not title:
+                return tid
+            _MAX = 32
+            if len(title) > _MAX:
+                title = title[: _MAX - 1].rstrip() + "…"
+            # Leaf labels are emitted inside mermaid ["..."]; a literal double
+            # quote would break the node declaration.
+            title = title.replace('"', "'")
+            return f"{tid} — {title}"
+    return label
 
 
-def _attack_tree_edge_line(edge: dict[str, Any]) -> str:
-    """Render one mermaid edge line, mirroring critical-attack-tree.md.j2."""
-    label = edge.get("label") or edge.get("refinement")
+# AND/OR is a property of the *parent* node, not the individual edge: every
+# child of an `or_node` is an OR-alternative, every child of an `and_node` is
+# AND-required, and capabilities feeding the goal are OR-alternatives. Deriving
+# the edge label from the destination node's class keeps the diagram internally
+# consistent and immune to the LLM authoring a per-edge `refinement` that
+# contradicts the parent's class (e.g. an `AND` edge into an `or_node`).
+_ATTACK_TREE_EDGE_LABEL_BY_DST_CLASS = {"or_node": "OR", "and_node": "AND", "goal": "OR"}
+
+
+def _attack_tree_edge_line(edge: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> str:
+    """Render one mermaid edge line, mirroring critical-attack-tree.md.j2. The
+    AND/OR label is derived from the destination node's class (falling back to
+    the authored `label`/`refinement` only for unclassed destinations)."""
     src, dst = edge.get("from"), edge.get("to")
+    dst_class = (nodes_by_id.get(dst) or {}).get("class")
+    label = _ATTACK_TREE_EDGE_LABEL_BY_DST_CLASS.get(dst_class) or edge.get("label") or edge.get("refinement")
     if label:
         return f'    {src} -->|"{label}"| {dst}'
     return f"    {src} --> {dst}"
@@ -5990,175 +6728,62 @@ def _attack_tree_block(
         n = nodes_by_id.get(nid)
         if not n:
             continue
-        lines.append(f'    {nid}["{n.get("label", nid)}"]:::{n.get("class", "leaf")}')
+        lines.append(f'    {nid}["{_attack_tree_node_label(n)}"]:::{n.get("class", "leaf")}')
     lines.append("")
     for e in edges:
-        lines.append(_attack_tree_edge_line(e))
+        lines.append(_attack_tree_edge_line(e, nodes_by_id))
     lines.append("")
     lines.append(_ATTACK_TREE_CLASSDEFS)
     return "\n".join(lines)
 
 
 def _build_attack_tree_blocks(data: dict[str, Any]) -> list[dict[str, str]]:
-    """Decompose a critical-attack-tree fragment into one or more renderable
-    mermaid blocks.
+    """Render the critical-attack-tree fragment as a single mermaid block.
 
-    Small trees render as a single diagram (unchanged behaviour). Wide trees
-    — too many sibling leaves to read at a glance — are split into:
-      * an overview diagram: the goal plus its direct capability nodes; and
-      * one compact subtree diagram per capability, carrying only that
-        capability, the goal, and the capability's own descendant leaves.
+    The whole tree (goal ← capabilities ← leaves) renders as one `graph LR`
+    diagram. Left-to-right is deliberate: sibling leaves stack *vertically*
+    (natural document scroll) instead of spreading horizontally, so a single
+    diagram stays readable no matter the fan-out. Combined with short leaf
+    labels (`T-NNN` only), this retires the earlier overview + per-capability
+    split — which kept each diagram narrow only by hiding the cross-branch
+    convergence the tree exists to show. Orientation is forced here regardless
+    of the fragment's authored `TD`/`TB` (the renderer owns layout).
 
-    Each returned block is ``{"title": str|None, "src": <mermaid source>}``.
-    The split keeps the fragment's own `TD`/`TB` orientation (the schema
-    forbids `LR`, and per-capability splitting already bounds each diagram's
-    width to a single capability's fan-out).
-    """
-    mermaid = data.get("mermaid") or {}
-    orientation = mermaid.get("orientation") or "TD"
-    nodes = mermaid.get("nodes") or []
-    edges = mermaid.get("edges") or []
-    nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
-    order = [n.get("id") for n in nodes if n.get("id")]
-
-    def _single() -> list[dict[str, str]]:
-        return [{"title": None, "src": _attack_tree_block(orientation, order, edges, nodes_by_id)}]
-
-    # Edge direction in the fragment is child --> parent (leaf -> capability
-    # -> goal), so a node's "children" in tree terms are its edge *sources*.
-    children: dict[str, list[str]] = {}
-    has_outgoing: set[str] = set()
-    for e in edges:
-        src, dst = e.get("from"), e.get("to")
-        if src is None or dst is None:
-            continue
-        children.setdefault(dst, []).append(src)
-        has_outgoing.add(src)
-
-    # Root = the goal node (class goal); fall back to the unique pure sink.
-    root = next((nid for nid, n in nodes_by_id.items() if n.get("class") == "goal"), None)
-    if root is None:
-        sinks = [nid for nid in order if nid not in has_outgoing]
-        root = sinks[0] if len(sinks) == 1 else None
-
-    leaf_count = sum(1 for n in nodes if n.get("class") == "leaf")
-    node_count = len(nodes)
-    too_wide = leaf_count > _ATTACK_TREE_SPLIT_LEAF_THRESHOLD or node_count > _ATTACK_TREE_SPLIT_NODE_THRESHOLD
-    if root is None or not too_wide:
-        return _single()
-
-    top_children = children.get(root, [])
-    capability_ids = [c for c in top_children if nodes_by_id.get(c, {}).get("class") in ("or_node", "and_node")]
-    if not capability_ids:
-        # No clean capability layer to split on — keep the single diagram.
-        return _single()
-
-    blocks: list[dict[str, str]] = []
-
-    # Overview: goal + its direct children (capabilities and any direct leaf).
-    overview_set = {root, *top_children}
-    overview_ids = [nid for nid in order if nid in overview_set]
-    overview_edges = [e for e in edges if e.get("to") == root and e.get("from") in overview_set]
-    blocks.append({
-        "title": "Overview — capability paths to the goal",
-        "src": _attack_tree_block(orientation, overview_ids, overview_edges, nodes_by_id),
-    })
-
-    # One subtree per capability: capability + goal + all descendants.
-    for cap in capability_ids:
-        subset = {root, cap}
-        stack = [cap]
-        while stack:
-            cur = stack.pop()
-            for ch in children.get(cur, []):
-                if ch not in subset:
-                    subset.add(ch)
-                    stack.append(ch)
-        sub_ids = [nid for nid in order if nid in subset]
-        sub_edges = [e for e in edges if e.get("from") in subset and e.get("to") in subset]
-        cap_label = nodes_by_id.get(cap, {}).get("label", cap)
-        blocks.append({
-            "title": f"Path: {cap_label}",
-            "src": _attack_tree_block(orientation, sub_ids, sub_edges, nodes_by_id),
-        })
-
-    return blocks
-
-
-def _derive_attack_tree_stages(data: dict[str, Any], ctx: RenderContext) -> list[dict[str, Any]] | None:
-    """Build the Stage | Finding | Primary Mitigation table deterministically
-    from the tree's capability decomposition + the canonical
-    `mitigations[].threat_ids` map.
-
-    This replaces the LLM-authored free-form `stages[]` (which could — and did —
-    contradict the tree grouping and the canonical mitigation mappings, e.g.
-    claiming M-002 fixes a finding that M-002.threat_ids never listed). One row
-    per capability subtree; findings are that capability's leaves; mitigations
-    are exactly those whose `threat_ids` cover one of those leaves. Returns
-    None when the tree has no resolvable capability layer (caller falls back to
-    the fragment's `stages`).
+    Returns a one-element ``[{"title": None, "src": <mermaid source>}]`` list
+    so the template's existing block loop is unchanged.
     """
     mermaid = data.get("mermaid") or {}
     nodes = mermaid.get("nodes") or []
     edges = mermaid.get("edges") or []
     nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
     order = [n.get("id") for n in nodes if n.get("id")]
+    return [{"title": None, "src": _attack_tree_block("LR", order, edges, nodes_by_id)}]
 
-    children: dict[str, list[str]] = {}
-    has_outgoing: set[str] = set()
-    for e in edges:
-        src, dst = e.get("from"), e.get("to")
-        if src is None or dst is None:
+
+def _derive_attack_tree_findings(data: dict[str, Any]) -> list[dict[str, str]]:
+    """Ordered leaf-finding pointer for the compact line under the tree.
+
+    The diagram shows only short `T-NNN` leaf boxes, so this tells the reader
+    what each id is and links it to its §8 Threat Register row. One entry per
+    leaf in tree-declaration order: ``{"id": "T-001", "title": "SQL injection
+    login bypass", "anchor": "#t-001"}``. Title is the leaf label with its id
+    prefix stripped; mitigations are intentionally NOT surfaced here (they live
+    in §9) — this section only points at the findings.
+    """
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for n in ((data.get("mermaid") or {}).get("nodes") or []):
+        if n.get("class") != "leaf":
             continue
-        children.setdefault(dst, []).append(src)
-        has_outgoing.add(src)
-
-    root = next((nid for nid, n in nodes_by_id.items() if n.get("class") == "goal"), None)
-    if root is None:
-        sinks = [nid for nid in order if nid not in has_outgoing]
-        root = sinks[0] if len(sinks) == 1 else None
-    if root is None:
-        return None
-
-    # Canonical threat -> [mitigation-id] reverse map.
-    rev: dict[str, list[str]] = {}
-    for m in (ctx.yaml_data.get("mitigations") or []):
-        mid = m.get("id")
-        if not mid:
+        label = n.get("label", "")
+        m = re.search(r"[FT]-\d{3,4}", label)
+        fid = (m.group(0) if m else (n.get("finding_ref") or "")).strip()
+        if not fid or fid in seen:
             continue
-        for tid in (m.get("threat_ids") or []):
-            rev.setdefault(tid, []).append(mid)
-
-    stages: list[dict[str, Any]] = []
-    for cap in children.get(root, []):
-        if nodes_by_id.get(cap, {}).get("class") not in ("or_node", "and_node"):
-            continue
-        subset = {cap}
-        stack = [cap]
-        while stack:
-            cur = stack.pop()
-            for ch in children.get(cur, []):
-                if ch not in subset:
-                    subset.add(ch)
-                    stack.append(ch)
-        leaf_tids: list[str] = []
-        for nid in order:
-            if nid in subset and nodes_by_id.get(nid, {}).get("class") == "leaf":
-                mt = re.search(r"T-\d{3,}", nodes_by_id[nid].get("label", ""))
-                if mt and mt.group(0) not in leaf_tids:
-                    leaf_tids.append(mt.group(0))
-        mids: list[str] = []
-        for tid in leaf_tids:
-            for mid in rev.get(tid, []):
-                if mid not in mids:
-                    mids.append(mid)
-        mids.sort()
-        stages.append({
-            "stage": nodes_by_id.get(cap, {}).get("label", cap),
-            "findings": leaf_tids,
-            "mitigations": mids,
-        })
-    return stages or None
+        seen.add(fid)
+        title = (label[: m.start()] + label[m.end():]).strip(" -—:·") if m else label.strip()
+        out.append({"id": fid, "title": title, "anchor": "#" + fid.lower()})
+    return out
 
 
 def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -6185,9 +6810,9 @@ def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, se
         return ""
     _validate_fragment("critical_attack_tree", data, section["schema"])
     blocks = _build_attack_tree_blocks(data)
-    stages = _derive_attack_tree_stages(data, ctx)
+    findings = _derive_attack_tree_findings(data)
     tpl = env.get_template(section["template"])
-    return tpl.render(data=data, blocks=blocks, stages=stages).rstrip() + "\n"
+    return tpl.render(data=data, blocks=blocks, findings=findings).rstrip() + "\n"
 
 
 def _subsection_drift_hint(md: str, section: dict, level: int) -> str:
@@ -6647,6 +7272,220 @@ def _inject_security_architecture_links(ctx: RenderContext, md: str) -> str:
     return md
 
 
+def _section7_region_bounds(md_lines: list[str]) -> tuple[int, int]:
+    """Return (start, end) line indices of the §7 Security Architecture chapter
+    (start inclusive at the `## 7.` heading, end exclusive at the next `## `).
+    Returns (-1, -1) when §7 is absent."""
+    start = -1
+    for i, ln in enumerate(md_lines):
+        if re.match(r"^##\s+7\.\s+Security Architecture\b", ln):
+            start = i
+            break
+    if start < 0:
+        return -1, -1
+    end = len(md_lines)
+    for j in range(start + 1, len(md_lines)):
+        if re.match(r"^##\s+(?!#)", md_lines[j]):
+            end = j
+            break
+    return start, end
+
+
+def _section7_number_and_bulletize(md: str) -> str:
+    """§7 readability (2026-05-30 user request):
+      * number each H4 control sub-control as `7.X.N <name>` (the QA gates
+        already strip the numeric prefix before matching, so this is safe);
+      * render the `**Controls covered:**` line as a bullet list.
+    Scoped strictly to the §7 chapter so `#### M-001` (§9) etc. are untouched.
+    Idempotent — already-numbered headings are left as-is."""
+    lines = md.split("\n")
+    start, end = _section7_region_bounds(lines)
+    if start < 0:
+        return md
+    out_head = lines[:start]
+    out_tail = lines[end:]
+    body = lines[start:end]
+
+    _h4_re = re.compile(r"^####\s+(.*\S)\s*$")
+    _anchor_re = re.compile(r'<a\s+id="([a-z0-9-]+)"\s*></a>')
+    _already_num_re = re.compile(r"^\d+(?:\.\d+)+\s")
+
+    def _gh_slug(text: str) -> str:
+        s = re.sub(r"[^\w\s-]", "", text.lower())
+        return re.sub(r"\s+", "-", s.strip())
+
+    # ---- Pass 1: assign 7.X.N numbers; map anchor + control-name → number. ----
+    anchor_num: dict[str, str] = {}
+    name_num: dict[str, str] = {}
+    section_slug_num: dict[str, str] = {}  # §7.X heading slug → "7.X" (for §7.1 links)
+    cur_section: str | None = None
+    h4_n = 0
+    in_fence = False
+    pending_anchors: list[str] = []
+    for line in body:
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        am = _anchor_re.search(line.strip())
+        if am and line.strip().startswith("<a"):
+            pending_anchors.append(am.group(1))
+            continue
+        m3 = re.match(r"^###\s+(7\.\d+)\b\s*(.*)$", line)
+        if m3:
+            cur_section = m3.group(1)
+            section_slug_num[_gh_slug(f"{m3.group(1)} {m3.group(2)}".strip())] = m3.group(1)
+            h4_n = 0
+            pending_anchors = []
+            continue
+        m4 = _h4_re.match(line)
+        if m4 and cur_section:
+            name = m4.group(1).strip()
+            h4_n += 1
+            num = name.split(" ", 1)[0] if _already_num_re.match(name) else f"{cur_section}.{h4_n}"
+            plain = re.sub(r"^\d+(?:\.\d+)+\s+", "", name).strip()
+            name_num[plain.lower()] = num
+            for a in pending_anchors:
+                anchor_num[a] = num
+            pending_anchors = []
+            continue
+        if line.strip():
+            pending_anchors = []
+
+    def _prefix_link(lk: str) -> str:
+        """Prefix a `[name](#anchor)` control link with its 7.X.N number."""
+        m = re.match(r"\[([^\]]+)\]\(#([a-z0-9-]+)\)", lk)
+        if not m:
+            return lk
+        text, anchor = m.group(1).strip(), m.group(2)
+        if _already_num_re.match(text):
+            return lk  # already numbered
+        num = anchor_num.get(anchor) or section_slug_num.get(anchor) or name_num.get(text.lower())
+        if not num:
+            return lk
+        return f"[{num} {text}](#{anchor})"
+
+    # ---- Pass 2: renumber headings + bulletize Controls covered. ----
+    result: list[str] = []
+    cur_section = None
+    h4_n = 0
+    in_fence = False
+    for line in body:
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            result.append(line)
+            continue
+        if not in_fence:
+            m3 = re.match(r"^###\s+(7\.\d+)\b", line)
+            if m3:
+                cur_section = m3.group(1)
+                h4_n = 0
+                result.append(line)
+                continue
+            m4 = _h4_re.match(line)
+            if m4 and cur_section:
+                name = m4.group(1).strip()
+                h4_n += 1
+                if _already_num_re.match(name):
+                    result.append(line)
+                else:
+                    result.append(f"#### {cur_section}.{h4_n} {name}")
+                continue
+            mc = re.match(r"^(\s*)\*\*Controls covered:\*\*\s*(.+?)\s*$", line)
+            if mc and cur_section:
+                indent, inline = mc.group(1), mc.group(2)
+                links = re.findall(r"\[[^\]]+\]\([^)]+\)", inline)
+                if links and inline.lstrip()[:1] != "-":
+                    result.append(f"{indent}**Controls covered:**")
+                    result.append("")
+                    for lk in links:
+                        result.append(f"{indent}- {_prefix_link(lk)}")
+                    continue
+            # Already-bulletized Controls-covered list item → add the number.
+            mb = re.match(r"^(\s*)-\s+(\[[^\]]+\]\(#[a-z0-9-]+\))\s*$", line)
+            if mb and cur_section:
+                result.append(f"{mb.group(1)}- {_prefix_link(mb.group(2))}")
+                continue
+            # §7.1 overview table rows — prefix the category link with its 7.X
+            # section number (`[7.2 Identity and Authentication Controls](#…)`).
+            if cur_section == "7.1" and line.lstrip().startswith("| ["):
+                line = re.sub(
+                    r"\[[^\]]+\]\(#[0-9][0-9a-z-]+\)",
+                    lambda m: _prefix_link(m.group(0)),
+                    line,
+                    count=1,
+                )
+                result.append(line)
+                continue
+        result.append(line)
+
+    return "\n".join(out_head + result + out_tail)
+
+
+def _section7_inline_findings_id_only(ctx: "RenderContext", md: str) -> str:
+    """§7 readability (2026-05-30 user request): in §7 prose, reduce inline
+    finding references to ID-only links — the titled enumeration already lives
+    in each control's `**Relevant findings**` block, so repeating the title in
+    the assessment is redundant. Lines that ARE finding bullets (`- [F-NNN]…`,
+    the Relevant-findings list) keep their label. Only strips a suffix that
+    exactly matches the finding's known short label, so legitimate parentheticals
+    are never touched."""
+    lines = md.split("\n")
+    start, end = _section7_region_bounds(lines)
+    if start < 0:
+        return md
+
+    # Collect every finding ref in §7 and its short label.
+    region = "\n".join(lines[start:end])
+    refs = set(re.findall(r"\[([FT]-\d{3,4})\]\(#[ft]-\d+\)", region))
+    strip_map: dict[str, str] = {}
+    for ref in refs:
+        canon = re.sub(r"^T-", "F-", ref)
+        label = (ctx.lookup_label(canon) or ctx.lookup_label(ref) or "").strip()
+        short = label.split(" — ", 1)[0].strip()
+        short = re.sub(r"\s*\([^()]*\)\s*$", "", short).strip()
+        if short:
+            strip_map[ref] = short
+    if not strip_map:
+        return md
+
+    _bullet_re = re.compile(r"^\s*-\s*\[[FT]-\d")
+    # Bare finding-id text (not already inside a link / code span) → ID-only
+    # link. Matches `F-019` / `T-004` when NOT preceded by `[` or a word char
+    # and NOT followed by `]` or a word char.
+    _bare_id_re = re.compile(r"(?<![\[\w`/-])([FT]-\d{3,4})(?![\w\]`-])")
+
+    def _bare_to_link(m: "re.Match[str]") -> str:
+        ref = m.group(1)
+        anchor = re.sub(r"^t-", "f-", ref.lower())
+        return f"[{ref}](#{anchor})"
+
+    in_fence = False
+    for i in range(start, end):
+        line = lines[i]
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence or re.match(r"^\s{0,3}#{1,6}\s", line):
+            continue
+        if _bullet_re.match(line):
+            continue  # Relevant-findings bullet — keep the title.
+        # 1. Strip the known-label suffix from any already-linked finding ref.
+        if "](#f-" in line or "](#t-" in line:
+            for ref, short in strip_map.items():
+                link = f"[{ref}](#{ref.lower()})"
+                if link not in line:
+                    continue
+                for sep in (f" ({short})", f" — {short}", f" - {short}"):
+                    line = line.replace(link + sep, link)
+        # 2. Linkify bare finding-id text → ID-only link (skip anchor decls).
+        if "<a id=" not in line:
+            line = _bare_id_re.sub(_bare_to_link, line)
+        lines[i] = line
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Enrich markdown-fragment tables whose columns link Threat / Mitigation /
 # Finding IDs. Prior LLM-authored fragments emitted bare `[T-003](#t-003)`
@@ -6736,6 +7575,115 @@ def _split_table_row(row: str) -> list[str]:
     if stripped.endswith("|"):
         stripped = stripped[:-1]
     return [c.strip() for c in stripped.split("|")]
+
+
+# ---------------------------------------------------------------------------
+# General table column-width normalisation (2026-05-30 user request: "Tabellen
+# kompakter, sinnvolle Verteilung der Spaltenbreiten, keine IDs brechen").
+#
+# GFM ignores the dash-run length of a separator row (all columns size to
+# content), but Pandoc — the converter that produces the HTML/PDF deliverable —
+# turns the RELATIVE dash lengths into explicit `<col style="width:N%">`. So a
+# single post-pass that rewrites every table's separator with weights derived
+# from the column's *role* (narrow ID/severity columns, generous finding/link
+# columns, capped description columns) gives every table a sensible, compact
+# layout without per-table tuning. Deterministic + idempotent.
+# ---------------------------------------------------------------------------
+
+# Per-role width BOUNDS (floor, cap). The actual width is the column's real
+# content length clamped into its role's band — so a short Notes column stays
+# compact and a long one gets room, but a Description never crowds out a
+# finding/link column and an ID column never balloons. "sinnvolle Verteilung".
+_TBL_ROLE_BOUNDS: dict[str, tuple[int, int]] = {
+    # Caps are SPREAD so a long column lands at its role ceiling and the
+    # ordering reads links > desc > default > medium > narrow — e.g. an
+    # Assets table gives Linked-Threats the most room, Description second,
+    # the short Asset/Classification/ID columns least (2026-05-30 tuning:
+    # desc cap used to equal default cap, so a 193-char Description rendered
+    # the same width as a 28-char Asset name).
+    "narrow": (3, 8),     # #, id, auth, effort, priority, method
+    "medium": (7, 14),    # risk, severity, classification, status, verdict, cwe
+    "default": (8, 22),   # control, asset, route, component, implementation, …
+    "desc": (14, 36),     # description, notes, scenario, reason — capped < links
+    "links": (16, 48),    # finding / threat / mitigation link columns (widest)
+}
+_TBL_W_MIN = 3
+# Back-compat representative weights (role cap) — referenced by tests.
+_TBL_W_NARROW = _TBL_ROLE_BOUNDS["narrow"][1]
+_TBL_W_MEDIUM = _TBL_ROLE_BOUNDS["medium"][1]
+_TBL_W_DESC = _TBL_ROLE_BOUNDS["desc"][1]
+_TBL_W_LINKS = _TBL_ROLE_BOUNDS["links"][1]
+_TBL_W_DEFAULT = _TBL_ROLE_BOUNDS["default"][1]
+
+
+def _table_col_role(header: str) -> str:
+    """Classify a table header into a width role. Description-type tokens are
+    checked BEFORE link-type tokens so 'Threat Description' is a (narrower)
+    description column, not a (wide) threats column."""
+    h = re.sub(r"[`*_]", "", header or "").strip().lower()
+    if not h:
+        return "default"
+    if h in {"#", "id", "ids", "auth", "effort", "priority", "protocol", "method", "factor", "level", "p", "sev"}:
+        return "narrow"
+    if h in {"risk", "severity", "cwe", "cwes", "status", "verdict", "classification", "required role", "role"}:
+        return "medium"
+    if any(tok in h for tok in (
+        "description", "notes", "scenario", "reason", "rationale", "details", "meaning", "impact", "assessment", "what it asks",
+    )):
+        return "desc"
+    if any(tok in h for tok in ("finding", "threat", "addresses", "mitigat", "covers", "linked")):
+        return "links"
+    return "default"
+
+
+def _table_col_weight(header: str) -> int:
+    """Representative (cap) width for a header's role — kept for tests."""
+    return _TBL_ROLE_BOUNDS[_table_col_role(header)][1]
+
+
+def _table_cell_visible_len(cell: str) -> int:
+    """Approximate the widest rendered line in a table cell: split on <br/>,
+    strip markdown link syntax / backticks / bold / html tags, return the max
+    visible-segment length (so a `<br/>`-stacked link column is sized by its
+    longest single entry, not the sum)."""
+    longest = 0
+    for seg in re.split(r"<br\s*/?>", cell or ""):
+        s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", seg)   # [text](url) → text
+        s = re.sub(r"<[^>]+>", "", s)                       # strip html tags
+        s = s.replace("`", "").replace("**", "").replace("*", "").strip()
+        longest = max(longest, len(s))
+    return longest
+
+
+def _normalize_table_column_widths(md: str) -> str:
+    """Rewrite every GFM table separator with CONTENT-AWARE proportional widths:
+    each column's real content length clamped into its role band. Separator-only
+    change (cell content untouched); GitHub ignores it, Pandoc honours it as
+    relative `<col>` widths. Idempotent."""
+    lines = md.split("\n")
+    for header_idx, block in _iter_md_table_blocks(md):
+        sep_idx = header_idx + 1
+        if sep_idx >= len(lines) or not _MD_TABLE_SEP_RE.match(lines[sep_idx]):
+            continue
+        header_cells = _split_table_row(block[0])
+        ncol = len(header_cells)
+        # Measure max visible content length per column (header + body rows).
+        content = [_table_cell_visible_len(h) for h in header_cells]
+        for row in block[2:]:
+            cells = _split_table_row(row)
+            for i in range(min(ncol, len(cells))):
+                content[i] = max(content[i], _table_cell_visible_len(cells[i]))
+        orig_cells = _split_table_row(lines[sep_idx])
+        new_cells: list[str] = []
+        for i, h in enumerate(header_cells):
+            lo, hi = _TBL_ROLE_BOUNDS[_table_col_role(h)]
+            w = max(_TBL_W_MIN, min(hi, max(lo, content[i])))
+            oc = orig_cells[i] if i < len(orig_cells) else "---"
+            left = oc.startswith(":")
+            right = oc.endswith(":")
+            new_cells.append((":" if left else "") + ("-" * w) + (":" if right else ""))
+        lines[sep_idx] = "|" + "|".join(new_cells) + "|"
+    return "\n".join(lines)
 
 
 def _enrich_linked_id_cells(ctx: RenderContext, md: str) -> str:
@@ -8445,7 +9393,7 @@ def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment
         "## Appendix A — Vektor Taxonomy",
         "",
         "This appendix defines the attacker-starting-position labels used in the "
-        "Top Findings table and throughout [§8 Threat Register](#8-threat-register). Each label answers the "
+        "Top Threats table and throughout [§8 Threat Register](#8-threat-register). Each label answers the "
         "question *what does the attacker need before the exploit begins?*",
         "",
     ]
@@ -10080,6 +11028,18 @@ _INLINE_CODE_PATTERNS: list[str] = [
     r"\b(?:process\.env\.[A-Z_][A-Z0-9_]*"
     r"|(?:[a-zA-Z_][a-zA-Z0-9_]*\.)+[a-zA-Z_][a-zA-Z0-9_]*\([^()\n]{0,200}\)"
     r"|[a-zA-Z_][a-zA-Z0-9_]{2,}\((?:\{[^{}\n]{0,200}\}|[^()\n]{0,200})\))",
+    # Bare camelCase identifiers (no dot/paren), e.g. `safeEval`, `imageUrl`,
+    # `bypassSecurityTrustHtml`, `isRedirectAllowed`, `multi`. A lowercase start
+    # with an internal uppercase is a code identifier — prose words almost never
+    # carry a mid-word capital, so this stays code-only in §9 How/Why/steps.
+    r"\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b",
+    # Bare route / directory paths: `/ftp/`, `/support/logs/`, `/rest/user`.
+    # The leading whitespace/paren lookbehind keeps prose `and/or`, `TLS/SSL`,
+    # `input/output` out (no space before the slash there).
+    r"(?<=[\s(])/[A-Za-z][A-Za-z0-9_\-]*(?:/[A-Za-z0-9_\-{}:.]+)*/?",
+    # Config object literal carrying a key:value, e.g. `{ noent: true }`,
+    # `{ multi: true }`, `{ windowMs: 900000 }`.
+    r"\{[^{}\n]{0,80}:[^{}\n]{0,80}\}",
     # Long npm package@version: `express-jwt@0.1.3`, `@types/bcrypt`.
     r"@[a-z][a-z0-9-]*/[a-z][a-z0-9-]*"  # scoped package
     r"|\b[a-z][a-z0-9-]*@\d+(?:\.\d+){0,2}(?:[\-+][a-zA-Z0-9.]+)?\b",
@@ -10617,6 +11577,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "skipped_sections_placeholder": _render_skipped_sections_placeholder,
         "top_findings": _render_top_findings,
         "architecture_assessment": _render_architecture_assessment,
+        "top_threats": _render_top_threats,
         "mitigations": _render_mitigations,
         "operational_strengths": _render_operational_strengths,
         "threat_register": _render_threat_register,
@@ -11145,6 +12106,19 @@ def render(
     # source snippet (rare, but possible for prose comments inside code)
     # is preserved verbatim.
     rendered = _normalize_emdashes(rendered)
+
+    # §7 readability passes (2026-05-30 user request):
+    #  - number the H4 control sub-controls (7.X.N) and render `Controls
+    #    covered` as a bullet list;
+    #  - reduce inline finding references in §7 prose to ID-only links (the
+    #    titled enumeration stays in each control's `Relevant findings` block).
+    rendered = _section7_number_and_bulletize(rendered)
+    rendered = _section7_inline_findings_id_only(ctx, rendered)
+
+    # General table compaction — proportional column widths on every table so
+    # description columns stop crowding out finding/link columns and short IDs
+    # are not broken across lines. Runs last so it sees the final table set.
+    rendered = _normalize_table_column_widths(rendered)
 
     return rendered, ctx.warnings
 

@@ -1279,6 +1279,7 @@ _TECH_TOKEN_REGISTRY: list[tuple[str, str, str, str, str, str]] = [
     ("app", "socket.io", "REALTIME", "fa:fa-plug", "Socket.IO", "WebSocket"),
     # DATA tier — relational + nosql + storage
     ("data", "sequelize", "ORM", "fa:fa-database", "Sequelize ORM", "object-relational mapper"),
+    ("data", "sqlite3", "SQLITE", "fa:fa-database", "SQLite", "embedded relational DB"),
     ("data", "sqlite", "SQLITE", "fa:fa-database", "SQLite", "embedded relational DB"),
     ("data", "postgres", "POSTGRES", "fa:fa-database", "PostgreSQL", "relational DB"),
     ("data", "mysql", "MYSQL", "fa:fa-database", "MySQL", "relational DB"),
@@ -1323,6 +1324,13 @@ def _detect_tech_stack(yaml_data: dict, components: list[dict]) -> dict[str, lis
         parts.append(str(c.get("name") or ""))
         parts.append(str(c.get("engine") or ""))
         parts.append(str(c.get("type") or ""))
+        # Component `description` is curated architecture prose ("SQLite3 via
+        # Sequelize ORM", "Node.js/TypeScript Express") and is the only place
+        # the real engine/runtime/ORM is named for many repos — without it §2.4
+        # collapses to ~4 generic nodes (2026-05-30 user report). It is safer
+        # to scan than free-form threat scenarios: the compat-qualifier guard
+        # in the matcher below rejects the "MongoDB-compatible / -style" noise.
+        parts.append(str(c.get("description") or ""))
         for p in c.get("paths") or []:
             parts.append(str(p))
     # Threats — `evidence.file` paths only (these point at real
@@ -1356,8 +1364,17 @@ def _detect_tech_stack(yaml_data: dict, components: list[dict]) -> dict[str, lis
         # match because dots / hyphens count as word boundaries).
         token_lc = token.lower()
         # Build a compact word-boundary regex. The token may itself contain
-        # punctuation (".", "-", " "), which the regex treats literally.
-        pat = re.compile(r"(?:^|[^a-z0-9])" + re.escape(token_lc) + r"(?:[^a-z0-9]|$)")
+        # punctuation (".", "-", " "), which the regex treats literally. The
+        # trailing negative lookahead rejects compatibility / vuln-class
+        # qualifiers ("MongoDB-compatible", "MongoDB-style injection",
+        # "Redis-like") so a description that merely *compares* to a tech
+        # family does not emit a deployment node for it.
+        pat = re.compile(
+            r"(?:^|[^a-z0-9])"
+            + re.escape(token_lc)
+            + r"(?![a-z0-9])"
+            + r"(?!\s*[-–]?\s*(?:compatible|style|like|based|inspired|esque|injection))"
+        )
         if not pat.search(haystack):
             continue
         # First match per node_id wins — keeps registry ordering intent.
@@ -2117,6 +2134,16 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def _proportional_separator(*widths: int) -> str:
+    """Build a GFM table separator row whose dash-runs encode RELATIVE column
+    widths. GitHub ignores the run length (all columns content-sized), but
+    Pandoc — the converter that produces the HTML/PDF deliverable — turns the
+    relative dash lengths into explicit `<col style="width:N%">` so wide,
+    link-stacked columns (Linked Threats / Notes) stop getting squished next
+    to a long Description column (2026-05-30 user request)."""
+    return "|" + "|".join("-" * max(3, w) for w in widths) + "|"
+
+
 def gen_assets(yaml_data: dict) -> str:
     """## 4. Assets — single | Asset | table per contract."""
     assets = yaml_data.get("assets") or []
@@ -2135,10 +2162,11 @@ def gen_assets(yaml_data: dict) -> str:
     any_linked = any(a.get("linked_threats") for a in assets)
     if any_linked:
         lines.append("| Asset | ID | Classification | Description | Linked Threats |")
-        lines.append("|---|---|---|---|---|")
+        # Narrow ID/Classification; give Description and (wider) Linked Threats room.
+        lines.append(_proportional_separator(16, 6, 13, 28, 34))
     else:
         lines.append("| Asset | ID | Classification | Description |")
-        lines.append("|---|---|---|---|")
+        lines.append(_proportional_separator(18, 6, 14, 40))
     for idx, a in enumerate(assets, start=1):
         # Auto-assign A-NNN deterministically when the yaml-writer omitted
         # the id field (LLM schema-drift: some orchestrator runs produce
@@ -2515,6 +2543,17 @@ def gen_attack_surface(yaml_data: dict) -> str:
         emoji = _sev_emoji.get(worst_name, "")
         return f"{emoji} {worst_name}".strip()
 
+    def _entry_rank(entry: dict) -> int:
+        """Numeric highest-severity rank across linked threats (for sorting)."""
+        worst = -1
+        for ref in entry.get("linked_threats") or entry.get("threats") or []:
+            if not isinstance(ref, str):
+                continue
+            t = threat_by_id.get(ref.strip().upper()) or {}
+            sev = (t.get("risk") or t.get("severity") or t.get("impact") or "").strip().title()
+            worst = max(worst, _sev_rank.get(sev, -1))
+        return worst
+
     def _entry_auth(entry: dict, default: str) -> str:
         """Authentication-required label (entries already partitioned)."""
         # Honour an explicit `auth_mechanism` field when present, else the
@@ -2538,7 +2577,15 @@ def gen_attack_surface(yaml_data: dict) -> str:
         # parsed the old table by column index will see Notes shift but
         # the column headings remain explicit.
         lines.append("| Method | Route | Auth | Risk | Notes |")
-        lines.append("|---|---|---|---|---|")
+        # Narrow Method/Auth/Risk; give Route some room and Notes (stacked
+        # finding links + prose) the widest allocation so it reads cleanly.
+        lines.append(_proportional_separator(7, 22, 5, 9, 40))
+        # Sort by risk descending, then by route (contract §5 rule) so the
+        # highest-severity entry points read first (2026-05-30 request).
+        bucket_entries = sorted(
+            bucket_entries,
+            key=lambda e: (-_entry_rank(e), _attack_surface_route(e).lower()),
+        )
         for entry in bucket_entries:
             method = _attack_surface_method(entry)
             route = _attack_surface_route(entry)
@@ -5378,7 +5425,9 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             )
         else:
             reason = "No controls or findings routed to this category."
-        lines.append(f"| [{h.split(' ', 1)[1]}](#{_v2_slug(h)}) | {verdict} | {reason} |")
+        # Link text carries the section number (e.g. "7.2 Identity and
+        # Authentication Controls") so the overview reads as a numbered map.
+        lines.append(f"| [{h}](#{_v2_slug(h)}) | {verdict} | {reason} |")
     lines.append("")
     lines.append("<!-- §7.1 MECHANICAL-FROZEN END -->")
     lines.append("")

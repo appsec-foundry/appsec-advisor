@@ -320,6 +320,20 @@ Summarize: `<N> workflows with no explicit permissions block (inherit repo defau
 
 If no `self-hosted` entries found: `None — all workflows use GitHub-hosted runners.`
 
+### 7.27a Public-Repo Contribution Exposure
+
+Only when repository visibility is **public** or **unknown** (independent of whether any workflow file exists — Cat 27d). For a **private/internal** repo, render: `Repo is private/internal — external-contribution threat does not apply.`
+
+| Signal | Observed |
+|--------|----------|
+| Repo visibility | <public / unknown (annotate source)> |
+| `CODEOWNERS` present | <yes (path) / no> |
+| `CONTRIBUTING` / PR template present | <yes (path) / no> |
+| Branch protection / required review | Not verifiable from source — verify out-of-band |
+| Verdict | <High: public, no CODEOWNERS / Medium: public, CODEOWNERS present / High: visibility unknown> |
+
+This block is the evidence source for the untrusted-external-contribution Tampering/EoP threat (see STRIDE analyzer supply-chain patterns).
+
 ### 7.28 Container Runtime Hardening
 
 Only when `Dockerfile` exists.

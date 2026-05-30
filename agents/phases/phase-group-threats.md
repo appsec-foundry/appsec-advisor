@@ -146,13 +146,13 @@ Always include: Auth/identity, Authorization, components handling PII/payments, 
 
 ### CI/CD Pipeline as STRIDE component
 
-**When `ASSESSMENT_DEPTH=standard` or `thorough`** and CI/CD workflow files were found by the recon scanner (Section 5): include the CI/CD pipeline as a STRIDE component if it fits within `MAX_STRIDE_COMPONENTS`. Use component ID `ci-cd-pipeline`.
+**When `ASSESSMENT_DEPTH=standard` or `thorough`** and EITHER CI/CD workflow files were found by the recon scanner (Section 5) OR `public_source_repo: true`: include the source-and-build-integrity component as a STRIDE component if it fits within `MAX_STRIDE_COMPONENTS`. Use component ID `ci-cd-pipeline`. The `public_source_repo` trigger ensures a public repo with **no** CI workflows still gets a host for the untrusted-external-contribution threat (Cat 27d) — without it that threat would have nowhere to land and would silently drop.
 
 Pass these additional context fields in the STRIDE analyzer prompt:
-- `COMPONENT_DESCRIPTION`: "CI/CD pipeline — build, test, and deployment automation. Includes workflow definitions, secret handling, artifact publishing, and deployment triggers."
-- `INTERFACES`: workflow trigger events (push, PR, schedule, workflow_dispatch), artifact registries, deployment targets
-- `TRUST_BOUNDARIES`: external Actions/images crossing into build environment, secrets injected at runtime, artifact publish boundary
-- `SUPPLY_CHAIN_FINDINGS`: recon-summary sections 7.14–7.17, 7.26, 7.27, and 7.28 (unpinned Actions, container images, dependency confusion, postinstall hooks, ecosystem CI install integrity, dependency management tooling, SCA tooling, `pull_request_target` misuse, `permissions:` hardening, self-hosted runner exposure, AI coding assistant & IDE agent configurations)
+- `COMPONENT_DESCRIPTION`: "CI/CD & source-contribution integrity — build, test, and deployment automation plus the trust boundary at which external code contributions enter the trunk. Includes workflow definitions, secret handling, artifact publishing, deployment triggers, and (for public repos) the pull-request contribution surface." When the component exists solely because `public_source_repo: true` and no workflow files were found, narrow the description to the contribution surface only.
+- `INTERFACES`: workflow trigger events (push, PR, schedule, workflow_dispatch), artifact registries, deployment targets, and the fork→pull-request contribution path (public repos)
+- `TRUST_BOUNDARIES`: external Actions/images crossing into build environment, secrets injected at runtime, artifact publish boundary, and (public repos) untrusted external contributions crossing into the trunk
+- `SUPPLY_CHAIN_FINDINGS`: recon-summary sections 7.14–7.17, 7.26, 7.27, 7.27a, and 7.28 (unpinned Actions, container images, dependency confusion, postinstall hooks, ecosystem CI install integrity, dependency management tooling, SCA tooling, `pull_request_target` misuse, `permissions:` hardening, self-hosted runner exposure, **public-repo contribution exposure**, AI coding assistant & IDE agent configurations)
 
 The STRIDE analyzer will use `SUPPLY_CHAIN_FINDINGS` to generate evidence-backed threats for the pipeline component (see STRIDE analyzer supply chain patterns).
 
@@ -673,7 +673,7 @@ After Merge (steps 0–8) and Coverage Checks complete — and **before** emitti
 - `component_name` — canonical name after step 8 normalization
 - `stride` — full word (`Spoofing`, `Tampering`, `Repudiation`, `Information Disclosure`, `Denial of Service`, `Elevation of Privilege`); never single-letter
 - `risk`, `likelihood`, `impact` — one of `Critical`, `High`, `Medium`, `Low`
-- `title` — **2–6 word noun phrase, MAXIMUM 60 characters total**. This is a *headline*, NOT a sentence: drop articles, drop the impact clause, drop CWE descriptors. **MUST NOT contain backtick code identifiers** — no `` `lib/insecurity.ts` ``, no `` `bypassSecurityTrustHtml()` ``. **MUST NOT contain file paths, route paths, line numbers, or function call expressions.** The location part (after "in") names the feature/endpoint in plain English: "in login", "in search", "in file upload". Bad: `"MD5 Password Hashing Combined with SQL Injection Enables Full Account Takeover"` (88 chars, full sentence). Bad: `` "SQL injection in `routes/login.ts:34`" `` (has file path+line). Good: `"MD5 Password Hashing"` (20 chars, noun phrase). Good: `"SQL Injection in Login"`. The full impact narrative belongs in `scenario:`, not in `title`. For Critical threats, use the identical text that appears in the `## Critical Attack Tree` Quick-reference Title column. For non-Critical threats, derive by converting the remediation title from imperative to noun phrase (e.g. "Remove hardcoded RSA key" → "Hardcoded RSA Private Key"). **Hard limit enforced by `qa_checks.py:check_heading_hygiene` — titles > 100 chars trip the repair gate.**
+- `title` — **2–6 word noun phrase, MAXIMUM 60 characters total**. This is a *headline*, NOT a sentence: drop articles, drop the impact clause, drop CWE descriptors. **MUST NOT contain backtick code identifiers** — no `` `lib/insecurity.ts` ``, no `` `bypassSecurityTrustHtml()` ``. **MUST NOT contain file paths, route paths, line numbers, or function call expressions.** The location part (after "in") names the feature/endpoint in plain English: "in login", "in search", "in file upload". Bad: `"MD5 Password Hashing Combined with SQL Injection Enables Full Account Takeover"` (88 chars, full sentence). Bad: `` "SQL injection in `routes/login.ts:34`" `` (has file path+line). Good: `"MD5 Password Hashing"` (20 chars, noun phrase). Good: `"SQL Injection in Login"`. The full impact narrative belongs in `scenario:`, not in `title`. For Critical threats, this title is reused in the `## Critical Attack Tree` Findings pointer (the composer derives it from the matching leaf label), so keep the two consistent. For non-Critical threats, derive by converting the remediation title from imperative to noun phrase (e.g. "Remove hardcoded RSA key" → "Hardcoded RSA Private Key"). **Hard limit enforced by `qa_checks.py:check_heading_hygiene` — titles > 100 chars trip the repair gate.**
 - `cwe` — mandatory, must match the CWE reference in the Section 7 Scenario cell
 - `evidence` — `{file, line}`; `file` repo-relative, `line` integer or `null`
 - `source` — one of `stride`, `requirements-compliance`, `architectural-anti-pattern`, `known-vuln`, `coverage-gap`
@@ -995,74 +995,66 @@ The Critical Attack Tree is a **thin, promoted section** placed **immediately af
 
 Its job is to show the *tree* — how Critical (and optionally High) findings combine via AND/OR refinement into the attacker's terminal business-impact goal — and to link back to the detailed rows in Section 8.1 and the step-by-step walkthroughs in Section 3. Full narrative detail (Scenario, Current state, Violated Requirements) lives in Section 8.1; detailed sequenceDiagrams per Critical finding live in Section 3 (Attack Walkthroughs), rendered by Phase 4 of the orchestrator.
 
-**One tree per report, rooted at the business-impact goal.** The diagram is a single `graph TD` block — top-down, root at the top. Internal nodes are subgoals annotated with `AND` or `OR` refinement; leaves are individual Critical (and optionally High) findings labeled with their T-NNN. AND-refinement means every child subgoal must be achieved for the parent to fall; OR-refinement means any one child suffices. When two Worst Case Scenarios share a root step but diverge later, they share the upper subtree and branch only where they diverge — that branching is the entire point of using a tree instead of separate chains.
+**One tree per report, rooted at the business-impact goal.** The composer renders a single tree (`graph LR`, normalized — see the render note below). Internal nodes are subgoals; leaves are individual Critical (and optionally High) findings. AND/OR is encoded by each parent node's `class` (`and_node` = every child required, `or_node` = any child suffices), not per-edge. When two Worst Case Scenarios share a root step but diverge later, they share the upper subtree and branch only where they diverge — that branching is the entire point of using a tree instead of separate chains.
 
-**Section 3 (Attack Walkthroughs)** holds the detailed `sequenceDiagram` blocks — one per Critical finding, rendered by Phase 4 of the orchestrator. The `## Critical Attack Tree` block remains the thin executive-level overview, and Section 3 remains distinct from it: the Attack Tree shows *how Criticals decompose into a single attacker goal* (one `graph TD` per report), Section 3 shows *each Critical in detail* (one `sequenceDiagram` per finding). Do not duplicate the Mermaid tree diagram or the quick-reference table in Section 3 — they live **only** in `## Critical Attack Tree`.
+**Section 3 (Attack Walkthroughs)** holds the detailed `sequenceDiagram` blocks — one per Critical finding, rendered by Phase 4 of the orchestrator. The `## Critical Attack Tree` block remains the thin executive-level overview, and Section 3 remains distinct from it: the Attack Tree shows *how Criticals decompose into a single attacker goal* (one tree per report), Section 3 shows *each Critical in detail* (one `sequenceDiagram` per finding). Do not duplicate the Mermaid tree diagram in Section 3 — it lives **only** in `## Critical Attack Tree`.
 
 When there are 0 or 1 Critical findings, skip the `## Critical Attack Tree` section entirely — a single Critical cannot form a meaningful tree (the leaf and the root would coincide). Section 3 still renders in that case: if `CRIT_COUNT == 1` it contains one attack walkthrough for that single Critical finding; if `CRIT_COUNT == 0` it contains the empty-state stub documented in Phase 4.
+
+The composer renders the section deterministically from `.fragments/ms-critical-attack-tree.json` (authored per the `ms-critical-attack-tree.json` authoring contract in `appsec-threat-renderer.md`). Phase 9 only verifies the heading exists; it does not hand-author the markdown. The rendered shape:
 
 ```markdown
 <a id="critical-attack-chain"></a>
 <a id="critical-attack-tree"></a>
 ## Critical Attack Tree
 
-The tree below decomposes the attacker's terminal goal into the Critical findings that realise it. Read top-down: the root names the business impact, internal nodes are subgoals annotated `AND` (all children required) or `OR` (any child suffices), leaves are individual Critical findings linked to their Section 7.1 row.
+The root is the worst-case attacker goal; below it, each capability branch groups the Critical findings that achieve it. Branches feed the goal by OR — any single path suffices.
 
 ```mermaid
-graph TD
+graph LR
+    G_ROOT["Full admin takeover + customer DB exfiltration"]:::goal
+    OR_RCE["Land shell on host"]:::or_node
+    OR_EXFIL["Exfiltrate customer DB"]:::or_node
+    AND_JWT["Forge administrator JWT"]:::and_node
+    L_T001["T-001"]:::leaf
+    L_T003["T-003"]:::leaf
+    L_T006["T-006"]:::leaf
+    L_T002["T-002"]:::leaf
+    L_T007["T-007"]:::leaf
+
+    OR_RCE -->|"OR"| G_ROOT
+    OR_EXFIL -->|"OR"| G_ROOT
+    AND_JWT -->|"OR"| OR_RCE
+    L_T006 -->|"OR"| OR_RCE
+    L_T001 -->|"AND"| AND_JWT
+    L_T003 -->|"AND"| AND_JWT
+    L_T002 -->|"OR"| OR_EXFIL
+    L_T007 -->|"OR"| OR_EXFIL
+
     classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px
     classDef and_node fill:#7c3aed,stroke:#5b21b6,color:#fff,stroke-width:2px
     classDef or_node fill:#2563eb,stroke:#1e40af,color:#fff,stroke-width:2px
     classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
-
-    GOAL(["Full admin takeover + customer DB exfiltration"]):::goal
-    SUB_RCE["Land shell on host"]:::or_node
-    SUB_EXFIL["Exfiltrate customer DB"]:::or_node
-    PRE_JWT["Forge administrator JWT"]:::and_node
-    T1["T-001 Hardcoded RSA key"]:::leaf
-    T3["T-003 JWT forgery"]:::leaf
-    T6["T-006 RCE via eval"]:::leaf
-    T2["T-002 SQLi login bypass"]:::leaf
-    T7["T-007 UNION SELECT dump"]:::leaf
-
-    GOAL -->|"OR"| SUB_RCE
-    GOAL -->|"OR"| SUB_EXFIL
-    SUB_RCE -->|"AND"| PRE_JWT
-    SUB_RCE -->|"AND"| T6
-    PRE_JWT --> T1
-    PRE_JWT --> T3
-    SUB_EXFIL --> T2
-    SUB_EXFIL --> T7
 ```
 
-**Key takeaway:** <one sentence — e.g. "Either path (admin shell OR customer-DB exfiltration) requires only Critical findings that sit on the public attack surface; breaking either OR-branch with M-001/M-002 collapses that whole subtree.">
-
-**Mitigation breakpoints:** optional sub-bullet list naming the M-NNN mitigations that sever at least one subtree (e.g. `[M-001](#m-001) — removing the hardcoded RSA key collapses the JWT-forgery AND subtree, eliminating the shell-on-host path`).
-
-### Quick reference — Critical findings
-
-| ID | Title | Component | Violated Requirements | Mitigation |
-|----|-------|-----------|------------------------|------------|
-| [T-001](#t-001) | Hardcoded RSA Private Key | Auth Service | [DP-005](url), [AC-005](url) | [M-001](#m-001) · P1 |
-| [T-002](#t-002) | SQL Injection in Login | Auth Service | [IV-004](url) | [M-002](#m-002) · P1 |
-| … | | | | |
+**Findings** (full detail in [§8 Threat Register](#8-threat-register)): [T-001](#t-001) Hardcoded RSA key · [T-002](#t-002) SQLi login bypass · [T-003](#t-003) JWT forgery · [T-006](#t-006) RCE via eval · [T-007](#t-007) UNION SELECT dump
 ```
+
+Note how the leaf boxes show only `T-NNN` (the titles live in the Findings line and §8), every edge's `AND`/`OR` label matches its parent node's `class`, and there is no Key-takeaway sentence, Mitigation-breakpoints list, or quick-reference mitigation table — those were retired (mitigations live in §9).
 
 **Rules for `## Critical Attack Tree`:**
 
-- **No per-finding prose blocks — ever.** The old template had a `### 🔴 T-NNN — Title` heading with a Scenario / Current state / Violated Requirements / Mitigation block for each finding. Do **not** emit those blocks — they duplicate Section 7.1. The Quick-reference table is the only per-finding presentation allowed.
+- **No per-finding prose blocks — ever.** Never emit a `### 🔴 T-NNN — Title` heading with a Scenario / Current state / Violated Requirements / Mitigation block per finding — that duplicates Section 8.1. The one-line Findings pointer is the only per-finding presentation in this section.
 - **Heading is unnumbered.** Render as `## Critical Attack Tree` (canonical anchor `#critical-attack-tree`), not `## 9. Critical Attack Tree` and not `## 1.5 …`. The absence of a number is deliberate and tells the reader this is part of the executive summary, not a numbered finding section.
 - **Dual anchor mandatory.** Emit `<a id="critical-attack-chain"></a>` and `<a id="critical-attack-tree"></a>` on their own lines **immediately before** the `## Critical Attack Tree` heading. The legacy `#critical-attack-chain` anchor preserves external deep-links from prior reports (AGENTS.md §5 — ID stability).
 - **Position is non-negotiable.** Immediately after the Management Summary, immediately before Section 1. Never after Section 7.
-- The intro sentence is mandatory and must come before the Mermaid block.
-- **Exactly one tree per report.** A single `graph TD` block — no second tree, no merged side-by-side trees. When multiple Worst Case Scenarios exist, they share the upper subtree and branch only where they diverge.
-- **Tree-shape rules:** `graph TD` (top-down) is the only allowed layout (`graph LR` is forbidden under this section). The diagram MUST contain at least one `goal` root node and at least three `leaf` finding nodes. Internal nodes use the `and_node` (purple) or `or_node` (blue) classDef and carry `AND` / `OR` edge labels so the boolean refinement is explicit on the wire.
+- **One-line explanation above the tree, one-line Findings pointer below it.** The explanation precedes the Mermaid block; the Findings pointer (`**Findings** (full detail in [§8 …](#8-threat-register)): [T-NNN](#t-nnn) <title> · …`) follows it. No Key-takeaway sentence, no Mitigation-breakpoints list, no quick-reference table — all retired.
+- **Exactly one tree per report.** A single Mermaid block — no second tree, no merged side-by-side trees. When multiple Worst Case Scenarios exist, they share the upper subtree and branch only where they diverge.
+- **Tree-shape rules:** the composer normalizes the diagram to `graph LR` (do not hand-set orientation). The tree MUST contain one `goal` root node and at least three `leaf` finding nodes. Internal nodes use the `and_node` (purple) or `or_node` (blue) classDef; each edge's `AND`/`OR` label is **derived from the parent node's class** by the composer, so the boolean structure lives in the node class, never in a per-edge field.
 - **Skip rule:** emit 0 trees (skip the whole section) when `CRIT_COUNT <= 1`. Emit 1 tree otherwise.
-- Each leaf node is one Critical finding labeled with its T-NNN and a 2–3 word summary; internal-node labels are subgoals (1–4 words) phrased as capabilities the attacker must achieve.
-- The block MUST have exactly one `**Key takeaway:**` sentence immediately under the diagram, and may have an optional `**Mitigation breakpoints:**` bullet list naming M-NNN mitigations that sever subtrees.
-- The Quick-reference table is rendered **once**, at the end of the section (after the takeaway and any breakpoints) — not per subtree. It lists every Critical finding that appears as a leaf in the tree. Columns: ID, Title, Component, Mitigation. Word severity only (no emoji) — severity is implicit. Include `Violated Requirements` as comma-separated clickable IDs *only when* `CHECK_REQUIREMENTS=true`; otherwise drop the column.
-- **Mitigation column MUST include a short explanation** after the M-NNN link: `[M-NNN](#m-NNN) — <short action>` (e.g. `[M-001](#m-001) — Parameterized queries`). Bare M-NNN links without an explanation are a format defect.
-- Section 8.1 remains the authoritative per-finding source — any reader clicking a T-NNN link in the Quick-reference table or in a leaf node lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
+- Each leaf box shows only its `T-NNN`; author the leaf label as `T-NNN <2–3 word title>` so the composer can build the Findings line. Internal-node labels are subgoals (1–4 words) phrased as capabilities the attacker must achieve.
+- Mitigations are **not** shown in this section — they live in §9 Mitigation Register. This section only points at the findings.
+- Section 8.1 remains the authoritative per-finding source — any reader clicking a `T-NNN` link in the Findings pointer or recognizing it from a leaf box lands on the full row with Scenario, Likelihood, Impact, Risk, Controls in Place, and Mitigation.
 
 **Section 3 — Attack Walkthroughs:**
 
@@ -1086,7 +1078,7 @@ _No critical-severity attack walkthroughs — the highest-severity findings are 
 
 | Where | What | For whom |
 |---|---|---|
-| `## Critical Attack Tree` (after Mgmt Summary) | 1 high-level `graph TD` decomposing the attacker goal via AND/OR refinement into Critical-finding leaves | Executive — 30 seconds |
+| `## Critical Attack Tree` (after Mgmt Summary) | 1 high-level `graph LR` decomposing the attacker goal via class-derived AND/OR into Critical-finding leaves, with a one-line Findings pointer below | Executive — 30 seconds |
 | Section 8.1 Critical | Tabular per-finding rows with Evidence, CWE, Mitigation | Engineer — 5 minutes |
 | **Section 3 Attack Walkthroughs** | 1 detailed `sequenceDiagram` per Critical finding, alt=current / else=post-mitigation | Reviewer walking through the exploit — 15 minutes |
 
@@ -1317,7 +1309,7 @@ When T-NNN or M-NNN appears in a column named **"ID"** in a table, it is an **id
 | [T-001](#t-001) | SQL injection — authentication bypass | ...
 ```
 
-This applies to: Top Findings table (# column — rank, not ID), Critical Attack Tree quick-reference table (ID column), Attack Walkthrough summary table (ID column), Threat Register (ID column).
+This applies to: Top Findings table (# column — rank, not ID), Critical Attack Tree Findings pointer (T-NNN links), Attack Walkthrough summary table (ID column), Threat Register (ID column).
 
 Also no label on: anchor definition sites (`<a id="t-001"></a>T-001`), inside Mermaid diagram blocks (node labels carry their own text), Mitigation Register headings (`### M-001 — <full title>`).
 
@@ -1694,7 +1686,7 @@ fi
 - **mitigation-overrides**: splits baseline M-IDs into finer-grained mitigations when remediation steps span different OWASP categories, AND adds cross-cutting / process mitigations not derivable from any single threat (e.g. "Establish dependency-update SLA")
 - **tier-root-causes**: replaces the title-list fallback with cross-finding pattern aggregation (e.g. "missing input neutralization on raw SQL paths" aggregating 4 separate injection findings)
 
-See [docs/substep2-deterministic-migration.md §2.6 and §2.8](../../docs/substep2-deterministic-migration.md). Both sidecars run AFTER the triage agent completes — they consume `.triage-flags.json` and the annotated `.threats-merged.json`.
+Both sidecars run AFTER the triage agent completes — they consume `.triage-flags.json` and the annotated `.threats-merged.json`.
 
 #### `.mitigation-overrides.json`
 

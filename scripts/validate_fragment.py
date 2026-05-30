@@ -43,8 +43,7 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     "compound-chains": "compound-chains.schema.json",
     "operational-strengths-overrides": "operational-strengths-overrides.schema.json",
     "security-posture-attack-paths": "security-posture-attack-paths.schema.json",
-    # Substep 2 deterministic migration sidecars (see
-    # docs/substep2-deterministic-migration.md). These are INPUTS to
+    # Substep 2 deterministic migration sidecars. These are INPUTS to
     # scripts/build_threat_model_yaml.py, NOT render fragments — they
     # live at $OUTPUT_DIR/.X.json (dot-prefix, repo root of output_dir)
     # rather than $OUTPUT_DIR/.fragments/X.json. They share the validator

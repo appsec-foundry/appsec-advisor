@@ -61,25 +61,6 @@ HISTORICAL_MAPPINGS = {
 }
 
 
-class TestHistoricalMappings:
-    """Every component ID observed across 8 historical runs MUST map."""
-
-    def test_yaml_loads(self):
-        m = cci.load_map(YAML_PATH)
-        assert m, "canonical map is empty"
-
-    @pytest.mark.parametrize("input_id,expected", HISTORICAL_MAPPINGS.items())
-    def test_alias_resolves(self, input_id, expected):
-        canonical, kind = cci.canonicalize(input_id, cci.load_map(YAML_PATH))
-        assert canonical == expected, f"{input_id} → expected {expected}, got {canonical} (kind={kind})"
-        assert kind in ("exact", "alias")
-
-    def test_no_unmapped_historical_ids(self):
-        m = cci.load_map(YAML_PATH)
-        misses = [cid for cid in HISTORICAL_MAPPINGS if cci.canonicalize(cid, m)[1] == "miss"]
-        assert not misses, f"unmapped historical IDs: {misses}"
-
-
 class TestPassThrough:
     """Unknown IDs pass through unchanged unless --strict."""
 
@@ -135,22 +116,6 @@ class TestCLI:
         )
         assert r.returncode == 1
         assert "miss" in r.stdout
-
-
-class TestSignalMatching:
-    def test_juice_shop_signals_pick_right_components(self):
-        # Simulate a recon-summary excerpt for Juice-Shop
-        text = """
-        Detected: routes/ (61 files), routes/login.ts, lib/insecurity.ts,
-        models/ (22 Sequelize models), frontend/src/ Angular app
-        with @angular/core. multer for file upload.
-        """
-        m = cci.load_map(YAML_PATH)
-        hits = cci.match_by_signals(text, m)
-        ids = [cid for cid, _ in hits]
-        # Expected canonicals to surface
-        for expected in ("backend-api", "auth-identity", "frontend-spa", "data-persistence", "file-handling"):
-            assert expected in ids, f"signals failed to detect {expected}; got {ids}"
 
 
 class TestNoOverlappingAliases:

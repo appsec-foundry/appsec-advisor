@@ -57,6 +57,24 @@ if [ ! -x "$PLUGIN_ROOT/scripts/run-headless.sh" ]; then
     exit 3
 fi
 
+# ── Optional export tooling (pdf/html need pandoc; pdf also weasyprint) ───────
+# Gated so the E2E never fails just because a CI box lacks the converters —
+# the matching pdf/html assertions skip themselves when the tool is absent.
+PDF_FLAG=""
+PDF_ATTEMPTED=0
+HTML_CAPABLE=0
+if command -v pandoc >/dev/null 2>&1; then
+    HTML_CAPABLE=1
+    if python3 -c 'import weasyprint' >/dev/null 2>&1; then
+        PDF_FLAG="--pdf"
+        PDF_ATTEMPTED=1
+    else
+        echo "  note: weasyprint missing → --pdf skipped (PDF assertions skip)." >&2
+    fi
+else
+    echo "  note: pandoc missing → HTML/PDF export skipped (those assertions skip)." >&2
+fi
+
 # ── Auth banner ─────────────────────────────────────────────────────────────
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     AUTH_MODE="api-key"
@@ -93,6 +111,10 @@ RUN_STATUS=0
     --output "$OUTPUT_DIR" \
     --assessment-depth "$DEPTH" \
     --sarif \
+    --pentest-tasks \
+    --requirements \
+    --keep-runtime-files \
+    $PDF_FLAG \
     --no-qa \
     --max-duration 1800 \
     || RUN_STATUS=$?
@@ -110,6 +132,22 @@ if [ "$RUN_STATUS" -ne 0 ]; then
     exit 1
 fi
 
+# ── Stage 1b: HTML export (best-effort; needs pandoc) ────────────────────────
+# PDF is produced in-pipeline via --pdf; HTML has no create-threat-model flag,
+# so we drive export_html.py directly here (deterministic, no LLM tokens).
+HTML_DONE=0
+if [ "$HTML_CAPABLE" -eq 1 ]; then
+    echo ""
+    echo "[1b] exporting HTML ..."
+    if python3 "$PLUGIN_ROOT/scripts/export_html.py" \
+            "$OUTPUT_DIR/threat-model.md" \
+            --output "$OUTPUT_DIR/threat-model.html"; then
+        HTML_DONE=1
+    else
+        echo "HTML export failed (non-fatal)." >&2
+    fi
+fi
+
 # ── Stage 2: assertion suite ────────────────────────────────────────────────
 echo ""
 echo "[2/2] running assertion suite ..."
@@ -121,6 +159,8 @@ APPSEC_E2E_OUTPUT_DIR="$OUTPUT_DIR" \
 APPSEC_E2E_TARGET_REPO="$REPO" \
 APPSEC_E2E_DEPTH="$DEPTH" \
 APPSEC_E2E_PIPELINE_ELAPSED="$ELAPSED" \
+APPSEC_E2E_PDF="$PDF_ATTEMPTED" \
+APPSEC_E2E_HTML="$HTML_DONE" \
     python3 -m pytest \
         "$PLUGIN_ROOT/tests/test_full_run_e2e.py" \
         -v --tb=short --no-header \

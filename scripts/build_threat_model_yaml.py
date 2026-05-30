@@ -390,20 +390,52 @@ def apply_mitigation_overrides(
     # Pre-compute baseline threat_id sets for subset-check
     baseline_tids = {m["id"]: set(m.get("threat_ids", [])) for m in out.values()}
 
-    # Apply additions — defensive dedup against LLM mistakes
-    skipped_dup = 0
-    skipped_collision = 0
+    def _overlay_authored(base: dict, add: dict) -> None:
+        """Merge an addition's AUTHORED remediation fields onto a baseline
+        mitigation. The baseline (derived from threats) carries only the
+        threat title + grouping; the sidecar addition carries the LLM's
+        action-oriented title, the `description` (the *why/what* of the
+        fix) and a `reference` link. Those are exactly what §9 needs and
+        were previously discarded when the addition collided with the
+        baseline by ID or threat_ids. Authored, non-empty values win;
+        otherwise the baseline value is kept.
+        """
+        for field in ("title", "description", "reference", "remediation", "how", "how_code", "verification"):
+            val = add.get(field)
+            if isinstance(val, str):
+                val = val.strip()
+            if val:
+                base[field] = add[field]
+        # Prefer explicitly-authored priority/effort; coerce kind enum.
+        if add.get("priority"):
+            base["priority"] = add["priority"]
+        if add.get("effort"):
+            base["effort"] = add["effort"]
+        if add.get("kind"):
+            base["kind"] = _KIND_COERCE.get(add["kind"], add["kind"])
+
+    # Apply additions — merge authored content onto matching baseline
+    # entries (do NOT discard the LLM's remediation guidance); only append
+    # as a new mitigation when it covers a genuinely new threat set.
+    merged = 0
     added = 0
     for add in sidecar.get("additions", []) or []:
         aid = add.get("id", "")
-        # Rule 1: ID collision
+        # Rule 1: ID collision → merge authored fields onto the baseline.
         if aid in out:
-            skipped_collision += 1
+            _overlay_authored(out[aid], add)
+            merged += 1
             continue
-        # Rule 2: threat_ids subset of existing baseline mitigation
+        # Rule 2: threat_ids subset of an existing baseline mitigation →
+        # same fix under a different ID; merge onto that baseline entry.
         add_tids = set(add.get("threat_ids", []))
-        if add_tids and any(add_tids.issubset(bt) for bt in baseline_tids.values()):
-            skipped_dup += 1
+        host_mid = next(
+            (mid for mid, bt in baseline_tids.items() if add_tids and add_tids.issubset(bt)),
+            None,
+        )
+        if host_mid is not None:
+            _overlay_authored(out[host_mid], add)
+            merged += 1
             continue
         # Apply defaults for optional fields
         sev = add.get("severity", "Medium")
@@ -417,14 +449,14 @@ def apply_mitigation_overrides(
             "priority": add.get("priority", sev_to_pri.get(sev, "P3")),
             "severity": sev,
             "effort": add.get("effort", "Medium"),
+            **({"description": add["description"]} if add.get("description") else {}),
+            **({"reference": add["reference"]} if add.get("reference") else {}),
             **({"remediation": add["remediation"]} if "remediation" in add else {}),
         }
         added += 1
 
-    if skipped_collision:
-        warnings.append(f"mitigation-overrides.additions: {skipped_collision} skipped — ID collides with baseline")
-    if skipped_dup:
-        warnings.append(f"mitigation-overrides.additions: {skipped_dup} skipped — threat_ids already covered by baseline (LLM duplicate-as-addition drift)")
+    if merged:
+        warnings.append(f"mitigation-overrides.additions: {merged} merged onto baseline (authored title/description/reference preserved)")
     if added:
         warnings.append(f"mitigation-overrides.additions: {added} accepted (true additions)")
 

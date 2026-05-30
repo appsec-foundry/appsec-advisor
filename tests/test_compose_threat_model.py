@@ -99,16 +99,14 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     assert "## Management Summary\n" in rendered
     assert "## 1. Management Summary" not in rendered
 
-    # Post-2026-05 — six canonical sub-sections, in order. `### Mitigations`
-    # was renamed `### Top Mitigations` to distinguish the MS preview from
-    # §9 Mitigation Register (the full P1/P2/P3 catalogue). `### Security
-    # Posture at a Glance` was added between Verdict and Top Findings to
-    # surface the path-grouped heatmap before the per-finding table.
+    # Post-2026-05 — four canonical sub-sections, in order. The former
+    # `### Security Posture at a Glance`, `### Top Findings` and
+    # `### Architecture Assessment` were MERGED into the single
+    # `### Security Posture & Top Threats` section (heatmap = Figure 2 + the
+    # Top Threats table). `### Mitigations` renders as `### Top Mitigations`.
     expected_order = [
         "### Verdict",
-        "### Security Posture at a Glance",
-        "### Top Findings",
-        "### Architecture Assessment",
+        "### Security Posture & Top Threats",
         "### Top Mitigations",
         "### Operational Strengths",
     ]
@@ -116,13 +114,15 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     assert all(p > 0 for p in positions), f"missing MS subsection(s): {expected_order} at {positions}"
     assert positions == sorted(positions), f"MS subsections out of order: {positions}"
 
-    # No forbidden legacy headings anywhere in MS.
+    # No forbidden legacy headings anywhere in MS — including the now-merged
+    # Top Findings / Architecture Assessment sub-sections.
     ms_slice = rendered.split("## Management Summary", 1)[1].split("\n## ", 1)[0]
     for forbidden in (
         "### 1.1",
         "### Executive Overview",
         "### Risk Distribution",
-        "### Top Threats",
+        "### Top Findings",
+        "### Architecture Assessment",
         "### Immediate Actions",
     ):
         assert forbidden not in ms_slice, f"forbidden MS heading leaked: {forbidden!r}"
@@ -153,44 +153,46 @@ def test_verdict_renders_red_blockquote(tmp_path: Path) -> None:
     assert re.search(r"\*\(\[[FT]-00[12]\]\(#[ft]-00[12]\)(?: — [^)]+)?\)\*", rendered)
 
 
-def test_top_findings_has_six_columns(tmp_path: Path) -> None:
+def test_top_threats_has_five_columns(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    # Locate the Top Findings header row.
-    header = "| # | Criticality | Pfad | Finding | Component | Primary Mitigations |"
-    assert header in rendered, "Top Findings must use exactly the 6 canonical columns"
+    # Locate the merged Top Threats header row (replaced Top Findings +
+    # Architecture Assessment).
+    header = "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |"
+    assert header in rendered, "Top Threats must use exactly the 5 canonical columns"
 
 
-def test_top_findings_path_glyphs_link_to_heatmap_anchors(tmp_path: Path) -> None:
-    """Every Pfad glyph used in the Top Findings table must resolve to an
-    anchor emitted by the Security Posture at a Glance bullet list."""
+def test_top_threats_rows_self_anchor_the_path_glyph(tmp_path: Path) -> None:
+    """Each Top Threats row carries its `#path-<class>` anchor on the `#`
+    glyph cell (the merged section dropped the bullet list that used to emit
+    those anchors), and the glyph agrees with a diagram attack arrow."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    m = re.search(r"### Top Findings(.+?)(?=^### )", rendered, re.DOTALL | re.MULTILINE)
-    assert m, "Top Findings section not found"
-    table_section = m.group(1)
-    used_anchors = set(re.findall(r"\[[①-⑦]\]\(#(path-[a-z-]+)\)", table_section))
-    if not used_anchors:
+    m = re.search(r"### Security Posture & Top Threats(.+?)(?=^### )", rendered, re.DOTALL | re.MULTILINE)
+    assert m, "Security Posture & Top Threats section not found"
+    section = m.group(1)
+    # Rows look like `| <a id="path-injection"></a>① | …`.
+    row_anchors = set(re.findall(r'\|\s*<a id="(path-[a-z-]+)"></a>[①②③④⑤⑥⑦]\s*\|', section))
+    if not row_anchors:
         return  # fixture has no qualifying findings → nothing to verify
-    for anchor in used_anchors:
-        assert f'<a id="{anchor}"></a>' in rendered, (
-            f"Top Findings references #{anchor} but heatmap bullets do not emit it"
-        )
+    # Each anchor is defined exactly once (no duplicate ids).
+    for anchor in row_anchors:
+        assert section.count(f'<a id="{anchor}"></a>') == 1
 
 
-def test_architecture_assessment_has_four_columns(tmp_path: Path) -> None:
-    """R-7 (2026-05): Architecture Assessment table is now 4 columns —
-    Weakness category | Affected component(s) | Description | Key findings.
-    The legacy 3-column `| Defect | Description | Key Findings |` form is
-    retired; the fixture uses the new `weaknesses[]` schema shape."""
+def test_legacy_ms_sections_merged(tmp_path: Path) -> None:
+    """Security Posture at a Glance + Top Findings + Architecture Assessment
+    were merged into the single `### Security Posture & Top Threats` section;
+    none of the legacy headings may render."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
-    assert "| Weakness category | Affected component(s) | Description | Key findings |" in rendered
-    # And the retired 3-column form is gone.
-    legacy = "| Defect | Description | Key Findings |"
-    assert legacy not in rendered, (
-        "retired 3-column Architecture Assessment header leaked into the render"
-    )
+    assert "### Security Posture & Top Threats" in rendered
+    assert "### Top Findings" not in rendered
+    assert "### Architecture Assessment" not in rendered
+    # The standalone "### Security Posture at a Glance" / "### Top Threats"
+    # headings are gone (folded into the combined heading).
+    assert "### Security Posture at a Glance" not in rendered
+    assert "### Top Threats\n" not in rendered
 
 
 def test_operational_strengths_has_three_columns(tmp_path: Path) -> None:
@@ -223,7 +225,12 @@ def test_section_3_is_per_finding_walkthroughs(tmp_path: Path) -> None:
     assert "### 3.1 SQL Injection in Product Search" in rendered
     # Each walkthrough carries a sequenceDiagram (no `graph LR` chain blocks).
     assert re.search(r"```mermaid\s*\n\s*sequenceDiagram", rendered)
-    assert not re.search(r"```mermaid\s*\n\s*graph LR", rendered), (
+    # The retired §3 kill-chains used `graph LR`; scope the guard to the §3
+    # region so it does not collide with the `## Critical Attack Tree` above
+    # §1, which legitimately renders one `graph LR` diagram.
+    s3 = rendered.split("## 3. Attack Walkthroughs", 1)[-1]
+    s3 = re.split(r"\n## \d", s3, 1)[0]
+    assert not re.search(r"```mermaid\s*\n\s*graph LR", s3), (
         "§3 must not contain `graph LR` chain blocks any more"
     )
 
@@ -683,43 +690,37 @@ def _attack_tree_data(n_leaves: int) -> dict:
     return {"mermaid": {"orientation": "TD", "nodes": nodes, "edges": edges}}
 
 
-def test_attack_tree_small_renders_single_block() -> None:
-    """A narrow tree (<= threshold leaves) renders as one diagram, unchanged."""
+def test_attack_tree_renders_single_lr_block() -> None:
+    """The whole tree renders as ONE `graph LR` diagram, every leaf present,
+    leaf boxes labelled `T-NNN — <short title>` (id + title, 2026-05-30), and
+    only the four classDefs the tree actually uses."""
     blocks = compose._build_attack_tree_blocks(_attack_tree_data(4))
     assert len(blocks) == 1
     assert blocks[0]["title"] is None
     src = blocks[0]["src"]
-    assert src.startswith("graph TD")
+    assert src.startswith("graph LR")
     assert "classDef goal" in src
-    # All 4 leaves present in the single diagram.
-    assert all(f"L_T{i:03d}" in src for i in range(4))
+    # Trimmed palette — the unused classes are gone.
+    assert "classDef attacker" not in src and "classDef crit" not in src
+    for i in range(4):
+        assert f"L_T{i:03d}" in src                       # node id retained
+        assert f'["T-{i:03d} — finding"]' in src          # id + short title leaf label
 
 
-def test_attack_tree_wide_splits_into_overview_plus_subtrees() -> None:
-    """A wide tree splits into an overview + one diagram per capability, each
-    carrying only that capability's leaves, its own classDefs, and never an
-    `LR` orientation (schema-forbidden + the §3 graph-LR guard)."""
+def test_attack_tree_wide_still_single_block() -> None:
+    """A wide tree (well past the old split threshold) still renders as ONE
+    `graph LR` block carrying every leaf — the cross-branch convergence view is
+    no longer fragmented into per-capability sub-diagrams."""
     blocks = compose._build_attack_tree_blocks(_attack_tree_data(8))
-    # overview + 2 capability subtrees
-    assert len(blocks) == 3
-    titles = [b["title"] for b in blocks]
-    assert titles[0].startswith("Overview")
-    assert any("Capability A" in (t or "") for t in titles)
-    assert any("Capability B" in (t or "") for t in titles)
-
-    overview = blocks[0]["src"]
-    # Overview shows the goal + both capabilities but NO leaves.
-    assert "G_ROOT" in overview and "OR_A" in overview and "OR_B" in overview
-    assert "L_T000" not in overview
-
-    for b in blocks:
-        assert "classDef goal" in b["src"], "each split diagram must carry classDefs"
-        assert "graph LR" not in b["src"], "split sub-diagrams must not use graph LR"
-
-    # Every leaf appears in exactly one subtree block (no loss, no dup).
-    subtree_src = "\n".join(b["src"] for b in blocks[1:])
+    assert len(blocks) == 1
+    src = blocks[0]["src"]
+    assert src.startswith("graph LR")
+    assert "graph TD" not in src
+    assert "OR_A" in src and "OR_B" in src
+    assert all(f"L_T{i:03d}" in src for i in range(8))
+    # Every leaf appears exactly once in the single diagram (no loss, no dup).
     for i in range(8):
-        assert subtree_src.count(f'L_T{i:03d}["') == 1
+        assert src.count(f'L_T{i:03d}["') == 1
 
 
 def test_codify_inline_identifiers_no_mid_token_backticks() -> None:
@@ -779,29 +780,30 @@ def test_curate_top_mitigations_drops_unknown_and_floor_dupes() -> None:
     assert [m["id"] for m in out] == ["M-001", "M-007", "M-006"]
 
 
-def test_attack_tree_stages_derived_from_canonical_mappings() -> None:
-    """The Stage|Finding|Primary Mitigation table is derived deterministically
-    from the tree capabilities + canonical `mitigations[].threat_ids`, so it
-    can never contradict the tree grouping or claim a mitigation the YAML does
-    not map (the historic `F-006 -> M-002` divergence)."""
-    from types import SimpleNamespace
-    data = _attack_tree_data(8)  # OR_A: T000,T002,T004,T006 ; OR_B: T001,T003,T005,T007
-    ctx = SimpleNamespace(yaml_data={"mitigations": [
-        {"id": "M-001", "threat_ids": ["T-000", "T-002"]},
-        {"id": "M-002", "threat_ids": ["T-001", "T-003"]},
-        {"id": "M-099", "threat_ids": ["T-999"]},  # maps to nothing in the tree
-    ]})
-    stages = compose._derive_attack_tree_stages(data, ctx)
-    assert stages and len(stages) == 2  # one row per capability (OR_A, OR_B)
-    by_stage = {s["stage"]: s for s in stages}
-    a = by_stage["Capability A"]
-    # OR_A leaves are the even-indexed Ts: T-000, T-002, T-004, T-006
-    assert a["findings"] == ["T-000", "T-002", "T-004", "T-006"]
-    # only M-001 covers OR_A leaves (T-000, T-002); the unrelated M-099 never appears
-    assert a["mitigations"] == ["M-001"]
-    b = by_stage["Capability B"]
-    assert b["mitigations"] == ["M-002"]
-    assert "M-099" not in {m for s in stages for m in s["mitigations"]}
+def test_attack_tree_findings_pointer_from_leaves() -> None:
+    """The compact findings pointer is derived deterministically from the tree's
+    leaf nodes in declaration order: each leaf's id + title (label minus the id
+    prefix) + lowercased §8 anchor, deduped, no mitigations."""
+    data = _attack_tree_data(4)  # leaves L_T000..L_T003, labels "T-000 finding" ...
+    findings = compose._derive_attack_tree_findings(data)
+    assert [f["id"] for f in findings] == ["T-000", "T-001", "T-002", "T-003"]
+    assert findings[0] == {"id": "T-000", "title": "finding", "anchor": "#t-000"}
+    # No mitigation data leaks into the pointer.
+    assert all("mitigation" not in f and "mitigations" not in f for f in findings)
+
+
+def test_attack_tree_findings_pointer_dedups_and_skips_non_leaves() -> None:
+    """Capability/goal nodes are excluded; a repeated finding id appears once."""
+    data = {"mermaid": {"nodes": [
+        {"id": "G", "label": "Goal", "class": "goal"},
+        {"id": "OR_A", "label": "Cap", "class": "or_node"},
+        {"id": "L1", "label": "T-005 SQLi login bypass", "class": "leaf"},
+        {"id": "L2", "label": "T-005 dup", "class": "leaf"},
+        {"id": "L3", "label": "T-009 RCE via eval", "class": "leaf", "finding_ref": "T-009"},
+    ], "edges": []}}
+    findings = compose._derive_attack_tree_findings(data)
+    assert [f["id"] for f in findings] == ["T-005", "T-009"]
+    assert findings[0]["title"] == "SQLi login bypass"
 
 
 def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
@@ -1799,7 +1801,7 @@ class TestSecurityPostureV2:
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         assert 'HDR_A["<b>Threat Actors</b>"]' in out
         assert 'HDR_T["<b>Architecture Tiers</b>"]' in out
-        assert 'HDR_I["<b>Impact</b>"]' in out
+        assert 'HDR_I["<b>Business Impact</b>"]' in out
 
     def test_v2_alignment_edges_chain_headers(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
@@ -1820,28 +1822,31 @@ class TestSecurityPostureV2:
         # At least one dashed consequence arrow.
         assert "-.->" in out
 
-    def test_v2_attack_paths_bullets_below_diagram(self, tmp_path):
+    def test_v2_top_threats_table_below_diagram(self, tmp_path):
+        # 2026-05 — the legacy attack-path bullet list was replaced by the
+        # merged Top Threats table under the combined section heading.
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        assert "**Threat actors.**" in out
-        assert "**Attack paths (numbered arrows in the diagram):**" in out
-        # One bullet per glyph.
+        assert "### Security Posture & Top Threats" in out
+        assert "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |" in out
+        # One self-anchored table row per glyph.
         for glyph in ("①", "②", "③", "④", "⑤", "⑥", "⑦"):
-            assert f"**{glyph}" in out
+            assert glyph in out
 
-    def test_v2_findings_subbullet_links_only_id(self, tmp_path):
+    def test_v2_findings_linked_in_table(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        # Findings format: `[F-NNN](#f-nnn) — Title` (only ID is the link).
-        assert "[F-001](#f-001) — SQL Injection" in out
-        assert "[F-007](#f-007) — CSRF" in out
+        # Findings cells link into §8 (`[F-NNN](#f-nnn)`).
+        assert "[F-001](#f-001)" in out
+        assert "[F-007](#f-007)" in out
 
-    def test_v2_impact_line_comma_separated(self, tmp_path):
+    def test_v2_impact_shown_in_risk_cell(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        assert "Impact: Customer Data Exfiltration" in out
-        assert "Impact: Full Admin Takeover" in out
-        assert "Impact: Customer Session Hijack" in out
+        # Business impact appears in the Risk & Impact column.
+        assert "Customer Data Exfiltration" in out
+        assert "Full Admin Takeover" in out
+        assert "Customer Session Hijack" in out
 
     def test_v2_no_low_findings_in_tier_counts(self, tmp_path):
         # Add a Low-severity finding; verify it is NOT shown in tier counts.
@@ -1870,9 +1875,9 @@ class TestSecurityPostureV2:
         # No fragment file → renderer falls back to CWE→class derivation.
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes())
         out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        # Must still produce a valid diagram + at least one bullet.
+        # Must still produce a valid diagram + the Top Threats table.
         assert "```mermaid" in out
-        assert "**Attack paths (numbered arrows in the diagram):**" in out
+        assert "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |" in out
 
     def test_v2_classify_finding_class(self):
         taxonomy = compose._load_attack_class_taxonomy()
@@ -2333,4 +2338,116 @@ class TestFormatIdListScalarString:
         out = env.filters["format_id_list"](["M-001", "M-002"])
         assert "#m-001" in out and "#m-002" in out
         assert "<br/>" in out
+
+
+# ---------------------------------------------------------------------------
+# §7 readability + table-width post-processors (2026-05-30 user request).
+# ---------------------------------------------------------------------------
+
+
+def test_table_col_weight_roles() -> None:
+    """Link columns widest, description capped below links, ids narrow."""
+    w = compose._table_col_weight
+    assert w("Linked Threats") > w("Description")
+    assert w("Findings (→ Component)") > w("Threat Description")
+    assert w("ID") < w("Description")
+    assert w("Classification") < w("Linked Threats")
+    # 'Threat Description' is a description column, not a (wide) threats column.
+    assert w("Threat Description") == compose._TBL_W_DESC
+
+
+def test_normalize_table_column_widths_sets_proportional_separator() -> None:
+    md = (
+        "| Asset | ID | Classification | Description | Linked Threats |\n"
+        "|---|---|---|---|---|\n"
+        "| DB | A-001 | Restricted | long text here | [F-001](#f-001) |\n"
+    )
+    out = compose._normalize_table_column_widths(md)
+    sep = out.splitlines()[1]
+    cells = [c for c in sep.split("|") if c]
+    # Description column (idx 3) narrower than Linked Threats (idx 4).
+    assert len(cells[3]) < len(cells[4])
+    # ID column (idx 1) is the narrowest.
+    assert len(cells[1]) <= len(cells[3])
+    # Idempotent.
+    assert compose._normalize_table_column_widths(out) == out
+
+
+def test_normalize_table_widths_skips_code_fences() -> None:
+    md = "```\n| not | a | table |\n|---|---|---|\n```\n"
+    assert compose._normalize_table_column_widths(md) == md
+
+
+def test_section7_number_and_bulletize() -> None:
+    md = (
+        "## 7. Security Architecture\n\n"
+        "### 7.4 Authorization Controls\n\n"
+        "**Controls covered:** [Route auth](#route-auth), [Object auth](#object-auth)\n\n"
+        '<a id="route-auth"></a>\n'
+        "#### Route auth\n\nbody\n\n"
+        '<a id="object-auth"></a>\n'
+        "#### Object auth\n\nbody\n\n"
+        "## 8. Threat Register\n\n"
+        "#### M-001 — not renumbered\n"
+    )
+    out = compose._section7_number_and_bulletize(md)
+    assert "#### 7.4.1 Route auth" in out
+    assert "#### 7.4.2 Object auth" in out
+    # §8 heading outside the §7 region is untouched.
+    assert "#### M-001 — not renumbered" in out
+    # Controls covered became a bullet list, each link prefixed with its number.
+    assert "- [7.4.1 Route auth](#route-auth)" in out
+    assert "- [7.4.2 Object auth](#object-auth)" in out
+    # Idempotent — second pass does not double-number headings or links.
+    out2 = compose._section7_number_and_bulletize(out)
+    assert "7.4.1.1" not in out2
+    assert "7.4.1 7.4.1" not in out2
+    assert "- [7.4.1 Route auth](#route-auth)" in out2
+
+
+def test_section7_overview_links_get_section_number() -> None:
+    """§7.1 overview-table category links are prefixed with their 7.X number."""
+    md = (
+        "## 7. Security Architecture\n\n"
+        "### 7.1 Security Control Overview\n\n"
+        "| Control category | Verdict | Main reason |\n"
+        "|---|---|---|\n"
+        "| [Authorization Controls](#74-authorization-controls) | 🟠 Weak | gaps |\n\n"
+        "### 7.4 Authorization Controls\n\n"
+        "#### Route auth\n\nbody\n\n"
+        "## 8. Threat Register\n"
+    )
+    out = compose._section7_number_and_bulletize(md)
+    assert "[7.4 Authorization Controls](#74-authorization-controls)" in out
+
+
+class _StubLabelCtx:
+    def __init__(self, labels: dict) -> None:
+        self._labels = labels
+
+    def lookup_label(self, ref: str) -> str:
+        return self._labels.get((ref or "").upper(), "")
+
+
+def test_section7_inline_findings_id_only() -> None:
+    ctx = _StubLabelCtx({"F-019": "Client side route guard bypass", "F-014": "BOLA user data export"})
+    md = (
+        "## 7. Security Architecture\n\n"
+        "### 7.4 Authorization Controls\n\n"
+        "#### 7.4.1 Route auth\n\n"
+        "**Security assessment**\n\n"
+        "Bypassed by calling the API directly ([F-019](#f-019) (Client side route guard bypass)). "
+        "Also see F-014 here.\n\n"
+        "**Relevant findings**\n\n"
+        "- [F-014](#f-014) (BOLA user data export)\n\n"
+        "## 8. Threat Register\n"
+    )
+    out = compose._section7_inline_findings_id_only(ctx, md)
+    # Inline assessment ref: title stripped, ID-only LINK.
+    assert "([F-019](#f-019))" in out
+    assert "Client side route guard bypass)." not in out.split("Relevant findings")[0]
+    # Bare 'F-014' in prose became an ID-only link.
+    assert "[F-014](#f-014) here" in out
+    # Relevant-findings bullet keeps its title.
+    assert "- [F-014](#f-014) (BOLA user data export)" in out
 

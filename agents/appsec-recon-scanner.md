@@ -368,6 +368,19 @@ Repo visibility comes from the git remote URL plus GitHub API lookup if availabl
 
 Also Grep for `ACTIONS_RUNNER_` env vars in `.env`, `docker-compose*.y*ml`, or runner-config manifests — these reveal self-managed runner deployments that should be cross-referenced with the CI findings.
 
+**27d — Public-repo contribution exposure.** This check is independent of any workflow file — it captures the inherent threat that a **public** source repository accepts code contributions from anyone on the internet (fork + pull request), so an attacker can propose malicious **or merely insecure** code that, absent enforced review, is merged into the trunk and ships to production. An internal/private repo carries a much lower variant of this threat (only vetted developers commit), so the check is gated on repository visibility.
+
+Run only when repository visibility is **public** or **unknown** (same visibility source as 27c — git remote URL plus GitHub API lookup if available). Record the observable contribution-governance signals:
+
+| Signal | Detection | Meaning |
+|--------|-----------|---------|
+| Repo visibility | git remote + GitHub API (if available) | `public` → threat applies; `unknown` → applies, annotate "repo visibility unknown" |
+| `CODEOWNERS` present | `.github/CODEOWNERS`, `CODEOWNERS`, or `docs/CODEOWNERS` exists | Mitigating signal — review can be routed to owners (does **not** prove required-review is enforced) |
+| `CONTRIBUTING` / PR template present | `CONTRIBUTING*`, `.github/PULL_REQUEST_TEMPLATE*` exists | Repo actively solicits external contributions → contribution attack surface is real, not theoretical |
+| Branch protection / required review | **Not observable from the source tree** — GitHub API setting only | Always annotate "branch protection / required review NOT verifiable from source — verify out-of-band" |
+
+Severity model (mirrors 27c's unknown-defaults-up approach): **High** when the repo is public and no `CODEOWNERS` is present; **Medium** when public and a `CODEOWNERS` exists; default **High** + "repo visibility unknown" annotation when visibility cannot be determined. Record the verdict with the observed signals so the STRIDE analyzer can emit an evidence-backed Tampering/EoP threat.
+
 **Category 28 (AI coding assistant & IDE agent configurations) — detailed instructions:**
 
 AI coding assistants (Claude Code, Cursor, Windsurf, Continue.dev, Codeium, Aider, GitHub Copilot, Kiro, etc.) read configuration and instruction files **directly from the cloned repository** and execute on the developer's workstation with the developer's own privileges. Anything committed into these paths is therefore a supply-chain attack surface that reaches every contributor who opens the repo in the matching IDE. This category enumerates committed AI-assistant state, scans each artefact for dangerous patterns, and flags findings as local-dev-workstation supply-chain risks — **distinct** from Cat 14/27 (CI-runtime supply chain) and Cat 13 (the product's own LLM integrations).

@@ -2,16 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/critical-attack-tree.schema.json",
   "title": "Critical Attack Tree fragment",
-  "description": "Data-driven attack-tree section rendered as the unnumbered `## Critical Attack Tree` block between the Management Summary and Section 1. The renderer produces the Mermaid graph block (vertical, top-down), the 'Key takeaway' paragraph, and the Stage/Finding/Mitigation reference table. Replaces the dormant critical-attack-chain.schema.json (2026-05 hybrid migration). This is the report's single cross-finding view — the §3.1 Attack Chain Overview was retired; §3 is per-Critical sequenceDiagram walkthroughs only.",
+  "description": "Data-driven attack-tree section rendered as the unnumbered `## Critical Attack Tree` block between the Management Summary and Section 1. The renderer produces a single `graph LR` Mermaid tree (full goal-decomposition, short `T-NNN` leaf labels), a fixed one-line explanation above it, and a one-line findings pointer below it (each leaf id → title → §8 anchor; no mitigations — those live in §9). Replaces the dormant critical-attack-chain.schema.json (2026-05 hybrid migration). This is the report's single cross-finding view — the §3.1 Attack Chain Overview was retired; §3 is per-Critical sequenceDiagram walkthroughs only.",
   "type": "object",
-  "required": ["intro", "mermaid", "key_takeaway", "stages"],
+  "required": ["mermaid"],
   "additionalProperties": false,
   "properties": {
     "intro": {
       "type": "string",
       "minLength": 40,
       "maxLength": 600,
-      "description": "One-paragraph intro describing the attacker goal at the root and how to read the tree top-down."
+      "description": "DEPRECATED (2026-05-30): no longer rendered — the section opens with a fixed one-line explanation. Retained as optional only so pre-2026-05-30 fragments still validate; new fragments should omit it."
     },
     "root_goal": {
       "type": "string",
@@ -27,7 +27,7 @@
         "orientation": {
           "type": "string",
           "enum": ["TD", "TB"],
-          "description": "Trees render top-down. `LR` is forbidden (the horizontal layout belonged to the retired §3.1 chains)."
+          "description": "Authored value is NOT used for layout — the renderer normalizes the unified tree to `graph LR` (sibling leaves stack vertically, so one diagram stays readable at any fan-out). Retained for backward compatibility; author `TD`."
         },
         "nodes": {
           "type": "array",
@@ -68,7 +68,7 @@
               "refinement": {
                 "type": "string",
                 "enum": ["AND", "OR"],
-                "description": "Optional AND/OR semantic annotation. AND = all children required; OR = any child suffices. The renderer surfaces this on the edge label so reviewers can read the tree without re-deriving the boolean structure."
+                "description": "DEPRECATED (2026-05-30): the rendered AND/OR edge label is now DERIVED from the destination node's class (`or_node`→OR, `and_node`→AND), which makes a per-edge value contradicting the parent class impossible. This field is no longer read; encode AND/OR via the parent node's `class` instead."
               }
             }
           }
@@ -79,12 +79,12 @@
       "type": "string",
       "minLength": 60,
       "maxLength": 800,
-      "description": "Paragraph beginning with '**Key takeaway:**'. The renderer auto-prepends that prefix; supply only the content."
+      "description": "DEPRECATED (2026-05-30): no longer rendered — the Branch table now carries the cross-finding view. Retained as optional only for backward compatibility with pre-2026-05-30 fragments; new fragments should omit it."
     },
     "mitigation_breakpoints": {
       "type": "array",
       "maxItems": 8,
-      "description": "Optional list of mitigations (M-NNN) whose deployment severs at least one subtree. Rendered as a sub-bullet list under the key takeaway when non-empty.",
+      "description": "DEPRECATED (2026-05-30): no longer rendered — the Branch table's Primary Mitigation column (derived from canonical mitigations[].threat_ids) supersedes it. Retained as optional only for backward compatibility; new fragments should omit it.",
       "items": {
         "type": "object",
         "required": ["mitigation", "breaks"],
@@ -99,7 +99,7 @@
       "type": "array",
       "minItems": 3,
       "maxItems": 12,
-      "description": "Rows of the Stage/Finding/Mitigation reference table — the linear walk through the most-likely path from root to leaves, kept for quick-reference parity with the prior chain layout.",
+      "description": "DEPRECATED (2026-05-30): no longer rendered. The section now shows a one-line findings pointer derived from the tree's leaf nodes (mitigations live in §9, not here). Retained as optional only for backward compatibility with pre-2026-05-30 fragments; new fragments should omit it.",
       "items": {
         "type": "object",
         "required": ["stage", "findings", "mitigations"],

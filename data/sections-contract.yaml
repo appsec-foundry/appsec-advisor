@@ -331,9 +331,11 @@ sections:
     fragment_type: computed                         # renderer composes from sub-sections below
     required_subsections:
       - verdict
+      # security_posture_at_a_glance renders the merged "Security Posture &
+      # Top Threats" section (heatmap + Top Threats table). The former
+      # top_findings / architecture_assessment / top_threats children are all
+      # folded into it.
       - security_posture_at_a_glance
-      - top_findings
-      - architecture_assessment
       - mitigations
       - operational_strengths
     optional_subsections:
@@ -346,7 +348,6 @@ sections:
       - "^STRIDE Coverage$"
       - "^Executive Overview$"
       - "^Immediate Actions( Required.*)?$"
-      - "^Top Threats( by Risk)?$"
       - "^Top Critical Findings$"
       - "^Key Strengths$"
       - "^Follow-up Actions$"
@@ -401,7 +402,13 @@ sections:
   # Critical/High findings (a green-status threat model does not need a
   # hero diagram).
   security_posture_at_a_glance:
-    heading: "### Security Posture at a Glance"
+    # 2026-05 — merged section. Renders: the risk-flow heatmap (Figure 2,
+    # forward-only) + an optional architecture diagram (Figure 1, from
+    # `.fragments/top-threats-architecture.md`) + the **Top Threats** table
+    # (one threat-grouped row per attack class, replacing the former
+    # Top Findings + Architecture Assessment). The standalone attack-path
+    # bullet list is no longer rendered.
+    heading: "### Security Posture & Top Threats"
     heading_numbered: false
     # `hybrid` = renderer composes a deterministic block (the diagram +
     # the threat-actor intro paragraph) AND consumes one LLM fragment
@@ -424,15 +431,19 @@ sections:
     # check_security_posture_structure`. Each invariant ID is referenced
     # in the QA repair-plan when violated, so adding/removing/renaming
     # an entry here changes the QA gate semantics.
-    # Categories:
-    #   D = Diagram structure (Mermaid block)
+    # Categories (must match the checks implemented in
+    # `qa_checks.py check_security_posture_structure`):
+    #   D = Diagram structure (Figure 2 heatmap Mermaid block)
     #   E = Edge structure (attack arrows + consequence arrows + alignment)
     #   C = Card / node label structure
     #   F = Column population
-    #   G = Glyph consistency
-    #   N = Narrative section below the diagram (intro + actor bullets + attack-paths)
-    #   B = Per-attack-class bullet structure
-    #   L = Linking format
+    #   G = Glyph consistency on the heatmap attack arrows
+    #   T = Top Threats table below the diagram
+    # 2026-05: the legacy per-attack-class BULLET list (former N/B/L invariants)
+    # is no longer rendered — it was replaced by the Top Threats table (T-rules).
+    # The `**Threat actors.**` intro + actor legend above the table is
+    # deterministic renderer output (`_build_security_posture_actor_legend`) and
+    # is intentionally NOT gated here.
     invariants:
       - { id: D1, rule: "mermaid block declares ELK renderer via `%%{init: {\"flowchart\": {\"defaultRenderer\": \"elk\"}} }%%` directive" }
       - { id: D2, rule: "mermaid block opens with `flowchart LR`" }
@@ -452,66 +463,27 @@ sections:
       - { id: F3, rule: "IMPACT column has 1–5 cards: 1 column header (HDR_I) + 1–4 business-impact cards" }
       - { id: G1, rule: "each glyph ①–⑦ appears at most once on attack-arrow labels" }
       - { id: G2, rule: "glyph order on attack arrows is ① ② … without gaps" }
-      - { id: G3, rule: "every glyph used in the diagram appears in exactly one attack-class bullet header below" }
-      - { id: N1, rule: "directly after the ```mermaid``` close-fence, an intro paragraph beginning `**Threat actors.**` introduces the actors" }
-      - { id: N2, rule: "two threat-actor bullets follow (one per visible actor card), each as a top-level `- **Actor Name**` bullet" }
-      - { id: N3, rule: "after the actor bullets, a section header `**Attack paths (numbered arrows in the diagram):**` introduces the per-class list" }
-      - { id: N4, rule: "1–7 attack-class bullets follow, one per non-empty class in attack_paths fragment, glyphs match diagram arrow labels" }
-      - { id: B1, rule: "each attack-class bullet header is `- **<glyph> <Class Title>** (<Actor> → <Target>) — <generic class description>`" }
-      - { id: B2, rule: "each attack-class bullet has a `Findings:` sub-bullet list with ≥1 F-NNN entry; sub-bullets follow the form `[F-NNN](#f-nnn) — Title`" }
-      - { id: B3, rule: "each attack-class bullet ends with `Impact:` line (single line, comma-separated outcome names from data/business-impact-taxonomy.yaml)" }
-      - { id: B5, rule: "if attack_chains is non-empty: `Attack chain:` sub-bullet list, each entry `[Chain N](#chain-N) — Title`" }
-      - { id: L1, rule: "every F-NNN reference inside a Findings sub-bullet is a markdown link `[F-NNN](#f-nnn) — Title`" }
-      - { id: L3, rule: "every chain reference inside an Attack-chain sub-bullet is a markdown link `[CC-NN](#cc-nn)` resolving to a `<a id=\"cc-nn\">` anchor in the §8.F Compound Attack Chains sub-section" }
+      # T — Top Threats table below the diagram (replaced the legacy bullet list).
+      - { id: T1, rule: "the Top Threats table header `| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |` is present below the diagram" }
+      - { id: T2, rule: "diagram ↔ table glyph parity: every heatmap attack-arrow glyph ①–⑦ appears exactly once as a Top Threats table-row `#` glyph, and vice-versa (emitted as `T2/G3`)" }
+      - { id: T3, rule: "the Top Threats table links findings into §8 via `[F-NNN](#f-nnn)`" }
 
-  top_findings:
-    heading: "### Top Findings"
-    heading_numbered: false
-    fragment_type: computed                         # 100% derived from threat-model.yaml + triage
-    data_source: "triage#ranking.views.top_findings.findings_ranked"
-    fallback_sort:                                  # when triage absent or v1
-      - "effective_severity:desc"
-      - "breach_distance:asc"
-      - "cvss:desc"
-      - "id:asc"
-    filter: "effective_severity in [Critical, High]"
-    table:
-      columns:
-        - { key: rank,        header: "#",                   width: narrow,  required: true }
-        - { key: criticality, header: "Criticality",         render: severity_badge, required: true }
-        - { key: path,        header: "Path",                render: path_glyph,     required: true }
-        - { key: finding,     header: "Finding",             render: finding_ref,    required: true }
-        - { key: component,   header: "Component",           render: component_ref,  required: true }
-        - { key: mitigations, header: "Primary Mitigations", render: mitigation_list, required: true }
-      rows:
-        # 2026-05 user-request (second iteration): cap Top Findings at 5
-        # so the Management Summary stays a true scan-first surface. §8
-        # Threat Register is the canonical full catalogue. min: 3 keeps
-        # small assessments from rendering an empty / 1-row tabelle.
-        min: 3
-        max: 5
-    footer_template: |
-      {% if total_qualifying > rendered_count %}
-      _+{{ total_qualifying - rendered_count }} additional ≥High findings — see [§8 Threat Register](#8-threat-register)._
-      {% endif %}
+  # 2026-05 — `top_findings` and `architecture_assessment` were MERGED into
+  # the single `top_threats` section below (one threat-grouped table that
+  # carries the per-finding ranking AND the cross-cutting architectural
+  # weakness, fully linked). Their renderers (`_render_top_findings`,
+  # `_render_architecture_assessment`) remain in compose for reference but are
+  # no longer wired into the Management Summary.
 
-      _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High (significant impact; exploit requires preconditions or chained step). **Path** glyphs ①–⑦ link to the matching attack-path bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._
-
-  architecture_assessment:
-    heading: "### Architecture Assessment"
-    heading_numbered: false
-    fragment_type: data
-    fragment: "ms-architecture-assessment.json"
-    schema:   "architecture-assessment.schema.json"
-    template: "architecture-assessment.md.j2"
-    table:
-      columns:
-        - { key: defect,       header: "Defect",       render: bold_text,     required: true }
-        - { key: description,  header: "Description",  render: plain_text,    required: true }
-        - { key: key_findings, header: "Key Findings", render: finding_list,  required: true }
-      rows:
-        min: 3
-        max: 6
+  # Top Threats — the merged threat-grouped table (replaced Top Findings +
+  # Architecture Assessment). 2026-05: FOLDED into `security_posture_at_a_glance`
+  # so the heatmap (Figure 2) and the table render under one
+  # "### Security Posture & Top Threats" heading. The renderer
+  # (`_compute_top_threats_rows` + `templates/fragments/top-threats.md.j2`,
+  # invoked from `_render_security_posture_at_a_glance`) joins the attack-paths
+  # fragment (class taxonomy → glyph, generic description, curated finding
+  # membership, impacts) with the deterministic threat/mitigation/component
+  # data. Every cell except the one-line class description is derived.
 
   mitigations:
     heading: "### Mitigations"
@@ -522,7 +494,7 @@ sections:
         heading: "#### Prioritized Mitigations"
         filter: "addresses_any_severity in [Critical, High]"
         sort: [effort_rank:asc, addressed_count:desc]
-        intro: "The mitigations below address the Critical and High findings in the Top Findings table and must be completed before any production deployment. Entries are ordered by effort (lowest first), then by number of threats addressed (highest first)."
+        intro: "The mitigations below address the Critical and High findings in the Top Threats table and must be completed before any production deployment. Entries are ordered by effort (lowest first), then by number of threats addressed (highest first)."
       - id: followup_mitigations
         heading: "#### Follow-up Mitigations"
         filter: "addresses_any_severity in [Medium, Low] OR (addresses_any_severity == High AND id NOT IN prioritized_mitigations)"
@@ -1282,7 +1254,17 @@ sections:
       cross_cutting:
         - "7.13 Defense-in-Depth Summary"
 
-      domain_required_patterns: {}
+      # §7.2 (authentication flows) and §7.3 (session-token lifecycle) MUST
+      # each carry at least one `sequenceDiagram` — the auth/session flow is
+      # the architecture view the report is built around, and its repeated
+      # absence in v2 output was the dominant §7 complaint (2026-05-30 user
+      # report). Section-scoped (at least one diagram anywhere under the
+      # heading), so pure-primitive sub-controls still need none.
+      domain_required_patterns:
+        "7.2 Identity and Authentication Controls":
+          - "sequenceDiagram"
+        "7.3 Session and Token Controls":
+          - "sequenceDiagram"
 
       domain_required_rules:
         "7.2 Identity and Authentication Controls":

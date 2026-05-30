@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/attack-surface-overrides.schema.json",
   "title": "Phase 6 sidecar — attack surface curations + additions",
-  "description": "Phase-6 LLM persists curation hints + additions at PHASE_END. The Python aggregator (build_threat_model_yaml.py) emits baseline attack_surface[] from .route-inventory.json[routes] (all 112+ routes), then applies these overrides: curations[] filter the noisy baseline to ~20-30 high-signal entries; additions[] adds non-route surfaces (SSH, file watchers, scheduled jobs, cloud events) absent from route-inventory. See docs/substep2-deterministic-migration.md §2.3.",
+  "description": "Phase-6 LLM persists curation hints + additions at PHASE_END. The Python aggregator (build_threat_model_yaml.py) emits baseline attack_surface[] from .route-inventory.json[routes] (all 112+ routes), then applies these overrides: curations[] filter the noisy baseline to ~20-30 high-signal entries; additions[] adds non-route surfaces (SSH, file watchers, scheduled jobs, cloud events) absent from route-inventory.",
   "type": "object",
   "required": ["schema_version"],
   "additionalProperties": false,

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/assets.schema.json",
   "title": "Phase 5 sidecar — assets",
-  "description": "Structured asset inventory the Phase-5 (Asset Identification) LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[assets[]] without re-composing from working memory in Phase 11. See docs/substep2-deterministic-migration.md §2.2.",
+  "description": "Structured asset inventory the Phase-5 (Asset Identification) LLM persists at PHASE_END. Consumed by scripts/build_threat_model_yaml.py to populate threat-model.yaml[assets[]] without re-composing from working memory in Phase 11.",
   "type": "object",
   "required": ["schema_version", "assets"],
   "additionalProperties": false,

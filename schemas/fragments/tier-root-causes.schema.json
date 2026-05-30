@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/tier-root-causes.schema.json",
   "title": "Phase 10b sidecar — tier root causes",
-  "description": "Phase-10b LLM persists at PHASE_END. Natural-language aggregation of root-cause patterns per architectural tier (edge/server/data). Rendered in the §1 Security Posture at a Glance heatmap. The Python aggregator can derive a fallback (top-N threat titles per tier), but the LLM produces better cross-finding pattern recognition (e.g. 'missing input neutralization on raw SQL paths' aggregating 4 separate injection findings). See docs/substep2-deterministic-migration.md §2.8.",
+  "description": "Phase-10b LLM persists at PHASE_END. Natural-language aggregation of root-cause patterns per architectural tier (edge/server/data). Rendered in the §1 Security Posture at a Glance heatmap. The Python aggregator can derive a fallback (top-N threat titles per tier), but the LLM produces better cross-finding pattern recognition (e.g. 'missing input neutralization on raw SQL paths' aggregating 4 separate injection findings).",
   "type": "object",
   "required": ["schema_version", "tier_root_causes"],
   "additionalProperties": false,

@@ -15,18 +15,19 @@
 {#-   linkstyle_alignment          — [int]                                          -#}
 {#-   linkstyle_attacks            — [int]                                          -#}
 {#-   linkstyle_consequences       — [int]                                          -#}
-### Security Posture at a Glance
-
+{#- NOTE: no section heading here — the renderer emits the combined           -#}
+{#- `### Security Posture & Top Threats` heading + `Figure 2` caption before  -#}
+{#- this diagram block.                                                       -#}
 {{ data.intro_paragraph }}
 
 ```mermaid
-%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%
+%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 45, "rankSpacing": 95}} }%%
 flowchart LR
     subgraph ACTORS[" "]
         direction TB
         HDR_A["<b>{{ data.subgraph_actors.header_label }}</b>"]:::columnHeader
 {%- for card in data.subgraph_actors.cards %}
-        {{ card.id }}(["{% if card.fa_icon %}{{ card.fa_icon }} {% endif %}{{ card.label }}<br/><i>{{ card.subtitle }}</i>"]):::{{ card.severity_class }}
+        {{ card.id }}(["{% if card.fa_icon %}{{ card.fa_icon }} {% endif %}{{ card.label }}"]):::{{ card.severity_class }}
 {%- endfor %}
     end
 
@@ -35,9 +36,9 @@ flowchart LR
         HDR_T["<b>{{ data.subgraph_tiers.header_label }}</b>"]:::columnHeader
 {%- for tier in data.subgraph_tiers.cards %}
 {%- if tier.cluster_label_lines and tier.cluster_label_lines|length > 0 %}
-        {{ tier.node_id }}["{% if tier.fa_icon %}{{ tier.fa_icon }} {% endif %}{{ tier.header_summary or tier.name }}<br/>{{ tier.cluster_label_lines | join("<br/>") }}"]:::{{ tier.css_class }}
+        {{ tier.node_id }}["{{ tier.header_summary or tier.name }}<br/>{{ tier.cluster_label_lines | join("<br/>") }}"]:::{{ tier.css_class }}
 {%- else %}
-        {{ tier.node_id }}["{% if tier.fa_icon %}{{ tier.fa_icon }} {% endif %}{{ tier.name }}<br/>{{ tier.root_causes_line }}<br/>{{ tier.components_line }}<br/>{{ tier.severity_counts_line }}"]:::{{ tier.css_class }}
+        {{ tier.node_id }}["{{ tier.name }}<br/>{{ tier.components_line }}"]:::{{ tier.css_class }}
 {%- endif %}
 {%- endfor %}
     end
@@ -51,9 +52,10 @@ flowchart LR
     end
 
     %% Invisible alignment hints. Two purposes:
-    %%   (a) keep the per-component alignment edges (e.g. SHOPUSER --- BROWSER,
-    %%       ANON --- SERVER) so attack arrows route horizontally without
-    %%       crossing tier boxes;
+    %%   (a) keep per-component alignment edges (e.g. ANON --- SERVER) so the
+    %%       forward attack arrows route horizontally without crossing tier
+    %%       boxes (the diagram is forward-only: actor → tier → impact, no
+    %%       backward relay edges into the actor column);
     %%   (b) chain the three column headers (HDR_A, HDR_T, HDR_I) across
     %%       subgraph boundaries so ELK pins them on the same Y line.
 {%- for e in data.alignment_edges %}

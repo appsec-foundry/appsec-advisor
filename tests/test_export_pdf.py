@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -354,3 +355,31 @@ def test_real_pdf_generation(tmp_path):
     assert pdf.exists()
     assert pdf.stat().st_size > 1000
     assert pdf.read_bytes().startswith(b"%PDF-")
+
+
+def test_inject_table_colgroups_content_aware():
+    """gfm drops pipe-table dash widths, so export injects a content-aware
+    <colgroup>: link/finding columns widest, id/severity narrow."""
+    html = (
+        "<table>\n<thead>\n<tr>\n"
+        "<th>Asset</th><th>ID</th><th>Classification</th>"
+        "<th>Description</th><th>Linked Threats</th>\n</tr>\n</thead>\n<tbody>\n"
+        "<tr><td>User Credentials Database</td><td>A-001</td><td>Restricted</td>"
+        "<td>" + ("x" * 180) + "</td>"
+        "<td><a href=\"#f-001\">F-001</a> (SQL injection authentication bypass via login route)</td></tr>\n"
+        "</tbody>\n</table>"
+    )
+    out = ep._inject_table_colgroups(html)
+    assert out.count("<colgroup>") == 1
+    pct = [int(x) for x in re.findall(r"width:\s*(\d+)%", out)]
+    assert len(pct) == 5
+    asset, idc, classification, desc, linked = pct
+    assert idc < classification < asset           # short cols ordered, id narrowest
+    assert desc > asset and linked > desc          # description wide, linked widest
+    # Idempotent — a second pass does not add another colgroup.
+    assert ep._inject_table_colgroups(out) == out
+
+
+def test_inject_table_colgroups_skips_existing():
+    html = "<table>\n<colgroup><col style=\"width: 50%\"/></colgroup>\n<tr><th>A</th><th>B</th></tr>\n</table>"
+    assert ep._inject_table_colgroups(html) == html

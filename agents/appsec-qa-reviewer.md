@@ -165,18 +165,14 @@ If `Write/Edit` is blocked by the PreToolUse hook, emit a `linkify_file_path` ac
 
 **Print now:** `[qa-reviewer] ▶ Check 3 — Checking threat/mitigation cross-references…`
 
-Single in-memory extraction pass (one read of `threat-model.md`): all T/F-IDs + Risk + Mitigations cells (§8), all M-IDs + Addresses lines (§9), Critical Attack Tree Quick-ref rows, requirement-ID references.
+Single in-memory extraction pass (one read of `threat-model.md`): all T/F-IDs + Risk + Mitigations cells (§8), all M-IDs + Addresses lines (§9), Critical Attack Tree Findings-pointer T-IDs, requirement-ID references.
 
 **3a/3b — Orphaned T↔M (from `PRE_PASS_JSON.xrefs.issues`).** Iterate `orphaned-mitigation-ref:` / `orphaned-threat-ref:` entries. For each:
 - Orphaned M-ref in §8 Mitigations cell → add `<sup>⚠ M-xxx not found in Mitigation Register</sup>` next to it.
 - Orphaned T-ref in §9 Addresses line → add `<sup>⚠ T-xxx not found in Threat Register</sup>`.
 - Asymmetric (T lists M but M's Addresses lacks T, or vice versa) → comment on both sides.
 
-**3c — Critical Findings coverage (Attack Tree + §8.B).** Locate the Quick-reference table inside `## Critical Attack Tree` (call this `ATTACK_TREE_TABLE`). Skip when the section is absent (Critical count < 2). For each Critical-rated T/F that is not in `ATTACK_TREE_TABLE`, **add one row** at the end:
-```
-| [T-NNN](#t-NNN) | <Title from §8 row> | <Component> | <Violated cell or dash> | [M-NNN](#m-NNN) · <P-tag> |
-```
-Reverse direction: T-IDs in `ATTACK_TREE_TABLE` not in §8 get `<sup>⚠ T-xxx not found in Threat Register</sup>`. Missing mitigation link in a row → `<!-- QA: Critical finding T-xxx has no Mitigation link in the Attack Tree table — link to [M-NNN] -->`.
+**3c — Critical Findings coverage (Attack Tree + §8.B).** Skip when the `## Critical Attack Tree` section is absent (Critical count < 2). The section is composed deterministically — its one-line **Findings** pointer is derived from the tree's leaf nodes, so do **not** hand-edit it (there is no quick-reference table to maintain any more). Verify coverage instead: every Critical-rated T/F in §8 MUST appear as a leaf, i.e. in the Findings pointer. If one is missing, the `ms-critical-attack-tree.json` fragment omitted it — surface via repair plan with `action_type: rerender_with_composer_fixes` (the fix is to re-author the fragment, not to patch the rendered markdown). Reverse direction: a `T-NNN` in the Findings pointer that has no §8 row → `<sup>⚠ T-xxx not found in Threat Register</sup>`.
 
 **3d / 3e — Requirement reference validity** (only when `.requirements.yaml` exists and `source:` is not `"disabled"`, `"skipped"`, or `"unavailable"`). Build the known-ID set from `categories[].requirements[].id`. Scan the document for bracketed `[XXX-N]`-style tags. Unknown → `<sup>⚠ QA: [ID] is not a known requirement — verify against .requirements.yaml</sup>`. Valid but `url: null` → `<!-- QA: [ID] valid but URL is null — add url to requirements YAML -->`. For requirement-sourced threats (`source: requirements-compliance` per `.threats-merged.json#threats[].source`), assert the Threat Scenario cell carries `Violated: [ID](url), …`; flag missing inline notes. For mitigations addressing requirement-linked threats, assert `**Fulfills Requirements:**` line present.
 
@@ -184,7 +180,7 @@ When `.requirements.yaml` is missing/disabled, skip 3d/3e with `[qa-reviewer]   
 
 **3f / 3g / 3h / 3i / 3j / 3k / 3l — already deterministic.** These are covered by `check_inline_code_format`, `check_label_as_code`, `check_strengths_row_quality`, `check_subcontrol_naming_canonical`, `check_invariants`, the autolink-guard pass in the renderer, and the contract gate. If any of `PRE_PASS_JSON.{inline_code_format, label_as_code, strengths_row_quality, subcontrol_naming_canonical}` carries issues that are still present after `apply_prose_fixes.py`, surface them via the repair plan — do **not** re-implement the rules here. The rule reference for unusual edge cases is `shared/qa-crossref-rules.md`.
 
-**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> orphans annotated, <n> Critical added to Attack Tree, <n> requirement refs validated, <n> unknown req refs, <n> missing Violated/Fulfills annotations`
+**Print when done:** `[qa-reviewer]   ↳ Cross-references: <n> orphans annotated, <n> Critical coverage gaps surfaced, <n> requirement refs validated, <n> unknown req refs, <n> missing Violated/Fulfills annotations`
 
 ---
 
@@ -281,7 +277,7 @@ The canonical structural-quality presence rows (excerpt — full list in `data/s
 | `## 5. Attack Surface` | Present and contains a Markdown table. |
 | `## 7. Security Architecture` | Present with `### 7.1 Security Control Overview` through `### 7.13 Defense-in-Depth Summary`. |
 | `## 8. Threat Register` | Present with ≥1 data row. |
-| `## Critical Attack Tree` | Present when §8 has ≥2 Critical rows. Must contain a Mermaid `graph TD` block (goal-decomposition) plus a Quick-reference table. Omitted entirely when Critical count < 2. |
+| `## Critical Attack Tree` | Present when §8 has ≥2 Critical rows. Must contain a one-line explanation, a single Mermaid `graph LR` tree (goal-decomposition, short `T-NNN` leaf boxes), and a one-line **Findings** pointer below it. No Key-takeaway, Mitigation-breakpoints, or quick-reference table (all retired). Omitted entirely when Critical count < 2. |
 | `## 9. Mitigation Register` | Present and contains at least one `### … M-\d+` heading. |
 | `## 10. Out of Scope` | Present. |
 
@@ -300,7 +296,7 @@ For the small set of issues the pre-pass cannot decide:
    - **Node-count overload.** Nodes counted on lines matching `^\s*\w+[\[\(]`. When > 7 → `<!-- QA: theme "<heading>" diagram has <n> nodes — the cap is 7. Simplify, split, or drop. -->`.
    - **Missing Key takeaway.** Diagram present without `**Key takeaway:**` line between the closing fence and the first labelled block → `<!-- QA: theme "<heading>" diagram is missing its **Key takeaway:** sentence -->`.
    - **Mandatory-diagram enforcement.** Read `DIAGRAM_DEPTH` from the header metadata row. At `standard+`, `2.4.4 Authentication` is mandatory; at `thorough`, `2.4.3 Secret Management` is also mandatory. `2.4.6 Input Validation` and `2.4.8 Defense-in-Depth` remain forbidden at every depth. Mandatory + missing → `<!-- QA: theme "<heading>" is missing its mandatory Mermaid diagram at DIAGRAM_DEPTH=<depth> -->`.
-4. **Critical Attack Tree presence + layout.** When §8 has ≥2 Critical rows but the `## Critical Attack Tree` heading is missing (or uses `graph LR` instead of `graph TD`, or contains per-finding prose blocks instead of the Quick-reference table), surface via repair plan with `action_type: rerender_with_composer_fixes`.
+4. **Critical Attack Tree presence + layout.** When §8 has ≥2 Critical rows but the `## Critical Attack Tree` heading is missing (or the tree is not a single `graph LR` block, or it carries per-finding prose blocks / a retired quick-reference table / Key-takeaway / Mitigation-breakpoints instead of the one-line Findings pointer), surface via repair plan with `action_type: rerender_with_composer_fixes`.
 
 ### 7c — Consistency invariants
 

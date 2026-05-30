@@ -48,14 +48,11 @@ Incremental reruns help keep the architecture view and threat model aligned with
 ## Security notes
 
 > [!IMPORTANT]
-> ⚠ **Treat the repository as untrusted input by default.** Repo content flows into the LLM (prompt injection) and the shipped Bash allow-list still includes RCE-capable primitives (`python3`, `awk`, `sed`) — successful injection can become local command execution. For third-party or vendor code, run with `--trust-mode untrusted` and inside an isolated container or VM. See [SECURITY.md → Known issues](SECURITY.md#known-issues--untrusted-repositories).
+> **Treat any repository you scan as untrusted input.** Its contents flow into the LLM, so a repo can attempt prompt injection — and because the default Bash allow-list still contains general-purpose interpreters (`python3`, `awk`, `sed`), a successful injection can escalate into local command execution. For third-party or vendor code, run with `--trust-mode untrusted` inside a container or VM. Details in [SECURITY.md → Known issues](SECURITY.md#known-issues--untrusted-repositories).
 
-- **Untrusted-repo risks** *(full table in SECURITY.md)*: prompt injection → RCE, SSRF via `docs/related-repos.yaml`, symlink-driven file reads pointing outside the repo, repo-owned `.claude/` hooks loaded by Claude Code before the plugin runs, argument injection in `git` invocations.
-- **Data sent to Anthropic:** source files of analysed components, manifests, configuration — not the whole repo. `.recon-summary.md` may reference filenames containing secrets (values are masked to first 4 chars + `****`). Prompt-cache segments live on Anthropic infrastructure for the cache TTL. The plugin cannot run air-gapped; `api.anthropic.com` egress is required.
-- **What the plugin does locally:** deterministic Python rendering of the final report, schema validation on every intermediate artefact, a small condition parser instead of `eval()`, secret-value masking with a `validate_intermediate.py` post-check (`****` + max 4-char prefix), and `secret_scan.py` running before `publish-threat-model` exposes a report.
-- **Permission boundary:** file ops are scoped to `${REPO_ROOT}`, `${PLUGIN_ROOT}`, and `${OUTPUT_DIR}` in `data/required-permissions.yaml`. Shell uses a curated 30-entry allow-list (see `.claude/settings.json`). Full Bash hardening is tracked in [`permissions.md`](permissions.md).
-- **`--trust-mode untrusted`** (also `--strict-urls`) runs `scripts/preflight_untrusted.py` first (rejects repo-owned `.claude/` hooks, escaping symlinks, unvalidated related-repo URLs), enforces an explicit `APPSEC_URL_ALLOWLIST`, and sets `APPSEC_LOG_REDACT_PATHS=1` so `.agent-run.log` does not carry sensitive filenames.
-- **Operator checklist** for third-party code: container/VM, egress to `api.anthropic.com` only (plus your allowlist hosts), remove `docs/related-repos.yaml` or define `APPSEC_URL_ALLOWLIST`, pass `--output` outside the repo, no SSH-agent forwarding, no cached cloud-CLI tokens, and rotate any secret recon might plausibly find (masking prevents report leak — not the fact that the API already saw the snippet).
+**What leaves your machine.** Only the source, manifests, and config of the components under analysis — never the whole repo. Secret snippets surfaced in `.recon-summary.md` are masked (up to 4 characters kept, the rest `****`). The plugin needs `api.anthropic.com` and cannot run air-gapped; cached prompt segments live on Anthropic infrastructure for the cache TTL.
+
+**How the report is produced.** The report is rendered by deterministic Python (Jinja), not by the model, so the same input yields the same report. Intermediate artefacts are schema-validated, template conditions use a small parser instead of `eval()`, and `secret_scan.py` blocks `publish-threat-model` from exposing an unmasked secret.
 
 ---
 
@@ -516,7 +513,8 @@ At a high level:
 3. Bundle `org-profile/` into that plugin and point `config.json` at it.
 4. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
 
-Full runbook: [`docs/internal-plugin-packaging.md`](docs/internal-plugin-packaging.md). Profile fields and resolver precedence: [`docs/org-profiles.md`](docs/org-profiles.md).
+- Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
+- Examples: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · [local build](docs/internal-plugin-packaging.md#local-build-no-tarball)
 
 ## Roadmap
 

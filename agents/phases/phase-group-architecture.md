@@ -315,7 +315,7 @@ The Context diagram must give the reader a complete picture of who and what touc
 
 Edge labels on every Context arrow MUST include both the **protocol** AND the **authentication state** (e.g. `HTTPS · unauthenticated`, `WSS · API key in source`, `OAuth redirect`). A bare protocol label is incomplete.
 
-When the source code repository is public (detected by `.recon-summary.md` repo-visibility hint, or by the context resolver finding a public GitHub URL), it MUST appear as an `external` node with an attacker edge labelled `read source code` — even when no secrets are observed, the public-repo property itself shifts the threat model.
+When the source code repository is public (detected by `.recon-summary.md` repo-visibility hint, or by the context resolver finding a public GitHub URL), it MUST appear as an `external` node with **two** attacker edges, because a public repo shifts the threat model in both directions: a **read** edge labelled `read source code` (recon advantage + committed-secret exposure, drawn even when no secrets are observed) AND a **write/contribution** edge labelled `contribute code (PR)` representing that any internet user can fork and open a pull request — the path by which malicious or insecure code reaches the trunk (recon 7.27a; modelled as the untrusted-external-contribution Tampering/EoP threat). For a private/internal repo, draw neither edge — only vetted developers commit, so the contribution threat does not apply.
 
 ### Technology Architecture — key-technology diagram + per-layer heatmap tables (Section 2.x)
 
@@ -834,8 +834,7 @@ The renderer (M3.3 / D1 — `pregenerate_fragments.py:_data_flow_edges`) reads t
 
 ### Phase 3 sidecar — `.components.json` (Substep-2 deterministic migration)
 
-**Why:** persist the canonical `components[]` to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly instead of forcing the orchestrator to re-compose from working memory at the budget-critical end of Stage 1. See [docs/substep2-deterministic-migration.md §2.1](../../docs/substep2-deterministic-migration.md).
-
+**Why:** persist the canonical `components[]` to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly instead of forcing the orchestrator to re-compose from working memory at the budget-critical end of Stage 1.
 **Protocol (runs immediately after `components[]` is finalized, BEFORE PHASE_END):**
 
 1. **No ID reservation needed** — component IDs are LLM-chosen slugs canonicalized via `canonicalize_component_id.py` (already done above).
@@ -1110,8 +1109,7 @@ If your project uses different classification labels, adapt the legend wording b
 
 ### Phase 5 sidecar — `.assets.json` (Substep-2 deterministic migration)
 
-**Why:** Phase 11 Substep 2 historically required the orchestrator to re-author the full `threat-model.yaml` from working memory, including all assets — which routinely consumed 15-20 turns at the end of the pipeline where budget is most constrained (verified MAX_TURNS bootstrap-stub failure on 2026-05-24 juice-shop run). The deterministic yaml builder (`scripts/build_threat_model_yaml.py`) eliminates that turn-burn by reading per-phase sidecars instead. Phase 5 is the PoC pilot. See [docs/substep2-deterministic-migration.md §2.2](../../docs/substep2-deterministic-migration.md).
-
+**Why:** Phase 11 Substep 2 historically required the orchestrator to re-author the full `threat-model.yaml` from working memory, including all assets — which routinely consumed 15-20 turns at the end of the pipeline where budget is most constrained (verified MAX_TURNS bootstrap-stub failure on 2026-05-24 juice-shop run). The deterministic yaml builder (`scripts/build_threat_model_yaml.py`) eliminates that turn-burn by reading per-phase sidecars instead. Phase 5 is the PoC pilot.
 **Protocol (3 deterministic Bash calls, runs immediately after the §4 table is rendered, BEFORE the PHASE_END log line):**
 
 1. **Reserve A-NNN IDs** for every asset row in the §4 table:
@@ -1231,6 +1229,17 @@ These endpoints require at least a valid session, JWT, or API key. They still re
 - **Entry Point column:** name the handler/route cleanly. Do NOT append product-specific training-tier annotations such as `(LEVEL_1–N)` — those are VulnerableApp-internal enum ranges and are meaningless to the reader of a generic threat model. If the vulnerable tier matters for a specific threat, name it in that threat's entry (e.g. "SQL injection in the base AuthenticationVulnerability handler"), not in the shared Entry Point column.
 - The QA reviewer's Section 5 structural check verifies that both sub-section headings exist in Title Case with entry counts, and that the counts match the table rows — deviations are auto-repaired.
 
+**Authenticated-surface completeness (§5.2) — mandatory.** The authenticated entry points are NOT just "the endpoints that happen to carry a finding". §5.2 must map the *reachable* authenticated surface — every endpoint an account-holder or malicious insider can call once they hold a valid session/JWT — because that is the surface for account-takeover, BOLA/IDOR, and privilege-escalation follow-up. A §5.2 table with only 3–4 rows on a real application is almost always under-enumerated and will be flagged.
+
+When `.route-inventory.json` is absent (no automated route extraction matched the framework), you author §5.2 directly from the route files — enumerate the authenticated surface **by capability group**, one representative row per distinct operation, covering at minimum (where present in the repo):
+
+- **Identity & account:** profile read/update, password change, email change, 2FA enrol, session/logout, API-token issue.
+- **User-owned objects (BOLA-prone):** basket/cart, orders/checkout, addresses, payment cards / wallet, user-generated content (reviews, complaints, messages, uploads).
+- **Privileged / admin:** admin dashboards, user management, configuration, feature flags, data export/import, anything role-gated.
+- **Out-of-band authenticated surfaces:** B2B/partner APIs, webhooks that require a signing key, authenticated WebSocket channels, scheduled-job trigger endpoints.
+
+Prefer one row per *capability* (e.g. "`PUT /api/Addresss/:id` — address update") over enumerating every CRUD verb separately when they share a handler and risk profile. Put the role/authentication requirement in the `Required Role` column. An endpoint with no current finding still belongs in §5.2 — set `linked_threats: []` and use `notes` to state why it is attack surface (e.g. "user-owned object; ownership check relies on body-supplied UserId").
+
 ### Phase 6 yaml schema — `attack_surface[]`
 
 Every entry-point identified in Phase 6 **MUST** be written into `threat-model.yaml → attack_surface[]` with the following fields. Without `auth_required`, the deterministic §5 fragment generator (`pregenerate_fragments.py`) cannot split the table — all entries fall into the Unauthenticated bucket and §5.2 renders "(0)".
@@ -1252,8 +1261,7 @@ attack_surface:
 
 ### Phase 6 sidecar — `.attack-surface-overrides.json` (Substep-2 deterministic migration)
 
-**Why:** the Python aggregator emits `attack_surface[]` baseline from ALL routes in `.route-inventory.json` (typically 100+ entries). The Phase-6 LLM curates that baseline down to the ~20-30 entries that actually represent attack risk (unauthenticated, management surface, novel paths) and adds non-route surfaces (SSH, scheduled jobs, file watchers). This sidecar persists the curation + additions so the aggregator produces the same curated §5 the LLM produces today. See [docs/substep2-deterministic-migration.md §2.3](../../docs/substep2-deterministic-migration.md).
-
+**Why:** the Python aggregator emits `attack_surface[]` baseline from ALL routes in `.route-inventory.json` (typically 100+ entries). The Phase-6 LLM curates that baseline down to the ~20-30 entries that actually represent attack risk (unauthenticated, management surface, novel paths) and adds non-route surfaces (SSH, scheduled jobs, file watchers). This sidecar persists the curation + additions so the aggregator produces the same curated §5 the LLM produces today.
 **Protocol (after §5 sub-section tables are rendered, BEFORE PHASE_END):**
 
 1. **Collect the route_ids you kept** from `.route-inventory.json[routes][].route_id` for §5.1 + §5.2. The route_id is the key the aggregator uses to filter the baseline.
@@ -1325,8 +1333,7 @@ The `enforcement` value should describe the **observed** enforcement mechanism (
 
 ### Phase 7 sidecar — `.trust-boundaries.json` (Substep-2 deterministic migration)
 
-**Why:** persist the trust-boundary catalog to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly instead of forcing the orchestrator to re-author from working memory. See [docs/substep2-deterministic-migration.md §2.4](../../docs/substep2-deterministic-migration.md).
-
+**Why:** persist the trust-boundary catalog to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly instead of forcing the orchestrator to re-author from working memory.
 **Protocol (after the trust-boundary table is finalized, BEFORE PHASE_END):**
 
 1. **No ID reservation needed** — boundary IDs are LLM-chosen `tb-N` slugs.
@@ -1740,8 +1747,7 @@ This domain feeds `### 7.11 Operations, Runtime and Supply Chain Controls` and r
 
 ### Phase 8 sidecar — `.security-controls.json` (Substep-2 deterministic migration)
 
-**Why:** persist the security-controls catalog to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly. The aggregator joins this sidecar with `.architecture-coverage.json[control_assessments]` — sidecar wins on conflict (LLM has more context than the static rule engine). See [docs/substep2-deterministic-migration.md §2.5](../../docs/substep2-deterministic-migration.md).
-
+**Why:** persist the security-controls catalog to disk so the Phase 11 Substep 2 aggregator (`scripts/build_threat_model_yaml.py`) can read it directly. The aggregator joins this sidecar with `.architecture-coverage.json[control_assessments]` — sidecar wins on conflict (LLM has more context than the static rule engine).
 **Protocol (after the 14-domain control loop finishes, BEFORE PHASE_END):**
 
 1. **No ID reservation needed** — controls have no T-/M-style IDs; they key off `(domain, control)`.

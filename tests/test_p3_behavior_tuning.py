@@ -131,65 +131,64 @@ class TestVictimTargetingArrowDirection:
     direction."""
 
     def test_target_victim_form_emits_dual_arrows(self):
-        """LLM-authored fragment shape: ``target: victim``."""
+        """LLM-authored fragment shape: ``target: victim``. The function
+        returns ``(attack_arrows, relay_arrows)``; the injection edge is in
+        attack_arrows (grouped, no text label), the delivery edge in relays."""
         attack_paths = {
             "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"}]
         }
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        assert len(arrows) == 2, "victim-targeting must emit 2 arrows"
-        # Edge 1 — injection attacker → client tier.
-        assert arrows[0] == {"src": "ANON", "glyph": "①", "label": "XSS", "dst": "BROWSER"}
-        # Edge 2 — consequence client tier → victim.
-        assert arrows[1] == {"src": "BROWSER", "glyph": "①", "label": "XSS", "dst": "SHOPUSER"}
+        arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
+        # Edge 1 — injection attacker → client tier (grouped, label dropped).
+        assert arrows == [{"src": "ANON", "glyph": "①", "label": "", "dst": "BROWSER"}]
+        # Edge 2 — relay client tier → victim, sharing the glyph.
+        assert relays == [{"src": "BROWSER", "glyph": "①", "label": "XSS", "dst": "SHOPUSER"}]
 
     def test_target_client_actor_victim_form_emits_dual_arrows(self):
         """Deterministic-fallback shape: ``target: client`` +
-        ``actor: victim-required``. Pre-P3 this triggered the else branch
-        and emitted SHOPUSER → BROWSER (wrong direction)."""
+        ``actor: victim-required``. Must route attacker→client + client→victim,
+        never victim→client."""
         attack_paths = {
             "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "client"}]
         }
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        assert len(arrows) == 2
-        # Same dual-arrow shape as the explicit target=victim form.
-        assert arrows[0]["src"] == "ANON"
-        assert arrows[0]["dst"] == "BROWSER"
-        assert arrows[1]["src"] == "BROWSER"
-        assert arrows[1]["dst"] == "SHOPUSER"
+        arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
+        assert arrows[0]["src"] == "ANON" and arrows[0]["dst"] == "BROWSER"
+        assert relays[0]["src"] == "BROWSER" and relays[0]["dst"] == "SHOPUSER"
 
     def test_csrf_also_dual_arrow(self):
         """CSRF is the second victim-targeting class; same treatment."""
         attack_paths = {
             "attack_paths": [{"class": "cross-site-request-forgery", "actor": "victim-required", "target": "client"}]
         }
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        assert len(arrows) == 2
+        arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert arrows[0]["src"] == "ANON" and arrows[0]["dst"] == "BROWSER"
-        assert arrows[1]["src"] == "BROWSER" and arrows[1]["dst"] == "SHOPUSER"
+        assert relays[0]["src"] == "BROWSER" and relays[0]["dst"] == "SHOPUSER"
 
 
-class TestDirectAttackArrowsUnchanged:
-    """The pre-P3 single-arrow shape for direct-attack classes must be
-    preserved. Regression guard so the dual-arrow logic doesn't bleed
-    into Injection / Auth Bypass / RCE etc."""
+class TestDirectAttackArrowsGrouped:
+    """Reference form (2026-05): direct-attack arrows are grouped per
+    (actor, tier) — one arrow carrying all of that actor's glyphs against the
+    tier, with no per-class text label. `_build_attack_arrows` returns
+    ``(attack_arrows, relay_arrows)``."""
 
-    def test_injection_emits_single_arrow_anon_to_application(self):
+    def test_injection_emits_single_grouped_arrow_anon_to_application(self):
         attack_paths = {"attack_paths": [{"class": "injection", "actor": "internet-anon", "target": "application"}]}
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        assert len(arrows) == 1
-        assert arrows[0] == {"src": "ANON", "glyph": "①", "label": "Injection", "dst": "SERVER"}
+        arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
+        assert arrows == [{"src": "ANON", "glyph": "①", "label": "", "dst": "SERVER"}]
+        assert relays == []
 
-    def test_rce_emits_single_arrow_anon_to_application(self):
+    def test_rce_emits_single_grouped_arrow_anon_to_application(self):
         attack_paths = {
             "attack_paths": [{"class": "remote-code-execution", "actor": "internet-anon", "target": "application"}]
         }
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
+        arrows, _relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert len(arrows) == 1
         assert arrows[0]["src"] == "ANON"
         assert arrows[0]["dst"] == "SERVER"
 
-    def test_mixed_classes_correct_arrow_count(self):
-        """5 direct + 1 victim = 5 + 2 = 7 arrows."""
+    def test_same_actor_same_tier_classes_collapse_to_one_arrow(self):
+        """3 direct classes from the same actor against the same tier collapse
+        to one grouped arrow carrying ``① ② ③``; the victim class adds a second
+        grouped arrow (anon→client) plus a relay."""
         attack_paths = {
             "attack_paths": [
                 {"class": "injection", "actor": "internet-anon", "target": "application"},
@@ -198,54 +197,55 @@ class TestDirectAttackArrowsUnchanged:
                 {"class": "cross-site-scripting", "actor": "victim-required", "target": "client"},
             ]
         }
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        assert len(arrows) == 5  # 3 direct + 2 victim-arrows
+        arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
+        assert len(arrows) == 2  # grouped app arrow + grouped client arrow
+        app = next(a for a in arrows if a["dst"] == "SERVER")
+        assert app["glyph"] == "① ② ③"
+        assert len(relays) == 1 and relays[0]["dst"] == "SHOPUSER"
 
 
 class TestGlyphSharingAcrossDualArrow:
-    """Both arrows of a victim-targeting class share the same glyph so
-    they render as one numbered path with two segments."""
+    """A victim-targeting class shares one glyph across its injection arrow
+    and its relay arrow, and the glyph index advances once per class."""
 
-    def test_dual_arrows_share_glyph(self):
+    def test_injection_and_relay_share_glyph(self):
         attack_paths = {
             "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"}]
         }
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        assert arrows[0]["glyph"] == arrows[1]["glyph"] == "①"
+        arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
+        assert arrows[0]["glyph"] == "①"
+        assert relays[0]["glyph"] == "①"
 
     def test_glyph_sequence_advances_per_class_not_per_arrow(self):
-        """Glyph index ticks once per attack-class, not once per emitted
-        arrow. After XSS (which emits 2 arrows with glyph ①) the next
-        direct attack should still be glyph ②, not ③."""
+        """XSS (glyph ①, emitted as anon→client arrow + relay) then a direct
+        injection must get glyph ②, not ③."""
         attack_paths = {
             "attack_paths": [
                 {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"},
                 {"class": "injection", "actor": "internet-anon", "target": "application"},
             ]
         }
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        # First class XSS: glyphs are ① ①
-        assert arrows[0]["glyph"] == "①"
-        assert arrows[1]["glyph"] == "①"
-        # Second class Injection: glyph is ②
-        assert arrows[2]["glyph"] == "②"
+        arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
+        xss = next(a for a in arrows if a["dst"] == "BROWSER")
+        inj = next(a for a in arrows if a["dst"] == "SERVER")
+        assert xss["glyph"] == "①"
+        assert inj["glyph"] == "②"
+        assert relays[0]["glyph"] == "①"
 
 
 class TestNoAttackerActorPresent:
-    """When the actor list contains ONLY the victim, no injection edge can
-    be emitted (no attacker to route the edge from). The consequence edge
-    still emits so the diagram remains correct."""
+    """When the actor list contains ONLY the victim, no injection arrow can be
+    emitted (no attacker to route from); only the client→victim relay edge is
+    produced."""
 
-    def test_only_victim_in_actor_list_emits_consequence_edge_only(self):
+    def test_only_victim_in_actor_list_emits_relay_only(self):
         actors = [{"slug": "victim-required", "id": "SHOPUSER", "label": "Shop User"}]
         attack_paths = {
             "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"}]
         }
-        arrows = compose._build_attack_arrows(attack_paths, _taxonomy(), actors, _tiers())
-        # Only the consequence edge — no injection edge from a non-existent attacker.
-        assert len(arrows) == 1
-        assert arrows[0]["src"] == "BROWSER"
-        assert arrows[0]["dst"] == "SHOPUSER"
+        arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), actors, _tiers())
+        assert arrows == []
+        assert relays[0]["src"] == "BROWSER" and relays[0]["dst"] == "SHOPUSER"
 
 
 class TestConsequenceArrowsVictimTargetingDetection:

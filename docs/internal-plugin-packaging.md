@@ -216,6 +216,27 @@ dist/
 `-- acme-appsec-0.9.0-acme.20260517.tgz.sha256
 ```
 
+### Local build (no tarball)
+
+When iterating on the org profile, build only the directory tree and skip the
+tarball with `--skip-archive`. The full, runnable plugin lands in
+`build/${INTERNAL_NAME}/` and can be loaded directly — no untar step.
+
+```bash
+python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
+  --source upstream/appsec-advisor \
+  --org-profile org-profile \
+  --name acme-appsec --version 0.4.0-dev --skip-archive
+
+claude --plugin-dir build/acme-appsec
+```
+
+Validation still runs, so profile and namespace errors surface the same way they
+would in CI. Pick a `--version` that satisfies the profile's
+`compatibility.core` range (here `>=0.4 <0.6`), otherwise validation rejects the
+build. This is for the maintainer inner loop only; developers install the
+published artifact (Step 6), not a local build tree.
+
 ## Step 5 - Validate In CI And Publish The Artifact
 
 Put the Step 4 command in your CI pipeline. The packager exits non-zero before

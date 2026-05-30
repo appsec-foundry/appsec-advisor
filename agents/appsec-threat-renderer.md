@@ -99,6 +99,7 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
 - `.fragments/ms-top-mitigations.json` — curate the Management-Summary Top-Mitigations leader-board (see authoring contract below)
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
+- `.fragments/top-threats-architecture.md` (Figure 1 of the Security Posture section) unless `SKIP_ATTACK_PATHS_AUTHORING=true` or quick depth — see authoring contract below. When absent, the composer falls back to a deterministic builder; your hand-authored version is preferred because it can express semantic edge labels and internal data flows the fallback cannot derive.
 - `.fragments/architecture-diagrams.md` and `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`
 
 Do not overwrite deterministic fragments unless enrichment is explicitly enabled or the pre-generated fragment is materially wrong:
@@ -108,6 +109,79 @@ Do not overwrite deterministic fragments unless enrichment is explicitly enabled
 - `attack-surface.md`
 - `attack-walkthroughs.md` (deterministic from `walkthrough_renderer.py` — see "§3 Attack Walkthroughs — out of your scope" below)
 - `out-of-scope.md`
+
+### `top-threats-architecture.md` authoring contract (Figure 1)
+
+Figure 1 of the **Security Posture & Top Threats** section is an architecture
+diagram showing components grouped by trust boundary with the attacker-controlled
+data flows drawn as labelled red edges. The composer inlines this fragment as
+"Figure 1" directly above the deterministic risk-flow heatmap (Figure 2). Author
+it as a raw-markdown fragment: a one-line caption sentence, then one ` ```mermaid `
+block. Do NOT include the `**Figure 1 — …**` bold caption (the composer adds it).
+
+**Glyph contract (load-bearing).** The red edges MUST carry the same ①–⑦ glyphs
+as Figure 2 and the Top Threats table. Glyphs are assigned **positionally over the
+attack classes in `data/attack-class-taxonomy.yaml` declaration order, restricted
+to classes that have ≥1 finding in `threat-model.yaml`** — i.e. the first non-empty
+class is ①, the second ②, and so on. Read `threat-model.yaml threats[]` (each has
+`cwe`, `component`, `vektor`), map each threat's CWE to its class via the taxonomy
+`classes[].cwes`, and derive the same ordered, non-empty class list the heatmap uses.
+
+**Structure (model on the reference in `docs/analysis-top-threats-merge.md` →
+"Figure 1"). The LAYOUT below is PRESCRIBED — keep it identical so every report's
+Figure 1 reads the same way; only the edge wording is yours. The deterministic
+fallback builder (`_render_top_threats_architecture`) emits this exact shape, so a
+hand-authored fragment MUST match it (you just supply richer edge labels):**
+
+1. `flowchart TB`.
+2. External nodes above the tiers:
+   - One **Anonymous Internet Attacker** node (`fa:fa-user-secret`).
+   - The **Shop User** victim node (`fa:fa-user`, subtitle "victim — XSS/CSRF
+     target") whenever any victim-targeting (XSS/CSRF) class exists.
+   - **Collapse attacker actors to match the Figure 2 heatmap** using the `meta`
+     flags: when `open_user_registration: true`, fold authenticated / privileged
+     attackers into the anonymous attacker; when `public_source_repo: true`, the
+     committed secret is readable by anyone, so do NOT draw a separate repo-reader
+     attacker — the anonymous attacker drives the secret-forgery class. You MAY add a
+     NON-attacker **Public Source Repo** source node (`fa:fa-code-branch`, subtitle
+     naming the committed secrets) joined to the attacker by a DOTTED grey edge
+     (`-.->`, e.g. "secrets readable by anyone") to show where the key comes from —
+     never an attack (`==>`) edge from the repo. A `repo-read` *attacker* node is
+     only legitimate when the repo is private (`public_source_repo` unset/false).
+3. One subgraph per architecture tier PRESENT, in order — `CLIENT["Client Tier — browser"]`,
+   `APP["Application Tier — …"]`, `DATA["Data Tier"]` — each holding its `C-NN · Name`
+   component nodes (`:::comp`). **Omit components that host no findings** — a box
+   reachable only by a benign edge is noise (canonical `C-NN` numbering is by the full
+   `components[]` order, so omitting one never renumbers the rest). You MAY add a
+   data-tier sub-node for a finding's real infrastructure sink not in `components[]`
+   (e.g. `DB["C-03 · SQLite + MarsDB"]`, `FS["Filesystem<br/>FTP · key · log dirs"]`).
+4. Grey benign backbone edges (`-->`, `stroke:#6b7280`): Shop User → client component,
+   client → primary application component, application → data sink.
+5. Red attacker edges (`==>`, `stroke:#b71c1c`), one per attack class, each labelled
+   `"<glyph> <short semantic action>"` — a concise, accurate verb phrase, NOT the
+   generic class name (e.g. `② forge admin JWT`, `① SQL / NoSQL injection`,
+   `④ browse secret files`, `⑤ RCE via eval`, `⑥ unescaped HTML`). **Route by where the
+   attack LANDS (impact tier)** so the threats spread across tiers instead of piling on
+   one box:
+   - A class whose impact is in the DATA tier (injection, secret/file exposure) is
+     drawn as an INTERNAL application→data edge (`API ==> DB`, `API ==> FS`), even
+     though the finding's component is the application — this mirrors the reference and
+     stops the edge spanning the actor column across the app tier.
+   - A victim-targeting class (XSS/CSRF) is drawn as application→client (injection,
+     `API ==> SPA`) PLUS client→Shop User (delivery, `SPA ==> Shop User`), so the
+     victim is VISIBLY attacked — never an edge originating at the victim node.
+   - Every other class is an actor→component edge to each application component that
+     hosts a finding of that class (so a specialised component like the B2B Order API
+     gets its own RCE edge instead of being an orphaned box).
+   Never leave a shown component without an edge; never invent an edge to a component
+   with no findings of that class.
+6. Close with `style`/`classDef` for the tier subgraphs (dashed borders) and
+   `comp`/`ext` classes, and `linkStyle` ranges separating the grey benign edges from
+   the red attacker edges.
+
+Keep it readable: ≤ ~12 edges. If the deterministic data is too flat to express
+internal flows (e.g. all findings collapsed onto one component, empty `evidence.file`),
+prefer fewer, correct edges over inventing structure.
 
 ### `ms-architecture-assessment.json` authoring contract
 
@@ -186,7 +260,6 @@ The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` sect
 
 ```json
 {
-  "intro": "<paragraph (40-600 chars) — what is the attacker goal at the root, how to read the tree top-down>",
   "root_goal": "<optional, 5-120 chars — short business-impact statement, e.g. 'Full admin takeover'>",
   "mermaid": {
     "orientation": "TD",
@@ -197,33 +270,24 @@ The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` sect
       { "id": "L_T011",  "label": "T-011 JWT alg:none accepted",          "class": "leaf", "finding_ref": "T-011" }
     ],
     "edges": [
-      { "from": "AND_JWT", "to": "G_ROOT", "refinement": "OR" },
-      { "from": "L_T001",  "to": "AND_JWT", "refinement": "AND" },
-      { "from": "L_T011",  "to": "AND_JWT", "refinement": "AND" }
+      { "from": "AND_JWT", "to": "G_ROOT" },
+      { "from": "L_T001",  "to": "AND_JWT" },
+      { "from": "L_T011",  "to": "AND_JWT" }
     ]
-  },
-  "key_takeaway": "<paragraph (60-800 chars) — the renderer auto-prepends '**Key takeaway:**'; supply only the content>",
-  "mitigation_breakpoints": [
-    { "mitigation": "M-001", "breaks": "Rotating the JWT signing key out of source eliminates every offline token-forgery path" }
-  ],
-  "stages": [
-    { "stage": "Initial access",       "findings": ["T-001"], "mitigations": ["M-001"] },
-    { "stage": "Privilege escalation", "findings": ["T-011"], "mitigations": ["M-007"] },
-    { "stage": "Impact",               "findings": ["T-008"], "mitigations": ["M-003"] }
-  ]
+  }
 }
 ```
+
+> **Render shape (2026-05-30).** The section renders as a SINGLE `graph LR` tree (no overview/per-capability split) with leaf boxes collapsed to just their `T-NNN` id, a one-line explanation above it, and a one-line findings pointer below it (each leaf id → title → §8 anchor, derived from the tree's leaves; **no mitigations** — those live in §9). The `intro`, `key_takeaway`, `mitigation_breakpoints`, and `stages` fields are **no longer rendered** — do not author them (they are optional/deprecated in the schema and only waste tokens). The only fields you author are `root_goal?` and `mermaid`. Edge AND/OR labels are derived from each parent node's `class`, so omit the per-edge `refinement` field.
 
 **Mandatory authoring rules.**
 
 1. **Build the tree from `threats[].risk == Critical` rows.** Each Critical finding becomes a `leaf` node with `finding_ref: "T-NNN"` (or `F-NNN` for findings-shaped models). Internal `and_node` / `or_node` entries describe the **preconditions** that combine the leaves into a higher-level capability (e.g. `T-001 hardcoded key` AND `T-011 alg:none` → `Forge admin JWT`). The single `goal` node at the root names the worst-case impact and SHOULD match one of the Worst-Case-Scenario bullets in `ms-verdict.json`.
-2. **AND vs OR is load-bearing.** `refinement: "AND"` means all child leaves are required to satisfy the parent capability; `refinement: "OR"` means any one child suffices. Use AND for "attacker needs all of these primitives" and OR for "any of these paths leads to the same capability". The renderer surfaces these on the edge labels; do not encode the boolean structure only in prose.
-3. **`orientation` is `TD` or `TB`.** Trees render top-down. `LR` is rejected by the schema (the horizontal layout belonged to the retired §3.1 chains).
-4. **Node id grammar.** Mermaid node ids match `^[A-Z][A-Z0-9_]*$`. Use semantic prefixes (`G_`, `AND_`, `OR_`, `L_`) so the structure is readable in the raw JSON without rendering the diagram. **Never expose a node id in prose.** The reader sees the rendered diagram, not its source — `intro`, `key_takeaway`, and `mitigation_breakpoints[].breaks` must name a subtree by what it represents ("the offline token-forgery paths", "the SQL-injection branch"), never by its raw id (`AND_JWT`, `OR_FORGE`, `G_ROOT`). A parenthetical `(OR_FORGE)` in the takeaway is a defect.
-5. **`stages[]` is the linear walk for the reference table.** Pick the most-likely path from root to impact and list it as 3–12 stages, each citing the relevant `T-NNN` finding(s) and the primary `M-NNN` mitigation(s). This is what the post-tree table renders; it complements the graph rather than restating it.
-6. **`mitigation_breakpoints[]` is curation, not exhaustion.** Up to 8 entries naming mitigations that **sever a subtree** when deployed — the highest-leverage actions a reader can take. Leave empty if every Critical needs its own dedicated mitigation.
-7. **No code fragments in node labels.** Labels read as prose (`Forge admin JWT`, `Hardcoded RSA key`) — never `jwt.sign(..., {algorithm:'none'})` or other source snippets. Same rule as finding titles (`prose-style.md`).
-8. **Dual anchor preserved.** The template emits both `#critical-attack-tree` (canonical) and `#critical-attack-chain` (legacy back-compat). External deep-links to the legacy anchor continue to resolve; cross-references inside the model should use the canonical anchor.
+2. **AND vs OR is encoded by the parent node's `class`, not per edge.** An `and_node` means all its children are required to satisfy that capability; an `or_node` means any one child suffices; capabilities feeding the `goal` are OR-alternatives. The renderer DERIVES each edge's AND/OR label from the destination node's class — so a per-edge `refinement` is ignored, and a mismatched one (an `AND` edge into an `or_node`) can no longer corrupt the diagram. Choose the parent class deliberately; that is the only place the boolean structure lives.
+3. **`orientation`: author `TD`.** The renderer normalizes the unified tree to `graph LR` regardless (vertical leaf stacking keeps one diagram readable at any fan-out); the authored value is not used for layout.
+4. **Node id grammar.** Mermaid node ids match `^[A-Z][A-Z0-9_]*$`. Use semantic prefixes (`G_`, `AND_`, `OR_`, `L_`) so the structure is readable in the raw JSON without rendering the diagram. The reader never sees a node id — they see the rendered diagram and the derived findings line.
+5. **Leaf labels carry the finding title; only the id renders in the box.** Author each leaf label as `T-NNN <short title>` (e.g. `T-001 Hardcoded RSA key`) and set `finding_ref`. The diagram box shows just `T-001`; the composer strips the id prefix to build the one-line findings pointer (`[T-001](#t-001) Hardcoded RSA key …`). A clean, prose title (2–4 words) is what the reader sees there — so no code snippets (`jwt.sign(..., {algorithm:'none'})`) in labels, same rule as finding titles (`prose-style.md`).
+6. **Dual anchor preserved.** The template emits both `#critical-attack-tree` (canonical) and `#critical-attack-chain` (legacy back-compat). External deep-links to the legacy anchor continue to resolve; cross-references inside the model should use the canonical anchor.
 
 The fragment is validated against `schemas/fragments/critical-attack-tree.schema.json` at compose time; a schema-invalid fragment falls back to the soft-skip path. The deterministic `walkthrough_renderer.py` does NOT author this fragment — the LLM judgement on which preconditions combine into which capability is required.
 
@@ -279,10 +343,12 @@ Fenced code blocks INSIDE §7.X prose (after a colon-terminated introducing sent
 Each `### 7.2` through `### 7.12` block uses this exact section-level structure:
 
 1. `**Verdict:**` one concise verdict line.
-2. `**Controls covered:**` markdown links to every H4 subcontrol in the section.
+2. `**Controls covered:**` markdown links to every H4 subcontrol in the section. Author as inline comma-separated links OR a bullet list — the composer normalises this to a bullet list either way (one control per line), so don't agonise over the layout.
 3. `**Implemented controls:**` one concrete inventory sentence.
 4. `**Assessment:**` the section-level architectural conclusion. For §7.2 and §7.3, the Assessment paragraph carries the **bridging sentence** that locates the boundary between authentication flows and session-token lifecycle (see "§7.2/§7.3 topology" below).
-5. One `#### 7.X.Y <Function in plain language> (<Tech>)` subsection per covered control, numbered sequentially within the parent section (`7.2.1`, `7.2.2`, …, `7.3.1`, `7.3.2`, …). The numbering MUST be present and contiguous.
+5. One `#### 7.X.Y <Function in plain language> (<Tech>)` subsection per covered control. The composer auto-numbers H4 sub-controls (`7.2.1`, `7.2.2`, …) at render time, so a flat `#### <Function> (<Tech>)` heading is acceptable — but the **anchor must be an explicit `<a id="…">` immediately above the heading** (the composer renumbers heading text, not the anchor) and the `**Controls covered:**` link text must match the heading's control name.
+
+**Inline finding references in §7 prose are auto-reduced to ID-only links.** Cite findings inline as bare `[F-NNN](#f-nnn)` (no title) — the composer strips any title the global linkifier would add, because the titled enumeration already lives in each control's `**Relevant findings**` block. Do NOT repeat the finding title in the assessment prose; it is redundant and will be removed.
 
 **§7.2/§7.3 topology — authoritative.** §7.2 enumerates authentication **flows** (the ways identity is established); §7.3 traces the **session token lifecycle** that follows every successful flow. JWT-handling sub-sections belong in §7.3 (not §7.2), because the token in this codebase is the local session token regardless of which §7.2 flow issued it. OAuth here is a frontend identity hint terminating in local login — it does NOT consume an IdP-issued id_token — so JWT Issuance / Verification are NOT subordinate to OAuth.
 
@@ -336,11 +402,21 @@ Every H4 subcontrol MUST contain these elements, in this order:
    Bad (jumps straight to the gap):
    > "**Security assessment:** ❌ Missing — OAuth is not properly implemented because..."
 
-2. **Optional Mermaid sequence diagram — clarity aid, not a mandate.** Diagrams are valuable when the mechanism has ≥ 3 steps between ≥ 2 components and prose alone would be unclear. Typical §7.2 flows: User Registration, Password-Based Login, Social Login Adapter (OAuth/OIDC), SAML, Multi-Factor Enrollment (TOTP), Multi-Factor Verification (TOTP), Password Reset, Password Change, mTLS Handshake, Webhook HMAC Verification, multi-step upload pipelines. Typical §7.3 lifecycle steps that benefit from a diagram: Session Token Signing (JWT Based) and Session Token Validation (JWT Based) — when the surrounding routes / middleware chain has ≥ 3 hops. Diagrams add noise when the control is a pure primitive (hashing, signature-verification-as-algorithm, rate limiting, cookie flag hardening, a single header value) — skip the diagram there. **When you include a diagram, you MUST introduce it with exactly one sentence that ends in `:`** (reference form: `The diagram shows the positive password-login path, including the branch into TOTP verification:`). A `sequenceDiagram` fence with no introducing sentence is a contract violation.
+2. **Mermaid sequence diagram — REQUIRED for the primary authentication and session-token flows; clarity aid elsewhere.** A `sequenceDiagram` is MANDATORY in:
+   - **§7.2** — the primary credential-verification flow (the grouped `Password-Based Authentication` H4, or the flat `Password-Based Login` fallback). When OAuth/OIDC or MFA (TOTP) flows are present, each ALSO carries its own diagram. This is the single most-requested missing element in §7 (2026-05-30 user report: "bei den Authentifizierungsverfahren fehlen schon wieder komplett die Mermaid Diagramme") — do NOT skip it.
+   - **§7.3** — `Session Token Signing (JWT Based)` and `Session Token Validation (JWT Based)`: show issuance (login → sign → return token) and validation (request → verify-middleware → route) respectively.
 
-3. `**Security assessment**` — multi-sentence narrative covering what the mechanism does well in this app AND what is broken, with file:line + CWE-grounded evidence. NOT a single-sentence inline tag (the form `**Security assessment:** ❌ Missing - <one sentence>` is a contract violation).
+   The diagram is the architecture view the user wants front-and-centre; it shows the actors/components and the happy-path hops, so the reader sees the mechanism before the prose. Render the **positive flow** (not the attack) — 3–6 steps between 2–3 participants (e.g. `User`/`Browser`, `API`/route, `DB`/key store). Diagrams remain OPTIONAL (and add noise) for pure primitives — hashing, a single header value, cookie-flag hardening, rate limiting, signature-verification-as-algorithm — skip them there. **You MUST introduce every diagram with exactly one sentence that ends in `:`** (reference form: `The diagram shows the positive password-login path, including the branch into TOTP verification:`). A `sequenceDiagram` fence with no introducing sentence is a contract violation.
 
-   **When the block covers two or more discrete weaknesses, break them out as a short bullet list** — one bullet per weakness, led by a single framing sentence. A reader scans "SQL injection at `routes/login.ts:34`" and "unsalted MD5 at `lib/insecurity.ts:43`" as two separate items far faster than as two clauses welded into a 60-word paragraph. Keep flowing prose only when the weaknesses form one causal chain that reads better as a narrative (e.g. "the key is committed, so any forged token passes, so the route guard is moot"). The bullet form satisfies the multi-sentence requirement — it is not the banned single-line inline tag. One main clause per bullet; do not chain three weaknesses through comma-and-semicolon strings.
+3. `**Security assessment**` — **default to a short framing sentence + a bullet list**, architecture-focused and tight. This is the section the user singled out as "viel zu viel Text mit unverlinkten Findings" (2026-05-30): the fix is structure and restraint, not more prose.
+
+   **Hard limits — keep §7 scannable:**
+   - **Default form is bullets.** One framing sentence (≤ 1 line) naming the boundary/mechanism, then **2–5 bullets, one weakness each**, led by the weakness in plain words + its `file:line` evidence. A reader scans "SQL injection at `routes/login.ts:36`" and "unsalted MD5 at `lib/insecurity.ts:43`" as two items far faster than as two clauses welded into a 60-word paragraph.
+   - **Budget: ≤ ~90 words total** per control block assessment. If you exceed it you are narrating single findings — cut to the architectural point. §7 is about the *control boundary*, not a per-finding catalog; findings are **anchor points for a larger structural problem**, not the subject.
+   - Keep flowing prose only when the weaknesses form ONE causal chain that genuinely reads better as a narrative (e.g. "the key is committed, so any forged token passes, so the route guard is moot") — and even then ≤ 3 sentences.
+   - The bullet form satisfies the multi-sentence requirement — it is NOT the banned single-line inline tag (`**Security assessment:** ❌ Missing - <one sentence>` remains a violation). One main clause per bullet; do not chain three weaknesses through comma-and-semicolon strings.
+
+   **Every finding reference in §7 prose MUST be a markdown link — bare `(F-001)` / `(T-001)` plain-text mentions are FORBIDDEN.** Either link it inline as `[F-001](#f-001)` at the point you cite it, or (preferred) cite no raw ID in the assessment at all and let the `**Relevant findings**` block below carry the linked enumeration. The plain-text `(F-NNN)` form that appeared throughout the 2026-05-30 juice-shop §7.2/§7.3 prose ("returning the first user … (F-001)") is exactly the unlinked-finding defect the user flagged.
 
 4. **Optional code excerpt — clarity aid, not a mandate.** Include a fenced `ts`/`js`/`py`/`yaml`/`dockerfile`/`ini` block (≤ 6 lines) when the weakness concentrates at one short location and the snippet makes the assessment concrete (typical: raw SQL interpolation, `bypassSecurityTrustHtml`, `fetch(user_input)`, hardcoded secrets, permissive `app.use(cors())`, a single insecure config line). Skip the snippet when the weakness is structural and a single excerpt would mislead. **When you include a snippet, you MUST introduce it with exactly one sentence that ends in `:`** (reference forms: `The vulnerable login lookup is built as a raw SQL string:`, `This trusted-HTML call demonstrates where Angular's default escaping is bypassed:`, `The archive extraction logic shows the weak path containment check:`). A code fence with no introducing sentence is a contract violation.
 

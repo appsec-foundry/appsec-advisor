@@ -1,0 +1,77 @@
+api_version: appsec-advisor.org-profile/v2
+
+organization:
+  id: acme
+  name: Acme Corp
+  profile_version: 2026.05.1
+
+# Range of upstream appsec-advisor core versions this profile supports.
+# Bump after testing the packaged build against a new upstream release.
+compatibility:
+  core: ">=0.4 <0.6"
+
+default_preset: ci-standard
+
+requirements:
+  source:
+    requirements_yaml_url: "https://security.acme.example/appsec-requirements.yaml"
+    label: "Acme AppSec Requirements"
+    cache: true
+    fail_mode: cache_fallback
+
+llm_context:
+  documents:
+    - id: organization
+      path: context/organization.md
+      purpose: organization_background
+      max_bytes: 50000
+
+actors:
+  inherit_defaults: true
+  disable: []
+  # Glob is resolved relative to the org-profile/ directory in the packaged copy.
+  add: actors/*.yaml
+
+presets:
+  # Cheap, time-capped scan suitable for per-PR pipelines.
+  ci-standard:
+    base_mode: standard
+    outputs:
+      yaml: true
+      sarif: true
+    scan:
+      incremental: auto
+    requirements:
+      enabled: true
+    quality:
+      qa_review: auto
+      architecture_enrichment: auto
+    guardrails:
+      max_wall_time: 1h
+      max_cost_usd: 20
+      max_resumes: 1
+      tracing: true
+
+  # Deep run for release/architecture reviews — slower, higher fidelity.
+  release-review:
+    base_mode: thorough
+    outputs:
+      yaml: true
+      sarif: true
+      pdf: true
+      pentest_tasks: true
+    scan:
+      incremental: false
+      scan_manifest: true
+    requirements:
+      enabled: true
+    quality:
+      qa_review: auto
+      architecture_enrichment: enabled
+      architect_review: enabled
+    guardrails:
+      max_wall_time: 3h
+      max_cost_usd: 80
+      max_resumes: 1
+      tracing: true
+      verbose_report: true

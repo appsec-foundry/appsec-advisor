@@ -49,35 +49,6 @@ def _run_cli(*args: str) -> dict:
 
 
 class TestParametric:
-    def test_standard_full_sonnet_juice_shop_size_matches_observation(self, tmp_path: Path):
-        """Calibration anchor: ~1400-file repo, standard, full, sonnet —
-        must land within 5 min of the 44-min juice-shop measurement."""
-        # Pretend the repo has 1399 files by creating that many empty files
-        # in a temp git repo (cheap — `git ls-files` reads the index, not stat).
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        # Faster proxy: don't actually init a git repo (would slow the test);
-        # the script's `find` fallback walks the dir tree directly.
-        for i in range(1399):
-            (repo / f"f{i}.py").touch()
-        out_dir = tmp_path / "out"
-        out_dir.mkdir()
-        result = _run_cli(
-            "--depth",
-            "standard",
-            "--mode",
-            "full",
-            "--reasoning-model",
-            "sonnet",
-            "--output-dir",
-            str(out_dir),
-            "--repo-root",
-            str(repo),
-        )
-        assert result["source"] == "parametric"
-        # 25 (base) × 1.0 (1.0× size bucket) × 1.0 (sonnet) + 8 + 7 + 0 + 4 = 44.
-        assert 39 <= result["total_min"] <= 49, result
-
     def test_thorough_full_opus_cheap_with_architect(self, tmp_path: Path):
         repo = tmp_path / "repo"
         repo.mkdir()

@@ -213,8 +213,9 @@ class TestNoBoldInDiagramNodes:
         assert actor_line_present, "actor card line must exist in template"
         # No <b> around card.label.
         assert "<b>{{ card.label }}</b>" not in tpl
-        # The plain form is now expected.
-        assert "{{ card.label }}<br/>" in tpl
+        # Single-line plain form is now expected (no subtitle line) — the
+        # actor card closes directly after the label.
+        assert '{{ card.label }}"])' in tpl
 
     def test_security_posture_template_no_bold_in_tier_card(self):
         tpl = (REPO_ROOT / "templates" / "fragments" / "security-posture-diagram.md.j2").read_text()
@@ -231,12 +232,16 @@ class TestNoBoldInDiagramNodes:
 
     def test_components_line_in_tier_card_is_plain(self):
         """compose._build_tier_cards emits the tier components line as plain
-        `comp1 · comp2` (was `<b>comp1</b> · <b>comp2</b>`)."""
-        # The function builds a card list from yaml. Inspect the source —
-        # this assertion is a structural check against regression.
+        `C-NN Name · C-NN Name` (was `<b>comp1</b> · <b>comp2</b>`).
+
+        2026-05 — Figure 2 reshape: the tier card lists its components as
+        `C-NN Name` (reference form) joined with ` · `. The line must stay
+        plain (no `<b>` stitching); the join idiom is now a generator over
+        `comps_in_tier`, so we assert the plain ` · `.join + the absence of
+        the bold-stitched form rather than the old `comp_ids` literal."""
         src = (REPO_ROOT / "scripts" / "compose_threat_model.py").read_text()
-        # The plain-join idiom must appear; the bold-stitched form must not.
-        assert '" · ".join(comp_ids)' in src
+        # The plain ` · `-join idiom must appear; the bold-stitched form must not.
+        assert '" · ".join(' in src
         assert '"</b> · <b>".join' not in src
 
     def test_impact_card_label_is_plain(self):
@@ -634,25 +639,30 @@ class TestComposeSmokeAllFourInvariants:
         # The link is `[F-001](#f-001)` and `<a id="f-001"></a>` exists.
         assert "[F-001](#f-001)" in rendered or "[F-002](#f-002)" in rendered
 
-        # === A3 — T-001 (CWE-321) lands in TH-03 Cryptographic Failures.
-        # Find the threat-register row for T-001 and confirm its TH cell.
+        # === A3 — the CWE→category classification is reflected in each §8 row.
+        # The TH-NN identifier was dropped from rendered rows on 2026-05-28
+        # (noisy filler — see compose_threat_model.py "Item 7"; the renderer
+        # keeps the classification NAME). The CWE→TH mapping logic itself is
+        # unit-tested separately (test_cwe_*_maps_to_th*); here we assert the
+        # rendered `**Classification:**` NAME per the fixture's CWEs.
+        # T-001 (CWE-321) → "Cryptographic Failures"
         t001_row = next(
             (l for l in rendered.splitlines() if '<a id="t-001">' in l),
             "",
         )
-        assert "TH-03" in t001_row, f"T-001 must map to TH-03; got row: {t001_row[:200]}"
-        # T-002 (CWE-89) → TH-01 Injection
+        assert "Cryptographic Failures" in t001_row, f"T-001 (CWE-321) classification; got row: {t001_row[:200]}"
+        # T-002 (CWE-89) → "Injection"
         t002_row = next(
             (l for l in rendered.splitlines() if '<a id="t-002">' in l),
             "",
         )
-        assert "TH-01" in t002_row
-        # T-003 (CWE-94) → TH-05 Code Execution
+        assert "Injection" in t002_row
+        # T-003 (CWE-94) → "Code Execution via Unsafe Deserialization or Eval"
         t003_row = next(
             (l for l in rendered.splitlines() if '<a id="t-003">' in l),
             "",
         )
-        assert "TH-05" in t003_row
+        assert "Code Execution" in t003_row
 
         # === B1 — diagram nodes carry no `<b>` except for the three column
         # headers HDR_A / HDR_T / HDR_I in the heatmap.
@@ -661,20 +671,26 @@ class TestComposeSmokeAllFourInvariants:
         # authored bold text inside Verdict bullet titles / Architecture
         # Assessment defect names (Markdown `**…**` renders to `<strong>`,
         # not `<b>`, so genuine markdown bold isn't here).
-        allowed_header_bolds = {"Threat Actors", "Architecture Tiers", "Impact"}
+        allowed_header_bolds = {"Threat Actors", "Architecture Tiers", "Business Impact"}
         # Component IDs and actor labels must NOT appear in `<b>` form.
         # Extract just bolds that look like a component ID or actor name.
         for tok in bold_tokens:
             assert tok in allowed_header_bolds or len(tok) > 30, f"unexpected bold token in diagrams: {tok!r}"
 
-        # === Sanity — render produced no warnings other than the
-        # NARRATIVE_PLACEHOLDER survival notice. The test fixture has no
-        # Stage 2 narrative-fill pass, so the placeholders the pregenerator
-        # writes for §7.1/§7.2/§7.4-§7.14 survive into the final markdown.
-        # That is expected for this smoke test and unrelated to the P1
-        # invariants under test (F1.4 emits the warning at standard depth
-        # since 2026-05; quick depth would suppress it).
-        non_placeholder_warnings = [w for w in warnings if "NARRATIVE_PLACEHOLDER" not in w]
+        # === Sanity — render produced no warnings other than the expected
+        # soft-skip notices. The test fixture deliberately authors only the
+        # four P1-relevant LLM fragments and runs no Stage 2 narrative-fill
+        # pass, so two warnings are expected and unrelated to the P1
+        # invariants under test:
+        #   • NARRATIVE_PLACEHOLDER survival — the §7 placeholders the
+        #     pregenerator writes survive into the markdown (no fill pass).
+        #   • `critical_attack_tree: fragment missing` — the fixture does not
+        #     author `ms-critical-attack-tree.json`, so the optional MS
+        #     attack-tree section is soft-skipped.
+        _ignorable = ("NARRATIVE_PLACEHOLDER", "critical_attack_tree: fragment missing")
+        non_placeholder_warnings = [
+            w for w in warnings if not any(tok in w for tok in _ignorable)
+        ]
         assert non_placeholder_warnings == [], (
             f"unexpected compose warnings: {non_placeholder_warnings}"
         )

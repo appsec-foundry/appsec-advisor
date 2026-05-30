@@ -56,7 +56,7 @@ actors:
 
   build-time:
     label: "Supply-Chain / Build Attacker"
-    default_subtitle: "compromises a dependency or build pipeline"
+    default_subtitle: "compromises a dependency or build pipeline, or contributes malicious code to a public repo"
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
@@ -73,7 +73,11 @@ actors:
     role: attacker
     diagram_position: bottom
     severity_class: actorAnon
-    fa_icon: "fa:fa-user-secret"
+    # Repo/source-code vektor keeps fa:fa-code-branch (not the generic
+    # fa:fa-user-secret): the threat is "anyone who can READ the committed
+    # source holds the signing key", a supply/source context distinct from a
+    # runtime adversary — same icon the architecture diagram uses for the repo.
+    fa_icon: "fa:fa-code-branch"
 
   victim-required:
     label: "Shop User"

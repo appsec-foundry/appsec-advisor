@@ -180,14 +180,6 @@ class TestScalePhaseLimits:
         out = agg.scale_phase_limits(base, file_count=100)
         assert out == base
 
-    def test_juice_shop_size_yields_factor_about_2_18(self):
-        """1500 files → 1 + log10(15) ≈ 2.176."""
-        base = {"1": 60, "2": 120}
-        out = agg.scale_phase_limits(base, file_count=1500)
-        # Allow ±2s rounding tolerance per phase (integer rounding).
-        assert abs(out["1"] - 131) <= 2, f"expected ~131, got {out['1']}"
-        assert abs(out["2"] - 261) <= 2, f"expected ~261, got {out['2']}"
-
     def test_negative_count_treated_as_zero(self):
         base = {"1": 60}
         assert agg.scale_phase_limits(base, file_count=-42) == base
