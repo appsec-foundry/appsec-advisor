@@ -10,19 +10,22 @@ Pipeline:
      Skipped when mmdc is not installed or --no-mermaid is passed; diagrams
      then remain as code blocks in the PDF.
   2. Pandoc Markdown → standalone HTML5 with print.css embedded.
-  3. WeasyPrint HTML → PDF (atomic write).
+  3. Post-process the HTML: content-aware table column widths, a dedicated
+     cover page (title + metadata), and a page-numbered table of contents
+     (WeasyPrint target-counter; broken TOC anchors degrade gracefully).
+  4. WeasyPrint HTML → PDF (atomic write).
 
 Hard dependencies (preflight aborts if missing):
   - pandoc          (apt install pandoc / brew install pandoc)
   - weasyprint      (pip install weasyprint)
-
-Optional dependency:
-  - mmdc            (npm install -g @mermaid-js/mermaid-cli)
-                    Without it, Mermaid blocks render as <pre><code>.
+  - mmdc + Chrome   (npm install -g @mermaid-js/mermaid-cli, plus a Chrome/
+                    Chromium for Puppeteer). Required by default so diagrams
+                    render as graphics, not raw code. Pass --no-mermaid to
+                    export without diagrams when no Chrome/mmdc is available.
 
 Exit codes:
   0  success
-  1  missing hard dependency (pandoc or weasyprint)
+  1  missing hard dependency (pandoc, weasyprint, or mmdc/Chrome)
   2  input file not found / bad arguments
   3  conversion error (pandoc, weasyprint, or mmdc failure)
 """
@@ -30,6 +33,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -52,8 +56,81 @@ except ImportError:
 INSTALL_HINTS = {
     "pandoc": "apt install pandoc   |   brew install pandoc   |   https://pandoc.org/installing.html",
     "weasyprint": "pip install weasyprint   (also needs Pango/Cairo system libs on Linux)",
-    "mmdc": "npm install -g @mermaid-js/mermaid-cli   (optional — without it, Mermaid blocks remain code blocks)",
+    "mmdc": (
+        "npm install -g @mermaid-js/mermaid-cli   AND a Chrome/Chromium for Puppeteer "
+        "(e.g. `npx puppeteer browsers install chrome`, or apt install chromium and set "
+        "PUPPETEER_EXECUTABLE_PATH)"
+    ),
 }
+
+# Puppeteer (used by mmdc) looks for its own cached Chrome and ignores a
+# system browser unless PUPPETEER_EXECUTABLE_PATH points at one. Probe the
+# common system binaries so a plain `apt install chromium` / `google-chrome`
+# is enough without the user exporting that variable by hand.
+CHROME_CANDIDATES = (
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "chrome",
+)
+
+
+def find_chrome() -> Optional[str]:
+    """Resolve a Chrome/Chromium for Puppeteer, honouring an explicit env var."""
+    env = os.environ.get("PUPPETEER_EXECUTABLE_PATH")
+    if env and Path(env).exists():
+        return env
+    for name in CHROME_CANDIDATES:
+        path = shutil.which(name)
+        if path:
+            return path
+    return None
+
+
+def mmdc_env() -> dict:
+    """Environment for mmdc subprocesses with PUPPETEER_EXECUTABLE_PATH set.
+
+    If the user already exported the variable we leave it untouched; otherwise
+    we point Puppeteer at a system Chrome when one is on PATH.
+    """
+    env = os.environ.copy()
+    if not env.get("PUPPETEER_EXECUTABLE_PATH"):
+        chrome = find_chrome()
+        if chrome:
+            env["PUPPETEER_EXECUTABLE_PATH"] = chrome
+    return env
+
+
+def probe_mmdc() -> tuple[bool, str]:
+    """Actually render a trivial diagram to verify mmdc *works*.
+
+    `which mmdc` is not enough: mmdc shells out to a headless Chrome via
+    Puppeteer, and a missing or non-functional Chrome makes every real diagram
+    fail at runtime (the diagram silently degrades to a raw code block). This
+    render probe is the only reliable way to catch that before conversion.
+
+    Returns (ok, info) — info is a short human-readable status or error tail.
+    """
+    with tempfile.TemporaryDirectory(prefix="export-pdf-mmdc-probe-") as tmp:
+        src = Path(tmp) / "probe.mmd"
+        out = Path(tmp) / "probe.svg"
+        src.write_text("graph TD\n  A --> B\n", encoding="utf-8")
+        try:
+            result = subprocess.run(
+                ["mmdc", "-i", str(src), "-o", str(out), "-q"],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                env=mmdc_env(),
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            return False, f"render probe failed: {exc}"
+        if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+            tail = [ln for ln in (result.stderr or "").splitlines() if ln.strip()]
+            hint = tail[-1] if tail else f"exit {result.returncode}"
+            return False, f"present but cannot render (missing/broken Chrome for Puppeteer): {hint}"
+        return True, f"render probe ok via {find_chrome() or 'puppeteer chrome'}"
 
 
 def check_tool(name: str) -> Optional[str]:
@@ -108,15 +185,27 @@ def preflight(require_mermaid: bool) -> tuple[bool, list[str]]:
             messages.append(f"           install: {INSTALL_HINTS[hard]}")
 
     mmdc_path = check_tool("mmdc")
-    if mmdc_path:
-        messages.append(f"  [ok]   mmdc        {mmdc_path}")
-    else:
+    if not mmdc_path:
         if require_mermaid:
             ok = False
-            messages.append("  [miss] mmdc        not found (required by --require-mermaid)")
+            messages.append("  [miss] mmdc        not found — needed to render Mermaid diagrams")
             messages.append(f"           install: {INSTALL_HINTS['mmdc']}")
+            messages.append("           or re-run with --no-mermaid to export without diagrams")
         else:
-            messages.append("  [skip] mmdc        not found — Mermaid blocks will stay as code")
+            messages.append("  [skip] mmdc        --no-mermaid set — diagrams will stay as code")
+    elif require_mermaid:
+        # `which mmdc` lies: mmdc needs a headless Chrome (via Puppeteer), and a
+        # missing Chrome makes every diagram fail at runtime. Probe for real.
+        can_render, info = probe_mmdc()
+        if can_render:
+            messages.append(f"  [ok]   mmdc        {mmdc_path}  ({info})")
+        else:
+            ok = False
+            messages.append(f"  [bad]  mmdc        {mmdc_path}  — {info}")
+            messages.append(f"           install: {INSTALL_HINTS['mmdc']}")
+            messages.append("           or re-run with --no-mermaid to export without diagrams")
+    else:
+        messages.append(f"  [ok]   mmdc        {mmdc_path}")
 
     return ok, messages
 
@@ -178,6 +267,7 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
                 check=True,
                 capture_output=True,
                 timeout=60,
+                env=mmdc_env(),
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             counter["failed"] += 1
@@ -239,6 +329,11 @@ _COLW_ROLE_BOUNDS: dict[str, tuple[int, int]] = {
     "links": (16, 48),
 }
 
+# Minimum width any single column may occupy (percent of table width). At ~510px
+# of A4 content width, 9% ≈ 46px — enough for a short header word ("Method") and
+# two-letter cells ("No") to stay on one line instead of breaking per character.
+_MIN_COL_PCT = 9.0
+
 
 def _colw_role(header: str) -> str:
     h = re.sub(r"[`*_]", "", header or "").strip().lower()
@@ -292,10 +387,151 @@ def _inject_table_colgroups(html: str) -> str:
             lo, hi = _COLW_ROLE_BOUNDS.get(roles[i], (8, 22))
             weights.append(max(3, min(hi, max(lo, content[i]))))
         total = sum(weights) or 1
-        cols = "".join(f'<col style="width: {round(100 * w / total)}%" />' for w in weights)
+        pcts = [100.0 * w / total for w in weights]
+        # Floor every column so a wide prose column (e.g. "Notes"/"Description")
+        # can't crush a short one (e.g. "Method"/"Auth") below the width of its
+        # own header word — which, under table-layout:fixed, makes the text wrap
+        # one character per line ("Met"/"hod"). Floor + renormalise to 100%.
+        floor = min(_MIN_COL_PCT, 100.0 / ncol)
+        pcts = [max(floor, p) for p in pcts]
+        scale = 100.0 / (sum(pcts) or 1)
+        pcts = [p * scale for p in pcts]
+        cols = "".join(f'<col style="width: {round(p)}%" />' for p in pcts)
         return f"{open_tag}\n<colgroup>{cols}</colgroup>{inner}</table>"
 
     return re.sub(r"(<table[^>]*>)(.*?)</table>", _one, html, flags=re.DOTALL | re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# Cover page + Table-of-Contents page numbers
+# ---------------------------------------------------------------------------
+
+# Pandoc emits a <header id="title-block-header"> with the (filename-derived)
+# --metadata title. The report body already carries its own real <h1> + a
+# subtitle blockquote + a metadata line, so the pandoc header is a duplicate.
+_TITLE_BLOCK_RE = re.compile(
+    r"<header[^>]*id=\"title-block-header\"[^>]*>.*?</header>\s*",
+    re.DOTALL | re.IGNORECASE,
+)
+
+# The cover region: from the first body <h1> up to (but not including) the
+# first <h2>. That span is the report's title + generator line + metadata
+# blockquote — everything before the first real section (Changelog / TOC).
+# Group 1 becomes the cover; group 2 (the <h2>) is re-emitted after it.
+_COVER_REGION_RE = re.compile(
+    r"(<h1\b.*?)(<h2\b)",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _wrap_cover_page(html: str) -> str:
+    """Wrap the leading title block into a dedicated full-page cover.
+
+    The cover holds the title, the generator subtitle, and the metadata table
+    (everything before the first <h2>). Best-effort: with no body <h1>+<h2> the
+    HTML is returned unchanged — including pandoc's own title header, so the
+    document still shows a title.
+    """
+    stripped = _TITLE_BLOCK_RE.sub("", html, count=1)
+    m = _COVER_REGION_RE.search(stripped)
+    if not m:
+        # No body-h1 + h2 cover region — keep the original (pandoc header intact).
+        return html
+    cover = '<div class="cover-page">\n' + m.group(1).strip() + "\n</div>\n"
+    return stripped[: m.start()] + cover + m.group(2) + stripped[m.end() :]
+
+
+# Locate the Table-of-Contents region as: heading -> everything up to the next
+# <h2>. This is nesting-agnostic (the report emits a <ul> plus an <ol> with
+# nested <ul> children), unlike a list-matching regex which backtracks across
+# the nested lists and swallows the document body.
+_TOC_HEADING_RE = re.compile(
+    r"<h2[^>]*id=\"table-of-contents\"[^>]*>.*?</h2>",
+    re.DOTALL | re.IGNORECASE,
+)
+_ID_RE = re.compile(r'\bid="([^"]+)"')
+_ANCHOR_RE = re.compile(r'<a\s+href="([^"]*)"([^>]*)>(.*?)</a>', re.DOTALL | re.IGNORECASE)
+
+
+def _wrap_toc(html: str) -> str:
+    """Wrap the TOC (heading + its lists) in <nav class="toc"> for page numbers.
+
+    WeasyPrint's `target-counter` is fatal when it points at a missing anchor,
+    so any TOC entry whose `#target` does not exist in the document is
+    downgraded to a plain <span> (keeps the text, drops the dead link and its
+    page number) rather than aborting the whole PDF. Print CSS then appends
+    page numbers to the surviving internal links only.
+
+    Best-effort: if no TOC heading is found the HTML is returned unchanged.
+    """
+    hm = _TOC_HEADING_RE.search(html)
+    if not hm:
+        return html
+    rest = html[hm.end():]
+    nxt = re.search(r"<h2\b", rest, re.IGNORECASE)
+    end = hm.end() + (nxt.start() if nxt else len(rest))
+    region = html[hm.start():end]
+
+    ids = set(_ID_RE.findall(html))
+
+    def _heal(m: "re.Match[str]") -> str:
+        href, _attrs, text = m.group(1), m.group(2), m.group(3)
+        if href.startswith("#") and href[1:] not in ids:
+            return f"<span>{text}</span>"
+        return m.group(0)
+
+    region = _ANCHOR_RE.sub(_heal, region)
+    wrapped = f'<nav class="toc">\n{region}\n</nav>\n'
+    return html[:hm.start()] + wrapped + html[end:]
+
+
+# ---------------------------------------------------------------------------
+# Emoji fallback (WeasyPrint has no emoji/symbol font — only DejaVu is embedded)
+# ---------------------------------------------------------------------------
+
+# Emoji used as status/severity badges that DejaVu lacks → render as tofu boxes
+# in the PDF. Map each to a DejaVu-safe glyph wrapped in a colored span so the
+# badge still reads as a colored mark. DejaVu coverage verified for the targets
+# (● U+25CF, ✓ U+2713, ✗ U+2717, ▲ U+25B2, ★ U+2605).
+_EMOJI_FALLBACKS: dict[str, tuple[str, str]] = {
+    "\U0001F534": ("●", "#d1242f"),  # 🔴 red circle
+    "\U0001F7E0": ("●", "#bc4c00"),  # 🟠 orange circle
+    "\U0001F7E1": ("●", "#9a6700"),  # 🟡 yellow/amber circle
+    "\U0001F7E2": ("●", "#1a7f37"),  # 🟢 green circle
+    "\U0001F535": ("●", "#0969da"),  # 🔵 blue circle
+    "✅":     ("✓", "#1a7f37"),  # ✅ -> green check
+    "❌":     ("✗", "#d1242f"),  # ❌ -> red cross
+    "⚠":     ("▲", "#9a6700"),  # ⚠ -> amber triangle
+    "⭐":     ("★", "#9a6700"),  # ⭐ -> amber star
+}
+
+_SVG_BLOCK_RE = re.compile(r"<svg\b.*?</svg>", re.DOTALL | re.IGNORECASE)
+
+
+def _replace_unsupported_emoji(html: str) -> str:
+    """Swap emoji WeasyPrint can't render for colored DejaVu-safe glyphs.
+
+    PDF-only (not used by the HTML export — browsers have their own emoji
+    fonts). Embedded <svg>…</svg> diagram blocks are left untouched so their
+    <text> nodes aren't corrupted by injected HTML spans.
+    """
+    if not any(e in html for e in _EMOJI_FALLBACKS):
+        return html
+
+    def sub(segment: str) -> str:
+        for emo, (glyph, color) in _EMOJI_FALLBACKS.items():
+            if emo in segment:
+                segment = segment.replace(emo, f'<span style="color: {color}">{glyph}</span>')
+        return segment
+
+    parts: list[str] = []
+    last = 0
+    for m in _SVG_BLOCK_RE.finditer(html):
+        parts.append(sub(html[last:m.start()]))
+        parts.append(m.group(0))
+        last = m.end()
+    parts.append(sub(html[last:]))
+    return "".join(parts)
 
 
 def pandoc_supports_embed_resources() -> bool:
@@ -329,6 +565,12 @@ def md_to_html(md_path: Path, html_path: Path, css_path: Path, title: str) -> No
         "html5",
         "--standalone",
         embed_flag,
+        # Mermaid SVGs are written next to the (temp) Markdown and referenced
+        # relatively as `diagram-N.svg`. Pandoc resolves image paths against
+        # its CWD, not the input file, so without this it fails to embed them
+        # ("File diagram-1.svg not found in resource path", exit 99). css_path
+        # is absolute, so replacing the default search path here is safe.
+        f"--resource-path={md_path.parent}",
         f"--css={css_path}",
         "--metadata",
         f"title={title}",
@@ -338,12 +580,16 @@ def md_to_html(md_path: Path, html_path: Path, css_path: Path, title: str) -> No
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"pandoc failed (exit {result.returncode}):\n{result.stderr.strip()}")
-    # Inject content-aware <colgroup> widths (gfm drops the pipe-table dash
-    # hints, so columns would otherwise all size to content). Best-effort: any
-    # failure leaves the pandoc HTML untouched.
+    # Post-process the pandoc HTML (best-effort; any failure leaves it as-is):
+    #  - inject content-aware <colgroup> widths (gfm drops pipe-table dash hints)
+    #  - wrap the title block into a dedicated cover page
+    #  - tag the TOC list so print CSS can add target-counter page numbers
     try:
         html_text = html_path.read_text(encoding="utf-8")
-        html_path.write_text(_inject_table_colgroups(html_text), encoding="utf-8")
+        html_text = _inject_table_colgroups(html_text)
+        html_text = _wrap_cover_page(html_text)
+        html_text = _wrap_toc(html_text)
+        html_path.write_text(html_text, encoding="utf-8")
     except OSError:
         pass
 
@@ -392,6 +638,16 @@ def export_pdf(
         title = input_md.stem.replace("-", " ").title()
         md_to_html(pre_md, html_path, css_path, title)
 
+        # PDF-only: swap emoji WeasyPrint can't render for DejaVu-safe glyphs.
+        # Best-effort — any failure leaves the pandoc HTML untouched.
+        try:
+            html_path.write_text(
+                _replace_unsupported_emoji(html_path.read_text(encoding="utf-8")),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
         if keep_html:
             kept_html = output_pdf.with_suffix(".html")
             atomic_write_text(kept_html, html_path.read_text(encoding="utf-8"))
@@ -424,12 +680,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-mermaid",
         action="store_true",
-        help="Skip Mermaid SVG pre-rendering even if mmdc is installed",
+        help="Export without diagrams (skip Mermaid rendering AND its preflight). "
+        "This is the opt-out for environments with no Chrome/mmdc.",
     )
     parser.add_argument(
         "--require-mermaid",
         action="store_true",
-        help="Fail preflight if mmdc is not installed (default: warn and skip)",
+        help="Deprecated/redundant: Mermaid rendering is now required by default. "
+        "Kept for backward compatibility.",
     )
     parser.add_argument(
         "--keep-html",
@@ -443,7 +701,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    ok, messages = preflight(require_mermaid=args.require_mermaid)
+    # Mermaid rendering is required by default: a PDF where diagrams silently
+    # degrade to raw code is a broken result, so a missing or non-functional
+    # mmdc (e.g. no Chrome for Puppeteer) must abort with a clear error.
+    # --no-mermaid is the explicit opt-out; --require-mermaid is now redundant.
+    require_mermaid = not args.no_mermaid
+    ok, messages = preflight(require_mermaid=require_mermaid)
     sys.stderr.write("[export_pdf] preflight:\n")
     for m in messages:
         sys.stderr.write(m + "\n")

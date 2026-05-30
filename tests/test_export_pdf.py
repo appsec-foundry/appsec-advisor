@@ -96,6 +96,46 @@ class TestPreflight:
         assert ok is False
         assert any("mmdc" in m and ("not found" in m or "miss" in m) for m in msgs)
 
+    def test_mmdc_present_but_cannot_render_is_hard(self):
+        """mmdc on PATH but Chrome missing → render probe fails → hard abort.
+
+        This is the core regression: `which mmdc` succeeds yet every diagram
+        would degrade to raw code, so preflight must fail when mermaid is
+        required."""
+        with (
+            patch.object(ep, "check_tool", return_value="/usr/bin/mmdc"),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+            patch.object(
+                ep,
+                "probe_mmdc",
+                return_value=(False, "present but cannot render (missing/broken Chrome for Puppeteer): err"),
+            ),
+        ):
+            ok, msgs = ep.preflight(require_mermaid=True)
+        assert ok is False
+        assert any("mmdc" in m and "cannot render" in m for m in msgs)
+
+    def test_mmdc_render_probe_success_passes(self):
+        with (
+            patch.object(ep, "check_tool", return_value="/usr/bin/mmdc"),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+            patch.object(ep, "probe_mmdc", return_value=(True, "render probe ok via /usr/bin/google-chrome")),
+        ):
+            ok, msgs = ep.preflight(require_mermaid=True)
+        assert ok is True
+        assert any("mmdc" in m and "ok" in m for m in msgs)
+
+    def test_mmdc_not_probed_when_not_required(self):
+        """With --no-mermaid (require_mermaid=False) the slow render probe is
+        skipped entirely even when mmdc is present."""
+        with (
+            patch.object(ep, "check_tool", return_value="/usr/bin/mmdc"),
+            patch.object(ep, "probe_runs", return_value=(True, "ok")),
+            patch.object(ep, "probe_mmdc", side_effect=AssertionError("probe must not run")),
+        ):
+            ok, _ = ep.preflight(require_mermaid=False)
+        assert ok is True
+
 
 # ---------------------------------------------------------------------------
 # render_mermaid_blocks()
@@ -383,3 +423,233 @@ def test_inject_table_colgroups_content_aware():
 def test_inject_table_colgroups_skips_existing():
     html = "<table>\n<colgroup><col style=\"width: 50%\"/></colgroup>\n<tr><th>A</th><th>B</th></tr>\n</table>"
     assert ep._inject_table_colgroups(html) == html
+
+
+def test_inject_table_colgroups_floors_narrow_columns():
+    """A wide prose column must not crush short columns below the per-column
+    floor (which made headers like 'Method' wrap one char per line)."""
+    html = (
+        "<table>\n<thead><tr>"
+        "<th>Method</th><th>Route</th><th>Auth</th><th>Risk</th><th>Notes</th>"
+        "</tr></thead>\n<tbody>\n"
+        "<tr><td>POST</td><td>/rest/products/search</td><td>No</td><td>Critical</td>"
+        "<td>" + ("word " * 50) + "</td></tr>\n</tbody>\n</table>"
+    )
+    out = ep._inject_table_colgroups(html)
+    pct = [int(x) for x in re.findall(r"width:\s*(\d+)%", out)]
+    assert len(pct) == 5
+    # Every column at or above the floor (rounding may shave 1%).
+    assert min(pct) >= int(ep._MIN_COL_PCT) - 1
+    assert 95 <= sum(pct) <= 105
+
+
+# ---------------------------------------------------------------------------
+# Emoji fallback (DejaVu has no emoji glyphs → PDF tofu)
+# ---------------------------------------------------------------------------
+
+
+class TestEmojiFallback:
+    def test_replaces_tofu_emoji_with_colored_glyph(self):
+        html = "<p>Risk \U0001F534 critical, \U0001F7E0 weak, ✅ ok, ❌ missing</p>"
+        out = ep._replace_unsupported_emoji(html)
+        # No raw emoji left; replaced by colored DejaVu-safe glyphs.
+        for emo in ("\U0001F534", "\U0001F7E0", "✅", "❌"):
+            assert emo not in out
+        assert '<span style="color: #d1242f">●</span>' in out  # red circle
+        assert "✓" in out and "✗" in out                   # check + cross
+
+    def test_keeps_dejavu_safe_glyphs_untouched(self):
+        # ✓ ✗ ● ≥ → are already in DejaVu; must not be rewritten.
+        html = "<p>✓ ✗ ● ≥ →</p>"
+        assert ep._replace_unsupported_emoji(html) == html
+
+    def test_does_not_touch_emoji_inside_svg(self):
+        html = '<p>\U0001F534</p><svg><text>\U0001F534</text></svg>'
+        out = ep._replace_unsupported_emoji(html)
+        # The <p> emoji is replaced; the one inside <svg> is preserved verbatim.
+        assert "<svg><text>\U0001F534</text></svg>" in out
+        assert out.index("<span") < out.index("<svg")
+
+    def test_noop_when_no_emoji(self):
+        html = "<p>plain ascii only</p>"
+        assert ep._replace_unsupported_emoji(html) is html or ep._replace_unsupported_emoji(html) == html
+
+
+# ---------------------------------------------------------------------------
+# Cover page + TOC page numbers
+# ---------------------------------------------------------------------------
+
+_REPORT_HTML = (
+    "<body>\n"
+    '<header id="title-block-header">\n<h1 class="title">From Filename</h1>\n</header>\n'
+    '<h1 id="threat-model-x">Threat Model: x</h1>\n'
+    "<blockquote>\n<p>Generated by tool.</p>\n</blockquote>\n"
+    "<p><strong>Scan date:</strong> 2025-01-01</p>\n"
+    "<hr />\n"
+    '<h2 id="table-of-contents">Table of Contents</h2>\n\n'
+    '<ul>\n<li><a href="#management-summary">Management Summary</a></li>\n</ul>\n'
+    '<ol type="1">\n<li><a href="#1-system-overview">System Overview</a>\n'
+    '<ul>\n<li><a href="#scope">Scope</a></li>\n</ul></li>\n</ol>\n'
+    '<h2 id="management-summary">Management Summary</h2>\n<p>body</p>\n'
+    "</body>"
+)
+
+
+class TestCoverPage:
+    def test_wraps_title_block_into_cover(self):
+        out = ep._wrap_cover_page(_REPORT_HTML)
+        assert '<div class="cover-page">' in out
+        # Real body title + subtitle + metadata land inside the cover.
+        cover = re.search(r'<div class="cover-page">(.*?)</div>', out, re.S).group(1)
+        assert "Threat Model: x" in cover
+        assert "Generated by tool." in cover
+        assert "Scan date:" in cover
+
+    def test_drops_duplicate_pandoc_title_header(self):
+        out = ep._wrap_cover_page(_REPORT_HTML)
+        assert "title-block-header" not in out
+        assert "From Filename" not in out
+
+    def test_consumes_the_hr_separator(self):
+        out = ep._wrap_cover_page(_REPORT_HTML)
+        # The <hr/> that delimited the cover region is removed, not left dangling
+        # right after the cover div.
+        assert "</div>\n<hr" not in out
+
+    def test_toc_stays_outside_cover(self):
+        out = ep._wrap_cover_page(_REPORT_HTML)
+        cover = re.search(r'<div class="cover-page">(.*?)</div>', out, re.S).group(1)
+        assert "table-of-contents" not in cover
+
+    def test_no_cover_region_returns_unchanged(self):
+        # No <hr> → no cover; pandoc header preserved so a title still shows.
+        html = '<body>\n<header id="title-block-header"><h1 class="title">T</h1></header>\n<h1>Doc</h1>\n<p>x</p>\n</body>'
+        assert ep._wrap_cover_page(html) == html
+
+
+class TestTocPageNumbers:
+    def test_wraps_toc_region_in_nav(self):
+        out = ep._wrap_toc(_REPORT_HTML)
+        assert '<nav class="toc">' in out
+        nav = re.search(r'<nav class="toc">(.*?)</nav>', out, re.S).group(1)
+        # Heading + BOTH sibling lists (ul + ol) end up inside the nav.
+        assert "table-of-contents" in nav
+        assert "Management Summary" in nav
+        assert "System Overview" in nav
+        assert "Scope" in nav  # nested child included too
+
+    def test_toc_nav_closes_before_next_section(self):
+        out = ep._wrap_toc(_REPORT_HTML)
+        nav = re.search(r'<nav class="toc">(.*?)</nav>', out, re.S).group(1)
+        # The Management Summary *section heading* (h2) must stay outside the nav.
+        assert '<h2 id="management-summary">' not in nav
+
+    def test_does_not_swallow_unrelated_trailing_list(self):
+        html = _REPORT_HTML + '\n<ol><li>unrelated</li></ol>'
+        out = ep._wrap_toc(html)
+        assert "unrelated" not in re.search(r'<nav class="toc">(.*?)</nav>', out, re.S).group(1)
+
+    def test_no_toc_heading_is_noop(self):
+        html = "<h2 id=\"intro\">Intro</h2>\n<ol><li>x</li></ol>"
+        assert ep._wrap_toc(html) == html
+
+    def test_heals_broken_anchor_to_span(self):
+        """A TOC entry pointing at a missing anchor would make WeasyPrint's
+        target-counter abort the whole render; it must degrade to a <span>
+        (text kept, dead link + page number dropped) while valid entries stay
+        as links."""
+        html = (
+            '<h2 id="table-of-contents">Table of Contents</h2>\n'
+            '<ul>\n'
+            '<li><a href="#real">Real Section</a></li>\n'
+            '<li><a href="#missing">Broken Section</a></li>\n'
+            '</ul>\n'
+            '<h2 id="real">Real Section</h2>\n'
+        )
+        out = ep._wrap_toc(html)
+        nav = re.search(r'<nav class="toc">(.*?)</nav>', out, re.S).group(1)
+        assert '<a href="#real">Real Section</a>' in nav      # valid link preserved
+        assert '<a href="#missing">' not in nav               # dead link removed
+        assert "<span>Broken Section</span>" in nav           # but text kept
+
+    def test_external_links_untouched(self):
+        html = (
+            '<h2 id="table-of-contents">Table of Contents</h2>\n'
+            '<ul><li><a href="https://example.com">Ext</a></li></ul>\n'
+            '<h2 id="x">X</h2>\n'
+        )
+        out = ep._wrap_toc(html)
+        # External links are not internal anchors → left as-is (CSS [href^="#"]
+        # already excludes them from page numbering).
+        assert '<a href="https://example.com">Ext</a>' in out
+
+
+# ---------------------------------------------------------------------------
+# md_to_html — resource-path so pandoc can embed rendered Mermaid SVGs
+# ---------------------------------------------------------------------------
+
+
+def test_md_to_html_passes_resource_path(tmp_path):
+    """Rendered Mermaid SVGs sit next to the (temp) Markdown and are referenced
+    relatively; pandoc must get --resource-path=<md dir> or it cannot embed
+    them (exit 99). Regression guard for the latent crash."""
+    md = tmp_path / "pre.md"
+    md.write_text("# Doc\n\n![Diagram 1](diagram-1.svg)\n")
+    html = tmp_path / "out.html"
+    css = tmp_path / "print.css"
+    css.write_text("body{}")
+    captured: dict = {}
+
+    def fake_run(cmd, **kw):
+        program = Path(cmd[0]).name
+        if program == "pandoc" and "--version" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, "pandoc 3.0\n", "")
+        if program == "pandoc":
+            captured["cmd"] = cmd
+            Path(cmd[cmd.index("-o") + 1]).write_text("<html></html>")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        raise AssertionError(f"unexpected: {cmd}")
+
+    with patch("subprocess.run", side_effect=fake_run):
+        ep.md_to_html(md, html, css, "Title")
+
+    assert any(a == f"--resource-path={md.parent}" for a in captured["cmd"])
+
+
+# ---------------------------------------------------------------------------
+# find_chrome / mmdc_env — point Puppeteer at a system Chrome
+# ---------------------------------------------------------------------------
+
+
+class TestChromeResolution:
+    def test_env_var_takes_precedence(self, tmp_path, monkeypatch):
+        chrome = tmp_path / "my-chrome"
+        chrome.write_text("")
+        monkeypatch.setenv("PUPPETEER_EXECUTABLE_PATH", str(chrome))
+        assert ep.find_chrome() == str(chrome)
+
+    def test_falls_back_to_path_lookup(self, monkeypatch):
+        monkeypatch.delenv("PUPPETEER_EXECUTABLE_PATH", raising=False)
+        with patch.object(
+            ep.shutil,
+            "which",
+            side_effect=lambda n: "/usr/bin/google-chrome" if n == "google-chrome" else None,
+        ):
+            assert ep.find_chrome() == "/usr/bin/google-chrome"
+
+    def test_none_when_no_chrome(self, monkeypatch):
+        monkeypatch.delenv("PUPPETEER_EXECUTABLE_PATH", raising=False)
+        with patch.object(ep.shutil, "which", return_value=None):
+            assert ep.find_chrome() is None
+
+    def test_mmdc_env_sets_executable_path(self, monkeypatch):
+        monkeypatch.delenv("PUPPETEER_EXECUTABLE_PATH", raising=False)
+        with patch.object(ep, "find_chrome", return_value="/opt/chrome"):
+            env = ep.mmdc_env()
+        assert env["PUPPETEER_EXECUTABLE_PATH"] == "/opt/chrome"
+
+    def test_mmdc_env_does_not_override_user_value(self, monkeypatch):
+        monkeypatch.setenv("PUPPETEER_EXECUTABLE_PATH", "/user/set/chrome")
+        with patch.object(ep, "find_chrome", return_value="/opt/chrome"):
+            env = ep.mmdc_env()
+        assert env["PUPPETEER_EXECUTABLE_PATH"] == "/user/set/chrome"

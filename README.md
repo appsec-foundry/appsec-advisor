@@ -145,7 +145,7 @@ Findings are rendered from structured artifacts and checked before release, so t
 
 | File | Enable with | Description |
 |---|---|---|
-| `threat-model.pdf` | `--pdf` | Print-ready PDF report. |
+| `threat-model.pdf` | `--pdf` | Print-ready PDF report: automatic cover page, page-numbered table of contents, rendered diagrams, content-aware tables. Requires `pandoc` + `weasyprint`; diagrams additionally need `mmdc` and a Chrome/Chromium for Puppeteer. Missing deps abort with a clear message — pass `--no-mermaid` to export without diagrams. |
 | `threat-model.html` | `--html` (or `export-threat-model --formats html`) | Self-contained HTML5 (pandoc-only, no weasyprint) for browser viewing, wiki attachments, or as a styling-pipeline input. |
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
 | `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for AI pentesters such as Strix, including finding verification plus architecture-driven probes. |
@@ -162,7 +162,7 @@ All optional deliverables can also be generated after an assessment. This is use
 /appsec-advisor:export-threat-model --formats pentest --pentest-target https://staging.example.com
 ```
 
-SARIF and pentest-tasks are produced deterministically from `threat-model.yaml` — no LLM tokens spent. PDF and HTML are converted from `threat-model.md`: HTML needs only pandoc, PDF additionally needs weasyprint. See [Utility commands](#utility-commands) for related workflow helpers.
+SARIF and pentest-tasks are produced deterministically from `threat-model.yaml` — no LLM tokens spent. PDF and HTML are converted from `threat-model.md`: HTML needs only `pandoc`, PDF additionally needs `weasyprint`. Mermaid diagrams are rendered to vector graphics by `mmdc` (`@mermaid-js/mermaid-cli`), which drives a headless **Chrome/Chromium via Puppeteer** — install one (`npx puppeteer browsers install chrome`, or `apt install chromium` and set `PUPPETEER_EXECUTABLE_PATH`). The PDF exporter's preflight aborts with a clear message if any required tool is missing or non-functional; run `/appsec-advisor:export-threat-model --check-only` to verify the toolchain, or pass `--no-mermaid` to export without diagrams. See [Utility commands](#utility-commands) for related workflow helpers.
 
 ## Example report: OWASP Juice Shop
 

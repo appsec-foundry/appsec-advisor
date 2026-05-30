@@ -1,6 +1,6 @@
 ---
 name: export-threat-model
-description: Re-export a finished threat-model.yaml/.md into PDF + HTML + SARIF + pentest-tasks artifacts. Standalone post-processing — does not analyze the repo, does not run any agent. SARIF and pentest-tasks are derived deterministically from threat-model.yaml; PDF and HTML are converted from threat-model.md (requires pandoc; PDF also needs weasyprint; mmdc optional for Mermaid).
+description: Re-export a finished threat-model.yaml/.md into PDF + HTML + SARIF + pentest-tasks artifacts. Standalone post-processing — does not analyze the repo, does not run any agent. SARIF and pentest-tasks are derived deterministically from threat-model.yaml; PDF and HTML are converted from threat-model.md (requires pandoc; PDF also needs weasyprint plus mmdc+Chrome for Mermaid diagrams, or --no-mermaid).
 ---
 
 You are exporting an existing threat model into one or more artifact formats. This skill is **standalone post-processing** — do not analyze the repository, do not dispatch any agent, do not modify the source `threat-model.md` or `threat-model.yaml`. The skill reads those two files and writes the requested exports.
@@ -41,8 +41,12 @@ FLAGS
 DEPENDENCIES (installed by the user, not by this plugin)
   pandoc        Required for PDF + HTML.  apt install pandoc | brew install pandoc
   weasyprint    Required for PDF only.    pip install weasyprint
-  mmdc          Optional for PDF/HTML Mermaid rendering.
+  mmdc          Required for PDF Mermaid diagrams (optional for HTML).
+                Also needs a Chrome/Chromium for Puppeteer.
                 npm install -g @mermaid-js/mermaid-cli
+                + npx puppeteer browsers install chrome   (or apt install
+                chromium and set PUPPETEER_EXECUTABLE_PATH)
+                PDF aborts if missing; pass --no-mermaid to skip diagrams.
   pyyaml        Required for SARIF + pentest. apt install python3-yaml | pip install pyyaml
 
 OUTPUTS
@@ -65,7 +69,7 @@ exports. It never dispatches agents and never spends LLM tokens.
 
 EXIT CODES
   0  All requested exports written (or --check-only succeeded)
-  1  Missing dependency (pandoc / weasyprint / pyyaml)
+  1  Missing dependency (pandoc / weasyprint / mmdc+Chrome / pyyaml)
   2  Input file not found (threat-model.md or .yaml)
   3  threat-model.yaml is schema-invalid
   4  Conversion error from one of the helpers

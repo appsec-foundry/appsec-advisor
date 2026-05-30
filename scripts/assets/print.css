@@ -67,8 +67,9 @@ pre {
   padding: 10px 12px;
   border-radius: 5px;
   overflow-x: auto;
-  page-break-inside: avoid;
-  break-inside: avoid;
+  /* No break-inside:avoid — a code block taller than the remaining space would
+   * otherwise jump whole to the next page and strand a near-empty one. Let it
+   * flow across the page boundary instead. */
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -84,30 +85,52 @@ table {
   table-layout: fixed;
   margin: 0.6em 0;
   font-size: 0.92em;
-  page-break-inside: avoid;
-  break-inside: avoid;
+  /* The table itself may break across pages — many register/surface tables are
+   * taller than a page, and forcing them whole pushed them (and any heading
+   * glued before them via page-break-after:avoid) onto the next page, leaving
+   * the previous one almost blank. Row-level rules below keep cells intact. */
 }
+/* Repeat the header row on each page a table spans. Rows are NOT pinned with
+ * break-inside:avoid: the threat/mitigation registers have rows as tall as a
+ * full page (one card each), and pinning them forced each oversized row whole
+ * onto the next page, stranding big blank areas. WeasyPrint splits a row across
+ * the boundary with correct borders, so flowing reads better than the gaps. */
+thead { display: table-header-group; }
 th, td {
   border: 1px solid #d0d7de;
   padding: 5px 8px;
   text-align: left;
   vertical-align: top;
-  /* Wrap long prose within the fixed column rather than overflowing. */
+  /* Wrap long prose within the fixed column rather than overflowing, but never
+   * hyphenate — a hyphen mid-identifier (e.g. F-0/01) reads as a typo. */
   overflow-wrap: break-word;
+  hyphens: none;
 }
 th {
   background: #f6f8fa;
   font-weight: 600;
+  /* Header labels are short single words ("Method", "Auth"); break only between
+   * words, never mid-word, so a slightly tight column overflows by a pixel
+   * rather than stacking one character per line. */
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
 tr:nth-child(even) td { background: #fafbfc; }
 
-/* Keep short ID links (`F-001`) intact; let long inline-code (`file:line`,
- * `$where`) break only when it would otherwise overflow a fixed column. */
-td a { white-space: nowrap; }
+/* Short ID links (`F-001`) stay whole; long title links (the §7.1 control-
+ * category column links to "7.2 Identity and Authentication Controls…") wrap
+ * at word boundaries instead of overflowing into the next column. */
+td a { overflow-wrap: break-word; }
 td code { overflow-wrap: anywhere; }
 
 img {
   max-width: 100%;
+  /* Cap height so a tall rendered diagram (Mermaid SVG) fits on the same page
+   * as the heading + intro + caption above it (which take ~70mm), rather than
+   * jumping to the next page and stranding a near-empty one. Measured: the
+   * Figure-1 architecture diagram needs ≤ ~207mm of the ~275mm content area to
+   * sit under its caption. */
+  max-height: 170mm;
   height: auto;
   page-break-inside: avoid;
   break-inside: avoid;
@@ -133,4 +156,63 @@ li { margin: 0.15em 0; }
  * line-wrap awkwardly between page columns. */
 .severity-critical, .severity-high, .severity-medium, .severity-low {
   white-space: nowrap;
+}
+
+/* Cover page ---------------------------------------------------------------
+ * export_pdf.py wraps the leading title/subtitle/metadata block into
+ * <div class="cover-page">. It fills the first page (no page number) and a
+ * page break sends the Table of Contents onto its own page. */
+@page cover {
+  margin: 0;
+  @bottom-right { content: none; }   /* no footer page number on the cover */
+}
+.cover-page {
+  page: cover;
+  break-after: page;
+  page-break-after: always;
+  height: 297mm;           /* full A4 (cover @page margin is 0) */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  padding: 0 2.5cm;
+  box-sizing: border-box;
+}
+.cover-page table { margin-left: auto; margin-right: auto; max-width: 90%; }
+.cover-page td { text-align: left; }
+.cover-page h1 {
+  font-size: 2.6em;
+  border: 0;
+  padding: 0;
+  margin: 0 0 0.5em 0;
+}
+.cover-page blockquote {
+  border: 0;
+  margin: 0 auto 1.4em auto;
+  padding: 0;
+  max-width: 85%;
+  font-size: 1.05em;
+  color: #444;
+}
+.cover-page p { color: #57606a; }
+.cover-page a { color: inherit; }
+.cover-page hr { display: none; }
+
+/* Table of Contents — append the target page number to each entry. export_pdf
+ * wraps the TOC heading + its lists in <nav class="toc">. Scoped to print media
+ * so a browser viewing the HTML export doesn't show dangling leader dots
+ * (target-counter is paged-media only; WeasyPrint resolves it to PDF pages). */
+nav.toc { break-after: page; page-break-after: always; }
+nav.toc a {
+  color: #1a1a1a;
+  text-decoration: none;
+}
+@media print {
+  /* Internal anchors only — external links (https, file) have no page to
+   * count, and target-counter on a missing anchor aborts the render. */
+  nav.toc a[href^="#"]::after {
+    content: leader('. ') target-counter(attr(href url), page);
+    color: #57606a;
+    font-variant-numeric: tabular-nums;
+  }
 }
