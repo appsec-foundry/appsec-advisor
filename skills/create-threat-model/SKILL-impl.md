@@ -2956,22 +2956,28 @@ The orchestrator's repair-mode branch must:
 9-min sonnet REPAIR cost is not conflated with the deterministic Stage-3
 QA fast-path record. The QA fast-path runs first (deterministic, 5s,
 `tokens=0`, `model=none`); when the gate trips and REPAIR_MODE fires,
-the repair dispatch is its OWN stat with `--variant repair`. Without
-`--variant`, the second `record_stage_stats.py --stage 3 …` call
-silently no-ops via the (stage, variant) idempotency key — the JSONL
-ends up with only the fast-path record and the LLM-token costs are
-invisible. With `--variant repair`, both records coexist and
-`render_completion_summary.py` can surface "Stage 3 QA (deterministic,
-5s) + Stage 3 Repair (sonnet, 9m, 119k tokens)" instead of one hybrid
-mislabeled record.
+the repair dispatch is its OWN stat with an iteration-distinct variant
+`repair-<k>` (k = `repair_iteration`, 1-based). Without `--variant`,
+the second `record_stage_stats.py --stage 3 …` call silently no-ops via
+the (stage, variant) idempotency key. **A CONSTANT `--variant repair`
+has the same failure when the Re-Render Loop runs more than one
+REPAIR_MODE iteration** (observed juice-shop 2026-05-30 `--thorough`:
+two repair dispatches, only the first recorded — the second iteration's
+~10 min / ~120k tokens were lost from the per-stage breakdown). Using
+`repair-<k>` keeps crash-safety idempotency (re-running the SAME
+iteration after a crash → same key → no-op) AND captures every distinct
+repair pass. `render_completion_summary.py` sums `duration_ms` across
+all JSONL lines regardless of variant value, so the distinct variants
+all roll into the total correctly.
 
 Capture `STAGE3_REPAIR_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` right
-before each repair-mode Agent dispatch (per iteration if the loop runs
-multiple times — last value wins). After the Agent returns:
+before each repair-mode Agent dispatch (per iteration — capture freshly
+each pass). After the Agent returns (substitute `<k>` with the 1-based
+repair iteration number):
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-    --stage 3 --variant repair \
+    --stage 3 --variant "repair-<k>" \
     --name "Re-Render Loop (REPAIR_MODE)" \
     --agent appsec-advisor:appsec-threat-analyst \
     --model "$STRIDE_MODEL" \

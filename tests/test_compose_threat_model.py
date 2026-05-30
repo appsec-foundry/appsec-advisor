@@ -2315,6 +2315,31 @@ def test_table_col_weight_roles() -> None:
     assert w("Threat Description") == compose._TBL_W_DESC
 
 
+def test_normalize_emdashes_preserves_mermaid_alt_else_labels() -> None:
+    """§3 walkthrough sequenceDiagram `alt`/`else` branch labels follow the
+    'Current state — T-NNN' / 'After M-NNN — …' convention where the em-dash
+    is the intended separator (QA Check 8e). _normalize_emdashes must keep it
+    on those lines while still normalising ordinary node-label em-dashes."""
+    md = (
+        "```mermaid\n"
+        "sequenceDiagram\n"
+        "    Note over U: Untrusted Zone — Internet\n"
+        "    alt Current state — T-001\n"
+        "        U->>S: forge token\n"
+        "    else After M-001 — rotate key\n"
+        "        U->>S: blocked\n"
+        "    end\n"
+        "```\n"
+    )
+    out = compose._normalize_emdashes(md)
+    assert "alt Current state — T-001" in out
+    assert "else After M-001 — rotate key" in out
+    # Ordinary node labels are still normalised to ASCII hyphen.
+    assert "Untrusted Zone - Internet" in out
+    # Idempotent.
+    assert compose._normalize_emdashes(out) == out
+
+
 def test_normalize_table_column_widths_sets_proportional_separator() -> None:
     md = (
         "| Asset | ID | Classification | Description | Linked Threats |\n"

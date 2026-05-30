@@ -1557,6 +1557,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = {
         "mode": args.mode,
         "reasoning_model": args.reasoning_model,
+        "assessment_depth": args.assessment_depth,
         "write_yaml": args.write_yaml,
         "write_sarif": args.write_sarif,
         "write_pentest_tasks": args.write_pentest_tasks,

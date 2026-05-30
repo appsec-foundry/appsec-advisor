@@ -512,6 +512,25 @@ class TestCLISmoke:
         assert "Results" in r.stdout
         assert "Next Steps" in r.stdout
 
+    def test_assessment_depth_reflected_in_run_block(self, tmp_path: Path):
+        """Regression: --assessment-depth must surface in the Run block.
+        Pre-fix the cfg dict omitted assessment_depth so the Depth line
+        always fell back to 'standard' regardless of the flag (observed
+        juice-shop 2026-05-30 --thorough run printed 'Depth: standard')."""
+        out = self._minimal_output_dir(tmp_path)
+        r = subprocess.run(
+            [
+                sys.executable, str(SCRIPT_PATH),
+                "--output-dir", str(out), "--repo-root", str(out),
+                "--mode", "full", "--assessment-depth", "thorough",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0
+        assert "Depth     : thorough" in r.stdout
+        assert "Depth     : standard" not in r.stdout
+
     def test_no_print_suppresses_summary(self, tmp_path: Path):
         """--no-print flag (added M2.13) suppresses stdout so Stage 2 can
         invoke the script just to patch placeholders without leaking the

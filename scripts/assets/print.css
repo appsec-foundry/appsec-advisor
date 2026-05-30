@@ -216,3 +216,66 @@ nav.toc a {
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* ===========================================================================
+ * Screen layout (HTML export only)
+ *
+ * This stylesheet is shared by both pipelines: WeasyPrint renders it as PAGED
+ * media (it ignores @media screen) to produce the PDF, while a browser opening
+ * the standalone .html renders it as SCREEN media. Without the rules below the
+ * page-oriented defaults (full-bleed body, A4 cover that fills a screen, fixed
+ * pt font) make the HTML look unstructured and run edge-to-edge on wide
+ * monitors. These rules only affect on-screen viewing.
+ * ========================================================================= */
+@media screen {
+  html {
+    font-size: 16px;            /* px, not the print 10.5pt */
+    background: #f5f6f8;        /* gutter around the "page" */
+  }
+  body {
+    max-width: 860px;          /* readable measure instead of full-bleed */
+    margin: 2.5rem auto;
+    padding: 3rem 3.5rem;
+    background: #ffffff;
+    border: 1px solid #e3e6ea;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  }
+
+  /* The cover wrapper is a print device — on screen it must not reserve a full
+   * A4 height (huge blank first screen) or force a page break. Render it as a
+   * normal, lightly separated title block. */
+  .cover-page {
+    height: auto;
+    min-height: 0;
+    display: block;
+    text-align: left;
+    padding: 0 0 1.5rem 0;
+    margin-bottom: 1.5rem;
+    border-bottom: 2px solid #d0d7de;
+    break-after: auto;
+    page-break-after: auto;
+  }
+  .cover-page h1 { font-size: 2.1em; }
+  .cover-page blockquote { margin-left: 0; max-width: none; }
+
+  /* The TOC nav is just an in-page index on screen — no forced page break. */
+  nav.toc {
+    break-after: auto;
+    page-break-after: auto;
+    background: #fbfcfd;
+    border: 1px solid #e3e6ea;
+    border-radius: 6px;
+    padding: 0.5rem 1.5rem 1rem;
+    margin-bottom: 2rem;
+  }
+  nav.toc a:hover { text-decoration: underline; }
+
+  /* Diagrams: show at natural size (the 170mm print cap would shrink them) but
+   * never wider than the text column. */
+  img { max-height: none; }
+
+  /* Tables may break the measure for very wide registers — let them scroll
+   * horizontally rather than overflow the page card. */
+  table { font-size: 0.95rem; }
+}

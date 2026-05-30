@@ -8298,11 +8298,24 @@ def _normalize_emdashes(md: str) -> str:
         flags=re.DOTALL,
     ):
         if chunk.startswith("```mermaid"):
-            # Mermaid blocks: em dash is not syntactic; normalise inside
-            # so the rendered diagram stays consistent with the prose.
-            chunk = _EMDASH_SPACED_RE.sub("-", chunk)
-            chunk = _EMDASH_TIGHT_RE.sub("-", chunk)
-            out_chunks.append(chunk)
+            # Mermaid blocks: em dash is not syntactic; normalise node
+            # labels inside so the rendered diagram stays consistent with
+            # the prose. EXCEPTION: sequenceDiagram `alt`/`else` branch
+            # labels follow the "Current state — T-NNN" / "After M-NNN — …"
+            # convention (QA Check 8e) where the em-dash is the intended
+            # visual separator. Blanket-normalising them to a hyphen makes
+            # every §3 walkthrough diagram drift from its authored fragment,
+            # so the QA reviewer re-flags it on every run. Preserve em-dashes
+            # on those lines only.
+            mermaid_lines = []
+            for ln in chunk.split("\n"):
+                if re.match(r"^\s*(?:alt|else)\s+\S", ln):
+                    mermaid_lines.append(ln)
+                else:
+                    ln = _EMDASH_SPACED_RE.sub("-", ln)
+                    ln = _EMDASH_TIGHT_RE.sub("-", ln)
+                    mermaid_lines.append(ln)
+            out_chunks.append("\n".join(mermaid_lines))
             continue
         if chunk.startswith("```") or chunk.startswith("<!--"):
             out_chunks.append(chunk)
