@@ -262,6 +262,14 @@ If no SCM siblings or SaaS integrations are found, write: `No cross-repository o
 | <e.g., Python> | `requirements.txt` | <yes/no> | <`pip install --require-hashes` / `pip install` / not found> | <`--require-hashes` / `--no-deps`? yes/no> | — |
 | <e.g., Go> | `go.sum` | <yes/no> | <`go mod verify` in CI? yes/no> | <`GONOSUMCHECK` set? yes/no> | — |
 
+**Install cooldown / minimum release age** (Cat 26 Step 7 — refuses dependency versions younger than a minimum age; primary defense against fast-propagation 2025 attacks):
+
+| Ecosystem | Cooldown configured | Mechanism / value |
+|-----------|---------------------|-------------------|
+| <e.g., npm> | <yes / no / pnpm v11 default-on> | <`.npmrc minimumReleaseAge=1440` / `npmMinimalAgeGate` / `--exclude-newer` / none> |
+
+If no cooldown on any JS/Python ecosystem: `No install cooldown configured — newly published (potentially compromised) versions are installable immediately.`
+
 **Dependency management tooling:**
 - <Renovate: `renovate.json` found at `<path>` — covers: npm, Docker, GitHub Actions / not found>
 - <Dependabot: `.github/dependabot.yml` found — covers: npm, pip / not found>
@@ -330,6 +338,7 @@ Only when repository visibility is **public** or **unknown** (independent of whe
 | `CODEOWNERS` present | <yes (path) / no> |
 | `CONTRIBUTING` / PR template present | <yes (path) / no> |
 | Branch protection / required review | Not verifiable from source — verify out-of-band |
+| PR dependency-review gate | <`actions/dependency-review-action` present (path) / absent> |
 | Verdict | <High: public, no CODEOWNERS / Medium: public, CODEOWNERS present / High: visibility unknown> |
 
 This block is the evidence source for the untrusted-external-contribution Tampering/EoP threat (see STRIDE analyzer supply-chain patterns).
@@ -365,6 +374,14 @@ Only when `.github/workflows/*.yml` or `Dockerfile` exist.
 - **SLSA provenance:** search for SLSA-generator actions, `slsa-framework/slsa-github-generator`. Record level if present.
 
 If none found for any of the three: `No container signing / SBOM / SLSA provenance pipeline detected.`
+
+**Publish authentication & package provenance** (Cat 27e — only when a package-publish step exists):
+
+| Publish target | Auth model | Package provenance/attestation |
+|----------------|-----------|--------------------------------|
+| <npm / PyPI / none> | <Trusted Publishing (OIDC) / long-lived token (`NPM_TOKEN` / `TWINE_PASSWORD` / `password:`)> | <PEP 740 attestation / npm `--provenance` / none> |
+
+If a long-lived publish token is used: `Long-lived publish token in CI — stealable credential enables registry publish-hijack; no package provenance. Adopt Trusted Publishing (OIDC) to fix both.` If no publish step exists: `Repo does not publish a package — publish-auth check N/A.`
 
 ### 7.31 Service-to-Service & Cloud-IAM Authentication
 

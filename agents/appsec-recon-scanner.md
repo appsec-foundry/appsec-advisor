@@ -310,6 +310,20 @@ For each ecosystem, combine the three signals into a single verdict:
 | **`PIP_INDEX_URL` / `PIP_EXTRA_INDEX_URL` env in CI** | `grep -rEn 'PIP_(INDEX\|EXTRA_INDEX)_URL' .github/workflows/ Dockerfile*` | Registry override risk (dependency confusion) when the override URL is attacker-reachable |
 | **`--unsafe-perm`** | `grep -rEn 'unsafe-perm' package.json .npmrc .github/workflows/ Dockerfile*` | npm runs install scripts as root in containers — privilege escalation surface |
 
+**Step 7 — Install cooldown / minimum release age.** A *cooldown* refuses to install a dependency version until it has been public for some minimum age (typically 1 day), so a version that is compromised and yanked within hours never reaches your build. This is the single highest-leverage defense against the 2025-class fast-propagation attacks (chalk/debug Sept 2025, malicious version live ~2.5 h; Shai-Hulud self-replicating worm Nov 2025, 796 packages / 132M monthly downloads) — a 1-day cooldown would have blocked both. Detect whether any cooldown is configured for each JS/Python ecosystem present:
+
+| Ecosystem | Cooldown mechanism | Detection |
+|-----------|--------------------|-----------|
+| npm (v11+) | `.npmrc` `minimumReleaseAge=<minutes>` | `grep -nE 'minimumReleaseAge' .npmrc */.npmrc` |
+| pnpm (v10.16+, default-on in v11) | `pnpm-workspace.yaml` / `package.json#pnpm.minimumReleaseAge` | `grep -rnE 'minimumReleaseAge' pnpm-workspace.yaml package.json` |
+| yarn (Berry 4.10+) | `.yarnrc.yml` `npmMinimalAgeGate` | `grep -nE 'npmMinimalAgeGate' .yarnrc.yml` |
+| bun (v1.3+) | `bunfig.toml` `minimumReleaseAge` | `grep -nE 'minimumReleaseAge' bunfig.toml` |
+| Renovate | `minimumReleaseAge` in renovate config | `grep -rnE 'minimumReleaseAge' renovate.json* .renovaterc* .github/renovate.json` |
+| Python (uv) | `--exclude-newer <date>` in CI/lock | `grep -rnE 'exclude-newer' .github/workflows/ uv.toml pyproject.toml` |
+| Python (pip v26+) | `--uploaded-prior-to <date>` in CI | `grep -rnE 'uploaded-prior-to' .github/workflows/ Dockerfile*` |
+
+Record the verdict per ecosystem: **configured** (note mechanism + value) or **no cooldown** (the default — an attacker-published version is installable the instant it is live). Absence is a real finding for npm/pnpm/yarn/bun projects, not merely informational. Note that pnpm v11 enables a 1-day cooldown by default, so a pnpm project on v11+ without an explicit *disable* is already protected.
+
 Record each hit with file:line and attach to section 7.16 (Dependency Confusion) or 7.17 (Postinstall Scripts) as appropriate.
 
 **Category 27 (GitHub Actions workflow privilege hardening) — detailed instructions:**
@@ -380,6 +394,19 @@ Run only when repository visibility is **public** or **unknown** (same visibilit
 | Branch protection / required review | **Not observable from the source tree** — GitHub API setting only | Always annotate "branch protection / required review NOT verifiable from source — verify out-of-band" |
 
 Severity model (mirrors 27c's unknown-defaults-up approach): **High** when the repo is public and no `CODEOWNERS` is present; **Medium** when public and a `CODEOWNERS` exists; default **High** + "repo visibility unknown" annotation when visibility cannot be determined. Record the verdict with the observed signals so the STRIDE analyzer can emit an evidence-backed Tampering/EoP threat.
+
+Additionally, record whether a PR-time dependency-review gate is present — `grep -rEn 'actions/dependency-review-action|dependency-review' .github/workflows/`. This action blocks pull requests that introduce known-vulnerable or malicious dependencies and is a primary mitigation for the untrusted-external-contribution threat. Note **present** (file:line) or **absent** in the 7.27a verdict.
+
+**27e — Publish authentication & provenance.** Only when the repo publishes a package (presence of a publish step: `npm publish`, `pnpm publish`, `twine upload`, `pypa/gh-action-pypi-publish`, `uv publish`, `poetry publish`, or a `release`-triggered workflow). The 2025 best practice is **Trusted Publishing via OIDC** (npm OIDC GA 2025; PyPI since 2023 — ~1 in 8 PyPI uploads), which replaces a long-lived registry token with a short-lived (~15-min), workflow-scoped credential and, on PyPI/npm, **auto-generates a PEP 740 / Sigstore provenance attestation for free**. Classify each publish workflow:
+
+| Signal | Detection | Verdict |
+|--------|-----------|---------|
+| Long-lived npm token | `NODE_AUTH_TOKEN` / `NPM_TOKEN` / `secrets.NPM_TOKEN` near `npm publish`, **without** `id-token: write` | **Finding** — stealable token → publish-hijack; no provenance |
+| Long-lived PyPI token | `gh-action-pypi-publish` with a `password:` input, or `TWINE_PASSWORD` / `secrets.PYPI_API_TOKEN` near `twine upload` | **Finding** — Trusted Publishing uses NO `password:` key |
+| Trusted Publishing (OIDC) | `id-token: write` permission + `gh-action-pypi-publish` (no `password:`) / npm `--provenance` with OIDC | **OK** — short-lived credential + provenance |
+| No package-level provenance | `npm publish` without `--provenance`, or PyPI publish via `gh-action-pypi-publish` older than `v1.11.0` (no attestation) | **Finding (Low/Medium)** — note that adopting Trusted Publishing resolves this automatically |
+
+Record the publish mechanism, the auth model (OIDC vs long-lived token), and whether package-level provenance/attestation is emitted, with file:line evidence.
 
 **Category 28 (AI coding assistant & IDE agent configurations) — detailed instructions:**
 
