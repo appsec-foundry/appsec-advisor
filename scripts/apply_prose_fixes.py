@@ -188,6 +188,37 @@ _LITERAL_TOKEN_RE = re.compile(
     r"|method:(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)))"
     r"(?![\w`])"
 )
+#   - Package@version tokens: `express-jwt@0.1.3`, `jsonwebtoken@0.4.0`,
+#     `@angular/core@15.2.0`. The `@<digit>` boundary requires the version to
+#     start with a digit, so email addresses (`user@example.com` → letter
+#     after `@`) and decorators (`@Component`) never match. The optional
+#     `@scope/` prefix admits npm-scoped packages.
+_LIB_VERSION_RE = re.compile(
+    r"(?<![\w`/@])"
+    r"(?P<libver>(?:@[a-z0-9][\w.-]*/)?[a-z][\w.-]*@\d[\w.\-+]*)"
+    r"(?![\w`])"
+)
+#   - CVE identifiers: `CVE-2020-28042`. Distinctive shape, very low
+#     false-positive risk. CVEs inside a markdown link label
+#     (`[CVE-2020-28042](https://…)`) are protected by _MD_LINK_LABEL_RE.
+_CVE_RE = re.compile(
+    r"(?<![\w`-])(?P<cve>CVE-\d{4}-\d{4,7})(?![\w`])"
+)
+#   - Bare JWT/JWS algorithm names: `HS256`, `RS256`, `ES384`, `PS512`.
+#     The `:` in the negative lookbehind keeps the `HS256` inside `alg:HS256`
+#     out of this pass (that whole literal is owned by _LITERAL_TOKEN_RE);
+#     this pass only catches the algorithm used bare in prose
+#     ("switch to HS256"). Bare `none` is intentionally NOT matched here.
+_ALG_NAME_RE = re.compile(
+    r"(?<![\w`:])(?P<alg>(?:HS|RS|ES|PS)(?:256|384|512))(?![\w`])"
+)
+#   - Bare hash / digest algorithm names used in prose ("unsalted MD5",
+#     "SHA-1 hashing"). These read as code identifiers, not English words,
+#     so they get backticked like any other code token. Restricted to the
+#     named MD/SHA digests so arbitrary capitalised words are never matched.
+_HASH_NAME_RE = re.compile(
+    r"(?<![\w`:/-])(?P<hash>MD[45]|SHA-?(?:1|224|256|384|512))(?![\w`])"
+)
 #   - HTTP method + URL path pairs: backtick the path portion of
 #     `GET /support/logs` → `GET \`/support/logs\``.  The method stays
 #     bare so the sentence reads naturally; only the route gets the code
@@ -196,6 +227,22 @@ _HTTP_METHOD_PATH_RE = re.compile(
     r"\b(?P<method>GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+"
     r"(?P<route>/[A-Za-z][\w/.:%-]+)"
     r"(?![\w/`])"
+)
+#   - Dotted runtime-API tokens used BARE in prose, no parens: `vm.runInContext`,
+#     `req.body`, `process.env`, `child_process.exec`, `JSON.parse`. These read
+#     as code, not English, in §5 Notes / §8 descriptions / §3 Attack Steps.
+#     Anchored to a known-object allowlist so generic dotted prose ("the U.S.
+#     team", "Node.js") never matches; the trailing `(`-exclusion leaves the
+#     `foo()` forms to `_FUNCTION_CALL_RE`. Plus a couple of standalone sandbox
+#     sink identifiers (`notevil`, `vm2`) that are unambiguously code names.
+_CODE_API_RE = re.compile(
+    r"(?<![\w`.$@-])"
+    r"(?P<api>"
+    r"(?:vm|req|res|process|child_process|JSON|Object|crypto|fs|sequelize)"
+    r"\.[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+    r"|notevil|vm2"
+    r")"
+    r"(?![\w`])"
 )
 _BACKTICK_SPAN_RE = re.compile(r"`[^`\n]+`")
 _MD_LINK_URL_RE = re.compile(r"\]\(([^)]+)\)")
@@ -212,6 +259,20 @@ _HTML_CODE_INLINE_RE = re.compile(r"<code\b.*?</code>", re.DOTALL)
 # multi-word link labels like `[CWE-321](https://…)` aren't broken by
 # accidental backtick injection inside the label.
 _MD_LINK_LABEL_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
+# Linked-title TAIL — the `— <title>` that trails a finding / threat /
+# mitigation anchor link, e.g. `[F-002](#f-002) — MD5 hashing`. Per the
+# title-exemption rule ("code in titles and links is NOT backticked"), the
+# title tail is a title context: code tokens in it (function calls, paths,
+# hash names) must stay bare. Requiring the em-dash immediately after the
+# link scopes this to title tails only — genuine prose that merely follows
+# a link ("see [F-001](#f-001) which calls eval()") is NOT protected. The
+# tail runs up to the next `<br/>`, table-cell `|`, or end of line.
+# The separator may be an em-dash, en-dash, or a spaced hyphen — the
+# `_bulletize_relevant_findings` post-processor normalises `- ` to `— `
+# only AFTER the per-line wrap pass, so the hyphen form must match here too.
+_LINKED_TITLE_TAIL_RE = re.compile(
+    r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)"
+)
 
 
 def _wrap_line(line: str) -> tuple[str, int]:
@@ -232,10 +293,15 @@ def _wrap_line(line: str) -> tuple[str, int]:
     # patterns (it only matches `<word>/<file>.<ext>` shapes anyway).
     pass_order: list[tuple[re.Pattern[str], str]] = [
         (_HTTP_METHOD_PATH_RE, "_http_method_path"),
+        (_LIB_VERSION_RE, "libver"),
         (_URL_PATH_RE, "urlpath"),
         (_BARE_FILENAME_RE, "file"),
         (_FUNCTION_CALL_RE, "fn"),
         (_LITERAL_TOKEN_RE, "lit"),
+        (_ALG_NAME_RE, "alg"),
+        (_HASH_NAME_RE, "hash"),
+        (_CVE_RE, "cve"),
+        (_CODE_API_RE, "api"),
         (_PATH_RE, "path"),
     ]
 
@@ -245,6 +311,7 @@ def _wrap_line(line: str) -> tuple[str, int]:
             _BACKTICK_SPAN_RE,
             _MD_LINK_URL_RE,
             _MD_LINK_LABEL_RE,
+            _LINKED_TITLE_TAIL_RE,
             _HTML_ATTR_RE,
             _HTML_DETAILS_RE,
             _HTML_PRE_RE,

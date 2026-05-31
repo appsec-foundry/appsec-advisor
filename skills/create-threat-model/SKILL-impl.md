@@ -2003,6 +2003,11 @@ if [ "$DRY_RUN" = "false" ]; then
     # than the renderer's `"internet-user"` default. Idempotent — preserves
     # any hand-set values.
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_threat_vektors.py" "$OUTPUT_DIR" 2>&1 || true
+    # Surface WHY a rating sits above its class baseline (public-repo secret,
+    # unauth privileged endpoint, attack-chain keystone) as a short inline
+    # severity_rationale the §8 card renders. Runs AFTER emit_threat_vektors
+    # because the rationale keys on threats[].vektor. Idempotent.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_severity_rationale.py" "$OUTPUT_DIR" 2>&1 || true
     # Issue-1: detect open user self-registration; sets
     # meta.open_user_registration which the §6 heatmap renderer reads to
     # collapse internet-user / internet-priv-user actor cards into
@@ -2422,7 +2427,7 @@ Pass the following variables to the agent prompt:
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to run Phases 1–10b plus the deterministic Phase 11 Substeps 1–3 (counts, yaml write, baseline cache) and then stop cleanly without entering the LLM-heavy Substeps 4–N. See `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT — early-exit branch" for the full contract. **Mutually exclusive with `RENDER_ONLY=true`.**)
 - `RENDER_ONLY=true` (legacy compatibility signal for older Stage-2 recovery prompts; normal Stage 2 dispatch now uses `appsec-threat-renderer`. **Mutually exclusive with `STAGE1_PHASE_LIMIT=10b`.**)
-- `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. Off by default at quick and standard; on by default only at thorough; force on at any depth via `--enrich-arch`, force off via `--no-enrich-arch`.)
+- `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. Off by default at quick; **on by default at standard and thorough** (the deterministic scaffold ships unfilled `NARRATIVE_PLACEHOLDER` comments for §7.3–§7.12 at standard/thorough, so enrichment is required for a non-empty §7 — see `resolve_config.py:resolve_enrich_arch_fragments`); force on at any depth via `--enrich-arch`, force off via `--no-enrich-arch`.)
 - `SKIP_ATTACK_PATHS_AUTHORING=<true|false>` (only set on Stage 2 dispatch. When `true`, the agent skips authoring `security-posture-attack-paths.json` and lets the renderer's deterministic CWE→class fallback in `compose_threat_model.py:_derive_attack_paths_fallback` produce the fragment. On at quick depth (since 2026-05) to save ~1-3 min in Stage 2; off at standard/thorough where the LLM-authored architectural-root-causes and attack-chain links justify the authoring cost.)
 - `SKIP_ATTACK_WALKTHROUGHS=<true|false>` (only set on Stage 2 dispatch. When `true` (set by `--no-walkthroughs` or quick depth), the agent skips authoring `attack-walkthroughs.md`; the composer renders §3 with the chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2.)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
@@ -2949,6 +2954,7 @@ The orchestrator's repair-mode branch must:
 1. Skip Phases 1–10 (their outputs are already on disk).
 2. Load the repair plan; for each `action`, re-author the listed `fragments_to_rewrite` so the next compose pass emits a contract-clean document. The orchestrator's repair branch is the **only** legal writer of `.fragments/*.{json,md}` — it never touches `threat-model.md` directly.
 3. Re-invoke `python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py --output-dir $OUTPUT_DIR --strict` (Phase 11 Substep 5).
+3b. **Re-run `apply_prose_fixes.py` on the freshly composed `threat-model.md`** (`python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py $OUTPUT_DIR/threat-model.md`). A `compose_threat_model.py --strict` rebuild regenerates the Markdown from fragments and therefore **discards** the deterministic prose-fix pass that the pre-agent gate (§"Pre-agent contract gate") applied before the repair — without this re-run the final document ships with unbackticked code tokens (function calls like `eval()`, file paths like `lib/insecurity.ts:23`, weak-hash names like `MD5`) in tables, §2 Top-Threats cells, and §3 Attack-Walkthrough steps. Idempotent; safe to run after every recompose. (Mirrors the call at the §"Pre-agent contract gate" so the post-repair document matches the pre-repair contract.)
 4. Re-run the QA contract gate (Phase 11 Substep 6) as before.
 5. Log `REPAIR_END` with the iteration number, the fragment paths that were rewritten, and the final `qa_checks.py contract` exit code.
 

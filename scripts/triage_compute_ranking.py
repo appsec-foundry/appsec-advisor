@@ -294,23 +294,46 @@ def _apply_severity_caps(eff_rank: int, cwe: str, caps: dict) -> tuple[int, str]
 def _apply_critical_criteria(
     t: dict, eff_rank: int, role: str, criteria: dict, breach_distance: int
 ) -> tuple[int, str]:
-    """Final gatekeeper before allowing effective_severity == Critical."""
+    """Final gatekeeper for effective_severity == Critical.
+
+    Two directions:
+      • ``always_critical_cwes`` — when the required context holds (breach
+        distance + impact floor), the CWE is Critical BY DEFINITION, so this
+        PROMOTES a finding the auditor under-rated (e.g. a CWE-915 mass
+        assignment that reaches ``role=admin`` on an unauthenticated endpoint
+        but was scored High×High=High). When the context fails it caps at High.
+      • ``never_individual_critical`` — de-escalates a Critical that is not a
+        keystone in a Critical chain.
+
+    Pre-2026-05-31 this function only *kept or de-escalated* an already-Critical
+    finding and returned early for anything below Critical — so the
+    always-critical CWEs could never actually promote, defeating their stated
+    intent (juice-shop T-012 register-as-admin stayed High).
+    """
     cwe = _finding_cwe(t)
     impact = _finding_impact(t)
+    bd = breach_distance if isinstance(breach_distance, int) else 3
 
-    # Don't elevate by default — only de-escalate Critical.
-    if eff_rank < _sev_rank("Critical"):
-        return eff_rank, ""
-
-    # Always-critical CWEs need required context to keep Critical
+    # Always-critical CWEs: promote (or keep) when context holds, cap at High
+    # when it fails. Runs regardless of the incoming rank so an under-scored
+    # primary-breach finding is lifted to Critical.
     for entry in criteria.get("always_critical_cwes", []) or []:
         if cwe == (entry.get("cwe") or "").upper():
             req = entry.get("required") or {}
             bd_max = int(req.get("breach_distance_max", 3))
             imp_min = req.get("impact_min", "Low")
-            if breach_distance > bd_max or _sev_rank(impact) < _sev_rank(imp_min):
-                return _sev_rank("High"), f"always_crit_failed:{cwe}"
+            context_ok = bd <= bd_max and _sev_rank(impact) >= _sev_rank(imp_min)
+            if not context_ok:
+                if eff_rank >= _sev_rank("Critical"):
+                    return _sev_rank("High"), f"always_crit_failed:{cwe}"
+                return eff_rank, ""
+            if eff_rank < _sev_rank("Critical"):
+                return _sev_rank("Critical"), f"always_crit_promoted:{cwe}"
             return eff_rank, ""
+
+    # Don't elevate by default — only de-escalate Critical (non-always CWEs).
+    if eff_rank < _sev_rank("Critical"):
+        return eff_rank, ""
 
     # never_individual_critical CWEs drop unless they're a keystone in a Critical chain
     never_ind = criteria.get("never_individual_critical") or []

@@ -86,6 +86,7 @@ except Exception:  # pragma: no cover
 
 
 _LOG_NAME = ".agent-run.log"
+_HOOK_LOG_NAME = ".hook-events.log"
 _TICK_NAME = ".skill-watchdog.tick"
 _AGENT_NAME = "skill-watchdog"
 
@@ -281,6 +282,42 @@ def _log_idle_seconds(output_dir: Path, started_at_iso: str) -> float:
     return max(0.0, time.time() - dt.timestamp())
 
 
+def _run_idle_seconds(output_dir: Path, run_start_iso: str) -> float:
+    """Seconds since the run last showed ANY observable activity — across ALL
+    phases, not just Phase 9 / Substep 2.
+
+    This is the GENERAL stall signal. The existing detectors (STRIDE_STALE,
+    SUBSTEP2_IDLE) only cover two narrow windows; the recon / context phases
+    (Phase 1-2) ran completely unmonitored. The 2026-05-31 juice-shop run sat
+    idle for 7m and 11m on two recon-phase model requests (standard-tier API
+    latency that blew the 5-min prompt-cache TTL — verified from the session
+    transcript: 98 / 1128 output tokens after 441s / 667s of wall-clock), and
+    nothing surfaced it — the user watched 46 min and aborted, unsure whether
+    the run had wedged.
+
+    Two independent activity signals, whichever is freshest wins (so we never
+    false-positive while either log is advancing):
+
+      1. ``.hook-events.log`` mtime — every Bash/Read/Write tool call appends
+         here, and the watchdog never writes it, so its mtime is a clean
+         "agent did something" pulse at tool granularity.
+      2. The last NON-watchdog entry in ``.agent-run.log`` (reuses
+         ``_log_idle_seconds`` semantics) — catches phase-boundary progress
+         even if the hook log is absent (hooks are opt-in).
+
+    Returns 0.0 on any I/O error so a transient glitch never false-positives.
+    """
+    idles: list[float] = []
+    hook_log = output_dir / _HOOK_LOG_NAME
+    try:
+        if hook_log.exists():
+            idles.append(max(0.0, time.time() - hook_log.stat().st_mtime))
+    except OSError:
+        pass
+    idles.append(_log_idle_seconds(output_dir, run_start_iso))
+    return min(idles) if idles else 0.0
+
+
 def _bump_tick(output_dir: Path, n: int) -> None:
     try:
         (output_dir / _TICK_NAME).write_text(f"{n}\n{int(time.time())}\n", encoding="utf-8")
@@ -401,11 +438,16 @@ def watch(
     max_iterations: int | None,
     *,
     substep2_idle_seconds: int = 0,
+    run_idle_seconds: int = 0,
 ) -> int:
     lock_path = output_dir / ".appsec-lock"
     if not output_dir.is_dir():
         sys.stderr.write(f"output_dir not found: {output_dir}\n")
         return 2
+
+    # Floor for the global idle window — activity before the watchdog booted
+    # does not count toward "currently stalled".
+    run_start_iso = _ts_now()
 
     _log(
         output_dir,
@@ -434,6 +476,9 @@ def watch(
     substep2_start_iso: str | None = None
     substep2_complete = False
     substep2_idle_fired = False
+    # Global idle (RUN_IDLE) tracking — re-arms after activity resumes so each
+    # distinct stall logs exactly one WARN line.
+    run_idle_fired = False
     iteration = 0
 
     while lock_path.exists():
@@ -586,6 +631,40 @@ def watch(
                         )
                         substep2_idle_fired = True
 
+        # 7c — global RUN_IDLE detection (all phases).
+        #
+        # The phase-9 / substep-2 detectors above cover only two narrow
+        # windows. Phases 1-10 — including the recon/context phase where the
+        # 2026-05-31 juice-shop run lost ~23 min to standard-tier API latency
+        # stalls — were unmonitored. This fires a single WARN whenever the run
+        # makes no observable progress (no hook-events.log tool activity and no
+        # non-watchdog .agent-run.log entry) for `run_idle_seconds`, then
+        # re-arms once activity resumes so every distinct stall is surfaced.
+        #
+        # Deliberately WARN, not the loud `_log_error_loud` escalation used by
+        # SUBSTEP2_IDLE: a multi-minute model response is usually slow-but-fine
+        # API latency, not a defect. The message tells the user it is almost
+        # certainly an API wait, not a hang — which is exactly the question
+        # ("is it stuck or still working?") that this signal answers in real
+        # time instead of after a 46-min abort. `run_idle_seconds <= 0`
+        # disables it (parity with the other --*-seconds knobs).
+        if run_idle_seconds > 0:
+            idle = _run_idle_seconds(output_dir, run_start_iso)
+            if idle >= run_idle_seconds and not run_idle_fired:
+                _log(
+                    output_dir,
+                    "WARN",
+                    "RUN_IDLE",
+                    f"no run activity for {int(idle)}s (threshold={run_idle_seconds}s) — "
+                    f"the run is waiting, almost certainly on a slow model/API response "
+                    f"(standard-tier latency), not a hang. A wait past the 5-min cache "
+                    f"TTL forces the recovered turn to re-prefill cold. Still watching…",
+                )
+                run_idle_fired = True
+            elif idle < run_idle_seconds and run_idle_fired:
+                _log(output_dir, "INFO", "RUN_RESUMED", f"activity resumed after idle (idle={int(idle)}s)")
+                run_idle_fired = False
+
         # 8 — self-liveness tick.
         _bump_tick(output_dir, iteration)
 
@@ -645,6 +724,20 @@ def main(argv: list[str]) -> int:
         "single-Bash-call rule and pre-validated intermediates instead.",
     )
     p.add_argument(
+        "--run-idle-seconds",
+        type=int,
+        default=int(os.environ.get("APPSEC_RUN_IDLE_SECONDS", "240")),
+        help="Global idle window (seconds with no hook-events.log tool activity "
+        "AND no non-watchdog .agent-run.log entry) before a one-shot RUN_IDLE "
+        "WARN fires, re-arming after activity resumes. Covers ALL phases — "
+        "unlike STRIDE_STALE (Phase 9) and SUBSTEP2_IDLE (Phase 11). Default "
+        "240 = 4 min (just under the 5-min prompt-cache TTL, so it warns "
+        "before a stall turns into a cold re-prefill). Override via env "
+        "APPSEC_RUN_IDLE_SECONDS. Set 0 to disable. Catches the standard-tier "
+        "API-latency stalls that cost the 2026-05-31 juice-shop run ~23 min in "
+        "the unmonitored recon/context phase.",
+    )
+    p.add_argument(
         "--max-iterations", type=int, default=None, help="Optional cap on iterations (test hook; not for production)."
     )
     args = p.parse_args(argv[1:])
@@ -660,6 +753,7 @@ def main(argv: list[str]) -> int:
         component_timeout_seconds=args.component_timeout_seconds,
         max_iterations=args.max_iterations,
         substep2_idle_seconds=args.substep2_idle_seconds,
+        run_idle_seconds=args.run_idle_seconds,
     )
 
 

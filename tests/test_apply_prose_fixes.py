@@ -222,6 +222,85 @@ def test_r7_tokens_inside_markdown_link_label_are_preserved():
     assert "[POST /api/login](https://example.com/docs)" in fixed
 
 
+def test_lib_version_token_is_wrapped():
+    md = "express-jwt@0.1.3 and jsonwebtoken@0.4.0 are both outdated.\n"
+    fixed, n = prose.apply_fixes(md)
+    assert n >= 2
+    assert "`express-jwt@0.1.3`" in fixed
+    assert "`jsonwebtoken@0.4.0`" in fixed
+
+
+def test_scoped_lib_version_token_is_wrapped():
+    md = "The app pins @angular/core@15.2.0 in package.json.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`@angular/core@15.2.0`" in fixed
+
+
+def test_email_address_is_not_treated_as_lib_version():
+    md = "Report issues to security@example.com promptly.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`security@example.com`" not in fixed
+    assert "security@example.com" in fixed
+
+
+def test_cve_identifier_is_wrapped():
+    md = "jsonwebtoken@0.4.0 is vulnerable to CVE-2020-28042.\n"
+    fixed, n = prose.apply_fixes(md)
+    assert "`CVE-2020-28042`" in fixed
+
+
+def test_linked_cve_label_is_preserved():
+    md = "See [CVE-2020-28042](https://nvd.nist.gov/vuln/detail/CVE-2020-28042) details.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "[CVE-2020-28042](https://nvd.nist.gov/vuln/detail/CVE-2020-28042)" in fixed
+    assert "`CVE-2020-28042`" not in fixed
+
+
+def test_bare_algorithm_name_is_wrapped():
+    md = "An attacker can switch to HS256 using the public RS256 key.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`HS256`" in fixed
+    assert "`RS256`" in fixed
+
+
+def test_alg_prefixed_literal_not_double_wrapped():
+    # `alg:HS256` is owned by the literal-token pass — the HS256 inside must
+    # not be separately backticked, and the whole literal wraps once.
+    md = "The header sets alg:HS256 explicitly.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`alg:HS256`" in fixed
+    assert "alg:`HS256`" not in fixed
+
+
+def test_algorithm_word_boundary_avoids_false_match():
+    md = "The nonce token labelled THINGS256 is unrelated.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "THINGS256" in fixed
+    assert "`HS256`" not in fixed
+
+
+def test_section3_token_block_is_fully_formatted():
+    """Regression for the §3 attack-step block reported 2026-05-31 — every
+    code-like token (lib@version, function call, file:line, alg literal, bare
+    algorithm, path, CVE) must end up backticked in one pass."""
+    md = textwrap.dedent("""\
+        express-jwt@0.1.3 and jws.verify() in lib/insecurity.ts:57 do not enforce expected algorithm.
+        An attacker can modify the JWT header to alg:none, or switch to HS256 using the key from /encryptionkeys/jwt.pub.
+        jsonwebtoken@0.4.0 is vulnerable to CVE-2020-28042.
+    """)
+    fixed, _ = prose.apply_fixes(md)
+    for tok in (
+        "`express-jwt@0.1.3`", "`jws.verify()`", "`lib/insecurity.ts:57`",
+        "`alg:none`", "`HS256`", "`/encryptionkeys/jwt.pub`",
+        "`jsonwebtoken@0.4.0`", "`CVE-2020-28042`",
+    ):
+        assert tok in fixed, f"{tok} not backticked"
+    # Idempotent — a second pass changes nothing.
+    twice, n2 = prose.apply_fixes(fixed)
+    assert n2 == 0
+    assert twice == fixed
+
+
 def test_r7_full_pipeline_is_idempotent():
     md = textwrap.dedent("""\
         Call GET /rest/user/login, then invoke eval() on the body. The

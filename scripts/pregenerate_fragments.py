@@ -823,11 +823,21 @@ def _actor_id_by_slug(actors: list[dict], slug: str) -> str | None:
     return next((a["id"] for a in actors if a["id"] == node_id), None)
 
 
-def _select_external_actors_for_diagram(actor_labels: dict, attack_paths_data: dict | None = None) -> list[dict]:
+def _select_external_actors_for_diagram(
+    actor_labels: dict,
+    attack_paths_data: dict | None = None,
+    public_source_repo: bool = False,
+) -> list[dict]:
     """Pick up to 3 external actors (1 attacker + 1 victim + 1 supply-
     chain repo when present) for the §2.3 EXT subgraph. Slugs come from
     `posture-actor-labels.yaml`; the heatmap uses the same data so the
     two views stay consistent.
+
+    When ``public_source_repo`` is True the ``repo-read`` (Internal Developer)
+    actor is folded away — anyone can clone public source, so the repo reader
+    IS the anonymous internet attacker (mirrors
+    ``compose_threat_model._collapse_public_repo_actors`` for the heatmap so
+    both diagrams agree). 2026-05-31 actor-model decision.
 
     Returns a list of dicts with keys: id (mermaid node id),
     label (`fa:fa-... Name`), css_class (`threat`/`legit`/`external`).
@@ -865,10 +875,12 @@ def _select_external_actors_for_diagram(actor_labels: dict, attack_paths_data: d
     # heatmap classification (`posture-actor-labels.yaml: severity_class:
     # actorAnon`), repo-read IS an attacker actor, not a neutral external
     # service. Use `:::threat` (red) for visual consistency with the
-    # heatmap, not `:::external` (gray).
-    repo = _entry("repo-read", "threat")
-    if repo:
-        out.append(repo)
+    # heatmap, not `:::external` (gray). On a PUBLIC source repo it folds
+    # into internet-anon (omitted here) so the §2.3 view matches the heatmap.
+    if not public_source_repo:
+        repo = _entry("repo-read", "threat")
+        if repo:
+            out.append(repo)
     return out
 
 
@@ -893,7 +905,8 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     )
 
     actor_labels = _load_posture_actor_labels_for_pregen()
-    ext_actors = _select_external_actors_for_diagram(actor_labels)
+    _public_repo = bool((yaml_data.get("meta") or {}).get("public_source_repo"))
+    ext_actors = _select_external_actors_for_diagram(actor_labels, public_source_repo=_public_repo)
 
     # Tier-icon defaults (shared with §2.4 in `_TIER_ICON`-equivalent).
     TIER_ICON = {
@@ -2158,16 +2171,34 @@ def gen_assets(yaml_data: dict) -> str:
         lines.append("")
         return "\n".join(lines).rstrip() + "\n"
 
+    # Sort rows by data-classification severity (2026-05-31 user request) so the
+    # most-sensitive assets lead the table, regardless of A-NNN allocation order.
+    # Stable within a class — preserves the yaml/ID order for ties.
+    def _classification_rank(a: dict) -> int:
+        c = re.sub(r"[`*_]", "", (a.get("classification") or "")).strip().lower()
+        order = {
+            "restricted": 0, "secret": 0, "top secret": 0,
+            "confidential": 1, "pii": 1, "sensitive": 1,
+            "internal": 2, "private": 2,
+            "public": 3,
+        }
+        for key, rank in order.items():
+            if key in c:
+                return rank
+        return 4  # unknown / n/a sorts last
+    assets = sorted(assets, key=_classification_rank)
+
     # Check whether any asset has linked_threats to decide if the column is needed
     any_linked = any(a.get("linked_threats") for a in assets)
     if any_linked:
         lines.append("| Asset | ID | Classification | Description | Linked Threats |")
-        # Narrow ID/Classification; cap Description and give Linked Threats more
-        # room. Linked Threats is rendered INLINE (` · `) below rather than
-        # `<br/>`-stacked so the column claims width proportional to its content
-        # in content-sizing renderers (2026-05-30 user request — stacked links
-        # left it the narrowest column while Description dominated).
-        lines.append(_proportional_separator(18, 6, 12, 24, 34))
+        # Linked Threats is COMPACT: `·`-joined BARE `[F-NNN](#f-nnn)` chips
+        # (no titles — those live in §8), so the column stays narrow and the
+        # short ID column no longer wraps `A-010` at the hyphen (2026-05-31
+        # user request — supersedes the earlier `<br/>`-stacked-with-titles
+        # form). `_enrich_linked_id_cells` skips the §4 Assets table (header
+        # signature guard) so the bare chips survive compose.
+        lines.append(_proportional_separator(20, 6, 12, 40, 22))
     else:
         lines.append("| Asset | ID | Classification | Description |")
         lines.append(_proportional_separator(18, 6, 14, 40))
@@ -2183,9 +2214,9 @@ def gen_assets(yaml_data: dict) -> str:
         desc = (a.get("description") or "").replace("\n", " ").strip()
         if any_linked:
             lt = [_to_canonical_finding_label(t) for t in (a.get("linked_threats") or [])]
-            # Inline (` · `) rather than `<br/>`-stacked so the Linked Threats
-            # column claims width proportional to its content (2026-05-30 user
-            # request). check_cell_format skips this table (see its §4 guard).
+            # COMPACT `·`-joined bare chips (2026-05-31 user request) — keeps
+            # the asset table narrow so the ID column stops wrapping. Titles
+            # are intentionally omitted here (available in §8).
             lt_cell = " · ".join(f"[{t}](#{t.lower()})" for t in lt) if lt else "—"
             lines.append(f"| {name} | {aid} | {clazz} | {desc} | {lt_cell} |")
         else:
@@ -2561,15 +2592,6 @@ def gen_attack_surface(yaml_data: dict) -> str:
             worst = max(worst, _sev_rank.get(sev, -1))
         return worst
 
-    def _entry_auth(entry: dict, default: str) -> str:
-        """Authentication-required label (entries already partitioned)."""
-        # Honour an explicit `auth_mechanism` field when present, else the
-        # partition default (`Yes` for §5.2 buckets, `No` for §5.1).
-        mech = (entry.get("auth_mechanism") or entry.get("auth") or "").strip()
-        if mech:
-            return mech
-        return default
-
     lines = ["## 5. Attack Surface", ""]
     lines.append(
         "Network-reachable entry points classified by authentication requirement. "
@@ -2578,15 +2600,15 @@ def gen_attack_surface(yaml_data: dict) -> str:
     )
     lines.append("")
 
-    def _emit_table(bucket_entries: list, auth_default: str) -> None:
-        # Five columns (Method | Route | Auth | Risk | Notes). Backward-
-        # compatible with the prior 3-col layout — readers/tools that
-        # parsed the old table by column index will see Notes shift but
-        # the column headings remain explicit.
-        lines.append("| Method | Route | Auth | Risk | Notes |")
-        # Narrow Method/Auth/Risk; give Route some room and Notes (stacked
-        # finding links + prose) the widest allocation so it reads cleanly.
-        lines.append(_proportional_separator(7, 22, 5, 9, 40))
+    def _emit_table(bucket_entries: list) -> None:
+        # Four columns (Method | Route | Risk | Notes). The Auth requirement
+        # is NOT a column — it is already stated by the §5.1 Unauthenticated /
+        # §5.2 Authenticated subsection the table sits in, so a per-row Auth
+        # cell would be 100% redundant (every §5.1 row "No", every §5.2 "Yes").
+        lines.append("| Method | Route | Risk | Notes |")
+        # Narrow Method/Risk; give Route some room and Notes (stacked finding
+        # links + prose) the widest allocation so it reads cleanly.
+        lines.append(_proportional_separator(7, 24, 9, 44))
         # Sort by risk descending, then by route (contract §5 rule) so the
         # highest-severity entry points read first (2026-05-30 request).
         bucket_entries = sorted(
@@ -2596,15 +2618,14 @@ def gen_attack_surface(yaml_data: dict) -> str:
         for entry in bucket_entries:
             method = _attack_surface_method(entry)
             route = _attack_surface_route(entry)
-            auth_lbl = _entry_auth(entry, auth_default)
             risk_lbl = _entry_risk(entry)
             notes = _attack_surface_notes(entry)
-            lines.append(f"| {method} | `{route}` | {auth_lbl} | {risk_lbl} | {notes} |")
+            lines.append(f"| {method} | `{route}` | {risk_lbl} | {notes} |")
 
     lines.append(f"### 5.1 Unauthenticated Entry Points ({len(unauth)})")
     lines.append("")
     if unauth:
-        _emit_table(unauth, "No")
+        _emit_table(unauth)
     else:
         lines.append("_None enumerated._")
     lines.append("")
@@ -2612,7 +2633,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
     lines.append(f"### 5.2 Authenticated Entry Points ({len(auth)})")
     lines.append("")
     if auth:
-        _emit_table(auth, "Yes")
+        _emit_table(auth)
     else:
         lines.append("_None enumerated._")
     lines.append("")
@@ -5315,6 +5336,155 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
     return True
 
 
+# ---------------------------------------------------------------------------
+# §7.2 Authentication Mechanisms inventory (2026-05-31 — deterministic).
+#
+# schema_v2 catalogues controls by domain — identity/login → §7.2,
+# session/token (JWT) → §7.3, password hashing → §7.9 — so the §7.2 section
+# only ever decomposes the control(s) Stage-1 filed under the identity domain
+# (usually just "Password Login"). That made §7.2 read "ausgedünnt": OAuth /
+# JWT / MFA were either elsewhere or absent. This inventory is a DETERMINISTIC
+# table emitted at the top of §7.2 that reconstructs the COMPLETE authentication
+# surface from the yaml (controls + threats + meta) — status, where it is
+# assessed (§7.2/§7.3/§7.9), and linked findings — independent of the LLM
+# scaffold-fill. Mechanisms checked but absent are named in a trailing note so
+# "no OAuth" is explicit, not silent. Built from data + frozen → an LLM author
+# cannot thin it out on a later run. That is the whole point.
+# ---------------------------------------------------------------------------
+
+# `section` = the §7 subsection where the mechanism's controls are catalogued
+# (drives the "Assessed in" link). `control_kw` / `threat_kw` are lowercase
+# substrings matched against control name+domain / threat title+cwe. `meta_flag`
+# marks the mechanism present from a meta boolean alone.
+_AUTH_MECHANISM_SPECS: list[dict] = [
+    {"name": "User registration", "section": "7.2",
+     "control_kw": ["registration", "sign-up", "signup"],
+     "threat_kw": ["registration", "register", "sign-up", "signup", "role field", "mass assignment", "mass-assignment"],
+     "meta_flag": "open_user_registration"},
+    {"name": "Password login", "section": "7.2",
+     "control_kw": ["password authentication", "password-based", "password login", "login"],
+     "threat_kw": ["login authentication bypass", "credential stuffing", "brute force", "brute-force", "authentication bypass"]},
+    {"name": "Password reset / change", "section": "7.2",
+     "control_kw": ["password reset", "password change", "forgot password"],
+     "threat_kw": ["password reset", "reset-password", "reset password", "password change", "forgot password", "security question", "security-question"]},
+    {"name": "Password storage (hashing)", "section": "7.9",
+     "control_kw": ["password hashing", "credential storage", "hashing"],
+     "threat_kw": ["md5", "password hash", "unsalted", "bcrypt", "scrypt", "argon2"]},
+    {"name": "JWT / bearer-token session", "section": "7.3",
+     "control_kw": ["jwt", "session token validation", "bearer", "token validation"],
+     "threat_kw": ["jwt", "json web token", "bearer token", "alg:none", "algorithm confusion", "token forgery"]},
+    {"name": "Session-token storage", "section": "7.3",
+     "control_kw": ["session token storage", "token storage"],
+     "threat_kw": ["localstorage", "local storage", "session theft", "token stored", "httponly"]},
+    {"name": "Multi-factor authentication (TOTP / 2FA)", "section": "7.2",
+     "control_kw": ["totp", "2fa", "mfa", "multi-factor", "multi factor", "two-factor", "two factor"],
+     "threat_kw": ["totp", "2fa", "two-factor", "two factor", "mfa", "multi-factor", "one-time password"]},
+    {"name": "OAuth / OIDC federated login", "section": "7.2",
+     "control_kw": ["oauth", "oidc", "openid", "sso", "saml", "federated", "social login"],
+     "threat_kw": ["oauth", "oidc", "openid", "saml", "single sign-on", "social login"]},
+]
+
+_AUTH_INV_SECTION_TITLES = {
+    "7.2": "7.2 Identity and Authentication Controls",
+    "7.3": "7.3 Session and Token Controls",
+    "7.9": "7.9 Cryptography Secrets and Data Protection",
+}
+
+_AUTH_INV_EFFECTIVENESS_BADGE = {
+    "adequate": "🟢 Adequate", "partial": "🟡 Partial",
+    "weak": "🟠 Weak", "unsafe": "🔴 Unsafe", "missing": "🔴 Missing",
+}
+_AUTH_INV_EFFECTIVENESS_RANK = {"adequate": 0, "partial": 1, "weak": 2, "unsafe": 3, "missing": 3}
+_AUTH_INV_RISK_BADGE = {"critical": "🔴 Critical", "high": "🟠 High", "medium": "🟡 Medium", "low": "🟢 Low"}
+_AUTH_INV_RISK_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
+
+def _auth_mech_finding_link(threat: dict) -> str | None:
+    raw = (threat.get("id") or threat.get("t_id") or "").strip()
+    m = re.search(r"(\d+)$", raw)
+    if not m:
+        return None
+    n = int(m.group(1))
+    return f"[F-{n:03d}](#f-{n:03d})"
+
+
+def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
+    """Deterministic §7.2 'Authentication mechanisms' inventory block (markdown
+    lines). Returns [] when no auth mechanism is present at all."""
+    threats = yaml_data.get("threats") or []
+    controls = _normalize_security_controls(yaml_data.get("security_controls"))
+    meta = yaml_data.get("meta") or {}
+
+    def _ctrl_blob(c: dict) -> str:
+        return f"{c.get('control') or c.get('name') or ''} {c.get('domain') or ''}".lower()
+
+    def _threat_blob(t: dict) -> str:
+        return f"{t.get('title') or ''} {t.get('cwe') or ''}".lower()
+
+    rows: list[tuple] = []
+    absent: list[str] = []
+    for spec in _AUTH_MECHANISM_SPECS:
+        m_ctrls = [c for c in controls if any(k in _ctrl_blob(c) for k in spec["control_kw"])]
+        m_threats = [t for t in threats if any(k in _threat_blob(t) for k in spec["threat_kw"])]
+        meta_present = bool(spec.get("meta_flag") and meta.get(spec["meta_flag"]))
+        if not (m_ctrls or m_threats or meta_present):
+            absent.append(spec["name"])
+            continue
+        status = ""
+        if m_ctrls:
+            worst = max(
+                ((c.get("effectiveness") or "").strip().lower() for c in m_ctrls),
+                key=lambda e: _AUTH_INV_EFFECTIVENESS_RANK.get(e, -1), default="",
+            )
+            status = _AUTH_INV_EFFECTIVENESS_BADGE.get(worst, "")
+        if not status and m_threats:
+            worst_r = max(
+                ((t.get("risk") or t.get("severity") or "").strip().lower() for t in m_threats),
+                key=lambda r: _AUTH_INV_RISK_RANK.get(r, -1), default="",
+            )
+            status = _AUTH_INV_RISK_BADGE.get(worst_r, "⚠️ At risk")
+        if not status:
+            status = "✅ Present"
+        seen: set[str] = set()
+        flinks: list[str] = []
+        for t in m_threats:
+            lk = _auth_mech_finding_link(t)
+            if lk and lk not in seen:
+                seen.add(lk)
+                flinks.append(lk)
+        findings = "<br/>".join(flinks[:6]) if flinks else "—"
+        sec = spec["section"]
+        assessed = f"[§{sec}](#{_v2_slug(_AUTH_INV_SECTION_TITLES.get(sec, sec))})"
+        rows.append((spec["name"], status, assessed, findings))
+
+    if not rows:
+        return []
+
+    sec73 = _v2_slug(_AUTH_INV_SECTION_TITLES["7.3"])
+    sec79 = _v2_slug(_AUTH_INV_SECTION_TITLES["7.9"])
+    out: list[str] = []
+    out.append("<!-- §7.2 AUTH-MECHANISMS-FROZEN — deterministic inventory, pregenerator-owned. DO NOT EDIT. -->")
+    out.append(
+        "**Authentication mechanisms (at a glance).** Every authentication mechanism "
+        "detected on the application, its effective status, where it is assessed, and its "
+        "linked findings. Controls are catalogued by domain, so JWT/session handling is "
+        f"assessed under [§7.3 Session and Token Controls](#{sec73}) and password hashing "
+        f"under [§7.9 Cryptography Secrets and Data Protection](#{sec79})."
+    )
+    out.append("")
+    out.append("| Mechanism | Status | Assessed in | Findings |")
+    out.append("|---|---|---|---|")
+    for name, status, assessed, findings in rows:
+        out.append(f"| {name} | {status} | {assessed} | {findings} |")
+    out.append("")
+    if absent:
+        out.append("_Also checked, not detected on this codebase: " + ", ".join(absent) + "._")
+        out.append("")
+    out.append("<!-- §7.2 AUTH-MECHANISMS-FROZEN END -->")
+    out.append("")
+    return out
+
+
 def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> str:
     """13-section §7 scaffold for the v2 security-architecture contract.
 
@@ -5602,6 +5772,14 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         lines.append("")
         lines.append(f"**Assessment:** <!-- NARRATIVE_PLACEHOLDER: §{heading} — {hint} -->")
         lines.append("")
+
+        # §7.2 — deterministic Authentication Mechanisms inventory at the top of
+        # the section so the COMPLETE auth surface (incl. mechanisms catalogued
+        # under §7.3/§7.9) is always rendered, independent of LLM scaffold-fill.
+        if heading.startswith("7.2 "):
+            inv = _build_auth_mechanism_inventory(yaml_data)
+            if inv:
+                lines.extend(inv)
 
         if quick_depth and not control_names:
             continue

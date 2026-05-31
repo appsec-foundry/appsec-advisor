@@ -41,7 +41,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from _atomic_io import atomic_write_json
+from _atomic_io import atomic_write_json, atomic_write_text
 
 # Stable ordering for the T-NNN deterministic sort.
 _RISK_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -88,19 +88,60 @@ def _load_stride_outputs(output_dir: Path) -> list[tuple[str, dict]]:
             raw = path.read_text()
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
-            window = _json_error_context(raw, exc.pos)
+            # Recovery: STRIDE analyzers occasionally emit invalid backslash
+            # escapes inside code-snippet fields — most often `\!` (a `!` that
+            # picked up a backslash crossing a shell / history-expansion layer
+            # while the agent wrote the file). `\!` is not a valid JSON escape,
+            # so json.loads raises "Invalid \escape". Strip invalid escapes
+            # deterministically and retry ONCE before giving up, so the
+            # orchestrator no longer has to hand-`sed` each offending escape
+            # (a 2026-05-31 juice-shop run burned ~10 turns whack-a-moling
+            # `\!=`, `\!currentPassword`, `OK\!` one at a time).
+            cleaned = _strip_invalid_json_escapes(raw)
+            try:
+                data = json.loads(cleaned)
+            except json.JSONDecodeError:
+                window = _json_error_context(raw, exc.pos)
+                sys.stderr.write(
+                    f"merge_threats: invalid JSON in {path}\n"
+                    f"  parser: {exc.msg} at line {exc.lineno} column {exc.colno} (char {exc.pos})\n"
+                    f"  component: {comp_id}\n"
+                    f"  context (±60 chars around offset {exc.pos}):\n"
+                    f"    {window}\n"
+                    f"  note: auto-repair of invalid backslash escapes was attempted and did NOT fix it.\n"
+                    f"  recovery: fix or regenerate this single .stride-*.json, then re-run\n"
+                    f"           `merge_threats.py collect`. Do NOT inline-rebuild .threats-merged.json.\n"
+                )
+                raise SystemExit(1)
+            # Repaired. Persist atomically so every downstream re-read / QA
+            # re-parse sees valid JSON, and report what was fixed.
+            n_fixed = raw.count("\\") - cleaned.count("\\")
+            atomic_write_text(path, cleaned)
             sys.stderr.write(
-                f"merge_threats: invalid JSON in {path}\n"
-                f"  parser: {exc.msg} at line {exc.lineno} column {exc.colno} (char {exc.pos})\n"
-                f"  component: {comp_id}\n"
-                f"  context (±60 chars around offset {exc.pos}):\n"
-                f"    {window}\n"
-                f"  recovery: fix or regenerate this single .stride-*.json, then re-run\n"
-                f"           `merge_threats.py collect`. Do NOT inline-rebuild .threats-merged.json.\n"
+                f"merge_threats: auto-repaired {n_fixed} invalid JSON escape(s) "
+                f"(e.g. \\! → !) in {path.name} and continued.\n"
             )
-            raise SystemExit(1)
         pairs.append((comp_id, data))
     return pairs
+
+
+# Valid JSON string escapes per RFC 8259 §7. A backslash followed by anything
+# else is invalid and makes json.loads raise "Invalid \escape".
+_VALID_JSON_ESCAPE = set('"\\/bfnrtu')
+
+
+def _strip_invalid_json_escapes(raw: str) -> str:
+    """Drop backslashes that don't begin a valid JSON escape, repairing the
+    common `\\!` → `!` corruption STRIDE analyzers emit. `\\(.)` consumes a
+    backslash+char as one unit (left-to-right, non-overlapping) so a legitimate
+    `\\\\` survives whole and a valid `\\n`/`\\"`/`\\uXXXX`/`\\/` is preserved.
+    Idempotent — a no-op on already-valid JSON."""
+    return re.sub(
+        r"\\(.)",
+        lambda m: "\\" + m.group(1) if m.group(1) in _VALID_JSON_ESCAPE else m.group(1),
+        raw,
+        flags=re.DOTALL,
+    )
 
 
 def _json_error_context(raw: str, pos: int, radius: int = 60) -> str:

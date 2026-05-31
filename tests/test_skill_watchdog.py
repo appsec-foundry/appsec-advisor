@@ -433,3 +433,92 @@ class TestSubstep2IdleDetection:
         # WATCHDOG_START is now in the log (idle would be ~0 if mtime-based)
         # but the detector must still fire because it filters skill-watchdog lines.
         assert (out_dir / ".substep2-idle").exists()
+
+
+# ---------------------------------------------------------------------------
+# Global RUN_IDLE detection (all phases) — 2026-05-31 juice-shop regression:
+# ~23 min lost to standard-tier API-latency stalls in the recon/context phase,
+# a window covered by NONE of the phase-9 / substep-2 detectors. RUN_IDLE
+# fires one WARN per distinct stall and re-arms after activity resumes.
+# ---------------------------------------------------------------------------
+
+
+import os as _os
+
+
+class TestRunIdleHelper:
+    """`_run_idle_seconds` takes the FRESHEST of two activity signals:
+    .hook-events.log mtime (tool granularity) and the last non-watchdog
+    .agent-run.log entry. Either one being recent means 'not idle'."""
+
+    OLD_FLOOR = "2020-01-01T00:00:00Z"
+
+    def test_fresh_hook_activity_masks_stale_agent_log(self, out_dir, silent_heartbeat):
+        sw = silent_heartbeat
+        # agent-run.log last non-watchdog entry is ancient → that signal is huge…
+        (out_dir / ".agent-run.log").write_text(
+            "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n"
+        )
+        # …but a tool just appended to hook-events.log (mtime = now) → fresh.
+        (out_dir / ".hook-events.log").write_text("tool ran\n")
+        idle = sw._run_idle_seconds(out_dir, self.OLD_FLOOR)
+        assert idle < 5  # freshest signal wins → not idle
+
+    def test_reports_idle_when_both_signals_stale(self, out_dir, silent_heartbeat):
+        sw = silent_heartbeat
+        (out_dir / ".agent-run.log").write_text(
+            "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n"
+        )
+        hook = out_dir / ".hook-events.log"
+        hook.write_text("last tool\n")
+        # Backdate the hook log mtime by 10 minutes — no tool has run since.
+        past = time.time() - 600
+        _os.utime(hook, (past, past))
+        idle = sw._run_idle_seconds(out_dir, self.OLD_FLOOR)
+        assert 590 <= idle <= 620  # ~10 min idle
+
+
+class TestRunIdleDetection:
+    """Loop wiring for the global stall WARN (gated on --run-idle-seconds)."""
+
+    def _run(self, sw, out_dir, idle_fn, *, run_idle_seconds=300, iters=1):
+        # Drive the detector with a controllable idle reading.
+        sw._run_idle_seconds = idle_fn  # type: ignore[assignment]
+        return sw.watch(
+            output_dir=out_dir,
+            plugin_root=REPO_ROOT,
+            heartbeat_interval=0,
+            stride_stale_seconds=999,
+            stride_canary_seconds=999,
+            component_timeout_seconds=999,
+            max_iterations=iters,
+            run_idle_seconds=run_idle_seconds,
+        )
+
+    def test_fires_warn_when_idle_exceeds_threshold(self, out_dir, silent_heartbeat):
+        sw = silent_heartbeat
+        self._run(sw, out_dir, lambda *_a, **_k: 500.0)
+        log = (out_dir / ".agent-run.log").read_text()
+        assert "WARN" in log and "RUN_IDLE" in log
+        assert "API" in log  # message steers the user toward the real cause
+
+    def test_quiet_when_run_is_active(self, out_dir, silent_heartbeat):
+        sw = silent_heartbeat
+        self._run(sw, out_dir, lambda *_a, **_k: 5.0)
+        log = (out_dir / ".agent-run.log").read_text()
+        assert "RUN_IDLE" not in log
+
+    def test_disabled_with_zero(self, out_dir, silent_heartbeat):
+        sw = silent_heartbeat
+        self._run(sw, out_dir, lambda *_a, **_k: 9999.0, run_idle_seconds=0)
+        log = (out_dir / ".agent-run.log").read_text()
+        assert "RUN_IDLE" not in log
+
+    def test_fires_once_then_rearms_on_resume(self, out_dir, silent_heartbeat):
+        sw = silent_heartbeat
+        # idle high (fire) → low (resume) → high (fire again): 2 RUN_IDLE, 1 RESUMED.
+        seq = iter([500.0, 10.0, 500.0])
+        self._run(sw, out_dir, lambda *_a, **_k: next(seq), iters=3)
+        log = (out_dir / ".agent-run.log").read_text()
+        assert log.count("RUN_IDLE") == 2
+        assert log.count("RUN_RESUMED") == 1

@@ -1,29 +1,19 @@
 # Org Profiles
 
-Org profiles let AppSec teams ship Acme-flavoured defaults — presets,
-requirements source, optional markdown context, skill toggles — alongside
-the plugin **without forking the core**. Profiles are validated and
-resolved deterministically before Stage 1 of any scan; they never inject
-agent instructions and never replace renderer / QA / schema pipelines.
+Org profiles let AppSec teams ship Acme-flavoured defaults — presets, requirements source, optional markdown context, skill toggles — alongside the plugin **without forking the core**. Profiles are validated and resolved deterministically before Stage 1 of any scan; they never inject agent instructions and never replace renderer / QA / schema pipelines.
 
-The current profile contract is `api_version: appsec-advisor.org-profile/v2`
-which adds the `actors:` block. v1 profiles are auto-upgraded on load with
-an `info` notice in run-issues.json.
+The current profile contract is `api_version: appsec-advisor.org-profile/v2`, which adds the `actors:` block. v1 profiles are auto-upgraded on load with an `info` notice in run-issues.json.
+
+This page is the **reference** for the profile format. To build and ship a company-branded plugin that bundles a profile, follow the build runbook: [internal-plugin-packaging.md](internal-plugin-packaging.md).
 
 ## What an org profile can and cannot do
 
 **Can**
 
-- set default `assessment_depth`, output toggles (SARIF / PDF / pentest
-  tasks / SCA), guardrails (wall time, cost cap, tracing), quality
-  knobs (QA review, architect review, walkthroughs, enrichment) per
-  preset
-- declare a single requirements source URL, the default active state
-  for create-threat-model, and a separate standalone-audit toggle
-- attach 1–3 short markdown files as untrusted reference data for the
-  context resolver (organisation background, SSO, platform, etc.)
-- enable a default-on Security Coach with a `max_requirements_per_topic`
-  cap
+- set default `assessment_depth`, output toggles (SARIF / PDF / pentest tasks / SCA), guardrails (wall time, cost cap, tracing), quality knobs (QA review, architect review, walkthroughs, enrichment) per preset
+- declare a single requirements source URL, the default active state for create-threat-model, and a separate standalone-audit toggle
+- attach 1–3 short markdown files as untrusted reference data for the context resolver (organisation background, SSO, platform, etc.)
+- enable a default-on Security Coach with a `max_requirements_per_topic` cap
 - soft-disable optional user-facing skills with a human-readable reason
 
 **Cannot**
@@ -34,10 +24,11 @@ an `info` notice in run-issues.json.
 - override schemas, QA gates, permissions, or any renderer template
 - ship remote markdown context, signed packages, or arbitrary scripts
 
-The MVP is intentionally narrow. See `custom.md` for the full design and
-the explicit "Bewusst spaeter" list.
+The MVP is intentionally narrow.
 
 ## Packaging
+
+For the recommended automated build — which produces a self-contained plugin and wires the profile in for you — use the packaging runbook: [internal-plugin-packaging.md](internal-plugin-packaging.md). The layouts below are the hand-built alternative, and (unlike the packaged tree) use a `../org-profile/` sibling path.
 
 Two layouts are supported:
 
@@ -80,9 +71,7 @@ The plugin's `config.json` carries the pointer:
 }
 ```
 
-`organization_profile.path` is resolved relative to the plugin root when
-not absolute. `default_preset: null` means "use the profile's own
-`default_preset`."
+`organization_profile.path` is resolved relative to the plugin root when not absolute. `default_preset: null` means "use the profile's own `default_preset`."
 
 ## CLI and environment
 
@@ -121,19 +110,18 @@ Precedence (highest wins):
 6. direct CLI flags (--sarif, --no-requirements, --max-cost, …)
 ```
 
-Steps 2–4 only choose which profile and preset are active. Step 5 layers
-preset values as structured defaults; step 6 direct flags always win.
+Steps 2–4 only choose which profile and preset are active. Step 5 layers preset values as structured defaults; step 6 direct flags always win.
 
 ## Schema overview
 
 The schema lives in `schemas/org-profile.schema.yaml`. Highlights:
 
 ```yaml
-api_version: appsec-advisor.org-profile/v1
+api_version: appsec-advisor.org-profile/v2
 organization:
   id: acme
   name: Acme Corp
-  profile_version: 2026.05.1
+  profile_version: "2026.05.1"
 compatibility:
   core: ">=0.0 <999.0"
 default_preset: ci-standard
@@ -166,25 +154,20 @@ presets:
     guardrails: { max_wall_time: 1h, max_cost_usd: 20, tracing: true }
 ```
 
-Semantic rules enforced by `scripts/validate_org_profile.py` on top of
-JSON Schema:
+Semantic rules enforced by `scripts/validate_org_profile.py` on top of JSON Schema:
 
 - `default_preset` must exist in `presets`.
 - `compatibility.core` must accept the current plugin version.
-- `llm_context.documents[].path` must stay under the profile directory
-  and may not traverse symlinks that escape it.
+- `llm_context.documents[].path` must stay under the profile directory and may not traverse symlinks that escape it.
 - `presets[].context.document_ids[]` must reference declared documents.
 - `target.repo == profile_default` requires `target.repo_path`.
-- `target.output_dir` may only use the tokens `{repo_name}`,
-  `{repo_slug}`, `{preset}`, `{date}`, and may not resolve into `.git/`.
+- `target.output_dir` may only use the tokens `{repo_name}`, `{repo_slug}`, `{preset}`, `{date}`, and may not resolve into `.git/`.
 - `requirements_yaml_url` must not embed credentials and must be http/s.
-- `skill_toggles` keys must be known user-facing skill names; disabled
-  toggles must carry a reason.
+- `skill_toggles` keys must be known user-facing skill names; disabled toggles must carry a reason.
 
 ## Actors
 
-Org profiles can extend or restrict the plugin's default actor library
-(ACT-D-01 through ACT-D-09) via the `actors:` block (v2+ profiles):
+Org profiles can extend or restrict the plugin's default actor library (ACT-D-01 through ACT-D-09) via the `actors:` block (v2+ profiles):
 
 ```yaml
 actors:
@@ -193,8 +176,7 @@ actors:
   add: actors/*.yaml                  # glob for custom actor definition files
 ```
 
-Actor definition files live in `org-profile/<name>/actors/` (parallel to `context/`).
-Each file contains a top-level `actors:` array of actor objects:
+Actor definition files live in `org-profile/<name>/actors/` (parallel to `context/`). Each file contains a top-level `actors:` array of actor objects:
 
 ```yaml
 # org-profile/acme/actors/insiders.yaml
@@ -213,19 +195,16 @@ actors:
 ```
 
 **Override semantics:**
+
 - Enterprise actors additively merge with plugin defaults (field-level deep merge on ID match).
-- Enterprise-disable is **terminal** — repo layer cannot re-enable a disabled enterprise actor.
+- Enterprise-disable is **terminal** — the repo layer cannot re-enable a disabled enterprise actor.
 - When disabling, `disable_reason` is required for audit.
 
-**`inherit_defaults: false`** (regulated environments): the tool reports which of the 9 default
-actor classes are covered by your enterprise actors. Use `replaces: ACT-D-NN` on custom actors
-to mark a class as covered.
+**`inherit_defaults: false`** (regulated environments): the tool reports which of the 9 default actor classes are covered by your enterprise actors. Use `replaces: ACT-D-NN` on custom actors to mark a class as covered.
 
-**v2 profile fingerprint:** includes all actor definition files — changes to actor files invalidate
-the actor-layer cache and trigger a per-component slice re-run (not a full recon re-run).
+**v2 profile fingerprint:** includes all actor definition files — changes to actor files invalidate the actor-layer cache and trigger a per-component slice re-run (not a full recon re-run).
 
-**v1 → v2 migration:** `appsec-advisor:migrate-org-profile <path>` adds the `actors:` block
-with defaults. Until migrated, profiles are auto-treated as v2 with `actors: {inherit_defaults: true}`.
+**v1 → v2 migration:** v1 profiles are auto-upgraded to v2 on load, defaulting to `actors: {inherit_defaults: true}` (with an `info` notice in run-issues.json). No manual migration step is required.
 
 ## Markdown context
 
@@ -233,47 +212,31 @@ with defaults. Until migrated, profiles are auto-treated as v2 with `actors: {in
 
 - read from the profile directory only (no remote sources in MVP)
 - size-checked against `max_bytes` (default 50_000, hard cap 200_000)
-- secret-scanned for AKIA / GitHub / Slack tokens, PEM keys, and
-  password/secret-like assignments
+- secret-scanned for AKIA / GitHub / Slack tokens, PEM keys, and password/secret-like assignments
 - hashed with SHA-256 for cache invalidation
-- wrapped with an explicit *untrusted reference data* preamble before
-  it reaches any agent context
+- wrapped with an explicit *untrusted reference data* preamble before it reaches any agent context
 
-The loader emits `.threat-modeling-context.md` (wrapped markdown) and
-`.org-context-manifest.json` (sha256 + bytes + loaded/skipped reasons).
+The loader emits `.threat-modeling-context.md` (wrapped markdown) and `.org-context-manifest.json` (sha256 + bytes + loaded/skipped reasons).
 
 ## Skill toggles
 
-User-facing skills can be soft-disabled with a reason. The plan
-distinguishes three categories:
+User-facing skills can be soft-disabled with a reason. The plan distinguishes three categories:
 
-- **User skills** (e.g. `export-threat-model`, `publish-threat-model`): blocked
-  with the reason printed. Exit code 30.
-- **Help-only**: `--help` still renders even when the skill is disabled.
-  Exit code 10.
-- **Operational / repair skills** (`status`, `check-permissions`,
-  `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org
-  profile can warn but never hard-blocks them. Exit code 20.
+- **User skills** (e.g. `export-threat-model`, `publish-threat-model`): blocked with the reason printed. Exit code 30.
+- **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.
+- **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org profile can warn but never hard-blocks them. Exit code 20.
 
-Each skill calls `scripts/check_skill_enabled.py <skill>` at the top of
-its preflight. With no active org profile the script always returns
-"enabled" so legacy invocations are bit-identical.
+Each skill calls `scripts/check_skill_enabled.py <skill>` at the top of its preflight. With no active org profile the script always returns "enabled" so legacy invocations are bit-identical.
 
 ## Security Coach
 
-`security_coach.enabled_by_default: true` in the profile activates the
-coach without requiring `APPSEC_COACH=1` or
-`hooks/steering_keywords.json` `enabled: true`. Precedence stays
-strict — the environment variable still wins, including as a kill
-switch (`APPSEC_COACH=0`).
+`security_coach.enabled_by_default: true` in the profile activates the coach without requiring `APPSEC_COACH=1` or `hooks/steering_keywords.json` `enabled: true`. Precedence stays strict — the environment variable still wins, including as a kill switch (`APPSEC_COACH=0`).
 
-`security_coach.max_requirements_per_topic` overrides the static
-default (3) for per-prompt requirement injection.
+`security_coach.max_requirements_per_topic` overrides the static default (3) for per-prompt requirement injection.
 
 ## Status output
 
-`/appsec-advisor:status` adds an *Org Profile* section when a profile is
-active or merely configured:
+`/appsec-advisor:status` adds an *Org Profile* section when a profile is active or merely configured:
 
 ```
 Org Profile
@@ -288,16 +251,11 @@ Org Profile
   Disabled skills publish-threat-model
 ```
 
-When the resolver has not yet emitted `.org-profile-effective.json`, the
-status view falls back to the static pointer in `config.json` and shows
-"configured (not yet resolved)".
+When the resolver has not yet emitted `.org-profile-effective.json`, the status view falls back to the static pointer in `config.json` and shows "configured (not yet resolved)".
 
 ## Compatibility note
 
-The packaged plugin has `organization_profile.enabled: false` by
-default. Until a team explicitly flips it on or passes `--org-profile`,
-the resolver behaves exactly as before — every existing CLI flag,
-preset-free invocation, and downstream artefact stays bit-identical.
+The packaged plugin has `organization_profile.enabled: false` by default. Until a team explicitly flips it on or passes `--org-profile`, the resolver behaves exactly as before — every existing CLI flag, preset-free invocation, and downstream artefact stays bit-identical.
 
 ## Examples
 

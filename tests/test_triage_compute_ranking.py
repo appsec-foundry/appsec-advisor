@@ -171,6 +171,37 @@ def test_refuted_keystone_not_elevated() -> None:
     assert any("elevated:keystone" in r for r in reasons2)
 
 
+def test_always_critical_cwe_promotes_under_context() -> None:
+    """always_critical_cwes must PROMOTE an under-scored finding to Critical
+    when the required context holds — e.g. a CWE-915 mass assignment reaching
+    role=admin on an UNAUTHENTICATED endpoint that the auditor scored
+    High×High=High (juice-shop T-012). Pre-2026-05-31 the gate only kept /
+    de-escalated an already-Critical finding, so this stayed High forever.
+    """
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    caps = {"contributor_cap": {"default": "High"}}
+    criteria = {
+        "never_individual_critical": [],
+        "always_critical_cwes": [
+            {"cwe": "CWE-915", "required": {"breach_distance_max": 1, "impact_min": "High"}},
+        ],
+        "conditional_critical": {},
+    }
+    # Context holds: unauthenticated (breach_distance 1), impact High → promote.
+    mass = {"risk": "High", "impact": "High", "primary_cwe": "CWE-915"}
+    eff, reasons = tcr._compute_effective(mass, None, 0, caps, criteria, 1)
+    assert eff == "Critical", f"CWE-915 on unauth endpoint must promote; got {eff}"
+    assert any("always_crit_promoted:CWE-915" in r for r in reasons)
+
+    # Context fails: deeper / authenticated (breach_distance 3) → stays High.
+    mass2 = {"risk": "High", "impact": "High", "primary_cwe": "CWE-915"}
+    eff2, reasons2 = tcr._compute_effective(mass2, None, 0, caps, criteria, 3)
+    assert eff2 == "High", f"CWE-915 without unauth context must stay High; got {eff2}"
+    assert not any("always_crit_promoted" in r for r in reasons2)
+
+
 def test_refuted_contributor_not_elevated() -> None:
     """Contributor refutation suppression — mirror of the keystone case."""
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))

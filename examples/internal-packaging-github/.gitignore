@@ -1,0 +1,7 @@
+# Outputs from package_internal_plugin.py
+build/
+dist/
+
+# Upstream clone (Option B — fresh clone per run).
+# Remove this line if you vendor upstream as a git submodule (Option A).
+upstream/appsec-advisor/

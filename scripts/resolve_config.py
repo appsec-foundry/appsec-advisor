@@ -143,7 +143,13 @@ _DEFAULT_EXTENDED_ROUTING = {
 # scannable-evidence content.
 QUICK_STRIDE_PROFILE = {
     "skip_verification_greps": True,   # A
-    "max_threats_per_category": 2,     # B
+    "max_threats_per_category": 1,     # B (was 2 — quick is a triage pass.
+                                       #     Keep only the top-severity threat
+                                       #     per STRIDE category per component.
+                                       #     CRITICAL-SAFE: the analyzer never
+                                       #     drops a Critical to honour this cap
+                                       #     — see appsec-stride-analyzer.md
+                                       #     Quick-mode table exception.)
     "skip_code_examples":      False,  # C (R9 — was True; flipped 2026-05.
                                        #     User feedback: mitigations without
                                        #     code hints are not actionable.

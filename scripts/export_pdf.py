@@ -33,6 +33,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -102,6 +103,69 @@ def mmdc_env() -> dict:
     return env
 
 
+# Headless-Chrome flags that a server / WSL / root / CI environment needs.
+# Without `--no-sandbox` Chrome 11x aborts at launch on most non-desktop hosts
+# ("Failed to launch the browser process"); the rest avoid GPU + /dev/shm +
+# crash-reporter writes that fail under restricted filesystems. Pointing
+# Puppeteer at the system Chrome via `executablePath` also fixes the common
+# "Could not find Chrome (ver. …)" when no puppeteer-cached browser exists.
+_MMDC_CHROME_ARGS = [
+    "--no-sandbox",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--disable-crash-reporter",
+    "--no-first-run",
+    "--disable-extensions",
+]
+# Mermaid render config. `htmlLabels: false` is CRITICAL for the PDF path:
+# with the default HTML labels, mermaid emits node/edge text inside SVG
+# `<foreignObject>` (an embedded HTML `<div>`). WeasyPrint — and most non-
+# browser SVG rasterisers — do NOT implement foreignObject, so every
+# flowchart / graph / attack-tree renders as empty boxes with ALL TEXT
+# MISSING (sequence diagrams are unaffected — they already use native
+# `<text>`). Forcing `htmlLabels: false` makes mermaid emit native SVG
+# `<text>`/`<tspan>` for every label, which renders identically in
+# WeasyPrint and browsers. `<br/>` in a label becomes a tspan line break.
+_MMDC_MERMAID_CONFIG = {
+    "htmlLabels": False,
+    "flowchart": {"htmlLabels": False},
+    "themeVariables": {"fontFamily": "DejaVu Sans, Arial, sans-serif"},
+}
+_MMDC_RENDER_ARGS: list[str] = []
+
+
+def mmdc_render_args() -> list[str]:
+    """Return the extra mmdc flags every render needs:
+
+      * ``-p <puppeteer.json>`` — system Chrome + headless-server launch flags
+        (``--no-sandbox`` etc.) so Chrome actually starts on WSL / root / CI.
+      * ``-c <mermaid.json>`` — ``htmlLabels: false`` so labels are native SVG
+        text (foreignObject HTML labels are invisible in the WeasyPrint PDF).
+
+    Both temp configs are written once per process and cached. Returns the
+    subset it could write; a temp-file failure degrades to mmdc's defaults
+    (prior behaviour) rather than aborting the export.
+    """
+    if _MMDC_RENDER_ARGS:
+        return _MMDC_RENDER_ARGS
+    pptr_cfg: dict = {"args": list(_MMDC_CHROME_ARGS)}
+    chrome = find_chrome()
+    if chrome:
+        pptr_cfg["executablePath"] = chrome
+    for flag, cfg, prefix in (
+        ("-p", pptr_cfg, "mmdc-pptr-"),
+        ("-c", _MMDC_MERMAID_CONFIG, "mmdc-mmd-"),
+    ):
+        try:
+            fd, path = tempfile.mkstemp(prefix=prefix, suffix=".json")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(cfg, fh)
+        except OSError:
+            continue
+        _MMDC_RENDER_ARGS.extend([flag, path])
+    return _MMDC_RENDER_ARGS
+
+
 def probe_mmdc() -> tuple[bool, str]:
     """Actually render a trivial diagram to verify mmdc *works*.
 
@@ -118,7 +182,7 @@ def probe_mmdc() -> tuple[bool, str]:
         src.write_text("graph TD\n  A --> B\n", encoding="utf-8")
         try:
             result = subprocess.run(
-                ["mmdc", "-i", str(src), "-o", str(out), "-q"],
+                ["mmdc", "-i", str(src), "-o", str(out), "-q", *mmdc_render_args()],
                 capture_output=True,
                 text=True,
                 timeout=90,
@@ -263,6 +327,7 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
                     "-b",
                     "transparent",
                     "-q",
+                    *mmdc_render_args(),
                 ],
                 check=True,
                 capture_output=True,

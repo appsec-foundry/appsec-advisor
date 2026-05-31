@@ -72,7 +72,7 @@ class TestQuickProfileEvidenceExcerptRestored:
         profile = rc.resolve_stride_profile("haiku-economy", "quick")
         sp = profile["stride_profile"]
         assert sp["skip_verification_greps"] is True
-        assert sp["max_threats_per_category"] == 2
+        assert sp["max_threats_per_category"] == 1  # quick triage, Critical-safe (2026-05)
         assert sp["skip_code_examples"] is False  # F4.4 — verified 2026-05
         assert sp["skip_cvss_scoring"] is True
         assert sp["turn_budget_hard_cap"] == 25

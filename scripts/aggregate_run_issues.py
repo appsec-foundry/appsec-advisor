@@ -178,6 +178,32 @@ def _count_repo_files(repo_root: Path) -> int:
     return n
 
 
+# Model-speed scaling — the size scaler above assumes default (sonnet-class)
+# sub-agent speed. When the run auto-switched to ``haiku-economy`` (cheaper,
+# but slower wall-time on tool-heavy scan agents), the model-bound recon
+# phases legitimately take longer than the size-scaled budget predicts.
+# Without this factor a haiku-economy run on a large repo emits a mild
+# false-positive perf_anomaly (observed: juice-shop Phase 2 recon ran 8m14s
+# vs the 6m26s size-scaled budget — 1.28× over — purely because recon ran on
+# haiku). Phases 1 (context) and 2 (reconnaissance) are the model-bound
+# scan phases at economy tier; the orchestrator-owned phases (3/9/10b/11)
+# run on sonnet regardless of reasoning tier, so they are NOT scaled here.
+_ECONOMY_BOUND_PHASES = frozenset({"1", "2"})
+_ECONOMY_PHASE_FACTOR = 1.5
+
+
+def _run_used_economy_model(output_dir: Path) -> bool:
+    """True when ``.skill-config.json`` resolved ``reasoning_model`` to an
+    economy tier (haiku-economy). Best-effort — a missing/malformed config
+    returns False so the threshold stays at its default (size-scaled) value.
+    """
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return str(cfg.get("reasoning_model", "")).strip().lower() == "haiku-economy"
+
+
 # Sub-agent token-output ceiling — abnormal Sonnet sessions go up to
 # ~64K output tokens. >50K signals a long-running session worth flagging
 # even when the agent didn't hit MAX_TURNS.
@@ -461,6 +487,7 @@ def _extract_perf_anomalies(
     depth: str,
     *,
     file_count: int = 0,
+    economy: bool = False,
 ) -> list[dict]:
     """Phases that exceed depth-specific limits or the hard ceiling.
 
@@ -469,10 +496,20 @@ def _extract_perf_anomalies(
     just for being a non-trivial-sized repo. The scaling factor is
     surfaced in each issue's evidence dict (``budget_scale_factor``,
     ``repo_file_count``) so the user can verify why a budget moved.
+
+    When ``economy`` is True (run resolved to ``haiku-economy``), the
+    model-bound recon phases (``_ECONOMY_BOUND_PHASES``) get an additional
+    ``_ECONOMY_PHASE_FACTOR`` budget multiplier on top of the size scale,
+    because the economy model is slower per wall-clock on those scan
+    phases. Without it, an economy run on a large repo false-flags recon.
     """
     issues: list[dict] = []
     base = PHASE_DURATION_LIMITS_SECONDS.get(depth, PHASE_DURATION_LIMITS_SECONDS["standard"])
-    limits = scale_phase_limits(base, file_count) if file_count > 0 else base
+    limits = dict(scale_phase_limits(base, file_count)) if file_count > 0 else dict(base)
+    if economy:
+        for ph in _ECONOMY_BOUND_PHASES:
+            if ph in limits:
+                limits[ph] = int(round(limits[ph] * _ECONOMY_PHASE_FACTOR))
     for pd in phase_durs:
         ph = pd["phase"]
         dur = pd["duration_seconds"]
@@ -714,11 +751,12 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
         elif output_dir.parent.parent.is_dir():
             repo_root = output_dir.parent.parent
     file_count = _count_repo_files(repo_root) if repo_root else 0
+    economy = _run_used_economy_model(output_dir)
 
     issues: list[dict] = []
     issues.extend(_extract_errors(hook_log, agent_log))
     issues.extend(_extract_warnings(hook_log))
-    issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count))
+    issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))
 

@@ -167,9 +167,26 @@ controls:
       nist_sp_800_53: SC-12
 
   - name: "Social Login Adapter (OAuth / OIDC)"
+    # Name aliases AND concrete library / import / route signals so recon and
+    # the stride-analyzer reliably map a detected OAuth integration onto this
+    # canonical mechanism (previously only name-level aliases existed, so OAuth
+    # was missed whenever recon had not already named it — the juice-shop
+    # Google-login case). Mirrors the library-level detection the SAML entry
+    # below already carries.
     aliases: ["Federated Identity / OAuth", "OAuth Login Adapter", "OAuth Adapter",
               "OAuth 2.0", "OIDC", "OpenID Connect", SSO,
-              "OAuth Sign-In", "OIDC Sign-In"]
+              "OAuth Sign-In", "OIDC Sign-In", "Social Login", "Google Login",
+              "Sign in with Google", "Login with Google",
+              # library / package signals (Node, Python, .NET, Java, SPA)
+              "passport-oauth2", "passport-google-oauth", "passport-google-oauth20",
+              "passport-github", "passport-facebook", "passport-azure-ad",
+              "openid-client", "simple-oauth2", "grant", "@node-oauth",
+              "next-auth", "@auth/core", "react-oauth", "angularx-social-login",
+              "google-auth-library", "googleapis OAuth2", "authlib", "msal",
+              "spring-security-oauth2", "django-allauth", "omniauth",
+              # route / flow signals
+              "/auth/google", "/oauth/callback", "/oauth2/callback",
+              "authorization_code", "response_type=code", "openid profile email"]
     domain: IAM
     kind: mechanism
     default_references:

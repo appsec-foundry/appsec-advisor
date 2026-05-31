@@ -196,6 +196,45 @@ class TestScalePhaseLimits:
         assert 200 <= out["1"] <= 240
 
 
+class TestEconomyModelPerfFactor:
+    """haiku-economy slows the model-bound recon phases (1, 2); the perf
+    threshold must widen for them so an economy run does not false-flag.
+    """
+
+    def _phase_dur(self, phase: str, dur: int) -> dict:
+        return {
+            "phase": phase,
+            "duration_seconds": dur,
+            "label": f"Phase {phase} test",
+            "start_line": 4,
+            "start_ts": "2026-05-31T14:26:07Z",
+            "end_ts": "2026-05-31T14:34:21Z",
+            "end_inferred": False,
+        }
+
+    def test_economy_widens_recon_budget(self):
+        base2 = agg.PHASE_DURATION_LIMITS_SECONDS["standard"]["2"]
+        # A duration 1.3× over the base budget: flagged WITHOUT economy
+        # (mult ≥ 1.20, slack ≥ 30s for base ≥ 100s), suppressed WITH it.
+        dur = int(base2 * 1.3)
+        without = agg._extract_perf_anomalies([self._phase_dur("2", dur)], "standard")
+        assert len(without) == 1, "size-only budget should flag a 1.3× overshoot"
+        with_eco = agg._extract_perf_anomalies(
+            [self._phase_dur("2", dur)], "standard", economy=True
+        )
+        assert with_eco == [], "economy factor (×1.5) should absorb a 1.3× overshoot on phase 2"
+
+    def test_economy_does_not_scale_orchestrator_phases(self):
+        base9 = agg.PHASE_DURATION_LIMITS_SECONDS["standard"]["9"]
+        dur = int(base9 * 1.3)
+        # Phase 9 runs on sonnet regardless of reasoning tier → economy must
+        # NOT widen its budget; the overshoot stays flagged.
+        flagged = agg._extract_perf_anomalies(
+            [self._phase_dur("9", dur)], "standard", economy=True
+        )
+        assert len(flagged) == 1, "phase 9 is not economy-bound; overshoot must still flag"
+
+
 # ---------------------------------------------------------------------------
 # Sprint 4C — session_stop_unknown filter (skip when output_tokens > 0)
 # ---------------------------------------------------------------------------

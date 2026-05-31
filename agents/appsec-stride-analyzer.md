@@ -233,7 +233,7 @@ Apply when `STRIDE_PROFILE_JSON.stride_profile_label = "quick (depth-reduced via
 | Flag | Value | Adjustment |
 |---|---|---|
 | `skip_verification_greps` | `true` | Skip the targeted verification grep before discarding a candidate. **Exception:** Spoofing / Tampering / EoP rated Critical or High — grep is mandatory regardless. Skipping in those cases produced silent false positives. |
-| `max_threats_per_category` | `2` | After enumerating per category, sort by severity descending (Critical > High > Medium > Low) and keep at most the top 2. |
+| `max_threats_per_category` | `1` | After enumerating per category, sort by severity descending (Critical > High > Medium > Low) and keep the top 1. **Critical-safe exception:** never drop a Critical to honour this cap — if a category has 2+ Critical findings, keep **all** of them (the cap applies only to the High/Medium/Low tail). |
 | `skip_code_examples` | `false` | Inactive — `code_example` remains mandatory. |
 | `skip_evidence_excerpt` | `false` | Inactive — file:line evidence stays. |
 | `skip_cvss_scoring` | `true` | Do not emit `cvss_v4`. |

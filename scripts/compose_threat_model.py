@@ -4013,6 +4013,11 @@ def _build_strength_clusters(
 
 _SEV_RANK_TBL = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _SEV_ICON_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
+# Priority circles for the §9 Mitigation Register index — mirrors the §8
+# severity circles but keys on mitigation PRIORITY (P1 = before deployment …
+# P4 = backlog) so the jump-list reflects remediation urgency, not finding
+# severity (2026-05-31 user request).
+_PRIO_ICON_TBL = {"p1": "🔴", "p2": "🟠", "p3": "🟡", "p4": "🟢"}
 
 # §8 / §9 register jump-list helpers. The index lines used to be bare
 # `[F-NNN](#f-nnn)` chips with no title or criticality, which is unreadable
@@ -4040,11 +4045,18 @@ def _severity_by_finding_num(threats: list) -> dict:
 
 
 def _build_register_index(label: str, prefix: str, nums: list,
-                          title_by_num: dict, sev_by_num: dict) -> str:
-    """Render a `**<label>:**<br/>🔴 [P-NNN](#p-nnn) — <title><br/>…` jump list."""
+                          title_by_num: dict, sev_by_num: dict,
+                          icon_tbl: dict | None = None) -> str:
+    """Render a `**<label>:**<br/>🔴 [P-NNN](#p-nnn) — <title><br/>…` jump list.
+
+    ``icon_tbl`` defaults to the severity-circle table (§8 Findings index);
+    pass ``_PRIO_ICON_TBL`` for the §9 Mitigations index so the circle keys
+    on remediation priority (p1..p4) instead of finding severity.
+    """
+    icon_tbl = icon_tbl if icon_tbl is not None else _SEV_ICON_TBL
     chips = []
     for n in nums:
-        emoji = _SEV_ICON_TBL.get(sev_by_num.get(n, ""), "⚪")
+        emoji = icon_tbl.get(sev_by_num.get(n, ""), "⚪")
         ttl = _index_short_title(title_by_num.get(n, ""))
         chip = f"{emoji} [{prefix}-{n:03d}](#{prefix.lower()}-{n:03d})"
         if ttl:
@@ -4753,6 +4765,7 @@ def _render_top_threats_architecture(
     # attack edge — it is part of the architecture, just not (yet) a threat host.
     comp_node: dict[str, str] = {}
     comp_label: dict[str, str] = {}
+    comp_pure_name: dict[str, str] = {}
     comp_tier: dict[str, str] = {}
     comp_cnum: dict[str, str] = {}
     for idx, c in enumerate(components, start=1):
@@ -4777,6 +4790,7 @@ def _render_top_threats_architecture(
         )
         _name = f"C-{idx:02d} · {_fig1_label(c.get('name') or cid)}"
         comp_label[cid] = f"{_name}<br/><i>{_badge}</i>" if _badge else _name
+        comp_pure_name[cid] = f"C-{idx:02d} {_fig1_label(c.get('name') or cid)}"
         comp_tier[cid] = tier
     if not comp_node:
         return ""
@@ -4987,7 +5001,7 @@ def _render_top_threats_architecture(
     # driven; ELK only equalises their row placement, not their pixel size.
     lines: list[str] = [
         "```mermaid",
-        '%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%',
+        '%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 34, "rankSpacing": 52}} }%%',
         "flowchart TB",
     ]
     # External actors are grouped into their OWN band (a subgraph, like every
@@ -5026,12 +5040,16 @@ def _render_top_threats_architecture(
         # Collapse no-finding components into ONE muted note node (2026-05-31)
         # so the tier acknowledges them without a box each. Never edge-linked.
         if tier_hidden:
-            _ids = ", ".join(comp_cnum.get(cid, "C-??") for cid in tier_hidden)
-            _note = (
-                f"{len(tier_hidden)} more component"
-                f"{'s' if len(tier_hidden) != 1 else ''} without Critical/High "
-                f"findings (not drawn): {_ids}"
+            # Name the muted components (not just C-NN) so the reader knows
+            # they were ASSESSED — just carried no Critical/High finding —
+            # rather than skipped (2026-05-31 user request). The compmuted
+            # classDef carries a reduced font-size so the legend never
+            # competes visually with the real component boxes. Stack with
+            # <br/> when more than one so a long tier list stays narrow.
+            _names = "<br/>".join(
+                comp_pure_name.get(cid, comp_cnum.get(cid, "C-??")) for cid in tier_hidden
             )
+            _note = f"Also assessed — no Critical/High finding:<br/>{_names}"
             lines.append(f'        {sg}_OMITTED["{_fig1_label(_note)}"]:::compmuted')
         lines.append("    end")
     lines.append("")
@@ -5049,16 +5067,14 @@ def _render_top_threats_architecture(
         glyph_name[glyph_seq[i]] = _fig1_label(_posture_short_label(nm))
 
     def _attack_label(glyphs: list[str]) -> str:
-        # SOLID (actor-originated) edges name every class they carry — this is
-        # the single place each attack is named. When an edge carries several
-        # classes they are STACKED VERTICALLY (one per line via <br/>) so the
-        # label reads as a tidy list instead of one long horizontal run:
-        #     ① Injection
-        #     ② Auth Bypass
-        #     ④ Secrets
-        #     ⑤ RCE
-        # Compact short-forms (see _POSTURE_LABEL_ABBREV) keep each line short.
-        return "<br/>".join(f"{g} {glyph_name.get(g, '')}".strip() for g in glyphs)
+        # Glyph-ONLY (space-joined), identical to the dotted propagation edges
+        # below — so attacks and their consequences read as one numbered system
+        # and the class names live in a single compact legend line under the
+        # diagram instead of being stacked 5+ lines high on one edge. Naming
+        # every class on its edge inflated the actor→app rank gap and stretched
+        # the whole figure vertically (2026-05-31 user feedback: "zu sehr in die
+        # Länge gezogen"). The glyph→name key is emitted once, below.
+        return " ".join(glyphs)
 
     edge_idx = 0
     benign_idx: list[int] = []
@@ -5097,7 +5113,7 @@ def _render_top_threats_architecture(
         lines.append("    style ZONE_ACTORS fill:none,stroke:#94a3b8,stroke-width:1.5px,stroke-dasharray:5")
     lines.append("    classDef comp fill:#eef2f7,stroke:#334155,color:#0f172a,stroke-width:1.5px")
     # Muted style for the per-tier "components without findings (not drawn)" note.
-    lines.append("    classDef compmuted fill:#f8fafc,stroke:#cbd5e1,color:#64748b,stroke-width:1px")
+    lines.append("    classDef compmuted fill:#f8fafc,stroke:#cbd5e1,color:#64748b,stroke-width:1px,font-size:9px")
     lines.append("    classDef ext  fill:#ffffff,stroke:#94a3b8,color:#334155,stroke-width:1.5px")
     # Actor colouring: malicious red, benign/victim green (2026-05-30 request).
     lines.append("    classDef actorbad  fill:#fde8e8,stroke:#b71c1c,color:#7f0000,stroke-width:2px")
@@ -5125,11 +5141,17 @@ def _render_top_threats_architecture(
         "threat glyph(s) — the same numbering as Figure 2 and the Top Threats table below."
     )
 
-    # No separate glyph legend: each attack class is NAMED ONCE on its solid
-    # actor-originated edge (e.g. "① Injection · ② Auth Bypass · …") and
-    # referenced by bare number on the dotted propagation edges, so a standalone
-    # legend would just name everything a second time.
-    return intro + "\n\n" + "\n".join(lines) + "\n"
+    # Compact one-line glyph legend UNDER the diagram. Edges now carry glyphs
+    # only (see _attack_label), so this single line is where each number is
+    # decoded — `① Injection · ② Auth Bypass · …`. One line replaces the former
+    # per-edge stacked names that stretched the figure vertically.
+    glyph_legend = " · ".join(
+        f"{g} {glyph_name[g]}".strip() for g in glyph_seq if glyph_name.get(g)
+    )
+    body = intro + "\n\n" + "\n".join(lines) + "\n"
+    if glyph_legend:
+        body += "\n_Threats: " + glyph_legend + "_\n"
+    return body
 
 
 def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonomy: dict) -> str:
@@ -5226,10 +5248,21 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # Vektor column (and the YAML field) keep their granularity — only
     # the at-a-glance heatmap collapses.
     open_user_registration = bool((ctx.yaml_data.get("meta") or {}).get("open_user_registration"))
-    if open_user_registration:
-        _collapse_open_registration_actors(attack_paths_data)
+    # 2026-05-31 actor-model decision: do NOT collapse the authenticated
+    # internet tiers (`internet-user` / `internet-priv-user`) into `internet-anon`
+    # on open registration. Registering is trivial, but an authenticated request
+    # is still a distinct attack position (a post-login state-changing endpoint
+    # is a different surface than an anonymous one), and collapsing it hid the
+    # "Authenticated Internet Attacker" entirely. The `internet-anon` card is
+    # still relabelled below (open_user_registration=True) to note registration
+    # is one POST away, so the trivial-escalation insight is preserved without
+    # erasing the authenticated tier. The legacy collapse helper
+    # (_collapse_open_registration_actors) is retained but no longer called.
+    #
     # A committed secret in a PUBLIC repo is readable by any anonymous attacker,
-    # so the repo-reader vektor collapses into internet-anon (see function doc).
+    # so the repo-reader vektor collapses into internet-anon (drops the
+    # "Internal Developer" actor — anyone can clone public source). Gated on
+    # meta.public_source_repo (set by Stage-1 context / the recon scanner).
     public_source_repo = bool((ctx.yaml_data.get("meta") or {}).get("public_source_repo"))
     if public_source_repo:
         _collapse_public_repo_actors(attack_paths_data)
@@ -5315,8 +5348,9 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     )
     if open_user_registration:
         intro_paragraph += (
-            " Self-registration is open, so authenticated-only attacks "
-            "still originate from the anonymous attacker."
+            " Self-registration is open, so the **Authenticated Internet Attacker** "
+            "tier is one POST away from anonymous — it is shown distinctly because a "
+            "post-login endpoint is still a different attack surface."
         )
 
     diagram_data = {
@@ -6917,8 +6951,13 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # `→ component` link — but let the title wrap on normal spaces so a
             # long finding name flows onto the next line instead of forcing the
             # whole Findings column wide (and never breaks inside an F-NNN id).
+            # Use a ` — ` separator between the link and its title (not a bare
+            # space): every downstream re-label pass (qa_checks linkify_anchors,
+            # apply_prose_fixes relevant-findings-bullets, _linkify_bare_refs_in_prose)
+            # keys "already labelled" on ` — `, so the em-dash form is what stops
+            # them re-appending the title and doubling the cell (2026-05-31).
             finding_cells.append(
-                f"•&nbsp;[{visible}](#{visible.lower()}) {short} →&nbsp;"
+                f"•&nbsp;[{visible}](#{visible.lower()}) — {short} →&nbsp;"
                 f"[{c_anchor}](#{c_anchor.lower()})"
             )
 
@@ -8090,6 +8129,14 @@ def _enrich_linked_id_cells(ctx: RenderContext, md: str) -> str:
     out_lines = md.split("\n")
     for header_idx, block in _iter_md_table_blocks(md):
         header_cells = _split_table_row(block[0])
+        # §4 Assets guard — the Assets table (header carries both "Asset" and
+        # "Classification") deliberately ships COMPACT `·`-joined bare
+        # `[F-NNN](#f-nnn)` chips so its narrow ID column does not wrap. Adding
+        # `— title` labels + `<br/>` stacking here would re-widen it (the exact
+        # 2026-05-31 complaint). Leave that table's cells untouched.
+        _hdr_lc = {h.strip().lower() for h in header_cells}
+        if "asset" in _hdr_lc and "classification" in _hdr_lc:
+            continue
         # Map: column index → canonical header (if it matches a known label).
         enrichable: dict[int, str] = {}
         for ci, h in enumerate(header_cells):
@@ -8438,6 +8485,19 @@ def _normalize_emdashes(md: str) -> str:
                 # label enrichers (qa_checks linkify_anchors Pass 2) match
                 # the bare link again and double-label it. Preserve the row.
                 processed_lines.append(line)
+            elif re.search(r"\]\(#(?:f|t|m|th)-\d+\)\s+—\s", line):
+                # Non-table line carrying a structural `[ID](#id) — Label`
+                # separator: the §8/§9 register jump-lists
+                # (`**Findings index:**<br/>🔴 [F-001](#f-001) — …`), the
+                # emoji finding/mitigation bullets (`- 🔴 [F-001](#f-001) — …`)
+                # and the §8 Fix lines (`→ [M-001](#m-001) — …`). Same rule as
+                # the table-row case above — the em-dash is the link↔label
+                # separator, NOT prose. Hyphenising it lets a downstream
+                # re-label pass treat the link as bare and re-append the title,
+                # producing the `[F-001](#f-001) — Title - Title` doubling seen
+                # in the 2026-05-31 juice-shop run. Preserve the em-dash so the
+                # idempotency guards (which all key on ` — `) stay effective.
+                processed_lines.append(line)
             else:
                 processed_lines.append(_normalize_line_preserve_inline_code(line))
         chunk = "\n".join(processed_lines)
@@ -8459,6 +8519,29 @@ def _normalize_line_preserve_inline_code(line: str) -> str:
         p = _EMDASH_TIGHT_RE.sub("-", p)
         out_parts.append(p)
     return "".join(out_parts)
+
+
+# An `[ID](#anchor) <sep> Label <sep> Label <delim>` construct where the label
+# is repeated verbatim. Produced when a re-label pass (qa_checks linkify_anchors,
+# the renderer agent's own passes, apply_prose_fixes) appends a title to a link
+# that already carried one — the 2026-05-31 juice-shop §8/§9/attack-path
+# doubling. `_normalize_emdashes` preservation (above) closes the common vector,
+# but this is the deterministic belt-and-suspenders net: it can NEVER ship a
+# doubled label regardless of how upstream passes interleave. Conservative —
+# only collapses an EXACT consecutive repeat of the whole label segment, so a
+# label that legitimately contains a repeated word is untouched.
+_DOUBLED_ID_LABEL_RE = re.compile(
+    r"(\]\(#[A-Za-z0-9_-]+\)\s*[—-]\s*)"   # 1: ](#anchor) + first separator
+    r"([^\n<|—]+?)"                          # 2: label text (no newline / < / | / em-dash)
+    r"(?:\s*[—-]\s*|\s+)"                    # repeat separator: hyphen / em-dash / bare space
+    r"\2"                                    # the SAME label again
+    r"(?=\s*(?:<|\||→|$|\n))"                # followed by a cell/line delimiter
+)
+
+
+def _dedupe_doubled_id_labels(md: str) -> str:
+    """Collapse `[ID](#id) — Label - Label` → `[ID](#id) — Label`. Idempotent."""
+    return _DOUBLED_ID_LABEL_RE.sub(r"\1\2", md)
 
 
 def _escape_dollar_operators(md: str) -> str:
@@ -8700,14 +8783,16 @@ def _escape_dot_tld_identifiers(md: str) -> str:
         word, tld = m.group(1), m.group(2)
         full = f"{word}.{tld}"
         if full.lower() in _DOT_TLD_KNOWN_NAMES:
-            # Known-safe brand / framework name. Backtick-wrap to defeat
-            # GFM auto-link without inserting invisible characters. The
-            # legacy ZWSP (U+200B) approach is retired — see
-            # agents/appsec-threat-renderer.md §"Brand-token escape":
-            # ZWSP is fragile across PDF/HTML/RSS/IDE renderer pipelines
-            # and invisible to authors editing source. Backtick-wrap
-            # renders unchanged in every downstream format.
-            return f"`{full}`"
+            # Known-safe brand / framework / product name (Node.js, Vue.js,
+            # Socket.IO, …). These are PROSE, not code — they must NOT render
+            # in backticks (the §1 System Overview Runtime row, infobox cells,
+            # and narrative sentences should read "Node.js", not as a code
+            # reference). Backslash-escape the dot instead: pandoc and GitHub
+            # render `Node\.js` verbatim as "Node.js" while the backslash
+            # breaks GFM's bare-URL auto-link heuristic. Retired approaches:
+            # leaving it untouched (GFM auto-linked it as a URL) and ZWSP
+            # (U+200B — fragile across PDF/HTML/RSS/IDE pipelines).
+            return f"{word}\\.{tld}"
         if tld.lower() in _FILE_EXTENSION_SUFFIXES:
             # Bare file name (e.g. `login.ts`, `script.py`). GFM does not
             # auto-link these; backtick-wrap would corrupt path tokens
@@ -8778,10 +8863,25 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
             continue
         # Process line-by-line so we can skip headings individually.
         lines = chunk.split("\n")
+        in_assets_tbl = False
         for i, line in enumerate(lines):
             if re.match(r"^\s{0,3}#{1,6}\s", line):
                 # Heading — do not expand refs.
+                in_assets_tbl = False
                 continue
+            # §4 Assets guard — its Linked Threats cells ship COMPACT bare
+            # `[F-NNN](#f-nnn)` chips on purpose (narrow ID column). Detect the
+            # table header (Asset + Classification) and skip its body rows so
+            # the `(title)` parens form is NOT appended here.
+            _strip = line.lstrip()
+            if _strip.startswith("|"):
+                _cells = {c.strip().lower() for c in _strip.strip("|").split("|")}
+                if "asset" in _cells and "classification" in _cells:
+                    in_assets_tbl = True
+                if in_assets_tbl:
+                    continue
+            else:
+                in_assets_tbl = False
             lines[i] = re.sub(
                 # Skip refs already followed by ` — <label>` (em-dash form,
                 # produced by linkify_with_label in table cells / register
@@ -10796,6 +10896,15 @@ def _build_threat_card(
 
     # Meta line — Severity · Component · Location.
     sev_disp = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
+    # Optional in-place rationale when the rating sits ABOVE the usual class
+    # baseline — e.g. a hardcoded key elevated to Critical because it is
+    # committed to a public repo, or a mass-assignment promoted to Critical
+    # because it reaches a privileged field on an unauthenticated endpoint.
+    # Populated deterministically by emit_severity_rationale.py; kept short so
+    # the meta line stays scannable. Gated on presence → no-op when absent.
+    _sev_rat = (t.get("severity_rationale") or "").strip()
+    if _sev_rat:
+        sev_disp += f" — {_sev_rat}"
     if (t.get("impact") or "").strip().lower() == "critical" and sev != "critical":
         sev_disp += " _(raw Critical)_"
     comp_part = (
@@ -11528,24 +11637,39 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         }
     )
     if _m_nums:
-        # Each chip carries the mitigation title plus a criticality circle =
-        # the highest severity among the findings it addresses (2026-05-31).
+        # Each chip carries the mitigation title plus a PRIORITY circle
+        # (P1🔴 P2🟠 P3🟡 P4🟢) = the mitigation's own remediation urgency
+        # (2026-05-31 user request: "statt Kritikalität die Priorität").
+        # When a mitigation has no explicit priority, fall back to the
+        # highest severity among the findings it addresses, mapped onto the
+        # P-scale (Critical→P1 … Low→P4) so every chip still carries a circle.
         _sev_f = _severity_by_finding_num(ctx.yaml_data.get("threats") or [])
+        _sev_to_prio = {"critical": "p1", "high": "p2", "medium": "p3", "low": "p4"}
         _m_title: dict[int, str] = {}
-        _m_sev: dict[int, str] = {}
+        _m_prio: dict[int, str] = {}
         for mm in mitigations:
             _mn = re.search(r"(\d+)$", (mm.get("m_id") or mm.get("id") or "").strip())
             if not _mn:
                 continue
             _n = int(_mn.group(1))
             _m_title[_n] = (mm.get("title") or "").strip()
+            _raw_prio = (mm.get("priority") or "").strip().lower()
+            if _raw_prio in _PRIO_ICON_TBL:
+                _m_prio[_n] = _raw_prio
+                continue
             _best = 9
             for _a in (mm.get("threat_ids") or mm.get("addresses") or []):
                 _am = re.search(r"(\d+)$", str(_a))
                 if _am:
                     _best = min(_best, _SEV_RANK_TBL.get(_sev_f.get(int(_am.group(1)), ""), 9))
-            _m_sev[_n] = next((s for s, r in _SEV_RANK_TBL.items() if r == _best), "")
-        lines.append(_build_register_index("Mitigations index", "M", _m_nums, _m_title, _m_sev))
+            _sev_word = next((s for s, r in _SEV_RANK_TBL.items() if r == _best), "")
+            _m_prio[_n] = _sev_to_prio.get(_sev_word, "p3")
+        lines.append(
+            _build_register_index(
+                "Mitigations index", "M", _m_nums, _m_title, _m_prio,
+                icon_tbl=_PRIO_ICON_TBL,
+            )
+        )
         lines.append("")
 
     # Normalise severity-word priorities that the orchestrator sometimes
@@ -12529,6 +12653,10 @@ def render(
     # description columns stop crowding out finding/link columns and short IDs
     # are not broken across lines. Runs last so it sees the final table set.
     rendered = _normalize_table_column_widths(rendered)
+
+    # Final safety net — collapse any `[ID](#id) — Label - Label` doubling that
+    # an upstream re-label pass may have produced (see _dedupe_doubled_id_labels).
+    rendered = _dedupe_doubled_id_labels(rendered)
 
     return rendered, ctx.warnings
 

@@ -1978,3 +1978,83 @@ class TestSecurityArchitectureV2:
         assert seg.count("\n#### ") == 1, "password lifecycle must be ONE grouped H4"
         # grouped H4 still carries the two required labels
         assert "**Security assessment**" in seg and "**Relevant findings**" in seg
+
+
+# ---------------------------------------------------------------------------
+# §7.2 Authentication Mechanisms inventory (2026-05-31, deterministic)
+# ---------------------------------------------------------------------------
+
+def _auth_yaml():
+    """A yaml fixture exercising mechanisms across the §7.2/§7.3/§7.9 domains."""
+    return {
+        "meta": {"open_user_registration": True},
+        "security_controls": [
+            {"control": "Password Authentication (Login)", "domain": "Identity and Authentication Controls", "effectiveness": "weak"},
+            {"control": "Session Token Validation (JWT Based)", "domain": "Session and Token Controls", "effectiveness": "partial"},
+            {"control": "Password Hashing", "domain": "Cryptography Secrets and Data Protection", "effectiveness": "missing"},
+        ],
+        "threats": [
+            {"id": "T-001", "title": "JWT forgery via hardcoded RSA private key", "cwe": "CWE-321", "risk": "Critical"},
+            {"id": "T-024", "title": "TOTP secrets stored in plaintext in database", "cwe": "CWE-312", "risk": "High"},
+            {"id": "T-029", "title": "Admin account registration via role field manipulation", "cwe": "CWE-269", "risk": "High"},
+            {"id": "T-007", "title": "MD5 password hashing enables offline password recovery", "cwe": "CWE-916", "risk": "Critical"},
+        ],
+    }
+
+
+def test_auth_inventory_lists_present_mechanisms():
+    block = "\n".join(pf._build_auth_mechanism_inventory(_auth_yaml()))
+    # Registration (meta flag + threat), Password login (control), Password
+    # hashing (control+threat), JWT (control+threat), MFA/TOTP (threat) present.
+    assert "| User registration |" in block
+    assert "| Password login |" in block
+    assert "| Password storage (hashing) |" in block
+    assert "| JWT / bearer-token session |" in block
+    assert "| Multi-factor authentication (TOTP / 2FA) |" in block
+    # Findings link to F-ids (T-NNN → F-NNN, same number).
+    assert "[F-029](#f-029)" in block and "[F-024](#f-024)" in block
+    assert "[F-001](#f-001)" in block and "[F-007](#f-007)" in block
+
+
+def test_auth_inventory_absent_go_to_note():
+    block = "\n".join(pf._build_auth_mechanism_inventory(_auth_yaml()))
+    # OAuth and password-reset are not in the fixture → "Also checked" note,
+    # NOT a table row.
+    assert "Also checked, not detected" in block
+    assert "OAuth / OIDC federated login" in block.split("Also checked")[1]
+    assert "| OAuth / OIDC federated login |" not in block
+
+
+def test_auth_inventory_section_pointers():
+    block = "\n".join(pf._build_auth_mechanism_inventory(_auth_yaml()))
+    # JWT assessed under §7.3, hashing under §7.9, registration under §7.2.
+    assert "[§7.3](#73-session-and-token-controls)" in block
+    assert "[§7.9](#79-cryptography-secrets-and-data-protection)" in block
+    assert "[§7.2](#72-identity-and-authentication-controls)" in block
+
+
+def test_auth_inventory_status_from_effectiveness():
+    block = "\n".join(pf._build_auth_mechanism_inventory(_auth_yaml()))
+    # Password login control effectiveness=weak → 🟠 Weak badge in its row.
+    login_row = next(l for l in block.splitlines() if l.startswith("| Password login |"))
+    assert "🟠 Weak" in login_row
+    # Password hashing control effectiveness=missing → 🔴 Missing.
+    hash_row = next(l for l in block.splitlines() if l.startswith("| Password storage (hashing) |"))
+    assert "🔴 Missing" in hash_row
+
+
+def test_auth_inventory_empty_without_auth():
+    yaml_data = {
+        "meta": {},
+        "security_controls": [{"control": "Output Encoding / XSS Prevention", "domain": "Output Encoding", "effectiveness": "weak"}],
+        "threats": [{"id": "T-050", "title": "Stored XSS in product description", "cwe": "CWE-79", "risk": "High"}],
+    }
+    assert pf._build_auth_mechanism_inventory(yaml_data) == []
+
+
+def test_auth_inventory_is_frozen_marked_and_single_titles():
+    block = "\n".join(pf._build_auth_mechanism_inventory(_auth_yaml()))
+    assert "AUTH-MECHANISMS-FROZEN" in block
+    # Findings emit as bare ID links (single — the title is added by the compose
+    # linkify pass, not duplicated here).
+    assert block.count("[F-001](#f-001)") == 1

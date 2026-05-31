@@ -7,9 +7,9 @@ drift away from the documented Quick-mode contract.
 Profile (A-F, applies only when reasoning_mode=haiku-economy AND
 depth=quick):
   A. skip_verification_greps = True
-  B. max_threats_per_category = 2
-  C. skip_code_examples = True
-  D. skip_evidence_excerpt = True
+  B. max_threats_per_category = 1   (Critical-safe: Criticals never dropped)
+  C. skip_code_examples = False     (R9 — flipped 2026-05, kept actionable)
+  D. skip_evidence_excerpt = False  (P3 — kept, restores §8 evidence)
   E. skip_cvss_scoring = True
   F. turn_budget_hard_cap = 25
 """
@@ -43,8 +43,8 @@ def test_profile_active_quick_haiku_economy():
     p = out["stride_profile"]
 
     assert p["skip_verification_greps"] is True, "A: verification greps must be off in Quick"
-    assert p["max_threats_per_category"] == 2, "B: cap is 2 (was 2-5)"
-    assert p["skip_code_examples"] is True, "C: code_example field omitted"
+    assert p["max_threats_per_category"] == 1, "B: cap is 1 (Critical-safe quick triage)"
+    assert p["skip_code_examples"] is False, "C: code_example KEPT at quick (R9 — flipped 2026-05)"
     # P3 (A6) re-balance — evidence excerpt is CHEAP to keep at quick (it's a
     # yaml-side string trim, not new prose) and dropping it stripped the §8
     # Threat Register Finding column and Linked Threats columns of every

@@ -1,31 +1,59 @@
 # Internal Plugin Packaging
 
-Build a company-branded plugin from `appsec-advisor`, so developers run your
-namespace with your defaults:
+This guide shows how to build a company-branded version of `appsec-advisor`, so developers run your namespace with your defaults:
 
 ```text
 /acme-appsec:create-threat-model
 ```
 
-Same upstream analysis pipeline, but loaded with your requirements catalog,
-business context, presets, and guardrails.
+It is the same analysis pipeline as the upstream project ([`matthiasrohr/appsec-advisor`](https://github.com/matthiasrohr/appsec-advisor)), just pre-loaded with your requirements catalog, business context, presets, and guardrails. Throughout this guide, "upstream" means that repo.
 
-## Fastest path: copy a working example
+This page is the **build runbook**: how to assemble, validate, and ship the branded plugin. For what an org profile actually contains — every field, the schema, CLI flags, and resolution precedence — see the reference, [org-profiles.md](org-profiles.md).
 
-Two end-to-end, runnable packaging repos ship with this plugin. Start from one
-instead of assembling by hand:
+## Contents
 
-- [`examples/internal-packaging-github/`](../examples/internal-packaging-github) — GitHub Actions
-- [`examples/internal-packaging-gitlab/`](../examples/internal-packaging-gitlab) — GitLab CI
+- [Quickstart](#quickstart) — minimal local build, no CI
+- [What you own vs. what upstream owns](#what-you-own-vs-what-upstream-owns) — the boundary
+- [Step 1 — Set up the packaging repository](#step-1--set-up-the-packaging-repository)
+- [Step 2 — Write your org profile](#step-2--write-your-org-profile)
+  - [How the profile gets wired in (automatic)](#how-the-profile-gets-wired-in-automatic)
+- [Step 3 — Build the package](#step-3--build-the-package)
+  - [Local build (no tarball)](#local-build-no-tarball)
+- [Step 4 — Run it in CI and publish](#step-4--run-it-in-ci-and-publish)
+- [Step 5 — Developers install and run](#step-5--developers-install-and-run)
+- [Keeping in sync with upstream](#keeping-in-sync-with-upstream)
 
-Each contains a CI pipeline, a sample `org-profile/`, and a README. Recipe:
+## Quickstart
 
-1. Copy the example directory into a new internal repository.
-2. Edit `org-profile/` (your config — see [Step 2](#step-2--write-your-org-profile)).
-3. Set two CI variables (`APPSEC_ADVISOR_URL`, `APPSEC_ADVISOR_REF`).
-4. Run the pipeline → download the `dist/<name>-<version>.tgz` artifact.
+Build a branded plugin from a minimal profile and load it locally. No CI, no tarball, no example repo — just upstream plus a short profile:
 
-The rest of this guide explains what those pieces do, so you can adapt them.
+```bash
+# 1. Get upstream
+git clone --depth 1 https://github.com/matthiasrohr/appsec-advisor
+
+# 2. Write a minimal org profile (the core range must cover the upstream release).
+#    This sets YOUR default — every scan emits SARIF and is cost-capped.
+mkdir org-profile
+cat > org-profile/org-profile.yaml <<'YAML'
+api_version: appsec-advisor.org-profile/v2
+organization: { id: myorg, name: My Org, profile_version: "1" }
+compatibility: { core: ">=0.4 <0.6" }
+default_preset: secure-default
+presets:
+  secure-default:
+    base_mode: standard
+    outputs: { sarif: true }            # always produce SARIF for your dashboard
+    guardrails: { max_cost_usd: 10 }    # cap spend per scan
+YAML
+
+# 3. Build the plugin tree and load it (re-run these two to update)
+python3 appsec-advisor/scripts/package_internal_plugin.py \
+  --source appsec-advisor --org-profile org-profile \
+  --name my-appsec --version 0.4.0-dev --skip-archive
+claude --plugin-dir build/my-appsec
+```
+
+That gives you a working `/my-appsec:create-threat-model` that already runs with *your* default — standard depth, SARIF always on, $10 cost cap — instead of bare upstream defaults. Shipping defaults like that is the whole point of an org profile. The rest of this guide turns the skeleton into a real setup — your requirements catalog, business context, and actors (Steps 1–3), and, if a team needs prebuilt artifacts, a CI pipeline that publishes an installable tarball (Steps 4–5).
 
 ## What you own vs. what upstream owns
 
@@ -35,28 +63,11 @@ The rest of this guide explains what those pieces do, so you can adapt them.
 | requirements catalog source | schemas, QA gates, permissions |
 | business context, actors, presets, guardrails | renderers, export scripts |
 
-Treat `appsec-advisor` as read-only source. Never edit the upstream checkout —
-overlay your config on top during packaging.
+Treat the `appsec-advisor` checkout as read-only. Instead of editing it, you overlay your own config on top of it during packaging.
 
 ## Step 1 — Set up the packaging repository
 
-Your internal repo holds your config plus a clone of upstream under
-`upstream/appsec-advisor/`. **`upstream/` is not a special location — it is just
-where you clone the real plugin repo from GitHub.**
-
-```text
-acme-appsec-plugin/              # your internal repo
-├── upstream/
-│   └── appsec-advisor/          # clone of the real GitHub repo (see below)
-└── org-profile/
-    ├── org-profile.yaml         # your defaults, presets, requirements source
-    ├── context/
-    │   └── organization.md      # business context (untrusted reference data)
-    └── actors/
-        └── insiders.yaml        # optional company-specific actors
-```
-
-Get upstream into `upstream/appsec-advisor/` one of two ways:
+Create your internal repo, then check out the upstream repo into it under `upstream/appsec-advisor/`. There is nothing special about the `upstream/` directory; it is just where you put the clone. Pick one of two ways:
 
 ```bash
 # Option A — pinned submodule (recommended)
@@ -69,20 +80,40 @@ git -C upstream/appsec-advisor fetch --depth 1 origin v0.4.0-beta
 git -C upstream/appsec-advisor checkout --detach FETCH_HEAD
 ```
 
-Use your own fork URL if you maintain one. The packaging script
-(`scripts/package_internal_plugin.py`) lives inside that checkout — that is why
-later commands call `upstream/appsec-advisor/scripts/package_internal_plugin.py`.
+Substitute your own fork URL if you maintain one. Then add your own config next to the checkout, so the repo looks like this:
+
+```text
+acme-appsec-plugin/              # your internal repo
+├── .gitignore                   # ignore build/, dist/, and the upstream clone
+├── upstream/
+│   └── appsec-advisor/          # the checkout from above
+└── org-profile/
+    ├── org-profile.yaml         # your defaults, presets, requirements source
+    ├── context/
+    │   └── organization.md      # business context (untrusted reference data)
+    └── actors/
+        └── insiders.yaml        # optional company-specific actors
+```
+
+Add a `.gitignore` so build artifacts and the upstream clone don't get committed (the example repos ship one):
+
+```gitignore
+build/
+dist/
+upstream/appsec-advisor/         # drop this line if you vendor upstream as a submodule
+```
+
+The packaging script (`scripts/package_internal_plugin.py`) lives inside the checkout, which is why the later commands call `upstream/appsec-advisor/scripts/package_internal_plugin.py`.
 
 ## Step 2 — Write your org profile
 
-`org-profile/org-profile.yaml` is your entire config surface. Each preset maps
-to one upstream mode (`quick` / `standard` / `thorough`).
+`org-profile/org-profile.yaml` is your entire config surface. Each preset maps to one upstream mode (`quick`, `standard`, or `thorough`).
 
 ```yaml
 # org-profile/org-profile.yaml
 api_version: appsec-advisor.org-profile/v2
 
-organization: { id: acme, name: Acme Corp, profile_version: 2026.05.1 }
+organization: { id: acme, name: Acme Corp, profile_version: "2026.05.1" }
 compatibility: { core: ">=0.4 <0.6" }      # upstream versions this profile supports
 default_preset: ci-standard
 
@@ -110,7 +141,7 @@ presets:
     guardrails: { max_wall_time: 3h, max_cost_usd: 80 }
 ```
 
-Edit the three payload files to make the build yours:
+These three files hold everything you customize:
 
 | File | Put here |
 |---|---|
@@ -118,8 +149,7 @@ Edit the three payload files to make the build yours:
 | `context/organization.md` | business description, critical flows, identity architecture |
 | `actors/*.yaml` | company-specific threat actors (insiders, partners) — optional |
 
-Each actor file is a top-level `actors:` array. Example
-`org-profile/actors/insiders.yaml`:
+Each actor file is a top-level `actors:` array. For example, `org-profile/actors/insiders.yaml`:
 
 ```yaml
 actors:
@@ -134,52 +164,46 @@ actors:
     heatmap_slug: repo-read
 ```
 
-Context files are untrusted reference data: they inform analysis but cannot
-change severity rules, QA gates, schemas, or permissions.
+Context files are untrusted reference data. They inform the analysis but cannot change severity rules, QA gates, schemas, or permissions.
 
-Full reference: [org-profiles.md](org-profiles.md) · schema:
-[../schemas/org-profile.schema.yaml](../schemas/org-profile.schema.yaml).
+For the full reference, see [org-profiles.md](org-profiles.md); the schema lives at [../schemas/org-profile.schema.yaml](../schemas/org-profile.schema.yaml).
 
 ### How the profile gets wired in (automatic)
 
-You do **not** edit `config.json` or link the profile by hand. The packager does
-it — `--org-profile org-profile` is the only input. During the build it writes:
+You never edit `config.json` or link the profile by hand. The packager does it for you, and `--org-profile org-profile` is its only input. During the build it writes:
 
 ```json
 "organization_profile": { "enabled": true, "path": "org-profile/org-profile.yaml" }
 ```
 
-Note: no `../` prefix. The packager produces a self-contained tree where
-`org-profile/` sits **inside** the plugin root, so the path is relative to that
-root. (The `../org-profile/...` form in [org-profiles.md](org-profiles.md) is for
-a hand-built sibling layout — not this packaged flow.)
+Note there is no `../` prefix. The packager produces a self-contained tree where `org-profile/` sits inside the plugin root, so the path is relative to that root. (The `../org-profile/...` form shown in [org-profiles.md](org-profiles.md) is for a hand-built sibling layout, not this packaged flow.)
 
 ## Step 3 — Build the package
 
-Run the upstream packager. Do not reimplement copy/patch/rewrite/validate/tar
-logic in your CI.
+Run the upstream packager. Don't reimplement its copy, patch, rewrite, validate, and tar logic in your CI:
 
 ```bash
 python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
   --source upstream/appsec-advisor \
   --org-profile org-profile \
   --name acme-appsec \
-  --version 0.9.0-acme.20260517
+  --version 0.4.0-acme.20260517
 ```
 
 The script:
 
-- copies upstream into `build/acme-appsec/` (skips VCS, caches, `build/`/`dist/`, runtime outputs)
+- copies upstream into `build/acme-appsec/` (skipping VCS, caches, `build/`/`dist/`, and runtime outputs)
 - overlays your `org-profile/`
-- sets `plugin.json` `name` + `version` and enables `organization_profile` in `config.json`
-- rewrites the command namespace `appsec-advisor:` → `acme-appsec:` (agents dispatch by namespaced IDs, so this is required; schema IDs like `appsec-advisor.org-profile/v2` are left alone)
-- validates config, profile, actors, and that no namespace reference leaked
-- writes `dist/acme-appsec-0.9.0-acme.20260517.tgz` + `.sha256`
+- sets the `name` and `version` in `plugin.json` and enables `organization_profile` in `config.json`
+- rewrites the command namespace from `appsec-advisor:` to `acme-appsec:` (agents dispatch by namespaced IDs, so this is required; schema IDs like `appsec-advisor.org-profile/v2` are left alone)
+- validates the config, profile, and actors, and checks that no namespace reference leaked
+- writes `dist/acme-appsec-0.4.0-acme.20260517.tgz` and its `.sha256`
 
-Pick a `--version` inside the profile's `compatibility.core` range, or
-validation rejects the build.
+Pick a `--version` inside the profile's `compatibility.core` range, or validation rejects the build.
 
-**Local iteration** — build only the tree and load it directly, no tarball:
+### Local build (no tarball)
+
+Add `--skip-archive` and the packager stops after writing the plugin folder — no tarball, no publishing. Load it straight from `build/`:
 
 ```bash
 python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
@@ -189,36 +213,35 @@ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
 claude --plugin-dir build/acme-appsec
 ```
 
+This is the loop while editing your profile: change `org-profile/`, re-run the command, reload. (It is the same build the [Quickstart](#quickstart) uses.)
+
 ## Step 4 — Run it in CI and publish
 
-Put the Step 3 command in your pipeline. The packager exits non-zero before
-writing an artifact if validation fails (broken paths, unknown presets,
-unsupported compatibility, missed namespace rewrites).
+Put the Step 3 command in your pipeline. If validation fails (broken paths, unknown presets, unsupported compatibility, missed namespace rewrites), the packager exits non-zero before writing any artifact.
 
-Use the ready-made pipelines from the example repos:
+The example repos give you ready-made pipelines:
 
 - GitHub Actions: [`examples/internal-packaging-github/.github/workflows/package.yml`](../examples/internal-packaging-github/.github/workflows/package.yml)
 - GitLab CI: [`examples/internal-packaging-gitlab/.gitlab-ci.yml`](../examples/internal-packaging-gitlab/.gitlab-ci.yml)
 
-Both clone the pinned upstream, run the packager, and upload the tarball. Set:
+Both clone the pinned upstream, run the packager, and upload the tarball. Set these variables:
 
 | Variable | Value |
 |---|---|
 | `APPSEC_ADVISOR_URL` | `https://github.com/matthiasrohr/appsec-advisor.git` (or your fork) |
 | `APPSEC_ADVISOR_REF` | pinned tag/commit, e.g. `v0.4.0-beta` |
 | `INTERNAL_NAME` *(optional)* | plugin name, default `acme-appsec` |
-| `VERSION` *(optional)* | release string, e.g. `0.9.0-acme.20260517` |
+| `VERSION` *(optional)* | release string, e.g. `0.4.0-acme.20260517` |
 
-Then publish `dist/*.tgz` through whatever your org already trusts — release
-asset, artifact registry, bootstrap script, managed image, devcontainer.
+Then publish `dist/*.tgz` through whatever channel your org already trusts: a release asset, artifact registry, bootstrap script, managed image, or devcontainer.
 
 ## Step 5 — Developers install and run
 
-Developers install the approved artifact, not a local build:
+Developers install the approved artifact rather than building their own:
 
 ```bash
 mkdir -p ~/.claude/plugins
-tar -xzf acme-appsec-0.9.0-acme.20260517.tgz -C ~/.claude/plugins
+tar -xzf acme-appsec-0.4.0-acme.20260517.tgz -C ~/.claude/plugins
 claude --plugin-dir ~/.claude/plugins/acme-appsec
 ```
 
@@ -226,9 +249,7 @@ claude --plugin-dir ~/.claude/plugins/acme-appsec
 /acme-appsec:create-threat-model
 ```
 
-That loads your bundled profile, applies its `default_preset`, fetches your
-requirements catalog, and enforces your guardrails. Developers can still pick
-another approved preset, e.g. `--preset release-review`.
+That loads your bundled profile, applies its `default_preset`, fetches your requirements catalog, and enforces your guardrails. Developers can still choose another approved preset, for example with `--preset release-review`.
 
 ## Keeping in sync with upstream
 
@@ -237,6 +258,4 @@ another approved preset, e.g. `--preset release-review`.
 3. Smoke-test `/acme-appsec:create-threat-model --dry-run` on a small repo.
 4. Publish a new internal artifact.
 
-Prefer small packaging changes over forking prompts, schemas, renderers, or
-scripts. If you must change analysis behavior, treat it as a real fork: patch
-intentionally, keep a changelog, rerun the upstream tests.
+Prefer small packaging changes over forking the prompts, schemas, renderers, or scripts. If you genuinely need to change analysis behavior, treat it as a real fork: patch it deliberately, keep a changelog, and rerun the upstream tests.
