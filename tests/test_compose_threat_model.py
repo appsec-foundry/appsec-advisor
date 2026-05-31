@@ -2315,6 +2315,35 @@ def test_table_col_weight_roles() -> None:
     assert w("Threat Description") == compose._TBL_W_DESC
 
 
+def test_register_index_chip_carries_circle_and_title() -> None:
+    """§8/§9 jump-list chips must show a criticality circle + ID + title, not a
+    bare `[F-NNN](#f-nnn)` link (2026-05-31 user report: bare list unreadable)."""
+    sev = {1: "critical", 2: "high", 3: "medium", 4: "low"}
+    titles = {
+        1: "Hardcoded RSA private key — lib/insecurity.ts:23",  # path tail stripped
+        2: "Stored XSS in feedback",
+        3: "",  # missing title → chip is circle + link only
+        4: "x" * 200,  # long title → truncated
+    }
+    out = compose._build_register_index("Findings index", "F", [1, 2, 3, 4], titles, sev)
+    assert out.startswith("**Findings index:**<br/>")
+    chips = out.split("<br/>")[1:]
+    assert chips[0] == "🔴 [F-001](#f-001) — Hardcoded RSA private key"
+    assert chips[1] == "🟠 [F-002](#f-002) — Stored XSS in feedback"
+    assert chips[2] == "🟡 [F-003](#f-003)"  # no title appended
+    assert chips[3].startswith("🟢 [F-004](#f-004) — ") and chips[3].endswith("…")
+
+
+def test_severity_by_finding_num_reads_risk_then_severity() -> None:
+    threats = [
+        {"id": "T-001", "risk": "Critical"},
+        {"id": "F-002", "severity": "high"},
+        {"t_id": "T-003"},  # no risk/severity → defaults low
+    ]
+    sev = compose._severity_by_finding_num(threats)
+    assert sev == {1: "critical", 2: "high", 3: "low"}
+
+
 def test_normalize_emdashes_preserves_mermaid_alt_else_labels() -> None:
     """§3 walkthrough sequenceDiagram `alt`/`else` branch labels follow the
     'Current state — T-NNN' / 'After M-NNN — …' convention where the em-dash

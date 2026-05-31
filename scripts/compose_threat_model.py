@@ -3995,6 +3995,44 @@ def _build_strength_clusters(
 _SEV_RANK_TBL = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 _SEV_ICON_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢", "info": "⚪"}
 
+# §8 / §9 register jump-list helpers. The index lines used to be bare
+# `[F-NNN](#f-nnn)` chips with no title or criticality, which is unreadable
+# at 48 findings (2026-05-31 user report). Each chip now carries a leading
+# severity circle and the short title.
+_INDEX_PATH_TAIL_RE = re.compile(r"\s+—\s+(?:[\w.-]+/)*[\w.-]+\.\w+(?::\d+)?\s*$")
+
+
+def _index_short_title(title: str, limit: int = 72) -> str:
+    """Drop a trailing ` — file[:line]` tail and cap length for a jump-list chip."""
+    s = _INDEX_PATH_TAIL_RE.sub("", title or "").strip()
+    if len(s) > limit:
+        s = s[: limit - 1].rstrip() + "…"
+    return s
+
+
+def _severity_by_finding_num(threats: list) -> dict:
+    """Map finding number (the NNN in F-NNN / T-NNN) → severity key."""
+    out: dict[int, str] = {}
+    for t in threats or []:
+        m = re.search(r"(\d+)$", (t.get("id") or t.get("t_id") or "").strip())
+        if m:
+            out[int(m.group(1))] = (t.get("risk") or t.get("severity") or "low").strip().lower()
+    return out
+
+
+def _build_register_index(label: str, prefix: str, nums: list,
+                          title_by_num: dict, sev_by_num: dict) -> str:
+    """Render a `**<label>:**<br/>🔴 [P-NNN](#p-nnn) — <title><br/>…` jump list."""
+    chips = []
+    for n in nums:
+        emoji = _SEV_ICON_TBL.get(sev_by_num.get(n, ""), "⚪")
+        ttl = _index_short_title(title_by_num.get(n, ""))
+        chip = f"{emoji} [{prefix}-{n:03d}](#{prefix.lower()}-{n:03d})"
+        if ttl:
+            chip += f" — {ttl}"
+        chips.append(chip)
+    return f"**{label}:**<br/>" + "<br/>".join(chips)
+
 
 _MULTI_MATCH_WARNED: set[str] = set()
 
@@ -4697,10 +4735,12 @@ def _render_top_threats_architecture(
     comp_node: dict[str, str] = {}
     comp_label: dict[str, str] = {}
     comp_tier: dict[str, str] = {}
+    comp_cnum: dict[str, str] = {}
     for idx, c in enumerate(components, start=1):
         cid = (c.get("id") or "").strip()
         if not cid:
             continue
+        comp_cnum[cid] = f"C-{idx:02d}"
         tier = (c.get("tier") or "application").strip().lower()
         if tier not in _FIG1_TIER_ORDER:
             tier = "application"
@@ -4777,6 +4817,24 @@ def _render_top_threats_architecture(
     rep_app = _rep(app_comps)
     rep_client = _rep(client_comps)
     rep_data = _rep(data_comps)
+
+    # 2026-05-31 — collapse low-signal components. Drawing every component as a
+    # full box (the 2026-05-30 "show all components" request) became cluttered:
+    # components with only Medium/Low findings render with no Critical/High
+    # badge AND no attack/backbone edge, i.e. empty disconnected boxes that add
+    # noise without telling the reader anything. We now draw a component box
+    # only when it carries a Critical/High badge OR is its tier's representative
+    # (reps anchor the attack/propagation/backbone edges); the rest collapse
+    # into a single muted note node per tier. Edges to collapsed components are
+    # dropped so Mermaid never auto-creates a ghost box for an undeclared node.
+    def _has_hi_badge(cid: str) -> bool:
+        s = comp_sev_count.get(cid) or {}
+        return bool(s.get("Critical") or s.get("High"))
+
+    _drawn: set[str] = {cid for cid in comp_node if _has_hi_badge(cid)}
+    for _r in (rep_app, rep_client, rep_data):
+        if _r:
+            _drawn.add(_r)
 
     def _target_tier(ap: dict, cls: dict) -> str:
         # Route by the IMPACT tier (the LLM's original target — where the attack
@@ -4883,17 +4941,21 @@ def _render_top_threats_architecture(
     # the user via the client tier — not a fresh attack the SPA launches).
     for cnode, glyph in victim_props:
         _add(prop_glyphs, cnode, user_node, glyph)
+    # Only finding-bearing (drawn) components participate in the backbone; edges
+    # to collapsed components are skipped (their node is never declared).
+    _client_drawn = [cid for cid in client_comps if cid in _drawn]
+    _data_drawn = [cid for cid in data_comps if cid in _drawn]
     benign_edges: list[tuple[str, str, str]] = []
-    if client_comps:
-        for cid in client_comps:
+    if _client_drawn:
+        for cid in _client_drawn:
             benign_edges.append((user_node, comp_node[cid], " uses "))
         if rep_app:
-            for cid in client_comps:
+            for cid in _client_drawn:
                 benign_edges.append((comp_node[cid], comp_node[rep_app], " API calls "))
     elif rep_app:
         benign_edges.append((user_node, comp_node[rep_app], " uses "))
     if rep_app:
-        for cid in data_comps:
+        for cid in _data_drawn:
             benign_edges.append((comp_node[rep_app], comp_node[cid], " reads/writes "))
 
     # ---- Emit the Mermaid block -------------------------------------------
@@ -4934,10 +4996,24 @@ def _render_top_threats_architecture(
         tier_cids = [cid for cid in comp_node if comp_tier[cid] == tier]
         if not tier_cids:
             continue
+        tier_drawn = [cid for cid in tier_cids if cid in _drawn]
+        tier_hidden = [cid for cid in tier_cids if cid not in _drawn]
+        if not tier_drawn and not tier_hidden:
+            continue
         sg = {"client": "CLIENT", "application": "APP", "data": "DATA"}[tier]
         lines.append(f'    subgraph {sg}["{_fig1_label(_FIG1_TIER_LABEL[tier])}"]')
-        for cid in tier_cids:
+        for cid in tier_drawn:
             lines.append(f'        {comp_node[cid]}["{comp_label[cid]}"]:::comp')
+        # Collapse no-finding components into ONE muted note node (2026-05-31)
+        # so the tier acknowledges them without a box each. Never edge-linked.
+        if tier_hidden:
+            _ids = ", ".join(comp_cnum.get(cid, "C-??") for cid in tier_hidden)
+            _note = (
+                f"{len(tier_hidden)} more component"
+                f"{'s' if len(tier_hidden) != 1 else ''} without Critical/High "
+                f"findings (not drawn): {_ids}"
+            )
+            lines.append(f'        {sg}_OMITTED["{_fig1_label(_note)}"]:::compmuted')
         lines.append("    end")
     lines.append("")
 
@@ -5001,6 +5077,8 @@ def _render_top_threats_architecture(
         # reads as one more layer in a uniform stack.
         lines.append("    style ZONE_ACTORS fill:none,stroke:#94a3b8,stroke-width:1.5px,stroke-dasharray:5")
     lines.append("    classDef comp fill:#eef2f7,stroke:#334155,color:#0f172a,stroke-width:1.5px")
+    # Muted style for the per-tier "components without findings (not drawn)" note.
+    lines.append("    classDef compmuted fill:#f8fafc,stroke:#cbd5e1,color:#64748b,stroke-width:1px")
     lines.append("    classDef ext  fill:#ffffff,stroke:#94a3b8,color:#334155,stroke-width:1.5px")
     # Actor colouring: malicious red, benign/victim green (2026-05-30 request).
     lines.append("    classDef actorbad  fill:#fde8e8,stroke:#b71c1c,color:#7f0000,stroke-width:2px")
@@ -11122,11 +11200,16 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         }
     )
     if _idx_nums:
-        # One entry per line (2026-05-30 user request) — header, then each
-        # finding link on its own line (<br/>-stacked). The post-compose
-        # linkifier appends each finding's short title (with `$` escaped).
-        _idx = "<br/>".join(f"[F-{n:03d}](#f-{n:03d})" for n in _idx_nums)
-        lines.append(f"**Findings index:**<br/>{_idx}")
+        # One entry per line (<br/>-stacked), each chip carrying a leading
+        # severity circle and the short title so the index is scannable at
+        # 48 findings (2026-05-31 user request — bare ID links were unreadable).
+        _sev_by_num = _severity_by_finding_num(threats)
+        _title_by_num = {
+            int(m.group(1)): (t.get("title") or "").strip()
+            for t in threats
+            if (m := re.search(r"(\d+)$", (t.get("id") or t.get("t_id") or "").strip()))
+        }
+        lines.append(_build_register_index("Findings index", "F", _idx_nums, _title_by_num, _sev_by_num))
         lines.append("")
 
     # ---- Category anchors (invisible) ------------------------------------
@@ -11426,9 +11509,24 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         }
     )
     if _m_nums:
-        # One entry per line (2026-05-30 user request) — see §8 Findings index.
-        _midx = "<br/>".join(f"[M-{n:03d}](#m-{n:03d})" for n in _m_nums)
-        lines.append(f"**Mitigations index:**<br/>{_midx}")
+        # Each chip carries the mitigation title plus a criticality circle =
+        # the highest severity among the findings it addresses (2026-05-31).
+        _sev_f = _severity_by_finding_num(ctx.yaml_data.get("threats") or [])
+        _m_title: dict[int, str] = {}
+        _m_sev: dict[int, str] = {}
+        for mm in mitigations:
+            _mn = re.search(r"(\d+)$", (mm.get("m_id") or mm.get("id") or "").strip())
+            if not _mn:
+                continue
+            _n = int(_mn.group(1))
+            _m_title[_n] = (mm.get("title") or "").strip()
+            _best = 9
+            for _a in (mm.get("threat_ids") or mm.get("addresses") or []):
+                _am = re.search(r"(\d+)$", str(_a))
+                if _am:
+                    _best = min(_best, _SEV_RANK_TBL.get(_sev_f.get(int(_am.group(1)), ""), 9))
+            _m_sev[_n] = next((s for s, r in _SEV_RANK_TBL.items() if r == _best), "")
+        lines.append(_build_register_index("Mitigations index", "M", _m_nums, _m_title, _m_sev))
         lines.append("")
 
     # Normalise severity-word priorities that the orchestrator sometimes
