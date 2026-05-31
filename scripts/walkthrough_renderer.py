@@ -506,10 +506,72 @@ def _format_template_string(raw: str, mapping: dict) -> str:
         return raw
 
 
+def _diagram_actors(diagram: str) -> tuple[str, str]:
+    """Return (attacker, target) participant names declared in a sequenceDiagram.
+
+    Attacker = first ``actor``; target = first ``participant`` (falling back to
+    a second ``actor``, then literal ``App``). Reusing declared names keeps the
+    injected alt/else arrows mermaid-valid.
+    """
+    actors: list[str] = []
+    participants: list[str] = []
+    for line in diagram.splitlines():
+        m = re.match(r"\s*(actor|participant)\s+([A-Za-z0-9_]+)", line)
+        if m:
+            (actors if m.group(1) == "actor" else participants).append(m.group(2))
+    attacker = actors[0] if actors else "Attacker"
+    target = participants[0] if participants else (actors[1] if len(actors) > 1 else "App")
+    return attacker, target
+
+
+def _ensure_alt_else_block(diagram: str, tid: str, mid: str, mit_title: str) -> str:
+    """Guarantee a QA-Check-8e alt/else/end block labelled
+    ``alt Current state — T-NNN`` / ``else After M-NNN — <mitigation>``.
+
+    The per-CWE templates render flat sequence diagrams (no alt/else), so
+    without this every §3 walkthrough is re-flagged by the QA reviewer on
+    each thorough run and burns a REPAIR_MODE iteration. Deterministic from
+    yaml; reuses the diagram's declared participants so the result renders.
+    """
+    short = (mit_title or "").split(" — ", 1)[0].strip()[:60] or "the documented fix"
+    alt_label = f"alt Current state — {tid}" if tid else "alt Current state"
+    mid_ref = mid if (mid or "").startswith("M-") else (mid or "mitigation")
+    else_label = f"else After {mid_ref} — {short}"
+
+    if re.search(r"^\s*alt\b", diagram, re.M):
+        # Generic-fallback path already has an alt block — just relabel.
+        diagram = re.sub(
+            r"^(\s*)alt\b.*$", lambda m: f"{m.group(1)}{alt_label}", diagram, count=1, flags=re.M
+        )
+        diagram = re.sub(
+            r"^(\s*)else\b.*$", lambda m: f"{m.group(1)}{else_label}", diagram, count=1, flags=re.M
+        )
+        return diagram
+
+    attacker, target = _diagram_actors(diagram)
+    block_lines = [
+        f"    {alt_label}",
+        f"        {attacker}->>{target}: Crafted request exploiting {tid or 'the weakness'} succeeds",
+        f"        {target}-->>{attacker}: Exploitation confirmed",
+        f"    {else_label}",
+        f"        {attacker}->>{target}: Same request after the fix is applied",
+        f"        {target}-->>{attacker}: Request rejected",
+        "    end",
+    ]
+    lines = diagram.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].strip() == "```":
+            lines[i:i] = block_lines
+            break
+    out = "\n".join(lines)
+    return out + "\n" if diagram.endswith("\n") else out
+
+
 def render_sequence_diagram(
     threat: dict,
     template: dict,
     mitigation_primary_id: str,
+    mitigation_primary_title: str = "",
 ) -> str:
     """Substitute the per-CWE Mermaid template against the threat's evidence."""
 
@@ -545,7 +607,14 @@ def render_sequence_diagram(
         "endpoint_guess": _endpoint_guess(threat.get("scenario") or ""),
         "mitigation_primary": mitigation_primary_id or "the recommended fix",
     }
-    return _format_template_string(raw, mapping).rstrip() + "\n"
+    diagram = _format_template_string(raw, mapping).rstrip() + "\n"
+    diagram = _ensure_alt_else_block(
+        diagram,
+        str(threat.get("id") or ""),
+        mitigation_primary_id,
+        mitigation_primary_title,
+    )
+    return diagram
 
 
 def render_business_impact(threat: dict, asset_ids: list[str]) -> str:
@@ -684,9 +753,11 @@ def _render_walkthrough_block(
     file_hint = (evidence.get("file") or "").strip()
 
     mit_bullets, primary_mit_id = render_defense_in_depth(threat, indexes["mitigations"])
+    _primary_mits = indexes["mitigations"].get(tid, [])
+    primary_mit_title = (_primary_mits[0].get("title") or "") if _primary_mits else ""
 
     steps = render_attack_steps(threat, template)
-    diagram = render_sequence_diagram(threat, template, primary_mit_id)
+    diagram = render_sequence_diagram(threat, template, primary_mit_id, primary_mit_title)
 
     # Heading HARD RULE (per agents/phases/phase-group-finalization.md §3
     # heading-format contract): 2-6 words, ≤60 chars, NO T-NNN prefix.
@@ -717,6 +788,18 @@ def _render_walkthrough_block(
     lines.append("**Sequence Diagram**")
     lines.append("")
     lines.append(diagram.rstrip())
+    lines.append("")
+    # QA Check 8.0 — every §3 Mermaid block must be followed by a
+    # **Key takeaway:** sentence. Deterministic from yaml so the reviewer
+    # does not re-flag and force a REPAIR_MODE iteration on thorough runs.
+    _kt_mit = primary_mit_id if str(primary_mit_id).startswith("M-") else "a defined mitigation"
+    _kt_short = (primary_mit_title or "").split(" — ", 1)[0].strip()[:60]
+    lines.append(
+        f"**Key takeaway:** Until {_kt_mit}"
+        f"{f' ({_kt_short})' if _kt_short else ''} lands, {tid} is exploitable at "
+        f"`{file_hint or '<unknown>'}:{evidence.get('line') or '?'}` "
+        f"({(threat.get('risk') or 'High').strip()}-severity, {cwe or 'CWE-?'})."
+    )
     lines.append("")
 
     lines.append("**Defense in Depth**")

@@ -111,6 +111,71 @@ class TestAttackStepsPlaceholderSubstitution:
             )
 
 
+class TestSequenceDiagramAltElseBlock:
+    """QA Check 8e/8.0 — every §3 sequenceDiagram must carry an
+    `alt Current state — T-NNN` / `else After M-NNN — <mitigation>` block and
+    each walkthrough must end with a `**Key takeaway:**` line. The per-CWE
+    templates render flat diagrams, so the renderer injects this
+    deterministically to stop the QA reviewer forcing a REPAIR_MODE pass."""
+
+    def test_flat_template_gets_labelled_alt_else_block(self):
+        threat = _make_threat("x", file_="routes/search.ts", line=23)
+        flat = {
+            "sequence_diagram": (
+                "```mermaid\n"
+                "sequenceDiagram\n"
+                "    actor Attacker\n"
+                "    participant API\n"
+                "    Attacker->>API: payload\n"
+                "    API-->>Attacker: rows\n"
+                "```\n"
+            )
+        }
+        out = renderer.render_sequence_diagram(
+            threat, flat, "M-005", "Use parameterized queries — routes/search.ts"
+        )
+        assert "alt Current state — T-001" in out
+        assert "else After M-005 — Use parameterized queries" in out
+        assert "    end" in out
+        # Reuses the diagram's declared participants so it stays mermaid-valid.
+        assert "Attacker->>API" in out
+
+    def test_generic_fallback_alt_else_labels_enriched(self):
+        # template={} → render_sequence_diagram uses the hardcoded generic
+        # fallback which already has a bare `alt Current state` / `else After`.
+        threat = _make_threat("x")
+        out = renderer.render_sequence_diagram(
+            threat, {}, "M-001", "Rotate key out of source — lib/insecurity.ts"
+        )
+        assert "alt Current state — T-001" in out
+        assert "else After M-001 — Rotate key out of source" in out
+        # No duplicate alt block introduced.
+        assert out.count("alt Current state") == 1
+
+    def test_walkthrough_block_emits_key_takeaway(self):
+        yaml_data = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "title": "SQL injection in search",
+                    "component": "express-backend",
+                    "cwe": "CWE-89",
+                    "risk": "critical",
+                    "evidence": [{"file": "routes/search.ts", "line": 23}],
+                }
+            ],
+            "mitigations": [
+                {"id": "M-005", "title": "Use parameterized queries", "threat_ids": ["T-001"]}
+            ],
+            "assets": [],
+            "attack_surface": [],
+        }
+        md = renderer.render_attack_walkthroughs_md(yaml_data)
+        assert "**Key takeaway:**" in md
+        assert "alt Current state — T-001" in md
+        assert "else After M-005 — Use parameterized queries" in md
+
+
 class TestAttackStepsFallbackWhenNoScenario:
     """When `scenario` is missing the renderer still produces clean steps."""
 
