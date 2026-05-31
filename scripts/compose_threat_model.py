@@ -1860,7 +1860,26 @@ def _anchor_from_heading(heading: str) -> str:
 def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     entries = _compute_toc_entries(ctx)
     tpl = env.get_template("toc.md.j2")
-    return tpl.render(entries=entries).rstrip() + "\n"
+    out = tpl.render(entries=entries).rstrip() + "\n"
+    # Numbering-gap note (2026-05-31). §6 (Use Cases) was retired in 2026-05 and
+    # sections are intentionally NOT renumbered (the §7.x subsection numbers are
+    # semantic contract keys; renumbering is a coupled, all-repo change). A bare
+    # 5→7 jump reads as a rendering bug ("Wo ist Kapitel 6?"), so name the gap
+    # explicitly instead. Generic: fires for any missing top-level integer.
+    _nums = sorted(
+        {int(e["number"]) for e in entries if e.get("number") and "." not in str(e["number"])}
+    )
+    if _nums:
+        _missing = [n for n in range(_nums[0], _nums[-1] + 1) if n not in _nums]
+        if _missing:
+            _gap = ", ".join(f"§{n}" for n in _missing)
+            out += (
+                f"\n> _Section numbering is non-contiguous: {_gap} "
+                f"{'was' if len(_missing) == 1 else 'were'} retired in a prior "
+                f"revision. The remaining sections keep their original numbers so "
+                f"existing cross-references stay valid._\n"
+            )
+    return out
 
 
 def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:

@@ -81,6 +81,16 @@ def test_infobox_tags_string_is_split_into_list(tmp_path: Path) -> None:
         assert tok in tag_line, f"expected tag {tok!r} missing from: {tag_line!r}"
 
 
+def test_toc_emits_numbering_gap_note(tmp_path: Path) -> None:
+    """The contract intentionally skips §6 (Use Cases retired). A bare 5→7 jump
+    reads as a bug, so the TOC must carry an explicit non-contiguous-numbering
+    note naming the missing section (2026-05-31 'Wo ist Kapitel 6?' report)."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    assert "Section numbering is non-contiguous" in rendered
+    assert "§6 was retired" in rendered
+
+
 def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, warnings = compose.render(CONTRACT, out)
