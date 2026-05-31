@@ -208,8 +208,41 @@ _AUTHN_PATTERNS = re.compile(
     r"passport\.authenticate|verifyToken|jwt(?:Auth|Verify|Middleware)|"
     r"@?login_required|IsAuthenticated|AuthenticationFilter|"
     r"\[Authorize\]|@Secured|@PreAuthorize|requires_auth|"
-    r"middleware\(['\"]auth['\"]\)|auth_required"
+    r"middleware\(['\"]auth['\"]\)|auth_required|"
+    # Common Express/Juice-Shop-style gate names (the gate is named for the
+    # authZ check but is the de-facto authN boundary — without a session it
+    # rejects). Including these fixes the "every route auth=unknown" miss.
+    r"isAuthorized|isLoggedIn|ensureLoggedIn|requireLogin|restrictToLoggedIn|denyAll"
     r")\b"
+)
+
+# Path-prefix middleware mounting that carries an auth guard, e.g.
+#   app.use('/rest/basket', security.isAuthorized())
+#   app.get('/api/Users', security.isAuthorized())
+# Juice Shop (and many Express apps) protect whole path prefixes this way,
+# separately from where the route handler is defined — so the per-handler
+# window scan cannot see the guard. build_inventory collects these prefixes
+# globally and marks routes underneath them as guarded.
+_GUARD_MOUNT_RE = re.compile(
+    r"""\b(?:app|router)\.(?:use|all|get|post|put|delete|patch|head|options)\(\s*"""
+    r"""['"](?P<path>/[^'"]*)['"]\s*,[^)]*?\b(?:isAuthorized|isAuthenticated|"""
+    r"""authenticate|requireAuth|requireLogin|ensureLoggedIn|isLoggedIn|"""
+    r"""restrictToLoggedIn|denyAll|passport\.authenticate)\b"""
+)
+
+# HTTP verbs that change state — an unauthenticated one is a missing-auth
+# suspect worth a review warning (not an assertion).
+_STATE_CHANGING = {"POST", "PUT", "DELETE", "PATCH"}
+
+# Paths that are unauthenticated BY DESIGN (the auth-flow entry points and
+# common public probes). Excluded from the missing-auth advisory so the
+# warning stays low-noise — flagging the login endpoint as "missing auth"
+# is a false positive.
+_PUBLIC_BY_DESIGN_RE = re.compile(
+    r"(?i)(?:^|/)(?:login|logout|register|signup|sign-up|reset-password|"
+    r"forgot-password|forgot|recover|2fa|mfa|otp|captcha|token|refresh|"
+    r"oauth|openid|sso|saml|health|healthz|readyz|livez|ping|status|version|"
+    r"webhook|webhooks)\b"
 )
 
 _AUTHZ_PATTERNS = re.compile(
@@ -233,6 +266,7 @@ class RouteCandidate:
     authn_signal: str = "unknown"
     authz_signal: str = "unknown"
     management_surface: bool = False
+    missing_auth_suspect: bool = False
     confidence: str = "medium"
 
 
@@ -496,8 +530,17 @@ def build_inventory(repo_root: Path) -> dict:
     all_routes: list[RouteCandidate] = []
     frameworks_seen: set[str] = set()
     unsupported: list[str] = []
+    guarded_prefixes: set[str] = set()
 
     for src in _walk_sources(repo_root):
+        try:
+            lines = src.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        except OSError:
+            lines = []
+        # Collect path prefixes mounted with an auth guard (cross-file: a guard
+        # in server.ts protects handlers defined in routes/*.ts).
+        for gm in _GUARD_MOUNT_RE.finditer("".join(lines)):
+            guarded_prefixes.add(gm.group("path").rstrip("/") or "/")
         try:
             extracted = _extract_file(repo_root, src)
         except Exception:  # pragma: no cover
@@ -505,6 +548,28 @@ def build_inventory(repo_root: Path) -> dict:
         for r in extracted:
             frameworks_seen.add(r.framework)
             all_routes.append(r)
+
+    # Apply prefix guards + compute the missing-auth advisory flag.
+    def _prefix_guarded(path: str) -> bool:
+        p = (path or "").rstrip("/") or "/"
+        for g in guarded_prefixes:
+            if p == g or p.startswith(g + "/"):
+                return True
+        return False
+
+    for r in all_routes:
+        if r.authn_signal == "unknown" and _prefix_guarded(r.path):
+            r.authn_signal = "middleware_present"
+        # Warning (not a finding): a state-changing or management route with no
+        # detected auth guard looks like it SHOULD require authentication —
+        # unless it is an auth-flow / public-probe endpoint (login, register,
+        # captcha, health…) which is unauthenticated by design.
+        if (
+            r.authn_signal == "unknown"
+            and (r.method.upper() in _STATE_CHANGING or r.management_surface)
+            and not _PUBLIC_BY_DESIGN_RE.search(r.path or "")
+        ):
+            r.missing_auth_suspect = True
 
     seen_keys: set[tuple] = set()
     deduped: list[RouteCandidate] = []
@@ -529,11 +594,13 @@ def build_inventory(repo_root: Path) -> dict:
             "authn_signal": d["authn_signal"],
             "authz_signal": d["authz_signal"],
             "management_surface": d["management_surface"],
+            "missing_auth_suspect": d["missing_auth_suspect"],
             "confidence": d["confidence"],
         }
         routes_out.append(ordered)
 
     mgmt_count = sum(1 for r in routes_out if r["management_surface"])
+    missing_auth_count = sum(1 for r in routes_out if r["missing_auth_suspect"])
 
     return {
         "version": 1,
@@ -545,6 +612,7 @@ def build_inventory(repo_root: Path) -> dict:
             "unsupported_route_files": unsupported,
             "route_count": len(routes_out),
             "management_surface_count": mgmt_count,
+            "missing_auth_suspect_count": missing_auth_count,
         },
     }
 

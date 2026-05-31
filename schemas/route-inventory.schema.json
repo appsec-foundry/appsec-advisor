@@ -45,6 +45,10 @@
         "management_surface_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "missing_auth_suspect_count": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }
@@ -119,6 +123,10 @@
         "management_surface": {
           "type": "boolean",
           "description": "True if the route looks like an admin/debug/docs/metrics/health/actuator endpoint. Heuristic; NOT a finding by itself."
+        },
+        "missing_auth_suspect": {
+          "type": "boolean",
+          "description": "Advisory warning (NOT a finding): a state-changing (POST/PUT/DELETE/PATCH) or management route with no detected auth guard — looks like it should require authentication. Review candidate."
         },
         "confidence": {
           "type": "string",

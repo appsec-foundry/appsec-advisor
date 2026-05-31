@@ -161,6 +161,49 @@ def test_authn_signal_defaults_to_unknown(tmp_path: Path) -> None:
     assert public["authz_signal"] == "unknown"
 
 
+def test_prefix_mounted_guard_marks_routes_protected(tmp_path: Path) -> None:
+    """Express apps (e.g. Juice Shop) protect whole path prefixes via
+    `app.use('/path', security.isAuthorized())` separate from the handler.
+    The cross-file prefix pass must mark those routes protected (fixes the
+    2026-05-31 'every route auth=unknown' miss)."""
+    (tmp_path / "server.ts").write_text(
+        "app.use('/api/BasketItems', security.isAuthorized());\n"
+        "app.get('/api/Users', security.isAuthorized());\n"
+    )
+    (tmp_path / "routes.ts").write_text(
+        "router.get('/api/BasketItems/:id', h);\n"   # protected by the prefix
+        "router.get('/api/Products', h);\n"          # not guarded
+    )
+    inv = _run(tmp_path)
+    by_path = {r["path"]: r for r in inv["routes"]}
+    assert by_path["/api/BasketItems/:id"]["authn_signal"] == "middleware_present"
+    assert by_path["/api/Users"]["authn_signal"] == "middleware_present"
+    assert by_path["/api/Products"]["authn_signal"] == "unknown"
+
+
+def test_missing_auth_suspect_flags_sensitive_unguarded_routes(tmp_path: Path) -> None:
+    """State-changing / management routes with no detected guard are flagged as
+    advisory suspects — EXCEPT auth-flow/public-by-design endpoints."""
+    # Space the routes apart so the ±6-line nearby-middleware window does not
+    # bleed the guarded line's `isAuthorized` onto its neighbours.
+    pad = "\n" * 12
+    (tmp_path / "app.ts").write_text(
+        "app.put('/rest/wallet/balance', h);\n" + pad +       # sensitive write → suspect
+        "app.get('/rest/admin/config', h);\n" + pad +         # management → suspect
+        "app.post('/rest/user/login', h);\n" + pad +          # auth-flow → NOT a suspect
+        "app.post('/api/Orders', security.isAuthorized());\n" + pad +  # guarded → NOT a suspect
+        "app.get('/rest/products', h);\n"                     # GET read, not mgmt → NOT a suspect
+    )
+    inv = _run(tmp_path)
+    susp = {r["path"] for r in inv["routes"] if r["missing_auth_suspect"]}
+    assert "/rest/wallet/balance" in susp
+    assert "/rest/admin/config" in susp
+    assert "/rest/user/login" not in susp          # public by design
+    assert "/api/Orders" not in susp               # guarded
+    assert "/rest/products" not in susp            # GET, non-management
+    assert inv["coverage"]["missing_auth_suspect_count"] >= 2
+
+
 # ---------------------------------------------------------------------------
 # Excludes
 # ---------------------------------------------------------------------------
