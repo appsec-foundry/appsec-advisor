@@ -1575,6 +1575,17 @@ Flow-like mechanisms (always populate subcontrols, all under §7.2):
   * Output Encoding (§7.7) → subcontrols: Template Sanitization (Angular), DOM Sanitizer Bypass Sites, [innerHTML] Bindings
   * File Upload (§7.10) → subcontrols: Upload Multipart Parsing, Archive Extraction (unzipper), XML Parser Hardening (libxmljs2), Outbound HTTP Fetching
 
+**§7.6 Input Boundary Validation — approach FIRST, then specifics.** The §7.6
+controls list MUST lead with a single general-approach row named
+`Validation Approach` (or `Input Validation Strategy`) whose `implementation`
+states the architectural stance — is request validation centralized in a
+schema/validation layer or middleware, or scattered ad-hoc per endpoint? —
+BEFORE the specific boundary rows (request-schema validation, parser/size
+limits, upload constraints, URL/path validation, business-rule boundaries).
+This ordering renders the approach-first §7.6 the `validation_approach_first`
+QA gate requires. The pregenerator injects this approach row if you omit it,
+but authoring it yourself yields better strategy prose.
+
 Skip subcontrols (single-row mechanism is sufficient):
   * Password Hashing (primitive) — assess at the row level, no subcontrols
   * Authentication Rate Limiting (primitive)

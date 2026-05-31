@@ -1594,6 +1594,7 @@ def build_repair_plan(
     auth_report = check_auth_method_decomposition(md_path, contract_path)
     control_coverage_report = check_control_subsection_coverage(md_path, contract_path)
     relevant_findings_report = check_relevant_findings_bullet_list(md_path, contract_path)
+    validation_approach_report = check_validation_approach_first(md_path, contract_path)
     posture_report = check_security_posture_structure(md_path)
     compactness_report = check_diagram_compactness(md_path, contract_path)
     chain_compactness_report = check_chain_compactness(md_path, contract_path)
@@ -1608,6 +1609,7 @@ def build_repair_plan(
     auth_issues = list(auth_report.issues)
     control_coverage_issues = list(control_coverage_report.issues)
     relevant_findings_issues = list(relevant_findings_report.issues)
+    validation_approach_issues = list(validation_approach_report.issues)
     posture_issues = list(posture_report.issues)
     compactness_issues = list(compactness_report.issues)
     chain_compactness_issues = list(chain_compactness_report.issues)
@@ -1718,17 +1720,40 @@ def build_repair_plan(
                 "section_id": "security_architecture",
                 "fragments_to_rewrite": [".fragments/security-architecture.md"],
                 "remediation": (
-                    "Edit `.fragments/security-architecture.md` so §7.3 Identity "
-                    "& Access Management has ONE `#### <method> Flow` sub-block "
-                    "per row of the control table's `Control` column. Each "
-                    "sub-block MUST contain (1) its own `sequenceDiagram`, and "
-                    "(2) a bold `**Findings in this flow:**` trailer that cites "
-                    "only T-IDs also listed in that row's `Linked Threats` cell. "
-                    "If two table rows share a single flow (e.g. JWT Signing + "
-                    "JWT Validation), either merge them into one row or declare "
-                    "a synonym override in `data/sections-contract.yaml` under "
-                    "`security_architecture.domain_required_rules`. "
-                    "After editing, re-run compose_threat_model.py."
+                    "Edit `.fragments/security-architecture.md` so §7.2 Identity "
+                    "and Authentication Controls is decomposed by authentication "
+                    "MECHANISM (Password-Based Authentication, OAuth/OIDC, "
+                    "MFA/TOTP, …) — one `####` sub-block per mechanism, not by "
+                    "primitive (hashing), library (express-jwt), or token format "
+                    "(JWT-RS256). Every sub-block whose heading names an auth FLOW "
+                    "(login, OAuth/OIDC, SAML, TOTP/MFA, passkey, mTLS handshake, "
+                    "webhook HMAC, magic link) MUST carry its own positive-flow "
+                    "```mermaid sequenceDiagram```. The grouped Password-Based "
+                    "Authentication block folds Login/Registration/Reset/Change/"
+                    "Storage as bullets and shows the login sequenceDiagram once. "
+                    "Static primitives and non-flow methods (API key, anonymous) "
+                    "need no diagram. After editing, re-run compose_threat_model.py."
+                ),
+            }
+        )
+
+    for raw in validation_approach_issues:
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "validation_approach_first",
+                "section_id": "security_architecture",
+                "fragments_to_rewrite": [".fragments/security-architecture.md"],
+                "remediation": (
+                    "Edit `.fragments/security-architecture.md` so §7.6 Input "
+                    "Boundary Validation Controls OPENS with a general "
+                    "validation-approach `####` block (e.g. `#### Validation "
+                    "Approach` / `Input Validation Strategy`) that states the "
+                    "architectural stance — is request validation centralized in "
+                    "a schema/middleware layer, or scattered ad-hoc per endpoint? "
+                    "— BEFORE the specific parser / upload / business-rule "
+                    "sub-blocks. Reorder so the approach block is the FIRST H4 "
+                    "under §7.6. After editing, re-run compose_threat_model.py."
                 ),
             }
         )
@@ -3203,6 +3228,9 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # Current v2 §7 — `Relevant findings` must be a standalone label followed
     # by bullets, not a dense inline reference sentence.
     relevant_findings_report = check_relevant_findings_bullet_list(md)
+    # Current v2 §7.6 — Input Boundary Validation must open with a general
+    # validation-approach H4 before the specific boundary sub-blocks.
+    validation_approach_report = check_validation_approach_first(md)
     # Sprint 2 Item #5 — placeholders + yaml/md consistency.
     placeholder_report = check_placeholders(md)
     # yaml sits next to the md; allow absence (first-ever run before yaml is
@@ -3303,6 +3331,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "auth_method_decomposition": auth_report.as_dict(),
         "control_subsection_coverage": control_coverage_report.as_dict(),
         "relevant_findings_bullet_list": relevant_findings_report.as_dict(),
+        "validation_approach_first": validation_approach_report.as_dict(),
         "placeholders": placeholder_report.as_dict(),
         "yaml_md_consistency": yaml_md_report.as_dict(),
         "posture_structure": posture_report.as_dict(),
@@ -4273,6 +4302,11 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
     # describe exploitation paths, not auth methods, and belong in §3
     # Attack Walkthroughs.
     forbidden_heading_patterns = rule.get("forbidden_heading_patterns") or []
+    # Per-flow-method diagram enforcement (v2, migrated from the v1 rule).
+    # Absent fields → no-op, so older/v1 contracts keep working unchanged.
+    flow_methods_require_diagram = bool(rule.get("flow_methods_require_diagram"))
+    flow_method_tokens = rule.get("flow_method_tokens") or []
+    flow_diagram_token = (rule.get("flow_diagram_token") or "sequenceDiagram").strip()
     hashes = "#" * heading_level
 
     try:
@@ -4317,6 +4351,9 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
             method_whitelist=method_whitelist,
             forbidden_heading_patterns=forbidden_heading_patterns,
             section_label=(domain_title or "7.2 Identity and Authentication Controls"),
+            flow_methods_require_diagram=flow_methods_require_diagram,
+            flow_method_tokens=flow_method_tokens,
+            flow_diagram_token=flow_diagram_token,
         )
         return _finalize_auth_report(report, enforcement)
 
@@ -4586,6 +4623,96 @@ def check_relevant_findings_bullet_list(md_path: Path, contract_path: Path = DEF
     return _finalize_auth_report(report, enforcement)
 
 
+def check_validation_approach_first(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
+    """Enforce the §7.6 `validation_approach_first` rule (v2).
+
+    §7.6 Input Boundary Validation must OPEN with a general validation-approach
+    H4 (the architectural stance — central schema/validation layer vs. scattered
+    per-endpoint checks) BEFORE drilling into specific parsers/uploads/business
+    rules. An architect states the strategy first, then the boundary details.
+
+    The rule fires only on the FIRST `####` under the configured section, so the
+    agent stays free to add as many specific boundary sub-blocks afterwards as
+    the codebase warrants. No-op when the contract does not declare the rule
+    (e.g. under the v1 schema), so older contracts keep working byte-identically.
+    """
+    report = Report("validation_approach_first")
+    contract = _read_contract(contract_path)
+    if not contract:
+        return report
+
+    sec = (contract.get("sections") or {}).get("security_architecture") or {}
+    rules_map = sec.get("domain_required_rules") or {}
+    # Scan every domain-rule bucket so the check is schema-agnostic and
+    # survives a future renaming of the §7.6 key.
+    rule = None
+    for _key, rules in rules_map.items():
+        if not isinstance(rules, list):
+            continue
+        match = next(
+            (r for r in rules if isinstance(r, dict) and r.get("rule") == "validation_approach_first"),
+            None,
+        )
+        if match is not None:
+            rule = match
+            break
+    if rule is None:
+        report.ok = 1
+        return report
+
+    section_title = (rule.get("section_title") or "7.6 Input Boundary Validation Controls").strip()
+    heading_level = int(rule.get("heading_level") or 4)
+    patterns = [p for p in (rule.get("approach_heading_patterns") or []) if isinstance(p, str) and p]
+    enforcement = (rule.get("enforcement") or "warning").strip().lower()
+    hashes = "#" * heading_level
+
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"cannot read {md_path}: {e}")
+        return _finalize_auth_report(report, enforcement)
+
+    body = _extract_section_body(text, r"^###\s+" + re.escape(section_title) + r"[ \t]*$")
+    if body is None:
+        # check_contract owns a missing §7.6 heading.
+        report.ok = 1
+        return report
+    # A legitimately empty section ships as a single italic "_Not applicable …_"
+    # stub — no H4 expected, so the approach-first rule does not apply.
+    if re.search(r"^\s*_Not applicable\b", body, re.MULTILINE):
+        report.ok = 1
+        return report
+
+    subsections = _parse_subsections(body, level=heading_level)
+    if not subsections:
+        # control_subsection_coverage owns the missing-subsection case.
+        report.ok = 1
+        return report
+
+    compiled = []
+    for pat in patterns:
+        try:
+            compiled.append(re.compile(pat))
+        except re.error as err:
+            report.issues.append(
+                f"§{section_title}: invalid `approach_heading_patterns` entry "
+                f"{pat!r} in contract ({err}) — fix data/sections-contract.yaml"
+            )
+    first_heading = next(iter(subsections))
+    first_norm = re.sub(r"^\d+(?:\.\d+)*\s+", "", first_heading).strip()
+    if compiled and not any(p.search(first_heading) or p.search(first_norm) for p in compiled):
+        report.issues.append(
+            f"§{section_title}: the first {hashes} sub-block is {first_heading!r}, "
+            f"but §7.6 must OPEN with a general validation-approach block "
+            f"(e.g. `{hashes} Validation Approach` / `Input Validation Strategy`) "
+            f"describing whether validation is centralized (schema/middleware) or "
+            f"scattered per-endpoint, BEFORE specific parser/upload/business-rule "
+            f"sub-blocks (contract: validation_approach_first)."
+        )
+
+    return _finalize_auth_report(report, enforcement)
+
+
 def _run_auth_v2_structural_checks(
     *,
     report: Report,
@@ -4594,6 +4721,9 @@ def _run_auth_v2_structural_checks(
     method_whitelist: list,
     forbidden_heading_patterns: list,
     section_label: str,
+    flow_methods_require_diagram: bool = False,
+    flow_method_tokens: list = None,
+    flow_diagram_token: str = "sequenceDiagram",
 ) -> None:
     """v2 (§7.2 "… Authentication Controls") enforcement for
     ``auth_method_decomposition``.
@@ -4664,6 +4794,31 @@ def _run_auth_v2_structural_checks(
                 f"hashing or login rate-limiting into the relevant mechanism "
                 f"block as bullets, not as peer headings."
             )
+
+    # Per-flow-method diagram gate (migrated from the v1 rule). A §7.2 ####
+    # whose heading names an authentication FLOW must carry its own positive-
+    # flow `sequenceDiagram` — the auth flow is the architecture view §7.2 is
+    # built around. Scoped to flow-token headings so it never fires on static
+    # primitives, API keys, anonymous access, or methods the agent adds that
+    # have no meaningful sequence (Freiräume preserved). The grouped
+    # "Password-Based Authentication" lifecycle block matches via the
+    # `password-based` token and gets its login-flow diagram from the scaffold.
+    if flow_methods_require_diagram and (flow_method_tokens or []):
+        token = flow_diagram_token or "sequenceDiagram"
+        for heading, body in subsections.items():
+            heading_norm = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip()
+            if not _row_is_auth_method(heading_norm, flow_method_tokens):
+                continue
+            if token not in body:
+                report.issues.append(
+                    f"{sl} {hashes} {heading!r}: flow-based authentication "
+                    f"method has no `{token}` diagram. Every §7.2 sub-block "
+                    f"that names an auth FLOW (password login, OAuth/OIDC, "
+                    f"SAML, TOTP/MFA, passkey, mTLS, webhook HMAC, magic link) "
+                    f"must carry its own positive-flow ```mermaid {token}``` — "
+                    f"primitives and static controls are exempt "
+                    f"(contract: auth_method_decomposition.flow_methods_require_diagram)."
+                )
 
 
 def _run_auth_structural_checks(
@@ -8905,6 +9060,14 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py strengths_quality <threat-model.md>", file=sys.stderr)
             return 2
         report = check_strengths_row_quality(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "validation_approach_first":
+        if len(argv) not in (3, 4):
+            print("usage: qa_checks.py validation_approach_first <threat-model.md> [<contract.yaml>]", file=sys.stderr)
+            return 2
+        contract = Path(argv[3]) if len(argv) == 4 else DEFAULT_CONTRACT_PATH
+        report = check_validation_approach_first(Path(argv[2]), contract)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     print(f"unknown subcommand: {sub}", file=sys.stderr)

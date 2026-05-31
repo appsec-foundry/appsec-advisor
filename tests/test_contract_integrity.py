@@ -273,3 +273,47 @@ def test_required_subsections_entries_are_well_formed(contract):
                     f"sections.{sid}.required_subsections[{i}]: dict entry must have 'title' or 'title_pattern'"
                 )
     assert not problems, "\n".join(problems)
+
+
+# ---------------------------------------------------------------------------
+# §7 schema v1→v2 drift resolution (2026-05-31).
+# The strong per-auth-method enforcement (per-#### sequenceDiagram) was
+# migrated from the dead v1 IAM key onto the active schema_v2 rule, and §7.6
+# gained an approach-first rule. The v1 block stays for APPSEC_SCHEMA_V1=1
+# back-compat. These lock that contract shape so the drift cannot silently
+# reopen.
+# ---------------------------------------------------------------------------
+
+
+def _v2_rules(contract: dict) -> dict:
+    return contract["sections"]["security_architecture"]["schema_v2"]["domain_required_rules"]
+
+
+def test_v2_auth_method_decomposition_requires_flow_diagram(contract):
+    rules = _v2_rules(contract)["7.2 Identity and Authentication Controls"]
+    auth = next(r for r in rules if r.get("rule") == "auth_method_decomposition")
+    assert auth.get("flow_methods_require_diagram") is True
+    assert auth.get("flow_diagram_token") == "sequenceDiagram"
+    tokens = auth.get("flow_method_tokens") or []
+    # The grouped password block and the headline web flows must be gated.
+    for needed in ("password-based", "oauth", "totp", "saml"):
+        assert needed in tokens, f"{needed!r} missing from flow_method_tokens"
+
+
+def test_v2_section76_has_validation_approach_first(contract):
+    rules = _v2_rules(contract)
+    key = "7.6 Input Boundary Validation Controls"
+    assert key in rules, "§7.6 validation_approach_first rule key missing"
+    rule = next(r for r in rules[key] if r.get("rule") == "validation_approach_first")
+    assert rule.get("enforcement") == "error"
+    assert rule.get("approach_heading_patterns"), "no approach_heading_patterns declared"
+
+
+def test_v1_iam_block_preserved_for_backcompat(contract):
+    """The v1 §7.3 IAM domain rules must remain (APPSEC_SCHEMA_V1=1 + the
+    v1-pinned test suite depend on them) — migration re-homed enforcement,
+    it did not delete the v1 surface."""
+    v1 = contract["sections"]["security_architecture"].get("domain_required_rules") or {}
+    iam = v1.get("7.3 Identity & Access Management") or []
+    assert any(r.get("rule") == "auth_method_decomposition" for r in iam), \
+        "v1 auth_method_decomposition was removed — breaks APPSEC_SCHEMA_V1 back-compat"

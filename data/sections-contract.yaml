@@ -891,6 +891,24 @@ sections:
     #     bullet under §7 carries the finding title twice.
     #
     # See `docs/security/.section7-gap-analysis.md` for the rationale.
+    #
+    # ┌────────────────────────────────────────────────────────────────────┐
+    # │ V1 BACK-COMPAT ONLY (active solely under APPSEC_SCHEMA_V1=1).        │
+    # │ The section-level `domain_required_patterns` /                       │
+    # │ `domain_required_rules` below are keyed on the retired v1 IAM title  │
+    # │ "7.3 Identity & Access Management". Under the v2 default the overlay │
+    # │ (qa_checks.py:_apply_schema_v2_overlay) REPLACES these with the      │
+    # │ schema_v2 block, so they never fire in production runs.              │
+    # │                                                                      │
+    # │ DRIFT RESOLUTION (2026-05-31): the v1 strong enforcement — per-#### │
+    # │ sequenceDiagram + intro-before-diagram for each auth method — was    │
+    # │ MIGRATED onto the active schema_v2 `auth_method_decomposition` rule  │
+    # │ (see schema_v2 → domain_required_rules → "7.2 …" → flow_method_*     │
+    # │ fields). v2 is now the single authoritative §7 enforcement surface;  │
+    # │ this v1 block is retained verbatim only so pre-v2 threat-models (and │
+    # │ the v1-pinned test suite) still validate. Do NOT add new rules here. │
+    # └────────────────────────────────────────────────────────────────────┘
+    #
     # §7.3 Identity & Access Management MUST be enriched with a per-auth-method
     # breakdown. For every authentication flow used by the application (e.g.
     # password login, OAuth, TOTP/2FA, SSO), §7.3 needs a #### sub-block with
@@ -1298,6 +1316,45 @@ sections:
               - "Relevant findings"
             required_body_elements:
               - "intro_before_security_assessment"
+            # Per-flow-method diagram enforcement (migrated 2026-05-31 from the
+            # v1 auth_method_decomposition rule, where every #### flow block
+            # carried its own sequenceDiagram). A §7.2 #### block whose heading
+            # names a FLOW mechanism — one where identity is established through
+            # a multi-step exchange (password login, OAuth/OIDC, SAML, TOTP/MFA
+            # enrollment & verification, passkey/WebAuthn, mTLS handshake,
+            # webhook HMAC, magic link) — MUST carry its own positive-flow
+            # `sequenceDiagram`. This is the architecture view the section is
+            # built around: one flow picture per real authentication path.
+            #
+            # SCOPE / FREIRÄUME: the gate fires ONLY on flow-token headings.
+            # Non-flow mechanisms (API key, bearer token, anonymous access) and
+            # static primitives are exempt — they have no meaningful sequence.
+            # The grouped "Password-Based Authentication" lifecycle block DOES
+            # match (`password-based`) and gets its login-flow diagram from the
+            # scaffold. The rule never forbids ADDITIONAL #### methods the agent
+            # discovers — it only requires a diagram where a flow heading exists.
+            flow_methods_require_diagram: true
+            flow_diagram_token: "sequenceDiagram"
+            flow_method_tokens:
+              - "password-based"
+              - "password based"
+              - "login"
+              - "oauth"
+              - "oidc"
+              - "openid"
+              - "saml"
+              - "sso"
+              - "totp"
+              - "2fa"
+              - "mfa"
+              - "passkey"
+              - "webauthn"
+              - "magic link"
+              - "magic-link"
+              - "mtls"
+              - "mutual tls"
+              - "webhook hmac"
+              - "webhook signature"
             method_whitelist:
               # User-facing web auth mechanisms (mirror of
               # `architectural-controls.yaml::kind: mechanism`)
@@ -1407,6 +1464,28 @@ sections:
               - "7.12 Real-time and Not Applicable Controls"
             heading_level: 4
             label: "Relevant findings"
+            enforcement: "error"
+        # §7.6 Input Boundary Validation — the section must OPEN with a general
+        # validation-approach H4 (the architectural stance: is there a central
+        # schema/validation layer, or is validation scattered per-endpoint?)
+        # BEFORE drilling into specific parsers/uploads/business-rule checks.
+        # An architect describes the strategy first, then the boundary details.
+        # The rule fires only on the FIRST #### under §7.6, so the agent stays
+        # free to add as many specific boundary sub-blocks afterwards as the
+        # codebase warrants.
+        "7.6 Input Boundary Validation Controls":
+          - rule: "validation_approach_first"
+            section_title: "7.6 Input Boundary Validation Controls"
+            heading_level: 4
+            # The first #### heading must match one of these (case-insensitive,
+            # numeric `7.6.N ` prefix tolerated). Vocabulary mirrors the
+            # scaffold's injected general-approach block + the authoring prompt.
+            approach_heading_patterns:
+              - "(?i)validation approach"
+              - "(?i)validation strategy"
+              - "(?i)(input )?validation (model|architecture|posture)"
+              - "(?i)(central|centralized|centralised|schema)[- ]?based validation"
+              - "(?i)schema validation"
             enforcement: "error"
         "all_domains":
           - rule: "falls_short_bullet_threshold"

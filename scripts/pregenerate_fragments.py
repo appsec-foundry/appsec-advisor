@@ -4483,7 +4483,7 @@ _V2_DEFAULT_MECHANISM: dict[str, str] = {
     "7.3 Session and Token Controls": "Browser Token Storage and Request Propagation",
     "7.4 Authorization Controls": "Route and Object Authorization",
     "7.5 Query Construction and Data Access Controls": "Query Construction",
-    "7.6 Input Boundary Validation Controls": "Input Boundary Validation",
+    "7.6 Input Boundary Validation Controls": "Validation Approach",
     "7.7 Output Encoding and Rendering Controls": "Output Encoding and Client-Side Rendering",
     "7.8 Browser and Cross-Origin Controls": "Browser Security Headers and CORS/CSRF Posture",
     "7.9 Cryptography Secrets and Data Protection": "Secret Management and Data Protection",
@@ -4491,6 +4491,17 @@ _V2_DEFAULT_MECHANISM: dict[str, str] = {
     "7.11 Operations Runtime and Supply Chain Controls": "Logging, Runtime and Supply Chain Posture",
     "7.12 Real-time and Not Applicable Controls": "Real-time WebSocket Channel",
 }
+
+
+# §7.6 general validation-approach heading detector. Mirrors the contract's
+# `validation_approach_first.approach_heading_patterns` so the pregenerator
+# does not double-inject when Stage-1 already supplied an approach-named row.
+_V2_APPROACH_FIRST_RE = re.compile(
+    r"(?i)\b(validation approach|validation strategy"
+    r"|(input )?validation (model|architecture|posture)"
+    r"|(central|centralized|centralised|schema)[- ]?based validation"
+    r"|schema validation)\b"
+)
 
 
 # CWE → §7.X routing table — mirrors sections-contract.yaml schema_v2
@@ -4961,6 +4972,29 @@ def _emit_v2_grouped_control(lines: list, c: dict, subs: list, threats: list,
             "lifecycle bullets below carry the per-stage verdicts. -->"
         )
     lines.append("")
+    # Per-flow diagram — the grouped block represents a multi-step auth flow
+    # (e.g. the password login path). The schema_v2 auth_method_decomposition
+    # gate (flow_methods_require_diagram) requires a `sequenceDiagram` on any
+    # §7.2 flow block, and "Password-Based Authentication" matches the
+    # `password-based` flow token. Emit the diagram from Stage-1 data when
+    # present, else a fill-me placeholder so the scaffold satisfies the gate.
+    diag = (c.get("sequence_diagram") or "").strip()
+    if diag:
+        lines.append("The diagram shows the primary login flow for this mechanism:")
+        lines.append("")
+        lines.append("```mermaid")
+        lines.append(diag)
+        lines.append("```")
+        lines.append("")
+    elif heading.startswith("7.2 "):
+        lines.append(
+            "<!-- NARRATIVE_PLACEHOLDER: precede with one sentence ending in "
+            "`:` then a positive-flow ```mermaid sequenceDiagram``` of the "
+            "primary login path (User → App → credential store → session "
+            "issuance). One diagram for the whole lifecycle is enough — the "
+            "per-stage detail stays in the bullets below. -->"
+        )
+        lines.append("")
     bullets = _v2_lifecycle_bullets(subs, threats, heading)
     if bullets:
         lines.extend(bullets)
@@ -5509,6 +5543,24 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             for c in section_controls
             if (c.get("implementation") or "").strip()
         ]
+
+        # §7.6 must OPEN with a general validation-approach block before the
+        # specific boundary sub-blocks (contract: validation_approach_first).
+        # Inject a synthetic FIRST subcontrol so the scaffold satisfies the
+        # gate deterministically and the renderer fills the strategy prose
+        # instead of running against the gate. Skipped when Stage-1 already
+        # supplied an approach-named row as the first §7.6 control.
+        if heading.startswith("7.6 ") and not (
+            control_names and _V2_APPROACH_FIRST_RE.search(control_names[0])
+        ):
+            section_controls = [{
+                "control": "Validation Approach",
+                "name": "Validation Approach",
+                "effectiveness": "",
+                "implementation": "",
+                "subcontrols": [],
+            }] + list(section_controls)
+            control_names = ["Validation Approach"] + control_names
 
         lines.append("**Verdict:** <!-- NARRATIVE_PLACEHOLDER: choose one of `🟢 Adequate` · `🟡 Partial` · `🟠 Weak` · `🔴 Unsafe` · `🔴 Missing`. Tokens come from `data/sections-contract.yaml → verdict_icons`. -->")
         lines.append("")

@@ -463,6 +463,204 @@ def test_recon_iam_bridge_uses_v2_section_title(monkeypatch, tmp_path: Path):
     assert any("7.2 Identity and Authentication Controls" in issue for issue in report.issues)
 
 
+# ---------------------------------------------------------------------------
+# §7.2 per-flow-method diagram gate + §7.6 validation-approach-first gate.
+# These exercise the REAL data/sections-contract.yaml via the schema_v2
+# overlay (no contract arg → DEFAULT_CONTRACT_PATH), so they double as a
+# wiring test that the migrated v1→v2 enforcement is live.
+# ---------------------------------------------------------------------------
+
+
+def test_auth_flow_method_requires_diagram(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [OAuth Login](#oauth-login).
+
+            #### 7.2.1 OAuth Login
+
+            The app federates login via Google.
+
+            **Security assessment**
+
+            Redirect URI not validated.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_auth_method_decomposition(md)
+
+    assert any("sequenceDiagram" in issue and "OAuth Login" in issue for issue in report.issues)
+
+
+def test_auth_flow_method_accepts_diagram(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [OAuth Login](#oauth-login).
+
+            #### 7.2.1 OAuth Login
+
+            The diagram shows the federated login path:
+
+            ```mermaid
+            sequenceDiagram
+                User->>App: authorization code
+            ```
+
+            **Security assessment**
+
+            Redirect URI not validated.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_auth_method_decomposition(md)
+
+    assert not any("sequenceDiagram" in issue for issue in report.issues)
+
+
+def test_auth_nonflow_method_exempt_from_diagram(monkeypatch, tmp_path: Path):
+    """API-key / anonymous auth has no meaningful sequence — the per-flow gate
+    must NOT demand a diagram for it (Freiräume: only flow methods are gated)."""
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [API Key Authentication](#api-key-authentication).
+
+            #### 7.2.1 API Key Authentication
+
+            Service callers present a static API key header.
+
+            **Security assessment**
+
+            Keys are not rotated.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_auth_method_decomposition(md)
+
+    assert not any("sequenceDiagram" in issue for issue in report.issues)
+
+
+def test_validation_approach_first_rejects_specific_first(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.6 Input Boundary Validation Controls
+
+            **Controls covered:** [File Upload Limits](#file-upload-limits).
+
+            #### 7.6.1 File Upload Limits
+
+            **Security assessment**
+
+            multer caps the upload size.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_validation_approach_first(md)
+
+    assert report.ok == 0
+    assert any("validation-approach" in issue for issue in report.issues)
+
+
+def test_validation_approach_first_accepts_approach_first(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.6 Input Boundary Validation Controls
+
+            **Controls covered:** [Validation Approach](#validation-approach).
+
+            #### 7.6.1 Validation Approach
+
+            **Security assessment**
+
+            No central schema layer; validation is per-endpoint.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+
+            #### 7.6.2 File Upload Limits
+
+            **Security assessment**
+
+            multer caps the upload size.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_validation_approach_first(md)
+
+    assert report.ok == 1
+    assert report.issues == []
+
+
+def test_validation_approach_first_skips_not_applicable(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.6 Input Boundary Validation Controls
+
+            _Not applicable — no input-validation findings routed to this category._
+        """),
+    )
+
+    report = qa.check_validation_approach_first(md)
+
+    assert report.ok == 1
+    assert report.issues == []
+
+
 def test_mermaid_alt_convention_is_scoped_to_attack_walkthroughs(tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
