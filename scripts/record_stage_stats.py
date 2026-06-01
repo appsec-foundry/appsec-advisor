@@ -44,7 +44,7 @@ Usage
       --stage 1                                    \\
       --name "Threat Analysis & Triage"            \\
       --agent appsec-advisor:appsec-threat-analyst \\
-      --model claude-sonnet-4-6                    \\
+      --model sonnet                    \\
       --duration-ms 1503583                        \\
       --tool-uses 113                              \\
       --tokens 93066                               \\
@@ -229,7 +229,7 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--name", required=True, help='Human-readable description, e.g. "Threat Analysis & Triage"')
     parser.add_argument("--agent", required=True, help="Agent identifier, e.g. appsec-advisor:appsec-threat-analyst")
-    parser.add_argument("--model", default="—", help="Model id, e.g. claude-sonnet-4-6")
+    parser.add_argument("--model", default="—", help="Model id, e.g. sonnet")
     parser.add_argument(
         "--duration-ms",
         type=int,

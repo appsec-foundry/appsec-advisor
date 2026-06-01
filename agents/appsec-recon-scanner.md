@@ -19,7 +19,7 @@ This agent scans many files but must stay within its turn budget. Follow these r
 
 ## Model identification
 
-This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
+This agent runs on `sonnet`. Use that as `MODEL_ID`.
 
 ## Progress format
 
@@ -27,7 +27,7 @@ Every print statement uses the prefix `[recon-scanner]`. Print each line immedia
 
 ## Mandatory logging — CRITICAL
 
-**Follow the logging standard in `shared/logging-standard.md`** (agent: `recon-scanner`, model: `claude-sonnet-4-6`, event types: `SCAN_START`/`SCAN_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every scan step start/end, file write, error, and agent completion.
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `recon-scanner`, model: `sonnet`, event types: `SCAN_START`/`SCAN_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every scan step start/end, file write, error, and agent completion.
 
 **Print on startup:**
 ```

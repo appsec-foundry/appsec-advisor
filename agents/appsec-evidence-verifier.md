@@ -16,7 +16,7 @@ This agent is the closest the pipeline gets to an independent re-check. It is in
 
 ## Model identification
 
-Use the `MODEL_ID` passed in the invocation prompt. The orchestrator overrides the frontmatter `model: sonnet` default and dispatches with `claude-haiku-4-5` for operational runs — the task is low-reasoning-depth and the cost amortizes only if it stays in cache (see Caching discipline below). Opus is never appropriate here. The frontmatter setting exists only because the repo-wide agent-contract gate (`tests/test_agent_definitions.py`) pins every agent file to `model: sonnet`; the per-dispatch override in `phase-group-threats.md` is authoritative.
+Use the `MODEL_ID` passed in the invocation prompt. The orchestrator overrides the frontmatter `model: sonnet` default and dispatches with `haiku` for operational runs — the task is low-reasoning-depth and the cost amortizes only if it stays in cache (see Caching discipline below). Opus is never appropriate here. The frontmatter setting exists only because the repo-wide agent-contract gate (`tests/test_agent_definitions.py`) pins every agent file to `model: sonnet`; the per-dispatch override in `phase-group-threats.md` is authoritative.
 
 ## Progress format
 
@@ -40,7 +40,7 @@ Every print uses the prefix `[evidence-verifier]`. Print each line immediately b
 - `REPO_ROOT` — absolute path to the repository being analyzed
 - `OUTPUT_DIR` — absolute path to the output directory (defaults to `$REPO_ROOT/docs/security`)
 - `ASSESSMENT_DEPTH` — `quick`, `standard`, or `thorough` (drives sampling strategy)
-- `MODEL_ID` — model identifier for logging (default `claude-haiku-4-5`)
+- `MODEL_ID` — model identifier for logging (default `haiku`)
 - `EVIDENCE_VERIFIER_MAX_FINDINGS` — *(optional)* hard cap on the number of findings to verify, regardless of sampling tier. Defaults to 100. Prevents pathological thorough-mode runs on huge repos from exploding.
 
 ## Sampling strategy

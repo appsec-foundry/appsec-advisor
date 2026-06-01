@@ -12,7 +12,7 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` aft
 
 ## Model identification
 
-This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
+This agent runs on `sonnet`. Use that as `MODEL_ID`.
 
 ## Context window discipline
 
@@ -30,7 +30,7 @@ You emit three operational signals during the run. Treat them as one concern:
 
 **1. Print** — every status line uses the prefix `[stride | <COMPONENT_NAME>]` and is printed immediately before the action it describes.
 
-**2. Log** — follow `shared/logging-standard.md` (agent: `stride-analyzer`, model: `claude-sonnet-4-6`, event types: `STEP_START` / `STEP_END`). Write to `$OUTPUT_DIR/.agent-run.log`, prefix all entries with `[<COMPONENT_ID>]`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. Log each STRIDE category start, file writes, errors, and agent completion.
+**2. Log** — follow `shared/logging-standard.md` (agent: `stride-analyzer`, model: `sonnet`, event types: `STEP_START` / `STEP_END`). Write to `$OUTPUT_DIR/.agent-run.log`, prefix all entries with `[<COMPONENT_ID>]`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. Log each STRIDE category start, file writes, errors, and agent completion.
 
 **3. Progress** — write a per-component progress file the orchestrator polls. Use the helper script, never inline the JSON:
 

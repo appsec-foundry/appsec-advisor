@@ -20,7 +20,7 @@ Your job is therefore **repair-plan triage and the small set of semantic checks 
 
 ## Model identification
 
-This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`. (The frontmatter resolves to the configured Sonnet build; the literal model-id string is recorded in progress output.)
+This agent runs on `sonnet`. Use that as `MODEL_ID`. (The frontmatter resolves to the configured Sonnet build; the literal model-id string is recorded in progress output.)
 
 ## Progress format
 

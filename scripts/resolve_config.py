@@ -41,23 +41,23 @@ from typing import Any, Optional
 
 MODEL_MATRIX = {
     "sonnet": {
-        "stride": "claude-sonnet-4-6",
-        "triage": "claude-sonnet-4-6",
-        "merger": "claude-sonnet-4-6",
+        "stride": "sonnet",
+        "triage": "sonnet",
+        "merger": "sonnet",
     },
     "opus-cheap": {
-        "stride": "claude-sonnet-4-6",
+        "stride": "sonnet",
         # triage stays on Sonnet: scripts/triage_validate_ratings.py provides a
         # deterministic floor (outlier thresholds, completeness counts, CVSS
         # eligibility); the agent only does judgment-call validation on top.
         # Opus here was overkill — Sonnet handles the structured input.
-        "triage": "claude-sonnet-4-6",
-        "merger": "claude-opus-4-7",
+        "triage": "sonnet",
+        "merger": "opus",
     },
     "opus": {
-        "stride": "claude-opus-4-7",
-        "triage": "claude-opus-4-7",
-        "merger": "claude-opus-4-7",
+        "stride": "opus",
+        "triage": "opus",
+        "merger": "opus",
     },
     # haiku-economy: STRIDE/triage/merger bleiben wie bei sonnet — der
     # Hauptwertbeitrag (Threat-Reasoning) wird NICHT auf Haiku geroutet.
@@ -66,9 +66,9 @@ MODEL_MATRIX = {
     # config-scanner). Quick-Mode bekommt zusätzlich eine STRIDE-Tiefe-
     # Reduktion via resolve_stride_profile().
     "haiku-economy": {
-        "stride": "claude-sonnet-4-6",
-        "triage": "claude-sonnet-4-6",
-        "merger": "claude-sonnet-4-6",
+        "stride": "sonnet",
+        "triage": "sonnet",
+        "merger": "sonnet",
     },
 }
 
@@ -76,8 +76,8 @@ MODEL_MATRIX = {
 # Schlüssel: (reasoning_tier, depth) → agent_type → model.
 # Default-Routing greift für sonnet/opus-cheap/opus (= unverändert zu heute).
 # haiku-economy hat depth-spezifisches Routing.
-HAIKU = "claude-haiku-4-5"
-SONNET = "claude-sonnet-4-6"
+HAIKU = "haiku"
+SONNET = "sonnet"
 
 EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
     # haiku-economy: extended-agent routing.
@@ -626,11 +626,11 @@ def resolve_architect_review(ns: argparse.Namespace, depth: str,
 
     # Model resolution — default opus when on, override via flag or env.
     if ns.architect_model == "sonnet":
-        model = "claude-sonnet-4-6"
+        model = "sonnet"
     elif ns.architect_model == "opus":
-        model = "claude-opus-4-7"
+        model = "opus"
     else:
-        model = "claude-opus-4-7"  # default
+        model = "opus"  # default
     if os.environ.get("APPSEC_ARCHITECT_MODEL"):
         model = os.environ["APPSEC_ARCHITECT_MODEL"]
 

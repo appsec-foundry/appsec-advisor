@@ -1014,9 +1014,9 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 
 | Model | Input | Output | Cache Write | Cache Read |
 |-------|-------|--------|-------------|------------|
-| claude-sonnet-4-6 | $3.00 | $15.00 | $3.75 | $0.30 |
+| sonnet | $3.00 | $15.00 | $3.75 | $0.30 |
 | claude-opus-4-6 | $15.00 | $75.00 | $18.75 | $1.50 |
-| claude-haiku-4-5 | $0.80 | $4.00 | $1.00 | $0.08 |
+| haiku | $0.80 | $4.00 | $1.00 | $0.08 |
 
 </details>
 
@@ -1065,7 +1065,7 @@ Only include agents that actually ran. The `qa-reviewer` row is always included 
 
 **Agent Dispatch Log rules:**
 - **Purpose column** is prose — not the phase number or the YAML role name. Describe what the agent did in this run.
-- **Model column** uses the canonical model ID (`claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5`). When a model override applied, show the override.
+- **Model column** uses the canonical model ID (`sonnet`, `opus`, `haiku`). When a model override applied, show the override.
 - **× <N>** multiplier on `appsec-stride-analyzer` reflects the number of dispatched component-level instances.
 - **Conditional rows** — skip `appsec-context-resolver` on a cache hit, skip `appsec-triage-validator` when `analysis_version < 2`. (The `appsec-dep-scanner` row was removed in 2026-05; supply-chain emitters in Phase 10 are deterministic scripts that do not appear in agent dispatch tables.)
 - **Qa-reviewer row** — emitted unconditionally with the model the skill layer will use in Stage 3 (sonnet by default).

@@ -24,7 +24,7 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 - `subagent_type`: `appsec-advisor:appsec-context-resolver`
 - `description`: `Resolve context for threat model`
 - `run_in_background`: `true` (parallel with recon — unless recon is skipped, then `false` is fine)
-- `model`: `$CONTEXT_RESOLVER_MODEL` from `.skill-config.json` (defaults to `claude-sonnet-4-6`; under `--reasoning-model haiku-economy` becomes `claude-haiku-4-5` regardless of depth — pure file-IO + summary task)
+- `model`: `$CONTEXT_RESOLVER_MODEL` from `.skill-config.json` (defaults to `sonnet`; under `--reasoning-model haiku-economy` becomes `haiku` regardless of depth — pure file-IO + summary task)
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set)
 
 Log `AGENT_INVOKE` before dispatch. After the agent returns (or cache hit): read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment.
@@ -153,7 +153,7 @@ Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.
 - `subagent_type`: `appsec-advisor:appsec-recon-scanner`
 - `description`: `Reconnaissance scan`
 - `run_in_background`: `true` (parallel with context-resolver — unless context is skipped, then `false` is fine)
-- `model`: `$RECON_SCANNER_MODEL` from `.skill-config.json`. Default routing is `claude-haiku-4-5` at every depth and reasoning tier — recon is grep-based pattern detection plus lookup-table verdicts (e.g. lockfile-disable severity per ecosystem, repo-visibility-conditional severity for self-hosted runners), all decision-table-driven and Haiku-suitable. Override per-run via `APPSEC_RECON_SCANNER_MODEL=claude-sonnet-4-6` if a specific repo needs Sonnet's stronger instruction-following on novel patterns.
+- `model`: `$RECON_SCANNER_MODEL` from `.skill-config.json`. Default routing is `haiku` at every depth and reasoning tier — recon is grep-based pattern detection plus lookup-table verdicts (e.g. lockfile-disable severity per ecosystem, repo-visibility-conditional severity for self-hosted runners), all decision-table-driven and Haiku-suitable. Override per-run via `APPSEC_RECON_SCANNER_MODEL=sonnet` if a specific repo needs Sonnet's stronger instruction-following on novel patterns.
 - `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>` and `SCAN_MANIFEST=<value of SCAN_MANIFEST variable — true or false>`
 
 After both Phase 1 and Phase 2 have returned, read `$OUTPUT_DIR/.recon-summary.md`. Store contents for Phases 3–11:
@@ -211,7 +211,7 @@ orchestrator turn as context-resolver and recon-scanner):**
   config-scanner is the sole dispatched agent — see State-Matrix in
   `appsec-threat-analyst.md` Step B)
 - `model`: `$CONFIG_SCANNER_MODEL` from `.skill-config.json` (defaults to
-  `claude-haiku-4-5` at all reasoning tiers — YAML-rule-engine task,
+  `haiku` at all reasoning tiers — YAML-rule-engine task,
   pattern-matching against a static check catalog, Haiku-suitable at every
   depth. Override via `APPSEC_CONFIG_SCANNER_MODEL`.)
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`,

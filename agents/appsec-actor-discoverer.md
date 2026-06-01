@@ -15,7 +15,7 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` at 
 
 ## Model identification
 
-This agent runs on `claude-sonnet-4-6`. Budget: 15–25k tokens — breadth-first identification, not deep reasoning.
+This agent runs on `sonnet`. Budget: 15–25k tokens — breadth-first identification, not deep reasoning.
 
 ## Context window discipline
 
@@ -26,7 +26,7 @@ This agent runs on `claude-sonnet-4-6`. Budget: 15–25k tokens — breadth-firs
 
 ## Operational signals (print + log)
 
-Every status line uses prefix `[actor-discoverer]`. Write log entries to `$OUTPUT_DIR/.agent-run.log` (agent: `actor-discoverer`, model: `claude-sonnet-4-6`, event types: `STEP_START`/`STEP_END`).
+Every status line uses prefix `[actor-discoverer]`. Write log entries to `$OUTPUT_DIR/.agent-run.log` (agent: `actor-discoverer`, model: `sonnet`, event types: `STEP_START`/`STEP_END`).
 
 **Print on startup:**
 ```

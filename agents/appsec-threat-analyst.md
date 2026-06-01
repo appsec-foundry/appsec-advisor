@@ -516,7 +516,7 @@ Follow `phase-group-threats.md` (Phase 10 and Phase 10b) and `phase-group-finali
 
 Pass these context fields in the verifier prompt:
 - `REPO_ROOT`, `OUTPUT_DIR`, `ASSESSMENT_DEPTH` (verbatim from this run)
-- `MODEL_ID=claude-haiku-4-5` (the verifier's default; do NOT override unless the run explicitly opted into Sonnet via `--evidence-verifier-model`)
+- `MODEL_ID=haiku` (the verifier's default; do NOT override unless the run explicitly opted into Sonnet via `--evidence-verifier-model`)
 - `EVIDENCE_VERIFIER_MAX_FINDINGS=100` (cap; only override when the operator passed `--evidence-verifier-cap N`)
 
 The verifier is intentionally low-budget (≤30 turns, Haiku). It MUST NOT modify `risk`, `likelihood`, `impact`, or any field other than `evidence_check` and `evidence_flags`. Phase 10b then reads `evidence_check == refuted` and suppresses chain-elevation for those findings when computing `effective_severity`.
@@ -878,12 +878,12 @@ Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` fi
 - If neither is available, record as `None`
 This list goes into the metadata table and the System Overview.
 
-**Model identification:** This agent runs on `claude-sonnet-4-6`. Use `claude-sonnet-4-6` as `MODEL_ID` in both the MD header `Model` field and the YAML `meta.model` field.
+**Model identification:** This agent runs on `sonnet`. Use `sonnet` as `MODEL_ID` in both the MD header `Model` field and the YAML `meta.model` field.
 
-**Agent model mapping:** Each sub-agent declares its own model in its frontmatter (`model:` field). Before printing the banner, read the frontmatter of each agent to determine its actual model. Use the actual model identifiers (e.g. `claude-sonnet-4-6`, `claude-opus-4-6`) throughout:
+**Agent model mapping:** Each sub-agent declares its own model in its frontmatter (`model:` field). Before printing the banner, read the frontmatter of each agent to determine its actual model. Use the actual model identifiers (e.g. `sonnet`, `claude-opus-4-6`) throughout:
 - **Banner** — `Agents:` line lists each agent with its actual model in parentheses
 - **Dispatch/return lines** — `(model: <actual model>)` uses the invoked agent's model, not this agent's model
-- **MD header** — `Agent Models` row: if all agents share the same model as the orchestrator, write `"all agents: <model>"`. If any agent differs, write the base model followed by exceptions in parentheses, e.g. `"claude-sonnet-4-6 (stride-analyzer: claude-opus-4-6)"`
+- **MD header** — `Agent Models` row: if all agents share the same model as the orchestrator, write `"all agents: <model>"`. If any agent differs, write the base model followed by exceptions in parentheses, e.g. `"sonnet (stride-analyzer: claude-opus-4-6)"`
 - **YAML** — include `agent_models:` map only when any agent uses a different model; omit the key entirely when all are the same
 - **Summary block** — `Pipeline:` section lists each agent's actual model
 
@@ -909,13 +909,13 @@ The skill passes depth parameters that control scope and detail. Store these var
 - `STRIDE_TURNS_SIMPLE` / `STRIDE_TURNS_MODERATE` / `STRIDE_TURNS_COMPLEX` — turn budgets per component complexity (see phase-group-threats.md)
 - `DIAGRAM_DEPTH` — `minimal`, `standard`, or `extended` (see phase-group-architecture.md)
 - `QA_DEPTH` — `core`, `full`, or `extended` (passed through to QA reviewer)
-- `STRIDE_MODEL` — model ID for STRIDE analyzer dispatches (e.g. `claude-sonnet-4-6` or `claude-opus-4-7`). Pass this as the Agent tool's `model` parameter for every STRIDE dispatch — it overrides the agent's frontmatter default.
+- `STRIDE_MODEL` — model ID for STRIDE analyzer dispatches (e.g. `sonnet` or `opus`). Pass this as the Agent tool's `model` parameter for every STRIDE dispatch — it overrides the agent's frontmatter default.
 - `TRIAGE_MODEL` — model ID for the triage-validator dispatch (Phase 10b). Pass as Agent tool `model` parameter.
 - `MERGER_MODEL` — model ID for the threat-merger dispatch (Phase 9, optional — only dispatched when `.merge-candidates.json` contains candidate groups after `merge_threats.py collect`).
 
 If any depth variable is missing from the prompt, use the `standard` defaults: `MAX_STRIDE_COMPONENTS=5`, `STRIDE_TURNS_SIMPLE=15`, `STRIDE_TURNS_MODERATE=22`, `STRIDE_TURNS_COMPLEX=31`, `DIAGRAM_DEPTH=standard`, `QA_DEPTH=full`.
 
-If any reasoning-model variable is missing, default to `claude-sonnet-4-6` for all three (`STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL`). The skill is responsible for resolving `--reasoning-model` → the three variables; see `skills/create-threat-model/SKILL.md` Reasoning Model Resolution.
+If any reasoning-model variable is missing, default to `sonnet` for all three (`STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL`). The skill is responsible for resolving `--reasoning-model` → the three variables; see `skills/create-threat-model/SKILL.md` Reasoning Model Resolution.
 
 Include `ASSESSMENT_DEPTH` in the banner and the final assessment summary.
 
@@ -1029,7 +1029,7 @@ When invoked, execute the following startup sequence in this exact order — do 
   Depth       : <ASSESSMENT_DEPTH> (components: <MAX_STRIDE_COMPONENTS>, diagrams: <DIAGRAM_DEPTH>)
   Repository  : <REPO_ROOT>
   Output      : <OUTPUT_DIR>/threat-model.md  +  threat-model.yaml<if WRITE_SARIF=true>  +  threat-model.sarif.json</if><if WRITE_YAML=false>  (yaml suppressed by --no-yaml)</if>
-  Orchestrator: <own model, e.g. claude-sonnet-4-6>  (75 turns)
+  Orchestrator: <own model, e.g. sonnet>  (75 turns)
   Agents      : context-resolver (<model>) · recon-scanner (<model>)
                 stride-analyzer (<model>)
                 qa-reviewer (<model>, skill-level)

@@ -12,7 +12,7 @@ You are the Stage 2 renderer for appsec-advisor. Your job is narrow: use the val
 
 Skip Phases 1–10b entirely; their outputs are prerequisites for invoking this agent.
 
-Set `MODEL_ID=claude-sonnet-4-6` in progress/log text when a model identifier is needed.
+Set `MODEL_ID=sonnet` in progress/log text when a model identifier is needed.
 
 ## Output Hygiene — token-budget critical
 

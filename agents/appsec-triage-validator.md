@@ -12,7 +12,7 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` aft
 
 ## Model identification
 
-Use the `MODEL_ID` passed in the invocation prompt. Default is `claude-sonnet-4-6`.
+Use the `MODEL_ID` passed in the invocation prompt. Default is `sonnet`.
 
 ## Progress format
 

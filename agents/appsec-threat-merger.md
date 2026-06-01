@@ -24,7 +24,7 @@ Every print uses the prefix `[threat-merger]`. Print each line immediately befor
 
 - `REPO_ROOT` — absolute path to repository root
 - `OUTPUT_DIR` — absolute path to output directory
-- `MODEL_ID` — actual model identifier passed at dispatch (e.g. `claude-opus-4-7` or `claude-sonnet-4-6`)
+- `MODEL_ID` — actual model identifier passed at dispatch (e.g. `opus` or `sonnet`)
 - `COMPONENT_MAP_PATH` — path to JSON `{component_id: {name, trust_boundaries}}` for context
 - `CANDIDATES_FILE` — absolute path to `$OUTPUT_DIR/.merge-candidates.json` (produced by `merge_threats.py collect`)
 

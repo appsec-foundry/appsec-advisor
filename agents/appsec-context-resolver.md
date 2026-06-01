@@ -10,7 +10,7 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` at 
 
 ## Model identification
 
-This agent runs on `claude-sonnet-4-6`. Use that as `MODEL_ID`.
+This agent runs on `sonnet`. Use that as `MODEL_ID`.
 
 ## Progress format
 
@@ -18,7 +18,7 @@ Every print statement in this agent uses the prefix `[context-resolver]`. Print 
 
 ## Mandatory logging — CRITICAL
 
-**Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `claude-sonnet-4-6`, event types: `STEP_START`/`STEP_END`). Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `sonnet`, event types: `STEP_START`/`STEP_END`). Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
 
 ## Task
 

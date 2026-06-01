@@ -1527,7 +1527,7 @@ fi
 
 **Log `PHASE_START`:**
 ```bash
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10a/11] Evidence Verification (sampled, model: claude-haiku-4-5)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10a/11] Evidence Verification (sampled, model: haiku)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 **Print before dispatch:**
@@ -1541,13 +1541,13 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_S
 ```
 subagent_type: "appsec-advisor:appsec-evidence-verifier"
 description: "Re-reads cited evidence file:line on sampled findings"
-model: claude-haiku-4-5
+model: haiku
 run_in_background: false
 prompt: |
   REPO_ROOT=<REPO_ROOT>
   OUTPUT_DIR=<OUTPUT_DIR>
   ASSESSMENT_DEPTH=<ASSESSMENT_DEPTH>
-  MODEL_ID=claude-haiku-4-5
+  MODEL_ID=haiku
   EVIDENCE_VERIFIER_MAX_FINDINGS=100
 ```
 
