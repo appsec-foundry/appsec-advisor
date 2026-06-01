@@ -636,6 +636,83 @@ def _dedupe_exact(threats: list[dict]) -> list[dict]:
     return out
 
 
+def _evidence_identity_key(t: dict) -> tuple | None:
+    """Evidence-centric identity key — the SAME code location + the SAME
+    weakness class is the SAME finding, regardless of which STRIDE letter an
+    analyzer assigned, which component scanned it, or how the title was
+    phrased.
+
+    This reunites the cross-STRIDE / cross-component duplicate that the
+    ``(CWE, STRIDE)`` candidate key (``_candidate_key``) cannot: when two
+    component analyzers scan an overlapping path glob (e.g. ``express-backend``
+    over ``routes/**`` and ``b2b-api`` over ``routes/b2bOrder.ts``) they report
+    the same defect but may disagree on STRIDE (Tampering vs Elevation of
+    Privilege) and phrase the title differently ("Remote code execution…" vs
+    "RCE…"). ``_exact_key`` includes STRIDE + component + title-keywords, so it
+    misses them; the ``(CWE, STRIDE)`` grouping then splits them into separate
+    buckets the merger never compares. (2026-06 juice-shop: T-004/T-009 shipped
+    as two Critical findings for the identical ``routes/b2bOrder.ts:23`` RCE,
+    both pointing at the same mitigation M-010.)
+
+    Returns ``None`` when the evidence lacks a concrete positive line — a bare
+    file (line 0 / absent) is too coarse to assert identity, since many
+    distinct findings can legitimately share a file. CWE is part of the key so
+    two genuinely-different weaknesses at the same line (rare) stay separate."""
+    ev = t.get("evidence") or {}
+    if not isinstance(ev, dict):
+        ev = {}
+    f = (ev.get("file") or "").strip().lower()
+    ln = ev.get("line")
+    cwe = (t.get("cwe") or "").strip()
+    if not f or not cwe or not isinstance(ln, int) or isinstance(ln, bool) or ln <= 0:
+        return None
+    return (f, ln, cwe)
+
+
+def _dedupe_evidence(threats: list[dict]) -> list[dict]:
+    """Collapse threats sharing ``(file, line, CWE)`` — the same vulnerability
+    seen by two analyzers that disagreed on STRIDE / component / title.
+
+    Runs AFTER ``_dedupe_exact`` and BEFORE the ``(CWE, STRIDE)`` candidate
+    grouping, so the cross-STRIDE duplicate is reunited deterministically in
+    the collect phase — before STRIDE-based identity can split it and before
+    the (separately fragile) endpoint-grouping / LLM-merger / finalize path is
+    reached at all.
+
+    Merge policy: the higher-risk member stays primary (tie → first-seen, for
+    order-stable output); the dropped member's ``component_id`` and ``stride``
+    are recorded in ``merged_from`` / ``merged_strides`` for traceability.
+    Component re-attribution is left to the downstream ``reclassify_components``
+    pass, which keys on ``evidence.file``."""
+    out: list[dict] = []
+    by_key: dict[tuple, dict] = {}
+    for t in threats:
+        k = _evidence_identity_key(t)
+        if k is None:
+            out.append(t)
+            continue
+        prev = by_key.get(k)
+        if prev is None:
+            by_key[k] = t
+            out.append(t)
+            continue
+        if _risk_rank(t.get("risk")) < _risk_rank(prev.get("risk")):
+            keep, dropped = t, prev
+            by_key[k] = t
+            out[out.index(prev)] = t
+        else:
+            keep, dropped = prev, t
+        mf = keep.setdefault("merged_from", [keep.get("component_id")])
+        cid = dropped.get("component_id")
+        if cid and cid not in mf:
+            mf.append(cid)
+        ms = keep.setdefault("merged_strides", [keep.get("stride")])
+        ds = dropped.get("stride")
+        if ds and ds not in ms:
+            ms.append(ds)
+    return out
+
+
 def _group_candidates(threats: list[dict]) -> list[dict]:
     """Group threats sharing the candidate key (CWE + STRIDE). Groups of
     size >= 2 are candidates for LLM-adjudicated merge. Single-element
@@ -862,6 +939,58 @@ def _assign_t_ids(threats: list[dict]) -> list[dict]:
     return sorted_threats
 
 
+_SCENARIO_REF_RE = re.compile(r"\b[FT]-(\d{2,3})\b")
+
+
+def _remap_scenario_local_refs(threats: list[dict]) -> list[dict]:
+    """Rewrite analyzer-local cross-references in ``scenario`` prose to the
+    assigned GLOBAL T-ids.
+
+    STRIDE analyzers reference their own findings by component-LOCAL F-id (with
+    a stray ``T-`` prefix) when writing scenarios — e.g. the rate-limit
+    finding's scenario reads "Combined with MD5 password hashing (T-009)" where
+    ``T-009`` is the analyzer's local ``F-009`` (MD5). ``_assign_t_ids`` then
+    assigns a global T-id by sorting across ALL components + config-scan, with
+    no relation to the local number, and never rewrites the prose — so the ref
+    silently points at an unrelated global threat (2026-06 juice-shop: T-024
+    "wildcard CORS (T-019)" where T-019 was zip-slip; the local F-019 was CORS).
+
+    Local ids are globally unique by construction (the orchestrator hands each
+    analyzer a non-overlapping F-range), so a single ``local-id → t_id`` table
+    suffices. Each ``[TF]-NNN`` scenario token is interpreted as local
+    ``F-NNN`` and replaced with the resolved global T-id. Tokens that don't
+    resolve to a known local id (a deduped finding, a config-scan ``CFG-``
+    finding, or a hallucinated number) are left untouched — the pass never
+    emits a ref it cannot justify. Idempotent w.r.t. re-running finalize, which
+    always starts from the local-ref scenarios in ``.merge-candidates.json``."""
+    loc2tid = {
+        t["id"]: t["t_id"]
+        for t in threats
+        if isinstance(t.get("id"), str) and isinstance(t.get("t_id"), str)
+    }
+    n_fixed = 0
+
+    def _sub(m: "re.Match[str]") -> str:
+        nonlocal n_fixed
+        tid = loc2tid.get("F-%03d" % int(m.group(1)))
+        if tid and tid != m.group(0):
+            n_fixed += 1
+            return tid
+        return m.group(0)
+
+    for t in threats:
+        sc = t.get("scenario")
+        if isinstance(sc, str) and ("T-" in sc or "F-" in sc):
+            t["scenario"] = _SCENARIO_REF_RE.sub(_sub, sc)
+    if n_fixed:
+        print(
+            f"merge_threats: remapped {n_fixed} scenario cross-reference(s) "
+            "from analyzer-local F-ids to global T-ids",
+            file=sys.stderr,
+        )
+    return threats
+
+
 def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     """Apply LLM-produced merge decisions.
 
@@ -984,6 +1113,11 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # posture now arrives as §7.11 control rows + meta_findings[] sidecars,
     # not as CVE-shaped threats in this merged set.
     deduped = _dedupe_exact(flat)
+    # Evidence-identity dedup (2026-06): collapse the cross-STRIDE /
+    # cross-component duplicate (same file:line + CWE) that _exact_key and the
+    # (CWE,STRIDE) candidate grouping both miss. Runs here, before grouping, so
+    # the merger / finalize path never has to reunite a STRIDE-split pair.
+    deduped = _dedupe_evidence(deduped)
     all_candidates = _group_candidates(deduped)
     candidates, auto_decisions = _split_auto_decisions(all_candidates)
 
@@ -1037,6 +1171,9 @@ def cmd_finalize(args: argparse.Namespace) -> int:
 
     threats = _apply_decisions(threats, decisions)
     threats = _assign_t_ids(threats)
+    # Rewrite analyzer-local scenario cross-refs (F-NNN with a stray T- prefix)
+    # to the global T-ids just assigned — must run AFTER _assign_t_ids.
+    threats = _remap_scenario_local_refs(threats)
 
     payload = {
         "version": 1,

@@ -104,6 +104,109 @@ class TestExactDedup:
 
 
 # ---------------------------------------------------------------------------
+# Evidence-identity dedup (cross-STRIDE / cross-component same-location dup)
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceDedup:
+    """Regression for the 2026-06 juice-shop T-004/T-009 duplicate: two
+    component analyzers reported the SAME routes/b2bOrder.ts:23 RCE but
+    disagreed on STRIDE (Tampering vs Elevation of Privilege), different
+    component_id and title — so _exact_key and the (CWE,STRIDE) candidate
+    grouping both missed it and it shipped as two separate Critical findings."""
+
+    def _rce_pair(self):
+        ev = {"file": "routes/b2bOrder.ts", "line": 23}
+        b2b = _threat(
+            component_id="b2b-api",
+            title="Remote code execution via B2B order sandbox escape",
+            cwe="CWE-94", stride="Tampering", risk="Critical",
+            likelihood="High", impact="Critical", evidence=dict(ev),
+        )
+        express = _threat(
+            component_id="express-backend",
+            title="RCE via B2B order sandbox escape",
+            cwe="CWE-94", stride="Elevation of Privilege", risk="Critical",
+            likelihood="High", impact="Critical", evidence=dict(ev),
+        )
+        return b2b, express
+
+    def test_cross_stride_same_location_collapses(self, mt):
+        b2b, express = self._rce_pair()
+        result = mt._dedupe_evidence([b2b, express])
+        assert len(result) == 1
+        kept = result[0]
+        # provenance of the dropped member is preserved
+        assert set(kept.get("merged_from", [])) == {"b2b-api", "express-backend"}
+        assert set(kept.get("merged_strides", [])) == {"Tampering", "Elevation of Privilege"}
+
+    def test_higher_risk_member_wins(self, mt):
+        ev = {"file": "routes/x.ts", "line": 9}
+        low = _threat(component_id="a", cwe="CWE-94", stride="Tampering",
+                      risk="High", evidence=dict(ev), title="t-high")
+        crit = _threat(component_id="b", cwe="CWE-94", stride="Elevation of Privilege",
+                       risk="Critical", evidence=dict(ev), title="t-crit")
+        # first-seen is the lower-risk one; the Critical must still win
+        result = mt._dedupe_evidence([low, crit])
+        assert len(result) == 1
+        assert result[0]["risk"] == "Critical"
+
+    def test_same_line_different_cwe_stays_distinct(self, mt):
+        ev = {"file": "routes/x.ts", "line": 50}
+        a = _threat(component_id="c", cwe="CWE-89", stride="Tampering", evidence=dict(ev))
+        b = _threat(component_id="c", cwe="CWE-862", stride="Elevation of Privilege", evidence=dict(ev))
+        assert len(mt._dedupe_evidence([a, b])) == 2
+
+    def test_no_concrete_line_is_too_coarse_to_merge(self, mt):
+        # bare file (line 0 / absent) must NOT collapse — many distinct
+        # findings legitimately share a file.
+        a = _threat(component_id="c", cwe="CWE-94", stride="Tampering",
+                    evidence={"file": "server.ts", "line": 0})
+        b = _threat(component_id="c", cwe="CWE-94", stride="Elevation of Privilege",
+                    evidence={"file": "server.ts", "line": 0})
+        assert len(mt._dedupe_evidence([a, b])) == 2
+
+
+# ---------------------------------------------------------------------------
+# Scenario-prose local-ref remap (analyzer-local F-id -> global T-id)
+# ---------------------------------------------------------------------------
+
+
+class TestScenarioRefRemap:
+    """Regression for the 2026-06 juice-shop stale scenario cross-refs: STRIDE
+    analyzers write their component-LOCAL F-id (with a T- prefix) into scenario
+    prose; _assign_t_ids reassigns global T-ids by sorting, so the prose ends
+    up pointing at unrelated threats."""
+
+    def test_local_ref_remapped_to_global(self, mt):
+        # local F-009 (MD5) is referenced by another finding's scenario as
+        # "T-009"; after global assignment F-009 becomes T-008.
+        threats = [
+            {"id": "F-009", "t_id": "T-008", "scenario": "MD5 hashing."},
+            {"id": "F-017", "t_id": "T-021",
+             "scenario": "Combined with MD5 password hashing (T-009), this enables takeover."},
+        ]
+        out = mt._remap_scenario_local_refs(threats)
+        assert "(T-008)" in out[1]["scenario"]
+        assert "T-009" not in out[1]["scenario"]
+
+    def test_unresolvable_ref_left_untouched(self, mt):
+        # a scenario ref whose local id is not in the table (deduped /
+        # config-scan / hallucinated) must NOT be rewritten.
+        threats = [
+            {"id": "F-001", "t_id": "T-001",
+             "scenario": "See also T-099 which does not exist locally."},
+        ]
+        out = mt._remap_scenario_local_refs(threats)
+        assert "T-099" in out[0]["scenario"]
+
+    def test_no_refs_is_noop(self, mt):
+        threats = [{"id": "F-001", "t_id": "T-001", "scenario": "Plain prose, no refs."}]
+        out = mt._remap_scenario_local_refs(threats)
+        assert out[0]["scenario"] == "Plain prose, no refs."
+
+
+# ---------------------------------------------------------------------------
 # Candidate grouping
 # ---------------------------------------------------------------------------
 
