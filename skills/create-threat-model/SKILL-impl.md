@@ -2158,6 +2158,13 @@ Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to
    ```
    When `$ESCALATE` is empty, skip straight to 3c. The escalation runs **at most once** per run (`.abuse-escalated` guard) and the verifiers get a fresh budget per dispatch (the watchdog resets per Agent dispatch — see "Fresh-budget" note in Stage 2), so it cannot re-trip the budget flag that this whole fix removes.
 
+3b2. **Fold verified chains into severity** (deterministic, no LLM). Now that the abuse verdicts are final, re-run the deterministic triage ranking so a **code-verified `fully_viable` chain bubbles its constituent findings up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** on `APPSEC_TRIAGE_DETERMINISTIC` and exits cleanly otherwise — so this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. Under `.budget-critical` every chain is `inconclusive`, so there is nothing to fold and this is a harmless no-op.
+   ```bash
+   if [ -f "$OUTPUT_DIR/.abuse-case-verdicts.json" ]; then
+     python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_compute_ranking.py" "$OUTPUT_DIR" || true
+   fi
+   ```
+
 3c. **Render §9** (deterministic):
    ```bash
    # Render the §9 fragment HERE — BEFORE the Stage-2 renderer's first

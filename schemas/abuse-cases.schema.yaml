@@ -31,8 +31,11 @@ $defs:
     properties:
       id:
         type: string
-        # AC-T-001 (library template), AC-001 (discovered), ORG-AC-001 (org
-        # custom), REPO-AC-001 (repo-local: <repo>/.appsec/abuse-cases/*.yaml)
+        # AC-T-001 (library template), ORG-AC-001 (org custom), REPO-AC-001
+        # (repo-local: <repo>/.appsec/abuse-cases/*.yaml). The bare AC-NNN form
+        # is reserved for analysis-discovered cases — NOT yet produced by any
+        # pipeline step (no discovered-case generator exists); kept in the
+        # pattern for forward-compat only.
         pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"
       title:
         type: string

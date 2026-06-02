@@ -1,3 +1,12 @@
+<!-- STALE DESIGN MOCKUP — DO NOT TREAT AS LIVE OUTPUT.
+     Hand-written §9 mockup from the original design phase. Uses the OLD scheme
+     (T-IDs, "§8 Threat Register", AC-001, a "discovered" AC-002) that the
+     shipped pipeline does NOT produce: there is no discovered-case generator,
+     and the real renderer emits AC-T-NNN / "§8 Findings Register". This file is
+     the source of the misleading "discovered (synthesised)" prose that leaked
+     into render_abuse_cases.py (now corrected). Kept for historical reference
+     only. See abuse-cases-value-plan.md. -->
+
 ## 9. Abuse Cases
 
 _Abuse cases describe end-to-end attack scenarios that span multiple components or require chaining of individual vulnerabilities. Each case is either **mandatory** (defined in the org profile, evaluated against every repository) or **discovered** (synthesized from the threat register by the threat analysis). All chain steps reference verified findings from [§8 Threat Register](#8-threat-register) — no step is asserted without a corresponding T-ID._

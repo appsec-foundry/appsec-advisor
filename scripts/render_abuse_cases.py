@@ -332,12 +332,12 @@ def _summary_table(models: list[dict]) -> str:
 
 _INTRO = (
     "_Abuse cases describe end-to-end attack scenarios that chain individual "
-    "findings into a verifiable exploitation path. Each case is either "
-    "**mandatory** (defined in the org profile / plugin library, evaluated against "
-    "every repository) or **discovered** (synthesised from the finding register). "
-    "Every chain step references a verified finding from "
-    "[§8 Findings Register](#8-findings-register); the chain verdict is computed "
-    "deterministically from per-step verification, never rated by hand._"
+    "findings into an exploitation path. Each case is **mandatory** — defined in "
+    "the org profile / plugin library and evaluated against every repository. "
+    "Every chain step references a finding from "
+    "[§8 Findings Register](#8-findings-register); each step is code-confirmed "
+    "against the repository and the chain verdict is folded deterministically "
+    "from the per-step results, never rated by hand._"
 )
 
 _LEGEND = (

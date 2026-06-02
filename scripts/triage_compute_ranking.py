@@ -93,6 +93,16 @@ def _load_yaml(path: Path, default: Any) -> Any:
     return data if data else default
 
 
+def _load_json(path: Path) -> Any:
+    """Best-effort JSON load; returns None on any error (non-fatal). Used for
+    the abuse-case sidecars, which may be absent when the feature is disabled
+    or skipped under budget-critical."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Finding access helpers
 # ---------------------------------------------------------------------------
@@ -274,6 +284,84 @@ def _detect_chains(findings: list[dict], chain_specs: list[dict]) -> list[dict]:
                 }
             )
     return active
+
+
+def _detect_verified_abuse_chains(
+    findings: list[dict], verdicts_doc: Any, matches_doc: Any
+) -> list[dict]:
+    """Build chain entries (same shape as ``_detect_chains``) from CODE-VERIFIED
+    abuse-case verdicts, so the existing effective-severity elevation
+    (keystone/contributor + caps + no-downgrade) drives the finding ratings.
+
+    Only ``fully_viable`` chains elevate — ``partially_blocked`` /
+    ``inconclusive`` do not (guardrail against inflation). A finding bound to a
+    ``required`` step is a keystone; a non-required step is a contributor. The
+    chain severity is one notch above the highest member raw severity — the
+    "combined exceeds individual" semantics that justify an abuse case — capped
+    at Critical. Returns [] when the sidecars are absent (non-fatal)."""
+    if not isinstance(verdicts_doc, dict) or not isinstance(matches_doc, dict):
+        return []
+    verdict_by_id = {
+        v.get("abuse_case_id"): v
+        for v in (verdicts_doc.get("verdicts") or [])
+        if isinstance(v, dict)
+    }
+
+    # The abuse-case matcher binds ``matched_finding_id`` from
+    # ``.threats-merged.json`` using ``f_id|t_id|id`` — which need NOT be the
+    # same key the triage uses (``t_id|id|finding_id``). Resolve a matched id
+    # against EVERY id key of each finding, then store the triage-canonical
+    # ``_finding_id`` so membership lines up with the per-finding loop below.
+    finding_by_any_id: dict[str, dict] = {}
+    for t in findings:
+        for key in ("f_id", "t_id", "id", "finding_id"):
+            val = (t.get(key) or "").strip()
+            if val:
+                finding_by_any_id.setdefault(val, t)
+
+    out: list[dict] = []
+    for m in matches_doc.get("matches") or []:
+        if not isinstance(m, dict):
+            continue
+        cid = m.get("abuse_case_id")
+        v = verdict_by_id.get(cid)
+        if not v or v.get("chain_verdict") != "fully_viable":
+            continue
+
+        keystones, contributors, members, member_sevs = [], [], [], []
+        for sm in m.get("step_matches") or []:
+            raw = (sm.get("matched_finding_id") or "").strip()
+            finding = finding_by_any_id.get(raw)
+            if not finding:
+                continue
+            tid = _finding_id(finding)
+            if not tid:
+                continue
+            members.append(tid)
+            member_sevs.append(_finding_severity(finding))
+            if sm.get("required", True):
+                keystones.append(tid)
+            else:
+                contributors.append(tid)
+        if not members:
+            continue
+
+        base = max((_sev_rank(s) for s in member_sevs), default=_sev_rank("High"))
+        combined_rank = min(base + 1, _sev_rank("Critical"))
+        out.append(
+            {
+                "id": cid,
+                "name": m.get("title") or cid,
+                "severity": _sev_label(combined_rank),
+                "severity_justification": f"code-verified fully-viable abuse chain {cid}",
+                "breach_distance": 1,
+                "keystones": keystones,
+                "contributors": contributors,
+                "members": members,
+                "narrative": "",
+            }
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -512,10 +600,17 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             t["breach_distance"] = d
             t["breach_distance_reason"] = r
 
-    # 6b — chains
+    # 6b — chains (keyword compound-chains + code-verified abuse-case chains)
     active_chains = _detect_chains(findings, chains_yaml.get("chains") or [])
+    verified_chains = _detect_verified_abuse_chains(
+        findings,
+        _load_json(output_dir / ".abuse-case-verdicts.json"),
+        _load_json(output_dir / ".abuse-case-matches.json"),
+    )
+    all_chains = active_chains + verified_chains
     role_by_id: dict[str, str] = {}
-    chain_membership: dict[str, list[str]] = {}
+    chain_membership: dict[str, list[str]] = {}      # compound-chain ids (CC-*)
+    verified_membership: dict[str, list[str]] = {}   # verified abuse-case ids (AC-*)
     for ch in active_chains:
         for k in ch.get("keystones") or []:
             role_by_id[k] = "keystone"
@@ -523,6 +618,13 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         for c in ch.get("contributors") or []:
             role_by_id.setdefault(c, "contributor")
             chain_membership.setdefault(c, []).append(ch["id"])
+    for ch in verified_chains:
+        for k in ch.get("keystones") or []:
+            role_by_id[k] = "keystone"  # a code-verified chain is ≥ a keyword one
+            verified_membership.setdefault(k, []).append(ch["id"])
+        for c in ch.get("contributors") or []:
+            role_by_id.setdefault(c, "contributor")
+            verified_membership.setdefault(c, []).append(ch["id"])
 
     # 6c — effective severity per finding
     eff_by_id: dict[str, str] = {}
@@ -533,7 +635,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             continue
         role = role_by_id.get(tid)
         chain_sev_rank = 0
-        for ch in active_chains:
+        for ch in all_chains:
             if tid in (ch["keystones"] + ch["contributors"]):
                 chain_sev_rank = max(chain_sev_rank, _sev_rank(ch["severity"]))
         eff, reasons = _compute_effective(t, role, chain_sev_rank, caps, criteria, bd_by_id.get(tid, 2))
@@ -543,6 +645,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             t["effective_severity"] = eff
             t["chain_role"] = role or "none"
             t["compound_chain_ids"] = chain_membership.get(tid, [])
+            t["verified_chain_ids"] = verified_membership.get(tid, [])
 
     # 6e — categories
     categories: list[dict] = yaml_data.get("threat_categories") or []
@@ -607,6 +710,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
                 "breach_distance": bd,
                 "score": s,
                 "compound_chain_ids": chain_membership.get(tid, []),
+                "verified_chain_ids": verified_membership.get(tid, []),
             }
         )
     fnd_scored.sort(key=lambda x: (-x["score"], x["id"]))
@@ -773,6 +877,7 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
             t["breach_distance"] = f["breach_distance"]
             t["chain_role"] = f["chain_role"]
             t["compound_chain_ids"] = f.get("compound_chain_ids", [])
+            t["verified_chain_ids"] = f.get("verified_chain_ids", [])
     # Write yaml back
     yaml_path.write_text(
         yaml.safe_dump(yaml_data, sort_keys=False, allow_unicode=True, width=120),

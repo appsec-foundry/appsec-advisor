@@ -267,3 +267,157 @@ def test_force_flag_overrides_env_gate(tmp_path: Path) -> None:
     )
     assert res.returncode == 0
     assert (tmp_path / ".triage-flags.json").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Verified abuse-case chains → effective_severity (P1-B)
+# ---------------------------------------------------------------------------
+
+
+def _tcr():
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    return tcr
+
+
+def _ac_docs(chain_verdict: str, *, required: bool = True):
+    """Build a matches+verdicts pair for one abuse case AC-T-001 whose single
+    matched step binds finding F-1."""
+    matches = {
+        "matches": [
+            {
+                "abuse_case_id": "AC-T-001",
+                "title": "Account Takeover via Stored XSS + Token Hijacking",
+                "step_matches": [
+                    {"step": 1, "required": required, "matched_finding_id": "F-1"},
+                ],
+            }
+        ]
+    }
+    verdicts = {"verdicts": [{"abuse_case_id": "AC-T-001", "chain_verdict": chain_verdict}]}
+    return verdicts, matches
+
+
+def test_verified_fully_viable_chain_elevates_required_finding() -> None:
+    """A finding bound to a REQUIRED step of a code-verified fully_viable chain
+    is a keystone → its effective severity is pulled up one notch (High→Critical)."""
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": "High", "title": "Stored XSS"}]
+    verdicts, matches = _ac_docs("fully_viable")
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert len(chains) == 1
+    ch = chains[0]
+    assert ch["id"] == "AC-T-001"
+    assert ch["keystones"] == ["F-1"]
+    assert ch["severity"] == "Critical"  # one notch above High, capped
+
+
+def test_matched_id_key_mismatch_resolves_to_triage_id() -> None:
+    """REGRESSION: the matcher binds matched_finding_id via f_id, but triage
+    keys findings on t_id. The detector must resolve across id keys and store
+    the triage-canonical id, else elevation silently no-ops in production."""
+    tcr = _tcr()
+    # Matcher bound "F-1" (the f_id); triage canonical _finding_id is the t_id "T-1".
+    findings = [{"f_id": "F-1", "t_id": "T-1", "risk": "High"}]
+    verdicts, matches = _ac_docs("fully_viable")  # binds matched_finding_id "F-1"
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert chains and chains[0]["keystones"] == ["T-1"]  # stored under triage id
+
+
+def test_partially_blocked_chain_does_not_elevate() -> None:
+    """Only fully_viable elevates; partially_blocked / inconclusive must not."""
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": "High"}]
+    for verdict in ("partially_blocked", "inconclusive", "mitigated"):
+        verdicts, matches = _ac_docs(verdict)
+        assert tcr._detect_verified_abuse_chains(findings, verdicts, matches) == []
+
+
+def test_non_required_step_is_contributor() -> None:
+    """A finding on a non-required step is a contributor (capped), not keystone."""
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": "Medium"}]
+    verdicts, matches = _ac_docs("fully_viable", required=False)
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert chains[0]["contributors"] == ["F-1"]
+    assert chains[0]["keystones"] == []
+
+
+def test_absent_sidecars_are_non_fatal() -> None:
+    """Missing/None sidecars → no verified chains, no error (feature off / budget)."""
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": "High"}]
+    assert tcr._detect_verified_abuse_chains(findings, None, None) == []
+    assert tcr._detect_verified_abuse_chains(findings, {}, {}) == []
+
+
+def test_combined_severity_capped_at_critical() -> None:
+    """Max member already Critical → combined stays Critical (no overflow)."""
+    tcr = _tcr()
+    findings = [{"id": "F-1", "risk": "Critical"}]
+    verdicts, matches = _ac_docs("fully_viable")
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert chains[0]["severity"] == "Critical"
+
+
+def test_verified_chain_annotates_finding_end_to_end(tmp_path: Path) -> None:
+    """Integration: with sidecars present, compute_ranking elevates the bound
+    finding's effective_severity and stamps verified_chain_ids in the ranking."""
+    tcr = _tcr()
+    threats = [
+        {"id": "F-1", "title": "Stored XSS", "risk": "High", "impact": "High", "primary_cwe": "CWE-79"},
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+    verdicts, matches = _ac_docs("fully_viable")
+    (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
+
+    ranking = tcr.compute_ranking(tmp_path)
+    fnd = ranking["views"]["top_findings"]["findings_ranked"]
+    entry = next(f for f in fnd if f["id"] == "F-1")
+    assert entry["effective_severity"] == "Critical"
+    assert entry["chain_role"] == "keystone"
+    assert entry["verified_chain_ids"] == ["AC-T-001"]
+
+
+def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> None:
+    """Weg 2: first triage pass (no sidecars) fixes effective_severity; a second
+    pass after the abuse sidecars appear must re-elevate the chain member upward
+    and persist it — and a third identical pass must be a no-op."""
+    tcr = _tcr()
+
+    env = dict(os.environ)
+
+    def _persist(out_dir: Path) -> None:
+        """Run the real CLI (writes threat-model.yaml + .triage-flags.json back)."""
+        res = subprocess.run(
+            [sys.executable, str(SCRIPT), str(out_dir), "--force"],
+            env=env, capture_output=True, text=True,
+        )
+        assert res.returncode == 0, res.stderr
+
+    threats = [{"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"}]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+
+    # Pass 1 — no abuse sidecars: stays High (no chain elevation).
+    _persist(tmp_path)
+    after1 = yaml.safe_load((tmp_path / "threat-model.yaml").read_text(encoding="utf-8"))
+    f1 = next(t for t in after1["threats"] if t["id"] == "F-1")
+    assert f1["effective_severity"] == "High"
+
+    # Sidecars now appear (Stage 1c completed) — pass 2 must elevate to Critical.
+    verdicts, matches = _ac_docs("fully_viable")
+    (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
+    _persist(tmp_path)
+    after2 = yaml.safe_load((tmp_path / "threat-model.yaml").read_text(encoding="utf-8"))
+    f2 = next(t for t in after2["threats"] if t["id"] == "F-1")
+    assert f2["effective_severity"] == "Critical"
+    assert f2["verified_chain_ids"] == ["AC-T-001"]
+
+    # Pass 3 — identical inputs: idempotent no-op.
+    _persist(tmp_path)
+    after3 = yaml.safe_load((tmp_path / "threat-model.yaml").read_text(encoding="utf-8"))
+    f3 = next(t for t in after3["threats"] if t["id"] == "F-1")
+    assert f3["effective_severity"] == "Critical"
