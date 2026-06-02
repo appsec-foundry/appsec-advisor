@@ -202,6 +202,44 @@ def test_always_critical_cwe_promotes_under_context() -> None:
     assert not any("always_crit_promoted" in r for r in reasons2)
 
 
+def test_mass_assignment_override_pins_distance_1_against_real_config() -> None:
+    """Regression for the juice-shop F-009 under-rating: a CWE-915 mass-assignment
+    finding whose scenario mentions a 'logged-in user' PUT variant must still get
+    breach_distance 1 (the open-registration / REST-bridge POST variant is the
+    reachable one). The override short-circuits the Stage-3 authenticated-route-hint
+    heuristic that otherwise re-raised it to 2 and defeated the Critical promotion.
+    """
+    sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
+    import triage_compute_ranking as tcr  # type: ignore[import-not-found]
+
+    bd_patterns = tcr._load_yaml(PLUGIN_ROOT / "data" / "breach-distance-patterns.yaml", {})
+    crit = tcr._load_yaml(PLUGIN_ROOT / "data" / "critical-criteria.yaml", {})
+
+    finding = {
+        "title": "Mass assignment via Sequelize REST — /api/* routes",
+        "cwe": "CWE-915",
+        "impact": "Critical",
+        # Scenario deliberately frames the AUTHENTICATED PUT variant — the exact
+        # wording that pushed breach_distance to 2 at Stage-1 triage time.
+        "scenario": "a logged-in authenticated user can send PUT /api/Users/:id "
+        "with {role: 'admin'} via the finale-rest bridge on routes/basket-like /api/* routes",
+        "evidence": {"file": "models/user.ts", "line": 86},
+    }
+    dist, reason = tcr._compute_breach_distance(finding, bd_patterns)
+    assert dist == 1, f"mass-assignment override must pin distance 1; got {dist} ({reason})"
+
+    # And with impact=Critical the always-critical gate promotes to Critical.
+    eff = tcr._sev_rank("High")  # Medium likelihood × Critical impact → High
+    rank, crit_reason = tcr._apply_critical_criteria(finding, eff, "", crit, dist)
+    assert rank == tcr._sev_rank("Critical"), f"must promote to Critical; reason={crit_reason}"
+    assert "always_crit_promoted:CWE-915" in crit_reason
+
+    # Guard: a LOW-impact mass-assignment is NOT over-promoted by the distance pin.
+    low = dict(finding, impact="Low")
+    rank_low, _ = tcr._apply_critical_criteria(low, tcr._sev_rank("Medium"), "", crit, dist)
+    assert rank_low < tcr._sev_rank("Critical"), "low-impact mass-assignment must not promote"
+
+
 def test_refuted_contributor_not_elevated() -> None:
     """Contributor refutation suppression — mirror of the keystone case."""
     sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))

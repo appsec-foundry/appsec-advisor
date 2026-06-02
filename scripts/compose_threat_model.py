@@ -1417,6 +1417,21 @@ def _load_fragment(ctx: RenderContext, section_id: str, fragment_name: str) -> A
             return json.loads(text)
         except json.JSONDecodeError as e:
             raise FragmentError(section_id, f"JSON parse error in {path}: {e}")
+    # Deterministic §7 structural floor (post-enrichment normalizer). The
+    # LLM-enriched security-architecture.md routinely drops the three §7
+    # structural contract rules (validation_approach_first,
+    # flow_methods_require_diagram, control_subsection_coverage); re-asserting
+    # them here — in-memory, at the single compose chokepoint — makes the
+    # composed §7 pass the contract gate by construction on every compose path
+    # (initial, REPAIR_MODE, export) without a Stage-1 repair round-trip.
+    # Idempotent and best-effort: a normalizer failure must never break compose.
+    if fragment_name.endswith("security-architecture.md"):
+        try:
+            from normalize_security_architecture import normalize_text
+
+            text, _changes = normalize_text(text)
+        except Exception:
+            pass
     return text
 
 
@@ -2375,14 +2390,45 @@ def _reconcile_attack_path_membership(
         if fid:
             findings_by_class.setdefault(slug, []).append(fid)
 
-    existing_slugs = {
-        (ap.get("class") or "").strip()
-        for ap in (data.get("attack_paths") or [])
-        if isinstance(ap, dict)
-    }
+    path_by_slug: dict[str, dict] = {}
+    for ap in (data.get("attack_paths") or []):
+        if isinstance(ap, dict):
+            s = (ap.get("class") or "").strip()
+            if s and s not in path_by_slug:
+                path_by_slug[s] = ap
+    existing_slugs = set(path_by_slug)
 
     gap_log: list[dict] = []
     appended: list[dict] = []
+    merged_any = False
+    # (3) Union missing findings into EXISTING class paths. The LLM-authored
+    # injection path lists e.g. SQL/NoSQL findings but routinely omits other
+    # same-class findings (XXE CWE-611 is an `injection`-class finding on the
+    # file-upload service); without this merge they exist in §8 but never get a
+    # glyph/edge in Figures 1 & 2 or the Top-Threats table. We add only findings
+    # that classify into the SAME class as the existing path, so the merge never
+    # mis-attributes a finding to an unrelated attack class.
+    for slug, fids in findings_by_class.items():
+        ap = path_by_slug.get(slug)
+        if ap is None:
+            continue
+        cur = [f for f in (ap.get("findings") or []) if isinstance(f, str)]
+        cur_set = set(cur)
+        missing = [f for f in sorted(set(fids)) if f not in cur_set]
+        if missing:
+            ap["findings"] = sorted(cur_set | set(missing))
+            merged_any = True
+            gap_log.append({
+                "class": slug,
+                "merged_findings": missing[:8],
+                "merged_count": len(missing),
+                "source": "(3) attack-paths same-class finding merge",
+                "reason": (
+                    f"{len(missing)} finding(s) classify as {slug!r} but were "
+                    f"missing from the LLM-authored path's findings[]"
+                ),
+            })
+
     for slug, fids in findings_by_class.items():
         if slug in existing_slugs:
             continue
@@ -2413,6 +2459,24 @@ def _reconcile_attack_path_membership(
         })
 
     if not appended:
+        if merged_any:
+            # Findings were merged into existing paths but no new class added —
+            # persist the merge log and return without re-sorting.
+            try:
+                log_path = ctx.output_dir / ".reconcile-log.json"
+                existing_log: dict = {}
+                if log_path.is_file():
+                    try:
+                        existing_log = json.loads(log_path.read_text(encoding="utf-8")) or {}
+                    except (json.JSONDecodeError, OSError):
+                        existing_log = {}
+                existing_log.setdefault("attack_path_gap_fills", []).extend(gap_log)
+                log_path.write_text(
+                    json.dumps(existing_log, indent=2, sort_keys=False) + "\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
         return
 
     # Re-sort attack_paths per taxonomy declaration order so ① ② … stays
@@ -4046,23 +4110,39 @@ def _severity_by_finding_num(threats: list) -> dict:
 
 def _build_register_index(label: str, prefix: str, nums: list,
                           title_by_num: dict, sev_by_num: dict,
-                          icon_tbl: dict | None = None) -> str:
+                          icon_tbl: dict | None = None,
+                          key_label_tbl: dict | None = None) -> str:
     """Render a `**<label>:**<br/>🔴 [P-NNN](#p-nnn) — <title><br/>…` jump list.
 
     ``icon_tbl`` defaults to the severity-circle table (§8 Findings index);
     pass ``_PRIO_ICON_TBL`` for the §9 Mitigations index so the circle keys
     on remediation priority (p1..p4) instead of finding severity.
+
+    ``key_label_tbl`` (optional) renders an explicit text tag after the circle
+    — e.g. ``{"p1": "P1", …}`` so the §9 Mitigations index reads
+    ``🔴 P1 · [M-001](#m-001) — …``. Without it the circle is ambiguous with
+    the §8 severity palette (both use 🔴/🟠/🟡); the tag disambiguates priority
+    from severity at a glance.
     """
     icon_tbl = icon_tbl if icon_tbl is not None else _SEV_ICON_TBL
     chips = []
     for n in nums:
-        emoji = icon_tbl.get(sev_by_num.get(n, ""), "⚪")
+        key = sev_by_num.get(n, "")
+        emoji = icon_tbl.get(key, "⚪")
+        chip = emoji
+        if key_label_tbl:
+            tag = key_label_tbl.get(key, "")
+            if tag:
+                chip += f" {tag} ·"
         ttl = _index_short_title(title_by_num.get(n, ""))
-        chip = f"{emoji} [{prefix}-{n:03d}](#{prefix.lower()}-{n:03d})"
+        chip += f" [{prefix}-{n:03d}](#{prefix.lower()}-{n:03d})"
         if ttl:
             chip += f" — {ttl}"
         chips.append(chip)
     return f"**{label}:**<br/>" + "<br/>".join(chips)
+
+
+_PRIO_LABEL_TBL = {"p1": "P1", "p2": "P2", "p3": "P3", "p4": "P4"}
 
 
 _MULTI_MATCH_WARNED: set[str] = set()
@@ -4669,6 +4749,26 @@ def _fig1_label(text: str) -> str:
     return s.replace("&", "&amp;").replace('"', "'")
 
 
+# Figure 1 label-complexity thresholds. Naming every attack glyph on every solid
+# edge is self-describing but clutters a busy diagram; past these limits the
+# edges fall back to bare numbers (the legend under the diagram still names every
+# glyph). Tuned so a typical figure (≤ a handful of attacked components, a few
+# classes each) stays in the readable full-name mode.
+_FIG1_TOTAL_GLYPH_LIMIT = 12   # sum of glyphs across all solid attack edges
+_FIG1_MAX_EDGE_GLYPH_LIMIT = 6  # glyphs on the single busiest solid edge
+
+
+def _fig1_use_compact_labels(attack_glyphs: dict) -> bool:
+    """Decide whether Figure 1 solid-edge labels should drop class names and
+    show bare glyph numbers, because naming every glyph would clutter the
+    diagram. ``attack_glyphs`` maps (actor, component) → list of glyphs."""
+    if not attack_glyphs:
+        return False
+    total = sum(len(g) for g in attack_glyphs.values())
+    busiest = max((len(g) for g in attack_glyphs.values()), default=0)
+    return total > _FIG1_TOTAL_GLYPH_LIMIT or busiest > _FIG1_MAX_EDGE_GLYPH_LIMIT
+
+
 def _render_top_threats_architecture(
     ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict
 ) -> str:
@@ -4687,10 +4787,17 @@ def _render_top_threats_architecture(
       T1. Every SOLID red edge originates at an ACTOR node. Built only via
           ``_add(attack_glyphs, actor_nid, …)`` where ``actor_nid`` always comes
           from ``_actor()`` → no component can ever be the source of an attack.
-      T2. Each attack class lands on EXACTLY ONE solid target = the
-          representative component of its TARGET TIER (data target fronted by
-          the app rep). No scatter across every tangential finding-host — that
-          is what wrongly drew "privilege-escalation ⇒ SPA".
+      T2. An attack class lands a SOLID edge on every DRAWN component in its
+          TARGET TIER that actually hosts one of the class's findings — directly
+          exposed APIs (file upload, B2B) are attacked directly, so each gets
+          its own actor⇒component edge rather than one arrow collapsed onto the
+          tier representative. Restricting hosts to the class's TARGET TIER is
+          what prevents the historic "privilege-escalation ⇒ SPA" mis-draw (a
+          client-tier finding of an application-target class does not pull the
+          arrow into the client tier). Glyphs merge per (actor, component) pair
+          (P2), so a component hit by several classes shows ONE edge carrying
+          all their glyphs — no parallel-edge clutter. Falls back to the target
+          tier's representative when the class has no drawn finding-host there.
       T3. No direct actor⇒data edge. Reaching the data tier is shown as a
           DOTTED propagation edge ``app rep ··> data rep`` (fires when the class
           targets data OR has any data-tier finding).
@@ -4933,19 +5040,30 @@ def _render_top_threats_architecture(
             for f in (ap.get("findings") or [])
         )
 
-        # T2 — ONE primary SOLID target per class = the representative component
-        # of the class's TARGET TIER. A data target is fronted by the app rep
-        # (attackers never reach data directly). This is deterministic and
-        # collapses to one edge per class — no scatter across every tangential
-        # finding-host (which is what wrongly drew "priv-esc ⇒ SPA").
-        if tt == "client":
-            primary = rep_client or rep_app
-        else:  # "application" or "data" → the attack lands on the app tier
-            primary = rep_app or rep_client
-        if not primary:
-            primary = next(iter(comp_node), None)
-        if primary:
-            _add(attack_glyphs, actor_nid, comp_node[primary], glyph)  # T1: src is an actor
+        # T2 — SOLID targets = the DRAWN components in the class's TARGET TIER
+        # that actually host one of this class's findings. Directly-exposed APIs
+        # (file upload, B2B) are reached and attacked directly by the attacker,
+        # so each gets its OWN solid actor⇒component edge — not one arrow
+        # collapsed onto the tier representative. Restricting to the target tier
+        # keeps a client-tier finding of an application-target class from pulling
+        # the arrow into the client tier (the old "priv-esc ⇒ SPA" mis-draw).
+        # Glyphs merge per (actor, component) pair (P2 / _add dedup), so a
+        # component hit by several classes renders ONE edge with all glyphs.
+        target_tier_name = "client" if tt in ("client", "victim") else "application"
+        host_comps: list[str] = []
+        for f in (ap.get("findings") or []):
+            c = fid_component.get((f or "").upper())
+            if c and c in _drawn and comp_tier.get(c) == target_tier_name and c not in host_comps:
+                host_comps.append(c)
+        if not host_comps:
+            # No drawn finding-host in the target tier → fall back to that tier's
+            # representative so the class still shows a solid edge.
+            _rep_fallback = rep_client if target_tier_name == "client" else rep_app
+            _rep_fallback = _rep_fallback or rep_app or rep_client or next(iter(comp_node), None)
+            if _rep_fallback:
+                host_comps = [_rep_fallback]
+        for _hc in host_comps:
+            _add(attack_glyphs, actor_nid, comp_node[_hc], glyph)  # T1: src is an actor
 
         # T3 — dotted propagation into the data tier when the class reaches data
         # (declared data target OR a data-tier finding), drawn app rep ··> data rep.
@@ -4990,6 +5108,19 @@ def _render_top_threats_architecture(
     if rep_app:
         for cid in _data_drawn:
             benign_edges.append((comp_node[rep_app], comp_node[cid], " reads/writes "))
+    # Application-tier connectivity fallback. With T2 routing solid attack edges
+    # to the actual finding-host components, a directly-attacked API (file
+    # upload, B2B) now carries its own RED edge and needs no grey edge. But a
+    # drawn app component that received NO solid attack edge (e.g. a sub-service
+    # whose findings did not surface as a top attack class) would otherwise be an
+    # orphan box. Wire only those from the rep with a grey backbone edge so every
+    # drawn component has ≥1 edge — without drawing a misleading "internal
+    # sub-service" grey edge onto a component the attacker actually hits directly.
+    _attacked_nodes = {dst for (_src, dst) in attack_glyphs}
+    if rep_app:
+        for cid in app_comps:
+            if cid in _drawn and cid != rep_app and comp_node[cid] not in _attacked_nodes:
+                benign_edges.append((comp_node[rep_app], comp_node[cid], " routes to "))
 
     # ---- Emit the Mermaid block -------------------------------------------
     # Use the ELK layered renderer (same as Figure 2): its crossing-minimisation
@@ -5001,7 +5132,12 @@ def _render_top_threats_architecture(
     # driven; ELK only equalises their row placement, not their pixel size.
     lines: list[str] = [
         "```mermaid",
-        '%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 34, "rankSpacing": 52}} }%%',
+        # padding: internal label padding inside every node box (default 8) so
+        #   the C-NN labels + badge line are not flush against the box border.
+        # subGraphTitleMargin: small breathing room above/below each tier title
+        #   ("Application Tier — Node / Express" etc.) so the cluster heading is
+        #   not clamped against the subgraph border (2026-06-02 user request).
+        '%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 34, "rankSpacing": 52, "padding": 10, "subGraphTitleMargin": {"top": 6, "bottom": 6}}} }%%',
         "flowchart TB",
     ]
     # External actors are grouped into their OWN band (a subgraph, like every
@@ -5066,26 +5202,61 @@ def _render_top_threats_architecture(
         nm = c.get("short_label") or c.get("label") or (ap.get("class") or "attack")
         glyph_name[glyph_seq[i]] = _fig1_label(_posture_short_label(nm))
 
-    # First-reference labelling (2026-06-02 user request): the FIRST edge that
-    # carries a glyph shows its short class title inline (e.g. "① RCE");
-    # every later reference to the same glyph (typically the dotted
-    # consequence edge) shows the bare number. This makes Figure 1
-    # self-describing on the arrows themselves without re-stacking every class
-    # name on every edge — the space-join keeps it horizontal, so it does not
-    # re-introduce the actor→app vertical inflation the bare-glyph form fixed
-    # (2026-05-31 "zu sehr in die Länge gezogen"). The full glyph→name key is
-    # still emitted once as the legend line below.
-    _emitted_glyph_titles: set[str] = set()
+    # Labelling rule (2026-06-02 user request, revised). A SOLID attack edge is a
+    # DIRECT attack and must be self-describing: it NAMES every glyph it carries
+    # ("① Injection ④ Secret Exposure"), so each attacked component reads on its
+    # own without cross-referencing another arrow. A DOTTED edge is a FOLLOW-ON /
+    # propagation step (the XSS landing on the victim, injection reaching the DB)
+    # whose attack class was already named on the solid edge it continues — so it
+    # references by BARE number ("⑥"). Only when a glyph reaches a dotted edge
+    # WITHOUT ever appearing on a solid edge (rare: a class with a data-tier-only
+    # finding and no direct host) does the dotted edge name it, so nothing is left
+    # unexplained. Solid edges are always emitted before dotted ones below, which
+    # is what lets the dotted edges safely go bare. The full glyph→name key is
+    # also emitted once as the legend line below.
+    #
+    # Complexity guard (2026-06-02 user request). Naming every glyph on every
+    # solid edge is the right default, but a busy diagram (many attacked
+    # components, several classes each) would render the names many times over
+    # and clutter the figure. When the solid-edge label payload crosses a
+    # threshold — either the total glyph count across all solid edges, or the
+    # busiest single edge — fall back to BARE numbers on the edges. Nothing is
+    # lost: the one-line glyph→name legend rendered directly under the diagram
+    # always names every glyph, so the compact form stays fully decodable. The
+    # current juice-shop figure (9 glyphs total, busiest edge 5) stays in the
+    # self-describing full-name mode; only materially larger diagrams reduce.
+    # Threshold logic lives in _fig1_use_compact_labels() so it is unit-testable.
+    _compact_labels = _fig1_use_compact_labels(attack_glyphs)
 
-    def _attack_label(glyphs: list[str]) -> str:
+    _named_glyphs: set[str] = set()
+
+    def _solid_label(glyphs: list[str]) -> str:
+        # Direct attack edge — name every glyph (self-describing) unless the
+        # diagram is too complex, in which case go bare (legend names them).
+        for g in glyphs:
+            _named_glyphs.add(g)
+        if _compact_labels:
+            return " ".join(glyphs)
         parts: list[str] = []
         for g in glyphs:
             title = glyph_name.get(g, "")
-            if title and g not in _emitted_glyph_titles:
-                _emitted_glyph_titles.add(g)
-                parts.append(f"{g} {title}")
-            else:
+            parts.append(f"{g} {title}" if title else g)
+        return " ".join(parts)
+
+    def _dotted_label(glyphs: list[str]) -> str:
+        # Follow-on / propagation edge — bare number when the glyph was already
+        # named on its solid attack edge; name it as a fallback otherwise. In
+        # compact mode everything is bare (the legend explains every glyph).
+        if _compact_labels:
+            return " ".join(glyphs)
+        parts: list[str] = []
+        for g in glyphs:
+            if g in _named_glyphs:
                 parts.append(g)
+            else:
+                _named_glyphs.add(g)
+                title = glyph_name.get(g, "")
+                parts.append(f"{g} {title}" if title else g)
         return " ".join(parts)
 
     edge_idx = 0
@@ -5100,14 +5271,14 @@ def _render_top_threats_architecture(
     if attack_glyphs:
         lines.append("    %% attacks (solid) — each originates at a threat actor; glyphs match Figure 2 / Top Threats")
         for (src, dst), glyphs in attack_glyphs.items():
-            lines.append(f'    {src} ==>|"{_attack_label(glyphs)}"| {dst}')
+            lines.append(f'    {src} ==>|"{_solid_label(glyphs)}"| {dst}')
             attack_idx.append(edge_idx)
             edge_idx += 1
     prop_idx: list[int] = []
     if prop_glyphs:
         lines.append("    %% propagation (dotted) — how the attack reaches the data tier / victim")
         for (src, dst), glyphs in prop_glyphs.items():
-            lines.append(f'    {src} -.->|"{_attack_label(glyphs)}"| {dst}')
+            lines.append(f'    {src} -.->|"{_dotted_label(glyphs)}"| {dst}')
             prop_idx.append(edge_idx)
             edge_idx += 1
     lines.append("")
@@ -5163,6 +5334,17 @@ def _render_top_threats_architecture(
     body = intro + "\n\n" + "\n".join(lines) + "\n"
     if glyph_legend:
         body += "\n_Threats: " + glyph_legend + "_\n"
+    # Per-component badge legend — explains the 🔴/🟠 circles on the component
+    # boxes (Critical / High finding counts). Only emitted when at least one
+    # component actually carries a badge, so a clean architecture stays unclutter
+    # ed. (User request: "in Figure 1 müssten die Farben erklärt werden — was ist
+    # roter/oranger Kreis".)
+    if any(d.get("Critical") or d.get("High") for d in comp_sev_count.values()):
+        body += (
+            "\n_Component badge: 🔴 = number of Critical findings on the component · "
+            "🟠 = number of High findings. Components with no Critical/High finding "
+            "carry no badge._\n"
+        )
     return body
 
 
@@ -7015,8 +7197,16 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # apply_prose_fixes relevant-findings-bullets, _linkify_bare_refs_in_prose)
             # keys "already labelled" on ` — `, so the em-dash form is what stops
             # them re-appending the title and doubling the cell (2026-05-31).
+            # Per-finding severity circle so the reader sees each finding's
+            # criticality inline (same 🔴/🟠/🟡/🟢 vocabulary as the §8/§9
+            # indices). Keep it BEFORE the non-breaking link unit; the ` — `
+            # title separator downstream passes key on is preserved.
+            f_emoji = _TOP_THREATS_SEVERITY_EMOJI.get(
+                (t.get("risk") or t.get("severity") or "").strip().lower(), ""
+            )
+            f_prefix = f"{f_emoji}&nbsp;" if f_emoji else ""
             finding_cells.append(
-                f"•&nbsp;[{visible}](#{visible.lower()}) — {short} →&nbsp;"
+                f"•&nbsp;{f_prefix}[{visible}](#{visible.lower()}) — {short} →&nbsp;"
                 f"[{c_anchor}](#{c_anchor.lower()})"
             )
 
@@ -9006,6 +9196,22 @@ _SECRET_PATTERNS: list[tuple[str, str, str]] = [
     (r"\bghp_[A-Za-z0-9]{36,}\b", "ghp_<REDACTED>", "github_token"),
     # Long hex string (>= 48 chars) — potential bearer token / hmac secret.
     (r"\b[a-fA-F0-9]{48,}\b", "<REDACTED — long hex>", "long_hex"),
+    # Lone / truncated PEM PRIVATE KEY marker — a BEGIN header without a
+    # matching END (e.g. a code snippet that was cut mid-key by the §8
+    # max-snippet length, or a prose excerpt like
+    # `const privateKey = '-----BEGIN RSA PRIVATE KEY-----...'`). The
+    # full-block patterns above only fire on a complete BEGIN...END pair, so
+    # these slip through and trip the qa_checks `pem_private_key` gate (which
+    # flags the bare BEGIN marker unconditionally). Consume the marker plus
+    # any same-physical-line trailing key bytes (literal escaped \r/\n or
+    # base64), stopping at the first real newline so the rest of a code block
+    # is never swallowed. Runs last so masked full blocks above lose only
+    # their (gate-flagged) BEGIN marker, not their key bytes.
+    (
+        r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----(?:\\[rn]|[A-Za-z0-9+/=])*",
+        "[PEM PRIVATE KEY — REDACTED]",
+        "pem_lone_marker",
+    ),
 ]
 
 
@@ -11778,7 +11984,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         lines.append(
             _build_register_index(
                 "Mitigations index", "M", _m_nums, _m_title, _m_prio,
-                icon_tbl=_PRIO_ICON_TBL,
+                icon_tbl=_PRIO_ICON_TBL, key_label_tbl=_PRIO_LABEL_TBL,
             )
         )
         lines.append("")

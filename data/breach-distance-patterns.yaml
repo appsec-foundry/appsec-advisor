@@ -178,9 +178,18 @@ overrides:
   - title_pattern: "SQL injection in login"
     distance: 1
     reason: "Login endpoints are unauthenticated by definition"
-  - title_pattern: "Mass assignment.*registration"
+  # Any mass-assignment finding: the Sequelize/finale REST bridge and open
+  # registration expose model fields (e.g. `role`) to attacker-supplied
+  # payloads with no prior compromise — distance 1. Pinned via an override so
+  # the Stage-3 authenticated-route-hint heuristic cannot re-raise it to 2 on
+  # the strength of a scenario that happens to mention a "logged-in user" PUT
+  # variant (the unauthenticated POST /api/Users {role:admin} variant is the
+  # one that matters). Critical promotion stays gated on impact>=High in
+  # critical-criteria.yaml, so a benign low-impact mass-assignment is NOT
+  # over-promoted by this distance pin.
+  - title_pattern: "[Mm]ass assignment"
     distance: 1
-    reason: "Public registration endpoints accept arbitrary payloads"
+    reason: "Mass assignment exposes model fields (e.g. role=admin) via the public REST bridge / open registration; reachable without prior compromise"
   - title_pattern: "JWT admin impersonation"
     distance: 3
     reason: "Requires RSA key extracted from public repo (stage-2 attack chain)"

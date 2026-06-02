@@ -22,11 +22,12 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 >   - Any per-phase entry inside Stage 1 (phases stream inline as the
 >     foreground Agent runs)
 >
-> The only `TaskCreate` calls allowed are the seven rows defined in
-> `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1 - Threat
-> Analysis and Triage`, `Abuse Case Verification` (when `DRY_RUN=false`),
-> `Stage 2 - Report Rendering`, conditional `Stage 3 - QA Review`,
-> conditional `Stage 4 - Architect Review`, `Final summary + cleanup`).
+> The only `TaskCreate` calls allowed are the eight rows defined in
+> `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1a - Threat
+> Analysis`, `Stage 1b - Triage`, `Stage 1c - Abuse Case Verification`
+> (when `DRY_RUN=false`), `Stage 2 - Report Rendering`, conditional
+> `Stage 3 - QA Review`, conditional `Stage 4 - Architect Review`,
+> `Final summary + cleanup`).
 > Subjects must match **verbatim** — later `TaskUpdate` calls match by
 > subject and silently no-op on drift.
 
@@ -1622,9 +1623,9 @@ No other text — no explanatory prose, no duplicated mode description — belon
 
 Right after the handoff banner and **before** dispatching Stage 1, pre-create one `TaskCreate` task per stage. Stage 1 runs in the foreground (see "Dispatch" below), so its internal phases stream directly to the chat as the orchestrator executes tool calls — no per-phase task entries are needed. The stage tasks give the user a single top-level checklist to follow.
 
-**This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight summary`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the seven spec'd rows below (`Preparing workspace`, `Stage 1 …`, `Abuse Case Verification`, `Stage 2 …`, conditional `Stage 3 …`, conditional `Stage 4 …`, `Final summary + cleanup`) — later `TaskUpdate` calls (stage lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
+**This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight summary`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the eight spec'd rows below (`Preparing workspace`, `Stage 1a …`, `Stage 1b …`, `Stage 1c …`, `Stage 2 …`, conditional `Stage 3 …`, conditional `Stage 4 …`, `Final summary + cleanup`) — later `TaskUpdate` calls (stage lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
 
-**Subjects must match verbatim.** The condition table below is the source of truth — do not paraphrase ("Stage 1 — dispatch appsec-threat-analyst" is wrong; the correct subject is "Stage 1 - Threat Analysis and Triage"). The exact strings are referenced by downstream `TaskUpdate` calls.
+**Subjects must match verbatim.** The condition table below is the source of truth — do not paraphrase ("Stage 1 — dispatch appsec-threat-analyst" is wrong; the correct subject is "Stage 1a - Threat Analysis"). The exact strings are referenced by downstream `TaskUpdate` calls.
 
 **Ordering invariant.** Task IDs are handed out monotonically by `TaskCreate`, so create the tasks in the exact order below.
 
@@ -1637,14 +1638,21 @@ TaskCreate subject="Preparing workspace"
 
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
-| always | `Stage 1 - Threat Analysis and Triage` | `Running threat analysis and triage` |
-| `DRY_RUN=false` | `Abuse Case Verification` | `Verifying abuse-case chains` |
+| always | `Stage 1a - Threat Analysis` | `Running threat analysis` |
+| always | `Stage 1b - Triage` | `Running triage` |
+| `DRY_RUN=false` | `Stage 1c - Abuse Case Verification` | `Verifying abuse-case chains` |
 | always (M2.12) | `Stage 2 - Report Rendering` | `Rendering threat model report` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA Review` | `Running QA review` |
 | `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 - Architect Review` | `Running architect review` |
-| always | `Final summary + cleanup` | `Writing final summary` |
+| `KEEP_RUNTIME_FILES=false` | `Final summary + cleanup` | `Writing final summary` |
+| `KEEP_RUNTIME_FILES=true` | `Final summary` | `Writing final summary` |
 
-**`Abuse Case Verification` is a first-class stage row (RC-2026-06).** It is created here (between Stage 1 and Stage 2) whenever `DRY_RUN=false`, so the verifier fan-out is visible on the TaskList. Its lifecycle (`in_progress` → `completed`) is driven by the §"Stage 1c — Abuse Case Verification" section. Subject must match verbatim — `Abuse Case Verification` (no "Stage N" prefix, since it is not part of the numbered Stage 1–4 banner sequence).
+**Final-row label is conditional on `KEEP_RUNTIME_FILES` (the `--keep-runtime-files` flag).** When runtime files are kept the post-pipeline transient-file cleanup is skipped (see "Post-summary cleanup" below), so the row must NOT advertise a cleanup step it will not perform — create it as `Final summary`. Otherwise create it as `Final summary + cleanup`. **Whichever subject you create, the closing `TaskUpdate` in "Post-summary cleanup" MUST use the SAME subject verbatim** (it matches by subject and silently no-ops on drift, which would hang the spinner). All other downstream references to this row resolve through that same `KEEP_RUNTIME_FILES` branch.
+
+**Stage 1 is exposed as three `Stage 1a/1b/1c` sub-rows (2026-06).** Threat analysis and triage formally belong to one work family, so they share the Stage-1 number with a letter suffix rather than consuming integer stages 2–4. The split is honest about what can show *live* progress:
+
+- `Stage 1a - Threat Analysis` and `Stage 1b - Triage` both run **inside the single `appsec-threat-analyst` dispatch** (`STAGE1_PHASE_LIMIT=10b`). The skill blocks on that one `Agent()` call and cannot drive a mid-dispatch transition, so both rows are marked `in_progress` together at dispatch and `completed` together on return — `1b` has no independent live phase (it is the analyst's Phase 10b). This is accepted: two static-but-truthful rows beat one opaque "Stage 1" row.
+- `Stage 1c - Abuse Case Verification` is the one Stage-1 sub-step with a **separate skill-level dispatch** (haiku verifier fan-out), so it earns a real `in_progress → completed` lifecycle, driven by the §"Stage 1c — Abuse Case Verification" section. Created only when `DRY_RUN=false`. It is already recorded as `--stage 1 --variant abuse-verification` in `.stage-stats.jsonl`, so the `1c` label matches the existing stats model. Subjects must match verbatim and use hyphen-minus, not em-dash (same TUI-width precedent as the other rows).
 
 **Stage 2 is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. The skill now splits Phase 11 at the Substep-3 / Substep-4 boundary: `STAGE1_PHASE_LIMIT=10b` keeps the deterministic Substeps 1–3 (counts, yaml write, baseline cache) in Stage 1, while the LLM compose work (Substeps 4–N) goes into a separate `appsec-threat-renderer` session so render-only work does not carry the full analyst prompt.
 
@@ -1725,7 +1733,7 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
    export YAML_PRE_STAGE1 MD_PRE_STAGE1
    ```
 
-1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 1 - Threat Analysis and Triage` task to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`). Note: the TaskCreate subject uses the word "and" (not `&`) because the Claude Code TaskList UI HTML-escapes `&` → `&amp;` in subjects. The subject also uses hyphen-minus (`-`), not em-dash (`—`), because the TodoWrite TUI renderer mis-handles the em-dash's UTF-8 width (1 column / 3 bytes) on partial redraws — adjacent task labels visibly bleed into the em-dash position (e.g. `Final summary` + `Stage 3 — QA Review` rendered as `Final 3ummQA Review`). Same precedent: do not "fix" `-` → `—` in any of the six stage subjects.
+1. **Mark the Stage-1 tasks `in_progress`.** Call `TaskUpdate` on **both** the `Stage 1a - Threat Analysis` and `Stage 1b - Triage` tasks to set status `in_progress` (skip if the bootstrap was not run, i.e. `DRY_RUN=true`). Both run inside this one analyst dispatch, so both go `in_progress` here and both go `completed` together on return (step 5) — `1b` has no separate live phase. Note: the TaskCreate subjects use hyphen-minus (`-`), not em-dash (`—`), because the TodoWrite TUI renderer mis-handles the em-dash's UTF-8 width (1 column / 3 bytes) on partial redraws — adjacent task labels visibly bleed into the em-dash position (e.g. `Final summary` + `Stage 3 — QA Review` rendered as `Final 3ummQA Review`). Same precedent: do not "fix" `-` → `—` in any of the eight stage subjects.
 
 2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
 
@@ -1742,7 +1750,7 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
 
    > **`TaskStop` is a deferred tool — load its schema first.** Unlike `TaskCreate`/`TaskUpdate`, `TaskStop` is frequently NOT in the pre-loaded tool set, so calling it directly fails with `InputValidationError: unexpected parameter`. Before the first `TaskStop` of the run, call `ToolSearch` with query `select:TaskStop` to load its schema. Its parameter is **`task_id`** (snake_case) — **not** `taskId`; passing `taskId` is the exact "Invalid tool parameters" failure observed on the 2026-06-01 juice-shop run. This applies to every `TaskStop` site below (Stage 2 / Stage 3 / Stage 4) — load the schema once, then reuse `task_id` each time.
 
-5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 - Threat Analysis and Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
+5. **On return, mark the Stage-1 tasks `completed`.** Call `TaskUpdate` to set **both** the `Stage 1a - Threat Analysis` and `Stage 1b - Triage` tasks to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
 6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table.
 
@@ -2059,7 +2067,7 @@ The YAML integrity gate that runs before this section will still pass after the 
 
 ## Stage 1c — Abuse Case Verification (visible skill-level stage)
 
-**This is a first-class, user-visible stage** (formerly the invisible "Phase 10c"). It runs between Stage 1 and Stage 2, has its own `TaskList` row (`Abuse Case Verification`), a handoff banner, a heartbeat watchdog, and a `.stage-stats.jsonl` record — so the verifier fan-out's cost, duration, and verdict reliability are visible in the completion summary and the §Run-Statistics breakdown (RC-2026-06: the 2026-06 juice-shop run lost 3/6 verifiers with no visibility because this work was unstaged).
+**This is a first-class, user-visible stage** (formerly the invisible "Phase 10c"). It runs between Stage 1 and Stage 2, has its own `TaskList` row (`Stage 1c - Abuse Case Verification`), a handoff banner, a heartbeat watchdog, and a `.stage-stats.jsonl` record — so the verifier fan-out's cost, duration, and verdict reliability are visible in the completion summary and the §Run-Statistics breakdown (RC-2026-06: the 2026-06 juice-shop run lost 3/6 verifiers with no visibility because this work was unstaged).
 
 **Why this lives at the skill level.** Abuse-case discovery → verifier fan-out → `.abuse-case-verdicts.json` is documented in `phase-group-threats.md` as running "after Phase 10b and before Phase 11". But Stage 1 is dispatched with `STAGE1_PHASE_LIMIT=10b`, whose analyst branch stops *after* Phase 10b plus the deterministic Phase-11 substeps 1–3 — it never reaches it. Running it here — after the YAML is final, before Stage 2 renders — closes the gap deterministically and keeps it out of Stage 1's turn budget.
 
@@ -2069,10 +2077,10 @@ Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to
    ```bash
    STAGE_ABUSE_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
    ```
-   - `TaskUpdate` `Abuse Case Verification` → `in_progress`.
+   - `TaskUpdate` `Stage 1c - Abuse Case Verification` → `in_progress`.
    - Banner:
      ```
-     ▶ Abuse Case Verification starting  (deterministic match + per-candidate haiku verifier fan-out)
+     ▶ Stage 1c - Abuse Case Verification starting  (deterministic match + per-candidate haiku verifier fan-out)
        ⟶ Chains each derived from §8 findings; verified step-by-step, then folded into §9
      ```
 
@@ -2086,10 +2094,30 @@ Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to
        list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
    ```
 2. **Verifier fan-out** — for each AC-ID in `$CANDIDATES`, dispatch the `appsec-advisor:appsec-abuse-case-verifier` Agent (`model: haiku`, foreground) with the prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=haiku`. Dispatch all candidates together in ONE message (wall-clock ≈ slowest single case). Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file. **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
-3. **Merge + finalize + render** (deterministic):
+3. **Merge + finalize** (deterministic):
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
+   ```
+
+3b. **Inconclusive escalation — one bounded sonnet pass.** The haiku fan-out occasionally returns `inconclusive` on a chain that is actually confirmable (verified 2026-06-02 juice-shop: AC-T-004 mass-assignment shipped `inconclusive`, a sonnet re-verify confirmed it at `models/user.ts:86`). Re-verify **only** the inconclusive candidate subset with a stronger model — bounded to one pass, capped at 5 cases, gated off under budget pressure so it never costs time on a run that is already over budget:
+   ```bash
+   ESCALATE=""
+   if [ "${DRY_RUN:-false}" != "true" ] && [ ! -f "$OUTPUT_DIR/.budget-critical" ] && [ ! -f "$OUTPUT_DIR/.abuse-escalated" ]; then
+     ESCALATE=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
+         list-inconclusive --output-dir "$OUTPUT_DIR" --max 5 2>/dev/null)
+   fi
+   ```
+   When `$ESCALATE` is non-empty: for each AC-ID in it, dispatch the `appsec-advisor:appsec-abuse-case-verifier` Agent **with `MODEL_ID=sonnet`** (identical prompt body to step 2 otherwise — `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`). Dispatch all escalation candidates together in ONE message. Each overwrites its `.abuse-case-verdict-<AC-ID>.json` with the stronger model's verdict. Then mark the one-shot guard and re-fold the verdicts:
+   ```bash
+   touch "$OUTPUT_DIR/.abuse-escalated"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
+   ```
+   When `$ESCALATE` is empty, skip straight to 3c. The escalation runs **at most once** per run (`.abuse-escalated` guard) and the verifiers get a fresh budget per dispatch (the watchdog resets per Agent dispatch — see "Fresh-budget" note in Stage 2), so it cannot re-trip the budget flag that this whole fix removes.
+
+3c. **Render §9** (deterministic):
+   ```bash
    # Render the §9 fragment HERE — BEFORE the Stage-2 renderer's first
    # compose. The verdicts are final at this point; rendering now means the
    # abuse-cases.md fragment already exists when Stage 2 runs
@@ -2115,7 +2143,7 @@ Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to
        --tokens <sum_tokens> \
        ${STAGE_ABUSE_START_ISO:+--subagent-type appsec-advisor:appsec-abuse-case-verifier --since-iso "$STAGE_ABUSE_START_ISO"}
    ```
-   - `TaskUpdate` `Abuse Case Verification` → `completed`.
+   - `TaskUpdate` `Stage 1c - Abuse Case Verification` → `completed`.
 
 The §9 fragment is **also** re-rendered idempotently in the Stage-3 pre-generation block (a backstop that picks up any late verdict change); rendering it here as well guarantees the FIRST Stage-2 compose already includes §9. Both calls read `.abuse-case-verdicts.json` (viable chains) **and** `.abuse-case-matches.json` (the generic catalog evaluated-but-not-applicable table) and are byte-identical given identical inputs.
 
@@ -2178,6 +2206,11 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 2 - Report Rendering` task to set status `in_progress` (skip when `DRY_RUN=true`).
 
 2. **Restart the heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` invocation with `run_in_background:true` (same flags as Stage 1 — see "Skill-layer heartbeat watchdog" above). Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
+
+   **Fresh-budget clear (G-BC).** Immediately before dispatch, clear any stale turn-budget flags so the renderer — which has its own `maxTurns` and polls `.budget-critical` by existence — is not forced into a premature wrap-up by a flag raised earlier in the run (Stage 1, STRIDE, or the abuse fan-out). The PostToolUse watchdog also resets per dispatch, but this skill-layer clear is the deterministic guarantee that does not depend on the hook firing:
+   ```bash
+   rm -f "$OUTPUT_DIR/.budget-critical" "$OUTPUT_DIR/.budget-warning"
+   ```
 
 3. **Dispatch the agent.** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"` and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass. **RC.B — the renderer does NOT call `render_completion_summary.py --patch-placeholders`.** The renderer cannot observe its own duration / tokens (those are only available post-Agent-return). The skill-final `--patch-placeholders` invocation in the §Completion Summary section below — after every stage has written to `.stage-stats.jsonl` — is the only authoritative patch point.
 
@@ -2740,6 +2773,20 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" \
     "$OUTPUT_DIR/threat-model.md" 2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
 ```
 
+**Hard secret-leak gate (always, fail-closed).** The full `qa_checks.py all` detector battery is deferred off the clean path, so the secret check must run on its own to actually block a release. Scan the persisted `threat-model.md` *and* `threat-model.yaml`; a hit exits non-zero and the skill aborts with exit 2. The detector excludes already-masked values (`AIza****`, `**** (12 chars)`, `[REDACTED]`) and unquoted code-identifier references (`secret: publicKey`, `password: security.hash`), so it fires only on genuine unmasked literals / typed tokens / private-key markers — which the masking policy (`agents/shared/secret-handling.md`) requires the author to redact. A correctly-masked document passes; a doc carrying a raw value is blocked until it is masked at authoring time.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" unmasked_secrets \
+    "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" > "$OUTPUT_DIR/.qa-secret-scan.json"
+SECRET_GATE_EXIT=$?
+if [ "$SECRET_GATE_EXIT" -eq 1 ]; then
+    printf '✖ Unmasked secret detected in the rendered threat model — refusing to release.\n' >&2
+    printf '  See %s/.qa-secret-scan.json. Mask the value at authoring time\n' "$OUTPUT_DIR" >&2
+    printf '  (agents/shared/secret-handling.md): typed tokens → first 4 chars + ****; passwords → **** plus length only.\n' >&2
+    exit 2
+fi
+```
+
 When the fragment precondition passes, run `qa_checks.py repair_plan` before the agent is dispatched. This builds `.qa-repair-plan.json` from the authoritative Python checker so the agent inherits a clean baseline instead of spending turns rediscovering drift:
 
 ```bash
@@ -2748,15 +2795,15 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" repair_plan \
 GATE_EXIT=$?
 ```
 
-Also apply the auto-fixing checks in place so the Markdown already has clean links, anchors, MS structure, and `<br/>`-stacked multi-link cells before the agent even looks at it:
+Also apply the auto-fixing checks in place so the Markdown already has clean links, anchors, MS structure, and `<br/>`-stacked multi-link cells before the agent even looks at it. The `autofix` subcommand runs **only** the five in-place mutating passes (links, anchors, MS structure, cell-format, heading-attribute strip); it does **not** run the ~45-check detector battery. That battery (`qa_checks.py all` → `.qa-prepass.json`) is deferred to the agent-dispatch path below, because on the clean fast path the QA agent is skipped and nothing consumes the pre-pass JSON:
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
-    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > "$OUTPUT_DIR/.qa-prepass.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" autofix \
+    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"
 ```
 
 **Branch logic:**
-- `GATE_EXIT == 0` — contract clean, no repair plan on disk. Run the deterministic `qa_checks.py all` pre-pass (above), write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path: deterministic checks own links, anchors, xrefs, placeholders, Mermaid syntax, YAML/MD consistency, and contract validation; no LLM session is needed when they are clean.
+- `GATE_EXIT == 0` — contract clean, no repair plan on disk. The `autofix` pass above already applied the in-place fixes; write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path: the contract gate (`repair_plan`) plus the in-place auto-fixers own links, anchors, MS structure, cell-format, Mermaid syntax, YAML/MD consistency, and contract validation; no LLM session — and no detector pre-pass — is needed when they are clean.
 - `GATE_EXIT == 1` — contract drift, `.qa-repair-plan.json` already on disk. Enter the Re-Render Loop below **without** dispatching the QA agent first. The Re-Render Loop calls Stage 1 in REPAIR_MODE, which re-authors the offending fragments and re-renders. The QA agent is dispatched **after** the loop settles (status=pass) so it works on a contract-clean document.
 - `GATE_EXIT == 2` — tool error (bad path, malformed contract). Log and fall back to the old flow: dispatch the agent unconditionally and let its Check 14 write the plan instead.
 
@@ -2785,6 +2832,15 @@ Where `<total_stages>` is `4` when `ARCHITECT_REVIEW=true`, otherwise `3`.
 Immediately before dispatching, call `TaskUpdate` on the `Stage 3 - QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`. If `QA_AGENT_DISPATCHED=false`, mark the task completed after writing the deterministic `.qa-status.json` and skip this handoff.
 
 **Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
+
+**Produce the detector pre-pass the agent consumes (dispatch path only).** The `autofix` pass at the gate already cleaned the Markdown in place; now — and only now, because the agent is actually being dispatched — run the full detector battery to write the `.qa-prepass.json` the reviewer loads as `PRE_PASS_JSON`:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
+    "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > "$OUTPUT_DIR/.qa-prepass.json"
+```
+
+(If this step is ever skipped, the reviewer's own fallback re-runs `qa_checks.py all` once — see `appsec-qa-reviewer.md` "Pre-pass handoff". The skill-level run is preferred so the agent inherits a clean baseline without spending a turn.)
 
 Inside this guarded branch, invoke the `appsec-advisor:appsec-qa-reviewer` agent using `"QA review of threat model"` as the Agent tool `description`. If `QA_AGENT_DISPATCHED=false`, this invocation is skipped entirely.
 
@@ -2932,6 +2988,7 @@ loop:
            repair_iteration += 1
            continue  (back to Stage 3 — no heavy LLM dispatch this turn)
        repair_iteration += 1
+       rm -f $OUTPUT_DIR/.budget-critical $OUTPUT_DIR/.budget-warning   # fresh-budget clear (G-BC): the REPAIR_MODE pass has its own maxTurns; never inherit an earlier stage's wrap-up flag
        dispatch Stage 1 again with REPAIR_MODE=true + REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json
        continue  (back to Stage 3)
 ```
@@ -3391,21 +3448,25 @@ Best-effort: failure here is non-fatal — the next run falls through to `last_r
 
 ### Post-summary cleanup
 
-After the script returns, call `TaskUpdate` on the `Final summary + cleanup` task to set status `completed`. (This is the final task on the list, so once it flips the whole Stage-1→cleanup sequence shows completed across the board.)
+After the script returns, call `TaskUpdate` on the final task to set status `completed`. **Use the same subject you created in Stage Task List Bootstrap** — `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise `Final summary + cleanup`. (This is the final task on the list, so once it flips the whole Stage-1→cleanup sequence shows completed across the board.)
 
-Then run the deterministic post-pipeline transient-file cleanup (whitelist pinned in `scripts/runtime_cleanup.py`) and remove the verbose / tracing marker files:
+Then run the deterministic post-pipeline transient-file cleanup (whitelist pinned in `scripts/runtime_cleanup.py`) and remove the verbose / tracing marker files. **When `KEEP_RUNTIME_FILES=true` (the `--keep-runtime-files` flag), SKIP the `runtime_cleanup.py` calls entirely** — the whole point of the flag is to leave the transient artifacts (`.stride-*.json`, `.threats-merged.json`, `.fragments/`, `.qa-*.json`, etc.) on disk for debugging. The lock release and marker cleanup still run regardless (they are run-state, not debug artifacts):
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa >/dev/null 2>&1 || true
-if [ "$ARCHITECT_REVIEW" = "true" ]; then
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect >/dev/null 2>&1 || true
+if [ "$KEEP_RUNTIME_FILES" != "true" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa >/dev/null 2>&1 || true
+    if [ "$ARCHITECT_REVIEW" = "true" ]; then
+        python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-architect >/dev/null 2>&1 || true
+    fi
+else
+    printf '  Runtime files kept (--keep-runtime-files) — transient artifacts NOT cleaned.\n' >&2
 fi
 rm -f "$OUTPUT_DIR/.appsec-lock"
 rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
 rm -f "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
 ```
 
-`post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed.
+`post-qa` runs the Phase 11 whitelist plus QA-specific artifacts (`.qa-status.json`, empty `.qa-repair-plan.json`, `.fragments/`). `post-architect` additively removes architect-review status files. Exit code 1 (safety-gate block) is silenced with `|| true` — the summary has already been printed. Both `runtime_cleanup.py` invocations are skipped under `--keep-runtime-files` so the kept artifacts survive, matching the conditional `Final summary` task label (no "+ cleanup" advertised when no cleanup runs).
 
 ### PDF Export (only when `WRITE_PDF=true`)
 
