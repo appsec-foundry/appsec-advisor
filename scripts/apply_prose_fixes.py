@@ -380,6 +380,30 @@ def _wrap_line(line: str) -> tuple[str, int]:
                 continue
             if overlaps_forbidden(s, e):
                 continue
+            # Adjacency guard (2026-06-02): never backtick a token that sits
+            # INSIDE a larger un-backticked code expression — wrapping just the
+            # inner token produces broken partial formatting like
+            #   btoa(profile.email.split('').`reverse()`.join(''))
+            # or  algorithm: '`RS256`'  or  execSync('cat `/etc/passwd`').
+            # Signals that the match is mid-expression:
+            #   • preceded by `.` / `_`  → member-access or identifier fragment
+            #   • wrapped in quotes      → it is a string-literal fragment
+            #   • a dotted chain immediately followed by `(`  → method call
+            #     embedded in a bigger expression
+            #   • followed by `.<word>`  → the member chain continues
+            # Standalone tokens in real prose (space / paren-in-prose
+            # boundaries) are unaffected and still get backticked.
+            gs, ge = m.start(group_or_special), m.end(group_or_special)
+            before = line[gs - 1] if gs > 0 else " "
+            after = line[ge] if ge < len(line) else " "
+            if before in "._":
+                continue
+            if before in "'\"" and after in "'\"":
+                continue
+            if after == "(" and "." in tok:
+                continue
+            if after == "." and ge + 1 < len(line) and (line[ge + 1].isalnum() or line[ge + 1] == "_"):
+                continue
             # Strip trailing punctuation (`.`, `,`, `;`, `)`, `?`, `!`).
             trailing = ""
             while tok.endswith((".", ",", ";", ")", "?", "!")) and not tok.endswith("()"):

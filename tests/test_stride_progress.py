@@ -102,3 +102,30 @@ def test_completion_exits_zero(tmp_path):
     _write_progress(tmp_path, "auth", "Auth Service", 9, 9, "done")
     res = _run(tmp_path, expected=1)
     assert res.returncode == 0
+
+
+def test_bridges_into_appsec_progress_json(tmp_path):
+    # When a line is emitted, the collapsed state must be mirrored into
+    # .appsec-progress.json so the streaming watcher (watch_run.py) shows it.
+    _write_progress(tmp_path, "auth", "Auth Service", 4, 9, "Tampering")
+    _run(tmp_path, expected=2)
+    bridged = tmp_path / ".appsec-progress.json"
+    assert bridged.is_file(), ".appsec-progress.json must be written on emit"
+    data = json.loads(bridged.read_text())
+    assert data["phase"] == "9"
+    assert data["phase_total"] == "11"
+    assert data["step"] == 0  # 0 of 2 .stride-*.json ready
+    assert data["step_total"] == 2
+    assert data["agent"] == "stride-analyzer"
+    assert "Auth Service" in data["label"]
+    assert data["status"] == "step_started"
+
+
+def test_bridge_marks_completed_when_ready(tmp_path):
+    (tmp_path / ".stride-auth.json").write_text("{}")
+    _write_progress(tmp_path, "auth", "Auth Service", 9, 9, "done")
+    _run(tmp_path, expected=1)
+    data = json.loads((tmp_path / ".appsec-progress.json").read_text())
+    assert data["step"] == 1
+    assert data["step_total"] == 1
+    assert data["status"] == "step_completed"

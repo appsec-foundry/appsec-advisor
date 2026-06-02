@@ -4111,7 +4111,8 @@ def _severity_by_finding_num(threats: list) -> dict:
 def _build_register_index(label: str, prefix: str, nums: list,
                           title_by_num: dict, sev_by_num: dict,
                           icon_tbl: dict | None = None,
-                          key_label_tbl: dict | None = None) -> str:
+                          key_label_tbl: dict | None = None,
+                          show_icon: bool = True) -> str:
     """Render a `**<label>:**<br/>🔴 [P-NNN](#p-nnn) — <title><br/>…` jump list.
 
     ``icon_tbl`` defaults to the severity-circle table (§8 Findings index);
@@ -4123,22 +4124,29 @@ def _build_register_index(label: str, prefix: str, nums: list,
     ``🔴 P1 · [M-001](#m-001) — …``. Without it the circle is ambiguous with
     the §8 severity palette (both use 🔴/🟠/🟡); the tag disambiguates priority
     from severity at a glance.
+
+    ``show_icon=False`` suppresses the leading colour circle and renders the
+    text tag only — used by the §10 Mitigations index where the priority is
+    the sole signal and the circle was visual noise (2026-06-02 user request:
+    "nur die Prio anzeigen, nicht den farblichen Kreis").
     """
     icon_tbl = icon_tbl if icon_tbl is not None else _SEV_ICON_TBL
     chips = []
     for n in nums:
         key = sev_by_num.get(n, "")
-        emoji = icon_tbl.get(key, "⚪")
-        chip = emoji
+        parts: list[str] = []
+        if show_icon:
+            parts.append(icon_tbl.get(key, "⚪"))
         if key_label_tbl:
             tag = key_label_tbl.get(key, "")
             if tag:
-                chip += f" {tag} ·"
+                parts.append(f"{tag} ·")
         ttl = _index_short_title(title_by_num.get(n, ""))
-        chip += f" [{prefix}-{n:03d}](#{prefix.lower()}-{n:03d})"
+        link = f"[{prefix}-{n:03d}](#{prefix.lower()}-{n:03d})"
         if ttl:
-            chip += f" — {ttl}"
-        chips.append(chip)
+            link += f" — {ttl}"
+        parts.append(link)
+        chips.append(" ".join(parts))
     return f"**{label}:**<br/>" + "<br/>".join(chips)
 
 
@@ -10603,20 +10611,49 @@ _CODE_DOTTED_RE = re.compile(
 _CODE_SPAN_MASK_RE = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
 
 
+def _code_token_is_embedded(seg: str, ms: int, me: int) -> bool:
+    """True when the matched code token sits INSIDE a larger un-backticked
+    expression / string literal / hyphenated word, where wrapping just this
+    inner token produces broken partial formatting — e.g.
+    ``btoa(...split('').`reverse()`.join(''))`` or ``admin@juice-`sh.op```.
+    Such tokens stay plain prose (2026-06-02 user request — Story Card Issue
+    code must not be half-backticked). Standalone tokens (space / paren-in-
+    prose boundaries) are unaffected.
+    """
+    before = seg[ms - 1] if ms > 0 else " "
+    after = seg[me] if me < len(seg) else " "
+    # Preceded by a member-access dot, identifier underscore, or a hyphen that
+    # joins it into a larger word/domain → it is a fragment, not a standalone.
+    if before in "._-":
+        return True
+    # Wrapped in matching quotes → it is a string-literal fragment.
+    if before in "'\"" and after in "'\"":
+        return True
+    return False
+
+
 def _sub_outside_spans(pattern: re.Pattern[str], s: str) -> str:
     """Wrap `pattern` group(1) in backticks, but ONLY in the parts of `s`
     that are not already inside a backtick span / link target / HTML tag /
     entity. Prevents a later code matcher from re-wrapping a token inside a
-    span an earlier matcher just created."""
+    span an earlier matcher just created. Tokens that `_code_token_is_embedded`
+    flags as mid-expression are left untouched (no partial backticking)."""
+    def _wrap_seg(seg: str) -> str:
+        def _repl(mm: re.Match[str]) -> str:
+            if _code_token_is_embedded(seg, mm.start(1), mm.end(1)):
+                return mm.group(0)
+            return f"`{mm.group(1)}`"
+        return pattern.sub(_repl, seg)
+
     out: list[str] = []
     pos = 0
     for m in _CODE_SPAN_MASK_RE.finditer(s):
         if m.start() > pos:
-            out.append(pattern.sub(lambda mm: f"`{mm.group(1)}`", s[pos:m.start()]))
+            out.append(_wrap_seg(s[pos:m.start()]))
         out.append(m.group(0))
         pos = m.end()
     if pos < len(s):
-        out.append(pattern.sub(lambda mm: f"`{mm.group(1)}`", s[pos:]))
+        out.append(_wrap_seg(s[pos:]))
     return "".join(out)
 
 
@@ -11981,10 +12018,18 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     _best = min(_best, _SEV_RANK_TBL.get(_sev_f.get(int(_am.group(1)), ""), 9))
             _sev_word = next((s for s, r in _SEV_RANK_TBL.items() if r == _best), "")
             _m_prio[_n] = _sev_to_prio.get(_sev_word, "p3")
+        # Order by rollout priority (P1 first), then by M-ID within a bucket —
+        # the priority is the actionable signal, so the index leads with what
+        # must ship first instead of raw ID order (2026-06-02 user request).
+        _PRIO_SORT = {"p1": 0, "p2": 1, "p3": 2, "p4": 3}
+        _m_nums_by_prio = sorted(
+            _m_nums, key=lambda n: (_PRIO_SORT.get(_m_prio.get(n, "p3"), 2), n)
+        )
         lines.append(
             _build_register_index(
-                "Mitigations index", "M", _m_nums, _m_title, _m_prio,
+                "Mitigations index", "M", _m_nums_by_prio, _m_title, _m_prio,
                 icon_tbl=_PRIO_ICON_TBL, key_label_tbl=_PRIO_LABEL_TBL,
+                show_icon=False,
             )
         )
         lines.append("")

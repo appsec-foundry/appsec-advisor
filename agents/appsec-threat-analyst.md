@@ -488,6 +488,8 @@ Follow `phase-group-architecture.md` Phase 8b. Skip if `CHECK_REQUIREMENTS` is `
 
 **⚠ SEQUENCING: STRIDE analyzers MUST NOT be dispatched before Phase 9.** They require outputs from Phases 6–8.
 
+**⚠ DISPATCH IS MANDATORY — never inline STRIDE (absolute policy).** For every non-trivial, non-carry-forward component you MUST issue an `Agent` tool call to `appsec-advisor:appsec-stride-analyzer`. Do NOT analyze components yourself and hand-write `.stride-<id>.json` — that collapses the parallel fan-out into one giant serial context where a single API stall freezes the whole phase (the 2026-06-02 juice-shop run lost 23 min this way: 5 components inlined, 0 `Agent` calls). Printing the `AGENT_INVOKE` manifest is NOT dispatching. The skill's post-Stage-1 gate `scripts/check_stride_dispatch.py` detects inlining (real `.stride-<id>.json` with no `.progress/<id>.json`) and aborts with exit 2. Only M24 trivial stubs and incremental carry-forward may be written without a dispatch.
+
 **Lazy-load `phase-group-threats.md` BEFORE dispatching any STRIDE analyzer** (Sprint 4 Item #9). Issue the Read tool call in parallel with the Phase 9 `PHASE_START` Bash call — zero extra turn. Skip if already in memory.
 
 ```

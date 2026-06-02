@@ -113,6 +113,37 @@ def _write_last(progress_dir: Path, line: str, unchanged: int) -> None:
         pass
 
 
+def _write_appsec_progress(output_dir: Path, ready: int, expected: int, entries: list[str]) -> None:
+    """Mirror the collapsed STRIDE line into ``.appsec-progress.json``.
+
+    Bridges the rich ``.progress/*.json`` channel into the file that the
+    streaming watcher (``watch_run.py``) tails. Without this, a user tailing
+    ``watch_run.py`` during Phase 9 sees only ``phase=9`` and the one-shot
+    "dispatching N analyzers" line — never the live per-component substep
+    pulse (``authn [4/9 Tampering]``). Shape matches ``log_event.py``'s
+    payload so ``watch_run._read_progress_state`` renders phase/step/label.
+    """
+    payload = {
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "event": "STRIDE_PROGRESS",
+        "kind": "step-start",
+        "agent": "stride-analyzer",
+        "phase": "9",
+        "phase_total": "11",
+        "step": ready,
+        "step_total": expected,
+        "label": " · ".join(entries) if entries else "dispatching analyzers",
+        "status": "step_completed" if ready >= expected else "step_started",
+    }
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / ".appsec-progress.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
 def main(argv: list[str]) -> int:
     force = "--force" in argv
     args = [a for a in argv[1:] if a != "--force"]
@@ -181,6 +212,7 @@ def main(argv: list[str]) -> int:
     if should_emit:
         print(line)
         _write_last(progress_dir, line, 0)
+        _write_appsec_progress(output_dir, ready, expected, entries)
     else:
         _write_last(progress_dir, last_line, unchanged + 1)
 

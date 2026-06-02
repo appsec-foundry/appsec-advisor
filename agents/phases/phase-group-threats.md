@@ -198,6 +198,8 @@ Format:
 
 Batch the echoes with the `AGENT_INVOKE` Bash call below so no extra turn is spent.
 
+**⚠ STRIDE dispatch is mandatory — inlining is a policy violation (absolute).** For every non-trivial, non-carry-forward component you MUST issue an `Agent` tool call to `appsec-advisor:appsec-stride-analyzer` (per the spec below). You MUST NOT perform the STRIDE analysis yourself and hand-write `.stride-<id>.json` via `Write`/`Bash`. The only `.stride-<id>.json` files you may author directly are (a) M24 trivial-component stubs and (b) incremental carry-forward reuse — nothing else. Inlining the real analysis collapses every component into one large serial orchestrator context: it is slow and expensive per turn, defeats the parallel fan-out, never writes the `.progress/<id>.json` files the watchdog needs, and turns a single API request stall into a phase-wide freeze (the 2026-06-02 juice-shop run lost 23 min this way — 5 components inlined, 0 `Agent` calls). The `AGENT_INVOKE` echo lines are a display manifest, NOT a substitute for the dispatch — printing them without issuing the `Agent` calls is the exact bypass this rule forbids. The skill's post-Stage-1 hard gate (`scripts/check_stride_dispatch.py`) detects inlining (real `.stride-<id>.json` with no matching `.progress/<id>.json`) and **aborts the run with exit 2**. Dispatch the analyzers; do not analyze inline.
+
 For each component, use Agent tool:
 - `subagent_type`: `appsec-advisor:appsec-stride-analyzer`
 - `description`: `STRIDE analysis for <COMPONENT_NAME>`

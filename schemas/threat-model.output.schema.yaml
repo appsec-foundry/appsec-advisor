@@ -328,7 +328,7 @@ properties:
         implementation: { type: [string, "null"] }
         effectiveness:
           type: string
-          enum: [Adequate, Partial, Weak, Missing]
+          enum: [Adequate, Partial, Weak, Unsafe, Missing]
         linked_threats:
           type: array
           items:

@@ -369,8 +369,13 @@ if [ "${APPSEC_SKIP_VALIDATOR_CHECK:-}" != "1" ]; then
     [ "$MERMAID_CORE_OK" = "no" ]  && MISSING="$MISSING mermaid"
     [ "$MMDC_OK" = "no" ]          && MISSING="$MISSING @mermaid-js/mermaid-cli"
     printf '\n⚠ Optional QA validators missing:%s\n' "$MISSING" >&2
-    printf '    npm install --prefix %s/scripts jsdom mermaid\n' "$CLAUDE_PLUGIN_ROOT" >&2
-    printf '    npm install -g @mermaid-js/mermaid-cli\n' >&2
+    printf '  To install (worth it — these caught 24 Mermaid breakages a regex-only run shipped on 2026-05-24):\n' >&2
+    # Only print the install line(s) for what is actually missing — mmdc may
+    # already be present, in which case the global install is irrelevant noise.
+    if [ "$JSDOM_OK" = "no" ] || [ "$MERMAID_CORE_OK" = "no" ]; then
+      printf '    npm install --prefix %s/scripts jsdom mermaid\n' "$CLAUDE_PLUGIN_ROOT" >&2
+    fi
+    [ "$MMDC_OK" = "no" ] && printf '    npm install -g @mermaid-js/mermaid-cli\n' >&2
     printf '  Without these, qa_checks.py mermaid_syntax falls back to a regex-only check that has\n' >&2
     printf '  documented false-negatives (sequenceDiagram quoted aliases, unbalanced parens in graph\n' >&2
     printf '  labels). The threat model still renders, but mermaid bugs may ship to the final report.\n' >&2
@@ -382,6 +387,7 @@ fi
 Behaviour contract:
 - Both dependencies present → silent, run proceeds normally.
 - One or both missing → single stderr block listing what's missing plus copy-pasteable install commands, then the run proceeds (non-blocking).
+- **Console relay (do not summarize away):** when the banner fires, your console message to the user MUST include the exact `npm install …` command(s) printed for what's missing — not just "validators missing, non-blocking". The whole ask is a one-liner with real value (the Layer-B jsdom+mermaid parser catches grammar breakages the regex pass misses), so surface it verbatim rather than condensing it out.
 - `node` itself absent → the `command -v node` guard short-circuits and `JSDOM_OK=no` is reported; the user sees that the runtime is needed before either npm package can be installed.
 - `APPSEC_SKIP_VALIDATOR_CHECK=1` → the entire block is skipped, no stderr output. Intended for CI pipelines where the maintainer has accepted the regex-only fallback as the run's QA contract.
 
@@ -1785,7 +1791,30 @@ for required in .recon-summary.md .threats-merged.json .triage-flags.json threat
 done
 ```
 
-If `PHASE10B_OK=false`, fall through to the existing cut-off detection (below) — Stage 1 died before completing its scope and Stage 2 cannot proceed. If `PHASE10B_OK=true`, continue to the YAML integrity gate below.
+If `PHASE10B_OK=false`, fall through to the existing cut-off detection (below) — Stage 1 died before completing its scope and Stage 2 cannot proceed. If `PHASE10B_OK=true`, continue to the STRIDE-dispatch gate below.
+
+### STRIDE-dispatch gate (deterministic, skill-level)
+
+**This closes the Phase-9 inline-shortcut gap.** `phase-group-threats.md` instructs the orchestrator to dispatch one parallel `appsec-stride-analyzer` sub-agent per component, but that is an LLM prompt — under turn-budget pressure the orchestrator sometimes analyzes components **inline** instead, hand-writing `.stride-<id>.json` with zero `Agent` calls. Inlining collapses every component into one ~182k-token serial context where a single standard-tier API stall freezes the whole phase (2026-06-02 juice-shop: 23 min lost, 5 components inlined). The detection logic lives in `scripts/check_stride_dispatch.py` so the gate is mechanical: a real `.stride-<id>.json` (non-stub, non-empty) with no matching `.progress/<id>.json` — the latter written only by a dispatched analyzer — trips it. Skipped in incremental mode (carry-forward makes progress-file absence ambiguous) and in dry-run (the sub-1-minute synthetic run may legitimately inline, same rationale as the watchdog skip). Runs here because `.progress/` is reaped only at `runtime_cleanup.py --stage pre-qa`, which is later than this gate.
+
+```bash
+STRIDE_DISPATCH_EXIT=0
+if [ "$DRY_RUN" != "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/check_stride_dispatch.py" \
+      "$OUTPUT_DIR" \
+      $([ "$INCREMENTAL" = "true" ] && echo --incremental)
+  STRIDE_DISPATCH_EXIT=$?
+fi
+if [ "$STRIDE_DISPATCH_EXIT" = "2" ]; then
+  echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  skill  STRIDE_INLINED  Phase 9 inlined — real .stride-*.json with no .progress/ dispatch evidence" \
+      >> "$OUTPUT_DIR/.agent-run.log"
+  rm -f "$OUTPUT_DIR/.appsec-lock"
+  rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+  exit 2
+fi
+```
+
+On exit 2 the script prints a full banner to stderr naming the inlined components and the remediation (re-run; the orchestrator must dispatch). Then continue to the YAML integrity gate below.
 
 ### YAML integrity gate (deterministic, skill-level)
 
@@ -2001,6 +2030,18 @@ if [ "$DRY_RUN" = "false" ]; then
     # links it back via threats[].mitigation_ids. Idempotent: prior
     # auto_source="config-scan" cards are cleared before re-computing.
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_config_scan_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
+    # M-RCA-2026-06 — `kind: fix` mitigations for CODE findings the LLM left
+    # uncovered. build_mitigations only emits an M-NNN card when the threat
+    # already carries mitigation_ids[]; when Phase-11's LLM yaml-write
+    # under-produces (2026-06-02 juice-shop: all 13 Critical findings came
+    # back with mitigation_ids=[]), the Mitigation Register ships
+    # "_No P1 mitigations._" despite every threat carrying a full remediation
+    # block. This emitter backfills a fix card (priority from severity+effort)
+    # for any non-config-scan threat with remediation content but no link, and
+    # back-references it via threats[].mitigation_ids. Idempotent; runs AFTER
+    # emit_config_scan_mitigations so config-scan threats are already linked
+    # and skipped.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_finding_fix_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true

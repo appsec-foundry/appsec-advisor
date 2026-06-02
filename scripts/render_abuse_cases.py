@@ -267,8 +267,20 @@ def _case_markdown(m: dict) -> str:
             finding_cell = f"[{r['fid']}]({_anchor(r['fid'])}) — {r['finding_title']}"
         else:
             finding_cell = "_no matching finding_"
+        # Only append the per-step evidence reference when it points at a
+        # DIFFERENT file than the one the finding title already names — the
+        # title carries `(file:line)` per the finding-title contract, so an
+        # evidence line for the same file is the same code reference repeated.
+        # A cross-file evidence line (e.g. the token-storage sink in a chain
+        # whose finding title names the XSS sink) still adds information and
+        # is kept. (2026-06-02 user request: one code reference per finding.)
         if r["evidence"]:
-            finding_cell += f"<br/>`{r['evidence']}`"
+            # Compare on basename so a title carrying `(wallet.ts:12)` also
+            # suppresses an evidence line of `routes/wallet.ts:12` (same file,
+            # path-prefix only differs).
+            ev_base = r["evidence"].rsplit(":", 1)[0].rsplit("/", 1)[-1]
+            if ev_base and ev_base not in r["finding_title"]:
+                finding_cell += f"<br/>`{r['evidence']}`"
         out.append(f"| {r['step']} | {finding_cell} | {r['outcome']} |")
     out.append("")
     if m["combined_risk_rationale"]:

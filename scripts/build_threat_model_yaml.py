@@ -210,7 +210,7 @@ def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
     title = (title or "").strip()
     if len(title) <= limit:
         return title
-    m = re.search(r"\s+(?:[—-]\s+)?[\w./-]+:\d+\s*$", title)
+    m = re.search(r"\s+(?:[—-]\s+)?\(?[\w./-]+:\d+\)?\s*$", title)
     if m:
         tail = title[m.start():].strip()
         head = title[:m.start()].rstrip()
@@ -286,7 +286,12 @@ def _clean_title(raw: str) -> str:
     suffix = f" ({parens[-1]})" if parens else ""
     body_cap = 80 - len(suffix)
     if len(s) > body_cap:
-        s = s[:body_cap].rstrip().rstrip(",;:-") + "…"
+        # Reserve one char for the ellipsis so body + "…" + suffix == 80,
+        # not 81. The off-by-one previously pushed the result one char over
+        # maxLength, which tripped the _clamp_title fallback below — and that
+        # truncation is not paren-aware, so it chopped into the "(file:line)"
+        # suffix, emitting an unclosed "(" that violates the title pattern.
+        s = s[: body_cap - 1].rstrip().rstrip(",;:-") + "…"
     return f"{s}{suffix}"
 
 
