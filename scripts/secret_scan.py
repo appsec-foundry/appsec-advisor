@@ -88,11 +88,30 @@ _PATTERNS: list[_Pattern] = [
             r"(?ix)"
             r"\b(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
             r"\s*[=:]\s*"
-            r"['\"]?(?P<val>[A-Za-z0-9_\-+/=\.]{8,})['\"]?"
+            r"(?P<q>['\"])?(?P<val>[A-Za-z0-9_\-+/=\.]{8,})"
         ),
         False,
     ),
 ]
+
+
+# An unquoted credential-assignment value that is a code-identifier reference
+# (camelCase / PascalCase / dotted attribute path, no digits) — e.g.
+# ``secret: publicKey`` or ``password: security.hash`` — is a reference to a
+# variable in a code excerpt, not a literal secret value, and must not be
+# flagged. Quoted values and opaque/digit-bearing strings (``abcdefghijklmnop``,
+# ``deadbeef1234``) are NOT excluded — those stay flagged.
+_CODE_REFERENCE_RE = re.compile(
+    r"^(?:"
+    r"[A-Za-z_]+(?:\.[A-Za-z_]+)+"   # dotted path:  security.hash
+    r"|[a-z]+[A-Z][A-Za-z]*"         # camelCase:    publicKey
+    r"|[A-Z][a-z]+[A-Z][A-Za-z]*"    # PascalCase:   PublicKey
+    r")$"
+)
+
+
+def _looks_like_code_reference(value: str) -> bool:
+    return bool(_CODE_REFERENCE_RE.match(value))
 
 
 @dataclass(frozen=True)
@@ -138,9 +157,15 @@ def scan_text(text: str) -> list[SecretHit]:
     for pat in _PATTERNS:
         for m in pat.regex.finditer(text):
             matched = m.group(0)
-            value = m.group("val") if "val" in (m.groupdict() or {}) else matched
-            if not pat.strict and _value_is_masked(value):
-                continue
+            groups = m.groupdict() or {}
+            value = m.group("val") if "val" in groups else matched
+            if not pat.strict:
+                if _value_is_masked(value):
+                    continue
+                # Unquoted code-identifier reference (variable name in an
+                # excerpt), not a literal secret — skip. Quoted values flag.
+                if not groups.get("q") and _looks_like_code_reference(value):
+                    continue
             snippet = matched[:80].replace("\n", " ")
             hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start())))
     return hits

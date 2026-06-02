@@ -3,7 +3,8 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+
+from event_log import format_line
 
 # ---------------------------------------------------------------------------
 # Defaults (used when steering_keywords.json is missing or unreadable)
@@ -392,9 +393,8 @@ def _log_coach_event(topics, req_ids, chars, prompt):
         topic_str = ",".join(sorted(t for t in topics if not t.startswith("_"))) or "-"
         req_str = ",".join(req_ids) if req_ids else "-"
         prompt_hash = hashlib.sha256(prompt.encode("utf-8", "replace")).hexdigest()[:8]
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         detail = f"topics={topic_str} req_ids={req_str} chars={chars} prompt={prompt_hash}"
-        line = f"{ts}  [--------]  {'INFO':<5}  {'COACH_INJECTED':<18}  {detail}\n"
+        line = format_line("COACH_INJECTED", detail)
 
         with open(log_file, "a") as fh:
             fh.write(line)

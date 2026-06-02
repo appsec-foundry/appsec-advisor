@@ -58,6 +58,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from event_log import format_line
+
 # ---------------------------------------------------------------------------
 # Config loading — single cached read of config.json
 # ---------------------------------------------------------------------------
@@ -267,9 +269,7 @@ def _write_trace(event: str, detail: str, sid: str = "") -> None:
     """Append a structured line to .appsec-trace.log when tracing is active."""
     if not _TRACING:
         return
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    sid_tag = (sid or "")[:8].ljust(8)
-    line = f"{ts}  [{sid_tag}]  TRACE  {event:<22}  {detail}\n"
+    line = format_line(event, detail, level="TRACE", sid=sid)
     try:
         trace_file = _trace_path()
         _rotate_if_needed(trace_file)
@@ -381,8 +381,7 @@ def _write_agent_run(level: str, agent: str, event: str, detail: str) -> None:
     MAX_TURNS and SESSION_STOP are duplicated so the agent-run.log is
     self-contained for diagnostics.
     """
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    line = f"{ts}  [--------]  {level:<5}  {agent:<18}  {event:<18}  {detail}\n"
+    line = format_line(event, detail, level=level, component=agent)
     try:
         log_file = _agent_run_log_path()
         if os.path.exists(log_file):
@@ -637,9 +636,7 @@ _HIGH_SIGNAL_EVENTS = frozenset(
 
 
 def _write(level: str, event: str, detail: str, sid: str = "") -> None:
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    sid = (sid or "")[:8].ljust(8)
-    line = f"{ts}  [{sid}]  {level:<5}  {event:<18}  {detail}\n"
+    line = format_line(event, detail, level=level, sid=sid)
     try:
         log_file = _log_path()
         _rotate_if_needed(log_file)
@@ -1566,6 +1563,20 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     short = _AGENT_SHORT_NAMES.get(raw_name, "")
     if short and sid:
         _save_session_agent(sid[:8], short)
+
+    # Fresh turn budget per dispatched stage. In headless mode every sub-agent
+    # shares the orchestrator session id, so without this reset the watchdog
+    # accumulates the whole pipeline's tool calls into one counter capped at a
+    # single agent's maxTurns — tripping a false BUDGET_CRITICAL mid-run that
+    # then poisons the fresh-budget renderer (it polls the shared flag by
+    # existence). Reset at each dispatch boundary scopes budget to one stage.
+    if sid:
+        try:
+            from budget_watchdog import reset_session
+
+            reset_session(sid, _output_dir())
+        except Exception:
+            pass
 
     # SCAN_START fires at PreToolUse (dispatch time) so it precedes
     # the threat-analyst's own SESSION_STOP in the log. Emitting it

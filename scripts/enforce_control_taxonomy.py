@@ -42,6 +42,8 @@ from pathlib import Path
 
 import yaml
 
+from event_log import format_line
+
 
 # ---------------------------------------------------------------------------
 # Deterministic name rewrites (RC-1)
@@ -393,9 +395,6 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
     return data, name_changes, domain_changes
 
 
-def _now() -> str:
-    import datetime as _dt
-    return _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _log(output_dir: Path, msg: str) -> None:
@@ -411,7 +410,7 @@ def _log(output_dir: Path, msg: str) -> None:
     log = output_dir / ".agent-run.log"
     try:
         with log.open("a", encoding="utf-8") as f:
-            f.write(f"{_now()}  [--------]  INFO   skill  CONTROL_TAXONOMY_DRIFT  {msg}\n")
+            f.write(format_line("CONTROL_TAXONOMY_DRIFT", msg, component="skill"))
     except OSError:
         pass
 

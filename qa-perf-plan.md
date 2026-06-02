@@ -1,5 +1,28 @@
 # QA Performance Plan — verified 2026-06-02
 
+> **HEADLINE WIN 2026-06-02 — YAML loader (P0, biggest lever found, SHIPPED).**
+> The dominant QA cost was never the check count — it was **PyYAML's pure-Python
+> `safe_load` re-parsing the ~90 KB `threat-model.yaml` 2–4× per run**. libyaml's
+> C loader (`CSafeLoader`) is **10.4× faster** (198 ms → 19 ms per parse) and was
+> available but unused; `_PrePass` cached md-text + contract but **not** the yaml.
+> Fix: added `_fast_yaml_load()` (CSafeLoader, SafeLoader fallback) and routed all
+> 9 `safe_load` call sites through it. Measured on juice-shop (2919-line md, 92 KB yaml):
+> - `repair_plan` (runs EVERY gate): **687 ms → 200 ms (−71%)**
+> - `all` (agent-dispatch path):     **1326 ms → 480 ms (−64%)**
+> Zero behavior change (identical output for the safe subset); 372 QA tests pass.
+> This dwarfs the entire P2+P3 check-drop campaign (which removed only cheap regex
+> checks). Per-parse profile: `walkthrough_coverage` parsed the yaml **twice** (786 ms,
+> 99% in safe_load); `chain_tid_consistency` once (497 ms); `yaml_md_consistency` once.
+>
+> **STATUS 2026-06-02: P1 + P2 + P3 + P4 IMPLEMENTED** (zero-regression vs baseline; 309 affected tests green).
+> P5 (repair_plan/all dedup) DEFERRED.
+> P4 deviation: PHASE_BURST kept inline in `check_invariants` (not extracted) — extraction added skill-wiring
+> risk for a diagnostic whose signal was never consumed on the clean path.
+> **Secret gate: HARD GATE shipped.** `secret_scan.py` precision-fixed (skip unquoted code-identifier
+> values like `publicKey`/`security.hash`; quoted literals + opaque/digit tokens still flag). Skill runs
+> `unmasked_secrets` every gate pass → `exit 2` on hit. Juice-shop now trips 2 LEGIT violations (real
+> password literal + PEM evidence) → such docs correctly blocked until masked. 46/46 secret-scan tests green.
+
 Code-level re-verification of the QA subsystem (`qa_checks.py`, `appsec-qa-reviewer.md`,
 skill wiring). Two prior-memory claims were **corrected** this pass.
 

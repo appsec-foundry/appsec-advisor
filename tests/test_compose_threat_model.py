@@ -172,11 +172,14 @@ def test_top_threats_has_five_columns(tmp_path: Path) -> None:
     assert header in rendered, "Top Threats must use exactly the 5 canonical columns"
 
 
-def test_figure1_edges_carry_first_reference_titles(tmp_path: Path) -> None:
-    """Figure 1 attack arrows show the short class title on the FIRST glyph
-    reference (e.g. `① Injection`) and the bare number on later references
-    (e.g. the dotted consequence edge). Regression for the 2026-06-02 request
-    'bei figure 1 fehlen kurze Beschreibungen der Pfeile'."""
+def test_figure1_solid_edges_are_self_describing(tmp_path: Path) -> None:
+    """Figure 1 DIRECT (solid) attack edges name every glyph they carry
+    (``① Injection ④ Secret Exposure``) so each attacked component reads on its
+    own; FOLLOW-ON (dotted) propagation edges reference the already-named attack
+    by bare number. When the diagram is too complex the solid edges fall back to
+    bare numbers (the legend names them). Regression for the 2026-06-02 request:
+    the file-upload / B2B arrows must carry their class titles, not a cryptic
+    ``① ④``."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     m = re.search(r"```mermaid\nflowchart TB.+?```", rendered, re.DOTALL)
@@ -184,18 +187,58 @@ def test_figure1_edges_carry_first_reference_titles(tmp_path: Path) -> None:
         return  # fixture produced no Figure 1 (no attack paths) → nothing to verify
     fig1 = m.group(0)
     glyphs = "①②③④⑤⑥⑦"
-    # At least one SOLID attack edge carries a glyph followed by an alpha title.
-    titled = re.findall(rf'==>\|"([{glyphs}][^"]*)"', fig1)
-    assert any(re.search(rf"[{glyphs}]\s+[A-Za-z]", lbl) for lbl in titled), \
-        f"no first-reference title on any Figure 1 attack edge: {titled}"
-    # A glyph must be titled at most ONCE across the whole figure (first ref).
-    all_labels = re.findall(rf'[=\-.]+>\|"([^"]*)"', fig1)
-    for g in glyphs:
-        titled_occurrences = sum(
-            1 for lbl in all_labels if re.search(rf"{g}\s+[A-Za-z]", lbl)
-        )
-        assert titled_occurrences <= 1, \
-            f"glyph {g} carries its title on more than one edge"
+    solid = re.findall(r'==>\|"([^"]*)"', fig1)
+    dotted = re.findall(r'-\.->\|"([^"]*)"', fig1)
+    if not solid:
+        return
+
+    def _glyphs_in(lbl: str) -> list[str]:
+        return re.findall(rf"[{glyphs}]", lbl)
+
+    total = sum(len(_glyphs_in(lbl)) for lbl in solid)
+    busiest = max((len(_glyphs_in(lbl)) for lbl in solid), default=0)
+    compact = total > 12 or busiest > 6
+
+    if compact:
+        # Reduced form: every solid glyph is bare (no inline class title).
+        for lbl in solid:
+            for gly in _glyphs_in(lbl):
+                assert not re.search(rf"{gly}\s+[A-Za-z]", lbl), \
+                    f"compact diagram should drop names, but {gly} is titled: {lbl!r}"
+    else:
+        # Self-describing: every glyph on every solid edge is followed by a name.
+        for lbl in solid:
+            for gly in _glyphs_in(lbl):
+                assert re.search(rf"{gly}\s+[A-Za-z]", lbl), \
+                    f"solid edge glyph {gly} not named (self-describing rule): {lbl!r}"
+        assert any(re.search(rf"[{glyphs}]\s+[A-Za-z]", lbl) for lbl in solid), \
+            f"no named glyph on any solid attack edge: {solid}"
+        # Dotted edges reference by bare number — a glyph already named on a
+        # solid edge must NOT be re-titled on a dotted edge.
+        solid_named = {g for lbl in solid for g in _glyphs_in(lbl)}
+        for lbl in dotted:
+            for gly in _glyphs_in(lbl):
+                if gly in solid_named:
+                    assert not re.search(rf"{gly}\s+[A-Za-z]", lbl), \
+                        f"dotted edge re-titles already-named glyph {gly}: {lbl!r}"
+
+
+def test_fig1_compact_label_threshold() -> None:
+    """The Figure 1 complexity guard reduces solid-edge labels to bare numbers
+    only once the glyph payload crosses the threshold."""
+    f = compose._fig1_use_compact_labels
+    assert f({}) is False
+    # Current juice-shop shape: 5 + 2 + 1 + 1 = 9 glyphs, busiest 5 → full names.
+    assert f({
+        ("a", "C1"): list("①②③④⑤"),
+        ("a", "C2"): ["①", "④"],
+        ("a", "C3"): ["⑤"],
+        ("a", "C4"): ["⑥"],
+    }) is False
+    # Many attacked components push the total over the limit → compact.
+    assert f({("a", f"C{i}"): ["①", "②", "③"] for i in range(5)}) is True  # 15 total
+    # One very busy single edge → compact even if the total is modest.
+    assert f({("a", "C1"): list("①②③④⑤⑥⑦")}) is True  # busiest 7 > 6
 
 
 def test_top_threats_rows_self_anchor_the_path_glyph(tmp_path: Path) -> None:
@@ -2519,4 +2562,39 @@ def test_section7_inline_findings_id_only() -> None:
     assert "[F-014](#f-014) here" in out
     # Relevant-findings bullet keeps its title.
     assert "- [F-014](#f-014) (BOLA user data export)" in out
+
+
+# ---------------------------------------------------------------------------
+# §8 count invariants — guaranteed by construction (replaces the retired
+# qa_checks.check_invariants numeric battery). The composer renders the Risk
+# Distribution line, the STRIDE Coverage line, and the §8 register from one
+# threats[] grouping, so all three counts must equal len(threats). Pinning it
+# here is what lets the QA pre-pass drop the dead runtime re-check.
+# ---------------------------------------------------------------------------
+
+
+def test_section8_counts_equal_threat_total(tmp_path: Path) -> None:
+    out = _prepare_output_dir(tmp_path)
+    yaml_total = len(yaml.safe_load((out / "threat-model.yaml").read_text()).get("threats", []))
+    rendered, _ = compose.render(CONTRACT, out)
+
+    rd_line = next((l for l in rendered.splitlines() if "**Risk Distribution:**" in l), "")
+    sc_line = next((l for l in rendered.splitlines() if "**STRIDE Coverage:**" in l), "")
+    assert rd_line, "Risk Distribution line missing from rendered §8"
+    assert sc_line, "STRIDE Coverage line missing from rendered §8"
+
+    # Per-severity cells, excluding the trailing **Total[ findings]: N** cell.
+    risk_sum = sum(
+        int(n) for n in re.findall(r"(?:Critical|High|Medium|Low|Info):\s*(\d+)", rd_line)
+    )
+    total_declared_m = re.search(r"Total(?:\s+findings)?:\s*(\d+)", rd_line)
+    assert total_declared_m, f"no Total cell in Risk Distribution line: {rd_line!r}"
+    total_declared = int(total_declared_m.group(1))
+    # The six STRIDE category counts.
+    stride_sum = sum(int(n) for n in re.findall(r":\s*(\d+)", sc_line))
+
+    assert risk_sum == total_declared == stride_sum == yaml_total, (
+        f"§8 count drift: risk_sum={risk_sum} total_declared={total_declared} "
+        f"stride_sum={stride_sum} yaml_total={yaml_total}"
+    )
 

@@ -3,7 +3,7 @@ name: appsec-abuse-case-verifier
 description: "INTERNAL — invoked by appsec-threat-analyst in Phase 10b, one agent per abuse-case candidate (parallel fan-out like the Phase-9 STRIDE dispatch). Verifies a single abuse case end-to-end against the codebase: per chain step it locates the entry point, traces the sink, checks for compensating controls, and emits a step verdict ∈ {confirmed, blocked, inconclusive}. Writes one .abuse-case-verdict-<AC-ID>.json. Never rates risk — the chain verdict is computed deterministically from these step verdicts."
 tools: Read, Grep, Bash, Write
 model: sonnet
-maxTurns: 20
+maxTurns: 28
 ---
 
 INTERNAL AGENT — do not invoke directly. Dispatched by `appsec-threat-analyst` (Phase 10b) once per abuse-case candidate produced by `scripts/match_abuse_cases.py`. Exactly one abuse case per agent; exactly one verdict file out. This mirrors the Phase-9 STRIDE fan-out: N agents run in parallel, wall-clock ≈ the slowest single case, not N × single.
@@ -23,6 +23,14 @@ Every print uses the prefix `[abuse-case-verifier:<ABUSE_CASE_ID>]`. Print each 
 ## Mandatory logging — CRITICAL
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `abuse-case-verifier`, model: `<MODEL_ID>`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, every Read/Grep, the final file write, and agent completion.
+
+**Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format) — it stamps the real UTC time and the correct column widths for you, so the timestamp can never be wrong or literal. Emit every event with one of these exact Bash calls (pass `--agent abuse-case-verifier` so the component column is correct):
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<AC-ID> started (model: <MODEL_ID>)" --agent abuse-case-verifier
+```
+Do **NOT**: hand-roll a `echo "$(date …) … "` log line; write log lines with the `Write` tool; embed a literal `$(date …)` anywhere; hardcode a timestamp (e.g. `2026-06-02T10:00:00Z`); or invent a JSON / `[bracket]` log schema. The only legal way to write `.agent-run.log` is through `log_event.py`.
 
 **Print on startup:**
 ```

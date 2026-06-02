@@ -193,14 +193,14 @@ def test_heartbeat_emits_hook_event_on_success(tmp_path: Path):
     assert "phase=10b" in content
     assert "step=triage" in content
     assert "INFO" in content  # success → INFO level
-    # Format: ts space "[<sid>]" space level event detail. The session-id
-    # slot is empty (acquire_lock runs outside the hook context) so it
-    # appears as 8 literal spaces between the brackets, e.g. "[        ]".
+    # Format: ts space "[<sid>]" space level event detail. acquire_lock runs
+    # outside the hook context, so the session-id slot carries the canonical
+    # no-session sentinel from event_log (eight dashes), e.g. "[--------]".
     line = content.strip().splitlines()[-1]
     assert line.startswith("2026-") or line.startswith("202"), (
         "line must start with UTC timestamp (got: %r)" % line[:10]
     )
-    assert "[        ]" in line, "session-id slot must be present and 8-char-padded"
+    assert "[--------]" in line, "session-id slot must be present and 8-char-padded"
 
 
 def test_heartbeat_logs_warn_when_lock_absent(tmp_path: Path):

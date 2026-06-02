@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
+
+from event_log import format_line
 
 
 def fmt_duration(seconds: int) -> str:
@@ -49,9 +50,10 @@ def main(argv: list[str]) -> int:
     end_epoch = int(time.time())
     elapsed = max(0, end_epoch - start_epoch)
     duration = fmt_duration(elapsed)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    line = (
-        f"{ts}  [--------]  INFO   {agent_name}  AGENT_END   {agent_name} completed in {duration} (model: {model_id})\n"
+    line = format_line(
+        "AGENT_END",
+        f"{agent_name} completed in {duration} (model: {model_id})",
+        component=agent_name,
     )
     log_path = output_dir / ".agent-run.log"
     try:

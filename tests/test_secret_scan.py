@@ -101,6 +101,38 @@ def test_loose_assignment_flagged(secret_scan, raw):
 @pytest.mark.parametrize(
     "raw",
     [
+        "secret: publicKey",            # camelCase code identifier, not a secret
+        "password: security.hash",      # dotted attribute path
+        "secret = config.apiKey",       # dotted path with camelCase tail
+        "token: PublicKey",             # PascalCase identifier
+        "api_key: this.that.other",     # multi-segment dotted path
+    ],
+)
+def test_bareword_code_reference_not_flagged(secret_scan, raw):
+    """Unquoted code-identifier values (variable names in code excerpts) are
+    references, not literal secrets — they must not trip the loose pattern."""
+    hits = [h for h in secret_scan.scan_text(raw) if h.pattern == "generic_credential_assignment"]
+    assert hits == [], f"code-reference value should not flag: {raw!r}, got {hits}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "password: 'EinBelegtesBrotMitSchinkenSCHINKEN'",  # quoted literal — flags despite shape
+        "bearer=abcdefghijklmnop",                         # opaque all-lowercase token
+        "token: someopaquetoken1234",                      # has digits
+        "secret = config2apiKey",                          # has a digit → not a pure code ref
+    ],
+)
+def test_real_or_opaque_credentials_still_flagged(secret_scan, raw):
+    assert any(
+        h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)
+    ), f"expected a loose-pattern hit for {raw!r}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
         'password = "****"',
         'password: "**** (12 chars)"',
         "API_KEY = AIza****",

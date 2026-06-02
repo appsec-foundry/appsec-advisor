@@ -59,8 +59,9 @@ import os
 import shutil
 import sys
 import time
-from datetime import datetime, timezone
 from pathlib import Path
+
+from event_log import format_line
 
 # Phase-budgets loader is sibling-imported so this script stays standalone
 # (no package init required). Falls back to the historical 300 s default
@@ -97,9 +98,7 @@ def _emit_hook_event(output_dir: Path, level: str, event: str, detail: str) -> N
     """
     try:
         log_path = output_dir / _LOG_FILENAME
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        sid = " " * 8  # unknown — we run outside the hook context
-        line = f"{ts}  [{sid}]  {level:<5}  {event:<18}  {detail}\n"
+        line = format_line(event, detail, level=level)
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(line)
     except Exception:

@@ -231,6 +231,54 @@ def test_flag_file_de_duplicates_per_session(env):
 
 
 # ---------------------------------------------------------------------------
+# reset_session — fresh budget per dispatched stage
+# ---------------------------------------------------------------------------
+
+
+def test_reset_session_clears_turn_counter(env):
+    """After reset, the next tool call starts the counter from 1 again."""
+    output_dir, _ = env
+    for _ in range(9):  # 9/10 — critical already crossed
+        bw.tally_and_check("sid_aaaa", "appsec-test-agent", str(output_dir))
+    bw.reset_session("sid_aaaa", str(output_dir))
+    state = json.loads((output_dir / bw.STATE_FILENAME).read_text())
+    assert "sid_aaaa" not in state
+    # Counter restarts: a single call is 1/10, no threshold.
+    r = bw.tally_and_check("sid_aaaa", "appsec-test-agent", str(output_dir))
+    assert r is None
+
+
+def test_reset_session_removes_flag_when_only_session(env):
+    """Flag file is deleted when the reset session was the only one flagged —
+    agents poll existence, so leaving an empty list would still trigger."""
+    output_dir, _ = env
+    for _ in range(9):
+        bw.tally_and_check("sid_aaaa", "appsec-test-agent", str(output_dir))
+    assert (output_dir / bw.CRITICAL_FLAG_FILENAME).is_file()
+    bw.reset_session("sid_aaaa", str(output_dir))
+    assert not (output_dir / bw.CRITICAL_FLAG_FILENAME).exists()
+
+
+def test_reset_session_preserves_other_sessions_flag(env):
+    """Resetting one session must not clear another session's flag entry."""
+    output_dir, _ = env
+    for _ in range(9):
+        bw.tally_and_check("sid_aaaa", "appsec-test-agent", str(output_dir))
+    for _ in range(9):
+        bw.tally_and_check("sid_bbbb", "appsec-test-agent", str(output_dir))
+    bw.reset_session("sid_aaaa", str(output_dir))
+    data = json.loads((output_dir / bw.CRITICAL_FLAG_FILENAME).read_text())
+    assert [e["sid"] for e in data] == ["sid_bbbb"]
+
+
+def test_reset_session_never_raises_on_bad_input(env):
+    output_dir, _ = env
+    bw.reset_session("", str(output_dir))  # no sid
+    bw.reset_session("sid_aaaa", "")  # no output_dir
+    bw.reset_session("sid_aaaa", str(output_dir))  # nothing to reset
+
+
+# ---------------------------------------------------------------------------
 # Robustness — never raise
 # ---------------------------------------------------------------------------
 

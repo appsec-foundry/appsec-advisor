@@ -110,6 +110,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from event_log import format_line
+
 # --- whitelist -------------------------------------------------------------
 
 ALWAYS_FILES = [
@@ -364,19 +366,23 @@ def run_cleanup(
     # --- log ----------------------------------------------------------------
     log_path = output_dir / ".agent-run.log"
     try:
-        import datetime as _dt
-
-        ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with log_path.open("a", encoding="utf-8") as f:
             if report["skipped"]:
                 f.write(
-                    f"{ts}  [--------]  INFO   runtime-cleanup  RUNTIME_CLEANUP   skipped ({report['skip_reason']})\n"
+                    format_line(
+                        "RUNTIME_CLEANUP",
+                        f"skipped ({report['skip_reason']})",
+                        component="runtime-cleanup",
+                    )
                 )
             else:
                 f.write(
-                    f"{ts}  [--------]  INFO   runtime-cleanup  RUNTIME_CLEANUP   "
-                    f"stage={stage} removed={len(report['removed'])} "
-                    f"preserved={len(report['preserved'])}\n"
+                    format_line(
+                        "RUNTIME_CLEANUP",
+                        f"stage={stage} removed={len(report['removed'])} "
+                        f"preserved={len(report['preserved'])}",
+                        component="runtime-cleanup",
+                    )
                 )
     except OSError:
         pass  # non-fatal

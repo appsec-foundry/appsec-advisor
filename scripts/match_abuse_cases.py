@@ -300,6 +300,60 @@ def cmd_list_candidates(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list_inconclusive(args: argparse.Namespace) -> int:
+    """Print AC-IDs whose chain verdict is `inconclusive` and that the matcher
+    rated a real candidate — i.e. worth a second look by a stronger model.
+
+    Run AFTER `finalize` (needs `chain_verdict`). Output is the escalation
+    work-list for the skill's sonnet re-verify pass. Capped at `--max` so the
+    escalation cost stays bounded; the cap drop is logged to stderr.
+    """
+    out_dir = Path(args.output_dir)
+    verdicts_path = out_dir / ".abuse-case-verdicts.json"
+    if not verdicts_path.exists():
+        return 0
+    try:
+        vdoc = json.loads(verdicts_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    verdicts = vdoc.get("verdicts") if isinstance(vdoc, dict) else vdoc
+
+    # Only escalate cases the matcher considered plausible (candidate /
+    # partial_candidate) — don't spend a strong model re-checking weak matches.
+    candidates: set[str] = set()
+    matches_path = out_dir / ".abuse-case-matches.json"
+    if matches_path.exists():
+        try:
+            mdoc = json.loads(matches_path.read_text(encoding="utf-8"))
+            candidates = {
+                m["abuse_case_id"]
+                for m in mdoc.get("matches", [])
+                if m.get("structural_verdict") in ("candidate", "partial_candidate")
+            }
+        except (OSError, json.JSONDecodeError, KeyError):
+            candidates = set()
+
+    inconclusive = sorted(
+        v.get("abuse_case_id")
+        for v in (verdicts or [])
+        if v.get("chain_verdict") == _INCONCLUSIVE
+        and v.get("abuse_case_id")
+        and (not candidates or v.get("abuse_case_id") in candidates)
+    )
+
+    cap = max(0, int(getattr(args, "max", 5) or 0))
+    if cap and len(inconclusive) > cap:
+        sys.stderr.write(
+            f"ESCALATE: {len(inconclusive)} inconclusive, capping to {cap} "
+            f"(dropped: {', '.join(inconclusive[cap:])})\n"
+        )
+        inconclusive = inconclusive[:cap]
+
+    for cid in inconclusive:
+        print(cid)
+    return 0
+
+
 def cmd_finalize(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir) if args.output_dir else None
     matches_path = (
@@ -351,6 +405,11 @@ def main(argv: list[str] | None = None) -> int:
     fz.add_argument("--matches", default=None)
     fz.add_argument("--verdicts", default=None)
     fz.set_defaults(func=cmd_finalize)
+
+    li = sub.add_parser("list-inconclusive", help="print candidate ids whose chain verdict is inconclusive (escalation work-list)")
+    li.add_argument("--output-dir", required=True)
+    li.add_argument("--max", type=int, default=5, help="cap the escalation work-list (default 5; 0 = no cap)")
+    li.set_defaults(func=cmd_list_inconclusive)
 
     args = parser.parse_args(argv)
     return args.func(args)

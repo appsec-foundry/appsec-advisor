@@ -97,7 +97,7 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 - `.fragments/ms-verdict.json` — do NOT cite exact severity counts in the `opening` prose (e.g. "eight Critical and eleven High"); those drift from the real totals. The composer injects an authoritative deterministic `**Risk distribution:** 🔴 Critical: N · 🟠 High: M · …` line directly under the opening. Describe posture + consequence in words; let the injected line carry the numbers.
 - `.fragments/ms-architecture-assessment.json`
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
-- `.fragments/ms-top-mitigations.json` — curate the Management-Summary Top-Mitigations leader-board (see authoring contract below)
+- ~~`.fragments/ms-top-mitigations.json`~~ — **DO NOT author by default.** The composer builds the §1 Top-Mitigations leader-board **deterministically** (`_row_sort_key` ordering + Critical-floor coverage). LLM curation is retired: the marginal re-ordering gain did not justify the extra renderer turns. Skip it unless `ENRICH_TOP_MITIGATIONS=true` is explicitly set. See contract below.
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - ~~`.fragments/top-threats-architecture.md` (Figure 1)~~ — **DO NOT author this fragment.** Figure 1 is built **deterministically** by the composer (`_render_top_threats_architecture`), which is the authoritative single source of truth for that diagram. Hand-authoring is retired: the LLM repeatedly drifted from the agreed format (unstructured layout, missing per-component finding badges, un-annotated actors, attacker→data edges, and out-of-range `linkStyle` indices that crash Mermaid). Skip it — the composer ignores any file you write here except as a no-attack-paths fallback.
 - `.fragments/architecture-diagrams.md` and `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`
@@ -184,6 +184,8 @@ The Architecture Assessment renders as a 4-column table in §1: `Weakness catego
 Legacy fragments using the `defects[]` shape with `name`/`description`/`findings` (no `category`, no `affected_components`) are accepted as back-compat (composer aliases `name` → `category`) but new authoring MUST use the `weaknesses[]` shape with the four fields above.
 
 ### `ms-top-mitigations.json` authoring contract
+
+> **Default: do NOT author this fragment.** The composer's deterministic `_row_sort_key` ordering + Critical-floor (line "Omit the fragment entirely…" below) is the authoritative source of truth. Author it **only** when `ENRICH_TOP_MITIGATIONS=true` is passed in the invocation. The rest of this section applies to that opt-in path.
 
 The §1 Top-Mitigations table is a curated leader-board, not a blind top-N cut. You decide which mitigations are *most important to surface*, within hard guardrails the composer enforces:
 

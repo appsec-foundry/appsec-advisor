@@ -56,6 +56,8 @@ import sys
 import time
 from pathlib import Path
 
+from event_log import format_line
+
 _CANONICAL_EVENTS = {
     "phase-start": "PHASE_START",
     "phase-end": "PHASE_END",
@@ -127,7 +129,7 @@ def _mirror_line(kind: str, detail: str, elapsed: str) -> str:
 
 def _append_log(output_dir: Path, event: str, detail: str, agent: str) -> None:
     log_path = output_dir / ".agent-run.log"
-    line = f"{_now_iso()}  [--------]  INFO   {agent}  {event:<12}  {detail}\n"
+    line = format_line(event, detail, component=agent)
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         with open(log_path, "a", encoding="utf-8") as fh:

@@ -48,7 +48,7 @@ Load `PRE_PASS_JSON_PATH` first. It is the authoritative result for **every** me
 | `links.issues` | Check 1 — broken vscode:// links | Iterate `missing:` / `ambiguous:`; helper already auto-repaired single-candidate cases |
 | `evidence_integrity.issues` | Check 1b — cited file/line drift | Annotate findings; no auto-repair |
 | `xrefs.issues` | Check 3 — orphaned T/M refs | Add `<sup>⚠ … not found</sup>` markers |
-| `invariants.issues` | Check 7c — Risk Dist / STRIDE sums, sec-8 heading counts | Flag mismatches inline (numeric) |
+| `invariants.issues` | Check 7c — requirement-violated coverage + PHASE_BURST diagnostic (numeric Risk-Dist/STRIDE sums are now composer-guaranteed, not re-checked) | Surface entries; a numeric mismatch is unreachable by construction |
 | `ms_structure.issues` | Check 7 — Management Summary layout | Annotate; structural defects need re-render |
 | `contract.issues` | Check 14 — sections-contract violations | Surfaced into `.qa-repair-plan.json` automatically; no inline edits |
 | `mermaid_syntax.issues` | Check 8a — Mermaid grammar (Layer A regex + Layer B parser) | Structural → repair plan, not inline |
@@ -301,7 +301,7 @@ For the small set of issues the pre-pass cannot decide:
 
 ### 7c — Consistency invariants
 
-Read `PRE_PASS_JSON.invariants.issues`. The helper (`check_invariants`) covers Risk Distribution sum, STRIDE Coverage sum, and §8.B-E heading-count parity. For each entry, annotate with `<!-- QA: Risk Distribution mismatch — line says <tier>: <N>, sub-section 8.<X> sums to <K> -->` (or the STRIDE / total equivalent). These are typically render-time defects → surface to repair plan.
+Read `PRE_PASS_JSON.invariants.issues`. The numeric Risk Distribution sum, STRIDE Coverage sum, and §8 heading-count parity that the helper used to emit are now **guaranteed by construction** — the composer renders all three from one `threats[]` grouping and the output-schema gate enums `stride`/`risk` before Stage 2, so a mismatch is unreachable (pinned by `tests/test_compose_threat_model.py::test_section8_counts_equal_threat_total`). This key therefore normally carries only the requirement-violated-coverage and PHASE_BURST diagnostics. In the rare event a numeric entry does appear, annotate with `<!-- QA: Risk Distribution mismatch — line says <tier>: <N>, sub-section 8.<X> sums to <K> -->` (or the STRIDE / total equivalent) and surface to repair plan.
 
 Additionally check (semantic, not in helper):
 - **Requirements Compliance count consistency.** When `CHECK_REQUIREMENTS=true`, find the `**Result:** <N> requirements checked — …` line in both the Management Summary `### Requirements Compliance` sub-section and §7b `**Summary:**` line. Five numbers must match. Mismatch → `<!-- QA: Requirements Compliance counts differ — MS says <tuple>, §7b says <tuple> -->`.

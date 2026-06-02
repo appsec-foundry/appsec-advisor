@@ -250,6 +250,57 @@ def tally_and_check(sid: str, agent: str, output_dir: str) -> Optional[dict]:
     return None
 
 
+def reset_session(sid: str, output_dir: str) -> None:
+    """Drop all watchdog state + flag entries for ``sid``, giving the next
+    delegated unit of work a fresh turn budget.
+
+    Called when the orchestrator dispatches a sub-agent (Agent tool). In
+    ``claude -p`` headless mode every sub-agent shares the outermost
+    orchestrator session id, so the per-session turn counter would otherwise
+    accumulate the WHOLE pipeline's tool calls (Stage 1 + STRIDE fan-out +
+    abuse fan-out + Stage 2 render + Stage 3 repair) against a single
+    sub-agent's ``maxTurns`` — tripping BUDGET_CRITICAL mid-run and poisoning
+    the fresh-budget renderer via the shared ``.budget-critical`` flag. A
+    reset at each dispatch boundary scopes the budget to one stage at a time,
+    which matches the documented "fresh budget per stage" design intent.
+
+    Never raises — a reset failure must not break a run.
+    """
+    if not sid or not output_dir:
+        return
+    sid = sid[:8]
+
+    # 1. Drop the per-session turn counter.
+    try:
+        state = _read_state(output_dir)
+        if sid in state:
+            del state[sid]
+            _write_state(output_dir, state)
+    except Exception:
+        pass
+
+    # 2. Drop this session's entries from both flag files; remove a flag file
+    #    entirely once no session is flagged (agents poll existence).
+    for filename in (WARN_FLAG_FILENAME, CRITICAL_FLAG_FILENAME):
+        path = Path(output_dir) / filename
+        if not path.is_file():
+            continue
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(existing, list):
+                existing = []
+        except (OSError, json.JSONDecodeError):
+            existing = []
+        remaining = [e for e in existing if e.get("sid") != sid]
+        try:
+            if remaining:
+                path.write_text(json.dumps(remaining, indent=2), encoding="utf-8")
+            else:
+                path.unlink()
+        except OSError:
+            pass
+
+
 def format_detail(payload: dict) -> str:
     """Format a threshold-crossing payload for the .hook-events.log line."""
     return (

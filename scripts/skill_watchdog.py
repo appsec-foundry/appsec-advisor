@@ -76,6 +76,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from event_log import format_line
+
 # Reuse the central phase budgets so per-component-timeout defaults stay
 # in sync with the rest of the toolchain.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -105,8 +107,7 @@ def _log(output_dir: Path, level: str, event: str, detail: str) -> None:
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
         log_path = output_dir / _LOG_NAME
-        sid = "-" * 8  # not a hook context
-        line = f"{_ts_now()}  [{sid}]  {level:<5}  {_AGENT_NAME}  {event:<24}  {detail}\n"
+        line = format_line(event, detail, level=level, component=_AGENT_NAME)
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(line)
     except Exception:

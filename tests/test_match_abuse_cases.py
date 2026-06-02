@@ -195,3 +195,54 @@ def test_cli_match_and_list_candidates(tmp_path: Path, capsys):
     assert rc == 0
     listed = capsys.readouterr().out.split()
     assert "AC-T-001" in listed
+
+
+# ---------------------------------------------------------------------------
+# CLI: list-inconclusive — escalation work-list
+# ---------------------------------------------------------------------------
+
+
+def _write_verdicts(tmp_path: Path, rows: list[tuple[str, str]]) -> None:
+    """rows = [(ac_id, chain_verdict), ...]"""
+    doc = {
+        "schema_version": 1,
+        "verdicts": [{"abuse_case_id": cid, "chain_verdict": cv, "step_verdicts": []} for cid, cv in rows],
+    }
+    (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(doc))
+
+
+def _write_matches(tmp_path: Path, rows: list[tuple[str, str]]) -> None:
+    """rows = [(ac_id, structural_verdict), ...]"""
+    doc = {"schema_version": 1, "matches": [{"abuse_case_id": cid, "structural_verdict": sv} for cid, sv in rows]}
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(doc))
+
+
+def test_list_inconclusive_lists_only_inconclusive_candidates(tmp_path: Path, capsys):
+    _write_verdicts(tmp_path, [("AC-T-001", "fully_viable"), ("AC-T-002", "inconclusive"), ("AC-T-003", "mitigated")])
+    _write_matches(tmp_path, [("AC-T-001", "candidate"), ("AC-T-002", "candidate"), ("AC-T-003", "candidate")])
+    rc = mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert capsys.readouterr().out.split() == ["AC-T-002"]
+
+
+def test_list_inconclusive_skips_non_candidates(tmp_path: Path, capsys):
+    _write_verdicts(tmp_path, [("AC-T-002", "inconclusive"), ("AC-T-009", "inconclusive")])
+    _write_matches(tmp_path, [("AC-T-002", "candidate"), ("AC-T-009", "not_applicable")])
+    mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
+    assert capsys.readouterr().out.split() == ["AC-T-002"]
+
+
+def test_list_inconclusive_respects_cap(tmp_path: Path, capsys):
+    rows = [(f"AC-T-{n:03d}", "inconclusive") for n in range(1, 9)]
+    _write_verdicts(tmp_path, rows)
+    _write_matches(tmp_path, [(cid, "candidate") for cid, _ in rows])
+    mac.main(["list-inconclusive", "--output-dir", str(tmp_path), "--max", "3"])
+    out = capsys.readouterr().out.split()
+    assert len(out) == 3
+    assert out == ["AC-T-001", "AC-T-002", "AC-T-003"]  # deterministic sort
+
+
+def test_list_inconclusive_no_verdicts_file_is_empty(tmp_path: Path, capsys):
+    rc = mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == ""

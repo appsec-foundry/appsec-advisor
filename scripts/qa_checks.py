@@ -22,6 +22,11 @@ Usage:
     qa_checks.py unmasked_secrets <threat-model.md> [<output-dir>]
     qa_checks.py relevant_findings <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py all           <threat-model.md> <repo-root>
+    qa_checks.py autofix       <threat-model.md> <repo-root>
+
+`autofix` runs only the five in-place mutating passes (links, anchors, MS
+structure, cell-format, heading-attribute strip) without the detector battery
+or pre-pass JSON — the fast-path mutation half of `all`.
 
 `all` runs every check in sequence and applies in-place fixes for links,
 anchors, and safe Management Summary structural repairs. It prints a JSON
@@ -115,21 +120,6 @@ RISK_DIST_RE = re.compile(
     + _DELIM
     + r"\**Total(?:\s+findings)?:\s*(\d+)\**"
 )
-STRIDE_COVERAGE_RE = re.compile(
-    r"\*\*STRIDE Coverage:\*\*\s*"
-    r"Spoofing:\s*(\d+)"
-    + _DELIM
-    + r"Tampering:\s*(\d+)"
-    + _DELIM
-    + r"Repudiation:\s*(\d+)"
-    + _DELIM
-    + r"Information Disclosure:\s*(\d+)"
-    + _DELIM
-    + r"Denial of Service:\s*(\d+)"
-    + _DELIM
-    + r"Elevation of Privilege:\s*(\d+)"
-)
-SECTION_8_SUB_RE = re.compile(r"^###\s+8\.([1-4])\s+(Critical|High|Medium|Low)\s*\((\d+)\)", re.MULTILINE)
 CODE_FENCE_RE = re.compile(r"^```", re.MULTILINE)
 
 
@@ -222,6 +212,29 @@ def _strip_code_fences(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Fast YAML loading
+#
+# PyYAML's pure-Python SafeLoader parses the ~90 KB ``threat-model.yaml`` in
+# ~200 ms; libyaml's C loader (``CSafeLoader``) does it in ~20 ms. The QA
+# ``repair_plan``/``all`` batteries parse that file 2–4× per run, so routing
+# every parse through the C loader removes ~0.4–0.8 s of pure-Python YAML
+# work per QA pass — the dominant cost on both paths. Output is identical for
+# the safe subset these documents use; ``SafeLoader`` is the fallback when a
+# PyYAML build lacks the libyaml extension.
+# ---------------------------------------------------------------------------
+_YAML_LOADER = None  # resolved lazily on first load
+
+
+def _fast_yaml_load(text: str):
+    global _YAML_LOADER
+    import yaml as _yaml
+
+    if _YAML_LOADER is None:
+        _YAML_LOADER = getattr(_yaml, "CSafeLoader", _yaml.SafeLoader)
+    return _yaml.load(text, Loader=_YAML_LOADER)
+
+
 class _PrePass:
     """Shared, lazy-loaded artifacts for the QA `all` subcommand.
 
@@ -270,7 +283,7 @@ class _PrePass:
             import yaml as _yaml  # local — qa_checks doesn't import yaml at module scope
 
             try:
-                cls._contract = _yaml.safe_load(contract_path.read_text(encoding="utf-8")) or {}
+                cls._contract = _fast_yaml_load(contract_path.read_text(encoding="utf-8")) or {}
             except (OSError, _yaml.YAMLError):
                 cls._contract = {}
             # schema_v2 — when active (.skill-config.json carries
@@ -481,7 +494,7 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
     try:
         import yaml as _yaml
 
-        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
     except Exception:
         return {}
     # The index doubles as an alias map: {ID: (label, canonical_anchor)}.
@@ -947,34 +960,13 @@ def check_unfounded_perimeter_claims(md_path: Path) -> Report:
 
 def check_invariants(md_path: Path) -> Report:
     report = Report("invariants")
-    text = md_path.read_text(encoding="utf-8")
-    rd = RISK_DIST_RE.search(text)
-    if not rd:
-        report.issues.append("Risk Distribution line not found")
-    else:
-        # Group 5 is the optional Info cell (None when omitted). Group 6 is Total.
-        crit, high, med, low = (int(rd.group(i)) for i in (1, 2, 3, 4))
-        info = int(rd.group(5)) if rd.group(5) is not None else 0
-        total = int(rd.group(6))
-        rd_sum = crit + high + med + low + info
-        if rd_sum != total:
-            report.issues.append(
-                f"Risk Distribution sum mismatch: {crit}+{high}+{med}+{low}+{info}={rd_sum} != Total {total}"
-            )
-        sub_counts = {int(m.group(1)): int(m.group(3)) for m in SECTION_8_SUB_RE.finditer(text)}
-        for idx, (label, n) in enumerate((("Critical", crit), ("High", high), ("Medium", med), ("Low", low)), start=1):
-            declared = sub_counts.get(idx)
-            if declared is not None and declared != n:
-                report.issues.append(f"Section 8.{idx} heading count ({declared}) != Risk Distribution {label} ({n})")
-    sc = STRIDE_COVERAGE_RE.search(text)
-    if not sc:
-        report.issues.append("STRIDE Coverage line not found")
-    elif rd:
-        s_sum = sum(int(x) for x in sc.groups())
-        # Group 6 is now Total (was 5 before the optional Info cell was added).
-        total = int(rd.group(6))
-        if s_sum != total:
-            report.issues.append(f"STRIDE Coverage sum ({s_sum}) != Findings Register Total ({total})")
+    # The numeric Risk-Distribution / STRIDE-Coverage / §8 heading-count
+    # invariants that used to run here are guaranteed by construction: the
+    # composer renders all three from one `threats[]` grouping
+    # (compose_threat_model.py -> _render_threat_register) and the output-schema
+    # gate enums `stride`/`risk` before Stage 2, so a mismatch is unreachable.
+    # They are pinned by a compose unit test instead. Only the PHASE_BURST log
+    # diagnostic below remains live.
 
     # F4 — PHASE_BURST detection (moved here from phase-group-architecture.md
     # auto-repair block, which is skipped on inline-shortcut runs). Inspects
@@ -2594,7 +2586,7 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
         try:
             import yaml  # type: ignore[import-not-found]
 
-            data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+            data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
             raw = data.get("threats", [])
             if isinstance(raw, list):
                 threats = [t for t in raw if isinstance(t, dict)]
@@ -3169,6 +3161,50 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
 # ---------------------------------------------------------------------------
 
 
+def cmd_autofix(md_path: Path, repo_root: Path) -> int:
+    """Run only the five in-place auto-fixing passes and write the corrected
+    Markdown back: links, anchors, MS structure, cell-format, and the
+    heading-attribute strip.
+
+    This is the mutation half of ``cmd_all`` without the detector battery. The
+    skill calls it on every run so the persisted Markdown is always clean, and
+    defers the full detector pre-pass (``cmd_all`` -> ``.qa-prepass.json``) to
+    the agent-dispatch path where the JSON is actually consumed. On the clean
+    fast path the QA agent is skipped, so running the ~45 detectors there only
+    populates a file nobody reads. Returns 0 — auto-fixes are not failures.
+    """
+    md = md_path.resolve()
+    _PrePass.reset()
+    link_report, text_after_links = check_links(md, repo_root)
+    if text_after_links != md.read_text(encoding="utf-8"):
+        md.write_text(text_after_links, encoding="utf-8")
+        _PrePass.reset()
+    anchor_report, text_after_anchors = linkify_anchors(md)
+    if text_after_anchors != md.read_text(encoding="utf-8"):
+        md.write_text(text_after_anchors, encoding="utf-8")
+        _PrePass.reset()
+    ms_report, text_after_ms = check_ms_structure(md)
+    if text_after_ms != md.read_text(encoding="utf-8"):
+        md.write_text(text_after_ms, encoding="utf-8")
+        _PrePass.reset()
+    cell_report, text_after_cell = check_cell_format(md)
+    if text_after_cell != md.read_text(encoding="utf-8"):
+        md.write_text(text_after_cell, encoding="utf-8")
+        _PrePass.reset()
+    attr_strip_report, _ = strip_heading_attribute_artifacts(md)
+    if attr_strip_report.fixes:
+        _PrePass.reset()
+    fixes = (
+        len(link_report.fixes)
+        + len(anchor_report.fixes)
+        + len(ms_report.fixes)
+        + len(cell_report.fixes)
+        + len(attr_strip_report.fixes)
+    )
+    print(json.dumps({"autofix": {"fix_count": fixes}}, indent=2))
+    return 0
+
+
 def cmd_all(md_path: Path, repo_root: Path) -> int:
     md = md_path.resolve()
     # Reset the pre-pass cache at the start of every `all` invocation.
@@ -3198,9 +3234,6 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     if text_after_cell != md.read_text(encoding="utf-8"):
         md.write_text(text_after_cell, encoding="utf-8")
         _PrePass.reset()
-    # Summary bullets — catches `**Gap summary:**` + inline `(1) … (2) …`
-    # prose (no auto-fix; rewriting is a semantic task for the author).
-    summary_report = check_summary_bullets(md)
     contract_report = check_contract(md)
     xref_report = check_xrefs(md)
     inv_report = check_invariants(md)
@@ -3263,13 +3296,9 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     recon_iam_report = check_recon_iam_bridge(md, md.parent)
     # Fix (7): dense "Where it falls short." paragraphs — warning-only.
     falls_short_report = check_falls_short_format(md)
-    # M-6: generic paragraph-density check (every §7.x prose paragraph).
-    paragraph_density_report = check_paragraph_density(md)
     # M-12c: path-shaped tokens that should be backticked per prose-style Rule 6.
     inline_code_report = check_inline_code_format(md)
     label_as_code_report = check_label_as_code(md)
-    # M-19 alt: empty validation_objective on hypotheses is a contract violation.
-    hypothesis_validation_report = check_hypothesis_validation_objective(md)
     # M1: evidence-integrity check — line in-range, not pure-noise,
     # absence-greps replayed. Reads .threats-merged.json (preferred) or
     # threat-model.yaml. No-op when neither is present.
@@ -3287,39 +3316,26 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # strengths. The renderer filters these via `excluded_from_strengths`;
     # this check catches overrides and legacy fragments that slip through.
     strengths_report = check_strengths_row_quality(md)
-    # arch3.md §7 enforcement — three new checks introduced 2026-05.
-    # All three are warnings: they surface mapping/structural drift but
-    # do not block the run, because the underlying repair is a semantic
-    # LLM rewrite of §7 prose (not a deterministic fix).
-    range_homogeneous_report = check_finding_range_homogeneous(md, md.parent)
-    dependency_cross_ref_report = check_dependency_cross_ref(md, md.parent)
-    na_against_recon_report = check_na_against_recon(md, md.parent)
-    # Cut-2: schema_v2 §7.X "architectural prose" — flag templated
-    # mechanism-language and the old "What this control does" definitional
-    # opening so the new code-first §7.X authoring pattern is enforced.
-    architectural_prose_report = check_architectural_prose(md)
-    attack_tree_node_id_report = check_attack_tree_node_id_leak(md)
-    section_713_no_table_report = check_section_713_no_table(md)
+    # Warning-only §7 prose checks (paragraph_density, finding_range_homogeneous,
+    # dependency_cross_ref, na_against_recon, architectural_prose, generic_phrases,
+    # rhetorical_severity, section_opener_restates_heading) were retired from the
+    # `all` pre-pass: they reached no actuator (not in build_repair_plan, no agent
+    # handoff action) and the underlying authoring rules are enforced at the
+    # renderer. Each remains callable as a standalone subcommand.
     subcontrol_naming_report = check_subcontrol_naming_canonical(md)
-    generic_phrases_report = check_generic_phrases(md)
-    rhetorical_severity_report = check_rhetorical_severity(md)
-    section_opener_restates_report = check_section_opener_restates_heading(md)
     ai_padding_report = check_ai_padding_phrases(md)
-    # §7 clarity checks (M2/M5c/M7/M8) — added 2026-05 to close the
-    # Stage-2 LLM placeholder/intro/fence-intro/dup-title failure modes
-    # that the pre-existing structural checks did not catch.
-    section7_placeholders_report = check_section7_narrative_placeholders(md)
-    section7_h4_intro_report = check_section7_h4_positive_intro(md)
+    # §7 clarity check (M7) — H4 status label. The sibling M2/M5c/M8 checks
+    # (narrative placeholders, positive-intro, fence-intro, finding-link
+    # duplicate/semantic) were retired from the `all` pre-pass: they reached
+    # no actuator (not in build_repair_plan, no agent handoff action) and the
+    # underlying authoring rule is enforced at the renderer. Each remains
+    # callable as a standalone subcommand.
     section7_h4_status_report = check_section7_h4_status(md)
-    section7_fence_intro_report = check_section7_fence_intro_sentence(md)
-    section7_finding_dup_report = check_section7_finding_link_duplicate(md)
-    section7_finding_sem_report = check_section7_finding_reference_semantic(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
         "ms_structure": ms_report.as_dict(),
         "cell_format": cell_report.as_dict(),
-        "summary_bullets": summary_report.as_dict(),
         "contract": contract_report.as_dict(),
         "xrefs": xref_report.as_dict(),
         "invariants": inv_report.as_dict(),
@@ -3342,31 +3358,15 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "walkthrough_depth": walkthrough_depth_report.as_dict(),
         "recon_iam_bridge": recon_iam_report.as_dict(),
         "falls_short_format": falls_short_report.as_dict(),
-        "paragraph_density": paragraph_density_report.as_dict(),
         "inline_code_format": inline_code_report.as_dict(),
         "label_as_code": label_as_code_report.as_dict(),
-        "hypothesis_validation_objective": hypothesis_validation_report.as_dict(),
         "evidence_integrity": evidence_integrity_report.as_dict(),
         "unfounded_perimeter_claims": perimeter_report.as_dict(),
         "unmasked_secrets": unmasked_secrets_report.as_dict(),
         "strengths_row_quality": strengths_report.as_dict(),
-        "finding_range_homogeneous": range_homogeneous_report.as_dict(),
-        "dependency_cross_ref": dependency_cross_ref_report.as_dict(),
-        "na_against_recon": na_against_recon_report.as_dict(),
-        "architectural_prose": architectural_prose_report.as_dict(),
-        "attack_tree_node_id_leak": attack_tree_node_id_report.as_dict(),
-        "section_713_no_table": section_713_no_table_report.as_dict(),
         "subcontrol_naming_canonical": subcontrol_naming_report.as_dict(),
-        "generic_phrases": generic_phrases_report.as_dict(),
-        "rhetorical_severity": rhetorical_severity_report.as_dict(),
-        "section_opener_restates_heading": section_opener_restates_report.as_dict(),
         "ai_padding_phrases": ai_padding_report.as_dict(),
-        "section7_narrative_placeholders": section7_placeholders_report.as_dict(),
-        "section7_h4_positive_intro": section7_h4_intro_report.as_dict(),
         "section7_h4_status": section7_h4_status_report.as_dict(),
-        "section7_fence_intro_sentence": section7_fence_intro_report.as_dict(),
-        "section7_finding_link_duplicate": section7_finding_dup_report.as_dict(),
-        "section7_finding_reference_semantic": section7_finding_sem_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -5683,7 +5683,7 @@ def _critical_threats_from_yaml(output_dir: Path) -> list[dict]:
         return []
     try:
         import yaml as _yaml  # local — qa_checks doesn't import yaml at module scope
-        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
     except (OSError, Exception):
         return []
     crits: list[dict] = []
@@ -6870,7 +6870,7 @@ def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = Non
 
     try:
         import yaml as _yaml
-        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8"))
     except Exception:
         report.ok = 1
         return report
@@ -7000,7 +7000,7 @@ def _load_weakness_classes() -> dict:
         return _WEAKNESS_CLASSES_CACHE_QA
     try:
         import yaml as _yaml
-        _WEAKNESS_CLASSES_CACHE_QA = _yaml.safe_load(candidate.read_text()) or {"clusters": []}
+        _WEAKNESS_CLASSES_CACHE_QA = _fast_yaml_load(candidate.read_text()) or {"clusters": []}
     except Exception:
         _WEAKNESS_CLASSES_CACHE_QA = {"clusters": []}
     return _WEAKNESS_CLASSES_CACHE_QA
@@ -7042,7 +7042,7 @@ def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) ->
 
     try:
         import yaml as _yaml
-        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8"))
     except Exception:
         report.ok = 1
         return report
@@ -7958,7 +7958,7 @@ def check_chain_tid_consistency(md_path: Path, output_dir: Path | None = None) -
         return report
 
     try:
-        ydata = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        ydata = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
     except (OSError, _yaml.YAMLError):
         report.ok = 1
         return report
@@ -8139,7 +8139,7 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
         return report
 
     try:
-        yaml_data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        yaml_data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8"))
     except _yaml.YAMLError as e:
         report.issues.append(f"yaml malformed: {e}")
         return report
@@ -8914,6 +8914,11 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py all <md> <repo-root>", file=sys.stderr)
             return 2
         return cmd_all(Path(argv[2]), Path(argv[3]))
+    if sub == "autofix":
+        if len(argv) != 4:
+            print("usage: qa_checks.py autofix <md> <repo-root>", file=sys.stderr)
+            return 2
+        return cmd_autofix(Path(argv[2]), Path(argv[3]))
     if sub == "heading_hygiene":
         if len(argv) != 3:
             print("usage: qa_checks.py heading_hygiene <md>", file=sys.stderr)
@@ -8933,6 +8938,88 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py section7_h4_status <md>", file=sys.stderr)
             return 2
         report = check_section7_h4_status(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    # Warning-only structural guards retired from the `all` pre-pass (they
+    # reached no actuator — not in build_repair_plan, no agent handoff action).
+    # Kept callable as standalone subcommands for CI / manual regression use.
+    if sub == "attack_tree_node_id_leak":
+        if len(argv) != 3:
+            print("usage: qa_checks.py attack_tree_node_id_leak <md>", file=sys.stderr)
+            return 2
+        report = check_attack_tree_node_id_leak(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "section_713_no_table":
+        if len(argv) != 3:
+            print("usage: qa_checks.py section_713_no_table <md>", file=sys.stderr)
+            return 2
+        report = check_section_713_no_table(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "hypothesis_validation_objective":
+        if len(argv) != 3:
+            print("usage: qa_checks.py hypothesis_validation_objective <md>", file=sys.stderr)
+            return 2
+        report = check_hypothesis_validation_objective(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    # Warning-only §7 prose checks retired from the `all` pre-pass (no actuator;
+    # rules enforced at the renderer). Kept callable for CI / manual use.
+    if sub == "paragraph_density":
+        if len(argv) != 3:
+            print("usage: qa_checks.py paragraph_density <md>", file=sys.stderr)
+            return 2
+        report = check_paragraph_density(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "architectural_prose":
+        if len(argv) != 3:
+            print("usage: qa_checks.py architectural_prose <md>", file=sys.stderr)
+            return 2
+        report = check_architectural_prose(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "generic_phrases":
+        if len(argv) != 3:
+            print("usage: qa_checks.py generic_phrases <md>", file=sys.stderr)
+            return 2
+        report = check_generic_phrases(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "rhetorical_severity":
+        if len(argv) != 3:
+            print("usage: qa_checks.py rhetorical_severity <md>", file=sys.stderr)
+            return 2
+        report = check_rhetorical_severity(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "section_opener_restates_heading":
+        if len(argv) != 3:
+            print("usage: qa_checks.py section_opener_restates_heading <md>", file=sys.stderr)
+            return 2
+        report = check_section_opener_restates_heading(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "finding_range_homogeneous":
+        if len(argv) != 3:
+            print("usage: qa_checks.py finding_range_homogeneous <md>", file=sys.stderr)
+            return 2
+        report = check_finding_range_homogeneous(Path(argv[2]), Path(argv[2]).parent)
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "dependency_cross_ref":
+        if len(argv) != 3:
+            print("usage: qa_checks.py dependency_cross_ref <md>", file=sys.stderr)
+            return 2
+        report = check_dependency_cross_ref(Path(argv[2]), Path(argv[2]).parent)
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "na_against_recon":
+        if len(argv) != 3:
+            print("usage: qa_checks.py na_against_recon <md>", file=sys.stderr)
+            return 2
+        report = check_na_against_recon(Path(argv[2]), Path(argv[2]).parent)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "mermaid_syntax":

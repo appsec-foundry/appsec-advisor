@@ -45,6 +45,7 @@ except ImportError:
 try:
     from export_pdf import (  # noqa: E402
         INSTALL_HINTS,
+        _inject_table_colgroups,
         check_tool,
         md_to_html,
         probe_runs,
@@ -55,6 +56,7 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
     from export_pdf import (  # noqa: E402
         INSTALL_HINTS,
+        _inject_table_colgroups,
         check_tool,
         md_to_html,
         probe_runs,
@@ -128,8 +130,19 @@ def export_html(
         title = input_md.stem.replace("-", " ").title()
         md_to_html(pre_md, html_tmp, css_path, title)
 
+        # Content-aware table column widths. print.css sets `table-layout:
+        # fixed`, but pandoc/gfm drops the pipe-table dash hints, so WITHOUT an
+        # explicit <colgroup> the browser distributes every column EQUALLY — a
+        # 1-char "#" / "Code" column ends up as wide as a prose Description
+        # column, wasting horizontal space and cramping the long cells. The PDF
+        # export already injects these widths (export_pdf.py); reuse the exact
+        # same helper here so the standalone HTML gets the same sensible,
+        # content-proportional distribution. Idempotent: the helper skips any
+        # <table> that already carries a <colgroup>.
+        html_out = _inject_table_colgroups(html_tmp.read_text(encoding="utf-8"))
+
         # Atomic copy from the work dir to the final destination.
-        atomic_write_text(output_html, html_tmp.read_text(encoding="utf-8"))
+        atomic_write_text(output_html, html_out)
 
     size = output_html.stat().st_size
     sys.stderr.write(f"[export_html] wrote {output_html} ({size} bytes)\n")

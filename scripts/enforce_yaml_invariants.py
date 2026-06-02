@@ -55,6 +55,8 @@ from pathlib import Path
 
 import yaml
 
+from event_log import format_line
+
 
 _TRACKED_FIELDS = (
     # (yaml_field, merged_field) — fields that MUST be byte-identical
@@ -119,7 +121,7 @@ def _log(output_dir: Path, msg: str) -> None:
     log_path = output_dir / ".agent-run.log"
     try:
         with log_path.open("a", encoding="utf-8") as f:
-            f.write(f"{_now()}  [--------]  WARN   skill  YAML_INVARIANT_DRIFT  {msg}\n")
+            f.write(format_line("YAML_INVARIANT_DRIFT", msg, level="WARN", component="skill"))
     except OSError:
         pass  # best-effort logging
 

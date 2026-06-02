@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import time
@@ -164,7 +165,9 @@ class TestCliBehaviour:
         res = _run([str(out), "phase-start", "[Phase 11/11] Finalization", "--agent", "threat-renderer"], tmp_path)
         assert res.returncode == 0
         log = (out / ".agent-run.log").read_text(encoding="utf-8")
-        assert " threat-renderer  PHASE_START" in log
+        # Canonical format pads the component column (event_log.format_line),
+        # so the agent name precedes the event with column padding between.
+        assert re.search(r"\bthreat-renderer\s+PHASE_START\b", log)
         progress = json.loads((out / ".appsec-progress.json").read_text(encoding="utf-8"))
         assert progress["agent"] == "threat-renderer"
 

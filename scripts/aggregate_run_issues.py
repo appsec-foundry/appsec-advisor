@@ -459,6 +459,45 @@ def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, 
     return issues
 
 
+def _extract_budget_events(agent_log: list[tuple[int, str]]) -> list[dict]:
+    """Sub-agent turn-budget pressure: ``WRAP_UP_TRIGGERED`` (an agent wound
+    down early and skipped optional work) and ``BUDGET_CRITICAL`` (an agent
+    crossed 90 % of its maxTurns). These are emitted to ``.agent-run.log`` (not
+    the hook log) and were previously invisible to the aggregator, so a run
+    whose renderer wrapped up early on optional fragments was reported as
+    ``clean`` despite shipping reduced-depth output. Surfaced at ``warning``
+    severity: the deliverable still exists, but some optional content (e.g.
+    attack-walkthroughs, deep §7 enrichment, an abuse-case chain) was skipped.
+    ``MAX_TURNS`` stays an ``error`` (handled by ``_extract_errors``)."""
+    issues: list[dict] = []
+    for ln, raw in agent_log:
+        ev = _parse_event_line(raw)
+        if not ev or ev["event"] not in ("WRAP_UP_TRIGGERED", "BUDGET_CRITICAL"):
+            continue
+        event = ev["event"]
+        if event == "WRAP_UP_TRIGGERED":
+            title = f"{ev['source']} wrapped up early (turn-budget): {_clip(ev['detail'], 90)}"
+            category = "wrap_up_triggered"
+        else:
+            title = f"{ev['source']} hit 90% of its turn budget: {_clip(ev['detail'], 90)}"
+            category = "budget_critical"
+        issues.append(
+            {
+                "category": category,
+                "severity": "warning",
+                "title": title,
+                "evidence": {
+                    "log_file": ".agent-run.log",
+                    "log_line": ln,
+                    "raw_event": raw[:300],
+                    "timestamp_iso": ev["ts"],
+                    "source_agent": ev["source"],
+                },
+            }
+        )
+    return issues
+
+
 def _extract_warnings(hook_log: list[tuple[int, str]]) -> list[dict]:
     """BASH_WARN events from PostToolUse hook."""
     issues: list[dict] = []
@@ -695,6 +734,53 @@ def _extract_recovery_events(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
+    """Flag abuse-case chains the verifier fan-out could not confirm.
+
+    Reads the merged ``.abuse-case-verdicts.json``. A chain whose
+    ``step_verdicts`` contain an ``inconclusive`` step (and no ``blocked``
+    step that would close it out) was not verified end-to-end — typically a
+    haiku verifier ran out of its turn budget mid-chain. Previously invisible
+    to the aggregator, so the §9 ``inconclusive`` rows shipped with no
+    run-level signal. Surfaced at ``warning`` severity (the chain is reported,
+    just not confirmed)."""
+    issues: list[dict] = []
+    merged = output_dir / ".abuse-case-verdicts.json"
+    if not merged.is_file():
+        return issues
+    try:
+        data = json.loads(merged.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return issues
+    for v in (data.get("verdicts") or []) if isinstance(data, dict) else []:
+        if not isinstance(v, dict):
+            continue
+        steps = v.get("step_verdicts") or []
+        verdicts = {(s.get("verdict") or "").strip().lower() for s in steps if isinstance(s, dict)}
+        if "inconclusive" in verdicts and "blocked" not in verdicts:
+            ac_id = v.get("abuse_case_id") or "AC-?"
+            title = v.get("title") or ac_id
+            n_inc = sum(
+                1 for s in steps if isinstance(s, dict) and (s.get("verdict") or "").lower() == "inconclusive"
+            )
+            issues.append(
+                {
+                    "category": "abuse_case_inconclusive",
+                    "severity": "warning",
+                    "title": f"Abuse case {ac_id} not verified end-to-end ({n_inc} inconclusive step(s)): {_clip(title, 70)}",
+                    "evidence": {
+                        "log_file": ".abuse-case-verdicts.json",
+                        "log_line": 1,
+                        "raw_event": f"{ac_id}: {len(steps)} step(s), {n_inc} inconclusive",
+                        "abuse_case_id": ac_id,
+                        "inconclusive_steps": n_inc,
+                        "outcome": "inconclusive",
+                    },
+                }
+            )
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -756,9 +842,11 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues: list[dict] = []
     issues.extend(_extract_errors(hook_log, agent_log))
     issues.extend(_extract_warnings(hook_log))
+    issues.extend(_extract_budget_events(agent_log))
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))
+    issues.extend(_extract_abuse_case_outcomes(output_dir))
 
     # Assign deterministic IDs (ordered by category then evidence line).
     issues.sort(key=lambda i: (i["category"], i["evidence"].get("log_line", 0)))
