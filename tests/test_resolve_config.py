@@ -743,3 +743,74 @@ class TestIntegrationScenarios:
         monkeypatch.chdir(tmp_path)
         cfg = rc.resolve(["--with-requirements"], REPO_ROOT)
         assert cfg["check_requirements"] is True
+
+
+# ---------------------------------------------------------------------------
+# Opus ceiling (--no-opus / APPSEC_DISABLE_OPUS / policy.disable_opus)
+# ---------------------------------------------------------------------------
+
+
+class TestOpusBan:
+    """The Opus ceiling downgrades every Opus selection to Sonnet. It is the
+    last model step in resolve(), so it overrides env-var per-agent overrides
+    and an explicit --reasoning-model opus alike."""
+
+    def test_baseline_unchanged_when_off(self, tmp_path, monkeypatch):
+        """No switch → no-op: merger stays on Opus, flag records False."""
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve([], REPO_ROOT)
+        assert cfg["opus_disabled"] is False
+        assert cfg["merger_model"] == "opus"
+
+    def test_no_opus_clamps_explicit_opus_tier(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve(["--no-opus", "--reasoning-model", "opus"], REPO_ROOT)
+        assert cfg["opus_disabled"] is True
+        assert cfg["reasoning_model"] == "sonnet"
+        assert cfg["stride_model"] == "sonnet"
+        assert cfg["triage_model"] == "sonnet"
+        assert cfg["merger_model"] == "sonnet"
+
+    def test_no_opus_clamps_default_merger(self, tmp_path, monkeypatch):
+        """Default standard tier is opus-cheap → merger would be Opus."""
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve(["--no-opus"], REPO_ROOT)
+        assert cfg["reasoning_model"] == "sonnet"
+        assert cfg["merger_model"] == "sonnet"
+
+    def test_no_opus_clamps_architect_model(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve(
+            ["--no-opus", "--assessment-depth", "thorough", "--architect-review"],
+            REPO_ROOT,
+        )
+        assert cfg["architect_review"] is True
+        assert cfg["architect_model"] == "sonnet"
+
+    def test_env_disable_opus(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("APPSEC_DISABLE_OPUS", "1")
+        cfg = rc.resolve(["--reasoning-model", "opus"], REPO_ROOT)
+        assert cfg["opus_disabled"] is True
+        assert cfg["merger_model"] == "sonnet"
+
+    def test_clamp_runs_after_env_override(self, tmp_path, monkeypatch):
+        """Proves ordering: an APPSEC_*_MODEL=opus env override is applied
+        inside the resolver, then clamped by the ceiling at the end."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("APPSEC_STRIDE_MODEL", "claude-opus-4-7")
+        cfg = rc.resolve(["--no-opus"], REPO_ROOT)
+        assert cfg["stride_model"] == "sonnet"
+
+    def test_apply_opus_ban_idempotent_noop(self):
+        cfg = {"reasoning_model": "opus-cheap", "merger_model": "opus"}
+        patch = rc.apply_opus_ban(cfg, False)
+        assert patch == {}
+        assert cfg["opus_disabled"] is False
+        assert cfg["merger_model"] == "opus"
+
+    def test_apply_opus_ban_matches_full_id(self):
+        cfg = {"reasoning_model": "opus", "merger_model": "claude-opus-4-7"}
+        patch = rc.apply_opus_ban(cfg, True)
+        assert patch["reasoning_model"] == "sonnet"
+        assert patch["merger_model"] == "sonnet"

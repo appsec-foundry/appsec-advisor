@@ -260,3 +260,38 @@ def test_emit_file_writes_effective_json(isolated_root, tmp_path):
     data = json.loads(emitted.read_text())
     assert data["org_profile"]["active"] is True
     assert data["preset"]["name"] == "ci-standard"
+
+
+# ---------------------------------------------------------------------------
+# policy.disable_opus — org-wide Opus ceiling
+# ---------------------------------------------------------------------------
+
+
+def test_policy_disable_opus_absent_defaults_false(isolated_root):
+    """Fixture without a policy block → disable_opus defaults to False."""
+    effective, errors = rop.resolve(
+        str(FIXTURE_PATH), None, False, None, isolated_root, env={}
+    )
+    assert errors == []
+    assert effective["defaults"]["disable_opus"] is False
+
+
+def test_policy_disable_opus_true(isolated_root, tmp_path):
+    profile = tmp_path / "org-profile.yaml"
+    profile.write_text(
+        "api_version: appsec-advisor.org-profile/v2\n"
+        "organization: { id: testco, name: TestCo, profile_version: t1 }\n"
+        "compatibility: { core: \">=0.0 <999.0\" }\n"
+        "policy:\n"
+        "  disable_opus: true\n"
+        "default_preset: std\n"
+        "presets:\n"
+        "  std:\n"
+        "    base_mode: standard\n"
+    )
+    effective, errors = rop.resolve(
+        str(profile), None, False, None, isolated_root, env={}
+    )
+    assert errors == []
+    assert effective["org_profile"]["active"] is True
+    assert effective["defaults"]["disable_opus"] is True

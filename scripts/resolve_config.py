@@ -518,6 +518,56 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
     }
 
 
+_OPUS_TOKEN = "opus"   # matches "opus", "opus-cheap", "claude-opus-4-7"
+_MODEL_FIELDS = (
+    "stride_model", "triage_model", "merger_model",
+    "architect_model", "orchestrator_model",
+    "context_resolver_model", "recon_scanner_model",
+    "qa_routine_model", "qa_content_model", "config_scanner_model",
+)
+
+
+def apply_opus_ban(cfg: dict, disable_opus: bool) -> dict:
+    """Single, non-bypassable ceiling: rewrite every Opus selection to Sonnet.
+
+    Runs LAST in resolve() — after env overrides, --stride-model,
+    --reasoning-model resolution, the repo-size auto-switch, and the
+    org-profile merge. That ordering is what makes the ceiling
+    non-bypassable: an explicit ``--reasoning-model opus`` or an
+    ``APPSEC_*_MODEL=claude-opus-4-7`` env override are both clamped here
+    after they have been applied.
+
+    The ban is sourced from (CLI ``--no-opus``) OR (env
+    ``APPSEC_DISABLE_OPUS``) OR (org-profile ``policy.disable_opus``) — any
+    one tightens, none loosens. Idempotent and a no-op when ``disable_opus``
+    is False.
+
+    Always records ``cfg["opus_disabled"]`` so the summary renderer and
+    downstream consumers can see the ceiling state. Returns a patch dict to
+    ``cfg.update()``.
+    """
+    cfg["opus_disabled"] = bool(disable_opus)
+    if not disable_opus:
+        return {}
+    patch: dict = {}
+    # 1) Tier coercion — drives labels and any downstream "is this opus?" check.
+    if cfg.get("reasoning_model") in ("opus", "opus-cheap"):
+        patch["reasoning_model"] = "sonnet"
+    # 2) Field clamp — any *_model carrying an opus token -> sonnet. Catches
+    #    both the short alias ("opus") and the full id ("claude-opus-4-7"),
+    #    and covers env-var per-agent overrides on the extended agents.
+    for f in _MODEL_FIELDS:
+        v = cfg.get(f)
+        if v and _OPUS_TOKEN in str(v).lower():
+            patch[f] = "sonnet"
+    # 3) Labels — make the downgrade visible, never silent.
+    base_mode = patch.get("reasoning_model", cfg.get("reasoning_model"))
+    patch["reasoning_label"] = f"{base_mode} (no-opus: Opus→Sonnet ceiling active)"
+    if cfg.get("architect_review"):
+        patch["architect_label"] = "enabled (sonnet, no-opus ceiling)"
+    return patch
+
+
 def resolve_stride_profile(reasoning_mode: str, depth: str) -> dict:
     """Return the STRIDE-analyzer depth profile.
 
@@ -899,6 +949,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reasoning-model",
                    choices=("sonnet", "opus-cheap", "opus", "haiku-economy"))
     p.add_argument("--stride-model", default=None)
+    # Opus ceiling. When set, every Opus selection anywhere in the run is
+    # downgraded to Sonnet (cost/compliance ceiling). Also settable org-wide
+    # via the org-profile `policy.disable_opus` key, or via the environment
+    # variable APPSEC_DISABLE_OPUS=1 for CI / org-shell enforcement without
+    # touching argv. The three sources OR together — any of them can tighten,
+    # none can loosen. Enforced by apply_opus_ban() as the last model step in
+    # resolve(), so it overrides env-var per-agent overrides and an explicit
+    # --reasoning-model opus alike.
+    p.add_argument("--no-opus", action="store_true", dest="no_opus",
+                   help="Forbid Opus anywhere; downgrade every Opus model "
+                        "selection to Sonnet. Also settable via org-profile "
+                        "policy.disable_opus or env APPSEC_DISABLE_OPUS=1.")
     p.add_argument("--assessment-depth", choices=("quick", "standard", "thorough"))
     # Convenience shortcuts: --quick / --thorough for the two non-default
     # depth levels. Mapped to --assessment-depth in resolve() below.
@@ -1185,6 +1247,19 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # explicitly toggled by the user.
     cfg.update(_apply_org_profile(ns, cfg, plugin_root))
 
+    # Opus ceiling — MUST be the last model step. Sourced from (CLI --no-opus)
+    # OR (env APPSEC_DISABLE_OPUS) OR (org-profile policy.disable_opus, merged
+    # into cfg["disable_opus"] by _apply_org_profile above). Running here —
+    # after every resolver, env override, and the org merge — is what makes the
+    # ceiling non-bypassable.
+    disable_opus = bool(
+        getattr(ns, "no_opus", False)
+        or os.environ.get("APPSEC_DISABLE_OPUS", "").strip().lower()
+            in ("1", "true", "yes", "on")
+        or cfg.get("disable_opus")
+    )
+    cfg.update(apply_opus_ban(cfg, disable_opus))
+
     # RC.A — emit `total_stages` deterministically so the skill banner does
     # not have to compute it from prose in SKILL-impl.md. Formula:
     #   2 (Stage 1 + Stage 2)
@@ -1276,6 +1351,11 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
         ns.pentest_tasks, ns.no_pentest_tasks, defaults.get("write_pentest_tasks"),
         cfg["write_pentest_tasks"],
     )
+
+    # Org-wide Opus ceiling (policy.disable_opus). Carried into cfg so the
+    # apply_opus_ban() step at the end of resolve() OR-combines it with the
+    # --no-opus flag and the APPSEC_DISABLE_OPUS env var.
+    org_block["disable_opus"] = bool(defaults.get("disable_opus"))
 
     # Tracing / scan_manifest: preset wins when user did not pass the flag.
     if not ns.tracing and isinstance(defaults.get("tracing"), bool):
@@ -1886,6 +1966,8 @@ def _format_pipeline_summary(cfg: dict) -> str:
 
 def _format_reasoning_summary(cfg: dict) -> str:
     mode = cfg.get("reasoning_model") or "unknown"
+    if cfg.get("opus_disabled"):
+        return f"{mode}; no-opus ceiling → all Opus selections downgraded to Sonnet"
     if cfg.get("reasoning_auto_switched"):
         return f"{mode}; auto-switched for large repo; STRIDE Sonnet"
     if mode == "haiku-economy":

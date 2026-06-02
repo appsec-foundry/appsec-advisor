@@ -133,9 +133,9 @@ class TestDefaultCoupling:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "quick")
         assert out["reasoning_model"] == "haiku-economy"
-        assert out["stride_model"] == "claude-sonnet-4-6"
-        assert out["triage_model"] == "claude-sonnet-4-6"
-        assert out["merger_model"] == "claude-sonnet-4-6"
+        assert out["stride_model"] == "sonnet"
+        assert out["triage_model"] == "sonnet"
+        assert out["merger_model"] == "sonnet"
 
     def test_quick_explicit_sonnet_override(self):
         """Users who want pre-2026-05 behaviour pass --reasoning-model sonnet."""
@@ -175,8 +175,8 @@ class TestStrideModelDeprecation:
         ns = rc.build_parser().parse_args(["--stride-model", "claude-custom"])
         out = rc.resolve_reasoning_model(ns, "standard")
         # opus-cheap default → triage stays on Sonnet, merger stays on Opus.
-        assert out["triage_model"] == "claude-sonnet-4-6"
-        assert out["merger_model"] == "claude-opus-4-7"
+        assert out["triage_model"] == "sonnet"
+        assert out["merger_model"] == "opus"
 
 
 # ---------------------------------------------------------------------------

@@ -53,7 +53,7 @@ The agent's **sole** output authority is writing `$OUTPUT_DIR/.architect-review.
 
 ## Model identification
 
-This agent runs on the model passed via the Agent tool's `model` field by the skill. The skill resolves `ARCHITECT_MODEL` from `--architect-model <sonnet|opus>` (default `opus` when `--architect-review` is set) and passes the resolved model ID in the invocation prompt as `MODEL_ID`. Use `MODEL_ID` verbatim in all log lines and progress prints. If not passed, fall back to `sonnet` (the frontmatter default).
+This agent runs on the model passed via the Agent tool's `model` field by the skill. The skill resolves `ARCHITECT_MODEL` from `--architect-model <sonnet|opus>` (default `opus` when `--architect-review` is set; forced to `sonnet` when the Opus ceiling is active — `--no-opus`, env `APPSEC_DISABLE_OPUS=1`, or org-profile `policy.disable_opus`) and passes the resolved model ID in the invocation prompt as `MODEL_ID`. Use `MODEL_ID` verbatim in all log lines and progress prints. If not passed, fall back to `sonnet` (the frontmatter default).
 
 ## Operational signals (print + log)
 

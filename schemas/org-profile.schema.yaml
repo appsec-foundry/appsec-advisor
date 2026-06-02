@@ -55,6 +55,21 @@ properties:
         minLength: 1
         maxLength: 80
 
+  policy:
+    type: object
+    additionalProperties: false
+    description: |
+      Org-wide run policy. Applies across every preset.
+    properties:
+      disable_opus:
+        type: boolean
+        description: |
+          When true, every Opus model selection in any preset or run is
+          downgraded to Sonnet, regardless of CLI flags (cost/compliance
+          ceiling). OR-combined with the CLI flag --no-opus and the env
+          var APPSEC_DISABLE_OPUS — any source can enable it, none can
+          disable it for a given run.
+
   default_preset:
     type: string
     pattern: "^[a-z0-9][a-z0-9_-]{1,62}$"

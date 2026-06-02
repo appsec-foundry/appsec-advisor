@@ -377,6 +377,12 @@ def resolve(
     if flat_errs:
         return base, flat_errs
 
+    # Profile-level policy (not preset-scoped) — folded into defaults so
+    # resolve_config._apply_org_profile can pick it up uniformly. The Opus
+    # ceiling is org-wide by design, hence profile-level rather than per-preset.
+    policy = profile.get("policy") or {}
+    defaults["disable_opus"] = bool(policy.get("disable_opus"))
+
     manifest = build_context_manifest(profile, profile_path.parent)
     fingerprint = profile_fingerprint(profile_yaml_bytes, manifest)
     coach = profile.get("security_coach")

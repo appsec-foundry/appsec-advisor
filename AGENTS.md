@@ -188,6 +188,7 @@ These should not be undone without understanding the trigger that created them.
   - `quick` → `haiku-economy` (also activates STRIDE depth-reduction profile A–F)
   - `standard` and `thorough` → `opus-cheap` (Opus on threat-merger only; triage-validator stays on Sonnet because `scripts/triage_validate_ratings.py` is the deterministic floor)
   - Override via `--reasoning-model`. Routing resolved by `scripts/resolve_config.py → resolve_extended_models()`.
+  - **Opus ceiling:** `--no-opus` (or env `APPSEC_DISABLE_OPUS=1`, or org-profile `policy.disable_opus`) downgrades every Opus selection — the `opus`/`opus-cheap` merger, an explicit `--reasoning-model opus`, the architect default, and any `APPSEC_*_MODEL=…opus…` override — to Sonnet. Enforced by `apply_opus_ban()` as the last model step, so it is non-bypassable. The three sources OR together (any enables, none disables).
 - **Two operating modes:** dev-team (default, in-repo output to `docs/security/`) vs. AppSec-team (`--repo <path>`, `--output <path>`). Path handling must work for both.
 - **Phase 2.5 (config/IaC scan) is conditional** on IaC surface (Dockerfile, GH Actions, docker-compose, Dependabot/Renovate, `.npmrc`/`.yarnrc.yml`). Do not unconditionally enable it.
 - **Authoritative Mermaid validation is batched.** `qa_checks.py` must call `scripts/mermaid_validate.mjs --batch-json` once per report, not once per Mermaid block. Preserve the old single-diagram validator mode for probes and compatibility.

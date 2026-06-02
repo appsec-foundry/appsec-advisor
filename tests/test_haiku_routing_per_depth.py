@@ -41,8 +41,11 @@ def _load_resolver():
     return mod
 
 
-HAIKU = "claude-haiku-4-5"
-SONNET = "claude-sonnet-4-6"
+# Version-less aliases — the resolver emits these short names so the run
+# always binds to the latest model of each tier. Tests pin the alias, never
+# a pinned version, so a model bump never breaks the routing drift-guard.
+HAIKU = "haiku"
+SONNET = "sonnet"
 
 
 # ---------------------------------------------------------------------------
@@ -181,9 +184,9 @@ def test_extraction_trio_always_haiku_in_default_tiers():
 
 def test_env_override_per_agent(monkeypatch):
     rc = _load_resolver()
-    monkeypatch.setenv("APPSEC_CONTEXT_RESOLVER_MODEL", "claude-opus-4-7")
+    monkeypatch.setenv("APPSEC_CONTEXT_RESOLVER_MODEL", "opus")
     out = rc.resolve_extended_models("haiku-economy", "quick")
-    assert out["context_resolver_model"] == "claude-opus-4-7"
+    assert out["context_resolver_model"] == "opus"
     # Other agents still follow the routing
     assert out["recon_scanner_model"] == HAIKU
 
@@ -197,7 +200,7 @@ def _minimal_cfg(reasoning_mode="sonnet", stride_label="full", reasoning_label=N
     """Build a minimum cfg dict that satisfies render_configuration_summary."""
     if reasoning_label is None:
         reasoning_label = (
-            f"{reasoning_mode} (STRIDE: claude-sonnet-4-6, triage: claude-sonnet-4-6, merger: claude-sonnet-4-6)"
+            f"{reasoning_mode} (STRIDE: sonnet, triage: sonnet, merger: sonnet)"
         )
     return {
         "repo_root": "/repo",

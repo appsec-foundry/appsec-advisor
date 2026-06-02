@@ -587,6 +587,7 @@ Parse the user's arguments for the following flags:
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 | `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|haiku-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `haiku-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` (punctual override, applied **after** `--reasoning-model` resolution) | (none — inherits from `--reasoning-model`) |
+| `--no-opus` | Forbid Opus anywhere; downgrades every Opus selection (incl. the `opus`/`opus-cheap` tier merger and the architect default) to Sonnet. Applied **last** in `resolve_config.py`, so it overrides `--reasoning-model opus`, `--stride-model`, and any `APPSEC_*_MODEL` env override. Also settable org-wide via org-profile `policy.disable_opus`, or via env `APPSEC_DISABLE_OPUS=1`. The three sources OR together — any can enable, none can disable. | off (Opus allowed) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
 | `--quick` | shortcut for `--assessment-depth quick`; also sets `SKIP_QA=true` and `SKIP_ATTACK_WALKTHROUGHS=true` (mutually exclusive with `--thorough`) | n/a |
 | `--thorough` | shortcut for `--assessment-depth thorough` (mutually exclusive with `--quick`) | n/a |
