@@ -210,13 +210,15 @@ These should not be undone without understanding the trigger that created them.
 
 Frontmatter pin (always Sonnet — runtime model overrides in table below). Turn-budget drift-guarded by `tests/test_agent_definitions.py::TestAgentsMdDocDrift`.
 
-- `agents/appsec-threat-analyst.md` — Sonnet, 250 max turns — orchestrator; runs Phases 1–11 and dispatches every sub-agent below.
+- `agents/appsec-threat-analyst.md` — Sonnet, 300 max turns — orchestrator; runs Phases 1–11 and dispatches every sub-agent below.
 - `agents/appsec-context-resolver.md` — Sonnet, 25 max turns — Phase 1; resolves REST endpoint, business context, and key repo files into `.threat-modeling-context.md`.
 - `agents/appsec-recon-scanner.md` — Sonnet, 25 max turns — Phase 2; repo structure, tech stack, and security-pattern scan → `.recon-summary.md`.
 - `agents/appsec-config-scanner.md` — Sonnet, 15 max turns — Phase 2.5 (conditional on IaC surface); Dockerfile / GH Actions / docker-compose / Dependabot / npm config checks against `data/config-iac-checks.yaml`.
+- `agents/appsec-actor-discoverer.md` — Sonnet, 15 max turns — Phase 2.7 (skipped in quick-mode); confirms static actor-library relevance and proposes repo-specific actors → `.actors-discovered.json`.
 - `agents/appsec-stride-analyzer.md` — Sonnet, 40 max turns — Phase 9; one instance per major component → `.stride-<component-id>.json`.
 - `agents/appsec-threat-merger.md` — Sonnet, 12 max turns — Post-Phase 9 fan-in; merge/keep/consolidate decisions on candidate duplicates from `merge_threats.py`. Does not perform STRIDE itself.
 - `agents/appsec-evidence-verifier.md` — Sonnet, 30 max turns — Between Phase 10 and 10b; samples findings, re-reads `evidence.file ±5`, and labels `verified` / `refuted` / `ambiguous` so refuted findings cannot elevate compound chains.
+- `agents/appsec-abuse-case-verifier.md` — Sonnet, 20 max turns — Phase 10b; one agent per abuse-case candidate (parallel fan-out). Verifies a single AC end-to-end against code, emitting per-step `confirmed` / `blocked` / `inconclusive` verdicts → `.abuse-case-verdict-<AC-ID>.json`. Writes a pre-seeded verdict file FIRST (finding ids copied from the matcher) so a cut-off agent still leaves a valid file. Dispatched with a `haiku` override.
 - `agents/appsec-triage-validator.md` — Sonnet, 20 max turns — Phase 10b; cross-component rating consistency, L/I outlier detection, and P1/P2 prioritisation checks → `.triage-flags.json`.
 - `agents/appsec-threat-renderer.md` — Sonnet, 80 max turns — Stage 2 (Phase 11); fresh-budget renderer that composes from validated fragments. Never re-runs analysis.
 - `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns — Stage 3; broken-link / cross-reference / placeholder / YAML-MD consistency checks; applies permitted soft fixes in-place and emits repair plans for structural fixes.

@@ -709,7 +709,7 @@ def render_cross_references(
         bullets.append(f"§3.1 chain membership: {chain_links}")
     else:
         bullets.append("§3.1 chain membership: this finding is treated as a standalone walkthrough — no compound chain")
-    bullets.append(f"§8 Threat Register: [{tid}](#{_anchor(tid)})")
+    bullets.append(f"§8 Findings Register: [{tid}](#{_anchor(tid)})")
     siblings = [p for p in peers_by_cwe.get(cwe, []) if p != tid][:2]
     if siblings:
         sib_links = ", ".join(f"[{p}](#{_anchor(p)})" for p in siblings)
@@ -844,7 +844,7 @@ def render_attack_walkthroughs_md(
         "goal, and where one fix severs several paths) is in the "
         "[Critical Attack Tree](#critical-attack-tree). Full per-finding "
         "context — severity rationale, assets, detection signals — is in the "
-        "[§8 Threat Register](#8-threat-register) row for each finding."
+        "[§8 Findings Register](#8-findings-register) row for each finding."
     )
     out.append("")
 

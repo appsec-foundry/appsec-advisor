@@ -1161,7 +1161,7 @@ def _extract_section_verbatim(md: str, *, top_level_number: int) -> str:
     return md[start:end].rstrip()
 
 
-# Matches a §8 Threat Register row in a rendered threat-model.md. Two arms
+# Matches a §8 Findings Register row in a rendered threat-model.md. Two arms
 # to handle both the legacy 9-column layout and the 4-column Story-Card
 # layout (2026-05) — both arms capture (digit-suffix, title):
 #   * arm A — new: `<a id="f-NNN"></a>F-NNN | **<Bold Title>**<br>…`
@@ -1934,7 +1934,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
 # ---------------------------------------------------------------------------
 
 # Canonical vektor (threat-actor) labels — preserved verbatim because
-# §8 Threat Register and Appendix A still resolve actor slugs through
+# §8 Findings Register and Appendix A still resolve actor slugs through
 # this map.
 _VEKTOR_LABEL: dict[str, str] = {
     "internet-anon": "Internet Anon",
@@ -2027,7 +2027,7 @@ def _component_max_severity(
     ``max_sev_key`` is the highest severity present, or ``"none"`` when
     the component has no linked threats.
 
-    PRESERVED FROM v1 — also used by the Threat Register row renderer.
+    PRESERVED FROM v1 — also used by the Findings Register row renderer.
     """
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "none": 0}
     for t in threats_by_component.get(component_id, []):
@@ -2064,9 +2064,9 @@ def _format_finding_link(finding: dict | None, fid: str = "") -> str:
     Returns ``[F-NNN — Title](#f-nnn)`` when a title is available, falling
     back to ``[F-NNN](#f-nnn)`` for the rare case of a title-less finding.
     The em dash (`—`, U+2014) separates F-ID from title — same glyph used
-    in §8 Threat Register, so cross-references render consistently.
+    in §8 Findings Register, so cross-references render consistently.
 
-    PRESERVED FROM v1 — also used by the Threat Register row renderer.
+    PRESERVED FROM v1 — also used by the Findings Register row renderer.
     """
     if finding is None:
         finding = {}
@@ -3971,7 +3971,7 @@ def _build_strength_clusters(
         elif addressed_for_cap:
             gap = (
                 f"{len(addressed_for_cap)} medium/low-severity finding(s) within the cluster's "
-                f"remit remain open — see §8 Threat Register for details."
+                f"remit remain open — see §8 Findings Register for details."
             )
         elif eff == "weak":
             gap = (
@@ -5066,15 +5066,27 @@ def _render_top_threats_architecture(
         nm = c.get("short_label") or c.get("label") or (ap.get("class") or "attack")
         glyph_name[glyph_seq[i]] = _fig1_label(_posture_short_label(nm))
 
+    # First-reference labelling (2026-06-02 user request): the FIRST edge that
+    # carries a glyph shows its short class title inline (e.g. "① RCE");
+    # every later reference to the same glyph (typically the dotted
+    # consequence edge) shows the bare number. This makes Figure 1
+    # self-describing on the arrows themselves without re-stacking every class
+    # name on every edge — the space-join keeps it horizontal, so it does not
+    # re-introduce the actor→app vertical inflation the bare-glyph form fixed
+    # (2026-05-31 "zu sehr in die Länge gezogen"). The full glyph→name key is
+    # still emitted once as the legend line below.
+    _emitted_glyph_titles: set[str] = set()
+
     def _attack_label(glyphs: list[str]) -> str:
-        # Glyph-ONLY (space-joined), identical to the dotted propagation edges
-        # below — so attacks and their consequences read as one numbered system
-        # and the class names live in a single compact legend line under the
-        # diagram instead of being stacked 5+ lines high on one edge. Naming
-        # every class on its edge inflated the actor→app rank gap and stretched
-        # the whole figure vertically (2026-05-31 user feedback: "zu sehr in die
-        # Länge gezogen"). The glyph→name key is emitted once, below.
-        return " ".join(glyphs)
+        parts: list[str] = []
+        for g in glyphs:
+            title = glyph_name.get(g, "")
+            if title and g not in _emitted_glyph_titles:
+                _emitted_glyph_titles.add(g)
+                parts.append(f"{g} {title}")
+            else:
+                parts.append(g)
+        return " ".join(parts)
 
     edge_idx = 0
     benign_idx: list[int] = []
@@ -5095,7 +5107,7 @@ def _render_top_threats_architecture(
     if prop_glyphs:
         lines.append("    %% propagation (dotted) — how the attack reaches the data tier / victim")
         for (src, dst), glyphs in prop_glyphs.items():
-            lines.append(f'    {src} -.->|"{" ".join(glyphs)}"| {dst}')
+            lines.append(f'    {src} -.->|"{_attack_label(glyphs)}"| {dst}')
             prop_idx.append(edge_idx)
             edge_idx += 1
     lines.append("")
@@ -5200,6 +5212,50 @@ def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonom
         sub_part = f"{sub}; " if sub else ""
         out.append(f"- **{name}** — {sub_part}{verb} {paths}.")
     return "\n".join(out) + "\n"
+
+
+def _build_ms_abuse_chain_line(ctx: "RenderContext") -> str:
+    """One deterministic line for the MS `Security Posture & Top Threats`
+    section that surfaces the verified abuse-case chains and links §9.
+
+    Read from the `.fragments/abuse-cases.json` sidecar produced by
+    `render_abuse_cases.py` (chain verdicts are computed deterministically from
+    per-step verification — never rated here). Only the ACTIONABLE verdicts
+    (fully viable / partially blocked) are surfaced so the exec summary points
+    at the chains that actually compose findings into an end-to-end exploit.
+    Returns '' when no such chain exists (line omitted). The verdict block
+    above must stay brief and ID-free (feedback_threat_model_verdict_brevity),
+    so the abuse linkage lives here, alongside the other §-cross-references.
+    """
+    path = ctx.fragments_dir / "abuse-cases.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    cases = doc.get("abuse_cases") or []
+    viable = [c for c in cases if c.get("chain_verdict") == "fully_viable"]
+    partial = [c for c in cases if c.get("chain_verdict") == "partially_blocked"]
+    if not viable and not partial:
+        return ""
+
+    def _links(items: list[dict]) -> str:
+        return ", ".join(
+            f"[{c.get('id')}](#{str(c.get('id', '')).lower()})" for c in items if c.get("id")
+        )
+
+    segs: list[str] = []
+    if viable:
+        segs.append(f"{len(viable)} fully viable ({_links(viable)})")
+    if partial:
+        segs.append(f"{len(partial)} partially blocked ({_links(partial)})")
+    return (
+        "**Verified attack chains.** "
+        + "; ".join(segs)
+        + ". These chains combine individual findings into end-to-end "
+        "exploitation paths verified step-by-step against the code — see "
+        "[§9 Abuse Cases](#9-abuse-cases) for the per-step breakdown and "
+        "blocking mitigations."
+    )
 
 
 def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -5657,6 +5713,9 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     if legend_md:
         parts += [legend_md.rstrip(), ""]
     parts += [table_md]
+    abuse_line = _build_ms_abuse_chain_line(ctx)
+    if abuse_line:
+        parts += ["", abuse_line]
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -5768,7 +5827,7 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
                 }
             )
         # Finding title — canonical `<weakness class> — <file:line>` form
-        # so the Top Findings row matches the §8 Threat Register row title.
+        # so the Top Findings row matches the §8 Findings Register row title.
         title = _canonical_finding_title(t)
         if not title:
             # Fallback chain matches `_build_finding_cell` for layout
@@ -6240,7 +6299,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     intro = (
         f"Highest-impact P1/P2 mitigations — {len(p12_rows)} of "
         f"{p12_total_before_cap} qualifying ({total_count} total). "
-        f"Full detail in [§9 Mitigation Register](#9-mitigation-register)."
+        f"Full detail in [§10 Mitigation Register](#10-mitigation-register)."
     )
     if _floor_n:
         intro += (
@@ -6263,7 +6322,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     if footer_parts:
         footer = (
             "*" + " · ".join(footer_parts)
-            + " in [§9 Mitigation Register](#9-mitigation-register). "
+            + " in [§10 Mitigation Register](#10-mitigation-register). "
             + "Sorted by priority (P1 first), then component, then leverage "
             + "(most findings first), severity (Critical first), and effort "
             + "(Low first).*"
@@ -6591,7 +6650,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
                 f"each cluster is supposed to prevent. See "
                 f"[§7 Security Architecture](#7-security-architecture) for "
                 f"the full per-control assessment and "
-                f"[§9 Mitigation Register](#9-mitigation-register) for the "
+                f"[§10 Mitigation Register](#10-mitigation-register) for the "
                 f"prioritised fix list._"
             )
         else:
@@ -6765,7 +6824,7 @@ def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment,
             + "\n\n### Requirements Traceability\n\n"
             + "Deterministic mapping of each violated requirement to the findings that "
             + "evidence it and the mitigations that remediate it — derived from the "
-            + "[Threat Register](#8-threat-register) and [Mitigation Register](#9-mitigation-register).\n\n"
+            + "[Findings Register](#8-findings-register) and [Mitigation Register](#10-mitigation-register).\n\n"
             + table
             + "\n"
         )
@@ -6874,7 +6933,7 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
       * Threat title + STRIDE — from `attack-class-taxonomy.yaml`
         (`threat_label` / `stride`).
       * Findings — each member finding rendered as `[F-NNN](#f-nnn) <short>
-        → [C-NN](#c-nn)`, linking into §8 Threat Register and §2.3 Components.
+        → [C-NN](#c-nn)`, linking into §8 Findings Register and §2.3 Components.
       * Risk — the MAX severity across the class's member findings.
       * Impact — business-impact labels from the fragment.
       * Fix — the union of the member findings' mitigations, linked
@@ -7183,7 +7242,7 @@ def _derive_attack_tree_findings(data: dict[str, Any]) -> list[dict[str, str]]:
     """Ordered leaf-finding pointer for the compact line under the tree.
 
     The diagram shows only short `T-NNN` leaf boxes, so this tells the reader
-    what each id is and links it to its §8 Threat Register row. One entry per
+    what each id is and links it to its §8 Findings Register row. One entry per
     leaf in tree-declaration order: ``{"id": "T-001", "title": "SQL injection
     login bypass", "anchor": "#t-001"}``. Title is the leaf label with its id
     prefix stripped; mitigations are intentionally NOT surfaced here (they live
@@ -7274,7 +7333,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
       * §2 architecture_diagrams — inject a `<a id="c-NN">` component anchor
         table underneath `### 2.3 Components` if the LLM fragment did not
         provide one. Without this anchor, every downstream C-NN reference in
-        the Top Findings and Threat Register tables becomes a dead link.
+        the Top Findings and Findings Register tables becomes a dead link.
 
     Quick-mode override:
       * §7 security_architecture — when running at quick depth, the renderer
@@ -7462,7 +7521,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     md = _escape_dot_tld_identifiers(md)
     # `_escape_html_payloads_in_prose` is intentionally NOT called here —
     # markdown fragments are only one of several section types and the
-    # §8 Threat Register (computed section) bypasses this wrapper. The
+    # §8 Findings Register (computed section) bypasses this wrapper. The
     # escape pass runs in the END-OF-RENDER pipeline (see `render()` near
     # the bottom of this file) so every section type is covered.
 
@@ -7477,7 +7536,7 @@ _ATTACK_WALKTHROUGHS_DEFAULT_INTRO = (
     "toward the worst-case goal, and where one fix severs several paths) is "
     "in the [Critical Attack Tree](#critical-attack-tree) above §1. Medium- "
     "and Low-severity findings are not walked through here — they are "
-    "documented in [§8 Threat Register](#8-threat-register)."
+    "documented in [§8 Findings Register](#8-findings-register)."
 )
 
 
@@ -7890,6 +7949,13 @@ def _section7_inline_findings_id_only(ctx: "RenderContext", md: str) -> str:
             continue
         if _bullet_re.match(line):
             continue  # Relevant-findings bullet — keep the title.
+        if line.lstrip().startswith("|"):
+            # §7 TABLE rows (e.g. the §7.2 Authentication-mechanisms inventory
+            # 'Findings' column) are summary tables, not prose — their finding
+            # links are meant to carry a short title (the no-bare-ID rule). The
+            # ID-only reduction targets repetitive PROSE references only, so it
+            # must not strip titles from table cells (2026-06-02 'leer betitelt').
+            continue
         # 1. Strip the known-label suffix from any already-linked finding ref.
         if "](#f-" in line or "](#t-" in line:
             for ref, short in strip_map.items():
@@ -7928,7 +7994,7 @@ _LINKED_ID_COLUMN_HEADERS: frozenset[str] = frozenset(
         "covers",
         "primary mitigations",
         "key findings",
-        # Singular "Mitigation" is the §8 Threat Register column header where
+        # Singular "Mitigation" is the §8 Findings Register column header where
         # rows used to ship as bare `[M-NNN](#m-nnn)` because the cell builder
         # bypassed linkify_with_label. Including the singular form makes the
         # post-render enrichment a defense-in-depth net for any future call
@@ -8022,7 +8088,10 @@ _TBL_ROLE_BOUNDS: dict[str, tuple[int, int]] = {
     # the same width as a 28-char Asset name).
     "narrow": (3, 8),     # #, id, auth, effort, priority, method
     "medium": (7, 14),    # risk, severity, classification, status, verdict, cwe
-    "default": (8, 22),   # control, asset, route, component, implementation, …
+    "default": (8, 22),   # control, asset, component, implementation, …
+    "path": (12, 40),     # route, path, endpoint, location, key paths — long
+                          # slash/dotted identifiers that wrap badly at the
+                          # default 22 cap (2026-06-02: /rest/.../:continueCode)
     "desc": (14, 36),     # description, notes, scenario, reason — capped < links
     "links": (16, 48),    # finding / threat / mitigation link columns (widest)
 }
@@ -8046,6 +8115,13 @@ def _table_col_role(header: str) -> str:
         return "narrow"
     if h in {"risk", "severity", "cwe", "cwes", "status", "verdict", "classification", "required role", "role"}:
         return "medium"
+    # Path/route/location columns hold long slash- or dot-separated identifiers
+    # that wrap at the default 22 cap — checked before "desc" so "Key Paths"
+    # is a path column, and before "links" so "Location"/"Route" never fall to
+    # default. Excludes "evidence" (often file:line, but kept in desc-ish flow).
+    if any(tok in h for tok in ("route", "endpoint", "location", "key path")) \
+            or h in {"path", "paths", "file", "files"}:
+        return "path"
     if any(tok in h for tok in (
         "description", "notes", "scenario", "reason", "rationale", "details", "meaning", "impact", "assessment", "what it asks",
     )):
@@ -8122,21 +8198,21 @@ def _enrich_linked_id_cells(ctx: RenderContext, md: str) -> str:
 
     Skipped cells:
       * The cell contains a declaration anchor (``<a id="…"></a>``) — this
-        is the Threat Register / Mitigation Register `| <a id="t-003"></a>T-003 | …` style.
+        is the Findings Register / Mitigation Register `| <a id="t-003"></a>T-003 | …` style.
       * The cell contains zero ID-shaped links.
       * The cell contains exactly one link that already carries ``— label``.
     """
     out_lines = md.split("\n")
     for header_idx, block in _iter_md_table_blocks(md):
         header_cells = _split_table_row(block[0])
-        # §4 Assets guard — the Assets table (header carries both "Asset" and
-        # "Classification") deliberately ships COMPACT `·`-joined bare
-        # `[F-NNN](#f-nnn)` chips so its narrow ID column does not wrap. Adding
-        # `— title` labels + `<br/>` stacking here would re-widen it (the exact
-        # 2026-05-31 complaint). Leave that table's cells untouched.
-        _hdr_lc = {h.strip().lower() for h in header_cells}
-        if "asset" in _hdr_lc and "classification" in _hdr_lc:
-            continue
+        # NOTE (2026-06-02): the §4 Assets table is no longer skipped. The user
+        # reversed the earlier "bare chips" preference and now wants the §4
+        # Linked-Threats cells to carry short titles, consistent with §8/§9.
+        # The `·`-joined bare chips gen_assets emits qualify as a pure-ID list
+        # (see the `·` separator handling in `_rewrite_linked_id_cell`) and are
+        # rewritten here to the canonical `[F-NNN](#f-nnn) — title` stacked
+        # form. The assets column-width tuning already gives Linked-Threats the
+        # most room, so the wider cell does not crush the short ID column.
         # Map: column index → canonical header (if it matches a known label).
         enrichable: dict[int, str] = {}
         for ci, h in enumerate(header_cells):
@@ -8196,7 +8272,7 @@ def _rewrite_linked_id_cell(ctx: RenderContext, cell: str) -> str:
         if not bare_ids:
             return cell
         stripped_bare = re.sub(r"\b([FTMC]-\d{2,4}|TH-\d{2})\b", "", cell)
-        residue_bare = re.sub(r"(<br/?>|[,;\s])+", "", stripped_bare).strip()
+        residue_bare = re.sub(r"(<br/?>|·|[,;\s])+", "", stripped_bare).strip()
         if residue_bare:
             return cell
         seen_b: set[str] = set()
@@ -8215,7 +8291,7 @@ def _rewrite_linked_id_cell(ctx: RenderContext, cell: str) -> str:
     # Also strip `— <label>` trailers so single-already-enriched cells look
     # empty when separator-only.
     stripped = re.sub(r"—\s*[^,;<|]+", "", stripped)
-    residue = re.sub(r"(<br/?>|[,;\s])+", "", stripped).strip()
+    residue = re.sub(r"(<br/?>|·|[,;\s])+", "", stripped).strip()
     if residue:
         # Cell has meaningful prose — do not touch it.
         return cell
@@ -9223,7 +9299,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
 
     # Coverage Summary intentionally removed. The same counters (threats by
     # severity, components, mitigations, security controls) already appear
-    # in the Run Statistics header block, the §8 Threat Register risk-
+    # in the Run Statistics header block, the §8 Findings Register risk-
     # distribution line, and the Verdict opening sentence. A third table
     # restating them in the appendix added length without information.
 
@@ -9886,7 +9962,7 @@ def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment
         "## Appendix A — Vektor Taxonomy",
         "",
         "This appendix defines the attacker-starting-position labels used in the "
-        "Top Threats table and throughout [§8 Threat Register](#8-threat-register). Each label answers the "
+        "Top Threats table and throughout [§8 Findings Register](#8-findings-register). Each label answers the "
         "question *what does the attacker need before the exploit begins?*",
         "",
     ]
@@ -10960,9 +11036,9 @@ def _build_threat_card(
     if mit_links:
         fix_card = "**Fix:** " + (f"{lead} → " if lead else "") + " · ".join(mit_links)
     elif lead:
-        fix_card = f"**Fix:** {lead} → _not yet mapped ([§9](#9-mitigation-register))_"
+        fix_card = f"**Fix:** {lead} → _not yet mapped ([§10](#10-mitigation-register))_"
     else:
-        fix_card = "**Fix:** _no mitigation mapped — see [§9](#9-mitigation-register)_"
+        fix_card = "**Fix:** _no mitigation mapped — see [§10](#10-mitigation-register)_"
 
     # Classification — category + external CWE/OWASP links + optional
     # walkthrough tail (classification_line already carries the linked refs).
@@ -11144,7 +11220,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
 
 
 def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """Render §8 Threat Register in the canonical 8.A/B/C/D layout.
+    """Render §8 Findings Register in the canonical 8.A/B/C/D layout.
 
     Structure:
       * Header: Risk Distribution + STRIDE Coverage + Category Distribution
@@ -11584,6 +11660,41 @@ def _wrap_inline_code(text: str) -> str:
     return "".join(out)
 
 
+def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
+    """Render §9 Abuse Cases.
+
+    The section body is produced deterministically by
+    ``scripts/render_abuse_cases.py`` (from ``.abuse-case-verdicts.json`` +
+    ``threat-model.yaml``) and dropped at ``.fragments/abuse-cases.md``. This
+    handler inlines that fragment verbatim when present; when it is absent —
+    no org-profile abuse case applied and none was discovered — it emits a
+    single italic placeholder so the §8 → §10 numbering stays contiguous (the
+    contract hard-numbers §10 Mitigation Register / §11 Out of Scope).
+
+    Like every markdown fragment, the first non-blank line must equal the
+    contract heading, so a renderer/contract drift is caught here rather than
+    surfacing as a malformed report.
+    """
+    heading = (section.get("heading") or "## 9. Abuse Cases").strip()
+    frag = ctx.fragments_dir / "abuse-cases.md"
+    try:
+        md = frag.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        md = ""
+    if not md:
+        return (
+            f"{heading}\n\n"
+            "_No abuse cases were identified or mandated for this assessment._\n"
+        )
+    first = next((ln.strip() for ln in md.splitlines() if ln.strip()), "")
+    if first != heading:
+        raise FragmentError(
+            "abuse_cases",
+            f"fragment must begin with '{heading}'; first heading is '{first}'",
+        )
+    return md.rstrip() + "\n"
+
+
 def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §9 Mitigation Register.
 
@@ -11620,7 +11731,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         "**How** / **Verification** fields are populated only when authored; "
         "if a field is omitted, refer to the linked finding's *Evidence* line "
         "for file:line context and to the threat-category description in "
-        "[§8 Threat Register](#8-threat-register) for the underlying weakness."
+        "[§8 Findings Register](#8-findings-register) for the underlying weakness."
     )
     lines.append("")
 
@@ -12114,6 +12225,7 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "mitigations": _render_mitigations,
         "operational_strengths": _render_operational_strengths,
         "threat_register": _render_threat_register,
+        "abuse_cases": _render_abuse_cases,
         "mitigation_register": _render_mitigation_register,
         "requirements_compliance": _render_requirements_compliance,
         "appendix_run_statistics": _render_appendix_run_statistics,
@@ -12217,7 +12329,7 @@ def render(
     # The orchestrator writes component.threat_ids[] and mitigation.addresses[]
     # but sometimes omits the reverse links threat.component_id and
     # threat.mitigations[]. Compute them once here so every downstream renderer
-    # (Top Findings, Threat Register, Mitigation Register) can count on them.
+    # (Top Findings, Findings Register, Mitigation Register) can count on them.
     _threats = yaml_data.get("threats") or []
     _components = yaml_data.get("components") or []
     _mitigations = yaml_data.get("mitigations") or []
@@ -12627,7 +12739,7 @@ def render(
     # them as live HTML elements (the report would otherwise become its own
     # XSS sink — see _escape_html_payloads_in_prose for the full rationale).
     # MUST run at the global pipeline (not per-section) because the §8
-    # Threat Register cells with attacker payloads live inside a computed
+    # Findings Register cells with attacker payloads live inside a computed
     # section that bypasses _render_markdown_fragment.
     rendered = _escape_html_payloads_in_prose(rendered)
 
@@ -12807,7 +12919,7 @@ def _normalize_cwe(value: object) -> str:
 
 def infer_threat_category(t: dict, taxonomy: dict[str, dict]) -> str:
     """Map a threat record → canonical TH-NN. Shared between Top Findings and
-    §8 Threat Register so the same threat always lands under the same
+    §8 Findings Register so the same threat always lands under the same
     category anchor.
 
     Resolution order:
@@ -13187,7 +13299,7 @@ def _categorize_warning(warning_text: str) -> dict[str, str]:
     text = warning_text.strip()
     lower = text.lower()
     if "orphan" in lower and ("t-nnn" in lower or "t-" in lower):
-        return {"section": "§8 Threat Register", "category": "orphan_link", "detail": text}
+        return {"section": "§8 Findings Register", "category": "orphan_link", "detail": text}
     if "operational-strengths overrides" in lower:
         return {"section": "Operational Strengths", "category": "schema_drift", "detail": text}
     if "soft-skip section" in lower:
@@ -13554,7 +13666,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # R4 — Canonical visible-label normalisation (post-bridges).
     # User-facing convention: every cross-reference renders as `[F-NNN](#f-nnn)`.
-    # The §8 Threat Register row emits the dual anchor `<a id="t-NNN"></a><a id="f-NNN"></a>`
+    # The §8 Findings Register row emits the dual anchor `<a id="t-NNN"></a><a id="f-NNN"></a>`
     # with F-NNN as the visible label (compose:7263-7266). The F-bridge above
     # ensures `#f-NNN` resolves even on component-prefixed schemas. The only
     # remaining drift is LLM-authored fragments that cite `[T-NNN](#t-nnn)` —

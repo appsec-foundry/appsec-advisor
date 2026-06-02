@@ -163,7 +163,7 @@ def _strip_code_fences(text: str) -> str:
     """Return ``text`` with fenced code blocks blanked out (same length).
 
     Strips both Markdown fenced blocks (``` … ```)
-    and HTML ``<pre>…</pre>`` blocks. The §8 Threat Register Story-Card layout
+    and HTML ``<pre>…</pre>`` blocks. The §8 Findings Register Story-Card layout
     embeds evidence snippets as ``<pre><code>…</code></pre>`` (Markdown fences
     do not survive inside table cells), and downstream checks that scan for
     placeholders / rhetorical phrasing / etc. must not flag literal source
@@ -415,7 +415,7 @@ def check_xrefs(md_path: Path) -> Report:
     for mid in orphan_m:
         report.issues.append(f"orphaned-mitigation-ref: {mid} referenced but no heading")
     for tid in orphan_t:
-        report.issues.append(f"orphaned-threat-ref: {tid} referenced but no Threat Register row")
+        report.issues.append(f"orphaned-threat-ref: {tid} referenced but no Findings Register row")
     report.ok = len(t_ids) + len(m_ids) - len(report.issues)
     return report
 
@@ -443,7 +443,7 @@ def _inject_row_anchors(lines: list[str]) -> tuple[list[str], int]:
         if line.startswith("## "):
             in_section_8 = "8." in line[:10] or line.startswith("## 8 ")
             in_section_10 = "10." in line[:12] or line.startswith("## 10 ")
-        # Threat Register rows: inject <a id="t-nnn"></a> before T-NNN
+        # Findings Register rows: inject <a id="t-nnn"></a> before T-NNN
         if in_section_8 and line.startswith("|"):
             m = re.match(r"^(\|\s*)(T-(\d{3,4}))(\s*\|)", line)
             if m and '<a id="t-' not in line:
@@ -624,7 +624,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             in_toc = False
         if in_toc:
             continue
-        # Skip the Threat Register ID-column rows in Section 8 — they are anchor sources.
+        # Skip the Findings Register ID-column rows in Section 8 — they are anchor sources.
         if in_section_8 and line.startswith("|") and re.search(r"^\|\s*(?:<a id=\"t-\d+\"></a>)?\s*T-\d+\s*\|", line):
             continue
         # Skip ALL Markdown heading lines (## / ### / #### / …). Headings are
@@ -974,7 +974,7 @@ def check_invariants(md_path: Path) -> Report:
         # Group 6 is now Total (was 5 before the optional Info cell was added).
         total = int(rd.group(6))
         if s_sum != total:
-            report.issues.append(f"STRIDE Coverage sum ({s_sum}) != Threat Register Total ({total})")
+            report.issues.append(f"STRIDE Coverage sum ({s_sum}) != Findings Register Total ({total})")
 
     # F4 — PHASE_BURST detection (moved here from phase-group-architecture.md
     # auto-repair block, which is skipped on inline-shortcut runs). Inspects
@@ -4499,9 +4499,22 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
             # from the link side only, so the comparison is asymmetric and the
             # control_subsection_coverage gate raises a false positive that the
             # re-render loop can never converge on.
+            def _unescape_md(s: str) -> str:
+                r"""Drop backslashes that escape a non-word character.
+
+                compose_threat_model.py's `_escape_dot_tld_identifiers` pass
+                backslash-escapes the dot in brand tokens (`Socket.IO` ->
+                `Socket\.IO`) in plain heading text but exempts markdown link
+                labels, so the `**Controls covered:**` link label keeps the
+                un-escaped form while the matching `#### ...` heading text is
+                escaped. Without normalising, the two diverge by exactly one
+                `\` and the control_subsection_coverage gate raises a false
+                positive the re-render loop can never converge on."""
+                return re.sub(r"\\([^\w\s])", r"\1", s)
+
             def _heading_matches(target: str, heading: str) -> bool:
-                target = _strip_md(target)
-                heading = _strip_md(heading)
+                target = _unescape_md(_strip_md(target))
+                heading = _unescape_md(_strip_md(heading))
                 if target == heading:
                     return True
                 # Allow `<number> <target>` form (e.g. `7.2.1 JWT Authentication`).
@@ -5153,7 +5166,7 @@ _T_ID_RE_LOCAL = re.compile(r"\b[TF]-(\d{3,4})\b")
 
 def _collect_threat_register_t_ids(text: str) -> set[str]:
     """Set of T-NNN IDs that have an `<a id="t-NNN"></a>` anchor under
-    §8 Threat Register or appear as a row in the threat table.
+    §8 Findings Register or appear as a row in the threat table.
     """
     # Use the h2-spanning extractor: the 2026-05 card layout groups findings
     # under `### <emoji> <Severity>` (h3) sub-headers, so the section body
@@ -5432,7 +5445,7 @@ def _check_threat_traceability(
     if t_ids_register:
         unknown = (cited_in_diagram | cited_in_body) - t_ids_register
         for tid in sorted(unknown):
-            report.issues.append(f"§{heading}: cites {tid} but no matching entry in §8 Threat Register")
+            report.issues.append(f"§{heading}: cites {tid} but no matching entry in §8 Findings Register")
 
     # Reverse direction: every Critical/High in §8 must surface SOMEWHERE
     # in §2 (either the diagram, the body table, or a §2.4.x table).
@@ -5473,7 +5486,7 @@ def check_chain_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTRAC
       * max_nodes_per_block: per-chain node ceiling (6).
       * max_subgraphs_per_block: 0 (no clustered mega-graphs).
       * Required classDef block (`risk` + `impact`).
-      * Each chain MUST cite ≥1 T-NNN that exists in §8 Threat Register
+      * Each chain MUST cite ≥1 T-NNN that exists in §8 Findings Register
         (otherwise it is a data-flow diagram, not an attack chain).
 
     No-op when the contract has no `chain_compactness` block.
@@ -5656,7 +5669,7 @@ def _check_chain_rules(report: Report, heading: str, rules: dict, body: str, t_i
                 unknown = t_in_block - t_ids_register
                 for tid in sorted(unknown):
                     report.issues.append(
-                        f"§{heading} chain {idx}: cites {tid} but no matching entry in §8 Threat Register"
+                        f"§{heading} chain {idx}: cites {tid} but no matching entry in §8 Findings Register"
                     )
 
 
@@ -6827,7 +6840,7 @@ def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = Non
     every F-ID in the span shares the same weakness cluster.
 
     Detection scope:
-      - §7 body only (skip §8 Threat Register tables where ranges are
+      - §7 body only (skip §8 Findings Register tables where ranges are
         legitimate layout).
       - Only consider markdown-link ranges of the form
         `[F-NNN](#f-nnn) ... – [F-MMM](#f-mmm)` (the renderer's canonical

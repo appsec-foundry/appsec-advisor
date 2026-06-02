@@ -1,0 +1,141 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://appsec-advisor/schemas/abuse-cases.schema.yaml"
+title: AppSec Advisor Abuse Case Library
+description: |
+  Schema for abuse-case definition files. An abuse case is a narrative,
+  end-to-end attack scenario (AC-NNN) that chains atomic findings (F-NNN)
+  into a verifiable exploitation path. Both the plugin standard library
+  (data/abuse-cases/default-library.yaml) and org-profile custom files
+  (abuse-cases/*.yaml referenced via org_profile.abuse_cases.add) use this
+  shape: a top-level `abuse_cases:` list of case objects.
+
+  The case object is also reused (via $defs/abuse_case) by
+  scripts/match_abuse_cases.py and scripts/verify_abuse_cases.py.
+
+type: object
+additionalProperties: false
+required: [abuse_cases]
+properties:
+  schema_version:
+    type: integer
+    default: 1
+  abuse_cases:
+    type: array
+    items: { $ref: "#/$defs/abuse_case" }
+
+$defs:
+  abuse_case:
+    type: object
+    additionalProperties: false
+    required: [id, title, source, attacker, goal, chain]
+    properties:
+      id:
+        type: string
+        # AC-T-001 (library template), AC-001 (discovered), ORG-AC-001 (org
+        # custom), REPO-AC-001 (repo-local: <repo>/.appsec/abuse-cases/*.yaml)
+        pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"
+      title:
+        type: string
+        minLength: 1
+      source:
+        enum: [mandatory, discovered]
+      detail_level:
+        enum: [minimal, standard, full]
+        default: standard
+      attacker:
+        type: object
+        additionalProperties: false
+        required: [actor_id, initial_access]
+        properties:
+          actor_id:
+            type: string
+          initial_access:
+            enum: [unauthenticated, authenticated_low_priv, authenticated_high_priv, physical]
+          prerequisite:
+            type: string   # free text — rendered verbatim into report prose
+      goal:
+        type: string
+        minLength: 1
+      scope_qualifier:
+        type: object
+        additionalProperties: false
+        properties:
+          required_signals:
+            type: array
+            items: { type: string }
+          path_patterns:
+            type: array
+            items: { type: string }
+      chain:
+        type: array
+        minItems: 1
+        items: { $ref: "#/$defs/chain_step" }
+      combined_risk_rationale:
+        type: string
+      release_gate:
+        type: object
+        additionalProperties: false
+        properties:
+          fail_on:
+            type: array
+            items:
+              enum: [fully_viable, partially_blocked]
+          applies_to_presets:
+            type: array
+            items: { type: string }
+
+  chain_step:
+    type: object
+    additionalProperties: false
+    required: [step, label, grants, probe]
+    properties:
+      step:
+        type: integer
+        minimum: 1
+      label:
+        type: string
+        minLength: 1
+      grants:
+        type: string   # attacker-state granted after this step completes
+      requires:
+        type: string   # attacker-state this step presupposes (optional on step 1)
+      description:
+        type: string   # narrative for the report chain row
+      required:
+        type: boolean
+        default: true
+      probe:
+        type: object
+        additionalProperties: false
+        required: [sink_patterns]
+        properties:
+          entry_points:
+            type: object
+            additionalProperties: false
+            properties:
+              endpoint_patterns:
+                type: array
+                items: { type: string }
+              file_hints:
+                type: array
+                items: { type: string }
+          sink_patterns:
+            type: array
+            minItems: 1
+            items: { type: string }   # regex / literal list matched against findings
+          control_patterns:
+            type: array
+            items: { type: string }   # when found → step is (partially) blocked
+          control_sufficiency:
+            enum: [any, all]
+            default: any
+          anchors:
+            type: array
+            items:
+              type: object
+              additionalProperties: false
+              required: [file, pattern]
+              properties:
+                file: { type: string }
+                line_hint: { type: integer }
+                pattern: { type: string }

@@ -1791,3 +1791,44 @@ Both sidecars run AFTER the triage agent completes — they consume `.triage-fla
    On failure: log WARN, continue. Aggregator falls back to top-N threat titles per tier.
 
 **Rule:** both sidecars are single-writer (Phase 10b only), append-only within run. They MUST be written AFTER the triage agent populates `.triage-flags.json` (the mitigation splits + additions reflect post-triage judgement, not raw merge output).
+
+## Phase 10c: Abuse Case Verification — scenario-level chain checks (parallel fan-out)
+
+**Sequencing:** Phase 10c runs **after** Phase 10b completes and **before** Phase 11. It promotes the atomic findings into narrative, end-to-end abuse-case scenarios (AC-NNN) and verifies each candidate chain against the code. The output (`.abuse-case-verdicts.json`) is consumed deterministically by Phase 11 (`render_abuse_cases.py` → §9 Abuse Cases). Entirely non-fatal: any failure leaves §9 to render its placeholder line.
+
+**Step 1 — deterministic match (no LLM):**
+```bash
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10c/11] Abuse Case Verification" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
+    --output-dir "$OUTPUT_DIR" \
+    ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} || true
+# → .abuse-case-matches.json
+CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
+```
+The matcher reads `.threats-merged.json`, applies each case's `scope_qualifier` and per-step `probe.sink_patterns`, and emits a structural verdict per case. Only `candidate` / `partial_candidate` cases proceed to verification.
+
+**Step 2 — verifier fan-out (one Haiku agent per candidate, parallel — same pattern as Phase 9 STRIDE).** For each id in `$CANDIDATES`, dispatch:
+
+```
+subagent_type: "appsec-advisor:appsec-abuse-case-verifier"
+description: "Verify abuse-case chain <AC-ID> end-to-end against code"
+model: haiku
+run_in_background: false
+prompt: |
+  ABUSE_CASE_ID=<AC-ID>
+  MATCH_RESULT_PATH=<OUTPUT_DIR>/.abuse-case-matches.json
+  REPO_ROOT=<REPO_ROOT>
+  OUTPUT_DIR=<OUTPUT_DIR>
+  MODEL_ID=haiku
+```
+
+Dispatch all candidates together (wall-clock ≈ the slowest single case, not the sum). Each agent writes one `.abuse-case-verdict-<AC-ID>.json`. **Budget-critical guard:** if `$OUTPUT_DIR/.budget-critical` exists before this step, skip the fan-out — the merge below records every candidate as `inconclusive`.
+
+**Step 3 — merge + finalize (deterministic):**
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
+# → .abuse-case-verdicts.json (per-step verdicts folded into a chain verdict)
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_END   [Phase 10c/11] Abuse Case Verification" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
+```
+The chain verdict (`fully_viable` / `partially_blocked` / `mitigated` / `inconclusive`) is computed deterministically from the per-step verdicts — never rated by the LLM — which makes §9 auditable and diff-stable between runs.

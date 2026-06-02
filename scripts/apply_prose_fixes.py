@@ -247,7 +247,7 @@ _CODE_API_RE = re.compile(
 _BACKTICK_SPAN_RE = re.compile(r"`[^`\n]+`")
 _MD_LINK_URL_RE = re.compile(r"\]\(([^)]+)\)")
 _HTML_ATTR_RE = re.compile(r'(?:href|src|action|formaction)="[^"]+"')
-# 2026-05 — additional forbidden zones for the §8 Threat Register cells.
+# 2026-05 — additional forbidden zones for the §8 Findings Register cells.
 # `<details>...</details>` blocks contain a `<pre><code>` snippet that
 # must NEVER be rewritten; `<pre>...</pre>` and `<code>...</code>`
 # (without surrounding details) likewise hold raw source code. We skip the
@@ -722,7 +722,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
             continue
         # Skip headings; track HTML-blockquote blocks. Table rows used to
         # be skipped entirely; 2026-05 R-7 fix changes that — the §8
-        # Threat Register cells embed prose ("Issue", "Impact",
+        # Findings Register cells embed prose ("Issue", "Impact",
         # "Classification" labelled fields) that benefit from code-token
         # wrapping just like normal prose. The expanded forbidden-zone
         # mask in ``_wrap_line`` (now includes <details>, <pre>, <code>
@@ -749,7 +749,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
         # R-7 (2026-05): unwrap labels / field names / bare HTTP methods
         # that got incorrectly backticked. Runs on prose AND table rows
         # so a `**Notes**` column reference (legitimately a label) in §5
-        # Attack Surface or §8 Threat Register doesn't read as code.
+        # Attack Surface or §8 Findings Register doesn't read as code.
         new_line, n5 = _apply_label_as_code_unwrap(new_line)
         inline_fixes += n5
         if not is_table_row:
@@ -767,6 +767,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
     body, bullet_fixes = _bulletize_relevant_findings(body)
     body, anchor_collapse_fixes = _collapse_consecutive_anchors(body)
     body, dollar_fixes = _escape_bare_dollars(body)  # run LAST
+    body, section8_fixes = _canonicalize_section8_name(body)
     total = (
         inline_fixes
         + padding_fixes
@@ -777,8 +778,23 @@ def apply_fixes(text: str) -> tuple[str, int]:
         + bullet_fixes
         + anchor_collapse_fixes
         + dollar_fixes
+        + section8_fixes
     )
     return body, total
+
+
+def _canonicalize_section8_name(text: str) -> tuple[str, int]:
+    """Rewrite the renamed §8 section everywhere it survives in LLM-authored
+    fragments (2026-06-02 'Threat Register' → 'Findings Register'). The heading
+    and the deterministic cross-refs already use the new name; this catches the
+    stale label + dead `#8-threat-register` anchor that older fragments (or LLM
+    drift) still carry, so the links resolve to the renamed heading. Idempotent."""
+    n = text.count("#8-threat-register") + text.count("Threat Register")
+    text = text.replace("#8-threat-register", "#8-findings-register")
+    text = text.replace("§8 Threat Register", "§8 Findings Register")
+    text = text.replace('Section 8 "Threat Register"', 'Section 8 "Findings Register"')
+    text = text.replace("Threat Register", "Findings Register")  # any residual label
+    return text, n
 
 
 def main(argv: list[str]) -> int:

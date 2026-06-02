@@ -56,6 +56,20 @@ def test_apply_fixes_is_idempotent_for_core_rewrites():
     assert "- [F-002](#f-002) — MD5 hashing" in once
 
 
+def test_canonicalize_section8_name_rewrites_stale_refs():
+    """Stale `§8 Threat Register` label + dead `#8-threat-register` anchor
+    (from older LLM-authored fragments) are rewritten to the renamed §8
+    'Findings Register' (2026-06-02 rename). Idempotent."""
+    md = "See [§8 Threat Register](#8-threat-register) and the Threat Register table.\n"
+    once, n = prose.apply_fixes(md)
+    assert "[§8 Findings Register](#8-findings-register)" in once
+    assert "Findings Register table" in once
+    assert "Threat Register" not in once
+    assert "#8-threat-register" not in once
+    twice, n2 = prose.apply_fixes(once)
+    assert once == twice and n2 == 0
+
+
 def test_legacy_title_path_tail_uses_canonical_paren_form():
     md = "| ID | Finding |\n|----|---------|\n| F-001 | Hardcoded key — lib/insecurity.ts:23 |\n"
 

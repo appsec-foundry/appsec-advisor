@@ -1,0 +1,336 @@
+# AppSec Advisor — plugin standard abuse-case library.
+#
+# These templates are activated for every repository when the org profile sets
+# `abuse_cases.inherit_defaults: true` (the default). Each case is `source:
+# mandatory` — it is evaluated against the repo on every run and its resolution
+# must be confirmed per run, never assumed carried forward. Individual cases can
+# be switched off per org via `abuse_cases.disable: [AC-T-001, ...]`.
+#
+# `scope_qualifier.required_signals` gates a case to repos whose recon surfaced
+# the relevant signals, so a case never produces a false positive on an
+# irrelevant codebase (it resolves to `not_applicable` instead).
+#
+# Validated against schemas/abuse-cases.schema.yaml.
+
+schema_version: 1
+
+abuse_cases:
+  - id: AC-T-001
+    title: Account Takeover via Stored XSS + Token Hijacking
+    source: mandatory
+    detail_level: standard
+    attacker:
+      actor_id: external-attacker
+      initial_access: unauthenticated
+      prerequisite: >-
+        Attacker can submit content that is later rendered to other users
+        (e.g. feedback, comments, profile fields).
+    goal: >-
+      Obtain persistent authenticated access as an arbitrary user without
+      valid credentials.
+    scope_qualifier:
+      required_signals: [has_auth_surface, has_client_storage]
+    chain:
+      - step: 1
+        label: Stored XSS sink renders attacker markup
+        grants: script_execution_in_victim_session
+        description: Attacker JavaScript executes in the victim's browser session.
+        required: true
+        probe:
+          entry_points:
+            endpoint_patterns: ["/api/Feedback", "/api/.*[Cc]omment"]
+            file_hints: ["*.component.ts", "*.component.html"]
+          sink_patterns:
+            - "bypassSecurityTrustHtml"
+            - "innerHTML"
+            - "dangerouslySetInnerHTML"
+            - "v-html"
+          control_patterns: ["DomSanitizer", "sanitize\\(", "DOMPurify"]
+          control_sufficiency: any
+      - step: 2
+        label: Session token readable from web-accessible storage
+        grants: stolen_session_token
+        requires: script_execution_in_victim_session
+        description: Token exfiltrated from local/session storage via the Step 1 payload.
+        required: true
+        probe:
+          sink_patterns:
+            - "localStorage\\.(setItem|getItem)"
+            - "sessionStorage\\."
+            - "document\\.cookie"
+          control_patterns: ["HttpOnly", "httpOnly: true"]
+          control_sufficiency: any
+      - step: 3
+        label: Stolen token accepted for a new session
+        grants: persistent_account_access
+        requires: stolen_session_token
+        description: >-
+          Exfiltrated token accepted for a new session; absence of token
+          binding / PKCE removes the last server-side revocation opportunity.
+        required: false
+        probe:
+          sink_patterns: ["response_type=token", "implicit", "grant_type"]
+          control_patterns: ["code_challenge", "PKCE", "token_binding"]
+          control_sufficiency: any
+    combined_risk_rationale: >-
+      Individually the XSS sink and the web-readable token storage rate below
+      Critical, but chained they form a repeatable credential-theft path: a
+      single stored payload causes indefinite session compromise for every user
+      who views the affected page.
+
+  - id: AC-T-002
+    title: Bulk Data Exfiltration via Broken Object Authorization
+    source: mandatory
+    detail_level: standard
+    attacker:
+      actor_id: authenticated-user
+      initial_access: authenticated_low_priv
+      prerequisite: Attacker holds a valid, non-privileged user account.
+    goal: >-
+      Enumerate and exfiltrate other users' records, then escalate own
+      permissions via unguarded mass assignment.
+    scope_qualifier:
+      required_signals: [has_auth_surface, has_role_concept]
+    chain:
+      - step: 1
+        label: Missing ownership check on object read (IDOR)
+        grants: arbitrary_object_read
+        requires: low_priv_account
+        description: >-
+          Attacker enumerates and retrieves records for arbitrary object IDs;
+          no ownership comparison is performed.
+        required: true
+        probe:
+          entry_points:
+            endpoint_patterns: ["/api/.*/:?id", "/api/Users"]
+            file_hints: ["routes/*.ts", "controllers/*"]
+          sink_patterns:
+            # Code-level sinks AND finding-prose/CWE signals (the matcher
+            # searches the finding title + CWE + evidence, which for most
+            # findings is prose, not source) — so IDOR/BOLA findings match by
+            # their CWE or weakness-class words even when no code excerpt exists.
+            - "findById"
+            - "findOne\\(\\s*\\{?\\s*id"
+            - "params\\.id"
+            - "CWE-(639|284|862|863|566)"
+            - "(?i)\\bIDOR\\b"
+            - "(?i)broken (object|object-level|access)"
+            - "(?i)ownership check"
+          control_patterns:
+            - "req\\.user\\.id\\s*===\\s*"
+            - "ownership"
+            - "isOwner"
+          control_sufficiency: any
+      - step: 2
+        label: Mass assignment allows privileged field write
+        grants: elevated_role
+        requires: arbitrary_object_read
+        description: >-
+          Update endpoint persists an unfiltered `role` (or equivalent) field
+          supplied in the request body.
+        required: true
+        probe:
+          entry_points:
+            endpoint_patterns: ["/api/Users/:id", "PUT /api/.*"]
+          sink_patterns:
+            - "update\\(\\s*req\\.body"
+            - "Object\\.assign\\(.*req\\.body"
+            - "\\.\\.\\.req\\.body"
+            - "CWE-(915|266|269)"
+            - "(?i)mass assignment"
+            - "(?i)(role|privilege) escalation"
+          control_patterns:
+            - "allowlist"
+            - "pick\\("
+            - "strip.*role"
+            - "dto"
+          control_sufficiency: any
+    combined_risk_rationale: >-
+      The ownership gap exposes every record, and the mass-assignment gap lets
+      the same low-privilege actor self-elevate — together they turn a single
+      compromised account into full tenant data access and role escalation.
+
+  - id: AC-T-003
+    title: Privilege Escalation to Admin via JWT Algorithm Confusion
+    source: mandatory
+    detail_level: standard
+    attacker:
+      actor_id: external-attacker
+      initial_access: unauthenticated
+      prerequisite: >-
+        Attacker can obtain any valid JWT issued by the system
+        (e.g. by registering a free account).
+    goal: Forge an admin-role JWT without knowledge of the signing secret.
+    scope_qualifier:
+      required_signals: [has_auth_surface]
+    chain:
+      - step: 1
+        label: JWT algorithm not pinned on verification
+        grants: forgeable_token
+        requires: any_valid_jwt
+        description: >-
+          Verifier accepts attacker-chosen `alg` (e.g. `none` or HMAC-with-public-key),
+          allowing token re-signing without the secret.
+        required: true
+        probe:
+          entry_points:
+            file_hints: ["*auth*", "middleware/*"]
+          sink_patterns:
+            - "jwt\\.verify"
+            - "decode\\(.*verify\\s*:\\s*false"
+            - "algorithms?\\s*:\\s*\\["
+            - "CWE-(347|345)"
+            - "(?i)algorithm confusion"
+            - "(?i)alg\\s*[:=]?\\s*none"
+            - "(?i)jwt forgery"
+            - "(?i)signature (not |un)?verif"
+          control_patterns:
+            - "algorithms:\\s*\\[\\s*['\"]RS256"
+            - "algorithms:\\s*\\[\\s*['\"]HS256"
+          control_sufficiency: any
+      - step: 2
+        label: Role claim trusted from token without re-fetch
+        grants: admin_access
+        requires: forgeable_token
+        description: >-
+          Forged `role: admin` claim is accepted as authoritative because the
+          role is not re-fetched from the database per request.
+        required: false
+        probe:
+          sink_patterns:
+            - "token\\.role"
+            - "decoded\\.role"
+            - "req\\.user\\.role"
+            - "CWE-(639|266|269)"
+            - "(?i)(role|privilege) escalation"
+            - "(?i)admin (role|takeover)"
+          control_patterns:
+            - "findUser.*role"
+            - "db.*role"
+            - "re-?fetch"
+          control_sufficiency: any
+    combined_risk_rationale: >-
+      Algorithm confusion alone yields a forgeable token; trusting the in-token
+      role claim turns that forgery into instant admin access — neither gap is
+      Critical in isolation, but the chain is a full authentication bypass.
+
+  - id: AC-T-004
+    title: Privilege Escalation via Mass-Assignment on Registration
+    source: mandatory
+    detail_level: standard
+    attacker:
+      actor_id: external-attacker
+      initial_access: unauthenticated
+      prerequisite: Self-registration is open (one unauthenticated POST).
+    goal: Obtain an administrator account without any existing privilege.
+    scope_qualifier:
+      required_signals: [has_auth_surface]
+    chain:
+      - step: 1
+        label: Registration endpoint binds an attacker-supplied privilege field
+        grants: admin_access
+        description: >-
+          The account-creation handler persists the request body wholesale, so
+          a client-supplied `role` (or `isAdmin`) field is written verbatim.
+        required: true
+        probe:
+          entry_points:
+            endpoint_patterns: ["/api/Users", "/register", "/signup", "/api/.*[Uu]ser"]
+          sink_patterns:
+            - "(?i)mass assignment"
+            - "(?i)(role|privilege|admin) escalation"
+            - "(?i)registration"
+            - "CWE-(915|266|269|639)"
+            - "\\.\\.\\.req\\.body"
+            - "Object\\.assign\\(.*req\\.body"
+          control_patterns:
+            - "(?i)allowlist|pick\\(|dto|strip.*role|omit.*role"
+          control_sufficiency: any
+    combined_risk_rationale: >-
+      A single unauthenticated request mints an admin account when the
+      registration handler trusts a client-supplied role field — the most
+      direct full-compromise path in role-based apps with open sign-up.
+
+  - id: AC-T-005
+    title: Authentication Bypass via Exposed Secret Material
+    source: mandatory
+    detail_level: standard
+    attacker:
+      actor_id: external-attacker
+      initial_access: unauthenticated
+      prerequisite: >-
+        Signing material or other secrets are reachable (committed to a public
+        repo, served by an unauthenticated route, or in an exposed directory).
+    goal: Forge trusted tokens / credentials and impersonate any user.
+    scope_qualifier:
+      required_signals: [has_auth_surface]
+    chain:
+      - step: 1
+        label: Secret material is extractable
+        grants: stolen_signing_material
+        description: >-
+          A private key, signing secret, or credential file is committed to the
+          source repository or served without authentication.
+        required: true
+        probe:
+          sink_patterns:
+            - "CWE-(798|540|321|312|256|200|306|548)"
+            - "(?i)(hardcoded|committed|exposed).*(key|secret|credential)"
+            - "(?i)(private key|signing key|encryption key)"
+            - "(?i)directory listing|unauthenticated.*(file|directory|endpoint)"
+          control_patterns:
+            - "(?i)vault|kms|secret manager|process\\.env"
+          control_sufficiency: any
+      - step: 2
+        label: Stolen material is accepted by the verification path
+        grants: identity_forgery
+        requires: stolen_signing_material
+        description: >-
+          The exposed key/secret is the same one the server trusts, so a token
+          signed with it (or the leaked credential) is accepted as authentic.
+        required: false
+        probe:
+          sink_patterns:
+            - "CWE-(347|287|384)"
+            - "(?i)jwt forgery|token forgery|forge.*token"
+            - "jwt\\.(sign|verify)"
+          control_patterns: ["(?i)key rotation|token binding"]
+          control_sufficiency: any
+    combined_risk_rationale: >-
+      Exposed signing material collapses the entire authentication boundary:
+      any attacker who reads the key can mint a valid token for any identity or
+      role, with no credential ever required.
+
+  - id: AC-T-006
+    title: Remote Code Execution via Server-Side Injection
+    source: mandatory
+    detail_level: standard
+    attacker:
+      actor_id: external-attacker
+      initial_access: unauthenticated
+      prerequisite: An input reaches a server-side interpreter / template / eval.
+    goal: Execute arbitrary code in the application process.
+    scope_qualifier:
+      required_signals: []
+    chain:
+      - step: 1
+        label: User input reaches a code/template/deserialization sink
+        grants: code_execution
+        description: >-
+          Attacker-controlled input is passed to `eval`, a server-side template
+          engine, an unsafe sandbox, or an unsafe deserializer.
+        required: true
+        probe:
+          sink_patterns:
+            - "CWE-(94|95|917|1336|502|74)"
+            - "(?i)(remote code execution|\\bRCE\\b)"
+            - "(?i)(template injection|\\bSSTI\\b)"
+            - "(?i)sandbox (bypass|escape)"
+            - "\\beval\\(|vm\\.run|notevil|new Function\\("
+          control_patterns:
+            - "(?i)sandbox|allowlist|no-eval|csp"
+          control_sufficiency: any
+    combined_risk_rationale: >-
+      A single injection into a server-side interpreter yields code execution in
+      the application process — the highest-impact outcome, granting full
+      filesystem and network access from one unauthenticated request.

@@ -8,7 +8,7 @@ without `mitigation_ids[]` and without a `remediation` block — neither
 field is on the scanner's actual output schema. As a result,
 `scripts/build_threat_model_yaml.py:build_mitigations` (which only emits
 M-NNN cards for threats carrying `mitigation_ids[]`) never produces a fix
-card for these threats, and the §8 Threat Register renders an empty
+card for these threats, and the §8 Findings Register renders an empty
 **Fix:** cell.
 
 This emitter closes the gap deterministically:

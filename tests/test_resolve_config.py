@@ -144,32 +144,32 @@ class TestResolveReasoningModel:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["reasoning_model"] == "opus-cheap"
-        assert out["stride_model"] == "claude-sonnet-4-6"
+        assert out["stride_model"] == "sonnet"
         # opus-cheap routes only the merger to Opus; triage stays on Sonnet
         # because triage_validate_ratings.py is the deterministic floor.
-        assert out["triage_model"] == "claude-sonnet-4-6"
-        assert out["merger_model"] == "claude-opus-4-7"
+        assert out["triage_model"] == "sonnet"
+        assert out["merger_model"] == "opus"
 
     def test_default_quick_gives_haiku_economy(self):
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "quick")
         assert out["reasoning_model"] == "haiku-economy"
         # haiku-economy keeps the Reasoning core on Sonnet
-        assert out["stride_model"] == "claude-sonnet-4-6"
-        assert out["triage_model"] == "claude-sonnet-4-6"
-        assert out["merger_model"] == "claude-sonnet-4-6"
+        assert out["stride_model"] == "sonnet"
+        assert out["triage_model"] == "sonnet"
+        assert out["merger_model"] == "sonnet"
 
     def test_explicit_opus(self):
         ns = rc.build_parser().parse_args(["--reasoning-model", "opus"])
         out = rc.resolve_reasoning_model(ns, "standard")
-        assert out["stride_model"] == "claude-opus-4-7"
+        assert out["stride_model"] == "opus"
 
     def test_stride_model_override_does_not_touch_triage(self):
         ns = rc.build_parser().parse_args(["--stride-model", "claude-custom-1"])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["stride_model"] == "claude-custom-1"
         # opus-cheap default → triage stays on its tier-default (Sonnet).
-        assert out["triage_model"] == "claude-sonnet-4-6"
+        assert out["triage_model"] == "sonnet"
 
     def test_env_var_highest_precedence(self, monkeypatch):
         monkeypatch.setenv("APPSEC_STRIDE_MODEL", "claude-env-override")
@@ -204,11 +204,15 @@ class TestResolveDefaultTierForCappedRepos:
         assert out["reasoning_model"] == "haiku-economy"
         assert out["reasoning_auto_switched"] is True
         assert "auto" in out["reasoning_label"]
-        assert "capped to 3 components" in out["reasoning_label"]
+        # 2026-06-02: large repos keep the economy tier but no longer DROP
+        # components, so the label says "economy tier across N components"
+        # rather than "capped to N components".
+        assert "3 components" in out["reasoning_label"]
+        assert "economy tier" in out["reasoning_label"]
         # Dependent fields re-resolved
-        assert out["triage_model"] == "claude-sonnet-4-6"  # was Opus
-        assert out["merger_model"] == "claude-sonnet-4-6"  # was Opus
-        assert out["recon_scanner_model"] == "claude-haiku-4-5"
+        assert out["triage_model"] == "sonnet"  # was Opus
+        assert out["merger_model"] == "sonnet"  # was Opus
+        assert out["recon_scanner_model"] == "haiku"
 
     def test_explicit_flag_disables_auto_switch(self):
         ns = self._ns("--reasoning-model", "opus-cheap")
@@ -247,6 +251,39 @@ class TestResolveDefaultTierForCappedRepos:
         assert out["reasoning_auto_switched"] is True
 
 
+class TestResolveRepoSizeCap:
+    """2026-06-02: a large repo flips to the economy tier (repo_size_capped)
+    but NO LONGER drops components below the floor (=5) — dropping components
+    created whole-component blind spots."""
+
+    def _cfg(self):
+        return {
+            "assessment_depth": "standard",
+            "max_stride_components": 5,
+            "stride_turns_simple": 15, "stride_turns_moderate": 22,
+            "stride_turns_complex": 31, "diagram_depth": "standard", "qa_depth": "full",
+        }
+
+    def test_large_repo_keeps_all_components_but_marks_capped(self, monkeypatch):
+        monkeypatch.setattr(rc, "_count_source_files", lambda p: 600)
+        out = rc.resolve_repo_size_cap(self._cfg(), Path("/tmp/x"))
+        assert out["repo_size_capped"] is True          # → drives economy tier
+        assert out["max_stride_components"] == 5         # no component dropped
+        assert "all 5 components" in out["depth_label"]
+        assert "capped from" not in out["depth_label"]
+
+    def test_small_repo_is_noop(self, monkeypatch):
+        monkeypatch.setattr(rc, "_count_source_files", lambda p: 50)
+        out = rc.resolve_repo_size_cap(self._cfg(), Path("/tmp/x"))
+        assert out == {}
+
+    def test_only_at_standard_depth(self, monkeypatch):
+        monkeypatch.setattr(rc, "_count_source_files", lambda p: 600)
+        cfg = self._cfg(); cfg["assessment_depth"] = "thorough"; cfg["max_stride_components"] = 8
+        out = rc.resolve_repo_size_cap(cfg, Path("/tmp/x"))
+        assert out == {}
+
+
 class TestResolveArchitectReview:
     def test_off_at_standard_by_default(self):
         ns = rc.build_parser().parse_args([])
@@ -257,7 +294,7 @@ class TestResolveArchitectReview:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_architect_review(ns, "thorough", dry_run=False)
         assert out["architect_review"] is True
-        assert out["architect_model"] == "claude-opus-4-7"
+        assert out["architect_model"] == "opus"
         assert "auto-thorough" in out["architect_label"]
 
     def test_explicit_on(self):
@@ -278,7 +315,7 @@ class TestResolveArchitectReview:
     def test_model_flag_sonnet(self):
         ns = rc.build_parser().parse_args(["--architect-review", "--architect-model", "sonnet"])
         out = rc.resolve_architect_review(ns, "standard", dry_run=False)
-        assert out["architect_model"] == "claude-sonnet-4-6"
+        assert out["architect_model"] == "sonnet"
 
 
 class TestResolveEnrichArchFragments:
@@ -690,9 +727,9 @@ class TestIntegrationScenarios:
         assert cfg["mode"] == "full"
         assert cfg["mode_label"] == "full (first run)"
         assert cfg["reasoning_model"] == "opus-cheap"
-        assert cfg["stride_model"] == "claude-sonnet-4-6"
-        assert cfg["triage_model"] == "claude-sonnet-4-6"
-        assert cfg["merger_model"] == "claude-opus-4-7"
+        assert cfg["stride_model"] == "sonnet"
+        assert cfg["triage_model"] == "sonnet"
+        assert cfg["merger_model"] == "opus"
         assert cfg["architect_review"] is False
         assert cfg["check_requirements"] is False
 
@@ -700,7 +737,7 @@ class TestIntegrationScenarios:
         monkeypatch.chdir(tmp_path)
         cfg = rc.resolve(["--assessment-depth", "thorough"], REPO_ROOT)
         assert cfg["architect_review"] is True
-        assert cfg["architect_model"] == "claude-opus-4-7"
+        assert cfg["architect_model"] == "opus"
 
     def test_deprecated_with_requirements_alias(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

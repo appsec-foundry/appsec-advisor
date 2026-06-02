@@ -289,3 +289,47 @@ Override requirements for one run:
 /appsec-advisor:create-threat-model --requirements https://security.example.test/r.yaml
 /appsec-advisor:create-threat-model --no-requirements
 ```
+
+## Abuse cases
+
+Abuse cases (the end-to-end attack chains rendered in §9 of the threat model)
+resolve from three layers, in load order:
+
+1. **Plugin standard library** — `data/abuse-cases/default-library.yaml` (the
+   `AC-T-NNN` mandatory set), unless an org profile sets
+   `abuse_cases.inherit_defaults: false`.
+2. **Org profile** — `abuse_cases.add` is a glob (relative to the org-profile
+   directory) of extra case files; `abuse_cases.disable` removes ids; ids use
+   the `ORG-AC-NNN` prefix. Validated against `schemas/abuse-cases.schema.yaml`.
+3. **Repo-local (zero-config)** — any `*.yaml` under
+   `<repo>/.appsec/abuse-cases/` in the target repository is loaded
+   automatically, **no org profile required**. Use the `REPO-AC-NNN` id prefix.
+   This mirrors a checked-in "known-threats" convention: a single repository can
+   ship its own scenarios in version control. The org profile's `disable` list
+   still applies to repo-local ids, and a duplicate id across layers is reported
+   as an authoring error.
+
+Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
+
+```yaml
+schema_version: 1
+abuse_cases:
+  - id: REPO-AC-001
+    title: Refund replay via idempotency-key reuse
+    source: mandatory
+    attacker:
+      actor_id: authenticated-user
+      initial_access: authenticated_low_priv
+    goal: Issue duplicate refunds to an attacker-controlled balance.
+    chain:
+      - step: 1
+        label: Reuse a prior idempotency key
+        grants: replayed-request
+        probe:
+          sink_patterns: ["idempotenc(y|e)[-_ ]?key"]
+```
+
+Each chain step's `probe.sink_patterns` is matched (regex) against the merged
+findings, so a repo-local case is bound to the concrete findings it chains —
+the same deterministic matcher used for the standard library. The per-candidate
+`appsec-abuse-case-verifier` agent then verifies each step against the code.

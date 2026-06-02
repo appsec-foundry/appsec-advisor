@@ -30,8 +30,10 @@ REQUIRED_MODEL = "sonnet"
 #   - Orchestrator 120→250 + renderer 45→80 (refactor): aligned with the
 #     Stage 1/Stage 2 split where the renderer needs more budget to compose
 #     fragments and the orchestrator absorbs additional sub-agent dispatches.
+#   - Orchestrator 250→300: extra headroom for the added sub-agent dispatches
+#     (Phase 2.7 actor discovery + Stage-1c abuse-case fan-out coordination).
 EXPECTED_MAX_TURNS = {
-    "appsec-threat-analyst": 250,
+    "appsec-threat-analyst": 300,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner": 25,
     "appsec-stride-analyzer": 40,  # B2a fix: bumped from 31 to cover thorough/complex (35 + 5 buffer)
@@ -41,7 +43,9 @@ EXPECTED_MAX_TURNS = {
     "appsec-qa-reviewer": 120,
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
+    "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
     "appsec-evidence-verifier": 30,  # M2: Phase 10a evidence re-check
+    "appsec-abuse-case-verifier": 20,  # Phase 10b: one agent per abuse-case candidate
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -56,6 +60,7 @@ INTERNAL_AGENTS = {
     "appsec-architect-reviewer",
     "appsec-config-scanner",
     "appsec-evidence-verifier",
+    "appsec-abuse-case-verifier",
 }
 
 # The orchestrator is the only user-facing agent

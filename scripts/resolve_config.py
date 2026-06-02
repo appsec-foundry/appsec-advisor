@@ -259,12 +259,22 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
 
 
 # B2c — repo-size auto-cap thresholds.
-# Source: 2026-04-27 juice-shop incident — Juice Shop has ~430 TS/JS files,
-# 5 STRIDE components consumed 50+ minutes in Phase 9 with cold caches and
-# never finished. With 3 components, the same depth-standard run is
-# expected to fit in ~12-18 min Phase 9.
+# Source: 2026-04-27 juice-shop incident — 5 STRIDE components once consumed
+# 50+ min in Phase 9 on cold caches and never finished, so large repos were
+# capped to 3 components. 2026-06-02 reversal: dropping components is the WRONG
+# cost/time lever — it created whole-component BLIND SPOTS (the 2026-06-02
+# cap-to-3 run missed the b2b-api RCE and the data-tier entirely, 23 threats vs
+# 42, and never even catalogued the §7.2 MFA surface). On large repos we now
+# keep the cheaper economy reasoning tier (haiku-economy: STRIDE stays on
+# Sonnet, only merger/qa downgrade) but analyze ALL components — the Phase-9
+# heartbeat watchdog (skill_watchdog.py: stride-stale 900s, per-component
+# timeout 480s) bounds any cold-cache hang instead of pre-emptively dropping
+# attack surface. Cost is controlled by the tier, not by blind spots.
 LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
-LARGE_REPO_CAP_COMPONENTS = 3
+# Floor (not a hard cap): never reduce STRIDE coverage BELOW this many
+# components on a large repo. 5 == the standard-depth default, so in practice
+# no component is dropped; the constant remains a tunable safety ceiling.
+LARGE_REPO_CAP_COMPONENTS = 5
 SOURCE_FILE_EXTENSIONS = (
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".py", ".go", ".java", ".kt", ".rb", ".php",
@@ -315,14 +325,23 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
     src_count = _count_source_files(repo_root)
     if src_count <= LARGE_REPO_SOURCE_FILE_THRESHOLD:
         return {}
-    # Cap the components and patch the label.
-    new_components = LARGE_REPO_CAP_COMPONENTS
+    # Large repo: switch to the economy reasoning tier for cost (downstream
+    # resolve_default_tier_for_capped_repos keys on repo_size_capped) but DO
+    # NOT drop components below the floor — dropping creates whole-component
+    # blind spots (2026-06-02). new_components only ever reduces toward the
+    # floor when the depth default exceeds it; with the floor at 5 == the
+    # standard default, no component is dropped in practice.
     old_components = cfg["max_stride_components"]
-    if new_components >= old_components:
-        return {}
+    new_components = min(old_components, LARGE_REPO_CAP_COMPONENTS)
+    if new_components < old_components:
+        comp_clause = (
+            f"components: {new_components} (capped from {old_components}) — "
+        )
+    else:
+        comp_clause = f"all {new_components} components — "
     new_label = (
-        f"{cfg['assessment_depth']} (components: {new_components} — "
-        f"capped from {old_components} on large repo: {src_count} source files, "
+        f"{cfg['assessment_depth']} ({comp_clause}"
+        f"large repo: {src_count} source files → economy reasoning tier, "
         f"STRIDE turns: {cfg['stride_turns_simple']}/"
         f"{cfg['stride_turns_moderate']}/{cfg['stride_turns_complex']}, "
         f"diagrams: {cfg['diagram_depth']}, QA: {cfg['qa_depth']})"
@@ -387,9 +406,9 @@ def resolve_default_tier_for_capped_repos(cfg: dict,
 
     # Override the label so the auto-switch is visible in --config-summary.
     patch["reasoning_label"] = (
-        f"haiku-economy (auto — large repo capped to "
-        f"{cfg['max_stride_components']} components, "
-        f"Opus on merger/triage uneconomical at this scale)"
+        f"haiku-economy (auto — large repo: economy tier across "
+        f"{cfg['max_stride_components']} components; "
+        f"Opus on merger/triage uneconomical at this scale, STRIDE stays Sonnet)"
     )
     patch["reasoning_auto_switched"] = True
     return patch

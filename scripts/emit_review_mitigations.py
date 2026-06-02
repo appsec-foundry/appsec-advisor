@@ -326,7 +326,7 @@ def _synthesize_poc_hints(data: dict, threats_by_id: dict) -> int:
     """Append a `poc_hint` field to threats whose affected_parameter is set
     AND whose CWE is in the injection allowlist. Does NOT create new M-NNN
     cards — the hint is appended to the threat itself so the composer can
-    render it under §8 Threat Register without inflating §9.
+    render it under §8 Findings Register without inflating §9.
 
     Returns the number of threats annotated.
     """

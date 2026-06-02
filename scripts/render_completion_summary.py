@@ -669,7 +669,7 @@ def build_next_steps(
     # Always line 2 (if any Critical/High).
     if critical or high:
         top = "Critical" if critical else "High"
-        lines.append(f'Review {top} findings in Section 8 "Threat Register"')
+        lines.append(f'Review {top} findings in Section 8 "Findings Register"')
 
     # Architect review available.
     if cfg.get("architect_review") and (output_dir / ".architect-review.md").is_file():

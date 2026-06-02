@@ -1,0 +1,221 @@
+"""Tests for scripts/render_abuse_cases.py — the deterministic §9 renderer.
+
+Verifies the fragment structure (summary table, per-case blocks, 5-column
+chain table with verdict-derived status icons, blocking-mitigation links) and
+the no-applicable-case fallback. The rendered links must target anchors the
+report actually emits (#f-nnn in §8, #m-nnn in §10, self #ac-... anchors).
+"""
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import pytest
+import yaml
+
+REPO_ROOT = Path(__file__).parent.parent
+SCRIPT = REPO_ROOT / "scripts" / "render_abuse_cases.py"
+
+# The sidecar (.fragments/abuse-cases.json) is an internal machine-readable
+# artefact — not a compose-loaded fragment — so its shape is pinned here rather
+# than via a schemas/fragments/*.json (which would couple it to the composer's
+# fragment registry). These keys are what downstream consumers rely on.
+_SIDECAR_REQUIRED_CASE_KEYS = {
+    "id", "title", "source", "combined_risk", "chain_verdict", "rows",
+}
+
+
+def _load():
+    if "render_abuse_cases" in sys.modules:
+        return sys.modules["render_abuse_cases"]
+    spec = importlib.util.spec_from_file_location("render_abuse_cases", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["render_abuse_cases"] = mod
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+rac = _load()
+
+_THREAT_MODEL = {
+    "threats": [
+        {"t_id": "T-010", "title": "Persistent XSS via bypassSecurityTrustHtml", "risk": "High"},
+        {"t_id": "T-046", "title": "Refresh token in localStorage", "risk": "Medium"},
+        {"t_id": "T-001", "title": "SQL injection in search", "risk": "Critical"},
+        {"t_id": "T-002", "title": "Mass assignment on role", "risk": "High"},
+    ],
+    "mitigations": [
+        {"m_id": "M-007", "title": "Replace bypassSecurityTrustHtml", "priority": "P1", "threat_ids": ["T-010"]},
+        {"m_id": "M-009", "title": "HttpOnly session cookie", "priority": "P1", "threat_ids": ["T-046"]},
+    ],
+}
+
+
+def _setup(tmp_path: Path, verdicts: dict) -> Path:
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(_THREAT_MODEL))
+    (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts))
+    return tmp_path
+
+
+_FULLY_VIABLE = {
+    "schema_version": 1,
+    "verdicts": [
+        {
+            "abuse_case_id": "AC-T-001",
+            "chain_verdict": "fully_viable",
+            "step_verdicts": [
+                {"step": 1, "verdict": "confirmed", "matched_finding_id": "T-010",
+                 "evidence": {"file": "about.component.ts", "line": 119}, "controls_found": []},
+                {"step": 2, "verdict": "confirmed", "matched_finding_id": "T-046",
+                 "evidence": {"file": "interceptor.ts", "line": 13}, "controls_found": []},
+                {"step": 3, "verdict": "inconclusive", "matched_finding_id": None,
+                 "evidence": {}, "controls_found": []},
+            ],
+        }
+    ],
+}
+
+
+def test_no_verdicts_file_yields_no_models(tmp_path: Path):
+    assert rac.build_models(tmp_path, None) == []
+
+
+def test_fully_viable_case_model(tmp_path: Path):
+    _setup(tmp_path, _FULLY_VIABLE)
+    models = rac.build_models(tmp_path, None)
+    assert len(models) == 1
+    m = models[0]
+    assert m["id"] == "AC-T-001"
+    assert m["chain_verdict"] == "fully_viable"
+    # max matched severity High → escalated to Critical because fully viable
+    assert m["combined_risk"] == "Critical"
+    # step 1 confirmed, no controls → ⚠; step 3 inconclusive/unmatched → ?
+    icons = [r["status_icon"] for r in m["rows"]]
+    assert icons == ["⚠", "⚠", "?"]
+    # T-010 normalised to F-010 for the visible label/anchor
+    assert m["rows"][0]["fid"] == "F-010"
+    # blocking mitigation M-007 addresses F-010 → breaks at step 1
+    bm = {b["id"]: b["breaks_at_step"] for b in m["blocking_mitigations"]}
+    assert bm.get("M-007") == 1
+
+
+def test_fragment_markdown_structure(tmp_path: Path):
+    _setup(tmp_path, _FULLY_VIABLE)
+    models = rac.build_models(tmp_path, None)
+    md = rac.render_fragment(models)
+    assert md.startswith("## 9. Abuse Cases")
+    assert "| # | Scenario | Actor | Combined Risk | Verdict |" in md
+    assert '### <a id="ac-t-001"></a>AC-T-001 —' in md
+    # 3-column chain table: Evidence folded into Finding (`<br/>`), Status dropped.
+    assert "| Step | Finding | Outcome |" in md
+    assert "| Step | Finding | Evidence | Outcome | Status |" not in md
+    assert "[F-010](#f-010)" in md  # chain step links to §8 dual anchor
+    assert "[M-007](#m-007)" in md  # blocking mitigation links to §10
+    # Blocking mitigations render as an explained bullet list, not a table.
+    assert "Implementing any single mitigation below severs the chain" in md
+    assert "| Mitigation | Addresses | Breaks chain at |" not in md
+    assert "breaks the chain at **Step 1**" in md
+    assert "[§8 Findings Register](#8-findings-register)" in md
+    # summary table verdict cell
+    assert "⚠ Fully viable" in md
+
+
+def test_partially_blocked_icon_and_verdict(tmp_path: Path):
+    verdicts = {
+        "schema_version": 1,
+        "verdicts": [{
+            "abuse_case_id": "AC-T-002",
+            "chain_verdict": "partially_blocked",
+            "step_verdicts": [
+                {"step": 1, "verdict": "confirmed", "matched_finding_id": "T-001",
+                 "evidence": {"file": "user.ts", "line": 44}, "controls_found": []},
+                {"step": 2, "verdict": "confirmed", "matched_finding_id": "T-002",
+                 "evidence": {"file": "user.ts", "line": 88}, "controls_found": ["allowlist"]},
+            ],
+        }],
+    }
+    _setup(tmp_path, verdicts)
+    m = rac.build_models(tmp_path, None)[0]
+    icons = [r["status_icon"] for r in m["rows"]]
+    assert icons == ["⚠", "◐"]  # second step has a control → ◐
+    # partially_blocked → no escalation; max matched severity is Critical (T-001)
+    assert m["combined_risk"] == "Critical"
+
+
+def test_not_applicable_case_excluded(tmp_path: Path):
+    verdicts = {
+        "schema_version": 1,
+        "verdicts": [{"abuse_case_id": "AC-T-001", "chain_verdict": "not_applicable", "step_verdicts": []}],
+    }
+    _setup(tmp_path, verdicts)
+    assert rac.build_models(tmp_path, None) == []
+
+
+_MATCHES_NA = {
+    "schema_version": 1,
+    "matches": [
+        {"abuse_case_id": "AC-T-002", "title": "Bulk Data Exfiltration via BOLA",
+         "source": "mandatory", "structural_verdict": "not_applicable",
+         "reason": "no finding matched the required chain step(s) for this scenario"},
+        {"abuse_case_id": "AC-T-001", "title": "Account Takeover via XSS",
+         "source": "mandatory", "structural_verdict": "candidate", "reason": None},
+    ],
+}
+
+
+def test_catalog_evaluation_lists_only_not_applicable(tmp_path: Path):
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(_MATCHES_NA))
+    rows = rac.build_catalog_evaluation(tmp_path)
+    assert [r["id"] for r in rows] == ["AC-T-002"]  # candidate excluded
+    assert "no finding matched" in rows[0]["reason"]
+
+
+def test_fragment_renders_catalog_table_when_no_viable_cases(tmp_path: Path):
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(_MATCHES_NA))
+    rows = rac.build_catalog_evaluation(tmp_path)
+    md = rac.render_fragment([], rows)
+    assert md.startswith("## 9. Abuse Cases")
+    assert "### Generic catalog — evaluated, not applicable" in md
+    assert "| Scenario | Source | Why not applicable |" in md
+    assert "Bulk Data Exfiltration via BOLA" in md
+    # honest 'nothing verified' line instead of the bare empty placeholder
+    assert "No abuse-case chain was verified end-to-end" in md
+
+
+def test_main_renders_catalog_even_without_verdicts(tmp_path: Path):
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(_MATCHES_NA))
+    rc = rac.main(["--output-dir", str(tmp_path)])
+    assert rc == 0
+    frag = (tmp_path / ".fragments" / "abuse-cases.md").read_text()
+    assert "Generic catalog" in frag
+
+
+def test_main_writes_fragment_and_sidecar_validates(tmp_path: Path):
+    _setup(tmp_path, _FULLY_VIABLE)
+    rc = rac.main(["--output-dir", str(tmp_path)])
+    assert rc == 0
+    md = (tmp_path / ".fragments" / "abuse-cases.md").read_text()
+    assert md.startswith("## 9. Abuse Cases")
+    sidecar = json.loads((tmp_path / ".fragments" / "abuse-cases.json").read_text())
+    assert sidecar["schema_version"] == 1
+    assert sidecar["abuse_cases"], "sidecar must carry at least one case"
+    for case in sidecar["abuse_cases"]:
+        missing = _SIDECAR_REQUIRED_CASE_KEYS - set(case)
+        assert not missing, f"sidecar case missing keys: {missing}"
+        assert case["chain_verdict"] in {
+            "fully_viable", "partially_blocked", "mitigated", "inconclusive",
+        }
+        assert case["combined_risk"] in {"Critical", "High", "Medium", "Low", "Informational"}
+
+
+def test_main_no_models_removes_stale_fragment(tmp_path: Path):
+    # Pre-seed a stale fragment, then run with no verdicts → it must be removed
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    (frag / "abuse-cases.md").write_text("## 9. Abuse Cases\n\nstale\n")
+    rc = rac.main(["--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert not (frag / "abuse-cases.md").exists()

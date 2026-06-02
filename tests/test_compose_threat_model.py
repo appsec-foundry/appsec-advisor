@@ -172,6 +172,32 @@ def test_top_threats_has_five_columns(tmp_path: Path) -> None:
     assert header in rendered, "Top Threats must use exactly the 5 canonical columns"
 
 
+def test_figure1_edges_carry_first_reference_titles(tmp_path: Path) -> None:
+    """Figure 1 attack arrows show the short class title on the FIRST glyph
+    reference (e.g. `① Injection`) and the bare number on later references
+    (e.g. the dotted consequence edge). Regression for the 2026-06-02 request
+    'bei figure 1 fehlen kurze Beschreibungen der Pfeile'."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    m = re.search(r"```mermaid\nflowchart TB.+?```", rendered, re.DOTALL)
+    if not m:
+        return  # fixture produced no Figure 1 (no attack paths) → nothing to verify
+    fig1 = m.group(0)
+    glyphs = "①②③④⑤⑥⑦"
+    # At least one SOLID attack edge carries a glyph followed by an alpha title.
+    titled = re.findall(rf'==>\|"([{glyphs}][^"]*)"', fig1)
+    assert any(re.search(rf"[{glyphs}]\s+[A-Za-z]", lbl) for lbl in titled), \
+        f"no first-reference title on any Figure 1 attack edge: {titled}"
+    # A glyph must be titled at most ONCE across the whole figure (first ref).
+    all_labels = re.findall(rf'[=\-.]+>\|"([^"]*)"', fig1)
+    for g in glyphs:
+        titled_occurrences = sum(
+            1 for lbl in all_labels if re.search(rf"{g}\s+[A-Za-z]", lbl)
+        )
+        assert titled_occurrences <= 1, \
+            f"glyph {g} carries its title on more than one edge"
+
+
 def test_top_threats_rows_self_anchor_the_path_glyph(tmp_path: Path) -> None:
     """Each Top Threats row carries its `#path-<class>` anchor on the `#`
     glyph cell (the merged section dropped the bullet list that used to emit
@@ -296,7 +322,7 @@ def test_evidence_check_footnote_omitted_when_no_drift(tmp_path: Path) -> None:
 
 
 def test_threat_register_is_card_layout(tmp_path: Path) -> None:
-    """§8 Threat Register uses the 2026-05 severity-grouped card layout.
+    """§8 Findings Register uses the 2026-05 severity-grouped card layout.
 
     The flat 4-column table (`ID | Finding | Component | Criticality`) was
     replaced by one card per finding under `### <emoji> <Severity> (n)`
@@ -328,8 +354,8 @@ def test_threat_register_is_card_layout(tmp_path: Path) -> None:
 
 
 def _slice_threat_register(rendered: str) -> str:
-    """Return the rendered §8 Threat Register body."""
-    i = rendered.find("## 8. Threat Register")
+    """Return the rendered §8 Findings Register body."""
+    i = rendered.find("## 8. Findings Register")
     assert i >= 0, "expected §8 in rendered output"
     j = rendered.find("\n## ", i + 5)
     return rendered[i:j] if j > 0 else rendered[i:]
@@ -362,7 +388,7 @@ def test_finding_cell_omits_walkthrough_line_when_no_chains_resolve(tmp_path: Pa
     # Replace fragment with a stub that has the required H2 but no chains.
     stub_frag = (
         "## 3. Attack Walkthroughs\n\n"
-        "_Skipped at this depth — see §8 Threat Register for finding-level detail._\n"
+        "_Skipped at this depth — see §8 Findings Register for finding-level detail._\n"
     )
     (out / ".fragments" / "attack-walkthroughs.md").write_text(stub_frag, encoding="utf-8")
     # The contract gates §3.1 subsection requirement on
@@ -1568,6 +1594,18 @@ class TestEnrichLinkedIdCells:
         out = compose._enrich_linked_id_cells(ctx, md)
         assert ("[T-001](#t-001) — Alpha<br/>[T-002](#t-002) — Beta") in out
 
+    def test_assets_table_now_enriched_with_titles(self) -> None:
+        # 2026-06-02: the §4 Assets table (header carries Asset + Classification)
+        # is no longer skipped — its `·`-joined Linked-Threats chips get titles.
+        md = (
+            "| Asset | ID | Classification | Description | Linked Threats |\n"
+            "|---|---|---|---|---|\n"
+            "| Users | A-001 | PII | accounts | [F-001](#f-001) · [F-002](#f-002) |\n"
+        )
+        ctx = _FakeCtx({"F-001": "SQL Injection", "F-002": "Stored XSS"})
+        out = compose._enrich_linked_id_cells(ctx, md)
+        assert ("[F-001](#f-001) — SQL Injection<br/>[F-002](#f-002) — Stored XSS") in out
+
 
 # ---------------------------------------------------------------------------
 # Security Posture at a Glance — contract v2 format (4-column heatmap with
@@ -2048,7 +2086,7 @@ class TestVerbatimFnnnStabilityGate:
             for d, title in rows
         )
         section8 = (
-            "## 8. Threat Register\n\n"
+            "## 8. Findings Register\n\n"
             "| ID | Title | STRIDE | Component | Severity | CVSS | Vektor | Mitigations | Refs |\n"
             "|----|-------|--------|-----------|----------|------|--------|-------------|------|\n"
             f"{section8_rows}\n"
@@ -2096,7 +2134,7 @@ class TestVerbatimFnnnStabilityGate:
         prior_md = (
             "## 7. Security Architecture\n\n"
             "General defense-in-depth narrative without any F-NNN citation.\n"
-            "\n## 8. Threat Register\n\n(empty)\n"
+            "\n## 8. Findings Register\n\n(empty)\n"
         )
         extracted = compose._extract_section_verbatim(prior_md, top_level_number=7)
         current = [{"t_id": "T-001", "title": "Anything"}]
@@ -2323,6 +2361,14 @@ def test_table_col_weight_roles() -> None:
     assert w("Classification") < w("Linked Threats")
     # 'Threat Description' is a description column, not a (wide) threats column.
     assert w("Threat Description") == compose._TBL_W_DESC
+    # Route / path / location columns get the wider 'path' role so long
+    # slash-separated identifiers stop wrapping at the default-22 cap
+    # (2026-06-02 column-width report).
+    assert compose._table_col_role("Route") == "path"
+    assert compose._table_col_role("Key Paths") == "path"
+    assert compose._table_col_role("Location") == "path"
+    assert w("Route") > w("Method")          # path wider than a narrow column
+    assert w("Route") > compose._TBL_W_DEFAULT  # and wider than plain default
 
 
 def test_register_index_chip_carries_circle_and_title() -> None:
@@ -2410,7 +2456,7 @@ def test_section7_number_and_bulletize() -> None:
         "#### Route auth\n\nbody\n\n"
         '<a id="object-auth"></a>\n'
         "#### Object auth\n\nbody\n\n"
-        "## 8. Threat Register\n\n"
+        "## 8. Findings Register\n\n"
         "#### M-001 — not renumbered\n"
     )
     out = compose._section7_number_and_bulletize(md)
@@ -2438,7 +2484,7 @@ def test_section7_overview_links_get_section_number() -> None:
         "| [Authorization Controls](#74-authorization-controls) | 🟠 Weak | gaps |\n\n"
         "### 7.4 Authorization Controls\n\n"
         "#### Route auth\n\nbody\n\n"
-        "## 8. Threat Register\n"
+        "## 8. Findings Register\n"
     )
     out = compose._section7_number_and_bulletize(md)
     assert "[7.4 Authorization Controls](#74-authorization-controls)" in out
@@ -2463,7 +2509,7 @@ def test_section7_inline_findings_id_only() -> None:
         "Also see F-014 here.\n\n"
         "**Relevant findings**\n\n"
         "- [F-014](#f-014) (BOLA user data export)\n\n"
-        "## 8. Threat Register\n"
+        "## 8. Findings Register\n"
     )
     out = compose._section7_inline_findings_id_only(ctx, md)
     # Inline assessment ref: title stripped, ID-only LINK.

@@ -192,6 +192,29 @@ properties:
     additionalProperties:
       $ref: "#/$defs/preset"
 
+  abuse_cases:
+    type: object
+    additionalProperties: false
+    description: |
+      Controls which abuse-case scenarios (AC-NNN) are evaluated against the
+      repository. The plugin standard library
+      (data/abuse-cases/default-library.yaml) is activated unless
+      inherit_defaults is false; org-specific cases are loaded from the glob in
+      `add` (relative to the profile directory) and validated against
+      schemas/abuse-cases.schema.yaml.
+    properties:
+      inherit_defaults:
+        type: boolean
+        default: true
+      disable:
+        type: array
+        items:
+          type: string
+          pattern: "^(AC-T|AC|ORG-AC)-[0-9]{3,}$"
+      add:
+        type: string
+        default: "abuse-cases/*.yaml"
+
 $defs:
   preset:
     type: object

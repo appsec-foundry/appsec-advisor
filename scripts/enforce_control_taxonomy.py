@@ -97,8 +97,19 @@ def _canonicalize_name(name: str) -> str | None:
     stripped = name.strip()
     if not stripped:
         return None
+    # Stage 1 routinely appends a `(library / tech)` qualifier to the control
+    # name (e.g. ``JWT Authentication (express-jwt + jsonwebtoken)``,
+    # ``Multi-Factor Authentication (TOTP via otplib)``). The §7.2 scaffold
+    # renders the heading from `_friendly_subcontrol_title`, which STRIPS that
+    # qualifier — so the heading the auth_method_decomposition gate sees is the
+    # bare mechanism (``JWT Authentication``). The anchored rewrite rules below
+    # must therefore match against the same qualifier-stripped form, otherwise a
+    # real-world name like ``JWT Authentication (express-jwt + jsonwebtoken)``
+    # slips past every rule and the scaffold emits a forbidden §7.2 heading
+    # (juice-shop 2026-06-01 §7.2 repair loop).
+    core = re.sub(r"\s*\([^)]*\)\s*$", "", stripped).strip()
     for pattern, canonical in _NAME_REWRITE_RULES:
-        if pattern.match(stripped):
+        if pattern.match(core):
             if stripped == canonical:
                 return None  # already canonical
             return canonical
@@ -134,7 +145,6 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("passkey",),              "Identity and Authentication Controls"),
     (("webauthn",),             "Identity and Authentication Controls"),
     (("password", "reset"),     "Identity and Authentication Controls"),
-    (("password", "hashing"),   "Identity and Authentication Controls"),
     (("magic", "link"),         "Identity and Authentication Controls"),
     (("login", "throttling"),   "Identity and Authentication Controls"),
     (("brute", "force"),        "Identity and Authentication Controls"),
@@ -191,6 +201,14 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     (("encryption",),           "Cryptography Secrets and Data Protection"),
     (("secret", "management"),  "Cryptography Secrets and Data Protection"),
     (("kms",),                  "Cryptography Secrets and Data Protection"),
+    # Password hashing is a credential-STORAGE / crypto-primitive control, not a
+    # §7.2 authentication MECHANISM. schema_v2 splits it into §7.9 (the §7.2
+    # auth_method_decomposition gate hard-forbids a `#### Password Hashing`
+    # heading — it must be folded as a bullet, never a peer mechanism). Stage 1
+    # routinely parks a standalone "Password Hashing" control in §7.2 IAM;
+    # route it to §7.9 so the scaffold emits a contract-clean heading.
+    (("password", "hashing"),   "Cryptography Secrets and Data Protection"),
+    (("password", "storage"),   "Cryptography Secrets and Data Protection"),
     # §7.10 File Parser / Outbound
     (("file", "upload"),    "File Parser and Outbound Request Controls"),
     (("ssrf",),             "File Parser and Outbound Request Controls"),
@@ -315,8 +333,23 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                 inferred == "Session and Token Controls"
                 and re.match(r"(?i)^session token\b", (c.get("control") or "").strip()) is not None
             )
+            # Targeted exception #2 (same rationale as session_primitive_reroute):
+            # a standalone password-hashing/storage control is an UNAMBIGUOUS
+            # crypto-storage primitive that schema_v2 places in §7.9, and the
+            # §7.2 auth_method_decomposition gate hard-forbids it as a §7.2
+            # heading. So a §7.2 IAM placement by Stage 1 is simply wrong, not a
+            # defensible narrative grouping — re-route it to §7.9 even though
+            # §7.2 IAM is a "known" domain.
+            crypto_primitive_reroute = (
+                inferred == "Cryptography Secrets and Data Protection"
+                and re.match(
+                    r"(?i)^password\s+(hashing|storage)\b",
+                    (c.get("control") or "").strip(),
+                ) is not None
+            )
             if (
                 not session_primitive_reroute
+                and not crypto_primitive_reroute
                 and current_norm
                 and not current_norm.endswith(" Controls")
             ):
@@ -342,6 +375,7 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                 current_norm == "Real-time and Not Applicable Controls"
                 or current_norm not in known_domain_strings
                 or session_primitive_reroute
+                or crypto_primitive_reroute
             ):
                 c["domain"] = inferred
                 domain_changes.append({

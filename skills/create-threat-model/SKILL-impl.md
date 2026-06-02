@@ -22,12 +22,13 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 >   - Any per-phase entry inside Stage 1 (phases stream inline as the
 >     foreground Agent runs)
 >
-> The only `TaskCreate` calls allowed are the six rows defined in
+> The only `TaskCreate` calls allowed are the seven rows defined in
 > `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1 - Threat
-> Analysis and Triage`, `Stage 2 - Report Rendering`, conditional
-> `Stage 3 - QA Review`, conditional `Stage 4 - Architect Review`,
-> `Final summary + cleanup`). Subjects must match **verbatim** — later
-> `TaskUpdate` calls match by subject and silently no-op on drift.
+> Analysis and Triage`, `Abuse Case Verification` (when `DRY_RUN=false`),
+> `Stage 2 - Report Rendering`, conditional `Stage 3 - QA Review`,
+> conditional `Stage 4 - Architect Review`, `Final summary + cleanup`).
+> Subjects must match **verbatim** — later `TaskUpdate` calls match by
+> subject and silently no-op on drift.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -1621,7 +1622,7 @@ No other text — no explanatory prose, no duplicated mode description — belon
 
 Right after the handoff banner and **before** dispatching Stage 1, pre-create one `TaskCreate` task per stage. Stage 1 runs in the foreground (see "Dispatch" below), so its internal phases stream directly to the chat as the orchestrator executes tool calls — no per-phase task entries are needed. The stage tasks give the user a single top-level checklist to follow.
 
-**This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight summary`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the six spec'd rows below — later `TaskUpdate` calls (Stage 1/2/3/4 lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
+**This is the ONLY place `TaskCreate` is allowed in the skill.** No earlier `TaskCreate` call is permitted — not for `Resolve config`, not for `Render Pre-flight summary`, not for `Pre-generate structural fragments` (intra-Stage-1 since M2.12), not for per-phase Stage 1 entries. If you have already created tasks earlier in the run (e.g. nudged by a Claude Code "task tools haven't been used recently" reminder during the preamble), **delete them via `TaskUpdate` before continuing** so the TaskList reflects exactly the seven spec'd rows below (`Preparing workspace`, `Stage 1 …`, `Abuse Case Verification`, `Stage 2 …`, conditional `Stage 3 …`, conditional `Stage 4 …`, `Final summary + cleanup`) — later `TaskUpdate` calls (stage lifecycle, completion-summary spinner clear at the end of the skill) match by subject and will silently no-op on drift, leaving the spinner hung.
 
 **Subjects must match verbatim.** The condition table below is the source of truth — do not paraphrase ("Stage 1 — dispatch appsec-threat-analyst" is wrong; the correct subject is "Stage 1 - Threat Analysis and Triage"). The exact strings are referenced by downstream `TaskUpdate` calls.
 
@@ -1637,10 +1638,13 @@ TaskCreate subject="Preparing workspace"
 | Condition | Task subject | activeForm |
 |-----------|--------------|------------|
 | always | `Stage 1 - Threat Analysis and Triage` | `Running threat analysis and triage` |
+| `DRY_RUN=false` | `Abuse Case Verification` | `Verifying abuse-case chains` |
 | always (M2.12) | `Stage 2 - Report Rendering` | `Rendering threat model report` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA Review` | `Running QA review` |
 | `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 - Architect Review` | `Running architect review` |
 | always | `Final summary + cleanup` | `Writing final summary` |
+
+**`Abuse Case Verification` is a first-class stage row (RC-2026-06).** It is created here (between Stage 1 and Stage 2) whenever `DRY_RUN=false`, so the verifier fan-out is visible on the TaskList. Its lifecycle (`in_progress` → `completed`) is driven by the §"Stage 1c — Abuse Case Verification" section. Subject must match verbatim — `Abuse Case Verification` (no "Stage N" prefix, since it is not part of the numbered Stage 1–4 banner sequence).
 
 **Stage 2 is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. The skill now splits Phase 11 at the Substep-3 / Substep-4 boundary: `STAGE1_PHASE_LIMIT=10b` keeps the deterministic Substeps 1–3 (counts, yaml write, baseline cache) in Stage 1, while the LLM compose work (Substeps 4–N) goes into a separate `appsec-threat-renderer` session so render-only work does not carry the full analyst prompt.
 
@@ -1734,7 +1738,9 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
        --heartbeat --phase=skill --step=stage-handoff \
        >/dev/null 2>&1 || true
    ```
-   Then immediately call `TaskStop` with `HEARTBEAT_TASK_ID` to terminate the background heartbeat loop. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip both calls silently.
+   Then immediately call `TaskStop` to terminate the background heartbeat loop. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip both calls silently.
+
+   > **`TaskStop` is a deferred tool — load its schema first.** Unlike `TaskCreate`/`TaskUpdate`, `TaskStop` is frequently NOT in the pre-loaded tool set, so calling it directly fails with `InputValidationError: unexpected parameter`. Before the first `TaskStop` of the run, call `ToolSearch` with query `select:TaskStop` to load its schema. Its parameter is **`task_id`** (snake_case) — **not** `taskId`; passing `taskId` is the exact "Invalid tool parameters" failure observed on the 2026-06-01 juice-shop run. This applies to every `TaskStop` site below (Stage 2 / Stage 3 / Stage 4) — load the schema once, then reuse `task_id` each time.
 
 5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 1 - Threat Analysis and Triage` task to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
@@ -2014,6 +2020,15 @@ if [ "$DRY_RUN" = "false" ]; then
     # internet-anon (registration is one POST away, the spectrum is
     # misleading on the at-a-glance view).
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_open_registration.py" "$OUTPUT_DIR" 2>&1 || true
+    # Public-repo detection (2026-06): sets meta.public_source_repo only on
+    # high-confidence LOCAL signals (OSI license file + public-host github/
+    # gitlab/bitbucket source URL). When true, compose collapses the repo-read
+    # actor "Internal Developer" into "Anonymous Internet Attacker" (a public
+    # repo's committed secrets are readable by anyone). When the evidence is
+    # insufficient the flag is left UNSET and the Internal Developer actor is
+    # kept — never guess public on a repo we cannot confirm. Honors the operator
+    # override meta.public_source_repo_pinned. Needs --repo-root.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_public_repo.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     # R-3 (2026-05): rebuild assets[].linked_threats from CWE-class affinity +
     # keyword overlap. Stage 1 Phase 5 is LLM-authored and routinely produces
     # links that have nothing to do with the asset (e.g. session-tokens linked
@@ -2041,6 +2056,68 @@ Behaviour contract:
 - `threats[].poc_hint` — accepted via `additionalProperties: true` on the threats item.
 
 The YAML integrity gate that runs before this section will still pass after the emitter writes; the schema permits every field the emitters touch.
+
+## Stage 1c — Abuse Case Verification (visible skill-level stage)
+
+**This is a first-class, user-visible stage** (formerly the invisible "Phase 10c"). It runs between Stage 1 and Stage 2, has its own `TaskList` row (`Abuse Case Verification`), a handoff banner, a heartbeat watchdog, and a `.stage-stats.jsonl` record — so the verifier fan-out's cost, duration, and verdict reliability are visible in the completion summary and the §Run-Statistics breakdown (RC-2026-06: the 2026-06 juice-shop run lost 3/6 verifiers with no visibility because this work was unstaged).
+
+**Why this lives at the skill level.** Abuse-case discovery → verifier fan-out → `.abuse-case-verdicts.json` is documented in `phase-group-threats.md` as running "after Phase 10b and before Phase 11". But Stage 1 is dispatched with `STAGE1_PHASE_LIMIT=10b`, whose analyst branch stops *after* Phase 10b plus the deterministic Phase-11 substeps 1–3 — it never reaches it. Running it here — after the YAML is final, before Stage 2 renders — closes the gap deterministically and keeps it out of Stage 1's turn budget.
+
+Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to render its catalog/placeholder. Skip the whole stage (and its TaskList row) when `DRY_RUN=true`.
+
+0. **Stage open.** Capture the start timestamp, mark the task in progress, print the banner, and start the heartbeat watchdog (same `skill_watchdog.py` invocation as the other stages — see "Skill-layer heartbeat watchdog"; capture its `task_id` in `HEARTBEAT_TASK_ID`). Skip all of this when `DRY_RUN=true`.
+   ```bash
+   STAGE_ABUSE_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+   ```
+   - `TaskUpdate` `Abuse Case Verification` → `in_progress`.
+   - Banner:
+     ```
+     ▶ Abuse Case Verification starting  (deterministic match + per-candidate haiku verifier fan-out)
+       ⟶ Chains each derived from §8 findings; verified step-by-step, then folded into §9
+     ```
+
+1. **Deterministic match** (no LLM): build candidates from the standard library + org profile + repo-local cases against `.threats-merged.json`. `--repo-root` loads `<repo>/.appsec/abuse-cases/*.yaml` (zero-config repo-local layer).
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
+       --output-dir "$OUTPUT_DIR" \
+       --repo-root "$REPO_ROOT" \
+       ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} || true
+   CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
+       list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
+   ```
+2. **Verifier fan-out** — for each AC-ID in `$CANDIDATES`, dispatch the `appsec-advisor:appsec-abuse-case-verifier` Agent (`model: haiku`, foreground) with the prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=haiku`. Dispatch all candidates together in ONE message (wall-clock ≈ slowest single case). Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file. **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
+3. **Merge + finalize + render** (deterministic):
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
+   # Render the §9 fragment HERE — BEFORE the Stage-2 renderer's first
+   # compose. The verdicts are final at this point; rendering now means the
+   # abuse-cases.md fragment already exists when Stage 2 runs
+   # compose_threat_model.py, so §9 ships populated on the first compose.
+   # (Earlier this only ran in the Stage-3 pre-gen block, AFTER Stage 2's
+   # compose, so the first composed report carried the "No abuse cases"
+   # placeholder until a Re-Render Loop happened to recompose — §9 could ship
+   # empty on any clean run with no other repair. RC-2026-06.)
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_abuse_cases.py" \
+       --output-dir "$OUTPUT_DIR" \
+       --repo-root "$REPO_ROOT" \
+       ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} || true
+   ```
+4. **Stage close.** Send a final heartbeat, stop the watchdog (`TaskStop` with `HEARTBEAT_TASK_ID`), record the aggregated stage-stats, and mark the task complete. The stage is recorded under `--stage 1 --variant abuse-verification` so it sorts immediately after Stage 1 in the Per-Stage Breakdown without renumbering Stages 2–4 (mirrors the Stage-3 `repair-<k>` variant pattern). When `$CANDIDATES` was empty (no agents ran) record a deterministic zero-token row instead (`--agent deterministic:match_abuse_cases.py --model none --tokens 0 --tool-uses 0`).
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+       --stage 1 --variant "abuse-verification" \
+       --name "Abuse Case Verification" \
+       --agent appsec-advisor:appsec-abuse-case-verifier \
+       --model haiku \
+       --duration-ms <sum_duration_ms> \
+       --tool-uses <sum_tool_uses> \
+       --tokens <sum_tokens> \
+       ${STAGE_ABUSE_START_ISO:+--subagent-type appsec-advisor:appsec-abuse-case-verifier --since-iso "$STAGE_ABUSE_START_ISO"}
+   ```
+   - `TaskUpdate` `Abuse Case Verification` → `completed`.
+
+The §9 fragment is **also** re-rendered idempotently in the Stage-3 pre-generation block (a backstop that picks up any late verdict change); rendering it here as well guarantees the FIRST Stage-2 compose already includes §9. Both calls read `.abuse-case-verdicts.json` (viable chains) **and** `.abuse-case-matches.json` (the generic catalog evaluated-but-not-applicable table) and are byte-identical given identical inputs.
 
 ## Stage 2 - Report Rendering (M2.12 — Sprint 3)
 
@@ -2504,6 +2581,14 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --only security-architecture.md,_chain-skeleton.md \
+    || true
+# §9 Abuse Cases — deterministic render from the Phase-10b verdicts. No-ops
+# (and removes any stale fragment) when no abuse case applied, so compose then
+# emits its placeholder line and §8 → §10 numbering stays contiguous.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_abuse_cases.py" \
+    --output-dir "$OUTPUT_DIR" \
+    --repo-root "$REPO_ROOT" \
+    ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} \
     || true
 ```
 

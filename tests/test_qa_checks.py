@@ -72,7 +72,7 @@ def test_unknown_subcommand_exits_nonzero(tmp_path: Path):
 _CLEAN_XREF_CONTENT = textwrap.dedent("""\
     ## Management Summary
 
-    ## 8. Threat Register
+    ## 8. Findings Register
 
     <a id="t-001"></a>
     | T-001 | Title | High | ... |
@@ -97,7 +97,7 @@ def test_xrefs_exits_0_on_clean_file(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 _RISK_DIST_CONTENT = textwrap.dedent("""\
-    ## 8. Threat Register
+    ## 8. Findings Register
 
     **Risk Distribution:** Critical: 1 · High: 2 · Medium: 3 · Low: 4 · **Total: 10**
     **STRIDE Coverage:** Spoofing: 1 · Tampering: 2 · Repudiation: 0 · Information Disclosure: 3 · Denial of Service: 2 · Elevation of Privilege: 2
@@ -359,6 +359,47 @@ def test_control_subsection_coverage_matches_code_spanned_control_name(monkeypat
             **Assessment:** Partial.
 
             #### WebSocket Event Bus (`Socket.IO`)
+
+            **Security assessment**
+
+            Present but not assessed.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_control_subsection_coverage(md, contract)
+
+    assert report.issues == []
+    assert report.ok == 1
+
+
+def test_control_subsection_coverage_matches_backslash_escaped_dot(monkeypatch, tmp_path: Path):
+    r"""Regression: compose_threat_model.py's TLD-escape pass turns `Socket.IO`
+    into `Socket\.IO` in the `####` heading text but leaves the
+    `**Controls covered:**` link label un-escaped (link spans are exempt from
+    the escape pass). `_heading_matches` must tolerate the one-backslash
+    divergence — otherwise the control_subsection_coverage gate false-positives
+    and the re-render loop never converges (juice-shop 2026-06-01 §7.12)."""
+    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    qa._PrePass.reset()
+    contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [WebSocket and Socket.IO Security](#websocket-and-socketio-security).
+
+            **Implemented controls:** Socket.IO event bus.
+
+            **Assessment:** Partial.
+
+            #### WebSocket and Socket\\.IO Security
 
             **Security assessment**
 
@@ -921,7 +962,7 @@ class TestYamlMdConsistencyCheck:
             textwrap.dedent("""
                 ## Critical Attack Chain
                 | [F-001](#f-001) | Chain member |
-                ## Threat Register
+                ## Findings Register
                 | [F-001](#f-001) | full row |
             """).strip(),
             textwrap.dedent("""
@@ -2104,7 +2145,7 @@ class TestRepairPlanStatusClassification:
         through the full `build_repair_plan` pipeline."""
         md = _write_minimal_model(
             tmp_path,
-            "## Management Summary\n\nNothing to see here.\n\n## 8. Threat Register\n\n_no threats_\n",
+            "## Management Summary\n\nNothing to see here.\n\n## 8. Findings Register\n\n_no threats_\n",
         )
         plan, _ = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
         # Bare-bones MD will violate many contract rules — the important
@@ -2587,7 +2628,7 @@ class TestCrossReferenceLabellingInvariant:
             ## Management Summary
             Top class: TH-01.
 
-            ## 8. Threat Register
+            ## 8. Findings Register
 
             | ID | Finding | Threat Category |
             |----|---------|-----------------|
@@ -2826,7 +2867,7 @@ class TestHeadingAttributeStrip:
     def test_clean_headings_untouched(self, tmp_path: Path):
         md = _write_minimal_model(
             tmp_path,
-            "### 7.13 Secret Management (cross-cutting)\n\n### 8. Threat Register\n",
+            "### 7.13 Secret Management (cross-cutting)\n\n### 8. Findings Register\n",
         )
         before = md.read_text()
         report, _ = qa.strip_heading_attribute_artifacts(md)

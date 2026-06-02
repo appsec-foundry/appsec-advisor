@@ -758,7 +758,7 @@ class TestSection3AttackWalkthroughs:
 
     def test_section_3_empty_state_documented(self):
         """CRIT_COUNT == 0 → Section 3 renders a 2-line empty-state stub
-        pointing to Section 8 (Threat Register)."""
+        pointing to Section 8 (Findings Register)."""
         txt = _read(self.ARCH_MD_PATH)
         assert "CRIT_COUNT == 0" in txt
         # Must mention that Section 3 has an empty-state stub pointing at Section 8
@@ -809,8 +809,8 @@ class TestSection3AttackWalkthroughs:
     def test_qa_reviewer_has_no_duplicate_section_8_attack_walkthroughs_row(self):
         """Regression guard: an earlier refactor left a duplicate
         `| ## 8. Attack Walkthroughs |` presence row alongside the real
-        `## 8. Threat Register` row. The duplicate must not return — Section 8
-        is Threat Register only."""
+        `## 8. Findings Register` row. The duplicate must not return — Section 8
+        is Findings Register only."""
         txt = _read(self.QA_MD_PATH)
         assert "| `## 8. Attack Walkthroughs`" not in txt, "Duplicate Section 8 Attack Walkthroughs row must not exist"
 

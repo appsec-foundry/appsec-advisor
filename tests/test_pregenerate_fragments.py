@@ -1466,7 +1466,7 @@ class TestGapSummary:
 class TestOutOfScope:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
         md = pf.gen_out_of_scope(minimal_yaml_data)
-        assert md.startswith("## 10. Out of Scope\n")
+        assert md.startswith("## 11. Out of Scope\n")
 
     def test_uses_meta_scope_when_present(self, minimal_yaml_data):
         md = pf.gen_out_of_scope(minimal_yaml_data)
@@ -1475,7 +1475,7 @@ class TestOutOfScope:
 
     def test_falls_back_to_default_when_meta_empty(self):
         md = pf.gen_out_of_scope({"meta": {}})
-        assert md.startswith("## 10. Out of Scope\n")
+        assert md.startswith("## 11. Out of Scope\n")
         assert "Third-party hosted dependencies" in md  # default
 
     def test_no_accepted_risks_subsection_when_list_absent(self, minimal_yaml_data):
@@ -1958,6 +1958,17 @@ class TestSecurityArchitectureV2:
         csp = next(l for l in rows if "Browser and Cross-Origin" in l)
         assert "🔴 Unsafe" in auth, auth
         assert "🔴 Missing" in csp, csp
+        # A Missing category that HAS a catalogued (absent) control names it as
+        # "required controls not in place" — not the misleading "no controls
+        # catalogued", which must be reserved for genuinely empty categories
+        # (2026-06-02 §7.1 fix).
+        assert "required controls not in place" in csp, csp
+        assert "no controls catalogued" not in csp.lower(), csp
+        # A category with NO catalogued control at all still reads "No controls
+        # catalogued for this category."
+        empty_rows = [l for l in rows if "no controls catalogued" in l.lower()]
+        for l in empty_rows:
+            assert "required controls not in place" not in l, l
 
     def test_status_badge_on_every_h4(self):
         md = pf.gen_security_architecture_v2(self._data())
@@ -1978,6 +1989,112 @@ class TestSecurityArchitectureV2:
         assert seg.count("\n#### ") == 1, "password lifecycle must be ONE grouped H4"
         # grouped H4 still carries the two required labels
         assert "**Security assessment**" in seg and "**Relevant findings**" in seg
+
+    @staticmethod
+    def _section_containing(md: str, needle: str) -> str:
+        """Return the `### 7.x` block (header→next H3/H2) that contains needle.
+
+        Skips §7.1 — the Security Control Overview table now names controls in
+        its 'Main reason' cells, so a control name appears there too; tests want
+        the control's OWN §7.x block, not the overview row."""
+        import re as _re
+        blocks = _re.split(r"(?m)^(?=### 7\.\d+ )", md)
+        for b in blocks:
+            if b.startswith("### 7.") and not b.startswith("### 7.1 ") and needle in b:
+                return b.split("\n## ")[0]
+        raise AssertionError(f"no §7 block contains {needle!r}")
+
+    @staticmethod
+    def _covered_labels(section: str) -> list:
+        import re as _re
+        cc = next((l for l in section.splitlines()
+                   if l.startswith("**Controls covered:**")), "")
+        return _re.findall(r"\[([^\]]+)\]\(#", cc)
+
+    @staticmethod
+    def _h4_titles(section: str) -> list:
+        import re as _re
+        return [_re.sub(r"^\d+(?:\.\d+)*\s+", "", h).strip()
+                for h in _re.findall(r"(?m)^#### (.+)$", section)]
+
+    def test_controls_covered_lists_only_emitted_h4s(self):
+        """B1 regression: a control suppressed by _emit_v2_subcontrol_legacy
+        (Missing + no findings + no implementation) must NOT appear in the
+        `**Controls covered:**` line — otherwise it is a dangling link the
+        control_subsection_coverage gate flags and the re-render loop cannot
+        self-heal (juice-shop 2026-06-01 §7.4/§7.10)."""
+        data = {
+            "components": [],
+            "threats": [{"id": "T-008", "cwe": "CWE-352", "title": "CSRF"}],
+            "security_controls": [
+                {"domain": "Authorization Controls",
+                 "control": "Role-Based Access Control",
+                 "effectiveness": "Missing", "linked_threats": ["T-008"]},
+                {"domain": "Authorization Controls",
+                 "control": "CSRF Protection",
+                 "effectiveness": "Missing"},  # suppressed: no findings, no impl
+            ],
+        }
+        md = pf.gen_security_architecture_v2(data)
+        assert "__CONTROLS_COVERED_SENTINEL__" not in md
+        seg = self._section_containing(md, "Role-Based Access Control")
+        labels = self._covered_labels(seg)
+        titles = self._h4_titles(seg)
+        # every covered link resolves to an emitted H4 (the invariant the gate enforces)
+        for lab in labels:
+            assert lab in titles, f"dangling covered link {lab!r}; H4s={titles}"
+        # the suppressed control must NOT be linked, but the emitted one must be
+        assert "CSRF Protection" not in labels
+        assert "Role-Based Access Control" in titles
+
+    def test_controls_covered_dropped_when_all_suppressed(self):
+        """When every control in a §7.x section is suppressed, the
+        `**Controls covered:**` line is removed entirely (no dangling links);
+        the suppressed-controls note still lists them for the reader."""
+        data = {
+            "components": [],
+            "threats": [],
+            "security_controls": [
+                {"domain": "Authorization Controls",
+                 "control": "CSRF Protection",
+                 "effectiveness": "Missing"},
+            ],
+        }
+        md = pf.gen_security_architecture_v2(data)
+        assert "__CONTROLS_COVERED_SENTINEL__" not in md
+        seg = self._section_containing(md, "Additional cataloged controls")
+        assert "**Controls covered:**" not in seg
+        assert "CSRF Protection" in seg
+
+
+class TestV2SectionRouting:
+    """`_v2_canonical_section_for_control` routes controls to §7 sections by
+    domain. Regression: hyphenated hints (`file-parser`) never matched the
+    space-form canonical domain Stage 1 writes ("File Parser and Outbound
+    Request Controls"), so a control whose NAME also lacked a hint token was
+    dropped from §7 entirely (juice-shop 2026-06-01 §7.10)."""
+
+    def test_canonical_domain_routes_even_without_hint_in_name(self):
+        # "File Upload Validation" carries no §7.10 hint token in its name,
+        # but its domain IS the canonical §7.10 title → must route to §7.10.
+        c = {"control": "File Upload Validation",
+             "domain": "File Parser and Outbound Request Controls"}
+        assert pf._v2_canonical_section_for_control(c) == \
+            "7.10 File Parser and Outbound Request Controls"
+
+    def test_data_access_domain_does_not_collide_with_authorization(self):
+        # Guard against the substring trap: §7.4 hint "access-control" must NOT
+        # steal a §7.5 control whose domain ends "...Data Access Controls".
+        c = {"control": "SQL Parameterization (Sequelize ORM)",
+             "domain": "Query Construction and Data Access Controls"}
+        assert pf._v2_canonical_section_for_control(c) == \
+            "7.5 Query Construction and Data Access Controls"
+
+    def test_hint_fallback_still_works_for_partial_domain(self):
+        # Non-canonical / shorthand domain still routes via the hint fallback.
+        c = {"control": "SSRF guard", "domain": "ssrf"}
+        assert pf._v2_canonical_section_for_control(c) == \
+            "7.10 File Parser and Outbound Request Controls"
 
 
 # ---------------------------------------------------------------------------
@@ -2055,6 +2172,9 @@ def test_auth_inventory_empty_without_auth():
 def test_auth_inventory_is_frozen_marked_and_single_titles():
     block = "\n".join(pf._build_auth_mechanism_inventory(_auth_yaml()))
     assert "AUTH-MECHANISMS-FROZEN" in block
-    # Findings emit as bare ID links (single — the title is added by the compose
-    # linkify pass, not duplicated here).
+    # Each finding link appears once and CARRIES its title (the inventory is a
+    # table, so compose's prose-linkifier never enriches it — emitting a bare
+    # ID left it 'leer betitelt', 2026-06-02). The link must show `— <title>`.
     assert block.count("[F-001](#f-001)") == 1
+    assert re.search(r"\[F-001\]\(#f-001\) — \S", block), \
+        "§7.2 inventory finding link must carry a title, not a bare ID"

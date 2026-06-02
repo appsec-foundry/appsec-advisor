@@ -200,6 +200,50 @@ _TITLE_FORBIDDEN_REPLACEMENTS = [
 ]
 
 
+_TITLE_MAXLEN = 80
+
+
+def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
+    """Enforce the schema title maxLength, preserving a trailing
+    ``file.ext:line`` (or ``— file.ext:line``) locator when present so the
+    weakness body is what gets shortened, not the evidence pointer."""
+    title = (title or "").strip()
+    if len(title) <= limit:
+        return title
+    m = re.search(r"\s+(?:[—-]\s+)?[\w./-]+:\d+\s*$", title)
+    if m:
+        tail = title[m.start():].strip()
+        head = title[:m.start()].rstrip()
+        keep = limit - len(tail) - 2  # room for "… " join
+        if keep >= 8:
+            return f"{head[:keep].rstrip()}… {tail}"
+    return title[: limit - 1].rstrip() + "…"
+
+
+def _normalize_cvss_v4(v4):
+    """Coerce a STRIDE-emitted cvss_v4 to the output-schema shape
+    ({vector, base_score, severity, source}, additionalProperties:false) or
+    return None to drop it. Analyzers commonly write ``score`` instead of
+    ``base_score`` and omit ``source``."""
+    if not isinstance(v4, dict):
+        return None
+    vector = v4.get("vector")
+    if not isinstance(vector, str) or not vector.startswith("CVSS:4.0"):
+        return None
+    score = v4.get("base_score", v4.get("score"))
+    sev = v4.get("severity")
+    if not isinstance(score, (int, float)) or sev not in ("None", "Low", "Medium", "High", "Critical"):
+        return None
+    src = v4.get("source")
+    valid_src = {"stride-analyzer", "dep-scan", "nvd", "osv", "known-vuln", "manual"}
+    return {
+        "vector": vector,
+        "base_score": float(score),
+        "severity": sev,
+        "source": src if src in valid_src else "stride-analyzer",
+    }
+
+
 def _clean_title(raw: str) -> str:
     """Best-effort transform of merged-threat title to schema pattern.
 
@@ -279,7 +323,19 @@ def build_threats(merged: dict) -> tuple[list[dict], list[str]]:
             skipped_stubs += 1
             continue
         threat["component"] = threat.pop("component_id", threat.get("component", ""))
-        threat["title"] = _clean_title(threat.get("title", ""))
+        threat["title"] = _clamp_title(_clean_title(threat.get("title", "")))
+        # Schema hard limits (output schema: title<=80, affected_parameter<=40)
+        # + cvss_v4 shape ({vector, base_score, severity, source}, no extra
+        # keys). STRIDE analyzers occasionally emit verbose titles, long
+        # affected_parameter lists, or a cvss_v4 with `score` instead of
+        # `base_score` and no `source` — normalise here so the deterministic
+        # builder always yields a schema-valid yaml (2026-06-02).
+        if threat.get("affected_parameter"):
+            ap = str(threat["affected_parameter"]).strip()
+            threat["affected_parameter"] = ap if len(ap) <= 40 else (ap[:39].rstrip() + "…")
+        threat["cvss_v4"] = _normalize_cvss_v4(threat.get("cvss_v4"))
+        if threat["cvss_v4"] is None:
+            threat.pop("cvss_v4", None)
         ev = threat.get("evidence")
         if isinstance(ev, dict):
             threat["evidence"] = [ev]

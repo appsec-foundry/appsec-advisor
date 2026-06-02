@@ -1,4 +1,4 @@
-## 10. Out of Scope
+## 11. Out of Scope
 
 - Physical security
 - Social engineering

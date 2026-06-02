@@ -47,7 +47,7 @@ def test_profile_active_quick_haiku_economy():
     assert p["skip_code_examples"] is False, "C: code_example KEPT at quick (R9 — flipped 2026-05)"
     # P3 (A6) re-balance — evidence excerpt is CHEAP to keep at quick (it's a
     # yaml-side string trim, not new prose) and dropping it stripped the §8
-    # Threat Register Finding column and Linked Threats columns of every
+    # Findings Register Finding column and Linked Threats columns of every
     # descriptive substring. Flag flipped from True to False; the other A-F
     # reductions stay in place.
     assert p["skip_evidence_excerpt"] is False, "D: evidence excerpt KEPT at quick (P3 — A6 re-balance)"

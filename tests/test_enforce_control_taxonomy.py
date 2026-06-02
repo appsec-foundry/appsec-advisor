@@ -78,6 +78,19 @@ class TestNameCanonicalisation:
         assert ect._canonicalize_name("Session Token Validation (JWT Based)") is None
         assert ect._canonicalize_name("Password Login") is None
 
+    def test_canonicalize_strips_trailing_tech_qualifier(self):
+        # Regression (juice-shop 2026-06-01): Stage 1 appends a `(library/tech)`
+        # qualifier the §7.2 scaffold strips when rendering the heading. The
+        # rewrite rules must match the qualifier-stripped form, otherwise a
+        # real name like "JWT Authentication (express-jwt + jsonwebtoken)"
+        # slips past every rule and the scaffold emits a forbidden §7.2 heading.
+        assert ect._canonicalize_name(
+            "JWT Authentication (express-jwt + jsonwebtoken)"
+        ) == "Session Token Validation (JWT Based)"
+        assert ect._canonicalize_name(
+            "JWT RS256 Authentication (lib/insecurity.ts)"
+        ) == "Session Token Validation (JWT Based)"
+
     def test_unknown_name_returns_none(self):
         assert ect._canonicalize_name("Custom Magic Auth") is None
 
@@ -109,6 +122,30 @@ class TestDomainInference:
 
     def test_token_storage_routes_to_session(self):
         assert ect._infer_domain("JWT Token Storage") == "Session and Token Controls"
+
+    def test_password_hashing_routes_to_crypto(self):
+        """Password hashing is a crypto-storage primitive (§7.9), NOT a §7.2
+        auth mechanism — the §7.2 auth_method_decomposition gate hard-forbids a
+        `#### Password Hashing` heading. juice-shop 2026-06-01 §7.2 residual."""
+        assert ect._infer_domain("Password Hashing") == \
+            "Cryptography Secrets and Data Protection"
+        assert ect._infer_domain("Password Storage") == \
+            "Cryptography Secrets and Data Protection"
+
+    def test_enforce_reroutes_password_hashing_out_of_iam(self):
+        """A standalone Password Hashing control Stage 1 parked in §7.2 IAM
+        must be re-routed to §7.9 even though §7.2 is a KNOWN domain (the
+        conservative don't-shuffle-known-domains guard must not block it)."""
+        data = {"security_controls": [
+            {"id": "SC-1", "control": "Password Hashing",
+             "domain": "Identity and Authentication Controls",
+             "effectiveness": "Weak"},
+        ]}
+        _, _names, domain_changes = ect.enforce(data)
+        assert data["security_controls"][0]["domain"] == \
+            "Cryptography Secrets and Data Protection"
+        assert any(ch["to"] == "Cryptography Secrets and Data Protection"
+                   for ch in domain_changes)
 
     def test_websocket_routes_to_realtime(self):
         assert ect._infer_domain("WebSocket message validation") == \

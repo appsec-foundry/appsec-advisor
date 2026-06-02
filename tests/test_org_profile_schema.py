@@ -165,3 +165,32 @@ def test_validator_returns_nonzero_on_errors(tmp_path):
 def test_validator_returns_zero_on_success():
     rc = vop.main([str(FIXTURE_PATH), "--plugin-version", "0.4.0-beta"])
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# abuse_cases block (added with the §9 Abuse Cases feature)
+# ---------------------------------------------------------------------------
+
+
+def test_abuse_cases_block_with_defaults_passes(acme_profile):
+    acme_profile["abuse_cases"] = {"inherit_defaults": True, "disable": ["AC-T-002"]}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_abuse_cases_disable_pattern_enforced(acme_profile):
+    acme_profile["abuse_cases"] = {"disable": ["not-an-id"]}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("abuse_cases" in e or "disable" in e for e in errors), errors
+
+
+def test_abuse_cases_unknown_key_rejected(acme_profile):
+    acme_profile["abuse_cases"] = {"mystery": True}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("mystery" in e for e in errors), errors
+
+
+def test_abuse_cases_absent_skips_resolution(acme_profile):
+    # No abuse_cases block → no abuse-case resolution errors leak in.
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert not any("abuse_cases" in e for e in errors), errors

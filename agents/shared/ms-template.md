@@ -179,7 +179,7 @@ If you're tempted to add an HTTP-header row because the table looks thin, prefer
 
 **Bottom line:** <One sentence summarizing that these controls narrow specific attack surfaces but none eliminates a Critical finding on its own.>
 
-→ *Full details: [Section 2](#2-architecture-diagrams) · [Critical Attack Tree](#critical-attack-tree) · [Section 7](#7-threat-register) · [Section 9](#9-mitigation-register).*
+→ *Full details: [Section 2](#2-architecture-diagrams) · [Critical Attack Tree](#critical-attack-tree) · [Section 7](#7-threat-register) · [Section 10](#10-mitigation-register).*
 ```
 
 **Column semantics:**

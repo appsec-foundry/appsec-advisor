@@ -101,6 +101,7 @@ document:
     - { id: skipped_sections_placeholder, condition: "not render_security_architecture" }
     - { id: requirements_compliance, condition: "check_requirements" }
     - threat_register
+    - abuse_cases
     - mitigation_register
     - out_of_scope
     - appendix_run_statistics        # always — verbose flag only gates token/cost detail
@@ -153,6 +154,7 @@ document:
         - { id: skipped_sections_placeholder, condition: "not render_security_architecture" }
         - { id: requirements_compliance, condition: "check_requirements" }
         - threat_register
+        - abuse_cases
         - mitigation_register
         - out_of_scope
         - appendix_run_statistics
@@ -1378,6 +1380,7 @@ sections:
               - "totp"
               - "2fa"
               - "mfa"
+              - "multi-factor"
               - "passkey"
               - "webauthn"
               - "magic link"
@@ -1426,6 +1429,13 @@ sections:
               - "(?i)^#?#?#?#?\\s*jwt\\s+bearer\\s+authentication\\s*$"
               - "(?i)^#?#?#?#?\\s*jwt\\s+authentication\\s*$"
               - "(?i)^#?#?#?#?\\s*jwt\\s+(issuance|verification|validation|signing)\\s*$"
+              # Token issuance/verification (any token format) is a §7.3
+              # session-token-lifecycle control, NOT a §7.2 auth mechanism —
+              # catches "JWT/Bearer Token Issuance", "Bearer Token Issuance",
+              # "Token Issuance" (2026-06-02: rename to a real mechanism such
+              # as Social Login / OAuth, or move the block to §7.3).
+              - "(?i)^#?#?#?#?\\s*(jwt[\\s/]*)?bearer\\s+token\\s+(issuance|verification|validation|signing)\\s*$"
+              - "(?i)^#?#?#?#?\\s*token\\s+(issuance|verification|validation|signing)\\s*$"
               - "(?i)\\b(bypass flow|forgery flow|hijack flow|attack flow|exploit flow)\\b"
               - "(?i)alg[:=]none"
             enforcement: "error"
@@ -1561,7 +1571,7 @@ sections:
   # -------------------------------------------------------------------------
 
   threat_register:
-    heading: "## 8. Threat Register"
+    heading: "## 8. Findings Register"
     heading_numbered: true
     fragment_type: computed
     data_source: "threat-model.yaml#threats"
@@ -1587,11 +1597,27 @@ sections:
     card_fields: [severity, component, location, issue, root_cause, evidence, fix, classification]
 
   # -------------------------------------------------------------------------
+  # E2. Abuse Cases — 100% computed; body authored by render_abuse_cases.py
+  # -------------------------------------------------------------------------
+  # The §9 body is produced deterministically by
+  # `scripts/render_abuse_cases.py` (from `.abuse-case-verdicts.json` +
+  # `threat-model.yaml`) and dropped at `.fragments/abuse-cases.md`. The
+  # `_render_abuse_cases` handler inlines that fragment when present and
+  # otherwise emits a single italic placeholder line, so the §8 → §10
+  # numbering stays contiguous even when no abuse case applies (the
+  # contract hard-numbers §10 Mitigation Register / §11 Out of Scope).
+  abuse_cases:
+    heading: "## 9. Abuse Cases"
+    heading_numbered: true
+    fragment_type: computed
+    data_source: ".fragments/abuse-cases.md"
+
+  # -------------------------------------------------------------------------
   # F. Mitigation Register — 100% computed from yaml
   # -------------------------------------------------------------------------
 
   mitigation_register:
-    heading: "## 9. Mitigation Register"
+    heading: "## 10. Mitigation Register"
     heading_numbered: true
     fragment_type: computed
     data_source: "threat-model.yaml#mitigations"
@@ -1606,7 +1632,7 @@ sections:
   # -------------------------------------------------------------------------
 
   out_of_scope:
-    heading: "## 10. Out of Scope"
+    heading: "## 11. Out of Scope"
     heading_numbered: true
     fragment_type: markdown
     fragment: "out-of-scope.md"

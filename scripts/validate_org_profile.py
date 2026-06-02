@@ -23,6 +23,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -93,6 +94,31 @@ def _schema_errors(profile: Any, schema: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 # Semantic checks
 # ---------------------------------------------------------------------------
+
+
+def _rac_module():
+    spec = importlib.util.spec_from_file_location(
+        "resolve_abuse_cases",
+        Path(__file__).resolve().parent / "resolve_abuse_cases.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _check_abuse_cases(profile: dict, profile_dir: Path) -> list[str]:
+    """When the profile declares an ``abuse_cases`` block, resolve and validate
+    the standard library + org glob files against the abuse-case schema and the
+    grants/requires chain-consistency rule."""
+    if "abuse_cases" not in profile:
+        return []
+    try:
+        rac = _rac_module()
+    except (OSError, ImportError) as exc:
+        return [f"abuse_cases: cannot load resolver: {exc}"]
+    _, errors = rac.resolve_abuse_cases(profile, profile_dir, PLUGIN_ROOT)
+    return [f"abuse_cases: {e}" for e in errors]
 
 
 def _check_default_preset(profile: dict) -> list[str]:
@@ -319,6 +345,7 @@ def validate(profile: Any, profile_dir: Path, plugin_version: str | None = None)
     errors += _check_requirements_url(profile)
     errors += _check_skill_toggles(profile)
     errors += _check_compatibility(profile, plugin_version or _read_plugin_version())
+    errors += _check_abuse_cases(profile, profile_dir)
     return errors
 
 

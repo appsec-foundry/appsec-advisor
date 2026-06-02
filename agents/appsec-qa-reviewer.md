@@ -278,8 +278,9 @@ The canonical structural-quality presence rows (excerpt — full list in `data/s
 | `## 7. Security Architecture` | Present with `### 7.1 Security Control Overview` through `### 7.13 Defense-in-Depth Summary`. |
 | `## 8. Threat Register` | Present with ≥1 data row. |
 | `## Critical Attack Tree` | Present when §8 has ≥2 Critical rows. Must contain a one-line explanation, a single Mermaid `graph LR` tree (goal-decomposition, short `T-NNN` leaf boxes), and a one-line **Findings** pointer below it. No Key-takeaway, Mitigation-breakpoints, or quick-reference table (all retired). Omitted entirely when Critical count < 2. |
-| `## 9. Mitigation Register` | Present and contains at least one `### … M-\d+` heading. |
-| `## 10. Out of Scope` | Present. |
+| `## 9. Abuse Cases` | Present. Either the abuse-case scenarios (summary table + per-`AC-NNN` blocks) or the single italic placeholder line when none applied. |
+| `## 10. Mitigation Register` | Present and contains at least one `### … M-\d+` heading. |
+| `## 11. Out of Scope` | Present. |
 
 ### 7b — Residual semantic checks
 

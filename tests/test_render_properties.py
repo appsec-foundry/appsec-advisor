@@ -173,7 +173,7 @@ _COMPUTED_SECTION_HEADINGS = [
     "#### Follow-up Mitigations",
     "### Operational Strengths",
     "## 8. Threat Register",
-    "## 9. Mitigation Register",
+    "## 10. Mitigation Register",
 ]
 
 
@@ -314,7 +314,8 @@ def test_risk_distribution_matches_threat_register_rows(tmp_path: Path) -> None:
     c, h, med, low = (int(x) for x in m.groups())
     # Count anchors for F-NNN / T-NNN inside §8.
     s8 = re.search(r"^## 8\. Threat Register", rendered, re.MULTILINE)
-    s9 = re.search(r"^## 9\. Mitigation Register", rendered, re.MULTILINE)
+    # §8 is now bounded by §9 Abuse Cases (Mitigation Register shifted to §10).
+    s9 = re.search(r"^## 9\. Abuse Cases", rendered, re.MULTILINE)
     assert s8 and s9
     register = rendered[s8.end() : s9.start()]
     # 2026-05 card layout: one card per finding, each opening with a distinct

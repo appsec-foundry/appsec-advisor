@@ -850,9 +850,20 @@ def _check_component_path_glob_consistency(data: dict) -> list[str]:
                 else:
                     continue
                 break
+        distinct_suggestions = sorted(set(suggestions))
+        # Suppress the advisory for exactly the case the downstream auto-emitter
+        # pass self-heals: reclassify_components.py reassigns a threat when its
+        # evidence file matches exactly ONE other component's globs. Emitting an
+        # advisory here for that threat is pure noise — it reads like a
+        # validation failure to the user even though the very next pipeline step
+        # silently fixes it. Keep the advisory only when reclassify will NOT act:
+        #   - no sibling matches (genuine orphan evidence — operator must look)
+        #   - 2+ siblings match (ambiguous — reclassify leaves it alone)
+        if len(distinct_suggestions) == 1:
+            continue
         sugg_part = (
-            f" — consider component={sorted(set(suggestions))[0]!r}"
-            if suggestions else ""
+            f" — consider one of component={distinct_suggestions!r}"
+            if distinct_suggestions else ""
         )
         advisories.append(
             f"[advisory] {tid}: component={comp!r} but evidence file(s) "

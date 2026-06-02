@@ -412,7 +412,7 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         "Application / Data); solid green arrows show legitimate data flow, "
         "dashed red arrows mark intrusion vectors. The component table "
         "directly below holds source paths and linked threats per `C-NN`; "
-        "per-finding evidence is in [§8 Threat Register](#8-threat-register)."
+        "per-finding evidence is in [§8 Findings Register](#8-findings-register)."
     )
     lines.append("")
     lines.extend(_components_diagram_compact(yaml_data, by_tier))
@@ -435,7 +435,7 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     # Flowchart-TD only — trust-boundary table and §2.4.1–§2.4.4 layer
     # tables were removed (2026-05): the trust boundaries duplicated content
     # available in `threat-model.yaml → trust_boundaries[]`, and the layer
-    # tables duplicated the §2.3 component table and §8 Threat Register
+    # tables duplicated the §2.3 component table and §8 Findings Register
     # without adding new signal. §2.4 is now pure technology-stack overview.
     lines.append("### 2.4 Technology Architecture")
     lines.append("")
@@ -443,7 +443,7 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         "The technology stack the system is built on. Each box names the "
         "framework or runtime that fills that role; per-component findings "
         "live in the §2.3 component table above, and the full per-finding "
-        "catalogue is in [§8 Threat Register](#8-threat-register)."
+        "catalogue is in [§8 Findings Register](#8-findings-register)."
     )
     lines.append("")
     lines.extend(_technology_architecture_mermaid(yaml_data, components, boundaries))
@@ -1186,7 +1186,7 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
                 max_sev = sev
         tlist_cell = "<br/>".join(cells) if cells else "—"
         # Risk cell carries emoji + severity label (e.g. "🔴 Critical") for
-        # consistency with §8 Threat Register and the Top Findings table.
+        # consistency with §8 Findings Register and the Top Findings table.
         # An emoji-only cell forces the reader to map the colour to the
         # severity word every time.
         if cells:
@@ -2163,7 +2163,7 @@ def gen_assets(yaml_data: dict) -> str:
     lines = ["## 4. Assets", ""]
     lines.append(
         "Information assets and the classification level that drives the "
-        "Confidentiality / Integrity / Availability targets used in [§8 Threat Register](#8-threat-register) risk scoring."
+        "Confidentiality / Integrity / Availability targets used in [§8 Findings Register](#8-findings-register) risk scoring."
     )
     lines.append("")
     if not assets:
@@ -2192,12 +2192,11 @@ def gen_assets(yaml_data: dict) -> str:
     any_linked = any(a.get("linked_threats") for a in assets)
     if any_linked:
         lines.append("| Asset | ID | Classification | Description | Linked Threats |")
-        # Linked Threats is COMPACT: `·`-joined BARE `[F-NNN](#f-nnn)` chips
-        # (no titles — those live in §8), so the column stays narrow and the
-        # short ID column no longer wraps `A-010` at the hyphen (2026-05-31
-        # user request — supersedes the earlier `<br/>`-stacked-with-titles
-        # form). `_enrich_linked_id_cells` skips the §4 Assets table (header
-        # signature guard) so the bare chips survive compose.
+        # Linked Threats ships `·`-joined BARE `[F-NNN](#f-nnn)` chips here;
+        # compose's `_enrich_linked_id_cells` rewrites them to the canonical
+        # `[F-NNN](#f-nnn) — title` stacked form (2026-06-02 user request —
+        # supersedes the earlier bare-chip-only preference). Emitting bare IDs
+        # keeps the short-title as a single source of truth in compose.
         lines.append(_proportional_separator(20, 6, 12, 40, 22))
     else:
         lines.append("| Asset | ID | Classification | Description |")
@@ -2214,9 +2213,8 @@ def gen_assets(yaml_data: dict) -> str:
         desc = (a.get("description") or "").replace("\n", " ").strip()
         if any_linked:
             lt = [_to_canonical_finding_label(t) for t in (a.get("linked_threats") or [])]
-            # COMPACT `·`-joined bare chips (2026-05-31 user request) — keeps
-            # the asset table narrow so the ID column stops wrapping. Titles
-            # are intentionally omitted here (available in §8).
+            # `·`-joined bare chips; compose's `_enrich_linked_id_cells` adds
+            # the `— title` labels (2026-06-02 user request).
             lt_cell = " · ".join(f"[{t}](#{t.lower()})" for t in lt) if lt else "—"
             lines.append(f"| {name} | {aid} | {clazz} | {desc} | {lt_cell} |")
         else:
@@ -2691,7 +2689,7 @@ _SUBSECTION_DOMAIN_HINTS = {
 # is empty for controls but T-032 Socket.IO Auth Missing is a relevant
 # threat that should appear there). Curated against the most common
 # OWASP/STRIDE CWE families; unknown CWEs fall through to no domain so
-# they only render once in §8 Threat Register.
+# they only render once in §8 Findings Register.
 _SUBSECTION_CWE_HINTS: dict[str, set[str]] = {
     "7.3": {
         "CWE-287",
@@ -3099,7 +3097,7 @@ def _format_linked_threats_for_control(
          and `_threats_for_subsection(threats, section_id)`. Mark the cell
          with a trailing `(derived)` italic note so reviewers can spot it.
 
-    Cell links to the §8 Threat Register anchors (`[T-NNN](#t-nnn)`).
+    Cell links to the §8 Findings Register anchors (`[T-NNN](#t-nnn)`).
     Returns `—` when nothing can be derived.
     """
     # Priority 1 — explicit population.
@@ -3649,7 +3647,7 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
     # 7.2 — Threat Hypotheses Requiring Validation (arch.md §Renderer-Rules)
     # Deterministic block. Only renders when threat_hypotheses[] is populated;
     # unconfirmed hypotheses (no promoted_threat_id) are listed here so
-    # Section 8 Threat Register is NOT polluted with unproven entries.
+    # Section 8 Findings Register is NOT polluted with unproven entries.
     # Promoted hypotheses (proof_state=confirmed, with promoted_threat_id)
     # live in Section 8 as the corresponding T-NNN and are NOT re-listed here.
     # ---------------------------------------------------------------------
@@ -3948,7 +3946,7 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
             )
     else:
         lines.append(
-            "_No dedicated secret-management control cataloged. See [§8 Threat Register](#8-threat-register) for "
+            "_No dedicated secret-management control cataloged. See [§8 Findings Register](#8-findings-register) for "
             "hardcoded-secret findings (CWE-321 / CWE-798)._"
         )
     lines.append("")
@@ -3991,7 +3989,7 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
 
 
 def gen_out_of_scope(yaml_data: dict) -> str:
-    """## 10. Out of Scope — pulls from meta.scope.out_of_scope or default,
+    """## 11. Out of Scope — pulls from meta.scope.out_of_scope or default,
     plus team-provided accepted risks from meta.accepted_risks (sourced from
     docs/known-threats.yaml entries with status: accepted)."""
     meta = yaml_data.get("meta") or {}
@@ -4004,7 +4002,7 @@ def gen_out_of_scope(yaml_data: dict) -> str:
     ]
     accepted_risks = meta.get("accepted_risks") or []
 
-    lines = ["## 10. Out of Scope", ""]
+    lines = ["## 11. Out of Scope", ""]
     lines.append(
         "The following items are **explicitly excluded** from this threat model. "
         "Findings against these areas should be tracked separately."
@@ -4181,7 +4179,7 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
     out.append("")
     out.append(
         "Medium- and Low-severity findings are not walked through here — "
-        "they are documented in [§8 Threat Register](#8-threat-register) "
+        "they are documented in [§8 Findings Register](#8-findings-register) "
         "with the same Story-Card structure but without the kill-chain "
         "narrative."
     )
@@ -4196,7 +4194,7 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
         "states or actions; nodes coloured dark are impact outcomes. The "
         "arrows encode causality, not timing. A chain typically covers 2–4 "
         "findings — every individual finding keeps its detailed write-up "
-        "in [§8 Threat Register](#8-threat-register) and is linked back "
+        "in [§8 Findings Register](#8-findings-register) and is linked back "
         "from there to the chain that uses it."
     )
     out.append("")
@@ -4387,7 +4385,7 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
         out.append("**Cross-references**")
         out.append("")
         out.append(
-            f"- [§8 Threat Register entry for {vid}](#{vid.lower()}) — "
+            f"- [§8 Findings Register entry for {vid}](#{vid.lower()}) — "
             "evidence, classification, full mitigation list."
         )
         out.append(
@@ -4761,6 +4759,23 @@ def _v2_canonical_section_for_control(c: dict) -> str:
         return explicit
     domain = (c.get("domain") or "").strip().lower()
     if domain:
+        # Exact canonical-title match FIRST. Stage 1 writes the §7 section's
+        # human-readable title verbatim as the control's domain (e.g. "File
+        # Parser and Outbound Request Controls"); match it against each
+        # heading minus its "7.X " number prefix. This is collision-free,
+        # unlike the hyphenated hint substrings — `_V2_CONTROL_HINTS` uses
+        # tokens like `file-parser` / `upload-validation` that never match a
+        # space-form domain, so a control whose NAME also carries no hint
+        # token (e.g. "File Upload Validation") used to route to NO section
+        # and was dropped from §7 entirely (juice-shop 2026-06-01 §7.10 "no
+        # #### found"). It also avoids the substring trap where the §7.4 hint
+        # `access-control` matches the §7.5 domain "...Data Access Controls".
+        for heading in _V2_HEADING_ORDER:
+            title = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip().lower()
+            if title and title == domain:
+                return heading
+        # Fall back to hint substring matching for partial / non-canonical
+        # domains (older yamls, shorthand). Unchanged space-form behaviour.
         for heading in _V2_HEADING_ORDER:
             hints = _V2_CONTROL_HINTS.get(heading, ())
             if any(h in domain for h in hints):
@@ -5242,7 +5257,16 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
     if isinstance(linked, str):
         linked = [linked]
     impl_text = (c.get("implementation") or "").strip()
-    if eff == "missing" and not linked and not impl_text:
+    # A "Missing" control whose OWN linked_threats is empty is still worth an
+    # H4 when findings route to this §7 category via CWE: the reader needs to
+    # see the absent control next to the findings it would have blocked, and
+    # qa_checks.check_control_subsection_coverage requires a #### per populated
+    # category (a category with catalogued controls but zero H4 trips the
+    # strict gate → the recurring §7 REPAIR_MODE loop). Only suppress when
+    # there is genuinely nothing to anchor — no own links, no implementation
+    # prose, AND no CWE-routed finding for this section.
+    routed_here = _v2_finding_links(threats, heading, max_links=1)
+    if eff == "missing" and not linked and not impl_text and not routed_here:
         return False
 
     title = _friendly_subcontrol_title(name)
@@ -5405,7 +5429,14 @@ def _auth_mech_finding_link(threat: dict) -> str | None:
     if not m:
         return None
     n = int(m.group(1))
-    return f"[F-{n:03d}](#f-{n:03d})"
+    # Carry the finding TITLE, not a bare ID — the §7.2 inventory is a table,
+    # so compose's prose-linkifier never enriches it, leaving "leer betitelt"
+    # links (2026-06-02 user report). Per the no-bare-ID rule every F-ref must
+    # show a short title. Use the finding's own title (already concise:
+    # "<weakness> via <surface>").
+    title = (threat.get("title") or "").strip()
+    link = f"[F-{n:03d}](#f-{n:03d})"
+    return f"{link} — {title}" if title else link
 
 
 def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
@@ -5483,6 +5514,13 @@ def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
     out.append("<!-- §7.2 AUTH-MECHANISMS-FROZEN END -->")
     out.append("")
     return out
+
+
+# Placeholder line for the `**Controls covered:**` link list inside
+# gen_security_architecture_v2. It is rewritten from the H4 headings actually
+# emitted in each §7.x block AFTER the subcontrol loop runs, so a suppressed
+# control can never leave a dangling link in the covered-list.
+_COVERED_SENTINEL = "<!-- __CONTROLS_COVERED_SENTINEL__ -->"
 
 
 def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> str:
@@ -5613,11 +5651,26 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             else:
                 reason = f"Catalogued controls are present but defeated{example_clause}."
         elif verdict.startswith("🔴 Missing"):
-            reason = (
-                f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no controls catalogued for this category."
-                if n_routed
-                else "No controls catalogued for this category."
-            )
+            # Distinguish "controls ARE catalogued but every one is rated
+            # Missing (absent / never built)" from "the category has no
+            # catalogued control at all" — the old text said "no controls
+            # catalogued" in BOTH cases, which read as an empty catalog even
+            # when several required controls were listed as Missing
+            # (2026-06-02: §7.1 showed it on every category).
+            if n_controls:
+                lead = (
+                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; "
+                    if n_routed else ""
+                )
+                reason = f"{lead}required controls not in place{example_clause}."
+                if not lead:
+                    reason = reason[0].upper() + reason[1:]
+            else:
+                reason = (
+                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no controls catalogued for this category."
+                    if n_routed
+                    else "No controls catalogued for this category."
+                )
         elif verdict.startswith("🟠 Weak"):
             if n_controls:
                 reason = (
@@ -5734,25 +5787,30 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
 
         lines.append("**Verdict:** <!-- NARRATIVE_PLACEHOLDER: choose one of `🟢 Adequate` · `🟡 Partial` · `🟠 Weak` · `🔴 Unsafe` · `🔴 Missing`. Tokens come from `data/sections-contract.yaml → verdict_icons`. -->")
         lines.append("")
+        # R5 — `**Controls covered:**` is mechanically derived from
+        # security_controls[].control + the H4 subcontrol headings.
+        # LLM authoring tends to drop the markdown link wrapper or invent
+        # new subcontrol names; the LOCKED marker is a sentinel for QA +
+        # renderer prompt: do not re-author this line.
+        #
+        # The line MUST list only controls that actually get a `#### ...`
+        # H4 emitted below. `_emit_v2_subcontrol_legacy` suppresses the H4
+        # for an effectiveness=Missing control with no linked findings and
+        # no implementation prose; listing such a control here produces a
+        # dangling `**Controls covered:**` link that
+        # qa_checks.check_control_subsection_coverage flags ("links to X but
+        # no matching #### X subsection exists") and that
+        # apply_prose_fixes._rewrite_controls_covered_anchors cannot self-heal
+        # when the §7.x block ends up with ZERO H4s (it skips heading-less
+        # blocks). We therefore emit a SENTINEL here and rewrite it AFTER the
+        # H4 loop below from the headings actually emitted — so the line is
+        # correct by construction. (juice-shop 2026-06-01 §7.10 all-suppressed
+        # case + the enriched-path dangling-link repair loop.)
+        covered_idx: int | None = None
         if control_names:
-            # R5 — `**Controls covered:**` is mechanically derived from
-            # security_controls[].control + the H4 subcontrol headings.
-            # LLM authoring tends to drop the markdown link wrapper or
-            # invent new subcontrol names; the LOCKED marker is a sentinel
-            # for QA + renderer prompt: do not re-author this line.
-            #
-            # Use the FRIENDLY title (same as the H4 heading text below) for
-            # both the link text and the anchor slug so the QA
-            # control_subsection_coverage check sees a clean match. The side
-            # anchor emitted above each H4 carries the un-friendly slug too,
-            # so older external references like `#input-validation` continue
-            # to resolve.
-            linked_controls = ", ".join(
-                f"[{_friendly_subcontrol_title(name)}](#{_v2_slug(_friendly_subcontrol_title(name))})"
-                for name in control_names[:8]
-            )
             lines.append("<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->")
-            lines.append(f"**Controls covered:** {linked_controls}.")
+            covered_idx = len(lines)
+            lines.append(_COVERED_SENTINEL)
         else:
             lines.append("**Controls covered:** <!-- NARRATIVE_PLACEHOLDER: list concrete subcontrols as markdown links to H4 headings. -->")
         lines.append("")
@@ -5855,6 +5913,31 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                     f"findings): {joined}._"
                 )
                 lines.append("")
+
+            # Rewrite the `**Controls covered:**` sentinel from the H4
+            # headings ACTUALLY emitted in this section so a suppressed
+            # control can never leave a dangling link. Labels drop the
+            # `7.X.N` numeric prefix (the gate tolerates it either way) and
+            # the anchor uses the same _v2_slug the H4 side-anchors carry.
+            if covered_idx is not None:
+                emitted_titles: list[str] = []
+                for ln in lines[covered_idx + 1:]:
+                    m_h4 = re.match(r"^####\s+(.+?)\s*$", ln)
+                    if m_h4:
+                        title = re.sub(r"^\d+(?:\.\d+)*\s+", "", m_h4.group(1)).strip()
+                        if title:
+                            emitted_titles.append(title)
+                if emitted_titles:
+                    linked_controls = ", ".join(
+                        f"[{t}](#{_v2_slug(t)})" for t in emitted_titles
+                    )
+                    lines[covered_idx] = f"**Controls covered:** {linked_controls}."
+                else:
+                    # Every control was suppressed (no H4 emitted). Drop the
+                    # LOCKED comment + sentinel + trailing blank so no dangling
+                    # `**Controls covered:**` link survives; the suppressed-
+                    # controls note above still lists them for the reader.
+                    del lines[covered_idx - 1: covered_idx + 2]
         else:
             # M5b — Replace the generic "#### Controls To Confirm" fallback.
             # Reference §7 never carries an unnamed catch-all H4. Two cases:

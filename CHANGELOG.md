@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### §9 Abuse Cases — verifiable, scenario-level attack chains
+
+The report gains a new **§9 Abuse Cases** section between §8 Threat Register and the mitigation register. Abuse cases (`AC-NNN`) are narrative, end-to-end attack scenarios that chain individual findings into a verified exploitation path, each carrying a deterministic chain verdict (`⚠ Fully viable` / `◐ Partially blocked` / `✓ Mitigated` / `? Inconclusive`). Cases are either **mandatory** (a plugin standard library plus org-profile definitions, evaluated on every run) or **discovered** from the finding register.
+
+- **Section numbering shift** — inserting §9 Abuse Cases renumbers **Mitigation Register §9 → §10** and **Out of Scope §10 → §11**. `data/sections-contract.yaml`, `compose_threat_model.py` (anchors + new `_render_abuse_cases` handler), `pregenerate_fragments.py`, the QA-reviewer heading contract, and the affected fixtures/tests are updated atomically. §8 Threat Register and `T-NNN`/`F-NNN` finding ids are unchanged.
+- **Data model** — `schemas/abuse-cases.schema.yaml` (case definition + chain steps with `grants`/`requires` and code `probe`s), `data/abuse-cases/default-library.yaml` (Account Takeover, Bulk Exfiltration, Privilege Escalation), and an `abuse_cases` block in `schemas/org-profile.schema.yaml` (`inherit_defaults` / `disable` / `add`). Resolution + validation in `scripts/resolve_abuse_cases.py` and `validate_org_profile.py`.
+- **Matching + verification** — `scripts/match_abuse_cases.py` (deterministic matcher + chain-verdict finalizer), `scripts/verify_abuse_cases.py` (verdict merge + budget guard), and a new Phase-10c parallel fan-out (`agents/appsec-abuse-case-verifier.md`, Haiku, one agent per candidate) that confirms each chain step against the code. The chain verdict is computed deterministically from per-step verdicts — never rated by the LLM — so §9 is auditable and diff-stable.
+- **Rendering** — `scripts/render_abuse_cases.py` produces the deterministic §9 fragment (summary table, per-case attack-chain table with verdict-derived status icons, combined-risk rationale, blocking-mitigation table) from `.abuse-case-verdicts.json`; `reserve_ids.py` gains the `AC` id type.
+
+Net test delta: zero new failures (verified against the pre-change baseline).
+
 ### §3.1 Attack Chain Overview — removed (consolidated into the Critical Attack Tree)
 
 The report narrated attack paths in three places: the top-level `## Critical Attack Tree` (AND/OR goal decomposition), the §3.1 Attack Chain Overview (linear `graph LR` kill-chains), and the §3.2+ per-finding walkthroughs. §3.1 was the redundant middle layer — it re-expressed the tree's cross-finding logic in a weaker linear form (the tree already carries a "Path to admin" table), it did not have the per-finding exploit steps of §3.2+, and it was the most error-prone surface (false causal edges between independent findings, mirror-duplicate chains, cryptic node labels). **§3.1 is removed.** §3 is now a flat list of per-Critical walkthroughs (`### 3.1`, `### 3.2`, …); the single cross-finding/strategic view is the `## Critical Attack Tree`.

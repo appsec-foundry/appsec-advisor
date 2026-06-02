@@ -3,7 +3,7 @@
 Two orthogonal regressions:
 
     A6 — Quick-mode STRIDE profile no longer suppresses evidence excerpts.
-         The flag was demoted from True to False so the §8 Threat Register
+         The flag was demoted from True to False so the §8 Findings Register
          Finding column and the Linked Threats columns regain their
          truncated descriptions. The other flags (max_threats_per_category,
          skip_verification_greps, skip_code_examples, skip_cvss_scoring)
@@ -59,7 +59,7 @@ class TestQuickProfileEvidenceExcerptRestored:
         sp = profile["stride_profile"]
         assert sp["skip_evidence_excerpt"] is False, (
             "P3 (A6) — skip_evidence_excerpt must be False at quick depth so "
-            "§8 Threat Register and Linked Threats columns regain their "
+            "§8 Findings Register and Linked Threats columns regain their "
             "truncated descriptions"
         )
 

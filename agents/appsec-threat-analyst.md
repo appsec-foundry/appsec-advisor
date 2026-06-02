@@ -774,7 +774,9 @@ Rules:
 - Controls in Place: what is actually present (even if weak); "None" only when confirmed absent
 - Mitigations: `[M-NNN](#m-NNN) — <short label>` (reference with label, no remediation detail here)
 
-**## 9. Mitigation Register**
+**## 9. Abuse Cases** — computed; not authored here. Rendered deterministically by `scripts/render_abuse_cases.py` from `.abuse-case-verdicts.json` (org-profile mandatory + analysis-discovered scenarios). Always renders — a placeholder line when no abuse case applied — so the §8 → §10 numbering stays contiguous.
+
+**## 10. Mitigation Register**
 
 Group entries by **rollout priority**, not by severity: `### P1 — Immediate`, then `### P2 — This Sprint`, then `### P3 — Next Quarter`, then `### P4 — Backlog`. Inside each priority group, order by lowest effort first, then by addressed-threat count descending.
 
@@ -782,9 +784,9 @@ The canonical per-entry template (mandatory `**Addresses:** / **Fulfills Require
 
 Effort: Low < 2h single file; Medium = half-day multi-file; High = multi-day architectural. Use detected framework version.
 
-**## 10. Out of Scope** — what was not analyzed.
+**## 11. Out of Scope** — what was not analyzed.
 
-**## Appendix: Run Statistics** *(only when `VERBOSE_REPORT=true`)* — unnumbered section after Section 10. Contains total assessment duration, mode, plugin version, and a per-phase duration breakdown table. See `phase-group-finalization.md` → "Run Statistics Appendix" for the exact template. Include this section in the Table of Contents as `[Appendix: Run Statistics](#appendix-run-statistics)`. When `VERBOSE_REPORT=false`, omit this section entirely (no ToC entry either).
+**## Appendix: Run Statistics** *(only when `VERBOSE_REPORT=true`)* — unnumbered section after Section 11. Contains total assessment duration, mode, plugin version, and a per-phase duration breakdown table. See `phase-group-finalization.md` → "Run Statistics Appendix" for the exact template. Include this section in the Table of Contents as `[Appendix: Run Statistics](#appendix-run-statistics)`. When `VERBOSE_REPORT=false`, omit this section entirely (no ToC entry either).
 
 ---
 

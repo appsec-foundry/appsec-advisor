@@ -120,8 +120,8 @@ def test_compose_renders_canonical_document(rendered_run: Path) -> None:
         assert heading in md, f"missing MS subsection: {heading}"
 
     # The body sections 1..11 are all numbered — the renderer must produce the
-    # canonical flat Threat Register summary and table.
-    assert "## 8. Threat Register" in md
+    # canonical flat Findings Register summary and table.
+    assert "## 8. Findings Register" in md
     assert "**Risk Distribution:**" in md
     assert "**STRIDE Coverage:**" in md
     assert (

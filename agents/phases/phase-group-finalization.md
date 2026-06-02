@@ -558,6 +558,16 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
    }
    ```
 
+   Then render the §9 Abuse Cases fragment deterministically from the Phase-10b verdicts (no-ops and clears any stale fragment when no abuse case applied, so compose emits its placeholder and §8 → §10 numbering stays contiguous):
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_abuse_cases.py" \
+     --output-dir "$OUTPUT_DIR" \
+     ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} || true
+   ```
+
+   This fragment is **deterministic-only** — never hand-author `.fragments/abuse-cases.md`; it is regenerated from `.abuse-case-verdicts.json` + `threat-model.yaml`.
+
    The gate writes `$OUTPUT_DIR/.pre-render-report.json` (kept by the post-QA cleanup wave). **Exit code 1 means one of two things:**
    - the `.fragments/` directory is missing entirely — the orchestrator bypassed the fragment pipeline (this used to be silent; since M3.2 it is a hard fail because the downstream compose step never runs when fragments are missing);
    - one or more of the 8 unconditional required fragments (`ms-verdict.json`, `ms-architecture-assessment.json`, `system-overview.md`, `architecture-diagrams.md`, `attack-walkthroughs.md`, `assets.md`, `attack-surface.md`, `security-architecture.md`) is missing, or a JSON fragment fails its schema.

@@ -8,7 +8,7 @@ descriptions in `.fragments/security-architecture.md` §7.2.2 and §7.4.1.
 The QA contract gate (`qa_checks.py contract`) does not check semantic ID
 accuracy — only structural coverage (link → anchor reachability). The
 broken refs pass contract because every `[F-NNN](#f-nnn)` link does land
-on its own definition in §8 Threat Register; the SEMANTIC mismatch
+on its own definition in §8 Findings Register; the SEMANTIC mismatch
 (label says "MD5" but F-008 is referenced in a "basket IDOR" context)
 is invisible to anchor-only checks.
 

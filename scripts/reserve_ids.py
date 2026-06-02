@@ -63,6 +63,7 @@ _ID_TYPES = {
     "asset":        ("next_asset_id",        "A",   3),
     "meta_finding": ("next_meta_finding_id", "MF",  3),
     "hyp":          ("next_hyp_id",          "HYP", 3),
+    "abuse_case":   ("next_abuse_case_id",   "AC",  3),
 }
 
 # Lock-acquisition timeout. Phases write sidecars in single-digit ms;

@@ -58,8 +58,16 @@ controls:
   # inventory.
 
   - name: "Multi-Factor Enrollment (TOTP)"
+    # Name aliases AND concrete library / code / route signals so recon maps a
+    # detected TOTP setup onto this mechanism even when it was never named
+    # (the juice-shop routes/2fa.ts case: hand-rolled otplib, no "MFA" string).
     aliases: ["TOTP Enrollment", "MFA Enrollment", "2FA Enrollment",
-              "Authenticator Setup", "Multi-Factor Authentication"]
+              "Authenticator Setup", "Multi-Factor Authentication",
+              # library / code / route signals
+              "otplib", "speakeasy", "otpauth", "node-2fa", "@otplib",
+              "authenticator.generateSecret", "generateSecret", "totpSecret",
+              "totp_setup_secret", "/2fa/setup", "routes/2fa", "2fa.ts",
+              "qrcode", "otpauth://"]
     domain: IAM
     kind: mechanism
     default_references:
@@ -70,7 +78,11 @@ controls:
   - name: "Multi-Factor Verification (TOTP)"
     aliases: ["TOTP Verification", "MFA Verification", "2FA Verification",
               "Second-Factor Verification", MFA, 2FA, TOTP,
-              "Two-Factor Authentication", "Second-Factor Authentication"]
+              "Two-Factor Authentication", "Second-Factor Authentication",
+              # library / code / route signals
+              "otplib", "speakeasy", "authenticator.check", "authenticator.verify",
+              "verifyTOTP", "totpToken", "totp_token_required", "/2fa/verify",
+              "/rest/2fa", "routes/2fa", "2fa.ts"]
     domain: IAM
     kind: mechanism
     default_references:
@@ -186,7 +198,15 @@ controls:
               "spring-security-oauth2", "django-allauth", "omniauth",
               # route / flow signals
               "/auth/google", "/oauth/callback", "/oauth2/callback",
-              "authorization_code", "response_type=code", "openid profile email"]
+              "authorization_code", "response_type=code", "openid profile email",
+              # SPA / hand-rolled front-end OAuth signals — a client-side
+              # redirect flow with NO backend OAuth library (the juice-shop
+              # Google-login case: frontend/src/app/oauth/oauth.component.ts
+              # reads the implicit-grant access_token and calls the local login
+              # with `oauth: true`). Backend-library signals above never match
+              # this shape, so OAuth was silently missed (2026-06-02).
+              "oauth.component", "oauthLogin", "/oauth", "oauth: true",
+              "access_token", "response_type=token", "implicit grant"]
     domain: IAM
     kind: mechanism
     default_references:
