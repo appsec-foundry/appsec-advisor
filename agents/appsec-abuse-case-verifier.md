@@ -14,7 +14,7 @@ The deterministic matcher (`match_abuse_cases.py`) can only say *a finding whose
 
 ## Model identification
 
-Use the `MODEL_ID` passed in the invocation prompt. The orchestrator overrides the frontmatter `model: sonnet` default and dispatches with `haiku` for operational runs — the per-step task is low-reasoning-depth grep+read. The frontmatter `model: sonnet` exists only because the repo-wide agent-contract gate (`tests/test_agent_definitions.py`) pins every agent file to `sonnet`; the per-dispatch override in `phase-group-threats.md` is authoritative. Opus is never appropriate here.
+Use the `MODEL_ID` passed in the invocation prompt. Operational runs dispatch with `sonnet` (single-pass — see Stage 1c in `SKILL-impl.md`; the former haiku-first + sonnet-escalation two-tier was removed 2026-06 because on complex repos most candidates escalated anyway, making the sequential haiku wave wasted wall-time for identical final verdicts). The frontmatter `model: sonnet` matches this and satisfies the repo-wide agent-contract gate (`tests/test_agent_definitions.py`). The skill-level dispatch in `SKILL-impl.md` (Stage 1c) is authoritative for operational runs. Opus is never appropriate here.
 
 ## Progress format
 
@@ -47,7 +47,7 @@ Do **NOT**: hand-roll a `echo "$(date …) … "` log line; write log lines with
 - `MATCH_RESULT_PATH` — `$OUTPUT_DIR/.abuse-case-matches.json`; read this case's `step_matches` for the finding the matcher already associated with each step (a strong starting hint — its `evidence.file` is where to look first)
 - `REPO_ROOT` — absolute path to the repository
 - `OUTPUT_DIR` — absolute path to the output directory
-- `MODEL_ID` — model identifier for logging (default `haiku`)
+- `MODEL_ID` — model identifier for logging (default `sonnet`)
 
 ## Procedure — per chain step
 

@@ -1809,19 +1809,19 @@ CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" list-can
 ```
 The matcher reads `.threats-merged.json`, applies each case's `scope_qualifier` and per-step `probe.sink_patterns`, and emits a structural verdict per case. Only `candidate` / `partial_candidate` cases proceed to verification.
 
-**Step 2 — verifier fan-out (one Haiku agent per candidate, parallel — same pattern as Phase 9 STRIDE).** For each id in `$CANDIDATES`, dispatch:
+**Step 2 — verifier fan-out (one Sonnet agent per candidate, parallel — same pattern as Phase 9 STRIDE).** For each id in `$CANDIDATES`, dispatch:
 
 ```
 subagent_type: "appsec-advisor:appsec-abuse-case-verifier"
 description: "Verify abuse-case chain <AC-ID> end-to-end against code"
-model: haiku
+model: sonnet
 run_in_background: false
 prompt: |
   ABUSE_CASE_ID=<AC-ID>
   MATCH_RESULT_PATH=<OUTPUT_DIR>/.abuse-case-matches.json
   REPO_ROOT=<REPO_ROOT>
   OUTPUT_DIR=<OUTPUT_DIR>
-  MODEL_ID=haiku
+  MODEL_ID=sonnet
 ```
 
 Dispatch all candidates together (wall-clock ≈ the slowest single case, not the sum). Each agent writes one `.abuse-case-verdict-<AC-ID>.json`. **Budget-critical guard:** if `$OUTPUT_DIR/.budget-critical` exists before this step, skip the fan-out — the merge below records every candidate as `inconclusive`.

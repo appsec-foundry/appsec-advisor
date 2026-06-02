@@ -1659,7 +1659,7 @@ TaskCreate subject="Preparing workspace"
 **Stage 1 is exposed as three `Stage 1a/1b/1c` sub-rows (2026-06).** Threat analysis and triage formally belong to one work family, so they share the Stage-1 number with a letter suffix rather than consuming integer stages 2–4. The split is honest about what can show *live* progress:
 
 - `Stage 1a - Threat Analysis` and `Stage 1b - Triage` both run **inside the single `appsec-threat-analyst` dispatch** (`STAGE1_PHASE_LIMIT=10b`). The skill blocks on that one `Agent()` call and cannot drive a mid-dispatch transition, so both rows are marked `in_progress` together at dispatch and `completed` together on return — `1b` has no independent live phase (it is the analyst's Phase 10b). This is accepted: two static-but-truthful rows beat one opaque "Stage 1" row.
-- `Stage 1c - Abuse Case Verification` is the one Stage-1 sub-step with a **separate skill-level dispatch** (haiku verifier fan-out), so it earns a real `in_progress → completed` lifecycle, driven by the §"Stage 1c — Abuse Case Verification" section. Created only when `DRY_RUN=false`. It is already recorded as `--stage 1 --variant abuse-verification` in `.stage-stats.jsonl`, so the `1c` label matches the existing stats model. Subjects must match verbatim and use hyphen-minus, not em-dash (same TUI-width precedent as the other rows).
+- `Stage 1c - Abuse Case Verification` is the one Stage-1 sub-step with a **separate skill-level dispatch** (sonnet verifier fan-out), so it earns a real `in_progress → completed` lifecycle, driven by the §"Stage 1c — Abuse Case Verification" section. Created only when `DRY_RUN=false`. It is already recorded as `--stage 1 --variant abuse-verification` in `.stage-stats.jsonl`, so the `1c` label matches the existing stats model. Subjects must match verbatim and use hyphen-minus, not em-dash (same TUI-width precedent as the other rows).
 
 **Stage 2 is now always pre-created (M2.12 — Sprint 3).** Previously only the recovery-dispatch path created it. The skill now splits Phase 11 at the Substep-3 / Substep-4 boundary: `STAGE1_PHASE_LIMIT=10b` keeps the deterministic Substeps 1–3 (counts, yaml write, baseline cache) in Stage 1, while the LLM compose work (Substeps 4–N) goes into a separate `appsec-threat-renderer` session so render-only work does not carry the full analyst prompt.
 
@@ -2122,7 +2122,7 @@ Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to
    - `TaskUpdate` `Stage 1c - Abuse Case Verification` → `in_progress`.
    - Banner:
      ```
-     ▶ Stage 1c - Abuse Case Verification starting  (deterministic match + per-candidate haiku verifier fan-out)
+     ▶ Stage 1c - Abuse Case Verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
        ⟶ Chains each derived from §8 findings; verified step-by-step, then folded into §9
      ```
 
@@ -2135,28 +2135,12 @@ Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to
    CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
        list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
    ```
-2. **Verifier fan-out** — for each AC-ID in `$CANDIDATES`, dispatch the `appsec-advisor:appsec-abuse-case-verifier` Agent (`model: haiku`, foreground) with the prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=haiku`. Dispatch all candidates together in ONE message (wall-clock ≈ slowest single case). Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file. **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
-3. **Merge + finalize** (deterministic):
+2. **Verifier fan-out** — for each AC-ID in `$CANDIDATES`, dispatch the `appsec-advisor:appsec-abuse-case-verifier` Agent (`model: sonnet`, foreground) with the prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=sonnet`. **Single-pass sonnet** (perf 2026-06-02): the former haiku-first + bounded-sonnet-escalation two-tier ran its waves *sequentially* (haiku → finalize barrier → sonnet re-verify), and on complex repos most candidates escalated anyway (juice-shop: 5/6) — so the haiku wave was near-pure wasted wall-time for the same final verdicts (sonnet is what produced them). Dispatching sonnet directly collapses it to one wave. Dispatch all candidates together in ONE message (wall-clock ≈ slowest single case). Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file. **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
+3. **Merge + finalize** (deterministic) — produces the final chain verdicts directly from the single sonnet wave:
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
    ```
-
-3b. **Inconclusive escalation — one bounded sonnet pass.** The haiku fan-out occasionally returns `inconclusive` on a chain that is actually confirmable (verified 2026-06-02 juice-shop: AC-T-004 mass-assignment shipped `inconclusive`, a sonnet re-verify confirmed it at `models/user.ts:86`). Re-verify **only** the inconclusive candidate subset with a stronger model — bounded to one pass, capped at 5 cases, gated off under budget pressure so it never costs time on a run that is already over budget:
-   ```bash
-   ESCALATE=""
-   if [ "${DRY_RUN:-false}" != "true" ] && [ ! -f "$OUTPUT_DIR/.budget-critical" ] && [ ! -f "$OUTPUT_DIR/.abuse-escalated" ]; then
-     ESCALATE=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
-         list-inconclusive --output-dir "$OUTPUT_DIR" --max 5 2>/dev/null)
-   fi
-   ```
-   When `$ESCALATE` is non-empty: for each AC-ID in it, dispatch the `appsec-advisor:appsec-abuse-case-verifier` Agent **with `MODEL_ID=sonnet`** (identical prompt body to step 2 otherwise — `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`). Dispatch all escalation candidates together in ONE message. Each overwrites its `.abuse-case-verdict-<AC-ID>.json` with the stronger model's verdict. Then mark the one-shot guard and re-fold the verdicts:
-   ```bash
-   touch "$OUTPUT_DIR/.abuse-escalated"
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
-   ```
-   When `$ESCALATE` is empty, skip straight to 3c. The escalation runs **at most once** per run (`.abuse-escalated` guard) and the verifiers get a fresh budget per dispatch (the watchdog resets per Agent dispatch — see "Fresh-budget" note in Stage 2), so it cannot re-trip the budget flag that this whole fix removes.
 
 3b2. **Fold verified chains into severity** (deterministic, no LLM). Now that the abuse verdicts are final, re-run the deterministic triage ranking so a **code-verified `fully_viable` chain bubbles its constituent findings up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** on `APPSEC_TRIAGE_DETERMINISTIC` and exits cleanly otherwise — so this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. Under `.budget-critical` every chain is `inconclusive`, so there is nothing to fold and this is a harmless no-op.
    ```bash
@@ -2186,7 +2170,7 @@ Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to
        --stage 1 --variant "abuse-verification" \
        --name "Abuse Case Verification" \
        --agent appsec-advisor:appsec-abuse-case-verifier \
-       --model haiku \
+       --model sonnet \
        --duration-ms <sum_duration_ms> \
        --tool-uses <sum_tool_uses> \
        --tokens <sum_tokens> \
