@@ -172,6 +172,10 @@ Examples:
 
 If you catch yourself adding a workaround downstream of the originator, stop and trace back — a surviving symptom-fix is technical debt other agents copy.
 
+### 13. Route all logging through `event_log.py`
+
+Any new event-log line must go through `scripts/event_log.py` (`format_line`) — never hand-roll log f-strings. It is the single source of truth all emitters delegate to: 6-field shape → `.agent-run.log`, 5-field → `.hook-events.log`, `--------` as the no-session sentinel. Adding a new emitter means calling `format_line`, not inventing a parallel format.
+
 ## Non-obvious Design Decisions
 
 These should not be undone without understanding the trigger that created them.
