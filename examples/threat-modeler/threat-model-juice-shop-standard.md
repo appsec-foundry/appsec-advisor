@@ -24,7 +24,7 @@ _Append-only history of assessment runs. Most recent first._
 
 | Version | Date | Mode | Depth | Reasoning | Baseline → Current | Δ Threats | Code | Note |
 |--------|----------|--------|--------|--------------|------------------|----------------|--------|--------|
-| v1 | 2026-05-30 | full | standard | haiku-economy | _(initial)_ | +31 / ~0 / -0 | - | - |
+| v1 | 2026-06-03 | full | standard | haiku-economy | _(initial)_ | +24 / ~0 / -0 | - | - |
 
 ---
 
@@ -34,25 +34,24 @@ _Append-only history of assessment runs. Most recent first._
 - [Critical Attack Tree](#critical-attack-tree)
 1. [System Overview](#1-system-overview)
    - [Scope](#scope)
+- [1.5 Identified Actors](#15-identified-actors)
 2. [Architecture Diagrams](#2-architecture-diagrams)
    - [2.1 System Context](#21-system-context)
    - [2.2 Container Architecture](#22-container-architecture)
    - [2.3 Components](#23-components)
    - [2.4 Technology Architecture](#24-technology-architecture)
 3. [Attack Walkthroughs](#3-attack-walkthroughs)
-   - [3.1 JWT algorithm confusion algorithm none bypass](#31-jwt-algorithm-confusion-algorithm-none-bypass)
-   - [3.2 RSA private key hardcoded offline JWT forgery](#32-rsa-private-key-hardcoded-offline-jwt-forgery)
-   - [3.3 SQL injection login authentication bypass](#33-sql-injection-login-authentication-bypass)
-   - [3.4 SQL injection product search (UNION + schema exfil)](#34-sql-injection-product-search-union-schema-exfil)
-   - [3.5 Remote code execution notevil sandbox bypass in B2B API](#35-remote-code-execution-notevil-sandbox-bypass-in-b2b-api)
-   - [3.6 Server side code injection via eval on username field](#36-server-side-code-injection-via-eval-on-username-field)
-   - [3.7 DOM XSS search results rendered via trust HTML bypass](#37-dom-xss-search-results-rendered-via-trust-html-bypass)
-   - [3.8 Stored XSS feedback comments rendered unsanitized in admin…](#38-stored-xss-feedback-comments-rendered-unsanitized-in-admin)
-   - [3.9 MD5 password hashing passwords trivially reversible](#39-md5-password-hashing-passwords-trivially-reversible)
+   - [3.1 SQL injection authentication bypass routes/login.ts](#31-sql-injection-authentication-bypass-routeslogints)
+   - [3.2 Hardcoded RSA private key enables JWT forgery lib/insecurit…](#32-hardcoded-rsa-private-key-enables-jwt-forgery-libinsecurit)
+   - [3.3 JWT algorithm confusion bypass via express jwt 0.1.3 lib/in…](#33-jwt-algorithm-confusion-bypass-via-express-jwt-013-libin)
+   - [3.4 Stored XSS in admin panel via user email and feedback front…](#34-stored-xss-in-admin-panel-via-user-email-and-feedback-front)
+   - [3.5 Remote code execution via sandbox escape in B2B order API r…](#35-remote-code-execution-via-sandbox-escape-in-b2b-order-api-r)
+   - [3.6 Remote code execution via eval in userProfile routes/userPr…](#36-remote-code-execution-via-eval-in-userprofile-routesuserpr)
+   - [3.7 SQL injection full database disclosure via UNION attack rou…](#37-sql-injection-full-database-disclosure-via-union-attack-rou)
 4. [Assets](#4-assets)
 5. [Attack Surface](#5-attack-surface)
-   - [5.1 Unauthenticated Entry Points (11)](#51-unauthenticated-entry-points-11)
-   - [5.2 Authenticated Entry Points (3)](#52-authenticated-entry-points-3)
+   - [5.1 Unauthenticated Entry Points (4)](#51-unauthenticated-entry-points-4)
+   - [5.2 Authenticated Entry Points (12)](#52-authenticated-entry-points-12)
 7. [Security Architecture](#7-security-architecture)
    - [7.1 Security Control Overview](#71-security-control-overview)
    - [7.2 Identity and Authentication Controls](#72-identity-and-authentication-controls)
@@ -67,11 +66,14 @@ _Append-only history of assessment runs. Most recent first._
    - [7.11 Operations Runtime and Supply Chain Controls](#711-operations-runtime-and-supply-chain-controls)
    - [7.12 Real-time and Not Applicable Controls](#712-real-time-and-not-applicable-controls)
    - [7.13 Defense-in-Depth Summary](#713-defense-in-depth-summary)
-8. [Threat Register](#8-threat-register)
-9. [Mitigation Register](#9-mitigation-register)
-10. [Out of Scope](#10-out-of-scope)
+8. [Findings Register](#8-findings-register)
+9. [Abuse Cases](#9-abuse-cases)
+10. [Mitigation Register](#10-mitigation-register)
+11. [Out of Scope](#11-out-of-scope)
 - [Appendix: Run Statistics](#appendix-run-statistics)
 - [Appendix A - Vektor Taxonomy](#appendix-a-vektor-taxonomy)
+
+> _Section numbering is non-contiguous: §6 was retired in a prior revision. The remaining sections keep their original numbers so existing cross-references stay valid._
 
 ---
 
@@ -79,27 +81,29 @@ _Append-only history of assessment runs. Most recent first._
 
 ### Verdict
 
-🔴 Not production-ready. Juice Shop is a deliberate training target - every tier contains working exploits. Anyone with a browser and a clone of the public repo can take over admin accounts, execute server-side code, and read every user's credentials through several independent, unauthenticated paths. Fixing this requires rebuilding authentication, data access, and secret management - not patching a single bug.
+🔴 🔴 Not production-ready. Juice Shop is a training target - intentional weaknesses live in every tier. Anyone with a browser and repo read access can take over admin accounts and the host server through several independent paths, none of which need elevated privilege or special tooling.
 
-**Risk distribution:** 🔴 Critical: 9 · 🟠 High: 16 · 🟡 Medium: 6 · 🟢 Low: 0 · **Total: 31**
+**Risk distribution:** 🔴 Critical: 7 · 🟠 High: 11 · 🟡 Medium: 5 · 🟢 Low: 1 · **Total: 24**
 
 <br/>
 
-**Worst-case scenarios behind this verdict - what an attacker can do today:**
+**Worst-case scenarios behind this verdict - what an attacker could do today:**
 
 <blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
 
-- **Admin account takeover without any password** — The RSA signing key committed to the public repository lets anyone forge an admin token offline in under a minute, without touching the server. *([F-002](#f-002) — RSA private key hardcoded offline JWT forgery, [F-001](#f-001) — JWT algorithm confusion algorithm none bypass)*
-- **Full database read via the login form** — Typing a single character into the login email field bypasses authentication and returns the admin account; a follow-up payload dumps the full user table including all password hashes. *([F-003](#f-003) — SQL injection login authentication bypass, [F-004](#f-004) — SQL injection product search (UNION + schema exfil))*
-- **Arbitrary code runs on the server from a user profile update** — Setting a username to a JavaScript expression executes it in the server process, giving any registered user full control of the host operating system. *([F-006](#f-006) — Server side code injection via eval on username field, [F-005](#f-005) — Remote code execution notevil sandbox bypass in B2B API)*
-- **Every user password recoverable from a single database dump** — Passwords are stored as unsalted MD5 hashes — a format that maps to plaintext in seconds using widely available lookup tables. *([F-027](#f-027) — MD5 password hashing passwords trivially reversible)*
-- **Stored script in feedback panel hijacks admin sessions** — An attacker who injects a script into the feedback form has it execute in the admin's browser, stealing the session token stored in browser local storage. *([F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel, [F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass)*
+- **Admin takeover with no credentials** — `POST /rest/user/login` with `' OR 1=1--` returns the seeded admin row. The login query at `routes/login.ts:34` interpolates `req.body.email` directly into raw SQL — no credentials required. *([F-001](#f-001) — SQL injection authentication bypass routes/login.ts)*
+- **JWT forgery via committed RSA key** — The RSA-2048 private key at `lib/insecurity.ts:23` is in the public repository. Any reader can `jwt.sign({role:'admin'}, privateKey, {algorithm:'RS256'})` and impersonate any user. `express-jwt@0.1.3` also accepts `alg:none` tokens, providing a second bypass. *([F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts, [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts)*
+- **Arbitrary OS command execution** — `eval()` in `routes/userProfile.ts:62` and `vm.runInContext(safeEval())` in `routes/b2bOrder.ts:23` evaluate attacker-controlled strings as Node.js code. Two independent RCE paths reach the same server process. *([F-006](#f-006) — Remote code execution via eval in userProfile routes/userProfile.ts, [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts)*
+- **Persistent XSS targeting the admin panel** — Registering with a `<script>` email stores the payload permanently. `administration.component.ts:60` calls `bypassSecurityTrustHtml()` on that email in every admin session — stored XSS with admin-privileged victim. *([F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ…)*
+- **Full database dump via unauthenticated search** — UNION injection on `GET /rest/products/search` extracts the full SQLite schema and all user records including MD5 password hashes — no authentication required. *([F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts)*
 
 </blockquote>
 
 <br/>
 
-31 mitigations follow; moving secrets to runtime injection, switching raw SQL to parameterized queries, removing both eval sinks, and replacing MD5 password hashes are the four changes required before any production-readiness evaluation is meaningful.
+Move secrets out of source, replace raw SQL with parameterized queries, remove the eval and safeEval sinks, enforce JWT algorithm restrictions, remove bypassSecurityTrustHtml calls, and replace `MD5` password hashes - those fixes are the prerequisite for any production-readiness discussion.
+
+**Attack-chain analysis.** 2 findings anchor 2 code-verified attack chains (see [§9](#9-abuse-cases) Abuse Cases): 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts, 🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts. Their Critical/High ratings reflect exploitability confirmed end-to-end across the chain, not the individual weakness alone.
 
 ### Security Posture & Top Threats
 
@@ -108,7 +112,7 @@ _Append-only history of assessment runs. Most recent first._
 Components grouped by trust boundary (architecture tier). Grey edges are the legitimate request backbone. **Solid red** edges are attacker-controlled attacks - each originates at a threat actor and lands on the component it directly reaches. **Dotted red** edges are the consequence path: how that attack propagates through the application tier onto the data tier or the victim. Each red edge carries the threat glyph(s) - the same numbering as Figure 2 and the Top Threats table below.
 
 ```mermaid
-%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 40, "rankSpacing": 80}} }%%
+%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 34, "rankSpacing": 52, "padding": 10, "subGraphTitleMargin": {"top": 6, "bottom": 6}}} }%%
 flowchart TB
     subgraph ZONE_ACTORS["External Actors"]
         direction LR
@@ -118,41 +122,48 @@ flowchart TB
     end
 
     subgraph CLIENT["Client Tier - browser"]
-        CMP_FRONTEND_SPA["C-02 · Angular Single-Page Application<br/><i>🔴 2 🟠 4</i>"]:::comp
+        CMP_ANGULAR_SPA["C-02 · Angular SPA Frontend<br/><i>🔴 1 🟠 1</i>"]:::comp
     end
     subgraph APP["Application Tier - Node / Express"]
-        CMP_BACKEND_API["C-01 · Express REST API Backend<br/><i>🔴 7 🟠 8</i>"]:::comp
-        CMP_FILE_UPLOAD_SERVICE["C-04 · File Upload and Processing Service"]:::comp
-        CMP_B2B_API["C-05 · B2B Order API (RCE Surface)"]:::comp
+        CMP_EXPRESS_BACKEND["C-01 · Express Backend API<br/><i>🔴 5 🟠 7</i>"]:::comp
+        CMP_FILE_UPLOAD_SERVICE["C-04 · File Upload and Static File Service<br/><i>🟠 2</i>"]:::comp
+        CMP_B2B_API["C-05 · B2B Order API<br/><i>🔴 1</i>"]:::comp
     end
     subgraph DATA["Data Tier"]
-        CMP_DATA_PERSISTENCE["C-03 · Data Layer (SQLite + MarsDB)<br/><i>🟠 4</i>"]:::comp
+        CMP_DATA_LAYER["C-03 · Data Layer<br/><i>🟠 1</i>"]:::comp
     end
 
     %% legitimate request flow
-    EXT_SHOPUSER -->|"uses"| CMP_FRONTEND_SPA
-    CMP_FRONTEND_SPA -->|"API calls"| CMP_BACKEND_API
-    CMP_BACKEND_API -->|"reads/writes"| CMP_DATA_PERSISTENCE
+    EXT_SHOPUSER -->|"uses"| CMP_ANGULAR_SPA
+    CMP_ANGULAR_SPA -->|"API calls"| CMP_EXPRESS_BACKEND
+    CMP_EXPRESS_BACKEND -->|"reads/writes"| CMP_DATA_LAYER
     %% attacks (solid) - each originates at a threat actor; glyphs match Figure 2 / Top Threats
-    ACT_INTERNET_ANON ==>|"① Injection<br/>② Auth Bypass<br/>④ Secret Exposure<br/>⑤ RCE"| CMP_BACKEND_API
-    ACT_INTERNET_USER ==>|"③ Priv-Esc"| CMP_BACKEND_API
-    ACT_INTERNET_ANON ==>|"⑥ XSS"| CMP_FRONTEND_SPA
+    ACT_INTERNET_ANON ==>|"① Injection ② Auth Bypass ③ Priv-Esc ④ Secret Exposure"| CMP_EXPRESS_BACKEND
+    ACT_INTERNET_ANON ==>|"① Injection ④ Secret Exposure"| CMP_FILE_UPLOAD_SERVICE
+    ACT_INTERNET_USER ==>|"⑤ RCE"| CMP_B2B_API
+    ACT_INTERNET_USER ==>|"⑤ RCE"| CMP_EXPRESS_BACKEND
+    ACT_INTERNET_ANON ==>|"⑥ XSS"| CMP_ANGULAR_SPA
     %% propagation (dotted) - how the attack reaches the data tier / victim
-    CMP_BACKEND_API -.->|"① ③ ④"| CMP_DATA_PERSISTENCE
-    CMP_FRONTEND_SPA -.->|"⑥"| EXT_SHOPUSER
+    CMP_EXPRESS_BACKEND -.->|"① ④"| CMP_DATA_LAYER
+    CMP_ANGULAR_SPA -.->|"⑥"| EXT_SHOPUSER
 
     style CLIENT fill:none,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
     style APP fill:none,stroke:#b71c1c,stroke-width:2px,stroke-dasharray:5
     style DATA fill:none,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
     style ZONE_ACTORS fill:none,stroke:#94a3b8,stroke-width:1.5px,stroke-dasharray:5
     classDef comp fill:#eef2f7,stroke:#334155,color:#0f172a,stroke-width:1.5px
+    classDef compmuted fill:#f8fafc,stroke:#cbd5e1,color:#64748b,stroke-width:1px,font-size:9px
     classDef ext  fill:#ffffff,stroke:#94a3b8,color:#334155,stroke-width:1.5px
     classDef actorbad  fill:#fde8e8,stroke:#b71c1c,color:#7f0000,stroke-width:2px
     classDef actorgood fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
     linkStyle 0,1,2 stroke:#6b7280,stroke-width:1.5px
-    linkStyle 3,4,5 stroke:#b71c1c,stroke-width:2.5px
-    linkStyle 6,7 stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5
+    linkStyle 3,4,5,6,7 stroke:#b71c1c,stroke-width:2.5px
+    linkStyle 8,9 stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5
 ```
+
+_Threats: ① Injection · ② Auth Bypass · ③ Priv-Esc · ④ Secret Exposure · ⑤ RCE · ⑥ XSS_
+
+_Component badge: 🔴 = number of Critical findings on the component · 🟠 = number of High findings. Components with no Critical/High finding carry no badge._
 
 **Figure 2 - Risk Flow: Actor → Tier → Impact**
 
@@ -171,9 +182,9 @@ flowchart LR
     subgraph TIERS[" "]
         direction TB
         HDR_T["<b>Architecture Tiers</b>"]:::columnHeader
-        BROWSER["Client Tier<br/>C-02 Angular Single-Page Application"]:::tierClient
-        SERVER["Application Tier<br/>C-01 Express REST API Backend · C-04 File Upload and Processing Service · C-05 B2B Order API (RCE Surface)"]:::tierApp
-        DATA["Data Tier<br/>C-03 Data Layer (SQLite + MarsDB)"]:::tierData
+        BROWSER["Client Tier<br/>C-02 Angular SPA Frontend"]:::tierClient
+        SERVER["Application Tier<br/>C-01 Express Backend API · C-04 File Upload and Static File Service · C-05 B2B Order API"]:::tierApp
+        DATA["Data Tier<br/>C-03 Data Layer"]:::tierData
     end
 
     subgraph IMPACT[" "]
@@ -197,13 +208,14 @@ flowchart LR
     ANON --- SERVER
 
     %% Attack arrows
-    ANON ==>|" ① Injection<br/>② Auth Bypass<br/>④ Secret Exposure<br/>⑤ RCE  "| SERVER
-    INTERNET_USER ==>|" ③ Priv-Esc  "| SERVER
+    ANON ==>|" ① Injection<br/>② Auth Bypass<br/>③ Priv-Esc<br/>④ Secret Exposure  "| SERVER
+    INTERNET_USER ==>|" ⑤ RCE  "| SERVER
     ANON ==>|" ⑥ XSS  "| BROWSER
 
     %% Consequence arrows (tier → business impact, all LR-forward)
     SERVER -.-> FULL_ADMIN_TAKEOVER
     SERVER -.-> CUSTOMER_DATA_EXFILTRATION
+    SERVER -.-> CUSTOMER_SESSION_HIJACK
     SERVER -.-> FULL_SERVER_COMPROMISE
     BROWSER -.-> CUSTOMER_SESSION_HIJACK
     BROWSER -.-> FULL_ADMIN_TAKEOVER
@@ -227,47 +239,49 @@ flowchart LR
 
     linkStyle 0,1,2     stroke:transparent,stroke-width:0px
     linkStyle 3,4,5     stroke:#b71c1c,stroke-width:3px
-    linkStyle 6,7,8,9,10     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
+    linkStyle 6,7,8,9,10,11     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
 
 ```
 
 **Threat actors.** The actors below drive the numbered attack paths in the figures above; the Shop User is the *victim* of client-side attacks (XSS / CSRF), not an attacker.
 
 - **Shop User** — legitimate customer; target of client-side attacks; target of ⑥ Output Encoding / Cross-Site Scripting.
-- **Anonymous Internet Attacker** — no account; registers in seconds when needed; drives ① Insecure Query Construction & Data Access, ② Hardcoded Secrets & Weak Cryptography, ④ Sensitive File & Secret Exposure, ⑤ Remote Code Execution (unsafe eval).
-- **Authenticated Internet Attacker** — owns a regular account; logged in; drives ③ Broken Authorization & Access Control.
+- **Anonymous Internet Attacker** — no account; registers in seconds when needed; drives ① Insecure Query Construction & Data Access, ② Hardcoded Secrets & Weak Cryptography, ③ Broken Authorization & Access Control, ④ Sensitive File & Secret Exposure.
+- **Authenticated Internet Attacker** — owns a regular account; logged in; drives ⑤ Remote Code Execution (unsafe eval).
 
-**6 structural threats**, grouped by weakness class - each row is one threat, not one finding. *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to [§8 Threat Register](#8-threat-register) with its component; *Risk & Impact* combines severity with business consequence.
+**6 structural threats**, grouped by weakness class - each row is one threat, not one finding. *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to [§8 Findings Register](#8-findings-register) with its component; *Risk & Impact* combines severity with business consequence.
 
 | # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |
-|---|------------------------------------|------------------------------------------------|------------------------------------|-----------------|
-| <a id="path-injection"></a>① | **Insecure Query Construction & Data Access** _(T·I)_<br/>Untrusted input is concatenated directly into SQL and NoSQL query strings, allowing authentication bypass, data exfiltration, and schema disclosure through unauthenticated endpoints. | •&nbsp;[F-003](#f-003) — SQL injection login authentication bypass SQL injection login authentication bypass →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-004](#f-004) — SQL injection product search (UNION + schema exfil) SQL injection product search (UNION + schema exfil) →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-026](#f-026) — NoSQL injection via \$where operator in MarsDB reviews NoSQL injection via \$where operator in MarsDB reviews →&nbsp;[C-03](#c-03)<br/>•&nbsp;[F-030](#f-030) — Database schema exposure via SQL injection in search route Database schema exposure via SQL injection in search route →&nbsp;[C-03](#c-03) | 🔴 **Critical**<br/>Full Admin Takeover · Customer Data Exfiltration | [M-003](#m-003) — Replace raw SQL with Sequelize parameterized query, [M-004](#m-004) (P1) |
-| <a id="path-auth-bypass"></a>② | **Hardcoded Secrets & Weak Cryptography** _(S·E)_<br/>Authentication can be circumvented by exploiting a hardcoded RSA signing key or the JWT algorithm-none bypass, allowing arbitrary token forgery without any server interaction. | •&nbsp;[F-001](#f-001) — JWT algorithm confusion algorithm none bypass JWT algorithm confusion algorithm none bypass →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-002](#f-002) — RSA private key hardcoded offline JWT forgery RSA private key hardcoded offline JWT forgery →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-027](#f-027) — MD5 password hashing passwords trivially reversible MD5 password hashing passwords trivially reversible →&nbsp;[C-01](#c-01) | 🔴 **Critical**<br/>Full Admin Takeover · Customer Data Exfiltration | [M-002](#m-002) — Implement application-level CSP and remove bypassSecurityTrustHtml, [M-027](#m-027) (P1) |
-| <a id="path-privilege-escalation"></a>③ | **Broken Authorization & Access Control** _(E·I)_<br/>Authorization checks on resource-owning endpoints accept attacker-controlled user identifiers from the request body rather than the verified JWT payload, enabling horizontal and vertical access escalation. | •&nbsp;[F-011](#f-011) — IDOR basket accessible by any authenticated user IDOR basket accessible by any authenticated user →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-017](#f-017) — Mass assignment wallet balance manipulable via req.body.UserId Mass assignment wallet balance manipulable via req.body.UserId →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-023](#f-023) — Angular route guards bypassable client side Angular route guards bypassable client side →&nbsp;[C-02](#c-02)<br/>•&nbsp;[F-029](#f-029) — Product reviews allow unauthorized update IDOR in review update Product reviews allow unauthorized update IDOR in review update →&nbsp;[C-03](#c-03) | 🟠 **High**<br/>Full Admin Takeover · Customer Data Exfiltration | [M-011](#m-011) — Validate basket ownership against authenticated user's ID from JWT, [M-017](#m-017) (P2) |
-| <a id="path-sensitive-data-exposure"></a>④ | **Sensitive File & Secret Exposure** _(I)_<br/>Signing keys, logs, and metric endpoints are served over unauthenticated routes, and path-traversal weaknesses allow reading arbitrary files from the server filesystem. | •&nbsp;[F-010](#f-010) — Sensitive files and logs exposed without authentication Sensitive files and logs exposed without authentication →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-013](#f-013) — Prometheus metrics endpoint exposed without authentication Prometheus metrics endpoint exposed without authentication →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-014](#f-014) — Access logs exposed to unauthenticated users tamper potential Access logs exposed to unauthenticated users tamper potential →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-015](#f-015) — Path traversal in data erasure layout parameter Path traversal in data erasure layout parameter →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-028](#f-028) — User model returns sensitive fields in API responses (password hash, totpSecret) User model returns sensitive fields in API responses (password hash, totpSecret) →&nbsp;[C-03](#c-03) | 🟠 **High**<br/>Customer Data Exfiltration · Full Server Compromise | [M-010](#m-010) — Add authentication middleware to sensitive file serving routes, [M-015](#m-015) (P2) |
-| <a id="path-remote-code-execution"></a>⑤ | **Remote Code Execution (unsafe eval)** _(E)_<br/>Attacker-controlled strings are evaluated as JavaScript code through two independent sinks - a profile-field handler and a B2B order endpoint - providing direct host-level code execution. | •&nbsp;[F-005](#f-005) — Remote code execution notevil sandbox bypass in B2B API Remote code execution notevil sandbox bypass in B2B API →&nbsp;[C-01](#c-01)<br/>•&nbsp;[F-006](#f-006) — Server side code injection via eval on username field Server side code injection via eval on username field →&nbsp;[C-01](#c-01) | 🔴 **Critical**<br/>Full Server Compromise · Customer Data Exfiltration | [M-005](#m-005) — Remove eval-based order processing; use structured input schema, [M-006](#m-006) (P1) |
-| <a id="path-cross-site-scripting"></a>⑥ | **Output Encoding / Cross-Site Scripting** _(T·I)_<br/>Angular's default output encoding is bypassed via DomSanitizer trust overrides across 14+ components, enabling stored and DOM-based XSS that steals session tokens from browser localStorage. | •&nbsp;[F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass DOM XSS search results rendered via trust HTML bypass →&nbsp;[C-02](#c-02)<br/>•&nbsp;[F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel Stored XSS feedback comments rendered unsanitized in admin panel →&nbsp;[C-02](#c-02)<br/>•&nbsp;[F-021](#f-021) — XSS last login ip rendered as trusted HTML XSS last login ip rendered as trusted HTML →&nbsp;[C-02](#c-02)<br/>•&nbsp;[F-025](#f-025) — Product description and review rendered as HTML stored XSS vector Product description and review rendered as HTML stored XSS vector →&nbsp;[C-02](#c-02) | 🔴 **Critical**<br/>Customer Session Hijack · Full Admin Takeover | [M-019](#m-019) — Remove bypassSecurityTrustHtml; use Angular's default sanitization, [M-020](#m-020) (P1) |
+|---|------------------------------------|------------------------------------------------|------------------------------------|--------------------|
+| <a id="path-injection"></a>① | **Insecure Query Construction & Data Access** _(T·I)_<br/>SQL injection on the login and search endpoints bypasses authentication and enables full database extraction without credentials. | •&nbsp;🔴&nbsp;[F-001](#f-001) — SQL injection authentication bypass →&nbsp;[C-01](#c-01)<br/>•&nbsp;🔴&nbsp;[F-007](#f-007) — SQL injection full database disclosure via UNION attack →&nbsp;[C-01](#c-01)<br/>•&nbsp;🟠&nbsp;[F-010](#f-010) — XML external entity injection via libxmljs2 external entity resolution routes/f… →&nbsp;[C-04](#c-04)<br/>•&nbsp;🟡&nbsp;[F-019](#f-019) — NoSQL injection via MarsDB queries →&nbsp;[C-03](#c-03) | 🔴 **Critical**<br/>Full Admin Takeover · Customer Data Exfiltration | [M-001](#m-001) — Replace raw SQL with Sequelize parameterized query in login route, [M-005](#m-005) (P1) |
+| <a id="path-auth-bypass"></a>② | **Hardcoded Secrets & Weak Cryptography** _(S·E)_<br/>Hardcoded RSA private key and algorithm-none acceptance in outdated express-jwt allow forging valid session tokens for any account offline. | •&nbsp;🔴&nbsp;[F-002](#f-002) — Hardcoded RSA private key enables JWT forgery →&nbsp;[C-01](#c-01)<br/>•&nbsp;🔴&nbsp;[F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 →&nbsp;[C-01](#c-01)<br/>•&nbsp;🟠&nbsp;[F-008](#f-008) — MD5 password hashing trivially reversible →&nbsp;[C-01](#c-01) | 🔴 **Critical**<br/>Full Admin Takeover · Customer Session Hijack | [M-002](#m-002) — Remove hardcoded RSA private key; rotate to environment variable, [M-003](#m-003) (P1) |
+| <a id="path-privilege-escalation"></a>③ | **Broken Authorization & Access Control** _(E·I)_<br/>authorisation checks are absent or bypassable, allowing horizontal and vertical privilege jumps from a self-registered or low-rights account. Includes mass-assignment of privileged attributes. | •&nbsp;🟠&nbsp;[F-018](#f-018) — Broken authorization on admin API endpoints →&nbsp;[C-01](#c-01)<br/>•&nbsp;🟢&nbsp;[F-024](#f-024) — Workflow lacks explicit permissions declaration →&nbsp;[C-01](#c-01) | 🟠 **High**<br/>Full Admin Takeover · Customer Data Exfiltration | [M-009](#m-009) — Add role-based authorization middleware to admin API endpoints, [M-028](#m-028) (P2/P4) |
+| <a id="path-sensitive-data-exposure"></a>④ | **Sensitive File & Secret Exposure** _(I)_<br/>confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content. | •&nbsp;🟠&nbsp;[F-013](#f-013) — Plaintext security answers stored in database →&nbsp;[C-03](#c-03)<br/>•&nbsp;🟠&nbsp;[F-014](#f-014) — SSRF via profile image URL upload →&nbsp;[C-01](#c-01)<br/>•&nbsp;🟠&nbsp;[F-015](#f-015) — Path traversal in encryption key and log file endpoints →&nbsp;[C-04](#c-04)<br/>•&nbsp;🟠&nbsp;[F-016](#f-016) — Unauthenticated FTP directory listing exposes sensitive files →&nbsp;[C-01](#c-01)<br/>•&nbsp;🟡&nbsp;[F-021](#f-021) — Build context includes sensitive files without dockerignore exclusions →&nbsp;[C-01](#c-01)<br/>•&nbsp;🟡&nbsp;[F-022](#f-022) — Open redirect via URL substring match bypass →&nbsp;[C-01](#c-01) | 🟠 **High**<br/>Customer Data Exfiltration | [M-016](#m-016) — Hash security answers before storage, [M-007](#m-007) (P2) |
+| <a id="path-remote-code-execution"></a>⑤ | **Remote Code Execution (unsafe eval)** _(E)_<br/>Direct JavaScript evaluation of user-controlled input via `eval()` and a bypassable sandbox gives authenticated users arbitrary OS command execution. | •&nbsp;🔴&nbsp;[F-005](#f-005) — Remote code execution via sandbox escape in B2B order API →&nbsp;[C-05](#c-05)<br/>•&nbsp;🔴&nbsp;[F-006](#f-006) — Remote code execution via eval in userProfile →&nbsp;[C-01](#c-01) | 🔴 **Critical**<br/>Full Server Compromise | [M-022](#m-022) — Replace safeEval with structured JSON order line parsing, [M-006](#m-006) (P1) |
+| <a id="path-cross-site-scripting"></a>⑥ | **Output Encoding / Cross-Site Scripting** _(T·I)_<br/>Persistent XSS via disabled Angular sanitization injects attacker scripts into admin and user sessions through stored HTML in email and feedback fields. | •&nbsp;🔴&nbsp;[F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ… →&nbsp;[C-02](#c-02)<br/>•&nbsp;🟠&nbsp;[F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo… →&nbsp;[C-02](#c-02)<br/>•&nbsp;🟠&nbsp;[F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa →&nbsp;[C-01](#c-01) | 🔴 **Critical**<br/>Customer Session Hijack · Full Admin Takeover | [M-011](#m-011) — Remove bypassSecurityTrustHtml() from administration component, [M-013](#m-013) (P1/P2) |
 
 _STRIDE: S spoofing · T tampering · R repudiation · I information disclosure · D denial of service · E elevation of privilege. Risk, findings, components, impact and Fix are derived deterministically; only the one-line weakness description is authored._
 
+**Verified attack chains.** 2 fully viable ([AC-T-003](#ac-t-003), [AC-T-005](#ac-t-005)); 2 partially blocked ([AC-T-001](#ac-t-001), [AC-T-006](#ac-t-006)). These chains combine individual findings into end-to-end exploitation paths verified step-by-step against the code - see [§9 Abuse Cases](#9-abuse-cases) for the per-step breakdown and blocking mitigations.
+
 ### Top Mitigations
 
-Highest-impact P1/P2 mitigations - 10 of 25 qualifying (31 total). Full detail in [§9 Mitigation Register](#9-mitigation-register). All 9 mitigation(s) that fix a Critical finding are always listed here; the remaining entries are curated by impact: broad SQL injection, stored XSS, SSRF, and IDOR exposure that combines with the hardcoded secrets to produce the most-reachable attack chains
+Highest-impact P1/P2 mitigations - 10 of 18 qualifying (26 total). Full detail in [§10 Mitigation Register](#10-mitigation-register). All 8 mitigation(s) that fix a Critical finding are always listed here.
 
 | # | Priority | Component | Mitigation | Addresses | Effort |
 |---|--------|----------------------|------------------------------------------------|------------------------------------------------|------|
-| **1** | **P1** | [C-01](#c-01) — Express REST API Backend | [M-003](#m-003) — Replace raw SQL with Sequelize parameterized query | [F-003](#f-003) — SQL injection login authentication bypass (`routes/login.ts`) | Low |
-| **2** | **P1** | [C-01](#c-01) — Express REST API Backend | [M-004](#m-004) — Use Sequelize Op.like with parameterized values for search | [F-004](#f-004) — SQL injection product search (`routes/search.ts`, "UNION + schema exfil") | Low |
-| **3** | **P1** | [C-01](#c-01) — Express REST API Backend | [M-006](#m-006) — Remove `eval()` from username processing; use safe string rendering | [F-006](#f-006) — Server side code injection via eval on username field (`routes/userProfile.ts`) | Low |
-| **4** | **P1** | [C-01](#c-01) — Express REST API Backend | [M-002](#m-002) — Implement application-level CSP and remove bypassSecurityTrustHtml | [F-002](#f-002) — RSA private key hardcoded offline JWT forgery (`lib/insecurity.ts`) | Medium |
-| **5** | **P1** | [C-01](#c-01) — Express REST API Backend | [M-005](#m-005) — Remove eval-based order processing; use structured input schema | [F-005](#f-005) — Remote code execution notevil sandbox bypass in B2B API (`routes/b2bOrder.ts`) | Medium |
-| **6** | **P1** | [C-01](#c-01) — Express REST API Backend | [M-027](#m-027) — Replace MD5 with bcrypt (cost factor 12+) for password hashing | [F-027](#f-027) — MD5 password hashing passwords trivially reversible (`lib/insecurity.ts`) | Medium |
-| **7** | **P1** | [C-02](#c-02) — Angular Single-Page Application | [M-019](#m-019) — Remove bypassSecurityTrustHtml; use Angular's default sanitization | [F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass (`frontend/src/app/search-result/search-result.component.ts`) | Low |
-| **8** | **P1** | [C-02](#c-02) — Angular Single-Page Application | [M-020](#m-020) — Sanitize feedback content server-side before storage; remove bypassSecurityTrustHtml in admin panel | [F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel (`frontend/src/app/administration/administration.component.ts`) | Medium |
-| **9** | **P2** | [C-01](#c-01) — Express REST API Backend | [M-001](#m-001) — Establish dependency vulnerability scanning and update SLA | [F-001](#f-001) — JWT algorithm confusion algorithm none bypass (`lib/insecurity.ts`) | Medium |
-| **10** | **P2** | [C-01](#c-01) — Express REST API Backend | [M-007](#m-007) — Set `noent:false` in libxmljs2 parsing to disable external entity resolution | [F-007](#f-007) — XXE via XML file upload with external entity resolution (`routes/fileUpload.ts`) | Low |
+| **1** | **P1** | [C-01](#c-01) — Express Backend API | [M-001](#m-001) — Replace raw SQL with Sequelize parameterized query in login route | 🔴 [F-001](#f-001) — SQL injection authentication bypass routes/login.ts (routes/login.ts) | Low |
+| **2** | **P1** | [C-01](#c-01) — Express Backend API | [M-002](#m-002) — Remove hardcoded RSA private key; rotate to environment variable | 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts (lib/insecurity.ts) | Low |
+| **3** | **P1** | [C-01](#c-01) — Express Backend API | [M-005](#m-005) — Replace raw SQL with Sequelize ORM parameterized queries in search route | 🔴 [F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts (routes/search.ts) | Low |
+| **4** | **P1** | [C-01](#c-01) — Express Backend API | [M-006](#m-006) — Remove eval() from userProfile route; use safe template string replacement | 🔴 [F-006](#f-006) — Remote code execution via eval in userProfile routes/userProfile.ts (routes/userProfile.ts) | Low |
+| **5** | **P1** | [C-01](#c-01) — Express Backend API | [M-003](#m-003) — Upgrade express-jwt to >=6.0.0 and enforce algorithm allowlist | 🔴 [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts (lib/insecurity.ts) | Medium |
+| **6** | **P1** | [C-02](#c-02) — Angular SPA Frontend | [M-011](#m-011) — Remove bypassSecurityTrustHtml() from administration component | 🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ… (frontend/src/app/administration/administration.component.ts)<br/>🟠 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo… (frontend/src/app/about/about.component.ts) | Medium |
+| **7** | **P1** | [C-05](#c-05) — B2B Order API | [M-022](#m-022) — Replace safeEval with structured JSON order line parsing | 🔴 [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts (routes/b2bOrder.ts) | Medium |
+| **8** | **P2** | [C-01](#c-01) — Express Backend API | [M-024](#m-024) — Implement dependency update automation and security audit policy | 🔴 [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts (lib/insecurity.ts)<br/>🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ… (frontend/src/app/administration/administration.component.ts) | Medium |
+| **9** | **P2** | [C-01](#c-01) — Express Backend API | [M-007](#m-007) — Implement URL allowlist for profile image upload | 🟠 [F-014](#f-014) — SSRF via profile image URL upload routes/profileImageUrlUpload.ts (routes/profileImageUrlUpload.ts) | Low |
+| **10** | **P2** | [C-01](#c-01) — Express Backend API | [M-010](#m-010) — Add rate limiting to /rest/user/login and /rest/user/register | 🟠 [F-017](#f-017) — No rate limiting on authentication endpoints server.ts (server.ts) | Low |
 
-*15 additional P1/P2 mitigations capped from the leader-board · 6 P3 backlog items in [§9 Mitigation Register](#9-mitigation-register). Sorted by priority (P1 first), then component, then leverage (most findings first), severity (Critical first), and effort (Low first).*
+*8 additional P1/P2 mitigations capped from the leader-board · 8 P3 backlog items in [§10 Mitigation Register](#10-mitigation-register). Sorted by priority (P1 first), then component, then leverage (most findings first), severity (Critical first), and effort (Low first).*
 
 ### Operational Strengths
 
@@ -275,8 +289,8 @@ Operational controls rated Adequate or Partial - grouped into broad clusters (fu
 
 | Strength | What's in Place | Effectiveness | Gap | Mitigates |
 |----------------------|----------------------|-------------|----------------------|----------------|
-| **Container & Supply-Chain Hardening** | _Build-time and runtime hardening - minimal base image, non-root execution, dependency inventory._<br/>Automated SCA scanning<br/>Container Security - Dockerfile:23-41<br/>File Upload Validation - `routes/fileUpload.ts`, `routes/profileImageUrlUpload.ts` | ✅ Adequate | - | - |
-| **Observability & Audit** | _Runtime visibility - access logging, audit trails, and operational telemetry for post-incident review._<br/>Security Logging and Monitoring - `server.ts:338`, `lib/logger.ts` | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
+| **Container & Supply-Chain Hardening** | _Build-time and runtime hardening - minimal base image, non-root execution, dependency inventory._<br/>Automated SCA scanning | ✅ Adequate | - | - |
+| **Observability & Audit** | _Runtime visibility - access logging, audit trails, and operational telemetry for post-incident review._<br/>Logging and Monitoring - `lib/logger.ts`, `server.ts:331`-338 | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
 
 
 **Bottom line:** These controls narrow specific attack surfaces but none eliminates a Critical finding on its own.
@@ -290,36 +304,28 @@ The root is the worst-case attacker goal; below it, each capability branch group
 
 ```mermaid
 graph LR
-    G_ROOT["Full host and data compromise"]:::goal
-    OR_ROOT["Any one path suffices"]:::or_node
-    AND_JWT["Forge admin JWT offline"]:::and_node
-    L_T001["T-001 - JWT algorithm confusion bypass"]:::leaf
-    L_T002["T-002 - RSA private key hardcoded"]:::leaf
-    OR_RCE["Server-side code execution"]:::or_node
-    L_T005["T-005 - RCE notevil sandbox bypass"]:::leaf
-    L_T006["T-006 - eval on username field"]:::leaf
-    OR_SQLI["Authentication bypass via SQL"]:::or_node
-    L_T003["T-003 - SQL injection login"]:::leaf
-    L_T004["T-004 - SQL injection search UNION"]:::leaf
-    AND_XSS["Session hijack via XSS + localStorage"]:::and_node
-    L_T019["T-019 - DOM XSS search results"]:::leaf
-    L_T020["T-020 - Stored XSS feedback admin"]:::leaf
-    L_T027["T-027 - MD5 password hashing"]:::leaf
+    G_ROOT["Full server and account compromise"]:::goal
+    OR_ADMIN["Admin account takeover"]:::or_node
+    OR_RCE["Arbitrary server-side code execution"]:::or_node
+    AND_JWT["Forge admin JWT"]:::and_node
+    L_T001["T-001 - SQL injection authentication by…"]:::leaf
+    L_T002["T-002 - Hardcoded RSA private key"]:::leaf
+    L_T003["T-003 - JWT algorithm confusion bypass"]:::leaf
+    L_T004["T-004 - Stored XSS in admin panel"]:::leaf
+    L_T005["T-005 - RCE via B2B sandbox escape"]:::leaf
+    L_T006["T-006 - RCE via eval in user profile"]:::leaf
+    L_T007["T-007 - SQL injection full database dump"]:::leaf
 
-    OR_ROOT -->|"OR"| G_ROOT
-    AND_JWT -->|"OR"| OR_ROOT
-    L_T001 -->|"AND"| AND_JWT
+    OR_ADMIN -->|"OR"| G_ROOT
+    OR_RCE -->|"OR"| G_ROOT
+    L_T001 -->|"OR"| OR_ADMIN
+    AND_JWT -->|"OR"| OR_ADMIN
     L_T002 -->|"AND"| AND_JWT
-    OR_RCE -->|"OR"| OR_ROOT
+    L_T003 -->|"AND"| AND_JWT
+    L_T004 -->|"OR"| OR_ADMIN
     L_T005 -->|"OR"| OR_RCE
     L_T006 -->|"OR"| OR_RCE
-    OR_SQLI -->|"OR"| OR_ROOT
-    L_T003 -->|"OR"| OR_SQLI
-    L_T004 -->|"OR"| OR_SQLI
-    AND_XSS -->|"OR"| OR_ROOT
-    L_T019 -->|"AND"| AND_XSS
-    L_T020 -->|"AND"| AND_XSS
-    L_T027 -->|"AND"| AND_XSS
+    L_T007 -->|"OR"| OR_ADMIN
 
     classDef goal fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px
     classDef and_node fill:#334155,stroke:#1e293b,color:#fff,stroke-width:2px
@@ -327,7 +333,7 @@ graph LR
     classDef leaf fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
 ```
 
-**Findings** (full detail in [§8 Threat Register](#8-threat-register)): [F-001](#f-001) — JWT algorithm confusion algorithm none bypass JWT algorithm confusion bypass · [F-002](#f-002) — RSA private key hardcoded offline JWT forgery RSA private key hardcoded · [F-005](#f-005) — Remote code execution notevil sandbox bypass in B2B API RCE notevil sandbox bypass · [F-006](#f-006) — Server side code injection via eval on username field eval on username field · [F-003](#f-003) — SQL injection login authentication bypass SQL injection login · [F-004](#f-004) — SQL injection product search (UNION + schema exfil) SQL injection search UNION · [F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass DOM XSS search results · [F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel Stored XSS feedback admin · [F-027](#f-027) — MD5 password hashing passwords trivially reversible MD5 password hashing
+**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001) — SQL injection authentication bypass routes/login.ts SQL injection authentication bypass · [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts Hardcoded RSA private key · [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts JWT algorithm confusion bypass · [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ… Stored XSS in admin panel · [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts RCE via B2B sandbox escape · [F-006](#f-006) — Remote code execution via eval in userProfile routes/userProfile.ts RCE via eval in user profile · [F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts SQL injection full database dump
 
 ---
 
@@ -336,11 +342,11 @@ graph LR
 Probably the most modern and sophisticated insecure web application
 
 **Repository:** https://github.com/juice-shop/juice-shop
-**Runtime:** `Node.js` 20 - 24
+**Runtime:** Node\.js 20 - 24
 
 ### Scope
 
-This threat model covers 5 components of juice-shop: **Express REST API Backend**, **Angular Single-Page Application**, **Data Layer (SQLite + MarsDB)**, **File Upload and Processing Service**, **B2B Order API (RCE Surface)**.
+This threat model covers 5 components of juice-shop: **Express Backend API**, **Angular SPA Frontend**, **Data Layer**, **File Upload and Static File Service**, **B2B Order API**.
 
 **Out of scope:** third-party hosted dependencies, browser runtime, operating-system kernel, and the underlying network infrastructure.
 
@@ -382,73 +388,70 @@ How the system decomposes into deployable units. Each box is a separate runtime 
 ```mermaid
 flowchart TB
     subgraph Client
-        frontend_spa["Angular Single-Page Application"]
+        angular_spa["Angular SPA Frontend"]
     end
     subgraph Application
-        backend_api["Express REST API Backend"]
-        file_upload_service["File Upload and Processing Service"]
-        b2b_api["B2B Order API (RCE Surface)"]
+        express_backend["Express Backend API"]
+        file_upload_service["File Upload and Static File Service"]
+        b2b_api["B2B Order API"]
     end
     subgraph Data
-        data_persistence[("Data Layer (SQLite + MarsDB)")]
+        data_layer[("Data Layer")]
     end
-    frontend_spa -->|HTTPS REST| backend_api
-    backend_api -->|driver| data_persistence
-    backend_api -->|in-process| file_upload_service
-    backend_api -->|in-process| b2b_api
+    angular_spa -->|HTTPS REST| express_backend
+    express_backend -->|driver| data_layer
+    express_backend -->|in-process| file_upload_service
+    express_backend -->|in-process| b2b_api
     classDef critical fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:3px
     classDef warning  fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px
-    class backend_api critical
-    class frontend_spa warning
-    class data_persistence warning
+    class express_backend critical
+    class file_upload_service warning
 ```
 
 ### 2.3 Components
 
 
-Who reaches each component, and through which trust zone. Four columns map external actors to the internal tiers (Client / Application / Data); solid green arrows show legitimate data flow, dashed red arrows mark intrusion vectors. The component table directly below holds source paths and linked threats per `C-NN`; per-finding evidence is in [§8 Threat Register](#8-threat-register).
+Who reaches each component, and through which trust zone. Four columns map external actors to the internal tiers (Client / Application / Data); solid green arrows show legitimate data flow, dashed red arrows mark intrusion vectors. The component table directly below holds source paths and linked threats per `C-NN`; per-finding evidence is in [§8 Findings Register](#8-findings-register).
 
 ```mermaid
 flowchart TD
     subgraph EXT["Untrusted Zone - Internet"]
         INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
         VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
-        REPO_READ["fa:fa-code-branch Internal Developer"]:::threat
     end
     subgraph CLIENT["Client Tier"]
-        frontend_spa["fa:fa-window-restore frontend-spa Angular Single-Page Appli…<br/><i>7 threats</i>"]:::risk
+        angular_spa["fa:fa-window-restore angular-spa Angular SPA Frontend<br/><i>2 threats</i>"]:::risk
     end
     subgraph APP["Application Tier"]
-        backend_api["fa:fa-server backend-api Express REST API Backend<br/>+ file-upload-service + b2b-api<br/><i>19 threats</i>"]:::risk
+        express_backend["fa:fa-server express-backend Express Backend API<br/>+ file-upload-service + b2b-api<br/><i>15 threats</i>"]:::risk
     end
     subgraph DATA["Data Tier"]
-        data_persistence[("fa:fa-database data-persistence Data Layer (SQLite + MarsDB)<br/><i>5 threats</i>")]:::risk
+        data_layer[("fa:fa-database data-layer Data Layer<br/><i>2 threats</i>")]:::risk
     end
-    VICTIM_REQUIRED -->|"HTTPS · TLS"| frontend_spa
-    frontend_spa -->|"REST · JWT Bearer"| backend_api
-    backend_api -->|"ORM · queries"| data_persistence
-    INTERNET_ANON -.->|"injection · auth bypass · RCE"| backend_api
-    INTERNET_ANON -.->|"XSS · client tampering · token theft"| frontend_spa
-    REPO_READ -.->|"leaked credentials · auth bypass"| backend_api
+    VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
+    angular_spa -->|"REST · JWT Bearer"| express_backend
+    express_backend -->|"ORM · queries"| data_layer
+    INTERNET_ANON -.->|"injection · auth bypass · RCE"| express_backend
+    INTERNET_ANON -.->|"XSS · client tampering · token theft"| angular_spa
 
     classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
     classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
     classDef external fill:#f2f2f2,stroke:#424242,color:#212121,stroke-width:1.5px
     classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
     linkStyle 0,1,2 stroke:#2e7d32,stroke-width:1.5px
-    linkStyle 3,4,5 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
+    linkStyle 3,4 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
 ```
 
 | ID | Name | Type | Key Paths | Linked Threats |
-|----|----------------------|---------|----------------------|------------------------------------------------|
-| <a id="c-01"></a><a id="backend-api"></a>C-01 | Express REST API Backend | process | `server.ts`<br/>`routes/**`<br/>`lib/**`<br/>`app.ts` | [F-001](#f-001) (JWT algorithm confusion algorithm none bypass)<br/>[F-002](#f-002) (RSA private key hardcoded offline JWT forgery)<br/>[F-003](#f-003) (SQL injection login authentication bypass)<br/>[F-004](#f-004) (SQL injection product search)<br/>[F-005](#f-005) (Remote code execution notevil sandbox bypass in B2B API)<br/>[F-006](#f-006) (Server side code injection via eval on username field)<br/>[F-007](#f-007) (XXE via XML file upload with external entity resolution)<br/>[F-008](#f-008) (Zip slip path traversal via unzipper 0.9.15)<br/>[F-009](#f-009) (Server side request forgery via profile image URL upload)<br/>[F-010](#f-010) (Sensitive files and logs exposed without authentication)<br/>[F-011](#f-011) (IDOR basket accessible by any authenticated user)<br/>[F-012](#f-012) (Open redirect bypass via allowlist prefix check)<br/>[F-013](#f-013) (Prometheus metrics endpoint exposed without authentication)<br/>[F-014](#f-014) (Access logs exposed to unauthenticated users tamper potential)<br/>[F-015](#f-015) (Path traversal in data erasure layout parameter)<br/>[F-016](#f-016) (Missing rate limiting on authentication endpoint)<br/>[F-017](#f-017) (Mass assignment wallet balance manipulable via `req.body`.UserId)<br/>[F-018](#f-018) (Error handler reveals internal stack traces)<br/>[F-027](#f-027) (MD5 password hashing passwords trivially reversible) |
-| <a id="c-02"></a><a id="frontend-spa"></a>C-02 | Angular Single-Page Application | process | `frontend/src/**` | [F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass<br/>[F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel<br/>[F-021](#f-021) — XSS last login ip rendered as trusted HTML<br/>[F-022](#f-022) — Client side JWT stored in localStorage accessible to XSS<br/>[F-023](#f-023) — Angular route guards bypassable client side<br/>[F-024](#f-024) — XSS via postMessage and iframe DOM based attack<br/>[F-025](#f-025) — Product description and review rendered as HTML stored XSS vector |
-| <a id="c-03"></a><a id="data-persistence"></a>C-03 | Data Layer (SQLite + MarsDB) | datastore | `models/**`<br/>`data/**`<br/>`routes/showProductReviews.ts`<br/>`routes/search.ts`<br/>`routes/updateProductReviews.ts` | [F-026](#f-026) — NoSQL injection via \$where operator in MarsDB reviews<br/>[F-028](#f-028) — User model returns sensitive fields in API responses (password hash, totpSecret)<br/>[F-029](#f-029) — Product reviews allow unauthorized update IDOR in review update<br/>[F-030](#f-030) — Database schema exposure via SQL injection in search route<br/>[F-031](#f-031) — JavaScript injection via \$where can crash MarsDB process |
-| <a id="c-04"></a><a id="file-upload-service"></a>C-04 | File Upload and Processing Service | process | `routes/fileUpload.ts`<br/>`routes/profileImageFileUpload.ts`<br/>`routes/profileImageUrlUpload.ts`<br/>`routes/memory.ts` | - |
-| <a id="c-05"></a><a id="b2b-api"></a>C-05 | B2B Order API (RCE Surface) | gateway | `routes/b2bOrder.ts` | - |
+|----|----------------------|-----------|--------------------------|------------------------------------------------|
+| <a id="c-01"></a><a id="express-backend"></a>C-01 | Express Backend API | application | `server.ts`<br/>`app.ts`<br/>`routes/**`<br/>`lib/**`<br/>`models/**` | 🔴 [F-001](#f-001) — SQL injection authentication bypass routes/login.ts<br/>🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts<br/>🔴 [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts<br/>🔴 [F-006](#f-006) — Remote code execution via eval in userProfile routes/userProfile.ts<br/>🔴 [F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts<br/>🟠 [F-008](#f-008) — MD5 password hashing trivially reversible lib/insecurity.ts<br/>🟠 [F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa<br/>🟠 [F-012](#f-012) — No Content Security Policy allows arbitrary script injection server.ts<br/>🟠 [F-014](#f-014) — SSRF via profile image URL upload routes/profileImageUrlUpload.ts<br/>🟠 [F-016](#f-016) — Unauthenticated FTP directory listing exposes sensitive files server.ts<br/>🟠 [F-017](#f-017) — No rate limiting on authentication endpoints server.ts<br/>🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts<br/>🟡 [F-021](#f-021) — Build context includes sensitive files without dockerignore exclusions<br/>🟡 [F-022](#f-022) — Open redirect via URL substring match bypass lib/insecurity.ts<br/>🟢 [F-024](#f-024) — Workflow lacks explicit permissions declaration |
+| <a id="c-02"></a><a id="angular-spa"></a>C-02 | Angular SPA Frontend | client | `frontend/src/**`<br/>`frontend/dist/**` | 🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ…<br/>🔴 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo… |
+| <a id="c-03"></a><a id="data-layer"></a>C-03 | Data Layer | data | `models/**`<br/>`data/**` | 🟠 [F-013](#f-013) — Plaintext security answers stored in database models/securityAnswer.ts<br/>🔴 [F-019](#f-019) — NoSQL injection via MarsDB queries data/mongodb.ts |
+| <a id="c-04"></a><a id="file-upload-service"></a>C-04 | File Upload and Static File Service | application | `routes/fileUpload.ts`<br/>`routes/fileServer.ts`<br/>`routes/keyServer.ts`<br/>`routes/logfileServer.ts`<br/>`routes/quarantineServer.ts` | 🟠 [F-010](#f-010) — XML external entity injection via libxmljs2 external entity resolution routes/f…<br/>🟠 [F-015](#f-015) — Path traversal in encryption key and log file endpoints routes/keyServer.ts<br/>🟡 [F-020](#f-020) — Unrestricted file upload allows malicious file storage routes/fileUpload.ts |
+| <a id="c-05"></a><a id="b2b-api"></a>C-05 | B2B Order API | application | `routes/b2bOrder.ts` | 🔴 [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts<br/>🟡 [F-023](#f-023) — DoS via infinite loop in B2B order evaluation routes/b2bOrder.ts |
 ### 2.4 Technology Architecture
 
-The technology stack the system is built on. Each box names the framework or runtime that fills that role; per-component findings live in the [§2.3](#23-components) component table above, and the full per-finding catalogue is in [§8 Threat Register](#8-threat-register).
+The technology stack the system is built on. Each box names the framework or runtime that fills that role; per-component findings live in the [§2.3](#23-components) component table above, and the full per-finding catalogue is in [§8 Findings Register](#8-findings-register).
 
 ```mermaid
 flowchart TD
@@ -489,19 +492,19 @@ flowchart TD
 
 ## 3. Attack Walkthroughs
 
-This section walks through how the highest-risk findings are exploited - one short walkthrough per Critical, each with attack steps, a focused sequence diagram, and the primary mitigation. The cross-finding view (which weaknesses combine toward the worst-case goal, and where one fix severs several paths) is in the [Critical Attack Tree](#critical-attack-tree). Full per-finding context - severity rationale, assets, detection signals - is in the [§8 Threat Register](#8-threat-register) row for each finding.
+This section walks through how the highest-risk findings are exploited - one short walkthrough per Critical, each with attack steps, a focused sequence diagram, and the primary mitigation. The cross-finding view (which weaknesses combine toward the worst-case goal, and where one fix severs several paths) is in the [Critical Attack Tree](#critical-attack-tree). Full per-finding context - severity rationale, assets, detection signals - is in the [§8 Findings Register](#8-findings-register) row for each finding.
 
-### 3.1 JWT algorithm confusion algorithm none bypass
+### 3.1 SQL injection authentication bypass routes/login.ts
 
-**Source:** [F-001](#f-001) — JWT algorithm confusion algorithm none bypass - `lib/insecurity.ts:54`
+**Source:** [F-001](#f-001) — `routes/login.ts:34`
 
-Severity **Critical** ([CWE-347](https://cwe.mitre.org/data/definitions/347.html)). STRIDE: Spoofing. See [§8 T-001](#t-001) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Spoofing. See [§8 T-001](#t-001) for the full register row.
 
 **Attack Steps**
 
-1. An attacker crafts a JWT with header {"alg":"none"} and empty signature.
-2. express-jwt 0.1.3 (routes via `lib/insecurity.ts:54`) accepts unsigned tokens because it does not enforce algorithm.
-3. Attacker sets isAdmin:true in the payload and gains full admin access.
+1. An unauthenticated attacker sends POST `/rest/user/login` with email="' OR 1=1--" which satisfies the raw SQL query SELECT * FROM Users WHERE email = ''' OR 1=1-- AND password.
+2. yielding the first row (admin).
+3. [CWE-89](https://cwe.mitre.org/data/definitions/89.html).
 
 **Sequence Diagram**
 
@@ -509,28 +512,41 @@ Severity **Critical** ([CWE-347](https://cwe.mitre.org/data/definitions/347.html
 sequenceDiagram
     autonumber
     actor Attacker
-    participant App
-    Note over App: backend-api - lib/insecurity.ts:54
-    Attacker->>App: Crafted request exercising the weakness at lib/insecurity.ts line 54
-    App->>App: Vulnerable branch executes without the missing control
-    App-->>Attacker: Response confirms the weakness - CWE-347
+    participant API
+    participant DB
+    Note over API: express-backend - routes/login.ts:34
+    Note over DB: Database
+    Attacker->>API: POST /rest/user/login with classical OR 1=1 payload
+    API->>DB: SQL built by string interpolation - payload becomes query
+    DB-->>API: First matching row regardless of intended predicate
+    API-->>Attacker: 200 OK with authenticated session / leaked rows
+    alt Current state — T-001
+        Attacker->>API: Crafted request exploiting T-001 succeeds
+        API-->>Attacker: Exploitation confirmed
+    else After M-001 — Replace raw SQL with Sequelize parameterized query in login 
+        Attacker->>API: Same request after the fix is applied
+        API-->>Attacker: Request rejected
+    end
 ```
+
+**Key takeaway:** Until [M-001](#m-001) — Replace raw SQL with Sequelize parameterized query in login route (Replace raw SQL with Sequelize parameterized query in login ) lands, [T-001](#t-001) — SQL injection authentication bypass routes/login.ts is exploitable at `routes/login.ts:34` (Critical-severity, [CWE-89](https://cwe.mitre.org/data/definitions/89.html)).
 
 **Defense in Depth**
 
-- Primary mitigation: [M-001](#m-001) (Establish dependency vulnerability scanning and update SLA)
+- Primary mitigation: [M-001](#m-001) (Replace raw SQL with Sequelize parameterized query in login route)
+- Defence in depth: [M-025](#m-025) (Add comprehensive security event logging and alerting)
 
-### 3.2 RSA private key hardcoded offline JWT forgery
+### 3.2 Hardcoded RSA private key enables JWT forgery lib/insecurit…
 
-**Source:** [F-002](#f-002) — RSA private key hardcoded offline JWT forgery - `lib/insecurity.ts:23`
+**Source:** [F-002](#f-002) — `lib/insecurity.ts:23`
 
 Severity **Critical** ([CWE-321](https://cwe.mitre.org/data/definitions/321.html)). STRIDE: Spoofing. See [§8 T-002](#t-002) for the full register row.
 
 **Attack Steps**
 
-1. The RSA 2048-bit private key is embedded in `lib/insecurity.ts:23` and committed to a public GitHub repository.
-2. Any user can retrieve the key (git clone or GitHub web UI), call `jwt.sign`({id:1, email:'admin@juice-`sh.op`', isAdmin:true}, privateKey, {algorithm:'RS256'}) offline and produce a cryptographically valid admin JWT without any server interaction.
-3. Clone the public repository and locate the cryptographic key at `lib/insecurity.ts:23`.
+1. The RSA-2048 private key is hardcoded in `lib/insecurity.ts:23` and committed to the public git repository.
+2. Any person with repository read access can extract it and forge arbitrary JWT tokens for any user including admin.
+3. [CWE-321](https://cwe.mitre.org/data/definitions/321.html).
 
 **Sequence Diagram**
 
@@ -541,28 +557,37 @@ sequenceDiagram
     participant Repo
     participant App
     Note over Repo: Public repository
-    Note over App: backend-api - lib/insecurity.ts:23
+    Note over App: express-backend - lib/insecurity.ts:23
     Attacker->>Repo: Clone or browse - extract private key from lib/insecurity.ts line 23
     Attacker->>Attacker: Sign forged token / signature with the extracted key
     Attacker->>App: Submit forged artefact in normal authentication flow
     App-->>Attacker: Request accepted as authentic - signature validates
+    alt Current state — T-002
+        Attacker->>Repo: Crafted request exploiting T-002 succeeds
+        Repo-->>Attacker: Exploitation confirmed
+    else After M-002 — Remove hardcoded RSA private key, rotate to env vars
+        Attacker->>Repo: Same request after the fix is applied
+        Repo-->>Attacker: Request rejected
+    end
 ```
+
+**Key takeaway:** Until [M-002](#m-002) — Remove hardcoded RSA private key; rotate to environment variable (Remove hardcoded RSA private key; rotate to environment vari) lands, [T-002](#t-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts is exploitable at `lib/insecurity.ts:23` (Critical-severity, [CWE-321](https://cwe.mitre.org/data/definitions/321.html)).
 
 **Defense in Depth**
 
-- Primary mitigation: [M-002](#m-002) (Implement application-level CSP and remove bypassSecurityTrustHtml)
+- Primary mitigation: [M-002](#m-002) (Remove hardcoded RSA private key; rotate to environment variable)
 
-### 3.3 SQL injection login authentication bypass
+### 3.3 JWT algorithm confusion bypass via express jwt 0.1.3 lib/in…
 
-**Source:** [F-003](#f-003) — SQL injection login authentication bypass - `routes/login.ts:34`
+**Source:** [F-003](#f-003) — `lib/insecurity.ts:54`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 T-003](#t-003) for the full register row.
+Severity **Critical** ([CWE-327](https://cwe.mitre.org/data/definitions/327.html)). STRIDE: Spoofing. See [§8 T-003](#t-003) for the full register row.
 
 **Attack Steps**
 
-1. `routes/login.ts:34` constructs an SQL query via template literal: SELECT * FROM Users WHERE email = '\${`req.body`.email}' AND password = '...' AND deletedAt IS NULL.
-2. An attacker submits email=admin@juice-`sh.op`'-- which comments out the password check, authenticating as admin without knowing the password.
-3. UNION-based injection can dump the entire Users table.
+1. express-jwt 0.1.3 (`CVE-2020-15084`) does not enforce algorithm restrictions.
+2. An attacker can craft a JWT with `alg:none`, strip the signature, and the middleware accepts it as valid.
+3. `RS256`→`HS256` confusion allows signing with the public key as HMAC secret.
 
 **Sequence Diagram**
 
@@ -570,31 +595,41 @@ Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html))
 sequenceDiagram
     autonumber
     actor Attacker
-    participant API
-    participant DB
-    Note over API: backend-api - routes/login.ts:34
-    Note over DB: Database
-    Attacker->>API: Crafted HTTP request to the affected endpoint with classical OR 1=1 payload
-    API->>DB: SQL built by string interpolation - payload becomes query
-    DB-->>API: First matching row regardless of intended predicate
-    API-->>Attacker: 200 OK with authenticated session / leaked rows
+    participant App
+    Note over App: express-backend - lib/insecurity.ts:54
+    Attacker->>App: GET /jwks or read RSA public key from the repo
+    App-->>Attacker: Public RSA key (intended for RS256 verification)
+    Attacker->>Attacker: Sign forged JWT with HS256 using the RSA public key as the HMAC secret (or set alg=none and drop the signature)
+    Attacker->>App: Authenticated request carrying the forged token
+    App-->>Attacker: 200 OK - server accepts the forged token because it does not enforce algorithm binding
+    alt Current state — T-003
+        Attacker->>App: Crafted request exploiting T-003 succeeds
+        App-->>Attacker: Exploitation confirmed
+    else After M-003 — Upgrade express-jwt to >=6.0.0 and enforce algorithm allowli
+        Attacker->>App: Same request after the fix is applied
+        App-->>Attacker: Request rejected
+    end
 ```
+
+**Key takeaway:** Until [M-003](#m-003) — Upgrade express-jwt to >=6.0.0 and enforce algorithm allowlist (Upgrade express-jwt to >=6.0.0 and enforce algorithm allowli) lands, [T-003](#t-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts is exploitable at `lib/insecurity.ts:54` (Critical-severity, [CWE-327](https://cwe.mitre.org/data/definitions/327.html)).
 
 **Defense in Depth**
 
-- Primary mitigation: [M-003](#m-003) (Replace raw SQL with Sequelize parameterized query)
+- Primary mitigation: [M-003](#m-003) (Upgrade express-jwt to >=6.0.0 and enforce algorithm allowlist)
+- Defence in depth: [M-024](#m-024) (Implement dependency update automation and security audit policy)
+- Defence in depth: [M-025](#m-025) (Add comprehensive security event logging and alerting)
 
-### 3.4 SQL injection product search (UNION + schema exfil)
+### 3.4 Stored XSS in admin panel via user email and feedback front…
 
-**Source:** [F-004](#f-004) — SQL injection product search (UNION + schema exfil) - `routes/search.ts:23`
+**Source:** [F-004](#f-004) — `frontend/src/app/administration/administration.component.ts:60`
 
-Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Tampering. See [§8 T-004](#t-004) for the full register row.
+Severity **Critical** ([CWE-79](https://cwe.mitre.org/data/definitions/79.html)). STRIDE: Tampering. See [§8 T-004](#t-004) for the full register row.
 
 **Attack Steps**
 
-1. `routes/search.ts:23` builds: SELECT * FROM Products WHERE ((name LIKE '%\${criteria}%' ...).
-2. An attacker submits q=')) UNION SELECT * FROM Users-- to enumerate all users.
-3. The same route at line 47 runs SELECT sql FROM sqlite_master on UNION success, exposing the full database schema.
+1. The admin panel bypasses Angular XSS protection on user email (`administration.component.ts:60`) and feedback comments (`administration.component.ts:78`).
+2. An attacker who registers with a crafted email like `<script>`...`</script>` injects persistent XSS into the admin panel.
+3. [CWE-79](https://cwe.mitre.org/data/definitions/79.html).
 
 **Sequence Diagram**
 
@@ -602,31 +637,40 @@ Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html))
 sequenceDiagram
     autonumber
     actor Attacker
-    participant API
-    participant DB
-    Note over API: backend-api - routes/search.ts:23
-    Note over DB: Database
-    Attacker->>API: Crafted HTTP request to the affected endpoint with classical OR 1=1 payload
-    API->>DB: SQL built by string interpolation - payload becomes query
-    DB-->>API: First matching row regardless of intended predicate
-    API-->>Attacker: 200 OK with authenticated session / leaked rows
+    actor Victim
+    participant App
+    Note over App: angular-spa - frontend/src/app/administration/administration.component.ts:60
+    Attacker->>App: Crafted HTTP request to the affected endpoint with HTML payload - onerror handler exfiltrates cookies
+    Victim->>App: Loads page rendering the stored / reflected payload
+    App-->>Victim: HTML contains the unescaped attacker payload - script executes
+    Victim->>Attacker: Outbound request leaks session cookie / token
+    alt Current state — T-004
+        Attacker->>App: Crafted request exploiting T-004 succeeds
+        App-->>Attacker: Exploitation confirmed
+    else After M-011 — Remove bypassSecurityTrustHtml() from administration compone
+        Attacker->>App: Same request after the fix is applied
+        App-->>Attacker: Request rejected
+    end
 ```
+
+**Key takeaway:** Until [M-011](#m-011) — Remove bypassSecurityTrustHtml() from administration component (Remove `bypassSecurityTrustHtml()` from administration compone) lands, [T-004](#t-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ… is exploitable at `frontend/src/app/administration/administration.component.ts:60` (Critical-severity, [CWE-79](https://cwe.mitre.org/data/definitions/79.html)).
 
 **Defense in Depth**
 
-- Primary mitigation: [M-004](#m-004) (Use Sequelize `Op.like` with parameterized values for search)
+- Primary mitigation: [M-011](#m-011) (Remove `bypassSecurityTrustHtml()` from administration component)
+- Defence in depth: [M-024](#m-024) (Implement dependency update automation and security audit policy)
 
-### 3.5 Remote code execution notevil sandbox bypass in B2B API
+### 3.5 Remote code execution via sandbox escape in B2B order API r…
 
-**Source:** [F-005](#f-005) — Remote code execution notevil sandbox bypass in B2B API - `routes/b2bOrder.ts:23`
+**Source:** [F-005](#f-005) — `routes/b2bOrder.ts:23`
 
-Severity **Critical** ([CWE-94](https://cwe.mitre.org/data/definitions/94.html)). STRIDE: Elevation of Privilege. See [§8 T-005](#t-005) for the full register row.
+Severity **Critical** ([CWE-94](https://cwe.mitre.org/data/definitions/94.html)). STRIDE: Tampering. See [§8 T-005](#t-005) for the full register row.
 
 **Attack Steps**
 
-1. POST `/b2b/v2/orders` accepts orderLinesData (user-controlled string) and executes it via vm.runInContext('safeEval(orderLinesData)', sandbox) at `routes/b2bOrder.ts:23`.
-2. The notevil library has documented sandbox escape vulnerabilities.
-3. An attacker can execute arbitrary `Node.js` code by sending a crafted payload: {"orderLinesData":"require('child_process').execSync('id')"}.
+1. POST `/api/B2BOrder` with orderLinesData containing prototype pollution payload (e.g., constructor[prototype][toString]=()=>{ require("child_process").exec("id") }) escapes the `notevil` safeEval sandbox via prototype chain manipulation and executes arbitrary Node\.js code.
+2. [CWE-94](https://cwe.mitre.org/data/definitions/94.html).
+3. `routes/b2bOrder.ts:23`.
 
 **Sequence Diagram**
 
@@ -636,29 +680,38 @@ sequenceDiagram
     actor Attacker
     participant API
     participant Sandbox
-    Note over API: backend-api - routes/b2bOrder.ts:23
+    Note over API: b2b-api - routes/b2bOrder.ts:23
     Note over Sandbox: Eval / VM context
-    Attacker->>API: POST /b2b/v2/orders with JS payload escaping the sandbox
+    Attacker->>API: POST /api/B2BOrder with JS payload escaping the sandbox
     API->>Sandbox: Pass attacker-controlled code to eval / vm.runInContext
     Sandbox->>Sandbox: Prototype-walk reaches the host realm - RCE
     API-->>Attacker: Command output / arbitrary side effects
+    alt Current state — T-005
+        Attacker->>API: Crafted request exploiting T-005 succeeds
+        API-->>Attacker: Exploitation confirmed
+    else After M-022 — Replace safeEval with structured JSON order line parsing
+        Attacker->>API: Same request after the fix is applied
+        API-->>Attacker: Request rejected
+    end
 ```
+
+**Key takeaway:** Until [M-022](#m-022) — Replace safeEval with structured JSON order line parsing (Replace safeEval with structured JSON order line parsing) lands, [T-005](#t-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts is exploitable at `routes/b2bOrder.ts:23` (Critical-severity, [CWE-94](https://cwe.mitre.org/data/definitions/94.html)).
 
 **Defense in Depth**
 
-- Primary mitigation: [M-005](#m-005) (Remove eval-based order processing; use structured input schema)
+- Primary mitigation: [M-022](#m-022) (Replace safeEval with structured JSON order line parsing)
 
-### 3.6 Server side code injection via eval on username field
+### 3.6 Remote code execution via eval in userProfile routes/userPr…
 
-**Source:** [F-006](#f-006) — Server side code injection via eval on username field - `routes/userProfile.ts:62`
+**Source:** [F-006](#f-006) — `routes/userProfile.ts:62`
 
 Severity **Critical** ([CWE-95](https://cwe.mitre.org/data/definitions/95.html)). STRIDE: Tampering. See [§8 T-006](#t-006) for the full register row.
 
 **Attack Steps**
 
-1. `routes/userProfile.ts:62` calls eval(code) where code is derived from the username field: const code = .
-2. username .
-3. When an authenticated user sets their username to a JavaScript expression (e.g.
+1. POST `/profile` with username containing #{&lt;code>} causes `routes/userProfile.ts:62` to eval(code) where code is extracted from the username field.
+2. An authenticated attacker sets username to #{process.mainModule.require("child_process").execSync("id").toString()} to execute arbitrary OS commands.
+3. [CWE-95](https://cwe.mitre.org/data/definitions/95.html).
 
 **Sequence Diagram**
 
@@ -667,27 +720,36 @@ sequenceDiagram
     autonumber
     actor Attacker
     participant App
-    Note over App: backend-api - routes/userProfile.ts:62
+    Note over App: express-backend - routes/userProfile.ts:62
     Attacker->>App: Crafted request exercising the weakness at routes/userProfile.ts line 62
     App->>App: Vulnerable branch executes without the missing control
     App-->>Attacker: Response confirms the weakness - CWE-95
+    alt Current state — T-006
+        Attacker->>App: Crafted request exploiting T-006 succeeds
+        App-->>Attacker: Exploitation confirmed
+    else After M-006 — Remove eval() from userProfile route, use safe template str
+        Attacker->>App: Same request after the fix is applied
+        App-->>Attacker: Request rejected
+    end
 ```
+
+**Key takeaway:** Until [M-006](#m-006) — Remove eval() from userProfile route; use safe template string replacement (Remove `eval()` from userProfile route; use safe template stri) lands, [T-006](#t-006) — Remote code execution via eval in userProfile routes/userProfile.ts is exploitable at `routes/userProfile.ts:62` (Critical-severity, [CWE-95](https://cwe.mitre.org/data/definitions/95.html)).
 
 **Defense in Depth**
 
-- Primary mitigation: [M-006](#m-006) (Remove `eval()` from username processing; use safe string rendering)
+- Primary mitigation: [M-006](#m-006) (Remove `eval()` from userProfile route; use safe template string replacement)
 
-### 3.7 DOM XSS search results rendered via trust HTML bypass
+### 3.7 SQL injection full database disclosure via UNION attack rou…
 
-**Source:** [F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass - `frontend/src/app/search-result/search-result.component.ts:170`
+**Source:** [F-007](#f-007) — `routes/search.ts:23`
 
-Severity **Critical** ([CWE-79](https://cwe.mitre.org/data/definitions/79.html)). STRIDE: Tampering. See [§8 T-019](#t-019) for the full register row.
+Severity **Critical** ([CWE-89](https://cwe.mitre.org/data/definitions/89.html)). STRIDE: Information Disclosure. See [§8 T-007](#t-007) for the full register row.
 
 **Attack Steps**
 
-1. `frontend/src/app/search-result/search-result.component.ts:170` calls this.sanitizer.bypassSecurityTrustHtml(queryParam) and binds the result to [innerHTML] in the template.
-2. An attacker crafts a URL with q=`<img src=x onerror=alert(document.cookie)>` and shares it.
-3. When the victim clicks the link, the Angular SPA renders the unsanitized parameter, executing the attacker's JavaScript in the victim's browser with full access to localStorage (JWT token).
+1. The search endpoint uses raw string interpolation in SELECT .
+2. LIKE queries (`routes/search.ts:23`).
+3. A UNION SELECT attack can extract all tables including Users, products, orders, and security answers.
 
 **Sequence Diagram**
 
@@ -695,79 +757,28 @@ Severity **Critical** ([CWE-79](https://cwe.mitre.org/data/definitions/79.html))
 sequenceDiagram
     autonumber
     actor Attacker
-    actor Victim
-    participant App
-    Note over App: frontend-spa - frontend/src/app/search-result/search-result.component.ts:170
-    Attacker->>App: Reflected attacker-controlled input (HTML payload) with HTML payload - onerror handler exfiltrates cookies
-    Victim->>App: Loads page rendering the stored / reflected payload
-    App-->>Victim: HTML contains the unescaped attacker payload - script executes
-    Victim->>Attacker: Outbound request leaks session cookie / token
+    participant API
+    participant DB
+    Note over API: express-backend - routes/search.ts:23
+    Note over DB: Database
+    Attacker->>API: Crafted search query (HTML payload in `q=` parameter) with classical OR 1=1 payload
+    API->>DB: SQL built by string interpolation - payload becomes query
+    DB-->>API: First matching row regardless of intended predicate
+    API-->>Attacker: 200 OK with authenticated session / leaked rows
+    alt Current state — T-007
+        Attacker->>API: Crafted request exploiting T-007 succeeds
+        API-->>Attacker: Exploitation confirmed
+    else After M-005 — Replace raw SQL with Sequelize ORM parameterized queries in 
+        Attacker->>API: Same request after the fix is applied
+        API-->>Attacker: Request rejected
+    end
 ```
+
+**Key takeaway:** Until [M-005](#m-005) — Replace raw SQL with Sequelize ORM parameterized queries in search route (Replace raw SQL with Sequelize ORM parameterized queries in ) lands, [T-007](#t-007) — SQL injection full database disclosure via UNION attack routes/search.ts is exploitable at `routes/search.ts:23` (Critical-severity, [CWE-89](https://cwe.mitre.org/data/definitions/89.html)).
 
 **Defense in Depth**
 
-- Primary mitigation: [M-019](#m-019) (Remove bypassSecurityTrustHtml; use Angular's default sanitization)
-
-### 3.8 Stored XSS feedback comments rendered unsanitized in admin…
-
-**Source:** [F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel - `frontend/src/app/administration/administration.component.ts:78`
-
-Severity **Critical** ([CWE-79](https://cwe.mitre.org/data/definitions/79.html)). STRIDE: Tampering. See [§8 T-020](#t-020) for the full register row.
-
-**Attack Steps**
-
-1. `frontend/src/app/administration/administration.component.ts:78` marks feedback.comment as trusted HTML via bypassSecurityTrustHtml(feedback.comment).
-2. The admin panel at `/administration` renders these comments via [innerHTML] binding.
-3. Any user who submits feedback with XSS payload stores it in the database; when admin views the panel, the payload executes in the admin's browser, potentially stealing the admin JWT and enabling privilege escalation.
-
-**Sequence Diagram**
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Attacker
-    actor Victim
-    participant App
-    Note over App: frontend-spa - frontend/src/app/administration/administration.component.ts:78
-    Attacker->>App: Stored feedback / comment submission (HTML payload) with HTML payload - onerror handler exfiltrates cookies
-    Victim->>App: Loads page rendering the stored / reflected payload
-    App-->>Victim: HTML contains the unescaped attacker payload - script executes
-    Victim->>Attacker: Outbound request leaks session cookie / token
-```
-
-**Defense in Depth**
-
-- Primary mitigation: [M-020](#m-020) (Sanitize feedback content server-side before storage; remove bypassSecurityTrustHtml in admin panel)
-
-### 3.9 MD5 password hashing passwords trivially reversible
-
-**Source:** [F-027](#f-027) — MD5 password hashing passwords trivially reversible - `lib/insecurity.ts:43`
-
-Severity **Critical** ([CWE-916](https://cwe.mitre.org/data/definitions/916.html)). STRIDE: Information Disclosure. See [§8 T-027](#t-027) for the full register row.
-
-**Attack Steps**
-
-1. `models/user.ts:77` and `lib/insecurity.ts:43` hash passwords with a single-round MD5 with no salt: crypto.createHash('md5').update(data).digest('hex').
-2. MD5 is a fast, cryptographically broken hash.
-3. The complete md5 rainbow table for common passwords fits in memory.
-
-**Sequence Diagram**
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Attacker
-    participant App
-    Note over App: backend-api - lib/insecurity.ts:43
-    Attacker->>Attacker: Craft JWT with header alg=none and admin claims
-    Attacker->>App: Crafted HTTP request to the affected endpoint with the unsigned token in Authorization
-    App->>App: Validate token without pinning the signing algorithm
-    App-->>Attacker: 200 OK - request authorised under forged admin identity
-```
-
-**Defense in Depth**
-
-- Primary mitigation: [M-027](#m-027) (Replace MD5 with bcrypt (cost factor 12+) for password hashing)
+- Primary mitigation: [M-005](#m-005) (Replace raw SQL with Sequelize ORM parameterized queries in search route)
 
 <!-- generated:walkthrough_renderer -->
 
@@ -775,20 +786,18 @@ sequenceDiagram
 
 ## 4. Assets
 
-Information assets and the classification level that drives the Confidentiality / Integrity / Availability targets used in [§8 Threat Register](#8-threat-register) risk scoring.
+Information assets and the classification level that drives the Confidentiality / Integrity / Availability targets used in [§8 Findings Register](#8-findings-register) risk scoring.
 
 | Asset | ID | Classification | Description | Linked Threats |
 |----------------------|-----|--------------|------------------------------------|------------------------------------------------|
-| User Credentials (email + MD5 password) | A-001 | Confidential | User email addresses and MD5-hashed passwords stored in the SQLite Users table. MD5 with no salt makes them trivially reversible. | [F-003](#f-003) (SQL injection login authentication bypass) · [F-004](#f-004) (SQL injection product search) · [F-016](#f-016) (Missing rate limiting on authentication endpoint) · [F-019](#f-019) (DOM XSS search results rendered via trust HTML bypass) · [F-020](#f-020) (Stored XSS feedback comments rendered unsanitized in admin panel) · [F-021](#f-021) (XSS last login ip rendered as trusted HTML) · [F-024](#f-024) (XSS via postMessage and iframe DOM based attack) · [F-025](#f-025) (Product description and review rendered as HTML stored XSS vector) · [F-027](#f-027) (MD5 password hashing passwords trivially reversible) |
-| RSA Private Key (JWT signing) | A-002 | Restricted | 2048-bit RSA private key hardcoded in `lib/insecurity.ts` line 23. Used to sign all JWTs. Permanently compromised as it is committed to the public GitHub repository. | [F-001](#f-001) (JWT algorithm confusion algorithm none bypass) · [F-002](#f-002) (RSA private key hardcoded offline JWT forgery) · [F-008](#f-008) (Zip slip path traversal via unzipper 0.9.15) · [F-010](#f-010) (Sensitive files and logs exposed without authentication) · [F-013](#f-013) (Prometheus metrics endpoint exposed without authentication) · [F-015](#f-015) (Path traversal in data erasure layout parameter) · [F-028](#f-028) (User model returns sensitive fields in API responses) · [F-030](#f-030) (Database schema exposure via SQL injection in search route) |
-| JWT Session Tokens | A-003 | Confidential | JWT tokens stored in browser localStorage. Signed with RS256 but the private key is public. Tokens include user id, email, role (isAdmin), and basket id. | [F-002](#f-002) (RSA private key hardcoded offline JWT forgery) · [F-008](#f-008) (Zip slip path traversal via unzipper 0.9.15) · [F-010](#f-010) (Sensitive files and logs exposed without authentication) · [F-013](#f-013) (Prometheus metrics endpoint exposed without authentication) · [F-015](#f-015) (Path traversal in data erasure layout parameter) · [F-022](#f-022) (Client side JWT stored in localStorage accessible to XSS) · [F-028](#f-028) (User model returns sensitive fields in API responses) · [F-030](#f-030) (Database schema exposure via SQL injection in search route) |
-| SQLite Database (All Application Data) | A-004 | Confidential | SQLite3 database containing all users, products, orders, complaints, feedback, payment cards, addresses, and other relational data. Accessible via raw SQL injection in login and search routes. | [F-003](#f-003) (SQL injection login authentication bypass) · [F-004](#f-004) (SQL injection product search) · [F-011](#f-011) (IDOR basket accessible by any authenticated user) · [F-019](#f-019) (DOM XSS search results rendered via trust HTML bypass) · [F-020](#f-020) (Stored XSS feedback comments rendered unsanitized in admin panel) · [F-021](#f-021) (XSS last login ip rendered as trusted HTML) · [F-024](#f-024) (XSS via postMessage and iframe DOM based attack) · [F-025](#f-025) (Product description and review rendered as HTML stored XSS vector) · [F-029](#f-029) (Product reviews allow unauthorized update IDOR in review update) · [F-030](#f-030) (Database schema exposure via SQL injection in search route) |
-| MarsDB Document Store (Reviews + Orders) | A-005 | Internal | In-memory MongoDB-compatible store containing product reviews and orders. Vulnerable to NoSQL injection via \$where operator in `showProductReviews.ts`. | - |
-| Application Access Logs | A-006 | Internal | Morgan combined-format access logs written to logs/ directory. Intentionally exposed at `/support/logs` without authentication - readable by anyone. | [F-010](#f-010) (Sensitive files and logs exposed without authentication) · [F-013](#f-013) (Prometheus metrics endpoint exposed without authentication) · [F-014](#f-014) (Access logs exposed to unauthenticated users tamper potential) · [F-028](#f-028) (User model returns sensitive fields in API responses) · [F-030](#f-030) (Database schema exposure via SQL injection in search route) |
-| Uploaded Files (Complaints, Profile Images) | A-007 | Internal | Files uploaded via `/file-upload` and `/profile/image/file` stored in uploads/complaints/ and assets/public/images/uploads/. Zip-slip allows extraction to arbitrary paths. | [F-005](#f-005) (Remote code execution notevil sandbox bypass in B2B API) · [F-006](#f-006) (Server side code injection via eval on username field) · [F-007](#f-007) (XXE via XML file upload with external entity resolution) · [F-008](#f-008) (Zip slip path traversal via unzipper 0.9.15) · [F-009](#f-009) (Server side request forgery via profile image URL upload) · [F-015](#f-015) (Path traversal in data erasure layout parameter) |
-| Server-Side Application Code and Config | A-008 | Internal | TypeScript source, compiled JS, config YAML files (config/*.yml), and intentional vulnerability snippets accessible via /snippets/ routes. | - |
-| Prometheus Metrics Endpoint | A-009 | Internal | prom-client metrics exposed at `/metrics` without authentication. Reveals server performance data, request counts, and system information. | - |
-| Encryption Keys Directory | A-010 | Restricted | The /encryptionkeys/ route serves the RSA public key (`jwt.pub`) and other key material with directory listing enabled. The private key is embedded in source. | [F-002](#f-002) (RSA private key hardcoded offline JWT forgery) · [F-008](#f-008) (Zip slip path traversal via unzipper 0.9.15) · [F-010](#f-010) (Sensitive files and logs exposed without authentication) · [F-013](#f-013) (Prometheus metrics endpoint exposed without authentication) · [F-015](#f-015) (Path traversal in data erasure layout parameter) · [F-028](#f-028) (User model returns sensitive fields in API responses) · [F-030](#f-030) (Database schema exposure via SQL injection in search route) |
+| JWT RSA Private Key | A-002 | Restricted | RSA-2048 private key hardcoded in `lib/insecurity.ts:23` and stored in encryptionkeys/. Possession of this key allows forging arbitrary JWT tokens for any user including admin. | 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts<br/>🔴 [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts<br/>🟠 [F-008](#f-008) — MD5 password hashing trivially reversible lib/insecurity.ts<br/>🟠 [F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa<br/>🟠 [F-012](#f-012) — No Content Security Policy allows arbitrary script injection server.ts<br/>🟠 [F-013](#f-013) — Plaintext security answers stored in database models/securityAnswer.ts<br/>🟠 [F-015](#f-015) — Path traversal in encryption key and log file endpoints routes/keyServer.ts<br/>🟡 [F-021](#f-021) — Build context includes sensitive files without dockerignore exclusions<br/>🟡 [F-022](#f-022) — Open redirect via URL substring match bypass lib/insecurity.ts |
+| User Credentials (Email + Password Hash) | A-001 | Confidential | User email addresses and `MD5`-hashed passwords stored in SQLite Users table. `MD5` is cryptographically weak; hashes can be reversed with rainbow tables. | 🔴 [F-001](#f-001) — SQL injection authentication bypass routes/login.ts<br/>🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ…<br/>🔴 [F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts<br/>🟠 [F-008](#f-008) — MD5 password hashing trivially reversible lib/insecurity.ts<br/>🔴 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo…<br/>🟠 [F-017](#f-017) — No rate limiting on authentication endpoints server.ts |
+| Session Tokens (JWT) | A-003 | Confidential | JWT tokens issued at login, stored in browser cookies. Valid for 6 hours. Compromise enables account takeover. | 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts<br/>🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ…<br/>🔴 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo…<br/>🟠 [F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa<br/>🟠 [F-013](#f-013) — Plaintext security answers stored in database models/securityAnswer.ts<br/>🟡 [F-021](#f-021) — Build context includes sensitive files without dockerignore exclusions |
+| Customer Orders and Basket Data | A-004 | Confidential | Purchase history, basket contents, delivery addresses, and payment card data stored in SQLite. Accessible via Sequelize/MarsDB. | 🔴 [F-001](#f-001) — SQL injection authentication bypass routes/login.ts<br/>🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ…<br/>🔴 [F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts<br/>🔴 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo…<br/>🟠 [F-013](#f-013) — Plaintext security answers stored in database models/securityAnswer.ts<br/>🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts<br/>🟡 [F-021](#f-021) — Build context includes sensitive files without dockerignore exclusions |
+| FTP Directory Contents | A-006 | Confidential | Intentionally exposed sensitive files in ftp/: `acquisitions.md` (M&A plans), `coupons_2013.md.bak`, incident-`support.kdbx` (KeePass database), `eastere.gg`, `suspicious_errors.yml`. | 🟠 [F-015](#f-015) — Path traversal in encryption key and log file endpoints routes/keyServer.ts<br/>🟠 [F-016](#f-016) — Unauthenticated FTP directory listing exposes sensitive files server.ts<br/>🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts |
+| Product Catalog and Pricing | A-005 | Internal | Product names, descriptions, prices, and images stored in Products table. Writable via SQL injection or BOLA vulnerabilities. | 🔴 [F-001](#f-001) — SQL injection authentication bypass routes/login.ts<br/>🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ…<br/>🔴 [F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts<br/>🔴 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo… |
+| Application Source Code and Challenge Logic | A-007 | Internal | TypeScript source code, challenge definitions, and coding challenge fix options. Exposed via /solve/challenges/ endpoint and ftp/ directory. | 🟠 [F-015](#f-015) — Path traversal in encryption key and log file endpoints routes/keyServer.ts<br/>🟠 [F-016](#f-016) — Unauthenticated FTP directory listing exposes sensitive files server.ts<br/>🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts |
+| User Profile Images and Memories | A-008 | Internal | User-uploaded profile images and memory photos stored in frontend/dist/frontend/assets/public/images/uploads/. Writable via SSRF via profile image URL upload. | 🔴 [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts<br/>🔴 [F-006](#f-006) — Remote code execution via eval in userProfile routes/userProfile.ts<br/>🟠 [F-010](#f-010) — XML external entity injection via libxmljs2 external entity resolution routes/f…<br/>🟠 [F-014](#f-014) — SSRF via profile image URL upload routes/profileImageUrlUpload.ts<br/>🟠 [F-015](#f-015) — Path traversal in encryption key and log file endpoints routes/keyServer.ts<br/>🟡 [F-020](#f-020) — Unrestricted file upload allows malicious file storage routes/fileUpload.ts |
 
 ---
 
@@ -796,29 +805,31 @@ Information assets and the classification level that drives the Confidentiality 
 
 Network-reachable entry points classified by authentication requirement. Each row links to the threat(s) referenced in its **Notes** column. The **Risk** column reflects the highest-severity linked finding.
 
-### 5.1 Unauthenticated Entry Points (11)
+### 5.1 Unauthenticated Entry Points (4)
 
-| Method | Route | Auth | Risk | Notes |
-|------|----------------------|----|----------|------------------------------------|
-| POST | `/b2b/v2/orders` | No | 🔴 Critical | [F-005](#f-005) (Remote code execution notevil sandbox bypass in B2B API)<br/>RCE via notevil sandbox escape. User-supplied JavaScript executed in vm context. |
-| GET | `/rest/products/search` | No | 🔴 Critical | [F-004](#f-004) (SQL injection product search)<br/>[F-030](#f-030) (Database schema exposure via SQL injection in search route)<br/>SQL injection (`search.ts:23`) - raw string interpolation in LIKE clause. |
-| POST | `/rest/user/login` | No | 🔴 Critical | [F-016](#f-016) (Missing rate limiting on authentication endpoint)<br/>[F-003](#f-003) (SQL injection login authentication bypass)<br/>SQL injection (`login.ts:34`) - raw string interpolation in WHERE clause. No rate limiting beyond `/rest/user/reset-password`. |
-| GET | `/encryptionkeys/` | No | 🟠 High | [F-010](#f-010) (Sensitive files and logs exposed without authentication)<br/>Serves RSA public key and directory listing of encryption key files. |
-| POST | `/file-upload` | No | 🟠 High | [F-007](#f-007) (XXE via XML file upload with external entity resolution)<br/>[F-008](#f-008) (Zip slip path traversal via unzipper 0.9.15)<br/>[F-009](#f-009) (Server side request forgery via profile image URL upload)<br/>XXE (libxmljs2 `noent:true`), zip-slip (unzipper 0.9.15), YAML deserialization. |
-| GET | `/ftp/` | No | 🟠 High | [F-010](#f-010) (Sensitive files and logs exposed without authentication)<br/>Directory listing of FTP files. serve-index middleware exposed without auth. |
-| GET | `/support/logs/` | No | 🟠 High | [F-010](#f-010) (Sensitive files and logs exposed without authentication)<br/>[F-014](#f-014) (Access logs exposed to unauthenticated users tamper potential)<br/>Serves application log files with directory listing. No authentication. |
-| GET | `/metrics` | No | 🟡 Medium | [F-013](#f-013) (Prometheus metrics endpoint exposed without authentication)<br/>Prometheus metrics endpoint - exposes server internals without authentication. |
-| GET | `/redirect` | No | 🟡 Medium | [F-012](#f-012) (Open redirect bypass via allowlist prefix check)<br/>Open redirect via `isRedirectAllowed()` bypass - redirects to attacker-controlled URL. |
-| GET | `/api-docs` | No | - | Swagger UI with full API documentation exposed publicly. |
-| ? | `Socket.IO WebSocket connection` | No | - | `Socket.IO` 3.x real-time channel. Unauthenticated connections accepted on initial connect. |
+| Method | Route | Risk | Notes |
+|------|-------------------------------------|----------|------------------------------------|
+| ? | `/rest/products/search (SQL injection)` | 🔴 Critical | [F-007](#f-007) (SQL injection full database disclosure via UNION attack `routes/search.ts`)<br/>Search endpoint with unsanitized LIKE query injection, allows UNION-based data extraction and schema disclosure. |
+| ? | `/rest/user/login (SQL injection)` | 🔴 Critical | [F-001](#f-001) (SQL injection authentication bypass `routes/login.ts`)<br/>Login endpoint vulnerable to SQL injection authentication bypass. Raw string interpolation in SELECT query. |
+| ? | `/encryptionkeys/:file` | 🟠 High | [F-015](#f-015) (Path traversal in encryption key and log file endpoints `routes/keyServer.ts`)<br/>Serves JWT public key and `premium.key` from encryptionkeys/ directory via path parameter. No auth required. |
+| ? | `/ftp (directory listing)` | - | serve-index serves FTP directory with file listing and download. Contains sensitive files (`acquisitions.md`, KeePass database). |
 
-### 5.2 Authenticated Entry Points (3)
+### 5.2 Authenticated Entry Points (12)
 
-| Method | Route | Auth | Risk | Notes |
-|------|----------------------|----|----------|------------------------------------|
-| POST | `/profile/image/url` | Yes | 🔴 Critical | [F-009](#f-009) (Server side request forgery via profile image URL upload)<br/>[F-006](#f-006) (Server side code injection via eval on username field)<br/>SSRF - user-controlled URL fetched server-side via `fetch()`. No allowlist validation. |
-| GET | `/rest/basket/:id` | Yes | 🟠 High | [F-011](#f-011) (IDOR basket accessible by any authenticated user)<br/>IDOR - any authenticated user can access any basket by guessing the numeric id. |
-| POST | `/rest/products/:id/reviews (PUT variant)` | Yes | 🟠 High | [F-029](#f-029) (Product reviews allow unauthorized update IDOR in review update)<br/>[F-026](#f-026) (NoSQL injection via \$where operator in MarsDB reviews)<br/>[F-031](#f-031) (JavaScript injection via \$where can crash MarsDB process)<br/>NoSQL injection via \$where in MarsDB query (`showProductReviews.ts:36`). |
+| Method | Route | Risk | Notes |
+|-------|---------------------|----------|------------------------------------|
+| ? | `/api/B2BOrder (RCE)` | 🔴 Critical | [F-005](#f-005) (Remote code execution via sandbox escape in B2B order API `routes/b2bOrder.ts`)<br/>[F-023](#f-023) (DoS via infinite loop in B2B order evaluation `routes/b2bOrder.ts`)<br/>B2B order processing endpoint accepts orderLinesData and evaluates it via `vm.runInContext`/safeEval - remote code execution vector. |
+| POST | `/profile/image/file` | 🔴 Critical | [F-014](#f-014) (SSRF via profile image URL upload `routes/profileImageUrlUpload.ts`)<br/>[F-006](#f-006) (Remote code execution via eval in userProfile `routes/userProfile.ts`)<br/>handler: `server.ts:310` |
+| POST | `/profile/image/url` | 🔴 Critical | [F-014](#f-014) (SSRF via profile image URL upload `routes/profileImageUrlUpload.ts`)<br/>[F-006](#f-006) (Remote code execution via eval in userProfile `routes/userProfile.ts`)<br/>handler: `server.ts:311` |
+| POST | `/api/Products` | 🟠 High | [F-018](#f-018) (Broken authorization on admin API endpoints `server.ts`)<br/>handler: `server.ts:368` |
+| GET | `/api/Users` | 🟠 High | [F-018](#f-018) (Broken authorization on admin API endpoints `server.ts`)<br/>handler: `server.ts:362` |
+| POST | `/file-upload` | 🟠 High | [F-010](#f-010) (XML external entity injection via libxmljs2 external entity resolution routes/f…)<br/>[F-014](#f-014) (SSRF via profile image URL upload `routes/profileImageUrlUpload.ts`)<br/>[F-020](#f-020) (Unrestricted file upload allows malicious file storage `routes/fileUpload.ts`)<br/>handler: `server.ts:309` |
+| OPTIONS | `*` | - | handler: `server.ts:181` |
+| POST | `/api/Challenges` | - | handler: `server.ts:372` |
+| GET | `/api/Complaints` | - | handler: `server.ts:380` |
+| POST | `/api/Hints` | - | handler: `server.ts:375` |
+| POST | `/rest/memories` | - | handler: `server.ts:312` |
+| ? | `Socket.IO (WebSocket)` | - | Real-time challenge notification channel. Used for challenge completion events and some user interactions. |
 
 ---
 
@@ -826,7 +837,7 @@ Network-reachable entry points classified by authentication requirement. Each ro
 
 This chapter is organized by security-control category. The architecture section avoids artificial control IDs and finding-ID columns in overview tables. Findings are listed only where the affected control is described.
 
-_[§7](#7-security-architecture) schema v2 (13-section control-category layout). Cataloged controls: 27 total - 1 adequate, 3 partial, 13 weak, 0 unsafe, 10 missing. Linked threats: 31._
+_[§7](#7-security-architecture) schema v2 (13-section control-category layout). Cataloged controls: 18 total - 1 adequate, 2 partial, 4 weak, 8 unsafe, 3 missing. Linked threats: 24._
 
 **How to read the verdicts.** Every control category (and every sub-control below it) carries exactly one status. The two red verdicts do **not** mean the same thing - this is the distinction that decides what you have to do about a finding:
 
@@ -839,7 +850,7 @@ _[§7](#7-security-architecture) schema v2 (13-section control-category layout).
 | 🔴 Missing | **Control was never built** | **Add the control** |
 | - | Not applicable to this codebase | - |
 
-So "🔴 Unsafe" on a control category does *not* mean the control is absent - it means the control exists but does not hold (e.g. an MD5 password hash, a raw-SQL query path, a hardcoded signing key). "🔴 Missing" is reserved for controls that were never built (e.g. no Content-Security-Policy header).
+So "🔴 Unsafe" on a control category does *not* mean the control is absent - it means the control exists but does not hold (e.g. an `MD5` password hash, a raw-SQL query path, a hardcoded signing key). "🔴 Missing" is reserved for controls that were never built (e.g. no Content-Security-Policy header).
 
 ### 7.1 Security Control Overview
 
@@ -847,16 +858,16 @@ So "🔴 Unsafe" on a control category does *not* mean the control is absent - i
 
 | Control category | Verdict | Main reason |
 |----------------------|---------|------------------------------------|
-| [7.2 Identity and Authentication Controls](#72-identity-and-authentication-controls) | 🟠 Weak | 3 routed findings; catalogued controls are weak (e.g. JWT Authentication (express-jwt + jsonwebtoken), Password-Based Authentication). |
-| [7.3 Session and Token Controls](#73-session-and-token-controls) | 🔴 Missing | 1 routed finding; no controls catalogued for this category. |
-| [7.4 Authorization Controls](#74-authorization-controls) | 🔴 Missing | 4 routed findings; no controls catalogued for this category. |
-| [7.5 Query Construction and Data Access Controls](#75-query-construction-and-data-access-controls) | 🟠 Weak | 3 routed findings; catalogued controls are weak (e.g. SQL Query Parameterization, NoSQL Query Parameterization). |
-| [7.6 Input Boundary Validation Controls](#76-input-boundary-validation-controls) | 🟠 Weak | 1 routed finding; no compensating controls catalogued. |
-| [7.7 Output Encoding and Rendering Controls](#77-output-encoding-and-rendering-controls) | 🟠 Weak | 5 routed findings; catalogued controls are weak (e.g. XSS Output Encoding (Angular DomSanitizer), Server-Side Template Rendering). |
-| [7.8 Browser and Cross-Origin Controls](#78-browser-and-cross-origin-controls) | 🔴 Missing | No controls catalogued for this category. |
-| [7.9 Cryptography Secrets and Data Protection](#79-cryptography-secrets-and-data-protection) | 🔴 Missing | 1 routed finding; no controls catalogued for this category. |
-| [7.10 File Parser and Outbound Request Controls](#710-file-parser-and-outbound-request-controls) | 🔴 Missing | 11 routed findings; no controls catalogued for this category. |
-| [7.11 Operations Runtime and Supply Chain Controls](#711-operations-runtime-and-supply-chain-controls) | 🔴 Missing | 2 routed findings; no controls catalogued for this category. |
+| [7.2 Identity and Authentication Controls](#72-identity-and-authentication-controls) | 🔴 Unsafe | 2 routed findings; catalogued controls are present but defeated (e.g. Password Authentication, Multi-Factor Authentication). |
+| [7.3 Session and Token Controls](#73-session-and-token-controls) | 🟠 Weak | 0 routed findings; catalogued controls are weak (e.g. Session Management). |
+| [7.4 Authorization Controls](#74-authorization-controls) | 🟠 Weak | 2 routed findings; catalogued controls are weak (e.g. Role-Based Access Control). |
+| [7.5 Query Construction and Data Access Controls](#75-query-construction-and-data-access-controls) | 🔴 Unsafe | 3 routed findings; catalogued controls are present but defeated (e.g. SQL Query Parameterization). |
+| [7.6 Input Boundary Validation Controls](#76-input-boundary-validation-controls) | 🔴 Unsafe | 1 routed finding; catalogued controls are present but defeated (e.g. Input Validation / Sanitization). |
+| [7.7 Output Encoding and Rendering Controls](#77-output-encoding-and-rendering-controls) | 🔴 Unsafe | 2 routed findings; catalogued controls are present but defeated (e.g. HTML Output Encoding / XSS Prevention). |
+| [7.8 Browser and Cross-Origin Controls](#78-browser-and-cross-origin-controls) | 🔴 Unsafe | 1 routed finding; catalogued controls are present but defeated (e.g. CORS Policy, Content Security Policy). |
+| [7.9 Cryptography Secrets and Data Protection](#79-cryptography-secrets-and-data-protection) | 🔴 Unsafe | 4 routed findings; catalogued controls are present but defeated (e.g. Secrets Management). |
+| [7.10 File Parser and Outbound Request Controls](#710-file-parser-and-outbound-request-controls) | 🔴 Unsafe | 7 routed findings; catalogued controls are present but defeated (e.g. File Upload Validation, Outbound Request Controls (SSRF)). |
+| [7.11 Operations Runtime and Supply Chain Controls](#711-operations-runtime-and-supply-chain-controls) | 🔴 Missing | Required controls not in place (e.g. Dependency Management, Logging and Monitoring). |
 | [7.12 Real-time and Not Applicable Controls](#712-real-time-and-not-applicable-controls) | - | No controls or findings routed to this category. |
 | [7.13 Defense-in-Depth Summary](#713-defense-in-depth-summary) | - | No controls or findings routed to this category. |
 
@@ -864,256 +875,178 @@ So "🔴 Unsafe" on a control category does *not* mean the control is absent - i
 
 ### 7.2 Identity and Authentication Controls
 
-**Verdict:** 🟠 Weak - password hashing is a single-round unsalted MD5; TOTP is optional and unenforced for admin accounts; the password login query is raw SQL susceptible to injection bypass.
+**Verdict:** 🔴 Unsafe
 
-**Controls covered:** [7.2.1 Password-Based Authentication](#721-password-based-authentication) · [7.2.2 Two-Factor Authentication (TOTP)](#722-two-factor-authentication-totp)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.2.1 Password Authentication](#721-password-authentication) · [7.2.2 Multi-Factor Authentication](#722-multi-factor-authentication)
 
-- [7.2.1 Password-Based Authentication](#password-based-authentication)
-- [7.2.2 Two-Factor Authentication (TOTP)](#two-factor-authentication)
+- [7.2.1 Password Authentication](#password-authentication)
+- [7.2.2 Multi-Factor Authentication](#multi-factor-authentication)
 
-**Implemented controls:** `routes/login.ts:23` (password credential check), `lib/insecurity.ts:43` (password hashing), `routes/2fa.ts` (TOTP enrollment and verification).
+**Implemented controls:** Password login via raw SQL at `routes/login.ts:34`, `MD5` hashing at `lib/insecurity.ts:43`; JWT issuance via RSA signing at `lib/insecurity.ts:23-56`; TOTP-based 2FA at `routes/2fa.ts`.
 
-**Assessment:** Authentication is implemented through two user-facing mechanisms: password-based login and optional TOTP as a second factor. Each has a structural gap. The password login route is vulnerable to SQL injection bypass and stores passwords as unsalted MD5 hashes. TOTP is correctly implemented but opt-in with no enforcement for high-privilege accounts. The JWT token issued on successful authentication - including its signing, algorithm enforcement, and key management - is described in [§7.3 Session and Token Controls](#73-session-and-token-controls).
+**Assessment:** Both password-based login and JWT issuance controls exist but are defeated. The login query short-circuits authentication via SQL injection; the signing key is committed to the public repository, nullifying the asymmetric-signature guarantee. TOTP provides a partial second factor but is not enforced for admin accounts. Each successful login path terminates in the server issuing a session token; the signing, validation, propagation, storage, and lifecycle of that token are described in [§7.3 Session and Token Controls](#73-session-and-token-controls).
 
-<a id="password-based-authentication"></a>
-#### 7.2.1 Password-Based Authentication
+<!-- §7.2 AUTH-MECHANISMS-FROZEN — deterministic inventory, pregenerator-owned. DO NOT EDIT. -->
+**Authentication mechanisms (at a glance).** Every authentication mechanism detected on the application, its effective status, where it is assessed, and its linked findings. Controls are catalogued by domain, so JWT/session handling is assessed under [§7.3 Session and Token Controls](#73-session-and-token-controls) and password hashing under [§7.9 Cryptography Secrets and Data Protection](#79-cryptography-secrets-and-data-protection).
 
-**Status:** 🟠 Weak - login query is raw SQL susceptible to injection bypass; passwords are stored as unsalted MD5 hashes.
+| Mechanism | Status | Assessed in | Findings |
+|----------------------|---------|-----------|------------------------------------------------|
+| Password login | 🔴 Unsafe | [§7.2](#72-identity-and-authentication-controls) | [F-001](#f-001) — SQL injection authentication bypass routes/login.ts |
+| Password storage (hashing) | 🟠 High | [§7.9](#79-cryptography-secrets-and-data-protection) | [F-008](#f-008) — MD5 password hashing trivially reversible lib/insecurity.ts |
+| JWT / bearer-token session | 🔴 Unsafe | [§7.3](#73-session-and-token-controls) | [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts<br/>[F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts<br/>[F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa |
+| Session-token storage | 🟠 High | [§7.3](#73-session-and-token-controls) | [F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa |
+| Multi-factor authentication (TOTP / 2FA) | 🟡 Partial | [§7.2](#72-identity-and-authentication-controls) | - |
 
-`routes/login.ts:34` handles credential verification by constructing a raw SQL query that selects the user record matching the supplied email and pre-hashed password. `lib/insecurity.ts:43` provides the hashing helper: a single call to `crypto.createHash('md5')` with no salt. Both the query construction and the hash function are exploitable independently.
+_Also checked, not detected on this codebase: User registration, Password reset / change, OAuth / OIDC federated login._
 
-The diagram shows the intended password login path:
+<!-- §7.2 AUTH-MECHANISMS-FROZEN END -->
+
+<a id="password-authentication"></a>
+#### 7.2.1 Password Authentication
+
+**Status:** 🔴 Unsafe - the login query interpolates `req.body.email` directly into raw SQL, making authentication bypass trivial without any credentials.
+
+`routes/login.ts:34` constructs the credential-check query by string interpolation. On a successful match, `lib/insecurity.ts:issueAuthToken()` signs a JWT with the RSA private key at `lib/insecurity.ts:23` and returns it to the caller. Password hashing relies on `MD5` at `lib/insecurity.ts:43` - a single fast hash with no salt.
+
+The diagram shows the positive password-login path from submitted credentials to issued JWT:
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor User
-    participant SPA as Login Form
     participant API as routes/login.ts
     participant DB as SQLite Users table
+    participant Issuer
+    Note over Issuer: issueAuthToken()
 
-    User->>SPA: POST email + password
-    SPA->>API: POST /rest/user/login
-    API->>API: hash(password) via lib/insecurity.ts:43
-    API->>DB: SELECT user WHERE email=? AND password=?
-    DB-->>API: user row
-    API->>API: issue JWT via lib/insecurity.ts:issueAuthToken
-    API-->>SPA: { token, basket_id, email }
+    User->>API: POST /rest/user/login {email, password}
+    API->>DB: SELECT * FROM Users WHERE email = '${email}' ...
+    DB-->>API: Matched user row
+    API->>Issuer: Sign {id, email, role}
+    Issuer-->>API: RS256 JWT (6h expiry)
+    API-->>User: {token, basketId, email}
 ```
 
 **Security assessment**
 
 Two independent weaknesses sit on the login path:
 
-- `routes/login.ts:34` concatenates `req.body.email` directly into `models.sequelize.query()`. The payload `' OR 1=1--` short-circuits the WHERE clause and returns the seeded admin row without a password ([F-003](#f-003) — SQL injection login authentication bypass).
-- `lib/insecurity.ts:43` hashes passwords with unsalted MD5. Any database dump - obtained through the SQL injection above or otherwise - yields plaintext for every account via a rainbow table lookup ([F-027](#f-027) — MD5 password hashing passwords trivially reversible).
+- `routes/login.ts:34` interpolates `req.body.email` into a raw SQL string - `' OR 1=1--` bypasses the credential check entirely and returns the first (admin) row.
+- `lib/insecurity.ts:43` hashes passwords with unsalted `MD5`; a dump obtained through the SQL injection above yields recoverable plaintext without GPU hardware.
 
-The raw SQL construction at the heart of the login route is:
+The vulnerable login lookup is built as a raw SQL string:
 
 ```ts
 models.sequelize.query(
-  `SELECT * FROM Users WHERE email = '${req.body.email || ''}' AND password = '${req.body.password || ''}' AND deletedAt IS NULL`,
-  { model: UserModel, plain: true }
+  `SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${security.hash(req.body.password)}'`
 )
 ```
 
 **Relevant findings**
 
-- [F-003](#f-003) — SQL injection in the login query allows authentication bypass without a valid credential.
-- [F-027](#f-027) — Unsalted MD5 hashing means any acquired password hash is trivially reversible offline.
+- [F-001](#f-001) — SQL injection in the login query allows authentication bypass with no credentials.
+- [F-008](#f-008) — Unsalted MD5 password hashing makes offline credential recovery from any dump trivial.
 
-<a id="two-factor-authentication"></a><a id="two-factor-authentication-totp"></a>
-#### 7.2.2 Two-Factor Authentication (TOTP)
+<a id="multi-factor-authentication"></a>
+#### 7.2.2 Multi-Factor Authentication
 
-**Status:** 🟡 Partial - TOTP enrollment and verification work correctly, but the second factor is entirely optional and never required for admin accounts.
+**Status:** 🟡 Partial - TOTP enrollment and verification are implemented, but 2FA is optional and not enforced for admin accounts.
 
-TOTP is implemented via `otplib` in `routes/2fa.ts`. Users may set up a time-based one-time password authenticator through a QR-code enrollment flow. When TOTP is configured on an account, the `/rest/user/login` route detects the presence of a `totpSecret` field and requires a valid OTP before issuing the JWT. Enrollment and verification are correctly implemented.
-
-The diagram shows the TOTP-enabled login path:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User
-    participant SPA as Login Form
-    participant API as routes/login.ts + routes/2fa.ts
-    participant OTP as otplib verifier
-
-    User->>SPA: POST email + password
-    SPA->>API: POST /rest/user/login
-    API->>API: verify password (see §7.2.1)
-    API->>API: check totpSecret present on account
-    API-->>SPA: 401 with totp challenge token
-    SPA->>User: prompt for TOTP code
-    User->>SPA: enter 6-digit OTP
-    SPA->>API: POST /rest/2fa/verify {token, totp}
-    API->>OTP: otplib.authenticator.check(totp, secret)
-    OTP-->>API: valid
-    API-->>SPA: JWT issued
-```
+TOTP-based second-factor authentication is available via `routes/2fa.ts`. Enrollment stores a `totpSecret` field on the `User` model (`models/user.ts`). Verification uses a standard TOTP library to validate the time-based code before allowing login to proceed. The mechanism is architecturally sound for users who opt in.
 
 **Security assessment**
 
-TOTP enrollment and verification are correctly implemented using `otplib`. The control weakness is governance, not code: no route or middleware enforces TOTP enrollment for users with elevated privileges. An attacker who forges an admin JWT (via [F-001](#f-001) — JWT algorithm confusion algorithm none bypass or [F-002](#f-002) — RSA private key hardcoded offline JWT forgery) bypasses TOTP entirely because the 2FA check only runs on the password login path, not on JWT-protected routes.
+TOTP enrollment and code verification work correctly for regular users. The gap is policy, not implementation: 2FA is purely opt-in and admin accounts are not required to enroll. A successful SQL injection ([T-001](#f-001) — SQL injection authentication bypass routes/login.ts) or JWT forgery ([T-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts) bypasses the 2FA step entirely because those paths skip `routes/2fa.ts` verification.
 
 **Relevant findings**
 
-- [F-016](#f-016) — No rate-limiting on the login endpoint allows credential brute-force that also exhausts the TOTP window.
+- No dedicated finding is routed to MFA in this assessment; the control works for enrolled users.
 
 ### 7.3 Session and Token Controls
 
-**Verdict:** 🔴 Missing - JWT is stored in browser `localStorage`, exposed to XSS theft; no revocation mechanism exists; session invalidation on logout is absent; the JWT library accepts unsigned tokens.
+**Verdict:** 🟠 Weak
 
-**Controls covered:** [7.3.1 JWT Bearer Token Validation (express-jwt middleware)](#731-jwt-bearer-token-validation-express-jwt-middleware) · [7.3.2 Session Token Storage (Browser localStorage)](#732-session-token-storage-browser-localstorage) · [7.3.3 Session Invalidation and Logout](#733-session-invalidation-and-logout)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.3.1 Session Management](#731-session-management)
 
-- [7.3.1 JWT Bearer Token Validation (express-jwt middleware)](#jwt-bearer-token-validation)
-- [7.3.2 Session Token Storage (Browser localStorage)](#session-token-storage)
-- [7.3.3 Session Invalidation and Logout](#session-invalidation-logout)
+- [7.3.1 Session Management](#session-management)
 
-**Implemented controls:** `lib/insecurity.ts:issueAuthToken()` issues RS256 JWTs on login; `lib/insecurity.ts:54-56` (JWT issuance and validation via `express-jwt@0.1.3`); `routes/login.ts` issues and `server.ts:289` configures a session cookie with the hardcoded `'kekse'` secret.
+**Implemented controls:** Token map in `lib/insecurity.ts:59-90`; JWT expiry set to 6 hours at issuance; cookie storage in Angular frontend.
 
-**Assessment:** This application uses a single locally-signed token format (JWT) for every authenticated session. The sub-sections below trace one token through its lifecycle: validation on protected routes (the JWT middleware), storage in the browser, and the absence of revocation and session-invalidation controls.
+**Assessment:** This application uses a single locally-signed token format (commonly called JWT) for every authenticated session, regardless of the login flow in [§7.2](#72-identity-and-authentication-controls) that established it. The sub-sections below trace one token through its lifecycle: signing on issuance, validation on every protected request, storage in the browser, manual revocation, and time-based expiry. The signing and algorithm controls that break the token boundary are detailed in [§7.2 Identity and Authentication Controls](#72-identity-and-authentication-controls) and [§7.9 Cryptography Secrets and Data Protection](#79-cryptography-secrets-and-data-protection).
 
-<a id="jwt-bearer-token-validation"></a>
-#### 7.3.1 JWT Bearer Token Validation (express-jwt middleware)
+<a id="session-management"></a>
+#### 7.3.1 Session Management
 
-**Status:** 🟠 Weak - `express-jwt@0.1.3` accepts `alg:none` tokens; algorithm enforcement is absent and the library predates the CVE-2015-9235 fix.
+**Status:** 🟠 Weak - stateless JWTs stored in browser cookies lack `Secure`, `HttpOnly`, and `SameSite` flags; the server-side revocation map is lost on restart.
 
-JWT validation is performed by `express-jwt@0.1.3` mounted in `lib/insecurity.ts:54-56`. On every protected route the middleware calls `jsonwebtoken@0.4.0` to decode the `Authorization: Bearer` header and attach the payload to `req.user`. The library versions in use predate the security fixes introduced in `jsonwebtoken` 6.x - neither enforces the signing algorithm.
-
-The diagram shows the intended positive path for a protected request carrying a valid JWT:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User
-    participant API as Express Route
-    participant MW as express-jwt middleware
-    participant Key as RSA Public Key
-
-    User->>API: GET /rest/user/whoami (Bearer token)
-    API->>MW: verify(token)
-    MW->>Key: load jwt.pub
-    Key-->>MW: PEM bytes
-    MW-->>API: decoded payload {id, email, role}
-    API-->>User: 200 OK - user data
-```
+`lib/insecurity.ts:59-90` maintains an in-memory `authenticatedUsers` map for explicit logout revocation. JWTs are issued with a six-hour expiry via `issueAuthToken()`. The Angular frontend stores the token in a browser cookie named `token`, which is transmitted with every API request. The `express-jwt` middleware at `lib/insecurity.ts:54` validates the signature on each protected route.
 
 **Security assessment**
 
-Two independent weaknesses break the JWT verification boundary:
+The session token lifecycle has two structural gaps:
 
-- `express-jwt@0.1.3` does not enforce the `algorithms` option. Supplying `{"alg":"none"}` in the JWT header produces a token with an empty signature that the library accepts as valid ([F-001](#f-001) — JWT algorithm confusion algorithm none bypass).
-- The RS256 private key is hardcoded at `lib/insecurity.ts:23`. Anyone with repo read access can call `jwt.sign(payload, privateKey, {algorithm:'RS256'})` to forge arbitrary tokens, bypassing signature verification entirely ([F-002](#f-002) — RSA private key hardcoded offline JWT forgery).
-
-**Relevant findings**
-
-- [F-001](#f-001) — `alg:none` acceptance lets an attacker craft a completely unsigned token and set `role=admin` without knowing the private key.
-- [F-002](#f-002) — Hardcoded RSA private key at `lib/insecurity.ts:23` enables offline forgery of fully-signed RS256 tokens.
-
-<a id="session-token-storage"></a><a id="cookie-security"></a><a id="cookie-security-httponly-samesite-secure-flags"></a>
-#### 7.3.2 Session Token Storage (Browser localStorage)
-
-**Status:** 🔴 Missing - JWT is stored in `localStorage`, which is readable by any XSS payload; `HttpOnly` cookies are not used.
-
-On successful login, `routes/login.ts` returns the JWT in the JSON response body. The Angular frontend stores it in `localStorage` via `TokenService` in `frontend/src/app/Services/token.service.ts`. The session cookie configured in `server.ts:289` uses the hardcoded secret `'kekse'` but is separate from the JWT mechanism; the JWT itself is never placed in an `HttpOnly` cookie.
-
-**Security assessment**
-
-`localStorage` is accessible to any JavaScript running in the page origin. The stored XSS vectors in [F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass, [F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel, and [F-021](#f-021) — XSS last login ip rendered as trusted HTML can read `localStorage` directly, allowing session hijacking with a single `document.cookie`-style payload. Moving the JWT to an `HttpOnly` `SameSite=Strict` cookie would remove this access entirely.
+- The `token` cookie is set without `Secure`, `HttpOnly`, or `SameSite=Strict` attributes, making it readable by JavaScript (XSS exfiltration) and transmittable cross-origin.
+- The `authenticatedUsers` revocation map at `lib/insecurity.ts:59` is in-process memory; a server restart silently re-accepts any token that has not yet expired, so "logout" does not invalidate the JWT itself.
 
 **Relevant findings**
 
-- [F-022](#f-022) — JWT in `localStorage` is readable by every XSS payload in this codebase, enabling full session takeover.
-
-<a id="session-invalidation-logout"></a>
-#### 7.3.3 Session Invalidation and Logout
-
-**Status:** 🟠 Weak - logout clears the client-side `localStorage` entry but does not invalidate the JWT server-side; stolen tokens remain valid until natural expiry.
-
-`routes/logout.ts` responds to `GET /rest/user/logout`. The server does not maintain a token allowlist or denylist; the JWT's server-side validity depends solely on its signature and expiry claim. Client-side logout removes the `localStorage` entry, which means a token stolen before logout continues to be accepted by every `express-jwt`-protected route.
-
-**Security assessment**
-
-Server-side token revocation is absent. A JWT stolen via any of the XSS vectors ([F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass, [F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel) continues to authenticate requests after the legitimate user has logged out. A revocation list keyed on the JWT `jti` claim, or a short expiry combined with refresh-token rotation, would close this gap.
-
-**Relevant findings**
-
-- [F-022](#f-022) — Stolen JWT remains valid server-side after client logout, enabling persistent impersonation.
+- [F-011](#f-011) — The missing cookie security flags expose the session token to XSS-based exfiltration and cross-site transmission.
 
 ### 7.4 Authorization Controls
 
-**Verdict:** 🔴 Missing - object-level authorization checks are absent on basket, wallet, and address routes; role checks rely on a client-side JWT claim that is forgeable.
+**Verdict:** 🟠 Weak
 
-**Controls covered:** [7.4.1 Role-Based Access Control (isAdmin JWT claim)](#741-role-based-access-control-isadmin-jwt-claim) · [7.4.2 Object-Level Authorization](#742-object-level-authorization)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.4.1 Role-Based Access Control](#741-role-based-access-control)
 
-- [7.4.1 Role-Based Access Control (isAdmin JWT claim)](#role-based-access-control)
-- [7.4.2 Object-Level Authorization](#object-level-authorization)
+- [7.4.1 Role-Based Access Control](#role-based-access-control)
 
-**Implemented controls:** `lib/insecurity.ts:54-55` (JWT parsing middleware that attaches `req.user`), `server.ts` route middleware (presence check only).
+**Implemented controls:** `isAuthorized()` middleware checks JWT signature validity; `denyAll()` applied to selected admin mutation endpoints in `server.ts`.
 
-**Assessment:** Authorization has two layers, both broken. Role checks read `req.user.role` from the JWT payload - a value that is forgeable via the hardcoded key ([F-002](#f-002) — RSA private key hardcoded offline JWT forgery) or `alg:none` bypass ([F-001](#f-001) — JWT algorithm confusion algorithm none bypass). Object-level checks on resource-owning endpoints accept `req.body.UserId` rather than the authenticated user's id from the verified JWT, so any logged-in user can operate on another user's resources by supplying a different id.
+**Assessment:** JWT role claims exist in the token payload but server-side route middleware does not consistently verify them. Several admin GET endpoints are reachable with any valid JWT; object-level ownership checks are absent on basket and order routes.
 
-<a id="role-based-access-control"></a><a id="role-based-access-control-rbac-isadmin"></a>
-#### 7.4.1 Role-Based Access Control (isAdmin JWT claim)
+<a id="role-based-access-control"></a>
+#### 7.4.1 Role-Based Access Control
 
-**Status:** 🟠 Weak - role check reads `req.user.role` from the JWT payload, which is forged via the hardcoded signing key; Angular route guards enforce nothing server-side.
+**Status:** 🟠 Weak - `isAuthorized()` validates JWT signature but does not check the `role` claim; `denyAll()` is applied only to selected mutation endpoints, leaving admin GET routes unprotected.
 
-Admin routes are guarded by middleware in `server.ts` that checks `req.user.role === 'admin'` after the `express-jwt` middleware attaches the decoded payload. The admin panel UI is additionally gated by Angular route guards in `frontend/src/app/app.routing.module.ts`. Both checks rely on the JWT claim being trustworthy.
-
-**Security assessment**
-
-Because the RSA private key is committed to the repository ([F-002](#f-002) — RSA private key hardcoded offline JWT forgery) and `alg:none` is accepted ([F-001](#f-001) — JWT algorithm confusion algorithm none bypass), any attacker can mint a JWT with `role=admin`. The server-side role check then passes transparently. Angular route guards ([F-023](#f-023) — Angular route guards bypassable client side) add no protection because they run only in the browser and are bypassed by making direct API calls.
-
-**Relevant findings**
-
-- [F-023](#f-023) — Angular route guards are client-only; direct API calls to admin endpoints are not blocked server-side.
-- [F-017](#f-017) — Mass assignment on wallet routes accepts `req.body.UserId`, bypassing role-based ownership.
-
-<a id="object-level-authorization"></a><a id="object-level-authorization-idor-prevention"></a>
-#### 7.4.2 Object-Level Authorization
-
-**Status:** 🔴 Missing - basket, wallet, and address routes use the user id from `req.body` rather than from the verified JWT; cross-user access requires only a valid session token.
-
-`routes/basket.ts`, `routes/wallet.ts`, and `routes/address.ts` accept a `UserId` parameter from the request body and use it directly to query the database. No comparison is made between the supplied id and the authenticated user's id from `req.user.id`.
+Route authorization is wired in `server.ts`. `lib/insecurity.ts:54` exposes `isAuthorized()`, which invokes the `express-jwt` middleware to verify the token signature. A separate `denyAll()` middleware is applied to admin-only mutation endpoints. Broken Object Level Authorization (BOLA) is widespread on basket and order routes where any authenticated user can reference another user's object IDs.
 
 **Security assessment**
 
-Any authenticated user can read or modify any other user's basket, wallet balance, or address by changing the `UserId` field in the request body. This is a horizontal privilege escalation: authentication is required, but the authorization check that would restrict a user to their own resources is absent.
+Two distinct authorization weaknesses coexist:
 
-The wallet update route illustrates the pattern:
-
-```ts
-// routes/wallet.ts — UserId from body, not from verified JWT
-const user = await UserModel.findOne({ where: { id: req.body.UserId } })
-```
+- `isAuthorized()` at `lib/insecurity.ts:54` checks that the JWT signature is valid but does not verify `req.user.role === 'admin'`. Any valid JWT - including one forged via [T-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts - passes the guard on admin-only GET routes.
+- BOLA: basket and order routes accept numeric IDs from the URL without verifying ownership, allowing horizontal privilege escalation across accounts.
 
 **Relevant findings**
 
-- [F-011](#f-011) — IDOR on basket route: any authenticated user can retrieve another user's basket contents.
-- [F-017](#f-017) — Mass assignment on wallet: `req.body.UserId` determines whose balance is updated.
+- [F-018](#f-018) — Admin API endpoints reachable by any authenticated JWT due to missing role verification.
+- [F-024](#f-024) — BOLA on basket/order routes allows cross-account data access with any valid token.
 
 ### 7.5 Query Construction and Data Access Controls
 
-**Verdict:** 🟠 Weak - SQL and NoSQL injection are present on unauthenticated routes; Sequelize parameterized queries are bypassed by two raw `models.sequelize.query()` call sites.
+**Verdict:** 🔴 Unsafe
 
-**Controls covered:** [7.5.1 SQL Query Parameterization (Sequelize + Raw Queries)](#751-sql-query-parameterization-sequelize-raw-queries) · [7.5.2 NoSQL Query Parameterization (MarsDB)](#752-nosql-query-parameterization-marsdb)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.5.1 SQL Query Parameterization](#751-sql-query-parameterization)
 
-- [7.5.1 SQL Query Parameterization (Sequelize + Raw Queries)](#sql-query-parameterization)
-- [7.5.2 NoSQL Query Parameterization (MarsDB)](#nosql-query-parameterization)
+- [7.5.1 SQL Query Parameterization](#sql-query-parameterization)
 
-**Implemented controls:** Sequelize ORM backs most model operations; `routes/login.ts:34` and `routes/search.ts:23` call `models.sequelize.query()` directly; `routes/showProductReviews.ts:36` passes user input to a MarsDB `$where` clause.
+**Implemented controls:** Sequelize ORM used for most data access; raw `models.sequelize.query()` calls bypass ORM parameter binding in login and search routes.
 
-**Assessment:** Sequelize's parameterized query support is available and used by most routes. Two routes opt out and construct raw SQL strings; one additional route passes user-controlled structure to a MarsDB selector. All three deviations are on high-traffic paths - login and product search are unauthenticated, and review queries are authenticated but trivially reachable. Fixing the login and search routes removes two Critical findings and eliminates [F-030](#f-030) — Database schema exposure via SQL injection in search route schema exposure as a side-effect.
+**Assessment:** The ORM provides parameterized queries for the majority of database interactions. The login and search routes intentionally bypass it with raw string interpolation, creating two independent SQL injection sinks.
 
 <a id="sql-query-parameterization"></a>
-#### 7.5.1 SQL Query Parameterization (Sequelize + Raw Queries)
+#### 7.5.1 SQL Query Parameterization
 
-**Status:** 🟠 Weak - login and search routes build SQL strings by concatenating user input rather than using Sequelize bind parameters.
+**Status:** 🔴 Unsafe - user-controlled input is string-interpolated into SQL at `routes/login.ts:34` and `routes/search.ts:23`, bypassing Sequelize's ORM parameter binding.
 
-Sequelize models back most relational data access in this codebase. Two routes deviate: `routes/login.ts:34` and `routes/search.ts:23` both construct raw SQL strings via `models.sequelize.query()`. The login route interpolates `req.body.email` and `req.body.password` directly; the search route interpolates the `q` query parameter into a `LIKE` clause.
+Sequelize backs most relational data access; the login and search routes call raw `models.sequelize.query()` directly with template-literal interpolation. `routes/login.ts:34` builds the user-lookup query from `req.body.email`, and `routes/search.ts:23` builds a LIKE query from the `q` search parameter.
 
-The product search route illustrates the raw SQL construction that bypasses parameter binding:
+The product search route uses the same raw SQL construction pattern:
 
 ```ts
 models.sequelize.query(
@@ -1123,446 +1056,342 @@ models.sequelize.query(
 
 **Security assessment**
 
-Both raw-SQL sites are on unauthenticated endpoints, making exploitation trivial:
-
-- `routes/login.ts:34` - `' OR 1=1--` in the email field returns the seeded admin account row and bypasses the password check ([F-003](#f-003) — SQL injection login authentication bypass).
-- `routes/search.ts:23` - a UNION-based payload dumps the full Users table including password hashes and the SQLite schema ([F-004](#f-004) — SQL injection product search (UNION + schema exfil), [F-030](#f-030) — Database schema exposure via SQL injection in search route).
+Both routes accept attacker-controlled SQL. On the login route, `' OR 1=1--` bypasses credential checking. On the search route, a UNION payload extracts the full database schema and all user records. These are two independent injection sinks sharing the same root cause: raw string interpolation where ORM finder methods would eliminate it.
 
 **Relevant findings**
 
-- [F-003](#f-003) — SQL injection in the login query allows authentication bypass without a valid credential.
-- [F-004](#f-004) — SQL injection in the search route enables UNION-based data exfiltration and schema disclosure.
-- [F-030](#f-030) — Database schema exposed as a side-effect of the search injection; eliminated when [F-004](#f-004) (SQL injection product search) is fixed.
-
-<a id="nosql-query-parameterization"></a>
-#### 7.5.2 NoSQL Query Parameterization (MarsDB)
-
-**Status:** 🟠 Weak - review queries accept a `$where` JavaScript expression from user-supplied input, giving the attacker control over query logic.
-
-Product reviews are stored in MarsDB, a MongoDB-compatible in-memory database. `routes/showProductReviews.ts:36` passes the user-supplied `id` parameter into a MarsDB selector. MarsDB supports the `$where` operator, which evaluates a JavaScript string as a boolean predicate over each document.
-
-**Security assessment**
-
-Supplying `{"$where":"sleep(2000)"}` or similar payloads as the review `id` executes JavaScript inside the MarsDB process. This enables both blind data extraction and a denial-of-service via CPU-intensive expressions that crash the MarsDB worker ([F-026](#f-026) (NoSQL injection via \$where operator in MarsDB reviews), [F-031](#f-031) (JavaScript injection via \$where can crash MarsDB process)).
-
-**Relevant findings**
-
-- [F-026](#f-026) — NoSQL injection via `$where` allows JavaScript execution in the MarsDB query context.
-- [F-031](#f-031) — JavaScript injection in `$where` can crash the MarsDB process through resource exhaustion.
+- [F-001](#f-001) — SQL injection in `routes/login.ts:34` allows unauthenticated admin login.
+- [F-007](#f-007) — SQL injection in `routes/search.ts:23` allows full database extraction via UNION.
+- [F-019](#f-019) — Potential injection in `routes/trackOrder.ts:21` via order ID parameter.
 
 ### 7.6 Input Boundary Validation Controls
 
-**Verdict:** 🟠 Weak - upload file-type and path-traversal constraints are absent; `multer` enforces only a file-size limit.
+**Verdict:** 🔴 Unsafe
 
-**Controls covered:** [7.6.1 Input Boundary Validation (multer + path checks)](#761-input-boundary-validation-multer-path-checks)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.6.1 Validation Approach](#761-validation-approach) · [7.6.2 Input Validation / Sanitization](#762-input-validation-sanitization)
 
-- [7.6.1 Input Boundary Validation (multer + path checks)](#input-boundary-validation)
+- [7.6.1 Validation Approach](#validation-approach)
+- [7.6.2 Input Validation / Sanitization](#input-validation-sanitization)
 
-**Implemented controls:** `multer` enforces a maximum file size on upload endpoints; `routes/dataErasure.ts:69` calls `path.resolve()` on the layout parameter without subsequent containment check.
+**Implemented controls:** `sanitize-html@1.4.2` used via `sanitizeLegacy()`; Multer file-size limits on upload endpoints; `sanitize-filename@1.6.3` on filenames.
 
-**Assessment:** Input validation is limited to file size. File type, content-type, and path-traversal constraints are absent on the upload endpoint and the layout parameter route. Uploaded XML, ZIP, and YAML files reach parsers with dangerous defaults enabled without any pre-flight type check.
+**Assessment:** Input sanitization exists but is bypassable. The sanitization library is outdated with known bypass vectors; URL validation uses a substring check that is trivially circumvented; XML parsing is configured to resolve external entities.
 
-<a id="input-boundary-validation"></a>
-#### 7.6.1 Input Boundary Validation (multer + path checks)
+<a id="validation-approach"></a>
+#### 7.6.1 Validation Approach
 
-**Status:** 🟠 Weak - file-size limit is enforced; file-type allow-listing and path-containment checks are absent.
+**Status:** 🟠 Weak - consistent input validation is absent at the API boundary; individual routes apply ad-hoc checks that are incomplete or bypassable.
 
-`multer` is configured on the file upload endpoint to reject files above a size threshold. No MIME-type or extension allow-list is applied before passing uploaded files to `libxmljs2` (XML), `unzipper` (ZIP), or the YAML parser. `routes/dataErasure.ts:69` calls `path.resolve(req.body.layout)` without subsequently verifying that the resolved path stays within the permitted directory.
+Input validation across the API relies on route-level ad-hoc checks rather than a centralized schema-validation layer. Multer enforces file-size limits on upload endpoints, and `sanitize-filename@1.6.3` is applied to uploaded filenames. No request schema validation library (e.g. Joi, Zod, express-validator) validates body shapes or query parameter types before they reach route handlers.
 
 **Security assessment**
 
-Three upload-validation gaps compound each other:
-
-- No file-type check allows `.xml` uploads to reach `libxmljs2` with `noent:true` ([F-007](#f-007) — XXE via XML file upload with external entity resolution).
-- No archive extraction path check allows ZIP files with `../` entries to write outside the target directory ([F-008](#f-008) — Zip slip path traversal via unzipper 0.9.15).
-- `routes/dataErasure.ts:69` resolves the `layout` parameter without a containment check, allowing traversal to read arbitrary files ([F-015](#f-015) — Path traversal in data erasure layout parameter).
+The ad-hoc validation pattern means each new route must implement its own guards. Where routes skip validation entirely (or implement it incorrectly), attackers can supply unexpected types, oversized payloads, or structurally malformed inputs. The absence of a centralized validation layer is the structural root cause behind multiple injection and parser findings in this model.
 
 **Relevant findings**
 
-- [F-031](#f-031) — JavaScript injection in MarsDB via unvalidated input structure crashes the process.
+- [F-023](#f-023) — Missing schema validation on the B2B order endpoint allows arbitrary `orderLinesData` to reach the eval sink.
+
+<a id="input-validation-sanitization"></a>
+#### 7.6.2 Input Validation / Sanitization
+
+**Status:** 🔴 Unsafe - `sanitize-html@1.4.2` is outdated with known bypass vectors; URL validation at `lib/insecurity.ts:138` uses `includes()` and is trivially circumvented.
+
+`lib/insecurity.ts:60-80` implements `sanitizeLegacy()` using `sanitize-html@1.4.2`. The URL redirect allowlist at `lib/insecurity.ts:138` checks only whether the target URL `includes()` an allowed host prefix - a payload such as `https://allowed.example.evil.com/` passes the check. XML uploads at `routes/fileUpload.ts:83` are parsed by `libxmljs2` with `noent: true`, enabling external entity resolution.
+
+**Security assessment**
+
+Three distinct bypass paths share the same root:
+
+- `sanitize-html@1.4.2` has documented bypass payloads; updating to a current release and applying allowlist-based tag sanitization would close this.
+- The `includes()` URL check at `lib/insecurity.ts:138` is not an allowlist - it is a substring scan. A URL containing the allowed prefix anywhere in the string passes.
+- `libxmljs2` with `noent: true` in `routes/fileUpload.ts:83` resolves XML `SYSTEM` entities, enabling file-read and SSRF via XXE (see [§7.10](#710-file-parser-and-outbound-request-controls)).
+
+**Relevant findings**
+
+- [F-023](#f-023) — Bypassable URL validation enables open redirect and contributes to the SSRF vector.
 
 ### 7.7 Output Encoding and Rendering Controls
 
-**Verdict:** 🟠 Weak - Angular's default output encoding is disabled via `bypassSecurityTrustHtml()` in 14+ components; server-side template rendering relies on user input in `eval()`.
+**Verdict:** 🔴 Unsafe
 
-**Controls covered:** [7.7.1 XSS Output Encoding (Angular DomSanitizer)](#771-xss-output-encoding-angular-domsanitizer) · [7.7.2 Server-Side Template Rendering (eval-based)](#772-server-side-template-rendering-eval-based)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.7.1 HTML Output Encoding / XSS Prevention](#771-html-output-encoding-xss-prevention)
 
-- [7.7.1 XSS Output Encoding (Angular DomSanitizer)](#xss-output-encoding)
-- [7.7.2 Server-Side Template Rendering (eval-based)](#server-side-template-rendering)
+- [7.7.1 HTML Output Encoding / XSS Prevention](#html-output-encoding-xss-prevention)
 
-**Implemented controls:** Angular's template engine escapes by default; `DomSanitizer.bypassSecurityTrustHtml()` is called explicitly to override this in `search-result.component.ts:170` and 13+ other components.
+**Implemented controls:** Angular's template escaping is active by default in components that do not opt out; `bypassSecurityTrustHtml()` explicitly disables it in at least six components.
 
-**Assessment:** Angular's default output encoding would prevent all DOM-XSS findings in this codebase. Every XSS finding here exists because `bypassSecurityTrustHtml()` was called deliberately to render HTML from user-controlled sources. Removing these calls and letting Angular's default sanitizer run is the single fix that closes five findings simultaneously.
+**Assessment:** Angular's default context-aware escaping is the baseline control. It is intentionally disabled in the administration, about, search-result, and last-login-ip components, creating persistent XSS sinks in the most sensitive views.
 
-<a id="xss-output-encoding"></a><a id="xss-output-encoding-angular-domsanitizer"></a>
-#### 7.7.1 XSS Output Encoding (Angular DomSanitizer)
+<a id="html-output-encoding-xss-prevention"></a>
+#### 7.7.1 HTML Output Encoding / XSS Prevention
 
-**Status:** 🟠 Weak - Angular's default escaping is present but overridden at 14+ call sites via `bypassSecurityTrustHtml()`; every override is a live XSS sink.
+**Status:** 🔴 Unsafe - `bypassSecurityTrustHtml()` is called in multiple Angular components, intentionally disabling the framework's XSS protection for user-controlled content.
 
-Angular templates escape interpolated values by default. Throughout the frontend, `DomSanitizer.bypassSecurityTrustHtml()` is called before binding user-controlled strings to `[innerHTML]` properties. The primary sites are `search-result.component.ts:170` (search query reflected in results), `administration.component.ts` (user feedback rendered in the admin panel), and `last-login-ip.component.ts` (login IP address rendered as HTML).
-
-**Security assessment**
-
-Each `bypassSecurityTrustHtml()` call converts a safe Angular template binding into a raw HTML injection sink. Three exploitable patterns:
-
-- `search-result.component.ts:170` - the search query parameter is reflected as trusted HTML, enabling DOM XSS ([F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass).
-- `administration.component.ts` - stored feedback content from any user is rendered unsanitized in the admin panel ([F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel).
-- `last-login-ip.component.ts` - the last-login IP, controllable via headers, is rendered as trusted HTML ([F-021](#f-021) — XSS last login ip rendered as trusted HTML).
-
-**Relevant findings**
-
-- [F-019](#f-019) — DOM XSS via search query reflected through `bypassSecurityTrustHtml()`.
-- [F-020](#f-020) — Stored XSS in admin panel feedback view via unsanitized `bypassSecurityTrustHtml()` call.
-- [F-021](#f-021) — XSS via last-login IP field rendered as trusted HTML.
-- [F-025](#f-025) — Product descriptions stored with HTML and rendered without sanitization in product detail views.
-
-<a id="server-side-template-rendering"></a>
-#### 7.7.2 Server-Side Template Rendering (eval-based)
-
-**Status:** 🟠 Weak - `routes/userProfile.ts:62` passes the username field through `eval()` for Handlebars template processing, enabling server-side code injection.
-
-`routes/userProfile.ts:62` calls `eval()` to process the username field as a Handlebars template. The intent is to allow personalised template expressions in user profiles. The result is that any JavaScript expression in the username field executes in the server process context.
+Angular's `DomSanitizer` provides context-aware output encoding by default for all template bindings. `administration.component.ts:60,78` calls `bypassSecurityTrustHtml()` on user email addresses and feedback comment fields before rendering them. The same pattern appears in `frontend/src/app/about/about.component.ts:119`. A server-side XSS filter that was present in earlier versions is commented out at `server.ts:187`.
 
 **Security assessment**
 
-`eval()` on user-controlled input is a direct code injection sink, not a template rendering issue. Any authenticated user can set their username to `{{require('child_process').execSync('id')}}` and retrieve server-side process output. This is a Critical finding independent of the template intent; see [§7.10](#710-file-parser-and-outbound-request-controls) for the related B2B eval sink.
+Wherever `bypassSecurityTrustHtml()` is called, Angular passes the raw HTML string to the DOM without escaping. A user who registers with a `<script>` or `<img onerror=…>` email address has their payload stored persistently in the database and rendered in every admin session. The administration panel is the highest-value target because the victim is always an admin-privileged session.
+
+This call illustrates where Angular's escaping is disabled in the administration component:
+
+```ts
+this.userEmail = this.sanitizer.bypassSecurityTrustHtml(user.email)
+```
 
 **Relevant findings**
 
-- [F-006](#f-006) — Server-side code injection via `eval()` on the username field grants arbitrary RCE to any authenticated user.
+- [F-004](#f-004) — Stored XSS in the admin panel executes in every administrator's browser session.
+- [F-009](#f-009) — Stored XSS in the feedback/about view targets any user who visits the page.
 
 ### 7.8 Browser and Cross-Origin Controls
 
-**Verdict:** 🔴 Missing - no Content-Security-Policy at app level; CORS is configured as a wildcard; CSRF protection is absent.
+**Verdict:** 🔴 Unsafe
 
-**Controls covered:** [7.8.1 Content Security Policy (Helmet partial)](#781-content-security-policy-helmet-partial) · [7.8.2 CORS Policy (wildcard)](#782-cors-policy-wildcard) · [7.8.3 CSRF Protection](#783-csrf-protection)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.8.1 CORS Policy](#781-cors-policy) · [7.8.2 Content Security Policy](#782-content-security-policy)
 
-- [7.8.1 Content Security Policy (Helmet partial)](#content-security-policy)
-- [7.8.2 CORS Policy (wildcard)](#cors-policy)
-- [7.8.3 CSRF Protection](#csrf-protection)
+- [7.8.1 CORS Policy](#cors-policy)
+- [7.8.2 Content Security Policy](#content-security-policy)
 
-**Implemented controls:** `helmet@4.6` is mounted in `server.ts:187` with a non-default configuration; `cors@2.8.5` is mounted in `server.ts:181-182`; no CSRF token middleware is present.
+**Implemented controls:** Helmet `noSniff` and `frameguard` headers set at `server.ts:185-188`; CORS middleware present but configured without restrictions.
 
-**Assessment:** The three browser-control primitives that would contain XSS and CSRF impact are all either absent or misconfigured. Helmet's `xssFilter` is explicitly disabled; no app-level CSP header is emitted; CORS allows every origin; and no CSRF token middleware protects state-changing requests. These gaps do not introduce findings on their own but amplify the XSS findings in [§7.7](#77-output-encoding-and-rendering-controls) by removing the last browser-side mitigations.
-
-<a id="content-security-policy"></a><a id="content-security-policy-csp"></a>
-#### 7.8.1 Content Security Policy (Helmet partial)
-
-**Status:** 🟠 Weak - a per-route CSP is present for the user profile endpoint only; no app-level CSP is emitted; Helmet's `xssFilter` is explicitly disabled.
-
-`server.ts:187` mounts Helmet without a `contentSecurityPolicy` configuration, so no `Content-Security-Policy` header is emitted on most routes. `routes/userProfile.ts:95` adds a route-specific CSP header, but this covers only the profile page. Helmet's `xssFilter` (legacy `X-XSS-Protection: 1; mode=block`) is explicitly disabled in the Helmet options.
-
-**Security assessment**
-
-Without an app-level CSP, scripts from any origin can be injected through the XSS sinks in [§7.7](#77-output-encoding-and-rendering-controls). A CSP `default-src 'self'` with a nonce-based `script-src` would prevent inline-script and cross-origin-script execution even when `bypassSecurityTrustHtml()` is called. The per-route CSP on the profile endpoint does not help because it applies after the `eval()`-based code injection in `routes/userProfile.ts:62`.
-
-**Relevant findings**
-
-- No dedicated finding routed in this assessment.
+**Assessment:** Browser security headers are partially applied via Helmet, but the two highest-impact controls are missing or defeated. CORS allows all origins, and no Content Security Policy is configured, leaving XSS attacks free to load arbitrary scripts.
 
 <a id="cors-policy"></a>
-#### 7.8.2 CORS Policy (wildcard)
+#### 7.8.1 CORS Policy
 
-**Status:** 🟠 Weak - `app.use(cors())` in `server.ts:181` enables wildcard origin and credentials, allowing any origin to make credentialed cross-origin requests.
+**Status:** 🔴 Unsafe - `cors()` is called without an origin allowlist at `server.ts:182`, allowing any origin to make credentialed cross-site requests.
 
-`server.ts:181-182` mounts the `cors` middleware with default options, which responds to every `Origin` header with `Access-Control-Allow-Origin: *`. No allowlist of trusted origins is configured.
-
-**Security assessment**
-
-A wildcard CORS policy means any web page on any domain can make cross-origin requests to the API. Combined with the absent CSRF protection ([§7.8.3](#csrf-protection)), a malicious page can perform state-changing operations on behalf of a logged-in user. The practical impact is amplified by JWT storage in `localStorage` (which cannot be sent with `SameSite` cookie restrictions).
-
-**Relevant findings**
-
-- No dedicated finding routed in this assessment.
-
-<a id="csrf-protection"></a>
-#### 7.8.3 CSRF Protection
-
-**Status:** 🔴 Missing - no CSRF token middleware is present; state-changing endpoints accept requests from any origin.
-
-No CSRF token middleware (`csurf` or equivalent) is configured in `server.ts`. State-changing POST, PUT, and DELETE routes do not require any origin-bound token. The session cookie uses a hardcoded secret (`'kekse'`) and no `SameSite` attribute.
+`server.ts:182` registers `app.use(cors())` with no options object. This sets `Access-Control-Allow-Origin: *` on every response, permitting cross-origin requests from any domain. Combined with the JWT stored in a browser cookie without `SameSite=Strict`, any page on the internet can direct a logged-in user's browser to issue authenticated API requests to the application.
 
 **Security assessment**
 
-All state-changing API endpoints are reachable from cross-origin requests. An attacker-controlled page can trigger basket modifications, order placements, and profile changes on behalf of any user who visits it. Adding `SameSite=Strict` to the session cookie and a CSRF token check on all non-GET routes would close this gap.
+Wildcard CORS plus cookie-based JWT storage without `SameSite` creates a CSRF-equivalent attack surface. Any malicious page can trigger state-changing requests that carry the victim's token. Restricting CORS to the application's own origin (or an explicit allowlist) and adding `SameSite=Strict` to the token cookie would close this vector.
 
 **Relevant findings**
 
-- No dedicated finding routed in this assessment.
+- [F-012](#f-012) — Wildcard CORS combined with missing cookie security flags enables cross-origin credential theft.
+
+<a id="content-security-policy"></a>
+#### 7.8.2 Content Security Policy
+
+**Status:** 🔴 Missing - no `Content-Security-Policy` header is set; `server.ts:185-188` applies only `noSniff` and `frameguard` via Helmet.
+
+Helmet is registered in `server.ts:185` and provides `X-Content-Type-Options: nosniff` and `X-Frame-Options` headers. The CSP directive is absent - `helmet.contentSecurityPolicy()` is not called. Without CSP, successful XSS payloads can load external scripts, exfiltrate data via `fetch()`, and bypass subresource integrity checks with no browser-side enforcement.
+
+**Security assessment**
+
+The absence of CSP means the stored XSS findings at [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ… and [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo… have no browser-level backstop. A strict CSP (`default-src 'self'`) would prevent injected scripts from loading external resources even if the XSS injection point persists. Helmet's existing CSP helper can enable this in one configuration call.
+
+**Relevant findings**
+
+- [F-012](#f-012) — Missing CSP leaves the application unable to restrict script sources, compounding the impact of stored XSS findings.
 
 ### 7.9 Cryptography Secrets and Data Protection
 
-**Verdict:** 🔴 Missing - three secrets are hardcoded in source; password hashing uses unsalted MD5; the signing key material is permanently compromised.
+**Verdict:** 🔴 Unsafe
 
-**Controls covered:** [7.9.1 Cryptographic Algorithm Selection (MD5, Math.random)](#791-cryptographic-algorithm-selection-md5-mathrandom) · [7.9.2 Secrets Management (hardcoded keys)](#792-secrets-management-hardcoded-keys)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.9.1 Secrets Management](#791-secrets-management)
 
-- [7.9.1 Cryptographic Algorithm Selection (MD5, Math.random)](#cryptographic-algorithm-selection)
-- [7.9.2 Secrets Management (hardcoded keys)](#secrets-management)
+- [7.9.1 Secrets Management](#secrets-management)
 
-**Implemented controls:** `lib/insecurity.ts:43` (password hashing), `lib/insecurity.ts:55` (CAPTCHA secret), `lib/insecurity.ts:152` (HMAC), `lib/insecurity.ts:23` (RSA private key), `server.ts:289` (cookie secret).
+**Implemented controls:** RSA-2048 key pair generated and committed; `SHA-256` HMAC secret hardcoded; `MD5` password hashing in `lib/insecurity.ts:43`.
 
-**Assessment:** All cryptographic secrets are hardcoded string literals in `lib/insecurity.ts` and `server.ts`. The RSA private key is additionally published to the `encryptionkeys/` route. Password hashing uses unsalted MD5, which provides no meaningful resistance to offline attacks. The CAPTCHA secret uses `Math.random()`, which is not cryptographically random. These are design-level choices, not accidental misconfigurations - each must be replaced at the root cause.
-
-<a id="cryptographic-algorithm-selection"></a>
-#### 7.9.1 Cryptographic Algorithm Selection (MD5, Math.random)
-
-**Status:** 🟠 Weak - passwords are hashed with unsalted MD5; CAPTCHA secrets are generated with `Math.random()`; neither provides meaningful security.
-
-`lib/insecurity.ts:43` calls `crypto.createHash('md5').update(password).digest('hex')` for all password storage and comparison. `routes/captcha.ts:14-19` generates CAPTCHA challenges using `Math.random()`. The RSA algorithm choice (RS256) is sound, but the key material is hardcoded (see [§7.9.2](#792-secrets-management-hardcoded-keys)).
-
-**Security assessment**
-
-MD5 without a salt is equivalent to no password hashing for practical purposes: rainbow tables built from dictionary and rule-based sets cover most real-world passwords, and GPU-accelerated MD5 cracking achieves billions of hashes per second. `Math.random()` produces a predictable CAPTCHA that provides no bot protection. Neither weakness requires a cryptographic attack - both are defeated by lookup.
-
-**Relevant findings**
-
-- [F-002](#f-002) — Unsalted MD5 password hash: any dump obtained through SQL injection yields plaintext credentials immediately.
+**Assessment:** Three distinct secrets are hardcoded as string literals in `lib/insecurity.ts` and committed to the public repository. All three are permanently compromised - key rotation is required in addition to moving them to environment variables.
 
 <a id="secrets-management"></a>
-#### 7.9.2 Secrets Management (hardcoded keys)
+#### 7.9.1 Secrets Management
 
-**Status:** 🔴 Missing - no runtime secret injection; three secrets are hardcoded literals; the RSA private key is publicly served at `/encryptionkeys`.
+**Status:** 🔴 Unsafe - RSA private key, HMAC secret, and cookie-signing secret are all hardcoded string literals in `lib/insecurity.ts` and committed to the public git repository.
 
-Three secrets live as string literals in `lib/insecurity.ts`: the 1024-bit RSA private key (line 23), an HMAC secret (line 152), and the `denyAll()` secret (line 55). A fourth secret - the session cookie signing key `'kekse'` - is hardcoded in `server.ts:289`. The `encryptionkeys/` static route serves the RSA public key file from `encryptionkeys/jwt.pub`, making the key material even more visible.
+`lib/insecurity.ts:23` stores the RSA-2048 private key as a PEM string literal. `lib/insecurity.ts:45` stores the HMAC secret `pa4qacea4VK9t9nGv7yZtwmj` as a plain string. Both are committed to the repository and visible in the git history. Password storage uses unsalted `MD5` at `lib/insecurity.ts:43` - a weak hash that makes any dumped credential set trivially reversible.
 
 **Security assessment**
 
-Cloning the repository gives an attacker both the private key (for JWT forgery) and the cookie secret (for session cookie forgery) with no further access required. Rotating these secrets requires a code change and a deployment - there is no runtime injection path. Moving to environment variables with a secrets manager (or a KMS-backed store for the RSA key) would allow rotation without a code change.
+Three secrets live as hardcoded string literals in `lib/insecurity.ts`: an RSA-2048 private key, an HMAC secret, and password hashes derived from `MD5` with no salt. Cloning the repository yields everything needed to forge JWTs for any user without server access. Key rotation is mandatory even after moving secrets to environment variables, because the current values are permanently in the git history.
 
 **Relevant findings**
 
-- [F-002](#f-002) — Hardcoded RSA private key at `lib/insecurity.ts:23`; any repo reader can forge admin JWTs offline.
+- [F-002](#f-002) — The committed RSA private key allows offline JWT forgery for any account.
+- [F-003](#f-003) — The outdated `express-jwt` accepts `alg:none` tokens, providing a second bypass of the signing control.
+- [F-008](#f-008) — Unsalted MD5 password hashing means any database dump yields recoverable credentials immediately.
+- [F-013](#f-013) — The HMAC secret is hardcoded in source, making HMAC-signed operations forgeable.
 
 ### 7.10 File Parser and Outbound Request Controls
 
-**Verdict:** 🔴 Missing - all three upload parser controls (XXE, zip-slip, SSRF) are absent; path-traversal checks are missing on the layout endpoint.
+**Verdict:** 🔴 Unsafe
 
-**Controls covered:** [7.10.1 SSRF Prevention (profile image upload)](#7101-ssrf-prevention-profile-image-upload)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.10.1 File Upload Validation](#7101-file-upload-validation) · [7.10.2 Outbound Request Controls](#7102-outbound-request-controls)
 
-- [7.10.1 SSRF Prevention (profile image upload)](#ssrf-prevention)
+- [7.10.1 File Upload Validation](#file-upload-validation)
+- [7.10.2 Outbound Request Controls](#outbound-request-controls)
 
-**Implemented controls:** `routes/profileImageUrlUpload.ts:24` fetches a user-supplied URL; `routes/fileUpload.ts` passes uploaded files to `libxmljs2`, `unzipper`, and the YAML parser without pre-flight checks.
+**Implemented controls:** Multer size limits and `sanitize-filename@1.6.3` on upload endpoints; `routes/profileImageUrlUpload.ts` performs URL-based fetching for profile images.
 
-**Assessment:** The file upload endpoint at `POST /file-upload` accepts XML, ZIP, and YAML files and passes them to their respective parsers with dangerous defaults enabled. `libxmljs2` is configured with `noent:true`, which enables external entity resolution. `unzipper@0.9.15` extracts archives without path containment. The profile image URL upload makes an outbound HTTP request to any user-supplied URL without an allowlist. Three independent parser weaknesses on a single endpoint make this the broadest attack surface in the codebase.
+**Assessment:** File upload processing exists but is structurally unsafe: XML files trigger external-entity resolution via `libxmljs2` and the profile image URL endpoint fetches arbitrary attacker-controlled URLs without an allowlist.
 
-<a id="ssrf-prevention"></a>
-#### 7.10.1 SSRF Prevention (profile image upload)
+<a id="file-upload-validation"></a>
+#### 7.10.1 File Upload Validation
 
-**Status:** 🔴 Missing - `routes/profileImageUrlUpload.ts:24` calls `fetch(req.body.imageUrl)` with no allowlist, SSRF protection library, or redirect-follow limit.
+**Status:** 🟠 Weak - Multer enforces size limits and `sanitize-filename` sanitizes names, but MIME-type validation is minimal and XML uploads are parsed with external-entity resolution enabled.
 
-`routes/profileImageUrlUpload.ts:24` accepts a URL in the request body and fetches it with Node's built-in `fetch()`. The fetched content is stored as the user's profile image. No allowlist, blocklist, or SSRF-protection library is applied before the outbound request is made.
+`routes/fileUpload.ts` uses Multer 1.4.5-lts for upload handling. File size limits are enforced. `sanitize-filename@1.6.3` strips path separators and dangerous characters from filenames. XML content submitted to the upload endpoint is parsed by `libxmljs2` at `routes/fileUpload.ts:83` with `{ noent: true }`, which enables resolution of `SYSTEM` external entities. YAML uploads are evaluated via the `js-yaml` `load()` call, which executes JavaScript in older API modes.
 
 **Security assessment**
 
-Three upload and outbound-request weaknesses share this endpoint area:
+Two parser-level weaknesses sit behind the upload endpoint:
 
-- `routes/profileImageUrlUpload.ts:24` - `fetch(req.body.imageUrl)` with no allowlist enables SSRF against internal network hosts ([F-009](#f-009) — Server side request forgery via profile image URL upload).
-- `routes/fileUpload.ts:83` - `libxmljs2` parses XML with `noent:true`, resolving external entities to arbitrary URIs including `file:///etc/passwd` ([F-007](#f-007) — XXE via XML file upload with external entity resolution).
-- `routes/fileUpload.ts:42-45` - `unzipper@0.9.15` extracts archive entries without verifying that extracted paths stay within the target directory ([F-008](#f-008) — Zip slip path traversal via unzipper 0.9.15).
+- `libxmljs2` with `noent: true` at `routes/fileUpload.ts:83` resolves `SYSTEM` entity references in uploaded XML. A crafted `<!ENTITY x SYSTEM "file:///etc/passwd">` returns local file contents in the XML response.
+- MIME-type enforcement is file-extension-based and bypassable; a renamed executable passes through the upload chain.
 
 **Relevant findings**
 
-- [F-009](#f-009) — SSRF via profile image URL: server fetches any user-supplied URL including internal cloud metadata endpoints.
-- [F-007](#f-007) — XXE via XML upload: external entity in uploaded XML resolves to arbitrary file paths.
-- [F-008](#f-008) — Zip-slip via archive upload: path traversal entries write outside the intended extraction directory.
+- [F-005](#f-005) — XXE via `libxmljs2` external entity resolution in uploaded XML allows local file read.
+- [F-006](#f-006) — Weak MIME-type enforcement allows upload of files that bypass the intended content restrictions.
+- [F-010](#f-010) — YAML parser configuration allows unsafe JavaScript evaluation in uploaded YAML files.
+
+<a id="outbound-request-controls"></a><a id="outbound-request-controls-ssrf"></a>
+#### 7.10.2 Outbound Request Controls
+
+**Status:** 🔴 Unsafe - `routes/profileImageUrlUpload.ts:24` fetches arbitrary attacker-supplied URLs without an allowlist; the open-redirect at `lib/insecurity.ts:138` uses a bypassable substring check.
+
+`routes/profileImageUrlUpload.ts:24` accepts a `imageUrl` body parameter and issues an outbound HTTP `fetch()` to the supplied URL without validating the host against an allowlist. This allows an authenticated attacker to direct the server to fetch internal network addresses (e.g. `http://169.254.169.254/latest/meta-data/`). The redirect validation at `lib/insecurity.ts:138` uses `url.includes(allowedHost)` - any URL containing the allowed string as a substring passes.
+
+**Security assessment**
+
+Both weaknesses share the same root: user-controlled URL values are not validated against a strict allowlist before the server issues an outbound request:
+
+- `routes/profileImageUrlUpload.ts:24` passes the URL directly to `fetch()` - no DNS allowlist, no IP-range blocking, no scheme restriction.
+- `lib/insecurity.ts:138` uses `includes()` for the redirect check; `https://accounts.google.com.evil.example/` passes the check for `accounts.google.com`.
+
+**Relevant findings**
+
+- [F-005](#f-005) — SSRF via profile image URL upload enables server-side requests to internal or cloud-metadata endpoints.
+- [F-006](#f-006) — The open-redirect bypass extends the SSRF and phishing surface.
+- [F-010](#f-010) — Combined with file-serving endpoints, SSRF can be chained to access quarantine and key directories.
 
 ### 7.11 Operations Runtime and Supply Chain Controls
 
-**Verdict:** 🔴 Missing - no SCA scan in CI; critical auth libraries are severely outdated; distroless Docker base image is the only positive supply-chain control.
+**Verdict:** 🔴 Missing
 
-**Controls covered:** [7.11.1 Dependency Vulnerability Scanning (CI/SCA)](#7111-dependency-vulnerability-scanning-cisca) · [7.11.2 Container Security (Dockerfile)](#7112-container-security-dockerfile) · [7.11.3 CI/CD Pipeline Security (GitHub Actions)](#7113-cicd-pipeline-security-github-actions) · [7.11.4 Security Logging and Monitoring (Morgan + Winston)](#7114-security-logging-and-monitoring-morgan-winston) · [7.11.5 Automated SCA scanning](#7115-automated-sca-scanning)
+<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->
+**Controls covered:** [7.11.1 Dependency Management](#7111-dependency-management) · [7.11.2 Logging and Monitoring](#7112-logging-and-monitoring) · [7.11.3 Automated SCA scanning](#7113-automated-sca-scanning)
 
-- [7.11.1 Dependency Vulnerability Scanning (CI/SCA)](#dependency-vulnerability-scanning)
-- [7.11.2 Container Security (Dockerfile)](#container-security)
-- [7.11.3 CI/CD Pipeline Security (GitHub Actions)](#cicd-pipeline-security)
-- [7.11.4 Security Logging and Monitoring (Morgan + Winston)](#security-logging-and-monitoring)
-- [7.11.5 Automated SCA scanning](#automated-sca-scanning)
+- [7.11.1 Dependency Management](#dependency-management)
+- [7.11.2 Logging and Monitoring](#logging-and-monitoring)
+- [7.11.3 Automated SCA scanning](#automated-sca-scanning)
 
-**Implemented controls:** `.github/workflows/ci.yml` (no SCA step); `Dockerfile:23-41` (multi-stage distroless image); `.github/workflows/` (16 workflow files, overly broad permissions); `server.ts:338` + `lib/logger.ts` (Morgan + Winston logging).
+**Implemented controls:** `package-lock.json` present; Morgan access logging to `logs/access.log`; Winston logger in `lib/logger.ts`; CodeQL scanning via `.github/workflows/codeql-analysis.yml`.
 
-**Assessment:** Two critically outdated auth libraries (`jsonwebtoken@0.4.0`, `express-jwt@0.1.3`) and one parser with a known zip-slip vulnerability (`unzipper@0.9.15`) are in production dependencies. No SCA step in CI would catch these. The GitHub Actions workflows use overly broad permissions. On the positive side, the multi-stage Dockerfile produces a distroless final image with no shell or package manager, reducing the container attack surface.
+**Assessment:** A lockfile and access logging provide a minimal operations baseline. SCA scanning runs in CI via CodeQL. However, several intentionally outdated packages with known CVEs are included, no automated dependency update mechanism exists, and access logs are exposed via an unauthenticated endpoint.
 
-<a id="dependency-vulnerability-scanning"></a><a id="dependency-vulnerability-scanning-sca"></a>
-#### 7.11.1 Dependency Vulnerability Scanning (CI/SCA)
+<a id="dependency-management"></a>
+#### 7.11.1 Dependency Management
 
-**Status:** 🔴 Missing - `.github/workflows/ci.yml` runs no SCA step; `npm audit` or Dependabot are not configured.
+**Status:** 🟠 Weak - `package-lock.json` pins resolved versions, but intentionally outdated packages (`jsonwebtoken@0.4.0`, `express-jwt@0.1.3`, `sanitize-html@1.4.2`) carry known CVEs and no automated update mechanism is configured.
 
-The CI pipeline in `.github/workflows/ci.yml` runs tests and lint but contains no `npm audit`, Snyk, or equivalent SCA step. The `package-lock.json` is present and would enable deterministic scanning. The repository is public on GitHub, which enables free Dependabot alerts, but no Dependabot configuration file (`.github/dependabot.yml`) is present.
-
-**Security assessment**
-
-Without a CI SCA step, three packages with known Critical vulnerabilities (`jsonwebtoken@0.4.0` CVE-2015-9235, `express-jwt@0.1.3` no-algorithm-enforcement, `unzipper@0.9.15` zip-slip) have remained in production dependencies. Adding `npm audit --audit-level=high` as a required CI gate would surface these immediately and block further outdated-dependency regressions.
-
-**Relevant findings**
-
-- [F-014](#f-014) — Access logs exposed at `/support/logs`; logging infrastructure is a data exposure vector, not just a monitoring gap.
-- [F-018](#f-018) — Error handler exposes internal stack traces in production responses.
-
-<a id="container-security"></a>
-#### 7.11.2 Container Security (Dockerfile)
-
-**Status:** 🟡 Partial - distroless final image reduces attack surface; no user privilege drop or seccomp profile is specified.
-
-`Dockerfile:23-41` uses a multi-stage build: a `Node.js` builder stage compiles the TypeScript and Angular frontend, then copies artifacts into a `gcr.io/distroless/nodejs20-debian12` final image. The distroless base has no shell, no package manager, and no OS utilities, which eliminates the most common container post-exploitation paths.
+`package.json` declares dependencies and `package-lock.json` pins the resolved version tree. GitHub Actions CI (`ci.yml`) runs tests but does not include a dependency-update step. No Dependabot or Renovate configuration was detected in the repository. `jsonwebtoken@0.4.0` and `express-jwt@0.1.3` are intentionally pinned at vulnerable versions (`CVE-2022-23529`, `CVE-2020-15084`).
 
 **Security assessment**
 
-The distroless base is a meaningful positive control. Two gaps remain: the container runs as the default user (root in distroless unless overridden), and no `seccomp` or `AppArmor` profile is specified in the Dockerfile or a default Kubernetes deployment manifest. Neither gap is evidenced in the source, but the absence of a non-root `USER` directive is a standard hardening step that is missing.
+The lockfile provides deterministic installs but does not protect against already-pinned vulnerable versions. Without an automated update mechanism, the patch posture is reactive - no automatic PRs when new CVEs are published. The CodeQL scanning in `.github/workflows/codeql-analysis.yml` provides code-level analysis but does not substitute for dependency version monitoring.
 
 **Relevant findings**
 
-- [F-014](#f-014) — Log files reachable at `/support/logs` are part of the runtime attack surface, not a container issue per se.
-- [F-018](#f-018) — Stack-trace exposure in error responses is a runtime configuration issue.
+- No dedicated finding is routed to dependency management in this assessment; the CVEs in `express-jwt@0.1.3` and `jsonwebtoken@0.4.0` are captured in [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts.
 
-<a id="cicd-pipeline-security"></a>
-#### 7.11.3 CI/CD Pipeline Security (GitHub Actions)
+<a id="logging-and-monitoring"></a>
+#### 7.11.2 Logging and Monitoring
 
-**Status:** 🟠 Weak - 16 GitHub Actions workflow files use overly broad `permissions: write-all` or implicit broad permissions; no pinned action SHA hashes.
+**Status:** 🟡 Partial - Morgan access logging and Winston structured logging are configured, but access logs are exposed via an unauthenticated endpoint and no security-event alerting is in place.
 
-`.github/workflows/` contains 11 active workflow files (plus `codeql-analysis.yml` and others). Several workflows use `write-all` permissions or do not explicitly restrict `permissions:` at the workflow level, granting write access to repository contents and packages by default. No workflow pins third-party actions to a commit SHA.
+`lib/logger.ts` configures Winston for application-level logging. Morgan is registered in `server.ts:331-338` and writes HTTP access logs to `logs/access.log`. The log file itself is served by a route at `/logs/` (intentional challenge), making access logs readable by any unauthenticated user.
 
 **Security assessment**
 
-Overly broad workflow permissions mean a compromised or malicious GitHub Action in the dependency chain could push to the repository, publish packages, or access secrets. Pinning actions to commit SHA hashes and applying the principle of least-privilege permissions (`contents: read` as the default) are the two most impactful fixes here.
+Access logging covers HTTP traffic but two operational gaps reduce its value:
+
+- The access log file is exposed at an unauthenticated route, allowing attackers to enumerate request patterns and observe their own attacks.
+- No security-event monitoring distinguishes legitimate traffic from brute-force or injection attempts; the logging pipeline produces records but does not alert.
 
 **Relevant findings**
 
-- [F-014](#f-014) — Logging pipeline exposes raw log files; relevant to CI/CD audit trail integrity.
-- [F-018](#f-018) — Error handler in production exposes internal paths that assist CI/CD environment enumeration.
-
-<a id="security-logging-and-monitoring"></a>
-#### 7.11.4 Security Logging and Monitoring (Morgan + Winston)
-
-**Status:** 🟡 Partial - Morgan combined-format logging and Winston application logging are enabled; but log files are exposed at an unauthenticated route, making the audit trail readable by any attacker.
-
-`server.ts:338` mounts Morgan in combined format, logging all HTTP requests to stdout and to a file. `lib/logger.ts` configures Winston for application-level events. Both loggers are active by default.
-
-**Security assessment**
-
-The logging infrastructure works: requests and events are recorded. The critical gap is that the log files are readable without authentication at `GET /support/logs` ([F-014](#f-014) — Access logs exposed to unauthenticated users tamper potential). An attacker can read request logs to discover authenticated users, active sessions, and API call patterns - the audit trail becomes an intelligence source for the attacker rather than for the defender.
-
-**Relevant findings**
-
-- [F-014](#f-014) — Log files exposed at `/support/logs` without authentication; the audit trail is readable by unauthenticated attackers.
-- [F-018](#f-018) — Error handler emits stack traces in production responses, enriching attacker intelligence.
+- No dedicated finding is routed to logging in this assessment.
 
 <a id="automated-sca-scanning"></a>
-#### 7.11.5 Automated SCA scanning
+#### 7.11.3 Automated SCA scanning
 
-**Status:** 🟢 Adequate - GitHub CodeQL analysis workflow (`codeql-analysis.yml`) runs on push to master and on PRs; CodeQL covers JavaScript/TypeScript.
+**Status:** 🟢 Adequate - CodeQL scanning runs in CI via `.github/workflows/codeql-analysis.yml` and the PR compliance workflow.
 
-`.github/workflows/codeql-analysis.yml` runs GitHub's CodeQL static analysis on every push to `master` and on pull requests. The analysis covers JavaScript and TypeScript, which catches a subset of the injection and dangerous-eval findings. CodeQL's built-in queries detect `eval()` on user-controlled input and SQL concatenation patterns.
+CodeQL analysis is configured in `.github/workflows/codeql-analysis.yml:23` and referenced in `.github/workflows/pr-compliance.yml:168`. The workflows run on push and pull requests, providing automated code-level scanning for known vulnerability patterns. GitHub Actions steps use SHA-pinned action references, preventing supply-chain substitution via tag mutation.
 
 **Security assessment**
 
-CodeQL provides a meaningful static analysis baseline. Its effectiveness is limited here because it is the only automated security gate and the findings it would surface (eval, SQL injection) are present in the current codebase - indicating either that the results are not reviewed or that the intentional vulnerability design suppresses alerts. The control is adequate as infrastructure; its operational value depends on a triage process that is outside the source tree.
+The SCA scanning posture is the strongest operational control in this codebase. SHA-pinned action references (`uses: actions/checkout@v3` with explicit SHA) are a meaningful supply-chain hardening measure. The CodeQL workflow scope and query packs used are not audited in this assessment, but the presence of automated scanning on every PR is a positive baseline.
 
 **Relevant findings**
 
-- [F-014](#f-014) — Log exposure is an operational finding not surfaced by static analysis.
-- [F-018](#f-018) — Error-handler misconfiguration is a runtime finding; CodeQL would not catch it.
+- No dedicated finding is routed to SCA scanning in this assessment.
 
 _Additional cataloged controls without a dedicated subsection (no implementation prose and no linked findings): Automated dependency updates, Lockfile hygiene._
 
 ### 7.12 Real-time and Not Applicable Controls
 
-`socket.io@3.1.x` is present in `package.json` and `lib/startup/registerWebsocketEvents.ts` registers WebSocket event handlers. No security finding was derived from the WebSocket or `Socket.IO` surface during this assessment.
-
-**Controls covered:** [7.12.1 WebSocket Event Handler Security (`Socket.IO`)](#7121-websocket-event-handler-security-socketio)
-
-- [7.12.1 WebSocket Event Handler Security (Socket.IO)](#websocket-event-handler-security)
-
-**Implemented controls:** `lib/startup/registerWebsocketEvents.ts` (`Socket.IO` event handler registration); `socket.io@3.1.x` (WebSocket server).
-
-**Assessment:** The `Socket.IO` event handlers are present and functional. No injection, authentication bypass, or denial-of-service finding was identified on the WebSocket surface during this assessment. This section is marked Not Applicable - the WebSocket surface was reviewed and no controls are deficient.
-
-<a id="websocket-event-handler-security"></a>
-#### 7.12.1 WebSocket Event Handler Security (`Socket.IO`)
-
-**Status:** - Not applicable - `Socket.IO` event handlers reviewed; no exploitable findings identified on this surface.
-
-`lib/startup/registerWebsocketEvents.ts` registers `Socket.IO` event handlers for real-time features (order status updates, challenge notifications). The handlers receive client messages and broadcast server-side events. No user-controlled data is passed to dangerous sinks (eval, SQL, filesystem) via the WebSocket path.
-
-**Security assessment**
-
-The WebSocket surface was reviewed during reconnaissance and STRIDE analysis. The `Socket.IO` handlers do not introduce independent injection or privilege-escalation vectors beyond those already catalogued on the HTTP REST surface. No additional controls are required beyond the session/JWT controls described in [§7.3](#73-session-and-token-controls).
-
-**Relevant findings**
-
-- No dedicated finding routed in this assessment.
+<!-- §7.12 LOCKED — mechanically derived from absence of real-time findings. Renderer must not rewrite the line below. -->
+_Not applicable - no real-time / WebSocket findings routed to this category, and no AI/LLM, GraphQL, or gRPC surfaces detected by the recon scan. Controls catalogued elsewhere (container hardening, dependency determinism) are covered in their primary [§7](#7-security-architecture) sections._
 
 ### 7.13 Defense-in-Depth Summary
 
-**Verdict:** 🔴 Missing
+**Verdict:** 🔴 Unsafe
 
-Two individual controls provide genuine defence-in-depth value: the multi-stage distroless Docker image removes shell and package-manager access from the runtime container, and the CodeQL workflow catches a class of injection and eval patterns in CI. The RS256 algorithm choice for JWT signing is architecturally sound - the weakness is in the key management, not the algorithm. Morgan and Winston logging infrastructure is present and functional.
+`RS256` asymmetric JWT signing, a Dockerfile multi-stage build producing a distroless runtime image, SHA-pinned GitHub Actions, CodeQL scanning on PRs, and Multer upload-size limits are the positive controls this codebase provides. Each represents a deliberate defensive choice that would hold in a non-training deployment.
 
-Restoring layered defence requires four structural repairs that each remove an independent exploitation path: (1) move all hardcoded secrets to runtime injection and rotate the RSA key pair, (2) replace the two raw `models.sequelize.query()` call sites with parameterized queries, (3) remove both `eval()` sinks and the `notevil` sandbox from the order processing path, and (4) remove every `bypassSecurityTrustHtml()` call and let Angular's default sanitizer run. Without these four, no browser-level or container-level hardening closes the Critical attack paths.
+Every other layer is intentionally broken for training purposes: authentication is bypassed by SQL injection before the JWT signing boundary is reached; the signing key is in the repository, so the asymmetric guarantee is nullified; output encoding is disabled in the highest-value views; XML and URL parsers are configured in their most permissive modes. Restoring layered defense requires: moving secrets to environment variables and rotating all committed values, replacing raw SQL with ORM parameter binding, enforcing JWT algorithm restrictions, removing `bypassSecurityTrustHtml()` calls, setting `Secure`/`HttpOnly`/`SameSite=Strict` cookie flags, and adding a Content Security Policy header.
 
 <!-- enriched:thorough -->
 
 ---
 
-## 8. Threat Register
+## 8. Findings Register
 
 Findings are grouped by severity (Critical → High → Medium → Low); within a tier they are ordered by attack vektor (Repo-Read → Internet-Anon → Internet-User → Victim-Required). Each finding is a card with the same fixed fields, in order: **Severity · Component · Location** → **Issue** → **Root cause** → **Evidence** → **Fix** → **Classification** (with external CWE / OWASP links).
 
-**Risk Distribution:** 🔴 Critical: 9 · 🟠 High: 16 · 🟡 Medium: 6 · 🟢 Low: 0 · **Total findings: 31**
-**STRIDE Coverage:** Spoofing: 4 · Tampering: 12 · Repudiation: 1 · Information Disclosure: 8 · Denial of Service: 2 · Elevation of Privilege: 4
+**Risk Distribution:** 🔴 Critical: 7 · 🟠 High: 11 · 🟡 Medium: 5 · 🟢 Low: 1 · **Total findings: 24**
+**STRIDE Coverage:** Spoofing: 4 · Tampering: 7 · Repudiation: 0 · Information Disclosure: 10 · Denial of Service: 2 · Elevation of Privilege: 1
 
-**Findings index:**<br/>[F-001](#f-001) — JWT algorithm confusion algorithm none bypass<br/>[F-002](#f-002) — RSA private key hardcoded offline JWT forgery<br/>[F-003](#f-003) — SQL injection login authentication bypass<br/>[F-004](#f-004) — SQL injection product search (UNION + schema exfil)<br/>[F-005](#f-005) — Remote code execution notevil sandbox bypass in B2B API<br/>[F-006](#f-006) — Server side code injection via eval on username field<br/>[F-007](#f-007) — XXE via XML file upload with external entity resolution<br/>[F-008](#f-008) — Zip slip path traversal via unzipper 0.9.15<br/>[F-009](#f-009) — Server side request forgery via profile image URL upload<br/>[F-010](#f-010) — Sensitive files and logs exposed without authentication<br/>[F-011](#f-011) — IDOR basket accessible by any authenticated user<br/>[F-012](#f-012) — Open redirect bypass via allowlist prefix check<br/>[F-013](#f-013) — Prometheus metrics endpoint exposed without authentication<br/>[F-014](#f-014) — Access logs exposed to unauthenticated users tamper potential<br/>[F-015](#f-015) — Path traversal in data erasure layout parameter<br/>[F-016](#f-016) — Missing rate limiting on authentication endpoint<br/>[F-017](#f-017) — Mass assignment wallet balance manipulable via req.body.UserId<br/>[F-018](#f-018) — Error handler reveals internal stack traces<br/>[F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass<br/>[F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel<br/>[F-021](#f-021) — XSS last login ip rendered as trusted HTML<br/>[F-022](#f-022) — Client side JWT stored in localStorage accessible to XSS<br/>[F-023](#f-023) — Angular route guards bypassable client side<br/>[F-024](#f-024) — XSS via postMessage and iframe DOM based attack<br/>[F-025](#f-025) — Product description and review rendered as HTML stored XSS vector<br/>[F-026](#f-026) — NoSQL injection via \$where operator in MarsDB reviews<br/>[F-027](#f-027) — MD5 password hashing passwords trivially reversible<br/>[F-028](#f-028) — User model returns sensitive fields in API responses (password hash, totpSecret)<br/>[F-029](#f-029) — Product reviews allow unauthorized update IDOR in review update<br/>[F-030](#f-030) — Database schema exposure via SQL injection in search route<br/>[F-031](#f-031) — JavaScript injection via \$where can crash MarsDB process
+**Findings index:**<br/>🔴 [F-001](#f-001) — SQL injection authentication bypass routes/login.ts<br/>🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts<br/>🔴 [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts<br/>🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/…<br/>🔴 [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrd…<br/>🔴 [F-006](#f-006) — Remote code execution via eval in userProfile routes/userProfile.ts<br/>🔴 [F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts<br/>🟠 [F-008](#f-008) — MD5 password hashing trivially reversible lib/insecurity.ts<br/>🟠 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/abo…<br/>🟠 [F-010](#f-010) — XML external entity injection via libxmljs2 external entity resolution…<br/>🟠 [F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa<br/>🟠 [F-012](#f-012) — No Content Security Policy allows arbitrary script injection server.ts<br/>🟠 [F-013](#f-013) — Plaintext security answers stored in database models/securityAnswer.ts<br/>🟠 [F-014](#f-014) — SSRF via profile image URL upload routes/profileImageUrlUpload.ts<br/>🟠 [F-015](#f-015) — Path traversal in encryption key and log file endpoints routes/keyServe…<br/>🟠 [F-016](#f-016) — Unauthenticated FTP directory listing exposes sensitive files server.ts<br/>🟠 [F-017](#f-017) — No rate limiting on authentication endpoints server.ts<br/>🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts<br/>🟡 [F-019](#f-019) — NoSQL injection via MarsDB queries data/mongodb.ts<br/>🟡 [F-020](#f-020) — Unrestricted file upload allows malicious file storage routes/fileUploa…<br/>🟡 [F-021](#f-021) — Build context includes sensitive files without dockerignore exclusions<br/>🟡 [F-022](#f-022) — Open redirect via URL substring match bypass lib/insecurity.ts<br/>🟡 [F-023](#f-023) — DoS via infinite loop in B2B order evaluation routes/b2bOrder.ts<br/>🟢 [F-024](#f-024) — Workflow lacks explicit permissions declaration
 
-<a id="th-01"></a><a id="th-02"></a><a id="th-03"></a><a id="th-05"></a><a id="th-11"></a><a id="th-04"></a><a id="th-06"></a><a id="th-07"></a><a id="th-08"></a><a id="th-12"></a><a id="th-17"></a><a id="th-16"></a><a id="th-18"></a>
+<a id="th-01"></a><a id="th-02"></a><a id="th-05"></a><a id="th-11"></a><a id="th-03"></a><a id="th-04"></a><a id="th-06"></a><a id="th-07"></a><a id="th-08"></a><a id="th-09"></a><a id="th-12"></a><a id="th-17"></a><a id="th-18"></a>
 
-### 🔴 Critical (9)
+### 🔴 Critical (7)
 
 <a id="t-002"></a><a id="f-002"></a>
 #### F-002 · Hardcoded Cryptographic Key
 
-**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `lib/insecurity.ts`:23
+**Severity:** 🔴 Critical - secret committed to the public source repo - extractable on clone, no prior access needed  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `lib/insecurity.ts`:23
 
-**Issue:** The RSA 2048-bit private key is embedded in `lib/insecurity.ts:23` and committed to a public GitHub repository. Any user can retrieve the key (git clone or GitHub web UI), call jwt.sign({id:1, email:'admin@juice-`sh.op`', isAdmin:true}, privateKey, {algorithm:'RS256'}) offline and produce a cryptographically valid admin JWT without any server interaction.
+**Issue:** The RSA-2048 private key is hardcoded in `lib/insecurity.ts:23` and committed to the public git repository. Any person with repository read access can extract it and forge arbitrary JWT tokens for any user including admin.
 
 **Root cause:** Authentication can be circumvented or forged because credentials, signing keys, or password hashes are weak, missing, or exposed.
 
 **Evidence:** ✓ verified - A signing key is embedded as a literal constant in source.
 
-**Fix:** Move the cryptographic key out of source control into a managed secret store and rotate it → [M-002](#m-002) — Implement application-level CSP and remove bypassSecurityTrustHtml - Implement application-level CSP and remove bypassSecurityTrustHtml
+**Fix:** Move the cryptographic key out of source control into a managed secret store and rotate it → [M-002](#m-002) — Remove hardcoded RSA private key; rotate to environment variable
 
-**Classification:** Cryptographic Failures · [CWE-321](https://cwe.mitre.org/data/definitions/321.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/) · walkthrough [Walkthrough §3.2](#32-rsa-private-key-hardcoded-offline-jwt-forgery)
+**Classification:** Broken Authentication · [CWE-321](https://cwe.mitre.org/data/definitions/321.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/) · walkthrough [Walkthrough §3.2](#32-hardcoded-rsa-private-key-enables-jwt-forgery-libinsecurit)
 
 <a id="t-001"></a><a id="f-001"></a>
-#### F-001 · Improper Verification of Cryptographic Signature
+#### F-001 · SQL Injection
 
-**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `lib/insecurity.ts`:54
+**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `routes/login.ts`:34
 
-**Issue:** An attacker crafts a JWT with header {"alg":"none"} and empty signature. express-jwt 0.1.3 (routes via `lib/insecurity.ts:54`) accepts unsigned tokens because it does not enforce algorithm. Attacker sets isAdmin:true in the payload and gains full admin access. CVE-2015-9235.
-
-**Root cause:** Authentication can be circumvented or forged because credentials, signing keys, or password hashes are weak, missing, or exposed.
-
-**Evidence:** ✓ verified
-
-```typescript
-// lib/insecurity.ts:54
-  return str
-}
-
-export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)
-export const denyAll = () => expressJwt({ secret: '' + Math.random() } as any)
-export const authorize = (user = {}) => jwt.sign(user, privateKey, { expiresIn: '6h', algorithm: 'RS256' })
-export const verify = (token: string) => token ? (jws.verify as ((token: string, secret: string) => boolean))(token, publicKey) : false
-```
-
-**Fix:** Pin the signature algorithm explicitly and reject `alg:none` and unknown algorithms → [M-001](#m-001) — Establish dependency vulnerability scanning and update SLA - Establish dependency vulnerability scanning and update SLA
-
-**Classification:** Broken Authentication · [CWE-347](https://cwe.mitre.org/data/definitions/347.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/) · walkthrough [Walkthrough §3.1](#31-jwt-algorithm-confusion-algorithm-none-bypass)
-
-<a id="t-003"></a><a id="f-003"></a>
-#### F-003 · SQL Injection
-
-**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/login.ts`:34
-
-**Issue:** `routes/login.ts:34` constructs an SQL query via template literal: SELECT * FROM Users WHERE email = '\${`req.body.email`}' AND password = '...' AND deletedAt IS NULL. An attacker submits email=admin@juice-`sh.op`'-- which comments out the password check, authenticating as admin without knowing the password. UNION-based injection can dump the entire Users table.
+**Issue:** An unauthenticated attacker sends POST `/rest/user/login` with email="' OR 1=1--" which satisfies the raw SQL query SELECT * FROM Users WHERE email = ''' OR 1=1-- AND password... yielding the first row (admin). `routes/login.ts:34`.
 
 **Root cause:** User input flows into a server-side interpreter (SQL, NoSQL, XML, YAML, LDAP, OS shell) without parameterisation or schema validation.
 
@@ -1579,16 +1408,31 @@ export const verify = (token: string) => token ? (jws.verify as ((token: string,
         if (user.data?.id && user.data.totpSecret !== '') {
 ```
 
-**Fix:** Switch all SQL execution to parameterised queries or ORM-bound parameters → [M-003](#m-003) — Replace raw SQL with Sequelize parameterized query - Replace raw SQL with Sequelize parameterized query
+**Fix:** Switch all SQL execution to parameterised queries or ORM-bound parameters → [M-001](#m-001) — Replace raw SQL with Sequelize parameterized query in login route
 
-**Classification:** Injection · [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.3](#33-sql-injection-login-authentication-bypass)
+**Classification:** Injection · [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.1](#31-sql-injection-authentication-bypass-routeslogints)
 
-<a id="t-004"></a><a id="f-004"></a>
-#### F-004 · SQL Injection
+<a id="t-003"></a><a id="f-003"></a>
+#### F-003 · Use of a Broken or Risky Cryptographic Algorithm
 
-**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/search.ts`:23
+**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `lib/insecurity.ts`:54
 
-**Issue:** `routes/search.ts:23` builds: SELECT * FROM Products WHERE ((name LIKE '%\${criteria}%' ...). An attacker submits q=')) UNION SELECT * FROM Users-- to enumerate all users. The same route at line 47 runs SELECT sql FROM sqlite_master on UNION success, exposing the full database schema.
+**Issue:** express-jwt 0.1.3 (`CVE-2020-15084`) does not enforce algorithm restrictions. An attacker can craft a JWT with `alg:none`, strip the signature, and the middleware accepts it as valid. `RS256`→`HS256` confusion allows signing with the public key as HMAC secret. `lib/insecurity.ts:54`.
+
+**Root cause:** Authentication can be circumvented or forged because credentials, signing keys, or password hashes are weak, missing, or exposed.
+
+**Evidence:** ✓ verified - A broken or non-password cryptographic primitive is configured on this path.
+
+**Fix:** Replace the broken algorithm with a vetted modern primitive (AES-GCM / Argon2id / Ed25519) → [M-003](#m-003) — Upgrade express-jwt to >=6.0.0 and enforce algorithm allowlist
+
+**Classification:** Broken Authentication · [CWE-327](https://cwe.mitre.org/data/definitions/327.html) · [OWASP A07:2021](https://owasp.org/Top10/A07_2021/) · walkthrough [Walkthrough §3.3](#33-jwt-algorithm-confusion-bypass-via-express-jwt-013-libin)
+
+<a id="t-007"></a><a id="f-007"></a>
+#### F-007 · SQL Injection
+
+**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `routes/search.ts`:23
+
+**Issue:** The search endpoint uses raw string interpolation in SELECT ... LIKE queries (`routes/search.ts:23`). A UNION SELECT attack can extract all tables including Users, products, orders, and security answers. `routes/search.ts:23`,47.
 
 **Root cause:** User input flows into a server-side interpreter (SQL, NoSQL, XML, YAML, LDAP, OS shell) without parameterisation or schema validation.
 
@@ -1605,16 +1449,16 @@ export const verify = (token: string) => token ? (jws.verify as ((token: string,
         if (challengeUtils.notSolved(challenges.unionSqlInjectionChallenge)) { // vuln-code-snippet hide-start
 ```
 
-**Fix:** Switch all SQL execution to parameterised queries or ORM-bound parameters → [M-004](#m-004) — Use Sequelize Op.like with parameterized values for search - Use Sequelize Op.like with parameterized values for search
+**Fix:** Switch all SQL execution to parameterised queries or ORM-bound parameters → [M-005](#m-005) — Replace raw SQL with Sequelize ORM parameterized queries in search route
 
-**Classification:** Injection · [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.4](#34-sql-injection-product-search-union-schema-exfil)
+**Classification:** Injection · [CWE-89](https://cwe.mitre.org/data/definitions/89.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.7](#37-sql-injection-full-database-disclosure-via-union-attack-rou)
 
 <a id="t-005"></a><a id="f-005"></a>
 #### F-005 · Code Injection
 
-**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/b2bOrder.ts`:23
+**Severity:** 🔴 Critical  ·  **Component:** [C-05](#c-05) - B2B Order API  ·  **Location:** `routes/b2bOrder.ts`:23
 
-**Issue:** POST `/b2b/v2/orders` accepts orderLinesData (user-controlled string) and executes it via vm.runInContext('safeEval(orderLinesData)', sandbox). The notevil library has documented sandbox escape vulnerabilities. An attacker can execute arbitrary `Node.js` code by sending a crafted payload: {"orderLinesData":"require('child_process').execSync('id')"}.
+**Issue:** POST `/api/B2BOrder` with orderLinesData containing prototype pollution payload (e.g., constructor[prototype][toString]=()=>{ require("child_process").exec("id") }) escapes the `notevil` safeEval sandbox via prototype chain manipulation and executes arbitrary `Node.js` code. `routes/b2bOrder.ts:23`.
 
 **Root cause:** User-supplied data reaches a server-side code-execution sink (`eval`, sandbox primitives, deserialisation, prototype-pollution gadgets) and breaks out into arbitrary native execution.
 
@@ -1631,16 +1475,16 @@ export const verify = (token: string) => token ? (jws.verify as ((token: string,
         if (utils.getErrorMessage(err).match(/Script execution timed out.*/) != null) {
 ```
 
-**Fix:** Replace runtime code generation (eval/Function/template render) with a data-only execution path → [M-005](#m-005) — Remove eval-based order processing; use structured input schema - Remove eval-based order processing; use structured input schema
+**Fix:** Replace runtime code generation (eval/Function/template render) with a data-only execution path → [M-022](#m-022) — Replace safeEval with structured JSON order line parsing
 
-**Classification:** Code Execution via Unsafe Deserialization or Eval · [CWE-94](https://cwe.mitre.org/data/definitions/94.html) · [OWASP A08:2021](https://owasp.org/Top10/A08_2021/) · walkthrough [Walkthrough §3.5](#35-remote-code-execution-notevil-sandbox-bypass-in-b2b-api)
+**Classification:** Code Execution via Unsafe Deserialization or Eval · [CWE-94](https://cwe.mitre.org/data/definitions/94.html) · [OWASP A08:2021](https://owasp.org/Top10/A08_2021/) · walkthrough [Walkthrough §3.5](#35-remote-code-execution-via-sandbox-escape-in-b2b-order-api-r)
 
 <a id="t-006"></a><a id="f-006"></a>
 #### F-006 · Server-Side Template Injection
 
-**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/userProfile.ts`:62
+**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `routes/userProfile.ts`:62
 
-**Issue:** Calls eval(code) where code is derived from the username field: const code = ... username ... When an authenticated user sets their username to a JavaScript expression (e.g. require('fs').readFileSync('`/etc/passwd`').`toString()`), the server evaluates it and the result becomes the displayed username. Full server-side JavaScript execution as the application process user.
+**Issue:** POST `/profile` with username containing #{&lt;code>} causes `routes/userProfile.ts:62` to eval(code) where code is extracted from the username field. An authenticated attacker sets username to #{process.mainModule.require("child_process").execSync("id").toString()} to execute arbitrary OS commands.
 
 **Root cause:** User-supplied data reaches a server-side code-execution sink (`eval`, sandbox primitives, deserialisation, prototype-pollution gadgets) and breaks out into arbitrary native execution.
 
@@ -1657,85 +1501,186 @@ export const verify = (token: string) => token ? (jws.verify as ((token: string,
       }
 ```
 
-**Fix:** Replace runtime code generation (eval/Function/template render) with a data-only execution path → [M-006](#m-006) — Remove eval() from username processing; use safe string rendering - Remove `eval()` from username processing; use safe string rendering
+**Fix:** Replace runtime code generation (eval/Function/template render) with a data-only execution path → [M-006](#m-006) — Remove eval() from userProfile route; use safe template string replacement
 
-**Classification:** Code Execution via Unsafe Deserialization or Eval · [CWE-95](https://cwe.mitre.org/data/definitions/95.html) · [OWASP A08:2021](https://owasp.org/Top10/A08_2021/) · walkthrough [Walkthrough §3.6](#36-server-side-code-injection-via-eval-on-username-field)
+**Classification:** Code Execution via Unsafe Deserialization or Eval · [CWE-95](https://cwe.mitre.org/data/definitions/95.html) · [OWASP A08:2021](https://owasp.org/Top10/A08_2021/) · walkthrough [Walkthrough §3.6](#36-remote-code-execution-via-eval-in-userprofile-routesuserpr)
 
-<a id="t-027"></a><a id="f-027"></a>
-#### F-027 · Password Hash with Insufficient Effort
+<a id="t-004"></a><a id="f-004"></a>
+#### F-004 · Cross-Site Scripting
 
-**Severity:** 🔴 Critical  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `lib/insecurity.ts`:43
+**Severity:** 🔴 Critical  ·  **Component:** [C-02](#c-02) - Angular SPA Frontend  ·  **Location:** `frontend/src/app/administration/administration.component.ts`:60
 
-**Issue:** `models/user.ts:77` and `lib/insecurity.ts:43` hash passwords with a single-round MD5 with no salt: crypto.createHash('md5').update(data).digest('hex'). MD5 is a fast, cryptographically broken hash. The complete md5 rainbow table for common passwords fits in memory. An attacker who exfiltrates the Users table (via SQL injection, [T-003](#t-003) — SQL injection login authentication bypass or [T-004](#t-004) — SQL injection product search (UNION + schema exfil)) can reverse all passwords within hours using GPU-accelerated cracking or rainbow tables.
+**Issue:** The admin panel bypasses Angular XSS protection on user email (`administration.component.ts:60`) and feedback comments (`administration.component.ts:78`). An attacker who registers with a crafted email like `<script>`...`</script>` injects persistent XSS into the admin panel.
+
+**Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitisation; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
+
+**Evidence:** ✓ verified - User input is rendered as HTML without contextual output encoding.
+
+```typescript
+// frontend/src/app/administration/administration.component.ts:60
+        this.userDataSource = users
+        this.userDataSourceHidden = users
+        for (const user of this.userDataSource) {
+          user.email = this.sanitizer.bypassSecurityTrustHtml(`<span class="${this.doesUserHaveAnActiveSession(user) ? 'confirmation' : 'error'}">${user.email}</span>`)
+        }
+        this.userDataSource = new MatTableDataSource(this.userDataSource)
+        this.userDataSource.paginator = this.paginatorUsers
+```
+
+**Fix:** Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls → [M-011](#m-011) — Remove bypassSecurityTrustHtml() from administration component
+
+**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.4](#34-stored-xss-in-admin-panel-via-user-email-and-feedback-front)
+
+### 🟠 High (11)
+
+<a id="t-013"></a><a id="f-013"></a>
+#### F-013 · Cleartext Storage of Sensitive Data
+
+**Severity:** 🟠 High  ·  **Component:** [C-03](#c-03) - Data Layer  ·  **Location:** `models/securityAnswer.ts`:1
+
+**Issue:** Security answers used for password reset are stored in plaintext in the SecurityAnswers table. An attacker who reads the database (via SQL injection or direct file access to SQLite) obtains all security answers, enabling password reset for any user account. `models/securityAnswer.ts`.
+
+**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
+
+**Evidence:** ✓ verified
+
+```typescript
+// models/securityAnswer.ts:1
+/*
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * SPDX-License-Identifier: MIT
+```
+
+**Fix:** [M-016](#m-016) — Hash security answers before storage
+
+**Classification:** Cryptographic Failures · [CWE-312](https://cwe.mitre.org/data/definitions/312.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
+
+<a id="t-008"></a><a id="f-008"></a>
+#### F-008 · Password Hash with Insufficient Effort
+
+**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `lib/insecurity.ts`:43
+
+**Issue:** All user passwords are hashed with `MD5` (`lib/insecurity.ts:43`) with no salt. `MD5` is not a password hashing function - it is a fast general-purpose hash trivially reversed by rainbow tables.
 
 **Root cause:** Authentication can be circumvented or forged because credentials, signing keys, or password hashes are weak, missing, or exposed.
 
 **Evidence:** ✓ verified - A non-iterating hash is used for password storage.
 
-**Fix:** Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id) → [M-027](#m-027) — Replace MD5 with bcrypt (cost factor 12+) for password hashing - Replace MD5 with bcrypt (cost factor 12+) for password hashing
+**Fix:** Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id) → [M-004](#m-004) — Replace MD5 with bcrypt/argon2 for password hashing
 
-**Classification:** Cryptographic Failures · [CWE-916](https://cwe.mitre.org/data/definitions/916.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/) · walkthrough [Walkthrough §3.9](#39-md5-password-hashing-passwords-trivially-reversible)
+**Classification:** Cryptographic Failures · [CWE-916](https://cwe.mitre.org/data/definitions/916.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
-<a id="t-019"></a><a id="f-019"></a>
-#### F-019 · Cross-Site Scripting
+<a id="t-011"></a><a id="f-011"></a>
+#### F-011 · JWT stored browser cookie without
 
-**Severity:** 🔴 Critical  ·  **Component:** [C-02](#c-02) - Angular Single-Page Application  ·  **Location:** `frontend/src/app/search-result/search-result.component.ts`:170
+**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `lib/insecurity.ts`:63
 
-**Issue:** Calls this.sanitizer.bypassSecurityTrustHtml(queryParam) and binds the result to [innerHTML] in the template. An attacker crafts a URL with q=`<img src=x onerror=alert(document.cookie)>` and shares it. When the victim clicks the link, the Angular SPA renders the unsanitized parameter, executing the attacker's JavaScript in the victim's browser with full access to localStorage (JWT token).
+**Issue:** The Angular app stores JWT tokens in browser cookies without Secure or HttpOnly flags. JavaScript can read the token via `document.cookie` (no XSS required on same-origin pages). Client-side JWT storage.
 
-**Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitisation; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
-
-**Evidence:** ✓ verified - User input is rendered as HTML without contextual output encoding.
+**Evidence:** ✓ verified
 
 ```typescript
-// frontend/src/app/search-result/search-result.component.ts:170
-        this.io.socket().emit('verifyLocalXssChallenge', queryParam)
-      }) // vuln-code-snippet hide-end
-      this.dataSource.filter = queryParam.toLowerCase()
-      this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam) // vuln-code-snippet vuln-line localXssChallenge xssBonusChallenge
-      this.gridDataSource.subscribe((result: any) => {
-        if (result.length === 0) {
-          this.emptyState = true
+// lib/insecurity.ts:63
+export const sanitizeLegacy = (input = '') => input.replace(/<(?:\w+)\W+?[\w]/gi, '')
+export const sanitizeFilename = (filename: string) => sanitizeFilenameLib(filename)
+export const sanitizeSecure = (html: string): string => {
+  const sanitized = sanitizeHtml(html)
+  if (sanitized === html) {
 ```
 
-**Fix:** Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls → [M-019](#m-019) — Remove bypassSecurityTrustHtml; use Angular's default sanitization - Remove bypassSecurityTrustHtml; use Angular's default sanitization
+**Fix:** [M-013](#m-013) — Set Secure, HttpOnly, and SameSite=Strict on JWT cookie
 
-**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.7](#37-dom-xss-search-results-rendered-via-trust-html-bypass)
+**Classification:** Insecure Client-Side Storage · [CWE-315](https://cwe.mitre.org/data/definitions/315.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
 
-<a id="t-020"></a><a id="f-020"></a>
-#### F-020 · Cross-Site Scripting
+<a id="t-012"></a><a id="f-012"></a>
+#### F-012 · Missing Defense-in-Depth Control
 
-**Severity:** 🔴 Critical  ·  **Component:** [C-02](#c-02) - Angular Single-Page Application  ·  **Location:** `frontend/src/app/administration/administration.component.ts`:78
+**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `server.ts`:187
 
-**Issue:** `frontend/src/app/administration/administration.component.ts:78` marks `feedback.comment` as trusted HTML via bypassSecurityTrustHtml(`feedback.comment`). The admin panel at `/administration` renders these comments via [innerHTML] binding. Any user who submits feedback with XSS payload stores it in the database; when admin views the panel, the payload executes in the admin's browser, potentially stealing the admin JWT and enabling privilege escalation.
+**Issue:** The application has no Content Security Policy header. Combined with XSS vulnerabilities in the Angular frontend, an attacker can load scripts from arbitrary origins, exfiltrate cookies/localStorage, keylog inputs, or redirect users to phishing pages. `server.ts:187`.
 
-**Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitisation; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
+**Evidence:** ✓ verified - The control that would block this exposure is absent from the configured stack.
 
-**Evidence:** ✓ verified - User input is rendered as HTML without contextual output encoding.
+**Fix:** Add the missing protection mechanism for this surface (CSP / CSRF token / headers) → [M-014](#m-014) — Implement Content Security Policy header
+
+**Classification:** Cross-Site Scripting (XSS) · [CWE-693](https://cwe.mitre.org/data/definitions/693.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
+
+<a id="t-016"></a><a id="f-016"></a>
+#### F-016 · Directory Listing Exposure
+
+**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `server.ts`:270
+
+**Issue:** The `/ftp` endpoint serves directory listings and file downloads using serve-index without any authentication (`server.ts:270`). The directory contains `acquisitions.md` (M&A strategy), `coupons_2013.md.bak`, `incident-support.kdbx` (KeePass password manager database), and eastere.gg.
+
+**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
+
+**Evidence:** ✓ verified
 
 ```typescript
-// frontend/src/app/administration/administration.component.ts:78
-      next: (feedbacks) => {
-        this.feedbackDataSource = feedbacks
-        for (const feedback of this.feedbackDataSource) {
-          feedback.comment = this.sanitizer.bypassSecurityTrustHtml(feedback.comment)
-        }
-        this.feedbackDataSource = new MatTableDataSource(this.feedbackDataSource)
-        this.feedbackDataSource.paginator = this.paginatorFeedb
+// server.ts:270
+  /* /ftp directory browsing and file download */ // vuln-code-snippet neutral-line directoryListingChallenge
+  app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true })) // vuln-code-snippet vuln-line directoryListingChallenge
+  app.use('/ftp(?!/quarantine)/:file', servePublicFiles()) // vuln-code-snippet vuln-line directoryListingChallenge
+  app.use('/ftp/quarantine/:file', serveQuarantineFiles()) // vuln-code-snippet neutral-line directoryListingChallenge
+
 ```
 
-**Fix:** Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls → [M-020](#m-020) — Sanitize feedback content server-side before storage; remove bypassSecurityTrustHtml in admin panel - Sanitize feedback content server-side before storage; remove bypassSecurityTrustHtml in admin panel
+**Fix:** [M-020](#m-020) — Add authentication to FTP directory endpoint
 
-**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/) · walkthrough [Walkthrough §3.8](#38-stored-xss-feedback-comments-rendered-unsanitized-in-admin)
+**Classification:** Unauthenticated Management Plane · [CWE-548](https://cwe.mitre.org/data/definitions/548.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
-### 🟠 High (16)
+<a id="t-017"></a><a id="f-017"></a>
+#### F-017 · Missing Rate Limiting (Brute-Force)
 
-<a id="t-007"></a><a id="f-007"></a>
-#### F-007 · XML External Entity (XXE)
+**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `server.ts`:458
 
-**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/fileUpload.ts`:83
+**Issue:** POST `/rest/user/login` and POST `/rest/user/register` have no rate limiting (only `/rest/user/reset-password` has it). An attacker can perform unlimited brute-force or credential stuffing attacks against the login endpoint. `server.ts:458-471`.
 
-**Issue:** Parses uploaded XML with libxmljs2 using { noent: true } which enables external entity resolution. An attacker uploads an XML file containing <!ENTITY xxe SYSTEM 'file:///etc/passwd'>. Same mechanism can trigger SSRF to internal services.
+**Evidence:** ✓ verified
+
+```typescript
+// server.ts:458
+  /* Verify the 2FA Token */
+  app.post('/rest/2fa/verify',
+    rateLimit({ windowMs: 5 * 60 * 1000, max: 100, validate: false }),
+    twoFactorAuth.verify
+  )
+```
+
+**Fix:** Apply rate limiting and lock-out thresholds on authentication endpoints → [M-010](#m-010) — Add rate limiting to /rest/user/login and /rest/user/register
+
+**Classification:** Denial of Service · [CWE-307](https://cwe.mitre.org/data/definitions/307.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
+
+<a id="t-018"></a><a id="f-018"></a>
+#### F-018 · Improper Authorization
+
+**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `server.ts`:362
+
+**Issue:** GET `/api/Users` returns all users with any valid JWT (only `isAuthorized()` checked, no admin role check). Any authenticated user can list all user accounts and emails. `server.ts:362`.
+
+**Root cause:** Authorisation checks are absent or bypassable, allowing horizontal and vertical privilege jumps from a self-registered or low-rights account. Includes mass-assignment of privileged attributes.
+
+**Evidence:** ✓ verified
+
+```typescript
+// server.ts:362
+  app.use('/api/Feedbacks/:id', security.isAuthorized())
+  /* Users: Only POST is allowed in order to register a new user */
+  app.get('/api/Users', security.isAuthorized())
+  app.route('/api/Users/:id')
+    .get(security.isAuthorized())
+```
+
+**Fix:** Add explicit server-side authorisation checks on every protected route → [M-009](#m-009) — Add role-based authorization middleware to admin API endpoints
+
+**Classification:** Broken Access Control · [CWE-285](https://cwe.mitre.org/data/definitions/285.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
+
+<a id="t-010"></a><a id="f-010"></a>
+#### F-010 · XML External Entity (XXE)
+
+**Severity:** 🟠 High  ·  **Component:** [C-04](#c-04) - File Upload and Static File Service  ·  **Location:** `routes/fileUpload.ts`:83
+
+**Issue:** The file upload endpoint parses XML with libxmljs2 (`routes/fileUpload.ts:83`) using options {noent: true} which enables entity expansion. An attacker uploads an XML file with XXE payload <\!DOCTYPE foo [<\!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo> to read arbitrary server files.
 
 **Root cause:** User input flows into a server-side interpreter (SQL, NoSQL, XML, YAML, LDAP, OS shell) without parameterisation or schema validation.
 
@@ -1750,135 +1695,16 @@ export const verify = (token: string) => token ? (jws.verify as ((token: string,
         challengeUtils.solveIf(challenges.xxeFileDisclosureChallenge, () => { return (utils.matchesEtcPasswdFile(xmlString) || utils.matchesSystemIniFile(xmlString)) })
 ```
 
-**Fix:** Disable external entity resolution on every XML parser and reject DOCTYPE declarations → [M-007](#m-007) — Set noent:false in libxmljs2 parsing to disable external entity resolution - Set `noent:false` in libxmljs2 parsing to disable external entity resolution
+**Fix:** Disable external entity resolution on every XML parser and reject DOCTYPE declarations → [M-018](#m-018) — Disable XML external entity processing (noent:false)
 
-**Classification:** Injection · [CWE-611](https://cwe.mitre.org/data/definitions/611.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
+**Classification:** Insecure File Handling · [CWE-611](https://cwe.mitre.org/data/definitions/611.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
-<a id="t-008"></a><a id="f-008"></a>
-#### F-008 · Path Traversal
+<a id="t-014"></a><a id="f-014"></a>
+#### F-014 · Server-Side Request Forgery (SSRF)
 
-**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/fileUpload.ts`:42
+**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `routes/profileImageUrlUpload.ts`:24
 
-**Issue:** `routes/fileUpload.ts:42-45` extracts ZIP files without path sanitization: const absolutePath = path.resolve('uploads/complaints/' + fileName). An attacker crafts a ZIP containing an entry with path ../..`/routes/login.js` and uploads it. The server extracts to an arbitrary location outside the intended directory, potentially overwriting application files.
-
-**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
-
-**Evidence:** ✓ verified - User-supplied path components are joined without traversal-safe canonicalisation.
-
-```typescript
-// routes/fileUpload.ts:42
-              .on('entry', function (entry: any) {
-                const fileName = entry.path
-                const absolutePath = path.resolve('uploads/complaints/' + fileName)
-                challengeUtils.solveIf(challenges.fileWriteChallenge, () => { return absolutePath === path.resolve('ftp/legal.md') })
-                if (absolutePath.includes(path.resolve('.'))) {
-```
-
-**Fix:** Resolve and normalise every constructed path and reject anything that escapes the intended base directory → [M-008](#m-008) — Validate extracted paths against target directory before writing - Validate extracted paths against target directory before writing
-
-**Classification:** Insecure File Handling · [CWE-22](https://cwe.mitre.org/data/definitions/22.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
-
-<a id="t-010"></a><a id="f-010"></a>
-#### F-010 · Information Disclosure
-
-**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `server.ts`:281
-
-**Issue:** Exposes three unauthenticated file-serving routes: /ftp/ (directory listing of FTP files), /encryptionkeys/ (RSA public key + others), /support/logs/ (raw application access logs). Log files contain IP addresses, user actions, and authentication tokens in the morgan combined format. Any internet user can read application logs at `/support/logs/access.log`.
-
-**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
-
-**Evidence:** ✓ verified - Sensitive runtime values are served unauthenticated to any caller.
-
-**Fix:** Restrict the response to the minimum fields needed and never echo secrets → [M-010](#m-010) — Add authentication middleware to sensitive file serving routes - Add authentication middleware to sensitive file serving routes
-
-**Classification:** Error Information Disclosure · [CWE-200](https://cwe.mitre.org/data/definitions/200.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
-
-<a id="t-016"></a><a id="f-016"></a>
-#### F-016 · Missing Rate Limiting (Brute-Force)
-
-**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `server.ts`:594
-
-**Issue:** POST `/rest/user/login` has no rate limiting. An attacker can attempt credential stuffing or brute-force attacks at unlimited speed. A 1 million-entry credential list can be tested in minutes from a single IP.
-
-**Evidence:** ✓ verified
-
-```typescript
-// server.ts:594
-
-  /* Custom Restful API */
-  app.post('/rest/user/login', login())
-  app.get('/rest/user/change-password', changePassword())
-  app.post('/rest/user/reset-password', resetPassword())
-```
-
-**Fix:** Apply rate limiting and lock-out thresholds on authentication endpoints → [M-016](#m-016) — Add express-rate-limit to login endpoint (already in dependencies) - Add express-rate-limit to login endpoint (already in dependencies)
-
-**Classification:** Denial of Service · [CWE-307](https://cwe.mitre.org/data/definitions/307.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
-
-<a id="t-022"></a><a id="f-022"></a>
-#### F-022 · ~~Insecure Storage of Sensitive Information~~ ⚠
-
-**Severity:** 🟠 High  ·  **Component:** [C-02](#c-02) - Angular Single-Page Application  ·  **Location:** `frontend/src/app/Services/authentication.service.ts`:1
-
-**Issue:** The Angular SPA stores JWT tokens in localStorage (accessible via JavaScript). Any successful XSS payload ([T-019](#t-019) — DOM XSS search results rendered via trust HTML bypass, [T-020](#t-020) — Stored XSS feedback comments rendered unsanitized in admin panel, [T-021](#t-021) — XSS last login ip rendered as trusted HTML) can read document.localStorage.getItem('token') and exfiltrate the JWT to an attacker-controlled server. Since JWTs last 6 hours and there is no revocation, the attacker has a 6-hour session window.
-
-**Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitisation; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
-
-**Evidence:** ⚠ refuted
-
-**Fix:** [M-022](#m-022) — Store JWT in HttpOnly cookie to prevent XSS-based theft - Store JWT in HttpOnly cookie to prevent XSS-based theft
-
-**Classification:** Insecure Client-Side Storage · [CWE-922](https://cwe.mitre.org/data/definitions/922.html) · [OWASP A02:2021](https://owasp.org/Top10/A02_2021/)
-
-<a id="t-023"></a><a id="f-023"></a>
-#### F-023 · Angular route guards bypassable client
-
-**Severity:** 🟠 High  ·  **Component:** [C-02](#c-02) - Angular Single-Page Application  ·  **Location:** `frontend/src/app/app.guard.ts`:12
-
-**Issue:** `frontend/src/app/app.guard.ts` provides LoginGuard and AdminGuard for client-side routing. Because these guards only check localStorage for a token, an attacker who forges a valid JWT ([T-001](#t-001) — JWT algorithm confusion algorithm none bypass, [T-002](#t-002) — RSA private key hardcoded offline JWT forgery) or manually sets a crafted token in localStorage can bypass the client-side guard. Even without token forgery, route guards are client-side only - direct API calls bypass them entirely.
-
-**Evidence:** ✓ verified
-
-**Fix:** [M-023](#m-023) — Enforce authorization server-side; client guards are UI-only - Enforce authorization server-side; client guards are UI-only
-
-**Classification:** Broken Access Control · [CWE-602](https://cwe.mitre.org/data/definitions/602.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
-
-<a id="t-028"></a><a id="f-028"></a>
-#### F-028 · Information Disclosure
-
-**Severity:** 🟠 High  ·  **Component:** [C-03](#c-03) - Data Layer (SQLite + MarsDB)  ·  **Location:** `models/user.ts`:28
-
-**Issue:** The User Sequelize model has no field exclusion by default. REST endpoints backed by Sequelize (via finale-rest) may return all model attributes including password (MD5 hash) and totpSecret in API responses. An attacker who can trigger a user data endpoint (e.g. GET `/api/Users/:id`) receives the password hash which can be cracked offline.
-
-**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
-
-**Evidence:** ✓ verified - Sensitive runtime values are served unauthenticated to any caller.
-
-**Fix:** Restrict the response to the minimum fields needed and never echo secrets → [M-028](#m-028) — Exclude password and totpSecret from all API serialization - Exclude password and totpSecret from all API serialization
-
-**Classification:** Error Information Disclosure · [CWE-200](https://cwe.mitre.org/data/definitions/200.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
-
-<a id="t-030"></a><a id="f-030"></a>
-#### F-030 · Information Disclosure
-
-**Severity:** 🟠 High  ·  **Component:** [C-03](#c-03) - Data Layer (SQLite + MarsDB)  ·  **Location:** `routes/search.ts`:47
-
-**Issue:** `routes/search.ts:47` executes SELECT sql FROM sqlite_master when the UNION injection challenge is solved. This reveals the complete SQLite schema including all table names, column names, and indexes. Even if the direct injection is mitigated, the pattern of exposing schema metadata is an information disclosure that aids further attacks.
-
-**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
-
-**Evidence:** ✓ verified - Sensitive runtime values are served unauthenticated to any caller.
-
-**Fix:** Restrict the response to the minimum fields needed and never echo secrets → [M-030](#m-030) — Mitigate SQL injection (T-004) eliminates schema exposure - Mitigate SQL injection ([T-004](#t-004) — SQL injection product search (UNION + schema exfil)) eliminates schema exposure
-
-**Classification:** Error Information Disclosure · [CWE-200](https://cwe.mitre.org/data/definitions/200.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
-
-<a id="t-009"></a><a id="f-009"></a>
-#### F-009 · Server-Side Request Forgery (SSRF)
-
-**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/profileImageUrlUpload.ts`:24
-
-**Issue:** `routes/profileImageUrlUpload.ts:24` fetches a user-controlled URL via fetch(url). An authenticated attacker provides url=http://169.254.169.254/latest/meta-data/ (AWS metadata service) or url=http://internal-service:8080/admin. The server makes the request and may expose the response or trigger actions on internal services.
+**Issue:** POST `/profile/image/url` with imageUrl pointing to internal services (e.g. http://localhost:3000/solve/challenges/server-side) causes fetch(url) with no allowlist check. The server fetches arbitrary URLs, enabling SSRF to internal services, metadata endpoints, and internal APIs. `routes/profileImageUrlUpload.ts:24`.
 
 **Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
 
@@ -1893,256 +1719,147 @@ export const verify = (token: string) => token ? (jws.verify as ((token: string,
             throw new Error('url returned a non-OK status code or an empty body')
 ```
 
-**Fix:** Validate the URL scheme + host against an explicit allow-list before issuing outbound requests → [M-009](#m-009) — Implement URL allowlist or SSRF protection library for outbound fetch - Implement URL allowlist or SSRF protection library for outbound fetch
+**Fix:** Validate the URL scheme + host against an explicit allow-list before issuing outbound requests → [M-007](#m-007) — Implement URL allowlist for profile image upload
 
 **Classification:** Server-Side Request Forgery · [CWE-918](https://cwe.mitre.org/data/definitions/918.html) · [OWASP A10:2021](https://owasp.org/Top10/A10_2021/)
-
-<a id="t-011"></a><a id="f-011"></a>
-#### F-011 · Insecure Direct Object Reference (IDOR)
-
-**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/basket.ts`:19
-
-**Issue:** GET `/rest/basket/:id` retrieves a basket by numeric ID. The route applies `security.isAuthorized()` but does NOT check that the basket belongs to the requesting user. An attacker authenticated as any user can enumerate basket IDs (e.g., GET `/rest/basket/1` through `/rest/basket/100`) and view other users' baskets, including saved payment methods.
-
-**Root cause:** Authorisation checks are absent or bypassable, allowing horizontal and vertical privilege jumps from a self-registered or low-rights account. Includes mass-assignment of privileged attributes.
-
-**Evidence:** ✓ verified - An object-identity parameter is trusted from the request without server-side ownership check.
-
-```typescript
-// routes/basket.ts:19
-    try {
-      const id = req.params.id
-      const basket = await BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })
-      /* jshint eqeqeq:false */
-      challengeUtils.solveIf(challenges.basketAccessChallenge, () => {
-```
-
-**Fix:** Tie every object lookup to the requesting user's identity and reject cross-tenant references → [M-011](#m-011) — Validate basket ownership against authenticated user's ID from JWT - Validate basket ownership against authenticated user's ID from JWT
-
-**Classification:** Broken Access Control · [CWE-639](https://cwe.mitre.org/data/definitions/639.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
 <a id="t-015"></a><a id="f-015"></a>
 #### F-015 · Path Traversal
 
-**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/dataErasure.ts`:69
+**Severity:** 🟠 High  ·  **Component:** [C-04](#c-04) - File Upload and Static File Service  ·  **Location:** `routes/keyServer.ts`:14
 
-**Issue:** Uses path.resolve(`req.body.layout`).`toLowerCase()` with the result being used to read a file. While `path.resolve()` normalizes the path, it resolves relative to the process working directory. A crafted layout value (e.g. ../..`/server`.ts) can read arbitrary files from the server's filesystem.
+**Issue:** GET `/encryptionkeys/:file` passes the parameter directly to path.resolve("encryptionkeys/", file) (`routes/keyServer.ts:14`). While sanitize-filename is not applied here, an attacker can request `jwt.pub` directly or attempt traversal with ../ sequences.
 
 **Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
 
 **Evidence:** ✓ verified - User-supplied path components are joined without traversal-safe canonicalisation.
 
 ```typescript
-// routes/dataErasure.ts:69
-    res.clearCookie('token')
-    if (req.body.layout) {
-      const filePath: string = path.resolve(req.body.layout).toLowerCase()
-      const isForbiddenFile: boolean = (filePath.includes('ftp') || filePath.includes('ctf.key') || filePath.includes('encryptionkeys'))
-      if (!isForbiddenFile) {
+// routes/keyServer.ts:14
+
+    if (!file.includes('/')) {
+      res.sendFile(path.resolve('encryptionkeys/', file))
+    } else {
+      res.status(403)
 ```
 
-**Fix:** Resolve and normalise every constructed path and reject anything that escapes the intended base directory → [M-015](#m-015) — Whitelist permitted layout file names; use path.basename() to strip directory traversal - Whitelist permitted layout file names; use `path.basename()` to strip directory traversal
+**Fix:** Resolve and normalise every constructed path and reject anything that escapes the intended base directory → [M-019](#m-019) — Add authentication and path validation to key/log server endpoints
 
 **Classification:** Insecure File Handling · [CWE-22](https://cwe.mitre.org/data/definitions/22.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
-<a id="t-017"></a><a id="f-017"></a>
-#### F-017 · Mass assignment wallet balance manipulable
+<a id="t-009"></a><a id="f-009"></a>
+#### F-009 · Cross-Site Scripting
 
-**Severity:** 🟠 High  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/wallet.ts`:12
+**Severity:** 🟠 High  ·  **Component:** [C-02](#c-02) - Angular SPA Frontend  ·  **Location:** `frontend/src/app/about/about.component.ts`:119
 
-**Issue:** `routes/wallet.ts:12` fetches wallet using req.body.UserId: WalletModel.findOne({ where: { UserId: req.body.UserId } }). An authenticated attacker can set req.body.UserId to any other user's ID to view or increment their wallet balance. `routes/address.ts:11` has the same pattern for addresses.
+**Issue:** User-submitted feedback comments are rendered via this.sanitizer.bypassSecurityTrustHtml(`feedback.comment`). Angular XSS protection is explicitly disabled. `about.component.ts:119`.
 
-**Root cause:** Authorisation checks are absent or bypassable, allowing horizontal and vertical privilege jumps from a self-registered or low-rights account. Includes mass-assignment of privileged attributes.
+**Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitisation; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
 
-**Evidence:** ✓ verified - Mass assignment is enabled because the model accepts request fields wholesale.
+**Evidence:** ✓ verified - User input is rendered as HTML without contextual output encoding.
 
 ```typescript
-// routes/wallet.ts:12
-export function getWalletBalance () {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    const wallet = await WalletModel.findOne({ where: { UserId: req.body.UserId } })
-    if (wallet != null) {
-      res.status(200).json({ status: 'success', data: wallet.balance })
+// frontend/src/app/about/about.component.ts:119
+            feedbacks[i].comment
+          }</p><div class="feedback-stars">(${this.stars[feedbacks[i].rating]})</div></figcaption>`
+          feedbacks[i].comment = this.sanitizer.bypassSecurityTrustHtml(
+            feedbacks[i].comment
+          )
 ```
 
-**Fix:** [M-017](#m-017) — Always derive UserId from verified JWT payload, never from request body - Always derive UserId from verified JWT payload, never from request body
+**Fix:** Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls → [M-011](#m-011) — Remove bypassSecurityTrustHtml() from administration component
 
-**Classification:** Broken Access Control · [CWE-915](https://cwe.mitre.org/data/definitions/915.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
+**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
-<a id="t-026"></a><a id="f-026"></a>
-#### F-026 · NoSQL Injection
+### 🟡 Medium (5)
 
-**Severity:** 🟠 High  ·  **Component:** [C-03](#c-03) - Data Layer (SQLite + MarsDB)  ·  **Location:** `routes/showProductReviews.ts`:36
+<a id="t-021"></a><a id="f-021"></a>
+#### F-021 · Cleartext Storage of Sensitive Data
 
-**Issue:** `routes/showProductReviews.ts:36` queries db.reviewsCollection.find({ \$where: '`this.product` == ' + id }). An attacker supplies id=1; return true - the \$where JavaScript expression evaluates to true for all documents, returning all reviews regardless of product. SSJI (Server-Side JavaScript Injection) in MarsDB.
+**Severity:** 🟡 Medium  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `Dockerfile`:2
+
+**Issue:** Full repo COPY in installer stage includes encryptionkeys/ and ftp/ with hardcoded JWT private key. CI/CD log or image artifact leak exposes these.
+
+**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
+
+**Evidence:** ✓ verified
+
+**Fix:** [M-027](#m-027) — Move secrets out of source into a managed secret store
+
+**Classification:** Error Information Disclosure · [CWE-312](https://cwe.mitre.org/data/definitions/312.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
+
+<a id="t-019"></a><a id="f-019"></a>
+#### F-019 · NoSQL Injection
+
+**Severity:** 🟡 Medium  ·  **Component:** [C-03](#c-03) - Data Layer  ·  **Location:** `data/mongodb.ts`:1
+
+**Issue:** MarsDB collections (reviews, orders, complaints) accept MongoDB-style query objects. If query parameters are passed as objects (e.g., via JSON body parsing), a NoSQL injection attack like { "": "1==1" } could bypass filters and access all records. `data/mongodb.ts`.
 
 **Root cause:** User input flows into a server-side interpreter (SQL, NoSQL, XML, YAML, LDAP, OS shell) without parameterisation or schema validation.
 
-**Evidence:** ✓ verified
+**Evidence:** ◌ ambiguous
 
-```typescript
-// routes/showProductReviews.ts:36
-    const t0 = new Date().getTime()
-
-    db.reviewsCollection.find({ $where: 'this.product == ' + id }).then((reviews: Review[]) => {
-      const t1 = new Date().getTime()
-      challengeUtils.solveIf(challenges.noSqlCommandChallenge, () => { return (t1 - t0) > 2000 })
-```
-
-**Fix:** Replace string concatenation in query operators with parameter binding → [M-026](#m-026) — Replace \$where JavaScript expression with standard MarsDB equality query - Replace \$where JavaScript expression with standard MarsDB equality query
+**Fix:** Replace string concatenation in query operators with parameter binding → [M-017](#m-017) — Sanitize MarsDB query parameters to prevent NoSQL injection · [M-026](#m-026) — Manual review: verify NoSQL injection via MarsDB queries data/mongodb.ts at data/mongodb.ts:1
 
 **Classification:** Injection · [CWE-943](https://cwe.mitre.org/data/definitions/943.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
 
-<a id="t-031"></a><a id="f-031"></a>
-#### F-031 · Uncontrolled Resource Consumption
+<a id="t-020"></a><a id="f-020"></a>
+#### F-020 · Unrestricted File Upload
 
-**Severity:** 🟠 High  ·  **Component:** [C-03](#c-03) - Data Layer (SQLite + MarsDB)  ·  **Location:** `routes/showProductReviews.ts`:36
+**Severity:** 🟡 Medium  ·  **Component:** [C-04](#c-04) - File Upload and Static File Service  ·  **Location:** `routes/fileUpload.ts`:62
 
-**Issue:** The \$where JavaScript expression executed by MarsDB ([T-026](#t-026) — NoSQL injection via \$where operator in MarsDB reviews vector) can include `process.exit()` or throw new `Error()` calls that crash or destabilize the `Node.js` process. Since MarsDB is an in-memory store and the application runs as a single process, a DoS via crafted review query brings down the entire application.
+**Issue:** The file upload endpoint accepts multiple file types with minimal validation. A zip file containing a PHP shell, SVG with embedded JavaScript, or oversized file can be uploaded. `routes/fileUpload.ts:62`.
 
 **Evidence:** ✓ verified
 
-**Fix:** Bound the request rate and the per-request resource budget on this endpoint → [M-031](#m-031) — Fix NoSQL injection T-026 to eliminate this DoS vector - Fix NoSQL injection [T-026](#t-026) — NoSQL injection via \$where operator in MarsDB reviews to eliminate this DoS vector
+**Fix:** Validate uploaded file type, size, and storage path; never execute uploaded content → [M-021](#m-021) — Implement strict file type validation using magic bytes
+
+**Classification:** Insecure File Handling · [CWE-434](https://cwe.mitre.org/data/definitions/434.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
+
+<a id="t-023"></a><a id="f-023"></a>
+#### F-023 · Uncontrolled Resource Consumption
+
+**Severity:** 🟡 Medium  ·  **Component:** [C-05](#c-05) - B2B Order API  ·  **Location:** `routes/b2bOrder.ts`:23
+
+**Issue:** POST `/api/B2BOrder` with orderLinesData containing an infinite loop (e.g., while(true){}) causes the `vm.runInContext` timeout to fire after 2000ms, returning HTTP 503. An attacker can keep the server busy with 2-second blocking evaluations. `routes/b2bOrder.ts:23`.
+
+**Evidence:** ✓ verified
+
+**Fix:** Bound the request rate and the per-request resource budget on this endpoint → [M-023](#m-023) — Replace eval-based processing; add rate limiting to B2B order endpoint
 
 **Classification:** Denial of Service · [CWE-400](https://cwe.mitre.org/data/definitions/400.html) · [OWASP A04:2021](https://owasp.org/Top10/A04_2021/)
 
-<a id="t-021"></a><a id="f-021"></a>
-#### F-021 · Cross-Site Scripting
+<a id="t-022"></a><a id="f-022"></a>
+#### F-022 · Open Redirect
 
-**Severity:** 🟠 High  ·  **Component:** [C-02](#c-02) - Angular Single-Page Application  ·  **Location:** `frontend/src/app/last-login-ip/last-login-ip.component.ts`:39
+**Severity:** 🟡 Medium  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `lib/insecurity.ts`:138
 
-**Issue:** `frontend/src/app/last-login-ip/last-login-ip.component.ts:39` wraps the server-provided lastLoginIp in bypassSecurityTrustHtml. If the last-login IP is set to attacker-controlled value (e.g. through an injection point), it renders as HTML in the user's own profile page. Server-side request with X-Forwarded-For: `<script>`alert(1)`</script>` could inject into this field.
-
-**Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitisation; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
-
-**Evidence:** ✓ verified - User input is rendered as HTML without contextual output encoding.
-
-```typescript
-// frontend/src/app/last-login-ip/last-login-ip.component.ts:39
-      if (payload.data.lastLoginIp) {
-
-        this.lastLoginIp = this.sanitizer.bypassSecurityTrustHtml(`<small>${payload.data.lastLoginIp}</small>`)
-      }
-    }
-```
-
-**Fix:** Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls → [M-021](#m-021) — Remove bypassSecurityTrustHtml; render IP as plain text - Remove bypassSecurityTrustHtml; render IP as plain text
-
-**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
-
-<a id="t-025"></a><a id="f-025"></a>
-#### F-025 · Cross-Site Scripting
-
-**Severity:** 🟠 High  ·  **Component:** [C-02](#c-02) - Angular Single-Page Application  ·  **Location:** `frontend/src/app/search-result/search-result.component.ts`:132
-
-**Issue:** `frontend/src/app/search-result/search-result.component.ts:132` and `product-details/product-details.component.html:16` use [innerHTML] for product descriptions. If an admin or data seeding creates a product with XSS in the description (or reviews), it executes for every user viewing that product. The application seeds products from data/static files, and any tampered seed data propagates to all users.
-
-**Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitisation; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
-
-**Evidence:** ✓ verified - User input is rendered as HTML without contextual output encoding.
-
-```typescript
-// frontend/src/app/search-result/search-result.component.ts:132
-  trustProductDescription (tableData: any[]) { // vuln-code-snippet neutral-line restfulXssChallenge
-    for (let i = 0; i < tableData.length; i++) { // vuln-code-snippet neutral-line restfulXssChallenge
-      tableData[i].description = this.sanitizer.bypassSecurityTrustHtml(tableData[i].description) // vuln-code-snippet vuln-line restfulXssChallenge
-    } // vuln-code-snippet neutral-line restfulXssChallenge
-  } // vuln-code-snippet neutral-line restfulXssChallenge
-```
-
-**Fix:** Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls → [M-025](#m-025) — Sanitize product descriptions server-side; use textContent for display - Sanitize product descriptions server-side; use textContent for display
-
-**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
-
-### 🟡 Medium (6)
-
-<a id="t-013"></a><a id="f-013"></a>
-#### F-013 · Information Disclosure
-
-**Severity:** 🟡 Medium  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `server.ts`:718
-
-**Issue:** GET `/metrics` serves prom-client metrics without any authentication middleware. These metrics expose request counts per route, response time histograms, `Node.js` heap size, event loop lag, active handles, and file descriptor counts. An attacker can fingerprint the server version, infer traffic patterns, and identify low-traffic admin routes.
+**Issue:** GET `/redirect`?to=https://legit.evil.com?x=https://www.google.com bypasses the redirectAllowlist check because isRedirectAllowed uses url.includes(allowedUrl), not `startsWith()`. Attackers craft phishing URLs that appear to originate from the application. `lib/insecurity.ts:138`.
 
 **Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
 
 **Evidence:** ✓ verified
 
-**Fix:** Restrict the response to the minimum fields needed and never echo secrets → [M-013](#m-013) — Add authentication or restrict /metrics to internal network - Add authentication or restrict `/metrics` to internal network
-
-**Classification:** Error Information Disclosure · [CWE-200](https://cwe.mitre.org/data/definitions/200.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
-
-<a id="t-014"></a><a id="f-014"></a>
-#### F-014 · Insufficient Logging
-
-**Severity:** 🟡 Medium  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `server.ts`:282
-
-**Issue:** Application logs are served at /support/logs/ without authentication. Beyond disclosure ([T-010](#t-010) — Sensitive files and logs exposed without authentication), an attacker can observe log file names, access patterns, and timestamps before performing attacks, then confirm whether their actions appeared in logs. This makes it trivial to verify whether a specific attack was logged.
-
-**Evidence:** ✓ verified
-
-**Fix:** [M-014](#m-014) — Restrict log access; send logs to separate log aggregation system - Restrict log access; send logs to separate log aggregation system
-
-**Classification:** Missing Audit Logging & Accountability · [CWE-778](https://cwe.mitre.org/data/definitions/778.html) · [OWASP A09:2021](https://owasp.org/Top10/A09_2021/)
-
-<a id="t-018"></a><a id="f-018"></a>
-#### F-018 · Error Message Disclosure
-
-**Severity:** 🟡 Medium  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `server.ts`:1
-
-**Issue:** The errorhandler npm package is imported (`package.json`) and used in development mode. Express next(err) calls propagate to this handler, which returns full stack traces, file paths, and line numbers in HTTP responses. An attacker triggering any route error (e.g. malformed JSON, SQL errors) receives detailed implementation information.
-
-**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
-
-**Evidence:** ◌ ambiguous
-
-**Fix:** Replace developer error pages with a generic message in production responses → [M-018](#m-018) — Remove errorhandler in production; use generic error responses - Remove errorhandler in production; use generic error responses
-
-**Classification:** Error Information Disclosure · [CWE-209](https://cwe.mitre.org/data/definitions/209.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
-
-<a id="t-029"></a><a id="f-029"></a>
-#### F-029 · Insecure Direct Object Reference (IDOR)
-
-**Severity:** 🟡 Medium  ·  **Component:** [C-03](#c-03) - Data Layer (SQLite + MarsDB)  ·  **Location:** `routes/updateProductReviews.ts`:1
-
-**Issue:** PATCH `/rest/products/reviews` at `server.ts:634` applies `security.isAuthorized()` but `routes/updateProductReviews.ts` does not verify that the authenticated user authored the review. Any authenticated user can update any review by knowing the review's _id, effectively defacing product reviews under other users' names.
-
-**Root cause:** Authorisation checks are absent or bypassable, allowing horizontal and vertical privilege jumps from a self-registered or low-rights account. Includes mass-assignment of privileged attributes.
-
-**Evidence:** ◌ ambiguous
-
-**Fix:** Tie every object lookup to the requesting user's identity and reject cross-tenant references → [M-029](#m-029) — Verify review author matches authenticated user before allowing update - Verify review author matches authenticated user before allowing update
-
-**Classification:** Broken Access Control · [CWE-639](https://cwe.mitre.org/data/definitions/639.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
-
-<a id="t-012"></a><a id="f-012"></a>
-#### F-012 · Open Redirect
-
-**Severity:** 🟡 Medium  ·  **Component:** [C-01](#c-01) - Express REST API Backend  ·  **Location:** `routes/redirect.ts`:19
-
-**Issue:** GET `/redirect`?to=<url> calls security.isRedirectAllowed(toUrl) which checks if the URL starts with a known allowlist entry (e.g. https://www.`paypal.com`). An attacker can bypass this with https://www.`paypal.com.attacker.com` or by appending query params. Users are redirected to attacker-controlled sites (phishing), and the redirect appears to originate from the trusted juice-shop domain.
-
-**Root cause:** Confidential files, credentials, and management-plane endpoints are reachable on unauthenticated routes; SSRF lets the server fetch internal resources on the attacker's behalf; unsafe path-handling primitives leak server content.
-
-**Evidence:** ✓ verified
-
-**Fix:** [M-012](#m-012) — Use exact hostname matching instead of prefix matching for redirect allowlist - Use exact hostname matching instead of prefix matching for redirect allowlist
+**Fix:** [M-008](#m-008) — Fix URL validation to use exact match or startsWith for redirect allowlist
 
 **Classification:** Open Redirect · [CWE-601](https://cwe.mitre.org/data/definitions/601.html) · [OWASP A01:2021](https://owasp.org/Top10/A01_2021/)
 
+### 🟢 Low (1)
+
 <a id="t-024"></a><a id="f-024"></a>
-#### F-024 · Cross-Site Scripting
+#### F-024 · Incorrect Permission Assignment
 
-**Severity:** 🟡 Medium  ·  **Component:** [C-02](#c-02) - Angular Single-Page Application  ·  **Location:** `frontend/src/hacking-instructor/challenges/reflectedXss.ts`:77
+**Severity:** 🟢 Low  ·  **Component:** [C-01](#c-01) - Express Backend API  ·  **Location:** `.github/workflows/ci.yml`:1
 
-**Issue:** Multiple files in frontend/src/hacking-instructor/challenges/ use postMessage/iframe. `frontend/src/hacking-instructor/challenges/domXss.ts:93`,99 and `reflectedXss.ts:77` demonstrate postMessage payloads. A malicious parent page can post crafted messages to iframes embedding the application, potentially triggering DOM XSS if message origin is not validated.
+**Issue:** No top-level permissions block in `ci.yml`. Implicit GITHUB_TOKEN permissions may be write-all depending on repo settings.
 
-**Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitisation; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
+**Root cause:** Authorisation checks are absent or bypassable, allowing horizontal and vertical privilege jumps from a self-registered or low-rights account. Includes mass-assignment of privileged attributes.
 
 **Evidence:** ✓ verified
 
-**Fix:** Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls → [M-024](#m-024) — Validate postMessage origin before processing; add frame-ancestors CSP directive - Validate postMessage origin before processing; add frame-ancestors CSP directive
+**Fix:** [M-028](#m-028) — Add a top-level GITHUB_TOKEN permissions block
 
-**Classification:** Cross-Site Scripting (XSS) · [CWE-79](https://cwe.mitre.org/data/definitions/79.html) · [OWASP A03:2021](https://owasp.org/Top10/A03_2021/)
+**Classification:** Error Information Disclosure · [CWE-732](https://cwe.mitre.org/data/definitions/732.html) · [OWASP A05:2021](https://owasp.org/Top10/A05_2021/)
 
 ---
 
@@ -2150,792 +1867,751 @@ _**Evidence verification:** rows tagged `⚠ (evidence refuted)` were re-checked
 
 ---
 
-## 9. Mitigation Register
+## 9. Abuse Cases
 
-Each mitigation block lists the findings it **Addresses**, the CWEs it **Prevents**, and the **Priority** (P1 = before deployment, P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / **How** / **Verification** fields are populated only when authored; if a field is omitted, refer to the linked finding's *Evidence* line for file:line context and to the threat-category description in [§8 Threat Register](#8-threat-register) for the underlying weakness.
+_Abuse cases describe end-to-end attack scenarios that chain individual findings into an exploitation path. Each case is **mandatory** - defined in the org profile / plugin library and evaluated against every repository. Every chain step references a finding from [§8 Findings Register](#8-findings-register); each step is code-confirmed against the repository and the chain verdict is folded deterministically from the per-step results, never rated by hand._
 
-**Mitigations index:**<br/>[M-001](#m-001) — Establish dependency vulnerability scanning and update SLA<br/>[M-002](#m-002) — Implement application-level CSP and remove bypassSecurityTrustHtml<br/>[M-003](#m-003) — Replace raw SQL with Sequelize parameterized query<br/>[M-004](#m-004) — Use Sequelize Op.like with parameterized values for search<br/>[M-005](#m-005) — Remove eval-based order processing; use structured input schema<br/>[M-006](#m-006) — Remove eval() from username processing; use safe string rendering<br/>[M-007](#m-007) — Set noent:false in libxmljs2 parsing to disable external entity resolution<br/>[M-008](#m-008) — Validate extracted paths against target directory before writing<br/>[M-009](#m-009) — Implement URL allowlist or SSRF protection library for outbound fetch<br/>[M-010](#m-010) — Add authentication middleware to sensitive file serving routes<br/>[M-011](#m-011) — Validate basket ownership against authenticated user's ID from JWT<br/>[M-012](#m-012) — Use exact hostname matching instead of prefix matching for redirect allowlist<br/>[M-013](#m-013) — Add authentication or restrict /metrics to internal network<br/>[M-014](#m-014) — Restrict log access; send logs to separate log aggregation system<br/>[M-015](#m-015) — Whitelist permitted layout file names; use path.basename() to strip directory traversal<br/>[M-016](#m-016) — Add express-rate-limit to login endpoint (already in dependencies)<br/>[M-017](#m-017) — Always derive UserId from verified JWT payload, never from request body<br/>[M-018](#m-018) — Remove errorhandler in production; use generic error responses<br/>[M-019](#m-019) — Remove bypassSecurityTrustHtml; use Angular's default sanitization<br/>[M-020](#m-020) — Sanitize feedback content server-side before storage; remove bypassSecurityTrustHtml in admin panel<br/>[M-021](#m-021) — Remove bypassSecurityTrustHtml; render IP as plain text<br/>[M-022](#m-022) — Store JWT in HttpOnly cookie to prevent XSS-based theft<br/>[M-023](#m-023) — Enforce authorization server-side; client guards are UI-only<br/>[M-024](#m-024) — Validate postMessage origin before processing; add frame-ancestors CSP directive<br/>[M-025](#m-025) — Sanitize product descriptions server-side; use textContent for display<br/>[M-026](#m-026) — Replace \$where JavaScript expression with standard MarsDB equality query<br/>[M-027](#m-027) — Replace MD5 with bcrypt (cost factor 12+) for password hashing<br/>[M-028](#m-028) — Exclude password and totpSecret from all API serialization<br/>[M-029](#m-029) — Verify review author matches authenticated user before allowing update<br/>[M-030](#m-030) — Mitigate SQL injection (T-004) eliminates schema exposure<br/>[M-031](#m-031) — Fix NoSQL injection T-026 to eliminate this DoS vector
+| # | Scenario | Actor | Combined Risk | Verdict |
+|--------|------------------------------------|-----------------|-------------|--------------|
+| [AC-T-001](#ac-t-001) | Account Takeover via Stored XSS + Token Hijacking | external-attacker | 🟠 High | ◐ Partially blocked |
+| [AC-T-003](#ac-t-003) | Privilege Escalation to Admin via JWT Algorithm Confusion | external-attacker | 🔴 Critical | ⚠ Fully viable |
+| [AC-T-005](#ac-t-005) | Authentication Bypass via Exposed Secret Material | external-attacker | 🔴 Critical | ⚠ Fully viable |
+| [AC-T-006](#ac-t-006) | Remote Code Execution via Server-Side Injection | external-attacker | 🔴 Critical | ◐ Partially blocked |
 
-### P1 — Immediate
-
-<a id="m-002"></a>
-#### M-002 — Implement application-level CSP and remove bypassSecurityTrustHtml
-
-**Addresses:**
-
-- 🔴 [F-002](#f-002) — RSA private key hardcoded offline JWT forgery - RSA private key hardcoded offline JWT forgery
-
-**Priority:** P1 - Immediate · **Effort:** Medium · **File:** `lib/insecurity.ts:23`
-
-**How:**
-
-1. Remove the hardcoded private key from `lib/insecurity.ts`
-2. Generate a new RSA key pair: `openssl genrsa -out jwt_private.pem` 2048
-3. Store in environment variable: `process.env.JWT_PRIVATE_KEY`
-4. Load at runtime: const `privateKey` = `process.env.JWT_PRIVATE_KEY`
-
-```javascript
-const privateKey = process.env.JWT_PRIVATE_KEY;
-if (!privateKey) throw new Error('JWT_PRIVATE_KEY not set');
-```
-
-**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html`
+_Verdict: ⚠ Fully viable - no effective control blocks this chain · ◐ Partially blocked - at least one step has a compensating control but the chain is not fully closed · ✓ Mitigated - chain is broken at a verified step · ? Inconclusive - could not be verified end-to-end._
 
 ---
 
-<a id="m-003"></a>
-#### M-003 — Replace raw SQL with Sequelize parameterized query
+### <a id="ac-t-001"></a>AC-T-001 — Account Takeover via Stored XSS + Token Hijacking
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🟠 High · **Verdict:** ◐ Partially blocked
+
+**Goal:** Obtain persistent authenticated access as an arbitrary user without valid credentials.
+
+**Prerequisite:** Attacker can submit content that is later rendered to other users (e.g. feedback, comments, profile fields).
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🟠 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo…<br/>`frontend/src/app/about/about.component.ts:119` | Attacker JavaScript executes in the victim's browser session. |
+| 2 | 🟠 [F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa<br/>`frontend/src/app/Services/request.interceptor.ts:13` | Token exfiltrated from local/session storage via the Step 1 payload. |
+| 3 | 🟢 [F-024](#f-024) — Workflow lacks explicit permissions declaration<br/>`lib/insecurity.ts:54` | Exfiltrated token accepted for a new session; absence of token binding / PKCE removes the last server-side revocation opportunity. |
+
+**Why combined risk exceeds individual ratings**
+
+Individually the XSS sink and the web-readable token storage rate below Critical, but chained they form a repeatable credential-theft path: a single stored payload causes indefinite session compromise for every user who views the affected page.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- [M-011](#m-011) — Remove bypassSecurityTrustHtml() from administration component (**P1**): remediating 🟠 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo… breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+- [M-013](#m-013) — Set Secure, HttpOnly, and SameSite=Strict on JWT cookie (**P2**): remediating 🟠 [F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa breaks the chain at **Step 2**, removing the link the rest of the chain depends on.
+- [M-028](#m-028) — Add a top-level GITHUB_TOKEN permissions block (**P4**): remediating 🟢 [F-024](#f-024) — Workflow lacks explicit permissions declaration breaks the chain at **Step 3**, removing the link the rest of the chain depends on.
+
+---
+
+### <a id="ac-t-003"></a>AC-T-003 — Privilege Escalation to Admin via JWT Algorithm Confusion
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🔴 Critical · **Verdict:** ⚠ Fully viable
+
+**Goal:** Forge an admin-role JWT without knowledge of the signing secret.
+
+**Prerequisite:** Attacker can obtain any valid JWT issued by the system (e.g. by registering a free account).
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts | Verifier accepts attacker-chosen `alg` (e.g. `none` or HMAC-with-public-key), allowing token re-signing without the secret. |
+| 2 | 🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts<br/>`lib/insecurity.ts:159` | Forged `role: admin` claim is accepted as authoritative because the role is not re-fetched from the database per request. |
+
+**Why combined risk exceeds individual ratings**
+
+Algorithm confusion alone yields a forgeable token; trusting the in-token role claim turns that forgery into instant admin access - neither gap is Critical in isolation, but the chain is a full authentication bypass.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- [M-002](#m-002) — Remove hardcoded RSA private key; rotate to environment variable (**P1**): remediating 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+- [M-009](#m-009) — Add role-based authorization middleware to admin API endpoints (**P2**): remediating 🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts breaks the chain at **Step 2**, removing the link the rest of the chain depends on.
+
+---
+
+### <a id="ac-t-005"></a>AC-T-005 — Authentication Bypass via Exposed Secret Material
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🔴 Critical · **Verdict:** ⚠ Fully viable
+
+**Goal:** Forge trusted tokens / credentials and impersonate any user.
+
+**Prerequisite:** Signing material or other secrets are reachable (committed to a public repo, served by an unauthenticated route, or in an exposed directory).
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts | A private key, signing secret, or credential file is committed to the source repository or served without authentication. |
+| 2 | 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts | The exposed key/secret is the same one the server trusts, so a token signed with it (or the leaked credential) is accepted as authentic. |
+
+**Why combined risk exceeds individual ratings**
+
+Exposed signing material collapses the entire authentication boundary: any attacker who reads the key can mint a valid token for any identity or role, with no credential ever required.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- [M-002](#m-002) — Remove hardcoded RSA private key; rotate to environment variable (**P1**): remediating 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+
+---
+
+### <a id="ac-t-006"></a>AC-T-006 — Remote Code Execution via Server-Side Injection
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🔴 Critical · **Verdict:** ◐ Partially blocked
+
+**Goal:** Execute arbitrary code in the application process.
+
+**Prerequisite:** An input reaches a server-side interpreter / template / eval.
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🔴 [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts | Attacker-controlled input is passed to `eval`, a server-side template engine, an unsafe sandbox, or an unsafe deserializer. |
+
+**Why combined risk exceeds individual ratings**
+
+A single injection into a server-side interpreter yields code execution in the application process - the highest-impact outcome, granting full filesystem and network access from one unauthenticated request.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- [M-022](#m-022) — Replace safeEval with structured JSON order line parsing (**P1**): remediating 🔴 [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+
+---
+
+### Generic catalog — evaluated, not applicable
+
+_These common abuse-case scenarios from the standard library were checked against this codebase and did not apply. They are listed so the assessment's abuse-case coverage is explicit, not silent._
+
+| Scenario | Source | Why not applicable |
+|------------------------------------|---------|----------------------|
+| Bulk Data Exfiltration via Broken Object Authorization | mandatory | no finding matched the required chain step(s) for this scenario |
+| Privilege Escalation via Mass-Assignment on Registration | mandatory | no finding matched the required chain step(s) for this scenario |
+
+---
+
+## 10. Mitigation Register
+
+Each mitigation block lists the findings it **Addresses**, the CWEs it **Prevents**, and the **Priority** (P1 = before deployment, P2 = current sprint, P3 = next quarter, P4 = backlog). The **Why** / **How** / **Verification** fields are populated only when authored; if a field is omitted, refer to the linked finding's *Evidence* line for file:line context and to the threat-category description in [§8 Findings Register](#8-findings-register) for the underlying weakness.
+
+**Mitigations index:**<br/>P1 · [M-001](#m-001) — Replace raw SQL with Sequelize parameterized query in login route<br/>P1 · [M-002](#m-002) — Remove hardcoded RSA private key; rotate to environment variable<br/>P1 · [M-003](#m-003) — Upgrade express-jwt to >=6.0.0 and enforce algorithm allowlist<br/>P1 · [M-005](#m-005) — Replace raw SQL with Sequelize ORM parameterized queries in search route<br/>P1 · [M-006](#m-006) — Remove eval() from userProfile route; use safe template string replacem…<br/>P1 · [M-011](#m-011) — Remove bypassSecurityTrustHtml() from administration component<br/>P1 · [M-022](#m-022) — Replace safeEval with structured JSON order line parsing<br/>P2 · [M-004](#m-004) — Replace MD5 with bcrypt/argon2 for password hashing<br/>P2 · [M-007](#m-007) — Implement URL allowlist for profile image upload<br/>P2 · [M-009](#m-009) — Add role-based authorization middleware to admin API endpoints<br/>P2 · [M-010](#m-010) — Add rate limiting to /rest/user/login and /rest/user/register<br/>P2 · [M-013](#m-013) — Set Secure, HttpOnly, and SameSite=Strict on JWT cookie<br/>P2 · [M-014](#m-014) — Implement Content Security Policy header<br/>P2 · [M-016](#m-016) — Hash security answers before storage<br/>P2 · [M-018](#m-018) — Disable XML external entity processing (noent:false)<br/>P2 · [M-019](#m-019) — Add authentication and path validation to key/log server endpoints<br/>P2 · [M-020](#m-020) — Add authentication to FTP directory endpoint<br/>P2 · [M-024](#m-024) — Implement dependency update automation and security audit policy<br/>P3 · [M-008](#m-008) — Fix URL validation to use exact match or startsWith for redirect allowl…<br/>P3 · [M-017](#m-017) — Sanitize MarsDB query parameters to prevent NoSQL injection<br/>P3 · [M-021](#m-021) — Implement strict file type validation using magic bytes<br/>P3 · [M-023](#m-023) — Replace eval-based processing; add rate limiting to B2B order endpoint<br/>P3 · [M-025](#m-025) — Add comprehensive security event logging and alerting<br/>P3 · [M-026](#m-026) — Manual review: verify NoSQL injection via MarsDB queries data/mongodb.t…<br/>P3 · [M-027](#m-027) — Move secrets out of source into a managed secret store<br/>P4 · [M-028](#m-028) — Add a top-level GITHUB_TOKEN permissions block
+
+### P1 — Immediate
+
+<a id="m-001"></a>
+#### M-001 — Replace raw SQL with Sequelize parameterized query in login route
 
 **Addresses:**
 
-- 🔴 [F-003](#f-003) — SQL injection login authentication bypass - SQL injection login authentication bypass
+- 🔴 [F-001](#f-001) — SQL injection authentication bypass routes/login.ts
 
 **Priority:** P1 - Immediate · **Effort:** Low · **File:** `routes/login.ts:34`
 
 **How:**
 
-1. Replace `models.sequelize.query(template literal)` with `UserModel.findOne({ where: { email: req.body.email, password: hash, deletedAt: null } })`
-2. Let Sequelize handle parameterization automatically
+1. Replace `sequelize.query()` string interpolation with User.`findOne`({ where: `{ email, password: hash(pw) }` })
+2. Ensure all raw SQL in routes/ is replaced with Sequelize finder methods
 
 ```javascript
-const user = await UserModel.findOne({
-  where: { email: req.body.email, password: security.hash(req.body.password), deletedAt: null }
-});
+UserModel.findOne({ where: { email: req.body.email, password: security.hash(req.body.password || ''), deletedAt: null } })
 ```
 
-**Reference:** https://sequelize.org/docs/v6/core-concepts/model-querying-basics/
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html`
 
 ---
 
-<a id="m-004"></a>
-#### M-004 — Use Sequelize Op.like with parameterized values for search
+<a id="m-002"></a>
+#### M-002 — Remove hardcoded RSA private key; rotate to environment variable
 
 **Addresses:**
 
-- 🔴 [F-004](#f-004) — SQL injection product search (UNION + schema exfil) - SQL injection product search (UNION + schema exfil)
+- 🔴 [F-002](#f-002) — Hardcoded RSA private key enables JWT forgery lib/insecurity.ts
+
+**Priority:** P1 - Immediate · **Effort:** Low · **File:** `lib/insecurity.ts:23`
+
+**How:**
+
+1. Remove const `privateKey` = hard-coded value from `lib/insecurity.ts:23`
+2. Read key from environment variable: const `privateKey` = `process.env.JWT_PRIVATE_KEY`
+3. Rotate the key - existing tokens signed with old key are permanently compromised
+4. Update encryptionkeys/ to not be committed (add to .gitignore)
+
+```javascript
+const privateKey = process.env.JWT_PRIVATE_KEY || fs.readFileSync(process.env.JWT_KEY_PATH)
+```
+
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Key_Management_Cheat_Sheet.html`
+
+---
+
+<a id="m-003"></a>
+#### M-003 — Upgrade express-jwt to >=6.0.0 and enforce algorithm allowlist
+
+**Addresses:**
+
+- 🔴 [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts
+
+**Priority:** P1 - Immediate · **Effort:** Medium · **File:** `lib/insecurity.ts:54`
+
+**How:**
+
+1. Upgrade express-jwt from 0.1.3 to >=6.0.0
+2. Upgrade jsonwebtoken from 0.4.0 to >=9.0.0
+3. Pass algorithms: ["RS256"] to `expressJwt()` options to block `alg:none`
+4. Test that algorithm:none tokens are rejected
+
+```javascript
+expressJwt({ secret: publicKey, algorithms: ["RS256"] })
+```
+
+**Reference:** https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/
+
+---
+
+<a id="m-005"></a>
+#### M-005 — Replace raw SQL with Sequelize ORM parameterized queries in search route
+
+**Addresses:**
+
+- 🔴 [F-007](#f-007) — SQL injection full database disclosure via UNION attack routes/search.ts
 
 **Priority:** P1 - Immediate · **Effort:** Low · **File:** `routes/search.ts:23`
 
 **How:**
 
-1. Replace raw query with Sequelize where clause using Op.like
-2. Use replacements parameter if raw query is needed
+1. Replace `models.sequelize.query()` in `search.ts:23` with `Product.findAll({ where: { [Op.or]: [{ name: { [Op.like]: ..% } }, { description: { [Op.like]: ..% } }] } })`
+2. Remove DB schema query fallback at `routes/search.ts:47`
 
-```javascript
-const products = await ProductModel.findAll({
-  where: { [Op.or]: [{ name: { [Op.like]: `%${criteria}%` } }, { description: { [Op.like]: `%${criteria}%` } }], deletedAt: null }
-});
+```typescript
+// Reject string interpolation; use parameter binding.
+await sequelize.query(
+  'SELECT * FROM Users WHERE email = :email AND password = :password',
+  { replacements: { email, password: hash(password) }, type: QueryTypes.SELECT }
+)
 ```
 
-**Reference:** https://sequelize.org/docs/v6/other-topics/querying/#operators
+**Verification:** Submit `' OR 1=1 --` in the affected field and confirm the request returns 401 (or zero rows) instead of an authenticated session.
 
----
-
-<a id="m-005"></a>
-#### M-005 — Remove eval-based order processing; use structured input schema
-
-**Addresses:**
-
-- 🔴 [F-005](#f-005) — Remote code execution notevil sandbox bypass in B2B API - Remote code execution notevil sandbox bypass in B2B API
-
-**Priority:** P1 - Immediate · **Effort:** Medium · **File:** `routes/b2bOrder.ts:23`
-
-**How:**
-
-1. Replace `orderLinesData` eval with a structured JSON schema (e.g. array of {sku, qty, price})
-2. Validate with express-validator or joi
-3. Remove notevil dependency
-
-```javascript
-const orderSchema = Joi.array().items(Joi.object({ sku: Joi.string().required(), qty: Joi.number().integer().min(1).required() }));
-const { error, value } = orderSchema.validate(req.body.orderLines);
-```
-
-**Reference:** https://`cwe.mitre.org/data/definitions/94.html`
+**Reference:** https://`sequelize.org`/docs/v6/core-concepts/model-querying-finders/
 
 ---
 
 <a id="m-006"></a>
-#### M-006 — Remove eval() from username processing; use safe string rendering
+#### M-006 — Remove eval() from userProfile route; use safe template string replacement
 
 **Addresses:**
 
-- 🔴 [F-006](#f-006) — Server side code injection via eval on username field - Server side code injection via eval on username field
+- 🔴 [F-006](#f-006) — Remote code execution via eval in userProfile routes/userProfile.ts
 
 **Priority:** P1 - Immediate · **Effort:** Low · **File:** `routes/userProfile.ts:62`
 
 **How:**
 
-1. Remove the `eval(code)` call entirely
-2. Use the username string directly without evaluation
-3. Apply HTML entity encoding before rendering
+1. Remove the `eval()` block at `routes/userProfile.ts:55`-65
+2. Sanitize username before template replacement
+3. Validate username against allowlist pattern
 
 ```javascript
-// Before: username = eval(code)
-// After: username = sanitizeHtml(user.username, { allowedTags: [] })
+username = username.replace(/[^a-zA-Z0-9_\-\. ]/g, '') // remove special chars
 ```
 
-**Reference:** https://`cwe.mitre.org/data/definitions/95.html`
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html`
 
 ---
 
-<a id="m-019"></a>
-#### M-019 — Remove bypassSecurityTrustHtml; use Angular's default sanitization
+<a id="m-011"></a>
+#### M-011 — Remove bypassSecurityTrustHtml() from administration component
 
 **Addresses:**
 
-- 🔴 [F-019](#f-019) — DOM XSS search results rendered via trust HTML bypass - DOM XSS search results rendered via trust HTML bypass
+- 🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ…
+- 🔴 [F-009](#f-009) — Stored XSS via trust HTML bypass in feedback frontend/src/app/about/about.compo…
 
-**Priority:** P1 - Immediate · **Effort:** Low · **File:** `frontend/src/app/search-result/search-result.component.ts:170`
+**Priority:** P1 - Immediate · **Effort:** Medium · **File:** `frontend/src/app/administration/administration.component.ts:60`
 
 **How:**
 
-1. Remove all calls to `bypassSecurityTrustHtml()` in `search-result.component.ts`
-2. Display the search query as plain text using {{ `searchValue` }} instead of [`innerHTML`]
-3. Audit all 14 `bypassSecurityTrustHtml` callsites
+1. Remove `bypassSecurityTrustHtml()` from `administration.component.ts:60`,78
+2. Render email as plain text with {{ user.email }}
+3. Apply HTML sanitization for any display of user-generated HTML content
+4. Remove `bypassSecurityTrustHtml()` from `about.component.ts:119`, `administration.component.ts:60`,78
+5. Use Angular interpolation {{ }} for text values instead of [`innerHTML`]
+6. If HTML rendering is needed, use `DomSanitizer.sanitize()` not `bypassSecurityTrustHtml()`
 
 ```javascript
-// Before: this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam)
-// After: this.searchValue = queryParam  // rendered via {{ searchValue }} in template
+feedback.comment = this.sanitizer.sanitize(SecurityContext.HTML, feedback.comment)
 ```
 
-**Reference:** https://angular.io/guide/security#xss
+**Reference:** https://owasp.org/www-community/attacks/xss/
 
 ---
 
-<a id="m-020"></a>
-#### M-020 — Sanitize feedback content server-side before storage; remove bypassSecurityTrustHtml in admin panel
+<a id="m-022"></a>
+#### M-022 — Replace safeEval with structured JSON order line parsing
 
 **Addresses:**
 
-- 🔴 [F-020](#f-020) — Stored XSS feedback comments rendered unsanitized in admin panel - Stored XSS feedback comments rendered unsanitized in admin panel
+- 🔴 [F-005](#f-005) — Remote code execution via sandbox escape in B2B order API routes/b2bOrder.ts
 
-**Priority:** P1 - Immediate · **Effort:** Medium · **File:** `frontend/src/app/administration/administration.component.ts:78`
+**Priority:** P1 - Immediate · **Effort:** Medium · **File:** `routes/b2bOrder.ts:23`
 
 **How:**
 
-1. Sanitize feedback on submission with DOMPurify or sanitize-html (properly configured)
-2. Remove `bypassSecurityTrustHtml` in `administration.component.ts:60`,78
-3. Use [`textContent`] instead of [`innerHTML`] for user-submitted content
+1. Replace vm.`runInContext`("`safeEval(orderLinesData)`") with `JSON.parse()` and strict schema validation
+2. Define a fixed order line schema using Joi or Zod
+3. Reject any `orderLinesData` that does not conform to the schema
 
-```typescript
-// Never call bypassSecurityTrust*; let Angular sanitize.
-// template:  <div [innerHTML]="product.description"></div>
-// component: no DomSanitizer.bypassSecurityTrustHtml(...)
-this.product.description = raw  // bound directly; Angular escapes
+```javascript
+const orderLines = JSON.parse(orderLinesData); const validated = orderLineSchema.parse(orderLines)
 ```
 
-**Verification:** Insert `<img src=x onerror=alert(1)>` via the affected field and confirm the browser renders the escaped text, not an alert dialog.
-
-**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html`
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Nodejs_Security_Cheat_Sheet.html`#use-strict-mode
 
 ---
 
-<a id="m-027"></a>
-#### M-027 — Replace MD5 with bcrypt (cost factor 12+) for password hashing
+### P2 — This Sprint
+
+<a id="m-004"></a>
+#### M-004 — Replace MD5 with bcrypt/argon2 for password hashing
 
 **Addresses:**
 
-- 🔴 [F-027](#f-027) — MD5 password hashing passwords trivially reversible - MD5 password hashing passwords trivially reversible
+- 🟠 [F-008](#f-008) — MD5 password hashing trivially reversible lib/insecurity.ts
 
-**Priority:** P1 - Immediate · **Effort:** Medium · **File:** `lib/insecurity.ts:43`
+**Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `lib/insecurity.ts:43`
 
 **How:**
 
-1. Install bcrypt: `npm install bcrypt @types/bcrypt`
-2. Replace `security.hash()` with `bcrypt.hash(password, 12)` for new passwords
-3. Update login to use `bcrypt.compare(plaintext, hash)`
-4. Migrate existing passwords: on next login, verify MD5, then re-hash with bcrypt
+1. Replace `crypto.createHash("md5")` with `bcrypt.hash()` in `lib/insecurity.ts:43`
+2. Update login query to use `bcrypt.compare()` instead of hash comparison
+3. Force password reset for all existing users (hashes are permanently compromised)
 
 ```javascript
-import bcrypt from 'bcrypt';
-const SALT_ROUNDS = 12;
-export const hashPassword = (p: string) => bcrypt.hash(p, SALT_ROUNDS);
-export const verifyPassword = (p: string, h: string) => bcrypt.compare(p, h);
+import bcrypt from "bcrypt"; export const hash = (data: string) => bcrypt.hash(data, 12)
 ```
 
 **Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html`
 
 ---
 
-### P2 — This Sprint
-
-<a id="m-001"></a>
-#### M-001 — Establish dependency vulnerability scanning and update SLA
-
-**Addresses:**
-
-- 🔴 [F-001](#f-001) — JWT algorithm confusion algorithm none bypass - JWT algorithm confusion algorithm none bypass
-
-**Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `lib/insecurity.ts:54`
-
-**How:**
-
-1. Upgrade express-jwt to 8.x: `npm install express-jwt@latest`
-2. Upgrade jsonwebtoken to 9.x: `npm install jsonwebtoken@latest`
-3. Enforce algorithm: `expressJwt({ secret: publicKey, algorithms: ['RS256'] })`
-4. Rotate the RSA key pair and store private key in environment variable, not source
-
-```javascript
-import { expressjwt } from 'express-jwt';
-const isAuthorized = () => expressjwt({ secret: process.env.JWT_PUBLIC_KEY, algorithms: ['RS256'] });
-```
-
-**Reference:** https://github.com/auth0/express-jwt/releases
-
----
-
 <a id="m-007"></a>
-#### M-007 — Set noent:false in libxmljs2 parsing to disable external entity resolution
+#### M-007 — Implement URL allowlist for profile image upload
 
 **Addresses:**
 
-- 🟠 [F-007](#f-007) — XXE via XML file upload with external entity resolution - XXE via XML file upload with external entity resolution
+- 🟠 [F-014](#f-014) — SSRF via profile image URL upload routes/profileImageUrlUpload.ts
 
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/fileUpload.ts:83`
-
-**How:**
-
-1. Change `parseXml` options to remove `noent:true`
-2. Use: `libxml.parseXml(data, { noblanks: true, noent: false, nocdata: true })`
-
-```javascript
-const xmlDoc = vm.runInContext('libxml.parseXml(data, { noblanks: true, noent: false, nocdata: true })', sandbox, { timeout: 2000 })
-```
-
-**Reference:** https://`cwe.mitre.org/data/definitions/611.html`
-
----
-
-<a id="m-008"></a>
-#### M-008 — Validate extracted paths against target directory before writing
-
-**Addresses:**
-
-- 🟠 [F-008](#f-008) — Zip slip path traversal via unzipper 0.9.15 - Zip slip path traversal via unzipper 0.9.15
-
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/fileUpload.ts:42`
+**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/profileImageUrlUpload.ts:24`
 
 **How:**
 
-1. Resolve target path and check it starts with the intended base directory
-2. Reject entries with .. or absolute paths
-3. Use a safe-extract library or add explicit check: if (!`absolutePath`.`startsWith`(`path.resolve('uploads/complaints/')`)) throw new `Error('Zip-slip')`
+1. Add URL validation: block private IP ranges (127.x, 10.x, 172.16-31.x, 192.168.x)
+2. Block internal hostnames
+3. Validate URL scheme is http:// or https:// only
 
 ```javascript
-const targetDir = path.resolve('uploads/complaints/');
-const absolutePath = path.resolve(targetDir, path.basename(entry.path));
-if (!absolutePath.startsWith(targetDir)) { entry.autodrain(); return; }
-```
-
-**Reference:** https://snyk.io/research/zip-slip-vulnerability
-
----
-
-<a id="m-009"></a>
-#### M-009 — Implement URL allowlist or SSRF protection library for outbound fetch
-
-**Addresses:**
-
-- 🟠 [F-009](#f-009) — Server side request forgery via profile image URL upload - Server side request forgery via profile image URL upload
-
-**Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `routes/profileImageUrlUpload.ts:24`
-
-**How:**
-
-1. Validate URL against an allowlist of trusted image CDN domains
-2. Block private IP ranges (10.x, 172.16.x, 192.168.x, 169.254.x, 127.x)
-3. Use ssrf-req-filter or similar library
-
-```javascript
-const allowedDomains = ['gravatar.com', 'avatars.githubusercontent.com'];
-const urlObj = new URL(url);
-if (!allowedDomains.includes(urlObj.hostname)) throw new Error('Domain not allowed');
+const isPrivateIP = (url) => /^https?:\/\/(localhost|127\.0\.0\.1|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(url)
 ```
 
 **Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html`
 
 ---
 
-<a id="m-010"></a>
-#### M-010 — Add authentication middleware to sensitive file serving routes
+<a id="m-009"></a>
+#### M-009 — Add role-based authorization middleware to admin API endpoints
 
 **Addresses:**
 
-- 🟠 [F-010](#f-010) — Sensitive files and logs exposed without authentication - Sensitive files and logs exposed without authentication
+- 🟠 [F-018](#f-018) — Broken authorization on admin API endpoints server.ts
 
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `server.ts:281`
-
-**How:**
-
-1. Add `security.isAuthorized()` middleware to `/support/logs/`
-2. Add admin-only check to `/encryptionkeys/`
-3. Remove or restrict `/ftp/` directory listing
-
-```typescript
-// Remove directory-listing middleware; require auth on management endpoints.
-// app.use('/ftp', serveIndex(...))   // delete
-app.use('/metrics', requireRole('admin'), promBundle())
-```
-
-**Verification:** Unauthenticated `GET /metrics` returns 401; `GET /ftp/` returns 404.
-
-**Reference:** https://owasp.org/www-project-top-ten/2021/A01_2021-Broken_Access_Control
-
----
-
-<a id="m-011"></a>
-#### M-011 — Validate basket ownership against authenticated user's ID from JWT
-
-**Addresses:**
-
-- 🟠 [F-011](#f-011) — IDOR basket accessible by any authenticated user - IDOR basket accessible by any authenticated user
-
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/basket.ts:19`
+**Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `server.ts:362`
 
 **How:**
 
-1. Extract user ID from JWT: const `userId` = req.user.data.id
-2. Add WHERE UserId = `userId` to basket query
-3. Return 403 if basket does not belong to user
+1. Create `isAdmin()` middleware that checks JWT role field === "admin"
+2. Apply `isAdmin()` to `GET /api/Users`, `GET /api/Complaints`, and other admin endpoints
+3. Audit all `/api/`* endpoints for authorization gaps
 
 ```javascript
-const userId = (req as any).user.data.id;
-const basket = await BasketModel.findOne({ where: { id, UserId: userId }, include: [ProductModel] });
+const isAdmin = () => (req, res, next) => { const user = security.authenticatedUsers.from(req); if (user?.data?.role \!== "admin") return res.status(403).json({ error: "Forbidden" }); next(); }
 ```
-
-**Reference:** https://owasp.org/www-project-top-ten/2021/A01_2021-Broken_Access_Control
-
----
-
-<a id="m-015"></a>
-#### M-015 — Whitelist permitted layout file names; use path.basename() to strip directory traversal
-
-**Addresses:**
-
-- 🟠 [F-015](#f-015) — Path traversal in data erasure layout parameter - Path traversal in data erasure layout parameter
-
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/dataErasure.ts:69`
-
-**How:**
-
-1. Validate layout against a whitelist of permitted values
-2. Or use `path.basename(req.body.layout)` and prepend a fixed base directory
-3. Verify resolved path starts with expected base directory
-
-```javascript
-const allowed = ['gdpr.html', 'ccpa.html'];
-if (!allowed.includes(req.body.layout)) return res.status(400).send('Invalid layout');
-```
-
-**Reference:** https://`cwe.mitre.org/data/definitions/22.html`
-
----
-
-<a id="m-016"></a>
-#### M-016 — Add express-rate-limit to login endpoint (already in dependencies)
-
-**Addresses:**
-
-- 🟠 [F-016](#f-016) — Missing rate limiting on authentication endpoint - Missing rate limiting on authentication endpoint
-
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `server.ts:594`
-
-**How:**
-
-1. Add `rateLimit({ windowMs: 15 * 60 * 1000, max: 10 })` to `POST /rest/user/login`
-2. Consider CAPTCHA after 5 failed attempts
-3. Add account lockout after N failures
-
-```javascript
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: 'Too many login attempts' });
-app.post('/rest/user/login', loginLimiter, login());
-```
-
-**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html`#account-lockout
-
----
-
-<a id="m-017"></a>
-#### M-017 — Always derive UserId from verified JWT payload, never from request body
-
-**Addresses:**
-
-- 🟠 [F-017](#f-017) — Mass assignment wallet balance manipulable via req.body.UserId - Mass assignment wallet balance manipulable via req.body.UserId
-
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/wallet.ts:12`
-
-**How:**
-
-1. Use req.body.UserId only when it comes from `appendUserId()` middleware which derives it from JWT
-2. Verify that `appendUserId()` correctly sets req.body.UserId from JWT before these routes
-3. Remove any path where client-controlled UserId is accepted
-
-```typescript
-// Whitelist mutable fields server-side; never trust the body.
-const ALLOWED = ['email', 'username'] as const
-const patch = Object.fromEntries(
-  Object.entries(req.body).filter(([k]) => ALLOWED.includes(k as any))
-)
-await user.update(patch)
-```
-
-**Verification:** POST `{ "role": "admin" }` to the register/update endpoint; confirm the stored row keeps the default role.
-
-**Reference:** https://owasp.org/www-project-top-ten/2021/A01_2021-Broken_Access_Control
-
----
-
-<a id="m-021"></a>
-#### M-021 — Remove bypassSecurityTrustHtml; render IP as plain text
-
-**Addresses:**
-
-- 🟠 [F-021](#f-021) — XSS last login ip rendered as trusted HTML - XSS last login ip rendered as trusted HTML
-
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `frontend/src/app/last-login-ip/last-login-ip.component.ts:39`
-
-**How:**
-
-1. Remove `bypassSecurityTrustHtml` wrapper
-2. Use {{ `lastLoginIp` }} in template instead of [`innerHTML`]
-3. Validate IP format on server before storing
-
-```typescript
-// Never call bypassSecurityTrust*; let Angular sanitize.
-// template:  <div [innerHTML]="product.description"></div>
-// component: no DomSanitizer.bypassSecurityTrustHtml(...)
-this.product.description = raw  // bound directly; Angular escapes
-```
-
-**Verification:** Insert `<img src=x onerror=alert(1)>` via the affected field and confirm the browser renders the escaped text, not an alert dialog.
-
-**Reference:** https://angular.io/guide/security
-
----
-
-<a id="m-022"></a>
-#### M-022 — Store JWT in HttpOnly cookie to prevent XSS-based theft
-
-**Addresses:**
-
-- 🟠 [F-022](#f-022) — Client side JWT stored in localStorage accessible to XSS - Client side JWT stored in localStorage accessible to XSS
-
-**Priority:** P2 - This Sprint · **Effort:** High · **File:** `frontend/src/app/Services/authentication.service.ts:1`
-
-**How:**
-
-1. Set JWT as HttpOnly, SameSite=Strict, Secure cookie on server side
-2. Update frontend to not read/write JWT from/to `localStorage`
-3. Update API calls to use cookie-based auth (browser sends automatically)
-
-```typescript
-// Move the JWT out of localStorage into an httpOnly cookie.
-res.cookie('session', token, {
-  httpOnly: true, secure: true, sameSite: 'lax', maxAge: 3600_000
-})
-```
-
-**Verification:** Open browser DevTools, run `localStorage.getItem('token')` and confirm `null`.
-
-**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html`
-
----
-
-<a id="m-023"></a>
-#### M-023 — Enforce authorization server-side; client guards are UI-only
-
-**Addresses:**
-
-- 🟠 [F-023](#f-023) — Angular route guards bypassable client side - Angular route guards bypassable client side
-
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `frontend/src/app/app.guard.ts:12`
-
-**How:**
-
-1. Treat Angular guards as UI-only navigation helpers, not security controls
-2. Enforce all authorization server-side with `isAuthorized()` and `isAccounting()` middleware
-3. Document that client-side guards are not security boundaries
 
 **Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html`
 
 ---
 
-<a id="m-025"></a>
-#### M-025 — Sanitize product descriptions server-side; use textContent for display
+<a id="m-010"></a>
+#### M-010 — Add rate limiting to /rest/user/login and /rest/user/register
 
 **Addresses:**
 
-- 🟠 [F-025](#f-025) — Product description and review rendered as HTML stored XSS vector - Product description and review rendered as HTML stored XSS vector
+- 🟠 [F-017](#f-017) — No rate limiting on authentication endpoints server.ts
 
-**Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `frontend/src/app/search-result/search-result.component.ts:132`
-
-**How:**
-
-1. Remove `bypassSecurityTrustHtml` in `search-result.component.ts:132`
-2. Sanitize product description HTML on creation/update server-side
-3. Use `allowedTags` whitelist with sanitize-html (updated version)
-
-```typescript
-// Never call bypassSecurityTrust*; let Angular sanitize.
-// template:  <div [innerHTML]="product.description"></div>
-// component: no DomSanitizer.bypassSecurityTrustHtml(...)
-this.product.description = raw  // bound directly; Angular escapes
-```
-
-**Verification:** Insert `<img src=x onerror=alert(1)>` via the affected field and confirm the browser renders the escaped text, not an alert dialog.
-
-**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html`
-
----
-
-<a id="m-026"></a>
-#### M-026 — Replace \$where JavaScript expression with standard MarsDB equality query
-
-**Addresses:**
-
-- 🟠 [F-026](#f-026) — NoSQL injection via \$where operator in MarsDB reviews - NoSQL injection via \$where operator in MarsDB reviews
-
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/showProductReviews.ts:36`
+**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `server.ts:458`
 
 **How:**
 
-1. Replace `db.reviewsCollection.find({ $where: 'this.product == ' + id })` with db.`reviewsCollection`.`find({ product: parseInt(id) })`
-2. Validate id is a numeric integer before use
+1. Apply `rateLimit({ windowMs: 15*60*1000, max: 10 })` to `POST /rest/user/login`
+2. Apply `rateLimit({ windowMs: 60*60*1000, max: 5 })` to `POST /rest/user/register`
+3. Consider progressive delays or account lockout after N failures
 
 ```javascript
-const productId = parseInt(req.params.id);
-if (isNaN(productId)) return res.status(400).json({error: 'Invalid product ID'});
-const reviews = await db.reviewsCollection.find({ product: productId });
+app.use('/rest/user/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10 }))
 ```
 
-**Reference:** https://`cwe.mitre.org/data/definitions/943.html`
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html`
 
 ---
 
-<a id="m-028"></a>
-#### M-028 — Exclude password and totpSecret from all API serialization
+<a id="m-013"></a>
+#### M-013 — Set Secure, HttpOnly, and SameSite=Strict on JWT cookie
 
 **Addresses:**
 
-- 🟠 [F-028](#f-028) — User model returns sensitive fields in API responses (password hash, totpSecret) - User model returns sensitive fields in API responses (password hash, totpSecret)
+- 🟠 [F-011](#f-011) — JWT stored in browser cookie without Secure/HttpOnly flags angular spa
 
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `models/user.ts:28`
+**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `lib/insecurity.ts:63`
 
 **How:**
 
-1. Add attributes: `{ exclude: ['password', 'totpSecret'] }` to all User queries
-2. Or override `toJSON()` in the User model to strip sensitive fields
-3. Ensure all user-returning endpoints explicitly select only needed columns
+1. Set HttpOnly flag on JWT cookie (prevents JavaScript access)
+2. Set Secure flag (HTTPS only)
+3. Set SameSite=Strict to prevent CSRF
+4. Server-side: `res.cookie("token", token, { httpOnly: true, secure: true, sameSite: "strict" })`
+
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html`
+
+---
+
+<a id="m-014"></a>
+#### M-014 — Implement Content Security Policy header
+
+**Addresses:**
+
+- 🟠 [F-012](#f-012) — No Content Security Policy allows arbitrary script injection server.ts
+
+**Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `server.ts:187`
+
+**How:**
+
+1. Add `helmet.contentSecurityPolicy()` with strict policy
+2. Start with report-only mode to identify violations
+3. Use nonce-based or strict-dynamic CSP
 
 ```javascript
-UserModel.findOne({ where: { id }, attributes: { exclude: ['password', 'totpSecret', 'deletedAt'] } })
+app.use(helmet.contentSecurityPolicy({ directives: { defaultSrc: ["'self'"] } }))
 ```
 
-**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html`
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html`
 
 ---
 
-<a id="m-030"></a>
-#### M-030 — Mitigate SQL injection (T-004) eliminates schema exposure
+<a id="m-016"></a>
+#### M-016 — Hash security answers before storage
 
 **Addresses:**
 
-- 🟠 [F-030](#f-030) — Database schema exposure via SQL injection in search route - Database schema exposure via SQL injection in search route
+- 🟠 [F-013](#f-013) — Plaintext security answers stored in database models/securityAnswer.ts
 
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/search.ts:47`
+**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `models/securityAnswer.ts:1`
 
 **How:**
 
-1. Fixing [T-004](#t-004) — SQL injection product search (UNION + schema exfil) (SQL injection in search) eliminates this exposure
-2. Remove the sqlite_master query if the challenge is disabled
+1. Hash security answers with bcrypt before storing in SecurityAnswers table
+2. Compare using `bcrypt.compare()` during password reset flow
 
-```typescript
-// Remove directory-listing middleware; require auth on management endpoints.
-// app.use('/ftp', serveIndex(...))   // delete
-app.use('/metrics', requireRole('admin'), promBundle())
-```
-
-**Verification:** Unauthenticated `GET /metrics` returns 401; `GET /ftp/` returns 404.
-
-**Reference:** https://`cwe.mitre.org/data/definitions/200.html`
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html`
 
 ---
 
-<a id="m-031"></a>
-#### M-031 — Fix NoSQL injection T-026 to eliminate this DoS vector
+<a id="m-018"></a>
+#### M-018 — Disable XML external entity processing (noent:false)
 
 **Addresses:**
 
-- 🟠 [F-031](#f-031) — JavaScript injection via \$where can crash MarsDB process - JavaScript injection via \$where can crash MarsDB process
+- 🟠 [F-010](#f-010) — XML external entity injection via libxmljs2 external entity resolution routes/f…
 
-**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/showProductReviews.ts:36`
+**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/fileUpload.ts:83`
 
 **How:**
 
-1. Mitigating [T-026](#t-026) — NoSQL injection via \$where operator in MarsDB reviews (replace \$where with equality query) eliminates this DoS vector
+1. Change `libxmljs.parseXml(data, { noblanks: true, noent: true, nocdata: true })` to noent: false
+2. Alternatively, switch to a parser that disables external entities by default (e.g. fast-xml-parser with default settings)
 
-**Reference:** https://`cwe.mitre.org/data/definitions/400.html`
+```javascript
+libxml.parseXml(data, { noblanks: true, noent: false, nocdata: true })
+```
+
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html`
+
+---
+
+<a id="m-019"></a>
+#### M-019 — Add authentication and path validation to key/log server endpoints
+
+**Addresses:**
+
+- 🟠 [F-015](#f-015) — Path traversal in encryption key and log file endpoints routes/keyServer.ts
+
+**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/keyServer.ts:14`
+
+**How:**
+
+1. Add `security.isAuthorized()` middleware to `/encryptionkeys/:file` and `/logs/:file`
+2. Validate file parameter against allowlist of permitted filenames
+3. Reject paths containing .. sequences explicitly
+
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html`
+
+---
+
+<a id="m-020"></a>
+#### M-020 — Add authentication to FTP directory endpoint
+
+**Addresses:**
+
+- 🟠 [F-016](#f-016) — Unauthenticated FTP directory listing exposes sensitive files server.ts
+
+**Priority:** P2 - This Sprint · **Effort:** Low · **File:** `server.ts:270`
+
+**How:**
+
+1. Add `security.isAuthorized()` middleware before the `/ftp` serve-index handler
+2. For admin-only files, additionally check admin role
+3. Consider moving sensitive files out of `/ftp` entirely
+
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Securing_Cascading_Style_Sheets_Cheat_Sheet.html`
+
+---
+
+<a id="m-024"></a>
+#### M-024 — Implement dependency update automation and security audit policy
+
+**Addresses:**
+
+- 🔴 [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts
+- 🔴 [F-004](#f-004) — Stored XSS in admin panel via user email and feedback frontend/src/app/administ…
+
+**Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `lib/insecurity.ts:54`
+
+**How:**
+
+1. Upgrade express-jwt from 0.1.3 to >=6.0.0
+2. Upgrade jsonwebtoken from 0.4.0 to >=9.0.0
+3. Pass algorithms: ["RS256"] to `expressJwt()` options to block `alg:none`
+4. Test that algorithm:none tokens are rejected
+5. Remove `bypassSecurityTrustHtml()` from `administration.component.ts:60`,78
+6. Render email as plain text with {{ user.email }}
+7. Apply HTML sanitization for any display of user-generated HTML content
+
+```javascript
+expressJwt({ secret: publicKey, algorithms: ["RS256"] })
+```
+
+**Reference:** https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/
 
 ---
 
 ### P3 — Next Quarter
 
-<a id="m-012"></a>
-#### M-012 — Use exact hostname matching instead of prefix matching for redirect allowlist
+<a id="m-008"></a>
+#### M-008 — Fix URL validation to use exact match or startsWith for redirect allowlist
 
 **Addresses:**
 
-- 🟡 [F-012](#f-012) — Open redirect bypass via allowlist prefix check - Open redirect bypass via allowlist prefix check
+- 🟡 [F-022](#f-022) — Open redirect via URL substring match bypass lib/insecurity.ts
 
-**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `routes/redirect.ts:19`
+**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `lib/insecurity.ts:138`
 
 **How:**
 
-1. Parse URL with new `URL(toUrl)` and compare only the origin/hostname
-2. Maintain an allowlist of permitted hostnames, not URL prefixes
+1. Replace `url.includes(allowedUrl)` with url === `allowedUrl` or `url.startsWith(allowedUrl + "?")` || `url.startsWith(allowedUrl + "/")`
+2. Test with URL fragment and query string bypass attempts
 
 ```javascript
-const allowed = ['www.paypal.com', 'github.com'];
-try { const parsed = new URL(toUrl); if (!allowed.includes(parsed.hostname)) return res.status(406); } catch { return res.status(400); }
+allowed = allowed || url === allowedUrl
 ```
 
 **Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html`
 
 ---
 
-<a id="m-013"></a>
-#### M-013 — Add authentication or restrict /metrics to internal network
+<a id="m-017"></a>
+#### M-017 — Sanitize MarsDB query parameters to prevent NoSQL injection
 
 **Addresses:**
 
-- 🟡 [F-013](#f-013) — Prometheus metrics endpoint exposed without authentication - Prometheus metrics endpoint exposed without authentication
+- 🔴 [F-019](#f-019) — NoSQL injection via MarsDB queries data/mongodb.ts
 
-**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `server.ts:718`
+**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `data/mongodb.ts:1`
 
 **How:**
 
-1. Add IP-based restriction or authentication check before metrics endpoint
-2. Use express-ipfilter to restrict to monitoring subnet
+1. Validate query parameters to reject \$ operators in user-supplied fields
+2. Use fixed query structure: `reviewsCollection.find({ author: email })` without spreading user input
 
-```typescript
-// Remove directory-listing middleware; require auth on management endpoints.
-// app.use('/ftp', serveIndex(...))   // delete
-app.use('/metrics', requireRole('admin'), promBundle())
+```javascript
+// Reject `$where` and operator keys from user-controlled input.
+function safeQuery(filter) {
+  for (const k of Object.keys(filter)) {
+    if (k.startsWith('$')) throw new Error('operator not allowed')
+  }
+  return collection.find(filter)
+}
 ```
 
-**Verification:** Unauthenticated `GET /metrics` returns 401; `GET /ftp/` returns 404.
+**Verification:** Send `{ "$where": "sleep(5000) || true" }` and confirm the request is rejected (HTTP 400) within 100 ms instead of taking ~5 s.
 
-**Reference:** https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+**Reference:** https://`owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/07-Input_Validation_Testing/05.6-Testing_for_NoSQL_Injection.html`
 
 ---
 
-<a id="m-014"></a>
-#### M-014 — Restrict log access; send logs to separate log aggregation system
+<a id="m-021"></a>
+#### M-021 — Implement strict file type validation using magic bytes
 
 **Addresses:**
 
-- 🟡 [F-014](#f-014) — Access logs exposed to unauthenticated users tamper potential - Access logs exposed to unauthenticated users tamper potential
+- 🟡 [F-020](#f-020) — Unrestricted file upload allows malicious file storage routes/fileUpload.ts
 
-**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `server.ts:282`
+**Priority:** P3 - Next Quarter · **Effort:** Medium · **File:** `routes/fileUpload.ts:62`
 
 **How:**
 
-1. Remove `/support/logs` route entirely or add admin authentication
-2. Forward logs to external SIEM (e.g. CloudWatch, Datadog, ELK)
+1. Validate file magic bytes (not just extension/MIME type) using file-type library
+2. Limit allowed types to a strict allowlist (PDF, PNG, JPEG)
+3. Store uploads outside web root
 
 ```typescript
-// Log authn / authz outcomes with stable correlation ids.
-logger.info({ event: 'auth.login.fail', userId, ip: req.ip, reqId })
-logger.info({ event: 'authz.deny', userId, route: req.path, reqId })
+// Validate MIME, extension, and magic bytes; cap size.
+const ALLOWED = new Set(['image/png', 'image/jpeg'])
+if (!ALLOWED.has(file.mimetype)) throw new Error('mime not allowed')
+if (file.size > 2 * 1024 * 1024) throw new Error('too large')
 ```
 
-**Verification:** A failed admin probe leaves an `authz.deny` line in the central log within 1 s.
+**Verification:** Upload a `.html` file with `image/png` mimetype and confirm rejection.
 
-**Reference:** https://owasp.org/www-project-top-ten/2021/A09_2021-Security_Logging_and_Monitoring_Failures
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html`
 
 ---
 
-<a id="m-018"></a>
-#### M-018 — Remove errorhandler in production; use generic error responses
+<a id="m-023"></a>
+#### M-023 — Replace eval-based processing; add rate limiting to B2B order endpoint
 
 **Addresses:**
 
-- 🟡 [F-018](#f-018) — Error handler reveals internal stack traces - Error handler reveals internal stack traces
+- 🟡 [F-023](#f-023) — DoS via infinite loop in B2B order evaluation routes/b2bOrder.ts
 
-**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `server.ts:1`
+**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `routes/b2bOrder.ts:23`
 
 **How:**
 
-1. Add NODE_ENV check: if (`process.env.NODE_ENV` !== 'development') use generic error handler
-2. Return generic 500 message in production
-3. Log details server-side only
+1. Remove `safeEval` and process order lines as structured JSON
+2. Add rate limiting to `/api/B2BOrder`
 
-**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html`
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html`
 
 ---
 
-<a id="m-024"></a>
-#### M-024 — Validate postMessage origin before processing; add frame-ancestors CSP directive
+<a id="m-025"></a>
+#### M-025 — Add comprehensive security event logging and alerting
 
 **Addresses:**
 
-- 🟡 [F-024](#f-024) — XSS via postMessage and iframe DOM based attack - XSS via postMessage and iframe DOM based attack
+- 🔴 [F-001](#f-001) — SQL injection authentication bypass routes/login.ts
+- 🔴 [F-003](#f-003) — JWT algorithm confusion bypass via express jwt 0.1.3 lib/insecurity.ts
 
-**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `frontend/src/hacking-instructor/challenges/reflectedXss.ts:77`
+**Priority:** P3 - Next Quarter · **Effort:** Medium · **File:** `routes/login.ts:34`
 
 **How:**
 
-1. Validate event.origin against a known allowlist in all `postMessage` handlers
-2. Add frame-ancestors 'self' to CSP header
+1. Replace `sequelize.query()` string interpolation with User.`findOne`({ where: `{ email, password: hash(pw) }` })
+2. Ensure all raw SQL in routes/ is replaced with Sequelize finder methods
+3. Upgrade express-jwt from 0.1.3 to >=6.0.0
+4. Upgrade jsonwebtoken from 0.4.0 to >=9.0.0
+5. Pass algorithms: ["RS256"] to `expressJwt()` options to block `alg:none`
+6. Test that algorithm:none tokens are rejected
 
-```typescript
-// Never call bypassSecurityTrust*; let Angular sanitize.
-// template:  <div [innerHTML]="product.description"></div>
-// component: no DomSanitizer.bypassSecurityTrustHtml(...)
-this.product.description = raw  // bound directly; Angular escapes
+```javascript
+UserModel.findOne({ where: { email: req.body.email, password: security.hash(req.body.password || ''), deletedAt: null } })
 ```
 
-**Verification:** Insert `<img src=x onerror=alert(1)>` via the affected field and confirm the browser renders the escaped text, not an alert dialog.
-
-**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html`
+**Reference:** https://`cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html`
 
 ---
 
-<a id="m-029"></a>
-#### M-029 — Verify review author matches authenticated user before allowing update
+<a id="m-026"></a>
+#### M-026 — Manual review: verify NoSQL injection via MarsDB queries data/mongodb.ts at data/mongodb.ts:1
 
 **Addresses:**
 
-- 🟡 [F-029](#f-029) — Product reviews allow unauthorized update IDOR in review update - Product reviews allow unauthorized update IDOR in review update
+- 🔴 [F-019](#f-019) — NoSQL injection via MarsDB queries data/mongodb.ts
 
-**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `routes/updateProductReviews.ts:1`
+**Priority:** P3 - Next Quarter · **Effort:** Medium · **File:** `data/mongodb.ts:1`
 
-**How:**
+**How:** The evidence-verifier sample could not confirm or refute the claim from the cited snippet alone. Have a developer familiar with this code path read ±20 lines around the cited location (`data/mongodb.ts:1`) and decide whether to keep, downgrade, or remove this finding.
 
-1. Fetch review by id first
-2. Check review.author === req.user.data.email
-3. Return 403 if not the author
+1. Validate query parameters to reject \$ operators in user-supplied fields
+2. Use fixed query structure: `reviewsCollection.find({ author: email })` without spreading user input
 
-```typescript
-// Ownership check before touching a resource.
-const basket = await Basket.findByPk(req.params.id)
-if (!basket || basket.UserId !== req.user.id) return res.status(403).end()
+```javascript
+// Reject `$where` and operator keys from user-controlled input.
+function safeQuery(filter) {
+  for (const k of Object.keys(filter)) {
+    if (k.startsWith('$')) throw new Error('operator not allowed')
+  }
+  return collection.find(filter)
+}
 ```
 
-**Verification:** Authenticate as user A; request `/api/Baskets/<B's id>` and confirm 403.
+**Verification:** Send `{ "$where": "sleep(5000) || true" }` and confirm the request is rejected (HTTP 400) within 100 ms instead of taking ~5 s.
 
-**Reference:** https://owasp.org/www-project-top-ten/2021/A01_2021-Broken_Access_Control
+**Reference:** https://`owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/07-Input_Validation_Testing/05.6-Testing_for_NoSQL_Injection.html`
+
+---
+
+<a id="m-027"></a>
+#### M-027 — Move secrets out of source into a managed secret store
+
+**Addresses:**
+
+- 🟡 [F-021](#f-021) — Build context includes sensitive files without dockerignore exclusions
+
+**Priority:** P3 - Next Quarter · **Effort:** Low · **File:** `Dockerfile:2`
+
+**How:** Delete the hardcoded value from source, rotate the secret (every credential that ever sat in source is compromised), and reload it at runtime from environment / Vault / KMS. Add a pre-commit secret-scan (gitleaks / trufflehog) to prevent regression.
 
 ---
 
 ### P4 — Backlog
 
-_No P4 mitigations._
+<a id="m-028"></a>
+#### M-028 — Add a top-level GITHUB_TOKEN permissions block
+
+**Addresses:**
+
+- 🟢 [F-024](#f-024) — Workflow lacks explicit permissions declaration
+
+**Priority:** P4 - Backlog · **Effort:** Low · **File:** `.github/workflows/ci.yml:1`
+
+**How:** Add `permissions: {}` (or `permissions: read-all`) at the workflow root, then grant only the specific scopes individual jobs require. Defaults grant broad write access - explicit minimisation closes the lateral-movement window if a step is compromised.
 
 ---
 
-## 10. Out of Scope
+## 11. Out of Scope
 
 The following items are **explicitly excluded** from this threat model. Findings against these areas should be tracked separately.
 
@@ -2952,49 +2628,49 @@ The following items are **explicitly excluded** from this threat model. Findings
 | Field | Value |
 |----------------------|----------------------|
 | Invocation | `(not recorded)` |
-| Generated | 2026-05-30 15:28 UTC |
+| Generated | 2026-06-03 04:12 UTC |
 | Mode | full |
 | Assessment depth | standard |
 | Plugin version | 0.4.0-beta (analysis v2) |
-| Orchestrator model | claude-sonnet-4-6 |
+| Orchestrator model | sonnet |
 | Repository | `/home/mrohr/juice-shop` |
 | Output directory | `/home/mrohr/juice-shop/docs/security` |
-| Total analysis duration | 39m 21s |
+| Total analysis duration | 55m 04s |
 
 ### Per-Stage Breakdown
 
 | Stage | Description | Agent | Model | Duration | Tool calls | Tokens |
-|--------|----------------------------|----------------------|-----------------|--------|----------|--------|
-| 1 | Threat Analysis & Triage | appsec-threat-analyst | claude-sonnet-4-6 | 25m 28s | 153 | 190,554 |
-| 2 | Report Rendering | appsec-threat-renderer | claude-sonnet-4-6 | 8m 46s | 48 | 99,664 |
-| 3 | Re-Render Loop (REPAIR_MODE) | appsec-threat-analyst | claude-sonnet-4-6 | 5m 01s | 11 | 91,475 |
-| 3 | QA Review | `qa_checks.py` | none | 0m 05s | 0 | 0 |
-| **Total** | - | - | - | **39m 21s** | **212** | **381,693** |
+|--------|----------------------------|----------------------|--------|--------|----------|--------|
+| 1 | Threat Analysis & Triage | appsec-threat-analyst | sonnet | 33m 00s | 186 | 220,463 |
+| 1 | Abuse Case Verification | appsec-abuse-case-verifier | sonnet | 6m 00s | 86 | 97,292 |
+| 2 | Report Rendering | appsec-threat-renderer | sonnet | 8m 39s | 54 | 94,070 |
+| 3 | Re-Render Loop (REPAIR_MODE) | appsec-threat-analyst | sonnet | 7m 24s | 70 | 118,525 |
+| 3 | QA Review | `qa_checks.py` | none | - | 0 | 0 |
+| **Total** | - | - | - | **55m 04s** | **396** | **530,350** |
 
 ### Per-Phase Duration Breakdown
 
 | Phase | Description | Agent (Model) | Duration |
 |---------|------------------------------------|----------------------|--------|
-| Phase 1 | Context Resolution complete (parallel with Phase 2) | threat-analyst (sonnet-4-6) | 2m 32s |
-| Phase 2 | Reconnaissance - recon-summary ready | recon-scanner (sonnet-4-6) | 5m 58s |
-| Phase 3 | Architecture Modeling - 4 diagrams produced | threat-analyst (sonnet-4-6) | 1m 10s |
+| Phase 1 | Context Resolution complete (parallel with Phase 2) | threat-analyst (sonnet-4-6) | 2m 22s |
+| Phase 2 | Reconnaissance - recon-summary ready | recon-scanner (sonnet-4-6) | 5m 43s |
+| Phase 3 | Architecture Modeling - 4 diagrams produced | threat-analyst (sonnet-4-6) | 38s |
 | Phase 4 | Attack Walkthroughs - 3 walkthroughs rendered | threat-analyst (sonnet-4-6) | (inline) |
-| Phase 5 | Asset Identification - 10 assets catalogued | threat-analyst (sonnet-4-6) | 1m 30s |
-| Phase 6 | Attack Surface Mapping - 14 entry points (8 unauthenticated) | threat-analyst (sonnet-4-6) | 1m 30s |
-| Phase 7 | Trust Boundary Analysis - 6 boundaries | threat-analyst (sonnet-4-6) | 1m 30s |
-| Phase 8 | Security Controls - adequate=0 partial=4 weak=4 missing=8 unsafe=7 | threat-analyst (sonnet-4-6) | 1m 44s |
-| Phase 9 | STRIDE Enumeration - 31 threats (Critical: 9, High: 16, Medium: 6, Low: 0) | Nx stride-analyzer (sonnet-4-6) | 7m 09s |
-| Phase 10 | Scan Synthesis - 2 secrets (from recon), 7 SCA/known-bad findings | threat-analyst (sonnet-4-6) | 43s |
-| Phase 10b | Triage Validation - 0 flags (0 warnings, 0 info) | appsec-triage-validator (sonnet-4-6) | 1m 26s |
-| Phase 11 | Substeps 1-3 complete - need_render=true, Stage 2 ready | threat-analyst (sonnet-4-6) | 1m 22s |
-| Phase 11 | Finalization (renderer mode) | threat-analyst (sonnet-4-6) | 8m 28s |
+| Phase 5 | Asset Identification - 8 assets catalogued | threat-analyst (sonnet-4-6) | 1m 53s |
+| Phase 6 | Attack Surface Mapping - 18 entry points (8 unauthenticated) | threat-analyst (sonnet-4-6) | 1m 53s |
+| Phase 7 | Trust Boundary Analysis - 5 boundaries | threat-analyst (sonnet-4-6) | 1m 53s |
+| Phase 8 | Security Controls - Adequate: 0  Partial: 2  Weak: 3  Unsafe: 7  Missing: 2 | threat-analyst (sonnet-4-6) | 56s |
+| Phase 9 | STRIDE Enumeration - 24 threats (Critical: 7, High: 11, Medium: 5, Low: 1) | Nx stride-analyzer (sonnet-4-6) | 12m 19s |
+| Phase 10 | Scan Synthesis - 2 secrets (from recon), 5 known-bad-libs (SCA) | threat-analyst (sonnet-4-6) | 26s |
+| Phase 10b | Triage Validation - 4 flags (2 warnings, 2 info) | appsec-triage-validator (sonnet-4-6) | 4m 16s |
+| Phase 11 | Finalization (renderer mode) | threat-analyst (sonnet-4-6) | 8m 22s |
 
 ---
 
 <a id="appendix-a-vektor-taxonomy"></a>
 ## Appendix A — Vektor Taxonomy
 
-This appendix defines the attacker-starting-position labels used in the Top Threats table and throughout [§8 Threat Register](#8-threat-register). Each label answers the question *what does the attacker need before the exploit begins?*
+This appendix defines the attacker-starting-position labels used in the Top Threats table and throughout [§8 Findings Register](#8-findings-register). Each label answers the question *what does the attacker need before the exploit begins?*
 
 <a id="vektor-internet-anon"></a>
 ### Internet Anon
