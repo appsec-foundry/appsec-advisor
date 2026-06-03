@@ -88,6 +88,18 @@ _NAME_REWRITE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     # older catalog: also a validation primitive, not a §7.2 mechanism.
     (re.compile(r"^jwt\s+bearer\s+authentication$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
     (re.compile(r"^jwt\s+authentication$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
+    # Token-LIFECYCLE shapes without an explicit alg (the RS/HS/ES/PS-qualified
+    # forms are handled above). Stage 1 emits bare "JWT Token Issuance",
+    # "JWT Issuance", "JWT Token Signing", "JWT Token Verification/Validation"
+    # and parks them in §7.2 IAM. They are session-token primitives, not §7.2
+    # mechanisms — canonicalise to the SessionMgmt lifecycle name so the
+    # session_primitive_reroute (`^session token`) moves them to §7.3 and the
+    # scaffold emits a contract-clean heading instead of the forbidden
+    # `#### 7.2.N JWT Token Issuance` (juice-shop 2026-06 §7.2 REPAIR trigger).
+    (re.compile(r"^jwt(\s+token)?\s+(issuance|generation)(\s+and\s+(verification|validation))?$", re.IGNORECASE),
+     "Session Token Issuance (JWT Based)"),
+    (re.compile(r"^jwt(\s+token)?\s+signing$", re.IGNORECASE), "Session Token Signing (JWT Based)"),
+    (re.compile(r"^jwt(\s+token)?\s+(verification|validation)$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
 )
 
 

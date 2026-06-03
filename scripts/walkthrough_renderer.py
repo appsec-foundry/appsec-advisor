@@ -534,6 +534,12 @@ def _ensure_alt_else_block(diagram: str, tid: str, mid: str, mit_title: str) -> 
     yaml; reuses the diagram's declared participants so the result renders.
     """
     short = (mit_title or "").split(" — ", 1)[0].strip()[:60] or "the documented fix"
+    # `;` is a Mermaid statement terminator — a mitigation title like
+    # "Remove hardcoded RSA private key; rotate to env vars" splits the alt/else
+    # label mid-clause and fails the authoritative parser (2026-06 REPAIR_MODE
+    # trigger). Normalise statement-breaking punctuation in the label; `_mermaid_safe`
+    # only guards `[...]`-node labels, not alt/else labels, so handle them here.
+    short = short.replace(";", ",").replace("#", "").replace("\n", " ").strip()
     alt_label = f"alt Current state — {tid}" if tid else "alt Current state"
     mid_ref = mid if (mid or "").startswith("M-") else (mid or "mitigation")
     else_label = f"else After {mid_ref} — {short}"
