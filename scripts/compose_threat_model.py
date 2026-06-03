@@ -207,6 +207,11 @@ class RenderContext:
     # label. Pre-synthesised once per threat at build time, so the scenario
     # fallback runs O(threats) instead of O(threats × lookups).
     _label_index: Optional[dict[str, str]] = None
+    # Built lazily on first `severity_for_ref` call. Maps upper-cased finding
+    # ref (T-NNN + F-NNN alias) → effective_severity (fallback risk/severity).
+    # Backs the leading criticality dot that `linkify_with_label` prepends to
+    # finding links so the reader sees a finding's severity at every reference.
+    _severity_index: Optional[dict[str, str]] = None
 
     def severity_emoji(self, key: str) -> str:
         k = (key or "").strip().lower()
@@ -298,6 +303,42 @@ class RenderContext:
             self._label_index = self._build_label_index()
         return self._label_index.get(ref.strip().upper(), "")
 
+    def _build_severity_index(self) -> dict[str, str]:
+        """Map every finding ref (T-NNN + F-NNN alias) → its rated severity.
+
+        Prefers ``effective_severity`` (the post-triage rating that drives the
+        §8 grouping, including abuse-chain elevation) and falls back to
+        ``risk`` / ``severity``. Only findings are indexed — mitigations,
+        components, and threat categories carry no criticality dot.
+        """
+        idx: dict[str, str] = {}
+        for t in (self.yaml_data or {}).get("threats", []) or []:
+            tid = (t.get("t_id") or t.get("id") or "").strip().upper()
+            if not tid:
+                continue
+            sev = (
+                t.get("effective_severity")
+                or t.get("risk")
+                or t.get("severity")
+                or ""
+            ).strip()
+            if not sev:
+                continue
+            idx.setdefault(tid, sev)
+            if tid.startswith("T-"):
+                idx.setdefault("F-" + tid[2:], sev)
+            elif tid.startswith("F-"):
+                idx.setdefault("T-" + tid[2:], sev)
+        return idx
+
+    def severity_for_ref(self, ref: str) -> str:
+        """Rated severity for a finding ref (T-/F-NNN), or "" when unknown."""
+        if not ref:
+            return ""
+        if self._severity_index is None:
+            self._severity_index = self._build_severity_index()
+        return self._severity_index.get(ref.strip().upper(), "")
+
     @staticmethod
     def _synthesise_label_noop() -> None:
         """Placeholder — kept so downstream imports do not break if they
@@ -377,12 +418,22 @@ class RenderContext:
             r = f"F-{m.group(1)}"
         anchor = r.lower()
         label = (label_override or self.lookup_label(r) or "").strip()
+        # Leading criticality dot for finding refs only (F-/T-NNN). Mitigations
+        # (M-NNN), components (C-NN), and threat categories (TH-NN) carry no
+        # dot. The dot sits OUTSIDE the markdown link so `_enrich_linked_id_cells`
+        # (which extracts `[ID](#anchor)` and re-linkifies) regenerates exactly
+        # one dot — never doubles it. Empty/unknown severity → no dot.
+        dot = ""
+        if re.match(r"^F-\d+$", r):
+            emoji = self.severity_emoji(self.severity_for_ref(r))
+            if emoji:
+                dot = f"{emoji} "
         if label:
             # Escape unescaped `$` (see linkify_with_short_label) so a `$where`-
             # style token cannot open a KaTeX math span in math-enabled viewers.
             label = re.sub(r"(?<!\\)\$", r"\\$", label)
-            return f"[{r}](#{anchor}) — {label}"
-        return f"[{r}](#{anchor})"
+            return f"{dot}[{r}](#{anchor}) — {label}"
+        return f"{dot}[{r}](#{anchor})"
 
 
 # ---------------------------------------------------------------------------
@@ -7284,6 +7335,58 @@ def _render_top_threats(ctx: RenderContext, env: jinja2.Environment, section: di
     return tpl.render(rows=rows).rstrip() + "\n"
 
 
+_MS_SEV_RANK = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _abuse_chain_ms_note(ctx: RenderContext) -> str:
+    """Deterministic Management-Summary sentence documenting the role
+    code-verified abuse chains played in the finding ratings.
+
+    Returns "" when no finding anchors a verified chain (e.g. abuse-case
+    verification was skipped at quick depth / via --no-abuse-cases, or no
+    chain was confirmed). Otherwise names the anchoring findings (with their
+    criticality dots via ``linkify_with_label``) and points the reader at §9.
+    """
+    members: list[tuple[str, bool]] = []  # (finding_id, elevated_by_chain)
+    all_chains: set[str] = set()
+    for t in (ctx.yaml_data or {}).get("threats", []) or []:
+        ids = [c.strip() for c in (t.get("verified_chain_ids") or []) if (c or "").strip()]
+        if not ids:
+            continue
+        all_chains.update(ids)
+        fid = (t.get("t_id") or t.get("id") or "").strip()
+        if not fid:
+            continue
+        elevated = _MS_SEV_RANK.get(
+            (t.get("effective_severity") or "").strip().lower(), 0
+        ) > _MS_SEV_RANK.get(
+            (t.get("risk") or t.get("severity") or "").strip().lower(), 0
+        )
+        members.append((fid, elevated))
+    if not members or not all_chains:
+        return ""
+    n, m = len(members), len(all_chains)
+    flinks = ", ".join(ctx.linkify_with_label(fid) for fid, _ in members)
+    elev = sum(1 for _, e in members if e)
+    note = (
+        f"**Attack-chain analysis.** {n} finding{'s' if n != 1 else ''} "
+        f"anchor {m} code-verified attack chain{'s' if m != 1 else ''} "
+        f"(see §9 Abuse Cases): {flinks}."
+    )
+    if elev:
+        note += (
+            f" {elev} of these {'is' if elev == 1 else 'are'} rated above "
+            f"{'its' if elev == 1 else 'their'} individual baseline as a "
+            f"direct result of the verified chain."
+        )
+    else:
+        note += (
+            " Their Critical/High ratings reflect exploitability confirmed "
+            "end-to-end across the chain, not the individual weakness alone."
+        )
+    return note
+
+
 def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     # Explicit composition ensures the canonical subsection order is enforced.
     # `security_posture_at_a_glance` is rendered between `verdict` and
@@ -7324,6 +7427,13 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             body = _render_by_id(ctx, env, sid, sec)
         else:
             raise ContractError(f"unsupported fragment_type for MS subsection {sid}: {ftype}")
+        if sid == "verdict":
+            # Append the deterministic abuse-chain provenance note INSIDE the
+            # verdict block (not as a new subsection) so the MS structure
+            # contract is unaffected. No-ops when no verified chain exists.
+            chain_note = _abuse_chain_ms_note(ctx)
+            if chain_note:
+                body = (body.rstrip() + "\n\n" + chain_note) if body.strip() else chain_note
         if body.strip():
             parts.append(body.rstrip())
     return "\n\n".join(parts) + "\n"
@@ -8470,7 +8580,7 @@ def _rewrite_linked_id_cell(ctx: RenderContext, cell: str) -> str:
         if not bare_ids:
             return cell
         stripped_bare = re.sub(r"\b([FTMC]-\d{2,4}|TH-\d{2})\b", "", cell)
-        residue_bare = re.sub(r"(<br/?>|·|[,;\s])+", "", stripped_bare).strip()
+        residue_bare = re.sub(r"(<br/?>|·|[🔴🟠🟡🟢⚪]|[,;\s])+", "", stripped_bare).strip()
         if residue_bare:
             return cell
         seen_b: set[str] = set()
@@ -8489,7 +8599,7 @@ def _rewrite_linked_id_cell(ctx: RenderContext, cell: str) -> str:
     # Also strip `— <label>` trailers so single-already-enriched cells look
     # empty when separator-only.
     stripped = re.sub(r"—\s*[^,;<|]+", "", stripped)
-    residue = re.sub(r"(<br/?>|·|[,;\s])+", "", stripped).strip()
+    residue = re.sub(r"(<br/?>|·|[🔴🟠🟡🟢⚪]|[,;\s])+", "", stripped).strip()
     if residue:
         # Cell has meaningful prose — do not touch it.
         return cell
@@ -12070,20 +12180,12 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             if addressed:
                 lines.append("**Addresses:**")
                 lines.append("")
-                threats_idx_local = {
-                    (t.get("t_id") or t.get("id") or "").upper(): t
-                    for t in (ctx.yaml_data.get("threats") or [])
-                }
                 for ref in addressed:
-                    ref_u = (ref or "").strip().upper()
-                    t_obj = threats_idx_local.get(ref_u) or {}
-                    sev_raw = (t_obj.get("risk") or t_obj.get("severity") or "").lower()
-                    badge = _SEV_ICON_TBL.get(sev_raw, "")
-                    label_text = ctx.linkify_with_label(ref)
-                    if badge:
-                        lines.append(f"- {badge} {label_text}")
-                    else:
-                        lines.append(f"- {label_text}")
+                    # linkify_with_label already prepends the effective-severity
+                    # criticality dot for finding refs — emitting a manual badge
+                    # here too would double it (and risk a raw-vs-effective
+                    # mismatch). Single source of truth: linkify_with_label.
+                    lines.append(f"- {ctx.linkify_with_label(ref)}")
                 lines.append("")
 
             # Prevents CWEs — prefer explicit field; else derive from addressed findings.

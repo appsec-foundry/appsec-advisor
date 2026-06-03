@@ -189,6 +189,7 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
     ("enrich_arch",  "no_enrich_arch",  "--enrich-arch and --no-enrich-arch cannot be used together."),
     ("schema_v1",    "schema_v2",       "--schema-v1 and --schema-v2 cannot be used together."),
+    ("abuse_cases",  "no_abuse_cases",  "--abuse-cases and --no-abuse-cases cannot be used together."),
 ]
 
 
@@ -256,6 +257,29 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
         "qa_depth":              params["qa"],
         "depth_label":           label,
     }
+
+
+def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
+    """Resolve ``skip_abuse_case_verification`` + a human-readable label.
+
+    Default: abuse-case verification runs at standard/thorough and is SKIPPED
+    at quick depth — the fast mode drops the per-candidate verifier fan-out
+    (matcher + haiku/sonnet verifiers + chain fold), the most expensive part of
+    Stage 1c. ``--abuse-cases`` forces it on at any depth (incl. quick);
+    ``--no-abuse-cases`` forces it off at any depth (incl. standard/thorough).
+    The two flags are mutually exclusive (see ``CONFLICT_PAIRS``).
+    """
+    if getattr(ns, "no_abuse_cases", False):
+        return {"skip_abuse_case_verification": True,
+                "abuse_case_label": "skipped (--no-abuse-cases)"}
+    if getattr(ns, "abuse_cases", False):
+        return {"skip_abuse_case_verification": False,
+                "abuse_case_label": "enabled (--abuse-cases)"}
+    if depth == "quick":
+        return {"skip_abuse_case_verification": True,
+                "abuse_case_label": "skipped (auto - quick depth)"}
+    return {"skip_abuse_case_verification": False,
+            "abuse_case_label": "enabled"}
 
 
 # B2c — repo-size auto-cap thresholds.
@@ -1015,6 +1039,19 @@ def build_parser() -> argparse.ArgumentParser:
                    dest="no_walkthroughs",
                    help="Skip authoring attack-walkthroughs.md in Stage 2; "
                         "§3 falls back to chain-overview-only rendering.")
+    # Abuse-case verification gating (2026-06). Stage 1c runs a deterministic
+    # matcher + per-candidate verifier fan-out that confirms attack chains and
+    # can elevate keystone findings. ON by default at standard/thorough; the
+    # quick fast-mode skips it. --abuse-cases forces it on at any depth;
+    # --no-abuse-cases forces it off at any depth. Mutually exclusive
+    # (detect_conflicts()).
+    p.add_argument("--abuse-cases", action="store_true", dest="abuse_cases",
+                   help="Force abuse-case verification ON at any depth "
+                        "(overrides the quick-depth default-off).")
+    p.add_argument("--no-abuse-cases", action="store_true", dest="no_abuse_cases",
+                   help="Force abuse-case verification OFF at any depth "
+                        "(skip the Stage 1c verifier fan-out even at "
+                        "standard/thorough).")
     # PR / base / no-qa / qa-scan-repo
     p.add_argument("--base",         default=None)
     p.add_argument("--pr-mode",      action="store_true")
@@ -1215,6 +1252,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         cfg["skip_attack_walkthroughs_label"] = "skipped (auto - quick depth)"
     else:
         cfg["skip_attack_walkthroughs_label"] = "authored (LLM)"
+    cfg.update(resolve_abuse_case_verification(ns, depth_info["assessment_depth"]))
     cfg.update(resolve_paths(ns, ns.dry_run))
 
     # B2c — repo-size auto-cap. Must run after resolve_paths so we have

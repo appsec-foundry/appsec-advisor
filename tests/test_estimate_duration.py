@@ -97,6 +97,40 @@ class TestParametric:
         # 20 × 0.6 × 1.0 + 9 + 0 + 0 + 4 = 25.
         assert 23 <= result["total_min"] <= 27, result
 
+    def test_standard_includes_stage1c_abuse(self, tmp_path: Path):
+        """Standard depth runs the abuse-case fan-out by default → the
+        parametric total carries the Stage-1c additive (~5 min)."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        for i in range(500):  # 1.0 size factor
+            (repo / f"f{i}.py").touch()
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        result = _run_cli(
+            "--depth", "standard", "--mode", "full",
+            "--reasoning-model", "sonnet",
+            "--output-dir", str(out_dir), "--repo-root", str(repo),
+        )
+        # 25 + 5 (abuse) + 8 + 7 + 4 = 49
+        assert result["stage1c_min"] == 5, result
+        assert result["total_min"] == 49, result
+
+    def test_skip_abuse_cases_zeroes_stage1c(self, tmp_path: Path):
+        """--no-abuse-cases (→ --skip-abuse-cases) drops the Stage-1c additive."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        for i in range(500):
+            (repo / f"f{i}.py").touch()
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        result = _run_cli(
+            "--depth", "standard", "--mode", "full",
+            "--reasoning-model", "sonnet", "--skip-abuse-cases",
+            "--output-dir", str(out_dir), "--repo-root", str(repo),
+        )
+        assert result["stage1c_min"] == 0, result
+        assert result["total_min"] == 44, result  # 25 + 0 + 8 + 7 + 4
+
     def test_size_factor_brackets(self):
         """The _size_factor_from_files brackets are calibrated against the
         juice-shop reality (~1400 files = 1.0×). Pin those numbers."""
@@ -333,8 +367,8 @@ class TestEdgeCases:
             str(tmp_path / "does-not-exist"),
         )
         assert result["source"] == "parametric"
-        # 25 × 0.6 + 8 + 7 + 4 = 34
-        assert 28 <= result["total_min"] <= 38, result
+        # 25 × 0.6 + 5 (Stage-1c abuse) + 8 + 7 + 4 = 39
+        assert 33 <= result["total_min"] <= 44, result
 
     def test_malformed_checkpoint_falls_through(self, tmp_path: Path):
         out = tmp_path / "out"
@@ -419,6 +453,7 @@ class TestOutputSchema:
         for key in (
             "source",
             "stage1_min",
+            "stage1c_min",
             "stage2_min",
             "stage3_min",
             "stage4_min",

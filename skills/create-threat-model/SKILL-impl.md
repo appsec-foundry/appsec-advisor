@@ -344,20 +344,38 @@ Non-blocking: Node / npm are legitimately absent on slim Docker images and bareb
 
 ```bash
 if [ "${APPSEC_SKIP_VALIDATOR_CHECK:-}" != "1" ]; then
-  # The Layer-B validator (scripts/mermaid_validate.mjs) scopes its
-  # require.resolve() calls to $CLAUDE_PLUGIN_ROOT/scripts, NOT to the
-  # default Node module-search path. A globally-installed jsdom or one
-  # in the user's cwd will NOT satisfy it. The preflight check must use
-  # the same scope to avoid a false-positive "OK" verdict here.
+  # The preflight MUST mirror the exact probe logic of the Layer-B validator
+  # (scripts/mermaid_validate.mjs), otherwise it false-positives. Two rules:
+  #   * jsdom — findJsdom() tries the scripts/ scope first, then the global
+  #     /usr/lib/node_modules path. A global jsdom DOES satisfy the validator,
+  #     so the preflight must accept it too.
+  #   * mermaid core — findMermaidCore() does NOT require.resolve('mermaid');
+  #     it existsSync()-probes for mermaid.core.mjs bundled inside
+  #     @mermaid-js/mermaid-cli's node_modules (global mmdc install) plus two
+  #     scripts/-local fallbacks. A bare require.resolve('mermaid', {paths:
+  #     [scripts]}) never sees the mmdc-bundled copy and wrongly reports it
+  #     missing — that was the false-positive this block previously had.
   JSDOM_OK="no"
   MERMAID_CORE_OK="no"
   if command -v node >/dev/null 2>&1; then
     eval "$(node --input-type=module -e "
       import { createRequire } from 'node:module';
-      const r = createRequire('${CLAUDE_PLUGIN_ROOT}/scripts/package.json');
+      import { existsSync } from 'node:fs';
+      import { join } from 'node:path';
+      const scripts = '${CLAUDE_PLUGIN_ROOT}/scripts';
+      const r = createRequire(scripts + '/package.json');
       let j='no', m='no';
-      try { r.resolve('jsdom',   { paths: ['${CLAUDE_PLUGIN_ROOT}/scripts'] });   j='yes'; } catch {}
-      try { r.resolve('mermaid', { paths: ['${CLAUDE_PLUGIN_ROOT}/scripts'] }); m='yes'; } catch {}
+      // jsdom: scripts/ scope, then global /usr/lib (same as findJsdom()).
+      try { r.resolve('jsdom', { paths: [scripts] });                j='yes'; } catch {}
+      if (j==='no') { try { r.resolve('jsdom', { paths: ['/usr/lib/node_modules'] }); j='yes'; } catch {} }
+      // mermaid core: existsSync probe list identical to findMermaidCore().
+      const cands = [
+        '/usr/lib/node_modules/@mermaid-js/mermaid-cli/node_modules/mermaid/dist/mermaid.core.mjs',
+        '/usr/local/lib/node_modules/@mermaid-js/mermaid-cli/node_modules/mermaid/dist/mermaid.core.mjs',
+        join(scripts, 'node_modules/@mermaid-js/mermaid-cli/node_modules/mermaid/dist/mermaid.core.mjs'),
+        join(scripts, 'node_modules/mermaid/dist/mermaid.core.mjs'),
+      ];
+      for (const p of cands) if (existsSync(p)) { m='yes'; break; }
       console.log('JSDOM_OK=' + j + ' MERMAID_CORE_OK=' + m);
     " 2>/dev/null)"
   fi
@@ -365,16 +383,16 @@ if [ "${APPSEC_SKIP_VALIDATOR_CHECK:-}" != "1" ]; then
   command -v mmdc >/dev/null 2>&1 && MMDC_OK="yes"
   if [ "$JSDOM_OK" = "no" ] || [ "$MERMAID_CORE_OK" = "no" ] || [ "$MMDC_OK" = "no" ]; then
     MISSING=""
-    [ "$JSDOM_OK" = "no" ]         && MISSING="$MISSING jsdom"
-    [ "$MERMAID_CORE_OK" = "no" ]  && MISSING="$MISSING mermaid"
+    NPM_PKGS=""
+    [ "$JSDOM_OK" = "no" ]         && { MISSING="$MISSING jsdom";   NPM_PKGS="$NPM_PKGS jsdom"; }
+    [ "$MERMAID_CORE_OK" = "no" ]  && { MISSING="$MISSING mermaid"; NPM_PKGS="$NPM_PKGS mermaid"; }
     [ "$MMDC_OK" = "no" ]          && MISSING="$MISSING @mermaid-js/mermaid-cli"
     printf '\n⚠ Optional QA validators missing:%s\n' "$MISSING" >&2
     printf '  To install (worth it — these caught 24 Mermaid breakages a regex-only run shipped on 2026-05-24):\n' >&2
-    # Only print the install line(s) for what is actually missing — mmdc may
-    # already be present, in which case the global install is irrelevant noise.
-    if [ "$JSDOM_OK" = "no" ] || [ "$MERMAID_CORE_OK" = "no" ]; then
-      printf '    npm install --prefix %s/scripts jsdom mermaid\n' "$CLAUDE_PLUGIN_ROOT" >&2
-    fi
+    # Only print install line(s) for what is actually missing. mermaid core is
+    # normally satisfied by the mmdc-bundled copy, so NPM_PKGS usually reduces
+    # to just `jsdom`; a global mmdc install is irrelevant noise when present.
+    [ -n "$NPM_PKGS" ] && printf '    npm install --prefix %s/scripts%s\n' "$CLAUDE_PLUGIN_ROOT" "$NPM_PKGS" >&2
     [ "$MMDC_OK" = "no" ] && printf '    npm install -g @mermaid-js/mermaid-cli\n' >&2
     printf '  Without these, qa_checks.py mermaid_syntax falls back to a regex-only check that has\n' >&2
     printf '  documented false-negatives (sequenceDiagram quoted aliases, unbalanced parens in graph\n' >&2
@@ -609,6 +627,8 @@ Parse the user's arguments for the following flags:
 | `--no-qa` | `SKIP_QA=true` — skip the Stage 3 QA reviewer (faster CI runs where the report is machine-consumed). Also honoured via `APPSEC_SKIP_QA=1` and implied by `--assessment-depth quick`. | `false` at standard/thorough; `true` at quick |
 | `--qa-scan-repo` | `QA_SCAN_REPO=true` — compatibility flag for historical deep repo-scan behaviour. The expensive QA Pass 2c remains retired in the QA prompt; the flag is retained only so configuration summaries and older CI invocations stay stable. | `false` |
 | `--no-walkthroughs` | `SKIP_ATTACK_WALKTHROUGHS=true` — skip authoring `attack-walkthroughs.md` in Stage 2; the composer renders §3 with chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2. Also implied by `--assessment-depth quick`. | `false` at standard/thorough; `true` at quick |
+| `--abuse-cases` | `skip_abuse_case_verification=false` — force the Stage 1c abuse-case verifier fan-out ON at any depth (overrides the quick-depth default-off). Conflicts with `--no-abuse-cases`. | on at standard/thorough; off at quick |
+| `--no-abuse-cases` | `skip_abuse_case_verification=true` — force the Stage 1c abuse-case verifier fan-out OFF at any depth (skips matcher + verifiers + chain fold even at standard/thorough; §9 renders the not-applicable catalog and no finding is chain-elevated). Conflicts with `--abuse-cases`. | on at standard/thorough; off at quick |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
 
@@ -1562,6 +1582,7 @@ EST_JSON=$( python3 "$CLAUDE_PLUGIN_ROOT/scripts/estimate_duration.py" \
   --reasoning-model "$REASONING_MODEL" \
   $( [ "$ARCHITECT_REVIEW" = "true" ] && echo "--architect-review" ) \
   $( [ "$SKIP_QA" = "true" ] && echo "--skip-qa" ) \
+  $( [ "$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/.skill-config.json')).get('skip_abuse_case_verification',False))" 2>/dev/null)" = "True" ] && echo "--skip-abuse-cases" ) \
   --output-dir "$OUTPUT_DIR" \
   --repo-root "$REPO_ROOT" \
   --max-stride-components "$MAX_STRIDE_COMPONENTS" \
@@ -1647,7 +1668,7 @@ TaskCreate subject="Preparing workspace"
 |-----------|--------------|------------|
 | always | `Stage 1a - Threat Analysis` | `Running threat analysis` |
 | always | `Stage 1b - Triage` | `Running triage` |
-| `DRY_RUN=false` | `Stage 1c - Abuse Case Verification` | `Verifying abuse-case chains` |
+| `DRY_RUN=false` AND `skip_abuse_case_verification=false` | `Stage 1c - Abuse Case Verification` | `Verifying abuse-case chains` |
 | always (M2.12) | `Stage 2 - Report Rendering` | `Rendering threat model report` |
 | `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA Review` | `Running QA review` |
 | `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 - Architect Review` | `Running architect review` |
@@ -2113,7 +2134,18 @@ The YAML integrity gate that runs before this section will still pass after the 
 
 **Why this lives at the skill level.** Abuse-case discovery → verifier fan-out → `.abuse-case-verdicts.json` is documented in `phase-group-threats.md` as running "after Phase 10b and before Phase 11". But Stage 1 is dispatched with `STAGE1_PHASE_LIMIT=10b`, whose analyst branch stops *after* Phase 10b plus the deterministic Phase-11 substeps 1–3 — it never reaches it. Running it here — after the YAML is final, before Stage 2 renders — closes the gap deterministically and keeps it out of Stage 1's turn budget.
 
-Runs only when `DRY_RUN=false`. Entirely non-fatal — any failure leaves §9 to render its catalog/placeholder. Skip the whole stage (and its TaskList row) when `DRY_RUN=true`.
+Runs only when `DRY_RUN=false` **and** `skip_abuse_case_verification=false` (resolved in `.skill-config.json` from the `--abuse-cases` / `--no-abuse-cases` flags — default on at standard/thorough, off at quick; see the Argument Parsing table). Entirely non-fatal — any failure leaves §9 to render its catalog/placeholder.
+
+**Skip the whole stage** (no matcher, no verifier fan-out, no escalation, no chain fold, no §9 render-from-verdicts, and no TaskList row — it was not created in the bootstrap) when **either** `DRY_RUN=true` **or** `skip_abuse_case_verification=true`. In the skip case the §9 fragment is still produced by the deterministic `render_abuse_cases.py` backstop in the Stage-3 pre-generation block, which no-ops to the not-applicable catalog/placeholder because no `.abuse-case-verdicts.json` exists — so §8 → §10 numbering stays contiguous and no finding is chain-elevated. Read the flag at stage entry:
+
+```bash
+SKIP_ABUSE=$(python3 -c "import json;print(str(json.load(open('$OUTPUT_DIR/.skill-config.json')).get('skip_abuse_case_verification',False)).lower())" 2>/dev/null || echo false)
+if [ "$DRY_RUN" = "true" ] || [ "$SKIP_ABUSE" = "true" ]; then
+  : # Stage 1c skipped — proceed directly to Stage 2. No TaskList row to update.
+else
+  : # run the full Stage 1c sequence below (steps 0–4).
+fi
+```
 
 0. **Stage open.** Capture the start timestamp, mark the task in progress, print the banner, and start the heartbeat watchdog (same `skill_watchdog.py` invocation as the other stages — see "Skill-layer heartbeat watchdog"; capture its `task_id` in `HEARTBEAT_TASK_ID`). Skip all of this when `DRY_RUN=true`.
    ```bash

@@ -537,6 +537,38 @@ class TestCLI:
         cfg = json.loads(r.stdout)
         assert cfg["assessment_depth"] == "quick"
 
+    # -- abuse-case verification gating -------------------------------------
+
+    def test_abuse_cases_enabled_by_default_at_standard(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = json.loads(self._run().stdout)
+        assert cfg["skip_abuse_case_verification"] is False
+        assert cfg["abuse_case_label"] == "enabled"
+
+    def test_abuse_cases_skipped_by_default_at_quick(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = json.loads(self._run("--quick").stdout)
+        assert cfg["skip_abuse_case_verification"] is True
+        assert cfg["abuse_case_label"] == "skipped (auto - quick depth)"
+
+    def test_abuse_cases_force_on_at_quick(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = json.loads(self._run("--quick", "--abuse-cases").stdout)
+        assert cfg["skip_abuse_case_verification"] is False
+        assert cfg["abuse_case_label"] == "enabled (--abuse-cases)"
+
+    def test_abuse_cases_force_off_at_standard(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = json.loads(self._run("--no-abuse-cases").stdout)
+        assert cfg["skip_abuse_case_verification"] is True
+        assert cfg["abuse_case_label"] == "skipped (--no-abuse-cases)"
+
+    def test_abuse_cases_conflict(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--abuse-cases", "--no-abuse-cases")
+        assert r.returncode == 1
+        assert "--abuse-cases and --no-abuse-cases" in r.stderr
+
     # -- summary "show only when active" rules ------------------------------
 
     def test_summary_default_quiet_no_optional_rows(self, tmp_path, monkeypatch):

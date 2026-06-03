@@ -2598,3 +2598,80 @@ def test_section8_counts_equal_threat_total(tmp_path: Path) -> None:
         f"stride_sum={stride_sum} yaml_total={yaml_total}"
     )
 
+
+
+# ---------------------------------------------------------------------------
+# Finding-link criticality dots (item 1) + abuse-chain MS note (item 4).
+# ---------------------------------------------------------------------------
+
+_SEV_TAX = {
+    "critical": {"emoji": "🔴", "label": "Critical"},
+    "high": {"emoji": "🟠", "label": "High"},
+    "medium": {"emoji": "🟡", "label": "Medium"},
+    "low": {"emoji": "🟢", "label": "Low"},
+}
+
+
+def _dot_ctx(tmp_path: Path, threats: list[dict]):
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    return compose.RenderContext(
+        output_dir=out,
+        contract={},
+        yaml_data={"threats": threats},
+        triage={},
+        fragments_dir=out / ".fragments",
+        severity_taxonomy=_SEV_TAX,
+    )
+
+
+def test_linkify_prepends_severity_dot_for_findings(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [{"id": "T-002", "effective_severity": "Critical", "title": "Hardcoded key"}])
+    out = ctx.linkify_with_label("T-002")
+    assert out.startswith("🔴 [F-002](#f-002)")
+
+
+def test_linkify_dot_uses_effective_severity(tmp_path: Path) -> None:
+    # raw High but chain-elevated to Critical → the dot reflects effective.
+    ctx = _dot_ctx(tmp_path, [{"id": "T-019", "risk": "High", "effective_severity": "Critical", "title": "SSRF"}])
+    assert ctx.linkify_with_label("F-019").startswith("🔴 ")
+
+
+def test_linkify_no_dot_for_mitigation_or_component(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [{"id": "T-002", "effective_severity": "Critical"}])
+    assert ctx.linkify_with_label("M-003").startswith("[M-003]")
+    assert ctx.linkify_with_label("C-01").startswith("[C-01]")
+
+
+def test_linkify_no_dot_when_severity_unknown(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [])  # no threats → no severity index entry
+    assert ctx.linkify_with_label("T-099").startswith("[F-099]")
+
+
+def test_abuse_chain_ms_note_names_findings_and_chains(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [
+        {"id": "T-011", "effective_severity": "Critical", "risk": "Critical",
+         "verified_chain_ids": ["AC-T-002"], "title": "IDOR"},
+        {"id": "T-014", "effective_severity": "Critical", "risk": "Critical",
+         "verified_chain_ids": ["AC-T-002", "AC-T-004"], "title": "Mass assignment"},
+        {"id": "T-001", "effective_severity": "Critical", "verified_chain_ids": []},
+    ])
+    note = compose._abuse_chain_ms_note(ctx)
+    assert "Attack-chain analysis." in note
+    assert "2 findings anchor 2 code-verified attack chains" in note
+    assert "[F-011](#f-011)" in note and "[F-014](#f-014)" in note
+    assert "see §9" in note or "§9" in note
+
+
+def test_abuse_chain_ms_note_empty_when_no_verified_chain(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [{"id": "T-001", "effective_severity": "Critical", "verified_chain_ids": []}])
+    assert compose._abuse_chain_ms_note(ctx) == ""
+
+
+def test_abuse_chain_ms_note_reports_elevation(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [
+        {"id": "T-019", "risk": "High", "effective_severity": "Critical",
+         "verified_chain_ids": ["AC-T-007"], "title": "SSRF"},
+    ])
+    note = compose._abuse_chain_ms_note(ctx)
+    assert "rated above" in note and "individual baseline" in note

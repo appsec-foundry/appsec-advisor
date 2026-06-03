@@ -2,6 +2,7 @@
 severity-rationale annotator."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -78,3 +79,71 @@ def test_idempotent(tmp_path: Path) -> None:
     esr.emit(out)
     second = (out / "threat-model.yaml").read_text(encoding="utf-8")
     assert first == second
+
+
+# -- verified abuse-chain provenance (item 4) -------------------------------
+
+def _write_matches(out_dir: Path, mapping: dict[str, str]) -> None:
+    (out_dir / ".abuse-case-matches.json").write_text(
+        json.dumps({"matches": [{"abuse_case_id": k, "title": v} for k, v in mapping.items()]}),
+        encoding="utf-8",
+    )
+
+
+def test_verified_chain_keystone_names_chain(tmp_path: Path) -> None:
+    # Already Critical (no numeric elevation) — must still document the role.
+    out = _write(tmp_path, [{
+        "id": "T-011", "risk": "Critical", "effective_severity": "Critical",
+        "cwe": "CWE-639", "chain_role": "keystone", "verified_chain_ids": ["AC-T-002"],
+    }])
+    _write_matches(out, {"AC-T-002": "Bulk Data Exfiltration"})
+    esr.emit(out)
+    note = _reload(out)[0]["severity_rationale"]
+    assert "verified attack-chain keystone in AC-T-002 (Bulk Data Exfiltration)" in note
+    assert "see §9" in note
+    assert "elevated to" not in note  # not numerically elevated
+
+
+def test_verified_chain_elevated_says_elevated(tmp_path: Path) -> None:
+    out = _write(tmp_path, [{
+        "id": "T-019", "risk": "High", "effective_severity": "Critical",
+        "cwe": "CWE-918", "chain_role": "keystone", "verified_chain_ids": ["AC-T-007"],
+    }])
+    _write_matches(out, {"AC-T-007": "SSRF Pivot"})
+    esr.emit(out)
+    note = _reload(out)[0]["severity_rationale"]
+    assert note.startswith("elevated to Critical as a verified attack-chain keystone in AC-T-007 (SSRF Pivot)")
+
+
+def test_chain_combines_with_intrinsic_repo_read(tmp_path: Path) -> None:
+    out = _write(tmp_path, [{
+        "id": "T-002", "risk": "Critical", "effective_severity": "Critical",
+        "cwe": "CWE-321", "vektor": "repo-read",
+        "chain_role": "keystone", "verified_chain_ids": ["AC-T-005"],
+    }])
+    _write_matches(out, {"AC-T-005": "Auth Bypass"})
+    esr.emit(out)
+    note = _reload(out)[0]["severity_rationale"]
+    assert "public source repo" in note  # intrinsic note preserved
+    assert "verified attack-chain keystone in AC-T-005 (Auth Bypass)" in note  # chain appended
+
+
+def test_chain_dedupes_repeated_ac_ids(tmp_path: Path) -> None:
+    out = _write(tmp_path, [{
+        "id": "T-002", "risk": "Critical", "effective_severity": "Critical",
+        "cwe": "CWE-89", "chain_role": "keystone", "verified_chain_ids": ["AC-T-005", "AC-T-005"],
+    }])
+    _write_matches(out, {"AC-T-005": "Auth Bypass"})
+    esr.emit(out)
+    note = _reload(out)[0]["severity_rationale"]
+    assert note.count("AC-T-005") == 1
+
+
+def test_chain_membership_without_verified_ids_gets_no_chain_note(tmp_path: Path) -> None:
+    # keyword-chain keystone (no verified_chain_ids) + naturally-Critical CWE → no note.
+    out = _write(tmp_path, [{
+        "id": "T-005", "risk": "Critical", "effective_severity": "Critical",
+        "cwe": "CWE-89", "chain_role": "keystone", "verified_chain_ids": [],
+    }])
+    esr.emit(out)
+    assert "severity_rationale" not in _reload(out)[0]

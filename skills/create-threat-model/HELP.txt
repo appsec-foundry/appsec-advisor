@@ -106,6 +106,13 @@ ADVANCED
   --no-walkthroughs            Skip per-finding attack walkthroughs in §3
                                (implied by quick);
                                chain overview is still rendered
+  --abuse-cases                Force Stage 1c abuse-case verification ON at any
+                               depth (default: on at standard/thorough, off at
+                               quick). Confirms attack chains and may elevate
+                               keystone findings (documented in §8 and §9)
+  --no-abuse-cases             Force Stage 1c abuse-case verification OFF at any
+                               depth (skip the verifier fan-out; §9 renders the
+                               not-applicable catalog, no chain elevation)
   --max-resumes <N>            Cap on Stage 1 auto-resume dispatches (default: 1;
                                0 disables resume)
   --max-wall-time <DURATION>   Hard wall-time deadline; watchdog aborts the run

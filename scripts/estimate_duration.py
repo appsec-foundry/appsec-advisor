@@ -90,6 +90,18 @@ _STAGE4_ARCHITECT: dict[str, float] = {
     "thorough": 6.0,
 }
 
+# Stage 1c — Abuse-case verifier fan-out. A separate skill-level dispatch
+# that runs after Phase 10b and before Stage 2 (single-pass sonnet, wall-clock
+# ≈ slowest verifier). Default-on at standard/thorough, off at quick. ~5 min
+# observed on juice-shop standard (2026-06). Gated by --skip-abuse-cases so
+# `--no-abuse-cases` zeroes it; quick is 0 because abuse is off there by
+# default and the estimator is not told about the rare --abuse-cases override.
+_STAGE1C_ABUSE: dict[str, float] = {
+    "quick": 0.0,
+    "standard": 5.0,
+    "thorough": 6.0,
+}
+
 # Skill-layer transition buffer — pre-flight wipe, task-list bootstrap,
 # stage hand-offs, completion summary. Empirical: ~5 min unaccounted
 # wall-clock summed across the run.
@@ -408,6 +420,7 @@ def _parametric(
     repo_root: Path,
     architect_review: bool,
     skip_qa: bool,
+    skip_abuse_cases: bool,
 ) -> tuple[dict[str, float], str]:
     """Fallback when no measured data is available. Multiplicative
     formula based on depth × repo-size × model + per-stage additives."""
@@ -415,14 +428,16 @@ def _parametric(
     size_factor = _size_factor_from_files(n_files)
     model_factor = _MODEL_FACTOR.get(reasoning_model, 1.0)
     stage1 = _STAGE1_BASE[depth] * size_factor * model_factor
+    stage1c = 0.0 if skip_abuse_cases else _STAGE1C_ABUSE.get(depth, 0.0)
     stage2 = _STAGE2_COMPOSITION[depth]
     stage3 = 0.0 if skip_qa else _STAGE3_QA[depth]
     stage4 = _STAGE4_ARCHITECT[depth] if architect_review else 0.0
     transition = _TRANSITION_BUFFER
-    total = stage1 + stage2 + stage3 + stage4 + transition
+    total = stage1 + stage1c + stage2 + stage3 + stage4 + transition
     return (
         {
             "stage1": stage1,
+            "stage1c": stage1c,
             "stage2": stage2,
             "stage3": stage3,
             "stage4": stage4,
@@ -450,6 +465,9 @@ def main(argv: list[str]) -> int:
     p.add_argument("--reasoning-model", default="sonnet", choices=("sonnet", "opus-cheap", "opus", "haiku-economy"))
     p.add_argument("--architect-review", action="store_true")
     p.add_argument("--skip-qa", action="store_true")
+    p.add_argument("--skip-abuse-cases", action="store_true",
+                   help="abuse-case verifier fan-out is disabled (mirrors "
+                        "skip_abuse_case_verification); drops the Stage-1c additive")
     p.add_argument("--output-dir", required=True, type=Path)
     p.add_argument("--repo-root", required=True, type=Path)
     p.add_argument("--max-stride-components", type=int, default=5)
@@ -496,11 +514,13 @@ def main(argv: list[str]) -> int:
             args.repo_root,
             args.architect_review,
             args.skip_qa,
+            args.skip_abuse_cases,
         )
 
     out = {
         "source": source,
         "stage1_min": int(round(breakdown["stage1"])),
+        "stage1c_min": int(round(breakdown.get("stage1c", 0.0))),
         "stage2_min": int(round(breakdown["stage2"])),
         "stage3_min": int(round(breakdown["stage3"])),
         "stage4_min": int(round(breakdown["stage4"])),
