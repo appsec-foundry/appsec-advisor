@@ -558,7 +558,8 @@ def _rewrite_controls_covered_anchors(text: str) -> tuple[str, int]:
 
     n_fixes = 0
     current_sec = None
-    cc_re = re.compile(r"^(\s*)\*\*Controls covered:\*\*\s*.*$")
+    cc_re = re.compile(r"^(\s*)\*\*Controls covered:\*\*\s*(.*)$")
+    bullet_re = re.compile(r"^(\s*)-\s+\[[^\]]+\]\(#[a-z0-9-]+\)\s*$")
     for idx, ln in enumerate(lines):
         m3 = sec_header_re.match(ln)
         if m3:
@@ -574,7 +575,37 @@ def _rewrite_controls_covered_anchors(text: str) -> tuple[str, int]:
         m_cc = cc_re.match(ln)
         if not m_cc:
             continue
-        indent = m_cc.group(1)
+        indent, inline_rest = m_cc.group(1), m_cc.group(2).strip()
+
+        # The composer (compose_threat_model Pass 2) bulletizes the
+        # `**Controls covered:**` link line into a header-only line followed by a
+        # `- [name](#slug)` list. When that bullet layout is present, the LIST is
+        # the canonical rendering — re-inlining the links onto the header here
+        # produced the §7 double-listing the user reported (the inline `· `-joined
+        # links AND the bullet list both showing the same sub-controls). So in
+        # the bulletized form we keep the header bare and only refresh the bullet
+        # anchors for heading-rename drift; we never re-add inline links.
+        j = idx + 1
+        while j < len(lines) and lines[j].strip() == "":
+            j += 1
+        if j < len(lines) and bullet_re.match(lines[j]):
+            if inline_rest:
+                lines[idx] = f"{indent}**Controls covered:**"
+                n_fixes += 1
+            canon = sections[current_sec]
+            k, bi = j, 0
+            while k < len(lines) and bullet_re.match(lines[k]) and bi < len(canon):
+                h, s = canon[bi]
+                new_b = f"{indent}- [{h}](#{s})"
+                if lines[k] != new_b:
+                    lines[k] = new_b
+                    n_fixes += 1
+                k += 1
+                bi += 1
+            continue
+
+        # Legacy inline form (no bullet list follows): preserve the historical
+        # single-line `**Controls covered:** a · b` rendering with fresh anchors.
         bullets = [f"[{h}](#{s})" for h, s in sections[current_sec]]
         canonical = f"{indent}**Controls covered:** " + " · ".join(bullets)
         if ln != canonical:

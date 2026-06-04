@@ -358,3 +358,58 @@ def test_nosql_object_inside_existing_code_span_is_preserved():
     md = "Already-formatted `{id: {$gt: ''}}` stays as one span."
     out, _ = prose.apply_fixes(md)
     assert out.count("`") == md.count("`")  # no new backticks injected
+
+
+def test_controls_covered_bulletized_form_not_reinlined():
+    """§7 fix (2026-06-04): when the composer has bulletized
+    `**Controls covered:**` into a header + `- [name](#slug)` list, the
+    anchor-rewrite must NOT re-add inline links onto the header (that produced
+    the double-listing bug). It keeps the header bare and refreshes the bullets.
+    """
+    md = textwrap.dedent(
+        """\
+        ### 7.4 Authorization Controls
+
+        **Controls covered:** [7.4.1 Route-Level Authorization](#741-route-level-authorization) · [7.4.2 Object-Level Authorization](#742-object-level-authorization)
+
+        - [7.4.1 Route-Level Authorization](#741-route-level-authorization)
+        - [7.4.2 Object-Level Authorization](#742-object-level-authorization)
+
+        #### 7.4.1 Route-Level Authorization
+
+        body
+
+        #### 7.4.2 Object-Level Authorization
+
+        body
+        """
+    )
+    out, n = prose.apply_fixes(md)
+    # The inline `· `-joined link line is collapsed to a bare header.
+    assert "**Controls covered:**\n" in out
+    assert "**Controls covered:** [7.4.1" not in out
+    # Exactly one header + the two bullets survive (no duplication).
+    assert out.count("**Controls covered:**") == 1
+    assert out.count("- [7.4.1 Route-Level Authorization](#741-route-level-authorization)") == 1
+    assert out.count("- [7.4.2 Object-Level Authorization](#742-object-level-authorization)") == 1
+    # Idempotent.
+    out2, n2 = prose.apply_fixes(out)
+    assert n2 == 0 and out2 == out
+
+
+def test_controls_covered_legacy_inline_form_preserved():
+    """With no bullet list following, the historical inline `a · b` rendering
+    is kept (and anchors refreshed) — only the bulletized layout collapses."""
+    md = textwrap.dedent(
+        """\
+        ### 7.4 Authorization Controls
+
+        **Controls covered:** [7.4.1 Route-Level Authorization](#wrong-anchor)
+
+        #### 7.4.1 Route-Level Authorization
+
+        body
+        """
+    )
+    out, _ = prose.apply_fixes(md)
+    assert "**Controls covered:** [7.4.1 Route-Level Authorization](#741-route-level-authorization)" in out

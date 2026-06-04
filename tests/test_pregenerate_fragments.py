@@ -294,6 +294,39 @@ class TestAttackSurface:
         assert "POST /rest/login" not in md
         assert "/rest/login" in md
 
+    def test_large_inventory_collapses_no_finding_rows_with_total_hint(self):
+        """A large route inventory lists only finding-linked rows individually;
+        the rest are summarised with an explicit total + inventory pointer
+        (2026-06-04 request — keep §5 scannable while staying complete)."""
+        unauth = [{"endpoint": f"GET /noise/{i}", "method": "GET"} for i in range(40)]
+        unauth.append({"endpoint": "GET /sqli", "method": "GET", "linked_threats": ["T-1"]})
+        data = {
+            "attack_surface": [{**e, "auth_required": False} for e in unauth],
+            "threats": [{"id": "T-1", "risk": "Critical"}],
+        }
+        md = pf.gen_attack_surface(data)
+        # Header carries the full count.
+        assert "Unauthenticated Entry Points (41)" in md
+        # The finding-linked row is shown; the 40 noise rows are not listed.
+        assert "/sqli" in md
+        assert "/noise/0" not in md
+        # The omission is acknowledged with the total.
+        assert "40 further entry point(s)" in md
+        assert "41 total" in md
+        assert ".route-inventory.json" in md
+
+    def test_small_inventory_lists_every_row(self):
+        """Below the cap, no rows are omitted and no total-hint note appears."""
+        data = {
+            "attack_surface": [
+                {"endpoint": "GET /a", "method": "GET", "auth_required": False},
+                {"endpoint": "GET /b", "method": "GET", "auth_required": False},
+            ]
+        }
+        md = pf.gen_attack_surface(data)
+        assert "/a" in md and "/b" in md
+        assert "further entry point(s)" not in md
+
 
 # ---------------------------------------------------------------------------
 # M3.3 / D1 — §2 + §7 substance enrichments

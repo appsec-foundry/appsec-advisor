@@ -2598,27 +2598,57 @@ def gen_attack_surface(yaml_data: dict) -> str:
     )
     lines.append("")
 
+    # When the deterministic route inventory feeds §5 (.route-inventory.json),
+    # a real app can carry dozens-to-hundreds of entry points. Listing every
+    # finding-free route bloats the report with low-signal rows. Above this
+    # threshold we list only the entry points that carry a linked finding and
+    # summarise the remainder with an explicit total — the full inventory still
+    # ships in `.route-inventory.json` and (when exported) `pentest-tasks.yaml`.
+    _SURFACE_ROW_CAP = 15
+
     def _emit_table(bucket_entries: list) -> None:
         # Four columns (Method | Route | Risk | Notes). The Auth requirement
         # is NOT a column — it is already stated by the §5.1 Unauthenticated /
         # §5.2 Authenticated subsection the table sits in, so a per-row Auth
         # cell would be 100% redundant (every §5.1 row "No", every §5.2 "Yes").
-        lines.append("| Method | Route | Risk | Notes |")
-        # Narrow Method/Risk; give Route some room and Notes (stacked finding
-        # links + prose) the widest allocation so it reads cleanly.
-        lines.append(_proportional_separator(7, 24, 9, 44))
+        #
         # Sort by risk descending, then by route (contract §5 rule) so the
         # highest-severity entry points read first (2026-05-30 request).
         bucket_entries = sorted(
             bucket_entries,
             key=lambda e: (-_entry_rank(e), _attack_surface_route(e).lower()),
         )
-        for entry in bucket_entries:
-            method = _attack_surface_method(entry)
-            route = _attack_surface_route(entry)
-            risk_lbl = _entry_risk(entry)
-            notes = _attack_surface_notes(entry)
-            lines.append(f"| {method} | `{route}` | {risk_lbl} | {notes} |")
+        # Large-inventory collapse: only show finding-linked rows individually;
+        # the rest are summarised as a total-count hint (2026-06-04 request).
+        with_findings = [e for e in bucket_entries if _entry_rank(e) >= 0]
+        collapse = (
+            len(bucket_entries) > _SURFACE_ROW_CAP
+            and len(with_findings) < len(bucket_entries)
+        )
+        shown = with_findings if collapse else bucket_entries
+
+        if shown:
+            lines.append("| Method | Route | Risk | Notes |")
+            # Narrow Method/Risk; give Route some room and Notes (stacked finding
+            # links + prose) the widest allocation so it reads cleanly.
+            lines.append(_proportional_separator(7, 24, 9, 44))
+            for entry in shown:
+                method = _attack_surface_method(entry)
+                route = _attack_surface_route(entry)
+                risk_lbl = _entry_risk(entry)
+                notes = _attack_surface_notes(entry)
+                lines.append(f"| {method} | `{route}` | {risk_lbl} | {notes} |")
+
+        omitted = len(bucket_entries) - len(shown)
+        if omitted > 0:
+            if shown:
+                lines.append("")
+            lines.append(
+                f"_{omitted} further entry point(s) in this category carry no linked finding "
+                f"and are not listed individually ({len(bucket_entries)} total). The complete "
+                f"route inventory is available in `.route-inventory.json` and, when exported, "
+                f"`pentest-tasks.yaml`._"
+            )
 
     lines.append(f"### 5.1 Unauthenticated Entry Points ({len(unauth)})")
     lines.append("")

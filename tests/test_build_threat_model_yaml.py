@@ -117,3 +117,66 @@ def test_effectiveness_unsafe_accepted_by_output_schema():
     enum = _effectiveness_enum()
     for v in ("Adequate", "Partial", "Weak", "Unsafe", "Missing"):
         assert v in enum, f"{v!r} missing from output-schema effectiveness enum"
+
+
+# ---------------------------------------------------------------------------
+# build_attack_surface — route-inventory baseline auth interpretation, dedup,
+# and sidecar-override-on-collision (2026-06-04 regression: §5 rendered only
+# the analyst's vuln-picked additions when .route-inventory.json was missing,
+# and once present, bool("unknown") flipped every route to authenticated).
+# ---------------------------------------------------------------------------
+
+def _routes(*specs):
+    """specs: (method, path, authn_signal) → route-inventory shape."""
+    return {"routes": [
+        {"method": m, "path": p, "authn_signal": a, "route_id": f"r{i}"}
+        for i, (m, p, a) in enumerate(specs)
+    ]}
+
+
+def test_attack_surface_unknown_authn_is_not_authenticated():
+    routes = _routes(
+        ("GET", "/public", "unknown"),
+        ("POST", "/admin", "middleware_present"),
+        ("GET", "/maybe", ""),
+    )
+    out, _ = b.build_attack_surface(routes, None)
+    by_ep = {e["entry_point"]: e for e in out}
+    assert by_ep["GET /public"]["auth_required"] is False
+    assert by_ep["GET /maybe"]["auth_required"] is False
+    assert by_ep["POST /admin"]["auth_required"] is True
+
+
+def test_attack_surface_dedup_conservative_auth():
+    # Same method+path twice: one guarded, one not → reachable unauthenticated.
+    routes = _routes(
+        ("POST", "/api/Users", "middleware_present"),
+        ("POST", "/api/Users", "unknown"),
+    )
+    out, _ = b.build_attack_surface(routes, None)
+    eps = [e["entry_point"] for e in out]
+    assert eps.count("POST /api/Users") == 1
+    assert out[0]["auth_required"] is False
+
+
+def test_attack_surface_sidecar_override_on_collision():
+    # Baseline heuristic says authenticated; analyst sidecar says it is the
+    # open-registration endpoint → analyst verdict wins, entry not duplicated.
+    routes = _routes(("POST", "/api/Users", "middleware_present"))
+    sidecar = {"additions": [
+        {"entry_point": "POST /api/Users", "protocol": "HTTP",
+         "auth_required": False, "notes": "open registration"}
+    ]}
+    out, warnings = b.build_attack_surface(routes, sidecar)
+    assert len(out) == 1
+    assert out[0]["auth_required"] is False
+    assert out[0]["notes"] == "open registration"
+    assert any("merged onto baseline" in w for w in warnings)
+
+
+def test_attack_surface_empty_baseline_falls_back_to_additions():
+    sidecar = {"additions": [
+        {"entry_point": "GET /x", "protocol": "HTTP", "auth_required": False}
+    ]}
+    out, _ = b.build_attack_surface(None, sidecar)
+    assert len(out) == 1 and out[0]["entry_point"] == "GET /x"

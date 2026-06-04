@@ -555,13 +555,42 @@ def build_attack_surface(
                 notes_parts.append("Management surface")
             if r.get("handler_file"):
                 notes_parts.append(f"handler: {r['handler_file']}:{r.get('handler_line', '')}")
+            # authn_signal is a STRING enum from route_inventory.py:
+            #   "middleware_present" / "decorator_present" → a guard was seen
+            #   "unknown" (the default) / "absent" / "" → no guard observed
+            # bool() of the raw string is WRONG: bool("unknown") is True, which
+            # would mark every route — including public ones — as authenticated
+            # (2026-06-04 juice-shop: 112/112 flipped to auth_required when the
+            # inventory was present). Only the positive signals count as auth.
+            authn_sig = str(r.get("authn_signal") or "").strip().lower()
+            auth_required = authn_sig in ("middleware_present", "decorator_present", "present", "required")
             entry = {
                 "entry_point": f"{r.get('method', '?')} {r.get('path', '/')}",
                 "protocol": "HTTP",
-                "auth_required": bool(r.get("authn_signal")),
+                "auth_required": auth_required,
                 "notes": "; ".join(notes_parts) or None,
             }
             baseline_pairs.append((entry, r.get("route_id")))
+
+    # Dedup baseline by entry_point. route_inventory.py can emit the same
+    # method+path more than once (finale auto-CRUD registers a model both via
+    # app.use(prefix) and app.METHOD(...), plus framework-challenge re-registers
+    # of POST /api/Users) — without collapsing them §5 shows 3-4 identical rows.
+    # Auth verdict is security-conservative: a route is "authenticated" only if
+    # EVERY occurrence is guarded; if any registration of that path is reachable
+    # without a guard, the path is reachable unauthenticated → auth_required=False.
+    if baseline_pairs:
+        collapsed: dict[str, tuple[dict, str | None]] = {}
+        for entry, rid in baseline_pairs:
+            ep = entry["entry_point"]
+            if ep not in collapsed:
+                collapsed[ep] = (entry, rid)
+            else:
+                prev, prev_rid = collapsed[ep]
+                prev["auth_required"] = bool(prev.get("auth_required")) and bool(entry.get("auth_required"))
+                if not prev.get("notes") and entry.get("notes"):
+                    prev["notes"] = entry["notes"]
+        baseline_pairs = list(collapsed.values())
 
     if sidecar:
         cur = sidecar.get("curations") or {}
@@ -590,22 +619,38 @@ def build_attack_surface(
 
     if sidecar:
         by_ep = {e["entry_point"]: i for i, e in enumerate(out)}
-        skipped = 0
+        merged = 0
         added = 0
         for add in sidecar.get("additions") or []:
             ep = add.get("entry_point")
             if not ep:
                 continue
             if ep in by_ep:
-                skipped += 1
+                # Entry-point collision with a baseline (route-inventory) entry.
+                # The Phase-6 analyst hand-read the code, so its explicit
+                # auth_required / notes OVERRIDE the heuristic baseline value —
+                # the route_inventory window-scan can mis-tag auth (e.g. an
+                # unauthenticated POST /api/Users sitting next to a guarded
+                # GET /api/Users gets a false middleware_present). Merge the
+                # addition's authoritative fields onto the baseline entry instead
+                # of dropping it.
+                base = out[by_ep[ep]]
+                if "auth_required" in add and add.get("auth_required") is not None:
+                    base["auth_required"] = bool(add["auth_required"])
+                if add.get("notes"):
+                    base["notes"] = add["notes"]
+                for k in ("linked_threats", "threats"):
+                    if add.get(k):
+                        base[k] = add[k]
+                merged += 1
                 continue
             out.append(add)
             by_ep[ep] = len(out) - 1
             added += 1
         if added:
             warnings.append(f"attack-surface-overrides.additions: {added} entries added")
-        if skipped:
-            warnings.append(f"attack-surface-overrides.additions: {skipped} skipped — entry_point already in baseline")
+        if merged:
+            warnings.append(f"attack-surface-overrides.additions: {merged} merged onto baseline (analyst auth/notes override)")
 
     return out, warnings
 
