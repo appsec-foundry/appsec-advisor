@@ -1,0 +1,16 @@
+{
+  "abuse_case_id": "AC-T-006",
+  "step_verdicts": [
+    {
+      "step": 1,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-011",
+      "evidence": {
+        "file": "routes/userProfile.ts",
+        "line": 62,
+        "excerpt": "username = eval(code) // eslint-disable-line no-eval"
+      },
+      "controls_found": []
+    }
+  ]
+}

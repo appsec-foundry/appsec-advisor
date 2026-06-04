@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "actors": ["internet-anon", "internet-user", "victim-required"],
+  "attack_paths": [
+    {
+      "class": "injection",
+      "actor": "internet-anon",
+      "target": "data",
+      "description": "User input flows into raw SQL or NoSQL queries without parameterisation, allowing authentication bypass or data exfiltration.",
+      "findings": ["T-001", "T-005", "T-017", "T-025"],
+      "attack_chains": [],
+      "impact": ["full-admin-takeover", "customer-data-exfiltration"]
+    },
+    {
+      "class": "auth-bypass",
+      "actor": "internet-anon",
+      "target": "application",
+      "description": "Authentication can be forged or bypassed because JWT signing keys and admin credentials are committed in source and password hashes use unsalted MD5.",
+      "findings": ["T-002", "T-003", "T-004", "T-007", "T-009", "T-014"],
+      "attack_chains": [],
+      "impact": ["full-admin-takeover", "customer-data-exfiltration"]
+    },
+    {
+      "class": "privilege-escalation",
+      "actor": "internet-user",
+      "target": "application",
+      "description": "Authorisation checks are absent server-side or enforced only in the Angular client, allowing any authenticated user to reach admin routes or modify other users' data.",
+      "findings": ["T-013", "T-019", "T-033", "T-038"],
+      "attack_chains": [],
+      "impact": ["full-admin-takeover", "customer-data-exfiltration"]
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "actor": "internet-anon",
+      "target": "data",
+      "description": "Confidential files, access logs, JWT signing keys, and the unencrypted SQLite database are reachable via unauthenticated HTTP endpoints or readable from the container filesystem.",
+      "findings": ["T-006", "T-020", "T-021", "T-024"],
+      "attack_chains": [],
+      "impact": ["customer-data-exfiltration"]
+    },
+    {
+      "class": "remote-code-execution",
+      "actor": "internet-user",
+      "target": "application",
+      "description": "User-supplied content is executed server-side via an unsafe VM sandbox escape in the B2B order processor and via a template-injection sink in the user-profile route.",
+      "findings": ["T-011", "T-012"],
+      "attack_chains": [],
+      "impact": ["full-server-compromise", "customer-data-exfiltration"]
+    },
+    {
+      "class": "cross-site-scripting",
+      "actor": "internet-anon",
+      "target": "client",
+      "description": "Angular components bypass default template escaping by calling bypassSecurityTrustHtml, and search results render user-controlled input into the DOM without sanitisation.",
+      "findings": ["T-018", "T-037"],
+      "attack_chains": [],
+      "impact": ["customer-session-hijack"]
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "actor": "victim-required",
+      "target": "application",
+      "description": "State-changing endpoints accept requests without CSRF tokens or SameSite cookie constraints; combined with wildcard CORS, cross-origin requests from attacker-controlled pages reach authenticated API routes.",
+      "findings": ["T-015", "T-016"],
+      "attack_chains": [],
+      "impact": ["customer-session-hijack", "customer-data-exfiltration"]
+    }
+  ]
+}

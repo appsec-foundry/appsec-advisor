@@ -1,0 +1,27 @@
+{
+  "abuse_case_id": "AC-T-003",
+  "step_verdicts": [
+    {
+      "step": 1,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-002",
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 54,
+        "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)"
+      },
+      "controls_found": []
+    },
+    {
+      "step": 2,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-038",
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 159,
+        "excerpt": "if (decodedToken?.data?.role === roles.accounting)"
+      },
+      "controls_found": []
+    }
+  ]
+}

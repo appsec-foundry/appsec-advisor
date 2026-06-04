@@ -89,6 +89,9 @@ Options:
   --dry-run                  Preview scope without running the full pipeline
   --incremental              Force delta analysis based on git diff
   --full                     Force full scan even when prior output exists
+  --rerender                 Re-render Stage 2 + re-run Stage 3 QA from the
+                             EXISTING Stage-1 fragments (no Stage 1, no no-op).
+                             For fragment/renderer/QA changes; not for code changes.
   --resume                   Continue from last checkpoint
   --base <ref>               Git ref to diff HEAD against (default: baseline commit)
   --pr-mode                  MR/PR delta report — implies --incremental
@@ -201,7 +204,7 @@ while [ $# -gt 0 ]; do
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
-        --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--full|--resume)
+        --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--full|--resume|--rerender)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --incremental)
             INCREMENTAL_REQUESTED=1
@@ -499,6 +502,9 @@ fi
 [ -n "$BASE_REF" ]         && export APPSEC_BASE_REF="$BASE_REF"
 [ "$CI_MODE" = "1" ]       && export APPSEC_CI_MODE=1
 [ -n "$FAIL_ON" ]          && export APPSEC_FAIL_ON="$FAIL_ON"
+# Full-M1 opt-in: forward the parallel-STRIDE switch into the headless skill env
+# (inherited from the caller's environment) so the skill's Bash tool sees it.
+[ "${APPSEC_PARALLEL_STRIDE:-0}" = "1" ] && export APPSEC_PARALLEL_STRIDE=1
 
 # ── Print summary ───────────────────────────────────────────────────
 echo ""

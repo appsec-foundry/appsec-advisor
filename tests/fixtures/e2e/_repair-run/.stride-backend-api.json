@@ -1,0 +1,561 @@
+{
+  "component_id": "backend-api",
+  "component_name": "Express REST API Backend",
+  "started_at": "2026-06-03T18:43:00Z",
+  "completed_at": "2026-06-03T18:55:00Z",
+  "source": "stride",
+  "threats": [
+    {
+      "id": "F-001",
+      "t_id": "T-001",
+      "title": "SQL injection in login — routes/login.ts",
+      "stride": "Spoofing",
+      "component": "backend-api",
+      "description": "The login handler constructs a raw SQL query using string interpolation of user-supplied email and password hash values. An attacker can use SQL injection payloads (e.g. `' OR '1'='1'--`) in the email field to bypass authentication entirely and gain access as any user, including admin.",
+      "likelihood": "Critical",
+      "impact": "Critical",
+      "risk": "Critical",
+      "cwe": "CWE-89",
+      "evidence": [
+        {
+          "file": "routes/login.ts",
+          "line": 37,
+          "excerpt": "models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email || ''}' AND password = '${security.hash(req.body.password || '')}' AND deletedAt IS NULL`"
+        }
+      ],
+      "controls_in_place": "None — raw SQL with no parameterization",
+      "mitigation": {
+        "title": "Replace raw SQL with parameterized Sequelize query",
+        "steps": ["Replace string interpolation with Sequelize `where` clause using parameterized values", "Use `UserModel.findOne({ where: { email, password: hash } })` instead of raw SQL"],
+        "effort": "Low",
+        "reference": "https://sequelize.org/docs/v6/core-concepts/model-querying-basics/"
+      },
+      "mitigation_ids": ["M-001"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-002",
+      "t_id": "T-002",
+      "title": "SQL injection in product search — routes/search.ts",
+      "stride": "Information Disclosure",
+      "component": "backend-api",
+      "description": "The search endpoint constructs a raw SQL LIKE query with unescaped user input. An attacker can use UNION-based SQL injection to extract the full database schema and all user data from the SQLite database without authentication.",
+      "likelihood": "Critical",
+      "impact": "Critical",
+      "risk": "Critical",
+      "cwe": "CWE-89",
+      "evidence": [
+        {
+          "file": "routes/search.ts",
+          "line": 23,
+          "excerpt": "models.sequelize.query(`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') AND deletedAt IS NULL) ORDER BY name`)"
+        }
+      ],
+      "controls_in_place": "None",
+      "mitigation": {
+        "title": "Parameterize the product search query",
+        "steps": ["Replace string interpolation with sequelize.query parameterized replacements", "Use `criteria` as a bound parameter: `WHERE name LIKE :search`, `{ replacements: { search: '%' + criteria + '%' } }`"],
+        "effort": "Low",
+        "reference": "https://sequelize.org/docs/v6/core-concepts/raw-queries/"
+      },
+      "mitigation_ids": ["M-002"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-003",
+      "t_id": "T-003",
+      "title": "Hardcoded RSA private key enables JWT forgery — lib/insecurity.ts",
+      "stride": "Spoofing",
+      "component": "backend-api",
+      "description": "The RSA private key used to sign all JWT authentication tokens is hardcoded as a string literal in lib/insecurity.ts. Anyone with access to the source code (public GitHub repository) can use this key to sign JWT tokens as any user, including admin, and authenticate without a valid password.",
+      "likelihood": "Critical",
+      "impact": "Critical",
+      "risk": "Critical",
+      "cwe": "CWE-321",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 26,
+          "excerpt": "const privateKey = '-----BEGIN RSA PRIVATE KEY-----\\r\\nMIICXA...' (truncated — full key in source)"
+        }
+      ],
+      "controls_in_place": "None — key permanently compromised via public source",
+      "mitigation": {
+        "title": "Remove hardcoded RSA private key; use environment variable",
+        "steps": ["Generate new RSA key pair", "Store private key in environment variable or secrets manager", "Read via `process.env.JWT_PRIVATE_KEY`", "Rotate all existing tokens (invalidate current sessions)"],
+        "effort": "Medium",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-003"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-004",
+      "t_id": "T-004",
+      "title": "JWT algorithm none bypass via express-jwt@0.1.3 — lib/insecurity.ts",
+      "stride": "Spoofing",
+      "component": "backend-api",
+      "description": "express-jwt version 0.1.3 is vulnerable to JWT algorithm confusion attacks (CVE-2015-9235 class). An attacker can craft a JWT with `alg: none` and an empty signature, which will be accepted by express-jwt@0.1.3 without signature verification. This bypasses authentication entirely.",
+      "likelihood": "Critical",
+      "impact": "Critical",
+      "risk": "Critical",
+      "cwe": "CWE-327",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 1,
+          "excerpt": "\"express-jwt\": \"0.1.3\" (intentionally pinned vulnerable version in .dependabot/config.yml)"
+        },
+        {
+          "file": "routes/verify.ts",
+          "line": 83,
+          "excerpt": "jwtChallenge(challenges.jwtUnsignedChallenge, req, 'none', /jwtn3d@/)"
+        }
+      ],
+      "controls_in_place": "None — vulnerable version deliberately retained",
+      "mitigation": {
+        "title": "Upgrade express-jwt and enforce algorithm whitelist",
+        "steps": ["Upgrade express-jwt to ^8.4.1 (latest)", "Explicitly specify algorithms: `expressJwt({ algorithms: ['RS256'] })`", "Remove Dependabot ignore rule for express-jwt"],
+        "effort": "Low",
+        "reference": "https://github.com/auth0/express-jwt/security/advisories"
+      },
+      "mitigation_ids": ["M-004"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-005",
+      "t_id": "T-005",
+      "title": "MD5 password hashing trivially reversible — lib/insecurity.ts",
+      "stride": "Information Disclosure",
+      "component": "backend-api",
+      "description": "All user passwords are hashed with unsalted MD5. MD5 is cryptographically broken and password databases can be cracked entirely using rainbow tables within minutes. Any attacker who obtains a copy of the database has immediate access to all plaintext passwords.",
+      "likelihood": "Critical",
+      "impact": "High",
+      "risk": "Critical",
+      "cwe": "CWE-916",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 43,
+          "excerpt": "export const hash = (data: string) => crypto.createHash('md5').update(data).digest('hex')"
+        }
+      ],
+      "controls_in_place": "None — MD5 without salt",
+      "mitigation": {
+        "title": "Replace MD5 with bcrypt or Argon2 for password hashing",
+        "steps": ["Install bcrypt: `npm install bcrypt`", "Update UserModel password setter to use bcrypt.hash(password, 12)", "Update login query to use bcrypt.compare instead of MD5 comparison", "Migrate existing hashes on next user login"],
+        "effort": "Medium",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-005"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-006",
+      "t_id": "T-006",
+      "title": "SSTI + eval() on user-controlled username — routes/userProfile.ts",
+      "stride": "Elevation of Privilege",
+      "component": "backend-api",
+      "description": "The user profile page uses eval() on a server-side template that includes the user's username. If a username matches the pattern `#{(.*)}`, the captured group is passed to eval() in a Node.js context. An attacker who can set their username to `#{process.mainModule.require('child_process').execSync('cat /etc/passwd')}` achieves server-side code execution.",
+      "likelihood": "Critical",
+      "impact": "Critical",
+      "risk": "Critical",
+      "cwe": "CWE-94",
+      "evidence": [
+        {
+          "file": "routes/userProfile.ts",
+          "line": 62,
+          "excerpt": "username = eval(code) // eslint-disable-line no-eval"
+        },
+        {
+          "file": "routes/userProfile.ts",
+          "line": 60,
+          "excerpt": "if (username?.match(/#{(.*)}/) !== null && utils.isChallengeEnabled(challenges.usernameXssChallenge))"
+        }
+      ],
+      "controls_in_place": "None — eval() deliberately retained for challenge",
+      "mitigation": {
+        "title": "Remove eval() from template rendering; use safe template substitution",
+        "steps": ["Remove the regex-match + eval() block entirely", "Replace with safe string substitution `template.replace(/_username_/g, sanitizedUsername)`", "Encode username before template substitution using html-entities"],
+        "effort": "Low",
+        "reference": "https://owasp.org/www-community/attacks/Server_Side_Template_Injection"
+      },
+      "mitigation_ids": ["M-006"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-007",
+      "t_id": "T-007",
+      "title": "Wildcard CORS allows all origins on sensitive endpoints — server.ts",
+      "stride": "Tampering",
+      "component": "backend-api",
+      "description": "The server uses `app.use(cors())` with no origin restriction, allowing any web origin to make cross-origin requests to all API endpoints. Combined with JWT stored in localStorage (not HttpOnly cookie), this enables CSRF-style attacks from malicious websites that can read responses.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-942",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 181,
+          "excerpt": "app.options('*', cors())\n  app.use(cors())"
+        }
+      ],
+      "controls_in_place": "None — wildcard CORS by design",
+      "mitigation": {
+        "title": "Restrict CORS to known origins",
+        "steps": ["Replace `cors()` with `cors({ origin: ['https://your-domain.com'] })`", "For development, use environment variable for allowed origins"],
+        "effort": "Low",
+        "reference": "https://expressjs.com/en/resources/middleware/cors.html"
+      },
+      "mitigation_ids": ["M-007"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-008",
+      "t_id": "T-008",
+      "title": "No rate limiting on login endpoint — server.ts",
+      "stride": "Denial of Service",
+      "component": "backend-api",
+      "description": "The login endpoint at POST /rest/user/login has no rate limiting. An attacker can perform unlimited brute-force credential attacks. The password hashing uses MD5 (fast) which means brute-force is particularly effective. Combined with the known user emails from /api/Users and hardcoded credentials in users.yml, account compromise is trivial.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-307",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 343,
+          "excerpt": "app.use('/rest/user/reset-password', rateLimit({...})) // Only reset-password is rate-limited; login is not"
+        }
+      ],
+      "controls_in_place": "Rate limiting on reset-password and 2FA only",
+      "mitigation": {
+        "title": "Add rate limiting to login endpoint",
+        "steps": ["Apply `rateLimit({ windowMs: 15*60*1000, max: 20 })` to POST /rest/user/login", "Consider progressive delays after failed attempts", "Log failed login attempts for monitoring"],
+        "effort": "Low",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-008"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-009",
+      "t_id": "T-009",
+      "title": "No CSRF protection on state-changing endpoints — server.ts",
+      "stride": "Tampering",
+      "component": "backend-api",
+      "description": "No CSRF token or SameSite cookie protection is implemented. The cookie-parser middleware uses a weak secret ('kekse'). While JWT in Authorization headers provides some CSRF resistance, endpoints using cookie-based auth (profile page uses req.cookies.token) are vulnerable to CSRF from any origin due to wildcard CORS.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "cwe": "CWE-352",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 289,
+          "excerpt": "app.use(cookieParser('kekse'))"
+        },
+        {
+          "file": "routes/userProfile.ts",
+          "line": 35,
+          "excerpt": "const loggedInUser = security.authenticatedUsers.get(req.cookies.token)"
+        }
+      ],
+      "controls_in_place": "None — no CSRF tokens, no SameSite cookies",
+      "mitigation": {
+        "title": "Implement CSRF protection",
+        "steps": ["Install csurf middleware", "Apply CSRF token validation to POST /profile and other state-changing cookie-auth routes", "Use SameSite=Strict cookie attribute for token cookie"],
+        "effort": "Medium",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-009"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-010",
+      "t_id": "T-010",
+      "title": "User enumeration via /api/Users — server.ts",
+      "stride": "Information Disclosure",
+      "component": "backend-api",
+      "description": "GET /api/Users returns the full list of all registered user accounts (email, role, profile data) to any authenticated user. This enables enumeration of admin accounts and targeted attacks. The finale-rest auto-generated endpoint excludes password and totpSecret but includes all other fields.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "cwe": "CWE-285",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 362,
+          "excerpt": "app.get('/api/Users', security.isAuthorized())"
+        },
+        {
+          "file": "server.ts",
+          "line": 498,
+          "excerpt": "{ name: 'User', exclude: ['password', 'totpSecret'], model: UserModel }"
+        }
+      ],
+      "controls_in_place": "Requires authentication; password and totpSecret excluded",
+      "mitigation": {
+        "title": "Restrict /api/Users to admin role only",
+        "steps": ["Replace `security.isAuthorized()` with `security.isAdmin()` guard", "For non-admin users, return only their own user record"],
+        "effort": "Low",
+        "reference": "https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/"
+      },
+      "mitigation_ids": ["M-010"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-011",
+      "t_id": "T-011",
+      "title": "Unauthenticated product modification via PUT /api/Products/:id — server.ts",
+      "stride": "Tampering",
+      "component": "backend-api",
+      "description": "The authorization middleware for PUT /api/Products/:id is intentionally commented out. Any user (including unauthenticated) can modify product names, descriptions, and prices. This is the changeProduct challenge but represents a real authorization bypass.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-285",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 369,
+          "excerpt": "// app.put('/api/Products/:id', security.isAuthorized()) // vuln-code-snippet vuln-line changeProductChallenge"
+        }
+      ],
+      "controls_in_place": "None — authorization intentionally removed",
+      "mitigation": {
+        "title": "Uncomment authorization middleware for product modification",
+        "steps": ["Uncomment `app.put('/api/Products/:id', security.isAuthorized())`", "Consider restricting to admin/accounting role only"],
+        "effort": "Low",
+        "reference": "https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/"
+      },
+      "mitigation_ids": ["M-011"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-012",
+      "t_id": "T-012",
+      "title": "Confidential files exposed via /ftp directory listing — server.ts",
+      "stride": "Information Disclosure",
+      "component": "backend-api",
+      "description": "The /ftp directory is served with full directory listing enabled. It contains confidential business documents: acquisitions.md (M&A plans), incident-support.kdbx (KeePass password database), coupons_2013.md.bak, and package-lock.json.bak. These files are publicly accessible without authentication.",
+      "likelihood": "Critical",
+      "impact": "High",
+      "risk": "Critical",
+      "cwe": "CWE-548",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 270,
+          "excerpt": "app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true }))"
+        },
+        {
+          "file": "ftp/acquisitions.md",
+          "line": 1,
+          "excerpt": "# Planned Acquisitions\n> This document is confidential! Do not distribute!"
+        }
+      ],
+      "controls_in_place": "robots.txt disallows /ftp but this is not enforced security",
+      "mitigation": {
+        "title": "Remove directory listing; restrict FTP file access",
+        "steps": ["Remove serveIndex for /ftp", "Move sensitive files out of web-accessible directories", "Implement proper authentication for any files that legitimately need to be downloadable"],
+        "effort": "Low",
+        "reference": "https://owasp.org/www-community/attacks/Directory_traversal"
+      },
+      "mitigation_ids": ["M-012"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-013",
+      "t_id": "T-013",
+      "title": "JWT public key and premium.key exposed at /encryptionkeys — server.ts",
+      "stride": "Information Disclosure",
+      "component": "backend-api",
+      "description": "The /encryptionkeys directory is served with directory listing, exposing jwt.pub (the JWT public key, which paired with the hardcoded private key confirms the key pair) and premium.key. While the public key alone is not secret for RS256, this exposure combined with the hardcoded private key in source code means the complete key pair is publicly available.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-548",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 277,
+          "excerpt": "app.use('/encryptionkeys', serveIndexMiddleware, serveIndex('encryptionkeys', { icons: true, view: 'details' }))"
+        }
+      ],
+      "controls_in_place": "None",
+      "mitigation": {
+        "title": "Remove directory listing for /encryptionkeys",
+        "steps": ["Remove serveIndex for /encryptionkeys", "Serve only jwt.pub via a specific endpoint if needed for verification", "Move premium.key out of web-accessible directory"],
+        "effort": "Low",
+        "reference": null
+      },
+      "mitigation_ids": ["M-013"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-014",
+      "t_id": "T-014",
+      "title": "Access logs exposed via /support/logs directory listing — server.ts",
+      "stride": "Information Disclosure",
+      "component": "backend-api",
+      "description": "The /support/logs directory is served with directory listing, exposing access logs in combined Apache format. These logs reveal all user URLs visited (including order IDs, search queries, user IDs in paths), IP addresses, and user agents. This enables user activity tracking and session correlation attacks.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "cwe": "CWE-532",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 280,
+          "excerpt": "app.use('/support/logs', serveIndexMiddleware, serveIndex('logs', { icons: true, view: 'details' }))"
+        }
+      ],
+      "controls_in_place": "None",
+      "mitigation": {
+        "title": "Remove public log directory access",
+        "steps": ["Remove serveIndex and serveLogFiles for /support/logs", "Restrict log access to admin users only or serve via secure admin panel"],
+        "effort": "Low",
+        "reference": "https://owasp.org/www-community/vulnerabilities/Information_exposure_through_log_files"
+      },
+      "mitigation_ids": ["M-014"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-015",
+      "t_id": "T-015",
+      "title": "Prometheus metrics exposed unauthenticated at /metrics — server.ts",
+      "stride": "Information Disclosure",
+      "component": "backend-api",
+      "description": "The Prometheus metrics endpoint is publicly accessible without authentication. It exposes application internals including request counts, durations, error rates, file upload metrics, and startup timing — information that aids attackers in fingerprinting and targeting attacks.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "cwe": "CWE-200",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 718,
+          "excerpt": "app.get('/metrics', metrics.serveMetrics()) // vuln-code-snippet vuln-line exposedMetricsChallenge"
+        }
+      ],
+      "controls_in_place": "None",
+      "mitigation": {
+        "title": "Restrict metrics endpoint to admin or internal network",
+        "steps": ["Add IP-based restriction or authentication to /metrics endpoint", "Alternatively, move metrics to a separate internal port"],
+        "effort": "Low",
+        "reference": null
+      },
+      "mitigation_ids": ["M-015"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-016",
+      "t_id": "T-016",
+      "title": "Missing Content-Security-Policy allows unrestricted script execution — server.ts",
+      "stride": "Elevation of Privilege",
+      "component": "backend-api",
+      "description": "No Content-Security-Policy header is configured. The helmet.xssFilter() middleware is explicitly commented out. The profile page explicitly sets `unsafe-eval` in its per-request CSP to support the SSTI challenge. Without CSP, stored XSS attacks can execute arbitrary JavaScript, load external scripts, and exfiltrate data.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-693",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 185,
+          "excerpt": "// app.use(helmet.xssFilter()); // = no protection from persisted XSS via RESTful API"
+        },
+        {
+          "file": "routes/userProfile.ts",
+          "line": 95,
+          "excerpt": "const CSP = `img-src 'self' ${user?.profileImage}; script-src 'self' 'unsafe-eval'`"
+        }
+      ],
+      "controls_in_place": "helmet.noSniff() and helmet.frameguard() present; CSP missing",
+      "mitigation": {
+        "title": "Configure Content-Security-Policy header",
+        "steps": ["Enable helmet.contentSecurityPolicy() with a restrictive policy", "Remove unsafe-eval from profile page CSP", "Start with report-only mode to identify violations before enforcing"],
+        "effort": "Medium",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-016"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-017",
+      "t_id": "T-017",
+      "title": "Hardcoded HMAC secret enables coupon forgery — lib/insecurity.ts",
+      "stride": "Tampering",
+      "component": "backend-api",
+      "description": "The HMAC secret used for coupon code generation is hardcoded as 'pa4qacea4VK9t9nGv7yZtwmj'. An attacker who reads the source code can generate valid coupon codes for arbitrary discounts by computing `HMAC-SHA256('pa4qacea4VK9t9nGv7yZtwmj', <data>)`.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "cwe": "CWE-321",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 44,
+          "excerpt": "export const hmac = (data: string) => crypto.createHmac('sha256', 'pa4qacea4VK9t9nGv7yZtwmj').update(data).digest('hex')"
+        }
+      ],
+      "controls_in_place": "None",
+      "mitigation": {
+        "title": "Move HMAC secret to environment variable",
+        "steps": ["Generate new random 256-bit HMAC secret", "Store in `process.env.HMAC_SECRET`", "Update lib/insecurity.ts to read from environment"],
+        "effort": "Low",
+        "reference": null
+      },
+      "mitigation_ids": ["M-017"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-018",
+      "t_id": "T-018",
+      "title": "Open redirect via /redirect?to= parameter — routes/redirect.ts",
+      "stride": "Spoofing",
+      "component": "backend-api",
+      "description": "The redirect endpoint validates the target URL against an allowlist, but the validation can be bypassed through subdomain matching or URL manipulation. An attacker can craft phishing links using the trusted Juice Shop domain that redirect to malicious sites.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "cwe": "CWE-601",
+      "evidence": [
+        {
+          "file": "routes/redirect.ts",
+          "line": 19,
+          "excerpt": "res.redirect(toUrl)"
+        }
+      ],
+      "controls_in_place": "Allowlist validation present but bypassable",
+      "mitigation": {
+        "title": "Use exact URL matching for redirect allowlist",
+        "steps": ["Replace prefix-based allowlist with exact URL matching", "Consider eliminating the open redirect endpoint entirely"],
+        "effort": "Low",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-018"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    }
+  ]
+}

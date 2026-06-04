@@ -1,0 +1,11 @@
+{
+  "agent": "threat-renderer",
+  "detail": "[Phase 11/11] Finalization (renderer mode)",
+  "event": "PHASE_END",
+  "kind": "phase-end",
+  "label": "Finalization (renderer mode)",
+  "phase": "11",
+  "phase_total": "11",
+  "status": "phase_completed",
+  "updated_at": "2026-06-04T06:51:05Z"
+}

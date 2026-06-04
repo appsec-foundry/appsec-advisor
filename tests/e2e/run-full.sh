@@ -105,6 +105,13 @@ echo ""
 echo "[1/2] running create-threat-model pipeline ..."
 START_TS=$(date +%s)
 
+# Depth-aware wall-clock cap. The flat 1800s ceiling SIGTERM'd standard-depth
+# runs mid-finalization (observed 2026-06-04: killed at 1803s right after the
+# Stage-2 renderer Phase-11 END, before exports completed). Quick fits in 1800s;
+# standard/thorough need more headroom to finish the pipeline.
+MAXDUR=1800
+[ "$DEPTH" != "quick" ] && MAXDUR=3000
+
 RUN_STATUS=0
 "$PLUGIN_ROOT/scripts/run-headless.sh" \
     --repo "$REPO" \
@@ -116,7 +123,7 @@ RUN_STATUS=0
     --keep-runtime-files \
     $PDF_FLAG \
     --no-qa \
-    --max-duration 1800 \
+    --max-duration "$MAXDUR" \
     || RUN_STATUS=$?
 
 ELAPSED=$(( $(date +%s) - START_TS ))

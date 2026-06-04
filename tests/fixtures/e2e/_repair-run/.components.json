@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "components": [
+    {
+      "id": "backend-api",
+      "name": "Express REST API Backend",
+      "description": "Node.js/Express server handling all REST/API endpoints at /rest/* and /api/*, JWT authentication, file serving, middleware chain, and business logic orchestration. Central component with 50+ route handlers and intentionally vulnerable SQL and code execution paths.",
+      "paths": [
+        "server.ts",
+        "routes/**",
+        "lib/**",
+        "app.ts"
+      ],
+      "tier": "application",
+      "complexity": "complex",
+      "framework": "express"
+    },
+    {
+      "id": "frontend-spa",
+      "name": "Angular Single-Page Application",
+      "description": "Angular 20 SPA compiled to static assets and served by the backend. Implements client-side route guards (LoginGuard, AdminGuard, AccountingGuard), stores JWT in localStorage, and uses bypassSecurityTrustHtml() in multiple components.",
+      "paths": [
+        "frontend/src/**"
+      ],
+      "tier": "client",
+      "complexity": "moderate",
+      "framework": "angular"
+    },
+    {
+      "id": "data-persistence",
+      "name": "Data Layer (SQLite + MarsDB)",
+      "description": "Dual-database persistence: SQLite via Sequelize ORM for relational data (users, products, orders, etc.) and MarsDB (MongoDB-like) for product reviews and order history. Multiple routes use raw SQL string interpolation enabling injection attacks.",
+      "paths": [
+        "models/**",
+        "data/mongodb.ts",
+        "data/datacreator.ts",
+        "data/static/users.yml"
+      ],
+      "tier": "data",
+      "complexity": "moderate",
+      "framework": "sequelize"
+    },
+    {
+      "id": "file-upload-service",
+      "name": "File Upload Service",
+      "description": "Handles multipart file uploads (ZIP, XML, YAML, images) via multer. ZIP handler has directory traversal. XML handler uses libxmljs2 with noent:true enabling XXE. Profile image upload accepts URLs for SSRF. Exposed FTP directory at /ftp.",
+      "paths": [
+        "routes/fileUpload.ts",
+        "routes/profileImageFileUpload.ts",
+        "routes/profileImageUrlUpload.ts",
+        "routes/fileServer.ts",
+        "routes/keyServer.ts"
+      ],
+      "tier": "application",
+      "complexity": "moderate",
+      "framework": "express"
+    },
+    {
+      "id": "b2b-api",
+      "name": "B2B Order API",
+      "description": "Authenticated B2B endpoint at /b2b/v2 that evaluates user-supplied order data using notevil + vm.runInContext, enabling RCE via sandbox bypass. Also includes Web3 wallet, NFT minting, and contract exploit listener endpoints.",
+      "paths": [
+        "routes/b2bOrder.ts",
+        "routes/web3Wallet.ts",
+        "routes/nftMint.ts",
+        "routes/checkKeys.ts"
+      ],
+      "tier": "application",
+      "complexity": "moderate",
+      "framework": "express"
+    }
+  ]
+}

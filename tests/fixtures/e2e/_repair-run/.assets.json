@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "assets": [
+    {
+      "id": "A-001",
+      "name": "User Credentials (email + password hash)",
+      "classification": "Restricted",
+      "description": "User account email addresses and MD5-hashed passwords stored in SQLite Users table. MD5 hashing makes these trivially reversible. Used for authentication.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-002",
+      "name": "JWT RSA Private Key",
+      "classification": "Restricted",
+      "description": "RSA private key used to sign all JWT tokens, hardcoded in lib/insecurity.ts:26. Any party with access to source code can sign arbitrary JWTs as any user including admin.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-003",
+      "name": "User Personal Data (PII)",
+      "classification": "Restricted",
+      "description": "User profile data including full name, address, credit card numbers, mobile numbers stored across multiple Sequelize models (Address, Card, User).",
+      "linked_threats": []
+    },
+    {
+      "id": "A-004",
+      "name": "Payment Card Data",
+      "classification": "Restricted",
+      "description": "Credit card numbers (CardNum), expiry months/years stored in Card model without encryption. Includes test cards like 4716190207394368.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-005",
+      "name": "Confidential Business Documents",
+      "classification": "Confidential",
+      "description": "M&A acquisition plans in /ftp/acquisitions.md, incident support KeePass database at /ftp/incident-support.kdbx, and coupon codes in /ftp/coupons_2013.md.bak. All publicly accessible via directory listing.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-006",
+      "name": "Application Source Code and Config",
+      "classification": "Confidential",
+      "description": "Node.js TypeScript source including security library (lib/insecurity.ts with hardcoded private key, HMAC secret). Config files exposing Google OAuth client ID and server configuration.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-007",
+      "name": "SQLite Database File",
+      "classification": "Confidential",
+      "description": "data/juiceshop.sqlite contains all user data, orders, and challenge state. The challenge tracking table reveals which challenges each user has solved.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-008",
+      "name": "Access Logs",
+      "classification": "Internal",
+      "description": "HTTP access logs stored in logs/access.log.* and accessible via /support/logs directory listing. Reveals user activity patterns, IP addresses, and browsed URLs.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-009",
+      "name": "Product Catalog and Pricing",
+      "classification": "Internal",
+      "description": "Product names, descriptions, prices, and quantities stored in SQLite Products table. Modifiable by authenticated users due to intentionally commented-out authorization.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-010",
+      "name": "TOTP Secrets (2FA Seeds)",
+      "classification": "Restricted",
+      "description": "TOTP secret seeds stored in Users.totpSecret field in SQLite. These are the 2FA enrollment keys that, if extracted, allow bypassing 2FA.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-011",
+      "name": "Application Availability",
+      "classification": "Internal",
+      "description": "The running Juice Shop instance serving training content. DoS via RCE, XML billion-laughs, ZIP bomb, or NoSQL sleep injection can make it unavailable.",
+      "linked_threats": []
+    },
+    {
+      "id": "A-012",
+      "name": "User Security Answers",
+      "classification": "Restricted",
+      "description": "Answers to security questions stored in SecurityAnswer model, used for password reset flow. Predictable answers enable account takeover without knowing password.",
+      "linked_threats": []
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "verdict_severity": "red",
+  "verdict_prose": "**Verdict — Every primary security boundary is broken or absent; the application is not defensible in its current form.**",
+  "framing": "Six weakness categories span all five components; Critical findings exist in each of the first five rows.",
+  "weaknesses": [
+    {
+      "category": "Query Construction and Data Access",
+      "affected_components": [],
+      "description": "Login and product-search routes bypass the Sequelize ORM and concatenate user-controlled values directly into SQL strings. The MarsDB review-update path passes request-body fields into a NoSQL selector without scalar enforcement. Same anti-pattern repeated across unrelated routes — not an isolated regression.",
+      "findings": [
+        { "ref": "T-001", "label": "SQL injection in login" },
+        { "ref": "T-005", "label": "SQL injection in product search" },
+        { "ref": "T-017", "label": "NoSQL injection in review update" },
+        { "ref": "T-025", "label": "NoSQL injection via $where clause" }
+      ]
+    },
+    {
+      "category": "Cryptography and Secret Management",
+      "affected_components": [],
+      "description": "The RSA private key for JWT signing, the HMAC secret for coupon generation, and the admin password are all committed in source files that ship in the public repository. Passwords are stored as unsalted MD5 digests. No runtime secret injection exists; rotating credentials requires a code change and redeploy.",
+      "findings": [
+        { "ref": "T-002", "label": "Hardcoded RSA private key" },
+        { "ref": "T-004", "label": "Hardcoded admin credentials" },
+        { "ref": "T-007", "label": "MD5 password hashing" },
+        { "ref": "T-014", "label": "Hardcoded HMAC secret" }
+      ]
+    },
+    {
+      "category": "File Parser and Outbound Request Controls",
+      "affected_components": [],
+      "description": "The XML upload route parses user-supplied XML with `noent:true` (external entity resolution enabled), enabling XXE file-read from the server filesystem. The ZIP route extracts entries without path-containment checks, allowing traversal writes outside the upload directory. The profile-image-URL route passes user-supplied URLs to `fetch()` without host validation, enabling SSRF.",
+      "findings": [
+        { "ref": "T-010", "label": "XXE via XML upload" },
+        { "ref": "T-036", "label": "Directory traversal in ZIP upload" },
+        { "ref": "T-026", "label": "SSRF via profile image URL" }
+      ]
+    },
+    {
+      "category": "Identity and Authentication",
+      "affected_components": [],
+      "description": "Password login accepts the first row returned by a SQL query short-circuited by injection. Rate limiting on the login endpoint is absent. Both JWT forgery paths (committed key and algorithm `none` acceptance) bypass the TOTP challenge, making 2FA ineffective against the most exploitable attack vectors.",
+      "findings": [
+        { "ref": "T-001", "label": "SQL injection enables login bypass" },
+        { "ref": "T-003", "label": "JWT algorithm none bypass" },
+        { "ref": "T-030", "label": "No rate limiting on login" }
+      ]
+    },
+    {
+      "category": "Authorization and Access Control",
+      "affected_components": [],
+      "description": "The Angular admin route guard (`app.guard.ts`) is the only enforcement point for admin access; no server-side role check exists on admin API routes. `PUT /api/Products/:id` accepts modifications from any request without authentication. The B2B API at `/b2b/v2` is reachable by any authenticated user regardless of role.",
+      "findings": [
+        { "ref": "T-038", "label": "Client-side-only admin guard" },
+        { "ref": "T-013", "label": "Unauthenticated product modification" },
+        { "ref": "T-033", "label": "B2B API reachable by any user" }
+      ]
+    },
+    {
+      "category": "Output Encoding and Rendering",
+      "affected_components": [],
+      "description": "Six Angular components call `bypassSecurityTrustHtml()` on user-controlled content, defeating Angular's default template escaping. The search-result component renders attacker-controlled query parameters into the DOM without sanitisation. A missing Content-Security-Policy leaves no browser-side backstop against either class of XSS.",
+      "findings": [
+        { "ref": "T-037", "label": "Stored XSS via bypassSecurityTrustHtml" },
+        { "ref": "T-018", "label": "DOM XSS via search result rendering" },
+        { "ref": "T-035", "label": "Missing Content Security Policy" }
+      ]
+    }
+  ]
+}

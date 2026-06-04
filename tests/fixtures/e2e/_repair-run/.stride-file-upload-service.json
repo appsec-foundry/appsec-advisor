@@ -1,0 +1,125 @@
+{
+  "component_id": "file-upload-service",
+  "component_name": "File Upload Service",
+  "started_at": "2026-06-03T18:43:00Z",
+  "completed_at": "2026-06-03T18:55:00Z",
+  "source": "stride",
+  "threats": [
+    {
+      "id": "F-029",
+      "t_id": "T-029",
+      "title": "XXE via XML upload with noent:true — routes/fileUpload.ts",
+      "stride": "Information Disclosure",
+      "component": "file-upload-service",
+      "description": "The XML upload handler uses libxmljs2 with `noent: true`, which enables external entity processing. An attacker can upload an XML file with an XXE payload pointing to file:///etc/passwd or internal network URLs, causing the server to disclose local file contents or SSRF to internal services.",
+      "likelihood": "Critical",
+      "impact": "Critical",
+      "risk": "Critical",
+      "cwe": "CWE-611",
+      "evidence": [
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 45,
+          "excerpt": "const xmlDoc = vm.runInContext('libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })', sandbox, { timeout: 2000 })"
+        }
+      ],
+      "controls_in_place": "2000ms vm execution timeout",
+      "mitigation": {
+        "title": "Disable external entity processing in XML parser",
+        "steps": ["Change `noent: true` to `noent: false` in libxmljs2 options", "Validate XML against a schema before processing", "Consider rejecting XML uploads entirely if the B2B complaint use case can be deprecated"],
+        "effort": "Low",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-029"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-030",
+      "t_id": "T-030",
+      "title": "Directory traversal in ZIP file upload — routes/fileUpload.ts",
+      "stride": "Elevation of Privilege",
+      "component": "file-upload-service",
+      "description": "The ZIP file upload handler extracts entries to uploads/complaints/ without sufficient path validation. The `absolutePath.includes(path.resolve('.'))` check can be bypassed with carefully crafted paths. An attacker can write files to arbitrary locations including ftp/ (e.g. ftp/legal.md), enabling overwrite of sensitive server files.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-22",
+      "evidence": [
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 44,
+          "excerpt": "const absolutePath = path.resolve('uploads/complaints/' + fileName)\n  challengeUtils.solveIf(challenges.fileWriteChallenge, () => { return absolutePath === path.resolve('ftp/legal.md') })"
+        }
+      ],
+      "controls_in_place": "path.resolve check present but insufficient",
+      "mitigation": {
+        "title": "Use path.resolve with strict prefix validation for ZIP extraction",
+        "steps": ["After resolving the path, verify it starts with `path.resolve('uploads/complaints') + path.sep`", "Use the archiver library's safeExtract option or manually validate each entry", "Reject ZIP entries with absolute paths or path traversal sequences"],
+        "effort": "Low",
+        "reference": "https://snyk.io/research/zip-slip-vulnerability"
+      },
+      "mitigation_ids": ["M-030"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-031",
+      "t_id": "T-031",
+      "title": "SSRF via profile image URL upload — routes/profileImageUrlUpload.ts",
+      "stride": "Information Disclosure",
+      "component": "file-upload-service",
+      "description": "The profile image URL upload endpoint fetches images from user-supplied URLs server-side without validation of the URL scheme or host. An attacker can supply internal URLs (file://, http://169.254.169.254/metadata, http://localhost:3000/metrics) to probe internal services or read local files via the SSRF vector.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-918",
+      "evidence": [
+        {
+          "file": "routes/profileImageUrlUpload.ts",
+          "line": 1,
+          "excerpt": "Fetches profile image from user-supplied URL without scheme/host validation"
+        }
+      ],
+      "controls_in_place": "None",
+      "mitigation": {
+        "title": "Implement SSRF prevention for URL-based image upload",
+        "steps": ["Validate URL scheme is http:// or https:// only", "Implement allowlist of permitted image hosts", "Use DNS resolution check to block requests to private IP ranges (RFC 1918)", "Consider using a dedicated image proxy service"],
+        "effort": "Medium",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-031"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-032",
+      "t_id": "T-032",
+      "title": "Denial of Service via XML billion-laughs attack — routes/fileUpload.ts",
+      "stride": "Denial of Service",
+      "component": "file-upload-service",
+      "description": "The XML parser with `noent: true` is vulnerable to billion-laughs (XML DoS) attacks where entity expansion causes exponential memory allocation. While vm.runInContext has a 2000ms timeout, memory exhaustion can still crash the Node.js process before the timeout triggers.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-776",
+      "evidence": [
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 45,
+          "excerpt": "libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })"
+        }
+      ],
+      "controls_in_place": "2000ms execution timeout (does not prevent memory exhaustion)",
+      "mitigation": {
+        "title": "Disable entity expansion and add file size limit",
+        "steps": ["Disable `noent: true` to prevent entity expansion", "Enforce maximum XML document size (e.g., 100KB) before parsing", "Consider rate-limiting the file upload endpoint"],
+        "effort": "Low",
+        "reference": "https://cwe.mitre.org/data/definitions/776.html"
+      },
+      "mitigation_ids": ["M-032"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    }
+  ]
+}

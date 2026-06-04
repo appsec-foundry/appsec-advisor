@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "findings": [
+    {
+      "title": "Library colors (npm) has known track record: protestware_incident",
+      "category": "Insufficient Patch Management",
+      "summary": "2022 protestware incident \u2014 maintainer intentionally introduced infinite-loop sabotage; rehabilitated but warrants supply-chain review The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 156
+        }
+      ],
+      "severity": "Medium",
+      "control": "Library track-record review",
+      "effectiveness": "Weak",
+      "source": "known-bad-libs",
+      "derived_from": [],
+      "asset_tier": "T2",
+      "track_record_category": "protestware_incident"
+    },
+    {
+      "title": "Library js-yaml (npm) has known track record: abandoned_with_known_cves",
+      "category": "Insufficient Patch Management",
+      "summary": "legacy versions (<3.13.0) allow code execution via unsafe-load default; pin or migrate to safe-load explicit usage The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 187
+        }
+      ],
+      "severity": "Medium",
+      "control": "Library track-record review",
+      "effectiveness": "Weak",
+      "source": "known-bad-libs",
+      "derived_from": [],
+      "asset_tier": "T2",
+      "track_record_category": "abandoned_with_known_cves"
+    },
+    {
+      "title": "Library jsonwebtoken (npm) has known track record: abandoned_with_known_cves",
+      "category": "Insufficient Patch Management",
+      "summary": "legacy versions (<9.0.0) allow algorithm-confusion attacks (CVE-2022-23529); pin >= 9 or migrate to jose The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 189
+        }
+      ],
+      "severity": "High",
+      "control": "Library track-record review",
+      "effectiveness": "Weak",
+      "source": "known-bad-libs",
+      "derived_from": [],
+      "asset_tier": "T2",
+      "track_record_category": "abandoned_with_known_cves"
+    },
+    {
+      "title": "Library libxmljs2 (npm) has known track record: abandoned_with_known_cves",
+      "category": "Insufficient Patch Management",
+      "summary": "multiple unfixed XXE CVEs since 2022; native libxml2 bindings without active security maintenance The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 192
+        }
+      ],
+      "severity": "High",
+      "control": "Library track-record review",
+      "effectiveness": "Weak",
+      "source": "known-bad-libs",
+      "derived_from": [],
+      "asset_tier": "T2",
+      "track_record_category": "abandoned_with_known_cves"
+    },
+    {
+      "title": "Library notevil (npm) has known track record: sandboxed_deprecated",
+      "category": "Insufficient Patch Management",
+      "summary": "known-broken JavaScript sandbox \u2014 should never be used as a security boundary; multiple escape CVEs The architectural choice to depend on this package warrants review regardless of which specific CVE is currently outstanding.",
+      "evidence": [
+        {
+          "file": "package.json",
+          "line": 200
+        }
+      ],
+      "severity": "High",
+      "control": "Library track-record review",
+      "effectiveness": "Weak",
+      "source": "known-bad-libs",
+      "derived_from": [],
+      "asset_tier": "T2",
+      "track_record_category": "sandboxed_deprecated"
+    }
+  ]
+}

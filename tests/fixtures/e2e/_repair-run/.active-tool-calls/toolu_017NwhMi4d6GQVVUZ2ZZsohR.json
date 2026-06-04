@@ -1,0 +1,1 @@
+{"tool_use_id": "toolu_017NwhMi4d6GQVVUZ2ZZsohR", "session_id": "5f22d34b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1780516679, "input_summary": "cd /home/mrohr/appsec-advisor python3 - <<'EOF' import importlib.util, sys spec = importlib.util.spec_from_file_location(\"ect\", \"scripts/enforce_control_taxonom\u2026"}

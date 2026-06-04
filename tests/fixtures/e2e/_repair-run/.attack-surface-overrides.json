@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "curations": {
+    "include_route_ids": []
+  },
+  "additions": [
+    {
+      "entry_point": "POST /rest/user/login",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "SQL injection via email/password fields; no rate limiting on this endpoint"
+    },
+    {
+      "entry_point": "GET /rest/products/search",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "SQL injection via q parameter; raw Sequelize query with string interpolation"
+    },
+    {
+      "entry_point": "GET /rest/products/:id/reviews",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "NoSQL injection via $where clause in MarsDB query; sleep injection DoS possible"
+    },
+    {
+      "entry_point": "GET /rest/track-order/:id",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "SQL injection via order ID parameter"
+    },
+    {
+      "entry_point": "POST /file-upload",
+      "protocol": "HTTP multipart",
+      "auth_required": false,
+      "notes": "ZIP directory traversal; XML XXE via libxmljs2 noent:true; YAML upload"
+    },
+    {
+      "entry_point": "POST /profile/image/url",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "SSRF via URL-based profile image upload; fetches arbitrary URLs server-side"
+    },
+    {
+      "entry_point": "GET /profile (POST /profile)",
+      "protocol": "HTTP",
+      "auth_required": true,
+      "notes": "SSTI + eval() in username field; pug template injection"
+    },
+    {
+      "entry_point": "POST /b2b/v2/orders",
+      "protocol": "HTTP",
+      "auth_required": true,
+      "notes": "RCE via vm.runInContext + notevil on orderLinesData field"
+    },
+    {
+      "entry_point": "GET /ftp (and files)",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Directory listing exposing confidential files: acquisitions.md, incident-support.kdbx, coupons"
+    },
+    {
+      "entry_point": "GET /encryptionkeys/:file",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Exposes JWT public key (jwt.pub) and premium.key; directory listing enabled"
+    },
+    {
+      "entry_point": "GET /support/logs/:file",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Access log directory listing; reveals user activity and IP addresses"
+    },
+    {
+      "entry_point": "GET /api/Users",
+      "protocol": "HTTP",
+      "auth_required": true,
+      "notes": "Lists all users; IDOR possible on /api/Users/:id; finale-rest auto-generated"
+    },
+    {
+      "entry_point": "PUT /api/Products/:id",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Authorization intentionally commented out — unauthenticated product modification"
+    },
+    {
+      "entry_point": "GET /metrics",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Prometheus metrics endpoint; reveals application internals and request statistics"
+    },
+    {
+      "entry_point": "GET /api-docs",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Swagger UI exposing full API documentation including B2B endpoints"
+    },
+    {
+      "entry_point": "POST /api/Users (registration)",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "User registration; allows setting role field (mass assignment if validation bypassed)"
+    },
+    {
+      "entry_point": "PATCH /rest/products/reviews",
+      "protocol": "HTTP",
+      "auth_required": true,
+      "notes": "NoSQL injection in review update; multi:true allows updating all reviews"
+    },
+    {
+      "entry_point": "GET /rest/user/change-password",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Password change via GET with no CSRF; current password can be omitted in some flows"
+    },
+    {
+      "entry_point": "WebSocket / Socket.IO",
+      "protocol": "WebSocket",
+      "auth_required": false,
+      "notes": "Challenge notification socket; no authentication required to connect"
+    },
+    {
+      "entry_point": "GET /redirect",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Open redirect via ?to= parameter; allowlist bypassable"
+    }
+  ]
+}

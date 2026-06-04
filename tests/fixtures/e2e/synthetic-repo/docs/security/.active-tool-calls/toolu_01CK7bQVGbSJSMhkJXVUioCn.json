@@ -1,0 +1,1 @@
+{"tool_use_id": "toolu_01CK7bQVGbSJSMhkJXVUioCn", "session_id": "b22739e7", "agent": "", "tool": "Bash", "started_at": 1780550811, "input_summary": "cd /home/mrohr/appsec-advisor export CLAUDE_PLUGIN_ROOT=/home/mrohr/appsec-advisor RESOLVE_ARGS=\"--repo /home/mrohr/appsec-advisor/tests/fixtures/e2e/synthetic-\u2026"}

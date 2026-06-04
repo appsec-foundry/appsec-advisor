@@ -1,0 +1,180 @@
+schema_version: 1
+categories:
+- id: TH-01
+  title: Injection
+  description: 'Untrusted input is executed by data-plane interpreters (SQL, NoSQL,
+    JavaScript sandbox, XML parser, HTML/template) because input neutralization is
+    either absent or bypassed on at least one code path.
+
+    '
+  stride:
+  - Tampering
+  - Elevation of Privilege
+  cwe_pillar: CWE-707
+  cwe_canonical: CWE-74
+  cwe_top25_members:
+  - CWE-79
+  - CWE-89
+  - CWE-94
+  owasp_top10_2021: A03
+  owasp_asvs: V5.3
+  typical_findings:
+  - SQL injection (raw query interpolation)
+  - NoSQL injection ($where, $regex)
+  - JavaScript sandbox escape (notevil, vm2)
+  - XXE (XML external entities)
+  - HTML/template injection
+  - LDAP / XPath / command injection
+- id: TH-03
+  title: Cryptographic Failures
+  description: 'Cryptographic primitives misused — weak algorithms, hardcoded keys,
+    missing salt, broken randomness, confused responsibilities between auth and storage
+    crypto.
+
+    '
+  stride:
+  - Information Disclosure
+  - Tampering
+  cwe_pillar: CWE-693
+  cwe_canonical: CWE-310
+  cwe_top25_members:
+  - CWE-798
+  owasp_top10_2021: A02
+  owasp_asvs: V6.2
+  typical_findings:
+  - MD5 / SHA-1 for password hashing
+  - Hardcoded RSA / HMAC / symmetric keys
+  - Deterministic derived passwords
+  - Missing salt / static IV
+  - Unauthenticated encryption modes (ECB)
+- id: TH-06
+  title: Broken Access Control
+  description: 'Authorization checks missing, inconsistent, or evaded — IDOR, mass
+    assignment of privileged fields, horizontal/vertical privilege abuse.
+
+    '
+  stride:
+  - Elevation of Privilege
+  cwe_pillar: CWE-284
+  cwe_canonical: CWE-284
+  cwe_top25_members:
+  - CWE-862
+  - CWE-863
+  - CWE-639
+  owasp_top10_2021: A01
+  owasp_api2023:
+  - API1
+  - API3
+  - API5
+  owasp_asvs: V4.1
+  typical_findings:
+  - IDOR via :id parameter without ownership check
+  - Mass-assignment admin-role injection
+  - Admin panel client-side guard only
+  - Server-side authorization missing on API
+- id: TH-07
+  title: Insecure File Handling
+  description: 'File upload, extraction, or path resolution accepts attacker-controlled
+    artifacts (path traversal, dangerous types, ZIP Slip, parser bombs).
+
+    '
+  stride:
+  - Tampering
+  - Denial of Service
+  cwe_pillar: CWE-664
+  cwe_canonical: CWE-434
+  cwe_top25_members:
+  - CWE-22
+  - CWE-434
+  owasp_top10_2021: A04
+  owasp_asvs: V12.1
+  typical_findings:
+  - ZIP Slip / archive path traversal
+  - XXE with external entity resolution enabled
+  - YAML bomb / billion laughs
+  - Unrestricted file type upload
+  - libxml2 noent:true
+- id: TH-16
+  title: Missing Audit Logging & Accountability
+  description: 'Security-relevant events (authentication, authorization decisions,
+    admin actions, data mutations) are not recorded in an append-only security log,
+    preventing forensic reconstruction.
+
+    '
+  stride:
+  - Repudiation
+  cwe_pillar: CWE-710
+  cwe_canonical: CWE-778
+  cwe_top25_members: []
+  owasp_top10_2021: A09
+  owasp_asvs: V7.2
+  typical_findings:
+  - Auth events (login / logout / 2FA) not logged
+  - Admin actions (user delete, role change) not logged
+  - Review / order mutations not logged
+  - Chatbot admin functions not logged
+cwe_to_th:
+  CWE-79:
+  - TH-01
+  CWE-89:
+  - TH-01
+  CWE-94:
+  - TH-01
+  CWE-611:
+  - TH-07
+  - TH-01
+  CWE-915:
+  - TH-06
+  - TH-01
+  CWE-943:
+  - TH-01
+  CWE-22:
+  - TH-07
+  CWE-434:
+  - TH-07
+  CWE-639:
+  - TH-06
+  CWE-862:
+  - TH-06
+  CWE-863:
+  - TH-06
+  CWE-285:
+  - TH-06
+  CWE-284:
+  - TH-06
+  CWE-917:
+  - TH-01
+  CWE-1336:
+  - TH-01
+  CWE-321:
+  - TH-03
+  CWE-798:
+  - TH-03
+  CWE-916:
+  - TH-03
+  CWE-330:
+  - TH-03
+  CWE-327:
+  - TH-03
+  CWE-326:
+  - TH-03
+  CWE-311:
+  - TH-03
+  CWE-319:
+  - TH-03
+  CWE-345:
+  - TH-03
+  CWE-347:
+  - TH-03
+  CWE-598:
+  - TH-03
+  CWE-532:
+  - TH-16
+  CWE-693:
+  - TH-03
+  CWE-778:
+  - TH-16
+  CWE-942:
+  - TH-06
+  CWE-602:
+  - TH-06

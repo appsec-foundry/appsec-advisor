@@ -1,0 +1,966 @@
+{
+  "attack_path_target_overrides": [
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "injection",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "llm_target": "data",
+      "canonical_target": "application",
+      "source": "attack-class-taxonomy.default_target_tier"
+    },
+    {
+      "class": "cross-site-request-forgery",
+      "llm_target": "application",
+      "canonical_target": "client",
+      "source": "attack-class-taxonomy.default_target_tier"
+    }
+  ],
+  "attack_path_gap_fills": [
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "injection",
+      "merged_findings": [
+        "T-010"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'injection' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "sensitive-data-exposure",
+      "merged_findings": [
+        "T-026",
+        "T-036",
+        "T-039",
+        "T-041"
+      ],
+      "merged_count": 4,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "4 finding(s) classify as 'sensitive-data-exposure' but were missing from the LLM-authored path's findings[]"
+    },
+    {
+      "class": "cross-site-scripting",
+      "merged_findings": [
+        "T-028"
+      ],
+      "merged_count": 1,
+      "source": "(3) attack-paths same-class finding merge",
+      "reason": "1 finding(s) classify as 'cross-site-scripting' but were missing from the LLM-authored path's findings[]"
+    }
+  ]
+}

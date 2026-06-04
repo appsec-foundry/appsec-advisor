@@ -1,0 +1,72 @@
+{
+  "analysis_version": 2,
+  "component_durations": {
+    "b2b-api": 385,
+    "backend-api": 243,
+    "data-persistence": 313,
+    "file-upload-service": 342,
+    "frontend-spa": 279
+  },
+  "component_durations_phase_9_start": 1780512080,
+  "component_durations_recorded_at": "2026-06-03T19:53:39Z",
+  "id_counters": {
+    "next_mitigation_id": 39,
+    "next_threat_id": 91
+  },
+  "last_run_at": "2026-06-03T18:55:54Z",
+  "last_run_depth": "standard",
+  "last_run_iso": "2026-06-03T19:53:39Z",
+  "last_run_mode": "full",
+  "last_run_seconds": 5238,
+  "mode": "full",
+  "plugin_version": "0.4.0-beta",
+  "recon_fingerprint": {
+    "dockerfiles": {
+      "Dockerfile": "sha256:3d411cd86f8a1133e4729c66e2bb18e3e30f0c2e36ecd107c48273cef043c1d0",
+      "test/smoke/Dockerfile": "sha256:cb71771fe53d36a1c5bfd2a5929802fee2124c9bc1fddf8239fbe9c91eca0315"
+    },
+    "iac": {
+      ".github/workflows/ci.yml": "sha256:21bdf61bd4f0d5aed4810ac24bc07161f275aee1c01ef6c2859b62ac3a3d2189",
+      ".github/workflows/codeql-analysis.yml": "sha256:a69a397b0255d265e29362a28f8a6ec1de7807f73a22db231257bc563d50d1a0",
+      ".github/workflows/frontend-bundle-analysis.yml": "sha256:67d0164f37fce7d01ca50c390ba6bb8589fe60d1f9a7fe54360ab184d3a0d9b5",
+      ".github/workflows/lint-fixer.yml": "sha256:8a40a60ce36d2a633854ac3367004145ecca307ee90c0d4139a46fb2fad5906c",
+      ".github/workflows/lock.yml": "sha256:115475d9fe8ff8c3d7e45cd047d33d814f15de7612a0fe6a759c3363dfc3c730",
+      ".github/workflows/pr-compliance.yml": "sha256:cc79b8bc6f0b15513de1a0504f17f89195ca75ae21b3b7d99c0597737ca40a2c",
+      ".github/workflows/rebase.yml": "sha256:c3947358711935936ab6e33c9171c0aedb448183ddc35e7806dadac6f8401c36",
+      ".github/workflows/release.yml": "sha256:5e7c2814ba8276f7bb4e53486a14f40b31cbb1ea4dd455c085855f1b7af2d476",
+      ".github/workflows/stale.yml": "sha256:7fdc6fea42d01bef18635a1683419e333464c2747bf36bc1e65c11b5a17aefa8",
+      ".github/workflows/update-challenges-ebook.yml": "sha256:5c631ff65f1b52e6b31162010a7cb1797528d924fb15074ddf73a1a286016242",
+      ".github/workflows/update-challenges-www.yml": "sha256:c13e32fd0c22023c68ba89ea9ef6e58126e55592b4a4d8cb62a48d66c07e2087",
+      ".github/workflows/update-news-www.yml": "sha256:481d24798fc2362790effd78771d1f168a86bd0da38e3fc94850595ee4e4028a",
+      ".github/workflows/zap_scan.yml": "sha256:edea5269e6b64b6319d804d74199a3ad54a7d7d21c013e734ac532e939cea17c"
+    },
+    "manifests": {
+      "frontend/package.json": "sha256:f2aae7c133ffb64a731d4b2fa6612dc0c6cf76817c43db2c8bb4f81246eed3c6",
+      "package.json": "sha256:7f54eb82a9a139084816a235d39382366e386ba164b49482c70b9db9dae62045"
+    }
+  },
+  "schema_version": 1,
+  "slice_files": {},
+  "stride_files": {
+    "b2b-api": {
+      "path": ".stride-b2b-api.json",
+      "sha256": "sha256:a7bfe85d328ff09f920d8d4af9a719eb6a362ba404fbd86946c55bae1ccbd3f7"
+    },
+    "backend-api": {
+      "path": ".stride-backend-api.json",
+      "sha256": "sha256:5daf45976aa354591f0a455d3fa827e313acc3e29fb98e9b68a598f9300a59ad"
+    },
+    "data-persistence": {
+      "path": ".stride-data-persistence.json",
+      "sha256": "sha256:b634833a379c5056bd9af810a56c9e8ace672cfe39b62d8417da71ad5d131138"
+    },
+    "file-upload-service": {
+      "path": ".stride-file-upload-service.json",
+      "sha256": "sha256:adca072efcb7f35ec92378d1f743b617a21a0aa512a1c8676c86dede3180cd6c"
+    },
+    "frontend-spa": {
+      "path": ".stride-frontend-spa.json",
+      "sha256": "sha256:8bee6fce1cdd5b9ba0d1db959d865c574593eeb382b024a3005b88f08c3c61e9"
+    }
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "component_id": "b2b-api",
+  "component_name": "B2B Order API",
+  "started_at": "2026-06-03T18:43:00Z",
+  "completed_at": "2026-06-03T18:55:00Z",
+  "source": "stride",
+  "threats": [
+    {
+      "id": "F-033",
+      "t_id": "T-033",
+      "title": "RCE via vm.runInContext sandbox escape in B2B order — routes/b2bOrder.ts",
+      "stride": "Elevation of Privilege",
+      "component": "b2b-api",
+      "description": "The B2B order endpoint evaluates user-supplied `orderLinesData` using `notevil` sandboxed eval inside `vm.runInContext`. The notevil library is not a true security sandbox — it can be escaped via prototype pollution or constructor access. An attacker can achieve full server-side code execution by sending a crafted `orderLinesData` payload.",
+      "likelihood": "Critical",
+      "impact": "Critical",
+      "risk": "Critical",
+      "cwe": "CWE-94",
+      "evidence": [
+        {
+          "file": "routes/b2bOrder.ts",
+          "line": 22,
+          "excerpt": "vm.runInContext('safeEval(orderLinesData)', sandbox, { timeout: 2000 })"
+        },
+        {
+          "file": "routes/b2bOrder.ts",
+          "line": 10,
+          "excerpt": "import { eval as safeEval } from 'notevil'"
+        }
+      ],
+      "controls_in_place": "notevil sandboxed eval, 2000ms timeout — both bypassable",
+      "mitigation": {
+        "title": "Replace eval-based order processing with structured JSON parsing",
+        "steps": ["Remove vm.runInContext and notevil entirely from order processing", "Define a strict JSON schema for orderLinesData and validate with ajv", "Parse order lines as structured data, not executable code"],
+        "effort": "Medium",
+        "reference": "https://owasp.org/www-community/attacks/Code_Injection"
+      },
+      "mitigation_ids": ["M-033"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-034",
+      "t_id": "T-034",
+      "title": "Denial of Service via B2B infinite loop — routes/b2bOrder.ts",
+      "stride": "Denial of Service",
+      "component": "b2b-api",
+      "description": "An attacker can craft an `orderLinesData` payload that causes an infinite loop inside notevil's evaluator. While notevil detects this and throws, the 2000ms execution timeout in vm.runInContext will block the Node.js event loop for 2 seconds per request, enabling a simple amplification DoS attack.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-400",
+      "evidence": [
+        {
+          "file": "routes/b2bOrder.ts",
+          "line": 30,
+          "excerpt": "if (utils.getErrorMessage(err).match(/Script execution timed out.*/) != null) { res.status(503) ... }"
+        }
+      ],
+      "controls_in_place": "2000ms timeout — event loop blocking during timeout",
+      "mitigation": {
+        "title": "Remove eval; use worker threads for isolated processing if needed",
+        "steps": ["Remove the eval-based processing entirely", "If scripted order processing is required, use a worker_thread with a strict timeout and kill on timeout"],
+        "effort": "Medium",
+        "reference": null
+      },
+      "mitigation_ids": ["M-034"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-035",
+      "t_id": "T-035",
+      "title": "B2B API reachable by any authenticated user — server.ts",
+      "stride": "Elevation of Privilege",
+      "component": "b2b-api",
+      "description": "The B2B order endpoint at /b2b/v2/orders is protected only by `security.isAuthorized()` — any authenticated user (including regular customers) can access it. The B2B API should only be accessible to specific B2B customer accounts with appropriate roles.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-285",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 423,
+          "excerpt": "app.use('/b2b/v2', security.isAuthorized())"
+        }
+      ],
+      "controls_in_place": "Authentication required; no role-based restriction",
+      "mitigation": {
+        "title": "Restrict B2B API to B2B customer role",
+        "steps": ["Create a B2B customer role in the User model", "Update security.isAuthorized() to accept optional role parameter", "Apply `security.isAuthorized('b2b')` to /b2b/v2 routes"],
+        "effort": "Medium",
+        "reference": "https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/"
+      },
+      "mitigation_ids": ["M-035"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-036",
+      "t_id": "T-036",
+      "title": "No audit trail for B2B orders — routes/b2bOrder.ts",
+      "stride": "Repudiation",
+      "component": "b2b-api",
+      "description": "B2B orders processed through the /b2b/v2/orders endpoint are not logged with sufficient detail to reconstruct what orderLinesData was submitted. If an attacker abuses the RCE vulnerability, there is no forensic record of the malicious payload that was executed.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "cwe": "CWE-778",
+      "evidence": [
+        {
+          "file": "routes/b2bOrder.ts",
+          "line": 18,
+          "excerpt": "return ({ body }: Request, res: Response, next: NextFunction) => { ... } // No logging of orderLinesData"
+        }
+      ],
+      "controls_in_place": "HTTP access logs via morgan (request-level only)",
+      "mitigation": {
+        "title": "Add structured audit logging for B2B orders",
+        "steps": ["Log orderLinesData (sanitized/truncated) along with user ID and IP for each B2B request", "Use a structured logging library (e.g., winston) for machine-parseable audit records"],
+        "effort": "Low",
+        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+      },
+      "mitigation_ids": ["M-036"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-037",
+      "t_id": "T-037",
+      "title": "Dependabot vulnerability pinning suppresses security updates — .dependabot/config.yml",
+      "stride": "Elevation of Privilege",
+      "component": "b2b-api",
+      "description": "Three known-vulnerable packages are explicitly excluded from Dependabot auto-updates: express-jwt@0.1.3 (JWT alg:none bypass), sanitize-html@1.4.2 (XSS bypass), and unzipper@0.9.15 (path traversal). While intentional for training, this creates a permanent CI/CD supply chain risk where newly discovered exploits in these pinned packages can be weaponized without any automated detection.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-1104",
+      "evidence": [
+        {
+          "file": ".dependabot/config.yml",
+          "line": 9,
+          "excerpt": "ignored_updates:\n  - match: { dependency_name: express-jwt, version_requirement: 0.1.3 }"
+        }
+      ],
+      "controls_in_place": "Intentional for training — not a defect",
+      "mitigation": {
+        "title": "Remove Dependabot ignore rules for vulnerable packages in production deployments",
+        "steps": ["Remove ignore rules from .dependabot/config.yml for production branches", "Upgrade express-jwt, sanitize-html, and unzipper to current secure versions", "Add npm audit to CI pipeline and fail on high/critical vulnerabilities"],
+        "effort": "Low",
+        "reference": "https://owasp.org/www-project-dependency-check/"
+      },
+      "mitigation_ids": ["M-037"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    },
+    {
+      "id": "F-038",
+      "t_id": "T-038",
+      "title": "GitHub Actions not using least-privilege permissions — .github/workflows/ci.yml",
+      "stride": "Elevation of Privilege",
+      "component": "b2b-api",
+      "description": "The CI/CD workflow does not specify a top-level `permissions:` block, defaulting to potentially broad read access to the repository. Some workflow jobs deploy to Docker Hub, Heroku, and GitHub Packages, meaning a compromise of the CI workflow (via unpinned Action substitution) could exfiltrate all repository secrets.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "cwe": "CWE-272",
+      "evidence": [
+        {
+          "file": ".github/workflows/ci.yml",
+          "line": 1,
+          "excerpt": "No top-level permissions block; DOCKERHUB_TOKEN, HEROKU_API_KEY, CYPRESS_RECORD_KEY all referenced"
+        }
+      ],
+      "controls_in_place": "Some actions use pinned SHA (e.g., actions/checkout@11bd71901...)",
+      "mitigation": {
+        "title": "Add least-privilege permissions to GitHub Actions workflows",
+        "steps": ["Add `permissions: read-all` at workflow level", "Grant specific write permissions only to the jobs that need them (e.g., `packages: write` for Docker publish)", "Pin all unpinned third-party actions to SHA digest"],
+        "effort": "Low",
+        "reference": "https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions"
+      },
+      "mitigation_ids": ["M-038"],
+      "source": "stride",
+      "evidence_check": "verified-prior"
+    }
+  ]
+}

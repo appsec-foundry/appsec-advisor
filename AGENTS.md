@@ -228,6 +228,7 @@ Frontmatter pin (always Sonnet — runtime model overrides in table below). Turn
 - `agents/appsec-threat-renderer.md` — Sonnet, 80 max turns — Stage 2 (Phase 11); fresh-budget renderer that composes from validated fragments. Never re-runs analysis.
 - `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns — Stage 3; broken-link / cross-reference / placeholder / YAML-MD consistency checks; applies permitted soft fixes in-place and emits repair plans for structural fixes.
 - `agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns — Stage 4 (advisory only); writes `.architect-review.md` + `.architect-status.json` (+ `.architect-repair-plan.json` on technical defects). **Never** edits `threat-model.md` / `threat-model.yaml` / SARIF directly.
+- `agents/appsec-fragment-fixer.md` — Sonnet, 30 max turns — Re-Render Loop repair executor; re-authors only the fragments named in a repair plan and re-runs `compose_threat_model.py`. Lean replacement for the heavy `appsec-threat-analyst` REPAIR_MODE dispatch — runs no recon/STRIDE/triage/merge.
 
 #### Runtime model routing (overrides the frontmatter)
 

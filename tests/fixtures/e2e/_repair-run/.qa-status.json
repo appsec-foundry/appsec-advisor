@@ -1,0 +1,26 @@
+{
+  "status": "manual_review",
+  "source": "deterministic-pre-agent",
+  "generated": "2026-06-04T06:55:00Z",
+  "summary": "Contract drift auto-repaired via Re-Render Loop (1 iteration); one non-fragment-fixable infobox-metadata note remains for manual review.",
+  "repaired": [
+    {
+      "type": "auth_method_decomposition",
+      "fragment": ".fragments/security-architecture.md",
+      "detail": "Renamed forbidden heading '#### 7.2.2 Login Rate Limiting' -> '#### 7.2.2 MFA / TOTP' to match auth-mechanism decomposition and Controls-covered link."
+    },
+    {
+      "type": "control_subsection_coverage",
+      "fragment": ".fragments/security-architecture.md",
+      "detail": "Resolved by the same heading rename; '7.2.2 MFA / TOTP' subsection now matches the Controls-covered reference."
+    }
+  ],
+  "manual_review_items": [
+    {
+      "type": "infobox_incomplete",
+      "issue": "infobox is missing required field(s): license, repository; optional fields missing: author, homepage, runtime, tags.",
+      "release_blocker": false,
+      "remediation": "Add a top-level project: block to threat-model.yaml (license, repository, ...) or ensure REPO_ROOT manifests + LICENSE are present; _read_project_manifest() picks them up on the next full/incremental run. Not fragment-fixable in --rerender."
+    }
+  ]
+}

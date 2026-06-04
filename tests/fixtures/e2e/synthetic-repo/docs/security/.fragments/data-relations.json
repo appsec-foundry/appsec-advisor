@@ -1,0 +1,8 @@
+{
+  "generated_at": "2026-06-04T08:39:42Z",
+  "models": {},
+  "note": "no ORM patterns detected \u2014 data-layer STRIDE will use default discovery",
+  "orm_detected": [],
+  "raw_query_routes": [],
+  "version": 1
+}

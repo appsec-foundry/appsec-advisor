@@ -185,6 +185,10 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("full",         "incremental",     "--full and --incremental cannot be used together."),
     ("rebuild",      "incremental",     "--rebuild discards all prior state; --incremental requires it. Pick one."),
     ("rebuild",      "resume",          "--rebuild wipes the checkpoint file; --resume needs it. Pick one."),
+    ("rerender",     "full",            "--rerender re-renders the existing assessment; --full rebuilds it. Pick one."),
+    ("rerender",     "incremental",     "--rerender reuses Stage-1 outputs; --incremental re-analyzes a delta. Pick one."),
+    ("rerender",     "rebuild",         "--rerender reuses existing artifacts; --rebuild wipes them. Pick one."),
+    ("rerender",     "resume",          "--rerender starts a fresh render; --resume continues a checkpoint. Pick one."),
     ("architect_review", "no_architect_review", "--architect-review and --no-architect-review cannot be used together."),
     ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
     ("enrich_arch",  "no_enrich_arch",  "--enrich-arch and --no-enrich-arch cannot be used together."),
@@ -800,6 +804,29 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
 
     state = _detect_baseline_state(output_dir)
 
+    # Rule 0a: --rerender — re-render Stage 2 + re-QA from the EXISTING Stage-1
+    # artifacts on disk. Skips Stage 1 entirely and the incremental no-op gate
+    # (both handled in the skill's rerender branch). Requires a structured
+    # baseline; it never re-analyzes source, so it is the wrong tool when code
+    # changed (the skill prints that guidance).
+    if ns.rerender:
+        if state == "empty":
+            raise SystemExit(
+                f"Error: --rerender requires an existing assessment at "
+                f"{output_dir}.\n  No threat-model.yaml found — run a full or "
+                f"standard assessment first; --rerender then re-renders it from "
+                f"the existing Stage-1 fragments."
+            )
+        return {
+            "mode":             "rerender",
+            "mode_label":       "rerender (re-render existing fragments + QA)",
+            "incremental":      False,
+            "rebuild":          False,
+            "rerender":         True,
+            "baseline_state":   state,
+            "post_summary_note": None,
+        }
+
     # Rule 0: --rebuild short-circuits.
     if ns.rebuild:
         note = None
@@ -952,6 +979,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--incremental", action="store_true")
     p.add_argument("--full",      action="store_true")
     p.add_argument("--rebuild",   action="store_true")
+    p.add_argument("--rerender",  action="store_true")
     p.add_argument("--keep-runtime-files", action="store_true")
     p.add_argument("--verbose",   action="store_true")
     # Tracing default flipped to ON in M3.6 (was opt-in pre-M3.6). Per-agent

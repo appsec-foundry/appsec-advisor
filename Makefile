@@ -28,6 +28,12 @@ e2e-full-standard:  ## Same as e2e-full but at standard depth (slower, higher fi
 		echo "ERROR: 'claude' CLI not on PATH. Install Claude Code first."; exit 3; }
 	@./tests/e2e/run-full.sh --depth standard
 
+.PHONY: e2e-full-repair
+e2e-full-repair:  ## QA-active variant: corrupt §7.2, resume with QA on, verify the real Re-Render Loop dispatches appsec-fragment-fixer (M2b) and converges
+	@command -v claude >/dev/null 2>&1 || { \
+		echo "ERROR: 'claude' CLI not on PATH. Install Claude Code first."; exit 3; }
+	@./tests/e2e/run-repair.sh
+
 .PHONY: e2e-full-keep
 e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no pipeline re-run)
 	@APPSEC_E2E_FULL=1 \

@@ -1,0 +1,123 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://appsec-advisor/schemas/stride-dispatch-manifest.schema.yaml"
+title: AppSec Advisor STRIDE Dispatch Manifest
+description: |
+  Schema for `.stride-dispatch-manifest.json` — the Analyst-A → skill handoff
+  for Full-M1. Analyst-A (Phases 1-8 + dispatch-prep) serializes every
+  per-component parameter the `appsec-stride-analyzer` needs into this manifest,
+  then stops before Phase 9. The skill (Level-0) reads it, validates it via
+  `scripts/validate_dispatch_manifest.py` (hard gate), and dispatches one
+  `appsec-stride-analyzer` per component IN PARALLEL — replacing the serial
+  inline STRIDE that runs today inside a single Level-1 analyst.
+
+  The per-component fields mirror the dispatch parameters documented in
+  `agents/phases/phase-group-threats.md` ("For each component, use Agent tool")
+  and the Inputs section of `agents/appsec-stride-analyzer.md`. Scalar context
+  fields (interfaces, trust_boundaries, controls, known_*) are authored by the
+  analyst from its Phase 6-8 analysis (they are NOT all reconstructable from the
+  structured on-disk artifacts, which is why the analyst must serialize them
+  here). Index/slice fields are absolute paths under $OUTPUT_DIR, or the literal
+  string "none".
+
+type: object
+additionalProperties: true
+required:
+  - schema_version
+  - components
+properties:
+  schema_version:
+    type: integer
+    const: 1
+  generated_at:
+    type: string
+    description: ISO-8601 UTC timestamp when Analyst-A wrote the manifest.
+  stride_profile:
+    description: STRIDE profile passed to every analyzer (label or inline object).
+    oneOf:
+      - type: string
+      - type: object
+  components:
+    type: array
+    minItems: 1
+    description: One entry per non-trivial, non-carry-forward component to dispatch.
+    items:
+      type: object
+      additionalProperties: true
+      required:
+        - component_id
+        - component_name
+        - component_paths
+        - component_complexity
+        - max_turns
+        - index_paths
+      properties:
+        component_id:
+          type: string
+          minLength: 1
+          pattern: "^[a-z0-9][a-z0-9-]*$"
+        component_name:
+          type: string
+          minLength: 1
+        component_description:
+          type: string
+        component_paths:
+          description: Path globs for this component (list, or comma-separated string).
+          oneOf:
+            - type: string
+              minLength: 1
+            - type: array
+              items: { type: string }
+              minItems: 1
+        component_complexity:
+          type: string
+          enum: [simple, moderate, complex]
+        max_turns:
+          type: integer
+          minimum: 1
+        estimated_threat_count:
+          type: integer
+          minimum: 0
+        interfaces:
+          description: Component interfaces (entry points / exposed surfaces) from Phase 6.
+          oneOf: [ { type: string }, { type: array } ]
+        trust_boundaries:
+          description: Trust boundaries touching this component, from Phase 7.
+          oneOf: [ { type: string }, { type: array } ]
+        controls:
+          description: Security controls relevant to this component, from Phase 8.
+          oneOf: [ { type: string }, { type: array } ]
+        known_secrets:
+          oneOf: [ { type: string }, { type: array } ]
+        known_vulns:
+          oneOf: [ { type: string }, { type: array } ]
+        known_llm_patterns:
+          oneOf: [ { type: string }, { type: array } ]
+        supply_chain_findings:
+          description: Only for the ci-cd-pipeline component; otherwise omitted/none.
+          oneOf: [ { type: string }, { type: array }, { type: "null" } ]
+        focus_paths:
+          oneOf: [ { type: string }, { type: array } ]
+        exclude_paths:
+          oneOf: [ { type: string }, { type: array } ]
+        taxonomy_slice_dir:
+          type: string
+          description: Per-component taxonomy slice dir, or the plugin data dir.
+        index_paths:
+          type: object
+          additionalProperties: false
+          description: |
+            Per-component context file paths under $OUTPUT_DIR, each an absolute
+            path to an existing file OR the literal string "none". The validator
+            enforces existence for non-"none" values.
+          required:
+            - prior_findings
+            - known_threats
+            - cross_repo
+            - requirements_violations
+            - relevant_actors
+          properties:
+            prior_findings:        { type: string, minLength: 1 }
+            known_threats:         { type: string, minLength: 1 }
+            cross_repo:            { type: string, minLength: 1 }
+            requirements_violations: { type: string, minLength: 1 }
+            relevant_actors:       { type: string, minLength: 1 }

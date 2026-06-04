@@ -59,6 +59,9 @@ INCREMENTAL / CI
   --incremental                Re-analyze only components changed since last run
   --full                       Re-analyze everything; preserve changelog history
   --rebuild                    Wipe all prior output and start completely fresh
+  --rerender                   Re-render the report + re-run QA from existing
+                               fragments (no re-analysis); for fragment/render
+                               changes, not code changes
   --resume                     Continue from the last saved checkpoint
   --base <ref>                 Git ref to diff against (default: prior scan commit)
   --pr-mode                    Focused delta report for an MR/PR (implies --incremental)

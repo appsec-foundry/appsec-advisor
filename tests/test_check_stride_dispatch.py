@@ -98,6 +98,30 @@ def test_inlined_run_trips_without_progress_dir(tmp_path):
     assert _run(tmp_path) == 2
 
 
+def test_dispatch_manifest_suppresses_false_positive(tmp_path):
+    """Full-M1: real stride files, NO .progress, but a dispatch manifest exists
+    → NOT inlined (the parallel fan-out is proven; agent_progress may no-op when
+    OUTPUT_DIR is not env-exported in the analyzer)."""
+    for cid in ("frontend-spa", "backend-api"):
+        _write_stride(tmp_path, cid, _real_stride())
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"component_id": "backend-api"}]}),
+        encoding="utf-8",
+    )
+    assert _run(tmp_path) == 0
+
+
+def test_agent_spawn_hook_evidence_suppresses_false_positive(tmp_path):
+    """Real stride files, no .progress, but the hook log shows a dispatched
+    appsec-stride-analyzer → NOT inlined."""
+    _write_stride(tmp_path, "backend-api", _real_stride())
+    (tmp_path / ".hook-events.log").write_text(
+        "2026-06-04T10:00:00Z  [sess]  INFO  AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer  model=sonnet\n",
+        encoding="utf-8",
+    )
+    assert _run(tmp_path) == 0
+
+
 def test_partial_inline_trips(tmp_path):
     """One dispatched component, one inlined → trips on the inlined one."""
     _write_stride(tmp_path, "frontend-spa", _real_stride())

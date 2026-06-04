@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "security_controls": [
+    {
+      "domain": "Identity and Authentication",
+      "control": "Password hashing",
+      "effectiveness": "Unsafe",
+      "evidence": "lib/insecurity.ts:43 uses crypto.createHash('md5') \u2014 trivially reversible",
+      "verdict_reason": "MD5 is broken for password storage; no salt; bcrypt/argon2 required"
+    },
+    {
+      "domain": "Identity and Authentication",
+      "control": "JWT signing key management",
+      "effectiveness": "Unsafe",
+      "evidence": "lib/insecurity.ts:26-28 \u2014 RSA private key hardcoded as string literal",
+      "verdict_reason": "Hardcoded key enables offline JWT forgery for any user; key compromise is permanent"
+    },
+    {
+      "domain": "Identity and Authentication",
+      "control": "Login rate limiting",
+      "effectiveness": "Missing",
+      "evidence": "server.ts \u2014 rate limiting only on /rest/user/reset-password and 2FA endpoints; /rest/user/login unprotected",
+      "verdict_reason": "Brute-force of login endpoint unrestricted"
+    },
+    {
+      "domain": "Identity and Authentication",
+      "control": "2FA support",
+      "effectiveness": "Partial",
+      "evidence": "routes/2fa.ts \u2014 TOTP available but optional",
+      "verdict_reason": "2FA available but not enforced; totpSecret stored in plaintext in DB"
+    },
+    {
+      "domain": "Session and Token Controls",
+      "control": "JWT token storage",
+      "effectiveness": "Unsafe",
+      "evidence": "frontend/src/app/login/login.component.ts:101 \u2014 localStorage.setItem('token',...)",
+      "verdict_reason": "localStorage is XSS-accessible; HttpOnly cookie preferred"
+    },
+    {
+      "domain": "Session and Token Controls",
+      "control": "JWT algorithm validation",
+      "effectiveness": "Unsafe",
+      "evidence": "routes/verify.ts:83 \u2014 express-jwt@0.1.3 vulnerable to alg:none bypass",
+      "verdict_reason": "express-jwt@0.1.3 does not enforce algorithm; alg:none bypass possible"
+    },
+    {
+      "domain": "Authorization Controls",
+      "control": "Server-side admin authorization",
+      "effectiveness": "Unsafe",
+      "evidence": "frontend/src/app/app.guard.ts \u2014 AdminGuard is client-side only; no server enforcement for admin routes",
+      "verdict_reason": "Admin panel accessible by bypassing client-side Angular guard"
+    },
+    {
+      "domain": "Authorization Controls",
+      "control": "Product modification authorization",
+      "effectiveness": "Unsafe",
+      "evidence": "server.ts:369 \u2014 app.put('/api/Products/:id'...) intentionally commented out",
+      "verdict_reason": "Any user can modify any product price/description unauthenticated"
+    },
+    {
+      "domain": "Authorization Controls",
+      "control": "CSRF protection",
+      "effectiveness": "Missing",
+      "evidence": "server.ts \u2014 no csurf or CSRF token middleware found",
+      "verdict_reason": "All state-changing endpoints vulnerable to CSRF from any origin"
+    },
+    {
+      "domain": "Query Construction and Data Access",
+      "control": "SQL parameterization",
+      "effectiveness": "Unsafe",
+      "evidence": "routes/search.ts:23, routes/login.ts:37 \u2014 raw string interpolation in Sequelize queries",
+      "verdict_reason": "Direct SQLi exploitable on login and search endpoints without authentication"
+    },
+    {
+      "domain": "Query Construction and Data Access",
+      "control": "NoSQL query parameterization",
+      "effectiveness": "Unsafe",
+      "evidence": "routes/showProductReviews.ts:35 \u2014 $where clause with unparameterized input",
+      "verdict_reason": "MongoDB-style operator injection and sleep-based DoS possible"
+    },
+    {
+      "domain": "Input Boundary Validation",
+      "control": "Server-side input validation",
+      "effectiveness": "Unsafe",
+      "evidence": "Multiple routes accept unsanitized input; b2bOrder.ts:22 evaluates user-supplied data",
+      "verdict_reason": "No centralized input validation; eval() on user input enables RCE"
+    },
+    {
+      "domain": "Output Encoding and Rendering",
+      "control": "XSS output encoding",
+      "effectiveness": "Unsafe",
+      "evidence": "administration.component.ts:60,78 \u2014 bypassSecurityTrustHtml() on user-controlled data",
+      "verdict_reason": "Angular XSS protection deliberately bypassed in admin panel and feedback display"
+    },
+    {
+      "domain": "Browser and Cross-Origin Controls",
+      "control": "CORS policy",
+      "effectiveness": "Unsafe",
+      "evidence": "server.ts:181-182 \u2014 app.use(cors()) with no origin restriction",
+      "verdict_reason": "Wildcard CORS allows any origin to make credentialed requests"
+    },
+    {
+      "domain": "Browser and Cross-Origin Controls",
+      "control": "Content Security Policy",
+      "effectiveness": "Missing",
+      "evidence": "server.ts \u2014 helmet.contentSecurityPolicy() not configured; profile page uses unsafe-eval",
+      "verdict_reason": "No CSP header; XSS can load external scripts freely"
+    },
+    {
+      "domain": "Cryptography Secrets and Data Protection",
+      "control": "Secret management",
+      "effectiveness": "Unsafe",
+      "evidence": "lib/insecurity.ts:26-44 \u2014 RSA private key and HMAC secret hardcoded as string literals",
+      "verdict_reason": "Production-equivalent secrets embedded in source code permanently compromised"
+    },
+    {
+      "domain": "Cryptography Secrets and Data Protection",
+      "control": "Data encryption at rest",
+      "effectiveness": "Missing",
+      "evidence": "models/user.ts \u2014 password field uses MD5, no encryption for card numbers or PII",
+      "verdict_reason": "Sensitive fields (card numbers, addresses, TOTP secrets) stored in plaintext"
+    },
+    {
+      "domain": "File Parser and Outbound Request Controls",
+      "control": "XML parser hardening",
+      "effectiveness": "Unsafe",
+      "evidence": "routes/fileUpload.ts:45 \u2014 libxmljs2.parseXml with noent:true enables external entity processing",
+      "verdict_reason": "XXE via uploaded XML files can read local files (/etc/passwd) and cause DoS"
+    },
+    {
+      "domain": "File Parser and Outbound Request Controls",
+      "control": "ZIP upload path validation",
+      "effectiveness": "Unsafe",
+      "evidence": "routes/fileUpload.ts:36-52 \u2014 path.resolve check insufficient; directory traversal possible",
+      "verdict_reason": "Crafted ZIP entries can write files outside the intended uploads directory"
+    },
+    {
+      "domain": "File Parser and Outbound Request Controls",
+      "control": "SSRF prevention",
+      "effectiveness": "Missing",
+      "evidence": "routes/profileImageUrlUpload.ts \u2014 fetches arbitrary URLs from user-supplied input",
+      "verdict_reason": "SSRF allows scanning internal network and accessing metadata services"
+    },
+    {
+      "domain": "Operations Runtime and Supply Chain",
+      "control": "Dependency security",
+      "effectiveness": "Unsafe",
+      "evidence": ".dependabot/config.yml \u2014 express-jwt@0.1.3, sanitize-html@1.4.2, unzipper@0.9.15 explicitly pinned as vulnerable",
+      "verdict_reason": "Three vulnerable dependencies intentionally pinned; supply chain risk known and accepted by design"
+    },
+    {
+      "domain": "Operations Runtime and Supply Chain",
+      "control": "Container image pinning",
+      "effectiveness": "Weak",
+      "evidence": "Dockerfile:1,23 \u2014 base images use tags not digest-pinned; distroless final image has no tag",
+      "verdict_reason": "Image substitution attack possible; CI may build with different image versions"
+    },
+    {
+      "domain": "Operations Runtime and Supply Chain",
+      "control": "CI/CD security scanning",
+      "effectiveness": "Partial",
+      "evidence": ".github/workflows/codeql-analysis.yml, zap_scan.yml \u2014 CodeQL and ZAP scans active",
+      "verdict_reason": "CodeQL (security-extended) and weekly ZAP scan present; some GitHub Actions unpinned"
+    },
+    {
+      "domain": "Operations Runtime and Supply Chain",
+      "control": "Sensitive file exposure",
+      "effectiveness": "Unsafe",
+      "evidence": "server.ts:270-282 \u2014 /ftp, /encryptionkeys, /support/logs all have directory listing enabled",
+      "verdict_reason": "Confidential documents, JWT keys, and access logs publicly accessible"
+    },
+    {
+      "domain": "Real-time and Not Applicable",
+      "control": "WebSocket security",
+      "effectiveness": "Partial",
+      "evidence": "lib/startup/registerWebsocketEvents.ts \u2014 Socket.io with CORS origin: localhost:4200 only",
+      "verdict_reason": "CORS origin restriction on WebSocket; no authentication required to connect"
+    },
+    {
+      "domain": "Real-time and Not Applicable",
+      "control": "Rate limiting (general)",
+      "effectiveness": "Partial",
+      "evidence": "server.ts \u2014 rate limiting on password reset and 2FA only; login and API endpoints unprotected",
+      "verdict_reason": "Rate limiting coverage too narrow; most attack-relevant endpoints unprotected"
+    },
+    {
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "control": "Automated SCA scanning",
+      "effectiveness": "Adequate",
+      "kind": "lifecycle",
+      "assessment": "Automated SCA scanning present: .github/workflows/codeql-analysis.yml:23, .github/workflows/pr-compliance.yml:168",
+      "linked_threats": []
+    },
+    {
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "control": "Automated dependency updates",
+      "effectiveness": "Missing",
+      "kind": "lifecycle",
+      "assessment": "Automated dependency updates not detected in the repository. Patch-management posture depends on this control being in place \u2014 the team is reactive rather than proactive without it.",
+      "linked_threats": []
+    },
+    {
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "control": "Lockfile hygiene",
+      "effectiveness": "Missing",
+      "kind": "lifecycle",
+      "assessment": "Lockfile hygiene not detected in the repository. Patch-management posture depends on this control being in place \u2014 the team is reactive rather than proactive without it.",
+      "linked_threats": []
+    }
+  ]
+}

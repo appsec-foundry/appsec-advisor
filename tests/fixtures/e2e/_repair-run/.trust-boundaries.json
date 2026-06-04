@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "trust_boundaries": [
+    {
+      "id": "tb-1",
+      "name": "Public Internet",
+      "description": "Unauthenticated external users and attackers. No trust. All traffic arrives here first.",
+      "components": ["external-user", "attacker"],
+      "from": "external",
+      "to": "backend-api",
+      "crossing_enforcement": "None — CORS wildcard, no authentication required for many endpoints"
+    },
+    {
+      "id": "tb-2",
+      "name": "Browser / Client Tier",
+      "description": "Angular SPA running in browser. JWT stored in localStorage (XSS-accessible). Client-side route guards only — no server enforcement.",
+      "components": ["frontend-spa"],
+      "from": "frontend-spa",
+      "to": "backend-api",
+      "crossing_enforcement": "JWT Bearer token in Authorization header (RS256, but private key hardcoded)"
+    },
+    {
+      "id": "tb-3",
+      "name": "Application Tier",
+      "description": "Express backend process. Handles all routing, authentication, and business logic. Partially enforces access control via express-jwt middleware on selected routes.",
+      "components": ["backend-api", "file-upload-service", "b2b-api"],
+      "from": "backend-api",
+      "to": "data-persistence",
+      "crossing_enforcement": "No network-level isolation — same process; Sequelize ORM with raw SQL fallback"
+    },
+    {
+      "id": "tb-4",
+      "name": "Data Tier",
+      "description": "SQLite file (data/juiceshop.sqlite) and MarsDB in-memory store. No network isolation — same filesystem.",
+      "components": ["data-persistence"],
+      "from": "backend-api",
+      "to": "data-persistence",
+      "crossing_enforcement": "File system permissions; no network segmentation; SQLite file accessible to any process running as same user"
+    },
+    {
+      "id": "tb-5",
+      "name": "Filesystem / Upload Zone",
+      "description": "Server filesystem including uploads/, ftp/, encryptionkeys/, logs/. Intended to be isolated but exposed via directory listing routes.",
+      "components": ["file-upload-service"],
+      "from": "file-upload-service",
+      "to": "external-user",
+      "crossing_enforcement": "None — /ftp, /encryptionkeys, /support/logs all publicly browsable"
+    }
+  ]
+}

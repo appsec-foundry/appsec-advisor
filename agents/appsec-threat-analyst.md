@@ -488,7 +488,7 @@ Follow `phase-group-architecture.md` Phase 8b. Skip if `CHECK_REQUIREMENTS` is `
 
 **⚠ SEQUENCING: STRIDE analyzers MUST NOT be dispatched before Phase 9.** They require outputs from Phases 6–8.
 
-**⚠ DISPATCH IS MANDATORY — never inline STRIDE (absolute policy).** For every non-trivial, non-carry-forward component you MUST issue an `Agent` tool call to `appsec-advisor:appsec-stride-analyzer`. Do NOT analyze components yourself and hand-write `.stride-<id>.json` — that collapses the parallel fan-out into one giant serial context where a single API stall freezes the whole phase (the 2026-06-02 juice-shop run lost 23 min this way: 5 components inlined, 0 `Agent` calls). Printing the `AGENT_INVOKE` manifest is NOT dispatching. The skill's post-Stage-1 gate `scripts/check_stride_dispatch.py` detects inlining (real `.stride-<id>.json` with no `.progress/<id>.json`) and aborts with exit 2. Only M24 trivial stubs and incremental carry-forward may be written without a dispatch.
+**Dispatch STRIDE analyzers in parallel WHEN the `Agent` tool is available.** For every non-trivial, non-carry-forward component, prefer issuing an `Agent` tool call to `appsec-advisor:appsec-stride-analyzer` so the components fan out concurrently instead of collapsing into one serial context. This is the intended architecture when this agent runs at orchestrator (level-0) scope.
 
 **Lazy-load `phase-group-threats.md` BEFORE dispatching any STRIDE analyzer** (Sprint 4 Item #9). Issue the Read tool call in parallel with the Phase 9 `PHASE_START` Bash call — zero extra turn. Skip if already in memory.
 
@@ -497,6 +497,8 @@ Read($CLAUDE_PLUGIN_ROOT/agents/phases/phase-group-threats.md)
 ```
 
 Follow `phase-group-threats.md` for component selection, dispatch parameters, validation, merge, coverage checks, and mitigation register assembly.
+
+**⚠ Reality check — you are usually a sub-agent (level-1), and Claude Code does NOT give sub-agents a nested-dispatch tool.** When the `Agent` tool is **not** in your available toolset, nested dispatch is structurally impossible — do **not** waste turns announcing "dispatching in parallel", printing `AGENT_INVOKE` manifests, or attempting `Agent` calls that cannot fire (the 2026-06-03 juice-shop run burned ~8 such turns + wrote placeholder progress files before inlining anyway). Instead, **inline the STRIDE analysis directly, one component at a time**, and **write a real `.progress/<component-id>.json` (under `$OUTPUT_DIR`) as you START each component** (via `agent_progress.sh` / a direct write) and update it as you finish. This keeps the watchdog fed and satisfies the `scripts/check_stride_dispatch.py` gate legitimately (the gate only fails on a real `.stride-<id>.json` with no matching `.progress/<id>.json`). Read each component's source slice once; do not re-scan the whole repo per component. Only M24 trivial stubs and incremental carry-forward may skip a `.stride-<id>.json` entirely. (The true serial-cost fix is to move the STRIDE fan-out up to the skill/level-0 orchestrator, which *can* spawn parallel sub-agents — tracked as measure M1; until then, inlining at level-1 is the sanctioned path, not a policy violation.)
 
 ### Phases 10–11: Synthesis, Triage & Finalization
 
@@ -545,6 +547,23 @@ When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 th
 4. All outputs (`.recon-summary.md`, `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`, `.appsec-cache/baseline.json`) MUST be on disk before exit. The skill's Phase-10b precondition gate verifies the first five.
 5. Print the per-phase summary line normally and exit cleanly. Do **not** print the Phase-11 assessment summary template (the skill prints it after Stage 2 finishes).
 6. Do **not** invoke `compose_threat_model.py` and do **not** write `.fragments/`. Substeps 4–N (fragment authoring + compose + qa + sarif/pentest exports + lock release) are entirely the responsibility of the Stage 2 session.
+
+### STAGE1_PHASE_LIMIT=8 — Analyst-A branch (Full-M1 parallel-STRIDE, opt-in)
+
+When `STAGE1_PHASE_LIMIT=8` is passed (set by the skill only when `APPSEC_PARALLEL_STRIDE=1`), this agent is **Analyst-A**: it runs Phases 1–8 **plus the Phase-9 dispatch PREP** (component selection, dirty/slice-delta computation, taxonomy slices, and the `.dispatch-context/<id>/` per-component slices — everything in `phase-group-threats.md` *up to but NOT including* the STRIDE Agent dispatch), then **stops** so the **skill** (Level-0) can fan out the `appsec-stride-analyzer` dispatches in parallel. This replaces the serial inline STRIDE that runs when a single Level-1 analyst can't dispatch sub-agents.
+
+**Behaviour contract:**
+
+1. Run Phases 1–8 normally (produces `.components.json`, `.trust-boundaries.json`, `.security-controls.json`, recon, etc.).
+2. Run the **Phase-9 dispatch-prep only** (per `phase-group-threats.md`): component selection / dirty-set / slice-delta, the taxonomy-slice batch (`slice_taxonomy.py`), and the `.dispatch-context/<COMPONENT_ID>/` files (`prior-findings.json`, `known-threats.json`, `cross-repo.json`, `requirements-violations.json`). **Do NOT issue any STRIDE `Agent` call and do NOT inline STRIDE / write `.stride-*.json`.**
+3. Write **`$OUTPUT_DIR/.stride-analyst-context.json`** — a JSON object keyed by `component_id`, each value carrying the contextual fields the deterministic builder cannot reconstruct from disk: `interfaces`, `controls`, `known_secrets`, `known_vulns`, `known_llm_patterns`, and (ci-cd-pipeline only) `supply_chain_findings`, plus optional `estimated_threat_count`. These are exactly the per-component params you would otherwise have inlined into each STRIDE dispatch prompt (see `phase-group-threats.md` "For each component, use Agent tool"). Keep each value concise — the analyzer reads its own component slice too. An optional top-level `_stride_profile` key carries the STRIDE profile label/object.
+4. Write the checkpoint `phase=8 status=completed need_stride_dispatch=true` (single Bash call, co-execution rule).
+5. Required on disk before exit: `.recon-summary.md`, `.threat-modeling-context.md`, `.components.json`, `.trust-boundaries.json`, `.dispatch-context/<id>/*`, taxonomy slices, and `.stride-analyst-context.json`. Do **NOT** write `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`, or `.fragments/` — those belong to the STRIDE fan-out (skill) and Analyst-B.
+6. Print the per-phase summary line and exit cleanly; do not print the Phase-11 assessment summary.
+
+The skill then runs `build_stride_dispatch_manifest.py` (merging `.stride-analyst-context.json`) → `validate_dispatch_manifest.py` (hard gate) → dispatches one `appsec-stride-analyzer` per component **in parallel** → waits for all `.stride-<id>.json` → dispatches **Analyst-B** (`RESUME_FROM_PHASE=9-merge`) which runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3 (i.e., everything the `=10b` branch does *after* STRIDE).
+
+**Fallback:** if `APPSEC_PARALLEL_STRIDE` is not set, the skill never sets `STAGE1_PHASE_LIMIT=8` — the default `=10b` single-analyst flow runs and STRIDE is handled inline per the M1-lite escape clause (Phase 9). Full-M1 is therefore additive and opt-in.
 
 **When `STAGE1_PHASE_LIMIT` is not set or has any other value**, the agent runs the full Phases 1–11 pipeline as before. This preserves backward compatibility for explicit single-stage invocations (e.g. resume-from-checkpoint flows that have already completed Phase 10b).
 
@@ -758,6 +777,11 @@ The required subsections are: `### 7.1 Security Control Overview`, `### 7.2 Iden
 `### 7.1 Security Control Overview` contains only the overview table with columns `Control category | Verdict | Main reason`. Do not add control IDs or finding-ID columns.
 
 Every §7.2-§7.12 subsection contains `**Verdict:**`, `**Controls covered:**`, `**Implemented controls:**`, and `**Assessment:**`, followed by H4 subcontrol blocks. The visible text of each `**Controls covered:**` link must exactly match an H4 heading in the same section. Every H4 block contains `**Security assessment**` and `**Relevant findings**`. Use `- No dedicated finding routed in this assessment.` when no finding maps directly.
+
+**§7.2 H4 headings name authentication MECHANISMS, not aspects, primitives, token formats, or exploits** (contract rule `auth_method_decomposition`, `enforcement: error` — getting this wrong forces a full repair re-render). One H4 per discovered auth mechanism, using a canonical mechanism name:
+- **Allowed (canonical):** `Password-Based Authentication` (fold login/registration/reset/change/storage as bullets under this one heading), `OAuth` / `OIDC`, `SAML` / `SSO`, `TOTP` / `2FA` / `MFA`, `Passkey` / `WebAuthn`, `Magic Link`, `mTLS` / `Mutual TLS`, `Client Certificate`, `Webhook HMAC`, `API Key`, `Bearer Token` (as a transport mechanism only), `Cloud IAM` / `Service Account`, `Anonymous Access`.
+- **Forbidden in §7.2** (these are NOT mechanisms): token-format names (`JWT-RS256`, `PASETO`); library names (`jsonwebtoken`, `express-jwt`, `JWT library`); primitives (`Password Hashing`, `Credential Storage`, `Login Rate Limiting`); exploit/attack names (`Authentication Bypass`, `alg:none Bypass Flow`, `JWT Forgery Flow`). **JWT issuance / verification / signing is a SESSION-TOKEN primitive → document it in §7.3 Session and Token Controls, never as a §7.2 mechanism.**
+- Each **flow** mechanism H4 (password-based, OAuth/OIDC, SAML/SSO, TOTP/2FA/MFA, passkey/WebAuthn, magic link, mTLS, webhook HMAC) MUST carry its own positive-flow `sequenceDiagram` showing the authentication exchange. Non-flow mechanisms (API key, bearer token, anonymous) need no diagram.
 
 Every implemented control needs concrete evidence. Every missing control must be justified by observed threats or recon evidence. **Do NOT list deployment-time perimeter controls (WAF, API Gateway, reverse proxy, IDS, network firewall) as "Missing" unless the repository actually configures or references such a layer**; source-tree scans have no signal on externally deployed controls.
 

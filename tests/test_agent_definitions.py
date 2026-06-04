@@ -46,6 +46,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
     "appsec-evidence-verifier": 30,  # M2: Phase 10a evidence re-check
     "appsec-abuse-case-verifier": 20,  # Phase 10b: one agent per abuse-case candidate
+    "appsec-fragment-fixer": 30,  # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE)
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -61,6 +62,7 @@ INTERNAL_AGENTS = {
     "appsec-config-scanner",
     "appsec-evidence-verifier",
     "appsec-abuse-case-verifier",
+    "appsec-fragment-fixer",
 }
 
 # The orchestrator is the only user-facing agent
@@ -157,7 +159,7 @@ class TestMaxTurnsCeilings:
         not as a sub-agent of the orchestrator — it has its own independent
         turn budget invoked by the skill after the orchestrator finishes.
         """
-        skill_level_agents = {"appsec-qa-reviewer", "appsec-architect-reviewer", "appsec-threat-renderer"}
+        skill_level_agents = {"appsec-qa-reviewer", "appsec-architect-reviewer", "appsec-threat-renderer", "appsec-fragment-fixer"}
         all_turns = {}
         for f in agent_files():
             meta, _ = parse_frontmatter(f)

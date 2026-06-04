@@ -1,0 +1,27 @@
+{
+  "abuse_case_id": "AC-T-005",
+  "step_verdicts": [
+    {
+      "step": 1,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-002",
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 23,
+        "excerpt": "const privateKey = '-----BEGIN RSA PRIVATE KEY-----\\r\\nMIICXA...' (full key hardcoded as string literal)"
+      },
+      "controls_found": []
+    },
+    {
+      "step": 2,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-002",
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 54,
+        "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any) — publicKey read from encryptionkeys/jwt.pub; authorize() signs with hardcoded privateKey (RS256); /encryptionkeys served unauthenticated at server.ts:277"
+      },
+      "controls_found": []
+    }
+  ]
+}

@@ -1,0 +1,259 @@
+{
+  "schema_version": 1,
+  "abuse_cases": [
+    {
+      "id": "AC-T-001",
+      "title": "Account Takeover via Stored XSS + Token Hijacking",
+      "source": "mandatory",
+      "actor_label": "external-attacker \u2014 unauthenticated external attacker",
+      "goal": "Obtain persistent authenticated access as an arbitrary user without valid credentials.",
+      "prerequisite": "Attacker can submit content that is later rendered to other users (e.g. feedback, comments, profile fields).",
+      "combined_risk": "High",
+      "chain_verdict": "partially_blocked",
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-018",
+          "finding_title": "DOM XSS via search result rendering search result.component.ts",
+          "evidence": "frontend/src/app/search-result/search-result.component.ts:132",
+          "outcome": "Attacker JavaScript executes in the victim's browser session.",
+          "status_icon": "\u25d0"
+        },
+        {
+          "step": 2,
+          "fid": "F-028",
+          "finding_title": "JWT stored in localStorage XSS accessible token storage login.component.ts",
+          "evidence": "frontend/src/app/login/login.component.ts:101",
+          "outcome": "Token exfiltrated from local/session storage via the Step 1 payload.",
+          "status_icon": "\u26a0"
+        },
+        {
+          "step": 3,
+          "fid": "F-027",
+          "finding_title": "OAuth token exposed in URL fragment oauth/oauth.component.ts",
+          "evidence": "lib/insecurity.ts:54",
+          "outcome": "Exfiltrated token accepted for a new session; absence of token binding / PKCE removes the last server-side revocation opportunity.",
+          "status_icon": "\u26a0"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-018",
+        "F-028",
+        "F-027"
+      ],
+      "combined_risk_rationale": "Individually the XSS sink and the web-readable token storage rate below Critical, but chained they form a repeatable credential-theft path: a single stored payload causes indefinite session compromise for every user who views the affected page.",
+      "blocking_mitigations": [
+        {
+          "id": "M-022",
+          "title": "DOM XSS via search result rendering search result.component.ts",
+          "priority": "P2",
+          "addresses": [
+            "F-018"
+          ],
+          "breaks_at_step": 1
+        },
+        {
+          "id": "M-020",
+          "title": "JWT stored in localStorage XSS accessible token storage login.component.ts",
+          "priority": "P2",
+          "addresses": [
+            "F-028"
+          ],
+          "breaks_at_step": 2
+        },
+        {
+          "id": "M-023",
+          "title": "OAuth token exposed in URL fragment oauth/oauth.component.ts",
+          "priority": "P2",
+          "addresses": [
+            "F-027"
+          ],
+          "breaks_at_step": 3
+        }
+      ]
+    },
+    {
+      "id": "AC-T-002",
+      "title": "Bulk Data Exfiltration via Broken Object Authorization",
+      "source": "mandatory",
+      "actor_label": "authenticated-user \u2014 authenticated low-privilege user",
+      "goal": "Enumerate and exfiltrate other users' records, then escalate own permissions via unguarded mass assignment.",
+      "prerequisite": "Attacker holds a valid, non-privileged user account.",
+      "combined_risk": "High",
+      "chain_verdict": "partially_blocked",
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-017",
+          "finding_title": "NoSQL injection in review update no author verification updateProductReviews.ts",
+          "evidence": "routes/basket.ts:19",
+          "outcome": "Attacker enumerates and retrieves records for arbitrary object IDs; no ownership comparison is performed.",
+          "status_icon": "\u26a0"
+        },
+        {
+          "step": 2,
+          "fid": "",
+          "finding_title": "",
+          "evidence": "routes/verify.ts:52",
+          "outcome": "Update endpoint persists an unfiltered `role` (or equivalent) field supplied in the request body.",
+          "status_icon": "\u25d0"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-017"
+      ],
+      "combined_risk_rationale": "The ownership gap exposes every record, and the mass-assignment gap lets the same low-privilege actor self-elevate \u2014 together they turn a single compromised account into full tenant data access and role escalation.",
+      "blocking_mitigations": [
+        {
+          "id": "M-025",
+          "title": "NoSQL injection in review update no author verification updateProductReviews.ts",
+          "priority": "P2",
+          "addresses": [
+            "F-017"
+          ],
+          "breaks_at_step": 1
+        }
+      ]
+    },
+    {
+      "id": "AC-T-003",
+      "title": "Privilege Escalation to Admin via JWT Algorithm Confusion",
+      "source": "mandatory",
+      "actor_label": "external-attacker \u2014 unauthenticated external attacker",
+      "goal": "Forge an admin-role JWT without knowledge of the signing secret.",
+      "prerequisite": "Attacker can obtain any valid JWT issued by the system (e.g. by registering a free account).",
+      "combined_risk": "Critical",
+      "chain_verdict": "fully_viable",
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-002",
+          "finding_title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "evidence": "lib/insecurity.ts:54",
+          "outcome": "Verifier accepts attacker-chosen `alg` (e.g. `none` or HMAC-with-public-key), allowing token re-signing without the secret.",
+          "status_icon": "\u26a0"
+        },
+        {
+          "step": 2,
+          "fid": "F-038",
+          "finding_title": "Client side only admin guard Angular route guard bypass app.guard.ts",
+          "evidence": "lib/insecurity.ts:159",
+          "outcome": "Forged `role: admin` claim is accepted as authoritative because the role is not re-fetched from the database per request.",
+          "status_icon": "\u26a0"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-002",
+        "F-038"
+      ],
+      "combined_risk_rationale": "Algorithm confusion alone yields a forgeable token; trusting the in-token role claim turns that forgery into instant admin access \u2014 neither gap is Critical in isolation, but the chain is a full authentication bypass.",
+      "blocking_mitigations": [
+        {
+          "id": "M-003",
+          "title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "priority": "P1",
+          "addresses": [
+            "F-002"
+          ],
+          "breaks_at_step": 1
+        },
+        {
+          "id": "M-021",
+          "title": "Client side only admin guard Angular route guard bypass app.guard.ts",
+          "priority": "P2",
+          "addresses": [
+            "F-038"
+          ],
+          "breaks_at_step": 2
+        }
+      ]
+    },
+    {
+      "id": "AC-T-005",
+      "title": "Authentication Bypass via Exposed Secret Material",
+      "source": "mandatory",
+      "actor_label": "external-attacker \u2014 unauthenticated external attacker",
+      "goal": "Forge trusted tokens / credentials and impersonate any user.",
+      "prerequisite": "Signing material or other secrets are reachable (committed to a public repo, served by an unauthenticated route, or in an exposed directory).",
+      "combined_risk": "Critical",
+      "chain_verdict": "fully_viable",
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-002",
+          "finding_title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "evidence": "lib/insecurity.ts:23",
+          "outcome": "A private key, signing secret, or credential file is committed to the source repository or served without authentication.",
+          "status_icon": "\u26a0"
+        },
+        {
+          "step": 2,
+          "fid": "F-002",
+          "finding_title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "evidence": "lib/insecurity.ts:54",
+          "outcome": "The exposed key/secret is the same one the server trusts, so a token signed with it (or the leaked credential) is accepted as authentic.",
+          "status_icon": "\u26a0"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-002",
+        "F-002"
+      ],
+      "combined_risk_rationale": "Exposed signing material collapses the entire authentication boundary: any attacker who reads the key can mint a valid token for any identity or role, with no credential ever required.",
+      "blocking_mitigations": [
+        {
+          "id": "M-003",
+          "title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "priority": "P1",
+          "addresses": [
+            "F-002"
+          ],
+          "breaks_at_step": 1
+        }
+      ]
+    },
+    {
+      "id": "AC-T-006",
+      "title": "Remote Code Execution via Server-Side Injection",
+      "source": "mandatory",
+      "actor_label": "external-attacker \u2014 unauthenticated external attacker",
+      "goal": "Execute arbitrary code in the application process.",
+      "prerequisite": "An input reaches a server-side interpreter / template / eval.",
+      "combined_risk": "Critical",
+      "chain_verdict": "partially_blocked",
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-011",
+          "finding_title": "RCE via vm.runInContext sandbox escape in B2B order routes/b2bOrder.ts",
+          "evidence": "routes/userProfile.ts:62",
+          "outcome": "Attacker-controlled input is passed to `eval`, a server-side template engine, an unsafe sandbox, or an unsafe deserializer.",
+          "status_icon": "\u26a0"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-011"
+      ],
+      "combined_risk_rationale": "A single injection into a server-side interpreter yields code execution in the application process \u2014 the highest-impact outcome, granting full filesystem and network access from one unauthenticated request.",
+      "blocking_mitigations": [
+        {
+          "id": "M-033",
+          "title": "RCE via vm.runInContext sandbox escape in B2B order routes/b2bOrder.ts",
+          "priority": "P1",
+          "addresses": [
+            "F-011"
+          ],
+          "breaks_at_step": 1
+        }
+      ]
+    }
+  ],
+  "catalog_evaluated": [
+    {
+      "id": "AC-T-004",
+      "title": "Privilege Escalation via Mass-Assignment on Registration",
+      "source": "mandatory",
+      "reason": "no finding matched the required chain step(s) for this scenario"
+    }
+  ]
+}

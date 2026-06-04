@@ -56,6 +56,11 @@ class TestConflicts:
         msg = rc.detect_conflicts(self._parse("--rebuild", "--resume"))
         assert msg and "checkpoint" in msg.lower()
 
+    @pytest.mark.parametrize("other", ["--full", "--incremental", "--rebuild", "--resume"])
+    def test_rerender_conflicts(self, other):
+        msg = rc.detect_conflicts(self._parse("--rerender", other))
+        assert msg and "rerender" in msg.lower()
+
     def test_architect_review_conflict(self):
         msg = rc.detect_conflicts(self._parse("--architect-review", "--no-architect-review"))
         assert msg
@@ -63,6 +68,23 @@ class TestConflicts:
     def test_no_conflict_clean_args(self):
         msg = rc.detect_conflicts(self._parse("--full", "--verbose"))
         assert msg is None
+
+
+class TestRerenderMode:
+    def _parse(self, *argv):
+        return rc.build_parser().parse_args(list(argv))
+
+    def test_rerender_on_structured_baseline(self, tmp_path):
+        (tmp_path / "threat-model.yaml").write_text("meta: {}\n")
+        res = rc.resolve_incremental_mode(self._parse("--rerender"), tmp_path, dry_run=False)
+        assert res["mode"] == "rerender"
+        assert res["rerender"] is True
+        assert res["incremental"] is False
+        assert res["rebuild"] is False
+
+    def test_rerender_empty_dir_aborts(self, tmp_path):
+        with pytest.raises(SystemExit):
+            rc.resolve_incremental_mode(self._parse("--rerender"), tmp_path, dry_run=False)
 
 
 # ---------------------------------------------------------------------------

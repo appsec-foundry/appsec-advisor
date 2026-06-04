@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "run_status": "clean",
+  "assessment_depth": "standard",
+  "generated": "2026-06-04T06:55:44Z",
+  "summary": {
+    "errors": 0,
+    "warnings": 0,
+    "perf_anomalies": 0,
+    "recovery_events": 0,
+    "auto_applicable_fixes": 0
+  },
+  "issues": []
+}

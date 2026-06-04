@@ -1,0 +1,1 @@
+{"tool_use_id": "toolu_01TuQdk7ngpxUwhFPtDWspL5", "session_id": "5f22d34b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1780516235, "input_summary": "export CLAUDE_PLUGIN_ROOT=/home/mrohr/appsec-advisor OUTPUT_DIR=/home/mrohr/juice-shop/docs/security  echo \"=== secret gate ===\" python3 \"$CLAUDE_PLUGIN_ROOT/sc\u2026"}

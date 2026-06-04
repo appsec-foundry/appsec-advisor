@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "tier_root_causes": {
+    "edge": [
+      "JWT stored in localStorage — accessible to any injected script",
+      "Angular route guards enforce authorization client-side only",
+      "DomSanitizer bypassed for user-controlled HTML output"
+    ],
+    "server": [
+      "Raw SQL string interpolation on multiple authentication and search paths",
+      "eval() and vm.runInContext accept user-supplied executable code",
+      "Wildcard CORS and missing CSP remove browser-enforced boundaries",
+      "Hardcoded RSA private key and HMAC secret in source code"
+    ],
+    "data": [
+      "MD5-only password hashing with no salt — trivially reversible",
+      "Sensitive PII and payment card data stored without field-level encryption",
+      "NoSQL $where clause accepts unparameterized JavaScript expressions"
+    ]
+  }
+}

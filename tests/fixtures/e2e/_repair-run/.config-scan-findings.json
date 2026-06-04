@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "scan_timestamp": "2026-06-03T18:40:00Z",
+  "repo_root": "/home/mrohr/juice-shop",
+  "findings": [
+    {
+      "id": "IAC-001",
+      "name": "Dockerfile base image not digest-pinned",
+      "severity": "High",
+      "file": "Dockerfile",
+      "line": 1,
+      "detail": "FROM node:24 uses a tag without digest pinning. Builder image can be silently substituted.",
+      "cwe": "CWE-1104",
+      "remediation": "Pin base image to @sha256:<digest>"
+    },
+    {
+      "id": "IAC-001b",
+      "name": "Dockerfile final stage not digest-pinned",
+      "severity": "High",
+      "file": "Dockerfile",
+      "line": 23,
+      "detail": "FROM gcr.io/distroless/nodejs24-debian13 uses no tag and no digest.",
+      "cwe": "CWE-1104",
+      "remediation": "Pin base image to @sha256:<digest>"
+    },
+    {
+      "id": "IAC-002",
+      "name": "Dockerfile sets non-root user (65532)",
+      "severity": "info",
+      "file": "Dockerfile",
+      "line": 38,
+      "detail": "USER 65532 correctly sets non-root execution context.",
+      "cwe": null,
+      "remediation": null
+    },
+    {
+      "id": "IAC-003",
+      "name": "Docker Compose uses :latest tag",
+      "severity": "Medium",
+      "file": "docker-compose.test.yml",
+      "line": 7,
+      "detail": "image: bkimminich/juice-shop:latest — mutable tag, not reproducible.",
+      "cwe": "CWE-1104",
+      "remediation": "Pin to specific version tag or digest"
+    },
+    {
+      "id": "IAC-010",
+      "name": "GitHub Actions use unpinned version tags",
+      "severity": "Medium",
+      "file": ".github/workflows/codeql-analysis.yml",
+      "line": 23,
+      "detail": "3 CodeQL actions use @v3 tag not @sha256 digest. Supply chain substitution possible.",
+      "cwe": "CWE-1104",
+      "remediation": "Pin all third-party actions to SHA digest"
+    },
+    {
+      "id": "IAC-010b",
+      "name": "GitHub Actions Coveralls uses unpinned @v2",
+      "severity": "Medium",
+      "file": ".github/workflows/ci.yml",
+      "line": 161,
+      "detail": "coverallsapp/github-action@v2 not digest-pinned.",
+      "cwe": "CWE-1104",
+      "remediation": "Pin to @sha256:<digest>"
+    },
+    {
+      "id": "IAC-020",
+      "name": "Dependabot intentionally ignores vulnerable dependencies",
+      "severity": "Critical",
+      "file": ".dependabot/config.yml",
+      "line": 9,
+      "detail": "express-jwt@0.1.3, sanitize-html@1.4.2, unzipper@0.9.15 explicitly suppressed from auto-update. These are known-vulnerable versions retained intentionally as training artifacts.",
+      "cwe": "CWE-1104",
+      "remediation": "By design for training — do not change in production-equivalent deployments"
+    },
+    {
+      "id": "IAC-021",
+      "name": "GitHub Actions permissions not least-privilege",
+      "severity": "Medium",
+      "file": ".github/workflows/ci.yml",
+      "line": 1,
+      "detail": "No top-level permissions block found. Default token permissions may be overly broad (read access to all scopes for GITHUB_TOKEN).",
+      "cwe": "CWE-272",
+      "remediation": "Add permissions: read-all at workflow level or restrict per-job"
+    }
+  ],
+  "summary": {
+    "critical": 1,
+    "high": 2,
+    "medium": 4,
+    "low": 0,
+    "info": 1,
+    "total": 8
+  }
+}

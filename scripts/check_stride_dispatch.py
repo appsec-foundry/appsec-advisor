@@ -109,12 +109,39 @@ def _stride_has_real_threats(stride_path: Path) -> bool:
     )
 
 
+def _stride_was_dispatched(output_dir: Path) -> bool:
+    """Positive evidence the STRIDE analyzers ran as real dispatched sub-agents.
+
+    Full-M1 fans them out in parallel from the skill (Level-0) and writes
+    ``.stride-dispatch-manifest.json``. In that mode ``agent_progress.sh`` may
+    NOT write ``.progress/<id>.json`` — it no-ops when ``OUTPUT_DIR`` is not a
+    shell env var inside the analyzer (the dispatch passes it as prompt text).
+    So the "real .stride, no .progress" signal would false-positive a genuinely
+    parallel run as inlined. A dispatch manifest — or an ``AGENT_SPAWN`` for
+    ``appsec-stride-analyzer`` in the hook log — is conclusive proof the
+    analysis was dispatched, not inlined.
+    """
+    if (output_dir / ".stride-dispatch-manifest.json").is_file():
+        return True
+    try:
+        text = (output_dir / ".hook-events.log").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "AGENT_SPAWN" in text and "appsec-stride-analyzer" in text
+
+
 def detect_inlined_components(output_dir: Path) -> list[str]:
     """Return component ids whose STRIDE analysis was inlined.
 
     A component is inlined when its ``.stride-<id>.json`` has real threats
     but no ``.progress/<id>.json`` exists. Empty list = clean.
+
+    Suppressed when there is positive dispatch evidence (Full-M1 parallel
+    fan-out manifest, or AGENT_SPAWN hook evidence) — in that case the missing
+    ``.progress/`` is a known limitation of the parallel dispatch, not inlining.
     """
+    if _stride_was_dispatched(output_dir):
+        return []
     progress_dir = output_dir / ".progress"
     inlined: list[str] = []
     for stride_path in sorted(output_dir.glob(".stride-*.json")):

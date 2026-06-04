@@ -1,0 +1,317 @@
+schema_version: 1
+categories:
+- id: TH-01
+  title: Injection
+  description: 'Untrusted input is executed by data-plane interpreters (SQL, NoSQL,
+    JavaScript sandbox, XML parser, HTML/template) because input neutralization is
+    either absent or bypassed on at least one code path.
+
+    '
+  stride:
+  - Tampering
+  - Elevation of Privilege
+  cwe_pillar: CWE-707
+  cwe_canonical: CWE-74
+  cwe_top25_members:
+  - CWE-79
+  - CWE-89
+  - CWE-94
+  owasp_top10_2021: A03
+  owasp_asvs: V5.3
+  typical_findings:
+  - SQL injection (raw query interpolation)
+  - NoSQL injection ($where, $regex)
+  - JavaScript sandbox escape (notevil, vm2)
+  - XXE (XML external entities)
+  - HTML/template injection
+  - LDAP / XPath / command injection
+- id: TH-02
+  title: Broken Authentication
+  description: 'Authentication mechanisms permit bypass or impersonation — signature
+    verification flaws, weak credential recovery, MFA enforcement gaps, client-side-only
+    guards.
+
+    '
+  stride:
+  - Spoofing
+  - Elevation of Privilege
+  cwe_pillar: CWE-693
+  cwe_canonical: CWE-287
+  cwe_top25_members:
+  - CWE-287
+  - CWE-306
+  owasp_top10_2021: A07
+  owasp_asvs: V2.1
+  typical_findings:
+  - JWT alg:none accepted
+  - JWT RS256→HS256 algorithm confusion (public key reused as HMAC secret)
+  - JWT `kid` header path injection (attacker-controlled key file lookup)
+  - JWT `jwk` / `jku` header URL injection (attacker-controlled JWKS endpoint)
+  - '`jwt.verify(token, key)` without `algorithms:` allowlist parameter'
+  - Hardcoded signing key permitting offline forgery
+  - Security-question-based password reset
+  - MFA bypassed on alternate login paths
+  - Client-side-only admin guard
+  - Missing token revocation
+  - SAML XML Signature Wrapping (XSW1-8) — assertion not canonically signed
+  - SAML RelayState open-redirect — destination URL not allowlisted
+- id: TH-04
+  title: Insecure Client-Side Storage
+  description: 'Session tokens or sensitive data stored in browser-accessible locations
+    (localStorage, sessionStorage, non-HttpOnly cookies) exposing them to XSS exfiltration.
+
+    '
+  stride:
+  - Information Disclosure
+  cwe_pillar: CWE-664
+  cwe_canonical: CWE-922
+  cwe_top25_members: []
+  owasp_top10_2021: A02
+  owasp_asvs: V3.4
+  typical_findings:
+  - JWT in localStorage
+  - PII (email, basket ID) in localStorage
+  - Cookies without HttpOnly / Secure / SameSite
+- id: TH-06
+  title: Broken Access Control
+  description: 'Authorization checks missing, inconsistent, or evaded — IDOR, mass
+    assignment of privileged fields, horizontal/vertical privilege abuse.
+
+    '
+  stride:
+  - Elevation of Privilege
+  cwe_pillar: CWE-284
+  cwe_canonical: CWE-284
+  cwe_top25_members:
+  - CWE-862
+  - CWE-863
+  - CWE-639
+  owasp_top10_2021: A01
+  owasp_api2023:
+  - API1
+  - API3
+  - API5
+  owasp_asvs: V4.1
+  typical_findings:
+  - IDOR via :id parameter without ownership check
+  - Mass-assignment admin-role injection
+  - Admin panel client-side guard only
+  - Server-side authorization missing on API
+- id: TH-10
+  title: OAuth / OIDC Misconfiguration
+  description: 'OAuth / OIDC flows implemented with deprecated patterns — implicit
+    flow, missing PKCE, missing state, tokens leaked via URL fragments, claim validation
+    skipped (aud/iss/nonce), refresh tokens exposed to the browser, or derived credentials
+    predictable from the identity claim.
+
+    '
+  stride:
+  - Spoofing
+  - Information Disclosure
+  cwe_pillar: CWE-693
+  cwe_canonical: CWE-287
+  cwe_top25_members:
+  - CWE-287
+  owasp_top10_2021: A07
+  owasp_asvs: V2.1
+  typical_findings:
+  - Implicit flow (no PKCE)
+  - State parameter missing / unvalidated
+  - Token in URL fragment exposed to history/referer
+  - Derived password from email / subject claim
+  - '`aud` claim not validated — token issued for a different audience accepted'
+  - '`iss` claim not validated — token from an unexpected IdP accepted'
+  - '`nonce` missing or not validated on id_token (OIDC replay protection)'
+  - Refresh token stored in browser (localStorage/sessionStorage) instead of BFF
+  - '`redirect_uri` allowlist uses substring/prefix match instead of exact match'
+  - '`post_logout_redirect_uri` not allowlisted — open-redirect on logout flow'
+  - Authorization code exchanged without PKCE on a public client
+- id: TH-11
+  title: Cross-Site Scripting (XSS)
+  description: 'Attacker-controlled input reaches the rendered DOM without proper
+    escaping — stored, reflected, or DOM-based XSS. Especially impactful when combined
+    with client-side JWT storage and missing CSP.
+
+    '
+  stride:
+  - Information Disclosure
+  - Tampering
+  cwe_pillar: CWE-707
+  cwe_canonical: CWE-79
+  cwe_top25_members:
+  - CWE-79
+  owasp_top10_2021: A03
+  owasp_asvs: V5.2
+  typical_findings:
+  - DomSanitizer.bypassSecurityTrustHtml on user input
+  - innerHTML assignments with attacker data
+  - Template interpolation without escape
+  - Missing Content Security Policy
+- id: TH-12
+  title: Denial of Service
+  description: 'Endpoints consume unbounded resources — no rate limiting, no account
+    lockout, unbounded expression evaluation, unbounded file parsing.
+
+    '
+  stride:
+  - Denial of Service
+  cwe_pillar: CWE-664
+  cwe_canonical: CWE-400
+  cwe_top25_members: []
+  owasp_top10_2021: A04
+  owasp_asvs: V11.1
+  typical_findings:
+  - No rate limiting on auth endpoints
+  - No account lockout on failed logins
+  - Unbounded expression complexity
+  - Parser amplification (YAML bomb, XXE billion laughs)
+  - Admin actions without rate limit (bulk delete)
+- id: TH-13
+  title: Insecure Real-Time Channel
+  description: 'WebSocket, Server-Sent-Events, or long-polling channels accept unauthenticated
+    connections, have no origin validation, or process attacker-controlled events
+    without server-side state checks.
+
+    '
+  stride:
+  - Spoofing
+  - Tampering
+  cwe_pillar: CWE-284
+  cwe_canonical: CWE-306
+  cwe_top25_members:
+  - CWE-306
+  owasp_top10_2021: A01
+  owasp_asvs: V13.4
+  typical_findings:
+  - '`Socket.IO` upgrade without JWT'
+  - WS origin header not validated
+  - Client-supplied challenge-verification events trusted
+- id: TH-15
+  title: Cross-Site Request Forgery (CSRF)
+  description: 'State-changing endpoints accept authenticated cross-origin requests
+    without CSRF token or SameSite-cookie enforcement, enabling attacker pages to
+    perform actions on behalf of victims.
+
+    '
+  stride:
+  - Tampering
+  cwe_pillar: CWE-693
+  cwe_canonical: CWE-352
+  cwe_top25_members:
+  - CWE-352
+  owasp_top10_2021: A01
+  owasp_asvs: V4.2
+  typical_findings:
+  - Password change without CSRF token
+  - Email change without CSRF token / SameSite cookie
+  - State-changing GET endpoints (bad REST hygiene)
+- id: TH-17
+  title: Error Information Disclosure
+  description: 'Unhandled errors return stack traces, library versions, file paths,
+    or internal state to untrusted callers, aiding reconnaissance.
+
+    '
+  stride:
+  - Information Disclosure
+  cwe_pillar: CWE-710
+  cwe_canonical: CWE-209
+  cwe_top25_members: []
+  owasp_top10_2021: A05
+  owasp_asvs: V7.4
+  typical_findings:
+  - Stack traces on 500 responses
+  - Verbose error messages exposing schema
+  - Express default error handler in production
+- id: TH-18
+  title: Open Redirect
+  description: 'Redirect endpoints accept attacker-controlled destinations without
+    allowlisting, enabling phishing and OAuth state-token exfiltration.
+
+    '
+  stride:
+  - Spoofing
+  cwe_pillar: CWE-664
+  cwe_canonical: CWE-601
+  cwe_top25_members: []
+  owasp_top10_2021: A01
+  owasp_asvs: V5.1
+  typical_findings:
+  - /redirect?to=<attacker>
+  - OAuth redirect_uri substring check only
+cwe_to_th:
+  CWE-79:
+  - TH-11
+  - TH-01
+  CWE-89:
+  - TH-01
+  CWE-94:
+  - TH-01
+  CWE-611:
+  - TH-01
+  CWE-915:
+  - TH-06
+  - TH-01
+  CWE-943:
+  - TH-01
+  CWE-400:
+  - TH-12
+  CWE-601:
+  - TH-18
+  CWE-922:
+  - TH-04
+  CWE-352:
+  - TH-15
+  CWE-287:
+  - TH-02
+  CWE-290:
+  - TH-02
+  CWE-306:
+  - TH-13
+  CWE-307:
+  - TH-02
+  - TH-12
+  CWE-522:
+  - TH-02
+  - TH-10
+  CWE-639:
+  - TH-06
+  CWE-640:
+  - TH-02
+  CWE-862:
+  - TH-06
+  CWE-863:
+  - TH-06
+  CWE-285:
+  - TH-06
+  CWE-284:
+  - TH-06
+  CWE-917:
+  - TH-01
+  CWE-1336:
+  - TH-01
+  CWE-346:
+  - TH-15
+  CWE-347:
+  - TH-02
+  CWE-548:
+  - TH-17
+  CWE-598:
+  - TH-10
+  CWE-209:
+  - TH-17
+  CWE-200:
+  - TH-17
+  CWE-359:
+  - TH-17
+  CWE-532:
+  - TH-17
+  CWE-613:
+  - TH-02
+  CWE-693:
+  - TH-12
+  - TH-11
+  CWE-942:
+  - TH-06
+  - TH-15
+  CWE-602:
+  - TH-06

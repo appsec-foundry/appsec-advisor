@@ -1,0 +1,1 @@
+{"tool_use_id": "toolu_01E3cW9ZTNyy9jjp34JoZVMr", "session_id": "5f22d34b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1780511569, "input_summary": "REPO_ROOT=/home/mrohr/juice-shop && ls \"$REPO_ROOT/data/mongodb.ts\" \"$REPO_ROOT/data/mongodb.js\" 2>/dev/null && cat \"$REPO_ROOT/data/mongodb.ts\" 2>/dev/null | h\u2026"}

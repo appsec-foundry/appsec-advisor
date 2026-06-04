@@ -1,0 +1,33 @@
+{
+  "severity": "red",
+  "opening": "Not production-ready. Every primary control boundary — authentication, query construction, server-side code execution, secret management, and output encoding — is broken or absent. An anonymous internet attacker can achieve administrative access, read the full user database, or execute arbitrary code on the server without chaining multiple vulnerabilities; each capability is independently available through a single entry point.",
+  "bullets_intro": "Worst-case scenarios behind this verdict — what an attacker could do today:",
+  "bullets": [
+    {
+      "title": "Full admin takeover using the public repository",
+      "body": "The RSA key used to sign every login session is committed to the source code repository; any reader can mint a session token with administrator privileges and access every protected admin route without supplying a valid credential.",
+      "refs": ["T-002", "T-003"]
+    },
+    {
+      "title": "Remote code execution via the B2B ordering endpoint",
+      "body": "The B2B order processor evaluates user-supplied order content as executable code inside a sandbox that can be escaped; a crafted order payload gives an attacker full server-side code execution as the application process.",
+      "refs": ["T-011"]
+    },
+    {
+      "title": "Database dump via the login and search endpoints",
+      "body": "Both the login and product-search forms build their database queries by pasting user input directly into the SQL string; an attacker can read every table in the database — including all user credentials — without logging in.",
+      "refs": ["T-001", "T-005"]
+    },
+    {
+      "title": "Immediate offline cracking of every stolen password",
+      "body": "All user passwords are stored as short, unsalted hashes using an algorithm designed for speed rather than security; any credential stolen via database access, file leak, or key theft can be reversed to plaintext in seconds using freely available tools.",
+      "refs": ["T-007", "T-009"]
+    },
+    {
+      "title": "Stored malicious scripts delivered to all admin users",
+      "body": "Any attacker who can submit a product review or description can embed a script that executes in every administrator's browser because the admin panel renders stored content as raw HTML without sanitisation and no browser policy blocks inline script execution.",
+      "refs": ["T-037", "T-035"]
+    }
+  ],
+  "closing": "No single patch closes the exposure; the codebase requires parameterised queries, runtime-injected secrets, replacement of the eval-based order processor, and a Content-Security-Policy before any of the above scenarios can be closed."
+}

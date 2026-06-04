@@ -1,0 +1,38 @@
+{
+  "abuse_case_id": "AC-T-001",
+  "step_verdicts": [
+    {
+      "step": 1,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-018",
+      "evidence": {
+        "file": "frontend/src/app/search-result/search-result.component.ts",
+        "line": 132,
+        "excerpt": "tableData[i].description = this.sanitizer.bypassSecurityTrustHtml(tableData[i].description)"
+      },
+      "controls_found": ["DomSanitizer injected but explicitly bypassed via bypassSecurityTrustHtml — no effective sanitization"]
+    },
+    {
+      "step": 2,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-028",
+      "evidence": {
+        "file": "frontend/src/app/login/login.component.ts",
+        "line": 101,
+        "excerpt": "localStorage.setItem('token', authentication.token)"
+      },
+      "controls_found": []
+    },
+    {
+      "step": 3,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-027",
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 54,
+        "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)"
+      },
+      "controls_found": []
+    }
+  ]
+}
