@@ -159,8 +159,14 @@ def test_verdict_renders_red_blockquote(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     assert "border-left: 3px solid #dc2626" in rendered
-    # At least one F/T-NNN linkified citation inside the blockquote.
-    assert re.search(r"\*\(\[[FT]-00[12]\]\(#[ft]-00[12]\)(?: — [^)]+)?\)\*", rendered)
+    # At least one F/T-NNN linkified citation inside the blockquote. The
+    # finding link may carry a leading severity dot (🔴/🟠/🟡/🟢) — added by
+    # linkify_refs so the Verdict findings are annotated like every other
+    # linked-findings context.
+    assert re.search(
+        r"\*\((?:[🔴🟠🟡🟢⚪]\s)?\[[FT]-00[12]\]\(#[ft]-00[12]\)(?: — [^)]+)?\)\*",
+        rendered,
+    )
 
 
 def test_top_threats_has_five_columns(tmp_path: Path) -> None:

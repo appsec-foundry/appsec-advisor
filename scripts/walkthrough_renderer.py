@@ -144,6 +144,12 @@ def _anchor(t_id: str) -> str:
     return (t_id or "").strip().lower()
 
 
+# Monochrome circled-digit priority glyphs (❶ P1 … ❹ P4). Mirrors
+# compose_threat_model.py:_PRIO_DIGIT_TBL — kept in sync so a linked measure
+# in §3 carries the same annotation as the composer-rendered M-NNN links.
+_PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+
+
 def _short_title(title: str, limit: int = 70) -> str:
     """Trim a finding title to fit a single-line Mermaid label.
 
@@ -443,11 +449,35 @@ _STEP_SQL_RE = re.compile(
     r"(?<![`\w])((?:UNION\s+)?(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b[^…`;,.]*?)"
     r"(?=\s+(?:which|yielding|queries|query|attack|and the|to extract)\b|[…;,.]|$)"
 )
+# Code function call — a dotted member-call (`crypto.createHash('md5')`,
+# `vm.runInContext()`, `libxmljs2.parseXml()`) OR a simple empty-arg call
+# (`safeEval()`). Both are unambiguous code the LLM scenario routinely leaves
+# un-backticked. The callee word must abut the `(` (no space), so prose like
+# "gains access (admin)" never matches.
+_STEP_CALL_RE = re.compile(
+    r"(?<![`\w])("
+    r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\([^()]{0,80}\)"  # dotted call
+    r"|[A-Za-z_]\w*\(\)"                                  # bare empty-arg call
+    r")(?!`)"
+)
+# `X`.member / `X`-NNN splits left behind when the LLM backticked only the
+# head of a dotted path or a file:line range. Merge the trailing continuation
+# back INTO the code span so the whole token is one consistent span.
+_STEP_DOTTED_MERGE_RE = re.compile(r"`([^`\n]+)`\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+_STEP_RANGE_MERGE_RE = re.compile(r"`([^`\n]+:\d+)`-(\d+)\b")
+# `file:?` — the {line} template slot when the evidence line is unknown. The
+# `:?` placeholder is noise; collapse the span to the bare file.
+_STEP_UNKNOWN_LINE_RE = re.compile(r"`([\w./-]+):\?`")
 
 
 def _format_step_code(step: str) -> str:
-    """Backtick code tokens the downstream prose-fixer does not cover, leaving
-    existing backtick spans untouched (idempotent)."""
+    """Normalise code formatting in one attack step.
+
+    Two passes: (1) backtick code tokens the downstream prose-fixer does not
+    cover (file:line, payload assignment, SQL, function calls), leaving
+    existing backtick spans untouched; (2) repair inconsistent LLM-authored
+    spans — merge split dotted-paths / file:line ranges back into one span
+    and drop the `:?` unknown-line placeholder. Idempotent."""
     out: list[str] = []
     for chunk in re.split(r"(`[^`\n]+`)", step):
         if chunk.startswith("`"):
@@ -456,8 +486,14 @@ def _format_step_code(step: str) -> str:
         chunk = _STEP_FILELINE_RE.sub(r"`\1`", chunk)
         chunk = _STEP_PAYLOAD_ASSIGN_RE.sub(r"`\1`", chunk)
         chunk = _STEP_SQL_RE.sub(lambda m: f"`{m.group(1).strip()}`", chunk)
+        chunk = _STEP_CALL_RE.sub(r"`\1`", chunk)
         out.append(chunk)
-    return "".join(out)
+    joined = "".join(out)
+    # Repair pass on the joined string (operates across the span boundaries).
+    joined = _STEP_DOTTED_MERGE_RE.sub(r"`\1.\2`", joined)
+    joined = _STEP_RANGE_MERGE_RE.sub(r"`\1-\2`", joined)
+    joined = _STEP_UNKNOWN_LINE_RE.sub(r"`\1`", joined)
+    return joined
 
 
 def render_attack_steps(threat: dict, template: dict) -> list[str]:
@@ -738,7 +774,13 @@ def render_defense_in_depth(threat: dict, mitigations_by_threat: dict[str, list[
         # Short-label rule mirrors RenderContext.linkify_with_short_label:
         # drop the ` — <file>` Stage-1-LLM tail.
         short_title = title.split(" — ", 1)[0].strip()[:160]
-        bullets.append(f"{label}: [{mid}](#{_anchor(mid)}) ({short_title})")
+        # Leading monochrome priority digit (❶ P1 … ❹ P4) so a linked measure
+        # in §3 carries the same rollout-priority annotation as every other
+        # M-NNN link (MS Top-Mitigations, §8 Fix cells). Variant B, 2026-06-04.
+        prio = str(m.get("priority") or "").strip().lower()
+        digit = _PRIO_DIGIT_TBL.get(prio, "")
+        prefix = f"{digit} " if digit else ""
+        bullets.append(f"{label}: {prefix}[{mid}](#{_anchor(mid)}) ({short_title})")
     # No padding bullet — bullets list is intentionally short when only one
     # mitigation is linked. The Detection Signals subsection below already
     # provides the layered-defense complement; appending a generic

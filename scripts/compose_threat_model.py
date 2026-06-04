@@ -612,7 +612,15 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             m = re.match(r"^T-(\d+)$", r)
             if m:
                 r = f"F-{m.group(1)}"
-            out.append(f"[{r}](#{r.lower()})")
+            # Leading severity dot for finding refs (mirrors `linkify_with_label`)
+            # so the Verdict blockquote finding list is annotated like every
+            # other linked-findings context. Sits OUTSIDE the markdown link.
+            dot = ""
+            if re.match(r"^F-\d+$", r):
+                emoji = ctx.severity_emoji(ctx.severity_for_ref(r))
+                if emoji:
+                    dot = f"{emoji} "
+            out.append(f"{dot}[{r}](#{r.lower()})")
         return ", ".join(out)
 
     def format_id_list(refs: list[str]) -> str:
@@ -7740,6 +7748,11 @@ def _render_critical_attack_tree(ctx: RenderContext, env: jinja2.Environment, se
     _validate_fragment("critical_attack_tree", data, section["schema"])
     blocks = _build_attack_tree_blocks(data)
     findings = _derive_attack_tree_findings(data)
+    # Leading severity dot per finding so the compact pointer line under the
+    # tree is annotated like every other linked-findings context (§2/§8).
+    for f in findings:
+        emoji = ctx.severity_emoji(ctx.severity_for_ref(f.get("id", "")))
+        f["dot"] = f"{emoji} " if emoji else ""
     tpl = env.get_template(section["template"])
     return tpl.render(data=data, blocks=blocks, findings=findings).rstrip() + "\n"
 
@@ -8750,6 +8763,12 @@ def _rewrite_linked_id_cell(ctx: RenderContext, cell: str) -> str:
     # Also strip `— <label>` trailers so single-already-enriched cells look
     # empty when separator-only.
     stripped = re.sub(r"—\s*[^,;<|]+", "", stripped)
+    # Strip parens-form `(label)` trailers too — the §2.3 Components
+    # Linked-Threats cell ships its titles as `[F-NNN](#f-nnn) (title)`, which
+    # otherwise reads as prose here and skips enrichment, leaving the finding
+    # links without their severity dot. Treating the parenthetical as a label
+    # lets the cell qualify as a pure ID list and be re-linkified (with dot).
+    stripped = re.sub(r"\([^()]*\)", "", stripped)
     residue = re.sub(r"(<br/?>|·|[🔴🟠🟡🟢⚪]|[,;\s])+", "", stripped).strip()
     if residue:
         # Cell has meaningful prose — do not touch it.
@@ -9140,7 +9159,11 @@ def _escape_dollar_operators(md: str) -> str:
 # brand spellings like `Socket.IO`, `Node.JS` also flow through the safety
 # logic (whitelist → ZWSP, others → backtick). Lowercase-only was missing
 # every CamelCase brand reference.
-_DOT_IDENT_TLD_RE = re.compile(r"(?<![`\[\w/])([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z]{2,4})\b(?![/\w])")
+#   .        — leading/trailing dot → the token is one segment of a longer
+#              dotted chain (`req.body.email`); wrapping just the 2-segment
+#              head splits the identifier into `` `req.body`.email ``. Only a
+#              STANDALONE `word.xx` (not mid-chain) is a ccTLD auto-link risk.
+_DOT_IDENT_TLD_RE = re.compile(r"(?<![`\[\w/.])([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z]{2,4})\b(?![/\w.])")
 
 # Source-file extensions that look like ccTLDs (.ts → Turkmenistan, .js → Jersey, etc.).
 # When the TLD-shaped suffix matches one of these, the token is treated as a
