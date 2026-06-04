@@ -1098,6 +1098,8 @@ Files
 <if will_run:>Configuration
   Depth     : <depth_summary — see _format_depth_summary>
   Reasoning : <reasoning_summary>
+  <if PARALLEL_STRIDE=true:>STRIDE disp: parallel (per-component fan-out, Level-0)
+  <elif env APPSEC_PARALLEL_STRIDE=1 (set but mode∉{full,rebuild}):>STRIDE disp: parallel requested — inactive (needs --full / --rebuild)
   <active options if any (Outputs / Extras / Skips / Run flags / STRIDE / Limits)>
 
 Notes

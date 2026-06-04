@@ -1,4 +1,7 @@
 {
+  "env": {
+    "APPSEC_PARALLEL_STRIDE": "1"
+  },
   "permissions": {
     "allow": [
       "Read(**)",

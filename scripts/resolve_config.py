@@ -2090,6 +2090,20 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     if sp_label != "full":
         rows.append(("STRIDE", sp_label))
 
+    # Full-M1 parallel-STRIDE opt-in surfacing. Mirror the exact skill-Bash
+    # resolution (SKILL-impl.md "Configuration Resolution"): env-gated, only
+    # honoured for from-scratch runs (full/rebuild). Surface the requested-but-
+    # inactive case too, so a user who set the env var on an incremental run
+    # sees why no per-component fan-out happened.
+    if os.environ.get("APPSEC_PARALLEL_STRIDE") == "1":
+        if cfg.get("mode") in ("full", "rebuild"):
+            rows.append(("STRIDE disp", "parallel (per-component fan-out, Level-0)"))
+        else:
+            rows.append((
+                "STRIDE disp",
+                "parallel requested — inactive (needs --full / --rebuild)",
+            ))
+
     # M11/M9 — wall-time + cost deadline display (existing behaviour).
     deadline_parts = []
     if cfg.get("max_wall_time_seconds"):
