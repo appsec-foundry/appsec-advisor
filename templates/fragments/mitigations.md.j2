@@ -8,13 +8,20 @@
     read as a missing value when a bucket spans many rows) so the table reads
     as grouped-by-component while every row carries its own component value.
     This also matches the sibling Top Findings table, which already
-    carries a Component column.):
+    carries a Component column.
 
-      | # | Priority | Component             | Mitigation | Addresses | Effort |
-      |---|---|---|---|---|---|
-      | 1 | P1 | **Express Backend (…)**   | ...        | ...       | ...    |
-      | 2 | P1 | **Express Backend (…)**   | ...        | ...       | ...    |
-      | 3 | P1 | **Angular SPA (…)**       | ...        | ...       | ...    |
+    2026-06-03 — the dedicated `Priority` column was dropped: the rollout
+    priority now rides on the linked mitigation itself, emitted by
+    `linkify_with_label(m.id)` so every fully-linked measure across the report
+    carries it consistently. A standalone column would duplicate it.
+    2026-06-04 — Variant B: a single monochrome circled digit whose number is
+    the priority (`❶` … `❹`), the colourless parallel to the findings circle.):
+
+      | # | Component             | Mitigation             | Addresses | Effort |
+      |---|---|---|---|---|
+      | 1 | **Express Backend (…)**   | ❶ [M-001](#m-001) — … | ...       | ...    |
+      | 2 | **Express Backend (…)**   | ❶ [M-002](#m-002) — … | ...       | ...    |
+      | 3 | **Angular SPA (…)**       | ❷ [M-003](#m-003) — … | ...       | ...    |
 
     Inputs:
       groups    : list of { header, component_label, divider_label,
@@ -25,6 +32,8 @@
                                    { number, id, title, primary_component_id,
                                      addresses[{ref,label}], effort, priority }
                                    Pre-sorted: P1 → P2, severity, effort, ID.
+                                   (priority still drives the sort; it is just
+                                   no longer rendered as its own column.)
       intro     : top-of-section paragraph string (mentions §9 register)
       footer    : optional italic footer line under the table (may be None)
 -#}
@@ -32,11 +41,11 @@
 
 {{ intro }}
 
-| # | Priority | Component | Mitigation | Addresses | Effort |
-|---|---|---|---|---|---|
+| # | Component | Mitigation | Addresses | Effort |
+|---|---|---|---|---|
 {%- for g in groups %}
 {%- for m in g.mitigations %}
-| **{{ m.number }}** | **{{ m.priority }}** | {% if g.component_label %}{{ g.component_label }}{% elif m.component_label %}{{ m.component_label }}{% endif %} | [{{ m.id }}](#{{ m.id | lower }}) — {{ m.title }} | {% for a in m.addresses %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
+| **{{ m.number }}** | {% if g.component_label %}{{ g.component_label }}{% elif m.component_label %}{{ m.component_label }}{% endif %} | {{ linkify_with_label(m.id) }} | {% for a in m.addresses %}{% if a.dot %}{{ a.dot }} {% endif %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
 {%- endfor %}
 {%- endfor %}
 {%- if footer %}

@@ -179,12 +179,95 @@ def scan_file(path: Path) -> list[SecretHit]:
     return scan_text(text)
 
 
+def _mask_match(pat: _Pattern, m: "re.Match[str]") -> str:
+    """Return the redacted replacement for a single secret match, following
+    agents/shared/secret-handling.md: PEM markers fully redacted, strict token
+    formats keep their first 4 chars + ``****``, credential assignments keep the
+    key/operator/quote prefix and replace only the value with ``**** (N chars)``.
+    The replacement always contains a masking marker so the value can never be
+    re-flagged by scan_text()."""
+    matched = m.group(0)
+    if pat.name == "pem_private_key":
+        return "[PEM PRIVATE KEY — REDACTED]"
+    if pat.strict:
+        # Token formats (AWS/GitHub/Google/Slack/Stripe/JWT/…). Keeping the
+        # first 4 chars preserves provider identification while breaking the
+        # strict format regex so the leak is neutralised.
+        return matched[:4] + "****"
+    # generic_credential_assignment — mask only the captured value, preserve the
+    # key + operator + opening quote so the line stays readable and valid.
+    value = m.group("val")
+    prefix = matched[: m.start("val") - m.start(0)]
+    return f"{prefix}**** ({len(value)} chars)"
+
+
+def mask_text(text: str) -> tuple[str, list[str]]:
+    """Redact every secret that scan_text() would flag — the masking twin of
+    the detector. Because both walk the SAME ``_PATTERNS`` with the SAME skip
+    rules (already-masked markers, unquoted code-identifier references), any
+    document passed through mask_text() is guaranteed to pass the
+    unmasked_secrets gate. Returns ``(masked_text, applied_pattern_names)``.
+
+    This is the single masking source of truth shared by the composer (rendered
+    markdown) and scripts/mask_secrets.py (threat-model.yaml evidence excerpts),
+    so detection and redaction can never drift apart again."""
+    if not text:
+        return text, []
+    applied: list[str] = []
+    for pat in _PATTERNS:
+        def _repl(m: "re.Match[str]", _pat: _Pattern = pat) -> str:
+            groups = m.groupdict() or {}
+            value = m.group("val") if "val" in groups else m.group(0)
+            if not _pat.strict:
+                if _value_is_masked(value):
+                    return m.group(0)
+                if not groups.get("q") and _looks_like_code_reference(value):
+                    return m.group(0)
+            applied.append(_pat.name)
+            return _mask_match(_pat, m)
+
+        text = pat.regex.sub(_repl, text)
+    # de-dup while preserving first-seen order
+    seen: dict[str, None] = {}
+    for name in applied:
+        seen.setdefault(name, None)
+    return text, list(seen.keys())
+
+
+def mask_file(path: Path) -> list[str]:
+    """Mask secrets in ``path`` in place. Returns the applied pattern names
+    (empty list when nothing changed). Best-effort: unreadable files no-op."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    masked, applied = mask_text(text)
+    if applied and masked != text:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(masked, encoding="utf-8")
+        tmp.replace(path)
+    return applied
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 2:
-        print("usage: secret_scan.py <file> [<file>...]", file=sys.stderr)
+    args = argv[1:]
+    do_mask = False
+    if args and args[0] == "--mask":
+        do_mask = True
+        args = args[1:]
+    if not args:
+        print("usage: secret_scan.py [--mask] <file> [<file>...]", file=sys.stderr)
         return 2
+    if do_mask:
+        # In-place redaction mode — masks every secret the scanner would flag so
+        # the unmasked_secrets gate cannot subsequently trip on these files.
+        for arg in args:
+            applied = mask_file(Path(arg))
+            if applied:
+                print(f"{arg}: masked {', '.join(applied)}")
+        return 0
     any_hit = False
-    for arg in argv[1:]:
+    for arg in args:
         for hit in scan_file(Path(arg)):
             print(f"{arg}:{hit.render()}")
             any_hit = True

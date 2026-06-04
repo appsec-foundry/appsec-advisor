@@ -2106,6 +2106,15 @@ if [ "$DRY_RUN" = "false" ]; then
     # to YAML bomb / CORS / mass assignment instead of XSS + JWT storage).
     # Idempotent. Hand-set entries preserved via assets[].linked_threats_manual.
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/enrich_asset_links.py" "$OUTPUT_DIR" 2>&1 || true
+    # Mask committed secrets in Stage-1 evidence excerpts (e.g. raw
+    # `password: 'admin123'`, PEM private-key markers) so the Stage-3
+    # unmasked_secrets gate — which scans threat-model.yaml as well as the
+    # rendered markdown — cannot trip on author-supplied excerpts. Uses the
+    # SAME secret_scan.py pattern set as the gate, so detector⇔masker symmetry
+    # guarantees the yaml passes. The composer applies the identical mask to the
+    # rendered markdown (it re-reads real source files for §8 evidence), so both
+    # artifacts are clean by construction. Idempotent and best-effort.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/secret_scan.py" --mask "$OUTPUT_DIR/threat-model.yaml" 2>&1 || true
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_END"
   } | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
 fi

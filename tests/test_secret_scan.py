@@ -231,3 +231,53 @@ def test_main_leak_exit_1(secret_scan, tmp_path, capsys):
 def test_main_bad_args_exit_2(secret_scan, capsys):
     rc = secret_scan.main(["secret_scan.py"])
     assert rc == 2
+
+
+# ----------------------------------------------------------------------------
+# mask_text — the masking twin of scan_text (juice-shop 2026-06-03 secret gate)
+# ----------------------------------------------------------------------------
+
+
+def test_mask_text_password_assignment(secret_scan):
+    masked, applied = secret_scan.mask_text("  password: 'admin123'")
+    assert "admin123" not in masked
+    assert "**** (8 chars)" in masked
+    assert "generic_credential_assignment" in applied
+
+
+def test_mask_text_pem_marker(secret_scan):
+    masked, applied = secret_scan.mask_text(
+        "const k = '-----BEGIN RSA PRIVATE KEY-----\\nMIIC...'"
+    )
+    assert "BEGIN RSA PRIVATE KEY" not in masked
+    assert "pem_private_key" in applied
+
+
+def test_mask_text_is_symmetric_with_scan(secret_scan):
+    # Anything scan_text would flag must be gone after mask_text — this is the
+    # guarantee that the composer + yaml mask can never trip the gate.
+    samples = [
+        "password: 'admin123'",
+        "email: admin\\n  password: 'admin123'",
+        "AKIAIOSFODNN7EXAMPLE",
+        "key AIzaSyA1234567890abcdefghijklmnopqrstuv end",
+        "const privateKey = '-----BEGIN RSA PRIVATE KEY-----\\nMIIC...'",
+    ]
+    for s in samples:
+        masked, _ = secret_scan.mask_text(s)
+        assert secret_scan.scan_text(masked) == [], "residual hit for " + repr(s)
+
+
+def test_mask_text_preserves_code_reference(secret_scan):
+    # Unquoted code-identifier references are not literal secrets.
+    for s in ("secret: publicKey", "password: security.hash"):
+        masked, applied = secret_scan.mask_text(s)
+        assert masked == s
+        assert applied == []
+
+
+def test_mask_text_idempotent(secret_scan):
+    once, _ = secret_scan.mask_text("password: 'admin123'")
+    twice, applied2 = secret_scan.mask_text(once)
+    assert twice == once
+    assert applied2 == []

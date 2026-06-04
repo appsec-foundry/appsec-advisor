@@ -855,11 +855,14 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     table reads as grouped-by-component while every value sits in a real
     column. Matches the sibling Top Findings table.
 
-    Layout:
-        | # | Priority | Component               | Mitigation | Addresses | Effort |
-        |---|---|---|---|---|---|
-        | 1 | **P1** | **Express Backend (c-…)**  | ...        | ...       | ...    |
-        | 2 | **P1** |                            | ...        | ...       | ...    |
+    Layout (2026-06-03 — the dedicated `Priority` column was dropped; the
+    rollout priority now rides on the linked mitigation as a leading prefix.
+    2026-06-04 — Variant B: a single monochrome circled digit whose number is
+    the priority, `❶` … `❹`):
+        | # | Component               | Mitigation                  | Addresses | Effort |
+        |---|---|---|---|---|
+        | 1 | **Express Backend (c-…)**  | ❶ [M-001](#m-001) — …      | ...       | ...    |
+        | 2 |                            | ❶ [M-002](#m-002) — …      | ...       | ...    |
     """
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
@@ -872,8 +875,9 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     assert "#### Follow-up Mitigations" not in ms_slice
     assert "####" not in ms_slice, "Top Mitigations layout must not emit `####` sub-headers"
 
-    # Canonical 6-column pipe-table header with the dedicated Component column.
-    assert "| # | Priority | Component | Mitigation | Addresses | Effort |" in ms_slice
+    # Canonical 5-column pipe-table header — the dedicated Priority column was
+    # dropped (2026-06-03); priority now rides on the linked mitigation prefix.
+    assert "| # | Component | Mitigation | Addresses | Effort |" in ms_slice
 
     import re as _re
     # The retired in-table divider-row form must NOT appear (regression guard).
@@ -885,8 +889,12 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     # No `↳` group glyph anywhere in the section any more.
     assert "↳" not in ms_slice, "component grouping no longer uses the ↳ glyph"
 
-    # A priority cell renders as **P1** / **P2** in data rows.
-    assert any(f"**P{n}**" in ms_slice for n in (1, 2)), "expected a bold P1/P2 priority cell"
+    # Priority now rides on the linked mitigation as a single colourless circled
+    # digit whose number is the priority (Variant B, 2026-06-04 — ❶❷❸❹) rather
+    # than a dedicated bold column cell. Assert the circled-digit prefix renders.
+    assert _re.search(r"[❶❷❸❹]\s+\[M-", ms_slice), (
+        "expected a Variant-B `❶ [M-NNN]` circled-digit priority prefix"
+    )
 
     # The Component column carries a label on the first row of each group,
     # linked to the component anchor exactly like the Architecture Assessment
@@ -898,8 +906,9 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     ]
     assert data_rows, "expected at least one numbered data row"
     first_cells = [c.strip() for c in data_rows[0].split("|")]
-    # cells: ['', '**1**', '**P1**', '[C-NN](#c-nn) — Name', '<mitigation>', ...]
-    comp_cell = first_cells[3]
+    # cells: ['', '**1**', '[C-NN](#c-nn) — Name', 'P1 · <mitigation>', ...]
+    # (Priority column dropped 2026-06-03 — Component shifted from index 3 to 2.)
+    comp_cell = first_cells[2]
     assert _re.match(r"^\[C-\d+\]\(#c-\d+\)\s+—\s+.+", comp_cell) or comp_cell == "Cross-cutting", (
         f"first row's Component cell must be a `[C-NN](#c-nn) — Name` link "
         f"(matching Architecture Assessment) or 'Cross-cutting', got {comp_cell!r}"

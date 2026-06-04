@@ -865,12 +865,28 @@ def _write_assessment_summary(sid: str) -> None:
         with open(log_file) as fh:
             all_lines = fh.readlines()
 
-        # Find the last SCAN_START line — everything before it belongs to
-        # a previous assessment and must be excluded.
+        # Anchor the run boundary on the FIRST SCAN_START of the *current*
+        # session. The threat-analyst is dispatched once per stage (Stage 1
+        # plus a Stage-3 repair re-dispatch), so SCAN_START fires multiple
+        # times with the SAME session id within one logical run. The previous
+        # logic took the LAST SCAN_START, which truncated both the measured
+        # duration and the token rollup to only the final stage — the
+        # 2026-06-03 juice-shop run (true wall-clock ~60m) was reported as
+        # 9m 14s because its repair re-dispatch fired SCAN_START at +50m.
+        # Everything before the current session's first SCAN_START belongs to
+        # an earlier (different-session) run in the persistent log and stays
+        # excluded; we fall back to the last SCAN_START when no line carries
+        # this session id.
+        sid8 = (sid or "")[:8]
         scan_start_idx = 0
+        first_owned_idx = None
+        last_scan_idx = 0
         for idx, line in enumerate(all_lines):
             if "SCAN_START" in line:
-                scan_start_idx = idx
+                last_scan_idx = idx
+                if first_owned_idx is None and sid8 and f"[{sid8}" in line:
+                    first_owned_idx = idx
+        scan_start_idx = first_owned_idx if first_owned_idx is not None else last_scan_idx
 
         for line in all_lines[scan_start_idx:]:
             # Track timestamps for duration

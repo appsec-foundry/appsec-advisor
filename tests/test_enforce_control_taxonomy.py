@@ -333,3 +333,44 @@ class TestLogLevelInfoNotWarn:
             assert " WARN " not in line, (
                 f"taxonomy drift must NOT be WARN-level, got: {line!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# RC-6 — JWT domain reroute (juice-shop 2026-06-03 §7.2 auth_method_decomposition)
+# ---------------------------------------------------------------------------
+
+
+class TestJwtDomainReroute:
+    """A bare `JWT …` control that Stage 1 parked in §7.2 IAM must reroute to
+    §7.3 Session and Token Controls even when its name does NOT match a
+    _canonicalize_name rule (e.g. "JWT signing key management"). Before the fix
+    the reroute guard only fired for names already canonicalised to
+    "Session Token …", so the unmatched name kept its IAM domain and tripped
+    the §7.2 auth_method_decomposition contract gate."""
+
+    def test_jwt_signing_key_management_reroutes_to_session(self):
+        data, _names, domains = ect.enforce(_make_yaml([
+            {"id": "SC-1", "control": "JWT signing key management",
+             "domain": "Identity and Authentication Controls"},
+        ]))
+        assert data["security_controls"][0]["domain"] == "Session and Token Controls"
+        assert any(d["to"] == "Session and Token Controls" for d in domains)
+
+    def test_non_jwt_iam_mechanism_stays_in_72(self):
+        data, _n, _d = ect.enforce(_make_yaml([
+            {"id": "SC-1", "control": "Password-Based Login",
+             "domain": "Identity and Authentication Controls"},
+            {"id": "SC-2", "control": "TOTP 2FA",
+             "domain": "Identity and Authentication Controls"},
+        ]))
+        assert data["security_controls"][0]["domain"] == "Identity and Authentication Controls"
+        assert data["security_controls"][1]["domain"] == "Identity and Authentication Controls"
+
+    def test_jwt_reroute_is_idempotent(self):
+        controls = [{"id": "SC-1", "control": "JWT signing key management",
+                     "domain": "Identity and Authentication Controls"}]
+        data, _, _ = ect.enforce(_make_yaml(controls))
+        # second pass over the already-rerouted yaml must be a no-op
+        data2, _, domains2 = ect.enforce(data)
+        assert data2["security_controls"][0]["domain"] == "Session and Token Controls"
+        assert domains2 == []

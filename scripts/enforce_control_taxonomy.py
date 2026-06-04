@@ -343,9 +343,25 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
             # ("Identity and Authentication") on a session-token control
             # re-routes to §7.3 in a SINGLE pass (idempotency — otherwise pass 1
             # would only suffix-normalise and pass 2 would re-route).
+            #
+            # ANY control carrying a bare "jwt" token also re-routes, even when
+            # the name was NOT canonicalised to "Session Token …" (e.g. Stage 1
+            # emits "JWT signing key management" / "JWT Issuance and Verification"
+            # — neither matches a _canonicalize_name rule, so they kept their
+            # §7.2 IAM domain and tripped the auth_method_decomposition gate on
+            # the juice-shop 2026-06-03 run). JWT is definitionally a §7.3
+            # session-token primitive: the §7.2 method_whitelist excludes it and
+            # the forbidden_heading_patterns reject every "#### …JWT…" heading,
+            # so a §7.2 placement is never defensible regardless of the exact
+            # name. Token-based (not regex-based) so it survives arbitrary noun
+            # suffixes like "key management" / "issuance" / "verification".
+            _ctl_name = (c.get("control") or "").strip()
             session_primitive_reroute = (
                 inferred == "Session and Token Controls"
-                and re.match(r"(?i)^session token\b", (c.get("control") or "").strip()) is not None
+                and (
+                    re.match(r"(?i)^session token\b", _ctl_name) is not None
+                    or "jwt" in _tokenise(_ctl_name)
+                )
             )
             # Targeted exception #2 (same rationale as session_primitive_reroute):
             # a standalone password-hashing/storage control is an UNAMBIGUOUS

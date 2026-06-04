@@ -1534,3 +1534,71 @@ class TestDirectWriteGuard:
             payload = json.loads(out)
             decision = (payload.get("hookSpecificOutput") or {}).get("permissionDecision")
             assert decision != "deny"
+
+
+# ---------------------------------------------------------------------------
+# Regression: ASSESSMENT_SUMMARY duration must span the whole run, not just
+# the final stage. A multi-stage run (Stage 1 + a Stage-3 repair re-dispatch)
+# fires SCAN_START more than once with the SAME session id; anchoring the run
+# boundary on the LAST SCAN_START reported a ~60-min run as 9m (2026-06-03
+# juice-shop). The boundary must be the FIRST SCAN_START of the current sid.
+# ---------------------------------------------------------------------------
+
+
+class TestAssessmentSummaryDuration:
+    def _write_log(self, output_dir: Path) -> None:
+        lines = [
+            # --- a previous, different-session run in the persistent log ---
+            "2026-06-03T01:00:00Z  [aaaaaaaa]  INFO   SCAN_START          "
+            "repo=/x  agent=appsec-advisor:appsec-threat-analyst  model=sonnet",
+            "2026-06-03T01:30:00Z  [aaaaaaaa]  INFO   SESSION_STOP        "
+            "stop_reason=unknown  in=9,999  out=9,999  cost=$9.0000",
+            # --- current run (sid cb7b5188): Stage 1 dispatch ---
+            "2026-06-03T03:41:14Z  [cb7b5188]  INFO   SCAN_START          "
+            "repo=/x  agent=appsec-advisor:appsec-threat-analyst  model=sonnet",
+            "2026-06-03T04:11:14Z  [cb7b5188]  INFO   SESSION_STOP        "
+            "stop_reason=unknown  in=100  out=200  cost=$1.0000",
+            # --- same run: Stage-3 repair re-dispatch fires SCAN_START again ---
+            "2026-06-03T04:32:01Z  [cb7b5188]  INFO   SCAN_START          "
+            "repo=/x  agent=appsec-advisor:appsec-threat-analyst  model=sonnet",
+            "2026-06-03T04:41:14Z  [cb7b5188]  INFO   SESSION_STOP        "
+            "stop_reason=unknown  in=300  out=400  cost=$2.0000",
+        ]
+        (output_dir / ".hook-events.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (output_dir / ".assessment-owner-sid").write_text("cb7b5188", encoding="utf-8")
+
+    def _summary_line(self, output_dir: Path) -> str:
+        text = (output_dir / ".hook-events.log").read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "ASSESSMENT_SUMMARY" in line:
+                return line
+        raise AssertionError("no ASSESSMENT_SUMMARY line emitted")
+
+    def test_duration_spans_full_run_across_repeated_scan_start(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        from agent_logger import _write_assessment_summary
+
+        self._write_log(tmp_path)
+        _write_assessment_summary("cb7b5188")
+
+        summary = self._summary_line(tmp_path)
+        # 03:41:14 → 04:41:14 == exactly 60m. The pre-fix bug measured only
+        # from the 04:32:01 re-dispatch and reported 9m 13s.
+        assert "duration=60m 00s" in summary, summary
+        assert "duration=9m" not in summary, summary
+
+    def test_previous_session_run_still_excluded(self, tmp_path, monkeypatch):
+        """The first-SCAN_START anchor must use the CURRENT sid, so the older
+        different-session run (in=9,999) stays out of the token rollup."""
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        from agent_logger import _write_assessment_summary
+
+        self._write_log(tmp_path)
+        _write_assessment_summary("cb7b5188")
+
+        text = (tmp_path / ".hook-events.log").read_text(encoding="utf-8")
+        tokens = next(l for l in text.splitlines() if "ASSESSMENT_TOKENS" in l)
+        # both current-run stops summed (out 200+400=600); prior run's 9,999 excluded.
+        assert "output=600" in tokens, tokens

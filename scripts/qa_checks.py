@@ -1452,6 +1452,11 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
             "No defensive cluster currently rates above Weak",
         ]),
         ("mitigations", "Top Mitigations", [
+            # 2026-06-03 — Priority column dropped: the rollout priority now
+            # rides on the linked mitigation as a leading prefix (2026-06-04
+            # Variant B: a monochrome circled digit, `❶`…`❹`), so the
+            # dedicated column is redundant.
+            "| # | Component | Mitigation | Addresses | Effort |",
             # Post-2026-05-29 — numbered table with a dedicated Component
             # column (label printed once per group, blank on continuation
             # rows). Replaces the in-table divider-row form, which rendered
@@ -4748,10 +4753,12 @@ def _run_auth_v2_structural_checks(
     gates that are meaningful for v2:
 
       * every ``####`` heading must name a real authentication MECHANISM from
-        ``method_whitelist`` (Password-Based Login, OAuth/OIDC, MFA/TOTP, JWT
-        Issuance/Verification, …). Primitives/aspects like "Password Hashing"
-        or "Login Rate Limiting" are not mechanisms — they belong folded into a
-        mechanism block, not promoted to a peer heading;
+        ``method_whitelist`` (Password-Based Login, OAuth/OIDC, MFA/TOTP, …).
+        JWT issuance/verification is a §7.3 session-token primitive, NOT a §7.2
+        mechanism — the whitelist excludes it and the forbidden patterns reject
+        it. Primitives/aspects like "Password Hashing" or "Login Rate Limiting"
+        are not mechanisms either — they belong folded into a mechanism block,
+        not promoted to a peer heading;
       * no heading may match ``forbidden_heading_patterns`` (token-format-only
         names, library names, vulnerability-class names, "Password Hashing").
 
@@ -4789,10 +4796,11 @@ def _run_auth_v2_structural_checks(
                 report.issues.append(
                     f"{sl} {hashes} {heading!r}: heading matches forbidden "
                     f"pattern {raw!r}. §7.2 sub-blocks must name authentication "
-                    f"MECHANISMS (Password-Based Login, OAuth/OIDC, MFA/TOTP, "
-                    f"JWT Issuance/Verification, …), not primitives (hashing), "
-                    f"libraries (express-jwt), token formats (JWT-RS256), or "
-                    f"vulnerability classes."
+                    f"MECHANISMS (Password-Based Login, OAuth/OIDC, MFA/TOTP, …), "
+                    f"not primitives (hashing), libraries (express-jwt), token "
+                    f"formats (JWT-RS256), or vulnerability classes. JWT "
+                    f"issuance/verification belongs in §7.3 Session and Token "
+                    f"Controls, not §7.2."
                 )
                 flagged = True
                 break
@@ -4802,10 +4810,12 @@ def _run_auth_v2_structural_checks(
             report.issues.append(
                 f"{sl} {hashes} {heading!r}: not a recognized authentication "
                 f"mechanism. Structure §7.2 by real auth method (e.g. "
-                f"Password-Based Login, OAuth/OIDC, MFA/TOTP, JWT "
-                f"Issuance/Verification) and fold aspects such as password "
-                f"hashing or login rate-limiting into the relevant mechanism "
-                f"block as bullets, not as peer headings."
+                f"Password-Based Login, OAuth/OIDC, MFA/TOTP) and fold aspects "
+                f"such as password hashing or login rate-limiting into the "
+                f"relevant mechanism block as bullets, not as peer headings. "
+                f"A JWT issuance/verification/signing-key heading belongs in "
+                f"§7.3 Session and Token Controls — move it there, do not rename "
+                f"it into a §7.2 mechanism."
             )
 
     # Per-flow-method diagram gate (migrated from the v1 rule). A §7.2 ####
@@ -8821,6 +8831,21 @@ def check_cell_format(md_path: Path) -> tuple[Report, str]:
                     # Already stacked properly.
                     new_cells.append(cell)
                     continue
+                # Prose cells that merely CITE findings inline (a sentence such
+                # as "Bypassed by 3 High finding(s) … e.g. [F-015](…), [F-016](…)")
+                # are not stacked link lists — flagging them "missing <br/>" is a
+                # false positive (juice-shop 2026-06-03 §2 cluster-coverage line).
+                # A genuine stack cell starts with its first link (optionally
+                # behind a bullet / severity glyph); a prose cell has running
+                # words before the first link. Skip when >3 prose words precede it.
+                _first_link = _ID_LINK_RE.search(cell)
+                if _first_link is not None:
+                    _lead_words = re.findall(r"[A-Za-z]{2,}", cell[: _first_link.start()])
+                    # `&nbsp;` contributes the token "nbsp"; allow a couple of
+                    # those plus a stray glyph word without tripping the skip.
+                    if len([w for w in _lead_words if w.lower() != "nbsp"]) > 3:
+                        new_cells.append(cell)
+                        continue
                 # Apply the fix.  If it didn't actually help (e.g. the
                 # links were separated by commas rather than whitespace),
                 # flag it so the agent can inspect.

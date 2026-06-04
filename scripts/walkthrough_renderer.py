@@ -431,6 +431,35 @@ def render_prerequisites(
     return out
 
 
+# Code-token formatters for attack-step prose. apply_prose_fixes (post-compose)
+# already backticks HTTP method+route, bare filenames, function calls and dotted
+# API tokens; these cover the gaps it cannot: inline `path/file.ext:line`
+# evidence refs, quoted injection payloads (`param="…"`), and UPPERCASE SQL
+# statements. SQL keywords are matched case-SENSITIVELY so English words
+# ("the attacker can update …", "users select …") are never mistaken for SQL.
+_STEP_FILELINE_RE = re.compile(r"(?<![`\w])([\w][\w./-]*\.[A-Za-z]{1,6}:\d+)(?![`\w:])")
+_STEP_PAYLOAD_ASSIGN_RE = re.compile(r'(?<![`\w])([A-Za-z_]\w*="[^"]{0,100}")(?![`])')
+_STEP_SQL_RE = re.compile(
+    r"(?<![`\w])((?:UNION\s+)?(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b[^…`;,.]*?)"
+    r"(?=\s+(?:which|yielding|queries|query|attack|and the|to extract)\b|[…;,.]|$)"
+)
+
+
+def _format_step_code(step: str) -> str:
+    """Backtick code tokens the downstream prose-fixer does not cover, leaving
+    existing backtick spans untouched (idempotent)."""
+    out: list[str] = []
+    for chunk in re.split(r"(`[^`\n]+`)", step):
+        if chunk.startswith("`"):
+            out.append(chunk)
+            continue
+        chunk = _STEP_FILELINE_RE.sub(r"`\1`", chunk)
+        chunk = _STEP_PAYLOAD_ASSIGN_RE.sub(r"`\1`", chunk)
+        chunk = _STEP_SQL_RE.sub(lambda m: f"`{m.group(1).strip()}`", chunk)
+        out.append(chunk)
+    return "".join(out)
+
+
 def render_attack_steps(threat: dict, template: dict) -> list[str]:
     """Source-of-truth: `threat.scenario`. Fallback to template skeleton.
 
@@ -453,14 +482,32 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
         "",
         raw_scenario,
         flags=re.IGNORECASE,
+    )
+    # Also drop a BARE trailing-metadata run the analyst appends after the
+    # narrative — a plain `CWE-89` (no `CWE:` prefix) and/or an evidence
+    # `routes/login.ts:34` file:line. Both are register fields, not steps;
+    # uncaught they surface as nonsense steps ("2. CWE-89.",
+    # "3. routes/login.ts:34.").
+    raw_scenario = re.sub(
+        r"(?:\s*(?:CWE-\d+|[\w./-]+\.[A-Za-z]{1,6}:\d+)\s*\.?\s*)+$",
+        "",
+        raw_scenario,
+        flags=re.IGNORECASE,
     ).rstrip(". ").strip()
+    # Normalise dot-runs ("AND password... yielding") to a single ellipsis
+    # char BEFORE sentence-splitting. `_split_sentences` breaks on `.!?` + space
+    # but NOT on `…`, so an ellipsis stays a stylistic pause instead of carving
+    # off a dangling lower-case fragment ("2. yielding the first row (admin).").
+    # `…` also preserves intra-code elisions (`<script>…</script>`,
+    # `SELECT … LIKE`) that a comma would have mangled.
+    raw_scenario = re.sub(r"\.{2,}", "…", raw_scenario)
     sentences = _split_sentences(raw_scenario)
-    # Defensive: drop any remaining sentence that is just a `CWE: …`
-    # tagline (covers edge cases where the trailing sentence had a
-    # mid-string period that survived the regex above).
+    # Defensive: drop any residual sentence that is ONLY a CWE tagline or a
+    # bare file:line token (covers mid-string metadata the strips above missed).
     sentences = [
         s for s in sentences
-        if not re.match(r"^\s*CWE\s*:?\s*CWE-\d+\.?\s*$", s, flags=re.IGNORECASE)
+        if not re.match(r"^\s*(?:CWE\s*:?\s*)?CWE-\d+\.?\s*$", s, flags=re.IGNORECASE)
+        and not re.match(r"^[\w./-]+\.[A-Za-z]{1,6}:\d+\.?\s*$", s)
     ]
     template_steps = list(template.get("attack_steps_template") or [
         "Send the crafted payload to the endpoint backed by `{file}:{line}`.",
@@ -490,7 +537,7 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
             break
         if cand not in body:
             body.append(cand)
-    return [f"{i+1}. {s.rstrip('.')}." for i, s in enumerate(body[:MIN_ATTACK_STEPS])]
+    return [f"{i+1}. {_format_step_code(s.rstrip('.'))}." for i, s in enumerate(body[:MIN_ATTACK_STEPS])]
 
 
 def _format_template_string(raw: str, mapping: dict) -> str:

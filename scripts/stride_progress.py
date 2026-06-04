@@ -91,14 +91,15 @@ def _format_entry(data: dict, done: bool, stale: bool, marks: dict) -> str:
 
 
 def _read_last(progress_dir: Path) -> tuple[str, int]:
-    """Return (last_line, unchanged_count). Defaults to ('', 0)."""
+    """Return (last_block, unchanged_count). Defaults to ('', 0).
+
+    The unchanged-count is stored on the first line so the remembered block
+    may itself span multiple lines (the vertical per-component layout).
+    """
     state = progress_dir / ".last-print"
     try:
-        raw = state.read_text(encoding="utf-8").splitlines()
-        if len(raw) >= 2:
-            return raw[0], int(raw[1])
-        if len(raw) == 1:
-            return raw[0], 0
+        count_str, _, body = state.read_text(encoding="utf-8").partition("\n")
+        return body.rstrip("\n"), int(count_str)
     except (OSError, ValueError):
         pass
     return "", 0
@@ -108,7 +109,7 @@ def _write_last(progress_dir: Path, line: str, unchanged: int) -> None:
     state = progress_dir / ".last-print"
     try:
         progress_dir.mkdir(parents=True, exist_ok=True)
-        state.write_text(f"{line}\n{unchanged}\n", encoding="utf-8")
+        state.write_text(f"{unchanged}\n{line}\n", encoding="utf-8")
     except OSError:
         pass
 
@@ -201,7 +202,10 @@ def main(argv: list[str]) -> int:
     ready = len(ready_ids)
     header = f"[stride] {ready}/{expected} ready"
     if entries:
-        line = f"{header}  {marks['bullet']}{marks['bullet']}  " + f" {marks['bullet']} ".join(entries)
+        # One line per component, mirroring the foreground multi-agent progress
+        # widget's vertical layout instead of a single dense bullet-joined line.
+        body = "\n".join(f"  {marks['bullet']} {e}" for e in entries)
+        line = f"{header}\n{body}"
     else:
         line = f"{header}  {marks['bullet']}{marks['bullet']}  (no progress reported yet)"
 

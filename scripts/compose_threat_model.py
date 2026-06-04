@@ -212,6 +212,12 @@ class RenderContext:
     # Backs the leading criticality dot that `linkify_with_label` prepends to
     # finding links so the reader sees a finding's severity at every reference.
     _severity_index: Optional[dict[str, str]] = None
+    # Built lazily on first `priority_for_ref` call. Maps upper-cased mitigation
+    # ref (M-NNN) → rollout priority key (p1..p4). Backs the leading `P1 · `
+    # priority tag that `linkify_with_label` prepends to mitigation links — the
+    # measures analogue of the finding severity dot, but colourless (a text
+    # tag, no colour circle) per the 2026-06-03 Variant-A decision.
+    _priority_index: Optional[dict[str, str]] = None
 
     def severity_emoji(self, key: str) -> str:
         k = (key or "").strip().lower()
@@ -256,7 +262,9 @@ class RenderContext:
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             if not tid:
                 continue
-            label = (t.get("title") or t.get("scenario_short") or "").strip()
+            label = _strip_embedded_evidence_file(
+                (t.get("title") or t.get("scenario_short") or "").strip(), t
+            )
             if not label:
                 sc = (t.get("scenario") or t.get("description") or "").strip()
                 if sc:
@@ -338,6 +346,49 @@ class RenderContext:
         if self._severity_index is None:
             self._severity_index = self._build_severity_index()
         return self._severity_index.get(ref.strip().upper(), "")
+
+    def _build_priority_index(self) -> dict[str, str]:
+        """Map every mitigation ref (M-NNN) → its rollout priority key (p1..p4).
+
+        The measures analogue of `_build_severity_index`. Prefers an explicit
+        ``priority`` field (``P1``..``P4``, or a severity word the orchestrator
+        sometimes emits in its place). Falls back to the highest severity among
+        the findings the mitigation addresses, mapped onto the P-scale
+        (Critical→P1 … Low→P4). This mirrors the §9 Mitigations-index derivation
+        exactly, so a mitigation's prefix tag, its §9 index chip, and the §9
+        register bucket it lands in all agree.
+        """
+        threats = (self.yaml_data or {}).get("threats", []) or []
+        sev_by_num = _severity_by_finding_num(threats)
+        sev_to_prio = {"critical": "p1", "high": "p2", "medium": "p3", "low": "p4"}
+        idx: dict[str, str] = {}
+        for m in (self.yaml_data or {}).get("mitigations", []) or []:
+            mid = (m.get("m_id") or m.get("id") or "").strip().upper()
+            if not mid:
+                continue
+            raw = (m.get("priority") or "").strip().lower()
+            if raw in _PRIO_ICON_TBL:            # already a p1..p4 key
+                idx.setdefault(mid, raw)
+                continue
+            if raw in sev_to_prio:               # severity word in the priority slot
+                idx.setdefault(mid, sev_to_prio[raw])
+                continue
+            best = 9
+            for a in (m.get("threat_ids") or m.get("addresses") or []):
+                am = re.search(r"(\d+)$", str(a))
+                if am:
+                    best = min(best, _SEV_RANK_TBL.get(sev_by_num.get(int(am.group(1)), ""), 9))
+            sev_word = next((s for s, r in _SEV_RANK_TBL.items() if r == best), "")
+            idx.setdefault(mid, sev_to_prio.get(sev_word, "p3"))
+        return idx
+
+    def priority_for_ref(self, ref: str) -> str:
+        """Rollout priority key (p1..p4) for a mitigation ref (M-NNN), else ""."""
+        if not ref:
+            return ""
+        if self._priority_index is None:
+            self._priority_index = self._build_priority_index()
+        return self._priority_index.get(ref.strip().upper(), "")
 
     @staticmethod
     def _synthesise_label_noop() -> None:
@@ -428,6 +479,16 @@ class RenderContext:
             emoji = self.severity_emoji(self.severity_for_ref(r))
             if emoji:
                 dot = f"{emoji} "
+        elif re.match(r"^M-\d+$", r):
+            # Measures analogue of the finding severity dot: a single colourless
+            # circled digit whose number IS the rollout priority (❶ P1 … ❹ P4),
+            # Variant B (2026-06-04). It sits OUTSIDE the markdown link for the
+            # same reason the severity dot does: `_enrich_linked_id_cells`
+            # extracts `[ID](#…)` and re-linkifies, so the prefix is regenerated
+            # exactly once. Mirrors the finding form `🔴 [F-NNN] — title`.
+            digit = _PRIO_DIGIT_TBL.get(self.priority_for_ref(r), "")
+            if digit:
+                dot = f"{digit} "
         if label:
             # Escape unescaped `$` (see linkify_with_short_label) so a `$where`-
             # style token cannot open a KaTeX math span in math-enabled viewers.
@@ -580,7 +641,6 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         for it in items:
             mid = it["id"]
             action = it.get("action", "").strip()
-            priority = it.get("priority", "").strip()
             kind = (it.get("kind") or "").strip().lower()
             # M-RCA-2026-05: render per-kind glyph (🔧/🔍/🧭/🛈) so a
             # reviewer can scan the column and triage at a glance. `fix`
@@ -592,7 +652,11 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
                 "accept_risk": "🛈 ",
             }.get(kind, "")
             if mid:
-                line = f"{glyph}[{mid}](#{mid.lower()})"
+                # Variant B (2026-06-04): lead with the monochrome priority
+                # prefix (`● P1 · `) — same as every other linked measure —
+                # then the action-kind glyph (orthogonal signal). Supersedes the
+                # old trailing `(P1)` token.
+                line = f"{_measure_prio_prefix(ctx, mid)}{glyph}[{mid}](#{mid.lower()})"
             else:
                 # Synthesized review-hint (M-14) — no M-NNN anchor; the
                 # `action` field already carries "Manual review at <file>"
@@ -601,8 +665,6 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
                 action = ""  # already consumed
             if action:
                 line += f" — {action}"
-            if priority:
-                line += f" ({priority})"
             rendered.append(line)
         return "<br/>".join(rendered)
 
@@ -3642,6 +3704,50 @@ def _shorten_title_for_xref(raw_title: str, threat: dict | None = None, *, compa
     return weakness
 
 
+def _strip_embedded_evidence_file(title: str, threat: dict | None) -> str:
+    """Drop a trailing evidence-file token that upstream title generation
+    appends to the weakness phrase.
+
+    Stage-1 increasingly emits titles like
+    ``"SQL injection authentication bypass routes/login.ts"`` — the file is
+    glued onto the weakness with a bare space. Downstream renderers then add
+    the file AGAIN (``_shorten_title_for_xref`` → ``… (routes/login.ts)``;
+    the §8 Location cell; bare-ref linkifiers), producing the redundant
+    ``… routes/login.ts (routes/login.ts)`` form the user flagged.
+
+    Strip the trailing token ONLY when it matches — or is a truncated prefix
+    of (the title may have been clipped at ~80 chars, leaving ``… administ…``)
+    — one of the threat's ``evidence[].file`` paths, so genuine weakness words
+    are never clipped. The file still reaches the reader via the evidence-
+    derived suffixes that each renderer adds deliberately.
+    """
+    t = (title or "").strip()
+    if not t or not isinstance(threat, dict):
+        return t
+    ev = threat.get("evidence")
+    if isinstance(ev, dict):
+        ev = [ev]
+    elif not isinstance(ev, list):
+        ev = []
+    files = [(e.get("file") or "").strip() for e in ev if isinstance(e, dict)]
+    files = [f for f in files if f]
+    if not files:
+        return t
+    idx = t.rfind(" ")
+    if idx < 0:
+        return t
+    tail = re.sub(r":\d+$", "", t[idx + 1:].rstrip("…").strip())
+    # Tail must look like a path (slash or dotted extension) to be a file
+    # token — never strip a plain trailing word like "spa" or "exclusions".
+    if not tail or ("/" not in tail and not re.search(r"\.[A-Za-z0-9]{1,6}$", tail)):
+        return t
+    for f in files:
+        f_norm = re.sub(r":\d+$", "", f)
+        if f_norm == tail or f_norm.startswith(tail):
+            return t[:idx].rstrip(" —–-")
+    return t
+
+
 def _load_weakness_classes() -> dict[str, Any]:
     """Lazy-load and cache the weakness-classes vocabulary."""
     global _WEAKNESS_CLASSES_CACHE
@@ -4133,6 +4239,14 @@ _SEV_ICON_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "�
 # P4 = backlog) so the jump-list reflects remediation urgency, not finding
 # severity (2026-05-31 user request).
 _PRIO_ICON_TBL = {"p1": "🔴", "p2": "🟠", "p3": "🟡", "p4": "🟢"}
+# Variant B (2026-06-04 user decision): measures are annotated with a single
+# MONOCHROME circled digit — the colourless parallel to the finding severity
+# dot, where the digit IS the rollout priority (❶ P1, ship now … ❹ P4, backlog).
+# Self-explanatory, so no `P1` text tag is needed alongside it (the earlier
+# fill-ramp `●◕◑○` + text form is superseded). Verified DejaVu-safe (U+2776–2779)
+# so it renders in the WeasyPrint PDF without tofu. The filled glyphs ❶❷❸❹
+# distinguish priority from the OUTLINE ①②③④ used for attack-path classes.
+_PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
 
 # §8 / §9 register jump-list helpers. The index lines used to be bare
 # `[F-NNN](#f-nnn)` chips with no title or criticality, which is unreadable
@@ -4201,7 +4315,17 @@ def _build_register_index(label: str, prefix: str, nums: list,
     return f"**{label}:**<br/>" + "<br/>".join(chips)
 
 
-_PRIO_LABEL_TBL = {"p1": "P1", "p2": "P2", "p3": "P3", "p4": "P4"}
+def _measure_prio_prefix(ctx: "RenderContext", mid: str) -> str:
+    """Variant-B priority prefix (`❶ `) for a BARE measure chip `[M-NNN]`.
+
+    The full-label form (`[M-NNN](#m-nnn) — title`) gets this prefix from
+    `linkify_with_label`; this helper is for the compact bare-chip cells
+    (§2 Top-Threats Fix, §7b Requirements Traceability, Top-Findings measures)
+    that deliberately omit the title but must still carry the same annotation.
+    Returns "" when the priority is unknown (no prefix rather than a bare digit).
+    """
+    digit = _PRIO_DIGIT_TBL.get(ctx.priority_for_ref(mid), "")
+    return f"{digit} " if digit else ""
 
 
 _MULTI_MATCH_WARNED: set[str] = set()
@@ -6303,12 +6427,21 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             # trailing token stays compact (`routes/login.ts` rather than
             # `routes/login.ts:34`). The §8 register still carries the
             # full file:line for click-through detail.
-            raw_title = (t.get("title") or t.get("scenario_short") or "").strip()
+            # Strip any evidence-file token the Stage-1 title already carries
+            # so the compact form below does not render it twice
+            # (`… routes/login.ts (routes/login.ts)`).
+            raw_title = _strip_embedded_evidence_file(
+                (t.get("title") or t.get("scenario_short") or "").strip(), t
+            )
             # compact=True — Top Mitigations Addresses cells stack 4-5
             # findings via `<br/>`; the parens form is more scannable
             # than 4 repeated "in file" phrases per row.
             short_label = _shorten_title_for_xref(raw_title, t, compact=True)
-            addressed.append({"ref": tid, "label": short_label})
+            # Criticality dot — the Addresses column lists findings and so
+            # carries the same severity glyph as every other finding cross-ref
+            # (§8 register, asset/component tables). Empty when severity unknown.
+            dot = ctx.severity_emoji(ctx.severity_for_ref(tid))
+            addressed.append({"ref": tid, "label": short_label, "dot": dot})
         comp_ids = m.get("components") or []
         if not comp_ids:
             seen: set[str] = set()
@@ -7039,8 +7172,18 @@ def _render_requirements_mapping_table(
         risk_word = (r.get("risk_word") or "").strip()
         emoji = _TOP_THREATS_SEVERITY_EMOJI.get(risk_word.lower(), "")
         risk_cell = f"{emoji} {risk_word.title()}".strip() or "—"
-        find_cell = ", ".join(f"[{fid}](#{fid.lower()})" for fid, _ in r["findings"]) or "—"
-        meas_cell = ", ".join(f"[{mid}](#{mid.lower()})" for mid in r["measures"]) or "—"
+        # Per-item annotation (2026-06-04): findings carry their severity dot
+        # and measures their Variant-B priority prefix — the same vocabulary as
+        # every other linked ref. The row-level Risk column shows the requirement
+        # aggregate; the per-finding dots disambiguate when findings differ.
+        def _find_chip(fid: str) -> str:
+            e = ctx.severity_emoji(ctx.severity_for_ref(fid))
+            return f"{e} [{fid}](#{fid.lower()})" if e else f"[{fid}](#{fid.lower()})"
+
+        find_cell = ", ".join(_find_chip(fid) for fid, _ in r["findings"]) or "—"
+        meas_cell = ", ".join(
+            f"{_measure_prio_prefix(ctx, mid)}[{mid}](#{mid.lower()})" for mid in r["measures"]
+        ) or "—"
         bp_cell = r.get("blueprint") or "—"
         lines.append(f"| `{r['req_id']}` | {risk_cell} | {find_cell} | {meas_cell} | {bp_cell} |")
     out = "\n".join(lines)
@@ -7292,18 +7435,18 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
 
         fix_ids.sort(key=_prio_rank)
         shown = fix_ids[:2]
-        fix_links = ", ".join(f"[{mid}](#{mid.lower()})" for mid in shown)
-        priorities: list[str] = []
-        for mid in shown:
-            p = (mitigations.get(mid, {}).get("priority") or "").strip()
-            if p and p not in priorities:
-                priorities.append(p)
-        if fix_links and priorities:
-            fix_cell = f"{fix_links} ({'/'.join(priorities)})"
-        elif fix_links:
-            fix_cell = fix_links
-        else:
-            fix_cell = "—"
+        # Stack multi-mitigation Fix cells with <br/> (same convention as the
+        # findings_cell below). A ", " join left two `[M-NNN](#…)` links on one
+        # line, which the cell_format QA detector flags as "2 ID links with no
+        # <br/> separator" (juice-shop 2026-06-03 §2 Top-Threats Fix column).
+        # Variant B (2026-06-04): annotate each measure link inline with its
+        # monochrome priority circle + P-tag (`● P1 · [M-NNN]`), the same prefix
+        # `linkify_with_label` emits everywhere else, instead of a trailing
+        # `(P1/P2)` token. Keeps every linked measure annotated consistently.
+        fix_links = "<br/>".join(
+            f"{_measure_prio_prefix(ctx, mid)}[{mid}](#{mid.lower()})" for mid in shown
+        )
+        fix_cell = fix_links or "—"
 
         impacts = [impact_label.get(s, s) for s in (ap.get("impact") or [])]
         impact_str = " · ".join(impacts)
@@ -7820,6 +7963,14 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # columns: rewrite as `<br/>`-stacked `[ID](#id) — label` entries so
     # these markdown-fragment tables match the computed-section convention.
     md = _enrich_linked_id_cells(ctx, md)
+
+    # §5 Attack Surface + §7 Security Architecture author their finding
+    # cross-references WITHOUT the severity dot (the §5 entry-point tables and
+    # the §7 control tables / DiD bullets). Prefix each with its criticality
+    # glyph so they match §8, the asset/component tables, and Top Mitigations.
+    # Runs after enrich so any dot it already produced is seen (idempotent).
+    if section_id in ("attack_surface", "security_architecture"):
+        md = _prepend_finding_severity_dots(ctx, md)
 
     # Escape `$word` tokens (MongoDB `$where`/`$ne`, jQuery selectors, bash
     # vars) so KaTeX/MathJax-enabled renderers don't treat the `$` as math
@@ -9099,7 +9250,13 @@ _DOT_TLD_KNOWN_NAMES: frozenset[str] = frozenset(
 #     anchor declaration, which is not in the dangerous-tag set anyway.
 # ---------------------------------------------------------------------------
 _DANGEROUS_HTML_TAG_RE = re.compile(
-    r"</?(?:script|iframe|svg|object|embed|form|style|link|meta)\b[^>]*/?>"
+    # `code` included: Stage-1 prose occasionally writes a bare placeholder
+    # like `#{<code>}` with no closing `</code>`. An unclosed inline `<code>`
+    # element bleeds its formatting across the entire remainder of the
+    # rendered document (the "everything is italic from §3.6 on" report).
+    # Balanced `<code>…</code>` pairs are pulled into PROTECTED_RE below
+    # first, so only the unbalanced/bare form reaches this substitution.
+    r"</?(?:script|iframe|svg|object|embed|form|style|link|meta|code)\b[^>]*/?>"
     r"|<img\b[^>]*onerror\s*=[^>]*>"
     r"|<img\b[^>]*/?>"  # bare <img …> — payload context only since legit <img> never appears in our prose
     r"|<[A-Za-z][\w]*\s+(?:onerror|onload|onclick|onmouseover)\s*=[^>]*/?>",
@@ -9276,6 +9433,39 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
                 line,
             )
         out_chunks.append("\n".join(lines))
+    return "".join(out_chunks)
+
+
+_FINDING_DOT_REF_RE = re.compile(
+    r"(?P<dot>[🔴🟠🟡🟢⚪]\s*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))"
+)
+
+
+def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
+    """Prefix every finding cross-reference ``[F-NNN](#f-nnn)`` with its
+    severity glyph so §5 Attack Surface and §7 Security Architecture carry the
+    same criticality dot the reader already sees in §8, the asset / component
+    tables, and the Top Mitigations Addresses column.
+
+    Idempotent — a ref already preceded by a severity emoji is left untouched.
+    Skips fenced code blocks and inline code spans; heading lines never carry a
+    `[F-NNN](#f-nnn)` link so they need no special guard.
+    """
+    if not md:
+        return md
+
+    def _sub(m: re.Match[str]) -> str:
+        if m.group("dot"):
+            return m.group(0)  # already dotted
+        emoji = ctx.severity_emoji(ctx.severity_for_ref(f"F-{m.group('num')}"))
+        return f"{emoji} {m.group('link')}" if emoji else m.group("link")
+
+    out_chunks: list[str] = []
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```|`[^`\n]+`)", md, flags=re.DOTALL):
+        if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
+            out_chunks.append(chunk)
+        else:
+            out_chunks.append(_FINDING_DOT_REF_RE.sub(_sub, chunk))
     return "".join(out_chunks)
 
 
@@ -9475,6 +9665,20 @@ def _mask_secrets(md: str) -> tuple[str, list[str]]:
         if regex.search(md):
             md = regex.sub(repl, md)
             applied.append(name)
+    # Canonical pass — mask anything the unmasked_secrets gate (secret_scan.py)
+    # would flag that the composer's own _SECRET_PATTERNS list does not cover.
+    # The composer renders §8 evidence by reading the REAL source file, so
+    # committed literals like `password: 'admin123'` (data/static/users.yml) end
+    # up verbatim in the markdown; the gate caught them on the 2026-06-03 run.
+    # Sharing secret_scan's pattern set guarantees detector⇔masker symmetry so
+    # the gate can never trip on the rendered document again.
+    try:
+        import secret_scan  # sibling script; lazy import keeps module load cheap
+        md, extra = secret_scan.mask_text(md)
+        applied.extend(extra)
+    except Exception:
+        # Best-effort: a missing/broken sibling must never abort composition.
+        pass
     return md, applied
 
 
@@ -12137,9 +12341,13 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         )
         lines.append(
             _build_register_index(
+                # Variant B (2026-06-04): a single MONOCHROME circled digit
+                # (❶❷❸❹) whose number is the priority — the colourless parallel
+                # to the §8 Findings-index severity dots, self-explanatory so no
+                # P-tag is needed (supersedes the fill-ramp+text form).
                 "Mitigations index", "M", _m_nums_by_prio, _m_title, _m_prio,
-                icon_tbl=_PRIO_ICON_TBL, key_label_tbl=_PRIO_LABEL_TBL,
-                show_icon=False,
+                icon_tbl=_PRIO_DIGIT_TBL, key_label_tbl=None,
+                show_icon=True,
             )
         )
         lines.append("")
