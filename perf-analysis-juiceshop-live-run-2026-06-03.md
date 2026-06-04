@@ -135,8 +135,11 @@ Renderer-Contract/Prompt so schärfen, dass §7.2 mechanismus-basiert entsteht �
 
 **Kernaussage:** Nicht die 52 Checks kosten Zeit (2.56 s). Bucket **E** (v2-Enforcement, u.a. der §7.2-Trigger) und **D** (Vorstufen-Tests) sind die **Repair-Lunten**. E → upstream garantieren oder advisory; D → in Stage-1 verschieben. Damit bleibt QA schnell *und* triggert teure Repairs nur noch für echte, nicht-upstream-garantierbare LLM-Suboptimalität — genau das geforderte „umfangreiche QA nur in begründeten Ausnahmen".
 
-### M3 — Renderer-Overrun (14 vs 8 min) *(sekundär)*
-Separat untersuchen; Qualitätsrisiko bei Hau-Ruck → niedrige Prio.
+### M3 — Renderer-Overrun (14 vs 8 min) *(GEMESSEN 2026-06-04 — niedrige Prio bestätigt)*
+Transcript-Analyse (`agent-a2ab643a`, 14min, 153 rows): **46 Bash / 10 Read / 8 Write** (NICHT round-trip-gebottleneckt wie der Analyst mit 212). Zeitverteilung:
+- **~5min = EIN Turn:** §7 `security-architecture.md` NARRATIVE_PLACEHOLDER-Fill als **60-KB-Single-Write** — echte Prosa-Generierung, kein Leerlauf (einziger Gap >45s = 297s, genau dieser Turn).
+- **~9min:** kleinere MS-Fragmente + Compose + Checks; `ms-architecture-assessment.json` 3× (5176→4732→4578b, schrumpfend) + `ms-verdict.json` 2× = ~2–3 Compactness-Refinement-Re-Writes.
+**Verdikt:** Renderer-Zeit ist überwiegend **legitime Generierung**, kein struktureller Waste. Hebel nur: (1) §7-Fill nach Stage 1 verschieben/splitten = Qualitäts-/Komplexitäts-Tradeoff (kein sauberer Gewinn); (2) ms-*-Re-Write-Churn straffen = ~2–3min, geringer ROI. → **M3 nicht weiterverfolgen; die verifizierten Hebel (M2a/M2b/M1-lite/Full-M1) sind die echten Gewinne.**
 
 ---
 
