@@ -272,15 +272,25 @@ the console output. Keep `PASS` and `UNVERIFIABLE` in internal stats and JSON
 output only.
 
 Use ANSI colors when the target terminal supports them and `NO_COLOR` is not
-set. If color support is unknown, use the same text without ANSI escape codes.
-Do not use emoji in the professional console output.
+set. If color support is unknown, render the same text and glyphs without ANSI
+escape codes. Do not use emoji in the console output — use the geometric glyphs
+`●` (filled) and `○` (hollow), which colorize cleanly via ANSI and degrade to
+plain characters when color is off.
+
+Each stats row and each open-requirement block leads with a **criticality dot**
+that encodes status at a glance: filled `●` for the actionable statuses, hollow
+`○` for the non-actionable `UNVERIFIABLE`. The dot color always matches the
+status color in the table below, so the report reads as a single coherent
+red/yellow/green scale.
 
 ANSI color rules:
 
 | Field | Color |
 |-------|-------|
-| `FAIL` | bold red (`\033[1;31m`) |
-| `PARTIAL` | bold yellow (`\033[1;33m`) |
+| `●` dot / `[FAIL]` | bold red (`\033[1;31m`) |
+| `●` dot / `[PARTIAL]` | bold yellow (`\033[1;33m`) |
+| `●` dot / `PASS` (stats only) | green (`\033[32m`) |
+| `○` dot / `UNVERIFIABLE` (stats only) | dim gray (`\033[2m`) |
 | `MUST` | red (`\033[31m`) |
 | `SHOULD` | yellow (`\033[33m`) |
 | `MAY` | cyan (`\033[36m`) |
@@ -299,11 +309,17 @@ Source : <remote url | plugin cache path>
 Scope  : <n> requirements checked<, filter: <filter> if set>
 
 Result
-  FAIL       <n>
-  PARTIAL    <n>
-  PASS       <n>
-  IGNORED    <n> untestable
+  ● FAIL          <n>
+  ● PARTIAL       <n>
+  ● PASS          <n>
+  ○ UNVERIFIABLE  <n>
 ```
+
+Color each leading dot per the ANSI table (red / yellow / green / dim); the
+status label keeps its own color. Use the canonical status token `UNVERIFIABLE` here — the same label used in
+the Step 2 status table and the JSON `unverifiable` stat. Do not invent
+synonyms such as "ignored" or "untestable". Right-align the counts in a single
+column as shown.
 
 ### 3b — Findings
 
@@ -326,7 +342,7 @@ Otherwise print `Open Requirements` followed by one block per open requirement.
 Per-finding block:
 
 ```
-[FAIL] MUST  SEC-SQL  Parameterized SQL Queries
+● [FAIL] MUST  SEC-SQL  Parameterized SQL Queries
 Finding : raw request input reaches sequelize.query() in routes/search.ts:23
 Risk    : attacker-controlled search terms can alter the SQL predicate
 Evidence: routes/search.ts:23
@@ -338,7 +354,9 @@ Links   : requirement · blueprint · threat model F-014
 
 Rules:
 
-- **First line:** `[<STATUS>] <PRIORITY>  <ID>  <Short Title>`.
+- **First line:** `<DOT> [<STATUS>] <PRIORITY>  <ID>  <Short Title>`, where
+  `<DOT>` is a colored `●` — red for `FAIL`, yellow for `PARTIAL` — so the gap
+  list scans as a colored column down the left edge.
   - Use `[FAIL]` or `[PARTIAL]` exactly.
   - Keep the title to 3-8 words in Title Case.
   - Do not use Markdown headings.
@@ -385,14 +403,21 @@ only open requirements (`FAIL` and `PARTIAL`). Do not include `PASS` or
 | Repository | <git remote URL or directory name> |
 | Source | <remote \| cached> |
 | Open Requirements | <n> |
-| Failed | <n> |
-| Partial | <n> |
-| Passed | <n> |
-| Ignored Untestable | <n> |
+| 🔴 Failed | <n> |
+| 🟡 Partial | <n> |
+| 🟢 Passed | <n> |
+| ⚪ Unverifiable | <n> |
 
 ## Open Requirements
 
-### FAIL · MUST · SEC-SQL — Parameterized SQL Queries
+> 🔴 fail · 🟡 partial — open gaps detailed below. 🟢 passed and ⚪ unverifiable are counted in the summary only.
+
+| Status | Priority | ID | Requirement | Effort |
+|--------|----------|----|-------------|--------|
+| 🔴 FAIL | MUST | SEC-SQL | Parameterized SQL Queries | M |
+| 🟡 PARTIAL | SHOULD | SEC-CSP-1 | Content Security Policy | S |
+
+### 🔴 FAIL · MUST · SEC-SQL — Parameterized SQL Queries
 
 Raw request input reaches `sequelize.query()` at `routes/search.ts:23`, so the query predicate can be changed by user-controlled input.
 
@@ -419,10 +444,25 @@ sequelize.query("select * from product where name like :term", {
 - Blueprint: <full blueprint section url, if available>
 - Threat model: [F-014](docs/security/threat-model.md#f-014)
 
+---
+
+*Effort: S = under 1 hour · M = about half a day · L = multi-day or architectural change.*
+
 ````
 
 Markdown rules:
 
+- Prefix every status — in the summary metadata table, the overview table, and
+  each `###` heading — with its criticality circle, reusing the threat model's
+  house palette: 🔴 FAIL · 🟡 PARTIAL · 🟢 PASS · ⚪ UNVERIFIABLE. Keep the
+  one-line palette legend (the `>` blockquote) directly under the
+  `## Open Requirements` heading.
+- Lead the `## Open Requirements` section with an overview table
+  (`Status | Priority | ID | Requirement | Effort`) listing every open
+  requirement in the sort order below. The detailed `###` blocks follow
+  beneath it, so a reviewer can scan the whole gap list before reading details.
+- Close the report with the one-line effort legend shown above
+  (`*Effort: S = … · M = … · L = …*`), preceded by a `---` rule.
 - Sort open requirements with the same order as console output.
 - Use one `###` heading per open requirement: `### <STATUS> · <PRIORITY> · <ID> — <Title>`.
 - Include full URLs for requirement and blueprint links.

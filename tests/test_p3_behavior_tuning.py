@@ -55,7 +55,7 @@ class TestQuickProfileEvidenceExcerptRestored:
     """The cheap, high-impact rebalance: evidence excerpt is back at quick."""
 
     def test_quick_haiku_economy_keeps_evidence_excerpt(self):
-        profile = rc.resolve_stride_profile("haiku-economy", "quick")
+        profile = rc.resolve_stride_profile("sonnet-economy", "quick")
         sp = profile["stride_profile"]
         assert sp["skip_evidence_excerpt"] is False, (
             "P3 (A6) — skip_evidence_excerpt must be False at quick depth so "
@@ -69,7 +69,7 @@ class TestQuickProfileEvidenceExcerptRestored:
         code-example flag flipped. Both are now False because the
         ~200-400 added output tokens per mitigation are worth restoring
         actionable code hints to the §9 Mitigation Register."""
-        profile = rc.resolve_stride_profile("haiku-economy", "quick")
+        profile = rc.resolve_stride_profile("sonnet-economy", "quick")
         sp = profile["stride_profile"]
         assert sp["skip_verification_greps"] is True
         assert sp["max_threats_per_category"] == 1  # quick triage, Critical-safe (2026-05)
@@ -78,10 +78,10 @@ class TestQuickProfileEvidenceExcerptRestored:
         assert sp["turn_budget_hard_cap"] == 25
 
     def test_non_quick_depths_get_full_profile(self):
-        """The rebalance only touches the haiku-economy quick branch.
+        """The rebalance only touches the sonnet-economy quick branch.
         Standard / thorough must still see the full-profile label."""
         for depth in ("standard", "thorough"):
-            profile = rc.resolve_stride_profile("haiku-economy", depth)
+            profile = rc.resolve_stride_profile("sonnet-economy", depth)
             assert profile["stride_profile"].get("stride_profile_label") == "full", (
                 f"depth={depth} must keep the full STRIDE profile"
             )

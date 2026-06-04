@@ -332,3 +332,29 @@ def test_r7_full_pipeline_is_idempotent():
     assert "`login.ts:18`" in once
     assert "`role:admin`" in once
     assert "`alg:none`" in once
+
+
+def test_nosql_operator_object_is_backticked():
+    # MongoDB/MarsDB operator object literals in prose get wrapped, and the
+    # composer's `\$`-escape is undone inside the code span.
+    md = "Sending body {id: {\\$gt:''}, message: 'hacked'} matches all docs with multi:true scope."
+    out, n = prose.apply_fixes(md)
+    assert n > 0
+    assert "`{id: {$gt:''}, message: 'hacked'}`" in out
+    assert "`multi:true`" in out
+    # Idempotent.
+    out2, n2 = prose.apply_fixes(out)
+    assert n2 == 0 and out2 == out
+
+
+def test_plain_brace_set_is_not_backticked():
+    # A `{...}` span WITHOUT a query operator is plain prose, left untouched.
+    md = "The role owns {read, write} on the bucket."
+    out, n = prose.apply_fixes(md)
+    assert "{read, write}" in out and "`{read, write}`" not in out
+
+
+def test_nosql_object_inside_existing_code_span_is_preserved():
+    md = "Already-formatted `{id: {$gt: ''}}` stays as one span."
+    out, _ = prose.apply_fixes(md)
+    assert out.count("`") == md.count("`")  # no new backticks injected

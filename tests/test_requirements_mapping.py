@@ -125,6 +125,51 @@ def test_mapping_is_prefix_agnostic_for_requirement_ids() -> None:
     assert "[F-001](#f-001)" in table and "[M-001](#m-001)" in table
 
 
+def test_remediation_reference_populates_when_requirement_is_known(tmp_path: Path) -> None:
+    # Field-name split fix: a STRIDE analyzer parks a matched requirement in
+    # `remediation.reference` ("[ID](url)") instead of `violated_requirements`.
+    # When the ID is declared in .requirements.yaml, the traceability table
+    # picks it up — so §7b/§MS stop diverging from the §8 `Violated:` note.
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n"
+        "- id: C1\n"
+        "  requirements:\n"
+        "  - id: SEC-AUTH-1\n"
+        "    url: https://x/auth\n",
+        encoding="utf-8",
+    )
+    threats = [
+        {
+            "id": "T-001",
+            "risk": "high",
+            "remediation": {"reference": "[SEC-AUTH-1](https://x/auth)"},
+            "mitigation_ids": ["M-001"],
+        },
+        # An OWASP reference shares the bracket-link shape but is NOT a declared
+        # requirement ID → must be ignored (no phantom row).
+        {"id": "T-002", "risk": "low", "remediation": {"reference": "[A01:2021](https://owasp.org)"}},
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": threats, "mitigations": []},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    rows = compose._build_requirements_mapping_rows(ctx)
+    assert {r["req_id"] for r in rows} == {"SEC-AUTH-1"}
+    auth = rows[0]
+    assert [fid for fid, _ in auth["findings"]] == ["F-001"]
+    assert auth["measures"] == ["M-001"]
+
+
+def test_remediation_reference_ignored_without_requirements_yaml() -> None:
+    # No declared-ID set (bare tmp dir) → degrade to array-only behaviour, so a
+    # reference-only threat does not enter the table. Pins the safe default.
+    threats = [{"id": "T-001", "risk": "high", "remediation": {"reference": "[SEC-AUTH-1](u)"}}]
+    assert compose._build_requirements_mapping_rows(_ctx(threats)) == []
+
+
 def test_no_requirement_linked_threats_yields_empty() -> None:
     rows = compose._build_requirements_mapping_rows(_ctx([{"id": "T-1", "source": "stride"}]))
     assert rows == []
@@ -231,6 +276,99 @@ def _prepare_req_output_dir(tmp_path: Path) -> Path:
         "**Summary:** 1 requirements checked — 1 PASS\n"
     )
     return out
+
+
+# --- §10 Mitigation Register: Fulfills Requirements + Blueprint guidance -----
+# These lines are demanded by the QA reviewer and specified in the §10 block
+# template, but the renderer previously emitted neither (mitigations[] carries
+# no such field). Both are now derived deterministically from the addressed
+# threats — only when check_requirements is on.
+
+
+def test_mitigation_register_renders_fulfills_and_blueprint(tmp_path: Path) -> None:
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n"
+        "- id: C1\n"
+        "  requirements:\n"
+        "  - id: SEC-AUTH-1\n"
+        "    url: https://x/auth\n",
+        encoding="utf-8",
+    )
+    threats = [
+        {
+            "id": "T-001",
+            "risk": "critical",
+            "title": "Auth bypass",
+            "violated_requirements": ["SEC-AUTH-1"],
+            "mitigation_ids": ["M-001"],
+            "remediation": {"blueprint": {"id": "BP-API", "url": "https://x/bp", "section": "API Auth"}},
+        },
+    ]
+    mitigations = [
+        {"id": "M-001", "title": "Add auth", "threat_ids": ["T-001"], "priority": "P1", "severity": "Critical"},
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": threats, "mitigations": mitigations},
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"check_requirements": True},
+    )
+    out = compose._render_mitigation_register(ctx, None, {"heading": "## 10. Mitigation Register"})
+    assert "**Fulfills Requirements:**" in out
+    assert "[SEC-AUTH-1](https://x/auth)" in out          # linked via declared URL
+    assert "**Blueprint guidance:**" in out
+    assert "BP-API" in out
+
+
+def test_mitigation_register_requirement_reference_renders_as_fulfills_not_reference(tmp_path: Path) -> None:
+    # A requirement parked in remediation.reference must surface under Fulfills
+    # Requirements — NOT be harvested into a cheatsheet `**Reference:**` line.
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n- id: C1\n  requirements:\n  - id: SEC-AUTH-1\n    url: https://x/auth\n",
+        encoding="utf-8",
+    )
+    threats = [
+        {
+            "id": "T-001",
+            "risk": "high",
+            "title": "Auth gap",
+            "mitigation_ids": ["M-001"],
+            "remediation": {"reference": "[SEC-AUTH-1](https://x/auth)"},
+        },
+    ]
+    mitigations = [{"id": "M-001", "title": "Fix auth", "threat_ids": ["T-001"], "priority": "P2", "severity": "High"}]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": threats, "mitigations": mitigations},
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"check_requirements": True},
+    )
+    out = compose._render_mitigation_register(ctx, None, {"heading": "## 10. Mitigation Register"})
+    assert "**Fulfills Requirements:**" in out
+    assert "[SEC-AUTH-1](https://x/auth)" in out
+    assert "**Reference:** [SEC-AUTH-1]" not in out
+
+
+def test_mitigation_register_omits_requirement_lines_when_disabled(tmp_path: Path) -> None:
+    threats = [
+        {"id": "T-001", "risk": "high", "title": "x", "violated_requirements": ["SEC-AUTH-1"], "mitigation_ids": ["M-001"]},
+    ]
+    mitigations = [{"id": "M-001", "title": "y", "threat_ids": ["T-001"], "priority": "P2", "severity": "High"}]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": threats, "mitigations": mitigations},
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={},  # check_requirements falsy → both lines suppressed
+    )
+    out = compose._render_mitigation_register(ctx, None, {"heading": "## 10. Mitigation Register"})
+    assert "**Fulfills Requirements:**" not in out
+    assert "**Blueprint guidance:**" not in out
 
 
 def test_full_render_emits_traceability_in_7b_and_ms(tmp_path: Path) -> None:

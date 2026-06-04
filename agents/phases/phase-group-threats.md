@@ -209,7 +209,7 @@ For each component, use Agent tool:
 - `prompt`: **emit the parameters in the order below.** The three groups are ordered by cache-friendliness — stable values across all dispatches come first so the Claude Code prompt-cache prefix covers them; component-specific values come next; volatile context file paths come last. See AGENTS.md → "Prompt caching contract" for the full rationale.
 
   **Group A — stable across every STRIDE dispatch (cache-friendly prefix):**
-  `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable), `STRIDE_PROFILE` (inline JSON from `.skill-config.json → stride_profile`; `{"stride_profile_label": "full"}` at Standard/Thorough or any non-haiku-economy reasoning-mode; depth-reduced JSON only when `--reasoning-model haiku-economy` AND `--assessment-depth quick` — see `agents/appsec-stride-analyzer.md` → "Quick-mode adjustments" for A-F semantics)
+  `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable), `STRIDE_PROFILE` (inline JSON from `.skill-config.json → stride_profile`; `{"stride_profile_label": "full"}` at Standard/Thorough or any non-economy reasoning-mode; depth-reduced JSON only when `--reasoning-model sonnet-economy` AND `--assessment-depth quick` — see `agents/appsec-stride-analyzer.md` → "Quick-mode adjustments" for A-F semantics)
 
   **Group B — component-specific scalars and short lists:**
   `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `COMPONENT_PATHS` (Fix #7 root cause — comma-separated `paths` globs from the component definition; the STRIDE analyzer uses these to refuse emitting a threat whose `evidence[0].file` is outside the globs, preventing the "SQL injection found in routes/search.ts recorded as component=data-layer" attack-target-tier drift that `reclassify_components.py` is currently the deterministic-only safety net for), `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26), `FOCUS_PATHS` (M15/M20 — see below), `EXCLUDE_PATHS` (M16 — only when extending scan-excludes.yaml is not enough)
@@ -416,16 +416,16 @@ When no obvious priority files are derivable (rare, e.g. brand-new component wit
 
 Dispatch all simultaneously with `run_in_background: true`. **Each component MUST be dispatched as a separate Agent tool call** using `subagent_type: "appsec-advisor:appsec-stride-analyzer"` and `model: $STRIDE_MODEL` (the reasoning-model-resolved ID — overrides the agent's frontmatter default). Issue all Agent calls in a single orchestrator turn (parallel tool calls). Do NOT perform STRIDE analysis inline in the orchestrator — the orchestrator does not have the STRIDE prompt and cannot produce the structured `.stride-<id>.json` output format. Then enter the progress watcher described below.
 
-**STRIDE_PROFILE forwarding (M3.5).** The `STRIDE_PROFILE_JSON` env var (set by the skill from `.skill-config.json → stride_profile`) is forwarded verbatim into Group A of every per-component dispatch prompt. When the user runs with `--reasoning-model haiku-economy --assessment-depth quick` the JSON encodes the A-F depth-reduction flags; otherwise it is `{"stride_profile_label":"full"}` and the analyzer runs at full depth. Emit the line as:
+**STRIDE_PROFILE forwarding (M3.5).** The `STRIDE_PROFILE_JSON` env var (set by the skill from `.skill-config.json → stride_profile`) is forwarded verbatim into Group A of every per-component dispatch prompt. When the user runs with `--reasoning-model sonnet-economy --assessment-depth quick` the JSON encodes the A-F depth-reduction flags; otherwise it is `{"stride_profile_label":"full"}` and the analyzer runs at full depth. Emit the line as:
 
 ```
 STRIDE_PROFILE=<contents of $STRIDE_PROFILE_JSON>
 ```
 
-For example (Quick + haiku-economy):
+For example (Quick + sonnet-economy):
 
 ```
-STRIDE_PROFILE={"skip_verification_greps": true, "max_threats_per_category": 2, "skip_code_examples": true, "skip_evidence_excerpt": true, "skip_cvss_scoring": true, "turn_budget_hard_cap": 25, "stride_profile_label": "quick (depth-reduced via haiku-economy)"}
+STRIDE_PROFILE={"skip_verification_greps": true, "max_threats_per_category": 2, "skip_code_examples": true, "skip_evidence_excerpt": true, "skip_cvss_scoring": true, "turn_budget_hard_cap": 25, "stride_profile_label": "quick (depth-reduced via sonnet-economy)"}
 ```
 
 The analyzer reads `STRIDE_PROFILE` per the contract in `agents/appsec-stride-analyzer.md → "Quick-mode adjustments"`. Forwarding is unconditional — the Group-A position keeps the prompt-cache prefix stable across all per-component dispatches.
@@ -1187,8 +1187,8 @@ When a mitigation addresses **two or more** findings, the `**Addresses:**` block
 | `#### <a id="m-NNN"></a>M-NNN — <title>` heading | always | Four-hash heading (not three) so the M-NNN blocks render as sub-sections of the priority group. Anchor ID `m-NNN` is mandatory — every cross-reference elsewhere lands on this anchor. |
 | `**Addresses:**` | always | Bullet list (`- [F-NNN](#f-NNN) — <title>`) when ≥2 addressed findings; single inline `[F-NNN](#f-NNN) — <title>` when exactly 1. **Never** bare IDs, **never** comma-separated unless inside a markdown table row. |
 | `**Prevents CWEs:**` | always when ≥ 1 CWE is distinctly prevented by this fix | Bullet list of `➚ [CWE-NNN](url) — <title>` — each CWE on its own line. When the mitigation prevents exactly one CWE, inline form `**Prevents CWEs:** ➚ [CWE-NNN](url) — <title>` is acceptable. |
-| `**Fulfills Requirements:**` | only when CHECK_REQUIREMENTS=true and the mitigation addresses at least one requirement-linked finding | Derived from requirement IDs propagated by Phase 8b — never invent IDs |
-| `**Blueprint guidance:**` | only when a matching blueprint section was attached by the STRIDE analyzer (`remediation.blueprint`) **and** the requirements YAML loaded a `blueprints[]` section | See Blueprint propagation rule below |
+| `**Fulfills Requirements:**` | only when CHECK_REQUIREMENTS=true and the mitigation addresses at least one requirement-linked finding | **Composer-derived (2026-06-04):** `_render_mitigation_register` emits this deterministically from the addressed threats' `violated_requirements` / `requirement_id` / requirement-matching `remediation.reference` — you do NOT hand-author it in `mitigations[]` (the yaml has no such field). Never invent IDs. |
+| `**Blueprint guidance:**` | only when a matching blueprint section was attached by the STRIDE analyzer (`remediation.blueprint`) **and** the requirements YAML loaded a `blueprints[]` section | **Composer-derived (2026-06-04):** emitted deterministically from the addressed threats' `remediation.blueprint`. See Blueprint propagation rule below for how the STRIDE analyzer attaches it. |
 | `**Priority:**` | always | Bold form: `**P1 — Immediate**` / `**P2 — This Sprint**` / `**P3 — Next Quarter**` / `**P4 — Backlog**`. See P1–P4 rollout priority section below. Note: the Priority line is also encoded in the parent `### P<n>` heading — the per-block line provides redundant anchoring that survives heading-strip operations. |
 | `**Severity:**` | always | One of 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low — derived from the highest risk among addressed findings. Use the emoji-only badge — never inline HTML `<span>`. On its own line. |
 | `**Effort:**` | always | `Low` (< 2h, single file) · `Medium` (half-day, multi-file) · `High` (multi-day, architectural). On its own line. |

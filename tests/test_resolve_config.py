@@ -175,8 +175,8 @@ class TestResolveReasoningModel:
     def test_default_quick_gives_haiku_economy(self):
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "quick")
-        assert out["reasoning_model"] == "haiku-economy"
-        # haiku-economy keeps the Reasoning core on Sonnet
+        assert out["reasoning_model"] == "sonnet-economy"
+        # sonnet-economy keeps the Reasoning core on Sonnet
         assert out["stride_model"] == "sonnet"
         assert out["triage_model"] == "sonnet"
         assert out["merger_model"] == "sonnet"
@@ -201,7 +201,7 @@ class TestResolveReasoningModel:
 
 
 class TestResolveDefaultTierForCappedRepos:
-    """B2d — auto-switch from opus-cheap to haiku-economy on capped repos.
+    """B2d — auto-switch from opus-cheap to sonnet-economy on capped repos.
 
     Trigger: repo_size_capped=True AND user did not pass --reasoning-model.
     No-op in every other case.
@@ -223,7 +223,7 @@ class TestResolveDefaultTierForCappedRepos:
         ns = self._ns()  # no --reasoning-model
         cfg = self._capped_cfg()
         out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out["reasoning_model"] == "haiku-economy"
+        assert out["reasoning_model"] == "sonnet-economy"
         assert out["reasoning_auto_switched"] is True
         assert "auto" in out["reasoning_label"]
         # 2026-06-02: large repos keep the economy tier but no longer DROP
@@ -249,9 +249,9 @@ class TestResolveDefaultTierForCappedRepos:
         assert out == {}
 
     def test_no_op_when_already_haiku_economy(self):
-        # quick depth defaults to haiku-economy already → no need to switch.
+        # quick depth defaults to sonnet-economy already → no need to switch.
         ns = self._ns()
-        cfg = self._capped_cfg(reasoning_model="haiku-economy", depth="quick")
+        cfg = self._capped_cfg(reasoning_model="sonnet-economy", depth="quick")
         out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
         assert out == {}
 
@@ -269,7 +269,7 @@ class TestResolveDefaultTierForCappedRepos:
         ns = self._ns()
         cfg = self._capped_cfg(depth="thorough")
         out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out["reasoning_model"] == "haiku-economy"
+        assert out["reasoning_model"] == "sonnet-economy"
         assert out["reasoning_auto_switched"] is True
 
 

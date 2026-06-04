@@ -179,10 +179,10 @@ def _count_repo_files(repo_root: Path) -> int:
 
 
 # Model-speed scaling — the size scaler above assumes default (sonnet-class)
-# sub-agent speed. When the run auto-switched to ``haiku-economy`` (cheaper,
+# sub-agent speed. When the run auto-switched to ``sonnet-economy`` (cheaper,
 # but slower wall-time on tool-heavy scan agents), the model-bound recon
 # phases legitimately take longer than the size-scaled budget predicts.
-# Without this factor a haiku-economy run on a large repo emits a mild
+# Without this factor a sonnet-economy run on a large repo emits a mild
 # false-positive perf_anomaly (observed: juice-shop Phase 2 recon ran 8m14s
 # vs the 6m26s size-scaled budget — 1.28× over — purely because recon ran on
 # haiku). Phases 1 (context) and 2 (reconnaissance) are the model-bound
@@ -194,14 +194,16 @@ _ECONOMY_PHASE_FACTOR = 1.5
 
 def _run_used_economy_model(output_dir: Path) -> bool:
     """True when ``.skill-config.json`` resolved ``reasoning_model`` to an
-    economy tier (haiku-economy). Best-effort — a missing/malformed config
-    returns False so the threshold stays at its default (size-scaled) value.
+    economy tier (sonnet-economy; legacy alias haiku-economy). Best-effort —
+    a missing/malformed config returns False so the threshold stays at its
+    default (size-scaled) value.
     """
     try:
         cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return str(cfg.get("reasoning_model", "")).strip().lower() == "haiku-economy"
+    return str(cfg.get("reasoning_model", "")).strip().lower() in (
+        "sonnet-economy", "haiku-economy")
 
 
 # Sub-agent token-output ceiling — abnormal Sonnet sessions go up to
@@ -536,7 +538,7 @@ def _extract_perf_anomalies(
     surfaced in each issue's evidence dict (``budget_scale_factor``,
     ``repo_file_count``) so the user can verify why a budget moved.
 
-    When ``economy`` is True (run resolved to ``haiku-economy``), the
+    When ``economy`` is True (run resolved to ``sonnet-economy``), the
     model-bound recon phases (``_ECONOMY_BOUND_PHASES``) get an additional
     ``_ECONOMY_PHASE_FACTOR`` budget multiplier on top of the size scale,
     because the economy model is slower per wall-clock on those scan

@@ -1,4 +1,4 @@
-"""Drift-guard tests for the haiku-economy routing tier.
+"""Drift-guard tests for the sonnet-economy routing tier.
 
 Pins the per-depth × per-agent model assignment so future edits to
 ``scripts/resolve_config.py → EXTENDED_MODEL_MATRIX`` cannot silently
@@ -84,9 +84,9 @@ SONNET = "sonnet"
 )
 def test_haiku_economy_routing(depth, agent, expected):
     rc = _load_resolver()
-    out = rc.resolve_extended_models("haiku-economy", depth)
+    out = rc.resolve_extended_models("sonnet-economy", depth)
     assert out[f"{agent}_model"] == expected, (
-        f"haiku-economy + {depth} → {agent} expected {expected!r}, got {out[f'{agent}_model']!r}"
+        f"sonnet-economy + {depth} → {agent} expected {expected!r}, got {out[f'{agent}_model']!r}"
     )
 
 
@@ -115,7 +115,7 @@ def test_default_tier_extraction_agents_on_haiku(tier, depth):
 
 
 # ---------------------------------------------------------------------------
-# Invariants — the entire point of haiku-economy is preserved
+# Invariants — the entire point of sonnet-economy is preserved
 # ---------------------------------------------------------------------------
 
 
@@ -124,7 +124,7 @@ def test_qa_content_never_haiku():
     use Sonnet — the split-mode design protects content reasoning."""
     rc = _load_resolver()
     for depth in ("quick", "standard", "thorough"):
-        out = rc.resolve_extended_models("haiku-economy", depth)
+        out = rc.resolve_extended_models("sonnet-economy", depth)
         assert out["qa_content_model"] == SONNET
 
 
@@ -133,7 +133,7 @@ def test_orchestrator_never_haiku():
     fragments — never on Haiku."""
     rc = _load_resolver()
     for depth in ("quick", "standard", "thorough"):
-        out = rc.resolve_extended_models("haiku-economy", depth)
+        out = rc.resolve_extended_models("sonnet-economy", depth)
         assert out["orchestrator_model"] == SONNET
 
 
@@ -141,7 +141,7 @@ def test_context_resolver_always_haiku_in_haiku_economy():
     """File-IO + structured-summary task — Haiku in every depth."""
     rc = _load_resolver()
     for depth in ("quick", "standard", "thorough"):
-        out = rc.resolve_extended_models("haiku-economy", depth)
+        out = rc.resolve_extended_models("sonnet-economy", depth)
         assert out["context_resolver_model"] == HAIKU
 
 
@@ -149,7 +149,7 @@ def test_config_scanner_always_haiku_in_haiku_economy():
     """Pattern-matching against YAML rule list — Haiku in every depth."""
     rc = _load_resolver()
     for depth in ("quick", "standard", "thorough"):
-        out = rc.resolve_extended_models("haiku-economy", depth)
+        out = rc.resolve_extended_models("sonnet-economy", depth)
         assert out["config_scanner_model"] == HAIKU
 
 
@@ -159,7 +159,7 @@ def test_recon_scanner_always_haiku_in_haiku_economy():
     — all decision-table-driven, Haiku-suitable in every depth."""
     rc = _load_resolver()
     for depth in ("quick", "standard", "thorough"):
-        out = rc.resolve_extended_models("haiku-economy", depth)
+        out = rc.resolve_extended_models("sonnet-economy", depth)
         assert out["recon_scanner_model"] == HAIKU
 
 
@@ -185,7 +185,7 @@ def test_extraction_trio_always_haiku_in_default_tiers():
 def test_env_override_per_agent(monkeypatch):
     rc = _load_resolver()
     monkeypatch.setenv("APPSEC_CONTEXT_RESOLVER_MODEL", "opus")
-    out = rc.resolve_extended_models("haiku-economy", "quick")
+    out = rc.resolve_extended_models("sonnet-economy", "quick")
     assert out["context_resolver_model"] == "opus"
     # Other agents still follow the routing
     assert out["recon_scanner_model"] == HAIKU
@@ -219,10 +219,10 @@ def _minimal_cfg(reasoning_mode="sonnet", stride_label="full", reasoning_label=N
 
 def test_summary_shows_reasoning_line_for_haiku_economy():
     rc = _load_resolver()
-    cfg = _minimal_cfg(reasoning_mode="haiku-economy", stride_label="quick (depth-reduced via haiku-economy)")
+    cfg = _minimal_cfg(reasoning_mode="sonnet-economy", stride_label="quick (depth-reduced via sonnet-economy)")
     out = rc.render_configuration_summary(cfg)
-    assert "Reasoning : haiku-economy" in out
-    assert "STRIDE    : quick (depth-reduced via haiku-economy)" in out
+    assert "Reasoning : sonnet-economy" in out
+    assert "STRIDE    : quick (depth-reduced via sonnet-economy)" in out
 
 
 def test_summary_shows_reasoning_line_for_sonnet_default():

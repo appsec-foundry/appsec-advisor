@@ -189,7 +189,7 @@ These should not be undone without understanding the trigger that created them.
   - Canonical spec: `agents/phases/phase-group-threats.md` → "Dispatch". Drift-guarded by `tests/test_dispatch_prompt_cache_order.py`.
 - **`docs/related-repos.yaml` is the only source for cross-repo findings deep-reads.** Filesystem siblings only annotate C4 diagrams, never load findings. Pipeline: `load_related_repos.py` → `build_cross_repo_register.py` → `slice_cross_repo_for_component.py`, feeding the Phase-9 STRIDE dispatcher, `coverage_checks.check_cross_repo`, and the Phase 11 §5 renderer. Schema-validated; drift-guarded by `tests/test_load_related_repos.py`.
 - **Default reasoning tiers per assessment depth** are not a free choice:
-  - `quick` → `haiku-economy` (also activates STRIDE depth-reduction profile A–F)
+  - `quick` → `sonnet-economy` (also activates STRIDE depth-reduction profile A–F)
   - `standard` and `thorough` → `opus-cheap` (Opus on threat-merger only; triage-validator stays on Sonnet because `scripts/triage_validate_ratings.py` is the deterministic floor)
   - Override via `--reasoning-model`. Routing resolved by `scripts/resolve_config.py → resolve_extended_models()`.
   - **Opus ceiling:** `--no-opus` (or env `APPSEC_DISABLE_OPUS=1`, or org-profile `policy.disable_opus`) downgrades every Opus selection — the `opus`/`opus-cheap` merger, an explicit `--reasoning-model opus`, the architect default, and any `APPSEC_*_MODEL=…opus…` override — to Sonnet. Enforced by `apply_opus_ban()` as the last model step, so it is non-bypassable. The three sources OR together (any enables, none disables).
@@ -240,15 +240,15 @@ Frontmatter `model: sonnet` is the dispatch fallback; the orchestrator overrides
 | `appsec-context-resolver`   | **Haiku** | **Always**, every depth and reasoning tier. Deterministic file IO + summary. Override via `APPSEC_CONTEXT_RESOLVER_MODEL`. |
 | `appsec-recon-scanner`      | **Haiku** | **Always**, every depth and reasoning tier. Grep + decision-table verdicts. Override via `APPSEC_RECON_SCANNER_MODEL`. |
 | `appsec-config-scanner`     | **Haiku** | **Always**, every depth and reasoning tier. YAML-rule-engine. Override via `APPSEC_CONFIG_SCANNER_MODEL`. |
-| `appsec-stride-analyzer`    | Sonnet | Threat reasoning — Sonnet at `sonnet` / `opus-cheap` / `haiku-economy`. Only `--reasoning-model opus` lifts to Opus. |
-| `appsec-threat-merger`      | Opus at default (`opus-cheap`) | Sonnet at `sonnet` / `haiku-economy`. |
+| `appsec-stride-analyzer`    | Sonnet | Threat reasoning — Sonnet at `sonnet` / `opus-cheap` / `sonnet-economy`. Only `--reasoning-model opus` lifts to Opus. |
+| `appsec-threat-merger`      | Opus at default (`opus-cheap`) | Sonnet at `sonnet` / `sonnet-economy`. |
 | `appsec-triage-validator`   | Sonnet | `scripts/triage_validate_ratings.py` provides the deterministic floor; agent only validates on top. Opus only at `--reasoning-model opus`. |
 | `appsec-evidence-verifier`  | Sonnet | Sampled re-read + verdict. |
 | `appsec-threat-renderer`    | Sonnet | Stage 2 renderer with fresh budget. |
-| `appsec-qa-reviewer`        | Sonnet | Split internally into `qa_content` (always Sonnet — invariant reasoning) and `qa_routine` (Haiku at `haiku-economy` quick/standard, Sonnet at thorough — mechanical link/anchor fixes). |
+| `appsec-qa-reviewer`        | Sonnet | Split internally into `qa_content` (always Sonnet — invariant reasoning) and `qa_routine` (Haiku at `sonnet-economy` quick/standard, Sonnet at thorough — mechanical link/anchor fixes). |
 | `appsec-architect-reviewer` | **Opus** | Stage 4 default. Override via `--architect-model sonnet` or `APPSEC_ARCHITECT_MODEL`. |
 
-Default (`standard` + `opus-cheap`): Haiku for context/recon/config, Sonnet for STRIDE/triage/evidence/rendering/QA/orchestration, Opus for the merger and thorough architect review. `haiku-economy` also moves `qa_routine` to Haiku and the merger to Sonnet; `opus` lifts STRIDE/triage/merger to Opus.
+Default (`standard` + `opus-cheap`): Haiku for context/recon/config, Sonnet for STRIDE/triage/evidence/rendering/QA/orchestration, Opus for the merger and thorough architect review. `sonnet-economy` also moves `qa_routine` to Haiku and the merger to Sonnet; `opus` lifts STRIDE/triage/merger to Opus.
 
 ### Phase map
 
@@ -284,7 +284,7 @@ Default (`standard` + `opus-cheap`): Haiku for context/recon/config, Sonnet for 
 | `standard` | 5              | 15 / 22 / 31                               | standard  | full |
 | `thorough` | 8              | 20 / 28 / 35                               | extended  | extended |
 
-When `quick` uses its default `haiku-economy` tier, the orchestrator applies `scripts/resolve_config.py:QUICK_STRIDE_PROFILE`: A=skip verification greps, B=max 2 threats/category, C=keep code examples, D=keep evidence excerpts, E=skip CVSS scoring, F=turn-budget hard-cap 25. Any other `--reasoning-model` disables the profile.
+When `quick` uses its default `sonnet-economy` tier, the orchestrator applies `scripts/resolve_config.py:QUICK_STRIDE_PROFILE`: A=skip verification greps, B=max 2 threats/category, C=keep code examples, D=keep evidence excerpts, E=skip CVSS scoring, F=turn-budget hard-cap 25. Any other `--reasoning-model` disables the profile.
 
 ### Prompt caching contract
 
@@ -300,7 +300,7 @@ Mode-awareness: `incremental=false` may rebuild transient state on a full-scan p
 
 Model-flag deprecation:
 
-- `--reasoning-model` selects the routing tier (`haiku-economy`, `opus-cheap`, `sonnet`, `opus`).
+- `--reasoning-model` selects the routing tier (`sonnet-economy`, `opus-cheap`, `sonnet`, `opus`). `haiku-economy` is a deprecated alias for `sonnet-economy` — still accepted, normalised on input (the tier keeps STRIDE/triage/merger on Sonnet; only the deterministic-leaning periphery runs on Haiku, so the old name oversold it).
 - `--stride-model` is a deprecated compatibility override for STRIDE only; prefer `--reasoning-model`.
 
 ## References

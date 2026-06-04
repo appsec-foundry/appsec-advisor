@@ -131,7 +131,7 @@ properties:
           type: [string, "null"]
           description: |
             Reasoning tier label resolved by `--reasoning-model`
-            (e.g. `haiku-economy`, `opus-cheap`, `opus`, `sonnet`).
+            (e.g. `sonnet-economy`, `opus-cheap`, `opus`, `sonnet`).
         invocation:
           type: [string, "null"]
           description: |

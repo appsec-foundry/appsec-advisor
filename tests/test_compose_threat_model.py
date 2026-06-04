@@ -2690,3 +2690,93 @@ def test_abuse_chain_ms_note_reports_elevation(tmp_path: Path) -> None:
     ])
     note = compose._abuse_chain_ms_note(ctx)
     assert "rated above" in note and "individual baseline" in note
+
+
+def test_global_finding_dot_pass_dots_bare_link_and_is_idempotent(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [{"id": "T-001", "effective_severity": "Critical", "title": "X"}])
+    md = "**Source:** [F-001](#f-001) — `lib/insecurity.ts:54`"
+    once = compose._prepend_finding_severity_dots(ctx, md)
+    assert once == "**Source:** 🔴 [F-001](#f-001) — `lib/insecurity.ts:54`"
+    # Idempotent — a second pass must not add a second dot.
+    assert compose._prepend_finding_severity_dots(ctx, once) == once
+
+
+def test_global_finding_dot_pass_tolerates_nbsp_separator(tmp_path: Path) -> None:
+    # Table cells emit `🔴&nbsp;[F-001]`; the pass must recognise the existing
+    # dot (separated by &nbsp;) and NOT prepend a duplicate.
+    ctx = _dot_ctx(tmp_path, [{"id": "T-001", "effective_severity": "Critical"}])
+    md = "•&nbsp;🔴&nbsp;[F-001](#f-001) — X"
+    assert compose._prepend_finding_severity_dots(ctx, md) == md
+
+
+def test_global_mitigation_circle_pass_dots_bare_link_and_is_idempotent(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    ctx = compose.RenderContext(
+        output_dir=out, contract={},
+        yaml_data={
+            "threats": [{"id": "T-003", "effective_severity": "Critical"}],
+            "mitigations": [{"id": "M-003", "priority": "P1", "threat_ids": ["T-003"]}],
+        },
+        triage={}, fragments_dir=out / ".fragments", severity_taxonomy=_SEV_TAX,
+    )
+    md = "Blocking: [M-003](#m-003) breaks the chain."
+    once = compose._prepend_mitigation_prio_circles(ctx, md)
+    assert once == "Blocking: ❶ [M-003](#m-003) breaks the chain."
+    assert compose._prepend_mitigation_prio_circles(ctx, once) == once
+
+
+def test_global_mitigation_circle_pass_skips_code_spans(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir(exist_ok=True)
+    ctx = compose.RenderContext(
+        output_dir=out, contract={},
+        yaml_data={"threats": [], "mitigations": [{"id": "M-003", "priority": "P1"}]},
+        triage={}, fragments_dir=out / ".fragments", severity_taxonomy=_SEV_TAX,
+    )
+    md = "inline `[M-003](#m-003)` stays bare"
+    assert compose._prepend_mitigation_prio_circles(ctx, md) == md
+
+
+def test_softwrap_prose_cells_wraps_long_description_not_links():
+    md = (
+        "| Asset | ID | Description | Linked Threats |\n"
+        "|---|---|---|---|\n"
+        "| DB | A-001 | SQLite database containing all user email addresses and "
+        "MD5-hashed passwords located at data/juiceshop.sqlite for offline cracking | "
+        "🔴 [F-001](#f-001) — SQL injection authentication bypass via login route |\n"
+    )
+    out = compose._softwrap_prose_table_cells(md, width=40)
+    body = [l for l in out.splitlines() if l.startswith("| DB")][0]
+    desc = compose._split_table_row(body)[2]
+    links = compose._split_table_row(body)[3]
+    # Description got wrapped (now multi-segment, each ≤ ~40 visible chars)…
+    assert "<br/>" in desc
+    assert all(compose._seg_visible_len(s) <= 48 for s in desc.split("<br/>"))
+    # …the link cell is untouched (single chip, no injected wrap).
+    assert links == "🔴 [F-001](#f-001) — SQL injection authentication bypass via login route"
+
+
+def test_softwrap_is_idempotent_and_skips_short_cells():
+    md = (
+        "| # | Threat Description | Findings |\n"
+        "|---|---|---|\n"
+        "| 1 | Short note | [F-002](#f-002) |\n"
+    )
+    once = compose._softwrap_prose_table_cells(md, width=40)
+    assert once == md  # short cell + link cell → unchanged
+    assert compose._softwrap_prose_table_cells(once, width=40) == once
+
+
+def test_softwrap_never_breaks_inside_backtick_span():
+    md = (
+        "| Asset | Description | Findings |\n"
+        "|---|---|---|\n"
+        "| X | the query `SELECT * FROM Users WHERE id = 1` is concatenated unsafely "
+        "without parameter binding anywhere | [F-001](#f-001) |\n"
+    )
+    out = compose._softwrap_prose_table_cells(md, width=30)
+    desc = compose._split_table_row([l for l in out.splitlines() if l.startswith("| X")][0])[1]
+    # No <br/> may fall INSIDE the backtick span (each segment has even backticks).
+    for seg in desc.split("<br/>"):
+        assert seg.count("`") % 2 == 0

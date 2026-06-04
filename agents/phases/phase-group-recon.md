@@ -24,7 +24,7 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 - `subagent_type`: `appsec-advisor:appsec-context-resolver`
 - `description`: `Resolve context for threat model`
 - `run_in_background`: `true` (parallel with recon — unless recon is skipped, then `false` is fine)
-- `model`: `$CONTEXT_RESOLVER_MODEL` from `.skill-config.json` (defaults to `sonnet`; under `--reasoning-model haiku-economy` becomes `haiku` regardless of depth — pure file-IO + summary task)
+- `model`: `$CONTEXT_RESOLVER_MODEL` from `.skill-config.json` (defaults to `sonnet`; under `--reasoning-model sonnet-economy` becomes `haiku` regardless of depth — pure file-IO + summary task)
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set)
 
 Log `AGENT_INVOKE` before dispatch. After the agent returns (or cache hit): read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment.

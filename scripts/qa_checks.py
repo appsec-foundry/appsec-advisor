@@ -3166,6 +3166,87 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
 # ---------------------------------------------------------------------------
 
 
+_SEV_DOT_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+_PRIO_DOT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+_F_REF_RE = re.compile(r"(?P<dot>[🔴🟠🟡🟢⚪](?:\s|&nbsp;|•)*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))")
+_M_REF_RE = re.compile(r"(?P<circ>[❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))")
+
+
+def _annotate_id_refs(md_path: Path) -> int:
+    """Final-pass retrofit: ensure every `[F-NNN](#f-nnn)` carries its severity
+    dot and every `[M-NNN](#m-nnn)` its priority circle.
+
+    autofix is the LAST mutating pass in the skill's Stage-3 flow, and its own
+    link-builder can turn a bare prose `M-NNN` / `F-NNN` token into a link AFTER
+    the composer's in-render annotation pass has already run — leaving the new
+    link un-annotated (e.g. a §3 key-takeaway ref, or a self-reference inside a
+    mitigation's own How steps). This retrofit reads the sibling
+    threat-model.yaml for severity/priority and annotates any still-bare ref.
+    Idempotent (the regex tolerates an existing dot/circle + `&nbsp;` separator)
+    and best-effort (any error leaves the document untouched).
+    """
+    try:
+        import yaml as _yaml
+        ydata = _yaml.safe_load((md_path.parent / "threat-model.yaml").read_text(encoding="utf-8")) or {}
+    except Exception:
+        return 0
+    sev_by_num: dict[str, str] = {}
+    for t in ydata.get("threats") or []:
+        m = re.search(r"(\d+)$", str(t.get("t_id") or t.get("id") or ""))
+        if not m:
+            continue
+        sev = str(t.get("effective_severity") or t.get("risk") or t.get("severity") or "").strip().lower()
+        if sev:
+            sev_by_num[m.group(1).zfill(3)] = sev
+    sev_to_prio = {"critical": "p1", "high": "p2", "medium": "p3", "low": "p4"}
+    prio_by_num: dict[str, str] = {}
+    for mit in ydata.get("mitigations") or []:
+        mm = re.search(r"(\d+)$", str(mit.get("m_id") or mit.get("id") or ""))
+        if not mm:
+            continue
+        raw = str(mit.get("priority") or "").strip().lower().replace("p", "p")
+        key = ""
+        if raw in _PRIO_DOT_TBL:
+            key = raw
+        elif raw in sev_to_prio:
+            key = sev_to_prio[raw]
+        else:
+            best = 9
+            rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+            for a in (mit.get("threat_ids") or mit.get("addresses") or []):
+                am = re.search(r"(\d+)$", str(a))
+                if am:
+                    best = min(best, rank.get(sev_by_num.get(am.group(1).zfill(3), ""), 9))
+            key = {0: "p1", 1: "p2", 2: "p3", 3: "p4"}.get(best, "")
+        if key:
+            prio_by_num[mm.group(1).zfill(3)] = key
+
+    def _f_sub(m: re.Match) -> str:
+        if m.group("dot"):
+            return m.group(0)
+        dot = _SEV_DOT_TBL.get(sev_by_num.get(m.group("num").zfill(3), ""), "")
+        return f"{dot} {m.group('link')}" if dot else m.group("link")
+
+    def _m_sub(m: re.Match) -> str:
+        if m.group("circ"):
+            return m.group(0)
+        circ = _PRIO_DOT_TBL.get(prio_by_num.get(m.group("num").zfill(3), ""), "")
+        return f"{circ} {m.group('link')}" if circ else m.group("link")
+
+    text = md_path.read_text(encoding="utf-8")
+    out: list[str] = []
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```|`[^`\n]+`)", text, flags=re.DOTALL):
+        if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
+            out.append(chunk)
+        else:
+            out.append(_M_REF_RE.sub(_m_sub, _F_REF_RE.sub(_f_sub, chunk)))
+    new = "".join(out)
+    if new != text:
+        md_path.write_text(new, encoding="utf-8")
+        return 1
+    return 0
+
+
 def cmd_autofix(md_path: Path, repo_root: Path) -> int:
     """Run only the five in-place auto-fixing passes and write the corrected
     Markdown back: links, anchors, MS structure, cell-format, and the
@@ -3198,6 +3279,11 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
         _PrePass.reset()
     attr_strip_report, _ = strip_heading_attribute_artifacts(md)
     if attr_strip_report.fixes:
+        _PrePass.reset()
+    # Final annotation retrofit — runs AFTER the link-builder passes above so any
+    # F-/M- ref they just linkified (e.g. a bare prose token) still gets its
+    # severity dot / priority circle. Best-effort + idempotent.
+    if _annotate_id_refs(md):
         _PrePass.reset()
     fixes = (
         len(link_report.fixes)
@@ -5802,7 +5888,12 @@ def check_walkthrough_coverage(
     # the Source line (not "any T-NNN in the block") avoids counting a
     # compound-chain cross-reference (e.g. "compound with T-009") as if it
     # were T-009's own walkthrough.
-    source_re = re.compile(r"\*\*Source:\*\*\s*\[[TF]-(\d{3,4})\]")
+    # Tolerate the leading severity dot the composer's global annotation pass
+    # prepends to the finding link (`**Source:** 🔴 [F-001](#f-001)`); the dot
+    # sits between `**Source:**` and the `[F/T-NNN]` link.
+    source_re = re.compile(
+        r"\*\*Source:\*\*\s*(?:[🔴🟠🟡🟢⚪](?:\s|&nbsp;)*)?\[[TF]-(\d{3,4})\]"
+    )
     seen_t_ids: set[str] = set()
     for block in subsection_blocks:
         ms = source_re.search(block)

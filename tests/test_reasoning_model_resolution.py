@@ -87,7 +87,7 @@ class TestResolverMatrix:
             "sonnet",
             "opus-cheap",
             "opus",
-            "haiku-economy",
+            "sonnet-economy",
         }
 
     @pytest.mark.parametrize("key", ["stride", "triage", "merger"])
@@ -110,13 +110,49 @@ class TestResolverMatrix:
         assert "opus" in m["merger"]
 
     def test_haiku_economy_keeps_stride_on_sonnet(self):
-        """haiku-economy MUST NOT downgrade STRIDE/triage/merger.
+        """sonnet-economy MUST NOT downgrade STRIDE/triage/merger.
         Threat-Reasoning is the tool's primary value contribution."""
         rc = _load_resolver()
-        m = rc.MODEL_MATRIX["haiku-economy"]
+        m = rc.MODEL_MATRIX["sonnet-economy"]
         assert "sonnet" in m["stride"]
         assert "sonnet" in m["triage"]
         assert "sonnet" in m["merger"]
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat: deprecated ``haiku-economy`` alias → ``sonnet-economy``
+# ---------------------------------------------------------------------------
+
+
+class TestHaikuEconomyAlias:
+    """The tier was renamed haiku-economy → sonnet-economy. Old CLI flags,
+    stored .skill-config.json values, and recorded fixtures still carry the
+    alias and MUST resolve identically to the canonical name."""
+
+    def test_canonical_normaliser_maps_alias(self):
+        rc = _load_resolver()
+        assert rc.canonical_reasoning_model("haiku-economy") == "sonnet-economy"
+        assert rc.canonical_reasoning_model("sonnet-economy") == "sonnet-economy"
+        assert rc.canonical_reasoning_model("opus-cheap") == "opus-cheap"
+        assert rc.canonical_reasoning_model(None) is None
+
+    def test_cli_flag_alias_resolves_to_canonical(self):
+        rc = _load_resolver()
+        ns = rc.build_parser().parse_args(["--reasoning-model", "haiku-economy"])
+        out = rc.resolve_reasoning_model(ns, "standard")
+        assert out["reasoning_model"] == "sonnet-economy"
+        assert out["stride_model"] == "sonnet"
+
+    def test_extended_models_alias_matches_canonical(self):
+        rc = _load_resolver()
+        for depth in ("quick", "standard", "thorough"):
+            assert (rc.resolve_extended_models("haiku-economy", depth)
+                    == rc.resolve_extended_models("sonnet-economy", depth))
+
+    def test_stride_profile_alias_matches_canonical(self):
+        rc = _load_resolver()
+        assert (rc.resolve_stride_profile("haiku-economy", "quick")
+                == rc.resolve_stride_profile("sonnet-economy", "quick"))
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +164,11 @@ class TestDefaultCoupling:
     def test_quick_defaults_to_haiku_economy(self):
         """Quick depth promises 'fast + cheap' — the default tier routes
         deterministic-leaning agents to Haiku 4.5. STRIDE/triage/merger
-        still stay on Sonnet via the haiku-economy MODEL_MATRIX entry."""
+        still stay on Sonnet via the sonnet-economy MODEL_MATRIX entry."""
         rc = _load_resolver()
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "quick")
-        assert out["reasoning_model"] == "haiku-economy"
+        assert out["reasoning_model"] == "sonnet-economy"
         assert out["stride_model"] == "sonnet"
         assert out["triage_model"] == "sonnet"
         assert out["merger_model"] == "sonnet"

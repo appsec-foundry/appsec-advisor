@@ -3,7 +3,7 @@
 appsec-evidence-verifier agent.
 
 When the LLM verifier is skipped or under-samples (observed: 0 dispatches
-on standard-depth haiku-economy runs despite the spec requiring all
+on standard-depth sonnet-economy runs despite the spec requiring all
 Critical+High findings to be sampled), every threat in threat-model.yaml
 ships with `evidence_check: unchecked`. This script provides a deterministic
 floor:

@@ -7060,6 +7060,72 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     )
 
 
+def _known_requirement_ids(ctx: RenderContext) -> dict[str, str]:
+    """Map of requirement ID → source URL declared in ``.requirements.yaml``
+    (``categories[].requirements[].id`` / ``.url``).
+
+    Used to recognise a requirement that a STRIDE analyzer parked in a threat's
+    ``remediation.reference`` (e.g. ``[SEC-AUTH-1](url)``) rather than in the
+    ``violated_requirements`` array the traceability table reads — the
+    field-name split between §8 ``Violated:`` annotations and the §7b/§MS table.
+    Returns an empty map when the file is absent or unparseable so every caller
+    degrades to the array-only behaviour (and the unit tests, which use a bare
+    tmp dir, see no change).
+    """
+    path = ctx.output_dir / ".requirements.yaml"
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for cat in data.get("categories", []) or []:
+        if not isinstance(cat, dict):
+            continue
+        for req in cat.get("requirements", []) or []:
+            if not isinstance(req, dict):
+                continue
+            rid = (req.get("id") or "").strip()
+            if rid and rid not in out:
+                out[rid] = (req.get("url") or "").strip()
+    return out
+
+
+def _requirement_ids_for_threat(t: dict[str, Any], known_ids: "dict[str, str] | set[str]") -> list[str]:
+    """Requirement IDs a threat evidences — order-preserving, de-duplicated.
+
+    Sources, in order: the canonical ``violated_requirements[]`` array, the
+    legacy singular ``requirement_id``, and — when ``known_ids`` is non-empty —
+    any bracketed token in ``remediation.reference`` that matches a declared
+    requirement ID. The last source closes the field-name split: STRIDE
+    analyzers write a matched requirement into ``remediation.reference`` as
+    ``[ID](url)`` instead of the array, so the finding shows in §8 (``Violated:``)
+    but was invisible to the §7b/§MS table. Matching against the declared-ID set
+    keeps this prefix-agnostic and ignores OWASP/CWE references that share the
+    bracket-link shape.
+    """
+    out: list[str] = []
+
+    def _add(rid: Any) -> None:
+        s = (rid or "").strip()
+        if s and s not in out:
+            out.append(s)
+
+    for rid in t.get("violated_requirements") or []:
+        _add(rid)
+    if t.get("requirement_id"):
+        _add(t["requirement_id"])
+    if known_ids:
+        rem = t.get("remediation") if isinstance(t.get("remediation"), dict) else {}
+        ref = rem.get("reference") if isinstance(rem, dict) else None
+        if isinstance(ref, str) and ref:
+            for tok in re.findall(r"\[([^\]]+)\]", ref):
+                if tok.strip() in known_ids:
+                    _add(tok)
+    return out
+
+
 def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]:
     """Deterministic requirement → finding → mitigation traceability.
 
@@ -7077,11 +7143,10 @@ def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]
     requirement-linked threat exists (e.g. all requirements PASS).
     """
     threats = list((ctx.yaml_data or {}).get("threats", []) or [])
+    known_ids = _known_requirement_ids(ctx)
     by_req: dict[str, dict[str, Any]] = {}
     for t in threats:
-        reqs = list(t.get("violated_requirements") or [])
-        if not reqs and t.get("requirement_id"):
-            reqs = [t["requirement_id"]]
+        reqs = _requirement_ids_for_threat(t, known_ids)
         if not reqs:
             continue
         tid = (t.get("t_id") or t.get("id") or "").strip().upper()
@@ -7982,6 +8047,11 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # the §7 control tables / DiD bullets). Prefix each with its criticality
     # glyph so they match §8, the asset/component tables, and Top Mitigations.
     # Runs after enrich so any dot it already produced is seen (idempotent).
+    # NOTE: §3 Attack Walkthroughs and §9 Abuse Cases are handled by the GLOBAL
+    # retrofit pass at the end of render() instead — their F-refs are rewritten
+    # from T-NNN → F-NNN AFTER this point, so a per-section pass here would miss
+    # them. See `_prepend_finding_severity_dots` / `_prepend_mitigation_prio_circles`
+    # call sites just before render() returns.
     if section_id in ("attack_surface", "security_architecture"):
         md = _prepend_finding_severity_dots(ctx, md)
 
@@ -8620,6 +8690,84 @@ def _table_cell_visible_len(cell: str) -> int:
         s = s.replace("`", "").replace("**", "").replace("*", "").strip()
         longest = max(longest, len(s))
     return longest
+
+
+def _seg_visible_len(seg: str) -> int:
+    """Visible length of a single (no-<br/>) cell segment — markdown stripped."""
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", seg)
+    s = re.sub(r"<[^>]+>", "", s)
+    return len(s.replace("`", "").replace("**", "").replace("*", "").strip())
+
+
+def _wrap_segment_words(seg: str, width: int) -> str:
+    """Word-wrap one segment to `width` visible chars, joining lines with <br/>.
+    Never breaks inside a backtick code span (defers the break until the running
+    line has balanced backticks)."""
+    if _seg_visible_len(seg) <= width:
+        return seg
+    out: list[str] = []
+    cur = ""
+    for word in seg.split(" "):
+        cand = f"{cur} {word}".strip() if cur else word
+        if cur and _seg_visible_len(cand) > width and cur.count("`") % 2 == 0:
+            out.append(cur)
+            cur = word
+        else:
+            cur = cand
+    if cur:
+        out.append(cur)
+    return "<br/>".join(out)
+
+
+def _softwrap_prose_table_cells(md: str, width: int = 44) -> str:
+    """Soft-wrap long PROSE table cells with `<br/>` so markdown-it (the VS Code
+    preview / GitHub) — which auto-sizes columns by content and IGNORES the
+    proportional separator widths Pandoc honours — does not hand a long
+    Description / narrative column most of the table, squeezing the finding/link
+    columns (2026-06-04 user report w/ screenshots: §4 Linked Threats clipped,
+    §2 Threat Description ~half the table).
+
+    Only `desc` / `default` / `path`-role columns are wrapped; `links` / `narrow`
+    / `medium` columns and any cell containing a `](#` cross-reference link are
+    left untouched (those size themselves via their own `<br/>` chip stacking).
+    Idempotent (a cell already ≤ width is unchanged) and PDF-safe (Pandoc still
+    applies the proportional `<col>` widths; the extra breaks fall near where the
+    text would wrap anyway). Each existing `<br/>` segment is wrapped
+    independently so an authored bold-name + narrative cell keeps its structure.
+    """
+    lines = md.split("\n")
+    for header_idx, block in _iter_md_table_blocks(md):
+        header_cells = _split_table_row(block[0])
+        wrap_cols = {
+            i for i, h in enumerate(header_cells)
+            if _table_col_role(h) in ("desc", "default", "path")
+        }
+        if not wrap_cols:
+            continue
+        for body_off in range(2, len(block)):
+            row_idx = header_idx + body_off
+            if row_idx >= len(lines):
+                break
+            cells = _split_table_row(lines[row_idx])
+            if len(cells) != len(header_cells):
+                continue  # ragged row — leave it for the QA gate to flag
+            changed = False
+            for i in wrap_cols:
+                cell = cells[i]
+                if "](#" in cell:           # carries a cross-ref link — skip
+                    continue
+                if _table_cell_visible_len(cell) <= width:
+                    continue
+                wrapped = "<br/>".join(
+                    _wrap_segment_words(seg, width)
+                    for seg in re.split(r"<br\s*/?>", cell)
+                )
+                if wrapped != cell:
+                    cells[i] = wrapped
+                    changed = True
+            if changed:
+                lines[row_idx] = "| " + " | ".join(cells) + " |"
+    return "\n".join(lines)
 
 
 def _normalize_table_column_widths(md: str) -> str:
@@ -9460,7 +9608,18 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
 
 
 _FINDING_DOT_REF_RE = re.compile(
-    r"(?P<dot>[🔴🟠🟡🟢⚪]\s*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))"
+    # The `dot` group tolerates a `&nbsp;` / bullet separator between the glyph
+    # and the link (table cells emit `🔴&nbsp;[F-004]`, attack-path bullets emit
+    # `•&nbsp;🔴&nbsp;[F-004]`) so the global retrofit pass recognises an
+    # already-dotted ref and never double-prefixes it.
+    #
+    # Matches the `[F-NNN](#f-nnn)` link form only. T-NNN links are intentionally
+    # NOT matched: the changelog and a few cross-refs cite `[T-NNN](#t-nnn)`
+    # without a dot by design, and main()'s T→F display rewrite converts the
+    # walkthrough `**Source:**` refs to F afterwards anyway. §3 walkthrough Source
+    # lines instead carry their dot from walkthrough_renderer.py (emitted before
+    # the T→F rewrite, preserved through it).
+    r"(?P<dot>[🔴🟠🟡🟢⚪](?:\s|&nbsp;|•)*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))"
 )
 
 
@@ -9489,6 +9648,42 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
             out_chunks.append(chunk)
         else:
             out_chunks.append(_FINDING_DOT_REF_RE.sub(_sub, chunk))
+    return "".join(out_chunks)
+
+
+_MITIGATION_CIRCLE_REF_RE = re.compile(
+    # Same `&nbsp;` / bullet tolerance as _FINDING_DOT_REF_RE so an
+    # already-circled `❶&nbsp;[M-001]` / `→ ❶ [M-002]` ref is skipped.
+    r"(?P<circ>[❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
+)
+
+
+def _prepend_mitigation_prio_circles(ctx: RenderContext, md: str) -> str:
+    """Prefix every mitigation cross-reference ``[M-NNN](#m-nnn)`` with its
+    rollout-priority circle (❶ P1 … ❹ P4) — the colourless parallel to the
+    finding severity dot. Brings §3 Attack Walkthroughs and §9 Abuse Cases in
+    line with §1/§2/§8/§10, where the computed renderers already emit the circle
+    inline via ``linkify_with_label`` / ``_measure_prio_prefix``.
+
+    Idempotent — a ref already preceded by a circle glyph is left untouched.
+    Skips fenced code blocks and inline code spans (same masking as the
+    finding-dot pass).
+    """
+    if not md:
+        return md
+
+    def _sub(m: re.Match[str]) -> str:
+        if m.group("circ"):
+            return m.group(0)  # already circled
+        digit = _PRIO_DIGIT_TBL.get(ctx.priority_for_ref(f"M-{m.group('num')}"), "")
+        return f"{digit} {m.group('link')}" if digit else m.group("link")
+
+    out_chunks: list[str] = []
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```|`[^`\n]+`)", md, flags=re.DOTALL):
+        if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
+            out_chunks.append(chunk)
+        else:
+            out_chunks.append(_MITIGATION_CIRCLE_REF_RE.sub(_sub, chunk))
     return "".join(out_chunks)
 
 
@@ -12272,6 +12467,11 @@ def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: di
             "abuse_cases",
             f"fragment must begin with '{heading}'; first heading is '{first}'",
         )
+    # NOTE: §9's bare `[F-NNN]` / `[M-NNN]` chips (chain tables + "Blocking
+    # mitigations" bullets) get their severity dot / priority circle from the
+    # GLOBAL retrofit pass at the end of render() — see the call sites just
+    # before render() returns. Doing it there (rather than here) keeps a single
+    # source of truth and covers §3/§5/§7/§9 uniformly.
     return md.rstrip() + "\n"
 
 
@@ -12374,6 +12574,18 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             )
         )
         lines.append("")
+
+    # Requirements + blueprint provenance for the per-mitigation blocks below.
+    # mitigations[] carries neither field, so derive from each mitigation's
+    # addressed threats (violated_requirements / requirement_id /
+    # remediation.reference for Fulfills; remediation.blueprint for the guidance
+    # line). Gated on check_requirements so default runs stay byte-unchanged.
+    _req_enabled = bool(ctx.eval_context.get("check_requirements"))
+    _known_req_ids = _known_requirement_ids(ctx) if _req_enabled else {}
+    _threats_by_id = {
+        (t.get("t_id") or t.get("id") or "").strip().upper(): t
+        for t in (ctx.yaml_data.get("threats") or [])
+    }
 
     # Normalise severity-word priorities that the orchestrator sometimes
     # emits instead of P-values (e.g. "Critical" → "P1").
@@ -12491,6 +12703,36 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     lines.append(f"- [{key}](https://cwe.mitre.org/data/definitions/{num}.html){suffix}")
                 lines.append("")
 
+            # Fulfills Requirements + Blueprint guidance — only when
+            # requirements are loaded. The §10 block template places both after
+            # Prevents CWEs and before Priority. mitigations[] carries neither
+            # field, so derive from the addressed threats here: this produces
+            # the lines the QA reviewer demands but the renderer previously
+            # dropped, and surfaces blueprint guidance that was otherwise
+            # confined to the §7b traceability cell.
+            if _req_enabled:
+                _addr = m.get("addresses") or m.get("threat_ids") or []
+                _fulfilled: list[str] = []
+                _bp_cell = ""
+                for _tid in _addr:
+                    _tt = _threats_by_id.get((_tid or "").strip().upper()) or {}
+                    for _rid in _requirement_ids_for_threat(_tt, _known_req_ids):
+                        if _rid not in _fulfilled:
+                            _fulfilled.append(_rid)
+                    if not _bp_cell:
+                        _rem = _tt.get("remediation") if isinstance(_tt.get("remediation"), dict) else {}
+                        _bp_cell = _format_blueprint_cell(_rem.get("blueprint")) if _rem else ""
+                if _fulfilled:
+                    lines.append("**Fulfills Requirements:**")
+                    lines.append("")
+                    for _rid in _fulfilled:
+                        _u = _known_req_ids.get(_rid, "")
+                        lines.append(f"- [{_rid}]({_u})" if _u else f"- `{_rid}`")
+                    lines.append("")
+                if _bp_cell:
+                    lines.append(f"**Blueprint guidance:** {_bp_cell}")
+                    lines.append("")
+
             # M3.13 — consolidate Priority + Effort + File on ONE line.
             # The standalone Severity row is REMOVED (severity is now shown
             # per-finding in the Addresses bullets above). File location
@@ -12596,6 +12838,15 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                                 seen_steps.add(s)
                         if not mitigation_reference:
                             r = (rem.get("reference") or "").strip() if isinstance(rem.get("reference"), str) else ""
+                            # A `remediation.reference` that is actually a
+                            # requirement ID (STRIDE analyzers park matched
+                            # requirements there) is surfaced via Fulfills
+                            # Requirements above — do NOT also render it as a
+                            # cheatsheet `**Reference:**` line.
+                            if r and _known_req_ids and any(
+                                tok.strip() in _known_req_ids for tok in re.findall(r"\[([^\]]+)\]", r)
+                            ):
+                                r = ""
                             if r:
                                 mitigation_reference = r
                         if not harvested_code:
@@ -13350,9 +13601,28 @@ def render(
     # are not broken across lines. Runs last so it sees the final table set.
     rendered = _normalize_table_column_widths(rendered)
 
+    # Soft-wrap long prose table cells so the markdown-it preview (VS Code /
+    # GitHub) — which ignores the proportional separator widths above — stops
+    # giving Description / narrative columns most of the table and clipping the
+    # finding/link columns. PDF/HTML (Pandoc) keep the proportional `<col>`
+    # widths; this only reshapes the raw-md preview.
+    rendered = _softwrap_prose_table_cells(rendered)
+
     # Final safety net — collapse any `[ID](#id) — Label - Label` doubling that
     # an upstream re-label pass may have produced (see _dedupe_doubled_id_labels).
     rendered = _dedupe_doubled_id_labels(rendered)
+
+    # GLOBAL annotation retrofit — prefix every `[F-NNN](#f-nnn)` with its
+    # severity dot and every `[M-NNN](#m-nnn)` with its priority circle, across
+    # the WHOLE document. Runs dead last so it sees the final ref forms after
+    # all T-NNN → F-NNN rewrites and section-ref linkification — this is the only
+    # point where §3 Attack Walkthroughs (`**Source:**` lines, rewritten from
+    # [T-NNN] late) and §9 Abuse Cases (bare chips from render_abuse_cases.py)
+    # carry their final `[F-NNN]` / `[M-NNN]` form. Idempotent: the regex `dot`
+    # / `circ` groups tolerate `&nbsp;` / bullet separators, so already-annotated
+    # refs in §1/§2/§8/§10 and the computed tables are left untouched.
+    rendered = _prepend_finding_severity_dots(ctx, rendered)
+    rendered = _prepend_mitigation_prio_circles(ctx, rendered)
 
     return rendered, ctx.warnings
 

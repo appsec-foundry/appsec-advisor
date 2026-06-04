@@ -197,7 +197,7 @@ class TestScalePhaseLimits:
 
 
 class TestEconomyModelPerfFactor:
-    """haiku-economy slows the model-bound recon phases (1, 2); the perf
+    """sonnet-economy slows the model-bound recon phases (1, 2); the perf
     threshold must widen for them so an economy run does not false-flag.
     """
 

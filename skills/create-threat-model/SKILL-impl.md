@@ -12,6 +12,9 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 > Until then, **suppress** any `TaskCreate` reflex even if Claude Code emits
 > a "task tools haven't been used recently" reminder during the long Bash
 > preamble — that reminder is generic and does not override this contract.
+> Suppress it **silently**: do **not** narrate that you are ignoring the
+> reminder or the contract (no "I'll ignore the TaskCreate reminder…" lines).
+> Just no-op and proceed to the next step.
 >
 > In particular, do **not** create separate `TaskCreate` entries for any of:
 >   - `Resolve config` / `emit .skill-config.json` (preamble Bash)
@@ -610,7 +613,7 @@ Parse the user's arguments for the following flags:
 | `--max-cost <usd>` | `MAX_COST_USD=<float>` — hard cumulative cost deadline for the watchdog. | (none) |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
-| `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|haiku-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `haiku-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
+| `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|sonnet-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `sonnet-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
 | `--stride-model <model>` | `STRIDE_MODEL=<model>` (punctual override, applied **after** `--reasoning-model` resolution) | (none — inherits from `--reasoning-model`) |
 | `--no-opus` | Forbid Opus anywhere; downgrades every Opus selection (incl. the `opus`/`opus-cheap` tier merger and the architect default) to Sonnet. Applied **last** in `resolve_config.py`, so it overrides `--reasoning-model opus`, `--stride-model`, and any `APPSEC_*_MODEL` env override. Also settable org-wide via org-profile `policy.disable_opus`, or via env `APPSEC_DISABLE_OPUS=1`. The three sources OR together — any can enable, none can disable. | off (Opus allowed) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
@@ -761,12 +764,37 @@ MODE=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.s
 INCREMENTAL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['incremental']).lower())")
 REBUILD=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['rebuild']).lower())")
 RERENDER=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('rerender',False)).lower())")
-# Full-M1 opt-in: parallel STRIDE fan-out at the skill (Level-0) instead of
-# serial inline STRIDE inside a single Level-1 analyst. Env-gated so the default
-# flow is byte-unchanged. Only honoured for from-scratch runs (full/rebuild).
+# Full-M1: parallel STRIDE fan-out at the skill (Level-0) instead of serial
+# inline STRIDE inside a single Level-1 analyst. DEFAULT-ON for from-scratch
+# runs (full/rebuild) — no env var needed. Opt-OUT with APPSEC_PARALLEL_STRIDE=0
+# (falls back to the serial inline analyst). Incremental/rerender runs use
+# STRIDE-delta, not the fan-out, so they are never parallelised here. The
+# graceful fallback in dispatch step 3b still catches a manifest defect at
+# runtime, so default-on degrades to serial rather than hard-failing.
 PARALLEL_STRIDE=false
-if [ "${APPSEC_PARALLEL_STRIDE:-0}" = "1" ] && { [ "$MODE" = "full" ] || [ "$MODE" = "rebuild" ]; }; then
+if { [ "$MODE" = "full" ] || [ "$MODE" = "rebuild" ]; } && [ "${APPSEC_PARALLEL_STRIDE:-1}" != "0" ]; then
   PARALLEL_STRIDE=true
+fi
+# Capture the RAW env value ONCE for the forensic PARALLEL_STRIDE_RESOLVED line
+# below (the `-` form, not `:-`, shows `unset` distinctly from empty). Reuse this
+# named variable in the log line — do NOT re-inline `${APPSEC_PARALLEL_STRIDE:-N}`
+# there. The resolution above defaults to 1 (`:-1`); a display that re-applies a
+# default drifts from the truth (the 2026-06-04 pstride-e2e run logged `=1` while
+# the var was genuinely unset). The whole point of this diagnostic is to tell
+# "env set" from "default applied" — so it must show the raw env, not the default.
+PARALLEL_STRIDE_ENV="${APPSEC_PARALLEL_STRIDE-unset}"
+# Live-phase console surfacing (opt-in, experimental). When on, Stage 1 (and
+# Stage 2) are dispatched run_in_background so the Level-0 orchestrator stays
+# unblocked and can drive a per-phase TaskUpdate from a Monitor on the phase
+# log — the only way to render the live phase on the MAIN console (a blocking
+# foreground Agent call queues all async output until it returns; verified by
+# spike 2026-06-04). Env-gated so the default (foreground) flow is byte-
+# unchanged. Mutually exclusive with PARALLEL_STRIDE for v1 (that path already
+# surfaces per-component STRIDE rows and has its own A/B split); PARALLEL_STRIDE
+# wins when both are set.
+LIVE_PHASE=false
+if [ "${APPSEC_LIVE_PHASE:-0}" = "1" ] && [ "$PARALLEL_STRIDE" = "false" ]; then
+  LIVE_PHASE=true
 fi
 DRY_RUN=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['dry_run']).lower())")
 OUTPUT_DIR=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['output_dir'])")
@@ -778,9 +806,9 @@ STRIDE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.lo
 TRIAGE_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['triage_model'])")
 MERGER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['merger_model'])")
 
-# Extended-model routing (haiku-economy tier — see AGENTS.md).
-# These default to claude-sonnet-4-6 when --reasoning-model is not haiku-economy
-# (preserves backward-compat). When haiku-economy is active, individual fields
+# Extended-model routing (sonnet-economy tier — see AGENTS.md).
+# These default to claude-sonnet-4-6 when --reasoning-model is not sonnet-economy
+# (preserves backward-compat). When sonnet-economy is active, individual fields
 # resolve to claude-haiku-4-5 according to the per-depth routing matrix.
 CONTEXT_RESOLVER_MODEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('context_resolver_model','claude-sonnet-4-6'))")
 RECON_SCANNER_MODEL=$(echo   "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('recon_scanner_model','claude-sonnet-4-6'))")
@@ -790,7 +818,7 @@ CONFIG_SCANNER_MODEL=$(echo  "$RESOLVED_JSON" | python3 -c "import json,sys;prin
 ORCHESTRATOR_MODEL=$(echo    "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('orchestrator_model','claude-sonnet-4-6'))")
 
 # STRIDE depth profile (Quick-mode A-F reductions, only when
-# --reasoning-model haiku-economy AND --assessment-depth quick).
+# --reasoning-model sonnet-economy AND --assessment-depth quick).
 # Emit as inline JSON for the orchestrator to forward in Phase 9 dispatches.
 STRIDE_PROFILE_JSON=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('stride_profile', {'stride_profile_label':'full'})))")
 STRIDE_PROFILE_LABEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('stride_profile',{}).get('stride_profile_label','full'))")
@@ -1098,8 +1126,10 @@ Files
 <if will_run:>Configuration
   Depth     : <depth_summary — see _format_depth_summary>
   Reasoning : <reasoning_summary>
-  <if PARALLEL_STRIDE=true:>STRIDE disp: parallel (per-component fan-out, Level-0)
-  <elif env APPSEC_PARALLEL_STRIDE=1 (set but mode∉{full,rebuild}):>STRIDE disp: parallel requested — inactive (needs --full / --rebuild)
+  <if PARALLEL_STRIDE=true:>STRIDE disp: parallel (per-component fan-out, Level-0; default)
+  <elif mode∈{full,rebuild} AND APPSEC_PARALLEL_STRIDE=0:>STRIDE disp: serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)
+  <if LIVE_PHASE=true:>Live phase : on (background dispatch + console phase)
+  <elif env APPSEC_LIVE_PHASE=1 (set but PARALLEL_STRIDE active):>Live phase : requested — inactive (PARALLEL_STRIDE wins)
   <active options if any (Outputs / Extras / Skips / Run flags / STRIDE / Limits)>
 
 Notes
@@ -1516,6 +1546,15 @@ HEARTBEAT_TASK_ID=<task_id from background bash>
 
 **Stage 2 / Stage 3 / Stage 4** — re-spawn a fresh watchdog before each subsequent foreground Agent dispatch and stop it after each return. The same Python invocation works for all stages because the loop's exit condition is "the lock file is gone".
 
+### Live-phase Monitor (opt-in, experimental — `APPSEC_LIVE_PHASE=1`)
+
+A second background helper, distinct from the watchdog, that surfaces the **live phase on the main console**. The watchdog writes progress to files only; the Monitor turns each phase-log line into a console notification that wakes the (now-unblocked) orchestrator so it can mirror the phase name via `TaskUpdate`.
+
+- **Why it requires background dispatch.** A blocking foreground `Agent` call queues ALL async console output (Monitor events, text) until it returns — so the live phase would only appear *after* Stage 1 finished (verified by the 2026-06-04 spike). The `LIVE_PHASE` variant therefore dispatches Stage 1 with `run_in_background: true` (see Stage-1 dispatch step 3 → "Live-phase variant") and the orchestrator stays free to react to Monitor events.
+- **Command / start / stop:** see Stage-1 dispatch **step 2b** (start, captures `LIVE_PHASE_MONITOR_ID`) and **step 4** (stop, beside the watchdog `TaskStop`). The grep alternation deliberately covers progress markers (`PHASE_START/END`, `STRIDE_PROGRESS`) AND every failure/terminal marker (`STRIDE_STALE`, `STRIDE_CANARY_TIMEOUT`, `STRIDE_COMPONENT_TIMEOUT`, `WRAP_UP_TRIGGERED`, `AGENT_ERROR`, `TOOL_ERROR`) so a stalled/crashed run is never silent.
+- **Failure modes** — same posture as the watchdog: a missed start is degraded observability; a missed stop is backstopped by the Monitor's `timeout_ms` (1 h) and self-ends when the log's directory is cleaned.
+- **v1 scope: Stage 1 only.** The same pattern is applicable to Stage 2 (renderer) and Stage 3/4, but is intentionally NOT wired there yet — the background dispatch + resume-on-notification control flow is new and unproven; Stage 1 (~25 min) carries almost all the payoff. Promote to Stage 2+ only after a real run confirms the Stage-1 path is reliable. PARALLEL_STRIDE runs ignore `LIVE_PHASE` (that path already shows per-component STRIDE rows and has its own A/B split; combining the two is deferred).
+
 **Tuning knobs (env-var compatible — pass via the CLI flags above).**
 
 | Flag | Default | Effect |
@@ -1690,7 +1729,7 @@ Where:
 
 No other text — no explanatory prose, no duplicated mode description — belongs between these lines. The verbose-mode hints are the single exception, and only when the flag is actually on.
 
-**M3.1 UX limitation:** The `Agent` tool dispatches Stage 1 in foreground and blocks the chat for the full duration (~25 min standard, ~40 min thorough). Phase and step events update `.appsec-progress.json`; Phase 9 also emits watcher progress.
+**M3.1 UX limitation:** The `Agent` tool dispatches Stage 1 in foreground and blocks the chat for the full duration (~25 min standard, ~40 min thorough). Phase and step events update `.appsec-progress.json`; Phase 9 also emits watcher progress. **Opt-in mitigation:** `APPSEC_LIVE_PHASE=1` switches Stage 1 to a background dispatch + live-phase Monitor that renders the current phase on the main console (experimental — see §"Live-phase Monitor" and the Stage-1 "Live-phase variant"). For runs without it, live phase is still observable in a second terminal via `/appsec-advisor:status --live` or by tailing `.agent-run.log`.
 
 ### Stage Task List Bootstrap
 
@@ -1779,14 +1818,15 @@ If no checkpoint exists and `--resume` was passed, inform the user and proceed w
 
 ## Stage 1 — Threat Analysis & Triage
 
-> **⚠ ROUTING — read FIRST. `PARALLEL_STRIDE` was resolved during Configuration Resolution (`APPSEC_PARALLEL_STRIDE=1` + `MODE` ∈ {full, rebuild}).**
+> **⚠ ROUTING — read FIRST. `PARALLEL_STRIDE` was resolved during Configuration Resolution (default-ON for `MODE` ∈ {full, rebuild}; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).**
 > - **If `PARALLEL_STRIDE=true`** → you MUST take the **Parallel-STRIDE split** (Full-M1): dispatch Analyst-A with `STAGE1_PHASE_LIMIT=8`, then run `build_stride_dispatch_manifest.py` → `validate_dispatch_manifest.py` → **fan out one `appsec-stride-analyzer` per component IN PARALLEL** → dispatch Analyst-B with `RESUME_FROM_PHASE=9-merge`. The full procedure is **step 3 → "Parallel-STRIDE variant"** below. Do **NOT** do the default single `STAGE1_PHASE_LIMIT=10b` dispatch in this case.
-> - **If `PARALLEL_STRIDE=false`** (the default) → use the normal single-analyst dispatch (step 3 → "Default variant").
-> Verify the value before dispatching AND persist it for forensics (writes a canonical `PARALLEL_STRIDE_RESOLVED` line to `.agent-run.log`, updates `.appsec-progress.json`, and mirrors to stderr — so a post-mortem can tell at a glance whether the parallel branch was even eligible to fire, without re-deriving it from spawn counts):
+> - **If `PARALLEL_STRIDE=false` AND `LIVE_PHASE=false`** (opt-out `APPSEC_PARALLEL_STRIDE=0`, or incremental/rerender mode) → use the single-analyst foreground dispatch (step 3 → "Serial variant").
+> - **If `PARALLEL_STRIDE=false` AND `LIVE_PHASE=true`** (opt-in `APPSEC_LIVE_PHASE=1`) → use the **background dispatch + live-phase Monitor** (step 3 → "Live-phase variant"); also start the Monitor in step 2b. `LIVE_PHASE` is never true when `PARALLEL_STRIDE=true` (mutually exclusive, resolved at Configuration Resolution).
+> Verify the values before dispatching AND persist them for forensics (writes a canonical `PARALLEL_STRIDE_RESOLVED` line to `.agent-run.log`, updates `.appsec-progress.json`, and mirrors to stderr — so a post-mortem can tell at a glance which dispatch path was eligible to fire, without re-deriving it from spawn counts). **The `env APPSEC_PARALLEL_STRIDE=` field MUST be the raw `$PARALLEL_STRIDE_ENV` captured in the resolution block (value or `unset`) — never re-inline a `${APPSEC_PARALLEL_STRIDE:-N}` default here, or the line lies about whether a var was actually set:**
 > ```bash
 > python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info \
 >     PARALLEL_STRIDE_RESOLVED \
->     "PARALLEL_STRIDE=$PARALLEL_STRIDE (mode=$MODE, env APPSEC_PARALLEL_STRIDE=${APPSEC_PARALLEL_STRIDE:-0})" \
+>     "PARALLEL_STRIDE=$PARALLEL_STRIDE LIVE_PHASE=$LIVE_PHASE (mode=$MODE, env APPSEC_PARALLEL_STRIDE=$PARALLEL_STRIDE_ENV)" \
 >     --agent skill 2>/dev/null || true
 > ```
 
@@ -1796,7 +1836,7 @@ Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Analysis 
 
 ### Dispatch
 
-Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor` for the foreground Agent itself, no notification choreography — but a **background heartbeat watchdog** runs in parallel (see "Skill-layer heartbeat watchdog" above).
+By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor` for the foreground Agent itself, no notification choreography — but a **background heartbeat watchdog** runs in parallel (see "Skill-layer heartbeat watchdog" above). **Exception:** when `LIVE_PHASE=true` (opt-in `APPSEC_LIVE_PHASE=1`) the dispatch is instead `run_in_background` + a live-phase Monitor so the current phase renders on the main console — see step 3 → "Live-phase variant" and §"Live-phase Monitor" above.
 
 0. **Snapshot prior artifact stats (incremental only).** Capture `mtime + size` of `threat-model.yaml` and (if it exists) `threat-model.md` so the post-Stage-1 / post-Stage-2 gates can detect a true no-op and skip downstream agent dispatches. **Skip when `MODE != incremental`** — full and rebuild always re-render and re-QA.
    ```bash
@@ -1821,9 +1861,15 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
 
 2. **Start the heartbeat watchdog (M3.4).** Issue the heartbeat-loop Bash command with `run_in_background: true` and capture the returned `task_id` in `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`. See the "Skill-layer heartbeat watchdog" section above for the exact command. The watchdog runs in parallel with the foreground Stage 1 dispatch and ensures `.appsec-lock` heartbeats fire every 60 s regardless of orchestrator activity.
 
+2b. **Start the live-phase Monitor (only when `LIVE_PHASE=true` and `DRY_RUN=false`).** This drives the live-phase console display in the §"Live-phase variant" below. `Monitor` is a **deferred tool** — call `ToolSearch` with query `select:Monitor` before first use. Then start it and capture the returned `task_id` in `LIVE_PHASE_MONITOR_ID`:
+   - command: `tail -n0 -F "$OUTPUT_DIR/.agent-run.log" 2>/dev/null | grep --line-buffered -E "PHASE_START|PHASE_END|STRIDE_PROGRESS|STRIDE_STALE|STRIDE_CANARY_TIMEOUT|STRIDE_COMPONENT_TIMEOUT|WRAP_UP_TRIGGERED|AGENT_ERROR|TOOL_ERROR"`
+   - description: `"appsec Stage 1 — live phase"` (this is what the console renders per event; keep it meaningful because the per-line payload is NOT shown inline — the orchestrator reads the payload from the event notification and mirrors it via `TaskUpdate`, see §"Live-phase variant")
+   - `timeout_ms: 3600000` (1 h backstop), `persistent: false`
+   - `tail -n0` avoids replaying prior-run log history; `-F` (capital) survives the analyst's `>`-overwrite of `.agent-run.log` at `ASSESSMENT_START` and follows the file by name. Skip this step entirely when `LIVE_PHASE=false` (the default).
+
 3. **Dispatch the orchestrator.**
 
-   **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, opt-in via `APPSEC_PARALLEL_STRIDE=1`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in parallel:
+   **— Parallel-STRIDE variant (`PARALLEL_STRIDE=true` — Full-M1, the DEFAULT for full/rebuild; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).** Instead of one monolithic analyst that inlines STRIDE serially, split Stage 1 so the skill (Level-0, can fan out) dispatches the per-component STRIDE analyzers in parallel:
 
    3a. **Analyst-A** — Agent call `description: "Threat Analysis & Triage"`, prompt sets **`STAGE1_PHASE_LIMIT=8`** (+ normal config). It runs Phases 1–8 + the Phase-9 dispatch-prep, writes `.stride-analyst-context.json` + `.dispatch-context/<id>/`, then stops (see `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT=8 — Analyst-A branch"). Foreground/blocking.
 
@@ -1842,7 +1888,16 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
 
    3d. **Analyst-B** — Agent call `description: "Threat Analysis & Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 
-   **— Default variant (`PARALLEL_STRIDE=false`).** Call the Agent tool with `description: "Threat Analysis & Triage"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b plus Phase 11 Substeps 1–3 (deterministic yaml write + baseline cache), without entering the LLM-heavy Substeps 4–N. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
+   **— Serial variant (`PARALLEL_STRIDE=false` AND `LIVE_PHASE=false` — opt-out / incremental fallback).** Reached when `APPSEC_PARALLEL_STRIDE=0` is set, or in non-full/rebuild modes where the parallel split does not apply. Call the Agent tool with `description: "Threat Analysis & Triage"`. Do **not** set `run_in_background` — this is a blocking inline call. **Pass `STAGE1_PHASE_LIMIT=10b` in the prompt** (in addition to the normal configuration variables) so the agent stops cleanly after Phase 10b plus Phase 11 Substeps 1–3 (deterministic yaml write + baseline cache), without entering the LLM-heavy Substeps 4–N. All prompt contents and configuration variables are described in the "Passing configuration" subsection below.
+
+   **— Live-phase variant (`LIVE_PHASE=true` — opt-in via `APPSEC_LIVE_PHASE=1`, experimental).** Same agent, same `description: "Threat Analysis & Triage"`, same `STAGE1_PHASE_LIMIT=10b` prompt and config as the Default variant — the ONLY differences are the dispatch mode and the control flow that follows. Set **`run_in_background: true`** on the Agent call so the Level-0 orchestrator is NOT blocked (a blocking foreground call would queue all async console output until it returns — verified by the 2026-06-04 spike). Capture the returned background agent id in `STAGE1_AGENT_ID`. Then drive the live-phase display:
+
+   - **End your turn immediately after dispatching.** Do NOT proceed to step 4. Do NOT make any blocking tool call (Bash, foreground Agent) while waiting — any blocking call re-blocks the main loop and re-queues the Monitor events, defeating the whole mechanism. You will be re-invoked by notifications.
+   - **On each live-phase Monitor event** (task id `LIVE_PHASE_MONITOR_ID`): parse the phase/step text out of the event payload (e.g. `… PHASE_START   [Phase 3/11] ▶ Architecture Modeling…` → `Phase 3/11 — Architecture Modeling`; `STRIDE_PROGRESS stride_files=2 …` → `Phase 9/11 — STRIDE 2/5 components`) and call `TaskUpdate` on the `Stage 1a - Threat Analysis` task to set its `activeForm` to that text. This is what surfaces the live phase NAME on the console (the raw Monitor line shows only the static description). Do nothing else; end your turn again. If the payload has no parseable phase, skip the update.
+   - **On a `STRIDE_STALE` / `STRIDE_CANARY_TIMEOUT` / `STRIDE_COMPONENT_TIMEOUT` / `AGENT_ERROR` / `TOOL_ERROR` event:** surface it once as a short console line (these are the failure/terminal markers — do not stay silent), then keep waiting.
+   - **On the `STAGE1_AGENT_ID` completion notification** (carries the `<usage>` block — same shape the Default variant reads inline): the dispatch is done. Proceed to **step 4** below and continue the normal flow (stop watchdog, stop Monitor, gates, stats). The `<usage>` from this completion notification is what step 6 records.
+
+   This is the one place in the skill that uses background dispatch + resume-on-notification. It is gated behind `LIVE_PHASE` precisely so the proven foreground flow stays the default. The cut-off detection (step 4+), resume, and stats logic are all UNCHANGED — they run at the same point (after the dispatch completes), the only difference being that "completes" now means "the completion notification arrived" rather than "the blocking call returned".
 
 4. **Stop the heartbeat watchdog.** Once the Agent tool returns (success, error, or cut-off), send one final heartbeat before stopping the watchdog so the lock reflects activity right up to the stage boundary:
    ```bash
@@ -1853,11 +1908,13 @@ Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls strea
    ```
    Then immediately call `TaskStop` to terminate the background heartbeat loop. Do this BEFORE the cut-off detection branches below — those branches may exit the skill, and a still-running watchdog would block the next user invocation. If `HEARTBEAT_TASK_ID` is unset (DRY_RUN, or watchdog spawn failed), skip both calls silently.
 
+   **Also stop the live-phase Monitor (when `LIVE_PHASE=true`).** If `LIVE_PHASE_MONITOR_ID` is set, call `TaskStop` on it here too — same place, same `task_id` param, schema already loaded. Stopping it in the SAME step as the watchdog guarantees a skill early-exit (cut-off branch) never leaks the Monitor. Skip silently when unset.
+
    > **`TaskStop` is a deferred tool — load its schema first.** Unlike `TaskCreate`/`TaskUpdate`, `TaskStop` is frequently NOT in the pre-loaded tool set, so calling it directly fails with `InputValidationError: unexpected parameter`. Before the first `TaskStop` of the run, call `ToolSearch` with query `select:TaskStop` to load its schema. Its parameter is **`task_id`** (snake_case) — **not** `taskId`; passing `taskId` is the exact "Invalid tool parameters" failure observed on the 2026-06-01 juice-shop run. This applies to every `TaskStop` site below (Stage 2 / Stage 3 / Stage 4) — load the schema once, then reuse `task_id` each time.
 
 5. **On return, mark the Stage-1 tasks `completed`.** Call `TaskUpdate` to set **both** the `Stage 1a - Threat Analysis` and `Stage 1b - Triage` tasks to `completed`, then proceed to the **Phase-10b precondition gate** below.
 
-6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table.
+6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table. (In the `LIVE_PHASE=true` variant the same `<usage>` block arrives in the background agent's **completion notification** — identical fields, identical extraction.)
 
    **`STAGE1_START_ISO` capture (multi-dispatch wall-time, 2026-05-23 juice-shop forensics).** Before dispatching the Stage 1 agent above, capture the dispatch-start timestamp into `STAGE1_START_ISO` (`STAGE1_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` immediately before the Agent tool call). This is the lower bound the recorder uses to derive `dispatch_count` + `wall_secs_observed` from `.hook-events.log` — without it the recorder cannot tell apart this stage's `AGENT_SPAWN` events from earlier-run residue in incremental mode. The variable is plumbed through to the recorder via `--since-iso` below. When `STAGE1_START_ISO` is empty (e.g. the capture line was skipped), pass nothing and the recorder degrades to the legacy single-dispatch field set (back-compat).
 
@@ -2675,15 +2732,15 @@ Pass the following variables to the agent prompt:
 - `STRIDE_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `--stride-model` or `$APPSEC_STRIDE_MODEL` when set)
 - `TRIAGE_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `$APPSEC_TRIAGE_MODEL` when set)
 - `MERGER_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `$APPSEC_MERGER_MODEL` when set)
-- `CONTEXT_RESOLVER_MODEL=<model>` (haiku-economy tier; default `claude-sonnet-4-6`. Read by Phase 1 dispatch in `phase-group-recon.md`. Override via `$APPSEC_CONTEXT_RESOLVER_MODEL`.)
-- `RECON_SCANNER_MODEL=<model>` (haiku-economy tier; default `claude-sonnet-4-6`. Read by Phase 2 dispatch in `phase-group-recon.md`. Override via `$APPSEC_RECON_SCANNER_MODEL`.)
-- `QA_ROUTINE_MODEL=<model>` (haiku-economy tier QA-split; default `claude-sonnet-4-6`. Used at the skill level for routine repair iterations. Override via `$APPSEC_QA_ROUTINE_MODEL`.)
-- `QA_CONTENT_MODEL=<model>` (haiku-economy tier QA-split; default `claude-sonnet-4-6`. Used for content-class repair iterations. Override via `$APPSEC_QA_CONTENT_MODEL`.)
+- `CONTEXT_RESOLVER_MODEL=<model>` (sonnet-economy tier; default `claude-sonnet-4-6`. Read by Phase 1 dispatch in `phase-group-recon.md`. Override via `$APPSEC_CONTEXT_RESOLVER_MODEL`.)
+- `RECON_SCANNER_MODEL=<model>` (sonnet-economy tier; default `claude-sonnet-4-6`. Read by Phase 2 dispatch in `phase-group-recon.md`. Override via `$APPSEC_RECON_SCANNER_MODEL`.)
+- `QA_ROUTINE_MODEL=<model>` (sonnet-economy tier QA-split; default `claude-sonnet-4-6`. Used at the skill level for routine repair iterations. Override via `$APPSEC_QA_ROUTINE_MODEL`.)
+- `QA_CONTENT_MODEL=<model>` (sonnet-economy tier QA-split; default `claude-sonnet-4-6`. Used for content-class repair iterations. Override via `$APPSEC_QA_CONTENT_MODEL`.)
 - `CONFIG_SCANNER_MODEL=<model>` (defaults to `claude-haiku-4-5` at all reasoning tiers. Read by Phase 2.5 dispatch in `phase-group-recon.md`. Override via `$APPSEC_CONFIG_SCANNER_MODEL`.)
 - `ACTOR_DISCOVERY_MODEL=<model>` (defaults to `claude-sonnet-4-6`. Read by Phase 2.7 dispatch. Override via `$APPSEC_ACTOR_DISCOVERY_MODEL`.)
 - `REFRESH_ACTOR_DISCOVERY=<true|false>` (when `true`, Phase 2.7 passes `--refresh-discovery` to resolve_actors.py and forces a new LLM discovery run even when the cache key is unchanged. Set by `--refresh-discovery` flag.)
-- `ORCHESTRATOR_MODEL=<model>` (haiku-economy tier; always `claude-sonnet-4-6` per matrix — informational only.)
-- `STRIDE_PROFILE_JSON=<inline-json>` (depth-reduction profile; default `{"stride_profile_label":"full"}`. Read by Phase 9 dispatch in `phase-group-threats.md` and forwarded to each STRIDE analyzer in Group A. Quick + haiku-economy contains the A-F reduction flags.)
+- `ORCHESTRATOR_MODEL=<model>` (sonnet-economy tier; always `claude-sonnet-4-6` per matrix — informational only.)
+- `STRIDE_PROFILE_JSON=<inline-json>` (depth-reduction profile; default `{"stride_profile_label":"full"}`. Read by Phase 9 dispatch in `phase-group-threats.md` and forwarded to each STRIDE analyzer in Group A. Quick + sonnet-economy contains the A-F reduction flags.)
 - `REASONING_LABEL=<resolved summary>`
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to run Phases 1–10b plus the deterministic Phase 11 Substeps 1–3 (counts, yaml write, baseline cache) and then stop cleanly without entering the LLM-heavy Substeps 4–N. See `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT — early-exit branch" for the full contract. **Mutually exclusive with `RENDER_ONLY=true`.**)
@@ -3000,7 +3057,7 @@ Inside this guarded branch, invoke the `appsec-advisor:appsec-qa-reviewer` agent
 | Iteration | Repair-plan flag classes present | `model:` field |
 |---|---|---|
 | First QA call (no `.qa-repair-plan.json` yet on disk) | n/a — initial check | `$QA_ROUTINE_MODEL` from `.skill-config.json` |
-| Re-Render-Loop iteration where ALL plan entries are in `{links, xrefs, anchors, repair_plan}` | mechanical repairs only | `$QA_ROUTINE_MODEL` (Haiku under `--reasoning-model haiku-economy quick\|standard`) |
+| Re-Render-Loop iteration where ALL plan entries are in `{links, xrefs, anchors, repair_plan}` | mechanical repairs only | `$QA_ROUTINE_MODEL` (Haiku under `--reasoning-model sonnet-economy quick\|standard`) |
 | Re-Render-Loop iteration where ANY plan entry is in `{invariants, ms_structure, contract}` | content reasoning required | `$QA_CONTENT_MODEL` (always Sonnet) |
 
 The split derives from `scripts/qa_checks.py` subcommand classes — the routine flags are mechanical (URL fix, anchor rename, T-NNN cross-reference patching) while the content flags require structural understanding of the document. To compute the model selection before dispatch:
@@ -3019,7 +3076,7 @@ print('1' if flags & content_classes else '0')
 fi
 ```
 
-**Pass the `model` field explicitly** in the Agent tool dispatch so the frontmatter `model: sonnet` default in `agents/appsec-qa-reviewer.md:5` is overridden — the same explicit-pass pattern as Stage 4 (Architect Review) below. Without explicit pass-through, the frontmatter default silently wins and the haiku-economy routing in `.skill-config.json` has no effect, defeating the entire QA-split mechanism. The 2026-05-04 juice-shop run lost ~3 min and ~3× the planned token cost to this drift (stage-stats reported Haiku, AGENT_SPAWN reported Sonnet).
+**Pass the `model` field explicitly** in the Agent tool dispatch so the frontmatter `model: sonnet` default in `agents/appsec-qa-reviewer.md:5` is overridden — the same explicit-pass pattern as Stage 4 (Architect Review) below. Without explicit pass-through, the frontmatter default silently wins and the sonnet-economy routing in `.skill-config.json` has no effect, defeating the entire QA-split mechanism. The 2026-05-04 juice-shop run lost ~3 min and ~3× the planned token cost to this drift (stage-stats reported Haiku, AGENT_SPAWN reported Sonnet).
 
 ```
 - model: $QA_MODEL  ← MUST appear as a top-level Agent tool parameter
@@ -3053,7 +3110,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
     ${STAGE3_START_ISO:+--subagent-type appsec-advisor:appsec-qa-reviewer --since-iso "$STAGE3_START_ISO"}
 ```
 
-**Pass the actual `$QA_MODEL` value** (not a hardcoded `claude-sonnet-4-6`) so the per-stage breakdown table reflects which model was effectively used — Haiku at haiku-economy/quick+standard, Sonnet at haiku-economy/thorough or whenever a content-class repair iteration switches to `$QA_CONTENT_MODEL`.
+**Pass the actual `$QA_MODEL` value** (not a hardcoded `claude-sonnet-4-6`) so the per-stage breakdown table reflects which model was effectively used — Haiku at sonnet-economy/quick+standard, Sonnet at sonnet-economy/thorough or whenever a content-class repair iteration switches to `$QA_CONTENT_MODEL`.
 
 Stage 4 (Architect Review) records `--stage 4` analogously when `ARCHITECT_REVIEW=true`, with `STAGE4_START_ISO` captured the same way and `--subagent-type appsec-advisor:appsec-architect-reviewer`.
 

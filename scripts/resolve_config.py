@@ -39,6 +39,25 @@ from typing import Any, Optional
 # ---------------------------------------------------------------------------
 
 
+# Canonical reasoning tiers. ``haiku-economy`` was the original name for the
+# economy tier, but it oversells the Haiku routing: STRIDE/triage/merger stay
+# on Sonnet (see below). The honest name is ``sonnet-economy`` — a Sonnet
+# reasoning floor with economy periphery. ``haiku-economy`` is retained as a
+# backward-compatible input alias (CLI flags, stored .skill-config.json,
+# recorded fixtures) and is normalised to the canonical name on the way in.
+REASONING_ALIASES = {"haiku-economy": "sonnet-economy"}
+
+
+def canonical_reasoning_model(mode):
+    """Map a deprecated reasoning-tier alias to its canonical name.
+
+    Pass-through for unknown / canonical values and for ``None``.
+    """
+    if mode is None:
+        return mode
+    return REASONING_ALIASES.get(mode, mode)
+
+
 MODEL_MATRIX = {
     "sonnet": {
         "stride": "sonnet",
@@ -59,13 +78,13 @@ MODEL_MATRIX = {
         "triage": "opus",
         "merger": "opus",
     },
-    # haiku-economy: STRIDE/triage/merger bleiben wie bei sonnet — der
+    # sonnet-economy: STRIDE/triage/merger bleiben wie bei sonnet — der
     # Hauptwertbeitrag (Threat-Reasoning) wird NICHT auf Haiku geroutet.
     # Der Haiku-Hebel greift bei den deterministisch-näheren Agenten via
     # EXTENDED_MODEL_MATRIX (context-resolver, recon-scanner, qa-routine,
     # config-scanner). Quick-Mode bekommt zusätzlich eine STRIDE-Tiefe-
-    # Reduktion via resolve_stride_profile().
-    "haiku-economy": {
+    # Reduktion via resolve_stride_profile(). (Alias: haiku-economy.)
+    "sonnet-economy": {
         "stride": "sonnet",
         "triage": "sonnet",
         "merger": "sonnet",
@@ -75,19 +94,19 @@ MODEL_MATRIX = {
 # Routing für Agenten jenseits von stride/triage/merger.
 # Schlüssel: (reasoning_tier, depth) → agent_type → model.
 # Default-Routing greift für sonnet/opus-cheap/opus (= unverändert zu heute).
-# haiku-economy hat depth-spezifisches Routing.
+# sonnet-economy hat depth-spezifisches Routing.
 HAIKU = "haiku"
 SONNET = "sonnet"
 
 EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
-    # haiku-economy: extended-agent routing.
+    # sonnet-economy: extended-agent routing.
     #
     # context-resolver, recon-scanner, config-scanner are deterministic
     # tasks (extraction / grep / rule-engine application against a YAML
     # check catalog) — they run on Haiku at every depth.
     # qa_routine moves up to Sonnet at thorough because the document is
     # bigger and more cross-references need reconciling.
-    ("haiku-economy", "quick"): {
+    ("sonnet-economy", "quick"): {
         "context_resolver": HAIKU,
         "recon_scanner":    HAIKU,
         "qa_routine":       HAIKU,
@@ -95,7 +114,7 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "config_scanner":   HAIKU,
         "orchestrator":     SONNET,
     },
-    ("haiku-economy", "standard"): {
+    ("sonnet-economy", "standard"): {
         "context_resolver": HAIKU,
         "recon_scanner":    HAIKU,
         "qa_routine":       HAIKU,
@@ -103,7 +122,7 @@ EXTENDED_MODEL_MATRIX: dict[tuple[str, str], dict[str, str]] = {
         "config_scanner":   HAIKU,
         "orchestrator":     SONNET,
     },
-    ("haiku-economy", "thorough"): {
+    ("sonnet-economy", "thorough"): {
         "context_resolver": HAIKU,
         "recon_scanner":    HAIKU,
         "qa_routine":       SONNET,
@@ -293,7 +312,7 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
 # cost/time lever — it created whole-component BLIND SPOTS (the 2026-06-02
 # cap-to-3 run missed the b2b-api RCE and the data-tier entirely, 23 threats vs
 # 42, and never even catalogued the §7.2 MFA surface). On large repos we now
-# keep the cheaper economy reasoning tier (haiku-economy: STRIDE stays on
+# keep the cheaper economy reasoning tier (sonnet-economy: STRIDE stays on
 # Sonnet, only merger/qa downgrade) but analyze ALL components — the Phase-9
 # heartbeat watchdog (skill_watchdog.py: stride-stale 900s, per-component
 # timeout 480s) bounds any cold-cache hang instead of pre-emptively dropping
@@ -393,17 +412,17 @@ def resolve_default_tier_for_capped_repos(cfg: dict,
         source-file count exceeds LARGE_REPO_SOURCE_FILE_THRESHOLD at
         ``--assessment-depth standard``)
       * the silently-resolved tier is ``opus-cheap`` (the only tier where
-        switching to ``haiku-economy`` produces real savings — quick already
-        defaults to haiku-economy, opus is an explicit user choice)
+        switching to ``sonnet-economy`` produces real savings — quick already
+        defaults to sonnet-economy, opus is an explicit user choice)
 
-    On trigger: switch reasoning_model to ``haiku-economy`` and re-run the
+    On trigger: switch reasoning_model to ``sonnet-economy`` and re-run the
     dependent resolvers (reasoning_model, extended_models, stride_profile)
     so the resulting cfg is internally consistent.
 
     Rationale: the large-repo cap reduces ``MAX_STRIDE_COMPONENTS`` to 3,
     which keeps the merger/triage workload small enough that paying Opus
     rates per-token is uneconomical (Phase 9 merger handles ≤45 threats,
-    Phase 10b triage runs deterministically since M3.1). Haiku-economy
+    Phase 10b triage runs deterministically since M3.1). Sonnet-economy
     keeps STRIDE on Sonnet (the value-creating phase) and downgrades only
     merger + qa-routine where Sonnet/Haiku is sufficient.
 
@@ -415,7 +434,7 @@ def resolve_default_tier_for_capped_repos(cfg: dict,
         return {}
     if not cfg.get("repo_size_capped"):
         return {}
-    if cfg.get("reasoning_model") != "opus-cheap":   # only the opus-cheap → haiku-economy path
+    if cfg.get("reasoning_model") != "opus-cheap":   # only the opus-cheap → sonnet-economy path
         return {}
 
     depth = cfg["assessment_depth"]
@@ -425,16 +444,16 @@ def resolve_default_tier_for_capped_repos(cfg: dict,
     # resolve_reasoning_model treats it as user-selected.
     import copy
     ns_synth = copy.copy(ns)
-    ns_synth.reasoning_model = "haiku-economy"
+    ns_synth.reasoning_model = "sonnet-economy"
 
     patch: dict = {}
     patch.update(resolve_reasoning_model(ns_synth, depth))
-    patch.update(resolve_extended_models("haiku-economy", depth))
-    patch.update(resolve_stride_profile("haiku-economy", depth))
+    patch.update(resolve_extended_models("sonnet-economy", depth))
+    patch.update(resolve_stride_profile("sonnet-economy", depth))
 
     # Override the label so the auto-switch is visible in --config-summary.
     patch["reasoning_label"] = (
-        f"haiku-economy (auto — large repo: economy tier across "
+        f"sonnet-economy (auto — large repo: economy tier across "
         f"{cfg['max_stride_components']} components; "
         f"Opus on merger/triage uneconomical at this scale, STRIDE stays Sonnet)"
     )
@@ -446,7 +465,7 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     """Resolution order: env-vars → --reasoning-model → depth default.
 
     Defaults per depth:
-      • quick    → haiku-economy (deterministic-leaning agents on Haiku;
+      • quick    → sonnet-economy (deterministic-leaning agents on Haiku;
                    Reasoning core stays on Sonnet)
       • standard → opus-cheap
       • thorough → opus-cheap
@@ -456,17 +475,17 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     (APPSEC_STRIDE_MODEL / APPSEC_TRIAGE_MODEL / APPSEC_MERGER_MODEL)
     take highest precedence for fine-grained overrides.
 
-    The ``haiku-economy`` tier keeps STRIDE/triage/merger on Sonnet
+    The ``sonnet-economy`` tier keeps STRIDE/triage/merger on Sonnet
     (Threat-Reasoning is the tool's primary value contribution and
     must not be downgraded). The Haiku savings come from the
     deterministic-leaning agents (context-resolver, recon-scanner,
     qa-routine fixes, config-scanner) — see resolve_extended_models.
     """
-    # Step 1: pick the base mode.
+    # Step 1: pick the base mode (normalising deprecated aliases).
     if ns.reasoning_model:
-        mode = ns.reasoning_model
+        mode = canonical_reasoning_model(ns.reasoning_model)
     elif depth == "quick":
-        mode = "haiku-economy"
+        mode = "sonnet-economy"
     else:
         mode = "opus-cheap"
 
@@ -519,8 +538,9 @@ def resolve_extended_models(reasoning_mode: str, depth: str) -> dict:
     Env vars (APPSEC_<AGENT>_MODEL) override per-agent for ad-hoc
     debugging or to force a specific tier on a specific phase.
     """
-    if reasoning_mode == "haiku-economy":
-        models = dict(EXTENDED_MODEL_MATRIX[("haiku-economy", depth)])
+    reasoning_mode = canonical_reasoning_model(reasoning_mode)
+    if reasoning_mode == "sonnet-economy":
+        models = dict(EXTENDED_MODEL_MATRIX[("sonnet-economy", depth)])
     else:
         models = dict(_DEFAULT_EXTENDED_ROUTING)
 
@@ -600,18 +620,18 @@ def resolve_stride_profile(reasoning_mode: str, depth: str) -> dict:
     """Return the STRIDE-analyzer depth profile.
 
     The STRIDE depth-reduction (A-F) is gated on
-    ``reasoning_mode == haiku-economy`` AND ``depth == quick``.
+    ``reasoning_mode == sonnet-economy`` AND ``depth == quick``.
     Both conditions must hold to keep behaviour predictable for users
-    who pick haiku-economy at standard/thorough (no STRIDE reduction
-    there) and for users who explicitly pick a non-haiku tier at quick
+    who pick sonnet-economy at standard/thorough (no STRIDE reduction
+    there) and for users who explicitly pick a non-economy tier at quick
     (e.g. ``--reasoning-model sonnet``, which preserves the pre-2026-05
     "Sonnet everywhere at quick" behaviour).
 
-    Since 2026-05 ``haiku-economy`` is also the default at quick depth,
+    Since 2026-05 ``sonnet-economy`` is also the default at quick depth,
     so an unflagged ``--assessment-depth quick`` invocation activates
     the A-F profile automatically — no extra flag required.
 
-    Quick + haiku-economy applies:
+    Quick + sonnet-economy applies:
       A. Skip verification greps
       B. Cap threats per STRIDE category at 2 (was "2-5")
       C. Omit code_example field in remediation
@@ -621,9 +641,10 @@ def resolve_stride_profile(reasoning_mode: str, depth: str) -> dict:
 
     The model itself stays Sonnet — only the task scope is reduced.
     """
-    if reasoning_mode == "haiku-economy" and depth == "quick":
+    reasoning_mode = canonical_reasoning_model(reasoning_mode)
+    if reasoning_mode == "sonnet-economy" and depth == "quick":
         profile = dict(QUICK_STRIDE_PROFILE)
-        profile["stride_profile_label"] = "quick (depth-reduced via haiku-economy)"
+        profile["stride_profile_label"] = "quick (depth-reduced via sonnet-economy)"
         return {"stride_profile": profile}
     return {"stride_profile": {"stride_profile_label": "full"}}
 
@@ -999,7 +1020,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", default=None)
     # Models / depth
     p.add_argument("--reasoning-model",
-                   choices=("sonnet", "opus-cheap", "opus", "haiku-economy"))
+                   choices=("sonnet", "opus-cheap", "opus",
+                            "sonnet-economy", "haiku-economy"))  # haiku-economy: deprecated alias
     p.add_argument("--stride-model", default=None)
     # Opus ceiling. When set, every Opus selection anywhere in the run is
     # downgraded to Sonnet (cost/compliance ceiling). Also settable org-wide
@@ -2031,13 +2053,13 @@ def _format_pipeline_summary(cfg: dict) -> str:
 
 
 def _format_reasoning_summary(cfg: dict) -> str:
-    mode = cfg.get("reasoning_model") or "unknown"
+    mode = canonical_reasoning_model(cfg.get("reasoning_model")) or "unknown"
     if cfg.get("opus_disabled"):
         return f"{mode}; no-opus ceiling → all Opus selections downgraded to Sonnet"
     if cfg.get("reasoning_auto_switched"):
         return f"{mode}; auto-switched for large repo; STRIDE Sonnet"
-    if mode == "haiku-economy":
-        return "haiku-economy; cheap phases Haiku; STRIDE/triage/merge Sonnet"
+    if mode == "sonnet-economy":
+        return "sonnet-economy; cheap phases Haiku; STRIDE/triage/merge Sonnet"
 
     def short(model: str | None) -> str:
         raw = (model or "unknown").replace("claude-", "")
@@ -2095,13 +2117,34 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     # honoured for from-scratch runs (full/rebuild). Surface the requested-but-
     # inactive case too, so a user who set the env var on an incremental run
     # sees why no per-component fan-out happened.
-    if os.environ.get("APPSEC_PARALLEL_STRIDE") == "1":
-        if cfg.get("mode") in ("full", "rebuild"):
-            rows.append(("STRIDE disp", "parallel (per-component fan-out, Level-0)"))
+    # Parallel STRIDE is DEFAULT-ON for full/rebuild; opt-OUT via
+    # APPSEC_PARALLEL_STRIDE=0 (mirror the skill resolution at SKILL-impl.md
+    # "Configuration Resolution"). Incremental/rerender never parallelise.
+    _ps_optout = os.environ.get("APPSEC_PARALLEL_STRIDE") == "0"
+    parallel_active = cfg.get("mode") in ("full", "rebuild") and not _ps_optout
+    if cfg.get("mode") in ("full", "rebuild"):
+        if parallel_active:
+            rows.append((
+                "STRIDE disp",
+                "parallel (per-component fan-out, Level-0; default)",
+            ))
         else:
             rows.append((
                 "STRIDE disp",
-                "parallel requested — inactive (needs --full / --rebuild)",
+                "serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)",
+            ))
+
+    # Live-phase console surfacing (opt-in, experimental). Mirror the skill-Bash
+    # resolution: honoured only when PARALLEL_STRIDE is NOT active (that path has
+    # its own per-component rows). Surface the inactive case so a user who set the
+    # env var alongside parallel-stride sees why no background dispatch happened.
+    if os.environ.get("APPSEC_LIVE_PHASE") == "1":
+        if not parallel_active:
+            rows.append(("Live phase", "on (background dispatch + console phase)"))
+        else:
+            rows.append((
+                "Live phase",
+                "requested — inactive (PARALLEL_STRIDE wins)",
             ))
 
     # M11/M9 — wall-time + cost deadline display (existing behaviour).

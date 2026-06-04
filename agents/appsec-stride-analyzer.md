@@ -89,7 +89,7 @@ Compliance + asset:
 Run config:
 - `MAX_TURNS` — soft target. The frontmatter `maxTurns` is the hard ceiling.
 - `ESTIMATED_THREAT_COUNT` — `low` (≤3) / `moderate` (4–7) / `high` (≥8). Drives pacing (see *Turn budget self-regulation*).
-- `STRIDE_PROFILE_JSON` — JSON object from `resolve_stride_profile()`. When `stride_profile_label = "quick (depth-reduced via haiku-economy)"`, apply *Quick-mode adjustments* in Step 3. The flag values mirror `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py` — keep that file and the Step-3 table in sync.
+- `STRIDE_PROFILE_JSON` — JSON object from `resolve_stride_profile()`. When `stride_profile_label = "quick (depth-reduced via sonnet-economy)"`, apply *Quick-mode adjustments* in Step 3. The flag values mirror `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py` — keep that file and the Step-3 table in sync.
 - `ASSESSMENT_DEPTH` — `quick` / `standard` / `thorough`. Gates the Step-2 raw-SQL IDOR trace (skipped at `quick`).
 
 Paths:
@@ -228,7 +228,7 @@ Eight forbidden substrings are schema-enforced; the rest is author discipline.
 
 ### Quick-mode adjustments
 
-Apply when `STRIDE_PROFILE_JSON.stride_profile_label = "quick (depth-reduced via haiku-economy)"`. Cuts verification overhead — never coverage. Per-threat quality bar identical to Full mode. **Source of truth: `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py`** — update this table in the same commit when a flag flips.
+Apply when `STRIDE_PROFILE_JSON.stride_profile_label = "quick (depth-reduced via sonnet-economy)"`. Cuts verification overhead — never coverage. Per-threat quality bar identical to Full mode. **Source of truth: `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py`** — update this table in the same commit when a flag flips.
 
 | Flag | Value | Adjustment |
 |---|---|---|

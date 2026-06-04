@@ -1,9 +1,9 @@
 {
   "agent": "abuse-case-verifier",
-  "detail": "AC-T-005 complete: 2/2 steps confirmed",
-  "event": "AGENT_COMPLETE",
+  "detail": "AC-T-003 complete: 2 step verdicts written",
+  "event": "AGENT_END",
   "kind": "info",
-  "label": "AC-T-005 complete: 2/2 steps confirmed",
+  "label": "AC-T-003 complete: 2 step verdicts written",
   "status": "info",
-  "updated_at": "2026-06-04T10:37:04Z"
+  "updated_at": "2026-06-04T19:14:51Z"
 }

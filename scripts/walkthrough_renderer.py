@@ -52,6 +52,19 @@ MIN_DETECTION_SIGNALS = 0
 
 # Severity-phrase table feeding the Business Impact paragraph. Severity is
 # taken from `threat.risk` (falls back to `threat.impact`).
+# Severity → criticality dot, matching the composer's _SEV_ICON_TBL. The §3
+# `**Source:**` finding ref carries this dot so it matches the dotted F-refs in
+# §8/§10 and the asset/component tables; it is emitted here (not retrofitted by
+# the composer's global F-dot pass) because the ref is `[T-NNN]` at this point
+# and only becomes `[F-NNN]` after main()'s T→F display rewrite, which preserves
+# the leading dot.
+SEVERITY_DOT: dict[str, str] = {
+    "critical": "🔴",
+    "high": "🟠",
+    "medium": "🟡",
+    "low": "🟢",
+}
+
 SEVERITY_PHRASES: dict[str, str] = {
     "critical": (
         "Critical impact — exploitation enables full bypass or extraction with "
@@ -866,7 +879,10 @@ def _render_walkthrough_block(
     lines: list[str] = []
     lines.append(heading)
     lines.append("")
-    lines.append(f"**Source:** [{tid}](#{_anchor(tid)}) — `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`")
+    _sev_key = (threat.get("effective_severity") or threat.get("risk") or "").strip().lower()
+    _dot = SEVERITY_DOT.get(_sev_key, "")
+    _dot_prefix = f"{_dot} " if _dot else ""
+    lines.append(f"**Source:** {_dot_prefix}[{tid}](#{_anchor(tid)}) — `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`")
     lines.append("")
     lines.append(
         f"Severity **{(threat.get('risk') or 'High').strip()}** "
@@ -887,7 +903,15 @@ def _render_walkthrough_block(
     # QA Check 8.0 — every §3 Mermaid block must be followed by a
     # **Key takeaway:** sentence. Deterministic from yaml so the reviewer
     # does not re-flag and force a REPAIR_MODE iteration on thorough runs.
-    _kt_mit = primary_mit_id if str(primary_mit_id).startswith("M-") else "a defined mitigation"
+    # Emit the mitigation as a real `[M-NNN](#m-nnn)` link (not bare text) so
+    # the composer's global priority-circle pass annotates it (❶ P1 … ❹ P4) and
+    # a later qa_checks autofix linkify pass finds it already complete. A bare
+    # `M-NNN` here would be linkified by autofix WITHOUT the circle (the autofix
+    # linkifier has no priority data), leaving an un-annotated §3 ref.
+    if str(primary_mit_id).startswith("M-"):
+        _kt_mit = f"[{primary_mit_id}](#{primary_mit_id.lower()})"
+    else:
+        _kt_mit = "a defined mitigation"
     _kt_short = (primary_mit_title or "").split(" — ", 1)[0].strip()[:60]
     lines.append(
         f"**Key takeaway:** Until {_kt_mit}"

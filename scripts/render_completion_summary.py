@@ -36,7 +36,7 @@ Flags:
     --write-pentest-tasks / --no-write-pentest-tasks
     --check-requirements / --no-check-requirements
     --architect-review / --no-architect-review
-    --reasoning-model {opus-cheap,sonnet,opus,haiku-economy}
+    --reasoning-model {opus-cheap,sonnet,opus,sonnet-economy,haiku-economy}
                                 Used only to decide whether the "re-run
                                 with --reasoning-model opus" Next Steps
                                 line should appear (Sonnet-only runs).
@@ -1525,7 +1525,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--repo-root", type=Path, required=True)
     p.add_argument("--mode", default="full", choices=("full", "incremental", "rebuild", "dry-run"))
-    p.add_argument("--reasoning-model", default="opus-cheap", choices=("opus-cheap", "sonnet", "opus", "haiku-economy"))
+    p.add_argument("--reasoning-model", default="opus-cheap", choices=("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"))
     p.add_argument("--assessment-depth", default="standard", choices=("quick", "standard", "thorough"))
     _bool_pair(p, "write-yaml", "write_yaml", True)
     _bool_pair(p, "write-sarif", "write_sarif", False)

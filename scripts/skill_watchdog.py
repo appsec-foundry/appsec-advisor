@@ -217,11 +217,38 @@ def _find_substep2_start(output_dir: Path) -> str | None:
 
 
 def _substep2_completed_after(output_dir: Path, started_at_iso: str) -> bool:
-    """True when ``.agent-run.log`` carries a FILE_WRITE of threat-model.yaml
-    whose timestamp is >= ``started_at_iso``.
+    """True once Substep 2's deliverable — ``threat-model.yaml`` — has landed,
+    by EITHER of two independent signals:
 
-    ISO 8601 strings sort lexicographically — no parsing needed.
+      1. A ``FILE_WRITE threat-model.yaml`` log line at/after ``started_at_iso``
+         in ``.agent-run.log`` (ISO 8601 sorts lexicographically — no parse).
+      2. **[robustness]** ``threat-model.yaml`` present on disk with an mtime
+         >= ``started_at_iso``.
+
+    Signal 2 closes a false-positive: the analyst writes the yaml via
+    ``build_threat_model_yaml.py``, which does NOT reliably emit the
+    ``FILE_WRITE`` marker signal 1 keys on. Without the disk check the watchdog
+    never set ``substep2_complete``, kept measuring idle long after Substep 2
+    finished, and mis-attributed the Stage-2 renderer's legitimate multi-minute
+    compose turn (one big LLM turn, no interim log lines) as a Substep-2 stall
+    — the 2026-06-04 juice-shop pstride-e2e SUBSTEP2_IDLE false-positive.
     """
+    # Signal 2 — yaml on disk (robust to a missing FILE_WRITE marker).
+    try:
+        st = (output_dir / "threat-model.yaml").stat()
+        started_epoch = (
+            datetime.strptime(started_at_iso, "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=timezone.utc)
+            .timestamp()
+        )
+        # +1s tolerance: log STEP_START is whole-second, the write may stamp
+        # within the same second.
+        if st.st_mtime + 1 >= started_epoch:
+            return True
+    except (OSError, ValueError):
+        pass
+
+    # Signal 1 — FILE_WRITE log marker (original).
     log_path = output_dir / _LOG_NAME
     if not log_path.exists():
         return False

@@ -185,6 +185,7 @@ _LITERAL_TOKEN_RE = re.compile(
     r"(?P<lit>(?:alg:(?:none|HS256|HS384|HS512|RS256|RS384|RS512|ES256|ES384|ES512|PS256|none)"
     r"|role:(?:admin|user|guest|root|anonymous|deluxe)"
     r"|noent:(?:true|false)"
+    r"|multi:(?:true|false)"
     r"|method:(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)))"
     r"(?![\w`])"
 )
@@ -244,6 +245,24 @@ _CODE_API_RE = re.compile(
     r")"
     r"(?![\w`])"
 )
+#   - NoSQL / MongoDB-operator object literals used bare in prose:
+#     `{id: {$gt:''}, message: 'hacked'}`, `{$where: '...'}`, `{$ne: null}`.
+#     Matches a `{…}` span (≤1 level of nesting, single line) that CONTAINS a
+#     known query operator. The operator may already carry the composer's
+#     `\$`-escape (`_escape_dollar_operators` runs before this pass); the
+#     content guard in `_wrap_line` accepts both `$op` and `\$op`, and unescapes
+#     `\$`→`$` before wrapping so the code span renders the operator cleanly
+#     (inside a backtick span the `$` is literal — no math-mode risk remains).
+_NOSQL_OBJECT_RE = re.compile(
+    r"(?<![\w`])"
+    r"(?P<obj>\{(?:[^{}\n]|\{[^{}\n]*\})*\})"
+    r"(?![\w`])"
+)
+# Detects a Mongo/NoSQL operator inside a candidate object — gates the
+# _NOSQL_OBJECT_RE pass so plain `{a, b}` prose sets are never backticked.
+_NOSQL_OPERATOR_RE = re.compile(
+    r"\\?\$(?:gt|gte|lt|lte|ne|eq|in|nin|where|regex|exists|or|and|not|elemMatch|set|push|all)\b"
+)
 _BACKTICK_SPAN_RE = re.compile(r"`[^`\n]+`")
 _MD_LINK_URL_RE = re.compile(r"\]\(([^)]+)\)")
 _HTML_ATTR_RE = re.compile(r'(?:href|src|action|formaction)="[^"]+"')
@@ -293,6 +312,9 @@ def _wrap_line(line: str) -> tuple[str, int]:
     # patterns (it only matches `<word>/<file>.<ext>` shapes anyway).
     pass_order: list[tuple[re.Pattern[str], str]] = [
         (_HTTP_METHOD_PATH_RE, "_http_method_path"),
+        # NoSQL operator objects run early so the whole `{…}` span is wrapped
+        # before the inner tokens are exposed to later single-token passes.
+        (_NOSQL_OBJECT_RE, "obj"),
         (_LIB_VERSION_RE, "libver"),
         (_URL_PATH_RE, "urlpath"),
         (_BARE_FILENAME_RE, "file"),
@@ -369,6 +391,14 @@ def _wrap_line(line: str) -> tuple[str, int]:
         for m in matches:
             s, e = m.start(), m.end()
             tok = m.group(group_or_special)
+            # NoSQL object pass: only wrap a `{…}` span that actually carries a
+            # query operator (so plain prose sets like `{read, write}` are
+            # left alone), and unescape the composer's `\$`→`$` so the code
+            # span renders the operator cleanly.
+            if group_or_special == "obj":
+                if not _NOSQL_OPERATOR_RE.search(tok):
+                    continue
+                tok = tok.replace("\\$", "$")
             # Globs and wildcards never get backticked — they may be
             # YAML-derived prose like `routes/**`.
             if "*" in tok:

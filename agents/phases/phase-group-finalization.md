@@ -1201,7 +1201,7 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
   date: <ISO now>
   mode: incremental
   assessment_depth: <quick|standard|thorough>   # ASSESSMENT_DEPTH at run-time
-  reasoning_model: <REASONING_MODEL>            # e.g. haiku-economy / opus-cheap / opus
+  reasoning_model: <REASONING_MODEL>            # e.g. sonnet-economy / opus-cheap / opus
   invocation: <INVOCATION_ARGS>                 # raw args string, e.g. "--quick --sarif"
   plugin_version: <PLUGIN_VERSION>        # from plugin_meta.py
   analysis_version: <ANALYSIS_VERSION>    # from plugin_meta.py

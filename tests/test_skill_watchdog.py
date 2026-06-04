@@ -376,6 +376,36 @@ class TestSubstep2IdleDetection:
         assert not (out_dir / ".substep2-idle").exists()
         assert not (out_dir / ".run-issues.json").exists()
 
+    def test_does_not_fire_when_yaml_on_disk_without_filewrite_marker(
+        self, out_dir, silent_heartbeat
+    ):
+        """STEP_START present, NO FILE_WRITE log marker, but threat-model.yaml
+        exists on disk (fresh mtime) → Substep 2 is done, no alarm.
+
+        Regression for the 2026-06-04 juice-shop pstride-e2e false-positive:
+        the analyst writes the yaml via build_threat_model_yaml.py, which does
+        not emit the FILE_WRITE marker the log-only check keyed on, so the
+        watchdog kept measuring idle and mis-flagged the Stage-2 renderer's
+        long compose turn (no interim logs) as a Substep-2 stall.
+        """
+        sw = silent_heartbeat
+        # STEP_START 1h ago, NO FILE_WRITE marker in the log…
+        (out_dir / ".agent-run.log").write_text(self.SUBSTEP2_START_LINE)
+        # …but the deliverable IS on disk with a current mtime.
+        (out_dir / "threat-model.yaml").write_text("schema_version: 1\n")
+        sw.watch(
+            output_dir=out_dir,
+            plugin_root=REPO_ROOT,
+            heartbeat_interval=0,
+            stride_stale_seconds=999,
+            stride_canary_seconds=999,
+            component_timeout_seconds=999,
+            max_iterations=1,
+            substep2_idle_seconds=300,
+        )
+        assert not (out_dir / ".substep2-idle").exists()
+        assert not (out_dir / ".run-issues.json").exists()
+
     def test_does_not_fire_before_substep2_starts(self, out_dir, silent_heartbeat):
         """No STEP_START Substep 2 yet → detector quiet."""
         sw = silent_heartbeat

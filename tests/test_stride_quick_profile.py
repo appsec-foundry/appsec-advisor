@@ -4,7 +4,7 @@ Pins the A-F depth-reduction values so future edits to
 ``scripts/resolve_config.py → QUICK_STRIDE_PROFILE`` cannot silently
 drift away from the documented Quick-mode contract.
 
-Profile (A-F, applies only when reasoning_mode=haiku-economy AND
+Profile (A-F, applies only when reasoning_mode=sonnet-economy AND
 depth=quick):
   A. skip_verification_greps = True
   B. max_threats_per_category = 1   (Critical-safe: Criticals never dropped)
@@ -39,7 +39,7 @@ def _load_resolver():
 
 def test_profile_active_quick_haiku_economy():
     rc = _load_resolver()
-    out = rc.resolve_stride_profile("haiku-economy", "quick")
+    out = rc.resolve_stride_profile("sonnet-economy", "quick")
     p = out["stride_profile"]
 
     assert p["skip_verification_greps"] is True, "A: verification greps must be off in Quick"
@@ -57,7 +57,7 @@ def test_profile_active_quick_haiku_economy():
 
 
 # ---------------------------------------------------------------------------
-# Opt-in semantics — profile only active for haiku-economy + quick
+# Opt-in semantics — profile only active for sonnet-economy + quick
 # ---------------------------------------------------------------------------
 
 
@@ -73,8 +73,8 @@ def test_profile_active_quick_haiku_economy():
         ("opus", "quick"),
         ("opus", "standard"),
         ("opus", "thorough"),
-        ("haiku-economy", "standard"),  # haiku-economy at non-quick: full STRIDE
-        ("haiku-economy", "thorough"),
+        ("sonnet-economy", "standard"),  # sonnet-economy at non-quick: full STRIDE
+        ("sonnet-economy", "thorough"),
     ],
 )
 def test_profile_full_outside_quick_haiku_economy(mode, depth):
@@ -104,7 +104,7 @@ def test_profile_does_not_skip_owasp_llm():
     """OWASP LLM Top 10 block stays conditional on KNOWN_LLM_PATTERNS,
     NOT forced-off. LLM-Threats can be Critical."""
     rc = _load_resolver()
-    out = rc.resolve_stride_profile("haiku-economy", "quick")
+    out = rc.resolve_stride_profile("sonnet-economy", "quick")
     p = out["stride_profile"]
     assert "skip_owasp_llm" not in p
     assert "skip_llm_top10" not in p
@@ -113,7 +113,7 @@ def test_profile_does_not_skip_owasp_llm():
 def test_profile_does_not_skip_supply_chain():
     """Supply-Chain block stays conditional on SUPPLY_CHAIN_FINDINGS."""
     rc = _load_resolver()
-    out = rc.resolve_stride_profile("haiku-economy", "quick")
+    out = rc.resolve_stride_profile("sonnet-economy", "quick")
     p = out["stride_profile"]
     assert "skip_supply_chain" not in p
 
@@ -121,7 +121,7 @@ def test_profile_does_not_skip_supply_chain():
 def test_profile_does_not_skip_client_side():
     """Client-Side / SPA block stays active for frontend components."""
     rc = _load_resolver()
-    out = rc.resolve_stride_profile("haiku-economy", "quick")
+    out = rc.resolve_stride_profile("sonnet-economy", "quick")
     p = out["stride_profile"]
     assert "skip_client_side" not in p
     assert "skip_spa_analysis" not in p
@@ -131,7 +131,7 @@ def test_profile_does_not_skip_stride_categories():
     """All 6 STRIDE categories must always be enumerated.
     Output-Contract requires all 6 markers."""
     rc = _load_resolver()
-    out = rc.resolve_stride_profile("haiku-economy", "quick")
+    out = rc.resolve_stride_profile("sonnet-economy", "quick")
     p = out["stride_profile"]
     assert "skip_categories" not in p
     assert "stride_categories" not in p

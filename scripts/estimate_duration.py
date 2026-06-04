@@ -462,7 +462,7 @@ def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="estimate_duration.py", add_help=True)
     p.add_argument("--depth", default="standard", choices=("quick", "standard", "thorough"))
     p.add_argument("--mode", default="full", choices=("full", "incremental", "rebuild", "resume"))
-    p.add_argument("--reasoning-model", default="sonnet", choices=("sonnet", "opus-cheap", "opus", "haiku-economy"))
+    p.add_argument("--reasoning-model", default="sonnet", choices=("sonnet", "opus-cheap", "opus", "sonnet-economy", "haiku-economy"))
     p.add_argument("--architect-review", action="store_true")
     p.add_argument("--skip-qa", action="store_true")
     p.add_argument("--skip-abuse-cases", action="store_true",
