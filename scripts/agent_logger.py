@@ -1467,6 +1467,28 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     """
     tool = data.get("tool_name", "")
 
+    # OUTPUT_DIR recovery (2026-06-05) — this PreToolUse hook runs as a SEPARATE
+    # process that does NOT inherit the skill's OUTPUT_DIR env. Without this,
+    # every AGENT_SPAWN landed in the plugin-root `docs/security/.hook-events.log`
+    # (the cwd+docs/security default in `_output_dir()`) instead of the run's
+    # `$OUTPUT_DIR/.hook-events.log`. That silently blinded the count-based
+    # `check_stride_dispatch.py` gate (it always degraded to the `.progress/`
+    # fallback in headless/CI — the very mode the count gate was meant to harden)
+    # and zeroed `record_stage_stats` / `verify_run_costs`, which read
+    # `$OUTPUT_DIR/.hook-events.log`. Every skill dispatch prompt carries
+    # `OUTPUT_DIR=<abs>` (SKILL-impl §3c hard-requirement), so recover it into the
+    # env THIS process reads. Each hook call is a fresh process, so the mutation
+    # cannot leak across runs; only set when unset; non-Agent tools have no
+    # `prompt` field, so `_extract_param` returns '' and this is a no-op.
+    if not os.environ.get("OUTPUT_DIR"):
+        _od = _extract_param(
+            (data.get("tool_input", {}) or {}).get("prompt", "") or "",
+            "OUTPUT_DIR",
+            max_len=512,
+        )
+        if _od:
+            os.environ["OUTPUT_DIR"] = _od
+
     # M3.6 #2 — record an in-flight marker file so /appsec-advisor:status
     # --live can answer "what is happening right now?". One file per
     # tool_use_id; PostToolUse removes it. Sub-agent calls without a

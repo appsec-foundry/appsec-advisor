@@ -105,12 +105,15 @@ echo ""
 echo "[1/2] running create-threat-model pipeline ..."
 START_TS=$(date +%s)
 
-# Depth-aware wall-clock cap. The flat 1800s ceiling SIGTERM'd standard-depth
-# runs mid-finalization (observed 2026-06-04: killed at 1803s right after the
-# Stage-2 renderer Phase-11 END, before exports completed). Quick fits in 1800s;
-# standard/thorough need more headroom to finish the pipeline.
-MAXDUR=1800
-[ "$DEPTH" != "quick" ] && MAXDUR=3000
+# Wall-clock cap. A flat 1800s ceiling SIGTERM'd runs mid-pipeline when recon
+# API latency stalls: observed 2026-06-04 at standard depth (killed at 1803s
+# right after the Stage-2 renderer Phase-11 END, before exports) AND 2026-06-05
+# at QUICK depth (killed at 1803s @ Phase 10b, before render — recon/context ate
+# ~24min, see bug_recon_api_latency_stalls). "Quick fits in 1800s" only holds
+# when recon does NOT stall, so the cap must survive the slow case. 3000s gives
+# every depth headroom; the cap is a ceiling, not a target — a fast run still
+# exits early the moment the pipeline completes.
+MAXDUR=3000
 
 RUN_STATUS=0
 "$PLUGIN_ROOT/scripts/run-headless.sh" \

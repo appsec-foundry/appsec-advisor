@@ -290,6 +290,47 @@ class TestAgentSpawn:
         assert "api-gw" in log
         assert "REPO_ROOT" in log
 
+    def test_agent_spawn_lands_in_prompt_output_dir(self, tmp_path):
+        """Regression (2026-06-05): the PreToolUse hook runs as a separate
+        process that does NOT inherit the skill's OUTPUT_DIR env, so AGENT_SPAWN
+        used to land in cwd/docs/security instead of the run's $OUTPUT_DIR —
+        blinding check_stride_dispatch.py's count-based gate in headless. The
+        dispatch prompt carries OUTPUT_DIR=<abs>, so the spawn line must be
+        written THERE, not in the cwd/docs/security default."""
+        run_out = tmp_path / "run-out"
+        run_out.mkdir()
+        event = make_pre_tool_event(
+            "Agent",
+            {
+                "subagent_type": "appsec-advisor:appsec-stride-analyzer",
+                "description": "STRIDE: backend-api",
+                "prompt": f"COMPONENT_ID=backend-api REPO_ROOT=/tmp/repo OUTPUT_DIR={run_out}",
+                "run_in_background": True,
+            },
+        )
+        env = os.environ.copy()
+        env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+        env.pop("OUTPUT_DIR", None)  # reproduce the headless "no env" condition
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        assert result.returncode == 0
+        # Spawn line landed in the prompt's OUTPUT_DIR ...
+        target_log = run_out / ".hook-events.log"
+        assert target_log.exists(), "AGENT_SPAWN not written to prompt OUTPUT_DIR"
+        assert "AGENT_SPAWN" in target_log.read_text()
+        assert "backend-api" in target_log.read_text()
+        # ... and NOT in the cwd/docs/security default that blinded the gate.
+        default_log = tmp_path / "docs" / "security" / ".hook-events.log"
+        assert not (default_log.exists() and "AGENT_SPAWN" in default_log.read_text()), (
+            "AGENT_SPAWN leaked to cwd/docs/security — OUTPUT_DIR recovery regressed"
+        )
+
 
 # ===========================================================================
 # _agent_model — unit tests
