@@ -595,3 +595,285 @@ class TestCLI:
             text=True,
         )
         assert r.returncode == 1
+
+
+# ---------------------------------------------------------------------------
+# Check 5 — mitigation_realism
+# ---------------------------------------------------------------------------
+
+
+class TestMitigationRealism:
+    def test_critical_without_mitigation_flagged(self, out_dir):
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-001
+                cwe: CWE-89
+                stride: Tampering
+                effective_severity: Critical
+                mitigation_ids: []
+            mitigations: []
+            """,
+        )
+        r = asc.check_mitigation_realism(out_dir / "threat-model.yaml")
+        kinds = {f["kind"] for f in r["findings"]}
+        assert "missing_mitigation" in kinds
+
+    def test_tls_for_injection_flagged(self, out_dir):
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-002
+                cwe: CWE-89
+                stride: Tampering
+                effective_severity: High
+                mitigation_ids: [M-001]
+            mitigations:
+              - id: M-001
+                title: Enforce TLS / HTTPS everywhere
+                threat_ids: [T-002]
+                effort: Low
+            """,
+        )
+        r = asc.check_mitigation_realism(out_dir / "threat-model.yaml")
+        assert any(f["kind"] == "mitigation_type_mismatch" for f in r["findings"])
+
+    def test_rootcause_mitigation_suppresses_flag(self, out_dir):
+        # TLS co-listed with a real parameterization fix → no flag.
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-003
+                cwe: CWE-89
+                stride: Tampering
+                effective_severity: High
+                mitigation_ids: [M-001, M-002]
+            mitigations:
+              - id: M-001
+                title: Enforce TLS everywhere
+                threat_ids: [T-003]
+                effort: Low
+              - id: M-002
+                title: Replace raw SQL with parameterized Sequelize ORM query
+                threat_ids: [T-003]
+                effort: Medium
+            """,
+        )
+        r = asc.check_mitigation_realism(out_dir / "threat-model.yaml")
+        assert r["findings"] == []
+
+    def test_absent_yaml_no_findings(self, out_dir):
+        r = asc.check_mitigation_realism(out_dir / "missing.yaml")
+        assert r["findings"] == []
+
+
+# ---------------------------------------------------------------------------
+# Check 12 — remediation_roi
+# ---------------------------------------------------------------------------
+
+
+class TestRemediationRoi:
+    def test_high_roi_not_prioritized_flagged(self, out_dir):
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-001
+                effective_severity: Critical
+              - id: T-002
+                effective_severity: High
+              - id: T-003
+                effective_severity: High
+            mitigations:
+              - id: M-001
+                title: One fix closes three
+                threat_ids: [T-001, T-002, T-003]
+                effort: Low
+                priority: P3
+            """,
+        )
+        r = asc.check_remediation_roi(out_dir / "threat-model.yaml")
+        assert any(f["kind"] == "high_roi_mitigation_not_prioritized" for f in r["findings"])
+        assert r["top5"][0]["roi"] == 3.0
+
+    def test_p1_low_roi_info(self, out_dir):
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-001
+                effective_severity: Medium
+            mitigations:
+              - id: M-001
+                title: Expensive fix for one medium
+                threat_ids: [T-001]
+                effort: High
+                priority: P1
+            """,
+        )
+        r = asc.check_remediation_roi(out_dir / "threat-model.yaml")
+        assert any(f["kind"] == "p1_low_roi" for f in r["findings"])
+
+
+# ---------------------------------------------------------------------------
+# Check 13 — config_iac
+# ---------------------------------------------------------------------------
+
+
+class TestConfigIac:
+    def test_skip_when_absent(self, out_dir):
+        r = asc.check_config_iac(out_dir)
+        assert r["skipped"] is True
+        assert r["findings"] == []
+
+    def test_orphan_config_findings_flagged(self, out_dir):
+        _write_json(out_dir / ".config-scan-findings.json", {"findings": [{"id": "C1"}, {"id": "C2"}]})
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-001
+                source: stride
+            """,
+        )
+        r = asc.check_config_iac(out_dir)
+        assert r["skipped"] is False
+        assert any(f["kind"] == "config_findings_orphan" for f in r["findings"])
+
+    def test_config_mapped_no_finding(self, out_dir):
+        _write_json(out_dir / ".config-scan-findings.json", {"findings": [{"id": "C1"}]})
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-001
+                source: configuration-defect
+            """,
+        )
+        r = asc.check_config_iac(out_dir)
+        assert r["findings"] == []
+
+
+# ---------------------------------------------------------------------------
+# Check 15 — actor_coverage
+# ---------------------------------------------------------------------------
+
+
+class TestActorCoverage:
+    def test_skip_when_absent(self, out_dir):
+        r = asc.check_actor_coverage(out_dir)
+        assert r["skipped"] is True
+
+    def test_whole_model_gap_flagged(self, out_dir):
+        _write_json(out_dir / ".actors-resolved.json", {"actors": [{"id": "internet-anon"}]})
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-001
+                actor_ids: []
+              - id: T-002
+                actor_ids: []
+            """,
+        )
+        r = asc.check_actor_coverage(out_dir)
+        assert any(f["kind"] == "whole_model_no_actor_attribution" for f in r["findings"])
+
+    def test_disabled_without_rationale_flagged(self, out_dir):
+        _write_json(
+            out_dir / ".actors-resolved.json",
+            {"actors": [{"id": "ghost", "_provenance": {"disabled_by": "op", "disable_reason": ""}}]},
+        )
+        _write_yaml(
+            out_dir / "threat-model.yaml",
+            """
+            threats:
+              - id: T-001
+                actor_ids: [internet-anon]
+            """,
+        )
+        r = asc.check_actor_coverage(out_dir)
+        assert any(f["kind"] == "actor_disabled_without_rationale" for f in r["findings"])
+
+
+# ---------------------------------------------------------------------------
+# Check 14 — sec7_quality_bar
+# ---------------------------------------------------------------------------
+
+
+_CLEAN_SEC7 = """
+### 7.1 Security Control Overview
+
+| Control category | Verdict | Main reason |
+|---|---|---|
+| Authentication | Unsafe | raw SQL |
+
+### 7.2 Identity and Authentication Controls
+
+**Controls covered:** [Password-Based Authentication](#x)
+
+#### 7.2.1 Password-Based Authentication
+
+**Status:** 🔴 Missing - raw SQL login.
+
+`routes/login.ts` builds a raw query.
+
+**Security assessment**
+
+The login query interpolates input.
+
+**Relevant findings**
+
+- [F-001](#f-001)
+"""
+
+
+def _sec7_doc(body: str) -> str:
+    head = "# Threat Model\n\n## 7. Security Architecture\n\n"
+    tail = "\n\n## 8. Threat Register\n\nrows\n"
+    return head + body.strip() + tail
+
+
+class TestSec7QualityBar:
+    def _full_clean(self) -> str:
+        # 7.1 + 7.2 + 7.3..7.13 stub headings so the heading-set check passes.
+        extra = "\n".join(f"### 7.{n} Section {n}\n\nprose\n" for n in range(3, 14))
+        return _sec7_doc(_CLEAN_SEC7 + "\n" + extra)
+
+    def test_clean_sec7_no_findings(self, out_dir):
+        _write_text(out_dir / "threat-model.md", self._full_clean())
+        r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
+        assert r["skipped"] is False
+        assert r["findings"] == [], [f["kind"] for f in r["findings"]]
+
+    def test_missing_heading_flagged(self, out_dir):
+        # Drop 7.13 → heading-set violation.
+        body = _CLEAN_SEC7 + "\n" + "\n".join(
+            f"### 7.{n} Section {n}\n\nprose\n" for n in range(3, 13)
+        )
+        _write_text(out_dir / "threat-model.md", _sec7_doc(body))
+        r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
+        assert any(f["kind"] == "sec7_v2_heading_set" for f in r["findings"])
+
+    def test_h4_missing_status_flagged(self, out_dir):
+        bad = _CLEAN_SEC7.replace("**Status:** 🔴 Missing - raw SQL login.\n\n", "")
+        body = bad + "\n" + "\n".join(f"### 7.{n} S{n}\n\np\n" for n in range(3, 14))
+        _write_text(out_dir / "threat-model.md", _sec7_doc(body))
+        r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
+        assert any(f["kind"] == "section7_h4_status" for f in r["findings"])
+
+    def test_legacy_flow_flagged(self, out_dir):
+        body = _CLEAN_SEC7 + "\n**Findings in this flow:** F-001\n\n" + "\n".join(
+            f"### 7.{n} S{n}\n\np\n" for n in range(3, 14)
+        )
+        _write_text(out_dir / "threat-model.md", _sec7_doc(body))
+        r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
+        assert any(f["kind"] == "sec7_v2_no_legacy_flows" for f in r["findings"])
+
+    def test_skip_when_no_sec7(self, out_dir):
+        _write_text(out_dir / "threat-model.md", "# Threat Model\n\n## 8. Threats\n\nrows\n")
+        r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
+        assert r["skipped"] is True

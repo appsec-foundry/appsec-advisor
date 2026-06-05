@@ -208,6 +208,7 @@ def render_case(case: dict, verdict: dict, findings_idx: dict, mitigations: list
                 "step": n,
                 "fid": fid,
                 "finding_title": finding.get("title", ""),
+                "finding_sev": _severity(finding),
                 "evidence": loc,
                 "outcome": step.get("description") or step.get("grants") or "",
                 "status_icon": _step_status_icon(sv.get("verdict", ""), sv.get("controls_found") or []),
@@ -264,7 +265,12 @@ def _case_markdown(m: dict) -> str:
     out.append("|------|---------|---------|")
     for r in m["rows"]:
         if r["fid"]:
-            finding_cell = f"[{r['fid']}]({_anchor(r['fid'])}) — {r['finding_title']}"
+            # Severity dot — keep abuse-case finding links consistent with the
+            # dotted finding-links in §4 / §5 / Top Mitigations (user-reported
+            # 2026-06: §9 was the only place F-NNN links rendered bare).
+            dot = _RISK_EMOJI.get(r.get("finding_sev", ""), "")
+            prefix = f"{dot} " if dot else ""
+            finding_cell = f"{prefix}[{r['fid']}]({_anchor(r['fid'])}) — {r['finding_title']}"
         else:
             finding_cell = "_no matching finding_"
         # Only append the per-step evidence reference when it points at a
@@ -299,13 +305,16 @@ def _case_markdown(m: dict) -> str:
         # Map each finding id to its title so the "Addresses" links carry a
         # short title rather than a bare ID (2026-06-02 user request).
         fid_title = {r["fid"]: r["finding_title"] for r in m["rows"] if r["fid"]}
+        fid_sev = {r["fid"]: r.get("finding_sev", "") for r in m["rows"] if r["fid"]}
         for b in m["blocking_mitigations"]:
             mid = b["id"]
             label_m = f"[{mid}](#{mid.lower()}) — {b['title']}"
             if b["priority"]:
                 label_m += f" (**{b['priority']}**)"
             addr = ", ".join(
-                f"[{a}]({_anchor(a)})" + (f" — {fid_title[a]}" if fid_title.get(a) else "")
+                (f"{_RISK_EMOJI[fid_sev[a]]} " if fid_sev.get(a) and fid_sev[a] in _RISK_EMOJI else "")
+                + f"[{a}]({_anchor(a)})"
+                + (f" — {fid_title[a]}" if fid_title.get(a) else "")
                 for a in b["addresses"]
             )
             out.append(

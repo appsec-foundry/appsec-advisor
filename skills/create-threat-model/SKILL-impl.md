@@ -1855,6 +1855,41 @@ Behaviour:
 
 If no checkpoint exists and `--resume` was passed, inform the user and proceed with a fresh assessment.
 
+### Requirements pre-fetch gate (deterministic, skill-level)
+
+**Closes the requirements fail-open gap.** When a run asks to be checked against requirements (`CHECK_REQUIREMENTS=true`) the source must load or the run must abort — previously this was only soft prose in `appsec-context-resolver.md` ("stop immediately … the orchestrator will detect the missing context file"), and under turn pressure the agent sometimes wrote the context file anyway, so an unreachable URL slipped through and the run silently produced a report claiming a requirements check that never happened. This gate makes the fetch-or-abort mechanical: it resolves the active source (honouring the `fail_mode` contract — `fail_closed` for an explicit `--requirements <url>`, `cache_fallback` for org-profile/config) and writes `$OUTPUT_DIR/.requirements.yaml` for the context-resolver to reuse. On an unreachable explicit URL (or no remote + no cache) it **fail-closes** with exit 2. Skipped in `--rerender` (Stage 1 does not run).
+
+```bash
+if [ "$RERENDER" != "true" ]; then
+  # Read the already-resolved decision from RESOLVED_JSON directly (these are
+  # passed into the agent prompt, not necessarily exported as shell vars here),
+  # and pass it through with --require so the fetcher never re-derives `enabled`
+  # differently than the skill did (quick-depth defaults can diverge).
+  REQ_CHECK=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('check_requirements',False)).lower())")
+  REQ_URL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('requirements_url_override') or '')")
+  if [ "$REQ_CHECK" = "true" ]; then
+    REQ_ARGS="--require"
+    [ -n "$REQ_URL" ] && REQ_ARGS="--requirements $REQ_URL"
+  else
+    REQ_ARGS="--no-requirements"
+  fi
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" \
+      --output-dir "$OUTPUT_DIR" \
+      --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+      $REQ_ARGS
+  REQ_FETCH_EXIT=$?
+  if [ "$REQ_FETCH_EXIT" = "2" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  skill  REQUIREMENTS_UNAVAILABLE  CHECK_REQUIREMENTS=true but requirements could not be loaded — aborting" \
+        >> "$OUTPUT_DIR/.agent-run.log"
+    rm -f "$OUTPUT_DIR/.appsec-lock"
+    rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+    exit 2
+  fi
+fi
+```
+
+The script prints a full diagnostic to stderr on abort (the unreachable URL, the `fail_mode`, and the remediation). On success `$OUTPUT_DIR/.requirements.yaml` is on disk and Step 2b of the context-resolver reuses it instead of fetching again.
+
 ## Stage 1 — Threat Analysis & Triage
 
 > **⚠ ROUTING — read FIRST. `PARALLEL_STRIDE` was resolved during Configuration Resolution (default-ON for `MODE` ∈ {full, rebuild}; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).**
@@ -1923,7 +1958,7 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
    ```
    **On `PS_FAIL=1` → graceful fallback (never hard-fail):** log `PARALLEL_STRIDE_FALLBACK` and dispatch a normal single `STAGE1_PHASE_LIMIT=10b` analyst with `RESUME_FROM_PHASE=9` (it re-runs STRIDE inline per the M1-lite escape clause + the rest of Stage 1). Skip 3c/3d. The default flow is unchanged, so a manifest defect degrades to today's behaviour — no regression.
 
-   3c. **Fan out STRIDE analyzers in parallel.** Read `.stride-dispatch-manifest.json`. **Issue ALL `components[]` Agent calls in ONE response turn — do NOT send one call, wait for it, then send the next.** Emit all N `Agent` tool calls simultaneously in a single message (same proven parallel pattern as the Stage-1c abuse-verifier fan-out) so they run concurrently. Each call targets `appsec-advisor:appsec-stride-analyzer`. **Set each Agent call's `description` to `"STRIDE: <NAME>"`** (the component's `name` from the manifest entry — e.g. `"STRIDE: express-api"`) so the Claude Code subagent panel shows one labelled row per component being analyzed, mirroring the abuse-verifier `"Verify abuse case AC-…"` rows. The component name leads the string because the panel truncates. Map each manifest entry to the analyzer's prompt params (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). **Each dispatch prompt MUST also pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instruct the analyzer to `export OUTPUT_DIR=<value>` as its FIRST Bash call** — `agent_progress.sh` silently no-ops unless `OUTPUT_DIR` is a shell env var, so without the export the analyzer writes `.stride-<id>.json` but skips `.progress/<id>.json`, blinding the watchdog and (pre-fix) false-positiving `check_stride_dispatch.py`. Model = `STRIDE_MODEL`. Wait for all to return — each writes `.stride-<id>.json` + `.progress/<id>.json`. The post-Stage-1 `check_stride_dispatch.py` gate passes either way: it now recognizes the `.stride-dispatch-manifest.json` (and `AGENT_SPAWN` hook evidence) as proof of real dispatch, so a missing `.progress/` no longer false-positives a parallel run. If a component's analyzer fails, re-dispatch just that one once; if it still fails, fall back to an inline `RESUME_FROM_PHASE=9` analyst for the remainder.
+   3c. **Fan out STRIDE analyzers in parallel.** Read `.stride-dispatch-manifest.json`; for EACH `components[]` entry issue one `Agent` call to `appsec-advisor:appsec-stride-analyzer` — **all in a single message** so they run concurrently (same proven parallel pattern as the Stage-1c abuse-verifier fan-out). **Set each Agent call's `description` to `"STRIDE: <NAME>"`** (the component's `name` from the manifest entry — e.g. `"STRIDE: express-api"`) so the Claude Code subagent panel shows one labelled row per component being analyzed, mirroring the abuse-verifier `"Verify abuse case AC-…"` rows. The component name leads the string because the panel truncates. Map each manifest entry to the analyzer's prompt params (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). **Each dispatch prompt MUST also pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instruct the analyzer to `export OUTPUT_DIR=<value>` as its FIRST Bash call** — `agent_progress.sh` silently no-ops unless `OUTPUT_DIR` is a shell env var, so without the export the analyzer writes `.stride-<id>.json` but skips `.progress/<id>.json`, blinding the watchdog and (pre-fix) false-positiving `check_stride_dispatch.py`. Model = `STRIDE_MODEL`. Wait for all to return — each writes `.stride-<id>.json` + `.progress/<id>.json`. **Issuing the real per-component `Agent` calls here is what makes the run pass the post-Stage-1 gate.** `check_stride_dispatch.py` requires *count-based* dispatch evidence: at least as many `AGENT_SPAWN appsec-stride-analyzer` lines in `.hook-events.log` as the manifest has components (each `Agent` call emits exactly one). **The manifest's existence alone is NOT proof** — it is built in step 3b *before* this fan-out, so it survives a collapse where you build it and then inline STRIDE instead of dispatching; that is the precise failure the gate now catches (it would silently pass pre-2026-06-05). If the spawn count falls short, the gate falls through to the per-component `.progress/` check — so a genuinely-parallel run whose hooks under-logged is still saved by the `.progress/` files the `export OUTPUT_DIR` above guarantees, while a true inline-collapse (no spawns AND no `.progress/`) trips and aborts the run. If a component's analyzer fails, re-dispatch just that one once; if it still fails, fall back to an inline `RESUME_FROM_PHASE=9` analyst for the remainder.
 
    3d. **Analyst-B** — Agent call `description: "Threat Analysis & Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 
@@ -3118,9 +3153,10 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" autofix \
 ```
 
 **Branch logic:**
-- `GATE_EXIT == 0` — contract clean, no repair plan on disk. The `autofix` pass above already applied the in-place fixes; write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path: the contract gate (`repair_plan`) plus the in-place auto-fixers own links, anchors, MS structure, cell-format, Mermaid syntax, YAML/MD consistency, and contract validation; no LLM session — and no detector pre-pass — is needed when they are clean.
+- `GATE_EXIT == 0` — contract clean, no repair plan on disk. The `autofix` pass above already applied the in-place fixes; write a compact `$OUTPUT_DIR/.qa-status.json` with `status: "pass"` and `source: "deterministic-pre-agent"`, then skip the QA agent unless `QA_DEPTH=extended` or `APPSEC_FORCE_QA_AGENT=1`. This is the normal fast path: the in-place auto-fixers own links, anchors, MS structure, cell-format; the `repair_plan` **gate** owns contract validation, Mermaid syntax, unfilled placeholders, and YAML↔MD consistency (count + asset cross-reference drift) — each trips the gate (exit 1/3) rather than the deferred `all` battery. No LLM session — and no detector pre-pass — is needed when they are clean. (Pre-2026-06-05 `placeholders` and `yaml_md_consistency` lived only in the deferred `all` battery, which never runs on the clean path because the QA agent that consumed it is skipped — so a residual placeholder or a yaml/md count drift could ship silently. They are now folded into `build_repair_plan`.)
 - `GATE_EXIT == 1` — contract drift, `.qa-repair-plan.json` already on disk. Enter the Re-Render Loop below **without** dispatching the QA agent first. The Re-Render Loop dispatches `appsec-fragment-fixer` in REPAIR_MODE, which re-authors the offending fragments and re-renders. The QA agent is dispatched **after** the loop settles (status=pass) so it works on a contract-clean document.
 - `GATE_EXIT == 2` — tool error (bad path, malformed contract). Log and fall back to the old flow: dispatch the agent unconditionally and let its Check 14 write the plan instead.
+- `GATE_EXIT == 3` — `manual_review`: a real defect exists but **no** action carries a writable fragment target, so re-rendering cannot converge (e.g. a deterministic yaml↔md count drift, which means a composer/fragment bug, not LLM drift). Do **not** enter the Re-Render Loop (it would burn iterations on an unfixable plan). Instead dispatch the QA agent **once** for semantic triage — it inherits the on-disk `.qa-repair-plan.json` and decides between a soft edit, a release-blocker, or a `manual_review_items` escalation. Treat it like the `== 2` fallback for dispatch purposes (set `QA_AGENT_DISPATCHED=true`).
 
 **Mandatory dispatch guard.** Set a local `QA_AGENT_DISPATCHED=false` flag before this gate. Only set it to `true` in the explicit agent-dispatch branch below. On the clean deterministic path (`GATE_EXIT == 0`, `QA_DEPTH != extended`, and `APPSEC_FORCE_QA_AGENT != 1`), do **not** execute any later instruction that invokes `appsec-qa-reviewer`, starts the Stage-3 heartbeat watchdog, extracts QA-agent usage, or waits for a QA-agent result. Continue directly to Stage 4 (if enabled) or the completion summary. Record Stage 3 stats as a zero-token deterministic gate (`agent=deterministic:qa_checks.py`, model=`none`) when the stats helper is available.
 
@@ -3131,6 +3167,7 @@ This inverts the pre-M3.2 flow where the agent was the first thing to see the re
 Run this subsection **only when `QA_AGENT_DISPATCHED=true` is required**:
 
 - `GATE_EXIT == 2` fallback
+- `GATE_EXIT == 3` (`manual_review` — re-render cannot fix; agent triages the on-disk plan)
 - `QA_DEPTH=extended`
 - `APPSEC_FORCE_QA_AGENT=1`
 - the Re-Render Loop settled with a remaining non-empty repair/content-repair plan that requires semantic triage

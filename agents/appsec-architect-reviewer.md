@@ -104,9 +104,9 @@ Do **not** read source files under `REPO_ROOT` beyond what targeted Grep surface
 
 Perform the 14 checks sequentially. Each produces zero or more findings + narrative content. Each check starts with a `STEP_START` log entry and ends with a `STEP_END` log entry. Which checks actually run at each depth is governed by `shared/architect-depth-matrix.md`.
 
-### Deterministic pre-pass (Sprint 2 Item #4) — mandatory
+### Deterministic pre-pass (Sprint 2 Item #4; Sprint-3 extension) — mandatory
 
-**Before running any agent-level check**, invoke the deterministic Python helper. It performs Checks 1, 3, and 6 by reading `threat-model.yaml`, `.recon-summary.md`, `threat-model.md`, and `.threats-merged.json` directly — no LLM judgement involved. The findings it emits are authoritative; do not re-evaluate them.
+**Before running any agent-level check**, invoke the deterministic Python helper. It performs the **detection** for Checks 1, 3, 6 **and 5, 12, 13, 14, 15** by reading `threat-model.yaml`, `.recon-summary.md`, `threat-model.md`, `.threats-merged.json`, `.config-scan-findings.json`, and `.actors-resolved.json` directly — no LLM judgement involved. The findings it emits are authoritative; do not re-evaluate them. Your remaining job for those checks is the **judgment residue only** (named per check below), not re-detection.
 
 **→ BASH CALL REQUIRED — run this as the second Bash command after your startup log entry:**
 
@@ -119,6 +119,11 @@ Parse the JSON output:
 - `architecture_input_pack` — compact advisory facts for Checks 7–12: top weak/missing controls, high-leverage AFs, and High/Critical findings not aggregated by any AF. Use this pack to prioritize review targets, but do **not** treat it as a verdict.
 - `ms_verdict.findings` — Check 3 results (verdict plausibility + risk distribution mismatch). Use directly; do **not** re-parse `threat-model.md` to re-count.
 - `cvss_risk.findings` — Check 6 results (CVSS ↔ qualitative risk alignment). Use directly; do **not** iterate threats again for this check.
+- `mitigation_realism.findings` — Check 5 detection (CWE-family wrong-type + missing-mitigation). Use directly; your only residual job is the **framework-bypass judgment** (Check 5 below).
+- `remediation_roi.findings` + `remediation_roi.top5` — Check 12 (ROI formula + prioritization gaps). Use directly; do **not** recompute ROI. Residue: a one-paragraph synthesis of whether the prioritization story holds.
+- `config_iac.findings` — Check 13 (config-scan ↔ register mapping). Use directly. `skipped:true` ⇒ Check 13 is N/A.
+- `actor_coverage.findings` — Check 15 (attribution counts + disabled-rationale). Use directly. `skipped:true` ⇒ no actor layer; Check 15 is N/A.
+- `sec7_quality_bar.findings` — Check 14 **structural** detection (heading set, H4 Status/labels, legacy flows, overview table, floskeln, generic openers). Use directly; your only residual job is the **Unsafe-vs-Missing classification judgment** (Check 14 below). `skipped:true` ⇒ pre-render, skip Check 14.
 
 **Cache the full JSON summary in working memory** under the key `STRUCTURAL_PRE_PASS_JSON`. Every subsequent reference to Checks 1, 3, and 6 reads from this cache — the checks below document the contract; the actual work is already done.
 
@@ -187,9 +192,9 @@ Consult `.recon-summary.md` and `.threat-modeling-context.md` for architectural 
 
 **Print now:** `[architect]   ↳ Check 5/14 — Mitigation realism…`
 
-Extract the Mitigation Register (Section 9) from `threat-model.md` and, for each M-NNN, identify the linked F-NNN/T-NNN findings and the CWEs of those findings. Judge whether the proposed mitigation addresses the root cause of the finding.
+**Detection is deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.mitigation_realism.findings`.** The helper applies the enumerated CWE-family rules below (TLS / rate-limit / input-validation type mismatches) and the missing-mitigation rule, suppressing co-listed defence-in-depth when a root-cause fix is present. **Do not re-derive these.** Your only residual job is the one rule a script cannot decide: **does a mitigation claim "handled by framework" while the threat's evidence points at a code path that bypasses framework defaults** (e.g. raw query construction when an ORM exists)? Scan only the threats flagged in the pack's `high_findings_top` for that single pattern; emit `warning: mitigation_framework_bypass` when found.
 
-**Flag when:**
+The deterministic rules (reference — already applied by the helper):
 - Mitigation is `TLS` / `HTTPS everywhere` for a threat whose CWE is in the injection family (CWE-78/89/94/502), authentication bypass (CWE-287/306), or authorization (CWE-285/639/732) — TLS does not mitigate these.
 - Mitigation is `rate limiting` / `WAF` for an injection threat (CWE-78/89/94) — defence-in-depth at best, never root-cause fix.
 - Mitigation is `input validation` for an authorization or broken-access-control threat (CWE-285/639).
@@ -380,6 +385,8 @@ Emit three `info: design_decision_top` entries + one `warning: design_decision_u
 
 **Print now:** `[architect]   ↳ Check 12/14 — Remediation synergy (ROI)…`
 
+**Detection is deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.remediation_roi`** (`top5` + `findings`). The helper computes `roi = ≥High-addressed / effort_rank`, flags top-5 mitigations not in P1/P2 (`high_roi_mitigation_not_prioritized`) and P1 mitigations with ROI < 1.0 (`p1_low_roi`). **Do not recompute.** Residue: render the top-5 ROI table from `top5` and add **one paragraph** of judgment — is the prioritization story coherent, or does a flagged `p1_low_roi` have a legitimate non-ROI reason (e.g. a low-breadth but Critical-severity fix)?
+
 Goal: score mitigations by **ROI** (≥High findings addressed / effort), and verify the Prioritized-Mitigations list reflects this.
 
 **Algorithm:**
@@ -408,6 +415,8 @@ Goal: score mitigations by **ROI** (≥High findings addressed / effort), and ve
 
 **Print now:** `[architect]   ↳ Check 13/14 — Config/IaC review…`
 
+**Detection is deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.config_iac.findings`.** The helper emits `config_findings_orphan` when config-scan findings exist but no `configuration-defect` threat is in the register. `skipped:true` ⇒ N/A. **Do not re-derive the mapping.** No judgment residue — surface the helper's findings as-is.
+
 Runs only when `.config-scan-findings.json` exists OR `config-iac-checks.yaml` has checks matching repo files.
 
 **Scope:**
@@ -423,15 +432,19 @@ Runs only when `.config-scan-findings.json` exists OR `config-iac-checks.yaml` h
 
 **Print now:** `[architect]   ↳ Check 14/15 — §7 narrative quality bar…`
 
-Read `shared/sec7-quality-bar-rules.md` for the 6 per-block validation codes and severities. Scope is the rendered `threat-model.md` §7 body — H3 sections `### 7.1` through `### 7.13`, plus every H4 subcontrol under §7.2–§7.12.
+**Structural detection is deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.sec7_quality_bar.findings`.** The helper applies the mechanical rules from `shared/sec7-quality-bar-rules.md` (`sec7_v2_heading_set`, `sec7_v2_overview_table`, `sec7_v2_h4_labels`, `section7_h4_status`, `sec7_v2_no_legacy_flows`, `qb7_no_floskeln`, `qb7_concrete_openers`). **Do not re-derive these.** `skipped:true` ⇒ pre-render; skip the whole check.
 
-**Skip when:** the rendered `threat-model.md` does not yet exist (pre-render run) — the check is a post-render gate.
+Your **only** residual job is the one judgment rule the helper cannot decide: **does any §7 block label a present-but-broken control "🔴 Missing" when it should be "🔴 Unsafe"** (control exists and is relied upon but is defeated — MD5 hash, raw-SQL path, hardcoded key, parser with unsafe options)? Read each H4 `**Status:**` badge once and check the verdict against the control's actual presence; emit `warning: sec7_unsafe_vs_missing` per mislabelled block. See `shared/sec7-quality-bar-rules.md` → "Verdict vocabulary" for the distinction.
+
+Reference (the deterministic rules, already applied by the helper): `shared/sec7-quality-bar-rules.md`. Scope is the rendered `threat-model.md` §7 body — H3 sections `### 7.1` through `### 7.13`, plus every H4 subcontrol under §7.2–§7.12.
 
 ---
 
 ### Check 15 — Actor Coverage (conditional)
 
 **Print now:** `[architect]   ↳ Check 15/15 — Actor coverage…`
+
+**Detection for the count-based sub-checks is deterministic — consumed from `STRUCTURAL_PRE_PASS_JSON.actor_coverage.findings`** (15.1 activated-no-findings, 15.2 disabled-without-rationale, 15.3b whole-model attribution gap). `skipped:true` ⇒ no actor layer; skip the whole check. **Do not re-derive these counts.** The residue that stays LLM is **15.6** (recon-derived TH-10 / BFF mandate enforcement — requires reading recon prose against the finding set) when `ASSESSMENT_DEPTH=thorough`; run only that sub-check here.
 
 **Skip when:** `.actors-resolved.json` does not exist in `$OUTPUT_DIR` (Quick-mode or actor-layer not yet enabled).
 

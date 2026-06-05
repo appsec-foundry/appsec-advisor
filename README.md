@@ -175,46 +175,54 @@ The report shows the architecture diagram, trust boundaries, STRIDE findings, ev
 Example security posture diagram from the report:
 
 ```mermaid
+%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 34, "rankSpacing": 52, "padding": 10, "subGraphTitleMargin": {"top": 6, "bottom": 6}}} }%%
 flowchart TB
-    ANON["fa:fa-user-secret Anonymous<br/>Internet Attacker"]:::ext
-    USER["fa:fa-user Shop User<br/>(victim)"]:::ext
-    REPO["fa:fa-code-branch Public Source Repo<br/><i>hardcoded RSA key · HMAC · cookie secret</i>"]:::ext
-
-    subgraph CLIENT["Client Tier — browser"]
-        SPA["C-02 · Angular SPA"]:::comp
+    subgraph ZONE_ACTORS["External Actors"]
+        direction LR
+        EXT_SHOPUSER["fa:fa-user Shop User<br/><i>legitimate customer - XSS/CSRF target</i>"]:::actorgood
+        ACT_INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker<br/><i>no account; registers in seconds when needed</i>"]:::actorbad
+        ACT_INTERNET_USER["fa:fa-user-secret Authenticated Internet Attacker<br/><i>owns a regular account; logged in</i>"]:::actorbad
     end
-    subgraph APP["Application Tier — Node / Express"]
-        API["C-01 · Express Backend API"]:::comp
-        B2B["C-05 · B2B Order API"]:::comp
-        UP["C-04 · File Upload &amp; Static Files"]:::comp
+
+    subgraph CLIENT["Client Tier - browser"]
+        CMP_ANGULAR_SPA["C-02 · Angular SPA Frontend<br/><i>🔴 1 🟠 1</i>"]:::comp
+    end
+    subgraph APP["Application Tier - Node / Express"]
+        CMP_EXPRESS_BACKEND["C-01 · Express Backend API<br/><i>🔴 5 🟠 7</i>"]:::comp
+        CMP_FILE_UPLOAD_SERVICE["C-04 · File Upload and Static File Service<br/><i>🟠 2</i>"]:::comp
+        CMP_B2B_API["C-05 · B2B Order API<br/><i>🔴 1</i>"]:::comp
     end
     subgraph DATA["Data Tier"]
-        DB["C-03 · SQLite + MarsDB"]:::comp
-        FS["Filesystem<br/>FTP · key · log dirs"]:::comp
+        CMP_DATA_LAYER["C-03 · Data Layer<br/><i>🟠 1</i>"]:::comp
     end
 
-    USER --> SPA
-    SPA -->|authenticated API calls| API
-    REPO ==>|"② forge admin JWT"| API
-    ANON ==>|"③ RCE via eval"| B2B
-    ANON ==>|"④ broken authZ / IDOR"| API
-    ANON ==>|"⑤ XXE · SSRF · ZIP-slip"| UP
-    ANON ==>|"⑦ browse secret files"| FS
-    ANON ==>|"⑧ CSRF (CORS *)"| API
-    API ==>|"① SQL / NoSQL injection"| DB
-    API ==>|"⑥ unescaped HTML"| SPA
-    SPA ==>|"⑥ XSS executes / steals token"| USER
-    UP -->|reads / writes| FS
+    %% legitimate request flow
+    EXT_SHOPUSER -->|"uses"| CMP_ANGULAR_SPA
+    CMP_ANGULAR_SPA -->|"API calls"| CMP_EXPRESS_BACKEND
+    CMP_EXPRESS_BACKEND -->|"reads/writes"| CMP_DATA_LAYER
+    %% attacks (solid) - each originates at a threat actor; glyphs match Figure 2 / Top Threats
+    ACT_INTERNET_ANON ==>|"① Injection ② Auth Bypass ③ Priv-Esc ④ Secret Exposure"| CMP_EXPRESS_BACKEND
+    ACT_INTERNET_ANON ==>|"① Injection ④ Secret Exposure"| CMP_FILE_UPLOAD_SERVICE
+    ACT_INTERNET_USER ==>|"⑤ RCE"| CMP_B2B_API
+    ACT_INTERNET_USER ==>|"⑤ RCE"| CMP_EXPRESS_BACKEND
+    ACT_INTERNET_ANON ==>|"⑥ XSS"| CMP_ANGULAR_SPA
+    %% propagation (dotted) - how the attack reaches the data tier / victim
+    CMP_EXPRESS_BACKEND -.->|"① ④"| CMP_DATA_LAYER
+    CMP_ANGULAR_SPA -.->|"⑥"| EXT_SHOPUSER
 
     style CLIENT fill:none,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
     style APP fill:none,stroke:#b71c1c,stroke-width:2px,stroke-dasharray:5
     style DATA fill:none,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
+    style ZONE_ACTORS fill:none,stroke:#94a3b8,stroke-width:1.5px,stroke-dasharray:5
     classDef comp fill:#eef2f7,stroke:#334155,color:#0f172a,stroke-width:1.5px
+    classDef compmuted fill:#f8fafc,stroke:#cbd5e1,color:#64748b,stroke-width:1px,font-size:9px
     classDef ext  fill:#ffffff,stroke:#94a3b8,color:#334155,stroke-width:1.5px
-    linkStyle 0,1,11 stroke:#6b7280,stroke-width:1.5px
-    linkStyle 2,3,4,5,6,7,8,9,10 stroke:#b71c1c,stroke-width:2.5px
+    classDef actorbad  fill:#fde8e8,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    classDef actorgood fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
+    linkStyle 0,1,2 stroke:#6b7280,stroke-width:1.5px
+    linkStyle 3,4,5,6,7 stroke:#b71c1c,stroke-width:2.5px
+    linkStyle 8,9 stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5
 ```
-
 ## What it checks
 
 Before running STRIDE, `appsec-advisor` performs a reconnaissance pass that collects security-relevant signals from the repository. Those signals give the analysis a concrete starting point: routes, trust boundaries, auth flows, risky sinks, security controls, deployment files, and supply-chain configuration.
