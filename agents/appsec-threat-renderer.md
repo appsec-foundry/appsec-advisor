@@ -562,10 +562,14 @@ If a §3 walkthrough is wrong, the fix is in one of three places:
 
 Surface drift through the standard QA repair plan; the **next** pre-generate pass at the top of Stage 2 re-derives §3 from the corrected source — no LLM-authored repair loop runs for §3 any more.
 
-End enriched fragments with:
+End enriched fragments with a provenance marker that records the **actual run
+depth** — substitute the `ASSESSMENT_DEPTH` value you were given (`standard`,
+`thorough`, …). Do **not** hard-code `thorough`: the marker is read by humans
+during post-mortems, and a `standard`-depth run that emits `enriched:thorough`
+is a false provenance claim.
 
 ```text
-<!-- enriched:thorough -->
+<!-- enriched:<ASSESSMENT_DEPTH> -->
 ```
 
 ## Render Contract

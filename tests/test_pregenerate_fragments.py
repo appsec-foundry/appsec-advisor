@@ -2211,3 +2211,55 @@ def test_auth_inventory_is_frozen_marked_and_single_titles():
     assert block.count("[F-001](#f-001)") == 1
     assert re.search(r"\[F-001\]\(#f-001\) — \S", block), \
         "§7.2 inventory finding link must carry a title, not a bare ID"
+
+
+class TestAttackSurfaceLinkPrecision:
+    """§5 attack-surface auto-linker precision (2026-06-04 regression).
+
+    The substring scorer used to award the +3 evidence bonus on a coincidental
+    shared generic token (`order` ⊂ `b2bOrder`, `login` ⊂ `saveLoginIp`),
+    attaching Critical findings (notevil RCE, login SQLi) to unrelated routes
+    once the route inventory expanded §5 to dozens of paths. The fix scores +3
+    only on a route↔handler signal that survives camelCase word splitting.
+    """
+
+    def _threat(self, tid, evfile, title="x", text="x"):
+        return {"id": tid, "title": title, "scenario": text, "description": text,
+                "evidence": [{"file": evfile, "line": 1}]}
+
+    def test_word_set_splits_camelcase_and_separators(self):
+        # "b2b" splits into b/2/b (each < 3 chars, dropped) → only "order" survives;
+        # that is enough — order-history shares just {order} with b2bOrder.
+        assert pf._word_set("b2bOrder") == {"order"}
+        assert pf._word_set("/rest/order-history") == {"order", "history"}
+        assert pf._word_set("profileImageUrlUpload") == {"profile", "image", "url", "upload"}
+        assert pf._word_set("/rest/user/login") == {"user", "login"}
+
+    def test_generic_shared_token_no_longer_links(self):
+        # order-history must NOT match a b2bOrder finding (shared word: "order").
+        b2b = self._threat("T-005", "routes/b2bOrder.ts")
+        assert pf._score_threat_path_match(b2b, "/rest/order-history") < 3
+        # saveLoginIp must NOT match login.ts (login ⊂ saveLoginIp).
+        login = self._threat("T-006", "routes/login.ts")
+        assert pf._score_threat_path_match(login, "/rest/saveLoginIp") < 3
+
+    def test_genuine_route_handler_matches_still_link(self):
+        # Segment-name match: /rest/track-order ↔ trackOrder.ts.
+        assert pf._score_threat_path_match(self._threat("T-013", "routes/trackOrder.ts"), "/rest/track-order/:id") >= 3
+        # Segment-name match: /rest/user/login ↔ login.ts.
+        assert pf._score_threat_path_match(self._threat("T-006", "routes/login.ts"), "/rest/user/login") >= 3
+        # Hyphen↔camel whole-name match: /file-upload ↔ fileUpload.ts.
+        assert pf._score_threat_path_match(self._threat("T-009", "routes/fileUpload.ts"), "/file-upload") >= 3
+        # ≥2 shared words: /profile/image/url ↔ profileImageUrlUpload.ts.
+        assert pf._score_threat_path_match(self._threat("T-022", "routes/profileImageUrlUpload.ts"), "/profile/image/url") >= 3
+
+    def test_derive_drops_spurious_keeps_real_on_mixed_set(self):
+        threats = [
+            self._threat("T-005", "routes/b2bOrder.ts", "notevil RCE", "vm sandbox order"),
+            self._threat("T-013", "routes/trackOrder.ts", "$where", "nosql track order"),
+        ]
+        # track-order keeps its own finding, not the b2bOrder one.
+        links = pf._derive_attack_surface_links({"entry_point": "GET /rest/track-order/:id"}, threats)
+        assert "T-013" in links and "T-005" not in links
+        # order-history matches neither.
+        assert pf._derive_attack_surface_links({"entry_point": "GET /rest/order-history"}, threats) == []

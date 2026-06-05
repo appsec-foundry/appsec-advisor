@@ -2355,6 +2355,32 @@ def _normalize_token(s: str) -> str:
     return _NORMALIZE_NON_ALNUM.sub("", (s or "").lower())
 
 
+_CAMEL_WORD_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|[0-9]+")
+_WORD_SET_STOP = {"rest", "api", "http", "https", "ts", "js", "the"}
+
+
+def _word_set(s: str) -> set[str]:
+    """Split an identifier or path into its lowercase *words*, breaking on
+    separators (``/ _ . : -``) AND camelCase boundaries, keeping words ≥ 3
+    chars and dropping routing stop-words.
+
+    ``b2bOrder`` → ``{b2b, order}``; ``/rest/order-history`` →
+    ``{order, history}``; ``profileImageUrlUpload`` →
+    ``{profile, image, url, upload}``. Word-level set comparison is what lets
+    the attack-surface linker tell a genuine route↔handler match (``file-upload``
+    ↔ ``fileUpload`` share both words) from a coincidental shared generic token
+    (``order-history`` vs ``b2bOrder`` share only ``order``)."""
+    if not s:
+        return set()
+    out: set[str] = set()
+    for part in re.split(r"[/_.:\-]", s):
+        for w in _CAMEL_WORD_RE.findall(part):
+            wl = w.lower()
+            if len(wl) >= 3 and wl not in _WORD_SET_STOP:
+                out.add(wl)
+    return out
+
+
 def _score_threat_path_match(threat: dict, raw_path: str) -> int:
     """Heuristic score: how strongly does ``threat`` mention the endpoint
     path ``raw_path``? Higher = better match. ≥ 3 is treated as a hit by
@@ -2409,10 +2435,26 @@ def _score_threat_path_match(threat: dict, raw_path: str) -> int:
     # is `routes/profileImageUrlUpload.ts`, etc.).
     _ROUTE_DIRS = ("routes/", "controllers/", "handlers/", "api/", "endpoints/", "rest/")
     if len(path_clean) >= 3:
-        path_tokens_norm = {
-            _normalize_token(tok)
-            for tok in _PATH_TOKEN_SPLIT.split(path_clean.lower())
-            if len(tok) >= 3
+        # Word-level signals (not raw substring). The previous substring branch
+        # (`len(tok) >= 5 and (tok in base_norm or base_norm in tok)`) produced
+        # the §5 false-positive class observed on 2026-06-04 juice-shop:
+        #   `order`  ⊂ `b2bOrder`     → /rest/order-history → notevil RCE finding
+        #   `login`  ⊂ `saveLoginIp`  → /rest/saveLoginIp   → login SQL-injection
+        # A coincidental shared generic token was scoring the full +3. We now
+        # award +3 only on a route↔handler signal that survives camelCase
+        # splitting:
+        #   (i)  the evidence basename names a whole route SEGMENT
+        #        (`trackOrder.ts` ↔ `/rest/track-order`, `login.ts` ↔
+        #         `/rest/user/login`, `fileUpload.ts` ↔ `/file-upload`), or
+        #   (ii) the basename and the path share ≥ 2 independent words
+        #        (`profileImageUrlUpload.ts` ↔ `/profile/image/url`).
+        # `order-history` vs `b2bOrder` share only {order} and neither names the
+        # other's segment → no bonus, the spurious link disappears.
+        path_words = _word_set(path_clean)
+        path_segs_norm = {
+            _normalize_token(seg)
+            for seg in path_clean.split("/")
+            if len(_normalize_token(seg)) >= 4
         }
         for ev in threat.get("evidence") or []:
             if not isinstance(ev, dict):
@@ -2423,27 +2465,12 @@ def _score_threat_path_match(threat: dict, raw_path: str) -> int:
             # any path containing the model name.
             if not any(seg in ev_file for seg in _ROUTE_DIRS):
                 continue
-            base = (ev.get("file") or "").split("/")[-1]
-            base_no_ext = _FILE_EXT_STRIP.sub("", base)
+            base_no_ext = _FILE_EXT_STRIP.sub("", (ev.get("file") or "").split("/")[-1])
             base_norm = _normalize_token(base_no_ext)
             if len(base_norm) < 4:
                 continue
-            if base_norm in path_tokens_norm:
-                # Exact whole-token match (e.g. evidence basename
-                # "fileUpload" -> normalised "fileupload" -> matches
-                # the "file-upload" token in /file-upload, or
-                # "login" -> "login" in /rest/user/login).
+            if base_norm in path_segs_norm or len(_word_set(base_no_ext) & path_words) >= 2:
                 score += 3
-                break
-            # Substring match in either direction for longer basenames
-            # like profileImageUrlUpload <-> /profile/image/url.
-            matched = False
-            for tok in path_tokens_norm:
-                if len(tok) >= 5 and (tok in base_norm or base_norm in tok):
-                    score += 3
-                    matched = True
-                    break
-            if matched:
                 break
     return score
 
