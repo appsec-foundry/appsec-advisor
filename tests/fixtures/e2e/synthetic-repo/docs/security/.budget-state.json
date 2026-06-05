@@ -1,1 +1,1 @@
-{"b22739e7": {"agent": "unknown", "turns": 1, "max_turns": 250, "warn_emitted": false, "critical_emitted": false, "max_emitted": false, "first_seen": 1780550804, "last_seen": 1780550804}}
+{"b22739e7": {"agent": "unknown", "turns": 1, "max_turns": 250, "warn_emitted": false, "critical_emitted": false, "max_emitted": false, "first_seen": 1780550804, "last_seen": 1780550804}, "774d6226": {"agent": "threat-analyst", "turns": 22, "max_turns": 300, "warn_emitted": false, "critical_emitted": false, "max_emitted": false, "first_seen": 1780676439, "last_seen": 1780676614}}

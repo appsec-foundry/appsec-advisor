@@ -341,6 +341,7 @@ sections:
       - mitigations
       - operational_strengths
     optional_subsections:
+      - { id: architectural_anti_patterns, condition: "has_anti_patterns" }
       - { id: requirements_compliance_ms, condition: "check_requirements" }
       - { id: triage_notes,               condition: "triage_has_warnings" }
     forbidden_subsection_patterns:                  # regexes; match = QA-strip
@@ -387,6 +388,24 @@ sections:
       - severity_emoji                              # must open with 🟢/🟡/🔴
       - red_blockquote                              # must contain the red HTML blockquote
       - finding_refs                                # ≥2 F-NNN or T-NNN refs in blockquote
+
+  # Architectural Anti-Patterns — optional MS callout naming the design-level
+  # defects the report articulates in §7 (e.g. "SPA without BFF",
+  # "JWT in localStorage"), so they are visible at executive level instead of
+  # buried in per-control prose. LLM-authored OPTIONAL fragment: the
+  # threat-renderer writes ms-anti-patterns.json only when ≥1 genuine
+  # anti-pattern is present; absent → the section renders nothing
+  # (gated by `has_anti_patterns`). Rendered via the special-case path in
+  # `_render_management_summary` (not the generic loop), so it never demands a
+  # fragment that older runs lack.
+  architectural_anti_patterns:
+    heading: "### Architectural Anti-Patterns"
+    heading_numbered: false
+    fragment_type: data
+    fragment: "ms-anti-patterns.json"
+    schema:   "anti-patterns.schema.json"
+    template: "anti-patterns.md.j2"
+    conditional: "has_anti_patterns"
 
   # Security Posture at a Glance — architecture heatmap showing where the
   # Critical findings concentrate and which attack paths connect them.

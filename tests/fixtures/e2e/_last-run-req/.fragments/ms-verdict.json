@@ -1,0 +1,33 @@
+{
+  "severity": "red",
+  "opening": "NOT PRODUCTION-READY. The Express application and its container have no authentication, no authorization, no input validation, no security headers, and no TLS — every HTTP endpoint on port 3000 is open to any anonymous caller. Two Critical findings (prototype pollution via `lodash@4.17.10` and completely missing authentication middleware) are independently exploitable without credentials or special tooling.",
+  "bullets_intro": "The dominant attack paths in priority order:",
+  "bullets": [
+    {
+      "title": "Full application takeover — no credentials required",
+      "body": "Every route is unauthenticated. An anonymous attacker reads, writes, and deletes any record by sending plain HTTP requests to port 3000 — no login bypass needed because no login exists.",
+      "refs": ["T-001", "T-013"]
+    },
+    {
+      "title": "Privilege escalation via prototype pollution",
+      "body": "`lodash@4.17.10` is vulnerable to CVE-2019-10744 (CVSS 9.8). A request body containing `{\"__proto__\":{\"isAdmin\":true}}` passed through any `_.merge` call poisons `Object.prototype` for the entire Node.js process lifetime, silently granting admin-level flags to all subsequent requests.",
+      "refs": ["T-002"]
+    },
+    {
+      "title": "Supply-chain backdoor baked into every image",
+      "body": "`Dockerfile:4` runs `npm install --production` without `--ignore-scripts` and with no `package-lock.json`. Any malicious or compromised npm dependency executes arbitrary shell code during `docker build`, embedding a backdoor in every published image layer.",
+      "refs": ["T-003"]
+    },
+    {
+      "title": "Credential and session token interception",
+      "body": "All traffic runs over plaintext HTTP (port 3000, no TLS). Any on-path observer captures credentials and session tokens in transit. HSTS cannot be enforced.",
+      "refs": ["T-010"]
+    },
+    {
+      "title": "Container root escalation after any RCE",
+      "body": "The Dockerfile has no `USER` directive; the Node.js process runs as UID 0. Any code execution vulnerability immediately grants container-root access and enables container escape attempts.",
+      "refs": ["T-012"]
+    }
+  ],
+  "closing": "Thirteen mitigations follow. The two Critical items — adding authentication middleware and upgrading `lodash` — unblock all other work and should land before any other deployment activity."
+}

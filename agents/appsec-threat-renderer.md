@@ -208,6 +208,32 @@ Renders as the §1 Verdict block (red/yellow/green HTML blockquote). **Author EX
 
 **Forbidden legacy keys** (they were the 2026-06-05 parallel-render drift): `verdict_label`, `verdict_color`, `worst_case_scenarios`, `closing_prose`, `verdict_prose`. The ONLY top-level keys are the five above. Do not cite exact severity counts in `opening` (the composer injects the authoritative `**Risk distribution:** …` line). Run the MS compactness gate after authoring (see "MS prose — single-pass discipline").
 
+### `ms-anti-patterns.json` authoring contract (OPTIONAL — architecture anti-patterns)
+
+Renders as the optional **`### Architectural Anti-Patterns`** callout in the Management Summary, immediately after the Verdict. Its job is to NAME the design-level defects you already articulate in §7 prose (e.g. "No BFF is implemented to move token storage server-side", "raw SQL string interpolation across multiple routes") so they are visible at executive level instead of buried in per-control narrative. Schema: `schemas/fragments/anti-patterns.schema.json` (`additionalProperties:false`).
+
+**When to author.** ONLY when ≥1 *genuine, named* architectural anti-pattern is present. **Omit the file entirely** when the report has none — the section then renders nothing (do NOT author an empty array; the schema requires `minItems:1`). An anti-pattern is a *named structural design defect*, not a routine control gap and not a finding restatement.
+
+**MANDATORY — `SPA without BFF`.** Whenever the architecture is a client-side SPA (Angular/React/Vue/Svelte, tier=client) talking to a backend (tier=application) where the SPA holds the session credential client-side (a bearer token / JWT in `localStorage` or `sessionStorage`, reachable by XSS) and **no Backend-for-Frontend** holds the token server-side, you MUST include a `SPA without BFF` entry. This is the report's signature architectural defect — never let it be implied only in §7 prose. Anchor it to the localStorage/JWT-storage finding and propose the BFF (token moved to an `HttpOnly Secure SameSite=Strict` cookie). The same pattern MUST also carry the `⚠ **Anti-pattern:**` label in its §7 session/token control block.
+
+```json
+{
+  "anti_patterns": [                       // REQUIRED, 1-6, most severe first
+    {
+      "name": "SPA without BFF",           // REQUIRED, canonical pattern name (4-60 chars)
+      "severity": "red",                   // OPTIONAL, enum green|yellow|red; defaults red
+      "description": "<1-2 sentence design-review prose: which boundary is defeated and why a point fix won't close it, 40-400 chars>",  // REQUIRED. Components/files referenced GENERICALLY, no SAST line lists.
+      "affected_components": ["C-02"],     // OPTIONAL, C-NN ids (auto-enriched to links)
+      "findings": [                        // REQUIRED, 1-4 representative findings
+        { "ref": "T-046", "label": "JWT stored in localStorage" }   // ref ^[FTM]-\\d{3,4}$
+      ]
+    }
+  ]
+}
+```
+
+**Naming vocabulary** (use a canonical label, do not invent one to pad the list): `SPA without BFF` · `JWT in localStorage` · `Raw SQL string interpolation` · `Secrets hardcoded in source` · `Missing server-side authorization layer` · `Mass-assignment / unscoped object binding` · `Client-side trust boundary` · `Sanitizer bypass by default` · `Unvalidated OAuth/OIDC token` · `Server-side eval of untrusted input`. Derive each entry from the §7 control blocks / threat scenarios you have already written — this fragment is a *headline index* of them, not new analysis. The same pattern you tag here should carry the `⚠ Anti-pattern:` label in its §7 control block (see the §7.X authoring pattern below).
+
 ### `ms-architecture-assessment.json` authoring contract
 
 The Architecture Assessment renders as a 4-column table in §1: `Weakness category | Affected component(s) | Description | Key findings`. The fragment schema is:
@@ -425,6 +451,8 @@ The §7.2 Assessment paragraph MUST close with a one-sentence handoff that names
 Every H4 subcontrol MUST contain these elements, in this order:
 
 0. **Status badge (REQUIRED)** — the FIRST line under the `#### 7.X.Y …` heading, before the intro paragraph: `**Status:** <icon> <word> — <one clause>`. Use the verdict vocabulary (`🟢 Adequate` / `🟡 Partial` / `🟠 Weak` / `🔴 Unsafe` / `🔴 Missing`); pick the icon from the control's `effectiveness`. The trailing clause is the bottom line — what holds, or what is defeated and how — so the reader gets the verdict before reading the assessment. For the two red verdicts the clause MUST make the remediation obvious: **Unsafe** = the control exists but is defeated/bypassable (FIX the existing control); **Missing** = the control was never built (ADD it). Never tag a present-but-broken control "Missing" — an MD5 hash, a raw-SQL query path, a hardcoded signing key, or a parser with unsafe options is **Unsafe**, not Missing. The pregenerator emits this line (deterministically from `effectiveness`); keep it and fill any placeholder clause.
+
+0b. **Anti-pattern label (OPTIONAL, metadata)** — when this control block embodies a *named architectural anti-pattern* (a structural design defect that recurs across call-sites or defeats a whole boundary, not a single bug), add a SECOND metadata line directly below the Status badge, before the intro paragraph: `⚠ **Anti-pattern:** <canonical name>`. Use the same canonical vocabulary as the `ms-anti-patterns.json` contract above (`SPA without BFF`, `JWT in localStorage`, `Raw SQL string interpolation`, `Secrets hardcoded in source`, `Missing server-side authorization layer`, `Sanitizer bypass by default`, …). This makes the structural defect explicit at the point of analysis and is the §7 counterpart of the same pattern's row in the Management Summary anti-patterns callout — tag it in BOTH places or neither. Keep it to the bare label line; the explanation belongs in the assessment bullets. Omit entirely for control blocks that are routine gaps with no recognized pattern — do not over-tag.
 
 1. **Positive-case intro paragraph (REQUIRED)** — 1-3 sentences describing how this control actually works in THIS codebase: which routes or components are involved, which library performs the operation, what the intended successful flow is. NEVER start with the attack or the missing protection. The reader uses this paragraph to understand the mechanism BEFORE reading the security assessment below.
 

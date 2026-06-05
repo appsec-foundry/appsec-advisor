@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-05T20:21:31Z",
+  "stride_profile": {
+    "stride_profile_label": "quick"
+  },
+  "components": [
+    {
+      "component_id": "express-app",
+      "component_name": "Express Application",
+      "component_description": "Node.js/Express web application. Declared in package.json with express@4.19.2, sequelize@6.37.1, and lodash@4.17.10. Entry point server.js referenced in Dockerfile but absent from repo \u2014 minimal fixture.",
+      "component_paths": [
+        "**/*.js",
+        "**/*.ts",
+        "server.js",
+        "routes/**",
+        "middleware/**",
+        "controllers/**"
+      ],
+      "component_complexity": "simple",
+      "max_turns": 10,
+      "trust_boundaries": "Public Internet to Container | Application to Data Layer",
+      "taxonomy_slice_dir": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.taxonomy-slices/express-app",
+      "index_paths": {
+        "prior_findings": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.dispatch-context/express-app/prior-findings.json",
+        "known_threats": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.dispatch-context/express-app/known-threats.json",
+        "cross_repo": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.dispatch-context/express-app/cross-repo.json",
+        "requirements_violations": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.dispatch-context/express-app/requirements-violations.json",
+        "relevant_actors": "none"
+      },
+      "interfaces": [
+        "HTTP API on port 3000 (Express routes \u2014 no source code present, inferred from Dockerfile CMD node server.js)",
+        "Sequelize ORM data access layer (database interactions)",
+        "npm package runtime (lodash, express, sequelize)"
+      ],
+      "controls": [
+        "Sequelize ORM (Partial \u2014 parameterized queries available but raw query usage unknown)",
+        "All other security controls: Missing (no auth, no session, no RBAC, no CSRF, no helmet, no CORS, no rate limiting, no input validation, no TLS, no logging)"
+      ],
+      "known_vulns": [
+        "lodash@4.17.10: CVE-2019-10744 (prototype pollution via _.merge, High severity)",
+        "lodash@4.17.10: CVE-2020-8203 (prototype pollution via _.zipObjectDeep, High severity)"
+      ],
+      "estimated_threat_count": 8
+    },
+    {
+      "component_id": "container-infra",
+      "component_name": "Container Infrastructure",
+      "component_description": "Docker container running Node.js 20 Alpine. Runs as root (no USER directive). Single exposed port 3000. No TLS, no reverse proxy.",
+      "component_paths": [
+        "Dockerfile",
+        "docker-compose*.yml",
+        "docker-compose*.yaml"
+      ],
+      "component_complexity": "simple",
+      "max_turns": 10,
+      "trust_boundaries": "Container to Host",
+      "taxonomy_slice_dir": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.taxonomy-slices/container-infra",
+      "index_paths": {
+        "prior_findings": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.dispatch-context/container-infra/prior-findings.json",
+        "known_threats": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.dispatch-context/container-infra/known-threats.json",
+        "cross_repo": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.dispatch-context/container-infra/cross-repo.json",
+        "requirements_violations": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_last-run-req/.dispatch-context/container-infra/requirements-violations.json",
+        "relevant_actors": "none"
+      },
+      "interfaces": [
+        "Docker container boundary (port 3000 exposed)",
+        "Host OS boundary (container-to-host)",
+        "npm install during build (supply chain ingress)",
+        "Base image pull from Docker Hub (node:20-alpine)"
+      ],
+      "controls": [
+        "Docker isolation (Partial \u2014 container runs as root, reducing isolation effectiveness)",
+        "npm install --production (no --ignore-scripts \u2014 supply chain gap)"
+      ],
+      "known_vulns": [
+        "Dockerfile: no USER directive \u2014 runs as root (IF-002 VIOLATION)",
+        "Dockerfile: mutable base image tag node:20-alpine (IF-007 violation)",
+        "Dockerfile: npm install without --ignore-scripts (supply chain risk)",
+        "No lockfile: supply chain integrity unverifiable (SC-002 violation)"
+      ],
+      "supply_chain_findings": [
+        "npm install without --ignore-scripts allows lifecycle hook execution during build",
+        "No package-lock.json \u2014 versions not pinned, dependency confusion possible",
+        "Base image FROM node:20-alpine uses mutable tag \u2014 image could be swapped",
+        "No Dependabot or Renovate configured \u2014 no automated dependency updates",
+        "No CI/CD pipeline (no .github/workflows/) \u2014 no automated SCA, SAST, or image scanning"
+      ],
+      "estimated_threat_count": 5
+    }
+  ]
+}

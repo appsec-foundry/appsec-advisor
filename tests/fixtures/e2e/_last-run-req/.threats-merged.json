@@ -1,0 +1,653 @@
+{
+  "version": 1,
+  "generated_at": "2026-06-05T20:26:39Z",
+  "threats": [
+    {
+      "local_id": "express-app-001",
+      "threat_category_id": "TH-09",
+      "additional_categories": [
+        "TH-13"
+      ],
+      "stride": "Spoofing",
+      "cwe": "CWE-306",
+      "title": "Missing Authentication on All HTTP Endpoints (package.json)",
+      "affected_parameter": null,
+      "scenario": "The Express application declares no authentication library (no passport, jsonwebtoken, express-session, or equivalent) in package.json. Every HTTP endpoint on port 3000 is reachable by any caller without identity verification. An unauthenticated attacker can invoke administrative operations, read other users' data, or modify records by sending direct HTTP requests \u2014 no credentials required. The trust boundary between Public Internet and the container is entirely uncontrolled.",
+      "evidence_summary": "package.json lists only express, sequelize, and lodash \u2014 no authentication or session management package is present.",
+      "impact_description": "Any caller on the network can perform any operation the application supports, effectively making every user an administrator.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None",
+      "mitigation_title": "Add authentication middleware to all Express routes",
+      "remediation": {
+        "effort": "High",
+        "steps": [
+          "Add `passport` + `passport-jwt` (or `jsonwebtoken` with a custom middleware) to package.json dependencies.",
+          "Create an `authenticate` middleware that validates the JWT on every request and attaches `req.user`; mount it globally via `app.use(authenticate)` before route registration.",
+          "For session-based flows add `express-session` with a strong secret from environment variables and set `cookie: { httpOnly: true, secure: true, sameSite: 'strict' }`.",
+          "Return HTTP 401 on missing/invalid credentials and HTTP 403 on insufficient privilege."
+        ],
+        "code_example": "```js\nconst jwt = require('jsonwebtoken');\nfunction authenticate(req, res, next) {\n  const token = req.headers.authorization?.split(' ')[1];\n  if (!token) return res.status(401).json({ error: 'Unauthorized' });\n  try {\n    req.user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['RS256'] });\n    next();\n  } catch { res.status(401).json({ error: 'Invalid token' }); }\n}\napp.use(authenticate);\n```",
+        "reference": "[AC-004]"
+      },
+      "evidence": {
+        "file": "package.json",
+        "line": 6
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "passport|jsonwebtoken|express-session|cookie-session",
+          "search_paths": [
+            "package.json"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:22:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "express-app",
+      "component_name": "Express Application",
+      "source": "stride",
+      "t_id": "T-001",
+      "mitigation_ids": [
+        "M-001"
+      ]
+    },
+    {
+      "local_id": "express-app-002",
+      "threat_category_id": "TH-05",
+      "additional_categories": [
+        "TH-01"
+      ],
+      "stride": "Tampering",
+      "cwe": "CWE-1321",
+      "title": "Prototype Pollution via lodash@4.17.10 _.merge on Untrusted Input (package.json)",
+      "affected_parameter": null,
+      "scenario": "lodash version 4.17.10 is vulnerable to prototype pollution via `_.merge` (CVE-2019-10744, CVSS 9.8) and `_.zipObjectDeep` (CVE-2020-8203). When attacker-controlled JSON such as `{\"__proto__\": {\"isAdmin\": true}}` is passed to any code path that calls `_.merge(target, userInput)`, `Object.prototype` is modified globally for the Node.js process lifetime. All subsequently created plain objects inherit the injected property, silently bypassing authorization checks that test `obj.isAdmin` or similar role flags. In a server that also lacks input validation (IV-001 FAIL) and authentication (AC-004 FAIL), every HTTP request body is a direct injection vector.",
+      "evidence_summary": "package.json pins lodash at 4.17.10, which is below the patched floor of 4.17.21 for both CVEs.",
+      "impact_description": "Attacker can escalate to administrator-equivalent access or crash the Node.js process by corrupting shared prototype state.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None \u2014 no input validation library present; no lodash version pin above 4.17.21.",
+      "mitigation_title": "Upgrade lodash to >=4.17.21 and validate object-merge inputs",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Upgrade lodash to `^4.17.21` in package.json immediately; run `npm install` to regenerate lockfile.",
+          "Add input validation with `zod` or `joi` on all request body handlers that feed object-merge operations; reject payloads containing `__proto__`, `constructor`, or `prototype` keys.",
+          "Replace `_.merge` with `Object.assign` or structured-clone where deep merge of untrusted data is required \u2014 these do not walk prototype chains.",
+          "Enable `--frozen-lockfile` (npm ci) in the Docker build to prevent silent dependency upgrades."
+        ],
+        "code_example": "```js\n// Sanitize before any merge\nfunction sanitize(obj) {\n  const banned = ['__proto__', 'constructor', 'prototype'];\n  return JSON.parse(JSON.stringify(obj, (k, v) =>\n    banned.includes(k) ? undefined : v));\n}\nconst safe = sanitize(req.body);\n_.merge(target, safe);\n```",
+        "reference": "[SC-002]"
+      },
+      "evidence": {
+        "file": "package.json",
+        "line": 7
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "express-app",
+      "component_name": "Express Application",
+      "source": "stride",
+      "t_id": "T-002",
+      "mitigation_ids": [
+        "M-002"
+      ]
+    },
+    {
+      "local_id": "container-infra-001",
+      "threat_category_id": "TH-14",
+      "additional_categories": [],
+      "stride": "Tampering",
+      "cwe": "CWE-506",
+      "title": "Supply-Chain Code Execution via Unguarded npm Lifecycle Hooks (Dockerfile:4)",
+      "affected_parameter": null,
+      "scenario": "`Dockerfile:4` runs `npm install --production` without `--ignore-scripts`. Any dependency (or transitive dependency) that includes a `preinstall`, `install`, or `postinstall` lifecycle hook executes arbitrary shell commands inside the build container. With no `package-lock.json` (SC-002 violation), the resolved dependency graph is non-deterministic across builds \u2014 a dependency-confusion attack or a malicious version bump can inject a hook that exfiltrates build secrets, adds backdoor binaries to the image layer, or overwrites `server.js` before `COPY . .` is applied. The attacker targets the package registry namespace, not the running container.",
+      "evidence_summary": "`Dockerfile:4` calls `npm install --production` with no `--ignore-scripts` flag, and no `package-lock.json` is present in the repository to pin the resolved version graph.",
+      "impact_description": "Attacker-controlled code runs inside the build environment and is baked into the published container image, affecting every downstream deployment.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "npm install uses `--production` to exclude devDependencies. No lockfile, no `--ignore-scripts`, no SCA scanner.",
+      "mitigation_title": "Add --ignore-scripts to npm install and commit a package-lock.json in Dockerfile",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Change `Dockerfile:4` to `RUN npm ci --omit=dev --ignore-scripts` (requires a committed `package-lock.json`).",
+          "Commit `package-lock.json` to the repository and add a CI step that fails the build when the lockfile is out of sync (`npm ci` exits non-zero when it is).",
+          "Add a `.npmrc` with `ignore-scripts=true` as defense-in-depth so `npm install` invocations elsewhere also skip hooks."
+        ],
+        "code_example": "# Dockerfile\nFROM node:20-alpine@sha256:<digest>\nWORKDIR /app\nCOPY package.json package-lock.json ./\nRUN npm ci --omit=dev --ignore-scripts\nCOPY . .\nEXPOSE 3000\nCMD [\"node\", \"server.js\"]",
+        "reference": "CWE-506"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 4
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "ignore-scripts",
+          "search_paths": [
+            "Dockerfile"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:23:00Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "container-infra",
+      "component_name": "Container Infrastructure",
+      "source": "stride",
+      "t_id": "T-003",
+      "mitigation_ids": [
+        "M-003"
+      ]
+    },
+    {
+      "local_id": "express-app-003",
+      "threat_category_id": "TH-15",
+      "additional_categories": [],
+      "stride": "Tampering",
+      "cwe": "CWE-352",
+      "title": "No CSRF Protection on State-Changing Endpoints (package.json)",
+      "affected_parameter": null,
+      "scenario": "The application ships with no CSRF protection (WEB-001 FAIL \u2014 no `csurf` or equivalent). Any state-changing POST/PUT/DELETE endpoint can be triggered by a third-party page via a forged form or AJAX request. Because there is also no SameSite cookie policy (no session library) and no CORS restriction, a malicious page visited by an authenticated user (once authentication is added) can issue cross-origin state-changing requests that the browser will relay with any ambient credentials.",
+      "evidence_summary": "package.json contains no anti-CSRF library; requirements violation WEB-001 confirms absence.",
+      "impact_description": "Attacker-controlled third-party page can silently perform any write operation on behalf of a logged-in user.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None",
+      "mitigation_title": "Add CSRF token middleware to all state-changing Express routes",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Install `csrf` (replacement for deprecated `csurf`) and generate a per-session token; embed it in forms and validate it on every POST/PUT/PATCH/DELETE handler.",
+          "Set `SameSite=Strict` on session cookies to provide defense-in-depth against cross-origin request forgery.",
+          "For API-only endpoints that use `Authorization: Bearer` headers (not cookies), CSRF is mitigated by the custom header itself \u2014 document this as the mitigation for those routes and skip token checks."
+        ],
+        "code_example": null,
+        "reference": "[WEB-001]"
+      },
+      "evidence": {
+        "file": "package.json",
+        "line": 5
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "csurf|csrf|anti-csrf",
+          "search_paths": [
+            "package.json"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:22:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "express-app",
+      "component_name": "Express Application",
+      "source": "stride",
+      "t_id": "T-004",
+      "mitigation_ids": [
+        "M-004"
+      ]
+    },
+    {
+      "local_id": "express-app-004",
+      "threat_category_id": "TH-16",
+      "additional_categories": [],
+      "stride": "Repudiation",
+      "cwe": "CWE-778",
+      "title": "No Security Event Logging \u2014 All Operations Leave Zero Forensic Trace (package.json)",
+      "affected_parameter": null,
+      "scenario": "The application has no logging library in its dependencies (LM-001 FAIL \u2014 no morgan, winston, or pino). Express's built-in error handling writes nothing structured. Authentication failures, data modifications, and access control violations are never recorded. After a breach, security teams have no request log, no audit trail, and no timeline to reconstruct the attack. Combined with missing authentication, an attacker operates in complete darkness from the defender's perspective.",
+      "evidence_summary": "package.json lists no logging dependency; requirements violation LM-001 confirms absence.",
+      "impact_description": "Breach investigation is impossible; attackers can exfiltrate data or escalate privilege with no evidence left behind.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None",
+      "mitigation_title": "Integrate structured request and security-event logging via pino or winston",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `pino` and `pino-http` to dependencies; mount `app.use(pinoHttp())` as the first middleware to capture every request, response status, latency, and caller IP.",
+          "Log security events (auth failures, permission denials, input validation rejections) at `warn` or `error` level with actor identity, action, resource, and timestamp.",
+          "Ship logs to an append-only sink (stdout captured by container runtime \u2192 forwarded to a SIEM) so they cannot be tampered with from within the application."
+        ],
+        "code_example": "```js\nconst pino = require('pino');\nconst pinoHttp = require('pino-http');\nconst logger = pino({ level: 'info' });\napp.use(pinoHttp({ logger }));\n// Security event example:\nlogger.warn({ actor: req.user?.id, action: 'login_failure', ip: req.ip }, 'Auth failed');\n```",
+        "reference": "[LM-001]"
+      },
+      "evidence": {
+        "file": "package.json",
+        "line": 5
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "morgan|winston|pino|bunyan",
+          "search_paths": [
+            "package.json"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:22:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "express-app",
+      "component_name": "Express Application",
+      "source": "stride",
+      "t_id": "T-005",
+      "mitigation_ids": [
+        "M-005"
+      ]
+    },
+    {
+      "local_id": "container-infra-003",
+      "threat_category_id": "TH-17",
+      "additional_categories": [],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-200",
+      "title": "Build Context Leaks Sensitive Files Into Image Layer (Dockerfile:5)",
+      "affected_parameter": null,
+      "scenario": "`Dockerfile:5` runs `COPY . .`, which copies the entire build context (the directory where `docker build` is invoked) into `/app`. No `.dockerignore` file exists in the repository. If the developer's working directory contains `.env`, `.env.local`, private key files (`*.pem`, `id_rsa`), or AWS/GCP credential files, these are baked into the image layer. Even if the files are removed in a later `RUN` instruction, they remain recoverable from the layer history via `docker image save` or a registry pull. Any user with `docker pull` access to the registry can read the secrets by inspecting the layer tarball.",
+      "evidence_summary": "No `.dockerignore` exists and `Dockerfile:5` copies the entire build context, exposing any local credential or configuration file present at build time as a permanent image layer.",
+      "impact_description": "Secrets embedded in the image layer are recoverable by any party with registry read access, including CI runners, all developers, and external attackers if the registry is public.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None \u2014 no .dockerignore, no multi-stage build to separate build and runtime contexts.",
+      "mitigation_title": "Add .dockerignore to exclude sensitive files from the Docker build context",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Create a `.dockerignore` file at the repository root excluding: `.env*`, `*.pem`, `*.key`, `.git/`, `node_modules/`, and any credential files.",
+          "Convert to a multi-stage build so build-time secrets never touch the final image layer \u2014 use `--mount=type=secret` (BuildKit) to inject secrets at build time without persisting them.",
+          "Audit existing published images for leaked secrets using `docker history --no-trunc <image>` and revoke any credentials found."
+        ],
+        "code_example": "# .dockerignore\n.env\n.env.*\n*.pem\n*.key\n.git\nnode_modules\n.npmrc",
+        "reference": "CWE-200"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 5
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": ".*",
+          "search_paths": [
+            ".dockerignore"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:23:20Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "container-infra",
+      "component_name": "Container Infrastructure",
+      "source": "stride",
+      "t_id": "T-009",
+      "mitigation_ids": [
+        "M-006"
+      ]
+    },
+    {
+      "local_id": "express-app-005",
+      "threat_category_id": "TH-03",
+      "additional_categories": [
+        "TH-17"
+      ],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-319",
+      "title": "Plaintext HTTP Exposure on Port 3000 \u2014 No TLS (Dockerfile)",
+      "affected_parameter": null,
+      "scenario": "The Dockerfile exposes port 3000 and starts the server with `node server.js` with no TLS termination in the application layer and no reference to an HTTPS proxy or load balancer. Requirements violations DP-006 and WEB-005 confirm that no TLS is configured. All HTTP traffic between clients and the container \u2014 including credentials, session tokens, and any sensitive data \u2014 is transmitted in cleartext and can be intercepted by any on-path observer (ISP, network switch, cloud MITM).",
+      "evidence_summary": "Dockerfile `EXPOSE 3000` with `CMD [\"node\", \"server.js\"]` and no TLS-related package in package.json.",
+      "impact_description": "Credentials and session tokens are exposed to passive network eavesdropping; HSTS cannot be enforced without HTTPS.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None",
+      "mitigation_title": "Terminate TLS at the container ingress or reverse proxy",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Place a TLS-terminating reverse proxy (nginx, Caddy, or AWS ALB) in front of the Express container; configure it to redirect HTTP\u2192HTTPS and set `Strict-Transport-Security: max-age=31536000; includeSubDomains`.",
+          "Alternatively, add the `https` Node.js built-in with a certificate (Let's Encrypt via `greenlock-express`) directly to server.js and update the Dockerfile to `EXPOSE 443`.",
+          "Ensure `helmet()` is added so the HSTS header is sent on every response: `app.use(helmet.hsts({ maxAge: 31536000 }))`."
+        ],
+        "code_example": null,
+        "reference": "[DP-006]"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 6
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "container-infra",
+      "component_name": "Express Application",
+      "source": "stride",
+      "t_id": "T-010",
+      "mitigation_ids": [
+        "M-007"
+      ]
+    },
+    {
+      "local_id": "express-app-006",
+      "threat_category_id": "TH-12",
+      "additional_categories": [],
+      "stride": "Denial of Service",
+      "cwe": "CWE-400",
+      "title": "No Rate Limiting on Any HTTP Endpoint (package.json)",
+      "affected_parameter": null,
+      "scenario": "The application has no rate-limiting middleware (AC-003 FAIL \u2014 no `express-rate-limit` or equivalent in package.json). An attacker or automated scanner can send an unbounded number of requests per second to any endpoint. Combined with the absence of authentication, routes that perform database queries via Sequelize can be hammered to exhaust database connection pool limits or saturate the Node.js event loop. A single-threaded Node.js process with no request queue limits will degrade for all users once the event loop is saturated.",
+      "evidence_summary": "package.json contains no rate-limiting package; requirements violation AC-003 confirms absence.",
+      "impact_description": "Attacker can render the application unavailable by flooding endpoints with requests, exhausting the DB connection pool or CPU.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None",
+      "mitigation_title": "Add express-rate-limit middleware to all externally reachable endpoints",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Install `express-rate-limit` and mount it globally: `app.use(rateLimit({ windowMs: 60_000, max: 100 }))` as the first middleware after logging.",
+          "Apply tighter per-route limits to sensitive endpoints (login, password reset, data export): `rateLimit({ windowMs: 15*60_000, max: 10 })`.",
+          "Back the rate-limiter with a shared Redis store (`rate-limit-redis`) when running multiple container replicas so the limit is enforced cluster-wide."
+        ],
+        "code_example": "```js\nconst rateLimit = require('express-rate-limit');\napp.use(rateLimit({\n  windowMs: 60 * 1000,\n  max: 100,\n  standardHeaders: true,\n  legacyHeaders: false\n}));\n```",
+        "reference": "[AC-003]"
+      },
+      "evidence": {
+        "file": "package.json",
+        "line": 5
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "express-rate-limit|rate-limit|throttle|bottleneck",
+          "search_paths": [
+            "package.json"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:22:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "express-app",
+      "component_name": "Express Application",
+      "source": "stride",
+      "t_id": "T-011",
+      "mitigation_ids": [
+        "M-008"
+      ]
+    },
+    {
+      "local_id": "container-infra-004",
+      "threat_category_id": "TH-06",
+      "additional_categories": [],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-269",
+      "title": "Container Process Runs as Root Without USER Directive (Dockerfile)",
+      "affected_parameter": null,
+      "scenario": "The `Dockerfile` contains no `USER` directive, so the Node.js process started by `CMD [\"node\", \"server.js\"]` runs as UID 0 (root) inside the container. This violates requirement IF-002. If an attacker achieves code execution through an application vulnerability (e.g., RCE via `eval()` or path traversal), they operate as root within the container. Root inside a default Docker container has near-full access to the container filesystem and can attempt container escape via kernel exploits, mounted volume abuse, or misconfigured `--privileged` flags added at runtime. The IF-002 FAIL evidence confirms: \"Container runs as UID 0.\"",
+      "evidence_summary": "`Dockerfile` has no `USER` instruction before `CMD`, confirmed by direct inspection; the requirements-violations index records this as IF-002 FAIL.",
+      "impact_description": "Post-exploitation pivot from application RCE to container root, maximising the blast radius of any code execution vulnerability and enabling container escape attempts.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Docker namespace isolation provides partial containment. No additional security profiles (AppArmor, seccomp) are defined in the Dockerfile.",
+      "mitigation_title": "Add USER directive to run container process as non-root in Dockerfile",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `RUN addgroup -S appgroup && adduser -S appuser -G appgroup` (Alpine syntax) to the Dockerfile before the `COPY` instructions.",
+          "Add `USER appuser` before the final `CMD` instruction so the Node.js process starts as a non-root user.",
+          "Verify the application can bind port 3000 as a non-root user (ports > 1024 require no special capability on Linux); if a privileged port is needed, use `setcap cap_net_bind_service` on the node binary instead of running as root."
+        ],
+        "code_example": "# Dockerfile\nFROM node:20-alpine\nWORKDIR /app\nRUN addgroup -S appgroup && adduser -S appuser -G appgroup\nCOPY package.json package-lock.json ./\nRUN npm ci --omit=dev --ignore-scripts\nCOPY --chown=appuser:appgroup . .\nUSER appuser\nEXPOSE 3000\nCMD [\"node\", \"server.js\"]",
+        "reference": "IF-002"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 7
+      },
+      "evidence_check": "verified-prior",
+      "controls_absent_evidence": [
+        {
+          "pattern": "USER\\s+",
+          "search_paths": [
+            "Dockerfile"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:23:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "container-infra",
+      "component_name": "Container Infrastructure",
+      "source": "stride",
+      "t_id": "T-012",
+      "mitigation_ids": [
+        "M-009"
+      ]
+    },
+    {
+      "local_id": "express-app-007",
+      "threat_category_id": "TH-06",
+      "additional_categories": [],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-862",
+      "title": "No Role-Based Access Control on Any Route (package.json)",
+      "affected_parameter": null,
+      "scenario": "The application has no RBAC library and no authorization middleware in its dependency list (AC-002 FAIL). Even if authentication is added, there is no mechanism to prevent a low-privilege authenticated user from accessing administrative endpoints, executing privileged database operations, or reading records belonging to other users. Because server.js is absent from the repo, the absence of authorization guards cannot be confirmed at the code level \u2014 but no enabler library exists at all, making any route-level authorization impossible.",
+      "evidence_summary": "package.json contains no authorization library (no `casl`, `accesscontrol`, `rbac`, or framework-level guard package).",
+      "impact_description": "Any authenticated user (once authentication is added) can access all application functions regardless of assigned role.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None",
+      "mitigation_title": "Implement role-based authorization middleware on all protected Express routes",
+      "remediation": {
+        "effort": "High",
+        "steps": [
+          "Add `casl` or a custom `requireRole(role)` middleware to package.json; define a permission matrix mapping roles to allowed actions/resources.",
+          "Mount `requireRole('admin')` on administrative endpoints and `requireOwnership(req.user.id, resource.ownerId)` on user-scoped data routes.",
+          "Return HTTP 403 with no details when the caller lacks the required role; never leak which roles exist in error messages.",
+          "Add integration tests that verify a low-privilege token receives 403 on each admin endpoint."
+        ],
+        "code_example": "```js\nfunction requireRole(...roles) {\n  return (req, res, next) => {\n    if (!req.user || !roles.includes(req.user.role))\n      return res.status(403).json({ error: 'Forbidden' });\n    next();\n  };\n}\napp.delete('/admin/users/:id', authenticate, requireRole('admin'), handler);\n```",
+        "reference": "[AC-002]"
+      },
+      "evidence": {
+        "file": "package.json",
+        "line": 5
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "casl|rbac|accesscontrol|express-acl|can\\b",
+          "search_paths": [
+            "package.json"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:22:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "express-app",
+      "component_name": "Express Application",
+      "source": "stride",
+      "t_id": "T-013",
+      "mitigation_ids": [
+        "M-010"
+      ]
+    },
+    {
+      "local_id": "container-infra-002",
+      "threat_category_id": "TH-14",
+      "additional_categories": [],
+      "stride": "Spoofing",
+      "cwe": "CWE-1104",
+      "title": "Mutable Base Image Tag Allows Undetected Image Substitution (Dockerfile:1)",
+      "affected_parameter": null,
+      "scenario": "`Dockerfile:1` specifies `FROM node:20-alpine` using a mutable floating tag. Docker Hub resolves this tag at build time to whatever image is currently published under that name. If the upstream `node:20-alpine` image is compromised, rotated, or poisoned via a registry supply-chain attack, the next `docker build` silently adopts the malicious image without any digest mismatch error. This satisfies the IF-007 FAIL from requirements-violations: no SHA256 digest pins the expected manifest. An attacker with registry write access (or a compromised Docker Hub account) can substitute the base image and execute code in every new build.",
+      "evidence_summary": "`Dockerfile:1` uses `FROM node:20-alpine` with no `@sha256:` digest, making the base image layer non-deterministic and unverifiable.",
+      "impact_description": "A malicious base image is incorporated into the production container image without detection, providing persistent code execution in all deployments built after the substitution.",
+      "likelihood": "Low",
+      "impact": "High",
+      "risk": "Medium",
+      "controls_in_place": "None \u2014 no digest pinning, no image signing (Cosign/Notary) configured.",
+      "mitigation_title": "Pin base image to immutable SHA256 digest in Dockerfile",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Replace `FROM node:20-alpine` with `FROM node:20-alpine@sha256:<current-digest>` \u2014 obtain via `docker buildx imagetools inspect node:20-alpine`.",
+          "Add a Renovate or Dependabot `docker` datasource configuration to open PRs when a new Node 20 LTS Alpine image digest is published, keeping the pin current.",
+          "Optionally verify image signatures with `cosign verify node:20-alpine@sha256:<digest>` in CI before the build step."
+        ],
+        "code_example": "# Dockerfile\nFROM node:20-alpine@sha256:a8560b36e8aeef2b3d6571aa5b7a4e0b1c5f6da1c2a3e4f5b6c7d8e9f0a1b2c3",
+        "reference": "IF-007"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 1
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "container-infra",
+      "component_name": "Container Infrastructure",
+      "source": "stride",
+      "t_id": "T-014",
+      "mitigation_ids": [
+        "M-011"
+      ]
+    },
+    {
+      "local_id": "express-app-008",
+      "threat_category_id": "TH-14",
+      "additional_categories": [
+        "TH-03"
+      ],
+      "stride": "Tampering",
+      "cwe": "CWE-346",
+      "title": "Absent CORS Policy Allows Cross-Origin State-Changing Requests (package.json)",
+      "affected_parameter": null,
+      "scenario": "The application has no CORS configuration (WEB-003 FAIL \u2014 no `cors` package in dependencies). Express by default does not set any `Access-Control-Allow-Origin` header, which means browsers will block cross-origin reads \u2014 but the absence of an explicit restrictive policy leaves the door open for server-side misconfigurations or future additions of wildcard CORS. More critically, pre-flight-exempt simple requests (GET, POST with `application/x-www-form-urlencoded`) are sent by the browser without a pre-flight check and can modify state. Without a defined allowlist, any origin can trigger these.",
+      "evidence_summary": "package.json lists no `cors` package; requirements violation WEB-003 confirms absence of CORS configuration.",
+      "impact_description": "Malicious third-party sites can issue simple cross-origin requests to state-changing endpoints; future wildcard CORS misconfiguration would fully open the API to cross-origin credential theft.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "controls_in_place": "None",
+      "mitigation_title": "Configure restrictive CORS allowlist via the cors middleware",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Install `cors` and configure it with an explicit `origin` allowlist from environment variables: `app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(','), credentials: true }))`.",
+          "Never set `origin: '*'` when `credentials: true` \u2014 browsers block it and it is unsafe.",
+          "Restrict `methods` to only the HTTP verbs each endpoint actually uses."
+        ],
+        "code_example": "```js\nconst cors = require('cors');\napp.use(cors({\n  origin: process.env.ALLOWED_ORIGINS.split(','),\n  methods: ['GET','POST','PUT','DELETE'],\n  credentials: true\n}));\n```",
+        "reference": "[WEB-003]"
+      },
+      "evidence": {
+        "file": "package.json",
+        "line": 5
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "\"cors\"",
+          "search_paths": [
+            "package.json"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:22:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "express-app",
+      "component_name": "Express Application",
+      "source": "stride",
+      "t_id": "T-015",
+      "mitigation_ids": [
+        "M-012"
+      ]
+    },
+    {
+      "local_id": "container-infra-005",
+      "threat_category_id": "TH-14",
+      "additional_categories": [],
+      "stride": "Denial of Service",
+      "cwe": "CWE-400",
+      "title": "No Resource Limits Defined \u2014 Container Can Exhaust Host Resources (Dockerfile)",
+      "affected_parameter": null,
+      "scenario": "The `Dockerfile` defines no memory or CPU limits. No `ulimit` instructions are present, and there is no `docker-compose.yml` to enforce `deploy.resources.limits`. A single runaway request handler (e.g., a regex catastrophe, an infinite loop introduced by a supply-chain compromise, or a legitimate flood of requests) can consume all available host memory and CPU, causing the host and any co-located containers to become unresponsive. Because the process runs as root (see container-infra-004), even a `fork()` bomb would not be constrained by per-user process limits.",
+      "evidence_summary": "`Dockerfile` contains no `ulimit` or resource-limit directive; no `docker-compose.yml` was found in the repository to apply runtime constraints.",
+      "impact_description": "A single compromised or misbehaving container instance can render the entire host and co-located services unavailable.",
+      "likelihood": "Low",
+      "impact": "High",
+      "risk": "Medium",
+      "controls_in_place": "None defined at the image level. Runtime enforcement depends entirely on undocumented deployment configuration.",
+      "mitigation_title": "Define memory and CPU resource limits in docker-compose.yml or container runtime configuration",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add a `docker-compose.yml` (or update deployment manifests) with `deploy.resources.limits.memory` and `deploy.resources.limits.cpus` set to values appropriate for the application's load profile.",
+          "Set `--memory-swap` equal to `--memory` to prevent swap exhaustion.",
+          "Add a health check (`HEALTHCHECK` in the Dockerfile) so the orchestrator can restart the container if it becomes unresponsive."
+        ],
+        "code_example": "# docker-compose.yml\nservices:\n  app:\n    build: .\n    ports:\n      - \"3000:3000\"\n    deploy:\n      resources:\n        limits:\n          cpus: '0.50'\n          memory: 256M",
+        "reference": "CWE-400"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 6
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "ulimit\\|memory\\|cpus\\|resources",
+          "search_paths": [
+            "Dockerfile"
+          ],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:23:40Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "component_id": "container-infra",
+      "component_name": "Container Infrastructure",
+      "source": "stride",
+      "t_id": "T-018",
+      "mitigation_ids": [
+        "M-013"
+      ]
+    }
+  ]
+}

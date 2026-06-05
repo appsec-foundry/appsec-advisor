@@ -1,0 +1,50 @@
+{
+  "verdict_severity": "red",
+  "verdict_prose": "**Verdict — no security layer is operational across either component.**",
+  "framing": "The table below maps each missing security boundary to the component it exposes and the representative findings that confirm the gap.",
+  "weaknesses": [
+    {
+      "category": "Identity and Authentication",
+      "affected_components": ["C-01"],
+      "description": "No authentication library is declared in `package.json`. Every HTTP endpoint on port 3000 is reachable by any anonymous caller — there is no credential check to bypass.",
+      "findings": [
+        { "ref": "T-001", "label": "Missing authentication on all endpoints" },
+        { "ref": "T-013", "label": "No RBAC on any route" }
+      ]
+    },
+    {
+      "category": "Input Validation and Untrusted Input Handling",
+      "affected_components": ["C-01"],
+      "description": "`lodash@4.17.10` accepts prototype-polluting keys in `_.merge` calls (CVE-2019-10744), and no input validation library is declared. Every request body is a direct injection vector into shared prototype state.",
+      "findings": [
+        { "ref": "T-002", "label": "Prototype pollution via lodash" }
+      ]
+    },
+    {
+      "category": "Operations, Runtime and Supply Chain",
+      "affected_components": ["C-02"],
+      "description": "`Dockerfile:4` runs `npm install` without `--ignore-scripts` and no `package-lock.json` is present, making the dependency graph non-deterministic and every build vulnerable to lifecycle-hook code execution. The base image uses a mutable floating tag with no digest pin.",
+      "findings": [
+        { "ref": "T-003", "label": "Supply chain code execution via npm hooks" },
+        { "ref": "T-014", "label": "Mutable base image tag" }
+      ]
+    },
+    {
+      "category": "Cryptography and Secret Management",
+      "affected_components": ["C-01", "C-02"],
+      "description": "No TLS is configured at any layer — the Dockerfile exposes port 3000 with `node server.js` and no reverse proxy or HTTPS setup is declared. All traffic including any credentials flows in plaintext.",
+      "findings": [
+        { "ref": "T-010", "label": "Plaintext HTTP, no TLS" }
+      ]
+    },
+    {
+      "category": "Authorization and Access Control",
+      "affected_components": ["C-02"],
+      "description": "The Dockerfile has no `USER` directive; the container process runs as UID 0. Combined with missing rate limiting, the container surface is both over-privileged and unbounded in resource consumption.",
+      "findings": [
+        { "ref": "T-012", "label": "Container runs as root" },
+        { "ref": "T-011", "label": "No rate limiting on any endpoint" }
+      ]
+    }
+  ]
+}

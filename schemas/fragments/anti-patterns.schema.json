@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/anti-patterns.schema.json",
+  "title": "Management Summary — Architectural Anti-Patterns fragment",
+  "description": "Structured data for the optional '### Architectural Anti-Patterns' callout in the Management Summary. Names the recognized design-level defects the report already articulates in §7 prose, so they are visible at executive level instead of buried in per-control narrative. Authored by the threat-renderer ONLY when at least one genuine architectural anti-pattern is present; omit the file entirely when none apply (the section then renders nothing).",
+  "type": "object",
+  "required": ["anti_patterns"],
+  "additionalProperties": false,
+  "properties": {
+    "anti_patterns": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "description": "Named architectural anti-patterns, most severe first. Each is a structural design defect that spans multiple findings and cannot be closed by a point fix.",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "findings"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 60,
+            "description": "Canonical anti-pattern name — e.g. 'SPA without BFF', 'JWT in localStorage', 'Raw SQL string interpolation', 'Secrets hardcoded in source', 'Missing server-side authorization layer', 'Sanitizer bypass by default'. A named pattern, NOT a generic domain ('Cryptography') or a finding restatement."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["green", "yellow", "red"],
+            "description": "Optional traffic-light cue driving the leading emoji. Defaults to red (architectural anti-patterns are structural by nature). Use yellow only for a partially-mitigated pattern."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 400,
+            "description": "1-2 sentence design-review prose: what structural boundary is defeated and why a single-line patch will not close it. References components/files GENERICALLY (no line-by-line SAST listing — that lives in the linked findings and §7)."
+          },
+          "affected_components": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 8,
+            "description": "Component-ids (or {id, name} dicts) carrying the pattern. The renderer enriches bare ids to '[C-NN](#c-nn) — Name'.",
+            "items": {
+              "oneOf": [
+                { "type": "string", "pattern": "^C-\\d{2,}$" },
+                {
+                  "type": "object",
+                  "required": ["id"],
+                  "properties": {
+                    "id":   { "type": "string", "pattern": "^C-\\d{2,}$" },
+                    "name": { "type": "string", "minLength": 1, "maxLength": 80 }
+                  }
+                }
+              ]
+            }
+          },
+          "findings": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "description": "1-4 representative findings the pattern manifests in. Each {ref, label}; renderer emits '[ref](#anchor) — label'.",
+            "items": {
+              "type": "object",
+              "required": ["ref", "label"],
+              "additionalProperties": false,
+              "properties": {
+                "ref":   { "type": "string", "pattern": "^[FTM]-\\d{3,4}$" },
+                "label": { "type": "string", "minLength": 5, "maxLength": 80 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

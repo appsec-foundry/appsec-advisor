@@ -1,218 +1,214 @@
 # Internal Plugin Packaging
 
-This guide shows how to build a company-branded version of `appsec-advisor`, so developers run your namespace with your defaults:
+Build a company-branded Claude Code plugin so developers run your namespace with your defaults:
 
 ```text
 /acme-appsec:create-threat-model
 ```
 
-It is the same analysis pipeline as the upstream project ([`matthiasrohr/appsec-advisor`](https://github.com/matthiasrohr/appsec-advisor)), just pre-loaded with your requirements catalog, business context, presets, and guardrails. Throughout this guide, "upstream" means that repo.
+The packaged plugin still runs the upstream `appsec-advisor` analysis pipeline. Packaging only adds your plugin name, your bundled `org-profile/`, and your default preset. Use [org-profiles.md](org-profiles.md) for the full profile reference.
 
-This page is the **build runbook**: how to assemble, validate, and ship the branded plugin. For what an org profile actually contains — every field, the schema, CLI flags, and resolution precedence — see the reference, [org-profiles.md](org-profiles.md).
+## Quick start
 
-## Contents
+This is the shortest local loop. Run it in an empty working directory. No CI, no tarball.
 
-- [Quickstart](#quickstart) — minimal local build, no CI
-- [What you own vs. what upstream owns](#what-you-own-vs-what-upstream-owns) — the boundary
-- [Repo layout](#repo-layout) — the target shape
-- [Step 1 — Clone upstream (pinned)](#step-1--clone-upstream-pinned)
-- [Step 2 — Add a `.gitignore`](#step-2--add-a-gitignore)
-- [Step 3 — Write your org profile](#step-3--write-your-org-profile)
-- [Step 4 — Add business context](#step-4--add-business-context)
-- [Step 5 — Add company-specific actors (optional)](#step-5--add-company-specific-actors-optional)
-- [Step 6 — Build the package](#step-6--build-the-package)
-- [Step 7 — Smoke-test the build](#step-7--smoke-test-the-build)
-- [Step 8 — Automate the build in CI](#step-8--automate-the-build-in-ci)
-- [Step 9 — Publish and install](#step-9--publish-and-install)
-- [Keeping in sync with upstream](#keeping-in-sync-with-upstream)
+**1. Set the versions used below.**
 
-## Quickstart
-
-Build a branded plugin from a minimal profile and load it locally. No CI, no tarball, no example repo — just upstream plus a short profile, in four short steps.
-
-**1. Get upstream.** Shallow-clone the pinned release into `appsec-advisor/`:
-
-```bash
-git clone --depth 1 --branch v0.4.0-beta https://github.com/matthiasrohr/appsec-advisor
+```console
+$ APPSEC_ADVISOR_REF=v0.4.0-beta
+$ INTERNAL_VERSION=0.4.0-local
 ```
 
-**2. Write a minimal org profile.** This is your whole config surface; here it sets one default so every scan emits SARIF and is cost-capped. The `compatibility.core` range must cover the upstream release you cloned:
+Use a pinned tag or branch for `APPSEC_ADVISOR_REF`. Avoid `latest` for internal packaging because it makes builds harder to reproduce.
 
-```bash
-mkdir org-profile
-cat > org-profile/org-profile.yaml <<'YAML'
+**2. Create a minimal org profile.**
+
+```console
+$ mkdir -p org-profile
+$ cat > org-profile/org-profile.yaml <<'YAML'
 api_version: appsec-advisor.org-profile/v2
 organization: { id: myorg, name: My Org, profile_version: "1" }
 compatibility: { core: ">=0.4 <0.6" }
-default_preset: secure-default
+default_preset: local-default
 presets:
-  secure-default:
+  local-default:
     base_mode: standard
-    outputs: { sarif: true }            # always produce SARIF for your dashboard
-    guardrails: { max_cost_usd: 10 }    # cap spend per scan
+    outputs: { sarif: true }
+    guardrails: { max_cost_usd: 10 }
 YAML
 ```
 
-**3. Build the plugin tree.** The packager copies upstream, overlays your profile, and validates — `--skip-archive` stops before the tarball:
+This profile is still tiny, but it changes behavior: a plain `/my-appsec:create-threat-model` uses standard depth, emits SARIF, and caps spend at `$10`. `compatibility` is required by the org-profile schema; it prevents packaging a profile with an unsupported upstream plugin version.
 
-```bash
-python3 appsec-advisor/scripts/package_internal_plugin.py \
-  --source appsec-advisor --org-profile org-profile \
-  --name my-appsec --version 0.4.0-dev --skip-archive
+**3. Clone the upstream release.**
+
+```console
+$ git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" https://github.com/matthiasrohr/appsec-advisor upstream/appsec-advisor
 ```
 
-**4. Load it in Claude Code.** Re-run steps 3–4 to pick up any profile edit:
+**4. Build a local branded plugin directory.**
 
-```bash
-claude --plugin-dir build/my-appsec
+```console
+$ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py --source upstream/appsec-advisor --org-profile org-profile --name my-appsec --version "$INTERNAL_VERSION" --skip-archive
 ```
 
-That gives you a working `/my-appsec:create-threat-model` that already runs with *your* default — standard depth, SARIF always on, $10 cost cap — instead of bare upstream defaults. The rest of this guide turns that skeleton into a real setup (a requirements catalog, business context, actors) and, if a team needs prebuilt artifacts, a CI pipeline that publishes an installable tarball.
+**5. Load it in Claude Code.**
 
-## What you own vs. what upstream owns
+```console
+$ claude --plugin-dir build/my-appsec
+```
 
-| You own (in `org-profile/` + packaging repo) | Upstream owns (do not fork) |
-|---|---|
-| plugin name / command namespace | analysis behavior, agents, prompts |
-| requirements catalog source | schemas, QA gates, permissions |
-| business context, actors, presets, guardrails | renderers, export scripts |
-
-Treat the `appsec-advisor` checkout as read-only. Instead of editing it, you overlay your own config on top of it during packaging.
-
-## Repo layout
-
-By the end of the steps below, your internal repo looks like this. You commit `org-profile/` (and a CI file); build outputs stay out of git, and so does upstream's source — only a submodule pin, if you use one:
+**6. Run the branded command in Claude Code.**
 
 ```text
-acme-appsec-plugin/              # your internal repo
-├── .gitignore                   # ignores build/, dist/, (+ upstream/ if fresh-cloned)
-├── upstream/
-│   └── appsec-advisor/          # pinned in Step 1 (submodule pointer, or ignored clone)
-└── org-profile/
-    ├── org-profile.yaml         # Step 3 — defaults, presets, requirements source
-    ├── context/
-    │   └── organization.md      # Step 4 — business context
-    └── actors/
-        └── insiders.yaml        # Step 5 — company-specific actors (optional)
+/my-appsec:create-threat-model
 ```
 
-## Step 1 — Clone upstream (pinned)
+That is enough for a local branded plugin. The following steps turn the same setup into a team-ready package with requirements, business context, optional actors, and CI artifacts.
 
-Check out the pinned upstream release under `upstream/appsec-advisor/` — just a folder to hold the clone. Either way below, upstream's code is **never committed** to your repo; you only pin *which* version to pull. There are two ways to do it.
+## Step 1 - Create the packaging repo
 
-### Submodule — recommended
+Create one small internal repo. It owns your profile and, later in Step 4, one CI pipeline file. It should not contain a copied upstream checkout.
 
-Record the exact upstream commit as a pointer in your own git history:
+First choose how the repo gets upstream:
 
-```bash
-git submodule add https://github.com/matthiasrohr/appsec-advisor upstream/appsec-advisor
-git -C upstream/appsec-advisor checkout v0.4.0-beta
-git commit -am "Pin upstream appsec-advisor v0.4.0-beta"
+| Option | Use when | How upstream appears | Trade-off |
+|---|---|---|---|
+| **Option 1 - CI clones upstream** | you want the simplest repo; this is what the examples use | local builds and CI clone `APPSEC_ADVISOR_REF` into ignored `upstream/appsec-advisor/` | pin lives in docs/CI variables, not in git history |
+| **Option 2 - Git submodule** | you want the upstream pin visible and reviewable in your repo history | git tracks `upstream/appsec-advisor/` as a submodule pointer | more submodule ceremony for clone/update workflows |
+
+The `.gitignore` difference follows from that choice: Option 1 ignores `upstream/`; Option 2 must not ignore `upstream/` because the submodule pointer is tracked.
+
+Run exactly one of the following setup blocks.
+
+### Option 1 - CI clones upstream
+
+Use this unless you explicitly want a Git submodule. The packaging repo commits only your profile and CI file; `upstream/appsec-advisor/` is created later by the local build command or CI pipeline and stays ignored.
+
+```console
+# Create the packaging repo skeleton.
+$ mkdir acme-appsec-plugin
+$ cd acme-appsec-plugin
+$ git init
+$ mkdir -p org-profile/context org-profile/actors
+$ printf 'build/\ndist/\nupstream/\n' > .gitignore
 ```
 
-Why it's the better default:
+After Step 2, the repo has this shape:
 
-- **Reproducible.** The pin is an immutable commit SHA, so every build — yours, a teammate's, CI — uses the exact same upstream. A tag can be re-pointed upstream; a submodule SHA cannot.
-- **Auditable.** Bumping the upstream version is a one-line, reviewable diff in your repo's history, not an invisible change in a CI variable.
-
-It still does not vendor upstream's code — your repo commits only the pointer; `git submodule update` (or `git clone --recurse-submodules`) fetches the actual files. The trade-off is the usual submodule ceremony. If you choose this, drop the `upstream/appsec-advisor/` line from the `.gitignore` in Step 2.
-
-### Fresh clone — simplest
-
-One command clones and pins a release tag; nothing is committed:
-
-```bash
-git clone --depth 1 --branch v0.4.0-beta \
-  https://github.com/matthiasrohr/appsec-advisor upstream/appsec-advisor
+```text
+acme-appsec-plugin/
+├── .gitignore
+├── org-profile/
+│   ├── org-profile.yaml
+│   ├── context/
+│   │   └── organization.md
+│   └── actors/
+│       └── insiders.yaml
 ```
 
-This is what the example CI pipelines do — they re-clone on every run, so there is no submodule to manage and the pin lives in the `APPSEC_ADVISOR_REF` variable. Good for quick local use too. `--branch` takes a tag or branch; for a bare commit SHA, clone without it, then `git -C upstream/appsec-advisor fetch --depth 1 origin <sha> && git -C upstream/appsec-advisor checkout --detach FETCH_HEAD`.
+Step 4 adds either `.github/workflows/package.yml` or `.gitlab-ci.yml`.
 
-Substitute your own fork URL in either command if you maintain one.
+### Option 2 - Git submodule
 
-## Step 2 — Add a `.gitignore`
+Use this when the upstream plugin version should be pinned in your packaging repo history. Here `upstream/appsec-advisor/` is tracked as a submodule pointer, so do not ignore `upstream/`.
 
-Keep the build outputs out of git:
-
-```gitignore
-build/
-dist/
-upstream/appsec-advisor/    # omit this line if you pinned upstream as a submodule
+```console
+# Create the packaging repo skeleton with a tracked upstream submodule.
+$ mkdir acme-appsec-plugin
+$ cd acme-appsec-plugin
+$ git init
+$ mkdir -p org-profile/context org-profile/actors
+$ printf 'build/\ndist/\n' > .gitignore
+$ APPSEC_ADVISOR_REF=v0.4.0-beta
+$ git submodule add https://github.com/matthiasrohr/appsec-advisor upstream/appsec-advisor
+$ git -C upstream/appsec-advisor checkout "$APPSEC_ADVISOR_REF"
+$ git add .gitignore .gitmodules upstream/appsec-advisor
+$ git commit -m "Pin upstream appsec-advisor"
 ```
 
-The last line ignores a fresh-cloned upstream so it is never vendored into your repo. If you used a submodule (Step 1), leave it out — the submodule pointer is meant to be tracked. The packaging script lives inside the checkout, which is why the later commands call `upstream/appsec-advisor/scripts/package_internal_plugin.py`.
+Step 4 still adds either `.github/workflows/package.yml` or `.gitlab-ci.yml`.
 
-## Step 3 — Write your org profile
+The example repos already use Option 1:
 
-`org-profile/org-profile.yaml` is your entire config surface. Each preset maps to one upstream mode (`quick`, `standard`, or `thorough`) and layers your outputs and guardrails on top. This is where you point at your requirements catalog and declare the presets your teams may run:
+- [GitHub Actions example](../examples/internal-packaging-github)
+- [GitLab CI example](../examples/internal-packaging-gitlab)
+
+## Step 2 - Write the org profile
+
+`org-profile/org-profile.yaml` is the only company-owned configuration surface. Start with two presets: one default CI-style scan and one deeper release review.
 
 ```yaml
-# org-profile/org-profile.yaml
 api_version: appsec-advisor.org-profile/v2
 
-organization: { id: acme, name: Acme Corp, profile_version: "2026.05.1" }
-compatibility: { core: ">=0.4 <0.6" }      # upstream versions this profile supports
+organization:
+  id: acme
+  name: Acme Corp
+  profile_version: "2026.05.1"
+
+compatibility:
+  core: ">=0.4 <0.6"
+
 default_preset: ci-standard
 
 requirements:
   source:
     requirements_yaml_url: "https://security.acme.example/appsec-requirements.yaml"
+    label: "Acme AppSec Requirements"
+    cache: true
     fail_mode: cache_fallback
+  create_threat_model:
+    default_active: true
+    quick_default_active: false
 
 llm_context:
   documents:
-    - { id: organization, path: context/organization.md, purpose: organization_background, max_bytes: 50000 }
+    - id: organization
+      path: context/organization.md
+      purpose: organization_background
+      max_bytes: 50000
 
 actors:
-  inherit_defaults: true       # keep the 9 built-in actor classes
-  add: actors/*.yaml           # glob, resolved relative to org-profile/
+  inherit_defaults: true
+  add: actors/*.yaml
 
 presets:
   ci-standard:
     base_mode: standard
-    outputs: { sarif: true }
-    guardrails: { max_wall_time: 1h, max_cost_usd: 20 }
+    outputs:
+      sarif: true
+    requirements:
+      enabled: true
+    guardrails:
+      max_wall_time: 1h
+      max_cost_usd: 20
+
   release-review:
     base_mode: thorough
-    outputs: { sarif: true, pdf: true, pentest_tasks: true }
-    guardrails: { max_wall_time: 3h, max_cost_usd: 80 }
+    outputs:
+      sarif: true
+      pdf: true
+      pentest_tasks: true
+    requirements:
+      enabled: true
+    guardrails:
+      max_wall_time: 3h
+      max_cost_usd: 80
 ```
 
-What each field controls:
+Add the referenced context file:
 
-| Field | Controls |
-|---|---|
-| `default_preset` | the preset a plain `create-threat-model` run uses |
-| `requirements.source` | the requirements catalog the analysis maps findings against |
-| `llm_context.documents` | the business-context files loaded into the analysis (Step 4) |
-| `actors` | which threat actors apply (built-ins + your additions, Step 5) |
-| `presets.*.guardrails` | per-run ceilings — `max_cost_usd`, `max_wall_time` |
+```markdown
+# Acme Corp - security context
 
-For the full reference, see [org-profiles.md](org-profiles.md); the schema lives at [../schemas/org-profile.schema.yaml](../schemas/org-profile.schema.yaml).
-
-## Step 4 — Add business context
-
-Create the context file your profile referenced under `llm_context.documents`. It describes your business, critical flows, and identity architecture so the analysis is grounded in how your systems actually work:
-
-```bash
-mkdir -p org-profile/context
-cat > org-profile/context/organization.md <<'MD'
-# Acme Corp — security context
-
-Acme runs a B2B payments platform. Critical flows: merchant onboarding,
-payout settlement, and admin refunds. Identity: Okta SSO for staff,
-per-tenant API keys for merchants.
-MD
+Acme runs a B2B payments platform. Critical flows: merchant onboarding, payout settlement, and admin refunds. Staff use Okta SSO; merchants use tenant-scoped API keys.
 ```
 
-Context files are **untrusted reference data**. They inform the analysis but cannot change severity rules, QA gates, schemas, or permissions.
+Context files are untrusted reference data. They inform the analysis, but they cannot change severity rules, QA gates, schemas, permissions, or tool behavior.
 
-## Step 5 — Add company-specific actors (optional)
-
-Your profile's `actors.add: actors/*.yaml` glob picks up any actor files you drop here, on top of the 9 built-in actor classes. Add one only if you have threat actors specific to your org (insiders, partners). Each file is a top-level `actors:` array:
+Custom actors are optional. If you keep `actors.add: actors/*.yaml`, actor files must contain a top-level `actors:` array:
 
 ```yaml
-# org-profile/actors/insiders.yaml
 actors:
   - id: ACT-E-1
     label: acme-privileged-contractor
@@ -225,82 +221,240 @@ actors:
     heatmap_slug: repo-read
 ```
 
-If you have no custom actors, skip this step — the glob simply matches nothing.
+## Step 3 - Build and validate
 
-## Step 6 — Build the package
+Make sure `upstream/appsec-advisor/` exists. With Option 1 from Step 1, clone it locally:
 
-Run the upstream packager. Don't reimplement its copy, patch, rewrite, validate, and tar logic in your CI — `--org-profile` is its only config input:
+```console
+# Option 1 only: create the ignored upstream checkout.
+$ APPSEC_ADVISOR_REF=v0.4.0-beta
+$ git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" https://github.com/matthiasrohr/appsec-advisor upstream/appsec-advisor
+```
 
-```bash
-python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
+With Option 2, the directory is the submodule checkout. Initialize it if this is a fresh clone of your packaging repo:
+
+```console
+# Option 2 only: fetch the tracked submodule checkout.
+$ git submodule update --init --recursive
+```
+
+Build the packaged plugin:
+
+```console
+$ INTERNAL_VERSION=0.4.0-acme.20260517
+$ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
   --source upstream/appsec-advisor \
   --org-profile org-profile \
   --name acme-appsec \
-  --version 0.4.0-acme.20260517
+  --version "$INTERNAL_VERSION"
 ```
 
-In one pass the script copies upstream into `build/acme-appsec/` (skipping VCS, caches, and runtime outputs), overlays your `org-profile/`, sets `name`/`version` in `plugin.json`, enables your profile in `config.json`, rewrites the command namespace `appsec-advisor:` → `acme-appsec:`, validates everything, and writes `dist/acme-appsec-0.4.0-acme.20260517.tgz` plus its `.sha256`. Pick a `--version` inside the profile's `compatibility.core` range, or validation rejects the build.
+The packager copies upstream into `build/acme-appsec/`, overlays `org-profile/`, rewrites `appsec-advisor:` command references to `acme-appsec:`, enables the bundled profile in `config.json`, validates the result, and writes `dist/acme-appsec-${INTERNAL_VERSION}.tgz` plus its `.sha256`.
 
-You never edit `config.json` by hand — the packager wires the profile in for you, writing a path relative to the self-contained plugin root:
+Run the smoke test after every build:
 
-```json
-"organization_profile": { "enabled": true, "path": "org-profile/org-profile.yaml" }
+```console
+$ python3 upstream/appsec-advisor/scripts/smoke_test_package.py build/acme-appsec --name acme-appsec
 ```
 
-To iterate locally without a tarball, add `--skip-archive` and load the folder directly with `claude --plugin-dir build/acme-appsec` (this is the [Quickstart](#quickstart) loop).
+Use `--skip-archive` while editing locally:
 
-## Step 7 — Smoke-test the build
-
-The build validates as it goes, but you can independently assert the finished artifact's contract — plugin name, org-profile wiring, a fully rewritten namespace, and a discoverable entry command — with a fast, no-API check:
-
-```bash
-python3 upstream/appsec-advisor/scripts/smoke_test_package.py \
-  build/acme-appsec --name acme-appsec
+```console
+$ INTERNAL_VERSION=0.4.0-dev
+$ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py --source upstream/appsec-advisor --org-profile org-profile --name acme-appsec --version "$INTERNAL_VERSION" --skip-archive
+$ claude --plugin-dir build/acme-appsec
 ```
 
-It exits non-zero on the first broken assertion, so it works as the last step of a CI job (both example pipelines run it) or against an extracted tarball on a developer machine.
+The `--version` must satisfy `compatibility.core` in the org profile.
 
-## Step 8 — Automate the build in CI
+## Step 4 - Add CI
 
-Put Steps 1, 6, and 7 in a pipeline. If validation fails (broken paths, unknown presets, unsupported compatibility, missed namespace rewrites), the packager exits non-zero before writing any artifact. Copy a ready-made example instead of writing one from scratch:
+Step 4 adds one pipeline file to the packaging repo:
 
-- GitHub Actions: [`examples/internal-packaging-github/.github/workflows/package.yml`](../examples/internal-packaging-github/.github/workflows/package.yml)
-- GitLab CI: [`examples/internal-packaging-gitlab/.gitlab-ci.yml`](../examples/internal-packaging-gitlab/.gitlab-ci.yml)
+- GitHub Actions: `.github/workflows/package.yml`
+- GitLab CI: `.gitlab-ci.yml`
 
-Both clone the pinned upstream, run the packager, smoke-test the build, and upload the tarball. Set these variables:
+The embedded examples below use Option 1 from Step 1, where CI clones upstream during the job. They do the same three operations as the local build:
 
-| Variable | Value |
-|---|---|
-| `APPSEC_ADVISOR_URL` | `https://github.com/matthiasrohr/appsec-advisor.git` (or your fork) |
-| `APPSEC_ADVISOR_REF` | pinned tag or branch, e.g. `v0.4.0-beta` |
-| `INTERNAL_NAME` *(optional)* | plugin name, default `acme-appsec` |
-| `VERSION` *(optional)* | release string, e.g. `0.4.0-acme.20260517` |
+1. clone a pinned upstream ref into `upstream/appsec-advisor`
+2. run `scripts/package_internal_plugin.py`
+3. run `scripts/smoke_test_package.py`
 
-## Step 9 — Publish and install
+For Option 1, set these CI variables:
 
-Publish `dist/*.tgz` through whatever channel your org already trusts — a release asset, artifact registry, bootstrap script, managed image, or devcontainer. Developers then install the approved artifact rather than building their own:
+| Variable | Required | Meaning |
+|---|---:|---|
+| `APPSEC_ADVISOR_URL` | yes | upstream or fork URL, for example `https://github.com/matthiasrohr/appsec-advisor.git` |
+| `APPSEC_ADVISOR_REF` | yes | pinned tag or branch, for example `v0.4.0-beta` |
+| `INTERNAL_NAME` | no | plugin namespace, default `acme-appsec` |
+| `VERSION` | no | package version; defaults to a CI snapshot version |
 
-```bash
-mkdir -p ~/.claude/plugins
-tar -xzf acme-appsec-0.4.0-acme.20260517.tgz -C ~/.claude/plugins
-claude --plugin-dir ~/.claude/plugins/acme-appsec
+The example clone command uses `git clone --depth 1 --branch "$APPSEC_ADVISOR_REF"`, which is correct for tags and branches. To pin an arbitrary commit SHA, replace that line with a clone plus `git fetch --depth 1 origin <sha>` and checkout.
+
+For Option 2, remove the clone step from the example and configure your CI checkout to initialize submodules. Then run the same package and smoke-test commands against `upstream/appsec-advisor/`.
+
+<details>
+<summary>GitHub Actions pipeline</summary>
+
+```yaml
+name: package-internal-plugin
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  INTERNAL_NAME: ${{ vars.INTERNAL_NAME || 'acme-appsec' }}
+  PYTHONDONTWRITEBYTECODE: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout packaging repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build dependencies
+        run: pip install --quiet pyyaml jsonschema packaging
+
+      - name: Resolve version
+        id: ver
+        env:
+          VERSION: ${{ vars.VERSION }}
+        run: |
+          if [ -n "${VERSION}" ]; then
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.4.0-internal.${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Clone pinned upstream
+        env:
+          APPSEC_ADVISOR_URL: ${{ vars.APPSEC_ADVISOR_URL }}
+          APPSEC_ADVISOR_REF: ${{ vars.APPSEC_ADVISOR_REF }}
+        run: |
+          test -n "${APPSEC_ADVISOR_URL}" || { echo "APPSEC_ADVISOR_URL not set"; exit 2; }
+          test -n "${APPSEC_ADVISOR_REF}" || { echo "APPSEC_ADVISOR_REF not set"; exit 2; }
+          git clone --depth 1 --branch "${APPSEC_ADVISOR_REF}" "${APPSEC_ADVISOR_URL}" upstream/appsec-advisor
+
+      - name: Package plugin
+        run: |
+          python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
+            --source upstream/appsec-advisor \
+            --org-profile org-profile \
+            --name "${INTERNAL_NAME}" \
+            --version "${{ steps.ver.outputs.version }}"
+
+      - name: Smoke-test package
+        run: |
+          python3 upstream/appsec-advisor/scripts/smoke_test_package.py \
+            "build/${INTERNAL_NAME}" --name "${INTERNAL_NAME}"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.INTERNAL_NAME }}-${{ steps.ver.outputs.version }}
+          path: |
+            dist/${{ env.INTERNAL_NAME }}-${{ steps.ver.outputs.version }}.tgz
+            dist/${{ env.INTERNAL_NAME }}-${{ steps.ver.outputs.version }}.tgz.sha256
+          retention-days: 30
 ```
 
-That loads your bundled profile, applies its `default_preset`, fetches your requirements catalog, and enforces your guardrails:
+Runnable copy: [examples/internal-packaging-github/.github/workflows/package.yml](../examples/internal-packaging-github/.github/workflows/package.yml)
+
+</details>
+
+<details>
+<summary>GitLab CI pipeline</summary>
+
+```yaml
+stages:
+  - package
+
+variables:
+  INTERNAL_NAME: "acme-appsec"
+  VERSION: "0.4.0-internal.${CI_COMMIT_SHORT_SHA}"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+default:
+  image: python:3.11-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
+    - pip install --quiet pyyaml jsonschema packaging
+
+package:
+  stage: package
+  script:
+    - test -n "$APPSEC_ADVISOR_URL" || { echo "APPSEC_ADVISOR_URL not set"; exit 2; }
+    - test -n "$APPSEC_ADVISOR_REF" || { echo "APPSEC_ADVISOR_REF not set"; exit 2; }
+    - git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" "$APPSEC_ADVISOR_URL" upstream/appsec-advisor
+    - >
+      python3 upstream/appsec-advisor/scripts/package_internal_plugin.py
+      --source upstream/appsec-advisor
+      --org-profile org-profile
+      --name "$INTERNAL_NAME"
+      --version "$VERSION"
+    - python3 upstream/appsec-advisor/scripts/smoke_test_package.py "build/${INTERNAL_NAME}" --name "${INTERNAL_NAME}"
+  artifacts:
+    name: "${INTERNAL_NAME}-${VERSION}"
+    paths:
+      - "dist/${INTERNAL_NAME}-${VERSION}.tgz"
+      - "dist/${INTERNAL_NAME}-${VERSION}.tgz.sha256"
+    expire_in: 30 days
+```
+
+Runnable copy: [examples/internal-packaging-gitlab/.gitlab-ci.yml](../examples/internal-packaging-gitlab/.gitlab-ci.yml)
+
+</details>
+
+## Step 5 - Publish and install
+
+Publish `dist/*.tgz` through your normal internal channel: CI artifact, release asset, package registry, Artifactory, Nexus, S3, developer portal, devcontainer image, or workstation bootstrap.
+
+Developers install the approved artifact:
+
+```console
+$ INTERNAL_VERSION=0.4.0-acme.20260517
+$ mkdir -p ~/.claude/plugins
+$ tar -xzf "acme-appsec-${INTERNAL_VERSION}.tgz" -C ~/.claude/plugins
+$ claude --plugin-dir ~/.claude/plugins/acme-appsec
+```
+
+Then they run:
 
 ```text
 /acme-appsec:create-threat-model
 ```
 
-Developers can still choose another approved preset, for example `--preset release-review`.
+To use another bundled preset:
 
-## Keeping in sync with upstream
+```text
+/acme-appsec:create-threat-model --preset release-review
+```
 
-When a new upstream release lands:
+## Step 6 - Update upstream
 
-1. Bump the pinned `upstream/appsec-advisor` ref (Step 1).
-2. Rebuild and re-run validation (Step 6) and the smoke test (Step 7).
-3. End-to-end check: run `/acme-appsec:create-threat-model --dry-run` on a small repo — it exercises the real pipeline with your bundled profile and writes to a temp directory instead of a report in your repo.
-4. Publish a new internal artifact (Step 9).
+When upstream releases a new version:
 
-Prefer small packaging changes over forking the prompts, schemas, renderers, or scripts. If you genuinely need to change analysis behavior, treat it as a real fork: patch it deliberately, keep a changelog, and rerun the upstream tests.
+1. update `APPSEC_ADVISOR_REF` or your local clone/submodule pin
+2. make sure `compatibility.core` covers the new package version
+3. rebuild the package
+4. run the smoke test
+5. run one small dry run with the packaged plugin
+6. publish a new internal artifact
+
+Keep packaging changes small. If you need to change analysis behavior, treat it as a real fork and test it as one.

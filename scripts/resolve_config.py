@@ -2079,6 +2079,10 @@ def _format_reasoning_summary(cfg: dict) -> str:
 def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
 
+    org_summary = _format_org_profile_summary(cfg)
+    if org_summary:
+        rows.append(("Org profile", org_summary))
+
     outputs = _format_outputs_summary(cfg)
     if outputs:
         rows.append(("Outputs", outputs))
@@ -2165,6 +2169,25 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
         rows.append(("Limits", " / ".join(deadline_parts)))
 
     return rows
+
+
+def _format_org_profile_summary(cfg: dict) -> str:
+    org = cfg.get("org_profile") or {}
+    if not org.get("active"):
+        return ""
+    preset = cfg.get("preset") or {}
+    name = org.get("name") or org.get("id") or "active"
+    org_id = org.get("id")
+    if org_id and org_id != name:
+        name = f"{name} ({org_id})"
+    parts = [name]
+    preset_name = preset.get("name")
+    if preset_name:
+        parts.append(f"preset {preset_name}")
+    source = org.get("source")
+    if source:
+        parts.append(f"source {source}")
+    return ", ".join(parts)
 
 
 def _format_outputs_summary(cfg: dict) -> str:

@@ -3268,3 +3268,40 @@ def test_section7_h4_status_accepts_badge_and_intro_tolerates_it(tmp_path: Path)
     # the Status line must NOT be mistaken for the intro paragraph
     assert not any("no positive intro" in i for i in intro_report.issues), intro_report.issues
     assert not any("too short" in i for i in intro_report.issues), intro_report.issues
+
+
+def test_section7_h4_positive_intro_skips_anti_pattern_label(tmp_path: Path):
+    """An optional `⚠ **Anti-pattern:**` metadata line between the Status badge
+    and the intro is skipped by the positive-intro check — the real intro
+    paragraph (not the label) is the one validated."""
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [Password Login](#password-login).
+
+            #### Password Login
+
+            **Status:** 🔴 Unsafe — raw SQL login lookup allows authentication bypass.
+
+            ⚠ **Anti-pattern:** Raw SQL string interpolation
+
+            The login route at routes/login.ts builds a SQL string from the
+            submitted email and the hashed password before issuing a session
+            token, so any caller who controls the email field controls the query.
+
+            **Security assessment**
+
+            The query interpolates user input.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+    intro_report = qa.check_section7_h4_positive_intro(md)
+    assert not any("no positive intro" in i for i in intro_report.issues), intro_report.issues
+    assert not any("too short" in i for i in intro_report.issues), intro_report.issues

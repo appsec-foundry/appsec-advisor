@@ -138,6 +138,60 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
         assert forbidden not in ms_slice, f"forbidden MS heading leaked: {forbidden!r}"
 
 
+def test_architectural_anti_patterns_absent_renders_nothing(tmp_path: Path) -> None:
+    """The optional Architectural Anti-Patterns callout is omitted entirely when
+    no ms-anti-patterns.json fragment is present (the default fixture) — no empty
+    heading, no crash."""
+    out = _prepare_output_dir(tmp_path)
+    assert not (out / ".fragments" / "ms-anti-patterns.json").exists()
+    rendered, _ = compose.render(CONTRACT, out)
+    assert "### Architectural Anti-Patterns" not in rendered
+
+
+def test_architectural_anti_patterns_renders_after_verdict(tmp_path: Path) -> None:
+    """When ms-anti-patterns.json is present, the callout renders inside the
+    Management Summary, immediately after the Verdict and before the Security
+    Posture section, naming each pattern with a severity emoji and a linkified
+    finding reference."""
+    out = _prepare_output_dir(tmp_path)
+    frag = {
+        "anti_patterns": [
+            {
+                "name": "SPA without BFF",
+                "severity": "red",
+                "description": "The SPA holds its sole session credential in "
+                "localStorage with no Backend-for-Frontend to keep it server-side, "
+                "so any XSS yields full token exfiltration.",
+                "affected_components": ["C-01"],
+                "findings": [{"ref": "T-001", "label": "JWT in localStorage"}],
+            },
+            {
+                "name": "Raw SQL string interpolation",
+                "description": "Login and search interpolate untrusted input "
+                "directly into raw SQL, bypassing the ORM parameter binding across "
+                "multiple routes.",
+                "findings": [{"ref": "F-002", "label": "SQL injection bypass"}],
+            },
+        ]
+    }
+    (out / ".fragments" / "ms-anti-patterns.json").write_text(json.dumps(frag))
+
+    rendered, _ = compose.render(CONTRACT, out)
+    ms_slice = rendered.split("## Management Summary", 1)[1].split("\n## ", 1)[0]
+
+    assert "### Architectural Anti-Patterns" in ms_slice
+    assert "**SPA without BFF**" in ms_slice
+    assert "**Raw SQL string interpolation**" in ms_slice
+    # Ordering: Verdict → Anti-Patterns → Security Posture.
+    v = ms_slice.find("### Verdict")
+    a = ms_slice.find("### Architectural Anti-Patterns")
+    s = ms_slice.find("### Security Posture & Top Threats")
+    assert v < a < s, f"anti-patterns out of order: verdict={v} ap={a} posture={s}"
+    # A linkified finding reference (T-001 normalises to the F-001 anchor).
+    assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), \
+        f"no linkified finding in anti-patterns callout: {ms_slice[a:s]!r}"
+
+
 def test_render_is_deterministic(tmp_path: Path) -> None:
     """Identical fragments + yaml must produce byte-identical output."""
     out1 = _prepare_output_dir(tmp_path / "a")
@@ -179,13 +233,13 @@ def test_top_threats_has_five_columns(tmp_path: Path) -> None:
 
 
 def test_figure1_solid_edges_are_self_describing(tmp_path: Path) -> None:
-    """Figure 1 DIRECT (solid) attack edges name every glyph they carry
-    (``① Injection ④ Secret Exposure``) so each attacked component reads on its
-    own; FOLLOW-ON (dotted) propagation edges reference the already-named attack
-    by bare number. When the diagram is too complex the solid edges fall back to
-    bare numbers (the legend names them). Regression for the 2026-06-02 request:
-    the file-upload / B2B arrows must carry their class titles, not a cryptic
-    ``① ④``."""
+    """Figure 1 names each threat glyph ONCE PER ACTOR — on the first solid
+    attack edge from that actor that carries it (``① Injection ⑥ XSS``) — and
+    references it by BARE number on every later edge from the same actor and on
+    every FOLLOW-ON (dotted) propagation edge. So the diagram is self-describing
+    (no legend lookup needed) without re-printing a class name on every arrow.
+    Regression for the 2026-06-05 request: busy single-actor figures (juice-shop)
+    must stay named, not collapse to cryptic bare ``① ④``."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     m = re.search(r"```mermaid\nflowchart TB.+?```", rendered, re.DOTALL)
@@ -193,7 +247,8 @@ def test_figure1_solid_edges_are_self_describing(tmp_path: Path) -> None:
         return  # fixture produced no Figure 1 (no attack paths) → nothing to verify
     fig1 = m.group(0)
     glyphs = "①②③④⑤⑥⑦"
-    solid = re.findall(r'==>\|"([^"]*)"', fig1)
+    # Capture (actor, label) per solid edge so we can assert the per-actor rule.
+    solid = re.findall(r'^\s*(\S+)\s+==>\|"([^"]*)"', fig1, re.MULTILINE)
     dotted = re.findall(r'-\.->\|"([^"]*)"', fig1)
     if not solid:
         return
@@ -201,50 +256,30 @@ def test_figure1_solid_edges_are_self_describing(tmp_path: Path) -> None:
     def _glyphs_in(lbl: str) -> list[str]:
         return re.findall(rf"[{glyphs}]", lbl)
 
-    total = sum(len(_glyphs_in(lbl)) for lbl in solid)
-    busiest = max((len(_glyphs_in(lbl)) for lbl in solid), default=0)
-    compact = total > 12 or busiest > 6
-
-    if compact:
-        # Reduced form: every solid glyph is bare (no inline class title).
-        for lbl in solid:
-            for gly in _glyphs_in(lbl):
+    # Per actor: the FIRST solid edge carrying a glyph names it; later edges from
+    # the same actor reference it bare. Track which (actor, glyph) were named.
+    named: set[tuple[str, str]] = set()
+    for actor, lbl in solid:
+        for gly in _glyphs_in(lbl):
+            titled = bool(re.search(rf"{gly}\s+[A-Za-z]", lbl))
+            if (actor, gly) in named:
+                assert not titled, \
+                    f"actor {actor} re-titles already-named glyph {gly}: {lbl!r}"
+            else:
+                assert titled, \
+                    f"actor {actor} first use of glyph {gly} not named: {lbl!r}"
+                named.add((actor, gly))
+    # At least one glyph is named somewhere (sanity — not a fully-bare diagram).
+    assert any(re.search(rf"[{glyphs}]\s+[A-Za-z]", lbl) for _, lbl in solid), \
+        f"no named glyph on any solid attack edge: {solid}"
+    # Dotted edges reference by bare number — a glyph already named on any solid
+    # edge must NOT be re-titled on a dotted edge.
+    solid_named = {g for _, lbl in solid for g in _glyphs_in(lbl)}
+    for lbl in dotted:
+        for gly in _glyphs_in(lbl):
+            if gly in solid_named:
                 assert not re.search(rf"{gly}\s+[A-Za-z]", lbl), \
-                    f"compact diagram should drop names, but {gly} is titled: {lbl!r}"
-    else:
-        # Self-describing: every glyph on every solid edge is followed by a name.
-        for lbl in solid:
-            for gly in _glyphs_in(lbl):
-                assert re.search(rf"{gly}\s+[A-Za-z]", lbl), \
-                    f"solid edge glyph {gly} not named (self-describing rule): {lbl!r}"
-        assert any(re.search(rf"[{glyphs}]\s+[A-Za-z]", lbl) for lbl in solid), \
-            f"no named glyph on any solid attack edge: {solid}"
-        # Dotted edges reference by bare number — a glyph already named on a
-        # solid edge must NOT be re-titled on a dotted edge.
-        solid_named = {g for lbl in solid for g in _glyphs_in(lbl)}
-        for lbl in dotted:
-            for gly in _glyphs_in(lbl):
-                if gly in solid_named:
-                    assert not re.search(rf"{gly}\s+[A-Za-z]", lbl), \
-                        f"dotted edge re-titles already-named glyph {gly}: {lbl!r}"
-
-
-def test_fig1_compact_label_threshold() -> None:
-    """The Figure 1 complexity guard reduces solid-edge labels to bare numbers
-    only once the glyph payload crosses the threshold."""
-    f = compose._fig1_use_compact_labels
-    assert f({}) is False
-    # Current juice-shop shape: 5 + 2 + 1 + 1 = 9 glyphs, busiest 5 → full names.
-    assert f({
-        ("a", "C1"): list("①②③④⑤"),
-        ("a", "C2"): ["①", "④"],
-        ("a", "C3"): ["⑤"],
-        ("a", "C4"): ["⑥"],
-    }) is False
-    # Many attacked components push the total over the limit → compact.
-    assert f({("a", f"C{i}"): ["①", "②", "③"] for i in range(5)}) is True  # 15 total
-    # One very busy single edge → compact even if the total is modest.
-    assert f({("a", "C1"): list("①②③④⑤⑥⑦")}) is True  # busiest 7 > 6
+                    f"dotted edge re-titles already-named glyph {gly}: {lbl!r}"
 
 
 def test_top_threats_rows_self_anchor_the_path_glyph(tmp_path: Path) -> None:

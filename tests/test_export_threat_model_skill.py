@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -223,8 +224,52 @@ def test_html_helper_reuses_pdf_helpers():
 
     # Functions imported from export_pdf should be reachable.
     assert export_html.md_to_html.__module__ == "export_pdf"
+    assert export_html.probe_mmdc.__module__ == "export_pdf"
     assert export_html.render_mermaid_blocks.__module__ == "export_pdf"
     assert export_html.rewrite_vscode_links.__module__ == "export_pdf"
+
+
+def test_html_require_mermaid_probes_real_renderer():
+    """--require-mermaid must catch mmdc+Chrome failures, not just PATH."""
+    sys.path.insert(0, str(SCRIPTS))
+    import importlib
+
+    if "export_html" in sys.modules:
+        importlib.reload(sys.modules["export_html"])
+    import export_html  # noqa: E402
+
+    with (
+        patch.object(export_html, "check_tool", return_value="/usr/bin/fake"),
+        patch.object(export_html, "probe_runs", return_value=(True, "ok")),
+        patch.object(
+            export_html,
+            "probe_mmdc",
+            return_value=(False, "present but cannot render (missing/broken Chrome for Puppeteer): err"),
+        ),
+    ):
+        ok, msgs = export_html.preflight(require_mermaid=True)
+
+    assert ok is False
+    assert any("mmdc" in m and "cannot render" in m for m in msgs)
+
+
+def test_html_does_not_probe_mmdc_when_not_required():
+    """HTML remains lenient by default: mmdc can be absent or unprobed."""
+    sys.path.insert(0, str(SCRIPTS))
+    import importlib
+
+    if "export_html" in sys.modules:
+        importlib.reload(sys.modules["export_html"])
+    import export_html  # noqa: E402
+
+    with (
+        patch.object(export_html, "check_tool", return_value="/usr/bin/fake"),
+        patch.object(export_html, "probe_runs", return_value=(True, "ok")),
+        patch.object(export_html, "probe_mmdc", side_effect=AssertionError("probe must not run")),
+    ):
+        ok, _ = export_html.preflight(require_mermaid=False)
+
+    assert ok is True
 
 
 def test_html_helper_missing_input_exits_two(tmp_path: Path):

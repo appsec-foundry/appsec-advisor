@@ -1,0 +1,143 @@
+schema_version: 1
+categories:
+- id: TH-03
+  title: Cryptographic Failures
+  description: 'Cryptographic primitives misused — weak algorithms, hardcoded keys,
+    missing salt, broken randomness, confused responsibilities between auth and storage
+    crypto.
+
+    '
+  stride:
+  - Information Disclosure
+  - Tampering
+  cwe_pillar: CWE-693
+  cwe_canonical: CWE-310
+  cwe_top25_members:
+  - CWE-798
+  owasp_top10_2021: A02
+  owasp_asvs: V6.2
+  typical_findings:
+  - MD5 / SHA-1 for password hashing
+  - Hardcoded RSA / HMAC / symmetric keys
+  - Deterministic derived passwords
+  - Missing salt / static IV
+  - Unauthenticated encryption modes (ECB)
+- id: TH-06
+  title: Broken Access Control
+  description: 'Authorization checks missing, inconsistent, or evaded — IDOR, mass
+    assignment of privileged fields, horizontal/vertical privilege abuse.
+
+    '
+  stride:
+  - Elevation of Privilege
+  cwe_pillar: CWE-284
+  cwe_canonical: CWE-284
+  cwe_top25_members:
+  - CWE-862
+  - CWE-863
+  - CWE-639
+  owasp_top10_2021: A01
+  owasp_api2023:
+  - API1
+  - API3
+  - API5
+  owasp_asvs: V4.1
+  typical_findings:
+  - IDOR via :id parameter without ownership check
+  - Mass-assignment admin-role injection
+  - Admin panel client-side guard only
+  - Server-side authorization missing on API
+- id: TH-14
+  title: Supply-Chain Integrity
+  description: 'Build-time artifacts (base images, dependencies, CI actions, training
+    data) accepted from sources without provenance verification, enabling substitution
+    attacks and transitive code execution at build time.
+
+    '
+  stride:
+  - Tampering
+  cwe_pillar: CWE-710
+  cwe_canonical: CWE-1104
+  cwe_top25_members: []
+  owasp_top10_2021: A06
+  owasp_asvs: V14.2
+  typical_findings:
+  - Floating base image tag (no digest)
+  - npm install without --ignore-scripts
+  - GitHub Actions pinned to mutable tags
+  - LLM training-data URL not pinned / not integrity-checked
+- id: TH-16
+  title: Missing Audit Logging & Accountability
+  description: 'Security-relevant events (authentication, authorization decisions,
+    admin actions, data mutations) are not recorded in an append-only security log,
+    preventing forensic reconstruction.
+
+    '
+  stride:
+  - Repudiation
+  cwe_pillar: CWE-710
+  cwe_canonical: CWE-778
+  cwe_top25_members: []
+  owasp_top10_2021: A09
+  owasp_asvs: V7.2
+  typical_findings:
+  - Auth events (login / logout / 2FA) not logged
+  - Admin actions (user delete, role change) not logged
+  - Review / order mutations not logged
+  - Chatbot admin functions not logged
+cwe_to_th:
+  CWE-915:
+  - TH-06
+  CWE-639:
+  - TH-06
+  CWE-862:
+  - TH-06
+  CWE-863:
+  - TH-06
+  CWE-285:
+  - TH-06
+  CWE-284:
+  - TH-06
+  CWE-321:
+  - TH-03
+  CWE-798:
+  - TH-03
+  CWE-916:
+  - TH-03
+  CWE-330:
+  - TH-03
+  CWE-327:
+  - TH-03
+  CWE-326:
+  - TH-03
+  CWE-311:
+  - TH-03
+  CWE-319:
+  - TH-03
+  CWE-345:
+  - TH-14
+  - TH-03
+  CWE-346:
+  - TH-14
+  CWE-347:
+  - TH-03
+  CWE-598:
+  - TH-03
+  CWE-532:
+  - TH-16
+  CWE-693:
+  - TH-03
+  CWE-778:
+  - TH-16
+  CWE-1104:
+  - TH-14
+  CWE-829:
+  - TH-14
+  CWE-506:
+  - TH-14
+  CWE-1357:
+  - TH-14
+  CWE-942:
+  - TH-06
+  CWE-602:
+  - TH-06

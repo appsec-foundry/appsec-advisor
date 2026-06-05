@@ -3,4 +3,4 @@ build/
 dist/
 
 # Upstream clone (fresh clone per run)
-upstream/appsec-advisor/
+upstream/

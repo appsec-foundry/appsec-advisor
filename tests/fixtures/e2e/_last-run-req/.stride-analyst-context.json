@@ -1,0 +1,58 @@
+{
+  "_stride_profile": {"stride_profile_label": "quick"},
+  "express-app": {
+    "interfaces": [
+      "HTTP API on port 3000 (Express routes — no source code present, inferred from Dockerfile CMD node server.js)",
+      "Sequelize ORM data access layer (database interactions)",
+      "npm package runtime (lodash, express, sequelize)"
+    ],
+    "controls": [
+      "Sequelize ORM (Partial — parameterized queries available but raw query usage unknown)",
+      "All other security controls: Missing (no auth, no session, no RBAC, no CSRF, no helmet, no CORS, no rate limiting, no input validation, no TLS, no logging)"
+    ],
+    "known_secrets": [],
+    "known_vulns": [
+      "lodash@4.17.10: CVE-2019-10744 (prototype pollution via _.merge, High severity)",
+      "lodash@4.17.10: CVE-2020-8203 (prototype pollution via _.zipObjectDeep, High severity)"
+    ],
+    "known_llm_patterns": [],
+    "supply_chain_findings": [],
+    "estimated_threat_count": 8,
+    "requirements_violations": [
+      "WEB-001 (CSRF), WEB-003 (CORS), WEB-004 (CSP), WEB-005 (HSTS)",
+      "AC-002 (RBAC), AC-003 (rate limiting), AC-004 (authentication)",
+      "IV-001 (input validation), DP-006 (TLS), SC-002 (lockfile), LM-001 (logging)"
+    ]
+  },
+  "container-infra": {
+    "interfaces": [
+      "Docker container boundary (port 3000 exposed)",
+      "Host OS boundary (container-to-host)",
+      "npm install during build (supply chain ingress)",
+      "Base image pull from Docker Hub (node:20-alpine)"
+    ],
+    "controls": [
+      "Docker isolation (Partial — container runs as root, reducing isolation effectiveness)",
+      "npm install --production (no --ignore-scripts — supply chain gap)"
+    ],
+    "known_secrets": [],
+    "known_vulns": [
+      "Dockerfile: no USER directive — runs as root (IF-002 VIOLATION)",
+      "Dockerfile: mutable base image tag node:20-alpine (IF-007 violation)",
+      "Dockerfile: npm install without --ignore-scripts (supply chain risk)",
+      "No lockfile: supply chain integrity unverifiable (SC-002 violation)"
+    ],
+    "known_llm_patterns": [],
+    "supply_chain_findings": [
+      "npm install without --ignore-scripts allows lifecycle hook execution during build",
+      "No package-lock.json — versions not pinned, dependency confusion possible",
+      "Base image FROM node:20-alpine uses mutable tag — image could be swapped",
+      "No Dependabot or Renovate configured — no automated dependency updates",
+      "No CI/CD pipeline (no .github/workflows/) — no automated SCA, SAST, or image scanning"
+    ],
+    "estimated_threat_count": 5,
+    "requirements_violations": [
+      "IF-002 (no-root requirement), IF-007 (image pinning), SC-002 (lockfile)"
+    ]
+  }
+}

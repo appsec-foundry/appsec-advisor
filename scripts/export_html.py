@@ -48,6 +48,7 @@ try:
         _inject_table_colgroups,
         check_tool,
         md_to_html,
+        probe_mmdc,
         probe_runs,
         render_mermaid_blocks,
         rewrite_vscode_links,
@@ -59,6 +60,7 @@ except ImportError:
         _inject_table_colgroups,
         check_tool,
         md_to_html,
+        probe_mmdc,
         probe_runs,
         render_mermaid_blocks,
         rewrite_vscode_links,
@@ -93,15 +95,28 @@ def preflight(require_mermaid: bool) -> tuple[bool, list[str]]:
             messages.append(f"           install: {INSTALL_HINTS['pandoc']}")
 
     mmdc_path = check_tool("mmdc")
-    if mmdc_path:
-        messages.append(f"  [ok]   mmdc        {mmdc_path}")
-    else:
+    if not mmdc_path:
         if require_mermaid:
             ok = False
             messages.append("  [miss] mmdc        not found (required by --require-mermaid)")
             messages.append(f"           install: {INSTALL_HINTS['mmdc']}")
         else:
             messages.append("  [skip] mmdc        not found — Mermaid blocks will stay as code")
+    elif require_mermaid:
+        # `which mmdc` is insufficient: mmdc shells out to Puppeteer/Chrome,
+        # and a missing or blocked browser would leave every diagram as raw
+        # code even though the binary exists. Match the PDF exporter's hard
+        # preflight when the caller explicitly requires Mermaid graphics.
+        can_render, info = probe_mmdc()
+        if can_render:
+            messages.append(f"  [ok]   mmdc        {mmdc_path}  ({info})")
+        else:
+            ok = False
+            messages.append(f"  [bad]  mmdc        {mmdc_path}  — {info}")
+            messages.append(f"           install: {INSTALL_HINTS['mmdc']}")
+            messages.append("           or re-run with --no-mermaid to export without diagrams")
+    else:
+        messages.append(f"  [ok]   mmdc        {mmdc_path}")
 
     return ok, messages
 

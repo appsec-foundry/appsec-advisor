@@ -1,0 +1,212 @@
+{
+  "component_id": "container-infra",
+  "component_name": "Container Infrastructure",
+  "started_at": "2026-06-05T20:22:22Z",
+  "analyzed_at": "2026-06-05T20:23:59Z",
+  "compliance_scope_applied": [],
+  "threats": [
+    {
+      "local_id": "container-infra-001",
+      "threat_category_id": "TH-14",
+      "additional_categories": [],
+      "stride": "Tampering",
+      "cwe": "CWE-506",
+      "title": "Supply-Chain Code Execution via Unguarded npm Lifecycle Hooks (Dockerfile:4)",
+      "affected_parameter": null,
+      "scenario": "`Dockerfile:4` runs `npm install --production` without `--ignore-scripts`. Any dependency (or transitive dependency) that includes a `preinstall`, `install`, or `postinstall` lifecycle hook executes arbitrary shell commands inside the build container. With no `package-lock.json` (SC-002 violation), the resolved dependency graph is non-deterministic across builds — a dependency-confusion attack or a malicious version bump can inject a hook that exfiltrates build secrets, adds backdoor binaries to the image layer, or overwrites `server.js` before `COPY . .` is applied. The attacker targets the package registry namespace, not the running container.",
+      "evidence_summary": "`Dockerfile:4` calls `npm install --production` with no `--ignore-scripts` flag, and no `package-lock.json` is present in the repository to pin the resolved version graph.",
+      "impact_description": "Attacker-controlled code runs inside the build environment and is baked into the published container image, affecting every downstream deployment.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "npm install uses `--production` to exclude devDependencies. No lockfile, no `--ignore-scripts`, no SCA scanner.",
+      "mitigation_title": "Add --ignore-scripts to npm install and commit a package-lock.json in Dockerfile",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Change `Dockerfile:4` to `RUN npm ci --omit=dev --ignore-scripts` (requires a committed `package-lock.json`).",
+          "Commit `package-lock.json` to the repository and add a CI step that fails the build when the lockfile is out of sync (`npm ci` exits non-zero when it is).",
+          "Add a `.npmrc` with `ignore-scripts=true` as defense-in-depth so `npm install` invocations elsewhere also skip hooks."
+        ],
+        "code_example": "# Dockerfile\nFROM node:20-alpine@sha256:<digest>\nWORKDIR /app\nCOPY package.json package-lock.json ./\nRUN npm ci --omit=dev --ignore-scripts\nCOPY . .\nEXPOSE 3000\nCMD [\"node\", \"server.js\"]",
+        "reference": "CWE-506"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 4
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "ignore-scripts",
+          "search_paths": ["Dockerfile"],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:23:00Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null
+    },
+    {
+      "local_id": "container-infra-002",
+      "threat_category_id": "TH-14",
+      "additional_categories": [],
+      "stride": "Spoofing",
+      "cwe": "CWE-1104",
+      "title": "Mutable Base Image Tag Allows Undetected Image Substitution (Dockerfile:1)",
+      "affected_parameter": null,
+      "scenario": "`Dockerfile:1` specifies `FROM node:20-alpine` using a mutable floating tag. Docker Hub resolves this tag at build time to whatever image is currently published under that name. If the upstream `node:20-alpine` image is compromised, rotated, or poisoned via a registry supply-chain attack, the next `docker build` silently adopts the malicious image without any digest mismatch error. This satisfies the IF-007 FAIL from requirements-violations: no SHA256 digest pins the expected manifest. An attacker with registry write access (or a compromised Docker Hub account) can substitute the base image and execute code in every new build.",
+      "evidence_summary": "`Dockerfile:1` uses `FROM node:20-alpine` with no `@sha256:` digest, making the base image layer non-deterministic and unverifiable.",
+      "impact_description": "A malicious base image is incorporated into the production container image without detection, providing persistent code execution in all deployments built after the substitution.",
+      "likelihood": "Low",
+      "impact": "High",
+      "risk": "Medium",
+      "controls_in_place": "None — no digest pinning, no image signing (Cosign/Notary) configured.",
+      "mitigation_title": "Pin base image to immutable SHA256 digest in Dockerfile",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Replace `FROM node:20-alpine` with `FROM node:20-alpine@sha256:<current-digest>` — obtain via `docker buildx imagetools inspect node:20-alpine`.",
+          "Add a Renovate or Dependabot `docker` datasource configuration to open PRs when a new Node 20 LTS Alpine image digest is published, keeping the pin current.",
+          "Optionally verify image signatures with `cosign verify node:20-alpine@sha256:<digest>` in CI before the build step."
+        ],
+        "code_example": "# Dockerfile\nFROM node:20-alpine@sha256:a8560b36e8aeef2b3d6571aa5b7a4e0b1c5f6da1c2a3e4f5b6c7d8e9f0a1b2c3",
+        "reference": "IF-007"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 1
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null
+    },
+    {
+      "local_id": "container-infra-003",
+      "threat_category_id": "TH-17",
+      "additional_categories": [],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-200",
+      "title": "Build Context Leaks Sensitive Files Into Image Layer (Dockerfile:5)",
+      "affected_parameter": null,
+      "scenario": "`Dockerfile:5` runs `COPY . .`, which copies the entire build context (the directory where `docker build` is invoked) into `/app`. No `.dockerignore` file exists in the repository. If the developer's working directory contains `.env`, `.env.local`, private key files (`*.pem`, `id_rsa`), or AWS/GCP credential files, these are baked into the image layer. Even if the files are removed in a later `RUN` instruction, they remain recoverable from the layer history via `docker image save` or a registry pull. Any user with `docker pull` access to the registry can read the secrets by inspecting the layer tarball.",
+      "evidence_summary": "No `.dockerignore` exists and `Dockerfile:5` copies the entire build context, exposing any local credential or configuration file present at build time as a permanent image layer.",
+      "impact_description": "Secrets embedded in the image layer are recoverable by any party with registry read access, including CI runners, all developers, and external attackers if the registry is public.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None — no .dockerignore, no multi-stage build to separate build and runtime contexts.",
+      "mitigation_title": "Add .dockerignore to exclude sensitive files from the Docker build context",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Create a `.dockerignore` file at the repository root excluding: `.env*`, `*.pem`, `*.key`, `.git/`, `node_modules/`, and any credential files.",
+          "Convert to a multi-stage build so build-time secrets never touch the final image layer — use `--mount=type=secret` (BuildKit) to inject secrets at build time without persisting them.",
+          "Audit existing published images for leaked secrets using `docker history --no-trunc <image>` and revoke any credentials found."
+        ],
+        "code_example": "# .dockerignore\n.env\n.env.*\n*.pem\n*.key\n.git\nnode_modules\n.npmrc",
+        "reference": "CWE-200"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 5
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": ".*",
+          "search_paths": [".dockerignore"],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:23:20Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null
+    },
+    {
+      "local_id": "container-infra-004",
+      "threat_category_id": "TH-06",
+      "additional_categories": [],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-269",
+      "title": "Container Process Runs as Root Without USER Directive (Dockerfile)",
+      "affected_parameter": null,
+      "scenario": "The `Dockerfile` contains no `USER` directive, so the Node.js process started by `CMD [\"node\", \"server.js\"]` runs as UID 0 (root) inside the container. This violates requirement IF-002. If an attacker achieves code execution through an application vulnerability (e.g., RCE via `eval()` or path traversal), they operate as root within the container. Root inside a default Docker container has near-full access to the container filesystem and can attempt container escape via kernel exploits, mounted volume abuse, or misconfigured `--privileged` flags added at runtime. The IF-002 FAIL evidence confirms: \"Container runs as UID 0.\"",
+      "evidence_summary": "`Dockerfile` has no `USER` instruction before `CMD`, confirmed by direct inspection; the requirements-violations index records this as IF-002 FAIL.",
+      "impact_description": "Post-exploitation pivot from application RCE to container root, maximising the blast radius of any code execution vulnerability and enabling container escape attempts.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Docker namespace isolation provides partial containment. No additional security profiles (AppArmor, seccomp) are defined in the Dockerfile.",
+      "mitigation_title": "Add USER directive to run container process as non-root in Dockerfile",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `RUN addgroup -S appgroup && adduser -S appuser -G appgroup` (Alpine syntax) to the Dockerfile before the `COPY` instructions.",
+          "Add `USER appuser` before the final `CMD` instruction so the Node.js process starts as a non-root user.",
+          "Verify the application can bind port 3000 as a non-root user (ports > 1024 require no special capability on Linux); if a privileged port is needed, use `setcap cap_net_bind_service` on the node binary instead of running as root."
+        ],
+        "code_example": "# Dockerfile\nFROM node:20-alpine\nWORKDIR /app\nRUN addgroup -S appgroup && adduser -S appuser -G appgroup\nCOPY package.json package-lock.json ./\nRUN npm ci --omit=dev --ignore-scripts\nCOPY --chown=appuser:appgroup . .\nUSER appuser\nEXPOSE 3000\nCMD [\"node\", \"server.js\"]",
+        "reference": "IF-002"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 7
+      },
+      "evidence_check": "verified-prior",
+      "controls_absent_evidence": [
+        {
+          "pattern": "USER\\s+",
+          "search_paths": ["Dockerfile"],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:23:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null
+    },
+    {
+      "local_id": "container-infra-005",
+      "threat_category_id": "TH-14",
+      "additional_categories": [],
+      "stride": "Denial of Service",
+      "cwe": "CWE-400",
+      "title": "No Resource Limits Defined — Container Can Exhaust Host Resources (Dockerfile)",
+      "affected_parameter": null,
+      "scenario": "The `Dockerfile` defines no memory or CPU limits. No `ulimit` instructions are present, and there is no `docker-compose.yml` to enforce `deploy.resources.limits`. A single runaway request handler (e.g., a regex catastrophe, an infinite loop introduced by a supply-chain compromise, or a legitimate flood of requests) can consume all available host memory and CPU, causing the host and any co-located containers to become unresponsive. Because the process runs as root (see container-infra-004), even a `fork()` bomb would not be constrained by per-user process limits.",
+      "evidence_summary": "`Dockerfile` contains no `ulimit` or resource-limit directive; no `docker-compose.yml` was found in the repository to apply runtime constraints.",
+      "impact_description": "A single compromised or misbehaving container instance can render the entire host and co-located services unavailable.",
+      "likelihood": "Low",
+      "impact": "High",
+      "risk": "Medium",
+      "controls_in_place": "None defined at the image level. Runtime enforcement depends entirely on undocumented deployment configuration.",
+      "mitigation_title": "Define memory and CPU resource limits in docker-compose.yml or container runtime configuration",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add a `docker-compose.yml` (or update deployment manifests) with `deploy.resources.limits.memory` and `deploy.resources.limits.cpus` set to values appropriate for the application's load profile.",
+          "Set `--memory-swap` equal to `--memory` to prevent swap exhaustion.",
+          "Add a health check (`HEALTHCHECK` in the Dockerfile) so the orchestrator can restart the container if it becomes unresponsive."
+        ],
+        "code_example": "# docker-compose.yml\nservices:\n  app:\n    build: .\n    ports:\n      - \"3000:3000\"\n    deploy:\n      resources:\n        limits:\n          cpus: '0.50'\n          memory: 256M",
+        "reference": "CWE-400"
+      },
+      "evidence": {
+        "file": "Dockerfile",
+        "line": 6
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "ulimit\\|memory\\|cpus\\|resources",
+          "search_paths": ["Dockerfile"],
+          "hit_count": 0,
+          "searched_at": "2026-06-05T20:23:40Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null
+    }
+  ]
+}

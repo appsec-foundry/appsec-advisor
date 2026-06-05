@@ -1,0 +1,17 @@
+{
+  "root_goal": "Full application compromise without credentials",
+  "mermaid": {
+    "orientation": "TD",
+    "nodes": [
+      { "id": "G_ROOT",   "label": "Full application compromise without credentials", "class": "goal" },
+      { "id": "OR_PATHS", "label": "Either attack path is independently sufficient",   "class": "or_node" },
+      { "id": "L_T001",   "label": "T-001 Missing authentication on all endpoints",   "class": "leaf", "finding_ref": "T-001" },
+      { "id": "L_T002",   "label": "T-002 Prototype pollution via lodash _.merge",    "class": "leaf", "finding_ref": "T-002" }
+    ],
+    "edges": [
+      { "from": "OR_PATHS", "to": "G_ROOT" },
+      { "from": "L_T001",   "to": "OR_PATHS" },
+      { "from": "L_T002",   "to": "OR_PATHS" }
+    ]
+  }
+}

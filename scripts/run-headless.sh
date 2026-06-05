@@ -12,7 +12,8 @@
 #   --yaml                  (no-op) yaml is always written by default
 #   --no-yaml               Suppress threat-model.yaml (BREAKS incremental mode!)
 #   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
-#   --requirements [<url>]   Enable requirements check (optionally from URL)
+#   --requirements [<src>]   Enable requirements check (optionally from an
+#                            http(s):// URL or a local file path)
 #   --no-requirements        Skip requirements even when enabled in config
 #   --dry-run               Preview scope without running the full pipeline
 #   --incremental           Force delta analysis based on git diff
@@ -84,7 +85,8 @@ Options:
                              incremental mode on future runs against this output
                              directory (yaml is the canonical baseline)
   --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
-  --requirements [<url>]     Enable requirements check, optionally from URL
+  --requirements [<src>]     Enable requirements check, optionally from an
+                             http(s):// URL or a local file path
   --no-requirements          Skip requirements even when enabled in config
   --dry-run                  Preview scope without running the full pipeline
   --incremental              Force delta analysis based on git diff
@@ -243,8 +245,11 @@ while [ $# -gt 0 ]; do
         --force)
             CLEAN_FORCE=1; shift ;;
         --requirements)
-            # --requirements [<url>] — enable requirements, optionally from URL
-            if [ $# -gt 1 ] && echo "$2" | grep -qE '^https?://'; then
+            # --requirements [<src>] — enable requirements, optionally from an
+            # http(s):// URL or a local file path. Consume the next token as the
+            # source unless it is absent or another flag (so a bare
+            # `--requirements --foo` does not swallow `--foo`).
+            if [ $# -gt 1 ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
                 SKILL_FLAGS="$SKILL_FLAGS --requirements $2"; shift 2
             else
                 SKILL_FLAGS="$SKILL_FLAGS --requirements"; shift

@@ -1,0 +1,90 @@
+[
+  {
+    "requirement_id": "WEB-005",
+    "requirement_text": "Set the Strict-Transport-Security (HSTS) response header",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No TLS configured. No helmet or HSTS middleware in dependencies.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "WEB-001",
+    "requirement_text": "Implement Anti-CSRF protection",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No csurf or equivalent package in dependencies.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "WEB-003",
+    "requirement_text": "Configure CORS restrictively",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No cors package in dependencies.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "WEB-004",
+    "requirement_text": "Activate Content-Security-Policy headers",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No helmet or CSP middleware in dependencies.",
+    "priority": "SHOULD"
+  },
+  {
+    "requirement_id": "AC-002",
+    "requirement_text": "Apply least-privilege and role-based access control",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No RBAC library in dependencies. No auth middleware.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "AC-003",
+    "requirement_text": "Apply rate limiting to all externally reachable API endpoints",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No express-rate-limit or equivalent in dependencies.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "AC-004",
+    "requirement_text": "End users MUST be authenticated through a central identity provider",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No authentication library (passport, jwt, etc.) in dependencies.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "IV-001",
+    "requirement_text": "Validate all external input as restrictively as possible",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No input validation library (joi, zod, express-validator) in dependencies.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "DP-006",
+    "requirement_text": "All data transmitted over external networks MUST be encrypted with TLS",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "Dockerfile exposes port 3000 with no TLS. No HTTPS configuration.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "SC-002",
+    "requirement_text": "Pin direct dependencies to exact versions",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No package-lock.json or yarn.lock found.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "LM-001",
+    "requirement_text": "Log all security-relevant events",
+    "component_id": "express-app",
+    "status": "FAIL",
+    "evidence": "No logging library (morgan, winston, pino) in dependencies.",
+    "priority": "MUST"
+  }
+]

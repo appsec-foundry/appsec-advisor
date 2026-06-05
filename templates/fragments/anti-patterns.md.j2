@@ -1,0 +1,11 @@
+{#- ### Architectural Anti-Patterns — optional MS callout naming the design-level -#}
+{#- defects the report articulates in §7. Rendered only when the LLM authored      -#}
+{#- ms-anti-patterns.json (≥1 pattern); absent file → the section renders nothing.  -#}
+{#- Schema: data.anti_patterns[] = {name, severity?, description, affected_components[]?, findings[]} -#}
+### Architectural Anti-Patterns
+
+The defects below are structural — each spans multiple findings and requires a design change, not a point fix. See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.
+
+{% for ap in data.anti_patterns -%}
+- {{ severity_emoji(ap.severity or 'red') }} **{{ ap.name }}** — {{ ap.description }}{% if ap.affected_components %} _({{ ap.affected_components | format_weakness_components }})_{% endif %}<br/>↳ {{ ap.findings | format_weakness_findings }}
+{% endfor %}

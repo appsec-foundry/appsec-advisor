@@ -1,0 +1,18 @@
+[
+  {
+    "requirement_id": "IF-002",
+    "requirement_text": "Containers MUST NOT run as root",
+    "component_id": "container-infra",
+    "status": "FAIL",
+    "evidence": "Dockerfile has no USER directive. Container runs as UID 0.",
+    "priority": "MUST"
+  },
+  {
+    "requirement_id": "IF-007",
+    "requirement_text": "Pin base images to an immutable digest",
+    "component_id": "container-infra",
+    "status": "FAIL",
+    "evidence": "FROM node:20-alpine uses mutable tag. No SHA256 digest.",
+    "priority": "SHOULD"
+  }
+]

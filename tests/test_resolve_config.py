@@ -644,6 +644,29 @@ class TestCLI:
         assert "markdown + yaml + sarif" in r.stdout
         assert "pentest-tasks (generic)" in r.stdout
 
+    def test_summary_shows_active_org_profile_defaults(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        profile = tmp_path / "org-profile" / "org-profile.yaml"
+        profile.parent.mkdir()
+        profile.write_text(
+            "api_version: appsec-advisor.org-profile/v2\n"
+            "organization: { id: myorg, name: My Org, profile_version: \"1\" }\n"
+            "compatibility: { core: \">=0.4 <0.6\" }\n"
+            "default_preset: local-default\n"
+            "presets:\n"
+            "  local-default:\n"
+            "    base_mode: standard\n"
+            "    outputs: { sarif: true }\n"
+            "    guardrails: { max_cost_usd: 10 }\n"
+        )
+        r = self._run("--config-summary", "--org-profile", str(profile))
+        assert r.returncode == 0
+        assert "Org profile" in r.stdout
+        assert "My Org (myorg), preset local-default, source cli" in r.stdout
+        assert "Outputs   :" in r.stdout
+        assert "markdown + yaml + sarif" in r.stdout
+        assert "Limits    : cost $10.00" in r.stdout
+
     def test_summary_shows_pentest_target_inline(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run(

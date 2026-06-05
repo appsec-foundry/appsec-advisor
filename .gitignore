@@ -18,6 +18,9 @@ docs/security/
 # Same artefacts when a script is invoked from inside scripts/ and writes a
 # relative docs/security/ path — never track those either.
 scripts/docs/
+# Same artefacts when the analyzed repo is nested inside this repo, for example
+# during local fixture or E2E runs.
+**/docs/security/
 # Manual full-run E2E driver writes artifacts here. Same threat-data
 # sensitivity rationale as docs/security/ above — never commit.
 tests/fixtures/e2e/_last-run/
@@ -35,6 +38,11 @@ Thumbs.db
 *.swo
 .vscode/settings.json
 .idea/
+
+# ----------------------------------------------------------------------------
+# Local Claude runtime state
+# ----------------------------------------------------------------------------
+.claude/*.lock
 
 # ----------------------------------------------------------------------------
 # Local config overrides (may contain sensitive URLs or internal endpoints)

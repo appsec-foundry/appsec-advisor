@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "curations": {
+    "include_route_ids": [],
+    "exclude_route_ids": [],
+    "rationale_by_id": {}
+  },
+  "additions": [
+    {
+      "entry_point": "HTTP API (port 3000)",
+      "protocol": "HTTP",
+      "auth_required": false,
+      "notes": "Express app listening on port 3000. No TLS configured. Route inventory returned 0 routes (server.js absent from repo). Assumed unauthenticated HTTP by default."
+    },
+    {
+      "entry_point": "Docker container entrypoint",
+      "protocol": "docker/exec",
+      "auth_required": false,
+      "notes": "Container runs as root. If container escape occurs, attacker has host-level root access."
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "compose_status": "warned",
+  "warning_count": 1,
+  "warnings": [
+    {
+      "section": "Global Secret-Mask Pass",
+      "category": "secret_mask",
+      "detail": "secret-mask applied: long_hex \u2014 credential-shaped strings were redacted to <REDACTED> placeholders",
+      "patterns": "long_hex"
+    }
+  ],
+  "section_retries": {},
+  "total_retry_attempts": 0,
+  "compose_invocation_iso": "2026-06-05T20:33:46Z"
+}

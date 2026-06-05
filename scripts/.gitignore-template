@@ -12,6 +12,12 @@ docs/security/.requirements.yaml
 docs/security/.threat-modeling-context.md
 docs/security/.appsec-lock
 docs/security/.appsec-checkpoint
+docs/security/.phase-epoch
+docs/security/.assessment-owner-sid
+docs/security/.assessment-summary-emitted
+docs/security/.budget-state.json
+docs/security/.appsec-progress.json
+docs/security/.skill-watchdog.tick
 docs/security/.agent-run.log
 docs/security/.agent-run.log.1
 docs/security/.agent-run.log.2
@@ -19,3 +25,9 @@ docs/security/.hook-events.log
 docs/security/.hook-events.log.1
 docs/security/.hook-events.log.2
 docs/security/.session-agent-map
+docs/security/.fragments
+docs/security/.progress
+docs/security/.taxonomy-slices
+docs/security/.dispatch-context
+docs/security/.merge-context
+docs/security/.active-tool-calls
