@@ -25,8 +25,10 @@ FLAGS
   --json                   Save the raw findings as
                            docs/security/appsec-requirements-report.json
   --save                   Both --md and --json
-  --requirements <url>     Fetch the requirements YAML from <url> instead
-                           of the configured source; no cache fallback
+  --requirements <src>     Load the requirements YAML from <src> instead
+                           of the configured source; no cache fallback.
+                           <src> is an http(s):// URL (fetched remotely) or
+                           a local file path (absolute, relative, or ~).
 
 See `/appsec-advisor:status` for plugin & configuration status, and
 `docs/configuration.md` → "Security Requirements Management" for the source
@@ -45,7 +47,7 @@ The user may pass arguments after the skill name. Parse them now:
 - `--md` — save results as `docs/security/appsec-requirements-report.md` after rendering
 - `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
 - `--save` — save both formats
-- `--requirements <url>` — override the configured `requirements_yaml_url` for this run. The URL must be reachable; there is no cache fallback when an explicit URL is provided.
+- `--requirements <src>` — override the configured `requirements_yaml_url` for this run. `<src>` is an http(s):// URL (fetched remotely) or a local file path (absolute or relative). The source must load; there is no cache fallback when an explicit source is provided.
 
 Store the resolved flags: `save_md`, `save_json`, `category_filter`, `requirements_url_override`.
 
@@ -110,23 +112,31 @@ Resolve the requirements YAML. The loading strategy depends on whether `--requir
 
 ---
 
-**Path A — `requirements_url_override` is set** (explicit URL from `--requirements <url>`):
+**Path A — `requirements_url_override` is set** (explicit source from `--requirements <src>`):
 
-Fetch from the override URL. No cache fallback — the explicit URL must be reachable.
+Load from the override source. No cache fallback — the explicit source must load.
+An `http(s)://` value is fetched remotely; anything else is read as a local file
+path (absolute or relative).
 
 ```bash
 mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
-curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_URL_OVERRIDE" \
-  -o "$REQUIREMENTS_CACHE"
+case "$REQUIREMENTS_URL_OVERRIDE" in
+  http://*|https://*)
+    curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_URL_OVERRIDE" \
+      -o "$REQUIREMENTS_CACHE" ;;
+  *)  # local file path — no scheme, no file://
+    cp "$REQUIREMENTS_URL_OVERRIDE" "$REQUIREMENTS_CACHE" ;;
+esac
 ```
 
-- On success: use `$REQUIREMENTS_CACHE`. Print: `▶ Requirements: fetched from <url> (cached to <REQUIREMENTS_CACHE>)`
+- On success: use `$REQUIREMENTS_CACHE`. Print: `▶ Requirements: loaded from <src> (cached to <REQUIREMENTS_CACHE>)`
 - On failure: abort with:
   ```
-  ✗ Could not fetch requirements from <url>
+  ✗ Could not load requirements from <src>
 
-    The URL was passed via --requirements and must be reachable.
-    Verify the URL is correct and the server is running.
+    The source was passed via --requirements and must load.
+    For an http(s):// URL, verify it is correct and the server is running;
+    for a local path, verify the file exists and is readable.
 
     Need a starting point? The plugin ships a reference YAML at
       data/appsec-requirements-fallback.yaml

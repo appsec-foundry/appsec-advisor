@@ -2919,7 +2919,7 @@ When `INCREMENTAL=true`, the orchestrator performs a **delta analysis** instead 
 This significantly reduces token consumption for incremental security reviews after small code changes. Baseline detection happens in the skill's Incremental Mode Resolution section above — a hard abort is raised there if `--incremental` is passed without an existing threat model, so by the time this section runs the baseline is guaranteed to exist.
 
 When `CHECK_REQUIREMENTS=true` and no requirements YAML is available, the context-resolver aborts with an error. The error behavior depends on the source:
-- **`REQUIREMENTS_URL_OVERRIDE` set** (from `--requirements <url>`) — the override URL must be reachable; no cache fallback (abort immediately on fetch failure)
+- **`REQUIREMENTS_URL_OVERRIDE` set** (from `--requirements <src>`) — the explicit source must load; no cache fallback (abort immediately on load failure). An `http(s)://` value is fetched remotely; anything else is read as a local file path (no `file://` scheme).
 - **`--requirements` (without URL) or config `enabled: true`** — tries the configured URL, falls back to plugin cache; aborts only if both are unavailable
 
 ## Dry-Run Mode

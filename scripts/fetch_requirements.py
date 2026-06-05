@@ -15,13 +15,15 @@ enforce it with ``|| exit 2``, exactly like the secret-leak / YAML gates.
 
 It resolves the active source (CLI ``--requirements`` override, org-profile, or
 legacy config) via ``resolve_requirements_source.resolve`` so the ``fail_mode``
-contract is honoured:
+contract is honoured. A source is fetched remotely only when it is an
+``http://`` / ``https://`` URL; anything else is read as a local file path
+(absolute, relative, or ``~``-prefixed — no ``file://`` scheme):
 
-  * ``fail_closed``    (CLI ``--requirements <url>``) — the explicit URL MUST be
-                       reachable; no cache fallback. Fetch failure -> exit 2.
-  * ``cache_fallback`` (org-profile / legacy config)  — on fetch failure fall
+  * ``fail_closed``    (CLI ``--requirements <src>``) — the explicit source MUST
+                       load; no cache fallback. Load failure -> exit 2.
+  * ``cache_fallback`` (org-profile / legacy config)  — on load failure fall
                        back to a non-empty plugin cache; abort only if both the
-                       remote AND the cache are unavailable.
+                       source AND the cache are unavailable.
 
 On success it writes ``<output-dir>/.requirements.yaml`` (and refreshes the
 plugin cache) so the context-resolver agent reads a pre-populated file instead
@@ -40,10 +42,33 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+# Only http(s) sources are fetched remotely. Everything else — including a bare
+# path, ``./reqs.yaml``, ``/abs/reqs.yaml``, or ``~/reqs.yaml`` — is a local file.
+_REMOTE_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+
+def _is_remote(src: str) -> bool:
+    """True iff ``src`` is an ``http://`` / ``https://`` URL.
+
+    Anything without an http(s) scheme is interpreted as a local filesystem
+    path, so users can say ``--requirements reqs.yaml`` or
+    ``--requirements https://host/reqs.yaml`` and nothing else (no ``file://``).
+    """
+    return bool(_REMOTE_RE.match(src))
+
+
+def _read_local(path: str) -> bytes:
+    """Read a local requirements file. Raises ``OSError`` on any failure.
+
+    Relative paths resolve against the current working directory; ``~`` expands.
+    """
+    return Path(path).expanduser().read_bytes()
 
 # Reuse the single source of truth for source resolution + fail_mode.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -53,12 +78,7 @@ _SKIPPED_STUB = '{"source": "skipped", "categories": [], "blueprints": []}\n'
 
 
 def _http_get(url: str, timeout: int) -> bytes:
-    """Fetch ``url`` and return its bytes. Raises on any failure.
-
-    Isolated so tests can point ``--url`` at a ``file://`` path (urllib handles
-    http/https/file uniformly) and exercise both the success and failure paths
-    without a network.
-    """
+    """Fetch an ``http(s)`` ``url`` and return its bytes. Raises on any failure."""
     req = urllib.request.Request(url, headers={"Accept": "application/yaml"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return resp.read()
@@ -133,32 +153,39 @@ def run(args: argparse.Namespace) -> int:
         print("↳ Requirements: skipped (not requested)")
         return 0
 
-    url = src.get("url")
+    src_loc = src.get("url")  # http(s) URL or a local file path
     fail_mode = src.get("fail_mode", "cache_fallback")
     cache_allowed = bool(src.get("cache", True)) and fail_mode != "fail_closed"
 
-    # 1. Remote fetch (when a URL is configured).
-    if url:
+    # 1. Load the source: http(s) -> remote fetch, anything else -> local file.
+    if src_loc:
+        remote = _is_remote(src_loc)
         try:
-            body = _http_get(url, args.timeout)
+            body = _http_get(src_loc, args.timeout) if remote else _read_local(src_loc)
             if not body.strip():
                 raise ValueError("empty response")
             _write(out_file, body)
             if cache_allowed:
                 _write(cache, body)  # refresh cache for the fallback path
-            print(f"↳ Requirements: fetched from {url} ({src.get('source')})")
+            verb = "fetched from" if remote else "read from"
+            print(f"↳ Requirements: {verb} {src_loc} ({src.get('source')})")
             return 0
         except (urllib.error.URLError, ValueError, OSError) as exc:
             if not cache_allowed:
-                # fail_closed (e.g. --requirements <url>): the explicit URL must
-                # be reachable; no cache fallback.
+                # fail_closed (e.g. --requirements <src>): the explicit source
+                # must load; no cache fallback.
+                hint = (
+                    "Verify the URL and that the server is running."
+                    if remote
+                    else "Verify the path points at an existing, readable file."
+                )
                 return _abort([
-                    f"Source: {url}  (fail_mode={fail_mode})",
+                    f"Source: {src_loc}  (fail_mode={fail_mode})",
                     f"Reason: {exc}",
-                    "The URL was passed explicitly (--requirements) and must be",
-                    "reachable. Verify the URL and that the server is running.",
+                    "The source was passed explicitly (--requirements) and must",
+                    f"load. {hint}",
                 ])
-            print(f"↳ Requirements: remote fetch failed ({url}) — checking plugin cache…", file=sys.stderr)
+            print(f"↳ Requirements: source load failed ({src_loc}) — checking plugin cache…", file=sys.stderr)
 
     # 2. Cache fallback (cache_fallback mode only).
     if cache_allowed and cache.is_file() and cache.stat().st_size > 0:
@@ -168,9 +195,9 @@ def run(args: argparse.Namespace) -> int:
 
     # 3. Requested but nothing loaded -> abort.
     return _abort([
-        f"Source: {url or '(no URL configured)'}  (fail_mode={fail_mode})",
-        "No remote endpoint responded and no usable plugin cache exists.",
-        "Fix: make the requirements URL reachable, populate the cache, or",
+        f"Source: {src_loc or '(no source configured)'}  (fail_mode={fail_mode})",
+        "The configured source did not load and no usable plugin cache exists.",
+        "Fix: make the requirements source reachable, populate the cache, or",
         "re-run with --no-requirements to skip the requirements check.",
     ])
 
@@ -181,7 +208,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Deterministic fetch-or-abort gate for security requirements.",
     )
     p.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR"), required=False)
-    p.add_argument("--requirements", default=None, help="CLI requirements URL override")
+    p.add_argument("--requirements", default=None,
+                   help="requirements source override: http(s):// URL or a local file path")
     p.add_argument("--no-requirements", action="store_true")
     p.add_argument("--require", action="store_true",
                    help="caller asserts requirements ARE requested (skip enabled re-derivation)")
