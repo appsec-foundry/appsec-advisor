@@ -180,35 +180,39 @@ flowchart TB
     subgraph ZONE_ACTORS["External Actors"]
         direction LR
         EXT_SHOPUSER["fa:fa-user Shop User<br/><i>legitimate customer - XSS/CSRF target</i>"]:::actorgood
-        ACT_INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker<br/><i>no account; registers in seconds when needed</i>"]:::actorbad
-        ACT_INTERNET_USER["fa:fa-user-secret Authenticated Internet Attacker<br/><i>owns a regular account; logged in</i>"]:::actorbad
+        ACT_INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker<br/><i>incl. self-registered users - open registration makes authenticated ≈ anonymous</i>"]:::actorbad
     end
 
     subgraph CLIENT["Client Tier - browser"]
-        CMP_ANGULAR_SPA["C-02 · Angular SPA Frontend<br/><i>🔴 1 🟠 1</i>"]:::comp
+        CMP_FRONTEND_SPA["C-02 · Angular SPA Frontend<br/><i>🔴 1 🟠 9</i>"]:::comp
     end
     subgraph APP["Application Tier - Node / Express"]
-        CMP_EXPRESS_BACKEND["C-01 · Express Backend API<br/><i>🔴 5 🟠 7</i>"]:::comp
-        CMP_FILE_UPLOAD_SERVICE["C-04 · File Upload and Static File Service<br/><i>🟠 2</i>"]:::comp
-        CMP_B2B_API["C-05 · B2B Order API<br/><i>🔴 1</i>"]:::comp
+        CMP_BACKEND_API["C-01 · Express REST API Backend<br/><i>🔴 3 🟠 13</i>"]:::comp
+        CMP_FILE_UPLOAD_SERVICE["C-04 · File Upload Service<br/><i>🔴 1 🟠 6</i>"]:::comp
+        CMP_B2B_API["C-05 · B2B Order API<br/><i>🔴 1 🟠 2</i>"]:::comp
+        CMP_WEBSOCKET_SERVER["C-06 · Socket.IO WebSocket Server<br/><i>🟠 5</i>"]:::comp
+        CMP_CI_CD_PIPELINE["C-07 · GitHub Actions CI/CD Pipeline<br/><i>🟠 3</i>"]:::comp
+        CMP_AUTH_SERVICE["C-08 · Authentication &amp; Session Service<br/><i>🔴 5 🟠 9</i>"]:::comp
     end
     subgraph DATA["Data Tier"]
-        CMP_DATA_LAYER["C-03 · Data Layer<br/><i>🟠 1</i>"]:::comp
+        CMP_DATA_PERSISTENCE["C-03 · Data Layer (SQLite + MarsDB)<br/><i>🔴 2 🟠 4</i>"]:::comp
     end
 
     %% legitimate request flow
-    EXT_SHOPUSER -->|"uses"| CMP_ANGULAR_SPA
-    CMP_ANGULAR_SPA -->|"API calls"| CMP_EXPRESS_BACKEND
-    CMP_EXPRESS_BACKEND -->|"reads/writes"| CMP_DATA_LAYER
+    EXT_SHOPUSER -->|"uses"| CMP_FRONTEND_SPA
+    CMP_FRONTEND_SPA -->|"API calls"| CMP_BACKEND_API
+    CMP_BACKEND_API -->|"reads/writes"| CMP_DATA_PERSISTENCE
     %% attacks (solid) - each originates at a threat actor; glyphs match Figure 2 / Top Threats
-    ACT_INTERNET_ANON ==>|"① Injection ② Auth Bypass ③ Priv-Esc ④ Secret Exposure"| CMP_EXPRESS_BACKEND
-    ACT_INTERNET_ANON ==>|"① Injection ④ Secret Exposure"| CMP_FILE_UPLOAD_SERVICE
-    ACT_INTERNET_USER ==>|"⑤ RCE"| CMP_B2B_API
-    ACT_INTERNET_USER ==>|"⑤ RCE"| CMP_EXPRESS_BACKEND
-    ACT_INTERNET_ANON ==>|"⑥ XSS"| CMP_ANGULAR_SPA
+    ACT_INTERNET_ANON ==>|"① ② ③ ④"| CMP_AUTH_SERVICE
+    ACT_INTERNET_ANON ==>|"① ③ ④ ⑤"| CMP_BACKEND_API
+    ACT_INTERNET_ANON ==>|"① ④ ⑤"| CMP_FILE_UPLOAD_SERVICE
+    ACT_INTERNET_ANON ==>|"③"| CMP_WEBSOCKET_SERVER
+    ACT_INTERNET_ANON ==>|"③ ④"| CMP_CI_CD_PIPELINE
+    ACT_INTERNET_ANON ==>|"④ ⑤"| CMP_B2B_API
+    ACT_INTERNET_ANON ==>|"⑥ ⑦"| CMP_FRONTEND_SPA
     %% propagation (dotted) - how the attack reaches the data tier / victim
-    CMP_EXPRESS_BACKEND -.->|"① ④"| CMP_DATA_LAYER
-    CMP_ANGULAR_SPA -.->|"⑥"| EXT_SHOPUSER
+    CMP_BACKEND_API -.->|"① ② ③ ④ ⑥"| CMP_DATA_PERSISTENCE
+    CMP_FRONTEND_SPA -.->|"⑥ ⑦"| EXT_SHOPUSER
 
     style CLIENT fill:none,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
     style APP fill:none,stroke:#b71c1c,stroke-width:2px,stroke-dasharray:5
@@ -220,9 +224,10 @@ flowchart TB
     classDef actorbad  fill:#fde8e8,stroke:#b71c1c,color:#7f0000,stroke-width:2px
     classDef actorgood fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
     linkStyle 0,1,2 stroke:#6b7280,stroke-width:1.5px
-    linkStyle 3,4,5,6,7 stroke:#b71c1c,stroke-width:2.5px
-    linkStyle 8,9 stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5
+    linkStyle 3,4,5,6,7,8,9 stroke:#b71c1c,stroke-width:2.5px
+    linkStyle 10,11 stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5
 ```
+
 ## What it checks
 
 Before running STRIDE, `appsec-advisor` performs a reconnaissance pass that collects security-relevant signals from the repository. Those signals give the analysis a concrete starting point: routes, trust boundaries, auth flows, risky sinks, security controls, deployment files, and supply-chain configuration.
