@@ -1,2 +1,0 @@
-{"stage": 1, "name": "Threat Analysis & Triage", "agent": "appsec-advisor:appsec-threat-analyst", "model": "sonnet", "duration_ms": 735333, "tool_uses": 172, "tokens": 319023, "recorded_at": "2026-06-05T20:31:44Z", "dispatch_count": 2, "wall_secs_observed": 656}
-{"stage": 2, "name": "Report Rendering", "agent": "appsec-advisor:appsec-threat-renderer", "model": "sonnet", "duration_ms": 97453, "tool_uses": 14, "tokens": 68007, "recorded_at": "2026-06-05T20:34:46Z", "dispatch_count": 1, "wall_secs_observed": 0}
