@@ -14,6 +14,30 @@ Skip Phases 1–10b entirely; their outputs are prerequisites for invoking this 
 
 Set `MODEL_ID=sonnet` in progress/log text when a model identifier is needed.
 
+## Render role — READ FIRST (perf 2026-06-05)
+
+The skill may split Stage-2 authoring across two agents that run **in parallel**
+so §7 prose and the management-summary fragments are written concurrently
+(~5 min wall instead of ~11 min serial). Your `RENDER_ROLE` decides which
+fragments you author and — critically — whether you compose. **The skill runs
+`compose_threat_model.py`, the QA gate, the Postcondition Gate, and the final
+checkpoint itself after both parallel agents return** — so in the two split
+roles you do NOT compose and do NOT run those tail steps.
+
+| `RENDER_ROLE` | Author | Do NOT touch | Compose / QA / Postcondition / Completion |
+|---|---|---|---|
+| `full` (default / unset) | everything below (MS + §7) | — | **YES — you run them** (back-compat, unchanged) |
+| `secarch` | ONLY `security-architecture.md` (+ `architecture-diagrams.md` when `ENRICH_ARCH_FRAGMENTS=true`) per the §7 contract below | any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
+| `ms` | ONLY `ms-verdict.json`, `ms-architecture-assessment.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
+
+**Both split roles still run the `## First Action` telemetry** (tag the phase-start
+message with your role, e.g. `[Phase 11/11] §7 enrichment` / `[Phase 11/11]
+Management summary`) and obey `## Output Hygiene`, `## Secret Handling`, and the
+`## Budget-critical wrap-up` skip table. When `RENDER_ROLE` is `full` or unset,
+ignore this section and execute the whole document as before. If your role is
+`secarch` or `ms`, your final return is a one-line status of what you authored —
+nothing composes on your side.
+
 ## Output Hygiene — token-budget critical
 
 The Stage-2 renderer is dispatched repeatedly by the Re-Render Loop. The 2026-05-23 juice-shop run produced a 5634 tokens/min output rate in the second dispatch — ~30,000 reasoning tokens for two −2-char edits, costing ~$2.83 in 5 minutes. The fix is procedural: **content lives in files, not in chat output.**
@@ -47,6 +71,7 @@ The skill passes the same run variables as Stage 1, including:
 - `SKIP_ATTACK_PATHS_AUTHORING`
 - `SKIP_ATTACK_WALKTHROUGHS`
 - `ENRICH_ARCH_FRAGMENTS`
+- `RENDER_ROLE` (`full` default / `secarch` / `ms` — see "Render role — READ FIRST" above)
 
 Required on-disk inputs:
 
@@ -136,6 +161,53 @@ Mermaid (`TypeError: Cannot set properties of undefined (setting 'style')`). Do
 not write `.fragments/top-threats-architecture.md`; if the format needs to change,
 edit `_render_top_threats_architecture` (and its tests), not this agent prompt.
 
+### MS prose — single-pass discipline (perf 2026-06-05, hard rule)
+
+Author `ms-verdict.json` and `ms-architecture-assessment.json` **exactly once
+each**. Do **NOT** re-open or rewrite an MS fragment to "tighten", "polish", or
+"shrink toward the word budget" by eye — that speculative re-authoring (the
+former 2-3× churn per fragment) burned Stage-2 wall time for zero content gain.
+The word budgets below are a deterministic contract; meet them on the first
+write.
+
+After authoring **both** MS fragments, run the compactness gate **once**:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
+```
+
+- **Exit 0 (PASS)** → the fragments are within budget. **Stop. Do not rewrite
+  anything.** Proceed to the next fragment / compose.
+- **Exit 1 (FAIL)** → re-author **ONLY** the specific field(s) the script names
+  (it prints `fragment: field is N words (max M)` per violation). Touch nothing
+  else, then re-run the gate once to confirm. Never rewrite a field the gate did
+  not flag.
+
+The gate catches only runaway prose (budgets sit above the soft targets), so a
+disciplined first write passes immediately — that is the expected path.
+
+### `ms-verdict.json` authoring contract
+
+Renders as the §1 Verdict block (red/yellow/green HTML blockquote). **Author EXACTLY this schema** (`schemas/fragments/verdict.schema.json`, `additionalProperties:false` — any extra key fails `compose --strict`):
+
+```json
+{
+  "severity": "red",                     // enum: "green" | "yellow" | "red" — REQUIRED. NOT "verdict_color"/"verdict_label".
+  "opening": "<2-4 sentence posture statement, 60-800 chars>",   // REQUIRED. NO F-NNN/T-NNN ids (regex-blocked). Posture, not a finding list.
+  "bullets_intro": "<1 sentence introducing the blockquote, 20-200 chars>",  // OPTIONAL. No F/T ids.
+  "bullets": [                           // REQUIRED, 2-8 items. NOT "worst_case_scenarios".
+    {
+      "title": "<business-outcome headline, 5-80 chars>",
+      "body": "<how the attacker achieves it, 20-400 chars>",
+      "refs": ["T-001", "F-012"]         // REQUIRED, 1-5 ids, each matching ^[FT]-\\d{3,4}$
+    }
+  ],
+  "closing": "<1-2 sentence wrap, 40-300 chars>"   // REQUIRED. NO F/T ids (regex-blocked). NOT "closing_prose".
+}
+```
+
+**Forbidden legacy keys** (they were the 2026-06-05 parallel-render drift): `verdict_label`, `verdict_color`, `worst_case_scenarios`, `closing_prose`, `verdict_prose`. The ONLY top-level keys are the five above. Do not cite exact severity counts in `opening` (the composer injects the authoritative `**Risk distribution:** …` line). Run the MS compactness gate after authoring (see "MS prose — single-pass discipline").
+
 ### `ms-architecture-assessment.json` authoring contract
 
 The Architecture Assessment renders as a 4-column table in §1: `Weakness category | Affected component(s) | Description | Key findings`. The fragment schema is:
@@ -175,7 +247,10 @@ The Architecture Assessment renders as a 4-column table in §1: `Weakness catego
    ❌ Bad: `routes/login.ts:34 calls models.sequelize.query() with template literals. routes/search.ts:23 does the same. routes/admin.ts:67 also uses raw SQL.`
    ✅ Good: `Login and search flows both string-interpolate untrusted input into raw SQL, bypassing the ORM's parameter binding. Same anti-pattern repeated across multiple routes — not an isolated regression.`
 
-3. **`affected_components[]` MUST contain at least one component-id.** Use the canonical `C-NN` identifiers from `threat-model.yaml` `components[]`. The renderer auto-enriches bare ids to `[C-NN](#c-nn) — Component Name` in the rendered column. Cross-cutting weaknesses spanning multiple components list all relevant ids.
+3. **`affected_components[]` MUST use canonical `C-NN` ids** (schema pattern `^C-\d{2,}$`, e.g. `C-01`, `C-02`) — NEVER the slug/name form. Read `threat-model.yaml` `components[]`: the ids are assigned by enumeration order (`C-01` = first component, `C-02` = second, …). **Map the component you mean to its `C-NN` id before writing.** The renderer auto-enriches a bare `C-NN` to `[C-NN](#c-nn) — Component Name` in the rendered column. Cross-cutting weaknesses list all relevant `C-NN` ids.
+
+   ❌ Bad (the 2026-06-05 parallel-render drift — fails `compose --strict`): `["express-backend", "angular-spa"]`
+   ✅ Good: `["C-01", "C-02"]`
 
 4. **Forbidden words.** Do NOT use `defect`, `defects`, or `vulnerability` in `category` or `description` strings. Use `weakness` only as a noun (`this weakness spans …`) — never as a content-free hedge (`the weakness lies in …` is already banned in `prose-style.md` and applies here verbatim).
 
@@ -574,6 +649,11 @@ is a false provenance claim.
 
 ## Render Contract
 
+> **`RENDER_ROLE=secarch` / `ms` → SKIP this entire section** (and the QA block,
+> Postcondition Gate, and Completion below). The skill composes after both
+> parallel agents return. Author your fragments, then return your one-line
+> status. Only `RENDER_ROLE=full` (or unset) runs the steps below.
+
 Never write `$OUTPUT_DIR/threat-model.md` directly. The only legal writer is:
 
 ```bash
@@ -641,6 +721,10 @@ The Postcondition Gate below still applies — `threat-model.md` MUST exist when
 
 ## Postcondition Gate — MANDATORY before returning
 
+> **`RENDER_ROLE=secarch` / `ms` → SKIP.** You did not compose; `threat-model.md`
+> is the skill's responsibility after both parallel agents return. This gate
+> applies only to `RENDER_ROLE=full` (or unset).
+
 You MUST NOT return until `$OUTPUT_DIR/threat-model.md` exists on disk. Run this exact Bash block as the final action before the Completion section, and refuse to proceed if it fails:
 
 ```bash
@@ -662,6 +746,12 @@ fi
 This guard is non-optional. A return without this check is a contract violation — the skill's `STAGE11_CUTOFF` detector relies on `threat-model.md` presence to classify success vs. recovery, and a silently-missing MD masquerades as a renderer success.
 
 ## Completion
+
+> **`RENDER_ROLE=secarch` / `ms` → SKIP the `status=completed` checkpoint.** The
+> skill writes the final Phase-11 checkpoint after it composes. You may emit a
+> role-tagged phase-end log line, but do NOT write `status=completed` (it would
+> falsely signal the render finished before compose ran). Return your one-line
+> status instead. `RENDER_ROLE=full` (or unset) runs the steps below.
 
 Write the final checkpoint and Phase 11 end telemetry:
 

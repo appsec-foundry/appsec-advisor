@@ -451,6 +451,11 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         # Authoritative total wall-clock when stage-stats.jsonl is present.
         # render_run_statistics prefers this over assess+qa+arch when set.
         "total_secs_from_stages": None,
+        # True end-to-end wall-clock of the whole scan (skill start → completion).
+        # Distinct from total_secs_from_stages, which only sums per-stage agent
+        # compute and therefore excludes the orchestration gaps between
+        # dispatches + the preamble. Written by the skill at completion.
+        "wall_secs": None,
     }
 
     # Total wall-clock from .stage-stats.jsonl. Lines are JSON objects with
@@ -474,6 +479,21 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
             total_ms = 0
         if total_ms > 0:
             stats["total_secs_from_stages"] = total_ms // 1000
+
+    # True end-to-end wall-clock — a single integer written by the skill at
+    # completion (now - .scan-start-epoch). Read here as a precomputed value so
+    # this function stays deterministic (no time.time()). The skill owns the
+    # timing because the .agent-run.log ASSESSMENT_START line gets overwritten
+    # by each analyst dispatch under the parallel-STRIDE split, so a
+    # log-derived start under-counts.
+    wall_path = output_dir / ".scan-wall-seconds"
+    if wall_path.is_file():
+        try:
+            w = int((wall_path.read_text(encoding="utf-8").strip() or "0"))
+            if w > 0:
+                stats["wall_secs"] = w
+        except (OSError, ValueError):
+            pass
 
     meta = yaml_data.get("meta") or {}
     assess_secs = meta.get("analysis_duration_seconds")
@@ -866,10 +886,22 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
             # the displayed total stays consistent with the headline figure.
             parts = []
         suffix = f"  ({' + '.join(parts)})" if parts else ""
-        lines.append(f"  Total Duration      : {_fmt_duration(total)}{suffix}")
+        lines.append(f"  Total stage compute : {_fmt_duration(total)}{suffix}")
     elif legacy_total:
         suffix = f"  ({' + '.join(parts)})" if parts else ""
-        lines.append(f"  Total Duration      : {_fmt_duration(legacy_total)}{suffix}")
+        lines.append(f"  Total stage compute : {_fmt_duration(legacy_total)}{suffix}")
+
+    # True end-to-end wall-clock of the whole scan. Rendered as a peer of the
+    # stage-compute total so the user can see both at a glance — the gap
+    # between them is orchestration overhead (between-dispatch turns, preamble,
+    # permission waits), not agent work. This is the headline "how long did the
+    # scan take" figure.
+    wall = stats.get("wall_secs")
+    if wall and wall > 0:
+        lines.append(
+            f"  Total scan (wall)   : {_fmt_duration(wall)}"
+            "  (end-to-end, incl. orchestration)"
+        )
 
     # Per-phase breakdown.
     # Fix #3 root cause — when the same phase_id is emitted by multiple agents

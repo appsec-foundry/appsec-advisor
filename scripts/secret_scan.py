@@ -87,7 +87,7 @@ _PATTERNS: list[_Pattern] = [
         re.compile(
             r"(?ix)"
             r"\b(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
-            r"\s*[=:]\s*"
+            r"\s*(?P<op>[=:])\s*"
             r"(?P<q>['\"])?(?P<val>[A-Za-z0-9_\-+/=\.]{8,})"
         ),
         False,
@@ -112,6 +112,43 @@ _CODE_REFERENCE_RE = re.compile(
 
 def _looks_like_code_reference(value: str) -> bool:
     return bool(_CODE_REFERENCE_RE.match(value))
+
+
+# A plain lowercase English word (no digits, no separators) — e.g. "existing",
+# "required", "rotated". On its own this is not enough to skip (a weak password
+# could be a lowercase word), so it is only honoured in prose context below.
+_PROSE_WORD_RE = re.compile(r"^[a-z]{4,}$")
+
+
+def _is_prose_credential_false_positive(
+    value: str, op: str | None, quoted: bool, text: str, start: int
+) -> bool:
+    """A credential keyword appearing mid-sentence in prose is not an
+    assignment. Example false positive that blocked a release on the
+    2026-06-05 juice-shop run::
+
+        - 'Rotate the secret: existing SecurityAnswers rows are invalidated…'
+
+    Here ``secret: existing`` is an English sentence, not ``secret = <literal>``.
+    The guard is deliberately narrow so a genuine literal can never slip
+    through — ALL of the following must hold:
+
+    * unquoted value (a quoted value stays flagged),
+    * the operator is ``:`` (prose uses a colon; ``=`` is assignment syntax),
+    * the value is a plain lowercase word (a real secret carries digits / mixed
+      case / token shape, which fails ``_PROSE_WORD_RE``),
+    * the keyword is preceded on the same line by a word + whitespace, i.e. it
+      sits inside a sentence rather than at a key / assignment position
+      (``  secret: x`` as a YAML key is preceded by indent only and stays
+      flagged).
+    """
+    if quoted or op != ":":
+        return False
+    if not _PROSE_WORD_RE.match(value):
+        return False
+    line_start = text.rfind("\n", 0, start) + 1
+    before = text[line_start:start]
+    return bool(re.search(r"[A-Za-z]{2,}\s+$", before))
 
 
 @dataclass(frozen=True)
@@ -165,6 +202,12 @@ def scan_text(text: str) -> list[SecretHit]:
                 # Unquoted code-identifier reference (variable name in an
                 # excerpt), not a literal secret — skip. Quoted values flag.
                 if not groups.get("q") and _looks_like_code_reference(value):
+                    continue
+                # Credential keyword used mid-sentence in prose (e.g.
+                # "Rotate the secret: existing rows…") — not an assignment.
+                if _is_prose_credential_false_positive(
+                    value, groups.get("op"), bool(groups.get("q")), text, m.start()
+                ):
                     continue
             snippet = matched[:80].replace("\n", " ")
             hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start())))
@@ -222,6 +265,12 @@ def mask_text(text: str) -> tuple[str, list[str]]:
                 if _value_is_masked(value):
                     return m.group(0)
                 if not groups.get("q") and _looks_like_code_reference(value):
+                    return m.group(0)
+                # Mirror the detector's prose guard so masking never corrupts a
+                # remediation sentence like "Rotate the secret: existing rows…".
+                if _is_prose_credential_false_positive(
+                    value, groups.get("op"), bool(groups.get("q")), text, m.start()
+                ):
                     return m.group(0)
             applied.append(_pat.name)
             return _mask_match(_pat, m)

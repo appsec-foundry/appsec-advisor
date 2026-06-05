@@ -202,6 +202,13 @@ POST_QA_FILES_IF_PASS = [
     # fixes are visible via git diff anyway.
     ".run-issues.json",
     ".run-issues-fixes.json",
+    # Wall-clock timing markers. The start epoch is written at run start and
+    # the elapsed seconds at completion; the rendered figure is already in the
+    # §Run Statistics block, so the markers are transient. Self-healing
+    # regardless (each run overwrites them), but reaped here to keep the dir
+    # clean on non-keep-runtime-files runs.
+    ".scan-start-epoch",
+    ".scan-wall-seconds",
 ]
 POST_QA_DIRS = [
     ".fragments",

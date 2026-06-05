@@ -20,7 +20,7 @@ quick-mode run:
          column headers HDR_A / HDR_T / HDR_I. Pre-fix: every node label
          was bold, drowning the visual hierarchy.
 
-    C  — `render_run_statistics` Total Duration sums every recorded stage
+    C  — `render_run_statistics` 'Total stage compute' sums every recorded stage
          from `.stage-stats.jsonl` (Stage 1 orchestrator + Stage 2
          renderer + Stage 3 QA + Stage 4 architect + REPAIR_MODE
          iterations) instead of just `assess_secs + qa_secs + arch_secs`.
@@ -326,7 +326,7 @@ class TestTierClusterArrowConsistency:
 
 
 # ---------------------------------------------------------------------------
-# C — Total Duration includes every stage from .stage-stats.jsonl
+# C — 'Total stage compute' includes every stage from .stage-stats.jsonl
 # ---------------------------------------------------------------------------
 
 
@@ -400,7 +400,7 @@ class TestTotalDurationFromStageStats:
         out = rcs.render_run_statistics(stats, None)
         text = "\n".join(out)
         # Total comes from jsonl: 1900+250+45+600 = 2795s = 46m 35s
-        assert "Total Duration      : 46m 35s" in text
+        assert "Total stage compute : 46m 35s" in text
         # Breakdown surfaces the delta line for stages the legacy path missed.
         assert "renderer + repair: 14m 55s" in text
 
@@ -413,9 +413,44 @@ class TestTotalDurationFromStageStats:
         out = rcs.render_run_statistics(stats, None)
         text = "\n".join(out)
         # 1900 + 60 + 240 = 2200 s = 36m 40s — legacy path
-        assert "Total Duration      : 36m 40s" in text
+        assert "Total stage compute : 36m 40s" in text
         # No "renderer + repair" delta line because jsonl wasn't read.
         assert "renderer + repair" not in text
+
+    def test_wall_clock_marker_extracted(self, tmp_path: Path):
+        """`.scan-wall-seconds` is read as the true end-to-end wall-clock."""
+        (tmp_path / ".scan-wall-seconds").write_text("3420\n", encoding="utf-8")
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        assert stats["wall_secs"] == 3420
+
+    def test_wall_clock_marker_absent_stays_none(self, tmp_path: Path):
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        assert stats["wall_secs"] is None
+
+    def test_wall_clock_marker_malformed_does_not_crash(self, tmp_path: Path):
+        (tmp_path / ".scan-wall-seconds").write_text("oops\n", encoding="utf-8")
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        assert stats["wall_secs"] is None
+
+    def test_render_shows_wall_clock_line_alongside_stage_total(self, tmp_path: Path):
+        """Both the stage-compute total AND the wall-clock are surfaced — the
+        gap between them is the orchestration overhead the user asked to see."""
+        self._write_jsonl(tmp_path, [{"stage": 1, "duration_ms": 1620_000}])  # 27m
+        (tmp_path / ".scan-wall-seconds").write_text("3420", encoding="utf-8")  # 57m
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        stats["assess_secs"] = 1620
+        out = rcs.render_run_statistics(stats, None)
+        text = "\n".join(out)
+        assert "Total stage compute : 27m 00s" in text
+        assert "Total scan (wall)   : 57m 00s" in text
+
+    def test_render_omits_wall_clock_line_when_absent(self, tmp_path: Path):
+        self._write_jsonl(tmp_path, [{"stage": 1, "duration_ms": 1620_000}])
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        stats["assess_secs"] = 1620
+        out = rcs.render_run_statistics(stats, None)
+        text = "\n".join(out)
+        assert "Total scan (wall)" not in text
 
 
 # ---------------------------------------------------------------------------

@@ -109,6 +109,9 @@ EXPECTED_POST_QA_FILES_IF_PASS = {
     # persistence is the §Run Issues appendix in threat-model.md.
     ".run-issues.json",
     ".run-issues-fixes.json",
+    # Wall-clock timing markers — rendered figure lives in §Run Statistics.
+    ".scan-start-epoch",
+    ".scan-wall-seconds",
 }
 EXPECTED_POST_QA_DIRS = {
     ".fragments",

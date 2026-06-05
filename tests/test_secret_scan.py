@@ -133,6 +133,50 @@ def test_real_or_opaque_credentials_still_flagged(secret_scan, raw):
 @pytest.mark.parametrize(
     "raw",
     [
+        # The 2026-06-05 juice-shop release-blocker: a credential keyword used
+        # mid-sentence in a remediation step, not an assignment.
+        "    - 'Rotate the secret: existing SecurityAnswers rows are invalidated.'",
+        "Update the password: required before the next login window.",
+        "Store the token: separately from the application config.",
+    ],
+)
+def test_prose_credential_keyword_not_flagged(secret_scan, raw):
+    """A credential keyword followed by a plain English word mid-sentence is
+    prose, not `keyword = <literal>`. The guard requires unquoted value + colon
+    operator + plain lowercase word + a preceding word, so it cannot mask a
+    real literal."""
+    hits = [h for h in secret_scan.scan_text(raw) if h.pattern == "generic_credential_assignment"]
+    assert hits == [], f"prose credential keyword should not flag: {raw!r}, got {hits}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "  secret: changeme",                 # YAML key (indent, not mid-sentence) → flags
+        'const secret = mypassword',          # code assignment with `=` → flags
+        "Rotate the secret: hunter2longer",   # prose but value has a digit → flags
+        "the secret: 'existing'",             # quoted value → flags
+    ],
+)
+def test_prose_guard_does_not_swallow_real_assignments(secret_scan, raw):
+    """The prose guard is narrow: a genuine assignment / key, a digit-bearing
+    value, or a quoted value must still flag even in a sentence-like line."""
+    assert any(
+        h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)
+    ), f"expected a loose-pattern hit for {raw!r}"
+
+
+def test_prose_credential_keyword_not_masked(secret_scan):
+    """mask_text mirrors the detector — it must not corrupt a remediation
+    sentence by redacting an English word."""
+    line = "    - 'Rotate the secret: existing rows are invalidated.'"
+    masked, applied = secret_scan.mask_text(line)
+    assert masked == line and applied == [], (masked, applied)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
         'password = "****"',
         'password: "**** (12 chars)"',
         "API_KEY = AIza****",

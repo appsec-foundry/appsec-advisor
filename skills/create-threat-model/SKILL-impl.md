@@ -1727,6 +1727,17 @@ export EST_STAGE1 EST_STAGE2 EST_STAGE3 EST_STAGE4 EST_TOTAL EST_SOURCE
 ASSESSMENT_START_EPOCH=$(date +%s)
 export ASSESSMENT_START_EPOCH
 
+# Persist the same epoch to a marker file that survives the whole run, so the
+# Completion Summary can compute the TRUE end-to-end wall-clock (now - start).
+# A file is required because shell state does not persist across the skill's
+# separate Bash calls, and .agent-run.log's ASSESSMENT_START line is unreliable
+# for this — it gets overwritten by each analyst dispatch under the
+# parallel-STRIDE split, so a log-derived start under-counts the scan. Written
+# unconditionally at every real-run start (overwrites any stale prior value, so
+# the next run never inherits a wrong baseline). Early no-op/abort paths never
+# reach this line and render no completion summary, so they need no marker.
+printf '%s' "$ASSESSMENT_START_EPOCH" > "$OUTPUT_DIR/.scan-start-epoch" 2>/dev/null || true
+
 # Source badge — distinguishes a measured-from-prior-run estimate from
 # the formula fallback so the user knows how trustworthy it is.
 SOURCE_HINT=""
@@ -2448,7 +2459,74 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    rm -f "$OUTPUT_DIR/.budget-critical" "$OUTPUT_DIR/.budget-warning"
    ```
 
-3. **Dispatch the agent.** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"`. Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json`, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"` and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass. **RC.B — the renderer does NOT call `render_completion_summary.py --patch-placeholders`.** The renderer cannot observe its own duration / tokens (those are only available post-Agent-return). The skill-final `--patch-placeholders` invocation in the §Completion Summary section below — after every stage has written to `.stage-stats.jsonl` — is the only authoritative patch point.
+3. **Dispatch the renderer.** Two paths — a **parallel split** (default when §7 enrichment is on) and the **single full dispatch** (back-compat). Resolve which:
+
+   ```bash
+   # Parallel render (perf 2026-06-05): §7 prose and the management-summary
+   # fragments are independent, so author them in TWO concurrent renderer
+   # agents (wall ≈ max(§7, MS) ≈ 6 min instead of ~11 min serial). Only
+   # meaningful when §7 is actually LLM-filled (ENRICH on) — at quick depth /
+   # --no-enrich the §7 work is deterministic and there is nothing to split,
+   # so fall through to the single full dispatch. Default-on; opt-OUT via
+   # APPSEC_PARALLEL_RENDER=0 (then the byte-unchanged single dispatch runs).
+   ENRICH_ARCH_FRAGMENTS=$(python3 -c "import json;print(str(json.load(open('$OUTPUT_DIR/.skill-config.json')).get('enrich_arch_fragments',False)).lower())" 2>/dev/null || echo false)
+   PARALLEL_RENDER=false
+   if [ "${APPSEC_PARALLEL_RENDER:-1}" != "0" ] && [ "$ENRICH_ARCH_FRAGMENTS" = "true" ] && [ "$DRY_RUN" = "false" ]; then
+     PARALLEL_RENDER=true
+   fi
+   ```
+
+   **— Parallel-render variant (`PARALLEL_RENDER=true`).** Dispatch **two** `appsec-advisor:appsec-threat-renderer` Agent calls **in a single message** so they run concurrently (same proven Level-0 fan-out as the STRIDE / abuse-verifier pattern). Pass all original configuration variables verbatim to **both** (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, ENRICH_ARCH_FRAGMENTS, SKIP_ATTACK_PATHS_AUTHORING, SKIP_ATTACK_WALKTHROUGHS, VERBOSE_REPORT, INVOCATION_ARGS, etc.), adding exactly one differing key:
+   - Agent **S** — `description: "Render: §7 Security Architecture"`, prompt adds `RENDER_ROLE=secarch`. Authors only `security-architecture.md` (+ `architecture-diagrams.md`); does NOT compose.
+   - Agent **M** — `description: "Render: Management Summary"`, prompt adds `RENDER_ROLE=ms`. Authors only `ms-verdict.json` + `ms-architecture-assessment.json` (+ `ms-critical-attack-tree.json` when ≥2 Critical, + `security-posture-attack-paths.json` unless skipped), runs the MS compactness gate; does NOT compose.
+
+   Wait for **both** to return, then compose + QA **at skill level** (the work the split agents deliberately skip):
+
+   ```bash
+   # Capture compose's EXIT CODE — not file presence. On a --strict failure
+   # (e.g. one split agent emitted an off-schema fragment) the on-disk
+   # threat-model.md is the STALE prior render, so `[ -f … ]` would falsely
+   # read as success and the downstream inline-shortcut gate would pass a stale
+   # doc (2026-06-05 parallel-render gotcha). Exit code is the only honest
+   # signal. Retry compose once (mirrors the single-dispatch renderer's
+   # Postcondition recovery) before handing off to the recovery path.
+   COMPOSE_RC=0
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
+       --output-dir "$OUTPUT_DIR" --strict || COMPOSE_RC=$?
+   if [ "$COMPOSE_RC" -ne 0 ]; then
+       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   threat-renderer  COMPOSE_FAILED  rc=$COMPOSE_RC (parallel render) — retrying once" >> "$OUTPUT_DIR/.agent-run.log"
+       COMPOSE_RC=0
+       python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
+           --output-dir "$OUTPUT_DIR" --strict || COMPOSE_RC=$?
+   fi
+   if [ "$COMPOSE_RC" -eq 0 ]; then
+       # Compose succeeded → run QA (on a stale MD it would be noise) and write
+       # the completed checkpoint the split agents deliberately skipped, so
+       # STAGE11_CUTOFF detection sees the same clean signal the single-dispatch
+       # renderer would have written.
+       if [ "$SKIP_QA" = "true" ] || [ "$DRY_RUN" = "true" ] || [ "$PR_MODE" = "true" ]; then
+           python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" all \
+               "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" > /dev/null || true
+       else
+           python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract \
+               "$OUTPUT_DIR/threat-model.md" > /dev/null || true
+       fi
+       python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-end "[Phase 11/11] Finalization (parallel renderer)" --agent threat-renderer 2>/dev/null || true
+       echo "phase=11 status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
+   else
+       # Both compose attempts failed → do NOT mark completed (that would ship a
+       # stale doc). Record an incomplete checkpoint and fall through to the
+       # post-dispatch backstop + hard gate + Stage-3 re-render loop, which own
+       # fragment-repair recovery exactly as for a single-dispatch compose miss.
+       echo "phase=11 status=incomplete reason=compose_failed_parallel timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
+   fi
+   ```
+
+   On a persistent compose failure the incomplete checkpoint routes into the existing post-dispatch backstop + hard gate and the §"Post-dispatch — fragment-pipeline audit" recovery — the same path the single-dispatch flow uses when a renderer returns without producing `threat-model.md`.
+
+   **— Single full dispatch (`PARALLEL_RENDER=false`).** Call the `appsec-advisor:appsec-threat-renderer` Agent tool with `description: "Threat Model Renderer (Stage 2)"` and `RENDER_ROLE=full` (or simply omit it — `full` is the default). Pass all original configuration variables verbatim (REPO_ROOT, OUTPUT_DIR, WRITE_YAML, WRITE_SARIF, ASSESSMENT_DEPTH, model selections, VERBOSE_REPORT, INVOCATION_ARGS, etc.) so the renderer has the same context the orchestrator had. The renderer authors the 2 LLM-driven JSON fragments (`ms-verdict.json`, `ms-architecture-assessment.json`) plus optionally `attack-walkthroughs.md` and `security-posture-attack-paths.json` and (when `ENRICH_ARCH_FRAGMENTS=true`) the §7 enrichment, then invokes `compose_threat_model.py --strict --output-dir "$OUTPUT_DIR"` and conditional QA: full `qa_checks.py all` when Stage 3 is skipped (`SKIP_QA=true`, `DRY_RUN=true`, or `PR_MODE=true`), otherwise only the fast contract check because the skill-level `repair_plan` gate and QA reviewer own the full QA pass.
+
+   **RC.B — neither path calls `render_completion_summary.py --patch-placeholders` here.** The renderer cannot observe its own duration / tokens (those are only available post-Agent-return). The skill-final `--patch-placeholders` invocation in the §Completion Summary section below — after every stage has written to `.stage-stats.jsonl` — is the only authoritative patch point.
 
    **Stage-2 dispatch guard (G-9).** The Agent call is synchronous and blocks the skill. In production the deadline-watchdog (see "Wall-time + cost deadline watchdog" above) provides the ultimate ceiling via `.appsec-lock` removal. For runs without a `--max-wall-time` limit, the wall-time upper bound is implicitly the Claude Code harness session timeout. No additional watcher is needed here — Stage 2 returns when complete or exhausted. If Stage 2 does not produce `threat-model.md` by the time the Agent call returns, the existing post-Stage-2 `STAGE11_CUTOFF` detection below handles recovery.
 
@@ -2463,7 +2541,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
 5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 - Report Rendering` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
 
-6. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper.
+6. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper. **In the parallel-render variant two `<usage>` blocks return (Agent S + Agent M)** — sum their `total_tokens` and `tool_uses`, and use the **larger** `duration_ms` (they ran concurrently, so wall-time is the max, not the sum). The `--since-iso "$STAGE2_START_ISO"` enrichment already derives the true `dispatch_count` (=2) and `wall_secs_observed` from `.hook-events.log`, so the recorded wall-time stays honest regardless.
 
    **`STAGE2_START_ISO` capture (mandatory for multi-dispatch wall-time).** Capture the dispatch-start timestamp into `STAGE2_START_ISO` (`STAGE2_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` immediately before the Agent tool call in step 3). Stage 2 is the stage most likely to re-dispatch (auto-retry via `check_inline_shortcut.py` → `MAX_INLINE_RETRIES=2`, see §"Auto-retry — inline shortcut" below, and `STAGE11_CUTOFF` recovery dispatch from the §"Handling turn-budget cut-offs" path). Without this capture, the recorder cannot derive `dispatch_count` / `wall_secs_observed` and Stage 2 wall-time silently under-reports by 50% on multi-spawn runs (observed on 2026-05-23 juice-shop: reported 8m06s, actual 15m58s).
 
@@ -2776,6 +2854,7 @@ Pass the following variables to the agent prompt:
 - `ENRICH_ARCH_FRAGMENTS=<true|false>` (M3.3 / D2 — only set on Stage 2 dispatch. When `true`, the agent overwrites `architecture-diagrams.md` and `security-architecture.md` with LLM-authored richer versions instead of using the deterministic pre-generator output. Off by default at quick; **on by default at standard and thorough** (the deterministic scaffold ships unfilled `NARRATIVE_PLACEHOLDER` comments for §7.3–§7.12 at standard/thorough, so enrichment is required for a non-empty §7 — see `resolve_config.py:resolve_enrich_arch_fragments`); force on at any depth via `--enrich-arch`, force off via `--no-enrich-arch`.)
 - `SKIP_ATTACK_PATHS_AUTHORING=<true|false>` (only set on Stage 2 dispatch. When `true`, the agent skips authoring `security-posture-attack-paths.json` and lets the renderer's deterministic CWE→class fallback in `compose_threat_model.py:_derive_attack_paths_fallback` produce the fragment. On at quick depth (since 2026-05) to save ~1-3 min in Stage 2; off at standard/thorough where the LLM-authored architectural-root-causes and attack-chain links justify the authoring cost.)
 - `SKIP_ATTACK_WALKTHROUGHS=<true|false>` (only set on Stage 2 dispatch. When `true` (set by `--no-walkthroughs` or quick depth), the agent skips authoring `attack-walkthroughs.md`; the composer renders §3 with the chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2.)
+- `RENDER_ROLE=<full|secarch|ms>` (perf 2026-06-05 — only set on Stage 2 dispatch. `full` (default / omit) = single-agent path: author MS + §7 + compose. `secarch` / `ms` = the two parallel split roles (`PARALLEL_RENDER=true`): each authors only its half and does NOT compose; the skill composes after both return. See `agents/appsec-threat-renderer.md` → "Render role — READ FIRST".)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 - `MAX_STRIDE_COMPONENTS=<3|5|8>`
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
@@ -3552,6 +3631,24 @@ fi
 The banner is **stderr-only and best-effort** — a missing log or unreadable file silently skips the banner; the run never blocks on the warning emission itself. The same events are also already mirrored to stderr in real-time during the run (via `_HIGH_SIGNAL_EVENTS` in `agent_logger.py`); this banner is the consolidated end-of-run reminder.
 
 **Design intent.** The completion block is the *only* thing the user reliably sees in headless (`claude -p`) mode and the dominant visible artifact in interactive mode. It is rendered by `scripts/render_completion_summary.py` — a single self-contained Python script with full unit tests. **Do not hand-author any part of this block**; invoke the script and print its output verbatim.
+
+**Compute the true end-to-end wall-clock first.** Read the `.scan-start-epoch`
+marker written at run start (see the "anchor point for all per-run timing"
+block above) and write the elapsed seconds to `.scan-wall-seconds`, which
+`render_completion_summary.py` reads to render the `Total scan (wall)` line
+**alongside** the `Total stage compute` total. The two figures differ by the
+orchestration overhead (between-dispatch turns, preamble, permission waits) —
+showing both is what makes "how long did the scan take" unambiguous. The stage
+total is the sum of per-stage agent compute from `.stage-stats.jsonl`; the
+wall-clock is real elapsed time. Best-effort — a missing marker just omits the
+wall line:
+
+```bash
+SCAN_START=$(cat "$OUTPUT_DIR/.scan-start-epoch" 2>/dev/null || echo 0)
+if [ "${SCAN_START:-0}" -gt 0 ]; then
+  printf '%s' "$(( $(date +%s) - SCAN_START ))" > "$OUTPUT_DIR/.scan-wall-seconds" 2>/dev/null || true
+fi
+```
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \

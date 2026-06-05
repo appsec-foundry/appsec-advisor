@@ -75,6 +75,30 @@ def test_layer_a_catches_unquoted_paren_in_participant(tmp_path: Path):
     assert any("unquoted '('" in i for i in report.issues), report.issues
 
 
+def test_layer_c_autofixes_html_tag_in_sequence_payload(tmp_path: Path):
+    """`Bearer <token>` / `<br/>` in a sequenceDiagram arrow payload crash
+    Mermaid. Layer C strips them to plain text in place and — because the
+    auto-fix runs before detection — the issue is NOT re-reported, so the
+    Re-Render Loop never dispatches an agent for it (the 2026-06-05 juice-shop
+    §7 render defect)."""
+    md = tmp_path / "threat-model.md"
+    md.write_text(
+        "# t\n\n```mermaid\nsequenceDiagram\n"
+        "    Client->>MW: GET /api/Users Authorization: Bearer <token>\n"
+        "    MW-->>Client: 200 OK<br/>body\n"
+        "```\n"
+    )
+    report = _qa().check_mermaid_syntax(md)
+    after = md.read_text()
+    assert not any("HTML tag" in i for i in report.issues), report.issues
+    assert any("seqdiagram_html_strip" in f for f in report.fixes), report.fixes
+    assert "<token>" not in after and "<br" not in after
+    assert "Bearer token" in after
+    # Idempotent — a second pass makes no further change.
+    report2 = _qa().check_mermaid_syntax(md)
+    assert report2.fixes == [], report2.fixes
+
+
 def test_layer_a_passes_valid_sequence(tmp_path: Path):
     md = "# t\n\n```mermaid\nsequenceDiagram\n    participant A\n    participant B\n    A->>B: hello\n```\n"
     report = _run_check(tmp_path, md)
