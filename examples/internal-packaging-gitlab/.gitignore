@@ -2,6 +2,5 @@
 build/
 dist/
 
-# Upstream clone (Option B — fresh clone per run).
-# Remove this line if you vendor upstream as a git submodule (Option A).
+# Upstream clone (fresh clone per run)
 upstream/appsec-advisor/

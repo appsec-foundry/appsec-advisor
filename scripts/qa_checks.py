@@ -3661,6 +3661,30 @@ def check_mermaid_syntax(md_path: Path) -> Report:
     """Flag mermaid blocks with known-bad syntax patterns."""
     report = Report(check="mermaid_syntax")
     raw = md_path.read_text(encoding="utf-8")
+
+    # Layer C — deterministic auto-fix for known false-negative patterns that
+    # Layer A's regex accepts but Mermaid's parser rejects, plus the HTML-tag
+    # case Layer A DOES flag (rule 3c). Runs FIRST — before the per-line
+    # detection below and before Layer B — so once a defect is auto-fixed it is
+    # neither re-reported in `report.issues` nor handed to the Re-Render Loop
+    # for an (unnecessary) agent repair. Patterns handled:
+    #   1. sequenceDiagram `participant X as "..."` quoted aliases — Mermaid's
+    #      grammar does NOT support quoted aliases after `as`.
+    #   2. flowchart `[label]` with an unbalanced '(' from `…` truncation
+    #      (typically `_short_title()` in walkthrough_renderer.py cutting a
+    #      finding title ending in `(<path>)` mid-paren).
+    #   3. HTML tags in sequenceDiagram message payloads (`Bearer <token>`,
+    #      `<br/>`) — invalid in arrow payloads; reduced to plain text.
+    # The template-level fixes (walkthrough_renderer.py, the §7 renderer) are
+    # the primary remediation; this is the safety net for LLM-authored content
+    # that re-introduces them and for environments without Layer B. All rules
+    # are idempotent — a second pass on patched text is a no-op.
+    new_raw, autofix_descriptions = _apply_mermaid_autofixes(raw)
+    if new_raw != raw:
+        md_path.write_text(new_raw, encoding="utf-8")
+        raw = new_raw
+        report.fixes.extend(autofix_descriptions)
+
     for block_idx, m in enumerate(_MERMAID_FENCE_RE.finditer(raw), start=1):
         body = m.group("body")
         line_offset = raw[: m.start()].count("\n") + 1  # 1-based line of ```mermaid
@@ -3913,32 +3937,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
 
             report.ok += 1
 
-    # Layer C — deterministic auto-fix for two known false-negative patterns
-    # that Layer A's regex check accepts but Mermaid's parser rejects:
-    #   1. sequenceDiagram `participant X as "..."` quoted aliases —
-    #      Mermaid's sequenceDiagram grammar does NOT support quoted
-    #      aliases after `as`. The alias must be an unquoted token. The
-    #      regex pre-pass (rule 2) explicitly skipped quoted aliases as
-    #      "OK", letting them ship to the rendered MD.
-    #   2. flowchart `[label]` with unbalanced '(' from `…` truncation —
-    #      typically introduced by `_short_title()` in
-    #      walkthrough_renderer.py when a finding title ending in
-    #      `(<path>)` is cut mid-paren. The `(` is interpreted by
-    #      Mermaid as the start of round-rect node syntax `(text)`
-    #      inside `[...]` and aborts the diagram.
-    #
-    # The template-level fix in walkthrough_renderer.py +
-    # data/walkthrough-templates/*.yaml is the primary remediation.
-    # This Layer C auto-fix is a safety net for: (a) LLM-authored content
-    # at --thorough that re-introduces the patterns; (b) environments
-    # where Layer B (jsdom + @mermaid-js/mermaid-cli) is unavailable.
-    # Both rules are idempotent — running a second time on the patched
-    # text is a no-op.
-    new_raw, autofix_descriptions = _apply_mermaid_autofixes(raw)
-    if new_raw != raw:
-        md_path.write_text(new_raw, encoding="utf-8")
-        raw = new_raw
-        report.fixes.extend(autofix_descriptions)
+    # (Layer C auto-fix now runs at the top of this function, before detection.)
 
     # Layer B — authoritative parse. Only runs if the Node validator and its
     # optional deps are installed. When it runs, it catches grammar-level
@@ -4012,6 +4011,37 @@ def _apply_mermaid_autofixes(md_text: str) -> tuple[str, list[str]]:
                     )
                 else:
                     patched_lines.append(line)
+            new_body = "\n".join(patched_lines)
+
+        # Rule C — strip HTML tags from sequenceDiagram message payloads.
+        # Mermaid does NOT interpret HTML in arrow payloads (unlike flowchart
+        # node labels), so `Bearer <token>` / `<br/>` crash the diagram. This
+        # mirrors detector rule (3c) in check_mermaid_syntax. The fix replaces
+        # `<br>`/`<br/>` with a space and reduces any other `<tag>` to its
+        # bracket-free inner text (`<token>` → `token`), yielding valid,
+        # readable plain text. Idempotent: the patched form has no `<…>` left.
+        if diagram_type == "sequenceDiagram":
+            patched_lines = []
+            for line in new_body.splitlines():
+                stripped_l = line.strip()
+                is_message = bool(re.match(r"^\s*\w+\s*(-+>>?|--?>>?|->|-->>?)", stripped_l))
+                if is_message and ":" in line:
+                    head, payload = line.split(":", 1)
+                    if re.search(r"<[a-zA-Z][^>]*>", payload):
+                        new_payload = re.sub(r"<br\s*/?>", " ", payload, flags=re.I)
+                        new_payload = re.sub(
+                            r"<([a-zA-Z][^>]*)>",
+                            lambda mm: re.split(r"[\s/]", mm.group(1), 1)[0],
+                            new_payload,
+                        )
+                        new_payload = re.sub(r" {2,}", " ", new_payload).rstrip()
+                        patched_lines.append(f"{head}:{new_payload}")
+                        fixes.append(
+                            f"mermaid auto-fix (seqdiagram_html_strip): stripped "
+                            f"HTML tag(s) from message payload `{stripped_l[:60]}`"
+                        )
+                        continue
+                patched_lines.append(line)
             new_body = "\n".join(patched_lines)
 
         # Rule B — drop the unbalanced `(` suffix from flowchart / graph

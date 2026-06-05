@@ -160,7 +160,7 @@ def test_upstream_packager_rejects_slashes_in_version(tmp_path: Path) -> None:
     assert "VERSION must not contain '/'" in result.stderr
 
 
-def test_gitlab_ci_fetches_ref_after_clone_for_commit_sha_support() -> None:
+def test_gitlab_ci_pins_ref_with_single_clone_then_smoke_tests() -> None:
     pipeline = yaml.safe_load((EXAMPLE_ROOT / ".gitlab-ci.yml").read_text())
     script_lines = pipeline["package"]["script"]
     script = "\n".join(script_lines)
@@ -174,11 +174,13 @@ def test_gitlab_ci_fetches_ref_after_clone_for_commit_sha_support() -> None:
     assert "rsync" not in script
     assert "ripgrep" not in script
     assert "tar -czf" not in script
-    assert 'git clone --depth 1 "$APPSEC_ADVISOR_URL" upstream/appsec-advisor' in script
+    # A single clone pins the ref via --branch; no separate fetch/checkout dance.
     assert (
-        'git -C upstream/appsec-advisor fetch --depth 1 origin "$APPSEC_ADVISOR_REF"'
-        in script
+        'git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" '
+        '"$APPSEC_ADVISOR_URL" upstream/appsec-advisor' in script
     )
-    assert "git -C upstream/appsec-advisor checkout --detach FETCH_HEAD" in script
+    assert "fetch --depth 1 origin" not in script
+    assert "checkout --detach FETCH_HEAD" not in script
     assert "scripts/package_internal_plugin.py" in script
-    assert not any("--branch" in line for line in script_lines if "APPSEC_ADVISOR_REF" in line)
+    # The build is smoke-tested before publishing.
+    assert "scripts/smoke_test_package.py" in script

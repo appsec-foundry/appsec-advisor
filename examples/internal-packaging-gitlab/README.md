@@ -21,6 +21,9 @@ package
        - rewrites appsec-advisor: → $INTERNAL_NAME:
        - validates config + org profile + namespace rewrite
        - writes dist/$INTERNAL_NAME-$VERSION.tgz + .sha256
+  └─ smoke_test_package.py build/$INTERNAL_NAME --name $INTERNAL_NAME
+       - asserts the built artifact's contract (no API): plugin name,
+         org-profile wiring, namespace rewrite, entry command present
 ```
 
 ## Repository layout
@@ -33,11 +36,10 @@ org-profile/
   actors/insiders.yaml          ← optional company-specific actors
 ```
 
-The package job clones upstream into `upstream/appsec-advisor/`.
-`APPSEC_ADVISOR_REF` may be a branch, tag, or commit SHA; the CI job fetches
-that ref and checks out `FETCH_HEAD`. If you prefer a pinned submodule instead
-of a fresh clone per run, replace the clone, fetch, and checkout lines with
-`git submodule update`.
+The package job pins upstream into `upstream/appsec-advisor/` with a single
+`git clone --depth 1 --branch $APPSEC_ADVISOR_REF`, so `APPSEC_ADVISOR_REF` is a
+tag or branch. To pin an arbitrary commit SHA instead, drop `--branch` and
+fetch + check out that SHA.
 
 ## Setup
 
