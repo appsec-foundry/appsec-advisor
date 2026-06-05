@@ -2156,6 +2156,63 @@ class TestRepairPlanStatusClassification:
 
 
 # ---------------------------------------------------------------------------
+# build_repair_plan — placeholders + yaml_md_consistency folded in (2026-06-05)
+#
+# Both checks used to live only in the deferred `all` battery, which never
+# runs on the clean fast path (the QA agent that consumed it is skipped). They
+# now gate the repair plan so a visible placeholder or a yaml↔md count drift
+# can no longer ship silently on a contract-clean document.
+# ---------------------------------------------------------------------------
+
+
+class TestRepairPlanFoldedChecks:
+    def test_visible_placeholder_appears_in_plan(self, tmp_path):
+        """A visible `_pending_` token reaches the repair plan as a
+        `placeholders` action (manual_review route — empty fragment target)."""
+        md = _write_minimal_model(
+            tmp_path,
+            "## 1. Management Summary\n\nThe verdict is _pending_ further review.\n",
+        )
+        (tmp_path / "threat-model.yaml").write_text(
+            "meta:\n  schema_version: 1\nthreats: []\nmitigations: []\n", encoding="utf-8"
+        )
+        plan, report = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        ph = [a for a in plan["actions"] if a["type"] == "placeholders"]
+        assert ph, "placeholders action missing from repair plan"
+        assert ph[0]["fragments_to_rewrite"] == []  # routes to manual_review/agent
+        assert any("_pending_" in i for i in report.issues)
+
+    def test_yaml_md_count_drift_appears_in_plan(self, tmp_path):
+        """yaml has 2 threats, md renders 0 → a `yaml_md_consistency` action
+        is emitted (empty fragment target → manual_review, not a wasted loop)."""
+        md = _write_minimal_model(
+            tmp_path,
+            "## 1. Management Summary\n\nNo findings table rendered here.\n",
+        )
+        (tmp_path / "threat-model.yaml").write_text(
+            "meta:\n  schema_version: 1\n"
+            "threats:\n  - id: T-001\n  - id: T-002\nmitigations: []\n",
+            encoding="utf-8",
+        )
+        plan, report = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
+        ym = [a for a in plan["actions"] if a["type"] == "yaml_md_consistency"]
+        assert ym, "yaml_md_consistency action missing from repair plan"
+        assert ym[0]["fragments_to_rewrite"] == []
+        assert any("count drift" in i for i in report.issues)
+
+    def test_yaml_md_only_drift_classifies_manual_review(self):
+        """An isolated yaml_md action (empty fragments) → manual_review so the
+        skill routes to agent triage (exit 3), not the Re-Render Loop."""
+        issues = ["threat count drift: yaml=2, md (distinct F/T-NNN)=0"]
+        actions = [
+            {"raw_issue": issues[0], "type": "yaml_md_consistency", "fragments_to_rewrite": []},
+        ]
+        status, actionable = qa._classify_plan_status(issues, actions)
+        assert status == "manual_review"
+        assert actionable is False
+
+
+# ---------------------------------------------------------------------------
 # Triage CLI defensive defaults (Sprint 1B / M3.5)
 #
 # The orchestrator has historically called `triage_validate_ratings.py` with

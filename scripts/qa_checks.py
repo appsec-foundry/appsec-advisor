@@ -1600,6 +1600,14 @@ def build_repair_plan(
     walkthrough_depth_report = check_walkthrough_depth(md_path, output_dir, contract_path)
     recon_iam_report = check_recon_iam_bridge(md_path, output_dir, contract_path)
     falls_short_report = check_falls_short_format(md_path, contract_path)
+    # Release-quality gates that used to live only in the deferred `all`
+    # battery — which never runs on the clean fast path (the QA agent that
+    # consumed it is skipped). Folding them into the repair plan means an
+    # unexpanded NARRATIVE_PLACEHOLDER or a yaml↔md count drift trips the
+    # Re-Render Loop instead of shipping silently. Both are deterministic and
+    # re-render-fixable (recompose / fragment re-author).
+    placeholder_report = check_placeholders(md_path)
+    yaml_md_report = check_yaml_md_consistency(md_path, output_dir / "threat-model.yaml")
     mermaid_issues = list(mermaid_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
@@ -1615,6 +1623,8 @@ def build_repair_plan(
     walkthrough_depth_issues = list(walkthrough_depth_report.issues)
     recon_iam_issues = list(recon_iam_report.issues)
     falls_short_issues = list(falls_short_report.issues)
+    placeholder_issues = list(placeholder_report.issues)
+    yaml_md_issues = list(yaml_md_report.issues)
     report.issues.extend(mermaid_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
@@ -1631,6 +1641,9 @@ def build_repair_plan(
     # falls_short issues are warnings only — extend warnings, not issues.
     report.warnings.extend(falls_short_report.warnings)
     report.issues.extend(falls_short_issues)
+    report.issues.extend(placeholder_issues)
+    report.warnings.extend(yaml_md_report.warnings)
+    report.issues.extend(yaml_md_issues)
 
     actions: list[dict] = []
     # One action per mermaid-syntax finding. The offending fragment is almost
@@ -2149,6 +2162,47 @@ def build_repair_plan(
             }
         )
         actions.append(action)
+
+    # One action per unfilled VISIBLE placeholder token (`_pending_`, `[TBD]`,
+    # `{{X}}`, bare TODO, …; the invisible `<!-- … -->` scaffold comments are
+    # excluded by the check). The token can live in any LLM-authored fragment,
+    # so we do NOT hard-target one — empty `fragments_to_rewrite` routes this to
+    # `manual_review` (exit 3) and the QA agent locates the line and fixes it.
+    for raw in placeholder_issues:
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "placeholders",
+                "section_id": "(global)",
+                "fragments_to_rewrite": [],
+                "remediation": (
+                    "A visible template placeholder reached the rendered MD "
+                    "(e.g. `_pending_`, `[TBD]`, `{{TOKEN}}`). Locate the line in "
+                    "the offending fragment, author the missing prose, and re-run "
+                    "compose_threat_model.py. The raw_issue carries the MD line(s)."
+                ),
+            }
+        )
+
+    # One action per yaml↔md drift. Counts are composed deterministically from
+    # threat-model.yaml, so a drift means a stale fragment or a bypassed
+    # composer — recompose first, then repair the source fragment if it persists.
+    for raw in yaml_md_issues:
+        actions.append(
+            {
+                "raw_issue": raw,
+                "type": "yaml_md_consistency",
+                "section_id": "threat_register",
+                "fragments_to_rewrite": [],
+                "remediation": (
+                    "The threat/mitigation counts (or asset cross-references) in "
+                    "threat-model.md disagree with threat-model.yaml. Re-run "
+                    "compose_threat_model.py --strict (the MD is built from the "
+                    "YAML); if the drift persists, a fragment was hand-edited or "
+                    "the composer was bypassed — repair the source fragment."
+                ),
+            }
+        )
 
     # ---- Repair-plan deduplication ---------------------------------------
     # Multiple structural checks (e.g. ``check_mermaid_syntax`` +
