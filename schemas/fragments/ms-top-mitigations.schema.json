@@ -1,5 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://appsec-advisor/schemas/fragments/ms-top-mitigations.schema.json",
   "title": "ms-top-mitigations",
   "description": "LLM curation of the Management-Summary Top-Mitigations leader-board. The composer always shows every Critical-covering mitigation (coverage floor); this fragment orders the most important ADDITIONAL mitigations up to the rows.max clamp. Optional — absence falls back to deterministic ordering.",
   "type": "object",

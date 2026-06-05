@@ -15,5 +15,5 @@ The root is the worst-case attacker goal; below it, each capability branch group
 {{ blocks[0].src }}
 ```
 {% if findings %}
-**Findings** (full detail in [§8 Threat Register](#8-threat-register)): {% for f in findings %}{{ f.dot }}[{{ f.id }}]({{ f.anchor }}) {{ f.title }}{% if not loop.last %} · {% endif %}{% endfor %}
+**Findings** (full detail in [§8 Findings Register](#8-findings-register)): {% for f in findings %}{{ f.dot }}[{{ f.id }}]({{ f.anchor }}) {{ f.title }}{% if not loop.last %} · {% endif %}{% endfor %}
 {% endif %}

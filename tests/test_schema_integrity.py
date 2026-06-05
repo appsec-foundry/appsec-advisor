@@ -182,7 +182,7 @@ def test_id_patterns_are_canonical(schema_files):
             if prefix.startswith("["):
                 continue
             # Strip `{min,max}` quantifier tail.
-            if prefix not in ("F", "T", "M", "C", "TH", "CC", "AF"):
+            if prefix not in ("F", "T", "M", "C", "TH", "CC", "AF", "A"):
                 violations.append(f"{path.name} at {pointer}: unusual ID prefix {prefix!r} in pattern {pat!r}")
     assert not violations, "\n".join(violations)
 

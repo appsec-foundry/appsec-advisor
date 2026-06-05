@@ -397,7 +397,6 @@ properties:
                   relevant_findings:
                     type: array
                     items: { type: string }
-            pattern: "^T-\\d{3,}$"
 
   threats:
     type: array

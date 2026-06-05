@@ -27,6 +27,20 @@ KNOWN_UNDOCUMENTED_FLAGS = {
     "--clean-cache",
     "--clean-all",
     "--force",
+    # Real flags parsed by scripts/run-headless.sh (trust/url safety) and
+    # documented in HELP.txt, but not surfaced in SKILL.md's Argument Parsing
+    # table (the skill defers to run-headless.sh for them).
+    "--trust-mode",
+    "--strict-urls",
+    # Real flag wired via REFRESH_ACTOR_DISCOVERY (SKILL-impl.md) and described
+    # in HELP.txt, but driven through an env var rather than the parse table.
+    "--refresh-discovery",
+}
+
+# Flags that belong to a DIFFERENT skill/command and appear in HELP.txt only as
+# a cross-reference (e.g. the standalone export-threat-model command).
+CROSS_COMMAND_FLAGS = {
+    "--formats",
 }
 
 # Match flags inside the Argument Parsing table's backtick-quoted flag cell.
@@ -108,7 +122,7 @@ def test_no_phantom_flags_in_help():
     known_aliases = {"--with-requirements", "--ignore-requirements", "--requirements-url"}
     # Common non-flag tokens that happen to start with --
     false_positives = {"--"}
-    phantom = helped - parsed - known_aliases - false_positives - KNOWN_UNDOCUMENTED_FLAGS
+    phantom = helped - parsed - known_aliases - false_positives - KNOWN_UNDOCUMENTED_FLAGS - CROSS_COMMAND_FLAGS
     assert not phantom, (
         f"HELP.txt mentions flags that no longer exist in the Argument Parsing "
         f"table: {sorted(phantom)}. Either add them to the table or remove from HELP.txt."

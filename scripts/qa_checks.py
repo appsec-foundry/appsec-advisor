@@ -1522,6 +1522,7 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
     "toc": [],  # computed
     "management_summary": [],  # container only
     "verdict": [".fragments/ms-verdict.json"],
+    "architectural_anti_patterns": [".fragments/ms-anti-patterns.json"],
     "top_findings": [],  # computed
     "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
     "mitigations": [],  # computed
@@ -1535,6 +1536,7 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
     "security_architecture": [".fragments/security-architecture.md"],
     "requirements_compliance": [".fragments/requirements-compliance.md"],
     "threat_register": [".fragments/compound-chains.json"],
+    "critical_attack_tree": [".fragments/ms-critical-attack-tree.json"],
     "mitigation_register": [],  # from yaml mitigations[]
     "out_of_scope": [".fragments/out-of-scope.md"],
     "appendix_run_statistics": [],  # from yaml meta
@@ -2917,6 +2919,13 @@ def check_section7_h4_positive_intro(md_path: Path) -> Report:
             # it sits directly under the H4 heading. Skip it so the positive
             # intro paragraph that follows is the one validated.
             if ls.startswith("**Status:"):
+                if intro_lines:
+                    break
+                continue
+            # An optional `⚠ **Anti-pattern:** <name>` label is metadata too —
+            # it sits between the Status badge and the intro. Skip it so the
+            # positive intro paragraph (not the label) is the one validated.
+            if ls.startswith("⚠ **Anti-pattern:") or ls.startswith("**Anti-pattern:"):
                 if intro_lines:
                     break
                 continue

@@ -150,7 +150,9 @@ def test_compatibility_rejects_unsupported_core(acme_profile):
 
 
 def test_api_version_const_enforced(acme_profile):
-    acme_profile["api_version"] = "appsec-advisor.org-profile/v2"
+    # v1 and v2 are the supported api_versions; anything outside the enum
+    # (here a hypothetical v3) must be rejected against the api_version field.
+    acme_profile["api_version"] = "appsec-advisor.org-profile/v3"
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert any("api_version" in e for e in errors), errors
 

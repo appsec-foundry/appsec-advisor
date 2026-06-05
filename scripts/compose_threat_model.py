@@ -130,6 +130,7 @@ class FragmentError(Exception):
 # security-architecture.md).
 _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "verdict": [".fragments/ms-verdict.json"],
+    "architectural_anti_patterns": [".fragments/ms-anti-patterns.json"],
     "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
     "operational_strengths": [".fragments/operational-strengths-overrides.json"],
     "system_overview": [".fragments/system-overview.md"],
@@ -143,6 +144,7 @@ _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "security_architecture": [".fragments/security-architecture.md"],
     "requirements_compliance": [".fragments/requirements-compliance.md"],
     "threat_register": [".fragments/compound-chains.json"],
+    "critical_attack_tree": [".fragments/ms-critical-attack-tree.json"],
     "out_of_scope": [".fragments/out-of-scope.md"],
 }
 
@@ -164,6 +166,10 @@ _KNOWN_JSON_FRAGMENT_SCHEMAS: dict[str, tuple[str, str]] = {
     "security-posture-attack-paths.json": (
         "security_posture_attack_paths",
         "security-posture-attack-paths.schema.json",
+    ),
+    "ms-anti-patterns.json": (
+        "architectural_anti_patterns",
+        "anti-patterns.schema.json",
     ),
 }
 
@@ -4809,12 +4815,11 @@ def _build_attack_arrows(
                 }
             )
 
-    # Collapse the per-class arrows into ONE grouped arrow per (src, dst). Each
-    # glyph is NAMED ONCE (same form as Figure 1): a single-class arrow reads
-    # "③ Priv-Esc"; a multi-class arrow STACKS its names vertically (one per
-    # line via <br/>) so it stays a tidy list rather than a long horizontal run.
+    # Collapse the per-class arrows into ONE grouped arrow per (src, dst),
+    # carrying that actor's glyphs as a bare, space-joined run (e.g. "① ② ③")
+    # with no per-class text label. The class names live in the §-narrative
+    # bullets and the intro range, keeping the Figure-2 heatmap edges compact.
     glyph_rank = {g: i for i, g in enumerate(glyph_seq)}
-    glyph_to_name = {a["glyph"]: _posture_short_label(a["label"]) for a in arrows}
     grouped: dict[tuple[str, str], list[str]] = {}
     order: list[tuple[str, str]] = []
     for a in arrows:
@@ -4826,13 +4831,10 @@ def _build_attack_arrows(
     grouped_arrows = []
     for (src, dst) in order:
         glyphs = sorted(grouped[(src, dst)], key=lambda g: glyph_rank.get(g, 99))
-        stacked = "<br/>".join(f"{g} {glyph_to_name.get(g, '')}".strip() for g in glyphs)
+        stacked = " ".join(glyphs)
         grouped_arrows.append({"src": src, "dst": dst, "glyph": stacked, "label": ""})
-    # Relay (delivery) arrows are the CONTINUATION of a victim-targeting path —
-    # reference by bare NUMBER only (the class is already named on its attack
-    # arrow), matching Figure 1's dotted-propagation labelling.
-    for r in relay_arrows:
-        r["label"] = ""
+    # Relay (delivery) arrows keep their class short_label so the client→victim
+    # delivery hop stays named (the grouped attack arrow it continues is bare).
     return grouped_arrows, relay_arrows
 
 
@@ -4938,26 +4940,6 @@ def _fig1_label(text: str) -> str:
     """Escape a string for use inside a quoted Mermaid node/edge label."""
     s = " ".join((text or "").split())
     return s.replace("&", "&amp;").replace('"', "'")
-
-
-# Figure 1 label-complexity thresholds. Naming every attack glyph on every solid
-# edge is self-describing but clutters a busy diagram; past these limits the
-# edges fall back to bare numbers (the legend under the diagram still names every
-# glyph). Tuned so a typical figure (≤ a handful of attacked components, a few
-# classes each) stays in the readable full-name mode.
-_FIG1_TOTAL_GLYPH_LIMIT = 12   # sum of glyphs across all solid attack edges
-_FIG1_MAX_EDGE_GLYPH_LIMIT = 6  # glyphs on the single busiest solid edge
-
-
-def _fig1_use_compact_labels(attack_glyphs: dict) -> bool:
-    """Decide whether Figure 1 solid-edge labels should drop class names and
-    show bare glyph numbers, because naming every glyph would clutter the
-    diagram. ``attack_glyphs`` maps (actor, component) → list of glyphs."""
-    if not attack_glyphs:
-        return False
-    total = sum(len(g) for g in attack_glyphs.values())
-    busiest = max((len(g) for g in attack_glyphs.values()), default=0)
-    return total > _FIG1_TOTAL_GLYPH_LIMIT or busiest > _FIG1_MAX_EDGE_GLYPH_LIMIT
 
 
 def _render_top_threats_architecture(
@@ -5393,59 +5375,54 @@ def _render_top_threats_architecture(
         nm = c.get("short_label") or c.get("label") or (ap.get("class") or "attack")
         glyph_name[glyph_seq[i]] = _fig1_label(_posture_short_label(nm))
 
-    # Labelling rule (2026-06-02 user request, revised). A SOLID attack edge is a
-    # DIRECT attack and must be self-describing: it NAMES every glyph it carries
-    # ("① Injection ④ Secret Exposure"), so each attacked component reads on its
-    # own without cross-referencing another arrow. A DOTTED edge is a FOLLOW-ON /
-    # propagation step (the XSS landing on the victim, injection reaching the DB)
-    # whose attack class was already named on the solid edge it continues — so it
-    # references by BARE number ("⑥"). Only when a glyph reaches a dotted edge
-    # WITHOUT ever appearing on a solid edge (rare: a class with a data-tier-only
-    # finding and no direct host) does the dotted edge name it, so nothing is left
-    # unexplained. Solid edges are always emitted before dotted ones below, which
-    # is what lets the dotted edges safely go bare. The full glyph→name key is
-    # also emitted once as the legend line below.
+    # Labelling rule (2026-06-05 user request — name-once per threat actor). A
+    # SOLID attack edge is a DIRECT attack: each threat ACTOR names a glyph the
+    # FIRST time one of its own attacks carries it ("① Injection"); every later
+    # edge FROM THE SAME ACTOR references that glyph by BARE number ("①"). Per
+    # actor, so every attacker's arrows read on their own without cross-checking
+    # another actor's edge — e.g. the Anonymous Internet Attacker's first arrow
+    # spells out "① Injection ⑥ XSS", its follow-up arrows just "①". A DOTTED
+    # edge is a FOLLOW-ON / propagation step (the XSS landing on the victim,
+    # injection reaching the DB) whose class was already named on the solid edge
+    # it continues — so it references by bare number. Only a glyph that reaches a
+    # dotted edge WITHOUT ever appearing on any solid edge (rare: a class with a
+    # data-tier-only finding and no direct host) is named there, so nothing is
+    # left unexplained. Solid edges are always emitted before dotted ones below,
+    # which is what lets the dotted edges safely go bare. The full glyph→name key
+    # is also emitted once as the legend line below.
     #
-    # Complexity guard (2026-06-02 user request). Naming every glyph on every
-    # solid edge is the right default, but a busy diagram (many attacked
-    # components, several classes each) would render the names many times over
-    # and clutter the figure. When the solid-edge label payload crosses a
-    # threshold — either the total glyph count across all solid edges, or the
-    # busiest single edge — fall back to BARE numbers on the edges. Nothing is
-    # lost: the one-line glyph→name legend rendered directly under the diagram
-    # always names every glyph, so the compact form stays fully decodable. The
-    # current juice-shop figure (9 glyphs total, busiest edge 5) stays in the
-    # self-describing full-name mode; only materially larger diagrams reduce.
-    # Threshold logic lives in _fig1_use_compact_labels() so it is unit-testable.
-    _compact_labels = _fig1_use_compact_labels(attack_glyphs)
+    # Name-once supersedes the former binary complexity guard: a glyph is named
+    # at most once per actor regardless of how many components that actor attacks,
+    # so a busy single-actor figure (juice-shop: one attacker, 7 components) stays
+    # self-describing AND uncluttered without any threshold toggle.
+    _named_by_actor: dict[str, set[str]] = {}
+    _named_anywhere: set[str] = set()
 
-    _named_glyphs: set[str] = set()
-
-    def _solid_label(glyphs: list[str]) -> str:
-        # Direct attack edge — name every glyph (self-describing) unless the
-        # diagram is too complex, in which case go bare (legend names them).
-        for g in glyphs:
-            _named_glyphs.add(g)
-        if _compact_labels:
-            return " ".join(glyphs)
+    def _solid_label(actor: str, glyphs: list[str]) -> str:
+        # Direct attack edge — this actor names each glyph on its first use, bare
+        # thereafter (per-actor name-once).
+        seen = _named_by_actor.setdefault(actor, set())
         parts: list[str] = []
         for g in glyphs:
-            title = glyph_name.get(g, "")
-            parts.append(f"{g} {title}" if title else g)
+            if g in seen:
+                parts.append(g)
+            else:
+                seen.add(g)
+                _named_anywhere.add(g)
+                title = glyph_name.get(g, "")
+                parts.append(f"{g} {title}" if title else g)
         return " ".join(parts)
 
     def _dotted_label(glyphs: list[str]) -> str:
         # Follow-on / propagation edge — bare number when the glyph was already
-        # named on its solid attack edge; name it as a fallback otherwise. In
-        # compact mode everything is bare (the legend explains every glyph).
-        if _compact_labels:
-            return " ".join(glyphs)
+        # named on ANY solid attack edge (the reader has seen it); name it as a
+        # fallback for the rare class that only ever reaches a dotted edge.
         parts: list[str] = []
         for g in glyphs:
-            if g in _named_glyphs:
+            if g in _named_anywhere:
                 parts.append(g)
             else:
-                _named_glyphs.add(g)
+                _named_anywhere.add(g)
                 title = glyph_name.get(g, "")
                 parts.append(f"{g} {title}" if title else g)
         return " ".join(parts)
@@ -5462,7 +5439,7 @@ def _render_top_threats_architecture(
     if attack_glyphs:
         lines.append("    %% attacks (solid) — each originates at a threat actor; glyphs match Figure 2 / Top Threats")
         for (src, dst), glyphs in attack_glyphs.items():
-            lines.append(f'    {src} ==>|"{_solid_label(glyphs)}"| {dst}')
+            lines.append(f'    {src} ==>|"{_solid_label(src, glyphs)}"| {dst}')
             attack_idx.append(edge_idx)
             edge_idx += 1
     prop_idx: list[int] = []
@@ -7288,6 +7265,27 @@ def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment,
     return body
 
 
+def _render_architectural_anti_patterns(ctx: RenderContext, env: jinja2.Environment) -> str:
+    """Render the optional '### Architectural Anti-Patterns' MS callout.
+
+    Surfaces the named design-level defects the report already articulates in
+    §7 prose (e.g. "SPA without BFF", "JWT in localStorage") at executive level.
+    LLM-authored fragment `ms-anti-patterns.json` — OPTIONAL: the threat-renderer
+    writes it only when ≥1 genuine architectural anti-pattern is present, so an
+    absent file renders nothing (clean architectures stay uncluttered). Reuses
+    the shared `format_weakness_*` filters so finding/component linkification
+    matches the rest of the Management Summary.
+    """
+    if not (ctx.fragments_dir / "ms-anti-patterns.json").is_file():
+        return ""
+    data = _load_fragment(ctx, "architectural_anti_patterns", "ms-anti-patterns.json")
+    _validate_fragment("architectural_anti_patterns", data, "anti-patterns.schema.json")
+    if not (data.get("anti_patterns") or []):
+        return ""
+    tpl = env.get_template("anti-patterns.md.j2")
+    return tpl.render(data=data)
+
+
 def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
     """Derive the ### Requirements Compliance MS subsection.
 
@@ -7614,6 +7612,11 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
     sections = ctx.contract["sections"]
     for sid in (
         "verdict",
+        # architectural_anti_patterns — optional named-anti-pattern callout
+        # right after the verdict (renders nothing when the LLM authored no
+        # ms-anti-patterns.json). Placed before the heatmap so the reader sees
+        # the structural design defects before the per-flow posture.
+        "architectural_anti_patterns",
         # security_posture_at_a_glance now renders the merged
         # "### Security Posture & Top Threats" section (Figure 1 + Figure 2
         # heatmap + the Top Threats table); the standalone top_threats child
@@ -7628,6 +7631,11 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
                 req_ms = _render_requirements_compliance_ms(ctx)
                 if req_ms.strip():
                     parts.append(req_ms.rstrip())
+            continue
+        if sid == "architectural_anti_patterns":
+            ap_ms = _render_architectural_anti_patterns(ctx, env)
+            if ap_ms.strip():
+                parts.append(ap_ms.rstrip())
             continue
         sec = sections.get(sid)
         if sec is None:
@@ -13346,6 +13354,10 @@ def render(
             "critical_category_count": _category_count_by_severity(_threats, category_taxonomy, "critical"),
             "verdict_severity": _verdict_severity_from_fragment(fragments_dir),
             "check_requirements": bool(yaml_data.get("meta", {}).get("check_requirements")),
+            # Optional MS "Architectural Anti-Patterns" callout — true when the
+            # threat-renderer authored ms-anti-patterns.json (gated on presence;
+            # the renderer also self-gates defensively).
+            "has_anti_patterns": (fragments_dir / "ms-anti-patterns.json").is_file(),
             "verbose_report": bool(yaml_data.get("meta", {}).get("verbose_report")),
             # §6 use_cases removed 2026-05. Conditional retained as False so
             # any stale config that still references `has_use_cases` evaluates

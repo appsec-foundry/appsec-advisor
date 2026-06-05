@@ -647,15 +647,13 @@ class TestCriticalAttackTreePromotion:
         assert "before section 1" in lower
 
     def test_critical_attack_tree_forbids_per_finding_blocks(self):
-        """The Mermaid tree + quick-reference table are the only allowed
-        formats in the Attack Tree block. Per-finding prose blocks belong
-        in Section 9 Attack Walkthroughs, not here."""
+        """The Mermaid tree + the one-line Findings pointer are the only
+        allowed formats in the Attack Tree block (the quick-reference table was
+        retired in the 2026-05 hybrid migration). Per-finding prose blocks
+        belong in Section 9 Attack Walkthroughs, not here."""
         txt = _read(THREATS_MD)
         assert "No per-finding prose blocks" in txt
-        assert (
-            "Quick-reference table is the only" in txt
-            or "Quick-reference table is the only per-finding presentation" in txt
-        )
+        assert "Findings pointer is the only per-finding presentation" in txt
 
     def test_finalization_section_order_places_attack_tree_after_mgmt_summary(self):
         """The numbered composition-order list in phase-group-finalization.md
@@ -690,9 +688,11 @@ class TestCriticalAttackTreePromotion:
         old language is gone."""
         txt = _read(PLUGIN / "agents" / "appsec-qa-reviewer.md")
         assert "### 🔴 T-NNN — <short title" not in txt
-        # ATTACK_TREE_TABLE is the post-migration name; ATTACK_CHAIN_TABLE may
-        # still appear in legacy-handling instructions but TREE is canonical.
-        assert "ATTACK_TREE_TABLE" in txt
+        # Post-migration the Critical Attack Tree carries a deterministic
+        # one-line Findings pointer — the quick-reference table was retired,
+        # so the QA spec drives off the tree + pointer, never a per-finding edit.
+        assert "Critical Attack Tree" in txt
+        assert "Findings pointer" in txt
         assert "Add it to Section 9 in-place" not in txt
 
 

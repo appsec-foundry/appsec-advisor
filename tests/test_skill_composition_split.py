@@ -183,7 +183,9 @@ def test_env_vars_appear_in_skill_and_orchestrator(skill_impl_text, orchestrator
 
 
 def test_max_turns_120_documented_in_orchestrator(orchestrator_text):
-    # The bump from M2.9 must still be in the frontmatter
-    assert "maxTurns: 120" in orchestrator_text
+    # The orchestrator turn budget was bumped past the legacy 75 (M2.9 →
+    # 75 → 120 → 250 → 300). The frontmatter must carry the current ceiling
+    # and the M2.9 guidance header documenting why.
+    assert "maxTurns: 300" in orchestrator_text
     # And referenced in the M2.9 header guidance
     assert "M2.9" in orchestrator_text or "120 turns" in orchestrator_text

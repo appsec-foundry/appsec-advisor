@@ -99,9 +99,10 @@ class TestScoreThreatPathMatch:
         assert pregen._score_threat_path_match(threat, "/file-upload") >= 3
 
     def test_evidence_file_strips_extensions(self):
-        threat = {"evidence": [{"file": "src/Login.java", "line": 1}]}
-        # "Login" normalises to "login"; path "/rest/user/login" normalises
-        # to "restuserlogin" — "login" is substring → +3.
+        # Route-handler file (the +3 evidence bonus is gated to route dirs).
+        # "Login.java" strips to "login" and names the "/rest/user/login"
+        # segment → +3, exercising the extension-stripping path.
+        threat = {"evidence": [{"file": "routes/Login.java", "line": 1}]}
         assert pregen._score_threat_path_match(threat, "/rest/user/login") >= 3
 
     def test_no_signals_returns_zero(self):
@@ -281,8 +282,11 @@ class TestDeriveControlMitigates:
             {"id": "T-001", "title": "RSA key", "scenario": "hardcoded key", "cwe": "CWE-321", "risk": "Critical"},
             # T-002 — SQLi (CWE-89 → Input Validation)
             {"id": "T-002", "title": "SQLi", "scenario": "raw SQL in login", "cwe": "CWE-89", "risk": "Critical"},
-            # T-005 — MD5 hash (CWE-916 → IAM)
-            {"id": "T-005", "title": "MD5 hash", "scenario": "md5 password", "cwe": "CWE-916", "risk": "Critical"},
+            # T-005 — JWT signature not verified (CWE-347 → IAM). CWE-347's C1
+            # required-token set {signature, jwt, verify} matches the test's
+            # "JWT signature verification" control, so the domain match survives
+            # the false-positive gate (unlike a hashing CWE + a JWT control).
+            {"id": "T-005", "title": "JWT not verified", "scenario": "jwt signature not validated", "cwe": "CWE-347", "risk": "Critical"},
             # T-006 — IDOR (CWE-639 → Authorization)
             {"id": "T-006", "title": "IDOR", "scenario": "no ownership check", "cwe": "CWE-639", "risk": "High"},
         ]
@@ -290,7 +294,7 @@ class TestDeriveControlMitigates:
     def test_iam_domain_picks_iam_cwes(self):
         control = {"domain": "Identity & Access Management", "control": "JWT signature verification"}
         derived = compose._derive_control_mitigates(control, self._threats())
-        # CWE-916 is in the IAM set; CWE-321 / 89 / 639 are not.
+        # CWE-347 is in the IAM set; CWE-89 / 639 are not.
         assert "T-005" in derived
         assert "T-002" not in derived
         assert "T-006" not in derived

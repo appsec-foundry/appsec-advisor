@@ -28,6 +28,22 @@ from pathlib import Path
 
 import yaml
 
+# Substep-2 deterministic-migration sidecars: validator-only INPUT types that
+# share the JSON-Schema machinery but are NOT render fragments. They live in
+# FRAGMENT_SCHEMAS only (never in _FRAGMENT_FILENAMES). Keep in sync with the
+# design note above the maps in scripts/validate_fragment.py.
+_SIDECAR_ONLY_TYPES = frozenset(
+    {
+        "components",
+        "assets",
+        "trust-boundaries",
+        "security-controls",
+        "attack-surface-overrides",
+        "mitigation-overrides",
+        "tier-root-causes",
+    }
+)
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 CONTRACT_PATH = PLUGIN_ROOT / "data" / "sections-contract.yaml"
 SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
@@ -123,9 +139,14 @@ def check() -> list[str]:
             errors.append(f"FRAGMENT_SCHEMAS[{ftype!r}] points to {schema_file}, not present in schemas/fragments/")
 
     # 2. FRAGMENT_SCHEMAS keys ↔ _FRAGMENT_FILENAMES keys
+    #    Substep-2 sidecars (components, assets, …) intentionally appear ONLY in
+    #    FRAGMENT_SCHEMAS — they share the JSON-Schema validator but are aggregator
+    #    INPUTS (live at OUTPUT_DIR/.X.json), NOT render fragments, so they are
+    #    deliberately kept out of _FRAGMENT_FILENAMES (see the design note in
+    #    validate_fragment.py above the maps). Exempt them from this direction.
     schemas_keys = set(fragment_schemas)
     filenames_keys = set(fragment_filenames)
-    for k in schemas_keys - filenames_keys:
+    for k in schemas_keys - filenames_keys - _SIDECAR_ONLY_TYPES:
         errors.append(f"validate_fragment.FRAGMENT_SCHEMAS has {k!r} but _FRAGMENT_FILENAMES does not")
     for k in filenames_keys - schemas_keys:
         errors.append(f"validate_fragment._FRAGMENT_FILENAMES has {k!r} but FRAGMENT_SCHEMAS does not")

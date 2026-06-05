@@ -104,7 +104,7 @@ def test_reorder_components_is_byte_identical(tmp_path: Path) -> None:
     # components-table will naturally see different orderings. Compare §8 + §9
     # which should be deterministic-by-id regardless of component array order.
     def slice_8_9(md: str) -> str:
-        m = re.search(r"^## 8\. Threat Register", md, re.MULTILINE)
+        m = re.search(r"^## 8\. Findings Register", md, re.MULTILINE)
         assert m
         return md[m.start() :]
 
@@ -155,6 +155,10 @@ def test_every_link_target_resolves(tmp_path: Path) -> None:
         - {
             "8c-compound-attack-chains",
             "8d-architectural-findings",
+            # Conditional section (>=2 Critical): soft-skipped when its
+            # ms-critical-attack-tree.json fragment is absent, so the TOC /
+            # walkthrough refs to it dangle — same tolerated correctness gap.
+            "critical-attack-tree",
         }
     )
     assert not missing, "Dangling Markdown link targets (no matching <a id> or heading slug):\n  " + "\n  ".join(
@@ -172,7 +176,7 @@ _COMPUTED_SECTION_HEADINGS = [
     "#### Prioritized Mitigations",
     "#### Follow-up Mitigations",
     "### Operational Strengths",
-    "## 8. Threat Register",
+    "## 8. Findings Register",
     "## 10. Mitigation Register",
 ]
 
@@ -225,8 +229,13 @@ def test_toc_anchors_all_resolve(tmp_path: Path) -> None:
     toc_anchors = [m.group(1) for m in re.finditer(r"\]\(#([^)]+)\)", toc_body)]
     declared = _anchors_declared(rendered)
     unresolved = [a for a in toc_anchors if a not in declared]
-    # Conditional §8.C and §8.D may legitimately be missing from a minimal fixture.
-    unresolved = [a for a in unresolved if a not in {"8c-compound-attack-chains", "8d-architectural-findings"}]
+    # Conditional §8.C and §8.D — and the >=2-Critical Critical Attack Tree —
+    # may legitimately be missing from a minimal fixture (no fragment authored).
+    unresolved = [
+        a
+        for a in unresolved
+        if a not in {"8c-compound-attack-chains", "8d-architectural-findings", "critical-attack-tree"}
+    ]
     assert not unresolved, f"TOC points to anchors that don't exist in the body: {unresolved}"
 
 
@@ -313,7 +322,7 @@ def test_risk_distribution_matches_threat_register_rows(tmp_path: Path) -> None:
     assert m, "Risk Distribution line not found"
     c, h, med, low = (int(x) for x in m.groups())
     # Count anchors for F-NNN / T-NNN inside §8.
-    s8 = re.search(r"^## 8\. Threat Register", rendered, re.MULTILINE)
+    s8 = re.search(r"^## 8\. Findings Register", rendered, re.MULTILINE)
     # §8 is now bounded by §9 Abuse Cases (Mitigation Register shifted to §10).
     s9 = re.search(r"^## 9\. Abuse Cases", rendered, re.MULTILINE)
     assert s8 and s9

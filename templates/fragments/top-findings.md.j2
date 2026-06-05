@@ -4,7 +4,7 @@
 {#-                mitigations[{id,action,priority}]}], total_qualifying. -#}
 ### Top Findings
 
-**{{ rows | length }} highest-risk items.** Full catalogue in [§8 Threat Register](#8-threat-register); **Path** glyphs link to [Security Posture at a Glance](#security-posture-at-a-glance).
+**{{ rows | length }} highest-risk items.** Full catalogue in [§8 Findings Register](#8-findings-register); **Path** glyphs link to [Security Posture at a Glance](#security-posture-at-a-glance).
 
 | # | Criticality | Path | Finding | Component | Primary Mitigations |
 |---|-------------|------|---------|-----------|---------------------|
@@ -13,6 +13,6 @@
 {%- endfor %}
 
 {% if total_qualifying > (rows | length) -%}
-_{{ total_qualifying - (rows | length) }} further ≥High findings are catalogued in [§8 Threat Register](#8-threat-register) beyond the top {{ rows | length }} shown here._
+_{{ total_qualifying - (rows | length) }} further ≥High findings are catalogued in [§8 Findings Register](#8-findings-register) beyond the top {{ rows | length }} shown here._
 {% endif %}
 _Legend: 🔴 Critical (directly exploitable, major impact) · 🟠 High (significant impact; exploit requires preconditions or a chained step). **Path** glyphs ①–⑦ link back to the matching bullet in [Security Posture at a Glance](#security-posture-at-a-glance)._

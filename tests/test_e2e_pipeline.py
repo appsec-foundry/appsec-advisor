@@ -112,21 +112,23 @@ def test_compose_renders_canonical_document(rendered_run: Path) -> None:
     assert "## Management Summary\n" in md
     for heading in (
         "### Verdict",
-        "### Top Findings",
-        "### Architecture Assessment",
-        "### Mitigations",
+        # Top Findings + Architecture Assessment were merged into the single
+        # "Security Posture & Top Threats" block; Mitigations → Top Mitigations.
+        "### Security Posture & Top Threats",
+        "### Top Mitigations",
         "### Operational Strengths",
     ):
         assert heading in md, f"missing MS subsection: {heading}"
 
     # The body sections 1..11 are all numbered — the renderer must produce the
-    # canonical flat Findings Register summary and table.
+    # canonical Findings Register summary. §8 is severity-grouped finding cards
+    # (not a flat table since the 2026-05 card-layout migration).
     assert "## 8. Findings Register" in md
     assert "**Risk Distribution:**" in md
     assert "**STRIDE Coverage:**" in md
-    assert (
-        "| ID | Finding | Threat Category | Component | Criticality | CVSS | Vektor | Mitigation | References |" in md
-    )
+    assert "**Findings index:**" in md
+    assert "### 🔴 Critical" in md
+    assert "#### F-003 · " in md
 
     # Every T-NNN in the fixture must be anchored somewhere in the document.
     for tid in ("t-001", "t-002", "t-003", "t-010"):

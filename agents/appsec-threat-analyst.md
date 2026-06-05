@@ -906,7 +906,7 @@ Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` fi
 - If neither is available, record as `None`
 This list goes into the metadata table and the System Overview.
 
-**Model identification:** This agent runs on `sonnet`. Use `sonnet` as `MODEL_ID` in both the MD header `Model` field and the YAML `meta.model` field.
+**Model identification:** This agent runs on `sonnet` (model ID `claude-sonnet-4-6`). Use `sonnet` as `MODEL_ID` in both the MD header `Model` field and the YAML `meta.model` field.
 
 **Agent model mapping:** Each sub-agent declares its own model in its frontmatter (`model:` field). Before printing the banner, read the frontmatter of each agent to determine its actual model. Use the actual model identifiers (e.g. `sonnet`, `claude-opus-4-6`) throughout:
 - **Banner** — `Agents:` line lists each agent with its actual model in parentheses

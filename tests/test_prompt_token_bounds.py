@@ -41,7 +41,9 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # Lowered 2026-05-23 after shared-file extraction (finding-title-contract,
     # supply-chain-patterns, spa-threats, cvss-metrics) and dedup of the
     # ops/progress sections. Measured 8_040.
-    "agents/appsec-stride-analyzer.md": (6_500, 9_750),
+    # Raised 2026-06-05: STRIDE parallel-dispatch + abuse-case guidance added.
+    # Measured 10_694; high = ~20% buffer above the new size.
+    "agents/appsec-stride-analyzer.md": (6_500, 12_850),
 }
 
 

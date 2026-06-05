@@ -44,6 +44,9 @@ DEPTH & MODEL
                                Auto-enabled at depth=thorough
   --no-architect-review        Disable Stage 4 even at depth=thorough
   --architect-model <m>        Model for Stage 4: sonnet | opus (default: opus)
+  --no-opus                    Forbid Opus anywhere; downgrade any Opus model
+                               selection to Sonnet (also via org-profile
+                               policy.disable_opus or APPSEC_DISABLE_OPUS=1)
   --no-enrich-arch             Disable LLM enrichment of architecture fragments
                                (on by default at standard/thorough)
   --enrich-arch                Force architecture enrichment even at quick depth
