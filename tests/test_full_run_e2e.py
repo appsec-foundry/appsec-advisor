@@ -98,7 +98,6 @@ REQUIRED_FILES = [
 REQUIRED_FRAGMENTS = [
     "ms-verdict.json",
     "ms-architecture-assessment.json",
-    "ms-critical-attack-tree.json",
     "attack-walkthroughs.md",
     "system-overview.md",
     "assets.md",
@@ -106,7 +105,13 @@ REQUIRED_FRAGMENTS = [
     "architecture-diagrams.md",
     "security-architecture.md",
     "out-of-scope.md",
-    "operational-strengths-overrides.json",
+    # NOT unconditional (removed 2026-06-05):
+    #   - ms-critical-attack-tree.json     → only authored when >=2 Critical
+    #     findings (composer gate `has_multi_critical`; see appsec-threat-
+    #     renderer.md:124, phase-group-finalization.md:444). Covered by the
+    #     conditional test below.
+    #   - operational-strengths-overrides.json → explicitly OPTIONAL
+    #     (phase-group-finalization.md:443) — absent when no controls qualify.
 ]
 
 
@@ -122,6 +127,30 @@ def test_required_fragment_exists(out_dir: Path, name: str) -> None:
     path = out_dir / ".fragments" / name
     assert path.is_file(), f"missing fragment: {path}"
     assert path.stat().st_size > 0, f"fragment is empty: {path}"
+
+
+def test_critical_attack_tree_fragment_is_conditional(
+    out_dir: Path, threat_model_yaml: dict
+) -> None:
+    """`ms-critical-attack-tree.json` is authored IFF >=2 Critical findings
+    exist — the composer's `has_multi_critical` gate (appsec-threat-renderer.md
+    :124, phase-group-finalization.md:444). Assert that conditional contract,
+    not unconditional presence: a single-Critical run correctly omits it."""
+    critical = sum(
+        1
+        for t in threat_model_yaml.get("threats", [])
+        if str(t.get("risk", "")).lower() == "critical"
+    )
+    frag = out_dir / ".fragments" / "ms-critical-attack-tree.json"
+    if critical >= 2:
+        assert frag.is_file() and frag.stat().st_size > 0, (
+            f">=2 Critical findings ({critical}) but {frag} is missing/empty"
+        )
+    else:
+        assert not frag.is_file(), (
+            f"<2 Critical findings ({critical}) but {frag} was authored "
+            "(should be skipped per has_multi_critical gate)"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -244,9 +273,11 @@ def test_threats_carry_required_fields(threat_model_yaml: dict) -> None:
     Catches partial schema regressions that slip past validate_intermediate."""
     threats = threat_model_yaml.get("threats", [])
     for t in threats:
-        assert t.get("t_id"), f"threat without t_id: {t}"
-        assert t.get("stride"), f"threat {t.get('t_id')} missing stride"
-        assert t.get("risk"), f"threat {t.get('t_id')} missing risk"
+        # Canonical threat key is `id` (T-NNN), not `t_id` — every threat in
+        # threat-model.yaml carries `id`; `t_id` never existed in the artifact.
+        assert t.get("id"), f"threat without id: {t}"
+        assert t.get("stride"), f"threat {t.get('id')} missing stride"
+        assert t.get("risk"), f"threat {t.get('id')} missing risk"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
