@@ -1855,6 +1855,41 @@ Behaviour:
 
 If no checkpoint exists and `--resume` was passed, inform the user and proceed with a fresh assessment.
 
+### Requirements pre-fetch gate (deterministic, skill-level)
+
+**Closes the requirements fail-open gap.** When a run asks to be checked against requirements (`CHECK_REQUIREMENTS=true`) the source must load or the run must abort — previously this was only soft prose in `appsec-context-resolver.md` ("stop immediately … the orchestrator will detect the missing context file"), and under turn pressure the agent sometimes wrote the context file anyway, so an unreachable URL slipped through and the run silently produced a report claiming a requirements check that never happened. This gate makes the fetch-or-abort mechanical: it resolves the active source (honouring the `fail_mode` contract — `fail_closed` for an explicit `--requirements <url>`, `cache_fallback` for org-profile/config) and writes `$OUTPUT_DIR/.requirements.yaml` for the context-resolver to reuse. On an unreachable explicit URL (or no remote + no cache) it **fail-closes** with exit 2. Skipped in `--rerender` (Stage 1 does not run).
+
+```bash
+if [ "$RERENDER" != "true" ]; then
+  # Read the already-resolved decision from RESOLVED_JSON directly (these are
+  # passed into the agent prompt, not necessarily exported as shell vars here),
+  # and pass it through with --require so the fetcher never re-derives `enabled`
+  # differently than the skill did (quick-depth defaults can diverge).
+  REQ_CHECK=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('check_requirements',False)).lower())")
+  REQ_URL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('requirements_url_override') or '')")
+  if [ "$REQ_CHECK" = "true" ]; then
+    REQ_ARGS="--require"
+    [ -n "$REQ_URL" ] && REQ_ARGS="--requirements $REQ_URL"
+  else
+    REQ_ARGS="--no-requirements"
+  fi
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" \
+      --output-dir "$OUTPUT_DIR" \
+      --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+      $REQ_ARGS
+  REQ_FETCH_EXIT=$?
+  if [ "$REQ_FETCH_EXIT" = "2" ]; then
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  skill  REQUIREMENTS_UNAVAILABLE  CHECK_REQUIREMENTS=true but requirements could not be loaded — aborting" \
+        >> "$OUTPUT_DIR/.agent-run.log"
+    rm -f "$OUTPUT_DIR/.appsec-lock"
+    rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
+    exit 2
+  fi
+fi
+```
+
+The script prints a full diagnostic to stderr on abort (the unreachable URL, the `fail_mode`, and the remediation). On success `$OUTPUT_DIR/.requirements.yaml` is on disk and Step 2b of the context-resolver reuses it instead of fetching again.
+
 ## Stage 1 — Threat Analysis & Triage
 
 > **⚠ ROUTING — read FIRST. `PARALLEL_STRIDE` was resolved during Configuration Resolution (default-ON for `MODE` ∈ {full, rebuild}; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`).**

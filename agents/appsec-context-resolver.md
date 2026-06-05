@@ -102,6 +102,8 @@ Two variables are passed from the orchestrator:
 - `CHECK_REQUIREMENTS` — `true` or `false` (default `false` if not present). Determines whether requirements are needed.
 - `REQUIREMENTS_URL_OVERRIDE` — a URL string (optional). If set, this URL takes precedence over the configured `requirements_yaml_url`.
 
+**If `$OUTPUT_DIR/.requirements.yaml` already exists and is non-empty:** the skill's deterministic **Requirements pre-fetch gate** (`scripts/fetch_requirements.py`, run before Stage 1) already resolved the source — it fetched the remote (or fell back to cache, or wrote the `skipped` stub) and would have **aborted the whole run** if a requested source was unreachable. Trust it: record `requirements_status` as `"skipped"` when its content is the `{"source": "skipped"}` stub, otherwise `"provided"`, and **skip the rest of Step 2b** (do NOT re-fetch). This is the normal path; the fetch logic below is the fallback for older orchestrators that did not run the gate.
+
 **If `CHECK_REQUIREMENTS=false`:** write stub `{source: "skipped", categories: [], blueprints: []}` to `$OUTPUT_DIR/.requirements.yaml`, store `requirements_status: "skipped"`. Print: `↳ Requirements: skipped (not requested)`. **Skip the rest of Step 2b** and continue to Step 3.
 
 ---
