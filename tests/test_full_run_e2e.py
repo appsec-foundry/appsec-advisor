@@ -352,14 +352,15 @@ def test_meta_block_populated(threat_model_yaml: dict) -> None:
 
 
 def test_pentest_tasks_structure(out_dir: Path) -> None:
-    """pentest-tasks.yaml must parse and carry meta + schema_version + a tasks
-    list. (Top-level keys are meta/schema_version/tasks; endpoints are embedded
-    per-task.) The file's existence is covered by REQUIRED_FILES; this asserts
-    its shape so a malformed export is caught."""
+    """pentest-tasks.yaml must parse and carry meta (with schema_version) + a
+    tasks list. (Top-level keys are meta/tasks/endpoints; schema_version lives
+    under meta — see render_pentest_tasks.py:763 and the canonical
+    test_pentest_tasks.py:187.) The file's existence is covered by REQUIRED_FILES;
+    this asserts its shape so a malformed export is caught."""
     doc = yaml.safe_load((out_dir / "pentest-tasks.yaml").read_text())
     assert isinstance(doc, dict), "pentest-tasks.yaml is not a mapping"
     assert doc.get("meta"), "pentest-tasks.yaml missing meta block"
-    assert doc.get("schema_version"), "pentest-tasks.yaml missing schema_version"
+    assert doc.get("meta", {}).get("schema_version"), "pentest-tasks.yaml missing meta.schema_version"
     assert isinstance(doc.get("tasks"), list), "pentest-tasks.yaml 'tasks' is not a list"
 
 
