@@ -14,9 +14,14 @@ remote branch.
 
 from __future__ import annotations
 
+import http.server
 import json
+import os
+import socketserver
 import subprocess
 import sys
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -35,6 +40,30 @@ def _reqs_file(tmp_path: Path) -> str:
     f = tmp_path / "reqs.yaml"
     f.write_text("categories:\n  - id: SEC-AUTH\n", encoding="utf-8")
     return str(f)  # bare local path — no scheme
+
+
+@contextmanager
+def _http_server(body: bytes):
+    """Serve ``body`` over http on an ephemeral localhost port; yield the URL."""
+    class _H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Type", "application/yaml")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):  # silence per-request logging
+            pass
+
+    srv = socketserver.TCPServer(("127.0.0.1", 0), _H)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield f"http://127.0.0.1:{port}/reqs.yaml"
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 # ---------------------------------------------------------------------------
@@ -78,11 +107,44 @@ def test_cli_local_path_missing_aborts(tmp_path):
     assert "fail_mode=fail_closed" in r.stderr
 
 
+def test_cli_remote_url_reachable_fetches_ok(tmp_path):
+    """--requirements <http URL> that responds -> fetched + cached, exit 0."""
+    cache = tmp_path / "cache.yaml"
+    with _http_server(b"categories:\n  - id: SEC-REMOTE\n") as url:
+        r = _run(tmp_path, "--requirements", url, "--cache-path", str(cache))
+    assert r.returncode == 0
+    assert "SEC-REMOTE" in (tmp_path / ".requirements.yaml").read_text()
+    # fail_closed (explicit --requirements) must NOT refresh the plugin cache.
+    assert not cache.exists()
+
+
 def test_cli_remote_url_unreachable_aborts(tmp_path):
     """--requirements <http(s) URL> that is unreachable -> fail_closed -> exit 2."""
     r = _run(tmp_path, "--requirements", "http://127.0.0.1:1/reqs.yaml", "--timeout", "2")
     assert r.returncode == 2
     assert "fail_mode=fail_closed" in r.stderr
+
+
+def test_cli_empty_local_file_aborts(tmp_path):
+    """An empty source loads but has no content -> exit 2 (no silent pass)."""
+    f = tmp_path / "empty.yaml"
+    f.write_text("", encoding="utf-8")
+    r = _run(tmp_path, "--requirements", str(f))
+    assert r.returncode == 2
+
+
+def test_cli_tilde_local_path_reads_ok(tmp_path):
+    """A ``~``-prefixed path expands against HOME and is read as a local file."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "reqs.yaml").write_text("categories:\n  - id: SEC-TILDE\n", encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT), "--output-dir", str(tmp_path),
+         "--requirements", "~/reqs.yaml"],
+        env={**os.environ, "HOME": str(home)}, capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+    assert "SEC-TILDE" in (tmp_path / ".requirements.yaml").read_text()
 
 
 def test_cli_missing_source_ignores_cache(tmp_path):
