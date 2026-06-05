@@ -548,9 +548,9 @@ When the env var `STAGE1_PHASE_LIMIT=10b` is passed, this agent runs Phases 1 th
 5. Print the per-phase summary line normally and exit cleanly. Do **not** print the Phase-11 assessment summary template (the skill prints it after Stage 2 finishes).
 6. Do **not** invoke `compose_threat_model.py` and do **not** write `.fragments/`. Substeps 4–N (fragment authoring + compose + qa + sarif/pentest exports + lock release) are entirely the responsibility of the Stage 2 session.
 
-### STAGE1_PHASE_LIMIT=8 — Analyst-A branch (Full-M1 parallel-STRIDE, opt-in)
+### STAGE1_PHASE_LIMIT=8 — Analyst-A branch (Full-M1 parallel-STRIDE, default for full/rebuild)
 
-When `STAGE1_PHASE_LIMIT=8` is passed (set by the skill only when `APPSEC_PARALLEL_STRIDE=1`), this agent is **Analyst-A**: it runs Phases 1–8 **plus the Phase-9 dispatch PREP** (component selection, dirty/slice-delta computation, taxonomy slices, and the `.dispatch-context/<id>/` per-component slices — everything in `phase-group-threats.md` *up to but NOT including* the STRIDE Agent dispatch), then **stops** so the **skill** (Level-0) can fan out the `appsec-stride-analyzer` dispatches in parallel. This replaces the serial inline STRIDE that runs when a single Level-1 analyst can't dispatch sub-agents.
+When `STAGE1_PHASE_LIMIT=8` is passed (set by the skill by default for `MODE` ∈ {full, rebuild}; opt-OUT via `APPSEC_PARALLEL_STRIDE=0`), this agent is **Analyst-A**: it runs Phases 1–8 **plus the Phase-9 dispatch PREP** (component selection, dirty/slice-delta computation, taxonomy slices, and the `.dispatch-context/<id>/` per-component slices — everything in `phase-group-threats.md` *up to but NOT including* the STRIDE Agent dispatch), then **stops** so the **skill** (Level-0) can fan out the `appsec-stride-analyzer` dispatches in parallel. This replaces the serial inline STRIDE that runs when a single Level-1 analyst can't dispatch sub-agents.
 
 **Behaviour contract:**
 
@@ -563,7 +563,7 @@ When `STAGE1_PHASE_LIMIT=8` is passed (set by the skill only when `APPSEC_PARALL
 
 The skill then runs `build_stride_dispatch_manifest.py` (merging `.stride-analyst-context.json`) → `validate_dispatch_manifest.py` (hard gate) → dispatches one `appsec-stride-analyzer` per component **in parallel** → waits for all `.stride-<id>.json` → dispatches **Analyst-B** (`RESUME_FROM_PHASE=9-merge`) which runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3 (i.e., everything the `=10b` branch does *after* STRIDE).
 
-**Fallback:** if `APPSEC_PARALLEL_STRIDE` is not set, the skill never sets `STAGE1_PHASE_LIMIT=8` — the default `=10b` single-analyst flow runs and STRIDE is handled inline per the M1-lite escape clause (Phase 9). Full-M1 is therefore additive and opt-in.
+**Fallback:** if `APPSEC_PARALLEL_STRIDE=0` is set, or `MODE` ∉ {full, rebuild}, the skill uses `STAGE1_PHASE_LIMIT=10b` instead — the single-analyst flow runs and STRIDE is handled inline per the M1-lite escape clause (Phase 9).
 
 **When `STAGE1_PHASE_LIMIT` is not set or has any other value**, the agent runs the full Phases 1–11 pipeline as before. This preserves backward compatibility for explicit single-stage invocations (e.g. resume-from-checkpoint flows that have already completed Phase 10b).
 
