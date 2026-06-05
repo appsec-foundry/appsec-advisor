@@ -38,7 +38,20 @@ Detection signal
 A ``.stride-<id>.json`` carrying **real** threats (i.e. not a trivial-skip
 stub and not empty) but with **no** matching ``.progress/<id>.json`` was
 produced without dispatching the analyzer — the only writer of progress
-files. The check is intentionally narrow so it never false-positives on:
+files.
+
+Positive dispatch evidence that suppresses the signal is **count-based**:
+at least as many ``AGENT_SPAWN  appsec-stride-analyzer`` lines in
+``.hook-events.log`` as the ``.stride-dispatch-manifest.json`` planned
+components (or, with no manifest, any such spawn). The manifest's *mere
+existence* is deliberately NOT proof — it is written by
+``build_stride_dispatch_manifest.py`` from Analyst-A's output *before* the
+skill fans the analyzers out, so it survives the exact inline-collapse this
+gate guards (manifest built, fan-out skipped, ``.stride-*.json`` hand-written
+with no ``.progress/``). Treating manifest-existence as proof (pre-2026-06-05)
+silently disabled this gate across the whole default parallel path.
+
+The check is intentionally narrow so it never false-positives on:
 
   * **Trivial-component stubs (M24)** — written inline by design with a
     single ``"trivial-component, no detailed STRIDE performed"``
@@ -109,25 +122,86 @@ def _stride_has_real_threats(stride_path: Path) -> bool:
     )
 
 
-def _stride_was_dispatched(output_dir: Path) -> bool:
-    """Positive evidence the STRIDE analyzers ran as real dispatched sub-agents.
+def _stride_analyzer_spawn_count(output_dir: Path, since: str | None = None) -> int:
+    """Number of dispatched ``appsec-stride-analyzer`` Agent calls in the hook log.
 
-    Full-M1 fans them out in parallel from the skill (Level-0) and writes
-    ``.stride-dispatch-manifest.json``. In that mode ``agent_progress.sh`` may
-    NOT write ``.progress/<id>.json`` — it no-ops when ``OUTPUT_DIR`` is not a
-    shell env var inside the analyzer (the dispatch passes it as prompt text).
-    So the "real .stride, no .progress" signal would false-positive a genuinely
-    parallel run as inlined. A dispatch manifest — or an ``AGENT_SPAWN`` for
-    ``appsec-stride-analyzer`` in the hook log — is conclusive proof the
-    analysis was dispatched, not inlined.
+    Each parallel-fan-out STRIDE dispatch emits exactly one
+    ``AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer`` line to
+    ``.hook-events.log`` (``scripts/agent_logger.py``). Counting them is the
+    *positive proof the fan-out actually fired* — re-dispatch-on-failure only
+    adds lines, so the count is a lower bound on attempts.
+
+    ``.hook-events.log`` is **append-only across runs** (truncated only by 5 MB
+    rotation, never at ``ASSESSMENT_START``), so a prior run's stride spawns
+    linger. ``since`` (the manifest's ``generated_at``, an ISO-8601 Zulu
+    timestamp written in step 3b immediately *before* this run's fan-out) bounds
+    the count to the current run: every legitimate spawn carries a leading
+    timestamp ``>= since``; stale spawns from an earlier run are older and
+    excluded. ISO-8601 Zulu is fixed-width, so lexicographic compare ==
+    chronological. Without ``since`` (no manifest) all matching lines count.
     """
-    if (output_dir / ".stride-dispatch-manifest.json").is_file():
-        return True
     try:
         text = (output_dir / ".hook-events.log").read_text(encoding="utf-8")
     except OSError:
-        return False
-    return "AGENT_SPAWN" in text and "appsec-stride-analyzer" in text
+        return 0
+    count = 0
+    for line in text.splitlines():
+        if "AGENT_SPAWN" not in line or "appsec-stride-analyzer" not in line:
+            continue
+        if since is not None:
+            ts = line.split("  ", 1)[0].strip()
+            if ts < since:
+                continue  # stale spawn from an earlier run — not this run's
+        count += 1
+    return count
+
+
+def _read_manifest(output_dir: Path) -> dict:
+    """Parse ``.stride-dispatch-manifest.json`` (``{}`` when absent/unreadable)."""
+    try:
+        data = json.loads(
+            (output_dir / ".stride-dispatch-manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _stride_was_dispatched(output_dir: Path) -> bool:
+    """Conclusive, **count-based** proof the STRIDE fan-out actually fired.
+
+    The dispatch manifest alone is NOT proof. ``build_stride_dispatch_manifest.py``
+    writes it from Analyst-A's output (``.components.json`` etc.) *before* the
+    skill fans out the analyzers, so it exists even when the orchestrator then
+    inlines STRIDE instead of dispatching — the exact Phase-9 collapse this gate
+    guards (manifest built in step 3b, fan-out 3c skipped, ``.stride-*.json``
+    hand-written with no ``.progress/``). Trusting manifest existence alone (the
+    pre-2026-06-05 behaviour) disabled this gate for the entire default parallel
+    path.
+
+    Real proof is the ``AGENT_SPAWN`` evidence: at least as many dispatched
+    ``appsec-stride-analyzer`` calls as the manifest planned (``>=`` because a
+    re-dispatch on failure only adds spawns). When the manifest is absent
+    (serial / live / opt-out path) any spawn is still a positive signal.
+
+    When there is NOT enough spawn evidence this returns ``False`` and the caller
+    does NOT globally trust it — it falls through to the per-component
+    ``.progress`` check, which is the per-component safety net that BOTH the
+    dispatched analyzer and the sanctioned serial-inline analyst write (see
+    ``appsec-threat-analyst.md`` §"Reality check" + ``phase-group-threats.md``).
+    So a genuinely-parallel run whose hooks happened not to log still passes on
+    its ``.progress/`` files; only a real inline-collapse (no spawns AND no
+    ``.progress/``) trips.
+    """
+    manifest = _read_manifest(output_dir)
+    comps = manifest.get("components")
+    expected = len(comps) if isinstance(comps, list) else 0
+    if expected > 0:
+        # Bound the spawn count to this run via the manifest's own timestamp —
+        # the fan-out reads the manifest, so every real spawn is at-or-after it.
+        since = manifest.get("generated_at")
+        return _stride_analyzer_spawn_count(output_dir, since=since) >= expected
+    return _stride_analyzer_spawn_count(output_dir) > 0
 
 
 def detect_inlined_components(output_dir: Path) -> list[str]:
@@ -136,9 +210,12 @@ def detect_inlined_components(output_dir: Path) -> list[str]:
     A component is inlined when its ``.stride-<id>.json`` has real threats
     but no ``.progress/<id>.json`` exists. Empty list = clean.
 
-    Suppressed when there is positive dispatch evidence (Full-M1 parallel
-    fan-out manifest, or AGENT_SPAWN hook evidence) — in that case the missing
-    ``.progress/`` is a known limitation of the parallel dispatch, not inlining.
+    Globally suppressed only when there is *count-based* dispatch evidence
+    (``_stride_was_dispatched`` — enough dispatched ``appsec-stride-analyzer``
+    spawns to cover the manifest). A manifest WITHOUT matching spawns is NOT
+    suppression evidence: it is written before the fan-out and survives an
+    inline-collapse, so it falls through to the per-component ``.progress``
+    check here.
     """
     if _stride_was_dispatched(output_dir):
         return []

@@ -65,6 +65,33 @@ def _write_progress(output_dir: Path, cid: str) -> None:
     )
 
 
+def _write_manifest(output_dir: Path, *cids: str, generated_at: str | None = None) -> None:
+    manifest = {
+        "schema_version": 1,
+        "components": [{"component_id": c} for c in cids],
+    }
+    if generated_at is not None:
+        manifest["generated_at"] = generated_at
+    (output_dir / ".stride-dispatch-manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+
+def _write_spawns(output_dir: Path, count: int, *, day: str = "2026-06-05") -> None:
+    """Append `count` dispatched-analyzer AGENT_SPAWN lines to the hook log.
+
+    `day` controls the leading ISO date so tests can place spawns before/after
+    a manifest's `generated_at` (the current-run time bound).
+    """
+    lines = "".join(
+        f"{day}T10:00:0{i}Z  [sess]  INFO  AGENT_SPAWN  "
+        f"appsec-advisor:appsec-stride-analyzer  model=sonnet  STRIDE: c{i}\n"
+        for i in range(count)
+    )
+    with (output_dir / ".hook-events.log").open("a", encoding="utf-8") as fh:
+        fh.write(lines)
+
+
 def _run(output_dir: Path, *extra: str) -> int:
     return subprocess.run(
         [sys.executable, str(SCRIPT), str(output_dir), *extra],
@@ -98,16 +125,76 @@ def test_inlined_run_trips_without_progress_dir(tmp_path):
     assert _run(tmp_path) == 2
 
 
-def test_dispatch_manifest_suppresses_false_positive(tmp_path):
-    """Full-M1: real stride files, NO .progress, but a dispatch manifest exists
-    → NOT inlined (the parallel fan-out is proven; agent_progress may no-op when
-    OUTPUT_DIR is not env-exported in the analyzer)."""
+def test_manifest_with_full_spawn_evidence_passes(tmp_path):
+    """Full-M1 clean run: real stride files, NO .progress, but the hook log
+    shows >= one dispatched analyzer per manifest component → fan-out proven,
+    not inlined (agent_progress may no-op when OUTPUT_DIR is not env-exported)."""
     for cid in ("frontend-spa", "backend-api"):
         _write_stride(tmp_path, cid, _real_stride())
-    (tmp_path / ".stride-dispatch-manifest.json").write_text(
-        json.dumps({"schema_version": 1, "components": [{"component_id": "backend-api"}]}),
-        encoding="utf-8",
+    _write_manifest(tmp_path, "frontend-spa", "backend-api")
+    _write_spawns(tmp_path, 2)  # one spawn per planned component
+    assert _run(tmp_path) == 0
+
+
+def test_manifest_built_but_stride_inlined_trips(tmp_path):
+    """THE inline-collapse: step 3b built the manifest, but the orchestrator
+    inlined STRIDE instead of fanning out (0 analyzer spawns, no .progress).
+    The manifest must NOT suppress — this is the 23-min-freeze failure mode
+    the gate exists to catch, and pre-2026-06-05 it slipped through."""
+    for cid in ("frontend-spa", "backend-api"):
+        _write_stride(tmp_path, cid, _real_stride())
+    _write_manifest(tmp_path, "frontend-spa", "backend-api")
+    # no AGENT_SPAWN lines, no .progress/ → collapse
+    assert _run(tmp_path) == 2
+
+
+def test_manifest_partial_spawns_falls_through_to_progress(tmp_path):
+    """Manifest with fewer spawns than planned does NOT globally suppress, but a
+    genuinely-dispatched run is still saved by its per-component .progress files
+    (no false-positive when hooks under-log but analyzers wrote progress)."""
+    for cid in ("frontend-spa", "backend-api"):
+        _write_stride(tmp_path, cid, _real_stride())
+        _write_progress(tmp_path, cid)
+    _write_manifest(tmp_path, "frontend-spa", "backend-api")
+    _write_spawns(tmp_path, 1)  # under-count, but .progress covers both
+    assert _run(tmp_path) == 0
+
+
+def test_manifest_partial_spawns_and_missing_progress_trips(tmp_path):
+    """Under-count spawns AND a real stride file with no .progress → the
+    uncovered component is flagged (partial fan-out / partial inline)."""
+    _write_stride(tmp_path, "frontend-spa", _real_stride())
+    _write_progress(tmp_path, "frontend-spa")
+    _write_stride(tmp_path, "backend-api", _real_stride())  # inlined, no progress
+    _write_manifest(tmp_path, "frontend-spa", "backend-api")
+    _write_spawns(tmp_path, 1)
+    assert _run(tmp_path) == 2
+
+
+def test_stale_spawns_before_manifest_do_not_suppress(tmp_path):
+    """Append-only hook log: a PRIOR clean run's stride spawns linger. A current
+    --rebuild that inlines (no fresh spawns, no .progress) must still trip — the
+    stale spawns predate the manifest's generated_at and are excluded."""
+    for cid in ("frontend-spa", "backend-api"):
+        _write_stride(tmp_path, cid, _real_stride())
+    _write_spawns(tmp_path, 2, day="2026-06-01")  # last run's spawns, still in log
+    _write_manifest(
+        tmp_path, "frontend-spa", "backend-api", generated_at="2026-06-05T10:00:00Z"
     )
+    # no fresh (>= generated_at) spawns, no .progress → collapse, must trip
+    assert _run(tmp_path) == 2
+
+
+def test_fresh_spawns_after_manifest_pass_with_time_bound(tmp_path):
+    """Same setup but the spawns are from the current run (after generated_at)
+    → counted, fan-out proven, exit 0."""
+    for cid in ("frontend-spa", "backend-api"):
+        _write_stride(tmp_path, cid, _real_stride())
+    _write_spawns(tmp_path, 2, day="2026-06-01")  # stale, excluded
+    _write_manifest(
+        tmp_path, "frontend-spa", "backend-api", generated_at="2026-06-05T10:00:00Z"
+    )
+    _write_spawns(tmp_path, 2, day="2026-06-05")  # this run's spawns, counted
     assert _run(tmp_path) == 0
 
 
