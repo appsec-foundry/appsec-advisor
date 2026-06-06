@@ -7069,6 +7069,46 @@ def _known_requirement_ids(ctx: RenderContext) -> dict[str, str]:
     return out
 
 
+def _requirement_blueprints(ctx: RenderContext) -> dict[str, str]:
+    """Map requirement ID → a rendered blueprint cell, derived deterministically
+    from the requirements↔blueprint cross-reference in ``.requirements.yaml``.
+
+    Each ``blueprints[].sections[].references[].id`` names a requirement that
+    section addresses, so a violated requirement can be linked to the blueprint
+    section that remediates it without depending on a STRIDE analyzer having set
+    ``remediation.blueprint`` (the analyzers reliably attach requirement IDs but
+    routinely skip the optional blueprint lookup). First section in file order to
+    reference a requirement wins. Cell shape matches the analyzer's
+    ``[{bp.id}]({section.url}) — {section.title}`` so §8 ``Violated:`` and the
+    §7b/§MS table render identically whether the link came from the LLM or here.
+    Returns ``{}`` when the file is absent/unparseable or carries no blueprints.
+    """
+    path = ctx.output_dir / ".requirements.yaml"
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for bp in data.get("blueprints", []) or []:
+        if not isinstance(bp, dict):
+            continue
+        bid = (bp.get("id") or "").strip()
+        if not bid:
+            continue
+        for sec in bp.get("sections", []) or []:
+            if not isinstance(sec, dict):
+                continue
+            url = (sec.get("url") or bp.get("url") or "").strip()
+            title = (sec.get("title") or "").strip()
+            for ref in sec.get("references", []) or []:
+                rid = (ref.get("id") or "").strip() if isinstance(ref, dict) else ""
+                if rid and rid not in out:
+                    out[rid] = f"[{bid}]({url})" + (f" — {title}" if title else "")
+    return out
+
+
 def _requirement_ids_for_threat(t: dict[str, Any], known_ids: "dict[str, str] | set[str]") -> list[str]:
     """Requirement IDs a threat evidences — order-preserving, de-duplicated.
 
@@ -7168,6 +7208,20 @@ def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]
                 if slot and mid not in slot["measures"]:
                     slot["measures"].append(mid)
 
+    # Deterministic blueprint fallback: when no STRIDE analyzer attached a
+    # remediation.blueprint, derive each requirement's blueprint from the
+    # requirements↔blueprint cross-reference in .requirements.yaml. Keeps the
+    # Blueprint column populated from the loaded baseline even when the LLM
+    # skipped the optional lookup (LLM-attached blueprints still take priority).
+    if by_req:
+        bp_map = _requirement_blueprints(ctx)
+        if bp_map:
+            for rid, slot in by_req.items():
+                if not slot["blueprint"]:
+                    cell = bp_map.get(rid)
+                    if cell:
+                        slot["blueprint"] = cell
+
     rows = list(by_req.values())
     for r in rows:
         best = min(r["findings"], key=lambda f: _severity_rank(f[1]), default=("", ""))
@@ -7248,10 +7302,26 @@ def _render_requirements_mapping_table(
 def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """§7b — inline the LLM compliance narrative (status/priority/evidence,
     which the yaml does not carry) then append a deterministic Requirements
-    Traceability table built from threat-model.yaml threats."""
-    body = _render_markdown_fragment(ctx, "requirements_compliance", section)
+    Traceability table built from threat-model.yaml threats.
+
+    The traceability table is built from threat-model.yaml and is therefore
+    always available; the LLM narrative fragment is not. If the fragment is
+    missing or invalid we still render the section with the deterministic table
+    (and a one-line note) rather than soft-skipping the whole section — losing
+    the requirement→finding→mitigation mapping is worse than losing the prose."""
     rows = _build_requirements_mapping_rows(ctx)
     table = _render_requirements_mapping_table(ctx, rows)
+    try:
+        body = _render_markdown_fragment(ctx, "requirements_compliance", section)
+    except FragmentError:
+        if not table:
+            raise  # no fragment AND no mapping → genuinely nothing to show
+        heading = (section.get("heading") or "## 7b. Requirements Compliance").strip()
+        body = (
+            f"{heading}\n\n"
+            "> ⚠ The requirements compliance narrative fragment was not "
+            "authored; the deterministic traceability table is shown below.\n"
+        )
     if table:
         body = (
             body.rstrip()

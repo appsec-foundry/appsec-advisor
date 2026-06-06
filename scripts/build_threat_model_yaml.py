@@ -177,6 +177,14 @@ def build_meta(
         "compliance_scope": (org or {}).get("compliance_scope", []),
         "git": {"commit_sha": commit_sha, "branch": branch},
         "accepted_risks": (org or {}).get("accepted_risks", []),
+        # Carry the resolved requirements gate into meta. The contract-driven
+        # renderer gates the entire Requirements Compliance surface (§7b
+        # traceability table, the MS compliance subsection, and authoring of
+        # the requirements-compliance.md fragment) on
+        # `meta.check_requirements`. Without this, a run with --requirements /
+        # CHECK_REQUIREMENTS=true that ran Phase 8b still rendered nothing —
+        # the flag lived in .skill-config.json but never reached the yaml.
+        "check_requirements": bool(skill_cfg.get("check_requirements", False)),
     }
 
 

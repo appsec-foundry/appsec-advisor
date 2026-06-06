@@ -180,3 +180,24 @@ def test_attack_surface_empty_baseline_falls_back_to_additions():
     ]}
     out, _ = b.build_attack_surface(None, sidecar)
     assert len(out) == 1 and out[0]["entry_point"] == "GET /x"
+
+
+# ── meta.check_requirements gate (2026-06-05) ─────────────────────────────────
+# The contract-driven renderer gates the entire Requirements Compliance surface
+# (§7b traceability, MS subsection, requirements-compliance.md authoring) on
+# meta.check_requirements. build_meta must propagate the resolved skill_cfg flag
+# into the yaml, else a --requirements run that ran Phase 8b renders nothing.
+def _meta(**cfg):
+    return b.build_meta(
+        skill_cfg=cfg, org=None, recon_project=None,
+        plugin_root=ROOT, repo_root=ROOT, prior_yaml=None,
+    )
+
+
+def test_build_meta_propagates_check_requirements_true():
+    assert _meta(check_requirements=True)["check_requirements"] is True
+
+
+def test_build_meta_check_requirements_defaults_false():
+    assert _meta()["check_requirements"] is False
+    assert _meta(check_requirements=False)["check_requirements"] is False

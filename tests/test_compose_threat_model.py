@@ -2815,3 +2815,72 @@ def test_softwrap_never_breaks_inside_backtick_span():
     # No <br/> may fall INSIDE the backtick span (each segment has even backticks).
     for seg in desc.split("<br/>"):
         assert seg.count("`") % 2 == 0
+
+
+# ---------------------------------------------------------------------------
+# Deterministic blueprint integration (2026-06-05)
+# When a STRIDE analyzer skips the optional remediation.blueprint lookup, the
+# Requirements Traceability table still links each violated requirement to the
+# blueprint section that references it (blueprints[].sections[].references[].id),
+# so blueprints reach findings/maßnahmen/MS without depending on LLM behaviour.
+# ---------------------------------------------------------------------------
+
+def _reqs_yaml_with_blueprint(tmp_path: Path) -> None:
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n"
+        "- id: CAT-AC\n"
+        "  requirements:\n"
+        "  - id: AC-004\n"
+        "    url: https://req.example/auth\n"
+        "    text: Authenticate users\n"
+        "    priority: MUST\n"
+        "blueprints:\n"
+        "- id: BP-AUTHZ\n"
+        "  url: https://bp.example/authz\n"
+        "  sections:\n"
+        "  - title: Implement a BFF\n"
+        "    url: https://bp.example/authz#bff\n"
+        "    references:\n"
+        "    - id: AC-004\n",
+        encoding="utf-8",
+    )
+
+
+def _ctx_for_mapping(tmp_path: Path, threat: dict):
+    frag = tmp_path / ".fragments"
+    frag.mkdir(exist_ok=True)
+    return compose.RenderContext(
+        output_dir=tmp_path, contract={},
+        yaml_data={"threats": [threat], "mitigations": []},
+        triage={}, fragments_dir=frag,
+    )
+
+
+def test_requirement_blueprints_maps_via_cross_reference(tmp_path: Path) -> None:
+    _reqs_yaml_with_blueprint(tmp_path)
+    ctx = _ctx_for_mapping(tmp_path, {})
+    bp = compose._requirement_blueprints(ctx)
+    assert bp.get("AC-004", "").startswith("[BP-AUTHZ](https://bp.example/authz#bff)")
+
+
+def test_mapping_row_gets_deterministic_blueprint_when_llm_omits_it(tmp_path: Path) -> None:
+    _reqs_yaml_with_blueprint(tmp_path)
+    threat = {
+        "t_id": "T-001", "risk": "critical", "mitigation_ids": ["M-001"],
+        "remediation": {"reference": "[AC-004]"},  # no blueprint attached
+    }
+    rows = compose._build_requirements_mapping_rows(_ctx_for_mapping(tmp_path, threat))
+    row = next(r for r in rows if r["req_id"] == "AC-004")
+    assert "BP-AUTHZ" in row["blueprint"]
+
+
+def test_mapping_row_keeps_llm_blueprint_over_deterministic(tmp_path: Path) -> None:
+    _reqs_yaml_with_blueprint(tmp_path)
+    threat = {
+        "t_id": "T-001", "risk": "critical", "mitigation_ids": ["M-001"],
+        "remediation": {"reference": "[AC-004]",
+                        "blueprint": "[BP-LLM](https://bp.example/llm) — Custom"},
+    }
+    rows = compose._build_requirements_mapping_rows(_ctx_for_mapping(tmp_path, threat))
+    row = next(r for r in rows if r["req_id"] == "AC-004")
+    assert "BP-LLM" in row["blueprint"] and "BP-AUTHZ" not in row["blueprint"]
