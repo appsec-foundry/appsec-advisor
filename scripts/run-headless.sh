@@ -44,7 +44,8 @@
 #   --stride-model <model>  Override model for STRIDE analyzers (e.g. opus)
 #   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
 #   --json                  Return structured JSON output
-#   --verbose               Show real-time hook event log on stderr
+#   --verbose               Show the full real-time hook event log on stderr
+#   --quiet                 Suppress live progress (default = milestone events)
 #
 # Skill selection:
 #   --audit-requirements    Run audit-security-requirements instead of threat model
@@ -111,7 +112,9 @@ Options:
   --stride-model <model>     Override model for STRIDE analyzers (e.g. opus)
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
   --json                     Return structured JSON output
-  --verbose                  Show real-time hook event log on stderr
+  --verbose                  Show the full real-time hook event log on stderr
+  --quiet                    Suppress live progress output (default shows
+                             milestone events: phases, agent spawns, heartbeat)
 
 Skill selection:
   --audit-requirements       Run audit-security-requirements instead of threat model
@@ -171,10 +174,12 @@ fi
 REPO_PATH=""
 OUTPUT_PATH=""
 SKILL_FLAGS=""
+REQUIREMENTS_INFO=""
 MAX_BUDGET=""
 MODEL=""
 OUTPUT_FORMAT="text"
 VERBOSE=""
+QUIET=""
 SKILL="create-threat-model"
 CATEGORY_FILTER=""
 SAVE_REPORT=""
@@ -250,20 +255,24 @@ while [ $# -gt 0 ]; do
             # source unless it is absent or another flag (so a bare
             # `--requirements --foo` does not swallow `--foo`).
             if [ $# -gt 1 ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
-                SKILL_FLAGS="$SKILL_FLAGS --requirements $2"; shift 2
+                SKILL_FLAGS="$SKILL_FLAGS --requirements $2"
+                REQUIREMENTS_INFO="enabled → $2"; shift 2
             else
-                SKILL_FLAGS="$SKILL_FLAGS --requirements"; shift
+                SKILL_FLAGS="$SKILL_FLAGS --requirements"
+                REQUIREMENTS_INFO="enabled (source from config)"; shift
             fi
             ;;
         --with-requirements)
             warn "--with-requirements is deprecated — use --requirements"
-            SKILL_FLAGS="$SKILL_FLAGS --requirements"; shift ;;
+            SKILL_FLAGS="$SKILL_FLAGS --requirements"
+            REQUIREMENTS_INFO="enabled (source from config)"; shift ;;
         --ignore-requirements)
             warn "--ignore-requirements is deprecated — use --no-requirements"
             SKILL_FLAGS="$SKILL_FLAGS --no-requirements"; shift ;;
         --requirements-url)
             warn "--requirements-url is deprecated — use --requirements <url>"
-            SKILL_FLAGS="$SKILL_FLAGS --requirements $2"; shift 2 ;;
+            SKILL_FLAGS="$SKILL_FLAGS --requirements $2"
+            REQUIREMENTS_INFO="enabled → $2"; shift 2 ;;
         --max-budget)
             MAX_BUDGET="$2"; shift 2 ;;
         --model)
@@ -283,6 +292,8 @@ while [ $# -gt 0 ]; do
             OUTPUT_FORMAT="json"; shift ;;
         --verbose)
             VERBOSE="--verbose"; shift ;;
+        --quiet)
+            QUIET="1"; shift ;;
         --audit-requirements|--check-requirements)
             SKILL="audit-security-requirements"; shift ;;
         --category)
@@ -523,6 +534,7 @@ echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
 [ -n "$OUTPUT_PATH" ]      && echo "  Output     : $OUTPUT_PATH"
 [ -n "$SKILL_FLAGS" ]      && echo "  Flags      :$SKILL_FLAGS"
+[ -n "$REQUIREMENTS_INFO" ] && echo "  Requirements: $REQUIREMENTS_INFO"
 [ -n "$MAX_BUDGET" ]       && echo "  Budget cap : \$$MAX_BUDGET"
 [ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
 [ -n "$VERBOSE" ]          && echo "  Verbose    : real-time hook event log on stderr"
@@ -531,6 +543,7 @@ echo ""
 # ── Execute ─────────────────────────────────────────────────────────
 TAIL_PID=""
 TAIL_RUN_PID=""
+PROGRESS_PID=""
 
 cleanup_tails() {
     if [ -n "$TAIL_PID" ]; then
@@ -543,6 +556,21 @@ cleanup_tails() {
         wait "$TAIL_RUN_PID" 2>/dev/null || true
         TAIL_RUN_PID=""
     fi
+    if [ -n "$PROGRESS_PID" ]; then
+        kill "$PROGRESS_PID" 2>/dev/null || true
+        wait "$PROGRESS_PID" 2>/dev/null || true
+        PROGRESS_PID=""
+    fi
+}
+
+# Tail both logs in the background and pipe them through render_progress.py,
+# which turns the raw event stream into a stateful, human-readable progress view
+# (current phase, sub-agent invokes, sub-steps, wall-clock elapsed). Runs as a
+# single pipeline so the trap can reap it by pid.
+start_progress_monitor() {
+    tail -F "$LOG_FILE" "$RUN_LOG_FILE" 2>/dev/null \
+        | python3 "$SCRIPT_DIR/render_progress.py" >&2 &
+    PROGRESS_PID=$!
 }
 
 if [ -n "$VERBOSE" ]; then
@@ -583,6 +611,20 @@ if [ -n "$VERBOSE" ]; then
     TAIL_RUN_PID=$!
 
     info "Starting Claude Code in headless mode (verbose: tailing $LOG_FILE and $RUN_LOG_FILE)..."
+elif [ -z "$QUIET" ]; then
+    # Default: lightweight live progress (milestone events only) so the run
+    # isn't a silent black box. Use --verbose for the full firehose, --quiet
+    # for no live output at all.
+    RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+    mkdir -p "$RESULT_DIR" 2>/dev/null || true
+    LOG_FILE="$RESULT_DIR/.hook-events.log"
+    RUN_LOG_FILE="$RESULT_DIR/.agent-run.log"
+    touch "$LOG_FILE" "$RUN_LOG_FILE"
+
+    trap 'cleanup_tails' EXIT INT TERM HUP
+    start_progress_monitor
+
+    info "Starting Claude Code in headless mode (live phase progress; --verbose for the raw event log, --quiet to silence)..."
 else
     info "Starting Claude Code in headless mode..."
 fi
