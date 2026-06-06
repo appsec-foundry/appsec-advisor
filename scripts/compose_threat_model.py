@@ -173,6 +173,14 @@ _KNOWN_JSON_FRAGMENT_SCHEMAS: dict[str, tuple[str, str]] = {
     ),
 }
 
+# Known JSON fragments whose section renderer can deterministically rebuild the
+# content from yaml when the LLM-authored fragment is absent or schema-invalid.
+# For these, the strict pre-render validation (`_validate_known_json_fragments`)
+# degrades to a warning + deterministic fallback instead of aborting compose.
+# Currently only the attack-paths fragment qualifies — `_load_attack_paths_fragment`
+# falls back to `_derive_attack_paths_fallback` (CWE→attack-class derivation).
+_FRAGMENTS_WITH_FALLBACK: frozenset[str] = frozenset({"security-posture-attack-paths.json"})
+
 
 # ---------------------------------------------------------------------------
 # Render context
@@ -1589,6 +1597,13 @@ def _validate_known_json_fragments(ctx: RenderContext) -> None:
     but they are still LLM-authored contract artifacts. If one is present and
     schema-invalid, fail before composing so bad fragments cannot sit unnoticed
     in the run directory.
+
+    Exception: fragments in ``_FRAGMENTS_WITH_FALLBACK`` are rebuilt by their
+    section renderer from yaml when absent/invalid (see
+    ``_load_attack_paths_fragment`` → ``_derive_attack_paths_fallback``). For
+    those a malformed LLM fragment is a WARNING, not a fatal compose abort —
+    otherwise this strict pre-pass kills the whole document over content the
+    renderer can deterministically regenerate.
     """
     for path in sorted(ctx.fragments_dir.glob("*.json")):
         entry = _KNOWN_JSON_FRAGMENT_SCHEMAS.get(path.name)
@@ -1597,9 +1612,17 @@ def _validate_known_json_fragments(ctx: RenderContext) -> None:
         section_id, schema_name = entry
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as e:
-            raise FragmentError(section_id, f"JSON parse error in {path}: {e}")
-        _validate_fragment(section_id, data, schema_name)
+            _validate_fragment(section_id, data, schema_name)
+        except (json.JSONDecodeError, FragmentError, ContractError) as e:
+            if path.name in _FRAGMENTS_WITH_FALLBACK:
+                ctx.warnings.append(
+                    f"{path.name} is schema-invalid ({type(e).__name__}); "
+                    f"falling back to deterministic derivation at render time"
+                )
+                continue
+            if isinstance(e, json.JSONDecodeError):
+                raise FragmentError(section_id, f"JSON parse error in {path}: {e}")
+            raise
 
 
 # ---------------------------------------------------------------------------

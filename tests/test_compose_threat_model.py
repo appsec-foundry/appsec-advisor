@@ -2914,3 +2914,42 @@ def test_requirement_ref_ignores_cwe_and_partial_tokens() -> None:
     # word-boundary guard: IF-0021 must not match IF-002
     assert compose._requirement_ids_for_threat(
         {"remediation": {"reference": "IF-0021"}}, known) == []
+
+
+# --------------------------------------------------------------------------- #
+# _validate_known_json_fragments — fallback-capable fragments are non-fatal
+# (attack-paths schema_version/actors drift — 2026-06-06)
+# --------------------------------------------------------------------------- #
+def _bare_ctx(tmp_path):
+    frag = tmp_path / ".fragments"
+    frag.mkdir(exist_ok=True)
+    return compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data={}, triage={}, fragments_dir=frag
+    )
+
+
+def test_invalid_attack_paths_fragment_is_non_fatal(tmp_path: Path) -> None:
+    """A schema-invalid security-posture-attack-paths.json (the ms-renderer
+    omitting schema_version/actors) must NOT abort compose — the section
+    renderer falls back to deterministic derivation. The pre-pass only warns."""
+    ctx = _bare_ctx(tmp_path)
+    # Missing required schema_version + actors — exactly the observed defect.
+    (ctx.fragments_dir / "security-posture-attack-paths.json").write_text(
+        json.dumps({"attack_paths": [{"class": "injection", "glyph": "①"}]}),
+        encoding="utf-8",
+    )
+    compose._validate_known_json_fragments(ctx)  # must not raise
+    assert any("security-posture-attack-paths.json" in w for w in ctx.warnings)
+
+
+def test_invalid_attack_paths_in_fallback_set() -> None:
+    assert "security-posture-attack-paths.json" in compose._FRAGMENTS_WITH_FALLBACK
+
+
+def test_invalid_non_fallback_fragment_still_fatal(tmp_path: Path) -> None:
+    """A fragment WITHOUT a deterministic fallback (ms-verdict.json) stays a
+    hard FragmentError so genuinely-broken artifacts cannot ship silently."""
+    ctx = _bare_ctx(tmp_path)
+    (ctx.fragments_dir / "ms-verdict.json").write_text("{}", encoding="utf-8")
+    with pytest.raises((compose.FragmentError, compose.ContractError)):
+        compose._validate_known_json_fragments(ctx)
