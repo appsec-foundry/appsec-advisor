@@ -318,19 +318,77 @@ def _ensure_flow_diagrams(md: str, rules_map: dict, changes: list[str]) -> str:
 # --------------------------------------------------------------------------- #
 # Public entrypoint
 # --------------------------------------------------------------------------- #
+def _canon_compare(s: str) -> str:
+    """Punctuation-insensitive heading key: drop commas, collapse whitespace,
+    lowercase. So `Cryptography, Secrets and Data Protection` and
+    `Cryptography Secrets and Data Protection` compare equal."""
+    return re.sub(r"\s+", " ", s.replace(",", "")).strip().lower()
+
+
+def _canonicalize_section_headings(md: str, required_subsections: list, changes: list[str]) -> str:
+    """Rewrite a §7.x heading to the contract's canonical title when it differs
+    ONLY by punctuation/whitespace — e.g. the LLM renderer re-adding the Oxford
+    comma the contract deliberately omits:
+        `### 7.9 Cryptography, Secrets and Data Protection`
+        → `### 7.9 Cryptography Secrets and Data Protection`
+    A heading whose normalized form matches NO canonical title is left
+    untouched, so genuinely different headings and §7.x.y sub-blocks are never
+    renamed. This keeps the LLM-enriched §7 fragment in lock-step with
+    `sections-contract.yaml:required_subsections` (the strict
+    `required_subsection_missing` gate matches the title verbatim)."""
+    canon: dict[str, str] = {}
+    for entry in required_subsections or []:
+        if not isinstance(entry, dict) or entry.get("level") != 3:
+            continue
+        title = str(entry.get("title") or "").strip()
+        m = re.match(r"^(\d+(?:\.\d+)*)\s", title)
+        if m:
+            canon[m.group(1)] = title
+    if not canon:
+        return md
+
+    segs = _segment(md)
+    dirty = False
+    for s in segs:
+        if s.level != 3:
+            continue
+        m = re.match(r"^(\d+(?:\.\d+)*)\s", s.heading)
+        if not m:
+            continue
+        want = canon.get(m.group(1))
+        if not want or s.heading == want:
+            continue
+        if _canon_compare(s.heading) == _canon_compare(want):
+            nl = "\n" if s.raw.endswith("\n") else ""
+            new_raw = f"{'#' * s.level} {want}{nl}"
+            changes.append(f"heading_canonicalized: {s.heading!r} -> {want!r}")
+            s.raw = new_raw
+            s.heading = want
+            dirty = True
+    return _serialize(segs) if dirty else md
+
+
 def normalize_text(md: str, contract_path: Path = qc.DEFAULT_CONTRACT_PATH) -> tuple[str, list[str]]:
     """Return (normalized_md, changes). No-op (changes == []) when the §7 text
-    already satisfies the three structural rules, or the contract is unreadable.
+    already satisfies the structural rules + canonical headings, or the contract
+    is unreadable.
     """
     contract = qc._read_contract(contract_path)
     if not contract:
         return md, []
     sec = (contract.get("sections") or {}).get("security_architecture") or {}
-    rules_map = sec.get("domain_required_rules") or {}
-    if not rules_map:
-        return md, []
 
     changes: list[str] = []
+    # Canonicalize §7.x heading text FIRST so the structural rules below (and
+    # the downstream strict `required_subsection` gate) see contract-exact
+    # headings — the LLM renderer routinely re-adds the Oxford comma the
+    # contract omits, which the deterministic scaffold never does.
+    md = _canonicalize_section_headings(md, sec.get("required_subsections") or [], changes)
+
+    rules_map = sec.get("domain_required_rules") or {}
+    if not rules_map:
+        return md, changes
+
     # Order matters: approach-first inserts a labelled block (so coverage sees
     # it), then coverage tops up any remaining missing labels, then flow
     # diagrams are inserted before the (now-present) Security assessment label.

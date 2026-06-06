@@ -213,3 +213,57 @@ def test_cli_accepts_output_dir(tmp_path):
     rc = nrm.main([str(tmp_path)])  # dir form resolves to .fragments/security-architecture.md
     assert rc == 0
     assert "Validation Approach" in (frag_dir / "security-architecture.md").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# §7.x heading canonicalization (Oxford-comma drift — 2026-06-06)
+# --------------------------------------------------------------------------- #
+# The contract's required_subsections use comma-free §7 titles deliberately
+# (e.g. "7.9 Cryptography Secrets and Data Protection"); enforce_control_taxonomy
+# canonicalises yaml domains to match. The enrich-on secarch LLM renderer
+# routinely re-adds the Oxford comma, which trips the strict
+# `required_subsection_missing` gate. normalize_text rewrites the heading back
+# to the contract-exact title when it differs ONLY by punctuation.
+
+def test_oxford_comma_heading_canonicalized():
+    md = (
+        "### 7.9 Cryptography, Secrets and Data Protection\n"
+        "Body text.\n"
+    )
+    out, changes = nrm.normalize_text(md)
+    assert "### 7.9 Cryptography Secrets and Data Protection" in out
+    assert "Cryptography, Secrets" not in out
+    assert any("heading_canonicalized" in c for c in changes)
+
+
+def test_multiple_comma_headings_canonicalized():
+    md = (
+        "### 7.10 File, Parser and Outbound Request Controls\n\n"
+        "### 7.11 Operations, Runtime and Supply Chain Controls\n"
+    )
+    out, _ = nrm.normalize_text(md)
+    assert "### 7.10 File Parser and Outbound Request Controls" in out
+    assert "### 7.11 Operations Runtime and Supply Chain Controls" in out
+
+
+def test_already_canonical_heading_untouched():
+    md = "### 7.9 Cryptography Secrets and Data Protection\nBody.\n"
+    out, changes = nrm.normalize_text(md)
+    assert "### 7.9 Cryptography Secrets and Data Protection" in out
+    assert not any("heading_canonicalized" in c for c in changes)
+
+
+def test_non_matching_heading_not_renamed():
+    # A genuinely different §7.9 title (not just punctuation) must be left as-is.
+    md = "### 7.9 Completely Different Title\nBody.\n"
+    out, changes = nrm.normalize_text(md)
+    assert "### 7.9 Completely Different Title" in out
+    assert not any("heading_canonicalized" in c for c in changes)
+
+
+def test_subsubsection_heading_not_touched():
+    # 7.2.1 has no canonical entry (only 7.2 does) — must never be rewritten.
+    md = "#### 7.2.1 Password-Based Authentication\nBody.\n"
+    out, changes = nrm.normalize_text(md)
+    assert "#### 7.2.1 Password-Based Authentication" in out
+    assert not any("heading_canonicalized" in c for c in changes)
