@@ -249,3 +249,80 @@ def test_heartbeat_phase_step_via_main_flag(tmp_path: Path):
     content = log.read_text()
     assert "phase=11" in content
     assert "step=compose" in content
+
+
+# ---------------------------------------------------------------------------
+# Placeholder-phase resolution from the run log (.agent-run.log)
+# ---------------------------------------------------------------------------
+
+
+def _write_run_log(tmp_path: Path, *phase_lines: str) -> None:
+    out = _lock_path(tmp_path).parent
+    out.mkdir(parents=True, exist_ok=True)
+    (out / ".agent-run.log").write_text("\n".join(phase_lines) + "\n")
+
+
+def _phase_start(num: str, total: str, name: str) -> str:
+    return (f"2026-06-06T17:21:26Z  [--------]  INFO   threat-analyst"
+            f"    PHASE_START   [Phase {num}/{total}] {name} — dispatching…")
+
+
+def test_bare_heartbeat_phase_derived_from_run_log(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
+    _write_run_log(tmp_path, _phase_start("2", "11", "Reconnaissance"))
+    acquire_lock._do_heartbeat(lp)  # no explicit phase → defaults to "?"
+    content = _hook_log(tmp_path).read_text()
+    assert "phase=2/11" in content
+    assert "phase=?" not in content
+
+
+def test_watchdog_skill_phase_overridden_by_real_phase(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
+    _write_run_log(tmp_path, _phase_start("9", "11", "STRIDE Threat Enumeration"))
+    acquire_lock._do_heartbeat(lp, phase="skill", step="watchdog")
+    content = _hook_log(tmp_path).read_text()
+    assert "phase=9/11" in content
+    assert "phase=skill" not in content
+    assert "step=watchdog" in content  # the watchdog tag is preserved
+
+
+def test_explicit_phase_is_not_overridden(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
+    _write_run_log(tmp_path, _phase_start("2", "11", "Reconnaissance"))
+    acquire_lock._do_heartbeat(lp, phase="10b", step="triage")
+    content = _hook_log(tmp_path).read_text()
+    assert "phase=10b" in content
+    assert "phase=2/11" not in content
+
+
+def test_phase_derivation_picks_latest_phase_start(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
+    _write_run_log(
+        tmp_path,
+        _phase_start("1", "11", "Context Resolution"),
+        _phase_start("2", "11", "Reconnaissance"),
+        _phase_start("3", "11", "Architecture Modeling"),
+    )
+    acquire_lock._do_heartbeat(lp)
+    assert "phase=3/11" in _hook_log(tmp_path).read_text()
+
+
+def test_placeholder_kept_when_no_phase_resolvable(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
+    # No .agent-run.log, no checkpoint → honest "?" (run hasn't entered a phase).
+    acquire_lock._do_heartbeat(lp)
+    assert "phase=?" in _hook_log(tmp_path).read_text()
+
+
+def test_phase_falls_back_to_checkpoint(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 30)
+    # No PHASE_START in the run log, but a checkpoint carries the phase.
+    (lp.parent / ".appsec-checkpoint").write_text("phase=10b step=2 status=running")
+    acquire_lock._do_heartbeat(lp, phase="skill")
+    assert "phase=10b" in _hook_log(tmp_path).read_text()

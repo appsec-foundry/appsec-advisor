@@ -56,6 +56,7 @@ Exit codes:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sys
 import time
@@ -211,6 +212,39 @@ def _read_phase_from_checkpoint(output_dir: Path) -> tuple[str | None, str | Non
     return (phase, depth)
 
 
+# Matches the live phase banner the threat-analyst writes into .agent-run.log,
+# e.g. "[Phase 2/11] Reconnaissance — dispatching recon-scanner…". Captured as
+# a single space-free token "2/11" to keep the HEARTBEAT detail's key=value
+# columns parseable (values never contain spaces by convention).
+_RUN_LOG_PHASE_RE = re.compile(r"\[Phase ([\d.]+)/(\d+)\]")
+_RUN_LOG_FILENAME = ".agent-run.log"
+
+
+def _current_phase_label(output_dir: Path) -> str | None:
+    """Best-effort current-phase token for a heartbeat with no explicit phase.
+
+    The watchdog and bare heartbeat callers don't know which analysis phase the
+    orchestrator is in, so they previously logged ``phase=?`` / ``phase=skill``.
+    Resolve the real phase from the most recent ``[Phase X/Y]`` banner in
+    ``.agent-run.log`` (authoritative, always written), falling back to the
+    ``.appsec-checkpoint`` phase. Returns ``None`` when nothing is resolvable
+    (e.g. before the first phase starts) so the caller keeps its placeholder.
+    """
+    log = output_dir / _RUN_LOG_FILENAME
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in reversed(lines):
+        if "PHASE_START" not in line:
+            continue
+        m = _RUN_LOG_PHASE_RE.search(line)
+        if m:
+            return f"{m.group(1)}/{m.group(2)}"
+    cp_phase, _ = _read_phase_from_checkpoint(output_dir)
+    return cp_phase
+
+
 def _stale_threshold_for_lock(lock_path: Path) -> int:
     """Phase-aware stall threshold for the lock at ``lock_path``.
 
@@ -310,6 +344,12 @@ def _do_heartbeat(lock_path: Path, phase: str = "?", step: str = "") -> int:
     silent run is never misclassified as alive.
     """
     output_dir = lock_path.parent
+    # Placeholder phases ("?" from a bare heartbeat, "skill" from the watchdog)
+    # carry no useful signal — resolve the real current phase from the run log.
+    if phase in ("?", "skill", ""):
+        derived = _current_phase_label(output_dir)
+        if derived:
+            phase = derived
     if not lock_path.exists():
         _emit_hook_event(
             output_dir, "WARN", _HEARTBEAT_EVENT, f"skip=lock_absent  phase={phase}{('  step=' + step) if step else ''}"
