@@ -5,8 +5,8 @@ Standalone tool. Independent of the create-threat-model rendering pipeline:
 takes a finished Markdown file as input, produces a PDF as output.
 
 Pipeline:
-  1. Pre-process Mermaid blocks: render each ```mermaid``` fenced block to an
-     SVG via mmdc (mermaid-cli), replace the block with an <img> reference.
+  1. Pre-process Mermaid blocks: render each ```mermaid``` fenced block to a
+     PNG via mmdc (mermaid-cli), replace the block with an <img> reference.
      Skipped when mmdc is not installed or --no-mermaid is passed; diagrams
      then remain as code blocks in the PDF.
   2. Pandoc Markdown → standalone HTML5 with print.css embedded.
@@ -117,18 +117,19 @@ _MMDC_CHROME_ARGS = [
     "--no-first-run",
     "--disable-extensions",
 ]
-# Mermaid render config. `htmlLabels: false` is CRITICAL for the PDF path:
-# with the default HTML labels, mermaid emits node/edge text inside SVG
-# `<foreignObject>` (an embedded HTML `<div>`). WeasyPrint — and most non-
-# browser SVG rasterisers — do NOT implement foreignObject, so every
-# flowchart / graph / attack-tree renders as empty boxes with ALL TEXT
-# MISSING (sequence diagrams are unaffected — they already use native
-# `<text>`). Forcing `htmlLabels: false` makes mermaid emit native SVG
-# `<text>`/`<tspan>` for every label, which renders identically in
-# WeasyPrint and browsers. `<br/>` in a label becomes a tspan line break.
+# Mermaid render config. Diagrams are rendered to PNG by mmdc (headless Chrome)
+# and embedded as raster images — see `render_mermaid_blocks`. This is CRITICAL:
+# WeasyPrint cannot faithfully rasterise mermaid's SVG. A flowchart with
+# subgraphs emits nodes nested in `<g transform=…>` cluster groups that
+# WeasyPrint silently DROPS — the rendered PDF shows the subgraph boxes + titles
+# but loses the inner nodes and edges entirely (Figure 1 / Figure 2 "kaputt").
+# An earlier workaround forced `htmlLabels:false` to dodge WeasyPrint's missing
+# `<foreignObject>` support, but that only fixed label text — the cluster-node
+# drop and FontAwesome `fa:` icons / `<i>` italics leaking as literal text
+# remained. Rendering to PNG via Chrome sidesteps EVERY WeasyPrint SVG gap at
+# once (foreignObject, cluster transforms, ELK layout, icons), so html labels
+# stay ON for full fidelity (icons, italics, badge dots all render).
 _MMDC_MERMAID_CONFIG = {
-    "htmlLabels": False,
-    "flowchart": {"htmlLabels": False},
     "themeVariables": {"fontFamily": "DejaVu Sans, Arial, sans-serif"},
 }
 _MMDC_RENDER_ARGS: list[str] = []
@@ -139,8 +140,8 @@ def mmdc_render_args() -> list[str]:
 
       * ``-p <puppeteer.json>`` — system Chrome + headless-server launch flags
         (``--no-sandbox`` etc.) so Chrome actually starts on WSL / root / CI.
-      * ``-c <mermaid.json>`` — ``htmlLabels: false`` so labels are native SVG
-        text (foreignObject HTML labels are invisible in the WeasyPrint PDF).
+      * ``-c <mermaid.json>`` — theme font family (html labels stay ON; the PDF
+        embeds PNGs rendered by Chrome, so WeasyPrint's SVG gaps never apply).
 
     Both temp configs are written once per process and cached. Returns the
     subset it could write; a temp-file failure degrades to mmdc's defaults
@@ -289,7 +290,12 @@ MMDC_FAIL_FAST_THRESHOLD = 3
 
 
 def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
-    """Replace each ```mermaid block with an <img> tag pointing at an SVG.
+    """Replace each ```mermaid block with an <img> tag pointing at a PNG.
+
+    PNG (not SVG): mmdc rasterises via headless Chrome, which renders every
+    mermaid construct faithfully; WeasyPrint then just embeds the bitmap.
+    Embedding the SVG instead makes WeasyPrint drop subgraph-nested nodes and
+    edges (see `_MMDC_MERMAID_CONFIG`). Rendered at 2× scale for print sharpness.
 
     Returns (rewritten_md, rendered_count, failed_count).
 
@@ -314,7 +320,7 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
             return match.group(0)
         source = match.group(1)
         mmd_path = work_dir / f"diagram-{n}.mmd"
-        svg_path = work_dir / f"diagram-{n}.svg"
+        png_path = work_dir / f"diagram-{n}.png"
         mmd_path.write_text(source, encoding="utf-8")
         try:
             subprocess.run(
@@ -323,9 +329,11 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
                     "-i",
                     str(mmd_path),
                     "-o",
-                    str(svg_path),
+                    str(png_path),
+                    "-s",
+                    "2",
                     "-b",
-                    "transparent",
+                    "white",
                     "-q",
                     *mmdc_render_args(),
                 ],
@@ -350,7 +358,7 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
                 )
             return match.group(0)
         counter["rendered"] += 1
-        return f"\n![Diagram {n}]({svg_path.name})\n"
+        return f"\n![Diagram {n}]({png_path.name})\n"
 
     rewritten = MERMAID_FENCE_RE.sub(replace, md_text)
     return rewritten, counter["rendered"], counter["failed"]
@@ -630,10 +638,10 @@ def md_to_html(md_path: Path, html_path: Path, css_path: Path, title: str) -> No
         "html5",
         "--standalone",
         embed_flag,
-        # Mermaid SVGs are written next to the (temp) Markdown and referenced
-        # relatively as `diagram-N.svg`. Pandoc resolves image paths against
+        # Mermaid PNGs are written next to the (temp) Markdown and referenced
+        # relatively as `diagram-N.png`. Pandoc resolves image paths against
         # its CWD, not the input file, so without this it fails to embed them
-        # ("File diagram-1.svg not found in resource path", exit 99). css_path
+        # ("File diagram-1.png not found in resource path", exit 99). css_path
         # is absolute, so replacing the default search path here is safe.
         f"--resource-path={md_path.parent}",
         f"--css={css_path}",
