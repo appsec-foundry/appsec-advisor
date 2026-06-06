@@ -79,16 +79,25 @@ def _has(text: str, *patterns: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _eval_lockfile(recon: str, repo_root: str | None) -> dict[str, str]:
-    """Lockfile pinning: is a lockfile present and committed?"""
+    """Lockfile pinning: is a lockfile present and committed?
+
+    Ecosystem-parametric: covers npm/yarn/pnpm, Python (pip/pipenv/poetry/uv),
+    Ruby, Rust, Go, PHP, and Java (Gradle ``gradle.lockfile`` /
+    ``gradle/verification-metadata.xml``). Maven has no native lockfile, so a
+    Maven-only repo cannot satisfy this row via a lockfile (its integrity story
+    is graded under CI install integrity / Enforcer instead).
+    """
     present = _has(recon, r"package-lock\.json", r"yarn\.lock", r"pnpm-lock\.yaml",
-                   r"Pipfile\.lock", r"poetry\.lock", r"Gemfile\.lock",
-                   r"Cargo\.lock", r"go\.sum", r"composer\.lock")
+                   r"Pipfile\.lock", r"poetry\.lock", r"uv\.lock", r"requirements\.lock",
+                   r"Gemfile\.lock", r"Cargo\.lock", r"go\.sum", r"composer\.lock",
+                   r"gradle\.lockfile", r"verification-metadata\.xml")
     # Check repo root directly when available
     if not present and repo_root:
         lockfiles = [
             "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-            "Pipfile.lock", "poetry.lock", "Gemfile.lock",
-            "Cargo.lock", "go.sum", "composer.lock",
+            "Pipfile.lock", "poetry.lock", "uv.lock", "requirements.lock",
+            "Gemfile.lock", "Cargo.lock", "go.sum", "composer.lock",
+            "gradle.lockfile", "gradle/verification-metadata.xml",
         ]
         present = any(Path(repo_root, lf).exists() for lf in lockfiles)
 
@@ -104,6 +113,9 @@ def _eval_ci_install(recon: str) -> dict[str, str]:
         r"--require-hashes", r"cargo\s+build\s+--locked",
         r"dotnet\s+restore\s+--locked", r"bundle\s+install\s+--frozen",
         r"go\s+mod\s+verify",
+        # Java — Gradle dependency locking / verification, Maven strict checksums
+        r"--verify-locks", r"verification-metadata", r"--strict-checksums",
+        r"mvn\b[^\n]*\s-C\b",
     )
     mutable = _has(recon, r"npm\s+install\b", r"pip\s+install\b(?!\s+--require-hashes)")
     if deterministic:
@@ -114,41 +126,70 @@ def _eval_ci_install(recon: str) -> dict[str, str]:
 
 
 def _eval_action_pinning(recon: str, repo_root: str | None) -> dict[str, str]:
-    """GitHub Actions pinning: SHA-pinned vs. mutable tags."""
-    # Read workflow files directly when repo root is available
+    """CI step pinning: are pipeline build inputs pinned by SHA / digest?
+
+    Ecosystem-aware across CI providers:
+      - GitHub Actions: ``uses: …@<40-hex>`` / ``@sha256:`` (pinned) vs
+        ``@v<N>`` / ``@latest`` (mutable).
+      - GitLab CI: ``image: …@sha256:`` (pinned) vs a bare/tagged image
+        (mutable). Mirrors ``recon_patterns._CAT14_GITLAB_IMAGE``.
+
+    A repo whose CI lives only in ``.gitlab-ci.yml`` is graded on its image
+    digest-pinning instead of returning a false "No GitHub Actions" Missing.
+    """
+    # Read GitHub workflow files directly when repo root is available
     workflow_text = recon
+    gitlab_text = ""
     if repo_root:
         wf_dir = Path(repo_root) / ".github" / "workflows"
         if wf_dir.is_dir():
             parts = []
-            for wf in wf_dir.glob("*.yml"):
-                try:
-                    parts.append(wf.read_text(encoding="utf-8", errors="replace"))
-                except OSError:
-                    pass
-            for wf in wf_dir.glob("*.yaml"):
-                try:
-                    parts.append(wf.read_text(encoding="utf-8", errors="replace"))
-                except OSError:
-                    pass
+            for pattern in ("*.yml", "*.yaml"):
+                for wf in wf_dir.glob(pattern):
+                    try:
+                        parts.append(wf.read_text(encoding="utf-8", errors="replace"))
+                    except OSError:
+                        pass
             if parts:
                 workflow_text = "\n".join(parts)
+        for name in (".gitlab-ci.yml", ".gitlab-ci.yaml"):
+            p = Path(repo_root) / name
+            if p.is_file():
+                try:
+                    gitlab_text += "\n" + p.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    pass
+    if not gitlab_text:
+        gitlab_text = recon
 
-    # SHA-pinned: uses@<40-char hex> or @sha256:
-    sha_pinned = bool(re.search(r"uses:\s*\S+@[0-9a-f]{40}", workflow_text) or
-                      re.search(r"uses:\s*\S+@sha256:", workflow_text))
-    # Mutable: uses@v<digit> or @latest
-    mutable_ref = bool(re.search(r"uses:\s*\S+@v\d", workflow_text) or
-                       re.search(r"uses:\s*\S+@latest", workflow_text))
-    has_workflows = bool(re.search(r"uses:\s*\S+@", workflow_text))
+    # --- GitHub Actions ---
+    gh_sha = bool(re.search(r"uses:\s*\S+@[0-9a-f]{40}", workflow_text) or
+                  re.search(r"uses:\s*\S+@sha256:", workflow_text))
+    gh_mutable = bool(re.search(r"uses:\s*\S+@v\d", workflow_text) or
+                      re.search(r"uses:\s*\S+@latest", workflow_text))
+    has_gh = bool(re.search(r"uses:\s*\S+@", workflow_text))
 
-    if not has_workflows:
-        return {"effectiveness": MISSING, "reason": "No GitHub Actions workflows detected."}
-    if sha_pinned and not mutable_ref:
-        return {"effectiveness": ADEQUATE, "reason": "All detected GitHub Actions steps pinned to commit SHA."}
-    if sha_pinned and mutable_ref:
-        return {"effectiveness": PARTIAL, "reason": "Mix of SHA-pinned and mutable-tag Actions references."}
-    return {"effectiveness": MISSING, "reason": "GitHub Actions steps pinned to mutable tags (@v<N> / @latest)."}
+    # --- GitLab CI images ---
+    gl_pinned = gl_mutable = False
+    has_gl = False
+    for m in re.finditer(r"(?m)^\s*image:\s*(?P<image>[^\s#]+)", gitlab_text):
+        has_gl = True
+        image = m.group("image").strip("'\"")
+        if re.search(r"@sha256:[0-9a-f]{64}", image):
+            gl_pinned = True
+        else:  # bare image, :tag, or :latest — all mutable
+            gl_mutable = True
+
+    if not has_gh and not has_gl:
+        return {"effectiveness": MISSING, "reason": "No GitHub Actions or GitLab CI pipeline references detected."}
+
+    any_pinned = gh_sha or gl_pinned
+    any_mutable = gh_mutable or gl_mutable
+    if any_pinned and not any_mutable:
+        return {"effectiveness": ADEQUATE, "reason": "All detected CI steps/images pinned to commit SHA or image digest."}
+    if any_pinned and any_mutable:
+        return {"effectiveness": PARTIAL, "reason": "Mix of SHA/digest-pinned and mutable-tag CI references."}
+    return {"effectiveness": MISSING, "reason": "CI steps/images pinned to mutable tags (@v<N> / @latest / :tag)."}
 
 
 def _eval_container_hygiene(recon: str, repo_root: str | None) -> dict[str, str]:
