@@ -86,15 +86,41 @@ def main() -> int:
     cur_phase = ""          # e.g. "2/11 Reconnaissance"
     phase_start = None      # datetime the current phase began
     run_start = None        # datetime the assessment began (or first line)
-    last_hb = None          # de-dup identical heartbeats within the same minute
 
     out = sys.stdout
+    is_tty = out.isatty()
     cur_clock = " " * 8
+    cur_when = None        # datetime of the line being processed
+    status_shown = False   # a transient \r heartbeat line is on screen
+    last_perm = None       # datetime of the last permanent (scrolling) line
+    _CLEAR = "\r\033[K"    # carriage-return + clear-to-end-of-line
+
+    # Heartbeats are pure liveness — on a TTY they update one in-place status
+    # line (no scroll); off a TTY (log/CI) they are throttled to this interval
+    # so a continuous scan doesn't flood the file. The watchdog's file logging
+    # (stall detection) is unaffected — this is display only.
+    _HB_THROTTLE_S = 300
 
     def w(line: str = "") -> None:
-        """Emit one logical line with the local-time column (blank = gap)."""
+        """Emit one permanent (scrolling) line with the local-time column."""
+        nonlocal status_shown, last_perm
+        if status_shown:  # retire the transient heartbeat line first
+            out.write(_CLEAR)
+            status_shown = False
         out.write("\n" if line == "" else f"{cur_clock}  {line}\n")
         out.flush()
+        last_perm = cur_when
+
+    def heartbeat(line: str) -> None:
+        """Show liveness without flooding the console."""
+        nonlocal status_shown
+        if is_tty:
+            out.write(f"{_CLEAR}{cur_clock}  {line}")  # in-place, no newline
+            out.flush()
+            status_shown = True
+        elif last_perm is None or cur_when is None or \
+                (cur_when - last_perm).total_seconds() >= _HB_THROTTLE_S:
+            w(line)  # off-TTY: occasional scrolling tick only
 
     for raw in sys.stdin:
         parsed = parse_line(raw)
@@ -102,6 +128,7 @@ def main() -> int:
             continue
         ts, comp, event, detail = parsed
         when = _parse_ts(ts)
+        cur_when = when
         cur_clock = _clock(when)
         if run_start is None:
             run_start = when
@@ -166,18 +193,14 @@ def main() -> int:
             w(f"      · STRIDE {files} component(s) analysed")
 
         elif event == "HEARTBEAT":
-            phase_el = _mins(phase_start, when) if phase_start else None
             total_el = _mins(run_start, when)
             if cur_phase:
-                key = f"{cur_phase}|{phase_el}"
-                if key == last_hb:
-                    continue  # same phase, same minute → skip the duplicate
-                last_hb = key
-                w(f"    · still in Phase {cur_phase} — {phase_el}"
-                  f"   [+{total_el} total]")
+                phase_el = _mins(phase_start, when) if phase_start else "?"
+                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}"
+                          f"   [+{total_el} total]")
             else:
                 step = _kv(detail, "step") or "startup"
-                w(f"    · starting up ({step}) — +{total_el}")
+                heartbeat(f"    · starting up ({step}) — +{total_el}")
 
         elif event == "WATCHDOG_START":
             w("    ⤷ watchdog armed (idle / stall guard active)")
@@ -193,6 +216,9 @@ def main() -> int:
             w()
             w(f"✓ assessment complete — {detail}")
 
+    if status_shown:  # leave the cursor on a clean line at EOF
+        out.write("\n")
+        out.flush()
     return 0
 
 

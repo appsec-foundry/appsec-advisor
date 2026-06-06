@@ -79,11 +79,26 @@ def test_heartbeat_anchored_to_current_phase():
     out = _render([
         "2026-06-06T17:21:26Z  [--------]  INFO   threat-analyst    PHASE_START"
         "   [Phase 2/11] Reconnaissance — dispatching recon-scanner… (expect ~4m)",
-        "2026-06-06T17:23:26Z  [--------]  INFO   HEARTBEAT"
+        # Off-TTY (test harness) heartbeats throttle; space this one past the
+        # interval so it surfaces and we can assert the rendered phase.
+        "2026-06-06T17:26:26Z  [--------]  INFO   HEARTBEAT"
         "           pid=23  phase=skill  step=watchdog  ts=1780766606",
     ])
     # The raw heartbeat says step=watchdog; the renderer reports the real phase.
-    assert "still in Phase 2/11 Reconnaissance — 2m" in out
+    assert "still in Phase 2/11 Reconnaissance — 5m" in out
+
+
+def test_heartbeats_throttled_off_tty():
+    # Two heartbeats < throttle interval apart (off-TTY): only the first shows.
+    out = _render([
+        "2026-06-06T17:21:26Z  [--------]  INFO   threat-analyst    PHASE_START"
+        "   [Phase 2/11] Reconnaissance — dispatching recon-scanner… (expect ~4m)",
+        "2026-06-06T17:22:26Z  [--------]  INFO   HEARTBEAT"
+        "           pid=23  phase=skill  step=watchdog  ts=1",  # +1m, suppressed
+        "2026-06-06T17:23:26Z  [--------]  INFO   HEARTBEAT"
+        "           pid=23  phase=skill  step=watchdog  ts=2",  # +2m, suppressed
+    ])
+    assert "still in Phase" not in out
 
 
 def test_heartbeat_before_first_phase_shows_startup():
