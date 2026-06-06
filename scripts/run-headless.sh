@@ -175,6 +175,7 @@ REPO_PATH=""
 OUTPUT_PATH=""
 SKILL_FLAGS=""
 REQUIREMENTS_INFO=""
+REQUIREMENTS_SRC=""
 MAX_BUDGET=""
 MODEL=""
 OUTPUT_FORMAT="text"
@@ -256,7 +257,7 @@ while [ $# -gt 0 ]; do
             # `--requirements --foo` does not swallow `--foo`).
             if [ $# -gt 1 ] && [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then
                 SKILL_FLAGS="$SKILL_FLAGS --requirements $2"
-                REQUIREMENTS_INFO="enabled → $2"; shift 2
+                REQUIREMENTS_INFO="enabled → $2"; REQUIREMENTS_SRC="$2"; shift 2
             else
                 SKILL_FLAGS="$SKILL_FLAGS --requirements"
                 REQUIREMENTS_INFO="enabled (source from config)"; shift
@@ -272,7 +273,7 @@ while [ $# -gt 0 ]; do
         --requirements-url)
             warn "--requirements-url is deprecated — use --requirements <url>"
             SKILL_FLAGS="$SKILL_FLAGS --requirements $2"
-            REQUIREMENTS_INFO="enabled → $2"; shift 2 ;;
+            REQUIREMENTS_INFO="enabled → $2"; REQUIREMENTS_SRC="$2"; shift 2 ;;
         --max-budget)
             MAX_BUDGET="$2"; shift 2 ;;
         --model)
@@ -535,6 +536,10 @@ echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$OUTPUT_PATH" ]      && echo "  Output     : $OUTPUT_PATH"
 [ -n "$SKILL_FLAGS" ]      && echo "  Flags      :$SKILL_FLAGS"
 [ -n "$REQUIREMENTS_INFO" ] && echo "  Requirements: $REQUIREMENTS_INFO"
+# One-line intake summary (req + blueprint counts, source names) when the
+# requirements source is a readable local file. Fails soft for URLs / config.
+[ -n "$REQUIREMENTS_SRC" ] && [ -f "$REQUIREMENTS_SRC" ] && \
+    python3 "$SCRIPT_DIR/run_summary.py" requirements "$REQUIREMENTS_SRC" 2>/dev/null || true
 [ -n "$MAX_BUDGET" ]       && echo "  Budget cap : \$$MAX_BUDGET"
 [ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
 [ -n "$VERBOSE" ]          && echo "  Verbose    : real-time hook event log on stderr"
@@ -654,6 +659,9 @@ if [ $EXIT_CODE -eq 0 ]; then
 
     # List all written files with full paths
     if [ "$SKILL" = "create-threat-model" ]; then
+        # Surface the Critical/High findings on the console (all modes).
+        python3 "$SCRIPT_DIR/run_summary.py" findings "$RESULT_DIR/threat-model.yaml" 2>/dev/null || true
+
         echo ""
         echo "  Output files:"
         [ -f "$RESULT_DIR/threat-model.md" ]          && ok "  $RESULT_DIR/threat-model.md"
