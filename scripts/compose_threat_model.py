@@ -7114,13 +7114,13 @@ def _requirement_ids_for_threat(t: dict[str, Any], known_ids: "dict[str, str] | 
 
     Sources, in order: the canonical ``violated_requirements[]`` array, the
     legacy singular ``requirement_id``, and — when ``known_ids`` is non-empty —
-    any bracketed token in ``remediation.reference`` that matches a declared
-    requirement ID. The last source closes the field-name split: STRIDE
-    analyzers write a matched requirement into ``remediation.reference`` as
-    ``[ID](url)`` instead of the array, so the finding shows in §8 (``Violated:``)
-    but was invisible to the §7b/§MS table. Matching against the declared-ID set
-    keeps this prefix-agnostic and ignores OWASP/CWE references that share the
-    bracket-link shape.
+    any declared requirement ID found in ``remediation.reference``, whether the
+    analyzer wrote it bracketed (``[ID]`` / ``[ID](url)``) or bare (``IF-002``).
+    This closes the field-name split: STRIDE analyzers write a matched
+    requirement into ``remediation.reference`` instead of the array, so the
+    finding shows in §8 (``Violated:``) but was invisible to the §7b/§MS table.
+    Matching against the declared-ID set keeps this prefix-agnostic and ignores
+    OWASP/CWE references (they are not declared requirement IDs).
     """
     out: list[str] = []
 
@@ -7137,9 +7137,19 @@ def _requirement_ids_for_threat(t: dict[str, Any], known_ids: "dict[str, str] | 
         rem = t.get("remediation") if isinstance(t.get("remediation"), dict) else {}
         ref = rem.get("reference") if isinstance(rem, dict) else None
         if isinstance(ref, str) and ref:
+            # Bracketed tokens first (preserves reference order for `[ID](url)`).
             for tok in re.findall(r"\[([^\]]+)\]", ref):
                 if tok.strip() in known_ids:
                     _add(tok)
+            # Bare IDs: analyzers sometimes write `IF-002` without the brackets
+            # the matcher above keys on. Recover any declared ID that appears as
+            # a standalone token. Only IDs in known_ids match, so CWE/OWASP refs
+            # never do; the word-boundary guard avoids partial hits (IF-0021).
+            for kid in known_ids:
+                if kid not in out and re.search(
+                    r"(?<![\w-])" + re.escape(kid) + r"(?![\w-])", ref
+                ):
+                    _add(kid)
     return out
 
 

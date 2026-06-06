@@ -2884,3 +2884,33 @@ def test_mapping_row_keeps_llm_blueprint_over_deterministic(tmp_path: Path) -> N
     rows = compose._build_requirements_mapping_rows(_ctx_for_mapping(tmp_path, threat))
     row = next(r for r in rows if r["req_id"] == "AC-004")
     assert "BP-LLM" in row["blueprint"] and "BP-AUTHZ" not in row["blueprint"]
+
+
+# ---------------------------------------------------------------------------
+# Bare requirement reference recovery (2026-06-06)
+# Analyzers sometimes write `IF-002` without the `[...]` brackets the matcher
+# keys on, dropping that requirement from the §7b/MS traceability table. The
+# matcher now also recovers declared IDs written bare — without matching
+# CWE/OWASP refs or partial tokens.
+# ---------------------------------------------------------------------------
+
+def test_requirement_ref_recovers_bare_declared_id() -> None:
+    known = {"IF-002": "", "AC-004": ""}
+    assert compose._requirement_ids_for_threat(
+        {"remediation": {"reference": "IF-002"}}, known) == ["IF-002"]
+
+
+def test_requirement_ref_bracketed_still_matches() -> None:
+    known = {"AC-004": ""}
+    assert compose._requirement_ids_for_threat(
+        {"remediation": {"reference": "[AC-004](http://x)"}}, known) == ["AC-004"]
+
+
+def test_requirement_ref_ignores_cwe_and_partial_tokens() -> None:
+    known = {"IF-002": ""}
+    # CWE refs are not declared requirement IDs → never matched
+    assert compose._requirement_ids_for_threat(
+        {"remediation": {"reference": "CWE-506"}}, known) == []
+    # word-boundary guard: IF-0021 must not match IF-002
+    assert compose._requirement_ids_for_threat(
+        {"remediation": {"reference": "IF-0021"}}, known) == []
