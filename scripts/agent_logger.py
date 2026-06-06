@@ -946,12 +946,14 @@ def _write_assessment_summary(sid: str) -> None:
 
     # --- Duration ---
     duration = "?"
+    duration_secs: int | None = None
     if first_ts and last_ts:
         try:
             t1 = datetime.strptime(first_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
             t2 = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
             secs = int((t2 - t1).total_seconds())
             duration = f"{secs // 60}m {secs % 60:02d}s"
+            duration_secs = secs
         except Exception:
             pass
 
@@ -959,6 +961,16 @@ def _write_assessment_summary(sid: str) -> None:
     mode = "full"
     phase_starts: dict[str, str] = {}  # phase_key → ISO timestamp
     phase_durations: list[tuple[str, int]] = []  # (phase_label, seconds)
+    # Idle accounting: the skill_watchdog logs RUN_RESUMED with the peak idle
+    # of each resolved stall ("...after {N}s idle"). Summing them gives the
+    # wall-clock the run spent waiting on slow/standard-tier API responses, so
+    # the summary can report honest active time (active ≈ wall − idle). An
+    # unresolved trailing RUN_IDLE (watchdog killed before activity resumed)
+    # contributes its last reported idle as a conservative floor.
+    idle_secs_total = 0
+    run_idle_count = 0
+    run_resumed_count = 0
+    last_run_idle_secs = 0
     try:
         arl = _agent_run_log_path()
         if os.path.exists(arl):
@@ -969,6 +981,19 @@ def _write_assessment_summary(sid: str) -> None:
                             mode = "incremental"
                         elif "dry-run" in line.lower():
                             mode = "dry-run"
+
+                    if "RUN_RESUMED" in line:
+                        mr = re.search(r"after\s+(\d+)s\s+idle", line)
+                        if mr:
+                            idle_secs_total += int(mr.group(1))
+                            run_resumed_count += 1
+                        continue
+                    if "RUN_IDLE" in line:
+                        mi = re.search(r"no run activity for\s+(\d+)s", line)
+                        if mi:
+                            last_run_idle_secs = int(mi.group(1))
+                            run_idle_count += 1
+                        continue
 
                     # Collect PHASE_START/PHASE_END pairs for per-phase timing.
                     # Format: "... PHASE_START   [Phase N/11] <label>…"
@@ -999,6 +1024,12 @@ def _write_assessment_summary(sid: str) -> None:
                                 pass
     except Exception:
         pass
+
+    # Unresolved trailing stall: more RUN_IDLE than RUN_RESUMED means the
+    # watchdog was killed mid-stall. Add the last reported idle as a floor so
+    # the active-time estimate is not silently optimistic.
+    if run_idle_count > run_resumed_count and last_run_idle_secs:
+        idle_secs_total += last_run_idle_secs
 
     # --- Smear batched phase timestamps (F3 fix, 2026-04-25) ---
     #
@@ -1179,11 +1210,26 @@ def _write_assessment_summary(sid: str) -> None:
     except Exception:
         pass
 
+    # --- Idle / active wall-clock split ---
+    #
+    # Surface the time the run spent waiting on slow (standard-tier) API
+    # responses so "37 min" reads honestly as e.g. "16m active + 21m API
+    # idle" rather than implying 37 min of work. Only shown when a stall was
+    # actually detected and we have a real wall-clock total to subtract from.
+    idle_str = ""
+    if idle_secs_total > 0 and duration_secs is not None:
+        active_secs = max(0, duration_secs - idle_secs_total)
+        idle_str = (
+            f"idle≈{idle_secs_total // 60}m {idle_secs_total % 60:02d}s (API waits)  "
+            f"active≈{active_secs // 60}m {active_secs % 60:02d}s  "
+        )
+
     # --- Write summary events ---
     _write(
         "INFO ",
         "ASSESSMENT_SUMMARY",
         f"mode={mode}  duration={duration}  "
+        f"{idle_str}"
         f"plugin_version={plugin_version}  analysis_version={analysis_version}  "
         f"threats={total_threats} "
         f"(Critical={threats['Critical']}, High={threats['High']}, "

@@ -6,6 +6,7 @@ import importlib.util
 import json
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -477,11 +478,18 @@ import os as _os
 
 
 class TestRunIdleHelper:
-    """`_run_idle_seconds` takes the FRESHEST of two activity signals:
-    .hook-events.log mtime (tool granularity) and the last non-watchdog
-    .agent-run.log entry. Either one being recent means 'not idle'."""
+    """`_run_idle_seconds` takes the FRESHEST of two activity signals: the
+    latest NON-heartbeat line in .hook-events.log (tool granularity) and the
+    last non-watchdog .agent-run.log entry. Either one being recent means
+    'not idle'. Heartbeat lines are content-filtered, NOT trusted via mtime —
+    the skill appends one every 60 s and a raw mtime would mask real stalls
+    (2026-06-06 juice-shop: 21-min Stage-1 stall went unsurfaced)."""
 
     OLD_FLOOR = "2020-01-01T00:00:00Z"
+
+    def _hook_line(self, sw, event="FILE_WRITE", ts=None):
+        ts = ts or sw._ts_now()
+        return f"{ts}  [a]  INFO   {event}   /repo/x.md  (10 chars)\n"
 
     def test_fresh_hook_activity_masks_stale_agent_log(self, out_dir, silent_heartbeat):
         sw = silent_heartbeat
@@ -489,21 +497,37 @@ class TestRunIdleHelper:
         (out_dir / ".agent-run.log").write_text(
             "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n"
         )
-        # …but a tool just appended to hook-events.log (mtime = now) → fresh.
-        (out_dir / ".hook-events.log").write_text("tool ran\n")
+        # …but a tool just appended a timestamped non-heartbeat line → fresh.
+        (out_dir / ".hook-events.log").write_text(self._hook_line(sw))
         idle = sw._run_idle_seconds(out_dir, self.OLD_FLOOR)
         assert idle < 5  # freshest signal wins → not idle
+
+    def test_heartbeat_only_hook_does_not_mask_idle(self, out_dir, silent_heartbeat):
+        # Regression for the 2026-06-06 masking bug: hook-events.log advances
+        # every 60 s with HEARTBEAT lines while the run is genuinely stalled.
+        # Those must NOT count as activity, so the stale agent-run signal wins.
+        sw = silent_heartbeat
+        (out_dir / ".agent-run.log").write_text(
+            "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n"
+        )
+        # Only fresh HEARTBEAT lines in the hook log — no real tool activity.
+        now = sw._ts_now()
+        (out_dir / ".hook-events.log").write_text(
+            f"{now}  [--------]  INFO   HEARTBEAT   pid=23  phase=skill  step=watchdog\n"
+        )
+        idle = sw._run_idle_seconds(out_dir, self.OLD_FLOOR)
+        assert idle > 600  # heartbeat ignored → stale agent-run signal surfaces
 
     def test_reports_idle_when_both_signals_stale(self, out_dir, silent_heartbeat):
         sw = silent_heartbeat
         (out_dir / ".agent-run.log").write_text(
             "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n"
         )
-        hook = out_dir / ".hook-events.log"
-        hook.write_text("last tool\n")
-        # Backdate the hook log mtime by 10 minutes — no tool has run since.
-        past = time.time() - 600
-        _os.utime(hook, (past, past))
+        # Hook log's latest non-heartbeat line is ~10 min old (no tool since).
+        old_ts = (
+            datetime.now(timezone.utc) - timedelta(seconds=600)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (out_dir / ".hook-events.log").write_text(self._hook_line(sw, ts=old_ts))
         idle = sw._run_idle_seconds(out_dir, self.OLD_FLOOR)
         assert 590 <= idle <= 620  # ~10 min idle
 

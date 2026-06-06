@@ -310,6 +310,51 @@ def _log_idle_seconds(output_dir: Path, started_at_iso: str) -> float:
     return max(0.0, time.time() - dt.timestamp())
 
 
+def _hook_log_idle_seconds(output_dir: Path) -> float | None:
+    """Seconds since the last NON-heartbeat line was appended to
+    ``.hook-events.log``.
+
+    The file's mtime is unusable as an activity signal: the skill's own
+    60 s heartbeat (``acquire_lock.py --heartbeat``) appends a ``HEARTBEAT``
+    line here every minute, so the mtime never goes stale and would mask a
+    genuine multi-minute API stall. That is exactly what let a 21-min Stage-1
+    stall (2026-06-06 juice-shop, §7 security-architecture generated in one
+    slow standard-tier turn) go completely unsurfaced — ``min(60s, real)``
+    always collapsed to ~60s and RUN_IDLE never fired. We instead scan the
+    log content for the latest timestamped line that is NOT a heartbeat and
+    measure the delta to now, mirroring ``_log_idle_seconds``.
+
+    Returns ``None`` when the log is absent or has no non-heartbeat line yet
+    (caller then relies on the ``.agent-run.log`` signal alone), or on any
+    I/O error. Returns 0.0-floored seconds otherwise.
+    """
+    log_path = output_dir / _HOOK_LOG_NAME
+    if not log_path.exists():
+        return None
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    last_ts: str | None = None
+    for line in content.splitlines():
+        m = _ISO_LEAD_RE.match(line)
+        if not m:
+            continue
+        if "HEARTBEAT" in line:
+            # Skill's own 60 s heartbeat — not agent activity.
+            continue
+        last_ts = m.group(1)
+    if last_ts is None:
+        return None
+    try:
+        dt = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+    return max(0.0, time.time() - dt.timestamp())
+
+
 def _run_idle_seconds(output_dir: Path, run_start_iso: str) -> float:
     """Seconds since the run last showed ANY observable activity — across ALL
     phases, not just Phase 9 / Substep 2.
@@ -326,9 +371,10 @@ def _run_idle_seconds(output_dir: Path, run_start_iso: str) -> float:
     Two independent activity signals, whichever is freshest wins (so we never
     false-positive while either log is advancing):
 
-      1. ``.hook-events.log`` mtime — every Bash/Read/Write tool call appends
-         here, and the watchdog never writes it, so its mtime is a clean
-         "agent did something" pulse at tool granularity.
+      1. ``.hook-events.log`` — the latest NON-heartbeat line (every
+         Bash/Read/Write tool call appends here). Heartbeat lines are
+         excluded because the skill writes one every 60 s and a raw mtime
+         would never go stale — see ``_hook_log_idle_seconds``.
       2. The last NON-watchdog entry in ``.agent-run.log`` (reuses
          ``_log_idle_seconds`` semantics) — catches phase-boundary progress
          even if the hook log is absent (hooks are opt-in).
@@ -336,12 +382,9 @@ def _run_idle_seconds(output_dir: Path, run_start_iso: str) -> float:
     Returns 0.0 on any I/O error so a transient glitch never false-positives.
     """
     idles: list[float] = []
-    hook_log = output_dir / _HOOK_LOG_NAME
-    try:
-        if hook_log.exists():
-            idles.append(max(0.0, time.time() - hook_log.stat().st_mtime))
-    except OSError:
-        pass
+    hook_idle = _hook_log_idle_seconds(output_dir)
+    if hook_idle is not None:
+        idles.append(hook_idle)
     idles.append(_log_idle_seconds(output_dir, run_start_iso))
     return min(idles) if idles else 0.0
 
@@ -505,8 +548,11 @@ def watch(
     substep2_complete = False
     substep2_idle_fired = False
     # Global idle (RUN_IDLE) tracking — re-arms after activity resumes so each
-    # distinct stall logs exactly one WARN line.
+    # distinct stall logs exactly one WARN line. ``run_idle_peak`` records the
+    # largest idle seen during the current stall so RUN_RESUMED can report the
+    # true stall length (the summary subtracts it from wall-clock).
     run_idle_fired = False
+    run_idle_peak = 0.0
     iteration = 0
 
     while lock_path.exists():
@@ -678,20 +724,32 @@ def watch(
         # disables it (parity with the other --*-seconds knobs).
         if run_idle_seconds > 0:
             idle = _run_idle_seconds(output_dir, run_start_iso)
-            if idle >= run_idle_seconds and not run_idle_fired:
-                _log(
-                    output_dir,
-                    "WARN",
-                    "RUN_IDLE",
-                    f"no run activity for {int(idle)}s (threshold={run_idle_seconds}s) — "
-                    f"the run is waiting, almost certainly on a slow model/API response "
-                    f"(standard-tier latency), not a hang. A wait past the 5-min cache "
-                    f"TTL forces the recovered turn to re-prefill cold. Still watching…",
-                )
-                run_idle_fired = True
-            elif idle < run_idle_seconds and run_idle_fired:
-                _log(output_dir, "INFO", "RUN_RESUMED", f"activity resumed after idle (idle={int(idle)}s)")
-                run_idle_fired = False
+            if idle >= run_idle_seconds:
+                run_idle_peak = max(run_idle_peak, idle)
+                if not run_idle_fired:
+                    _log(
+                        output_dir,
+                        "WARN",
+                        "RUN_IDLE",
+                        f"no run activity for {int(idle)}s (threshold={run_idle_seconds}s) — "
+                        f"the run is waiting, almost certainly on a slow model/API response "
+                        f"(standard-tier latency), not a hang. A wait past the 5-min cache "
+                        f"TTL forces the recovered turn to re-prefill cold. Still watching…",
+                    )
+                    run_idle_fired = True
+            else:
+                if run_idle_fired:
+                    # Report the PEAK idle (true stall length), not the small
+                    # post-resume value — the summary sums these to subtract
+                    # API-wait time from wall-clock.
+                    _log(
+                        output_dir,
+                        "INFO",
+                        "RUN_RESUMED",
+                        f"activity resumed after {int(run_idle_peak)}s idle (this stall)",
+                    )
+                    run_idle_fired = False
+                run_idle_peak = 0.0
 
         # 8 — self-liveness tick.
         _bump_tick(output_dir, iteration)

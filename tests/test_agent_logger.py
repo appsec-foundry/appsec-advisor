@@ -1643,3 +1643,84 @@ class TestAssessmentSummaryDuration:
         tokens = next(l for l in text.splitlines() if "ASSESSMENT_TOKENS" in l)
         # both current-run stops summed (out 200+400=600); prior run's 9,999 excluded.
         assert "output=600" in tokens, tokens
+
+
+class TestAssessmentSummaryIdle:
+    """The summary subtracts API-wait idle (from skill_watchdog RUN_RESUMED /
+    unresolved RUN_IDLE lines in .agent-run.log) from wall-clock so the report
+    reads honestly as 'active + idle' instead of implying full work."""
+
+    def _write_run(self, output_dir: Path, agent_run_lines: list[str]) -> None:
+        # 60-min wall-clock for the current run.
+        hook = [
+            "2026-06-06T04:41:14Z  [cb7b5188]  INFO   SCAN_START          "
+            "repo=/x  agent=appsec-advisor:appsec-threat-analyst  model=sonnet",
+            "2026-06-06T05:41:14Z  [cb7b5188]  INFO   SESSION_STOP        "
+            "stop_reason=unknown  in=100  out=200  cost=$1.0000",
+        ]
+        (output_dir / ".hook-events.log").write_text("\n".join(hook) + "\n", encoding="utf-8")
+        (output_dir / ".assessment-owner-sid").write_text("cb7b5188", encoding="utf-8")
+        if agent_run_lines:
+            (output_dir / ".agent-run.log").write_text(
+                "\n".join(agent_run_lines) + "\n", encoding="utf-8"
+            )
+
+    def _summary_line(self, output_dir: Path) -> str:
+        text = (output_dir / ".hook-events.log").read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "ASSESSMENT_SUMMARY" in line:
+                return line
+        raise AssertionError("no ASSESSMENT_SUMMARY line emitted")
+
+    def test_resolved_stall_subtracted_from_active(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        from agent_logger import _write_assessment_summary
+
+        self._write_run(
+            tmp_path,
+            [
+                "2026-06-06T05:05:42Z  [--------]  WARN   RUN_IDLE   "
+                "no run activity for 244s (threshold=240s) — slow API…",
+                "2026-06-06T05:26:50Z  [--------]  INFO   RUN_RESUMED   "
+                "activity resumed after 1268s idle (this stall)",
+            ],
+        )
+        _write_assessment_summary("cb7b5188")
+
+        summary = self._summary_line(tmp_path)
+        assert "duration=60m 00s" in summary, summary
+        # 1268s idle → 21m 08s; active 3600-1268=2332s → 38m 52s.
+        assert "idle≈21m 08s" in summary, summary
+        assert "active≈38m 52s" in summary, summary
+
+    def test_unresolved_trailing_run_idle_counted(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        from agent_logger import _write_assessment_summary
+
+        # RUN_IDLE with no following RUN_RESUMED → watchdog killed mid-stall;
+        # its last reported idle is added as a conservative floor.
+        self._write_run(
+            tmp_path,
+            [
+                "2026-06-06T05:05:42Z  [--------]  WARN   RUN_IDLE   "
+                "no run activity for 900s (threshold=240s) — slow API…",
+            ],
+        )
+        _write_assessment_summary("cb7b5188")
+
+        summary = self._summary_line(tmp_path)
+        assert "idle≈15m 00s" in summary, summary
+
+    def test_no_idle_field_on_clean_run(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        from agent_logger import _write_assessment_summary
+
+        self._write_run(tmp_path, [])
+        _write_assessment_summary("cb7b5188")
+
+        summary = self._summary_line(tmp_path)
+        assert "idle≈" not in summary, summary
+        assert "active≈" not in summary, summary
