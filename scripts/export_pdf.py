@@ -776,6 +776,29 @@ def main(argv: list[str] | None = None) -> int:
     for m in messages:
         sys.stderr.write(m + "\n")
     if not ok:
+        # "Right or nothing": a PDF whose diagrams silently degrade to raw code
+        # is a broken deliverable, so a non-functional Mermaid renderer is a
+        # HARD failure — abort rather than quietly shipping a diagram-less PDF.
+        # When the ONLY broken dep is mmdc/Chrome (the no-mermaid re-probe
+        # passes), emit a targeted hint: under the Bash sandbox Chrome cannot
+        # launch — its process_singleton socket() syscall is blocked (EPERM)
+        # path-independently — so the export must be re-run with the sandbox
+        # disabled. --no-mermaid stays the explicit opt-out for a deliberately
+        # diagram-less PDF.
+        if require_mermaid:
+            ok_no_mermaid, _ = preflight(require_mermaid=False)
+            if ok_no_mermaid:
+                sys.stderr.write(
+                    "[export_pdf] Mermaid renderer cannot run (mmdc missing, or "
+                    "Chrome/Puppeteer fails to launch — under a sandbox the "
+                    "process_singleton socket() syscall is blocked).\n"
+                    "[export_pdf] Refusing to ship a diagram-less PDF. Do one of:\n"
+                    "[export_pdf]   - re-run the export with the sandbox disabled "
+                    "(diagrams render in full), or\n"
+                    "[export_pdf]   - pass --no-mermaid to deliberately export with "
+                    "diagrams kept as code blocks.\n"
+                )
+                return 1
         sys.stderr.write("[export_pdf] missing hard dependency — aborting.\n")
         return 1
     if args.check_only:

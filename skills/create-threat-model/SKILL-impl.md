@@ -3844,6 +3844,8 @@ The PDF export runs **after** all four stages, the Completion Summary, and `runt
 
 **Non-fatal.** PDF export failures must not fail the assessment. The threat model itself was successfully written before this step runs; a missing system dependency (pandoc, weasyprint) or a conversion error are warnings, not errors. Log the issue and continue.
 
+**Run this step UNSANDBOXED.** Mermaid rendering shells out to a headless Chrome (via mmdc/Puppeteer), and Chrome's `process_singleton` calls `socket()` at launch — a syscall the Bash sandbox blocks (`Operation not permitted`, EPERM, path-independent). Under the sandbox the export aborts with a "Mermaid renderer cannot run …" message and writes **no** PDF (by design: a diagram-less PDF is a broken deliverable, not a silent fallback). Dispatch the `export_pdf.py` invocation below with the **sandbox disabled** so Chrome can launch and all diagrams render. If you see that abort message, the cause is the sandbox — re-run the exact command unsandboxed; do **not** "fix" it by adding `--no-mermaid` (that ships a diagram-less PDF). `--no-mermaid` is only for a deliberate, user-requested diagram-less export.
+
 ```bash
 if [ "$WRITE_PDF" = "true" ]; then
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" \

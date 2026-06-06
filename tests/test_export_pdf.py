@@ -266,6 +266,49 @@ class TestMainCli:
             rc = ep.main(["--check-only"])
         assert rc == 1
 
+    def test_aborts_when_only_mermaid_broken(self, tmp_path):
+        """"Right or nothing" (2026-06-06): pandoc + weasyprint present but
+        mmdc/Chrome broken must ABORT, NOT silently ship a diagram-less PDF.
+        First preflight (require_mermaid=True) fails on mmdc; the re-probe
+        (require_mermaid=False) passes, signalling only mermaid is broken — the
+        export still refuses and emits the sandbox/--no-mermaid hint."""
+        md = tmp_path / "threat-model.md"
+        md.write_text("# T\n\n```mermaid\ngraph TD; A-->B\n```\n\nBody.\n")
+        pdf = tmp_path / "threat-model.pdf"
+        seen: list[str] = []
+        with (
+            patch.object(
+                ep,
+                "preflight",
+                side_effect=[
+                    (False, ["  [bad]  mmdc  — present but cannot render"]),
+                    (True, []),
+                ],
+            ),
+            patch("subprocess.run", side_effect=self._pipeline_fake_run(seen)),
+        ):
+            rc = ep.main(["--input", str(md), "--output", str(pdf)])
+        assert rc == 1
+        # Refused: no PDF written, no conversion pipeline run.
+        assert not pdf.exists()
+        assert seen == []
+
+    def test_aborts_when_hard_dependency_missing(self, tmp_path):
+        """A genuine pandoc/weasyprint failure still aborts — the no-mermaid
+        re-probe also fails, so there is no degrade path."""
+        md = tmp_path / "threat-model.md"
+        md.write_text("# T\n")
+        with patch.object(
+            ep,
+            "preflight",
+            side_effect=[
+                (False, ["  [miss] pandoc not found"]),
+                (False, ["  [miss] pandoc not found"]),
+            ],
+        ):
+            rc = ep.main(["--input", str(md), "--output", str(tmp_path / "o.pdf")])
+        assert rc == 1
+
     @staticmethod
     def _pipeline_fake_run(
         seen_programs: list[str] | None = None,

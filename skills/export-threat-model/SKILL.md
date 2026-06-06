@@ -172,6 +172,8 @@ fi
 
 Execute the requested format helpers in order: SARIF → pentest → HTML → PDF (markup outputs last). Each helper's exit code propagates the first non-zero result back to the user.
 
+**Run the HTML/PDF helpers UNSANDBOXED.** Mermaid rendering (used by both `export_html.py` and `export_pdf.py`) shells out to a headless Chrome via mmdc/Puppeteer, whose `process_singleton` calls `socket()` at launch — a syscall the Bash sandbox blocks (`Operation not permitted`, EPERM, path-independent). Sandboxed, `export_pdf.py` aborts with "Mermaid renderer cannot run …" and writes **no** PDF (a diagram-less PDF is a broken deliverable, not a silent fallback). Dispatch this block with the **sandbox disabled** so diagrams render. The abort message means the sandbox — re-run unsandboxed; do **not** reach for `--no-mermaid` (that is only for a deliberately diagram-less export).
+
 ```bash
 EXIT_CODE=0
 
