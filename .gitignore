@@ -24,6 +24,7 @@ scripts/docs/
 # Manual full-run E2E driver writes artifacts here. Same threat-data
 # sensitivity rationale as docs/security/ above — never commit.
 tests/fixtures/e2e/_last-run/
+tests/fixtures/e2e/_last-run-req/
 
 # Persistent caches (auto-created at runtime)
 .cache/
