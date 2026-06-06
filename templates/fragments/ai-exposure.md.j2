@@ -1,0 +1,14 @@
+{#- ### AI / LLM Exposure — optional MS callout surfacing the architectural AI -#}
+{#- risks the report articulates (OWASP LLM Top-10 lens). Rendered only when the -#}
+{#- threat-renderer authored ms-ai-exposure.json (system has an LLM/AI surface);  -#}
+{#- absent file → the section renders nothing (zero cost for non-LLM repos).      -#}
+{#- Schema: data.ai_risks[] = {owasp_llm_id?, name, severity?, description, affected_components[]?, findings[]} -#}
+### AI / LLM Exposure
+
+{% if data.summary %}{{ data.summary }}
+
+{% endif %}This system embeds an LLM / AI-agent surface. The risks below are architectural — each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain). See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.
+
+{% for r in data.ai_risks -%}
+- {{ severity_emoji(r.severity or 'red') }} **{% if r.owasp_llm_id %}{{ r.owasp_llm_id }} {% endif %}{{ r.name }}** — {{ r.description }}{% if r.affected_components %} _({{ r.affected_components | format_weakness_components }})_{% endif %}<br/>↳ {{ r.findings | format_weakness_findings }}
+{% endfor %}

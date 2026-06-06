@@ -600,10 +600,16 @@ def build_attack_surface(
                     prev["notes"] = entry["notes"]
         baseline_pairs = list(collapsed.values())
 
+    # Snapshot the full deduped baseline + the exclude set so the class-coverage
+    # guard below can restore an auth class that an include allowlist emptied.
+    full_baseline_pairs: list[tuple[dict, str | None]] = list(baseline_pairs)
+    exclude_ids: set = set()
+
     if sidecar:
         cur = sidecar.get("curations") or {}
         include = set(cur.get("include_route_ids") or [])
         exclude = set(cur.get("exclude_route_ids") or [])
+        exclude_ids = exclude
         rationale = cur.get("rationale_by_id") or {}
 
         if include:
@@ -659,6 +665,40 @@ def build_attack_surface(
             warnings.append(f"attack-surface-overrides.additions: {added} entries added")
         if merged:
             warnings.append(f"attack-surface-overrides.additions: {merged} merged onto baseline (analyst auth/notes override)")
+
+    # Class-coverage guard (2026-06-06): an `include_route_ids` allowlist must
+    # never leave an entire auth class empty when the route-inventory baseline
+    # actually has that class. The Phase-6 analyst writes a vuln-focused include
+    # list that is almost entirely UNauthenticated routes (it curates "what is
+    # interesting to attack"), so a naive allowlist silently drops the whole
+    # authenticated surface and §5.2 Authenticated Entry Points renders "(0)"
+    # even on apps with dozens of guarded endpoints (juice-shop: 52 authenticated
+    # routes dropped). §5 must represent BOTH classes; when a class is empty in
+    # the curated output but present in the post-exclude baseline, restore that
+    # class's baseline entries. The §5 renderer collapses large buckets to the
+    # finding-linked rows + a total-count line, so restoring the full class stays
+    # readable while making the count honest.
+    if full_baseline_pairs:
+        present = {True: False, False: False}
+        seen_eps: set[str] = set()
+        for e in out:
+            present[bool(e.get("auth_required"))] = True
+            seen_eps.add(e.get("entry_point"))
+        restored = 0
+        for entry, rid in full_baseline_pairs:
+            if rid in exclude_ids:
+                continue  # an explicit exclude is honoured even by the guard
+            cls = bool(entry.get("auth_required"))
+            if not present[cls] and entry.get("entry_point") not in seen_eps:
+                out.append(entry)
+                seen_eps.add(entry.get("entry_point"))
+                restored += 1
+        if restored:
+            warnings.append(
+                f"attack-surface class-coverage guard: restored {restored} baseline "
+                f"route(s) so both auth classes are represented (include allowlist "
+                f"had emptied one class)"
+            )
 
     return out, warnings
 

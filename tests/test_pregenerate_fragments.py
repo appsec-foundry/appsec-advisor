@@ -152,6 +152,29 @@ class TestArchitectureDiagrams:
         assert "| Component ID |" in md
         assert "| rest-api |" in md
 
+    def test_each_section_2_diagram_has_key_takeaway(self, minimal_yaml_data):
+        """Bug #2 regression: QA Check 8.0 requires a `**Key takeaway:**` after
+        every §2 Mermaid block. The generator must emit one for each of
+        §2.1–§2.4 so the check passes by construction (no placeholder)."""
+        md = pf.gen_architecture_diagrams(minimal_yaml_data)
+        assert md.count("**Key takeaway:**") == 4
+        # The placeholder the QA reviewer inserts when the takeaway is missing
+        # must never appear in the generated baseline.
+        assert "QA: missing" not in md
+
+    def test_key_takeaway_immediately_follows_each_mermaid_fence(self, minimal_yaml_data):
+        """Each `**Key takeaway:**` must appear shortly after a closing mermaid
+        fence (the QA check looks just past the fence), not floating elsewhere."""
+        lines = pf.gen_architecture_diagrams(minimal_yaml_data).splitlines()
+        fence_idxs = [i for i, ln in enumerate(lines) if ln.strip() == "```"]
+        takeaway_idxs = [i for i, ln in enumerate(lines) if ln.startswith("**Key takeaway:**")]
+        assert takeaway_idxs, "no key takeaway lines emitted"
+        for ti in takeaway_idxs:
+            # A closing fence must precede this takeaway within a few lines.
+            assert any(0 < ti - fi <= 3 for fi in fence_idxs), (
+                f"key takeaway at line {ti} not preceded by a nearby mermaid fence"
+            )
+
 
 class TestAssets:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
@@ -2263,3 +2286,20 @@ class TestAttackSurfaceLinkPrecision:
         assert "T-013" in links and "T-005" not in links
         # order-history matches neither.
         assert pf._derive_attack_surface_links({"entry_point": "GET /rest/order-history"}, threats) == []
+
+
+class TestWrappableRoute:
+    """Long attack-surface routes get zero-width break opportunities so they
+    wrap instead of forcing the Route column unreadably wide (user 2026-06)."""
+
+    def test_short_route_untouched(self):
+        assert pf._wrappable_route("/rest/user/login") == "/rest/user/login"
+
+    def test_long_route_gets_zwsp_after_separators(self):
+        route = "/this/page/is/hidden/behind/an/incredibly/high/paywall/that/could/only/be/unlocked"
+        out = pf._wrappable_route(route)
+        assert "​" in out
+        # ZWSP is invisible — stripping it returns the original route verbatim.
+        assert out.replace("​", "") == route
+        # A break opportunity after every slash.
+        assert out.count("​") >= route.count("/")

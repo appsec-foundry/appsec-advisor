@@ -37,10 +37,12 @@ States
 ------
 
   * ``clean``    — no state files present (no run in progress, no residue).
-  * ``active``   — lock PID is alive; a real run is in progress. Never
-                   auto-cleaned. ``--clean`` still refuses.
-  * ``stale``    — lock PID is dead OR lock mtime older than
-                   ``STALE_SECONDS`` (1 hour, matching ``acquire_lock.py``).
+  * ``active``   — lock has a fresh heartbeat, or a legacy PID-only lock
+                   points at a live PID. Never auto-cleaned. ``--clean`` still
+                   refuses.
+  * ``stale``    — lock heartbeat is stale, lock PID is dead, or lock mtime
+                   is older than ``STALE_SECONDS`` (1 hour, matching
+                   ``acquire_lock.py``).
                    Auto-cleanup removes ``.appsec-lock`` +
                    ``.appsec-checkpoint`` + ``.phase-epoch`` +
                    ``.session-agent-map``.
@@ -69,7 +71,7 @@ Exit codes
   0 — clean OR active OR (stale/orphaned AND --clean succeeded)
   1 — stale OR orphaned (report only; no --clean)
   2 — --clean requested but skipped because state is active
-  3 — usage error / unreadable output dir
+  3 — resume guard refused / usage error / unreadable output dir
 """
 
 from __future__ import annotations
@@ -368,11 +370,17 @@ def classify(output_dir: Path) -> dict:
         pid = lock.get("pid")
         age = lock.get("age")
         if is_hung:
-            reasons.append(
-                f"lock PID {pid} is alive but heartbeat is "
-                f"{int(hb_age or 0)}s old (> {threshold}s threshold — "
-                f"orchestrator appears hung)"
-            )
+            if lock.get("alive") is False:
+                reasons.append(
+                    f"lock PID {pid} is not running and heartbeat is "
+                    f"{int(hb_age or 0)}s old (> {threshold}s threshold)"
+                )
+            else:
+                reasons.append(
+                    f"lock PID {pid} is alive but heartbeat is "
+                    f"{int(hb_age or 0)}s old (> {threshold}s threshold — "
+                    f"orchestrator appears hung)"
+                )
         if lock.get("alive") is False:
             reasons.append(f"lock PID {pid} is not running (process dead)")
         elif lock.get("alive") is None:
@@ -605,8 +613,32 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
     Returns (exit_code, message). Exit codes:
       0 — safe to resume (checkpoint absent, or status=completed, or fresh,
           or lock proves the orchestrator is dead).
-      3 — refuse to resume (stale checkpoint and lock cannot prove death).
+      3 — refuse to resume (active lock, or stale checkpoint and lock cannot
+          prove death).
     """
+    checkpoint = _read_checkpoint(output_dir)
+    lock = _read_lock(output_dir)
+    if lock is not None:
+        hb_age = lock.get("heartbeat_age")
+        has_hb = hb_age is not None
+        threshold = _resolve_threshold(output_dir, checkpoint)
+        hb_fresh = has_hb and hb_age <= threshold
+        legacy_live = not has_hb and lock.get("alive") is True
+        if hb_fresh or legacy_live:
+            if hb_fresh:
+                signal = f"fresh heartbeat age={int(hb_age or 0)}s threshold={threshold}s"
+            else:
+                signal = f"live PID {lock.get('pid')} (legacy PID-only lock)"
+            return (
+                3,
+                (
+                    f"Refusing to resume: active run lock in {output_dir} "
+                    f"({signal}). Wait for the prior run to finish, use the "
+                    "same --output as the interrupted run, or clean stale state "
+                    "only after verifying no assessment is running."
+                ),
+            )
+
     checkpoint_path = output_dir / CHECKPOINT_FILE
     if not checkpoint_path.is_file():
         return (0, "no checkpoint present — treating as fresh run")
@@ -614,7 +646,7 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
         age = time.time() - checkpoint_path.stat().st_mtime
     except OSError:
         age = float("inf")
-    cp = _read_checkpoint(output_dir) or {}
+    cp = checkpoint or {}
     status = cp.get("status", "")
     phase = cp.get("phase", "?")
     if status == "completed":

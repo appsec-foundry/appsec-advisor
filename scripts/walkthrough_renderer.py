@@ -157,6 +157,25 @@ def _anchor(t_id: str) -> str:
     return (t_id or "").strip().lower()
 
 
+def _to_fid(ref: str) -> str:
+    """Merged-stage ``T-NNN`` id → the document-wide visible ``F-NNN`` id.
+
+    The reader only ever sees ``F-NNN`` — §8 Findings Register headings, the
+    Critical Attack Tree, every cross-reference; ``T-NNN`` is the internal
+    merge-stage id with no visible heading. The composer's global pass rewrites
+    bare ``[T-NNN](#t-nnn)`` markdown LINKS to ``F-NNN`` but cannot reach
+    plain-text prose, alt/else labels inside a ```mermaid fence, or a link whose
+    text carries a prefix (``[§8 T-NNN]``) — so the §3 walkthroughs shipped
+    visible ``T-NNN`` the reader could not find (user report 2026-06).
+
+    Use this for DISPLAY only — never for index lookups: the mitigation / chain
+    / peer indexes are keyed by the merged ``T-NNN`` id. §8 emits a dual
+    ``<a id="t-nnn"></a><a id="f-nnn"></a>`` anchor, so ``#f-nnn`` always
+    resolves. Non ``T-NNN`` refs (already ``F-NNN``, ``M-NNN``, …) pass through.
+    """
+    return re.sub(r"^T-(\d+)$", r"F-\1", (ref or "").strip())
+
+
 # Monochrome circled-digit priority glyphs (❶ P1 … ❹ P4). Mirrors
 # compose_threat_model.py:_PRIO_DIGIT_TBL — kept in sync so a linked measure
 # in §3 carries the same annotation as the composer-rendered M-NNN links.
@@ -203,13 +222,39 @@ def _mermaid_safe(label: str) -> str:
 
 
 def _split_sentences(text: str) -> list[str]:
-    """Naive sentence split for the Attack Steps fallback path."""
+    """Sentence split for the Attack Steps path.
 
+    Robust against the two real-scenario failure modes (user report 2026-06,
+    §3.8 example): abbreviations like ``e.g.`` / ``i.e.`` splitting mid-clause,
+    and code / SQL payloads (full of ``.``, ``,``, parens, ``--``) being torn
+    across two steps so each reads as a broken fragment.
+
+    Strategy: (1) mask backtick code spans so their internal punctuation can
+    never trigger a split; (2) split ONLY at a ``.!?`` followed by whitespace
+    AND a real new-sentence opener — an uppercase letter, an opening quote /
+    paren / bracket, or a (masked) code span. A lowercase continuation
+    (``e.g. union select …``) is therefore NOT a boundary; (3) restore the
+    code spans. A naive ``(?<=[.!?])\\s+`` split (the previous behaviour) broke
+    on every ``e.g.`` and on payload periods.
+    """
     text = (text or "").strip()
     if not text:
         return []
-    parts = re.split(r"(?<=[.!?])\s+", text)
-    return [p.strip().rstrip(".") for p in parts if p.strip()]
+    # (1) Mask inline code spans → sentinel so internal '.'/'?' never split.
+    spans: list[str] = []
+
+    def _mask(m: re.Match[str]) -> str:
+        spans.append(m.group(0))
+        return f"\x00{len(spans) - 1}\x00"
+
+    masked = re.sub(r"`[^`\n]+`", _mask, text)
+    # (2) Split at terminator + whitespace + sentence opener only.
+    parts = re.split(r"(?<=[.!?])\s+(?=[A-Z\"'(\[\x00])", masked)
+
+    def _restore(s: str) -> str:
+        return re.sub(r"\x00(\d+)\x00", lambda m: spans[int(m.group(1))], s)
+
+    return [_restore(p).strip().rstrip(".") for p in parts if p.strip()]
 
 
 def _sentences_per_line(paragraph: str) -> list[str]:
@@ -460,8 +505,31 @@ _STEP_FILELINE_RE = re.compile(r"(?<![`\w])([\w][\w./-]*\.[A-Za-z]{1,6}:\d+)(?![
 _STEP_PAYLOAD_ASSIGN_RE = re.compile(r'(?<![`\w])([A-Za-z_]\w*="[^"]{0,100}")(?![`])')
 _STEP_SQL_RE = re.compile(
     r"(?<![`\w])((?:UNION\s+)?(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b[^…`;,.]*?)"
-    r"(?=\s+(?:which|yielding|queries|query|attack|and the|to extract)\b|[…;,.]|$)"
+    r"(?=\s+(?:which|yielding|queries|query|attack|and the|to|extracts?|can|dumps?|"
+    r"returns?|exposes?|reveals?|enables?|allows?|succeeds?|payload|against|in the)\b"
+    r"|[…;,.]|$)"
 )
+# A matched SELECT/UPDATE/… span is only REAL SQL (worth backticking) when it
+# carries a structural SQL signal. Without this gate the regex wrapped prose
+# that merely opens with a SQL verb — "UNION SELECT payload (e.g" and
+# "SELECT from Users extracts all email addresses…" both shipped as code spans
+# (user report 2026-06).
+_STEP_SQL_SIGNAL_RE = re.compile(r"\b(FROM|WHERE|INTO|VALUES|SET|JOIN)\b|\*|--|,\s*\d", re.IGNORECASE)
+# Trailing-prose trim — cut a matched SQL span at the first prose connector so
+# "SELECT from Users extracts all …" backticks only "SELECT from Users".
+_STEP_SQL_PROSE_CUT_RE = re.compile(
+    r"\s+(?:which|yielding|queries|query|attack|and the|to|extracts?|can|dumps?|"
+    r"returns?|exposes?|reveals?|enables?|allows?|succeeds?|payload|against|in the)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def _wrap_step_sql(m: "re.Match[str]") -> str:
+    sql = m.group(1).strip()
+    sql = _STEP_SQL_PROSE_CUT_RE.sub("", sql).strip()
+    if sql and _STEP_SQL_SIGNAL_RE.search(sql):
+        return f"`{sql}`"
+    return m.group(0)
 # Code function call — a dotted member-call (`crypto.createHash('md5')`,
 # `vm.runInContext()`, `libxmljs2.parseXml()`) OR a simple empty-arg call
 # (`safeEval()`). Both are unambiguous code the LLM scenario routinely leaves
@@ -498,7 +566,7 @@ def _format_step_code(step: str) -> str:
             continue
         chunk = _STEP_FILELINE_RE.sub(r"`\1`", chunk)
         chunk = _STEP_PAYLOAD_ASSIGN_RE.sub(r"`\1`", chunk)
-        chunk = _STEP_SQL_RE.sub(lambda m: f"`{m.group(1).strip()}`", chunk)
+        chunk = _STEP_SQL_RE.sub(_wrap_step_sql, chunk)
         chunk = _STEP_CALL_RE.sub(r"`\1`", chunk)
         out.append(chunk)
     joined = "".join(out)
@@ -571,7 +639,7 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
         "component": (threat.get("component") or "the application").strip() or "the application",
         "cwe": (threat.get("cwe") or "").strip() or "the weakness class",
         "title": _short_title(threat.get("title") or "", 120),
-        "tid": str(threat.get("id") or ""),
+        "tid": _to_fid(str(threat.get("id") or "")),
     }
     template_steps = [_format_template_string(s, mapping) for s in template_steps]
 
@@ -636,6 +704,9 @@ def _ensure_alt_else_block(diagram: str, tid: str, mid: str, mit_title: str) -> 
     # trigger). Normalise statement-breaking punctuation in the label; `_mermaid_safe`
     # only guards `[...]`-node labels, not alt/else labels, so handle them here.
     short = short.replace(";", ",").replace("#", "").replace("\n", " ").strip()
+    # Display the visible F-NNN id (T-NNN is internal — `tid` here is used only
+    # for the alt label and the "exploiting <id>" arrow, both display).
+    tid = _to_fid(tid)
     alt_label = f"alt Current state — {tid}" if tid else "alt Current state"
     mid_ref = mid if (mid or "").startswith("M-") else (mid or "mitigation")
     else_label = f"else After {mid_ref} — {short}"
@@ -699,7 +770,7 @@ def render_sequence_diagram(
         )
     evidence = (threat.get("evidence") or [{}])[0] or {}
     mapping = {
-        "tid": str(threat.get("id") or ""),
+        "tid": _to_fid(str(threat.get("id") or "")),
         "title": _short_title(threat.get("title") or "", 120),
         "component": (threat.get("component") or "the application").strip() or "the application",
         "file": (evidence.get("file") or "<unknown>"),
@@ -817,10 +888,10 @@ def render_cross_references(
         bullets.append(f"§3.1 chain membership: {chain_links}")
     else:
         bullets.append("§3.1 chain membership: this finding is treated as a standalone walkthrough — no compound chain")
-    bullets.append(f"§8 Findings Register: [{tid}](#{_anchor(tid)})")
+    bullets.append(f"§8 Findings Register: [{_to_fid(tid)}](#{_anchor(_to_fid(tid))})")
     siblings = [p for p in peers_by_cwe.get(cwe, []) if p != tid][:2]
     if siblings:
-        sib_links = ", ".join(f"[{p}](#{_anchor(p)})" for p in siblings)
+        sib_links = ", ".join(f"[{_to_fid(p)}](#{_anchor(_to_fid(p))})" for p in siblings)
         bullets.append(f"Sibling findings (same CWE class): {sib_links}")
     else:
         bullets.append(f"Sibling findings (same CWE class): none — {cwe or 'this class'} is unique in this assessment")
@@ -853,6 +924,7 @@ def _render_walkthrough_block(
     """Render one `### 3.<n> T-NNN — <title>` walkthrough block."""
 
     tid = str(threat.get("id") or "")
+    fid = _to_fid(tid)  # visible id (T-NNN → F-NNN); `tid` stays for index lookups
     title = (threat.get("title") or "untitled finding").strip()
     cwe = (threat.get("cwe") or "").upper()
     template = _template_for(cwe, templates, threat)
@@ -882,12 +954,12 @@ def _render_walkthrough_block(
     _sev_key = (threat.get("effective_severity") or threat.get("risk") or "").strip().lower()
     _dot = SEVERITY_DOT.get(_sev_key, "")
     _dot_prefix = f"{_dot} " if _dot else ""
-    lines.append(f"**Source:** {_dot_prefix}[{tid}](#{_anchor(tid)}) — `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`")
+    lines.append(f"**Source:** {_dot_prefix}[{fid}](#{_anchor(fid)}) — `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`")
     lines.append("")
     lines.append(
         f"Severity **{(threat.get('risk') or 'High').strip()}** "
         f"({cwe or 'CWE-?'}). STRIDE: {threat.get('stride') or 'n/a'}. "
-        f"See [§8 {tid}](#{_anchor(tid)}) for the full register row."
+        f"See [§8 {fid}](#{_anchor(fid)}) for the full register row."
     )
     lines.append("")
 
@@ -915,7 +987,7 @@ def _render_walkthrough_block(
     _kt_short = (primary_mit_title or "").split(" — ", 1)[0].strip()[:60]
     lines.append(
         f"**Key takeaway:** Until {_kt_mit}"
-        f"{f' ({_kt_short})' if _kt_short else ''} lands, {tid} is exploitable at "
+        f"{f' ({_kt_short})' if _kt_short else ''} lands, {fid} is exploitable at "
         f"`{file_hint or '<unknown>'}:{evidence.get('line') or '?'}` "
         f"({(threat.get('risk') or 'High').strip()}-severity, {cwe or 'CWE-?'})."
     )

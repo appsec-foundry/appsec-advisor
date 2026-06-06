@@ -27,7 +27,7 @@ roles you do NOT compose and do NOT run those tail steps.
 | `RENDER_ROLE` | Author | Do NOT touch | Compose / QA / Postcondition / Completion |
 |---|---|---|---|
 | `full` (default / unset) | everything below (MS + §7) | — | **YES — you run them** (back-compat, unchanged) |
-| `secarch` | ONLY `security-architecture.md` (+ `architecture-diagrams.md` when `ENRICH_ARCH_FRAGMENTS=true`) per the §7 contract below | any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
+| `secarch` | ONLY `security-architecture.md` per the §7 contract below | `architecture-diagrams.md` (deterministic — the skill force-regenerates it from `threat-model.yaml` before AND after this dispatch, so any edit here is always discarded; §2 incl. its `**Key takeaway:**` lines is owned by `pregenerate_fragments.py:gen_architecture_diagrams`), any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 | `ms` | ONLY `ms-verdict.json`, `ms-architecture-assessment.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 
 **Both split roles still run the `## First Action` telemetry** (tag the phase-start
@@ -125,7 +125,7 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 - ~~`.fragments/ms-top-mitigations.json`~~ — **DO NOT author by default.** The composer builds the §1 Top-Mitigations leader-board **deterministically** (`_row_sort_key` ordering + Critical-floor coverage). LLM curation is retired: the marginal re-ordering gain did not justify the extra renderer turns. Skip it unless `ENRICH_TOP_MITIGATIONS=true` is explicitly set. See contract below.
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
 - ~~`.fragments/top-threats-architecture.md` (Figure 1)~~ — **DO NOT author this fragment.** Figure 1 is built **deterministically** by the composer (`_render_top_threats_architecture`), which is the authoritative single source of truth for that diagram. Hand-authoring is retired: the LLM repeatedly drifted from the agreed format (unstructured layout, missing per-component finding badges, un-annotated actors, attacker→data edges, and out-of-range `linkStyle` indices that crash Mermaid). Skip it — the composer ignores any file you write here except as a no-attack-paths fallback.
-- `.fragments/architecture-diagrams.md` and `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`
+- `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`. (`architecture-diagrams.md` is **not** enriched — it is deterministic and the skill force-regenerates it from `threat-model.yaml` before AND after Stage 2, so any edit here is discarded. §2 — diagrams, intro sentences, and `**Key takeaway:**` lines — is owned by `pregenerate_fragments.py:gen_architecture_diagrams`.)
 
 Do not overwrite deterministic fragments unless enrichment is explicitly enabled or the pre-generated fragment is materially wrong:
 
@@ -233,6 +233,32 @@ Renders as the optional **`### Architectural Anti-Patterns`** callout in the Man
 ```
 
 **Naming vocabulary** (use a canonical label, do not invent one to pad the list): `SPA without BFF` · `JWT in localStorage` · `Raw SQL string interpolation` · `Secrets hardcoded in source` · `Missing server-side authorization layer` · `Mass-assignment / unscoped object binding` · `Client-side trust boundary` · `Sanitizer bypass by default` · `Unvalidated OAuth/OIDC token` · `Server-side eval of untrusted input`. Derive each entry from the §7 control blocks / threat scenarios you have already written — this fragment is a *headline index* of them, not new analysis. The same pattern you tag here should carry the `⚠ Anti-pattern:` label in its §7 control block (see the §7.X authoring pattern below).
+
+### `ms-ai-exposure.json` authoring contract (OPTIONAL — AI / LLM surface)
+
+Renders as the optional **`### AI / LLM Exposure`** callout in the Management Summary, immediately after the anti-patterns block. Its job is to make explicit, at executive level, that the system embeds an **LLM / AI-agent surface** and to name its headline architectural risks (the OWASP LLM Top-10 lens you already applied in STRIDE) — instead of leaving them scattered across §7 control prose. Schema: `schemas/fragments/ai-exposure.schema.json` (`additionalProperties:false`).
+
+**When to author.** ONLY when the system has a genuine LLM/AI surface — i.e. the recon `KNOWN_LLM_PATTERNS` input was non-empty and you applied the OWASP LLM Top-10 lens. **Omit the file entirely** when there is no AI/LLM usage (do NOT author an empty array; the schema requires `minItems:1`). This is what keeps non-AI reports unchanged: no AI surface → no fragment → the section renders nothing. Derive each `ai_risks[]` entry from the LLM threats you already recorded — this fragment is a *headline index* of them, not new analysis.
+
+```json
+{
+  "summary": "<OPTIONAL 1-sentence framing of the AI surface, 20-300 chars>",
+  "ai_risks": [                            // REQUIRED, 1-10, most severe first
+    {
+      "owasp_llm_id": "LLM01",             // OPTIONAL, enum LLM01..LLM10 (leading badge)
+      "name": "Prompt Injection",          // REQUIRED, canonical risk name (4-60 chars)
+      "severity": "red",                   // OPTIONAL, enum green|yellow|red; defaults red
+      "description": "<1-2 sentence design-review prose: which untrusted input reaches which AI sink and why it is structural, 40-400 chars>",  // REQUIRED. Components/files referenced GENERICALLY.
+      "affected_components": ["C-03"],     // OPTIONAL, C-NN ids (auto-enriched to links)
+      "findings": [                        // REQUIRED, 1-4 representative findings
+        { "ref": "T-021", "label": "User chat input concatenated into system prompt" }  // ref ^[FTM]-\\d{3,4}$
+      ]
+    }
+  ]
+}
+```
+
+**Naming vocabulary** (canonical OWASP LLM Top-10 risk names; do not invent one to pad the list): `Prompt Injection` (LLM01) · `Sensitive Information Disclosure` (LLM02) · `Model Supply Chain` (LLM03) · `Data & Model Poisoning` (LLM04) · `Improper Output Handling` (LLM05) · `Excessive Agency` (LLM06) · `System Prompt Leakage` (LLM07) · `Vector & Embedding Weaknesses` (LLM08) · `Misinformation` (LLM09) · `Unbounded Consumption` (LLM10). Map each to its `owasp_llm_id` and anchor it to the finding(s) where you recorded it.
 
 ### `ms-architecture-assessment.json` authoring contract
 
@@ -612,9 +638,9 @@ models.sequelize.query(`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%'
 9. **Every fenced block in §7 is preceded by an introducing sentence ending in `:`.** Walk through every ` ``` `-fence under §7.2-§7.12 (Mermaid and code alike) and confirm the immediately preceding non-empty line is a single sentence terminated by a colon. A "naked" Mermaid or code block — one that appears with no narrative preamble — is a contract violation, even when the fence's content is correct. The reference form is fixed: `The diagram shows …:` for diagrams, `The/This … shows/illustrates/demonstrates …:` for code excerpts.
 10. **Findings bullets carry one rationale sentence, not a duplicated title.** Confirm no bullet matches the pattern `\[F-\d+\]\(#f-\d+\)\s*[—-]\s*[^—\n]+\s*[—-]\s*[^\n]+` where both trailers are paraphrases of the same finding title. The pregenerator emits bare links; you append exactly one rationale sentence.
 
-When enriching diagrams:
+Diagrams (`architecture-diagrams.md`, the whole of §2) are **deterministic and generator-owned** — you do **not** author or enrich them. `pregenerate_fragments.py:gen_architecture_diagrams` builds §2.1–§2.4 (diagrams, intro sentences, and the `**Key takeaway:**` line after each block) from `threat-model.yaml`, and the skill force-regenerates the fragment before AND after this dispatch, so any edit you make here is discarded. The notes below are a **defensive backstop** only (for the legacy `full` role / a manual re-render) — under the split `secarch` role you skip §2 entirely:
 
-- **§2.1 Context Diagram may be enriched** — annotate actors and edge nodes (CDN, WAF, etc.) only when they are positively evidenced in the repo. Never add speculative perimeter actors.
+- **§2.1 Context Diagram is generator-owned.** Evidenced actors and edge nodes (CDN, WAF, etc.) come from the yaml/recon, not from LLM enrichment. Never add speculative perimeter actors.
 - **§2.2 Container Architecture is LOCKED.** Do not rewrite the container diagram from the deterministic pre-generator output. The Pre-Generator obeys the `diagram_compactness` contract by construction (max 3 lines per node label); LLM re-authoring has been observed to add T-NNN bullet rows per container, blowing past the 3-line limit and triggering a contract-gate repair iteration. Threat annotation belongs in the §2.4 heat map, not in container node labels. **If you find yourself adding `<br/>· T-NNN: …` lines to a container node, stop — you are about to violate the `diagram_compactness` rule and force a repair iteration.**
 - **§2.3 Components and §2.4 Technology Architecture are LOCKED.** Do not rewrite their compact diagrams.
 - Mermaid blocks must remain parseable by `scripts/mermaid_validate.mjs`.

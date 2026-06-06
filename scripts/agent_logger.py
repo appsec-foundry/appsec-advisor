@@ -702,13 +702,35 @@ def _mask_secrets(text: str) -> str:
 
 
 def _extract_param(text: str, key: str, max_len: int = 80) -> str:
-    """Return value of KEY=<value> from a prompt string, or ''."""
+    """Return value of KEY=<value> from a prompt string, or ''.
+
+    The value is the first whitespace-delimited token after ``KEY=``, with
+    surrounding shell/markdown delimiters stripped. Stripping matters because
+    a prompt frequently embeds the assignment inside an inline-code span or a
+    quoted shell command, e.g.::
+
+        Your FIRST Bash call MUST be `export OUTPUT_DIR=/abs/docs/security`
+
+    The naïve ``raw.split()[0]`` keeps the trailing backtick, yielding
+    ``/abs/docs/security``` — a path that does not exist. When the
+    PreToolUse OUTPUT_DIR-recovery feeds that to ``os.makedirs`` + the hook
+    log, every ``AGENT_SPAWN`` lands in a junk ``docs/security``` directory
+    instead of the run's real ``$OUTPUT_DIR/.hook-events.log``. That silently
+    blinds the count-based ``check_stride_dispatch.py`` gate (2026-06-06
+    juice-shop run: 0 stride spawns logged, gate false-tripped). A backtick or
+    quote can never be part of a real path/identifier value, so trimming them
+    is safe for every caller (OUTPUT_DIR, REPO_ROOT, COMPONENT_ID, …).
+    """
     marker = f"{key}="
     if marker not in text:
         return ""
     raw = text.split(marker, 1)[1]
     # stop at first whitespace or newline
     val = raw.split()[0] if raw.split() else ""
+    # Strip wrapping/trailing shell + markdown delimiters that can never be
+    # part of a legitimate path or identifier value (back-tick from inline
+    # code spans, quotes from shell-quoted commands, trailing punctuation).
+    val = val.strip("`'\"").rstrip("`'\",;)")
     return val[:max_len]
 
 

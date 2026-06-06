@@ -48,6 +48,10 @@ class TestConflicts:
         msg = rc.detect_conflicts(self._parse("--full", "--incremental"))
         assert msg and "--full" in msg and "--incremental" in msg
 
+    def test_full_vs_resume(self):
+        msg = rc.detect_conflicts(self._parse("--full", "--resume"))
+        assert msg and "--full" in msg and "--resume" in msg
+
     def test_rebuild_vs_incremental(self):
         msg = rc.detect_conflicts(self._parse("--rebuild", "--incremental"))
         assert msg and "--rebuild" in msg

@@ -202,6 +202,7 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("yaml",         "no_yaml",         "--yaml and --no-yaml cannot be used together."),
     ("requirements", "no_requirements", "--requirements and --no-requirements cannot be used together."),
     ("full",         "incremental",     "--full and --incremental cannot be used together."),
+    ("full",         "resume",          "--full starts a complete assessment; --resume continues a checkpoint. Pick one."),
     ("rebuild",      "incremental",     "--rebuild discards all prior state; --incremental requires it. Pick one."),
     ("rebuild",      "resume",          "--rebuild wipes the checkpoint file; --resume needs it. Pick one."),
     ("rerender",     "full",            "--rerender re-renders the existing assessment; --full rebuilds it. Pick one."),
@@ -674,8 +675,14 @@ def resolve_skip_attack_paths_authoring(depth: str) -> dict:
 
 def resolve_enrich_arch_fragments(ns: argparse.Namespace, depth: str,
                                    dry_run: bool) -> dict:
-    """LLM enrichment of architecture-diagrams.md and security-architecture.md
-    fragments.
+    """LLM enrichment of the security-architecture.md fragment (§7).
+
+    Note (2026-06): architecture-diagrams.md (§2) is NOT enriched — it is
+    deterministic and the skill force-regenerates it from threat-model.yaml
+    before AND after Stage 2, so any LLM edit was always discarded. §2 incl.
+    its per-diagram ``**Key takeaway:**`` lines is owned by
+    ``pregenerate_fragments.py:gen_architecture_diagrams``. This flag now
+    gates security-architecture.md (§7 narrative) only.
 
     Default behaviour (since 2026-05):
 
@@ -1052,13 +1059,14 @@ def build_parser() -> argparse.ArgumentParser:
     # and thorough; off at quick since 2026-05.
     p.add_argument("--no-enrich-arch", action="store_true",
                    dest="no_enrich_arch",
-                   help="Disable LLM enrichment of architecture-diagrams.md and "
-                        "security-architecture.md fragments (on by default at "
-                        "standard/thorough).")
+                   help="Disable LLM enrichment of the security-architecture.md "
+                        "(§7) fragment (on by default at standard/thorough). "
+                        "architecture-diagrams.md/§2 is always deterministic.")
     p.add_argument("--enrich-arch", action="store_true",
                    dest="enrich_arch",
-                   help="Force LLM enrichment of architecture fragments at any "
-                        "depth (overrides the quick-depth default-off).")
+                   help="Force LLM enrichment of the security-architecture.md "
+                        "(§7) fragment at any depth (overrides the quick-depth "
+                        "default-off).")
     # v2 13-section §7 layout — DEFAULT since 2026-05.
     # v2 restructures §7 around security-control categories and lists
     # findings only where the affected control is described.

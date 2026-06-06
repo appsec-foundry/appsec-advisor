@@ -151,8 +151,8 @@ def test_architectural_anti_patterns_absent_renders_nothing(tmp_path: Path) -> N
 def test_architectural_anti_patterns_renders_after_verdict(tmp_path: Path) -> None:
     """When ms-anti-patterns.json is present, the callout renders inside the
     Management Summary, immediately after the Verdict and before the Security
-    Posture section, naming each pattern with a severity emoji and a linkified
-    finding reference."""
+    Posture section, naming each pattern (NO leading severity glyph — it
+    collided with the per-finding dots) with a linkified finding reference."""
     out = _prepare_output_dir(tmp_path)
     frag = {
         "anti_patterns": [
@@ -190,6 +190,78 @@ def test_architectural_anti_patterns_renders_after_verdict(tmp_path: Path) -> No
     # A linkified finding reference (T-001 normalises to the F-001 anchor).
     assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), \
         f"no linkified finding in anti-patterns callout: {ms_slice[a:s]!r}"
+
+    ap_block = ms_slice[a:s]
+    # No leading severity glyph before the pattern name — the coloured circle
+    # used to collide with the per-finding severity dots (user report 2026-06).
+    assert not re.search(r"[🔴🟠🟡🟢]\s*\*\*SPA without BFF\*\*", ap_block), \
+        f"anti-pattern name still carries a leading severity circle: {ap_block!r}"
+    # Clean nested structure (indented sub-bullets), not <br/>↳-crammed.
+    assert "↳" not in ap_block, f"legacy ↳ cramming still present: {ap_block!r}"
+    assert "_Findings:_" in ap_block
+    assert "_Affected components:_" in ap_block  # first pattern declares them
+    # Sub-bullets are indented under the pattern bullet.
+    assert re.search(r"\n {4}- _Findings:_", ap_block), \
+        f"findings sub-bullet not indented: {ap_block!r}"
+
+
+def test_ai_exposure_absent_renders_nothing(tmp_path: Path) -> None:
+    """The optional AI / LLM Exposure callout is omitted entirely when no
+    ms-ai-exposure.json fragment is present (the default fixture — a non-LLM
+    repo) — no empty heading, no crash, zero impact."""
+    out = _prepare_output_dir(tmp_path)
+    assert not (out / ".fragments" / "ms-ai-exposure.json").exists()
+    rendered, _ = compose.render(CONTRACT, out)
+    assert "### AI / LLM Exposure" not in rendered
+
+
+def test_ai_exposure_renders_after_anti_patterns(tmp_path: Path) -> None:
+    """When ms-ai-exposure.json is present, the callout renders inside the
+    Management Summary, after the Verdict and before the Security Posture
+    section, naming each risk with its OWASP LLM id, a severity emoji and a
+    linkified finding reference."""
+    out = _prepare_output_dir(tmp_path)
+    frag = {
+        "summary": "A chat assistant relays user input to an external model API "
+        "and renders the completion back to the browser.",
+        "ai_risks": [
+            {
+                "owasp_llm_id": "LLM01",
+                "name": "Prompt Injection",
+                "severity": "red",
+                "description": "User chat input is concatenated directly into the "
+                "system prompt with no separation between instruction and data, so "
+                "a crafted message can override the assistant's guardrails.",
+                "affected_components": ["C-01"],
+                "findings": [{"ref": "T-001", "label": "Unsanitized prompt assembly"}],
+            },
+            {
+                "owasp_llm_id": "LLM06",
+                "name": "Excessive Agency",
+                "description": "The agent can invoke shell and SQL tools with no "
+                "human approval gate, so a successful injection escalates straight "
+                "into destructive tool execution.",
+                "findings": [{"ref": "F-002", "label": "Unguarded agent tool use"}],
+            },
+        ],
+    }
+    (out / ".fragments" / "ms-ai-exposure.json").write_text(json.dumps(frag))
+
+    rendered, _ = compose.render(CONTRACT, out)
+    ms_slice = rendered.split("## Management Summary", 1)[1].split("\n## ", 1)[0]
+
+    assert "### AI / LLM Exposure" in ms_slice
+    assert "Prompt Injection" in ms_slice
+    assert "LLM01" in ms_slice
+    assert "Excessive Agency" in ms_slice
+    # Ordering: Verdict → AI Exposure → Security Posture.
+    v = ms_slice.find("### Verdict")
+    a = ms_slice.find("### AI / LLM Exposure")
+    s = ms_slice.find("### Security Posture & Top Threats")
+    assert v < a < s, f"ai-exposure out of order: verdict={v} ai={a} posture={s}"
+    # A linkified finding reference (T-001 normalises to the F-001 anchor).
+    assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), \
+        f"no linkified finding in ai-exposure callout: {ms_slice[a:s]!r}"
 
 
 def test_render_is_deterministic(tmp_path: Path) -> None:
@@ -782,8 +854,8 @@ def test_attack_tree_renders_single_lr_block() -> None:
     # Trimmed palette — the unused classes are gone.
     assert "classDef attacker" not in src and "classDef crit" not in src
     for i in range(4):
-        assert f"L_T{i:03d}" in src                       # node id retained
-        assert f'["T-{i:03d} — finding"]' in src          # id + short title leaf label
+        assert f"L_T{i:03d}" in src                       # internal node id retained (not reader-visible)
+        assert f'["F-{i:03d} — finding"]' in src          # visible leaf label: T-NNN → F-NNN
 
 
 def test_attack_tree_wide_still_single_block() -> None:
@@ -865,8 +937,9 @@ def test_attack_tree_findings_pointer_from_leaves() -> None:
     prefix) + lowercased §8 anchor, deduped, no mitigations."""
     data = _attack_tree_data(4)  # leaves L_T000..L_T003, labels "T-000 finding" ...
     findings = compose._derive_attack_tree_findings(data)
-    assert [f["id"] for f in findings] == ["T-000", "T-001", "T-002", "T-003"]
-    assert findings[0] == {"id": "T-000", "title": "finding", "anchor": "#t-000"}
+    # Visible ids normalise T-NNN → F-NNN (the §8 register's canonical id).
+    assert [f["id"] for f in findings] == ["F-000", "F-001", "F-002", "F-003"]
+    assert findings[0] == {"id": "F-000", "title": "finding", "anchor": "#f-000"}
     # No mitigation data leaks into the pointer.
     assert all("mitigation" not in f and "mitigations" not in f for f in findings)
 
@@ -881,8 +954,63 @@ def test_attack_tree_findings_pointer_dedups_and_skips_non_leaves() -> None:
         {"id": "L3", "label": "T-009 RCE via eval", "class": "leaf", "finding_ref": "T-009"},
     ], "edges": []}}
     findings = compose._derive_attack_tree_findings(data)
-    assert [f["id"] for f in findings] == ["T-005", "T-009"]
+    assert [f["id"] for f in findings] == ["F-005", "F-009"]
     assert findings[0]["title"] == "SQLi login bypass"
+
+
+def test_normalize_visible_threat_ids() -> None:
+    """Global backstop: every reader-visible T-NNN → F-NNN (link form rewrites
+    text AND anchor; bare/prefixed prose and mermaid labels too), while
+    lowercase anchors and AC-T-NNN abuse-case ids are preserved."""
+    f = compose._normalize_visible_threat_ids
+    # Link form — text + anchor.
+    assert f("[T-002](#t-002)") == "[F-002](#f-002)"
+    # Text already F but anchor still the merge-stage #t- (per-component
+    # "Linked Threats" cells) → anchor normalised so the dot pass annotates it.
+    assert f("[F-001](#t-001)") == "[F-001](#f-001)"
+    # Bare prose.
+    assert f("until M-001 lands, T-004 is exploitable") == "until M-001 lands, F-004 is exploitable"
+    # Mermaid alt label.
+    assert f("    alt Current state — T-003") == "    alt Current state — F-003"
+    # Link text with a prefix (anchor stays lowercase but resolves via dual anchor).
+    assert f("[§8 T-001](#t-001)") == "[§8 F-001](#t-001)"
+    # Mixed text/anchor (LLM §7 drift) — bare pass fixes the text.
+    assert f("[T-003](#f-003)") == "[F-003](#f-003)"
+    # AC-T-NNN abuse-case ids are NOT touched.
+    assert f("[AC-T-005](#ac-t-005)") == "[AC-T-005](#ac-t-005)"
+    assert f("see AC-T-005 for detail") == "see AC-T-005 for detail"
+    # Mermaid internal node ids (no hyphen) and TH-/CWE- are untouched.
+    assert f("L_T003-->|AND|AND_JWT") == "L_T003-->|AND|AND_JWT"
+    assert f("TH-01 / CWE-321") == "TH-01 / CWE-321"
+
+
+def test_changelog_finding_refs_have_no_severity_dot(tmp_path: Path) -> None:
+    """The Changelog is a historical delta log, not a severity-ranked findings
+    list — its F-NNN refs are normalised (no visible T-NNN) but carry NO
+    severity dot / priority circle (those would be inconsistent across
+    resolved vs still-present threats)."""
+    out = _prepare_output_dir(tmp_path)
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "version": 2,
+                "date": "2026-04-23",
+                "mode": "incremental",
+                "baseline_sha": "cb6fb8a83458fe3c63dd03c80f46ceda0438dc1f",
+                "current_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "changed": {"threats": ["T-002"], "notes_by_id": {"T-002": "sev up"}},
+            },
+            {"version": 1, "date": "2026-04-19", "mode": "full", "note": "Initial"},
+        ],
+    )
+    ctr = _contract_with_changelog_style(tmp_path, "bullets")
+    rendered, _ = compose.render(ctr, out)
+    section = _extract_changelog_section(rendered)
+    assert "[F-002](#f-002)" in section          # normalised to visible F-NNN
+    assert "[T-002](#t-002)" not in section       # no stale T-NNN
+    # No severity dot immediately before the changelog finding link.
+    assert "🔴 [F-002]" not in section and "🟠 [F-002]" not in section
 
 
 def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
@@ -1051,9 +1179,9 @@ def test_changelog_incremental_renders_added_changed_resolved(tmp_path: Path) ->
     # Every delta bullet present with correct plural form + T-ID anchors.
     # Added/Changed/Resolved enumerate threats only — components and entry
     # points live in the dedicated **Architecture** bullet for readability.
-    assert "- **Added:** 2 threats ([T-020](#t-020), [T-021](#t-021))" in section
-    assert '- **Changed:** 1 threat ([T-002](#t-002): "severity High → Critical")' in section
-    assert '- **Resolved:** 1 threat ([T-010](#t-010): "not reproduced on full re-analysis")' in section
+    assert "- **Added:** 2 threats ([F-020](#f-020), [F-021](#f-021))" in section
+    assert '- **Changed:** 1 threat ([F-002](#f-002): "severity High → Critical")' in section
+    assert '- **Resolved:** 1 threat ([F-010](#f-010): "not reproduced on full re-analysis")' in section
     assert "- **Architecture:** +1 entry point (E-03)" in section
     assert "- **Re-analyzed:** C-01" in section
     assert "- **Carried forward:** C-02" in section
@@ -1092,7 +1220,7 @@ def test_changelog_full_rebuild_with_baseline_renders_only_nonempty_bullets(tmp_
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
 
-    assert '- **Resolved:** 1 threat ([T-020](#t-020): "not reproduced on full re-analysis")' in section
+    assert '- **Resolved:** 1 threat ([F-020](#f-020): "not reproduced on full re-analysis")' in section
     # Empty delta categories must NOT render — guards against "0 threats" noise.
     assert "**Added:**" not in section
     assert "**Changed:**" not in section
@@ -1143,22 +1271,22 @@ def test_changelog_caps_inline_ids_at_five_with_more_suffix(tmp_path: Path) -> N
 
     # Added: count reflects full list; inline enumeration shows 5 IDs + "+7 more".
     assert "- **Added:** 12 threats (" in section
-    assert "[T-020](#t-020)" in section
-    assert "[T-024](#t-024)" in section  # 5th shown ID
-    assert "[T-025](#t-025)" not in section  # 6th ID capped out of md
+    assert "[F-020](#f-020)" in section
+    assert "[F-024](#f-024)" in section  # 5th shown ID
+    assert "[F-025](#f-025)" not in section  # 6th ID capped out of md
     assert "+7 more" in section
 
     # Changed: 5 shown + "+3 more"; per-ID notes only on shown IDs.
     assert "- **Changed:** 8 threats (" in section
-    assert '[T-040](#t-040): "severity High → Critical"' in section
-    assert '[T-044](#t-044): "severity High → Critical"' in section  # 5th
-    assert "[T-045](#t-045)" not in section
+    assert '[F-040](#f-040): "severity High → Critical"' in section
+    assert '[F-044](#f-044): "severity High → Critical"' in section  # 5th
+    assert "[F-045](#f-045)" not in section
     assert "+3 more" in section
 
     # Resolved: 5 shown + "+1 more".
     assert "- **Resolved:** 6 threats (" in section
-    assert "[T-064](#t-064)" in section  # 5th shown ID
-    assert "[T-065](#t-065)" not in section
+    assert "[F-064](#f-064)" in section  # 5th shown ID
+    assert "[F-065](#f-065)" not in section
     assert "+1 more" in section
 
 
@@ -1246,7 +1374,7 @@ def test_changelog_architecture_bullet_lists_components_and_entry_points(tmp_pat
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
-    assert "- **Added:** 1 threat ([T-030](#t-030))" in section
+    assert "- **Added:** 1 threat ([F-030](#f-030))" in section
     assert "- **Architecture:** +2 components (C-06, C-07), +2 entry points (E-04, E-05)" in section
 
 
@@ -1393,10 +1521,10 @@ def test_changelog_table_latest_run_detail_block(tmp_path: Path) -> None:
     section = _extract_changelog_section(rendered)
     # The single-table format is preserved (table row exists).
     assert "| v3 |" in section
-    # The latest-run detail block enumerates the T-IDs.
+    # The latest-run detail block enumerates the finding ids (visible F-NNN form).
     assert "**Latest run (v3)" in section
     assert "- **Added (1):**" in section
-    assert "T-030" in section
+    assert "F-030" in section
     # Architecture / changed / resolved bullets are NOT emitted because
     # those buckets are empty for this entry.
     assert "- **Changed" not in section

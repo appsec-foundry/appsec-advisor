@@ -197,6 +197,8 @@ CLEAN_FORCE=0
 CLEAN_DRY_RUN=0
 TRUST_MODE="trusted"
 STRICT_URLS=0
+RESUME_REQUESTED=0
+FULL_REQUESTED=0
 
 # CI mode auto-detect — when running under a CI runner we prefer silent,
 # deterministic defaults.
@@ -212,7 +214,13 @@ while [ $# -gt 0 ]; do
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
-        --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--full|--resume|--rerender)
+        --resume)
+            RESUME_REQUESTED=1
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --full)
+            FULL_REQUESTED=1
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--rerender)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --incremental)
             INCREMENTAL_REQUESTED=1
@@ -414,6 +422,31 @@ if [ -n "$RESTORE_FROM" ]; then
     # Copy any .stride-*.json for per-component carry-forward
     find "$RESTORE_FROM" -maxdepth 1 -name '.stride-*.json' -exec cp {} "$OUTPUT_PATH/" \; 2>/dev/null || true
     ok "Restored $(ls -1 "$OUTPUT_PATH" 2>/dev/null | wc -l) files into $OUTPUT_PATH"
+fi
+
+if [ "$SKILL" = "create-threat-model" ] \
+   && [ "$RESUME_REQUESTED" = "1" ] \
+   && [ "$FULL_REQUESTED" = "1" ]; then
+    die "--full and --resume cannot be used together. Use --resume to continue a checkpoint, or --full to start a complete assessment."
+fi
+
+# ── Resume preflight ────────────────────────────────────────────────
+# In headless mode a blocked resume otherwise looks like an idle `claude -p`
+# session: no new agent log lines are emitted until the skill starts. Refuse
+# before dispatch when the selected output directory has an active or stale
+# unsafe checkpoint state, and print the exact directory being inspected so
+# `--repo` / `--output` mismatches are visible.
+if [ "$SKILL" = "create-threat-model" ] && [ "$RESUME_REQUESTED" = "1" ]; then
+    set +e
+    python3 "$PLUGIN_DIR/scripts/check_state.py" \
+        "$OUTPUT_PATH" --resume-guard --max-age-seconds 900
+    RESUME_GUARD_EXIT=$?
+    set -e
+    if [ "$RESUME_GUARD_EXIT" = "3" ]; then
+        err "--resume refused before starting Claude Code (output: $OUTPUT_PATH)"
+        warn "Use the same --output as the interrupted run. If no assessment is running, inspect or clean with: python3 $PLUGIN_DIR/scripts/check_state.py $OUTPUT_PATH --clean"
+        exit 3
+    fi
 fi
 
 # ── Fast-Path Preflight ─────────────────────────────────────────────

@@ -2,10 +2,19 @@
 {#- defects the report articulates in §7. Rendered only when the LLM authored      -#}
 {#- ms-anti-patterns.json (≥1 pattern); absent file → the section renders nothing.  -#}
 {#- Schema: data.anti_patterns[] = {name, severity?, description, affected_components[]?, findings[]} -#}
+{#- NO leading severity glyph before the pattern NAME: a coloured circle there      -#}
+{#- collided visually with the per-finding severity dots the global annotator adds  -#}
+{#- to the F-NNN links below. Structure: one bullet per pattern (name — what it is) -#}
+{#- with indented sub-bullets (affected components, findings), comma-joined so       -#}
+{#- nothing wraps on a literal <br/>. Keep the if/endif tags and their content on    -#}
+{#- the SAME line (and avoid `-%}` here) so the 4-space sub-bullet indent survives.  -#}
 ### Architectural Anti-Patterns
 
 The defects below are structural — each spans multiple findings and requires a design change, not a point fix. See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.
 
 {% for ap in data.anti_patterns -%}
-- {{ severity_emoji(ap.severity or 'red') }} **{{ ap.name }}** — {{ ap.description }}{% if ap.affected_components %} _({{ ap.affected_components | format_weakness_components }})_{% endif %}<br/>↳ {{ ap.findings | format_weakness_findings }}
-{% endfor %}
+- **{{ ap.name }}** — {{ ap.description }}
+{% if ap.affected_components %}    - _Affected components:_ {{ ap.affected_components | format_weakness_components(", ") }}
+{% endif %}    - _Findings:_ {{ ap.findings | format_weakness_findings(", ") }}
+
+{% endfor -%}

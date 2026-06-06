@@ -44,6 +44,7 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
     "operational-strengths-overrides": "operational-strengths-overrides.schema.json",
     "security-posture-attack-paths": "security-posture-attack-paths.schema.json",
     "anti-patterns": "anti-patterns.schema.json",
+    "ai-exposure": "ai-exposure.schema.json",
     "ms-top-mitigations": "ms-top-mitigations.schema.json",
     # Substep 2 deterministic migration sidecars. These are INPUTS to
     # scripts/build_threat_model_yaml.py, NOT render fragments — they
@@ -77,6 +78,7 @@ _FRAGMENT_FILENAMES: dict[str, str] = {
     "operational-strengths-overrides": "operational-strengths-overrides.json",
     "security-posture-attack-paths": "security-posture-attack-paths.json",
     "anti-patterns": "ms-anti-patterns.json",
+    "ai-exposure": "ms-ai-exposure.json",
     "ms-top-mitigations": "ms-top-mitigations.json",
 }
 

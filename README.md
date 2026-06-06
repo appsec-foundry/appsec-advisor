@@ -180,39 +180,53 @@ flowchart TB
     subgraph ZONE_ACTORS["External Actors"]
         direction LR
         EXT_SHOPUSER["fa:fa-user Shop User<br/><i>legitimate customer - XSS/CSRF target</i>"]:::actorgood
-        ACT_INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker<br/><i>incl. self-registered users - open registration makes authenticated ≈ anonymous</i>"]:::actorbad
+        ACT_INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker<br/><i>no account; registers in seconds when needed</i>"]:::actorbad
+        ACT_REPO_READ["fa:fa-code-branch Internal Developer<br/><i>developer with source-repository access</i>"]:::actorbad
     end
 
     subgraph CLIENT["Client Tier - browser"]
-        CMP_FRONTEND_SPA["C-02 · Angular SPA Frontend<br/><i>🔴 1 🟠 9</i>"]:::comp
+        CMP_FRONTEND_SPA["C-02 · Angular SPA Frontend<br/><i>🔴 3 🟠 5</i>"]:::comp
     end
     subgraph APP["Application Tier - Node / Express"]
-        CMP_BACKEND_API["C-01 · Express REST API Backend<br/><i>🔴 3 🟠 13</i>"]:::comp
-        CMP_FILE_UPLOAD_SERVICE["C-04 · File Upload Service<br/><i>🔴 1 🟠 6</i>"]:::comp
-        CMP_B2B_API["C-05 · B2B Order API<br/><i>🔴 1 🟠 2</i>"]:::comp
-        CMP_WEBSOCKET_SERVER["C-06 · Socket.IO WebSocket Server<br/><i>🟠 5</i>"]:::comp
-        CMP_CI_CD_PIPELINE["C-07 · GitHub Actions CI/CD Pipeline<br/><i>🟠 3</i>"]:::comp
-        CMP_AUTH_SERVICE["C-08 · Authentication &amp; Session Service<br/><i>🔴 5 🟠 9</i>"]:::comp
+        CMP_BACKEND_API["C-01 · Express REST API Backend<br/><i>🔴 5 🟠 10</i>"]:::comp
+        CMP_FILE_UPLOAD_SERVICE["C-04 · File Upload &amp; Parsing Service<br/><i>🔴 2 🟠 7</i>"]:::comp
+        CMP_B2B_API["C-05 · B2B Order API<br/><i>🔴 2 🟠 1</i>"]:::comp
+        CMP_DATA_LAYER["C-06 · Authentication &amp; Session Store<br/><i>🟠 4</i>"]:::comp
+        CMP_CI_CD_PIPELINE["C-07 · CI/CD Pipeline<br/><i>🟠 3</i>"]:::comp
+        CMP_SOCKET_IO["C-08 · Socket.IO Real-time Channel<br/><i>🟠 3</i>"]:::comp
     end
     subgraph DATA["Data Tier"]
-        CMP_DATA_PERSISTENCE["C-03 · Data Layer (SQLite + MarsDB)<br/><i>🔴 2 🟠 4</i>"]:::comp
+        CMP_DATA_PERSISTENCE["C-03 · Data Layer (SQLite + MarsDB)<br/><i>🔴 2 🟠 3</i>"]:::comp
     end
 
     %% legitimate request flow
     EXT_SHOPUSER -->|"uses"| CMP_FRONTEND_SPA
     CMP_FRONTEND_SPA -->|"API calls"| CMP_BACKEND_API
     CMP_BACKEND_API -->|"reads/writes"| CMP_DATA_PERSISTENCE
+    CMP_BACKEND_API -->|"routes to"| CMP_DATA_LAYER
     %% attacks (solid) - each originates at a threat actor; glyphs match Figure 2 / Top Threats
-    ACT_INTERNET_ANON ==>|"① ② ③ ④"| CMP_AUTH_SERVICE
-    ACT_INTERNET_ANON ==>|"① ③ ④ ⑤"| CMP_BACKEND_API
-    ACT_INTERNET_ANON ==>|"① ④ ⑤"| CMP_FILE_UPLOAD_SERVICE
-    ACT_INTERNET_ANON ==>|"③"| CMP_WEBSOCKET_SERVER
-    ACT_INTERNET_ANON ==>|"③ ④"| CMP_CI_CD_PIPELINE
-    ACT_INTERNET_ANON ==>|"④ ⑤"| CMP_B2B_API
-    ACT_INTERNET_ANON ==>|"⑥ ⑦"| CMP_FRONTEND_SPA
+    ACT_INTERNET_ANON ==>|"① Injection ③ Priv-Esc ④ Secret Exposure ⑤ RCE"| CMP_BACKEND_API
+    ACT_INTERNET_ANON ==>|"① ④"| CMP_FILE_UPLOAD_SERVICE
+    ACT_REPO_READ ==>|"② Auth Bypass"| CMP_BACKEND_API
+    ACT_REPO_READ ==>|"②"| CMP_CI_CD_PIPELINE
+    ACT_INTERNET_ANON ==>|"③ ④ ⑤"| CMP_B2B_API
+    ACT_INTERNET_ANON ==>|"④"| CMP_CI_CD_PIPELINE
+    ACT_INTERNET_ANON ==>|"④"| CMP_SOCKET_IO
+    ACT_INTERNET_ANON ==>|"⑥ XSS ⑦ CSRF"| CMP_FRONTEND_SPA
     %% propagation (dotted) - how the attack reaches the data tier / victim
-    CMP_BACKEND_API -.->|"① ② ③ ④ ⑥"| CMP_DATA_PERSISTENCE
+    CMP_BACKEND_API -.->|"① ② ④"| CMP_DATA_PERSISTENCE
     CMP_FRONTEND_SPA -.->|"⑥ ⑦"| EXT_SHOPUSER
+    %% invisible barycenter-balancing edges - center the client/data tiers under the app row (no glyph, no linkStyle → rendered as no line)
+    CMP_FILE_UPLOAD_SERVICE ~~~ CMP_DATA_PERSISTENCE
+    CMP_B2B_API ~~~ CMP_DATA_PERSISTENCE
+    CMP_DATA_LAYER ~~~ CMP_DATA_PERSISTENCE
+    CMP_CI_CD_PIPELINE ~~~ CMP_DATA_PERSISTENCE
+    CMP_SOCKET_IO ~~~ CMP_DATA_PERSISTENCE
+    CMP_FRONTEND_SPA ~~~ CMP_FILE_UPLOAD_SERVICE
+    CMP_FRONTEND_SPA ~~~ CMP_B2B_API
+    CMP_FRONTEND_SPA ~~~ CMP_DATA_LAYER
+    CMP_FRONTEND_SPA ~~~ CMP_CI_CD_PIPELINE
+    CMP_FRONTEND_SPA ~~~ CMP_SOCKET_IO
 
     style CLIENT fill:none,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
     style APP fill:none,stroke:#b71c1c,stroke-width:2px,stroke-dasharray:5
@@ -223,9 +237,9 @@ flowchart TB
     classDef ext  fill:#ffffff,stroke:#94a3b8,color:#334155,stroke-width:1.5px
     classDef actorbad  fill:#fde8e8,stroke:#b71c1c,color:#7f0000,stroke-width:2px
     classDef actorgood fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
-    linkStyle 0,1,2 stroke:#6b7280,stroke-width:1.5px
-    linkStyle 3,4,5,6,7,8,9 stroke:#b71c1c,stroke-width:2.5px
-    linkStyle 10,11 stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5
+    linkStyle 0,1,2,3 stroke:#6b7280,stroke-width:1.5px
+    linkStyle 4,5,6,7,8,9,10,11 stroke:#b71c1c,stroke-width:2.5px
+    linkStyle 12,13 stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5
 ```
 
 ## What it checks

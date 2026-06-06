@@ -182,6 +182,54 @@ def test_attack_surface_empty_baseline_falls_back_to_additions():
     assert len(out) == 1 and out[0]["entry_point"] == "GET /x"
 
 
+# build_attack_surface — class-coverage guard (2026-06-06 regression: an
+# all-unauthenticated include allowlist dropped every authenticated route, so
+# §5.2 Authenticated Entry Points rendered "(0)" on apps with dozens of guards).
+
+def test_attack_surface_include_allowlist_does_not_empty_auth_class():
+    routes = _routes(
+        ("POST", "/login", "unknown"),            # r0 unauth — analyst keeps
+        ("GET", "/api/admin", "middleware_present"),   # r1 auth — dropped by include
+        ("PUT", "/api/orders/1", "middleware_present"),  # r2 auth — dropped by include
+    )
+    # Analyst's vuln-focused include list keeps only the unauthenticated route.
+    sidecar = {"curations": {"include_route_ids": ["r0"]}}
+    out, warnings = b.build_attack_surface(routes, sidecar)
+    auth = [e for e in out if e.get("auth_required")]
+    unauth = [e for e in out if not e.get("auth_required")]
+    assert unauth, "curated unauthenticated route must survive"
+    assert auth, "guard must restore the authenticated class the allowlist emptied"
+    assert {e["entry_point"] for e in auth} == {"GET /api/admin", "PUT /api/orders/1"}
+    assert any("class-coverage guard" in w for w in warnings)
+
+
+def test_attack_surface_guard_honours_exclude():
+    routes = _routes(
+        ("POST", "/login", "unknown"),                 # r0 unauth — included
+        ("GET", "/api/admin", "middleware_present"),   # r1 auth — restored
+        ("GET", "/api/secret", "middleware_present"),  # r2 auth — explicitly excluded
+    )
+    sidecar = {"curations": {"include_route_ids": ["r0"], "exclude_route_ids": ["r2"]}}
+    out, _ = b.build_attack_surface(routes, sidecar)
+    eps = {e["entry_point"] for e in out}
+    assert "GET /api/admin" in eps          # restored by the guard
+    assert "GET /api/secret" not in eps     # exclude wins over the guard
+
+
+def test_attack_surface_guard_noop_when_both_classes_present():
+    routes = _routes(
+        ("POST", "/login", "unknown"),                 # r0 unauth
+        ("GET", "/api/admin", "middleware_present"),   # r1 auth
+        ("GET", "/api/other", "middleware_present"),   # r2 auth — not in include
+    )
+    # Include list already spans both classes → guard must not fire.
+    sidecar = {"curations": {"include_route_ids": ["r0", "r1"]}}
+    out, warnings = b.build_attack_surface(routes, sidecar)
+    eps = {e["entry_point"] for e in out}
+    assert eps == {"POST /login", "GET /api/admin"}
+    assert not any("class-coverage guard" in w for w in warnings)
+
+
 # ── meta.check_requirements gate (2026-06-05) ─────────────────────────────────
 # The contract-driven renderer gates the entire Requirements Compliance surface
 # (§7b traceability, MS subsection, requirements-compliance.md authoring) on

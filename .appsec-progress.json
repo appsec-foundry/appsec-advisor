@@ -1,0 +1,9 @@
+{
+  "agent": "abuse-case-verifier",
+  "detail": "AC-T-005 done: 2 step verdicts written (both confirmed)",
+  "event": "AGENT_COMPLETE",
+  "kind": "info",
+  "label": "AC-T-005 done: 2 step verdicts written (both confirmed)",
+  "status": "info",
+  "updated_at": "2026-06-06T17:57:48Z"
+}

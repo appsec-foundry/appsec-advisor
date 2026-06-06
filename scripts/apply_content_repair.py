@@ -253,6 +253,18 @@ def _validate_plan(plan: dict) -> list[str]:
             op_kind = op.get("op")
             if op_kind not in _OP_HANDLERS:
                 errs.append(f"actions[{i}].operation.op is unknown: {op_kind!r} (allowed: {sorted(_OP_HANDLERS)})")
+        elif op is not None:
+            # Reject the flat producer drift form
+            # (`operation: "replace_string"` + sibling search_text/replace_text)
+            # explicitly. Without this branch a non-dict operation slipped past
+            # validation and crashed apply_plan with an AttributeError.
+            errs.append(
+                f"actions[{i}].operation must be a JSON object with an 'op' key, "
+                f"got {type(op).__name__} — the flat form "
+                f"(operation:\"replace_string\" + search_text/replace_text) is not "
+                f"supported; use the nested object "
+                f"{{'op': 'replace_string', 'find': ..., 'replace': ...}}"
+            )
     return errs
 
 
@@ -321,6 +333,25 @@ def apply_plan(plan: dict, output_dir: Path) -> dict:
         original = text
         for idx, action in group:
             op = action.get("operation", {})
+            if not isinstance(op, dict):
+                # Defensive: the validator already rejects this at plan level,
+                # but guard the library entry point too so a non-dict operation
+                # can never raise an uncaught AttributeError here.
+                report["skipped"].append({
+                    "index": idx,
+                    "reason": (
+                        f"operation is not an object (got {type(op).__name__}); "
+                        f"flat form unsupported — use nested {{'op': ...}}"
+                    ),
+                })
+                report["exit_code"] = 1
+                print(
+                    f"[content-repair] ✗ action[{idx}] check={action.get('check', '?')} "
+                    f"fragment={fragment}: operation is not an object "
+                    f"({type(op).__name__}) — skipped",
+                    file=sys.stderr,
+                )
+                continue
             handler = _OP_HANDLERS.get(op.get("op", ""))
             if handler is None:
                 report["skipped"].append({"index": idx, "reason": f"unknown op {op.get('op')!r}"})

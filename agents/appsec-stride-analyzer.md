@@ -198,6 +198,17 @@ Do not limit yourself to `INTERFACES` — vulnerabilities often live in supporti
 Print each file: `[stride | <COMPONENT_NAME>]   ↳ Reading <filepath>…`
 **Print when done:** `[stride | <COMPONENT_NAME>]   ↳ Read <n> relevant source files`
 
+## Write-first guarantee (mandatory) — never lose the component
+
+**Before you begin STRIDE enumeration (Step 3), `Write` an initial valid `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`** containing the required top-level fields (`component_id`, `started_at`, `threats`) plus:
+- `"partial": true`
+- `"skipped_categories": ["Spoofing","Tampering","Repudiation","Information Disclosure","Denial of Service","Elevation of Privilege"]`
+- `"threats": [ … ]` — any threats already obvious from the Step-2 source reads, or `[]` if none yet.
+
+Then, **as each STRIDE category completes in Step 3, OVERWRITE the same file** with the accumulated threats and remove that category from `skipped_categories`. On the final Step-4 write, set `"partial": false` and `"skipped_categories": []`.
+
+This guarantees a valid `.stride-<COMPONENT_ID>.json` exists from the start of the budget-heavy enumeration, so a turn-budget cut-off mid-analysis degrades to a **partial-but-valid** file instead of a **missing** one. The historic failure mode: a budget-cut analyzer wrote `.progress/<id>.json` but never `.stride-<id>.json` (it intended to write "after this category" and ran out of turns first), so the skill saw a missing file and had to re-dispatch the whole component — burning more budget than the partial file would have cost (juice-shop 2026-06: file-upload-service lost its entire output this way). This mirrors the **write-first** contract the `appsec-abuse-case-verifier` already follows. The reactive `## Budget-critical wrap-up` below is the secondary guard; this proactive early write is the primary one — do **not** rely on the budget-critical flag firing in time.
+
 ## Step 3 — Enumerate threats (STRIDE)
 
 **Print:** `[stride | <COMPONENT_NAME>] ▶ Step 3/4 — Enumerating STRIDE threats…`

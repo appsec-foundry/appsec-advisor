@@ -573,16 +573,21 @@ Do NOT touch `threat-model.md` or `threat-model.yaml` in this check.
          "check": "toc_closure",
          "type": "linkify_file_path",
          "fragment": ".fragments/<name>.md",
-         "operation": "replace_string",
-         "search_text": "...",
-         "replace_text": "...",
+         "operation": { "op": "replace_string", "find": "...", "replace": "..." },
          "rationale": "..."
        }
      ]
    }
    ```
 
-   Each action specifies `check`, `type` (`linkify_file_path | linkify_evidence_line | remove_placeholder | inject_anchor | fix_anchor_slug | add_section | add_table_column | fix_xref | heading_rename_cascade | other`), `fragment` (must start with `.fragments/`), `operation` (`replace_string` preferred, also `append_after`, `insert_before`, `regex_replace`, `heading_rename_cascade`), `rationale`, optional `evidence`.
+   Each action specifies `check`, `type` (`linkify_file_path | linkify_evidence_line | remove_placeholder | inject_anchor | fix_anchor_slug | add_section | add_table_column | fix_xref | heading_rename_cascade | other`), `fragment` (must start with `.fragments/`), `rationale`, optional `evidence`, and `operation` — **a nested JSON object** (NOT a string) whose `op` is one of `replace_string | append_after | insert_before | regex_replace | heading_rename_cascade`, each carrying its own keys:
+     - `replace_string` → `{ "op": "replace_string", "find": <verbatim, must match exactly once>, "replace": <text> }`
+     - `append_after` → `{ "op": "append_after", "anchor": <verbatim>, "content": <text inserted, newline-prefixed, after the anchor> }`
+     - `insert_before` → `{ "op": "insert_before", "anchor": <verbatim>, "content": <text inserted before the anchor> }`
+     - `regex_replace` → `{ "op": "regex_replace", "pattern": <python re>, "replacement": <repl>, "max_substitutions": <int, optional, 0=unlimited> }`
+     - `heading_rename_cascade` → `{ "op": "heading_rename_cascade", "old_name": <H4 text>, "new_name": <canonical text> }`
+
+   **Do NOT** emit the flat form `"operation": "replace_string"` with sibling `search_text` / `replace_text` keys — `apply_content_repair.py` requires the nested object above and rejects (exit 3) any plan whose `operation` is a string. `replace_string` is preferred for most fixes (`append_after` for inserting a missing line like a `**Key takeaway:**`).
 
    **`heading_rename_cascade`** is mandatory for §7 H4 renames (the `subcontrol_naming_canonical` defect). Plain `replace_string` only renames the H4; cascade additionally rewrites the `<a id="<kebab>"></a>` anchor, the `**Controls covered:**` `[Name](#anchor)` link, and the §7.1 overview-table `(e.g. <Name>)` row in one shot.
 

@@ -635,7 +635,7 @@ The pipeline is trying to use subscription auth. Set `ANTHROPIC_API_KEY` as a CI
 Incremental needs `threat-model.yaml` from a prior run as baseline. In CI, the workspace is clean every run — restore the prior `docs/security/` via CI cache or `--restore-from`. See [B7](#b7-ci-cache). Also check that you are not passing `--no-yaml` earlier in the pipeline — that breaks the baseline.
 
 **`.appsec-lock` exists and blocks the run.**
-A previous run crashed. Locks older than 1 h are auto-overwritten. For faster recovery in a stuck pipeline, delete `$OUTPUT_DIR/.appsec-lock` before invoking the script — or pre-run `scripts/run-headless.sh --clean-cache`, which also removes the lock.
+A previous run may still be active, or it crashed after writing a fresh heartbeat. `run-headless.sh --resume` now checks `$OUTPUT_DIR` before starting `claude -p` and refuses with the inspected path when an active lock is present. First verify you are using the same `--output` as the interrupted run; `--repo /path/to/repo` defaults to `/path/to/repo/docs/security`, which is not the same as `--output /path/to/repo`. If no assessment is running, inspect or clean the state with `python3 scripts/check_state.py "$OUTPUT_DIR" --clean`.
 
 **Script exits with code 2 "budget exhausted" in the middle of a run.**
 Expected behaviour at the cap. Re-run with `--resume` on the same `$OUTPUT_DIR` — or raise `--max-budget` if the cap was too tight. Dry-run first (`--dry-run`) to size the budget before expensive runs.

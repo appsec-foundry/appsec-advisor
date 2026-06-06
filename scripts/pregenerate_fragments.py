@@ -252,6 +252,110 @@ def gen_system_overview(yaml_data: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _arch_diagram_takeaways(
+    name: str,
+    components: list[dict],
+    by_tier: dict[str, list[dict]],
+    crit_counts: dict[str, int],
+    high_counts: dict[str, int],
+) -> dict[str, str]:
+    """Deterministic, yaml-derived `**Key takeaway:**` sentences for each §2
+    diagram (2.1–2.4).
+
+    QA reviewer Check 8.0 requires every §2 Mermaid block to be followed by a
+    `**Key takeaway:**` line. Historically the generator emitted none, so the
+    check fired on every run and inserted a `_(QA: missing …)_` placeholder —
+    which then either shipped verbatim (when the content-repair applier was
+    broken) or required an LLM pass. Emitting a grounded baseline sentence here
+    makes the check pass by construction; LLM enrichment may still overwrite
+    these with richer prose.
+
+    Sentences are grounded only in counts/threat tallies (no speculative
+    control-absence claims, per the threat-model prose rules).
+    """
+
+    def _tc(c: dict) -> int:
+        return len(c.get("threat_ids") or [])
+
+    n_client = len(by_tier.get("client") or [])
+    n_app = len(by_tier.get("application") or [])
+    n_data = len(by_tier.get("data") or [])
+    total_threats = sum(_tc(c) for c in components if isinstance(c, dict))
+
+    top = max(
+        (c for c in components if isinstance(c, dict)),
+        key=_tc,
+        default=None,
+    )
+    top_name = (top.get("name") or top.get("id")) if top else name
+    top_n = _tc(top) if top else 0
+
+    total_crit = sum(crit_counts.values()) if crit_counts else 0
+    top_crit_id = max(crit_counts, key=crit_counts.get) if crit_counts else None
+    top_crit_name = None
+    if top_crit_id:
+        top_crit_name = next(
+            (
+                (c.get("name") or c.get("id"))
+                for c in components
+                if isinstance(c, dict) and c.get("id") == top_crit_id
+            ),
+            top_crit_id,
+        )
+    top_crit_n = crit_counts.get(top_crit_id, 0) if top_crit_id else 0
+
+    # --- 2.1 System Context ---
+    t21 = (
+        f"Every actor in the context interacts with {name} through its external "
+        "interface, so authentication and input validation at that edge govern "
+        "the entire attack surface."
+    )
+
+    # --- 2.2 Container Architecture ---
+    decomposition = (
+        f"{n_client} client, {n_app} application and {n_data} data unit(s)"
+    )
+    if total_crit and top_crit_name:
+        t22 = (
+            f"The system decomposes into {decomposition}; {top_crit_name} carries "
+            f"the most Critical findings ({top_crit_n}) and bounds the worst-case "
+            "blast radius."
+        )
+    else:
+        t22 = (
+            f"The system decomposes into {decomposition} connected by synchronous "
+            "request paths."
+        )
+
+    # --- 2.3 Components ---
+    if top and top_n:
+        t23 = (
+            f"{top_name} concentrates the most findings ({top_n} of {total_threats} "
+            "across all components); the table below maps each component to its "
+            "source paths and linked threats."
+        )
+    else:
+        t23 = (
+            "The table below maps each component to its source paths and linked "
+            "threats."
+        )
+
+    # --- 2.4 Technology Architecture ---
+    if n_data:
+        t24 = (
+            f"The stack spans {n_data} data-tier store(s) behind the application "
+            "tier; injection and data-at-rest exposure track the data tier, "
+            "detailed per finding in [§8 Findings Register](#8-findings-register)."
+        )
+    else:
+        t24 = (
+            "The technology stack is consolidated in the application tier; "
+            "per-finding detail is in [§8 Findings Register](#8-findings-register)."
+        )
+
+    return {"2.1": t21, "2.2": t22, "2.3": t23, "2.4": t24}
+
+
 def gen_architecture_diagrams(yaml_data: dict) -> str:
     """## 2. Architecture Diagrams — 4 required sub-sections with at least
     one ```mermaid block each.
@@ -267,6 +371,11 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     components = yaml_data.get("components") or []
     boundaries = yaml_data.get("trust_boundaries") or []
     by_tier = _components_by_tier(components)
+    # Pre-compute per-component Critical/High tallies once so both the §2.2
+    # classDef highlighting and the per-diagram Key takeaway sentences share
+    # the same source of truth.
+    crit_counts, high_counts = _threat_counts_per_component(yaml_data)
+    takeaways = _arch_diagram_takeaways(name, components, by_tier, crit_counts, high_counts)
 
     lines = ["## 2. Architecture Diagrams", ""]
 
@@ -280,6 +389,8 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     )
     lines.append("")
     lines.extend(_system_context_mermaid(yaml_data, name))
+    lines.append("")
+    lines.append(f"**Key takeaway:** {takeaways['2.1']}")
     lines.append("")
 
     # ----- 2.2 Container Architecture ----------------------------------------
@@ -301,9 +412,8 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
             return f"{nm}<br/>{engine}"
         return nm
 
-    # M3.3 / D1.5 (L) — pre-compute Critical / High threat counts per
-    # component so the mermaid block can apply classDef highlighting.
-    crit_counts, high_counts = _threat_counts_per_component(yaml_data)
+    # crit_counts / high_counts pre-computed at the top of the function so the
+    # classDef highlighting below and the §2 Key takeaways share one tally.
 
     lines.append("```mermaid")
     lines.append("flowchart TB")
@@ -393,6 +503,8 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
 
     lines.append("```")
     lines.append("")
+    lines.append(f"**Key takeaway:** {takeaways['2.2']}")
+    lines.append("")
 
     # ----- 2.3 Components ----------------------------------------------------
     # Compact 4-tier layout (post-2026-05) per
@@ -416,6 +528,8 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     )
     lines.append("")
     lines.extend(_components_diagram_compact(yaml_data, by_tier))
+    lines.append("")
+    lines.append(f"**Key takeaway:** {takeaways['2.3']}")
     lines.append("")
 
     lines.append("| Component ID | Name | Tier | Source paths | Threats |")
@@ -447,6 +561,8 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     )
     lines.append("")
     lines.extend(_technology_architecture_mermaid(yaml_data, components, boundaries))
+    lines.append("")
+    lines.append(f"**Key takeaway:** {takeaways['2.4']}")
     lines.append("")
 
     # M3.3 / D1.5 (J) — Legend footnote at the end of §2 covering all
@@ -2230,6 +2346,28 @@ def gen_assets(yaml_data: dict) -> str:
 _HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "WS", "ALL"}
 
 
+def _wrappable_route(route: str) -> str:
+    """Insert zero-width break opportunities (U+200B) after URL separators so a
+    long route wraps at sensible points inside its monospace table cell instead
+    of forcing the Route column unreadably wide (user report 2026-06:
+    `/this/page/is/hidden/behind/an/incredibly/high/paywall/…` blew the table
+    out and crushed the more-important Findings column).
+
+    ZWSP is invisible and a valid soft-wrap point in `white-space: normal` /
+    `pre-wrap` — i.e. markdown previews, GFM, and the PDF/HTML export (whose
+    print.css sets `td code{overflow-wrap:anywhere}`). Short routes are left
+    untouched. The visible characters are unchanged; only break hints are added.
+    """
+    if len(route) <= 28:
+        return route
+    out: list[str] = []
+    for ch in route:
+        out.append(ch)
+        if ch in "/.-_=&?:":
+            out.append("\u200b")  # ZWSP soft-wrap point
+    return "".join(out)
+
+
 def _attack_surface_route(entry: dict) -> str:
     """Return the route string. Schema v1 uses ``endpoint`` or ``path``;
     older orchestrator outputs used ``route`` or ``entry_point`` (the latter
@@ -2664,7 +2802,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
                 route = _attack_surface_route(entry)
                 risk_lbl = _entry_risk(entry)
                 notes = _attack_surface_notes(entry)
-                lines.append(f"| {method} | `{route}` | {risk_lbl} | {notes} |")
+                lines.append(f"| {method} | `{_wrappable_route(route)}` | {risk_lbl} | {notes} |")
 
         omitted = len(bucket_entries) - len(shown)
         if omitted > 0:

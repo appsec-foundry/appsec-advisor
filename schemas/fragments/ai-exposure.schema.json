@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/fragments/ai-exposure.schema.json",
+  "title": "Management Summary — AI / LLM Exposure fragment",
+  "description": "Structured data for the optional '### AI / LLM Exposure' callout in the Management Summary. Names the architectural AI/LLM risks the report already articulates (OWASP LLM Top-10 lens), so the fact that the system embeds an LLM/agent — and its headline risks — is visible at executive level instead of scattered across §7 control prose. Authored by the threat-renderer ONLY when the system has an LLM/AI surface (the OWASP LLM Top-10 lens fired, i.e. KNOWN_LLM_PATTERNS != none); omit the file entirely otherwise (the section then renders nothing — zero cost for non-LLM repos).",
+  "type": "object",
+  "required": ["ai_risks"],
+  "additionalProperties": false,
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 300,
+      "description": "Optional 1-sentence executive framing of the AI surface — what the LLM/agent does and where its trust boundary sits (e.g. 'A chat assistant relays user input to an external model API and renders the completion back to the browser')."
+    },
+    "ai_risks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "description": "Architectural AI/LLM risks, most severe first. Each is a real risk evidenced in the report, mapped to an OWASP LLM Top-10 category — NOT speculation.",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "findings"],
+        "additionalProperties": false,
+        "properties": {
+          "owasp_llm_id": {
+            "type": "string",
+            "enum": ["LLM01", "LLM02", "LLM03", "LLM04", "LLM05", "LLM06", "LLM07", "LLM08", "LLM09", "LLM10"],
+            "description": "Optional OWASP Top-10 for LLM Applications (2025) category id. Rendered as a leading badge."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 60,
+            "description": "Canonical risk name — e.g. 'Prompt Injection', 'Excessive Agency', 'Improper Output Handling', 'Model Supply Chain', 'System Prompt Leakage', 'Unbounded Consumption'. A named AI risk, not a finding restatement."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["green", "yellow", "red"],
+            "description": "Optional traffic-light cue driving the leading emoji. Defaults to red. Use yellow for a partially-mitigated risk."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 400,
+            "description": "1-2 sentence design-review prose: what untrusted input reaches which AI sink and why it is a structural risk. References components/files GENERICALLY (the line-by-line detail lives in the linked findings and §7)."
+          },
+          "affected_components": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 8,
+            "description": "Component-ids (or {id, name} dicts) carrying the risk. The renderer enriches bare ids to '[C-NN](#c-nn) — Name'.",
+            "items": {
+              "oneOf": [
+                { "type": "string", "pattern": "^C-\\d{2,}$" },
+                {
+                  "type": "object",
+                  "required": ["id"],
+                  "properties": {
+                    "id":   { "type": "string", "pattern": "^C-\\d{2,}$" },
+                    "name": { "type": "string", "minLength": 1, "maxLength": 80 }
+                  }
+                }
+              ]
+            }
+          },
+          "findings": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "description": "1-4 representative findings the risk manifests in. Each {ref, label}; renderer emits '[ref](#anchor) — label'.",
+            "items": {
+              "type": "object",
+              "required": ["ref", "label"],
+              "additionalProperties": false,
+              "properties": {
+                "ref":   { "type": "string", "pattern": "^[FTM]-\\d{3,4}$" },
+                "label": { "type": "string", "minLength": 5, "maxLength": 80 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

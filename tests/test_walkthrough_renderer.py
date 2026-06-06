@@ -134,7 +134,7 @@ class TestSequenceDiagramAltElseBlock:
         out = renderer.render_sequence_diagram(
             threat, flat, "M-005", "Use parameterized queries — routes/search.ts"
         )
-        assert "alt Current state — T-001" in out
+        assert "alt Current state — F-001" in out  # T-NNN normalised to visible F-NNN
         assert "else After M-005 — Use parameterized queries" in out
         assert "    end" in out
         # Reuses the diagram's declared participants so it stays mermaid-valid.
@@ -147,7 +147,7 @@ class TestSequenceDiagramAltElseBlock:
         out = renderer.render_sequence_diagram(
             threat, {}, "M-001", "Rotate key out of source — lib/insecurity.ts"
         )
-        assert "alt Current state — T-001" in out
+        assert "alt Current state — F-001" in out  # T-NNN normalised to visible F-NNN
         assert "else After M-001 — Rotate key out of source" in out
         # No duplicate alt block introduced.
         assert out.count("alt Current state") == 1
@@ -172,7 +172,7 @@ class TestSequenceDiagramAltElseBlock:
         }
         md = renderer.render_attack_walkthroughs_md(yaml_data)
         assert "**Key takeaway:**" in md
-        assert "alt Current state — T-001" in md
+        assert "alt Current state — F-001" in md  # T-NNN normalised to visible F-NNN
         assert "else After M-005 — Use parameterized queries" in md
 
 
@@ -188,3 +188,41 @@ class TestAttackStepsFallbackWhenNoScenario:
             assert "{file}" not in s
             assert "{line}" not in s
         assert "server.ts:187" in " ".join(steps)
+
+
+class TestSentenceSplittingRobustness:
+    """Attack-step splitting must not tear abbreviations or code/SQL payloads
+    across steps (user report 2026-06, §3.8)."""
+
+    def test_eg_abbreviation_does_not_split(self):
+        s = "A UNION SELECT payload (e.g. q=') can dump the schema."
+        assert renderer._split_sentences(s) == [
+            "A UNION SELECT payload (e.g. q=') can dump the schema"
+        ]
+
+    def test_real_boundary_still_splits(self):
+        s = "First sentence here. Second sentence here."
+        assert renderer._split_sentences(s) == [
+            "First sentence here",
+            "Second sentence here",
+        ]
+
+    def test_code_span_internal_punctuation_does_not_split(self):
+        s = "Call `a.b.c()` then. Next step starts."
+        out = renderer._split_sentences(s)
+        assert out == ["Call `a.b.c()` then", "Next step starts"]
+
+
+class TestStepSqlFormattingGate:
+    """SQL auto-backticking must wrap real SQL and leave prose alone."""
+
+    def test_prose_opening_with_sql_verb_not_wrapped(self):
+        out = renderer._format_step_code("A UNION SELECT payload (e.g. foo) can dump")
+        assert "`UNION SELECT payload" not in out
+        assert "`(e.g" not in out
+
+    def test_real_sql_is_wrapped_and_prose_excluded(self):
+        out = renderer._format_step_code("A second payload adding a SELECT from Users extracts all emails")
+        assert "`SELECT from Users`" in out
+        assert "extracts all emails" in out
+        assert "`SELECT from Users extracts" not in out

@@ -1523,6 +1523,7 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
     "management_summary": [],  # container only
     "verdict": [".fragments/ms-verdict.json"],
     "architectural_anti_patterns": [".fragments/ms-anti-patterns.json"],
+    "ai_exposure_ms": [".fragments/ms-ai-exposure.json"],  # optional — only when LLM/AI surface
     "top_findings": [],  # computed
     "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
     "mitigations": [],  # computed

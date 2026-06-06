@@ -131,6 +131,7 @@ class FragmentError(Exception):
 _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "verdict": [".fragments/ms-verdict.json"],
     "architectural_anti_patterns": [".fragments/ms-anti-patterns.json"],
+    "ai_exposure_ms": [".fragments/ms-ai-exposure.json"],
     "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
     "operational_strengths": [".fragments/operational-strengths-overrides.json"],
     "system_overview": [".fragments/system-overview.md"],
@@ -690,7 +691,11 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             rendered.append(line)
         return "<br/>".join(rendered)
 
-    def format_weakness_findings(items: list[dict[str, Any]]) -> str:
+    def format_weakness_findings(items: list[dict[str, Any]], sep: str = "<br/>") -> str:
+        # `sep` defaults to <br/> for the Architecture-Assessment table cells
+        # (vertical stacking inside one cell); pass ", " for inline prose
+        # contexts (e.g. the Anti-Patterns sub-bullets) so links flow on one
+        # line instead of forcing a literal <br/> mid-sentence.
         if not items:
             return "—"
         rendered = []
@@ -705,19 +710,20 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             if label:
                 line += f" — {label}"
             rendered.append(line)
-        return "<br/>".join(rendered)
+        return sep.join(rendered)
 
     # Back-compat alias: callers in older templates still use the legacy
     # `format_defect_findings` name. New code uses `format_weakness_findings`.
     format_defect_findings = format_weakness_findings
 
-    def format_weakness_components(items: list[dict[str, Any]] | list[str]) -> str:
+    def format_weakness_components(items: list[dict[str, Any]] | list[str], sep: str = "<br/>") -> str:
         """Render `affected_components[]` for Architecture Assessment.
 
         Accepts either a list of `{id, name}` dicts (preferred) or bare
         component-id strings (legacy). Component-id resolution against the
         components dict happens inside ``_render_architecture_assessment``
-        before the template is invoked.
+        before the template is invoked. `sep` defaults to <br/> for table
+        cells; pass ", " for inline prose contexts (Anti-Patterns sub-bullets).
         """
         if not items:
             return "—"
@@ -735,7 +741,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
                 parts.append(f"[{cid}](#{cid.lower()})")
             elif name:
                 parts.append(name)
-        return "<br/>".join(parts) if parts else "—"
+        return sep.join(parts) if parts else "—"
 
     def format_component_list(items: list[dict[str, Any]] | str) -> str:
         if isinstance(items, str):
@@ -5472,6 +5478,45 @@ def _render_top_threats_architecture(
             lines.append(f'    {src} -.->|"{_dotted_label(glyphs)}"| {dst}')
             prop_idx.append(edge_idx)
             edge_idx += 1
+
+    # ---- Layout balancing: center the narrow tiers under the wide app row ----
+    # ELK is a LAYERED layout that places each node at the barycenter (mean x)
+    # of its neighbours. The client tier (typically one SPA box) and the data
+    # tier (typically one DB box) each connect to only ONE application component
+    # — the app representative — so ELK inherits that rep's horizontal position
+    # and the narrow tier drifts to whichever side the rep landed on. With a
+    # wide app row the data tier rendered hard RIGHT (under the right-leaning
+    # SPA→API→DB spine) instead of as a centered BOTTOM band, and the client
+    # tier drifted top-right (2026-06-06 user request: "den data layer generell
+    # unten rendern statt rechts"). To pin them centrally we add INVISIBLE
+    # (`~~~`) forward edges from each narrow tier's rep to every OTHER drawn app
+    # component, so its barycenter becomes the mean x of the whole app row → the
+    # tier renders centered. The edges are FORWARD (client→app, app→data) so the
+    # tier ranking is unchanged, carry no glyph, and get no linkStyle entry — so
+    # Mermaid renders them as no line at all and the linkStyle index math above
+    # is untouched. Skipped when the app row has <2 drawn components (a single
+    # app box is already aligned with the narrow tiers, nothing to balance).
+    _app_drawn = [cid for cid in app_comps if cid in _drawn]
+    if len(_app_drawn) >= 2:
+        _balance: list[str] = []
+        # Data tier (bottom): rep_app already carries the real reads/writes edge
+        # into the data rep, so balance from every OTHER drawn app component.
+        if rep_data and rep_data in _drawn:
+            for cid in _app_drawn:
+                if cid != rep_app:
+                    _balance.append(f"    {comp_node[cid]} ~~~ {comp_node[rep_data]}")
+        # Client tier (top): client_rep already carries the real API-calls edge
+        # to rep_app, so balance it against every OTHER drawn app component.
+        if rep_client and rep_client in _drawn:
+            for cid in _app_drawn:
+                if cid != rep_app:
+                    _balance.append(f"    {comp_node[rep_client]} ~~~ {comp_node[cid]}")
+        if _balance:
+            lines.append(
+                "    %% invisible barycenter-balancing edges — center the client/data tiers "
+                "under the app row (no glyph, no linkStyle → rendered as no line)"
+            )
+            lines.extend(_balance)
     lines.append("")
     for tier, sg, stroke in (
         ("client", "CLIENT", "#475569"),
@@ -5507,12 +5552,9 @@ def _render_top_threats_architecture(
     lines.append("```")
 
     intro = (
-        "Components grouped by trust boundary (architecture tier). Grey edges are the "
-        "legitimate request backbone. **Solid red** edges are attacker-controlled attacks — "
-        "each originates at a threat actor and lands on the component it directly reaches. "
-        "**Dotted red** edges are the consequence path: how that attack propagates through "
-        "the application tier onto the data tier or the victim. Each red edge carries the "
-        "threat glyph(s) — the same numbering as Figure 2 and the Top Threats table below."
+        "Components grouped by architecture tier. **Grey** edges are the legitimate request "
+        "backbone; **solid red** are attacks (each from a threat actor); **dotted red** are the "
+        "consequence path onto the data tier or victim. Glyphs match Figure 2 and the Top Threats table."
     )
 
     # Compact one-line glyph legend UNDER the diagram. Edges now carry glyphs
@@ -7389,6 +7431,30 @@ def _render_architectural_anti_patterns(ctx: RenderContext, env: jinja2.Environm
     return tpl.render(data=data)
 
 
+def _render_ai_exposure(ctx: RenderContext, env: jinja2.Environment) -> str:
+    """Render the optional '### AI / LLM Exposure' MS callout.
+
+    Surfaces the architectural AI/LLM risks the report already articulates via the
+    OWASP LLM Top-10 lens (prompt injection, excessive agency, model supply chain,
+    …) at executive level, so the fact that the system embeds an LLM/agent — and
+    its headline risks — is visible in the Management Summary instead of scattered
+    across §7 control prose. LLM-authored fragment `ms-ai-exposure.json` —
+    OPTIONAL: the threat-renderer writes it only when the system has an LLM/AI
+    surface (KNOWN_LLM_PATTERNS != none), so an absent file renders nothing and a
+    repo with no AI usage pays zero cost (no schema load, no template). Reuses the
+    shared `format_weakness_*` filters so finding/component linkification matches
+    the rest of the Management Summary.
+    """
+    if not (ctx.fragments_dir / "ms-ai-exposure.json").is_file():
+        return ""
+    data = _load_fragment(ctx, "ai_exposure_ms", "ms-ai-exposure.json")
+    _validate_fragment("ai_exposure_ms", data, "ai-exposure.schema.json")
+    if not (data.get("ai_risks") or []):
+        return ""
+    tpl = env.get_template("ai-exposure.md.j2")
+    return tpl.render(data=data)
+
+
 def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
     """Derive the ### Requirements Compliance MS subsection.
 
@@ -7581,9 +7647,15 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
                 (t.get("risk") or t.get("severity") or "").strip().lower(), ""
             )
             f_prefix = f"{f_emoji}&nbsp;" if f_emoji else ""
+            # No leading `•` bullet — each finding sits on its own line (joined
+            # by <br/> below); a bullet inside a table cell reads as clutter
+            # (user request 2026-06). Keep the id+dot and the `→ component`
+            # link non-breaking so an F-NNN / C-NN id never wraps mid-token;
+            # the title between them still wraps on normal spaces.
             finding_cells.append(
-                f"•&nbsp;{f_prefix}[{visible}](#{visible.lower()}) — {short} →&nbsp;"
-                f"[{c_anchor}](#{c_anchor.lower()})"
+                f'<span style="white-space:nowrap">{f_prefix}[{visible}](#{visible.lower()})</span>'
+                f" — {short} "
+                f'<span style="white-space:nowrap">→&nbsp;[{c_anchor}](#{c_anchor.lower()})</span>'
             )
 
         # Risk = max severity across member findings.
@@ -7617,8 +7689,12 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
         # monochrome priority circle + P-tag (`● P1 · [M-NNN]`), the same prefix
         # `linkify_with_label` emits everywhere else, instead of a trailing
         # `(P1/P2)` token. Keeps every linked measure annotated consistently.
+        # Wrap each fix link in a nowrap span so the priority circle + M-NNN id
+        # never line-breaks (the narrow Fix column was stacking `❶ / M- / 007`
+        # — IDs must never wrap; user request 2026-06).
         fix_links = "<br/>".join(
-            f"{_measure_prio_prefix(ctx, mid)}[{mid}](#{mid.lower()})" for mid in shown
+            f'<span style="white-space:nowrap">{_measure_prio_prefix(ctx, mid)}[{mid}](#{mid.lower()})</span>'
+            for mid in shown
         )
         fix_cell = fix_links or "—"
 
@@ -7720,6 +7796,10 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # ms-anti-patterns.json). Placed before the heatmap so the reader sees
         # the structural design defects before the per-flow posture.
         "architectural_anti_patterns",
+        # ai_exposure_ms — optional AI/LLM-exposure callout, right after the
+        # anti-patterns block (renders nothing when the LLM authored no
+        # ms-ai-exposure.json, i.e. the system has no LLM/AI surface).
+        "ai_exposure_ms",
         # security_posture_at_a_glance now renders the merged
         # "### Security Posture & Top Threats" section (Figure 1 + Figure 2
         # heatmap + the Top Threats table); the standalone top_threats child
@@ -7739,6 +7819,11 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             ap_ms = _render_architectural_anti_patterns(ctx, env)
             if ap_ms.strip():
                 parts.append(ap_ms.rstrip())
+            continue
+        if sid == "ai_exposure_ms":
+            ai_ms = _render_ai_exposure(ctx, env)
+            if ai_ms.strip():
+                parts.append(ai_ms.rstrip())
             continue
         sec = sections.get(sid)
         if sec is None:
@@ -7781,17 +7866,35 @@ _ATTACK_TREE_CLASSDEFS = (
 )
 
 
+def _normalize_tid_to_fid(ref: str) -> str:
+    """Merged-stage ``T-NNN`` id → the document-wide visible ``F-NNN`` id.
+
+    Everywhere the reader can see — §8 Findings Register, the findings-pointer
+    line under the tree, every linkified reference — uses ``F-NNN``; ``T-NNN``
+    is the internal merge-stage id and has no visible anchor. The global
+    post-compose annotator rewrites ``[T-NNN](#t-nnn)`` markdown LINKS to
+    ``F-NNN``, but it cannot reach plain-text labels INSIDE a ```mermaid fence,
+    so the attack-tree boxes shipped stale ``T-NNN`` ids the reader could not
+    find (user report 2026-06). Normalising at generation time fixes that at
+    the source. Non ``T-NNN`` tokens (already ``F-NNN``, or unrelated) pass
+    through unchanged."""
+    return re.sub(r"^T-(\d+)$", r"F-\1", (ref or "").strip())
+
+
 def _attack_tree_node_label(node: dict[str, Any]) -> str:
     """Display label for a tree node. Leaf nodes show their finding id PLUS a
-    short title (`T-NNN — <title>`) so the diagram is self-describing instead
+    short title (`F-NNN — <title>`) so the diagram is self-describing instead
     of a wall of bare IDs (2026-05-30 user request); the full title still lives
     in the Branch table below. The title is truncated so leaf boxes stay
-    readable rather than ballooning. Goal/capability nodes keep their label."""
+    readable rather than ballooning. Goal/capability nodes keep their label.
+
+    The leaf id is normalised T-NNN → F-NNN (see `_normalize_tid_to_fid`) so
+    the box matches the F-NNN ids used everywhere else in the document."""
     label = node.get("label", node.get("id", ""))
     if node.get("class") == "leaf":
-        m = re.search(r"T-\d{3,}", label)
+        m = re.search(r"[FT]-\d{3,}", label)
         if m:
-            tid = m.group(0)
+            tid = _normalize_tid_to_fid(m.group(0))
             # Title = the label with the id (and any leading separators) removed.
             title = (label[: m.start()] + label[m.end():]).strip(" -—:·\t")
             if not title:
@@ -7890,7 +7993,7 @@ def _derive_attack_tree_findings(data: dict[str, Any]) -> list[dict[str, str]]:
             continue
         label = n.get("label", "")
         m = re.search(r"[FT]-\d{3,4}", label)
-        fid = (m.group(0) if m else (n.get("finding_ref") or "")).strip()
+        fid = _normalize_tid_to_fid((m.group(0) if m else (n.get("finding_ref") or "")).strip())
         if not fid or fid in seen:
             continue
         seen.add(fid)
@@ -8798,7 +8901,7 @@ def _table_cell_visible_len(cell: str) -> int:
     for seg in re.split(r"<br\s*/?>", cell or ""):
         s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", seg)   # [text](url) → text
         s = re.sub(r"<[^>]+>", "", s)                       # strip html tags
-        s = s.replace("`", "").replace("**", "").replace("*", "").strip()
+        s = s.replace("`", "").replace("**", "").replace("*", "").replace("\u200b", "").strip()
         longest = max(longest, len(s))
     return longest
 
@@ -8807,7 +8910,7 @@ def _seg_visible_len(seg: str) -> int:
     """Visible length of a single (no-<br/>) cell segment — markdown stripped."""
     s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", seg)
     s = re.sub(r"<[^>]+>", "", s)
-    return len(s.replace("`", "").replace("**", "").replace("*", "").strip())
+    return len(s.replace("`", "").replace("**", "").replace("*", "").replace("\u200b", "").strip())
 
 
 def _wrap_segment_words(seg: str, width: int) -> str:
@@ -9732,6 +9835,73 @@ _FINDING_DOT_REF_RE = re.compile(
     # the T→F rewrite, preserved through it).
     r"(?P<dot>[🔴🟠🟡🟢⚪](?:\s|&nbsp;|•)*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))"
 )
+
+
+def _normalize_visible_threat_ids(md: str) -> str:
+    """Rewrite every VISIBLE uppercase ``T-NNN`` threat id to its ``F-NNN``
+    form across the whole document — link text, alt/else labels inside a
+    ```mermaid fence, and bare prose alike.
+
+    The visible threat id everywhere is ``F-NNN`` (the §8 Findings Register
+    headings, the Critical Attack Tree, every cross-reference); ``T-NNN`` is the
+    internal merge-stage id with no visible heading, so a stray ``T-NNN`` is an
+    id the reader cannot resolve (user report 2026-06: the attack tree and the
+    §3 walkthroughs showed ``T-NNN`` while everything below them used ``F-NNN``).
+    Most refs are already ``F-NNN`` by the time they reach here (per-renderer
+    normalisation + `_normalize_tid_to_fid` / `_to_fid`); this is the global
+    backstop that also catches LLM-authored prose drift (e.g. a §7 paragraph
+    that hand-wrote ``[T-003](#f-003)/T-004``).
+
+    Two passes:
+      1. Link form ``[T-NNN](#t-nnn)`` → ``[F-NNN](#f-nnn)`` — rewrites BOTH
+         the visible text and the anchor together (the §8 register emits a dual
+         ``<a id="t-nnn"></a><a id="f-nnn"></a>`` anchor, so ``#f-nnn``
+         resolves). This is what the changelog / any markdown-link ref uses.
+      2. Any remaining bare or prefixed visible ``T-NNN`` (prose, alt/else
+         labels inside a ```mermaid fence, ``[§8 T-NNN]`` link text) → ``F-NNN``.
+
+    Safe by construction:
+      • Pass 2 matches only UPPERCASE ``T-NNN``; lowercase anchors/slugs
+        (``#t-001``, ``id="t-001"``) are preserved, so the dual-anchor link
+        targets still resolve.
+      • ``AC-T-NNN`` abuse-case ids are excluded (pass-1 text starts ``[AC``,
+        not ``[T``; pass-2 negative lookbehind rejects the ``-T`` after ``AC``).
+      • Mermaid node identifiers like ``L_T003`` carry no hyphen and never
+        match ``T-\\d``. ``TH-NN`` / ``CWE-NNN`` likewise do not match.
+    """
+    if not md:
+        return md
+    # Pass 1 — link form. Matches both [T-NNN](#t-nnn) (text+anchor T) AND
+    # [F-NNN](#t-nnn) (text already F but anchor still the merge-stage #t-nnn,
+    # emitted by the per-component "Linked Threats" cells). Both → [F-NNN](#f-nnn)
+    # so the anchor is the canonical #f-nnn AND the downstream severity-dot pass
+    # (which only matches `(#f-nnn)`) annotates them — without this, the C-03/C-04
+    # component rows shipped finding links with NO criticality dot (user 2026-06).
+    md = re.sub(r"\[[FT]-(\d+)\]\(#t-(\d+)\)", r"[F-\1](#f-\2)", md)
+    md = re.sub(r"(?<![A-Za-z-])T-(\d{3,})\b", r"F-\1", md)
+    return md
+
+
+def _apply_outside_changelog(md: str, fn) -> str:
+    """Apply ``fn`` to the document EXCEPT the ``## Changelog`` section.
+
+    The Changelog is an append-only historical delta log (added/changed/
+    resolved threats per run), not a severity-ranked findings list — so the
+    severity-dot / priority-circle retrofit must not annotate its F-/M-refs
+    (the annotation would be inconsistent: only threats still present in
+    ``threats[]`` resolve a severity, so resolved-threat refs would stay bare
+    while changed ones get a dot). Its ids are still normalised to F-NNN by
+    `_normalize_visible_threat_ids`; only the glyph passes skip it.
+    """
+    if not md:
+        return md
+    m = re.search(r"(?m)^## Changelog\b", md)
+    if not m:
+        return fn(md)
+    start = m.start()
+    nxt = re.search(r"(?m)^## ", md[m.end():])
+    end = (m.end() + nxt.start()) if nxt else len(md)
+    return fn(md[:start]) + md[start:end] + fn(md[end:])
 
 
 def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
@@ -13693,6 +13863,16 @@ def render(
     # section that bypasses _render_markdown_fragment.
     rendered = _escape_html_payloads_in_prose(rendered)
 
+    # Neutralise TLD-shaped brand tokens (Socket.IO, Node.js, …) across the
+    # WHOLE document — not just markdown fragments. `_render_markdown_fragment`
+    # already runs this per-fragment, but COMPUTED sections (the Mitigation
+    # Register / Top Mitigations, component tables, …) bypass it, so a
+    # mitigation title like "Attach JWT to Socket.IO handshake" shipped with
+    # `Socket.IO` auto-linked by GFM (user report 2026-06). Idempotent — an
+    # already-escaped `Socket\.IO` is not re-matched; fenced code/links/comments
+    # are skipped.
+    rendered = _escape_dot_tld_identifiers(rendered)
+
     # Final em-dash normalization — convert " — " (U+2014 surrounded by
     # spaces) to " - " (ASCII hyphen) outside fenced code blocks. Em dashes
     # are the single most visible "this was AI-written" signal in the
@@ -13736,8 +13916,16 @@ def render(
     # carry their final `[F-NNN]` / `[M-NNN]` form. Idempotent: the regex `dot`
     # / `circ` groups tolerate `&nbsp;` / bullet separators, so already-annotated
     # refs in §1/§2/§8/§10 and the computed tables are left untouched.
-    rendered = _prepend_finding_severity_dots(ctx, rendered)
-    rendered = _prepend_mitigation_prio_circles(ctx, rendered)
+    # Global backstop — normalise any stray visible T-NNN → F-NNN BEFORE the
+    # dot retrofit, so the dots key off the final F-NNN link form and no
+    # reader-facing T-NNN survives (link text, mermaid labels, or prose).
+    rendered = _normalize_visible_threat_ids(rendered)
+    rendered = _apply_outside_changelog(
+        rendered,
+        lambda s: _prepend_mitigation_prio_circles(
+            ctx, _prepend_finding_severity_dots(ctx, s)
+        ),
+    )
 
     return rendered, ctx.warnings
 

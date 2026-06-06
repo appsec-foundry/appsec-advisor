@@ -91,6 +91,50 @@ class TestValidatePlan:
         errs = acr._validate_plan(plan)
         assert any("unknown" in e and "frobnicate" in e for e in errs)
 
+    def test_flat_operation_string_rejected(self):
+        """Producer-drift guard: the QA reviewer historically emitted the flat
+        form (`operation: "replace_string"` + sibling search_text/replace_text).
+        The validator must reject it at plan level (not crash in apply_plan)."""
+        plan = {
+            "schema_version": 1,
+            "actions": [
+                {
+                    "check": "diagram_key_takeaway",
+                    "type": "other",
+                    "fragment": ".fragments/architecture-diagrams.md",
+                    "operation": "append_after",
+                    "search_text": "```",
+                    "replace_text": "**Key takeaway:** ...",
+                }
+            ],
+        }
+        errs = acr._validate_plan(plan)
+        assert any("must be a JSON object" in e and "flat form" in e for e in errs)
+
+    def test_apply_plan_does_not_crash_on_flat_operation(self, tmp_path):
+        """Belt-and-suspenders: even if the validator is bypassed, apply_plan
+        must skip a non-dict operation gracefully rather than raise
+        AttributeError ('str' object has no attribute 'get')."""
+        out = _setup_output_dir(tmp_path)
+        _write_fragment(out, "architecture-diagrams.md", "```\nx\n```\n")
+        plan = {
+            "schema_version": 1,
+            "actions": [
+                {
+                    "check": "diagram_key_takeaway",
+                    "type": "other",
+                    "fragment": ".fragments/architecture-diagrams.md",
+                    "operation": "append_after",
+                    "search_text": "```",
+                    "replace_text": "**Key takeaway:** ...",
+                }
+            ],
+        }
+        report = acr.apply_plan(plan, out)  # must not raise
+        assert report["exit_code"] == 1
+        assert report["applied"] == []
+        assert report["skipped"] and "not an object" in report["skipped"][0]["reason"]
+
 
 # ---------------------------------------------------------------------------
 # _resolve_fragment_path — security boundary

@@ -27,6 +27,7 @@ Usage:
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -60,9 +61,54 @@ def _is_registration_entry(entry_point: str) -> bool:
     return any(p.search(url) for p in _REGISTRATION_PATTERNS)
 
 
-def detect(yaml_data: dict) -> tuple[bool, str]:
+# authz_signal values from route_inventory.py that denote an explicit role
+# gate (decorator / middleware). Their presence on a `/users`-shaped POST is
+# the signal that the route is an *admin* create-user endpoint, not public
+# self-registration — so it must NOT count as open registration. Anything
+# else ("unknown", "none", absent) is treated as no role gate.
+_AUTHZ_GATE_SIGNALS = {"decorator_present", "middleware_present"}
+
+
+def _route_is_open_registration(route: dict) -> bool:
+    """True when a `.route-inventory.json` entry is a public self-registration POST.
+
+    The route inventory only ever emits ``authn_signal ∈ {unknown,
+    middleware_present}`` and cannot distinguish *authentication* middleware
+    from rate-limit / challenge / body-parser middleware. On a registration
+    endpoint ``middleware_present`` is therefore an unreliable "authenticated"
+    signal (juice-shop's ``POST /api/Users`` carries ``registerAdminChallenge``
+    middleware yet is fully open). A registration endpoint that genuinely
+    required prior authentication would be a semantic contradiction — you
+    cannot be logged in before you have an account. So the authn signal is
+    deliberately ignored here; the only suppressors are signals that the route
+    is an *admin* user-create endpoint rather than self-registration:
+
+      * ``management_surface`` truthy — flagged as an admin/management route, or
+      * ``authz_signal`` in {decorator_present, middleware_present} — an
+        explicit role gate guards it.
+    """
+    if str(route.get("method", "")).upper() != "POST":
+        return False
+    if not _is_registration_entry(str(route.get("path", "") or "")):
+        return False
+    if route.get("management_surface"):
+        return False
+    if str(route.get("authz_signal", "") or "") in _AUTHZ_GATE_SIGNALS:
+        return False
+    return True
+
+
+def detect(yaml_data: dict, routes: list | None = None) -> tuple[bool, str]:
     """Returns (open_registration, reason). The reason is a short
     human-readable string for the audit log.
+
+    ``routes`` is the optional ``.route-inventory.json`` ``routes[]`` list. It
+    is consulted only as a fallback when ``attack_surface[]`` carries no
+    registration entry — ``attack_surface[]`` is a curated subset (often
+    capped), so a real registration route can be absent from it while present
+    in the full inventory. This closed the 2026-06-06 juice-shop miss where
+    ``POST /api/Users`` was in the 112-route inventory but not in the 23
+    curated attack-surface rows, so the heatmap actor-collapse never fired.
     """
     meta = yaml_data.get("meta") or {}
     pinned = meta.get("open_user_registration_pinned")
@@ -77,7 +123,15 @@ def detect(yaml_data: dict) -> tuple[bool, str]:
         auth = entry.get("auth_required")
         if _is_registration_entry(ep) and not auth:
             return True, f"unauthenticated registration route: {ep}"
-    return False, "no unauthenticated registration route found in attack_surface[]"
+
+    # Fallback — attack_surface[] had nothing; consult the full route inventory.
+    for route in routes or []:
+        if isinstance(route, dict) and _route_is_open_registration(route):
+            return True, (
+                f"registration route in .route-inventory.json: "
+                f"POST {route.get('path')}"
+            )
+    return False, "no unauthenticated registration route found in attack_surface[] or route inventory"
 
 
 def main(argv: list[str]) -> int:
@@ -96,7 +150,19 @@ def main(argv: list[str]) -> int:
     if not isinstance(data, dict):
         return 1
 
-    open_reg, reason = detect(data)
+    # Load the full route inventory (fallback source when attack_surface[] is
+    # a curated subset that dropped the registration route). Best-effort.
+    routes: list = []
+    inv_path = Path(argv[0]) / ".route-inventory.json"
+    if inv_path.is_file():
+        try:
+            inv = json.loads(inv_path.read_text(encoding="utf-8"))
+            if isinstance(inv, dict) and isinstance(inv.get("routes"), list):
+                routes = inv["routes"]
+        except (ValueError, OSError):
+            routes = []
+
+    open_reg, reason = detect(data, routes)
     meta = data.setdefault("meta", {}) or {}
     if not isinstance(meta, dict):
         meta = {}

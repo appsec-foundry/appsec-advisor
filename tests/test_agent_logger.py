@@ -859,6 +859,37 @@ class TestExtractParam:
         text = "REPO_ROOT=/home/user/project"
         assert _extract_param(text, "REPO_ROOT") == "/home/user/project"
 
+    def test_strips_trailing_backtick_from_inline_code(self):
+        # Regression (2026-06-06 juice-shop): a stride dispatch prompt
+        # embedded `export OUTPUT_DIR=/abs/docs/security` in an inline-code
+        # span. The trailing backtick corrupted OUTPUT_DIR-recovery, so the
+        # hook wrote AGENT_SPAWN to a junk `docs/security`` directory and the
+        # count-based check_stride_dispatch gate went blind.
+        text = "Your FIRST Bash call MUST be `export OUTPUT_DIR=/abs/docs/security`"
+        assert _extract_param(text, "OUTPUT_DIR") == "/abs/docs/security"
+
+    def test_strips_surrounding_double_quotes(self):
+        text = 'OUTPUT_DIR="/abs/docs/security"'
+        assert _extract_param(text, "OUTPUT_DIR") == "/abs/docs/security"
+
+    def test_strips_surrounding_single_quotes(self):
+        text = "OUTPUT_DIR='/abs/docs/security'"
+        assert _extract_param(text, "OUTPUT_DIR") == "/abs/docs/security"
+
+    def test_strips_trailing_comma(self):
+        text = "OUTPUT_DIR=/abs/docs/security, REPO_ROOT=/abs"
+        assert _extract_param(text, "OUTPUT_DIR") == "/abs/docs/security"
+
+    def test_first_occurrence_in_inline_code_is_sanitized(self):
+        # The first OUTPUT_DIR= occurrence is inside inline code; the clean
+        # bullet form comes later. _extract_param keys off the first match,
+        # so the first match must itself sanitize cleanly.
+        text = (
+            "Run `export OUTPUT_DIR=/abs/docs/security` first.\n"
+            "- OUTPUT_DIR=/abs/docs/security\n"
+        )
+        assert _extract_param(text, "OUTPUT_DIR") == "/abs/docs/security"
+
 
 # ===========================================================================
 # Secret masking in TOOL_ERROR and BASH_WARN output

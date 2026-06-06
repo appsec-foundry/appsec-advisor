@@ -123,6 +123,16 @@ def test_resume_guard_allows_missing_checkpoint(tmp_path: Path):
     assert code == 0
 
 
+def test_resume_guard_refuses_active_lock_without_checkpoint(tmp_path: Path):
+    lock = tmp_path / ".appsec-lock"
+    lock.write_text(f"{os.getpid()}\n{int(time.time())}\n")
+
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+
+    assert code == 3
+    assert "active run lock" in msg
+
+
 def test_resume_guard_refuses_stale_started(tmp_path: Path):
     cp = tmp_path / ".appsec-checkpoint"
     cp.write_text("phase=5 status=started\n")
@@ -196,6 +206,23 @@ def _pick_dead_pid() -> int:
             pass
         candidate += 1
     raise RuntimeError("could not find a dead PID for the test")
+
+
+def test_resume_guard_refuses_fresh_heartbeat_even_when_lock_pid_is_dead(tmp_path: Path):
+    """Fresh heartbeat still means "do not start another resume".
+
+    This covers headless retries that accidentally refreshed a stale lock:
+    the PID can be gone, but a fresh heartbeat must produce a clear refusal
+    instead of dispatching a second idle-looking run.
+    """
+    dead_pid = _pick_dead_pid()
+    lock = tmp_path / ".appsec-lock"
+    lock.write_text(f"{dead_pid}\n{int(time.time())}\n")
+
+    code, msg = check_state._resume_guard_result(tmp_path, 900)
+
+    assert code == 3
+    assert "fresh heartbeat" in msg
 
 
 def test_resume_guard_allows_stale_checkpoint_when_lock_proves_dead(tmp_path: Path):

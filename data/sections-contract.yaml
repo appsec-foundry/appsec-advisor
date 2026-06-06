@@ -342,6 +342,7 @@ sections:
       - operational_strengths
     optional_subsections:
       - { id: architectural_anti_patterns, condition: "has_anti_patterns" }
+      - { id: ai_exposure_ms,              condition: "has_llm_surface" }
       - { id: requirements_compliance_ms, condition: "check_requirements" }
       - { id: triage_notes,               condition: "triage_has_warnings" }
     forbidden_subsection_patterns:                  # regexes; match = QA-strip
@@ -406,6 +407,25 @@ sections:
     schema:   "anti-patterns.schema.json"
     template: "anti-patterns.md.j2"
     conditional: "has_anti_patterns"
+
+  # AI / LLM Exposure — optional MS callout surfacing the architectural AI/LLM
+  # risks the report articulates via the OWASP LLM Top-10 lens (prompt injection,
+  # excessive agency, model supply chain, …), so the fact the system embeds an
+  # LLM/agent — and its headline risks — is visible at executive level instead of
+  # scattered across §7 control prose. LLM-authored OPTIONAL fragment: the
+  # threat-renderer writes ms-ai-exposure.json only when the system has an LLM/AI
+  # surface (KNOWN_LLM_PATTERNS != none); absent → the section renders nothing
+  # (gated by `has_llm_surface`), so a repo with no AI usage pays zero cost.
+  # Rendered via the special-case path in `_render_management_summary` (not the
+  # generic loop), so it never demands a fragment that non-LLM runs lack.
+  ai_exposure_ms:
+    heading: "### AI / LLM Exposure"
+    heading_numbered: false
+    fragment_type: data
+    fragment: "ms-ai-exposure.json"
+    schema:   "ai-exposure.schema.json"
+    template: "ai-exposure.md.j2"
+    conditional: "has_llm_surface"
 
   # Security Posture at a Glance — architecture heatmap showing where the
   # Critical findings concentrate and which attack paths connect them.

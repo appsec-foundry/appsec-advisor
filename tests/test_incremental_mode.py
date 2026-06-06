@@ -22,6 +22,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -500,6 +501,70 @@ class TestRunHeadlessScript:
         assert result.returncode == 42, result.stdout + result.stderr
         assert "CLAUDE_STUB_INVOKED" in result.stdout
 
+    def test_run_headless_resume_refuses_active_lock_before_claude(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        outdir = tmp_path / "out"
+        repo.mkdir()
+        outdir.mkdir()
+        (outdir / ".appsec-lock").write_text(f"{os.getpid()}\n{int(time.time())}\n")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        claude = bin_dir / "claude"
+        claude.write_text("#!/bin/sh\nprintf 'CLAUDE_STUB_INVOKED\\n'\nexit 42\n")
+        claude.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+        result = subprocess.run(
+            [
+                str(ROOT / "scripts" / "run-headless.sh"),
+                "--repo",
+                str(repo),
+                "--output",
+                str(outdir),
+                "--resume",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 3, result.stdout + result.stderr
+        assert "Refusing to resume: active run lock" in result.stdout
+        assert "--resume refused before starting Claude Code" in result.stderr
+        assert "CLAUDE_STUB_INVOKED" not in result.stdout
+
+    def test_run_headless_full_resume_conflict_before_claude(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        outdir = tmp_path / "out"
+        repo.mkdir()
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        claude = bin_dir / "claude"
+        claude.write_text("#!/bin/sh\nprintf 'CLAUDE_STUB_INVOKED\\n'\nexit 42\n")
+        claude.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+        result = subprocess.run(
+            [
+                str(ROOT / "scripts" / "run-headless.sh"),
+                "--repo",
+                str(repo),
+                "--output",
+                str(outdir),
+                "--full",
+                "--resume",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "--full and --resume cannot be used together" in result.stderr
+        assert "CLAUDE_STUB_INVOKED" not in result.stdout
+
     def test_fast_path_exit_capture_is_not_or_true_wrapped(self):
         headless = (ROOT / "scripts" / "run-headless.sh").read_text()
         skill = _read(SKILL_IMPL_MD)
@@ -510,6 +575,20 @@ class TestRunHeadlessScript:
         for needle in forbidden:
             assert needle not in headless
             assert needle not in skill
+
+    def test_skill_lock_heartbeat_requires_successful_acquire(self):
+        skill = _read(SKILL_IMPL_MD)
+        start = skill.find("### Skill-layer lock acquisition")
+        assert start != -1
+        block = skill[start : start + 2200]
+
+        assert "LOCK_EXIT=$?" in block
+        assert 'if [ "$LOCK_EXIT" != "0" ]; then' in block
+        assert "exit 3" in block
+        assert "--heartbeat --phase=skill --step=stage1-dispatch" in block
+        assert block.find('if [ "$LOCK_EXIT" != "0" ]; then') < block.find(
+            "--heartbeat --phase=skill --step=stage1-dispatch"
+        )
 
 
 class TestIncrementalDirtySetFiltering:
