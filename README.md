@@ -329,6 +329,8 @@ Assessment depth controls how much of the repository is reviewed and how much va
 
 The plugin supports three assessment depths. Pick the lightest mode that still matches the risk of the change.
 
+Within a run, *which* components receive a full STRIDE pass is derived from criteria rather than a fixed per-depth count: **quick** covers the frontend, the authentication surface, and internet-exposed components; **standard** additionally covers CI/CD & deployment pipelines and data stores holding credentials, PII, or payment data; **thorough** adds internal-only components and deepens per-component analysis. The analyzed count therefore follows the repository's attack surface rather than a hard cap. (The component figures in the benchmarks below predate this criteria-based selection.)
+
 | Mode | Best fit | What changes | Juice Shop benchmark |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Fast feedback, pre-commit checks, early design iterations. | Smaller scope, reduced STRIDE depth, no full QA or architect review. Good for early signal; rerun at standard depth before release decisions. | **Cost** ~ $8.49<br>**Time** ~ 33 min<br>**Findings** 14 threats / 3 components<br>Critical 4, High 8, Medium 2<br>[sample report](examples/threat-modeler/threat-mode-juice-shop-quick.md) |
@@ -555,6 +557,8 @@ Open work items currently shaping the next iterations of the plugin:
 - **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents — design draft in [`sharedstate.md`](sharedstate.md).
 
 - **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input* — its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. Only being weighed, not committed — goal and reservations in [`proposal-external-threat-model-ingestion.md`](docs/proposal-external-threat-model-ingestion.md).
+
+- **Scaling to component-heavy repositories.** Component selection is now criteria-driven (exposure / CI-CD / crown-jewel), so the analyzed set follows the attack surface instead of a fixed per-depth cap — but the upper end is unresolved. For repositories that decompose into many components (microservice estates, or any repo with more than roughly ten internet-exposed, supply-chain, or sensitive-data components), the serial STRIDE merge step and the per-agent turn budget become the bottleneck; they are already stressed at around eight to ten components. To avoid whole-component blind spots, the operational ceiling currently *lifts and logs* rather than silently dropping exposed surface, so cost and run stability for very large component sets are not yet bounded. A structural answer — parallelising or segmenting the STRIDE merge barrier so the analyzed count can scale freely — still needs to be designed.
 
 ## Related projects
 

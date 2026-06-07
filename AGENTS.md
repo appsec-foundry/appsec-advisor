@@ -276,7 +276,7 @@ Default (`standard` + `opus-cheap`): Haiku for context/recon/config, Sonnet for 
 
 ### Assessment depth profiles
 
-`--assessment-depth quick|standard|thorough` (default: `standard`). Drives the component cap, STRIDE turn ceilings per architecture complexity, diagram depth, and QA depth. Resolved by `scripts/resolve_config.py:DEPTH_PARAMS`.
+`--assessment-depth quick|standard|thorough` (default: `standard`). Drives the STRIDE turn ceilings per architecture complexity, diagram depth, and QA depth (resolved by `scripts/resolve_config.py:DEPTH_PARAMS`), and selects which component-selection criteria are active. The STRIDE-analyzed component set is **not** a fixed per-depth count — it is derived from criteria (exposure / ci-cd / crown-jewel) over the full component inventory by `scripts/build_stride_dispatch_manifest.py:select_stride_components()`, so the count follows the attack surface. `max_stride_components` is now a depth-independent operational ceiling (`STRIDE_COMPONENT_CEILING`, a merge/turn-budget safety valve), not the selection number; it sheds only genuinely-internal components and lifts (logging `EXPOSURE_CAP_LIFT`) rather than dropping exposed/ci-cd/crown-jewel surface. The per-run selection rationale is written to `.stride-selection.json`.
 
 | Depth      | Max components | STRIDE turns (simple / moderate / complex) | Diagrams  | QA |
 |------------|----------------|--------------------------------------------|-----------|----|
