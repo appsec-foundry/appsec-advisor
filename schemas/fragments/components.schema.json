@@ -54,6 +54,17 @@
           "framework": {
             "type": ["string", "null"],
             "description": "Primary framework (express, angular, react, sequelize, fastapi, ...). Optional, surfaces in §2.4 layer tables."
+          },
+          "deployment_zones": {
+            "type": "array",
+            "default": [],
+            "description": "Network/trust placement of this component. Values come from the canonical access-zone vocabulary in data/actors/default-library.yaml (e.g. internet, dmz, client-device, mobile-device, internal-network, peer-service, prod-env, prod-write-db, ci-cd-runtime, build-pipeline, deployment-pipeline). Phase-3-authored: the analyst maps the recon component_hints[].deployment_zones (from .recon-signals.json) onto its own finalized component set, resolving the recon↔analyst ID mismatch by judgment. Consumed by the deterministic STRIDE-component selection predicate (manifest builder) to derive exposure — NOT a hard-coded count. Empty/absent = treat as exposure-unknown (fail-safe toward inclusion at standard+).",
+            "items": {"type": "string", "minLength": 1}
+          },
+          "handles_sensitive_data": {
+            "type": "boolean",
+            "default": false,
+            "description": "Crown-jewel flag: true when the component stores or processes credentials, PII, payment data, or secrets. Phase-3-authored from the component's own role (the analyst already knows this while writing the description). Lets the selection predicate keep a high-value datastore in scope even when it is not directly internet-exposed."
           }
         }
       }

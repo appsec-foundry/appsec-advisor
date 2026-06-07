@@ -933,7 +933,7 @@ See `phase-group-finalization.md` for the exact write-gate rules.
 The skill passes depth parameters that control scope and detail. Store these variables on startup:
 
 - `ASSESSMENT_DEPTH` — `quick`, `standard` (default), or `thorough`
-- `MAX_STRIDE_COMPONENTS` — max components for STRIDE analysis (3 / 5 / 8)
+- `MAX_STRIDE_COMPONENTS` — operational ceiling on STRIDE components (safety valve, default 10). NOT the count: which components get analyzed is criteria-selected by `select_stride_components()` from the full inventory you author in Phase 3.
 - `STRIDE_TURNS_SIMPLE` / `STRIDE_TURNS_MODERATE` / `STRIDE_TURNS_COMPLEX` — turn budgets per component complexity (see phase-group-threats.md)
 - `DIAGRAM_DEPTH` — `minimal`, `standard`, or `extended` (see phase-group-architecture.md)
 - `QA_DEPTH` — `core`, `full`, or `extended` (passed through to QA reviewer)
@@ -941,7 +941,7 @@ The skill passes depth parameters that control scope and detail. Store these var
 - `TRIAGE_MODEL` — model ID for the triage-validator dispatch (Phase 10b). Pass as Agent tool `model` parameter.
 - `MERGER_MODEL` — model ID for the threat-merger dispatch (Phase 9, optional — only dispatched when `.merge-candidates.json` contains candidate groups after `merge_threats.py collect`).
 
-If any depth variable is missing from the prompt, use the `standard` defaults: `MAX_STRIDE_COMPONENTS=5`, `STRIDE_TURNS_SIMPLE=15`, `STRIDE_TURNS_MODERATE=22`, `STRIDE_TURNS_COMPLEX=31`, `DIAGRAM_DEPTH=standard`, `QA_DEPTH=full`.
+If any depth variable is missing from the prompt, use the `standard` defaults: `MAX_STRIDE_COMPONENTS=10` (operational ceiling), `STRIDE_TURNS_SIMPLE=15`, `STRIDE_TURNS_MODERATE=22`, `STRIDE_TURNS_COMPLEX=31`, `DIAGRAM_DEPTH=standard`, `QA_DEPTH=full`.
 
 If any reasoning-model variable is missing, default to `sonnet` for all three (`STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL`). The skill is responsible for resolving `--reasoning-model` → the three variables; see `skills/create-threat-model/SKILL.md` Reasoning Model Resolution.
 
@@ -1054,7 +1054,7 @@ When invoked, execute the following startup sequence in this exact order — do 
 ╚══════════════════════════════════════════════════════════════╝
 
   Methodology : STRIDE + C4 Architecture
-  Depth       : <ASSESSMENT_DEPTH> (components: <MAX_STRIDE_COMPONENTS>, diagrams: <DIAGRAM_DEPTH>)
+  Depth       : <ASSESSMENT_DEPTH> (components: criteria-selected, diagrams: <DIAGRAM_DEPTH>)
   Repository  : <REPO_ROOT>
   Output      : <OUTPUT_DIR>/threat-model.md  +  threat-model.yaml<if WRITE_SARIF=true>  +  threat-model.sarif.json</if><if WRITE_YAML=false>  (yaml suppressed by --no-yaml)</if>
   Orchestrator: <own model, e.g. sonnet>  (75 turns)
@@ -1080,7 +1080,7 @@ Phase overview — 11 phases, ~<total>m for depth=<ASSESSMENT_DEPTH>:
   7  Trust Boundaries     trust zones + cross-boundary data flows  (~1m)
   8  Security Controls    13 control domains rated ✅ / ⚠️ / 🔶 / ❌  (~2m)
   8b Requirements         [SEC-*] compliance check vs. requirements YAML  (optional, ~1m)
-  9  STRIDE Enumeration   stride-analyzer × <MAX_STRIDE_COMPONENTS> components (parallel) → threat-merger dedup  (~<depth-specific>)
+  9  STRIDE Enumeration   stride-analyzer × <criteria-selected> components (parallel) → threat-merger dedup  (~<depth-specific>)
   10 Scan Synthesis       incorporate secrets + SCA findings  (~30s)
   10b Triage Validation   triage-validator — breach-distance, compound chains, effective severity  (~30s)
   11 Finalization         compose threat-model.md/.yaml + qa-reviewer + [architect-reviewer if enabled]  (~1m)

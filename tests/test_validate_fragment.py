@@ -202,3 +202,50 @@ def test_pre_render_gate_passes_with_full_required_set(tmp_path: Path):
     _run(["pre-render-gate", str(tmp_path)])
     data = json.loads((tmp_path / ".pre-render-report.json").read_text())
     assert not data["missing_required"]
+
+
+# ---------------------------------------------------------------------------
+# components sidecar — selection-criteria inputs (deployment_zones / crown-jewel)
+# ---------------------------------------------------------------------------
+
+
+def _components(*, with_criteria: bool) -> dict:
+    comp = {
+        "id": "backend-api",
+        "name": "Express REST API Backend",
+        "description": "Node/Express backend serving REST endpoints.",
+        "paths": ["routes/**", "lib/**"],
+        "tier": "application",
+    }
+    if with_criteria:
+        comp["deployment_zones"] = ["internet", "internal-network"]
+        comp["handles_sensitive_data"] = True
+    return {"schema_version": 1, "components": [comp]}
+
+
+def test_components_with_selection_criteria_exits_0(tmp_path: Path):
+    """deployment_zones[] + handles_sensitive_data validate against the schema —
+    the data plumbing that lets STRIDE-component selection be criteria-derived."""
+    frag = tmp_path / ".components.json"
+    frag.write_text(json.dumps(_components(with_criteria=True)))
+    result = _run(["components", str(frag)])
+    assert result.returncode == 0, result.stderr
+
+
+def test_components_without_selection_criteria_still_valid(tmp_path: Path):
+    """Back-compat: the new fields are optional — a sidecar omitting them passes."""
+    frag = tmp_path / ".components.json"
+    frag.write_text(json.dumps(_components(with_criteria=False)))
+    result = _run(["components", str(frag)])
+    assert result.returncode == 0, result.stderr
+
+
+def test_components_bad_crown_jewel_type_exits_1(tmp_path: Path):
+    """handles_sensitive_data is a boolean — a string must be rejected."""
+    payload = _components(with_criteria=True)
+    payload["components"][0]["handles_sensitive_data"] = "yes"
+    frag = tmp_path / ".components.json"
+    frag.write_text(json.dumps(payload))
+    result = _run(["components", str(frag)])
+    assert result.returncode == 1
+    assert "VALIDATE_FAILED" in result.stderr

@@ -149,20 +149,33 @@ class TestResolveAssessmentDepth:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_assessment_depth(ns)
         assert out["assessment_depth"] == "standard"
-        assert out["max_stride_components"] == 5
+        # max_stride_components is now the depth-independent operational ceiling,
+        # NOT a per-depth selection count (selection is criteria-derived).
+        assert out["max_stride_components"] == rc.STRIDE_COMPONENT_CEILING
 
     def test_quick(self):
         ns = rc.build_parser().parse_args(["--assessment-depth", "quick"])
         out = rc.resolve_assessment_depth(ns)
         assert out["assessment_depth"] == "quick"
-        assert out["max_stride_components"] == 3
+        assert out["max_stride_components"] == rc.STRIDE_COMPONENT_CEILING
         assert out["diagram_depth"] == "minimal"
 
     def test_thorough(self):
         ns = rc.build_parser().parse_args(["--assessment-depth", "thorough"])
         out = rc.resolve_assessment_depth(ns)
-        assert out["max_stride_components"] == 8
+        assert out["max_stride_components"] == rc.STRIDE_COMPONENT_CEILING
         assert out["qa_depth"] == "extended"
+
+    def test_ceiling_is_depth_independent(self):
+        """The operational ceiling does not vary by depth — depth changes the
+        criteria predicate (and turn budget), not a component count."""
+        ceilings = {
+            d: rc.resolve_assessment_depth(
+                rc.build_parser().parse_args(["--assessment-depth", d])
+            )["max_stride_components"]
+            for d in ("quick", "standard", "thorough")
+        }
+        assert len(set(ceilings.values())) == 1
 
 
 class TestResolveReasoningModel:
@@ -230,10 +243,10 @@ class TestResolveDefaultTierForCappedRepos:
         assert out["reasoning_model"] == "sonnet-economy"
         assert out["reasoning_auto_switched"] is True
         assert "auto" in out["reasoning_label"]
-        # 2026-06-02: large repos keep the economy tier but no longer DROP
-        # components, so the label says "economy tier across N components"
-        # rather than "capped to N components".
-        assert "3 components" in out["reasoning_label"]
+        # 2026-06-02/06-07: large repos keep the economy tier but never DROP
+        # components — the analyzed set is criteria-selected, so the label says
+        # "economy tier across all criteria-selected components".
+        assert "criteria-selected components" in out["reasoning_label"]
         assert "economy tier" in out["reasoning_label"]
         # Dependent fields re-resolved
         assert out["triage_model"] == "sonnet"  # was Opus
@@ -278,14 +291,15 @@ class TestResolveDefaultTierForCappedRepos:
 
 
 class TestResolveRepoSizeCap:
-    """2026-06-02: a large repo flips to the economy tier (repo_size_capped)
-    but NO LONGER drops components below the floor (=5) — dropping components
-    created whole-component blind spots."""
+    """2026-06-02/06-07: a large repo flips to the economy tier (repo_size_capped)
+    but NEVER drops components — dropping components created whole-component blind
+    spots, and since 2026-06-07 the analyzed set is criteria-derived (no count to
+    reduce). The cap patch therefore carries NO max_stride_components key."""
 
     def _cfg(self):
         return {
             "assessment_depth": "standard",
-            "max_stride_components": 5,
+            "max_stride_components": 10,
             "stride_turns_simple": 15, "stride_turns_moderate": 22,
             "stride_turns_complex": 31, "diagram_depth": "standard", "qa_depth": "full",
         }
@@ -294,8 +308,8 @@ class TestResolveRepoSizeCap:
         monkeypatch.setattr(rc, "_count_source_files", lambda p: 600)
         out = rc.resolve_repo_size_cap(self._cfg(), Path("/tmp/x"))
         assert out["repo_size_capped"] is True          # → drives economy tier
-        assert out["max_stride_components"] == 5         # no component dropped
-        assert "all 5 components" in out["depth_label"]
+        assert "max_stride_components" not in out        # no count touched
+        assert "criteria-selected components" in out["depth_label"]
         assert "capped from" not in out["depth_label"]
 
     def test_small_repo_is_noop(self, monkeypatch):

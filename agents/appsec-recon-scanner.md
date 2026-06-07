@@ -663,7 +663,9 @@ After writing `.recon-summary.md`, write a second file `$OUTPUT_DIR/.recon-signa
 - All other signals are deterministic from existing Grep evidence — do not call LLM inference.
 - Missing evidence for a signal → `false` (conservative). The Actor resolver will activate actors with `signal_status: activate-with-warning` as fallback only for signals that are structurally unknowable (e.g. single-file repos with no package.json).
 
-**component_hints** — enumerate each major deployable unit (max 8). `component_type` from enum; `deployment_zones` from the known access-zone enum in `data/actors/default-library.yaml`. Flag `llm-fallback` when classification is ambiguous.
+**component_hints** — enumerate each major **deployable unit**. `component_type` from enum; `deployment_zones` from the known access-zone enum in `data/actors/default-library.yaml`. Flag `llm-fallback` when classification is ambiguous.
+
+**Granularity, not a hard cap.** There is **no fixed limit** on the number of hints — downstream STRIDE-component selection is criteria-derived (exposure / ci-cd / crown-jewel), so under-enumerating here silently drops attack surface. The guidance is about *granularity*: list **major deployable units** (a service, the frontend SPA, the data tier, the auth surface, the CI/CD pipeline, a distinct worker/queue), NOT every file or module. Split one service into sub-pieces **only** when they sit behind different trust boundaries. As a sanity check, ~10 units is the typical ceiling for a single repo — if you are about to emit **more than 10**, you are most likely over-decomposing: reconsider granularity first. If after that you still have >10 genuinely-distinct deployable units (a real microservice estate), emit them all **and** add this line to `.recon-summary.md`'s notes so the breadth is visible rather than silently truncated: `RECON_INVENTORY_LARGE: <n> deployable units (>10) — STRIDE merge/turn-budget may be stressed`.
 
 
 ---

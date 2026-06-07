@@ -1187,7 +1187,7 @@ After the fast-path and the Plugin Version Compatibility Gate, and **before** th
 |---------|----------|-----------|
 | Analysis-version drifted | `COMPAT_LABEL` | `older-compatible` (baseline yaml's `analysis_version` is older but compatible with the current plugin) |
 | Plugin-version drifted | `PLUGIN_TIER` | `minor` \| `major` (semver bump even if `analysis_version` did not move — the runtime prompts / heuristics may still be different) |
-| Broad source delta | `SEC_CHANGE_COUNT` vs `MAX_STRIDE_COMPONENTS` | security-relevant file count is close to the component cap: `SEC_CHANGE_COUNT / MAX_STRIDE_COMPONENTS >= 0.8` (integer: `SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS >= 8`) |
+| Broad source delta | `SEC_CHANGE_COUNT` vs `MAX_STRIDE_COMPONENTS` | security-relevant file count is large relative to the operational component ceiling: `SEC_CHANGE_COUNT / MAX_STRIDE_COMPONENTS >= 0.8` (integer: `SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS >= 8`) — a broad delta where a full scan gives better T-ID stability |
 
 ```bash
 # Only evaluate when mode was auto-detected incremental.
@@ -1213,7 +1213,7 @@ if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
   SEC_CHANGE_COUNT=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("security_relevant_change_count",0))' 2>/dev/null || echo 0)
   # Integer arithmetic: count*10/max >= 8  ⟺  count/max >= 0.8
   if [ "$(( SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS ))" -ge 8 ] && [ "$SEC_CHANGE_COUNT" -gt 0 ]; then
-    PROMPT_REASONS="${PROMPT_REASONS}    • ${SEC_CHANGE_COUNT} security-relevant files found near the ${MAX_STRIDE_COMPONENTS}-component cap — full scan gives better T-ID stability at similar cost\n"
+    PROMPT_REASONS="${PROMPT_REASONS}    • ${SEC_CHANGE_COUNT} security-relevant files changed (broad delta vs the ${MAX_STRIDE_COMPONENTS}-component operational ceiling) — full scan gives better T-ID stability at similar cost\n"
   fi
 
   if [ -n "$PROMPT_REASONS" ]; then
@@ -1755,7 +1755,7 @@ SOURCE_HINT=""
 case "$EST_SOURCE" in
   last_run_cache)        SOURCE_HINT="from last run on this repo" ;;
   resume_checkpoint)     SOURCE_HINT="remaining after checkpoint"  ;;
-  incremental_dirty_set) SOURCE_HINT="incremental, $SEC_CHANGE_COUNT relevant file(s), cap $MAX_STRIDE_COMPONENTS components" ;;
+  incremental_dirty_set) SOURCE_HINT="incremental, $SEC_CHANGE_COUNT relevant file(s), ceiling $MAX_STRIDE_COMPONENTS components" ;;
   parametric)            SOURCE_HINT="parametric" ;;
 esac
 ```
@@ -1963,6 +1963,7 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
    PS_FAIL=0
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_stride_dispatch_manifest.py" "$OUTPUT_DIR" \
        --depth "$ASSESSMENT_DEPTH" \
+       --ceiling "$MAX_STRIDE_COMPONENTS" \
        --analyst-context "$OUTPUT_DIR/.stride-analyst-context.json" || PS_FAIL=1
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_dispatch_manifest.py" \
        "$OUTPUT_DIR/.stride-dispatch-manifest.json" "$OUTPUT_DIR" || PS_FAIL=1
@@ -2639,7 +2640,7 @@ This is where the existing `pregenerate_fragments.py || true` + `check_inline_sh
 
 ### Handling turn-budget cut-offs
 
-Thorough-depth runs with 8 STRIDE analyzers (MAX_STRIDE_COMPONENTS=8) routinely touch the Claude Code agent turn budget (observed at ~90 tool calls per agent session in `claude -p` headless mode). When the budget is hit, the Agent call returns control to the skill *before* Phase 11 finalization runs, typically mid-Phase-9 or mid-Phase-10. Two concrete symptoms:
+Thorough-depth runs whose criteria selection yields the full inventory (commonly ~8 STRIDE analyzers; bounded by the `MAX_STRIDE_COMPONENTS` operational ceiling) routinely touch the Claude Code agent turn budget (observed at ~90 tool calls per agent session in `claude -p` headless mode). When the budget is hit, the Agent call returns control to the skill *before* Phase 11 finalization runs, typically mid-Phase-9 or mid-Phase-10. Two concrete symptoms:
 
 1. The agent's final text ends with something like `"All 8 STRIDE files ready. Proceeding to merge."` without a closing `ASSESSMENT_END` log entry.
 2. `$OUTPUT_DIR/threat-model.md` does NOT exist after the Agent call returns — but `$OUTPUT_DIR/.stride-*.json` and `$OUTPUT_DIR/.recon-summary.md` are present.
@@ -2916,7 +2917,7 @@ Pass the following variables to the agent prompt:
 - `SKIP_ATTACK_WALKTHROUGHS=<true|false>` (only set on Stage 2 dispatch. When `true` (set by `--no-walkthroughs` or quick depth), the agent skips authoring `attack-walkthroughs.md`; the composer renders §3 with the chain-overview-only fallback (no per-finding sequenceDiagram blocks). Saves ~1-2 min in Stage 2.)
 - `RENDER_ROLE=<full|secarch|ms>` (perf 2026-06-05 — only set on Stage 2 dispatch. `full` (default / omit) = single-agent path: author MS + §7 + compose. `secarch` / `ms` = the two parallel split roles (`PARALLEL_RENDER=true`): each authors only its half and does NOT compose; the skill composes after both return. See `agents/appsec-threat-renderer.md` → "Render role — READ FIRST".)
 - `ASSESSMENT_DEPTH=<quick|standard|thorough>`
-- `MAX_STRIDE_COMPONENTS=<3|5|8>`
+- `MAX_STRIDE_COMPONENTS=<operational ceiling, default 10>` (safety valve passed to the manifest builder as `--ceiling`; NOT the selection count — components are criteria-selected by `select_stride_components()`)
 - `STRIDE_TURNS_SIMPLE=<10|15|20>`
 - `STRIDE_TURNS_MODERATE=<15|22|28>`
 - `STRIDE_TURNS_COMPLEX=<20|31|35>`

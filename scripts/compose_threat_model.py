@@ -1751,15 +1751,20 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
     """
     if not ctx.eval_context.get("is_quick_depth"):
         return ""
-    meta = (ctx.yaml_data.get("meta") or {})
-    cap = meta.get("max_stride_components") or 3
     skip_walk = bool(ctx.eval_context.get("skip_attack_walkthroughs"))
+    # The analyzed-component count is emergent (criteria-selected at quick depth:
+    # frontend + auth + internet-exposed only), so report the actual number of
+    # components that received a STRIDE pass rather than a hard-coded cap/total.
+    components = ctx.yaml_data.get("components") or []
+    analyzed = sum(1 for c in components if c.get("threat_ids"))
+    comp_clause = (f"**{analyzed} component{'s' if analyzed != 1 else ''}**"
+                   if analyzed else "**A reduced component set**")
     lines = [
         "> ⚠ **Quick depth — reduced-scope assessment.**",
         "> ",
         "> This report ran with intentionally narrower depth to keep wall-time short:",
         "> ",
-        f"> - **{cap}/8 components** under full STRIDE analysis (top-priority components only)",
+        f"> - {comp_clause} under full STRIDE analysis (criteria-selected: frontend, auth, and internet-exposed components only)",
         "> - **Max 2 threats per STRIDE category** per component (vs. unlimited at standard/thorough)",
         "> - **No CVSS vectors**, no per-finding evidence excerpts",
     ]

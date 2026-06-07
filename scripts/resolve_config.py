@@ -182,14 +182,29 @@ QUICK_STRIDE_PROFILE = {
     "turn_budget_hard_cap":    25,     # F (was 40)
 }
 
+# NOTE: the per-depth STRIDE-component COUNT (formerly "components": 3/5/8) was
+# removed 2026-06-07. The analyzed-component set is no longer a hard-coded number
+# — it is derived from criteria (exposure / ci-cd / crown-jewel) by
+# build_stride_dispatch_manifest.py:select_stride_components(). Depth changes only
+# the STRIDE turn budget + diagram/QA depth here; WHICH components get analyzed is
+# decided by the criteria predicate over the full inventory in .components.json.
 DEPTH_PARAMS = {
-    "quick":    {"components": 3, "simple": 10, "moderate": 15, "complex": 20,
+    "quick":    {"simple": 10, "moderate": 15, "complex": 20,
                  "diagrams": "minimal",  "qa": "core", "qa_label": "skipped"},
-    "standard": {"components": 5, "simple": 15, "moderate": 22, "complex": 31,
+    "standard": {"simple": 15, "moderate": 22, "complex": 31,
                  "diagrams": "standard", "qa": "full", "qa_label": "full"},
-    "thorough": {"components": 8, "simple": 20, "moderate": 28, "complex": 35,
+    "thorough": {"simple": 20, "moderate": 28, "complex": 35,
                  "diagrams": "extended", "qa": "extended", "qa_label": "extended"},
 }
+
+# Operational safety ceiling on the number of components dispatched to STRIDE —
+# a merge/turn-budget guard, NOT the selection count. The criteria predicate is
+# the selector; this only caps a pathologically large inventory (auth/frontend/
+# exposed are never dropped — the ceiling lifts and logs EXPOSURE_CAP_LIFT).
+# Depth-independent: the same operational limit regardless of assessment depth.
+# The recon scanner's own hint cap (max 8) currently bounds the inventory below
+# this, so in practice it rarely binds.
+STRIDE_COMPONENT_CEILING = 10
 
 
 # ---------------------------------------------------------------------------
@@ -268,12 +283,12 @@ def resolve_requirements(ns: argparse.Namespace, config_enabled: bool) -> dict:
 def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
     depth = ns.assessment_depth or "standard"
     params = DEPTH_PARAMS[depth]
-    label = (f"{depth} (components: {params['components']}, STRIDE turns: "
+    label = (f"{depth} (components: criteria-selected, STRIDE turns: "
              f"{params['simple']}/{params['moderate']}/{params['complex']}, "
              f"diagrams: {params['diagrams']}, QA: {params['qa_label']})")
     return {
         "assessment_depth":      depth,
-        "max_stride_components": params["components"],
+        "max_stride_components": STRIDE_COMPONENT_CEILING,
         "stride_turns_simple":   params["simple"],
         "stride_turns_moderate": params["moderate"],
         "stride_turns_complex":  params["complex"],
@@ -319,10 +334,6 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
 # timeout 480s) bounds any cold-cache hang instead of pre-emptively dropping
 # attack surface. Cost is controlled by the tier, not by blind spots.
 LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
-# Floor (not a hard cap): never reduce STRIDE coverage BELOW this many
-# components on a large repo. 5 == the standard-depth default, so in practice
-# no component is dropped; the constant remains a tunable safety ceiling.
-LARGE_REPO_CAP_COMPONENTS = 5
 SOURCE_FILE_EXTENSIONS = (
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
     ".py", ".go", ".java", ".kt", ".rb", ".php",
@@ -353,7 +364,7 @@ def _count_source_files(repo_root: Path) -> int:
 
 
 def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
-    """B2c — auto-cap MAX_STRIDE_COMPONENTS on large repos.
+    """B2c — switch large standard-depth repos to the economy reasoning tier.
 
     Triggers only when:
       * assessment_depth is "standard" (the default tier — so the user did
@@ -361,9 +372,10 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
       * source-file count > LARGE_REPO_SOURCE_FILE_THRESHOLD
       * the user did not pass --assessment-depth thorough explicitly
 
-    On trigger: cap MAX_STRIDE_COMPONENTS at LARGE_REPO_CAP_COMPONENTS (3),
-    and append a (capped) marker to depth_label so the user sees the cap
-    in the configuration summary.
+    On trigger: set repo_size_capped=True (drives the economy reasoning tier
+    downstream) and append a marker to depth_label. No component count is
+    reduced — the analyzed set is criteria-derived (2026-06-07), so cost is
+    controlled by the tier, not by dropping attack surface.
 
     Returns the patched cfg slice (dict — not the full cfg) so the caller
     can `cfg.update(...)` it.
@@ -374,28 +386,19 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
     if src_count <= LARGE_REPO_SOURCE_FILE_THRESHOLD:
         return {}
     # Large repo: switch to the economy reasoning tier for cost (downstream
-    # resolve_default_tier_for_capped_repos keys on repo_size_capped) but DO
-    # NOT drop components below the floor — dropping creates whole-component
-    # blind spots (2026-06-02). new_components only ever reduces toward the
-    # floor when the depth default exceeds it; with the floor at 5 == the
-    # standard default, no component is dropped in practice.
-    old_components = cfg["max_stride_components"]
-    new_components = min(old_components, LARGE_REPO_CAP_COMPONENTS)
-    if new_components < old_components:
-        comp_clause = (
-            f"components: {new_components} (capped from {old_components}) — "
-        )
-    else:
-        comp_clause = f"all {new_components} components — "
+    # resolve_default_tier_for_capped_repos keys on repo_size_capped). We do NOT
+    # drop components — dropping creates whole-component blind spots (2026-06-02);
+    # since 2026-06-07 the analyzed set is criteria-derived, not a number, so
+    # there is no component count to reduce here. Cost is controlled by the tier,
+    # not by blind spots.
     new_label = (
-        f"{cfg['assessment_depth']} ({comp_clause}"
+        f"{cfg['assessment_depth']} (criteria-selected components — "
         f"large repo: {src_count} source files → economy reasoning tier, "
         f"STRIDE turns: {cfg['stride_turns_simple']}/"
         f"{cfg['stride_turns_moderate']}/{cfg['stride_turns_complex']}, "
         f"diagrams: {cfg['diagram_depth']}, QA: {cfg['qa_depth']})"
     )
     return {
-        "max_stride_components": new_components,
         "depth_label": new_label,
         "repo_size_capped": True,
         "repo_size_source_files": src_count,
@@ -454,9 +457,9 @@ def resolve_default_tier_for_capped_repos(cfg: dict,
 
     # Override the label so the auto-switch is visible in --config-summary.
     patch["reasoning_label"] = (
-        f"sonnet-economy (auto — large repo: economy tier across "
-        f"{cfg['max_stride_components']} components; "
-        f"Opus on merger/triage uneconomical at this scale, STRIDE stays Sonnet)"
+        "sonnet-economy (auto — large repo: economy tier across all "
+        "criteria-selected components; "
+        "Opus on merger/triage uneconomical at this scale, STRIDE stays Sonnet)"
     )
     patch["reasoning_auto_switched"] = True
     return patch
@@ -1935,9 +1938,9 @@ def _run_plan_notes(
 
     if cfg.get("repo_size_capped"):
         notes.append(
-            f"STRIDE component count capped at {cfg.get('max_stride_components')} "
-            f"(would have been 5) due to large repo "
-            f"({cfg.get('repo_size_source_files')} source files)."
+            f"Large repo ({cfg.get('repo_size_source_files')} source files) → "
+            f"economy reasoning tier (all criteria-selected components analyzed; "
+            f"cost controlled by tier, not by dropping components)."
         )
 
     return notes
@@ -2061,16 +2064,15 @@ def _format_target_scope(cfg: dict) -> str:
 def _format_depth_summary(cfg: dict) -> str:
     """Render the depth row.
 
-    The ``max_stride_components`` cap is suppressed for incremental runs
-    because it is meaningless there: the dirty-set defines the scope, and
-    the cap only governs Phase-1 component DETECTION which incremental
-    skips. Showing "up to 8 components" while we re-analyze 1 is
-    actively misleading. The Files block of the box already shows the
-    actual ``N known, M dirty`` counts.
+    The component-count line is suppressed for incremental runs because it is
+    meaningless there: the dirty-set defines the scope. For full runs the
+    analyzed set is criteria-selected (not a fixed number), so the row names
+    the mechanism rather than a misleading count; the Files block already shows
+    the actual ``N known, M dirty`` counts.
     """
     parts: list[str] = [cfg.get("assessment_depth", "standard")]
     if not cfg.get("incremental"):
-        parts.append(f"up to {cfg.get('max_stride_components', '?')} components")
+        parts.append("criteria-selected components")
     parts.append(
         f"STRIDE turns {cfg.get('stride_turns_simple', '?')}/"
         f"{cfg.get('stride_turns_moderate', '?')}/"
@@ -2276,10 +2278,10 @@ def _configuration_post_summary_notes(cfg: dict) -> list[str]:
         )
     if cfg.get("repo_size_capped"):
         post_lines.append(
-            f"Note: STRIDE component count capped at {cfg['max_stride_components']} "
-            f"(would have been 5) because the repository is large "
-            f"({cfg['repo_size_source_files']} source files). Pass "
-            f"--assessment-depth thorough to override and analyze 8 components."
+            f"Note: large repository ({cfg['repo_size_source_files']} source files) "
+            f"→ economy reasoning tier. All criteria-selected components are still "
+            f"analyzed (no attack surface dropped). Pass --assessment-depth thorough "
+            f"to also analyze internal-only components and deepen per-component budget."
         )
 
     # Mermaid validator status — surfaces whether Layer B (authoritative

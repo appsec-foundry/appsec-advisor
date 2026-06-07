@@ -59,7 +59,7 @@ The schemas are strict (`additionalProperties: false` on top-level). The LLM has
 
 | Sidecar | Top-level keys (exact names) | Required fields per item |
 |---|---|---|
-| `.components.json`               | `schema_version`, `components`                    | **every component MUST have `tier`** (enum: `client` / `application` / `data`) plus `id`, `name`, `description`, `paths` |
+| `.components.json`               | `schema_version`, `components`                    | **every component MUST have `tier`** (enum: `client` / `application` / `data`) plus `id`, `name`, `description`, `paths`; SHOULD also carry `deployment_zones[]` + `handles_sensitive_data` (selection-criteria inputs — see Phase 3 sidecar) |
 | `.assets.json`                   | `schema_version`, `assets`                        | `id` (A-NNN from `reserve_ids.py asset --count N`), `name`, `classification` (enum: `Public` / `Internal` / `Confidential` / `Restricted`), `description` |
 | `.attack-surface-overrides.json` | `schema_version`, **`curations`** (NOT `overrides`), `additions` | `curations.include_route_ids[]` (route_ids from `.route-inventory.json`); each `additions[]` entry needs `entry_point` + `protocol` |
 | `.trust-boundaries.json`         | `schema_version`, `trust_boundaries`              | every boundary needs `id` (e.g. `tb-1`) + `name`; `from`/`to` should reference component IDs or `external` |
@@ -240,7 +240,7 @@ Derive the system's architecture from code and config. Determine complexity:
 - **Moderate** (multiple services, clear layers): Context + Container diagrams
 - **Complex** (microservices, many bounded contexts): Context + Container + Component diagrams
 
-**⚠ Thorough-depth complexity upgrade (mandatory):** When `DIAGRAM_DEPTH=extended` (i.e. `--assessment-depth thorough`) AND the recon scanner identified ≥ 5 STRIDE-analyzable components, MUST upgrade the complexity tier to **Complex** regardless of the architecture pattern detected above. Rationale: at thorough depth, 8 components are analyzed — that component count exceeds the Moderate tier's conceptual scope and the Components section (§2.3) is essential to anchor the C-NN IDs used throughout the document. When this upgrade fires, log: `COMPLEXITY_UPGRADE: Moderate → Complex (DIAGRAM_DEPTH=extended, components=<n>)`. The upgrade does NOT apply at `minimal` or `standard` depth.
+**⚠ Thorough-depth complexity upgrade (mandatory):** When `DIAGRAM_DEPTH=extended` (i.e. `--assessment-depth thorough`) AND the deterministic selector chose ≥ 5 STRIDE-analyzable components (count emerges from the criteria — see `.stride-selection.json`), MUST upgrade the complexity tier to **Complex** regardless of the architecture pattern detected above. Rationale: at thorough depth all reachable components are analyzed — once that selected count exceeds ~5 it exceeds the Moderate tier's conceptual scope and the Components section (§2.3) is essential to anchor the C-NN IDs used throughout the document. When this upgrade fires, log: `COMPLEXITY_UPGRADE: Moderate → Complex (DIAGRAM_DEPTH=extended, components=<n>)`. The upgrade does NOT apply at `minimal` or `standard` depth.
 
 **DIAGRAM_DEPTH override:** The `DIAGRAM_DEPTH` variable (from `--assessment-depth`) can restrict diagram output regardless of detected complexity:
 
@@ -852,13 +852,19 @@ The renderer (M3.3 / D1 — `pregenerate_fragments.py:_data_flow_edges`) reads t
          "paths": ["<glob1>", "<glob2>"],
          "tier": "<client|application|data>",
          "complexity": "<simple|moderate|complex>",
-         "framework": "<express|angular|...>"
+         "framework": "<express|angular|...>",
+         "deployment_zones": ["<zone>", "..."],
+         "handles_sensitive_data": <true|false>
        }
      ]
    }
    JSON
    ```
    The shape mirrors the in-memory `components[]` exactly — `responsibilities[]`, `data_flows[]`, and `threat_ids[]` stay in working memory (they belong to other yaml fields). Only the fields the aggregator emits into `threat-model.yaml[components[]]` go into the sidecar.
+
+   **`deployment_zones` + `handles_sensitive_data` (selection-criteria inputs).** These two fields let the downstream STRIDE-component selection be *derived from criteria* instead of a hard-coded count — populate them for every component:
+   - `deployment_zones[]` — where the component sits, using the canonical access-zone vocabulary from `data/actors/default-library.yaml` (`internet`, `dmz`, `client-device`, `mobile-device`, `internal-network`, `peer-service`, `prod-env`, `prod-write-db`, `ci-cd-runtime`, `build-pipeline`, `deployment-pipeline`, …). **Source:** map the recon `component_hints[].deployment_zones` in `.recon-signals.json` onto your finalized component set — the recon IDs may not match your component IDs (e.g. recon `auth-service` → your `data-layer`), so map by role/paths, not by ID string. When a component has no recon hint, assign zones from your own trust-boundary analysis (Phase 3.x). Leave `[]` only when genuinely undeterminable.
+   - `handles_sensitive_data` — `true` when the component stores or processes credentials, PII, payment data, or secrets (you already know this while writing `description` — e.g. a user/credential store, a payment handler). Otherwise `false`.
 
 3. **Validate** before emitting PHASE_END:
    ```bash
@@ -867,7 +873,7 @@ The renderer (M3.3 / D1 — `pregenerate_fragments.py:_data_flow_edges`) reads t
    ```
    On failure: log WARN to `.agent-run.log`, continue (aggregator falls back to prior yaml). Non-blocking during PoC rollout.
 
-**Rules:** single writer (Phase 3 only), append-only within run, sidecar lives alongside the in-memory `components[]` — both must agree on the canonical ID set.
+**Rules:** single writer (Phase 3 only), append-only within run, sidecar lives alongside the in-memory `components[]` — both must agree on the canonical ID set. **Author the COMPLETE inventory** — every deployable unit you identified, depth-independent. Do **not** pre-prune by `--assessment-depth`: which components get a STRIDE pass is decided deterministically downstream by `select_stride_components()` from the `deployment_zones[]` + `handles_sensitive_data` criteria (see `phase-group-threats.md → Component Selection`). Pre-pruning here re-introduces the hard-coded count the deterministic selector exists to remove, and creates whole-component blind spots when your guess differs from the criteria.
 
 ## Phase 4: Attack Walkthroughs (renders Section 9)
 

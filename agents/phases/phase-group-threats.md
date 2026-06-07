@@ -122,27 +122,18 @@ When `INCREMENTAL=false`, skip this whole decision tree and select components as
 
 ### Component Selection
 
-Always include: Auth/identity, Authorization, components handling PII/payments, Admin panel, Public API gateway. For Moderate/Complex: each backend service, frontend SPA, queue consumers, CI/CD pipeline. **Cap at `MAX_STRIDE_COMPONENTS`** (default 5, set by `--assessment-depth`).
+**Selection is deterministic — not a per-depth count.** Which components get a STRIDE pass is decided by `scripts/build_stride_dispatch_manifest.py:select_stride_components()` (criteria predicate over `.components.json`), NOT by you choosing N components against a `MAX_STRIDE_COMPONENTS` number. The analyzed count is the *emergent* result of the criteria below applied to the full component inventory. **Your job in Phase 3 is to author the COMPLETE inventory** (every deployable unit you found) into `.components.json` with `deployment_zones[]` + `handles_sensitive_data` — do **not** pre-prune by depth. Prep `.dispatch-context/<id>/` for every inventory component (the builder reads what exists and falls back to `none`).
 
-**⚠ MANDATORY — Auth-as-separate-component invariant (M3.4):** Auth/identity MUST be dispatched as its own STRIDE component, regardless of `MAX_STRIDE_COMPONENTS`. This INCLUDES the case where the auth code happens to live inside a larger backend (e.g. when login/auth handlers are co-located with business routes in a shared backend module). Reasoning: auth threats (credential storage, token forgery, session fixation, MFA bypass) are categorically different from generic API threats (input injection, IDOR, rate-limit bypass) and must produce a dedicated `.stride-auth-*.json` for downstream merge, deduplication, and reporting. A prior run silently merged auth into the backend component due to cap=3, which left auth without its own STRIDE pass. **Do NOT consolidate auth into a backend/API component, even when the underlying code is co-located.**
+**The criteria the deterministic selector applies** (depth selects which predicates are active):
+- **Role-floor (every depth):** auth/identity and the frontend SPA are ALWAYS analyzed (encodes the two invariants below).
+- **quick:** role-floor + any component whose `deployment_zones[]` is internet-exposed (`internet`/`dmz`/`client-device`/`mobile-device`).
+- **standard:** quick + CI/CD & deployment components + crown-jewel datastores (`handles_sensitive_data:true`) + any exposure-unknown component (fail-safe inclusion). Internal-only components are excluded.
+- **thorough:** standard + all remaining transitively-reachable (internal-only) components.
+- An optional operational `--ceiling` (merge/turn-budget safety valve) may drop the lowest-priority components if the inventory is pathologically large — but auth/frontend/exposed are NEVER dropped (the ceiling lifts and logs `EXPOSURE_CAP_LIFT`). It is a safety net, not the selector.
 
-**Frontend SPA override:** If the recon scanner detected a frontend framework (Section 7.19) or client-side code patterns (Sections 7.10, 7.20–7.24), the frontend SPA MUST be included as a STRIDE component at **all** depth levels, including `quick`. The browser is a large, distinct attack surface that cannot be skipped. This overrides the component cap — if adding the frontend exceeds `MAX_STRIDE_COMPONENTS`, drop the lowest-risk non-auth component instead.
+**⚠ MANDATORY — Auth-as-separate-component invariant (M3.4):** Auth/identity MUST be its own component in the inventory — give it a dedicated `.components.json` entry (its zone is typically internal but the role-floor keeps it in scope at every depth). This INCLUDES the case where the auth code lives inside a larger backend (login/auth handlers co-located with business routes). Reasoning: auth threats (credential storage, token forgery, session fixation, MFA bypass) are categorically different from generic API threats and must produce a dedicated `.stride-auth-*.json` for downstream merge/dedup/reporting. A prior run silently merged auth into the backend component, which left auth without its own STRIDE pass. **Do NOT consolidate auth into a backend/API component, even when the underlying code is co-located.**
 
-| ASSESSMENT_DEPTH | MAX_STRIDE_COMPONENTS | Selection strategy |
-|-----------------|----------------------|-------------------|
-| `quick` | 3 | **Auth (mandatory)** + highest-risk component + public API (+ frontend SPA if detected, see override above) |
-| `standard` | 5 | **Auth (mandatory)**, AuthZ, PII/payment, Admin, public API, frontend SPA |
-| `thorough` | 8 | All mandatory + backend services, frontend, queues, CI/CD pipeline |
-
-**Selection priority order when cap forces drops** (from KEEP to DROP):
-1. Auth/identity — **never drop** (M3.4 invariant)
-2. Frontend SPA — never drop when detected (existing override)
-3. Public API / primary backend
-4. Admin panel
-5. PII/payment handler
-6. AuthZ (if separate from auth)
-7. CI/CD pipeline
-8. Other backend services (lowest priority — drop first)
+**Frontend SPA invariant:** If the recon scanner detected a frontend framework (Section 7.19) or client-side code patterns (Sections 7.10, 7.20–7.24), the frontend SPA MUST be a distinct component in the inventory (`tier: client`). The role-floor keeps it analyzed at **all** depths including `quick` — the browser is a large, distinct attack surface that cannot be skipped.
 
 ### CI/CD Pipeline as STRIDE component
 

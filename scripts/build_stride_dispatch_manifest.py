@@ -74,14 +74,198 @@ def _trust_boundaries_for(component_id: str, all_boundaries: list) -> str:
     return " | ".join(hits) if hits else "No trust boundary directly tied to this component."
 
 
-def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path) -> dict:
+# ---------------------------------------------------------------------------
+# Criteria-derived STRIDE-component selection (replaces the hard-coded 3/5/8
+# count). Depth selects which *predicates* are active; the component count is
+# the EMERGENT result of applying them to the full inventory in .components.json.
+#
+# Exposure classes are derived from each component's deployment_zones[] (the
+# access-zone vocabulary in data/actors/default-library.yaml). These sets are
+# the selection *criteria*, not a count — defining "exposed" is policy that has
+# to live somewhere; it is exactly the "general criteria" the count derives from.
+# ---------------------------------------------------------------------------
+EXPOSED_ZONES = frozenset({"internet", "dmz", "client-device", "mobile-device"})
+CICD_ZONES = frozenset({"ci-cd-runtime", "ci-cd-secrets", "build-pipeline", "deployment-pipeline"})
+_AUTH_HINTS = ("auth", "identity", "login", "session", "jwt", "oauth", "iam", "2fa", "mfa")
+_FRONTEND_HINTS = ("frontend", "spa", "web-client", "react", "angular", "vue")
+
+
+def _component_text(c: dict) -> str:
+    # Role detection matches id/name/type only — NOT description. The prose
+    # description over-matches (a chatbot whose description mentions "session"
+    # or "auth" would be mis-tagged auth); id+name+type are the stable labels.
+    return " ".join(str(c.get(k, "")) for k in ("id", "name", "type")).lower()
+
+
+def _zones(c: dict) -> set:
+    z = c.get("deployment_zones") or []
+    return {str(x).strip().lower() for x in z if str(x).strip()}
+
+
+def _is_auth(c: dict) -> bool:
+    t = _component_text(c)
+    return any(h in t for h in _AUTH_HINTS)
+
+
+def _is_frontend(c: dict) -> bool:
+    if (c.get("tier") or "").lower() == "client":
+        return True
+    t = _component_text(c)
+    return any(h in t for h in _FRONTEND_HINTS)
+
+
+def _is_cicd(c: dict) -> bool:
+    if _zones(c) & CICD_ZONES:
+        return True
+    t = _component_text(c)
+    return "ci-cd" in t or "cicd" in t or "pipeline" in t
+
+
+def _is_exposed(c: dict) -> bool:
+    return bool(_zones(c) & EXPOSED_ZONES)
+
+
+def _is_crown_jewel(c: dict) -> bool:
+    return bool(c.get("handles_sensitive_data"))
+
+
+def _is_internal_only(c: dict) -> bool:
+    """A component selected only for thorough completeness: it has explicit
+    zones, none exposed/ci-cd, and it is not crown-jewel/auth/frontend. These
+    are the ONLY components the operational ceiling may shed — everything that
+    earned selection by a positive criterion (or exposure-unknown fail-safe) is
+    never silently dropped."""
+    if not _zones(c):
+        return False  # exposure-unknown → fail-safe, never silently dropped
+    return not (_is_exposed(c) or _is_cicd(c) or _is_crown_jewel(c)
+                or _is_auth(c) or _is_frontend(c))
+
+
+def _priority(c: dict) -> int:
+    """Lower = kept first when an operational ceiling forces overflow drops."""
+    if _is_auth(c):
+        return 0          # M3.4 invariant — never drop
+    if _is_frontend(c):
+        return 1          # frontend attack-surface invariant — never drop
+    if _is_exposed(c):
+        return 2          # directly reachable by an external actor — never drop (cap lifts)
+    if _is_crown_jewel(c):
+        return 3
+    if _is_cicd(c):
+        return 4
+    return 5              # internal-only / transitively-reachable — drop first
+
+
+def _selection_reasons(c: dict, depth: str) -> list:
+    reasons = []
+    if _is_auth(c):
+        reasons.append("auth (M3.4 mandatory)")
+    if _is_frontend(c):
+        reasons.append("frontend attack surface (mandatory)")
+    if _is_exposed(c):
+        reasons.append(f"internet-exposed ({','.join(sorted(_zones(c) & EXPOSED_ZONES))})")
+    if depth != "quick" and _is_cicd(c):
+        reasons.append("ci-cd / deployment (supply-chain boundary)")
+    if depth != "quick" and _is_crown_jewel(c):
+        reasons.append("crown-jewel (credentials/PII/payment/secrets)")
+    if depth == "thorough" and not reasons:
+        reasons.append("transitively reachable (thorough)")
+    if not _zones(c) and not _is_auth(c) and not _is_frontend(c) and depth != "quick":
+        reasons.append("exposure-unknown (fail-safe inclusion)")
+    return reasons
+
+
+def _in_scope(c: dict, depth: str) -> bool:
+    # Role-floor: auth + frontend are mandatory at every depth.
+    if _is_auth(c) or _is_frontend(c):
+        return True
+    if _is_exposed(c):
+        return True
+    if depth == "quick":
+        # Quick = role-floor + directly internet-exposed only.
+        return False
+    # standard + thorough
+    if _is_cicd(c) or _is_crown_jewel(c):
+        return True
+    if not _zones(c):
+        # Exposure-unknown: fail-safe toward inclusion at standard+ (do not let a
+        # mis-tagged/untagged component silently become a whole-component blind spot).
+        return True
+    # Zones present but none exposed/cicd → internal-only: thorough only.
+    return depth == "thorough"
+
+
+def select_stride_components(components: list, depth: str, ceiling: int | None = None) -> tuple:
+    """Derive the STRIDE-analyzed subset from criteria — count is emergent.
+
+    Returns ``(selected, report)``. ``report`` is a JSON-serializable dict with
+    the included/excluded sets, their reasons, and whether an operational ceiling
+    forced (logged) overflow drops.
+
+    Back-compat / fail-safe: when NO component carries deployment_zones (an
+    un-migrated .components.json — today's shape, already LLM-pre-selected), the
+    predicate is skipped and ALL components pass through. This makes the change
+    strictly non-regressive until the Phase-3 full-inventory authoring lands.
+    """
+    comps = [c for c in components if isinstance(c, dict) and c.get("id")]
+    migrated = any(_zones(c) for c in comps)
+
+    if not migrated:
+        report = {
+            "mode": "passthrough", "depth": depth, "reason": "no deployment_zones in .components.json — un-migrated",
+            "selected": [c["id"] for c in comps], "excluded": [], "lifted": False, "ceiling": ceiling,
+        }
+        return comps, report
+
+    selected = [c for c in comps if _in_scope(c, depth)]
+    excluded = [c for c in comps if c not in selected]
+    lifted = False
+    overflow_dropped = []
+
+    if ceiling and len(selected) > ceiling:
+        # The ceiling may ONLY shed genuinely-internal components (selected at
+        # thorough purely for completeness). Anything that earned its place by a
+        # positive criterion — exposure, ci-cd/supply-chain, crown-jewel, auth,
+        # frontend, or exposure-unknown fail-safe — is NEVER silently dropped;
+        # the ceiling lifts (logged) instead. Dropping those would recreate the
+        # whole-component blind spots this redesign exists to remove.
+        internal = [c for c in selected if _is_internal_only(c)]
+        n_over = len(selected) - ceiling
+        overflow_dropped = internal[:n_over] if n_over > 0 else []
+        selected = [c for c in selected if c not in overflow_dropped]
+        lifted = len(selected) > ceiling  # earned set alone still exceeds ceiling
+        excluded = excluded + overflow_dropped
+
+    report = {
+        "mode": "criteria", "depth": depth, "ceiling": ceiling, "lifted": lifted,
+        "selected": [{"id": c["id"], "priority": _priority(c), "reasons": _selection_reasons(c, depth)} for c in selected],
+        "excluded": [{"id": c["id"], "reason": ("ceiling-overflow" if c in overflow_dropped
+                                                 else "out-of-scope at depth=" + depth)} for c in excluded],
+    }
+    return selected, report
+
+
+def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path,
+          ceiling: int | None = None) -> dict:
     import datetime as _dt
 
     dp = _depth_params()
     turns = dp.get(depth, dp.get("standard"))
 
     cj = _read_json(output_dir / ".components.json", {})
-    components = cj.get("components", cj) if isinstance(cj, dict) else cj
+    all_components = cj.get("components", cj) if isinstance(cj, dict) else cj
+    if not isinstance(all_components, list):
+        all_components = []
+
+    components, selection_report = select_stride_components(all_components, depth, ceiling)
+    # Persist the selection rationale so a run is auditable (which components were
+    # analyzed and why) and so EXPOSURE_CAP_LIFT can be post-hoc verified.
+    try:
+        (output_dir / ".stride-selection.json").write_text(
+            json.dumps(selection_report, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
     boundaries = (_read_json(output_dir / ".trust-boundaries.json", {}) or {}).get("trust_boundaries", [])
 
     out_components = []
@@ -108,6 +292,10 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             "max_turns": int(turns.get(complexity, turns.get("moderate", 22))),
             "trust_boundaries": _trust_boundaries_for(cid, boundaries),
             "taxonomy_slice_dir": str(tax) if tax.is_dir() else str(plugin_root / "data"),
+            # Carry the selection-criteria inputs through to the manifest so the
+            # selection is auditable downstream (and not silently dropped here).
+            "deployment_zones": c.get("deployment_zones") or [],
+            "handles_sensitive_data": bool(c.get("handles_sensitive_data", False)),
             "index_paths": {
                 "prior_findings": _idx(f".dispatch-context/{cid}/prior-findings.json"),
                 "known_threats": _idx(f".dispatch-context/{cid}/known-threats.json"),
@@ -146,16 +334,30 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--depth", default="standard", choices=["quick", "standard", "thorough"])
     ap.add_argument("--analyst-context", type=Path, default=None)
     ap.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
+    ap.add_argument("--ceiling", type=int, default=None,
+                    help="Operational safety ceiling on the selected component count "
+                         "(merge/turn-budget guard). NOT the selection number — auth/"
+                         "frontend/exposed are never dropped (cap lifts with a log). "
+                         "Omit for unbounded (the recon hint cap already bounds the inventory).")
     ns = ap.parse_args(argv)
 
     ctx = _read_json(ns.analyst_context, {}) if ns.analyst_context else {}
-    manifest = build(ns.output_dir, ns.depth, ctx, ns.plugin_root)
+    manifest = build(ns.output_dir, ns.depth, ctx, ns.plugin_root, ceiling=ns.ceiling)
     if not manifest["components"]:
         print("ERROR: no components found in .components.json — nothing to dispatch.", file=sys.stderr)
         return 1
+    sel = _read_json(ns.output_dir / ".stride-selection.json", {})
     out = ns.output_dir / ".stride-dispatch-manifest.json"
     out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"OK: wrote {out} ({len(manifest['components'])} components, depth={ns.depth})")
+    print(f"OK: wrote {out} ({len(manifest['components'])} components, depth={ns.depth}, "
+          f"selection={sel.get('mode', '?')})")
+    if sel.get("lifted"):
+        n_sel = len(sel.get("selected", []))
+        n_drop = len([e for e in sel.get("excluded", []) if e.get("reason") == "ceiling-overflow"])
+        tail = f"; dropped {n_drop} internal-only component(s)" if n_drop else ""
+        print(f"EXPOSURE_CAP_LIFT: {n_sel} earned components exceed the operational ceiling "
+              f"({ns.ceiling}) — analyzing all (no exposed/ci-cd/crown-jewel/auth/frontend "
+              f"component dropped; STRIDE merge/turn-budget may be stressed){tail}.")
     return 0
 
 

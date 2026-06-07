@@ -218,3 +218,140 @@ def test_depth_params_in_sync_with_resolve_config(tmp_path):
     for depth, vals in bm._FALLBACK_DEPTH_PARAMS.items():
         for cx, turns in vals.items():
             assert rc_mod.DEPTH_PARAMS[depth][cx] == turns, f"{depth}/{cx} drift"
+
+
+# ---------------------------------------------------------------------------
+# Criteria-derived component selection (select_stride_components)
+# ---------------------------------------------------------------------------
+
+
+def _c(cid, *, zones=None, tier="application", sensitive=False, name=None, desc=""):
+    comp = {"id": cid, "name": name or cid, "description": desc,
+            "paths": [f"{cid}/**"], "tier": tier}
+    if zones is not None:
+        comp["deployment_zones"] = zones
+    if sensitive:
+        comp["handles_sensitive_data"] = True
+    return comp
+
+
+def test_select_passthrough_when_no_zones():
+    """Un-migrated .components.json (no zones) → all pass through (today's behavior)."""
+    comps = [_c("backend-api"), _c("worker"), _c("data-layer", tier="data")]
+    selected, report = bm.select_stride_components(comps, "standard")
+    assert {c["id"] for c in selected} == {"backend-api", "worker", "data-layer"}
+    assert report["mode"] == "passthrough"
+
+
+def test_select_standard_includes_exposed_cicd_crownjewel_excludes_internal():
+    comps = [
+        _c("backend-api", zones=["internet"]),
+        _c("ci-cd", zones=["ci-cd-runtime"]),
+        _c("user-store", zones=["prod-write-db"], tier="data", sensitive=True),
+        _c("internal-worker", zones=["internal-network"]),   # internal-only → out at standard
+    ]
+    selected, report = bm.select_stride_components(comps, "standard")
+    assert {c["id"] for c in selected} == {"backend-api", "ci-cd", "user-store"}
+    assert report["mode"] == "criteria"
+    assert {e["id"] for e in report["excluded"]} == {"internal-worker"}
+
+
+def test_select_thorough_includes_internal_only():
+    comps = [
+        _c("backend-api", zones=["internet"]),
+        _c("internal-worker", zones=["internal-network"]),
+    ]
+    selected, _ = bm.select_stride_components(comps, "thorough")
+    assert {c["id"] for c in selected} == {"backend-api", "internal-worker"}
+
+
+def test_select_quick_is_role_floor_plus_exposed_only():
+    comps = [
+        _c("frontend-spa", zones=["client-device"], tier="client"),  # role-floor
+        _c("backend-api", zones=["internet"]),                        # exposed
+        _c("ci-cd", zones=["ci-cd-runtime"]),                         # NOT at quick
+        _c("user-store", zones=["prod-write-db"], tier="data", sensitive=True),  # NOT at quick
+    ]
+    selected, _ = bm.select_stride_components(comps, "quick")
+    assert {c["id"] for c in selected} == {"frontend-spa", "backend-api"}
+
+
+def test_select_auth_and_frontend_always_kept_even_without_exposed_zone():
+    """M3.4 + frontend invariants: auth/frontend kept at every depth, no exposed zone needed."""
+    comps = [
+        _c("auth-service", zones=["internal-network"], name="Authentication & Session Store"),
+        _c("frontend-spa", zones=["internal-network"], tier="client"),
+        _c("plain-internal", zones=["internal-network"]),
+    ]
+    for depth in ("quick", "standard"):
+        selected, _ = bm.select_stride_components(comps, depth)
+        ids = {c["id"] for c in selected}
+        assert "auth-service" in ids and "frontend-spa" in ids, depth
+        assert "plain-internal" not in ids, depth
+
+
+def test_select_exposure_unknown_failsafe_included_at_standard():
+    """A migrated set with one un-tagged component → fail-safe inclusion at standard+."""
+    comps = [
+        _c("backend-api", zones=["internet"]),
+        _c("mystery", zones=[]),   # zones present elsewhere → migrated; this one unknown
+    ]
+    selected, _ = bm.select_stride_components(comps, "standard")
+    assert "mystery" in {c["id"] for c in selected}
+    # but excluded at quick (quick stays minimal)
+    selected_q, _ = bm.select_stride_components(comps, "quick")
+    assert "mystery" not in {c["id"] for c in selected_q}
+
+
+def test_select_ceiling_sheds_only_internal_never_earned():
+    """The ceiling may shed ONLY genuinely-internal components — never anything
+    earned by exposure/ci-cd/crown-jewel/auth/frontend. Live-run regression
+    (2026-06-07): a ceiling that dropped ci-cd recreated the exact blind spot
+    the redesign removes; ci-cd must survive and the ceiling must lift instead."""
+    comps = [
+        _c("auth-service", zones=["internet"], name="auth"),   # earned (auth/exposed)
+        _c("frontend-spa", zones=["internet"], tier="client"), # earned (frontend)
+        _c("api-a", zones=["internet"]),                       # earned (exposed)
+        _c("api-b", zones=["internet"]),                       # earned (exposed)
+        _c("ci-cd", zones=["ci-cd-runtime"]),                  # earned (ci-cd) — must NOT drop
+        _c("internal", zones=["internal-network"]),            # internal-only — droppable
+    ]
+    selected, report = bm.select_stride_components(comps, "thorough", ceiling=3)
+    ids = {c["id"] for c in selected}
+    # every earned component survives despite ceiling=3 → lift
+    assert {"auth-service", "frontend-spa", "api-a", "api-b", "ci-cd"} <= ids
+    assert report["lifted"] is True
+    # ONLY the genuinely-internal component is shed, and visibly
+    assert "internal" not in ids
+    assert any(e["id"] == "internal" and e["reason"] == "ceiling-overflow"
+               for e in report["excluded"])
+
+
+def test_select_ceiling_never_drops_crownjewel_silently():
+    """A crown-jewel datastore over the ceiling lifts, not drops."""
+    comps = [_c(f"api-{i}", zones=["internet"]) for i in range(4)]
+    comps.append(_c("creds", zones=["internal-network"], sensitive=True))  # crown, not exposed
+    selected, report = bm.select_stride_components(comps, "standard", ceiling=3)
+    ids = {c["id"] for c in selected}
+    assert "creds" in ids                  # crown-jewel never shed
+    assert report["lifted"] is True
+    assert not [e for e in report["excluded"] if e["reason"] == "ceiling-overflow"]
+
+
+def test_builder_carries_zones_and_crownjewel_through(tmp_path):
+    (tmp_path / ".components.json").write_text(json.dumps({
+        "schema_version": 1,
+        "components": [
+            _c("backend-api", zones=["internet"], sensitive=True),
+            _c("internal-worker", zones=["internal-network"]),
+        ],
+    }), encoding="utf-8")
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    # internal-only excluded at standard via criteria
+    assert set(by_id) == {"backend-api"}
+    assert by_id["backend-api"]["deployment_zones"] == ["internet"]
+    assert by_id["backend-api"]["handles_sensitive_data"] is True
+    # selection report written
+    sel = json.loads((tmp_path / ".stride-selection.json").read_text())
+    assert sel["mode"] == "criteria"
