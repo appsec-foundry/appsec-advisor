@@ -10894,17 +10894,18 @@ def _resolve_security_schema(output_dir: Path) -> str:
 
     Priority (matches resolve_config.py + qa_checks._apply_schema_v2_overlay):
       1. APPSEC_SECURITY_SCHEMA env-var ("v1" or "v2") — explicit override
-      2. APPSEC_SCHEMA_V1=1 env-var — legacy opt-out shortcut
-      3. .skill-config.json → security_schema
+      2. APPSEC_SCHEMA_V1=1 env-var — TEST-SUITE PIN only (ignored outside pytest)
+      3. .skill-config.json → security_schema (set by --schema-v1 in production)
       4. default "v2" (since 2026-05)
     """
     import os as _os
     forced = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
     if forced in {"v1", "v2"}:
         return forced
-    if _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in (
-        "1", "true", "yes", "on"
-    ):
+    # APPSEC_SCHEMA_V1 is the test-suite pin only (gated to a running pytest via
+    # PYTEST_CURRENT_TEST); a stray env var in production can't force legacy v1.
+    if (_os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
+            and "PYTEST_CURRENT_TEST" in _os.environ):
         return "v1"
     cfg = _read_skill_config(output_dir).get("security_schema") or ""
     cfg = cfg.strip().lower() if isinstance(cfg, str) else ""
@@ -14065,7 +14066,7 @@ def render(
             # 13-section schema_v2 — DEFAULT since 2026-05.
             # Resolution order (matches resolve_config.py + qa_checks):
             #   1. APPSEC_SECURITY_SCHEMA env-var ("v1" or "v2")
-            #   2. APPSEC_SCHEMA_V1=1 env-var (legacy opt-out)
+            #   2. APPSEC_SCHEMA_V1=1 env-var (test-suite pin only — ignored outside pytest)
             #   3. .skill-config.json → security_schema
             #   4. default v2
             "security_schema": _resolve_security_schema(output_dir),

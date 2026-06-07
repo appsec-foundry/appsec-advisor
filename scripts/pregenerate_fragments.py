@@ -6280,14 +6280,20 @@ def main(argv: list[str] | None = None) -> int:
     # v2 13-section security-architecture layout is DEFAULT.
     # Resolution order:
     #   1. APPSEC_SECURITY_SCHEMA env-var (explicit override)
-    #   2. APPSEC_SCHEMA_V1=1 env-var (legacy opt-out shortcut)
-    #   3. .skill-config.json → security_schema
+    #   2. APPSEC_SCHEMA_V1=1 env-var — TEST-SUITE PIN ONLY (gated to pytest)
+    #   3. .skill-config.json → security_schema (set by --schema-v1 in production)
     #   4. default v2
     import os as _os
     _forced_schema = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
+    # APPSEC_SCHEMA_V1 is the test-suite pin only (gated to a running pytest via
+    # PYTEST_CURRENT_TEST); a stray env var in production can't force legacy v1.
+    _env_v1 = (
+        _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
+        and "PYTEST_CURRENT_TEST" in _os.environ
+    )
     if _forced_schema in {"v1", "v2"}:
         security_schema = _forced_schema
-    elif _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on"):
+    elif _env_v1:
         security_schema = "v1"
     else:
         security_schema = "v2"
@@ -6300,7 +6306,7 @@ def main(argv: list[str] | None = None) -> int:
                 cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
                 depth = (cfg.get("assessment_depth") or "").strip().lower()
                 # Only consult skill-config schema when env-var didn't already decide.
-                if _forced_schema not in {"v1", "v2"} and not _os.environ.get("APPSEC_SCHEMA_V1", "").strip():
+                if _forced_schema not in {"v1", "v2"} and not _env_v1:
                     cfg_schema = (cfg.get("security_schema") or "").strip().lower()
                     if cfg_schema in {"v1", "v2"}:
                         security_schema = cfg_schema

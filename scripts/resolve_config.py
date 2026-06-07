@@ -1280,20 +1280,36 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     ))
     # v2 13-section schema — DEFAULT since 2026-05.
     # Resolution order:
-    #   1. `--schema-v1` → v1 (explicit opt-out)
-    #   2. `APPSEC_SCHEMA_V1=1` env-var → v1 (CI / scripted opt-out)
-    #   3. otherwise → v2 (default)
+    #   1. `--schema-v1` → v1 (explicit opt-out — the ONLY production path to v1)
+    #   2. otherwise → v2 (default)
     # `--schema-v2` and `APPSEC_SCHEMA_V2=1` are kept as explicit "yes,
     # really v2" markers but are no-ops since v2 is already the default.
+    #
+    # v1 is the deprecated legacy 14-section §7 layout. The `APPSEC_SCHEMA_V1`
+    # env-var is retained ONLY as the test-suite pin (tests/conftest.py) and is
+    # gated to a running pytest via `PYTEST_CURRENT_TEST` (which pytest exports
+    # into the env, so it is inherited by subprocess-based tests too). In
+    # production a stray `APPSEC_SCHEMA_V1=1` left in a shell/profile/settings.json
+    # does NOTHING — v1 must be requested explicitly with `--schema-v1`.
     import os as _os
-    _explicit_v1 = bool(getattr(ns, "schema_v1", False)) or _os.environ.get(
-        "APPSEC_SCHEMA_V1", ""
-    ).strip() in ("1", "true", "yes", "on")
+    _env_v1 = (
+        _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
+        and "PYTEST_CURRENT_TEST" in _os.environ
+    )
+    _explicit_v1 = bool(getattr(ns, "schema_v1", False)) or _env_v1
     cfg["security_schema"] = "v1" if _explicit_v1 else "v2"
     if _explicit_v1:
         cfg["security_schema_label"] = (
-            "v1 (14-section legacy layout — opt-out via --schema-v1)"
+            "v1 (14-section legacy layout — DEPRECATED, opt-out via --schema-v1)"
         )
+        # Deprecation guard: v1 in a real run is almost always a mistake. Make it
+        # loud on stderr; suppressed under pytest (the suite pins v1 by design).
+        if "PYTEST_CURRENT_TEST" not in _os.environ:
+            sys.stderr.write(
+                "WARNING: using the DEPRECATED legacy v1 §7 schema (14-section "
+                "layout). v2 is the default; drop --schema-v1 to use the current "
+                "13-section security-architecture layout.\n"
+            )
     else:
         cfg["security_schema_label"] = (
             "v2 (13-section security architecture layout — default)"

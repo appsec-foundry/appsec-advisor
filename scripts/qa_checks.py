@@ -302,19 +302,22 @@ class _PrePass:
           1. `APPSEC_SECURITY_SCHEMA` env-var (smoke-test / forced override)
           2. `.skill-config.json` next to the current MD
           3. default: v2
-        Set `APPSEC_SCHEMA_V1=1` (or `APPSEC_SECURITY_SCHEMA=v1`) to
-        keep the legacy 14-section layout — useful when QA-checking a
-        threat-model that was rendered before the 2026-05 v2 default
-        flip and has not yet been re-rendered.
+        Set `APPSEC_SECURITY_SCHEMA=v1` to keep the legacy 14-section layout
+        — useful when QA-checking a threat-model that was rendered before the
+        2026-05 v2 default flip and has not yet been re-rendered. (The legacy
+        `APPSEC_SCHEMA_V1=1` shortcut is now the test-suite pin only and is
+        ignored outside pytest.)
         """
         if not isinstance(cls._contract, dict):
             return
         import os as _os
         # 1. Explicit env override wins (CI / smoke tests).
         schema = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
-        if not schema and _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in (
-            "1", "true", "yes", "on"
-        ):
+        # APPSEC_SCHEMA_V1 is the test-suite pin only (gated to a running pytest
+        # via PYTEST_CURRENT_TEST); a stray env var in production can't force v1.
+        if (not schema
+                and _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
+                and "PYTEST_CURRENT_TEST" in _os.environ):
             schema = "v1"
         # 2. Skill-config next to MD.
         if not schema and cls._md_path is not None:
