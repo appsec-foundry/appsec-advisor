@@ -474,6 +474,7 @@ sections:
     # an entry here changes the QA gate semantics.
     # Categories (must match the checks implemented in
     # `qa_checks.py check_security_posture_structure`):
+    #   A = Figure 1 architecture stack (Data bottom / sink-band rules)
     #   D = Diagram structure (Figure 2 heatmap Mermaid block)
     #   E = Edge structure (attack arrows + consequence arrows + alignment)
     #   C = Card / node label structure
@@ -486,6 +487,14 @@ sections:
     # deterministic renderer output (`_build_security_posture_actor_legend`) and
     # is intentionally NOT gated here.
     invariants:
+      # A — Figure 1 architecture diagram (optional, deterministic). Data is a
+      # bottom sink band, not a right-hand peer column.
+      - { id: A1, rule: "Figure 1, when present, uses `flowchart TB` so architecture tiers stack vertically" }
+      - { id: A2, rule: "Figure 1 subgraphs follow `ZONE_ACTORS → CLIENT → APP → DATA`; DATA is emitted last as the bottom tier" }
+      - { id: A3, rule: "Figure 1 has no solid red attack edge (`==>`) targeting a DATA node; attacks reach data only through propagation" }
+      - { id: A4, rule: "Figure 1 has no visible actor→DATA edge; DATA reachability is downstream from Client/Application only" }
+      - { id: A5, rule: "When Figure 1 has APP and DATA nodes, APP nodes connect to DATA by visible App→Data edges or `~~~` balancing edges so DATA stays centered below the app row" }
+      # D/E/C/F/G/T — Figure 2 heatmap + Top Threats table.
       - { id: D1, rule: "mermaid block declares ELK renderer via `%%{init: {\"flowchart\": {\"defaultRenderer\": \"elk\"}} }%%` directive" }
       - { id: D2, rule: "mermaid block opens with `flowchart LR`" }
       - { id: D3, rule: "exactly 3 top-level subgraphs in order: ACTORS, TIERS, IMPACT" }

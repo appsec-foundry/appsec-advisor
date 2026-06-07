@@ -1976,6 +1976,44 @@ class TestSecurityPostureStructureRegexes:
         | <a id="path-xss"></a>③ | **XSS** _(T·I)_<br/>scripts in stored content | •&nbsp;[F-003](#f-003)&nbsp;Stored&nbsp;XSS&nbsp;→&nbsp;[C-02](#c-02) | 🟠 **High**<br/>Customer Session Hijack | [M-003](#m-003) (P2) |
         """)
 
+    _CLEAN_FIGURE1_MERMAID = textwrap.dedent("""\
+        flowchart TB
+            subgraph ZONE_ACTORS["External Actors"]
+                direction LR
+                EXT_SHOPUSER["fa:fa-user Shop User"]:::actorgood
+                ACT_INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::actorbad
+            end
+
+            subgraph CLIENT["Client Tier - browser"]
+                CMP_WEB["C-02 · Web Frontend"]:::comp
+            end
+            subgraph APP["Application Tier - service"]
+                CMP_API["C-01 · API"]:::comp
+                APP_HOTSPOTS["Application hot spots<br/><i>C-04, C-05</i>"]:::hotspot
+            end
+            subgraph DATA["Data Tier"]
+                CMP_DB["C-03 · Primary Database"]:::comp
+            end
+
+            EXT_SHOPUSER -->|"uses"| CMP_WEB
+            CMP_WEB -->|"API calls"| CMP_API
+            CMP_API -->|"reads/writes"| CMP_DB
+            ACT_INTERNET_ANON ==>|"① Injection"| CMP_API
+            ACT_INTERNET_ANON ==>|"①"| APP_HOTSPOTS
+            CMP_API -.->|"①"| CMP_DB
+            APP_HOTSPOTS ~~~ CMP_DB
+        """)
+
+    def _with_figure1(self, fig1_mermaid: str) -> str:
+        figure1 = (
+            "**Figure 1 - Architecture, Trust Boundaries & Threats**\n\n"
+            "```mermaid\n"
+            f"{fig1_mermaid.rstrip()}\n"
+            "```\n\n"
+            "**Figure 2 - Risk Flow: Actor → Tier → Impact**\n\n"
+        )
+        return self._CLEAN_POSTURE_SECTION.replace("```mermaid", figure1 + "```mermaid", 1)
+
     # ---- _count_cards: standalone unit test of the card-counting helper ----
 
     def test_count_cards_matches_all_three_node_shapes(self):
@@ -2016,6 +2054,33 @@ class TestSecurityPostureStructureRegexes:
         report = qa.check_security_posture_structure(md)
         assert report.issues == [], report.issues
         assert report.ok == 1
+
+    def test_figure1_data_bottom_stack_passes(self, tmp_path):
+        """Figure 1 may precede the Figure 2 heatmap. Its architecture stack
+        passes when DATA is the last tier, solid attacks target app/client
+        nodes, and the extra app hotspot has a `~~~` Data balancing edge."""
+        md = _write_minimal_model(tmp_path, self._with_figure1(self._CLEAN_FIGURE1_MERMAID))
+        report = qa.check_security_posture_structure(md)
+        assert not any(i.startswith("A") for i in report.issues), report.issues
+
+    def test_figure1_flags_solid_actor_to_data_edge(self, tmp_path):
+        broken_fig1 = self._CLEAN_FIGURE1_MERMAID.replace(
+            'ACT_INTERNET_ANON ==>|"① Injection"| CMP_API',
+            'ACT_INTERNET_ANON ==>|"① Injection"| CMP_DB',
+        )
+        md = _write_minimal_model(tmp_path, self._with_figure1(broken_fig1))
+        report = qa.check_security_posture_structure(md)
+        assert any(i.startswith("A3:") for i in report.issues), report.issues
+        assert any(i.startswith("A4:") for i in report.issues), report.issues
+
+    def test_figure1_flags_missing_app_data_balancing_edge(self, tmp_path):
+        broken_fig1 = self._CLEAN_FIGURE1_MERMAID.replace(
+            "APP_HOTSPOTS ~~~ CMP_DB\n",
+            "",
+        )
+        md = _write_minimal_model(tmp_path, self._with_figure1(broken_fig1))
+        report = qa.check_security_posture_structure(md)
+        assert any(i.startswith("A5:") for i in report.issues), report.issues
 
     # ---- targeted: each formerly-broken invariant individually ----
 

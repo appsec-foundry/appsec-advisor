@@ -354,6 +354,116 @@ def test_figure1_solid_edges_are_self_describing(tmp_path: Path) -> None:
                     f"dotted edge re-titles already-named glyph {gly}: {lbl!r}"
 
 
+def test_figure1_keeps_data_as_bottom_sink_with_balancing_edges(tmp_path: Path) -> None:
+    """Figure 1 is a vertical tier stack. When the app row has multiple
+    visible components, every non-representative app node gets an invisible
+    App→Data balancing edge so ELK keeps DATA centered underneath the app row
+    instead of drifting to the right."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={
+            "components": [
+                {"id": "web", "name": "Web Frontend", "tier": "client"},
+                {"id": "api", "name": "REST API", "tier": "application"},
+                {"id": "worker", "name": "Background Worker", "tier": "application"},
+                {"id": "db", "name": "Primary Database", "tier": "data"},
+            ],
+            "threats": [
+                {"id": "F-001", "title": "SQL Injection", "component": "api", "risk": "High"},
+                {"id": "F-002", "title": "Unsafe job input", "component": "worker", "risk": "High"},
+                {"id": "F-003", "title": "Weak data storage", "component": "db", "risk": "Medium"},
+            ],
+        },
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    md = compose._render_top_threats_architecture(
+        ctx,
+        {
+            "attack_paths": [
+                {
+                    "class": "injection",
+                    "actor": "internet-anon",
+                    "target": "application",
+                    "findings": ["F-001", "F-002"],
+                    "impact": ["customer-data-exfiltration"],
+                }
+            ]
+        },
+        {
+            "glyph_sequence": ["①"],
+            "classes": [
+                {
+                    "id": "injection",
+                    "label": "Injection",
+                    "short_label": "Injection",
+                    "default_actor": "internet-anon",
+                    "default_target_tier": "application",
+                }
+            ],
+        },
+    )
+    fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
+    assert fig1.index('subgraph CLIENT["Client Tier') < fig1.index('subgraph APP["Application Tier')
+    assert fig1.index('subgraph APP["Application Tier') < fig1.index('subgraph DATA["Data Tier')
+    assert 'CMP_WORKER ~~~ CMP_DB' in fig1
+    assert not re.search(r'==>\|"[^"]*"\| CMP_DB\b', fig1), fig1
+
+
+def test_figure1_victim_target_without_client_component_does_not_crash(tmp_path: Path) -> None:
+    """Victim-targeting classes can occur in thin API-only models. Figure 1
+    must still render a propagation edge instead of referencing an undefined
+    fallback variable."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={
+            "components": [
+                {"id": "api", "name": "REST API", "tier": "application"},
+                {"id": "db", "name": "Primary Database", "tier": "data"},
+            ],
+            "threats": [
+                {"id": "F-001", "title": "Reflected XSS", "component": "api", "risk": "High"},
+            ],
+        },
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    md = compose._render_top_threats_architecture(
+        ctx,
+        {
+            "attack_paths": [
+                {
+                    "class": "cross-site-scripting",
+                    "actor": "victim-required",
+                    "target": "victim",
+                    "findings": ["F-001"],
+                    "impact": ["customer-session-hijack"],
+                }
+            ]
+        },
+        {
+            "glyph_sequence": ["①"],
+            "classes": [
+                {
+                    "id": "cross-site-scripting",
+                    "label": "Cross-Site Scripting",
+                    "short_label": "XSS",
+                    "default_actor": "victim-required",
+                    "default_target_tier": "client",
+                }
+            ],
+        },
+    )
+    assert "```mermaid" in md
+    assert "-.->" in md
+
+
 def test_top_threats_rows_self_anchor_the_path_glyph(tmp_path: Path) -> None:
     """Each Top Threats row carries its `#path-<class>` anchor on the `#`
     glyph cell (the merged section dropped the bullet list that used to emit

@@ -146,6 +146,9 @@ every run:
 - external **actor band on top** (red `:::actorbad` attackers, green
   `:::actorgood` legitimate user/victim — every actor annotated with icon +
   subtitle), then the `CLIENT → APP → DATA` tier stack (`flowchart TB`);
+- the **DATA tier is always the bottom sink band**, never a right-hand peer
+  column. App fan-out is balanced with invisible `~~~` App→Data layout edges
+  when needed so the data tier stays centered under the application row;
 - each component box carries a **finding-count badge** (`🔴 <Critical> 🟠 <High>`);
 - **no actor→data edges** — data-tier attacks (injection, secret/file exposure)
   route as internal `app ⇒ data` edges; victim-targeting classes route

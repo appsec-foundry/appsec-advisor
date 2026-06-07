@@ -5025,6 +5025,10 @@ def _render_top_threats_architecture(
       P4. Solid red = attack; dotted red = propagation; grey = benign backbone.
       P5. Each component box carries a 🔴/🟠 finding-count badge; actors are
           red (attacker) / green (legitimate user-victim), all annotated.
+      P6. Data is the bottom sink band, never a right-hand peer column. Every
+          visible application node is connected to the data representative by a
+          real App→Data edge or an invisible balancing edge, so ELK keeps the
+          data tier centered under a wide application row.
 
     Returns an empty string when there is nothing to draw (no components or no
     attack paths).
@@ -5280,7 +5284,12 @@ def _render_top_threats_architecture(
         # T4 — dotted propagation onto the victim, ONLY for victim-targeting
         # (XSS/CSRF) classes (deferred until user_node is resolved below).
         if tt in ("client", "victim"):
-            vsrc = comp_node[rep_client] if rep_client else (comp_node[primary] if primary else None)
+            # Prefer the client representative. If a repo has no explicit
+            # client-tier component, fall back to the application/data rep so a
+            # victim-targeting class still renders a valid propagation edge
+            # instead of crashing on an undefined placeholder.
+            fallback_cid = rep_client or rep_app or rep_data or next(iter(comp_node), None)
+            vsrc = comp_node.get(fallback_cid) if fallback_cid else None
             if vsrc:
                 victim_props.append((vsrc, glyph))
 

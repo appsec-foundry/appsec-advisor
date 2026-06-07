@@ -1885,14 +1885,14 @@ def build_repair_plan(
             }
         )
 
-    # Security Posture invariants — categorise by ID prefix. D/C/F/G/T are
+    # Security Posture invariants — categorise by ID prefix. A/D/C/F/G/T are
     # all renderer-driven; if they fire, it's a plugin bug, not content. L
     # rules (link format) typically reflect missing `title` in
     # `threat-model.yaml#threats[].title` — that is content.
     for raw in posture_issues:
         rule_id = raw.split(":", 1)[0].strip() if ":" in raw else "?"
         category = rule_id[0] if rule_id else "?"
-        if category in ("D", "C", "F", "G", "T"):
+        if category in ("A", "D", "C", "F", "G", "T"):
             kind = "posture_renderer_bug"
             fragments = []
             remediation = (
@@ -8511,16 +8511,18 @@ def check_security_posture_structure(md_path: Path) -> Report:
     invariants declared in
     `data/sections-contract.yaml > security_posture_at_a_glance.invariants`.
 
-    Layout: the forward-only Mermaid heatmap (Figure 2) — 3 columns
-    (ACTORS / TIERS / IMPACT) with explicit attack arrows, dashed
-    consequence arrows and cross-subgraph header-alignment edges —
-    followed by the **Top Threats** table.
+    Layout: Figure 1 is an optional fixed vertical architecture stack
+    (External Actors → Client → Application → Data). Figure 2 is the
+    forward-only Mermaid heatmap — 3 columns (ACTORS / TIERS / IMPACT) with
+    explicit attack arrows, dashed consequence arrows and cross-subgraph
+    header-alignment edges — followed by the **Top Threats** table.
 
     2026-05: the legacy per-attack-class BULLET list (former N / B / L
     invariants) was replaced by the Top Threats table, so this check now
     validates the table (T-rules) instead of the bullets.
 
     Categories:
+      A1–A5  Figure 1 architecture-stack layout (Data bottom / sink rules)
       D1–D6  Diagram structure (mermaid block, subgraphs, direction)
       E1–E5  Edge structure (alignment, attack arrows, consequence, linkStyle, undeclared nodes)
       C1     Card label structure (≤6 <br/> per label; HTML emphasis allowed)
@@ -8541,6 +8543,8 @@ def check_security_posture_structure(md_path: Path) -> Report:
     if sec_end < 0:
         sec_end = len(text)
     section = text[sec_start:sec_end]
+
+    _check_figure1_architecture_layout(report, section)
 
     # Locate the heatmap (Figure 2) mermaid block specifically — an optional
     # Figure 1 architecture diagram may precede it, so we anchor on the
@@ -8734,6 +8738,119 @@ def check_security_posture_structure(md_path: Path) -> Report:
     if not report.issues:
         report.ok = 1
     return report
+
+
+_MERMAID_BODY_RE = re.compile(r"```mermaid\s*\n(?P<body>.*?)(?:\n)?```", re.DOTALL)
+_FIG1_EDGE_RE = re.compile(
+    r"^\s*"
+    r"(?P<src>[A-Z_][A-Z0-9_]*)\s+"
+    r"(?P<op>==>|-->|-\.->|~~~|---)"
+    r"\s*(?:\|\"[^\"]*\"\|\s*)?"
+    r"(?P<dst>[A-Z_][A-Z0-9_]*)\b",
+    re.MULTILINE,
+)
+
+
+def _check_figure1_architecture_layout(report: Report, section: str) -> None:
+    """Validate the optional Figure 1 architecture diagram.
+
+    Figure 2 has its own heatmap contract. Figure 1 is a different visual:
+    a vertical tier stack whose Data tier is a bottom sink band. These rules
+    catch regressions where Mermaid/ELK or a future renderer change drifts the
+    data tier into a right-hand peer column or draws attacker edges straight
+    into data components.
+    """
+    fig1_pos = section.find("**Figure 1")
+    if fig1_pos < 0:
+        fig1_pos = section.find("Figure 1")
+    if fig1_pos < 0:
+        return
+    fig2_pos = section.find("**Figure 2", fig1_pos)
+    fig1_scope = section[fig1_pos: fig2_pos if fig2_pos > fig1_pos else len(section)]
+    blocks = [m.group("body") for m in _MERMAID_BODY_RE.finditer(fig1_scope)]
+    if not blocks:
+        report.issues.append("A1: Figure 1 is present but has no ```mermaid block")
+        return
+    mermaid = blocks[0]
+
+    if not re.search(r"^\s*flowchart\s+TB\b", mermaid, re.MULTILINE):
+        report.issues.append("A1: Figure 1 must use `flowchart TB` so tiers stack vertically")
+
+    subgraphs = re.findall(r"^\s*subgraph\s+([A-Z_][A-Z0-9_]*)\[", mermaid, re.MULTILINE)
+    tier_order = ["ZONE_ACTORS", "CLIENT", "APP", "DATA"]
+    present_tiers = [sg for sg in subgraphs if sg in tier_order]
+    expected = sorted(present_tiers, key=tier_order.index)
+    if present_tiers != expected:
+        report.issues.append(
+            "A2: Figure 1 subgraph order must follow "
+            f"`ZONE_ACTORS → CLIENT → APP → DATA`; got {present_tiers!r}"
+        )
+
+    actors_block = _extract_subgraph_block(mermaid, "ZONE_ACTORS")
+    app_block = _extract_subgraph_block(mermaid, "APP")
+    data_block = _extract_subgraph_block(mermaid, "DATA")
+    actor_nodes = _declared_node_ids(actors_block)
+    app_nodes = _declared_node_ids(app_block)
+    data_nodes = _declared_node_ids(data_block)
+    if not data_nodes:
+        return
+
+    edges = list(_iter_fig1_edges(mermaid))
+    solid_to_data = [
+        (src, dst)
+        for src, op, dst in edges
+        if op == "==>" and dst in data_nodes
+    ]
+    if solid_to_data:
+        report.issues.append(
+            "A3: Figure 1 must not draw solid attack edges into DATA nodes; "
+            f"offending edges: {solid_to_data!r}"
+        )
+
+    actor_to_data = [
+        (src, op, dst)
+        for src, op, dst in edges
+        if src in actor_nodes and dst in data_nodes and op in {"-->", "==>", "-.->"}
+    ]
+    if actor_to_data:
+        report.issues.append(
+            "A4: Figure 1 DATA reachability must be downstream from Client/Application, "
+            f"not directly from actors; offending edges: {actor_to_data!r}"
+        )
+
+    if app_nodes:
+        app_to_data_sources = {
+            src
+            for src, op, dst in edges
+            if src in app_nodes and dst in data_nodes and op in {"-->", "-.->", "~~~"}
+        }
+        if not app_to_data_sources:
+            report.issues.append(
+                "A5: Figure 1 has APP and DATA nodes but no App→Data visible or "
+                "invisible anchor edge; DATA may drift sideways instead of staying "
+                "as the bottom sink band"
+            )
+        elif len(app_nodes) > 1:
+            missing = sorted(app_nodes - app_to_data_sources)
+            if missing:
+                report.issues.append(
+                    "A5: every visible APP node must connect to a DATA node via a "
+                    "visible edge or `~~~` balancing edge when the app row fans out; "
+                    f"missing anchors for {missing!r}"
+                )
+
+
+def _declared_node_ids(block: str) -> set[str]:
+    """Return Mermaid node ids declared in a subgraph block."""
+    return set(re.findall(r"^\s+([A-Z_][A-Z0-9_]*)(?:\[|\()", block, re.MULTILINE))
+
+
+def _iter_fig1_edges(mermaid: str) -> list[tuple[str, str, str]]:
+    """Return ``(src, op, dst)`` triples for simple Figure 1 flowchart edges."""
+    return [
+        (m.group("src"), m.group("op"), m.group("dst"))
+        for m in _FIG1_EDGE_RE.finditer(mermaid)
+    ]
 
 
 def _check_heatmap_undeclared_nodes(report: Report, mermaid: str, tiers_block: str) -> None:
