@@ -544,7 +544,7 @@ At a high level:
 4. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
 
 - Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
-- Examples: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · [local build](docs/internal-plugin-packaging.md#local-build-no-tarball)
+- Runnable CI starters: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · Local build: [Quick start](docs/internal-plugin-packaging.md#quick-start)
 
 ## Roadmap
 
