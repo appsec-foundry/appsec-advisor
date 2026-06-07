@@ -1795,7 +1795,34 @@ This domain feeds `### 7.11 Operations, Runtime and Supply Chain Controls` and r
 
 ## Phase 8b: Requirements Compliance (conditional)
 
-**Only when `CHECK_REQUIREMENTS=true`.** Read `.requirements.yaml`, verify each requirement via Grep+Read, assign PASS/PARTIAL/FAIL/UNVERIFIABLE. Generate threat candidates from FAILs for Phase 9.
+**Only when `CHECK_REQUIREMENTS=true`.** Read `.requirements.yaml`, verify each requirement via Grep+Read, assign applicability first, then status. Generate threat candidates only from FAIL/PARTIAL/ANTI-PATTERN rows for Phase 9.
+
+### Applicability and source-of-truth rules
+
+Requirement checks are a policy/compliance surface, not another free-form recommendations list. Apply these rules before judging PASS/FAIL:
+
+1. **Separate normative requirements from guidance.** Only `categories[].requirements[]` entries are requirements. Top-level `blueprints[]` and blueprint `sections[]` are implementation guidance; use them for remediation advice, but they MUST NOT create extra compliance rows, change PASS/FAIL counts, or be cited as "violated requirements".
+2. **State the policy source.** If `.skill-config.json` / `.org-profile-effective.json` shows no active org profile and no `meta.compliance_scope`, call this a generic baseline assessment. Do not imply contractual compliance unless an organization profile or explicit compliance scope is active.
+3. **Decide applicability before evidence.** Every requirement row must use one of:
+   - `PASS` - directly evidenced in the repository or configured deployment artifacts.
+   - `FAIL` - applicable and contradicted by repository/deployment evidence.
+   - `PARTIAL` - applicable, some control exists, but required coverage is incomplete.
+   - `N/A` - the requirement domain does not exist in the assessed system (for example LLM requirements when no LLM surface exists, or service-to-service auth in a single-process monolith with no API-to-API calls).
+   - `NOT OBSERVABLE` - the requirement might be applicable in production but cannot be assessed from the repository artifacts supplied (for example WAF, external TLS termination, log retention, or peer-review gates when no deployment/platform evidence is present).
+   - `UNVERIFIABLE` - evidence is conflicting or too weak to decide.
+4. **Only `FAIL`, `PARTIAL`, and `ANTI-PATTERN` are violations.** `PASS`, `N/A`, `NOT OBSERVABLE`, and `UNVERIFIABLE` rows do not generate threat candidates and must not appear in violated-requirement traceability.
+5. **No semantic re-mapping after the status decision.** If a requirement is `PASS`, later STRIDE findings may not attach that requirement ID as violated. Link those findings to the correct failed requirement or to blueprint guidance instead.
+
+Common applicability examples:
+
+| Requirement shape | Correct handling when only repo evidence is available |
+|-------------------|--------------------------------------------------------|
+| Service-to-service auth for a single-process monolith | `N/A` unless recon found API-to-API calls |
+| WAF in front of app | `NOT OBSERVABLE` unless IaC/deployment config proves presence or absence |
+| TLS/HSTS when the app binds HTTP but deployment may terminate TLS externally | `PARTIAL` or `NOT OBSERVABLE`; cite exactly what repo evidence can prove |
+| Kubernetes NetworkPolicy with no Kubernetes manifests | `NOT OBSERVABLE`, not automatic FAIL |
+| LLM controls with no LLM/AI surface | `N/A` |
+| SAST when CodeQL or equivalent runs in PR CI | `PASS` or `PARTIAL`; do not map supply-chain install risks to SAST |
 
 ### Priority-aware risk escalation
 
@@ -1850,7 +1877,7 @@ For each detected anti-pattern:
 
 ### Requirement metadata for Phase 9 integration
 
-For each FAIL, PARTIAL, or ANTI-PATTERN requirement, emit a **threat candidate** that carries requirement metadata:
+For each FAIL, PARTIAL, or ANTI-PATTERN requirement, emit a **threat candidate** that carries requirement metadata. Do not emit candidates for PASS, N/A, NOT OBSERVABLE, or UNVERIFIABLE rows:
 
 - `source`: `"requirements-compliance"` or `"architectural-anti-pattern"`
 - `requirement_id`: the requirement's ID (e.g. `"SEC-AUTH-1"`) — for anti-patterns, use the closest matching requirement ID or `ARCH-<slug>` if no requirement matches
@@ -1887,7 +1914,7 @@ cat > "$OUTPUT_DIR/.phase-8b-violations.json" << 'ENDJSON'
 ENDJSON
 ```
 
-Include only requirements with `status` in `{FAIL, PARTIAL, ANTI-PATTERN}`. Requirements that PASS are not included. When `CHECK_REQUIREMENTS=false` or no violations exist, write `{"generated_at": "<ts>", "violations": []}`.
+Include only requirements with `status` in `{FAIL, PARTIAL, ANTI-PATTERN}`. Requirements that are PASS, N/A, NOT OBSERVABLE, or UNVERIFIABLE are not included. When `CHECK_REQUIREMENTS=false` or no violations exist, write `{"generated_at": "<ts>", "violations": []}`.
 
 ### Section 7b output format
 
@@ -1896,7 +1923,7 @@ When `CHECK_REQUIREMENTS=true`, write a **Section 7b — Requirements Compliance
 ```markdown
 ## 7b. Requirements Compliance
 
-This section summarizes the compliance status of each requirement from the [<requirements source name>](<url>) baseline. Requirements marked ❌ FAIL or ❌ ANTI-PATTERN have generated threat entries in the [Threat Register](#7-threat-register).
+This section summarizes the compliance status of each requirement from the [<requirements source name>](<url>) baseline. Requirements marked ❌ FAIL, ⚠️ PARTIAL, or ❌ ANTI-PATTERN have generated threat entries in the [Threat Register](#7-threat-register). PASS, N/A, NOT OBSERVABLE and UNVERIFIABLE rows are explicitly non-violations.
 
 ### Architectural Violations
 
@@ -1910,24 +1937,27 @@ These findings represent **systemic architectural gaps** — missing patterns or
 
 ### Full Compliance Table
 
-| Requirement | Priority | Title | Status | Evidence | Linked Threats |
-|-------------|----------|-------|--------|----------|----------------|
-| [<ID>](<url>) | MUST | <title> | ❌ ANTI-PATTERN | <architectural pattern missing> | [F-NNN](#f-nnn) |
-| [<ID>](<url>) | MUST | <title> | ❌ FAIL | <brief evidence of violation> | [F-NNN](#f-nnn) |
-| [<ID>](<url>) | SHOULD | <title> | ⚠️ PARTIAL | <what's present, what's missing> | [F-NNN](#f-nnn) |
-| [<ID>](<url>) | MUST | <title> | ✅ PASS | <brief evidence of compliance> | — |
+| Requirement | Applies? | Priority | Title | Status | Evidence | Linked Threats |
+|-------------|----------|----------|-------|--------|----------|----------------|
+| [<ID>](<url>) | No | MUST | <title> | N/A | <domain absent> | — |
+| [<ID>](<url>) | Unknown | SHOULD | <title> | NOT OBSERVABLE | <not present in repo/deployment artifacts> | — |
+| [<ID>](<url>) | Yes | MUST | <title> | ❌ ANTI-PATTERN | <architectural pattern missing> | [F-NNN](#f-nnn) |
+| [<ID>](<url>) | Yes | MUST | <title> | ❌ FAIL | <brief evidence of violation> | [F-NNN](#f-nnn) |
+| [<ID>](<url>) | Yes | SHOULD | <title> | ⚠️ PARTIAL | <what's present, what's missing> | [F-NNN](#f-nnn) |
+| [<ID>](<url>) | Yes | MUST | <title> | ✅ PASS | <brief evidence of compliance> | — |
 
-**Summary:** <N> requirements checked — ✅ <N> PASS · ❌ <N> FAIL · ❌ <N> ANTI-PATTERN · ⚠️ <N> PARTIAL
+**Summary:** <N> requirements assessed — ✅ <N> PASS · ❌ <N> FAIL · ❌ <N> ANTI-PATTERN · ⚠️ <N> PARTIAL · — <N> N/A · ? <N> NOT OBSERVABLE · ? <N> UNVERIFIABLE
 ```
 
 **Rules:**
-- Order rows by: ❌ ANTI-PATTERN first, then ❌ FAIL, then ⚠️ PARTIAL, then ✅ PASS. Within each status group, order by priority: MUST first, then SHOULD, then MAY
+- Order rows by: ❌ ANTI-PATTERN first, then ❌ FAIL, then ⚠️ PARTIAL, then ✅ PASS, then N/A, NOT OBSERVABLE, UNVERIFIABLE. Within each status group, order by priority: MUST first, then SHOULD, then MAY
 - The "Priority" column shows the requirement's priority from the YAML
-- The "Linked Threats" column links to threats generated from FAIL/PARTIAL/ANTI-PATTERN requirements in Phase 9
+- The "Applies?" column is `Yes`, `No`, or `Unknown`; `No` implies N/A and `Unknown` implies NOT OBSERVABLE/UNVERIFIABLE, not FAIL
+- The "Linked Threats" column links to threats generated from FAIL/PARTIAL/ANTI-PATTERN requirements in Phase 9; it is `—` for PASS/N/A/NOT OBSERVABLE/UNVERIFIABLE rows
 - Each requirement ID is a clickable link using the `url` from the requirements YAML. If no URL, render as plain text
 - The "Evidence" column is brief (one line) — cite the file:line or config that proves compliance or violation
 - The "Architectural Violations" subsection provides executive visibility into systemic gaps — keep each row to 1-2 sentences
-- **Do NOT author a separate requirement→finding→mitigation mapping/traceability table.** The composer (`compose_threat_model.py:_render_requirements_compliance`) deterministically appends a `### Requirements Traceability` table to §7b — built from `threat-model.yaml` (`violated_requirements`, `mitigation_ids`, `mitigation.fulfills_requirements`, `remediation.blueprint`) and validated by construction. Your Full Compliance Table owns the human view (Status / Priority / Evidence); the appended table owns the verified links (Findings / Maßnahmen / Blueprint). The Management Summary's `### Requirements Compliance` subsection renders a compact variant of the same deterministic table.
+- **Do NOT author a separate requirement→finding→mitigation mapping/traceability table.** The composer (`compose_threat_model.py:_render_requirements_compliance`) deterministically appends a `### Requirements Traceability` table to §7b — built from `threat-model.yaml` (`violated_requirements`, `mitigation_ids`, `mitigation.fulfills_requirements`, `remediation.blueprint`) and filtered by the Full Compliance Table status. Your Full Compliance Table owns the human view (Applicability / Status / Priority / Evidence); the appended table owns the verified links (Findings / Maßnahmen / non-normative Guidance). The Management Summary's `### Requirements Compliance` subsection renders a compact variant of the same deterministic table.
 
 ---
 

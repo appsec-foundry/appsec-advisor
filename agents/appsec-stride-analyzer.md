@@ -414,9 +414,11 @@ Read `shared/supply-chain-patterns.md` for the 21 finding-type → STRIDE-catego
 
 ### Requirements reference lookup — apply to every threat's `remediation.reference`
 
+**Normative rule:** a requirement ID may be written to `remediation.reference` only when it appears in the Phase 8b violations index for this component. Do not semantically match a normal STRIDE finding to arbitrary `categories[].requirements[]`; that reintroduces PASS/N/A requirements as "violated" downstream.
+
 **Phase 8b index check (highest priority)** — when the violations index loaded from `PHASE_8B_VIOLATIONS_INDEX_PATH` is non-empty:
 
-Before semantic matching, check the loaded index for a violation whose scenario area aligns with this threat. Alignment: same component AND (same CWE family OR same STRIDE category). On match, use that violation's `requirement_id` and `requirement_url` directly as `remediation.reference` — do not add an OWASP cheatsheet alongside. Ensures the Threat Register's `Violated:` annotations are consistent with Phase 8b's authoritative PASS/FAIL.
+Before selecting any other reference, check the loaded index for a violation whose scenario area aligns with this threat. Alignment: same component AND (same CWE family OR same STRIDE category). On match, use that violation's `requirement_id` and `requirement_url` directly as `remediation.reference` — do not add an OWASP cheatsheet alongside. Ensures the Threat Register's `Violated:` annotations are consistent with Phase 8b's authoritative PASS/FAIL.
 
 Match procedure:
 1. For each violation `v`:
@@ -424,16 +426,14 @@ Match procedure:
    - STRIDE match: threat STRIDE matches the violation's implied category
 2. On match: `remediation.reference = "[{v.requirement_id}]({v.requirement_url})"` (or plain `[{v.requirement_id}]` when URL is null).
 3. Multiple matches: prefer `architectural_violation=true` over `false`, then `MUST` over `SHOULD`.
-4. No match: fall through to semantic matching below.
+4. No match: do not attach a requirement ID; fall through to OWASP/CWE reference selection.
 
-**Semantic matching** — check `OUTPUT_DIR/.requirements.yaml`:
-- `source: "disabled"` or file missing → use OWASP / CWE reference directly (rule 3 below).
-- Otherwise → load `categories[].requirements[]`. Match by relevance. Prefer `MUST` > `SHOULD` > `MAY`.
+**No semantic requirement matching.** `OUTPUT_DIR/.requirements.yaml` may still be read for `blueprints[]` guidance, but `categories[].requirements[]` is not a free-form reference catalog at STRIDE time. If `PHASE_8B_VIOLATIONS_INDEX_PATH` is `none`, missing, empty, or contains no aligned violation, use an OWASP Cheat Sheet URL or CWE ID as `remediation.reference`.
 
 **Reference selection — exactly one, stop at first match:**
 
-1. Requirement matched, URL set → `"[{req.id}]({req.url})"` — e.g. `"[AUTH-3](https://security.example.com/requirements/auth#auth-3)"`.
-2. Requirement matched, URL null → `"[{req.id}]"`.
+1. Requirement matched from the Phase 8b violations index, URL set → `"[{req.id}]({req.url})"` — e.g. `"[AUTH-3](https://security.example.com/requirements/auth#auth-3)"`.
+2. Requirement matched from the Phase 8b violations index, URL null → `"[{req.id}]"`.
 3. No match or requirements unavailable → OWASP Cheat Sheet URL or CWE ID — e.g. `"CWE-287"`.
 
 **Do NOT add OWASP/CWE links when a requirement was matched.** The requirement URL is authoritative. Never invent requirement IDs.
