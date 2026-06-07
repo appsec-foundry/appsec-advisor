@@ -55,6 +55,50 @@ def test_org_profile_activation_via_cli(tmp_path):
     # ci-standard preset enables sarif by default; CLI didn't pass --sarif
     # so the preset default applies.
     assert cfg["write_sarif"] is True
+    # The selected preset and profile requirements source enable requirements by
+    # default; this must feed the final create-threat-model config, not just the
+    # emitted org-profile metadata.
+    assert cfg["check_requirements"] is True
+    assert cfg["requirements_url_override"] is None
+    assert cfg["requirements_label"].startswith("enabled (org-profile")
+
+
+def test_no_requirements_overrides_profile_default(tmp_path):
+    cfg = _resolve([
+        "--org-profile", str(FIXTURE),
+        "--no-requirements",
+        "--output", str(tmp_path),
+        "auth",
+    ])
+    assert cfg["org_profile"]["active"] is True
+    assert cfg["check_requirements"] is False
+    assert cfg["requirements_label"] == "disabled (--no-requirements)"
+
+
+def test_quick_default_in_profile_disables_create_requirements(tmp_path):
+    cfg = _resolve([
+        "--org-profile", str(FIXTURE),
+        "--assessment-depth", "quick",
+        "--output", str(tmp_path),
+        "auth",
+    ])
+    assert cfg["assessment_depth"] == "quick"
+    assert cfg["org_profile"]["active"] is True
+    assert cfg["check_requirements"] is False
+    assert cfg["requirements_label"] == "disabled (org-profile quick default)"
+
+
+def test_bare_requirements_flag_overrides_quick_profile_default(tmp_path):
+    cfg = _resolve([
+        "--org-profile", str(FIXTURE),
+        "--assessment-depth", "quick",
+        "--output", str(tmp_path),
+        "--requirements",
+    ])
+    assert cfg["assessment_depth"] == "quick"
+    assert cfg["check_requirements"] is True
+    assert cfg["requirements_url_override"] is None
+    assert cfg["requirements_label"] == "enabled (--requirements)"
 
 
 def test_no_sarif_overrides_preset(tmp_path):

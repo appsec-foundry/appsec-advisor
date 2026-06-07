@@ -29,6 +29,9 @@ FLAGS
                            of the configured source; no cache fallback.
                            <src> is an http(s):// URL (fetched remotely) or
                            a local file path (absolute, relative, or ~).
+  --org-profile <path>     Use this org profile for source resolution.
+  --preset <name>          Use a specific preset from the active org profile.
+  --no-org-profile         Ignore packaged/env-pointed org profiles.
 
 See `/appsec-advisor:status` for plugin & configuration status, and
 `docs/configuration.md` → "Security Requirements Management" for the source
@@ -48,8 +51,13 @@ The user may pass arguments after the skill name. Parse them now:
 - `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
 - `--save` — save both formats
 - `--requirements <src>` — override the configured `requirements_yaml_url` for this run. `<src>` is an http(s):// URL (fetched remotely) or a local file path (absolute or relative). The source must load; there is no cache fallback when an explicit source is provided.
+- `--org-profile <path>` — use this org profile for source resolution instead of the packaged default.
+- `--preset <name>` — use a specific preset when resolving the active org profile.
+- `--no-org-profile` — ignore any packaged or env-pointed org profile for this run.
 
-Store the resolved flags: `save_md`, `save_json`, `category_filter`, `requirements_url_override`.
+Store the resolved flags: `save_md`, `save_json`, `category_filter`,
+`requirements_url_override`, `org_profile_override`, `preset_override`,
+`no_org_profile`.
 
 #### Reject unknown flags (hard fail)
 
@@ -70,130 +78,116 @@ Error: unknown argument '<TOKEN>'
   --json                   Save the raw findings as JSON
   --save                   Both --md and --json
   --requirements <url>     Override the configured requirements YAML source
+  --org-profile <path>     Override the packaged org profile
+  --preset <name>          Select an org-profile preset
+  --no-org-profile         Ignore org-profile defaults
   --help, -h               Show full help and exit
 
 Run `/appsec-advisor:audit-security-requirements --help` for details.
 ```
 
-`--requirements` counts as unknown when its URL value is missing — treat
-the flag itself as the offending token in that case.
+`--requirements`, `--org-profile`, and `--preset` count as unknown when their
+value is missing — treat the flag itself as the offending token in that case.
 
-### 1b — Read config and resolve the requirements YAML
+### 1b — Resolve the org profile and requirements YAML
 
-Find the plugin config:
+Find the plugin root:
 
 ```bash
-SKILL_CONFIG=""
-if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  SKILL_CONFIG="$CLAUDE_PLUGIN_ROOT/skills/audit-security-requirements/config.json"
-else
-  SKILL_CONFIG=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/audit-security-requirements/config.json" \
+if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
+  SKILL_MD_PATH=$(find /root /home /opt -maxdepth 6 \
+    -path "*/appsec-advisor/skills/audit-security-requirements/SKILL.md" \
     2>/dev/null | head -1)
+  if [ -n "$SKILL_MD_PATH" ]; then
+    CLAUDE_PLUGIN_ROOT=$(dirname "$(dirname "$(dirname "$SKILL_MD_PATH")")")
+  fi
+fi
+export CLAUDE_PLUGIN_ROOT
+if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
+  echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved — install appsec-advisor or set the variable manually." >&2
+  exit 2
 fi
 ```
 
-Read `requirements_source.enabled` and `requirements_source.requirements_yaml_url`. If the file is not found, treat `enabled` as `false` and `requirements_yaml_url` as `null`.
-
-Determine the plugin cache path:
+Resolve the active org profile before resolving the requirements source. The
+audit report output directory is the current repository's `docs/security/`;
+the resolver writes `.org-profile-effective.json` there so the shared
+requirements resolver and fetch gate see the same profile state as
+`create-threat-model`.
 
 ```bash
-if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
-  REQUIREMENTS_CACHE="$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml"
+AUDIT_OUTPUT_DIR="${PWD}/docs/security"
+mkdir -p "$AUDIT_OUTPUT_DIR"
+
+ORG_ARGS=()
+[ -n "$ORG_PROFILE_OVERRIDE" ] && ORG_ARGS+=(--org-profile "$ORG_PROFILE_OVERRIDE")
+[ -n "$PRESET_OVERRIDE" ] && ORG_ARGS+=(--preset "$PRESET_OVERRIDE")
+[ "$NO_ORG_PROFILE" = "true" ] && ORG_ARGS+=(--no-org-profile)
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_org_profile.py" \
+  --output-dir "$AUDIT_OUTPUT_DIR" \
+  --emit-file \
+  "${ORG_ARGS[@]}" >/dev/null
+ORG_RESOLVE_EXIT=$?
+if [ "$ORG_RESOLVE_EXIT" -ne 0 ]; then
+  exit "$ORG_RESOLVE_EXIT"
+fi
+```
+
+Resolve the source with `scripts/resolve_requirements_source.py`. Resolution
+order is: explicit `--requirements <src>` > `--no-org-profile` / active org
+profile source and `standalone_audit.enabled` > legacy
+`skills/audit-security-requirements/config.json` > plugin cache fallback.
+
+```bash
+REQ_SOURCE_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR")
+[ -n "$REQUIREMENTS_URL_OVERRIDE" ] && REQ_SOURCE_ARGS+=(--requirements "$REQUIREMENTS_URL_OVERRIDE")
+
+REQ_SOURCE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_requirements_source.py" \
+  "${REQ_SOURCE_ARGS[@]}")
+REQ_SOURCE_ENABLED=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('enabled',False)).lower())")
+REQ_SOURCE_KIND=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('source') or '')")
+```
+
+If `REQ_SOURCE_KIND` is `org-profile` and `REQ_SOURCE_ENABLED` is `false`,
+abort. This is the org profile's explicit `requirements.standalone_audit.enabled:
+false` setting; do not silently fall back to the legacy config or cache.
+
+```bash
+if [ "$REQ_SOURCE_KIND" = "org-profile" ] && [ "$REQ_SOURCE_ENABLED" != "true" ]; then
+  echo "✗ Requirements audit is disabled by the active org profile." >&2
+  echo "  Set requirements.standalone_audit.enabled: true or pass --requirements <src>." >&2
+  exit 2
+fi
+```
+
+Fetch or load the requirements through the shared deterministic gate. Explicit
+`--requirements <src>` is fail-closed with no cache fallback. Without an explicit
+source, this audit is an explicit user action: require a usable org-profile or
+legacy source, or a populated plugin cache.
+
+```bash
+FETCH_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT")
+if [ -n "$REQUIREMENTS_URL_OVERRIDE" ]; then
+  FETCH_ARGS+=(--requirements "$REQUIREMENTS_URL_OVERRIDE")
 else
-  PLUGIN_ROOT=$(echo "$SKILL_CONFIG" | sed 's|/skills/audit-security-requirements/config.json||')
-  REQUIREMENTS_CACHE="${PLUGIN_ROOT:-.}/.cache/requirements.yaml"
+  FETCH_ARGS+=(--require)
 fi
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" "${FETCH_ARGS[@]}"
+REQ_FETCH_EXIT=$?
+if [ "$REQ_FETCH_EXIT" = "2" ]; then
+  exit 2
+fi
+if [ "$REQ_FETCH_EXIT" -ne 0 ]; then
+  exit "$REQ_FETCH_EXIT"
+fi
+
+REQUIREMENTS_YAML="$AUDIT_OUTPUT_DIR/.requirements.yaml"
 ```
 
-**Note:** This skill always attempts to load requirements regardless of the `enabled` config value — it is an explicit user action. The `enabled` field only controls the default behavior for the `create-threat-model` skill.
-
-Resolve the requirements YAML. The loading strategy depends on whether `--requirements <url>` was provided:
-
----
-
-**Path A — `requirements_url_override` is set** (explicit source from `--requirements <src>`):
-
-Load from the override source. No cache fallback — the explicit source must load.
-An `http(s)://` value is fetched remotely; anything else is read as a local file
-path (absolute or relative).
-
-```bash
-mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
-case "$REQUIREMENTS_URL_OVERRIDE" in
-  http://*|https://*)
-    curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_URL_OVERRIDE" \
-      -o "$REQUIREMENTS_CACHE" ;;
-  *)  # local file path — no scheme, no file://
-    cp "$REQUIREMENTS_URL_OVERRIDE" "$REQUIREMENTS_CACHE" ;;
-esac
-```
-
-- On success: use `$REQUIREMENTS_CACHE`. Print: `▶ Requirements: loaded from <src> (cached to <REQUIREMENTS_CACHE>)`
-- On failure: abort with:
-  ```
-  ✗ Could not load requirements from <src>
-
-    The source was passed via --requirements and must load.
-    For an http(s):// URL, verify it is correct and the server is running;
-    for a local path, verify the file exists and is readable.
-
-    Need a starting point? The plugin ships a reference YAML at
-      data/appsec-requirements-fallback.yaml
-    (63 baseline requirements across 38 categories, plus 9 blueprint entries,
-    with CWE/OWASP links where available). Copy it, adapt the IDs and URLs
-    to your organization, serve it over HTTP
-    (e.g. `python3 scripts/mock-server.py`), and pass the
-    resulting URL via --requirements or requirements_yaml_url.
-  ```
-  **Stop here — do not proceed to Step 1c.**
-
----
-
-**Path B — no `requirements_url_override`** (no explicit URL — use configured URL / cache):
-
-Try the following sources in order. Stop at the first success.
-
-**1. Remote fetch** — only if `requirements_yaml_url` is set:
-
-```bash
-mkdir -p "$(dirname "$REQUIREMENTS_CACHE")"
-curl -sf --max-time 15 -H "Accept: application/yaml" "$REQUIREMENTS_YAML_URL" \
-  -o "$REQUIREMENTS_CACHE"
-```
-
-- On success: use `$REQUIREMENTS_CACHE`. Print: `▶ Requirements: fetched from <url> (cached to <REQUIREMENTS_CACHE>)`
-- On failure: print `⚠ Could not fetch from <url> — checking plugin cache…` and continue.
-
-**2. Plugin cache** — use `$REQUIREMENTS_CACHE` if it exists and is not empty:
-
-```bash
-test -s "$REQUIREMENTS_CACHE" && echo exists || echo missing
-```
-
-If found: use this file. Print: `▶ Requirements: loaded from plugin cache (<REQUIREMENTS_CACHE>)`
-
-**3. No requirements available** — abort with:
-
-```
-✗ Could not load requirements.
-
-  No remote endpoint responded and no plugin cache exists.
-  To fix this:
-    1. Set requirements_yaml_url in skills/audit-security-requirements/config.json
-    2. Or pass --requirements <url> to provide a URL directly
-    3. Run this skill once with the endpoint reachable to populate the cache
-
-  The cache is stored at: <REQUIREMENTS_CACHE>
-
-  Starter template: data/appsec-requirements-fallback.yaml contains
-  63 baseline requirements (38 categories plus 9 blueprint entries) as a
-  reference. Copy and adapt it, then serve it from any HTTP endpoint
-  (e.g. `python3 scripts/mock-server.py`) — that URL goes into
-  requirements_yaml_url.
-```
-
-**Stop here — do not proceed to Step 1c.** The skill cannot produce meaningful results without a requirements baseline.
+Use `REQUIREMENTS_YAML` as the loaded catalog in Step 1c. The skill cannot
+produce meaningful results without this file.
 
 ### 1c — Parse the YAML
 
@@ -534,4 +528,4 @@ print a second `Save:` line.
 
 ---
 
-Note: if no `[SEC-*]` tags are found in the analyzed repo itself that is fine — the loaded requirements baseline is always checked regardless of existing code references. The skill requires a requirements YAML to be available (either fetched from the configured URL or from the plugin cache). If neither is available, the skill aborts in Step 1b.
+Note: if no `[SEC-*]` tags are found in the analyzed repo itself that is fine — the loaded requirements baseline is always checked regardless of existing code references. The skill requires a requirements YAML to be available (explicit `--requirements`, active org-profile source, legacy configured source, or plugin cache). If none is available, the skill aborts in Step 1b.

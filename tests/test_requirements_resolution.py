@@ -428,6 +428,16 @@ class TestSkillApplicability:
         assert "[F-NNN · Risk](docs/security/threat-model.md#f-nnn)" in content
         assert "[T-NNN · Risk](docs/security/threat-model.md#t-nnn)" not in content
 
+    def test_check_skill_uses_shared_org_profile_requirements_resolvers(self):
+        """The standalone audit skill must not bypass org-profile requirements
+        resolution by reading only its legacy config.json."""
+        skill_md = PLUGIN_DIR / "skills" / "audit-security-requirements" / "SKILL.md"
+        content = skill_md.read_text()
+        assert "resolve_org_profile.py" in content
+        assert "resolve_requirements_source.py" in content
+        assert "fetch_requirements.py" in content
+        assert "standalone_audit.enabled" in content
+
     def test_create_skill_supports_both_flags(self):
         """Verify create-threat-model implementation defines --requirements and --no-requirements."""
         skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL-impl.md"

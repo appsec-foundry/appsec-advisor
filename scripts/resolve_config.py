@@ -1453,6 +1453,39 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
     # --no-opus flag and the APPSEC_DISABLE_OPUS env var.
     org_block["disable_opus"] = bool(defaults.get("disable_opus"))
 
+    # Requirements defaults: direct CLI flags still win, but an active org
+    # profile with a requirements source must override the legacy config default.
+    # The fetch gate reads the actual URL from .org-profile-effective.json; this
+    # merge only decides whether CHECK_REQUIREMENTS is on for the create skill.
+    profile_rs = effective.get("requirements_source") or {}
+    if (
+        profile_rs.get("requirements_yaml_url")
+        and ns.requirements is None
+        and not ns.no_requirements
+    ):
+        ctm = profile_rs.get("create_threat_model") or {}
+        enabled = bool(ctm.get("default_active", True))
+        reason = "org-profile"
+        if isinstance(defaults.get("check_requirements"), bool):
+            enabled = bool(defaults["check_requirements"])
+            reason = "org-profile preset"
+        if cfg.get("assessment_depth") == "quick" and "quick_default_active" in ctm:
+            quick_enabled = bool(ctm.get("quick_default_active"))
+            if not quick_enabled:
+                enabled = False
+                reason = "org-profile quick default"
+            elif not isinstance(defaults.get("check_requirements"), bool):
+                enabled = True
+                reason = "org-profile quick default"
+
+        org_block["check_requirements"] = enabled
+        org_block["requirements_url_override"] = None
+        req_name = profile_rs.get("label") or profile_rs.get("requirements_yaml_url")
+        if enabled:
+            org_block["requirements_label"] = f"enabled ({reason}: {req_name})"
+        else:
+            org_block["requirements_label"] = f"disabled ({reason})"
+
     # Tracing / scan_manifest: preset wins when user did not pass the flag.
     if not ns.tracing and isinstance(defaults.get("tracing"), bool):
         org_block["tracing"] = defaults["tracing"]
