@@ -20,6 +20,10 @@ from pathlib import Path
 
 UPSTREAM_NAMESPACE = "appsec-advisor"
 TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
+HOOK_SCRIPT_IDS = {
+    "agent_logger.py": "agent-logger",
+    "security_steering.py": "security-coach",
+}
 
 
 def _die(message: str) -> None:
@@ -31,6 +35,37 @@ def _text_files(root: Path):
     for path in root.rglob("*"):
         if path.is_file() and path.suffix.lower() in TEXT_SUFFIXES:
             yield path
+
+
+def _hook_id(command: str) -> str | None:
+    if "/scripts/" not in command and "\\scripts\\" not in command:
+        return None
+    script_name = command.replace("\\", "/").split("/scripts/", 1)[1].split()[0]
+    script_name = Path(script_name).name
+    return HOOK_SCRIPT_IDS.get(script_name, Path(script_name).stem.replace("_", "-"))
+
+
+def _registered_hook_ids(root: Path) -> set[str]:
+    hooks_path = root / "hooks" / "hooks.json"
+    if not hooks_path.is_file():
+        return set()
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    ids: set[str] = set()
+    for entries in (data.get("hooks") or {}).values():
+        if not isinstance(entries, list):
+            continue
+        for outer in entries:
+            if not isinstance(outer, dict):
+                continue
+            for hook in outer.get("hooks") or []:
+                if not isinstance(hook, dict):
+                    continue
+                command = hook.get("command")
+                if isinstance(command, str):
+                    hook_id = _hook_id(command)
+                    if hook_id:
+                        ids.add(hook_id)
+    return ids
 
 
 def check_plugin_identity(root: Path, name: str) -> None:
@@ -83,6 +118,35 @@ def check_namespace_rewritten(root: Path, name: str) -> None:
         _die(f"entry command {entry!r} not found under skills/")
 
 
+def check_surface_manifest(root: Path) -> None:
+    manifest_path = root / ".claude-plugin" / "package-surface.json"
+    if not manifest_path.is_file():
+        return
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    skills = data.get("skills") or {}
+    for skill in skills.get("included") or []:
+        if not (root / "skills" / skill / "SKILL.md").is_file():
+            _die(f"package surface says skill {skill!r} is included, but it is missing")
+    for skill in skills.get("removed") or []:
+        if (root / "skills" / skill).exists():
+            _die(f"package surface says skill {skill!r} is removed, but it is present")
+
+    hook_ids = _registered_hook_ids(root)
+    hooks = data.get("hooks") or {}
+    for hook in hooks.get("included") or []:
+        if hook not in hook_ids:
+            _die(f"package surface says hook {hook!r} is included, but it is not registered")
+    for hook in hooks.get("removed") or []:
+        if hook in hook_ids:
+            _die(f"package surface says hook {hook!r} is removed, but it is registered")
+    if "security-coach" in (hooks.get("removed") or []):
+        if (root / "hooks" / "steering_keywords.json").exists():
+            _die(
+                "package surface removed security-coach but "
+                "steering_keywords.json is still present"
+            )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plugin_dir", help="packaged plugin root (e.g. build/acme-appsec)")
@@ -96,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     check_plugin_identity(root, args.name)
     check_org_profile_wired(root)
     check_namespace_rewritten(root, args.name)
+    check_surface_manifest(root)
 
     print(f"==> Smoke test passed for {args.name} ({root})")
     return 0

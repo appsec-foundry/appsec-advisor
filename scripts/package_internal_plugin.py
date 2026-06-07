@@ -42,6 +42,11 @@ PATH_EXCLUDES = {
     ("tests", "fixtures", "e2e", "_last-run"),
 }
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+SURFACE_MANIFEST = ".claude-plugin/package-surface.json"
+HOOK_SCRIPT_IDS = {
+    "agent_logger.py": "agent-logger",
+    "security_steering.py": "security-coach",
+}
 
 
 def _die(message: str, code: int = 2) -> None:
@@ -142,6 +147,276 @@ def patch_config(build: Path) -> None:
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _load_yaml_or_json(path: Path) -> dict:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        _die(f"cannot read package policy {path}: {exc}")
+    if path.suffix.lower() == ".json":
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            _die(f"invalid JSON package policy {path}: {exc}")
+    else:
+        try:
+            import yaml
+        except ImportError:
+            _die(
+                "package policy YAML requires PyYAML; install pyyaml or use a .json policy file"
+            )
+        try:
+            data = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            _die(f"invalid YAML package policy {path}: {exc}")
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        _die(f"package policy {path} must contain a mapping/object at the root")
+    return data
+
+
+def load_package_policy(
+    org_profile: Path, explicit_path: str | None
+) -> tuple[dict, Path | None]:
+    if explicit_path:
+        path = Path(explicit_path).resolve()
+        if not path.is_file():
+            _die(f"package policy not found at {path}")
+        return _load_yaml_or_json(path), path
+
+    for name in ("package-policy.yaml", "package-policy.yml", "package-policy.json"):
+        candidate = org_profile / name
+        if candidate.is_file():
+            return _load_yaml_or_json(candidate), candidate.resolve()
+    return {}, None
+
+
+def _policy_surface(policy: dict) -> dict:
+    surface = policy.get("plugin_surface", policy)
+    if not isinstance(surface, dict):
+        _die("package policy 'plugin_surface' must be a mapping/object")
+    unknown = set(surface) - {"skills", "hooks"}
+    if unknown:
+        _die(f"package policy has unknown plugin_surface keys: {sorted(unknown)}")
+    return surface
+
+
+def _read_name_list(block: dict, key: str, surface: str) -> set[str] | None:
+    if key not in block:
+        return None
+    value = block[key]
+    if value is None:
+        return set()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        _die(f"package policy plugin_surface.{surface}.{key} must be a list of strings")
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for item in value:
+        name = item.strip()
+        if not name:
+            _die(f"package policy plugin_surface.{surface}.{key} contains an empty name")
+        if name in seen:
+            duplicates.add(name)
+        seen.add(name)
+    if duplicates:
+        _die(
+            f"package policy plugin_surface.{surface}.{key} contains duplicates: "
+            f"{sorted(duplicates)}"
+        )
+    return seen
+
+
+def _resolve_keep_set(
+    block: object,
+    available: set[str],
+    surface: str,
+    *,
+    required: set[str] | None = None,
+) -> set[str]:
+    required = required or set()
+    if block is None:
+        return set(available)
+    if not isinstance(block, dict):
+        _die(f"package policy plugin_surface.{surface} must be a mapping/object")
+    unknown_keys = set(block) - {"include", "exclude"}
+    if unknown_keys:
+        _die(
+            f"package policy plugin_surface.{surface} has unknown keys: "
+            f"{sorted(unknown_keys)}"
+        )
+    include = _read_name_list(block, "include", surface)
+    exclude = _read_name_list(block, "exclude", surface)
+    if include is not None and exclude is not None:
+        _die(f"package policy plugin_surface.{surface} cannot set both include and exclude")
+
+    selected = include if include is not None else exclude
+    if selected is None:
+        return set(available)
+    unknown = selected - available
+    if unknown:
+        _die(
+            f"package policy plugin_surface.{surface} references unknown names: "
+            f"{sorted(unknown)} (available: {sorted(available)})"
+        )
+    keep = set(selected) if include is not None else (available - selected)
+    missing_required = required - keep
+    if missing_required:
+        _die(
+            f"package policy plugin_surface.{surface} must keep required names: "
+            f"{sorted(missing_required)}"
+        )
+    return keep
+
+
+def _available_skills(build: Path) -> set[str]:
+    skills_dir = build / "skills"
+    if not skills_dir.is_dir():
+        return set()
+    return {
+        path.parent.name
+        for path in skills_dir.glob("*/SKILL.md")
+        if path.is_file()
+    }
+
+
+def _hook_id(command: str) -> str | None:
+    if "/scripts/" not in command and "\\scripts\\" not in command:
+        return None
+    script_name = command.replace("\\", "/").split("/scripts/", 1)[1].split()[0]
+    script_name = Path(script_name).name
+    return HOOK_SCRIPT_IDS.get(script_name, Path(script_name).stem.replace("_", "-"))
+
+
+def _load_hooks(build: Path) -> tuple[Path, dict]:
+    hooks_path = build / "hooks" / "hooks.json"
+    if not hooks_path.is_file():
+        return hooks_path, {"hooks": {}}
+    try:
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        _die(f"invalid hooks.json in packaged copy: {exc}")
+    if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
+        _die("hooks/hooks.json must contain a top-level 'hooks' object")
+    return hooks_path, data
+
+
+def _available_hook_ids(build: Path) -> set[str]:
+    _, data = _load_hooks(build)
+    ids: set[str] = set()
+    for entries in data.get("hooks", {}).values():
+        if not isinstance(entries, list):
+            continue
+        for outer in entries:
+            if not isinstance(outer, dict):
+                continue
+            for hook in outer.get("hooks") or []:
+                if not isinstance(hook, dict):
+                    continue
+                command = hook.get("command")
+                if isinstance(command, str):
+                    hook_id = _hook_id(command)
+                    if hook_id:
+                        ids.add(hook_id)
+    return ids
+
+
+def apply_skill_policy(build: Path, surface: dict) -> dict:
+    available = _available_skills(build)
+    keep = _resolve_keep_set(
+        surface.get("skills"),
+        available,
+        "skills",
+        required={"create-threat-model"},
+    )
+    removed = sorted(available - keep)
+    for skill in removed:
+        shutil.rmtree(build / "skills" / skill)
+    return {"included": sorted(keep), "removed": removed}
+
+
+def apply_hook_policy(build: Path, surface: dict) -> dict:
+    available = _available_hook_ids(build)
+    keep = _resolve_keep_set(surface.get("hooks"), available, "hooks")
+    removed = sorted(available - keep)
+
+    hooks_path, data = _load_hooks(build)
+    filtered_events: dict[str, list[dict]] = {}
+    for event, entries in data.get("hooks", {}).items():
+        if not isinstance(entries, list):
+            continue
+        kept_entries: list[dict] = []
+        for outer in entries:
+            if not isinstance(outer, dict):
+                continue
+            hooks = outer.get("hooks") or []
+            kept_hooks = []
+            for hook in hooks:
+                if not isinstance(hook, dict):
+                    continue
+                command = hook.get("command")
+                hook_id = _hook_id(command) if isinstance(command, str) else None
+                if hook_id is None or hook_id in keep:
+                    kept_hooks.append(hook)
+            if kept_hooks:
+                new_outer = dict(outer)
+                new_outer["hooks"] = kept_hooks
+                kept_entries.append(new_outer)
+        if kept_entries:
+            filtered_events[event] = kept_entries
+
+    if hooks_path.parent.exists():
+        hooks_path.write_text(
+            json.dumps({"hooks": filtered_events}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    if "security-coach" in removed:
+        keywords_path = build / "hooks" / "steering_keywords.json"
+        if keywords_path.exists():
+            keywords_path.unlink()
+
+    return {
+        "included": sorted(keep),
+        "removed": removed,
+        "events": sorted(filtered_events),
+    }
+
+
+def write_surface_manifest(
+    build: Path,
+    policy_path: Path | None,
+    skills: dict,
+    hooks: dict,
+) -> None:
+    if policy_path is None:
+        policy_ref = None
+    elif (build / "org-profile" / policy_path.name).is_file():
+        policy_ref = f"org-profile/{policy_path.name}"
+    else:
+        try:
+            policy_ref = str(policy_path.relative_to(build))
+        except ValueError:
+            policy_ref = policy_path.name
+    manifest = {
+        "version": 1,
+        "policy": policy_ref,
+        "skills": skills,
+        "hooks": hooks,
+    }
+    manifest_path = build / SURFACE_MANIFEST
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def apply_package_surface_policy(
+    build: Path, policy: dict, policy_path: Path | None
+) -> None:
+    surface = _policy_surface(policy)
+    skills = apply_skill_policy(build, surface)
+    hooks = apply_hook_policy(build, surface)
+    write_surface_manifest(build, policy_path, skills, hooks)
+
+
 def _text_files(root: Path):
     for path in root.rglob("*"):
         if path.is_file() and path.suffix.lower() in TEXT_SUFFIXES:
@@ -237,6 +512,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="build the packaged tree but do not create a tarball",
     )
+    parser.add_argument(
+        "--package-policy",
+        default=None,
+        help=(
+            "optional package surface policy; defaults to "
+            "org-profile/package-policy.yaml when present"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -246,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
     org_profile = Path(args.org_profile).resolve()
     build = (Path(args.build_dir) / args.name).resolve()
     dist_dir = Path(args.dist_dir).resolve()
+    package_policy, package_policy_path = load_package_policy(org_profile, args.package_policy)
 
     _validate_package_name(args.name)
     _validate_version(args.version)
@@ -257,6 +541,7 @@ def main(argv: list[str] | None = None) -> int:
     overlay_org_profile(org_profile, build)
     patch_plugin_json(build, args.name, args.version, args.description)
     patch_config(build)
+    apply_package_surface_policy(build, package_policy, package_policy_path)
     rewrite_namespace(build, args.name)
     check_namespace_leaks(build)
 

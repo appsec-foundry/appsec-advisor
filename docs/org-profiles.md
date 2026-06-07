@@ -228,6 +228,8 @@ User-facing skills can be soft-disabled with a reason. The plan distinguishes th
 
 Each skill calls `scripts/check_skill_enabled.py <skill>` at the top of its preflight. With no active org profile the script always returns "enabled" so legacy invocations are bit-identical.
 
+These toggles are a runtime governance layer, not a packaging boundary. To make a skill or hook unavailable in an internal artifact, use the packaging runbook's `org-profile/package-policy.yaml`; the packager removes those directories or hook registrations before validation and archive creation.
+
 ## Security Coach
 
 `security_coach.enabled_by_default: true` in the profile activates the coach without requiring `APPSEC_COACH=1` or `hooks/steering_keywords.json` `enabled: true`. Precedence stays strict — the environment variable still wins, including as a kill switch (`APPSEC_COACH=0`).

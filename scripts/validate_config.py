@@ -211,20 +211,8 @@ def _validate_yaml_against_schema(data_path: Path, schema_path: Path) -> list[st
     return errors
 
 
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
-
-
-def main() -> None:
-    # Determine plugin root
-    if len(sys.argv) > 1:
-        plugin_root = Path(sys.argv[1])
-    elif os.environ.get("CLAUDE_PLUGIN_ROOT"):
-        plugin_root = Path(os.environ["CLAUDE_PLUGIN_ROOT"])
-    else:
-        plugin_root = Path(__file__).resolve().parent.parent
-
+def validate_plugin_root(plugin_root: Path) -> list[str]:
+    """Validate config files that are actually present in a packaged plugin."""
     all_errors: list[str] = []
 
     # Validate main config.json
@@ -239,17 +227,36 @@ def main() -> None:
     else:
         all_errors.append(f"{main_config}: file not found")
 
-    # Validate requirements skill config
+    # Validate requirements skill config only when that skill is packaged.
     req_config = plugin_root / "skills" / "audit-security-requirements" / "config.json"
-    if req_config.exists():
+    req_skill = plugin_root / "skills" / "audit-security-requirements" / "SKILL.md"
+    if req_skill.exists() and req_config.exists():
         try:
             with req_config.open() as f:
                 data = json.load(f)
             all_errors += _validate_requirements_config(data, str(req_config))
         except json.JSONDecodeError as e:
             all_errors.append(f"{req_config}: invalid JSON: {e}")
-    else:
+    elif req_skill.exists():
         all_errors.append(f"{req_config}: file not found")
+    return all_errors
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    # Determine plugin root
+    if len(sys.argv) > 1:
+        plugin_root = Path(sys.argv[1])
+    elif os.environ.get("CLAUDE_PLUGIN_ROOT"):
+        plugin_root = Path(os.environ["CLAUDE_PLUGIN_ROOT"])
+    else:
+        plugin_root = Path(__file__).resolve().parent.parent
+
+    all_errors = validate_plugin_root(plugin_root)
 
     if all_errors:
         for e in all_errors:

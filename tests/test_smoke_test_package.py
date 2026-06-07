@@ -88,3 +88,111 @@ def test_fails_when_entry_command_missing(tmp_path: Path) -> None:
     result = _run(tmp_path)
     assert result.returncode == 1
     assert "entry command" in result.stderr
+
+
+def test_passes_with_matching_surface_manifest(tmp_path: Path) -> None:
+    _make_valid(tmp_path)
+    hooks = tmp_path / "hooks" / "hooks.json"
+    hooks.parent.mkdir(parents=True, exist_ok=True)
+    hooks.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/"
+                                        "agent_logger.py"
+                                    ),
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    manifest = tmp_path / ".claude-plugin" / "package-surface.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "skills": {
+                    "included": ["create-threat-model"],
+                    "removed": ["publish-threat-model"],
+                },
+                "hooks": {
+                    "included": ["agent-logger"],
+                    "removed": ["security-coach"],
+                },
+            }
+        )
+    )
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_fails_when_removed_skill_is_present(tmp_path: Path) -> None:
+    _make_valid(tmp_path)
+    skill = tmp_path / "skills" / "publish-threat-model" / "SKILL.md"
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    skill.write_text("Publish.\n")
+    manifest = tmp_path / ".claude-plugin" / "package-surface.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "skills": {
+                    "included": ["create-threat-model"],
+                    "removed": ["publish-threat-model"],
+                },
+                "hooks": {"included": [], "removed": []},
+            }
+        )
+    )
+    result = _run(tmp_path)
+    assert result.returncode == 1
+    assert "removed" in result.stderr
+
+
+def test_fails_when_removed_hook_is_registered(tmp_path: Path) -> None:
+    _make_valid(tmp_path)
+    hooks = tmp_path / "hooks" / "hooks.json"
+    hooks.parent.mkdir(parents=True, exist_ok=True)
+    hooks.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/"
+                                        "security_steering.py"
+                                    ),
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    manifest = tmp_path / ".claude-plugin" / "package-surface.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "skills": {"included": ["create-threat-model"], "removed": []},
+                "hooks": {"included": [], "removed": ["security-coach"]},
+            }
+        )
+    )
+    result = _run(tmp_path)
+    assert result.returncode == 1
+    assert "security-coach" in result.stderr

@@ -160,6 +160,132 @@ def test_upstream_packager_rejects_slashes_in_version(tmp_path: Path) -> None:
     assert "VERSION must not contain '/'" in result.stderr
 
 
+def test_package_policy_prunes_skills_and_hooks(tmp_path: Path) -> None:
+    shutil.copytree(EXAMPLE_ROOT / "org-profile", tmp_path / "org-profile")
+    _write(
+        tmp_path / "org-profile" / "package-policy.yaml",
+        """
+plugin_surface:
+  skills:
+    exclude:
+      - audit-security-requirements
+      - publish-threat-model
+  hooks:
+    exclude:
+      - security-coach
+""".lstrip(),
+    )
+
+    upstream = tmp_path / "upstream" / "appsec-advisor"
+    _write(
+        upstream / ".claude-plugin" / "plugin.json",
+        json.dumps({"name": "appsec-advisor", "version": "0.0.0"}),
+    )
+    _write(
+        upstream / "config.json",
+        json.dumps({"external_context": {"enabled": False, "rest_url": None}}),
+    )
+    (upstream / "schemas").mkdir(parents=True)
+    (upstream / "scripts").mkdir(parents=True)
+    _write(
+        upstream / "skills" / "create-threat-model" / "SKILL.md",
+        "Run /appsec-advisor:create-threat-model.\n",
+    )
+    _write(
+        upstream / "skills" / "status" / "SKILL.md",
+        "Run /appsec-advisor:status.\n",
+    )
+    _write(
+        upstream / "skills" / "audit-security-requirements" / "SKILL.md",
+        "Run /appsec-advisor:audit-security-requirements.\n",
+    )
+    _write(
+        upstream / "skills" / "audit-security-requirements" / "config.json",
+        json.dumps(
+            {"requirements_source": {"enabled": False, "requirements_yaml_url": None}}
+        ),
+    )
+    _write(
+        upstream / "skills" / "publish-threat-model" / "SKILL.md",
+        "Run /appsec-advisor:publish-threat-model.\n",
+    )
+    _write(upstream / "agents" / "dispatch.yaml", "agent: appsec-advisor:worker\n")
+    _write(
+        upstream / "hooks" / "hooks.json",
+        json.dumps(
+            {
+                "hooks": {
+                    "UserPromptSubmit": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/"
+                                        "security_steering.py"
+                                    ),
+                                }
+                            ]
+                        }
+                    ],
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": (
+                                        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/"
+                                        "agent_logger.py"
+                                    ),
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        ),
+    )
+    _write(upstream / "hooks" / "steering_keywords.json", json.dumps({"topics": {}}))
+
+    subprocess.run(
+        [
+            "python3",
+            str(PACKAGER),
+            "--source",
+            str(upstream),
+            "--org-profile",
+            str(tmp_path / "org-profile"),
+            "--name",
+            "acme-appsec",
+            "--version",
+            "1.2.3-test",
+            "--skip-validation",
+            "--skip-archive",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    build = tmp_path / "build" / "acme-appsec"
+    assert (build / "skills" / "create-threat-model" / "SKILL.md").exists()
+    assert (build / "skills" / "status" / "SKILL.md").exists()
+    assert not (build / "skills" / "audit-security-requirements").exists()
+    assert not (build / "skills" / "publish-threat-model").exists()
+    assert not (build / "hooks" / "steering_keywords.json").exists()
+
+    hooks = json.loads((build / "hooks" / "hooks.json").read_text())
+    assert "UserPromptSubmit" not in hooks["hooks"]
+    assert "PreToolUse" in hooks["hooks"]
+
+    manifest = json.loads((build / ".claude-plugin" / "package-surface.json").read_text())
+    assert manifest["policy"] == "org-profile/package-policy.yaml"
+    assert manifest["skills"]["removed"] == [
+        "audit-security-requirements",
+        "publish-threat-model",
+    ]
+    assert manifest["hooks"]["removed"] == ["security-coach"]
+
+
 def test_gitlab_ci_pins_ref_with_single_clone_then_smoke_tests() -> None:
     pipeline = yaml.safe_load((EXAMPLE_ROOT / ".gitlab-ci.yml").read_text())
     script_lines = pipeline["package"]["script"]

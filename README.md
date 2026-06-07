@@ -541,7 +541,8 @@ At a high level:
 1. Pin or vendor `appsec-advisor` in an internal packaging repository.
 2. Build a packaged copy with `.claude-plugin/plugin.json` `name` set to your company namespace.
 3. Bundle `org-profile/` into that plugin and point `config.json` at it.
-4. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
+4. Optionally restrict the packaged surface with `org-profile/package-policy.yaml` so unapproved skills or hooks are not included in the internal artifact.
+5. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
 
 - Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
 - Runnable CI starters: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · Local build: [Quick start](docs/internal-plugin-packaging.md#quick-start)

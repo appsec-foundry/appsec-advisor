@@ -26,6 +26,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PLUGIN_ROOT = HERE.parent
+HOOK_SCRIPT_IDS = {
+    "agent_logger.py": "agent-logger",
+    "security_steering.py": "security-coach",
+}
 
 # Phase budgets for the live-view age cutoff. Falls back to 300 s when the
 # loader is unavailable.
@@ -75,6 +79,38 @@ def _load_json(path: Path) -> dict | None:
         return None
 
 
+def _skill_exists(skill: str) -> bool:
+    return (PLUGIN_ROOT / "skills" / skill / "SKILL.md").is_file()
+
+
+def _hook_id(command: str) -> str | None:
+    if "/scripts/" not in command and "\\scripts\\" not in command:
+        return None
+    script_name = command.replace("\\", "/").split("/scripts/", 1)[1].split()[0]
+    script_name = Path(script_name).name
+    return HOOK_SCRIPT_IDS.get(script_name, Path(script_name).stem.replace("_", "-"))
+
+
+def _registered_hook_ids() -> set[str]:
+    hooks_cfg = _load_json(PLUGIN_ROOT / "hooks" / "hooks.json") or {}
+    ids: set[str] = set()
+    for entries in (hooks_cfg.get("hooks") or {}).values():
+        if not isinstance(entries, list):
+            continue
+        for outer in entries:
+            if not isinstance(outer, dict):
+                continue
+            for hook in outer.get("hooks") or []:
+                if not isinstance(hook, dict):
+                    continue
+                command = hook.get("command")
+                if isinstance(command, str):
+                    hook_id = _hook_id(command)
+                    if hook_id:
+                        ids.add(hook_id)
+    return ids
+
+
 def _org_profile_status(output_dir: Path) -> dict:
     """Read ``.org-profile-effective.json`` if present.
 
@@ -122,6 +158,8 @@ def _org_profile_status(output_dir: Path) -> dict:
 
 def _coach_status() -> tuple[str, str]:
     """Return (state, note) — 'active' / 'inactive' / 'unknown'."""
+    if "security-coach" not in _registered_hook_ids():
+        return "not packaged", "security-coach hook is not registered in this package"
     env = os.environ.get("APPSEC_COACH", "").strip().lower()
     steering_cfg = _load_json(PLUGIN_ROOT / "hooks" / "steering_keywords.json") or {}
     cfg_enabled = bool(steering_cfg.get("enabled", False))
@@ -149,23 +187,30 @@ def _config_summary(req_cfg_path: Path, plugin_cfg_path: Path) -> list[tuple[str
         rows.append(("External context", "not configured (repo-files only)"))
 
     # Requirements YAML
-    req_cfg = _load_json(req_cfg_path) or {}
-    req_src = req_cfg.get("requirements_source") or {}
-    url = req_src.get("requirements_yaml_url")
-    enabled = bool(req_src.get("enabled", False))
-    if url:
-        cache = PLUGIN_ROOT / ".cache" / "requirements.yaml"
-        cache_state = "cache present" if cache.is_file() else "no cache yet"
-        rows.append(("Requirements YAML", f"{'auto-load ' if enabled else 'on-demand '}-> {url} ({cache_state})"))
+    if not _skill_exists("audit-security-requirements"):
+        rows.append(("Requirements YAML", "not packaged (requirements audit skill removed)"))
     else:
-        fallback = PLUGIN_ROOT / "data" / "appsec-requirements-fallback.yaml"
-        fallback_state = "present" if fallback.is_file() else "missing"
-        rows.append(("Requirements YAML", f"bundled fallback ({fallback_state})"))
+        req_cfg = _load_json(req_cfg_path) or {}
+        req_src = req_cfg.get("requirements_source") or {}
+        url = req_src.get("requirements_yaml_url")
+        enabled = bool(req_src.get("enabled", False))
+        if url:
+            cache = PLUGIN_ROOT / ".cache" / "requirements.yaml"
+            cache_state = "cache present" if cache.is_file() else "no cache yet"
+            mode = "auto-load " if enabled else "on-demand "
+            rows.append(("Requirements YAML", f"{mode}-> {url} ({cache_state})"))
+        else:
+            fallback = PLUGIN_ROOT / "data" / "appsec-requirements-fallback.yaml"
+            fallback_state = "present" if fallback.is_file() else "missing"
+            rows.append(("Requirements YAML", f"bundled fallback ({fallback_state})"))
 
     # Steering keywords
-    steering_cfg = _load_json(PLUGIN_ROOT / "hooks" / "steering_keywords.json") or {}
-    topic_count = len(steering_cfg.get("topics") or {})
-    rows.append(("Steering topics", f"{topic_count} configured"))
+    if "security-coach" not in _registered_hook_ids():
+        rows.append(("Steering topics", "not packaged (security coach hook removed)"))
+    else:
+        steering_cfg = _load_json(PLUGIN_ROOT / "hooks" / "steering_keywords.json") or {}
+        topic_count = len(steering_cfg.get("topics") or {})
+        rows.append(("Steering topics", f"{topic_count} configured"))
 
     return rows
 
@@ -289,13 +334,32 @@ def render_text(data: dict) -> str:
     )
 
     capsules = data["capsules"]
+    threat_assessment = capsules.get("threat_assessment", {}).get(
+        "command", "not packaged"
+    )
+    requirements_audit = capsules.get("requirements_audit", {}).get(
+        "command", "not packaged"
+    )
+    threat_row = (
+        f"{threat_assessment}   [--help]"
+        if threat_assessment != "not packaged"
+        else threat_assessment
+    )
+    requirements_row = (
+        f"{requirements_audit}   [--help]"
+        if requirements_audit != "not packaged"
+        else requirements_audit
+    )
     buf.append(
         _emit_table(
             "Capsules",
             [
-                ("1. Threat Assessment", "/appsec-advisor:create-threat-model   [--help]"),
-                ("2. Requirements Audit", "/appsec-advisor:audit-security-requirements   [--help]"),
-                ("3. Security Coach", f"{capsules['coach']['state']} — {capsules['coach']['note']}"),
+                ("1. Threat Assessment", threat_row),
+                ("2. Requirements Audit", requirements_row),
+                (
+                    "3. Security Coach",
+                    f"{capsules['coach']['state']} — {capsules['coach']['note']}",
+                ),
             ],
         )
     )
@@ -641,6 +705,15 @@ def main(argv: list[str] | None = None) -> int:
     auto_clean = _auto_clean_state(output_dir)
     plugin_json = _load_plugin_json()
     coach_state, coach_note = _coach_status()
+    capsules = {
+        "coach": {"state": coach_state, "note": coach_note},
+    }
+    if _skill_exists("create-threat-model"):
+        capsules["threat_assessment"] = {"command": "/appsec-advisor:create-threat-model"}
+    if _skill_exists("audit-security-requirements"):
+        capsules["requirements_audit"] = {
+            "command": "/appsec-advisor:audit-security-requirements"
+        }
 
     data = {
         "plugin": {
@@ -653,11 +726,7 @@ def main(argv: list[str] | None = None) -> int:
             "repo_root": str(repo_root),
             "output_dir": str(output_dir),
         },
-        "capsules": {
-            "threat_assessment": {"command": "/appsec-advisor:create-threat-model"},
-            "requirements_audit": {"command": "/appsec-advisor:audit-security-requirements"},
-            "coach": {"state": coach_state, "note": coach_note},
-        },
+        "capsules": capsules,
         "last_run": _last_run_info(output_dir),
         "config": _config_summary(
             PLUGIN_ROOT / "skills" / "audit-security-requirements" / "config.json",

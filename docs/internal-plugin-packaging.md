@@ -6,7 +6,7 @@ Build a company-branded Claude Code plugin so developers run your namespace with
 /acme-appsec:create-threat-model
 ```
 
-The packaged plugin still runs the upstream `appsec-advisor` analysis pipeline. Packaging only adds your plugin name, your bundled `org-profile/`, and your default preset. Use [org-profiles.md](org-profiles.md) for the full profile reference.
+The packaged plugin still runs the upstream `appsec-advisor` analysis pipeline. Packaging adds your plugin name, your bundled `org-profile/`, your default preset, and optionally a build-time package surface policy that removes skills or hooks from the internal artifact. Use [org-profiles.md](org-profiles.md) for the full profile reference.
 
 ## Quick start
 
@@ -136,7 +136,7 @@ The example repos already use Option 1:
 
 ## Step 2 - Write the org profile
 
-`org-profile/org-profile.yaml` is the only company-owned configuration surface. Start with two presets: one default CI-style scan and one deeper release review.
+`org-profile/org-profile.yaml` is the company-owned runtime configuration surface. Start with two presets: one default CI-style scan and one deeper release review. Build-time package restrictions live next to it in `org-profile/package-policy.yaml`; they are covered after the profile example.
 
 ```yaml
 api_version: appsec-advisor.org-profile/v2
@@ -221,6 +221,51 @@ actors:
     heatmap_slug: repo-read
 ```
 
+### Optional - Restrict the packaged surface
+
+Use `org-profile/package-policy.yaml` when the internal plugin must not expose every upstream skill or hook. The packager auto-detects this file. You can also pass `--package-policy <path>` explicitly.
+
+This is build-time pruning: removed skills are not present under `skills/`, and removed hooks are not registered in `hooks/hooks.json`. It is stronger than org-profile `skill_toggles`, which only soft-disable skills at runtime.
+
+Prefer allowlists for enterprise packages so newly added upstream skills do not appear until your team reviews them:
+
+```yaml
+plugin_surface:
+  skills:
+    include:
+      - create-threat-model       # required
+      - status
+      - check-permissions
+      - clean-run-state
+      - fix-run-issues
+      - threat-model-health
+  hooks:
+    include:
+      - agent-logger
+```
+
+Use denylists when you want to keep the upstream surface except for a small number of functions:
+
+```yaml
+plugin_surface:
+  skills:
+    exclude:
+      - publish-threat-model
+      - export-threat-model
+  hooks:
+    exclude:
+      - security-coach
+```
+
+Supported hook IDs today:
+
+| Hook ID | Registered script | Effect when removed |
+|---|---|---|
+| `security-coach` | `scripts/security_steering.py` | Removes prompt-time security coaching; `hooks/steering_keywords.json` is also omitted. |
+| `agent-logger` | `scripts/agent_logger.py` | Removes Claude hook event logging for tool/use/stop events. Run summaries may have less timing and token context. |
+
+`create-threat-model` is required and cannot be removed by package policy. Unknown names fail the build so typos do not silently produce the wrong internal artifact.
+
 ## Step 3 - Build and validate
 
 Make sure `upstream/appsec-advisor/` exists. With Option 1 from Step 1, clone it locally:
@@ -249,9 +294,11 @@ $ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
   --version "$INTERNAL_VERSION"
 ```
 
-The packager copies upstream into `build/acme-appsec/`, overlays `org-profile/`, rewrites `appsec-advisor:` command references to `acme-appsec:`, enables the bundled profile in `config.json`, validates the result, and writes `dist/acme-appsec-${INTERNAL_VERSION}.tgz` plus its `.sha256`.
+The packager copies upstream into `build/acme-appsec/`, overlays `org-profile/`, applies `org-profile/package-policy.yaml` when present, rewrites `appsec-advisor:` command references to `acme-appsec:`, enables the bundled profile in `config.json`, validates the result, and writes `dist/acme-appsec-${INTERNAL_VERSION}.tgz` plus its `.sha256`.
 
-Run the smoke test after every build:
+Every build writes `.claude-plugin/package-surface.json` into the packaged tree. It records the included and removed skills/hooks so CI and reviewers can verify the artifact surface without reverse-engineering the copied files.
+
+Run the smoke test after every build. It checks the plugin identity, org-profile wiring, namespace rewrite, and the package-surface manifest when present:
 
 ```console
 $ python3 upstream/appsec-advisor/scripts/smoke_test_package.py build/acme-appsec --name acme-appsec
