@@ -61,6 +61,7 @@ INTERNAL_AGENTS = {
     "appsec-qa-reviewer",
     "appsec-architect-reviewer",
     "appsec-config-scanner",
+    "appsec-actor-discoverer",  # Phase 2.7 sub-agent — internal (body already carries the marker; set was missing it)
     "appsec-evidence-verifier",
     "appsec-abuse-case-verifier",
     "appsec-fragment-fixer",
