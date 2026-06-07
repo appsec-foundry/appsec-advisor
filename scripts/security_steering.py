@@ -77,6 +77,10 @@ _DEFAULT_SEVERITY = {
 _DEFAULT_REQ_SOURCE_PATHS = [
     ".cache/requirements.yaml",
     "data/appsec-requirements-fallback.yaml",
+    # Vendor-neutral best-practices floor: when no company catalog is present the
+    # steering hook still resolves BP-* requirement text (matches the L0
+    # "company else best-practices" behaviour). See proposal-dev-security-helper.md.
+    "data/appsec-bestpractices-baseline.yaml",
 ]
 
 
@@ -349,7 +353,16 @@ def _assemble_context(cfg, matched_topics, req_index):
         if guidance:
             parts.append(f"\n[{name}] {guidance}")
 
-        req_ids = [rid for rid in (spec.get("requirements") or []) if isinstance(rid, str)]
+        # Filter to ids actually present in the active catalog BEFORE capping, so
+        # a topic can list both company (SEC-*) and best-practices (BP-*) ids and
+        # the right set survives depending on which catalog is loaded. Capping
+        # first would let absent ids consume the per-topic budget and inject fewer
+        # (or zero) lines under the baseline catalog.
+        req_ids = [
+            rid
+            for rid in (spec.get("requirements") or [])
+            if isinstance(rid, str) and req_index.get(rid)
+        ]
         req_ids = req_ids[:max_per_topic]
         resolved_lines = []
         for rid in req_ids:

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/requirements-verification.schema.json",
+  "title": "Requirements Change-Verification verdict",
+  "description": "Standalone output of the appsec-requirements-verifier subagent (verify-requirements skill). NOT a threat-model render fragment — it never enters compose_threat_model.py. The agent writes only this structured data; scripts/requirements_gate.py reads it to compute the deterministic exit code. See docs/proposal-requirements-verifier-subagent.md.",
+  "type": "object",
+  "required": ["version", "generated_at", "base_ref", "priority_floor", "summary", "results"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "generated_at": { "type": "string", "description": "ISO 8601 UTC." },
+    "model_id": { "type": "string" },
+    "base_ref": { "type": "string", "description": "The git ref the diff was taken against (display/audit)." },
+    "head_ref": { "type": "string" },
+    "priority_floor": {
+      "type": "string",
+      "enum": ["MUST", "SHOULD", "MAY"],
+      "description": "Requirements at or above this priority are eligible to gate (the skill passes its resolved floor; the agent echoes it)."
+    },
+    "requirements_source": { "type": "string", "description": "remote | cached | local — provenance of the catalog." },
+    "summary": {
+      "type": "object",
+      "required": ["changed_files", "candidates", "in_scope", "pass", "partial", "fail", "unverifiable", "not_applicable", "gating_failures"],
+      "additionalProperties": false,
+      "properties": {
+        "changed_files": { "type": "integer", "minimum": 0 },
+        "candidates": { "type": "integer", "minimum": 0 },
+        "in_scope": { "type": "integer", "minimum": 0 },
+        "pass": { "type": "integer", "minimum": 0 },
+        "partial": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "unverifiable": { "type": "integer", "minimum": 0 },
+        "not_applicable": { "type": "integer", "minimum": 0 },
+        "gating_failures": { "type": "integer", "minimum": 0, "description": "Agent's own count of in-scope FAIL at/above floor. Advisory — requirements_gate.py recomputes authoritatively from results[]." }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "priority", "status", "in_scope"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "Requirement ID, e.g. SEC-SQL." },
+          "category": { "type": "string" },
+          "priority": { "type": "string", "enum": ["MUST", "SHOULD", "MAY"] },
+          "status": {
+            "type": "string",
+            "enum": ["PASS", "PARTIAL", "FAIL", "UNVERIFIABLE", "NOT_APPLICABLE"],
+            "description": "PASS/PARTIAL/FAIL/UNVERIFIABLE mirror audit-security-requirements. NOT_APPLICABLE = candidate from the keyword pre-filter that the agent judged not actually implicated by this diff (never gates)."
+          },
+          "in_scope": { "type": "boolean", "description": "false ⇒ NOT_APPLICABLE; such results are recorded for transparency but never gate." },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["file"],
+              "additionalProperties": false,
+              "properties": {
+                "file": { "type": "string" },
+                "line": { "type": ["integer", "null"] }
+              }
+            }
+          },
+          "finding": { "type": "string", "description": "One concrete sentence naming the file/function/config and the mechanism." },
+          "fix": { "type": "string", "description": "Code-aware recommendation (FAIL/PARTIAL/UNVERIFIABLE)." },
+          "effort": { "type": "string", "enum": ["S", "M", "L"] },
+          "url": { "type": ["string", "null"] },
+          "gating": { "type": "boolean", "description": "Agent's advisory flag; requirements_gate.py recomputes the authoritative value from status + priority + in_scope." }
+        }
+      }
+    }
+  }
+}

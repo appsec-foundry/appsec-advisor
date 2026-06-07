@@ -32,7 +32,7 @@
         "appsec", "scan", "exploit", "privilege", "permission"
       ],
       "guidance": "",
-      "requirements": []
+      "requirements": ["BP-LOG-NO-SECRETS", "BP-ERR-NO-LEAK"]
     },
     "auth": {
       "triggers": [
@@ -42,7 +42,7 @@
         "oauth", "oidc", "session", "jwt", "sso", "mfa"
       ],
       "guidance": "Authentication & session guidance: short-lived tokens with rotation on refresh; validate issuer/audience/signature/expiry on every JWT check; MFA for admin paths; Secure+HttpOnly+SameSite=Strict on session cookies.",
-      "requirements": ["SEC-API-AUTH"]
+      "requirements": ["SEC-API-AUTH", "BP-AUTH-PWD-HASH", "BP-AUTH-SESSION-COOKIE", "BP-AUTH-RATE-LIMIT", "BP-AC-SERVER-SIDE", "BP-AC-OBJECT-OWNERSHIP", "BP-AC-DENY-DEFAULT"]
     },
     "injection": {
       "triggers": [
@@ -53,7 +53,7 @@
         "escape input", "user input"
       ],
       "guidance": "Injection guidance: parameterized queries only; validate input at the boundary (schema + type + bounds); escape output per sink (HTML / shell / SQL / URL).",
-      "requirements": ["SEC-SQL", "SEC-IV"]
+      "requirements": ["SEC-SQL", "SEC-IV", "BP-INJ-SQL-PARAM", "BP-INJ-CMD", "BP-VALID-ALLOWLIST", "BP-VALID-SSRF"]
     },
     "crypto": {
       "triggers": [
@@ -63,7 +63,7 @@
         "cbc", "gcm", "nonce", "signing key", "hmac"
       ],
       "guidance": "Cryptography guidance: Argon2id or bcrypt (cost >= 12) for passwords; AES-256-GCM with CSPRNG IVs for symmetric; TLS 1.2+ on external surfaces; rotate keys, never hardcode.",
-      "requirements": ["SEC-TLS"]
+      "requirements": ["SEC-TLS", "BP-CRYPTO-ALGO", "BP-CRYPTO-RANDOM", "BP-CRYPTO-TRANSIT"]
     },
     "xss_csrf": {
       "triggers": [
@@ -74,7 +74,7 @@
         "sri", "subresource integrity"
       ],
       "guidance": "Browser & output-encoding guidance: escape untrusted input before rendering; CSP with script-src 'self' + nonce/hash (no unsafe-inline); SameSite=Strict cookies + anti-CSRF tokens on state-changing requests; restrictive CORS origins. Never eval/exec untrusted data.",
-      "requirements": ["SEC-ANTI-CSRF", "SEC-CSP", "SEC-CORS"]
+      "requirements": ["SEC-ANTI-CSRF", "SEC-CSP", "SEC-CORS", "BP-INJ-XSS-ENCODE", "BP-HEADERS-CSP", "BP-HEADERS-CORS"]
     },
     "secrets": {
       "triggers": [
@@ -83,7 +83,7 @@
         "dotenv", "env var", "environment variable"
       ],
       "guidance": "Secrets guidance: never commit secrets to the repo; read from the organisation's secret store (Vault/KMS/SSM) at runtime; no secrets in logs, client-side code, or error messages.",
-      "requirements": ["SEC-SECRETS"]
+      "requirements": ["SEC-SECRETS", "BP-SECRETS-NO-HARDCODE"]
     },
     "iac": {
       "triggers": [
@@ -92,7 +92,7 @@
         "securitycontext", "runasnonroot", "privileged"
       ],
       "guidance": "Container & IaC guidance: non-root user; drop all capabilities then add only needed ones; pin image digests (no :latest); read-only filesystem where possible; no --privileged; secrets via mounts, not env vars, in K8s.",
-      "requirements": []
+      "requirements": ["BP-DEPS-KNOWN-VULN"]
     },
     "llm": {
       "triggers": [
@@ -105,6 +105,6 @@
   },
 
   "requirements_source": {
-    "paths": [".cache/requirements.yaml", "data/appsec-requirements-fallback.yaml"]
+    "paths": [".cache/requirements.yaml", "data/appsec-requirements-fallback.yaml", "data/appsec-bestpractices-baseline.yaml"]
   }
 }

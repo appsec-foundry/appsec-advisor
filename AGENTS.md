@@ -229,6 +229,7 @@ Frontmatter pin (always Sonnet — runtime model overrides in table below). Turn
 - `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns — Stage 3; broken-link / cross-reference / placeholder / YAML-MD consistency checks; applies permitted soft fixes in-place and emits repair plans for structural fixes.
 - `agents/appsec-architect-reviewer.md` — Sonnet, 40 max turns — Stage 4 (advisory only); writes `.architect-review.md` + `.architect-status.json` (+ `.architect-repair-plan.json` on technical defects). **Never** edits `threat-model.md` / `threat-model.yaml` / SARIF directly.
 - `agents/appsec-fragment-fixer.md` — Sonnet, 30 max turns — Re-Render Loop repair executor; re-authors only the fragments named in a repair plan and re-runs `compose_threat_model.py`. Lean replacement for the heavy `appsec-threat-analyst` REPAIR_MODE dispatch — runs no recon/STRIDE/triage/merge.
+- `agents/appsec-requirements-verifier.md` — Sonnet, 40 max turns — **standalone** (dispatched by the `verify-requirements` skill, NOT in the create-threat-model Phase map). Verifies a code change (git diff) against the in-scope security requirements: selects the requirement subset triggered by the diff, grades each `PASS`/`PARTIAL`/`FAIL`/`UNVERIFIABLE`/`NOT_APPLICABLE` against the post-change code → `.requirements-verification.json`. Never decides the gate — `scripts/requirements_gate.py` owns the exit code.
 
 #### Runtime model routing (overrides the frontmatter)
 

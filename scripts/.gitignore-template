@@ -9,6 +9,8 @@ docs/security/.known-bad-libs-findings.json
 docs/security/.stride-*.json
 docs/security/.triage-flags.json
 docs/security/.requirements.yaml
+docs/security/.verify-diff.json
+docs/security/.requirements-verification.json
 docs/security/.threat-modeling-context.md
 docs/security/.appsec-lock
 docs/security/.appsec-checkpoint

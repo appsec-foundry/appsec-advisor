@@ -166,11 +166,41 @@ class TestSteeringKeywordsJson:
             dupes = [k for k in set(items) if items.count(k) > 1]
             assert not dupes, f"duplicate keywords in '{group}': {dupes}"
 
-    def test_topic_requirements_are_sec_prefixed(self, keywords_data):
-        """Any requirements referenced from a topic must follow the SEC-* naming."""
+    def test_topic_requirement_ids_are_nonempty_strings(self, keywords_data):
+        """Requirement IDs are opaque strings — the naming scheme is org-defined
+        and varies per company catalog, so NO prefix (SEC-, BP-, ACME-, …) is
+        enforced. The company-vs-best-practices distinction comes from the
+        catalog's `source` field, not from the id. Only structural hygiene is
+        checked here."""
         bad = []
         for name, spec in keywords_data.get("topics", {}).items():
             for rid in spec.get("requirements") or []:
-                if not (isinstance(rid, str) and rid.startswith("SEC-")):
+                if not (isinstance(rid, str) and rid.strip()):
                     bad.append(f"{name}:{rid!r}")
-        assert not bad, "requirements must use SEC-* IDs: " + ", ".join(bad)
+        assert not bad, "topic requirement ids must be non-empty strings: " + ", ".join(bad)
+
+    def test_shipped_topic_requirements_resolve_in_a_bundled_catalog(self, keywords_data):
+        """Typo guard for the SHIPPED defaults only (scheme-agnostic): every id
+        the bundled steering_keywords.json references must exist in at least one
+        bundled catalog (the sample company catalog or the best-practices
+        baseline), whatever its naming scheme. Orgs that customise this file with
+        their own catalog own their own ids — this only protects our defaults."""
+        import yaml
+
+        root = Path(__file__).parent.parent / "data"
+        known: set[str] = set()
+        for fname in ("appsec-requirements-fallback.yaml", "appsec-bestpractices-baseline.yaml"):
+            data = yaml.safe_load((root / fname).read_text(encoding="utf-8")) or {}
+            for cat in data.get("categories") or []:
+                for req in cat.get("requirements") or []:
+                    if isinstance(req, dict) and req.get("id"):
+                        known.add(req["id"])
+        unresolved = []
+        for name, spec in keywords_data.get("topics", {}).items():
+            for rid in spec.get("requirements") or []:
+                if isinstance(rid, str) and rid not in known:
+                    unresolved.append(f"{name}:{rid}")
+        assert not unresolved, (
+            "shipped steering topic ids not found in any bundled catalog "
+            "(typo?): " + ", ".join(unresolved)
+        )

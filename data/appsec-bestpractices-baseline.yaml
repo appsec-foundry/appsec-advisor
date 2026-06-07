@@ -1,0 +1,184 @@
+generated: '2026-06-07T00:00:00Z'
+source: bundled-bestpractices
+description: >-
+  Vendor-neutral application-security best-practice baseline (OWASP-derived).
+  Used by the dev-security-helper (coach + on-demand check) as the zero-config
+  fallback when a team has NO company requirements catalog configured. When a
+  company catalog IS available it takes precedence; this baseline is the floor,
+  never an override. These ids use a BP- prefix purely as this file's own choice
+  — requirement-id schemes are org-defined and nothing assumes a prefix; which
+  catalog is active is read from the `source` field below, not from any id
+  prefix. Same shape as appsec-requirements-fallback.yaml so the same parser,
+  coach, and check consume it unchanged.
+url: https://owasp.org/www-project-cheat-sheets/
+categories:
+  - id: BP-AUTH
+    title: Authentication & Session Management
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+    requirements:
+      - id: BP-AUTH-PWD-HASH
+        priority: MUST
+        text: >-
+          Store passwords using a memory-hard adaptive hash (bcrypt, scrypt, or
+          Argon2id) with a per-user salt. Never store plaintext, fast hashes
+          (MD5/SHA-1/SHA-256), or reversible encryption.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+      - id: BP-AUTH-SESSION-COOKIE
+        priority: MUST
+        text: >-
+          Issue session cookies with HttpOnly, Secure, and an explicit SameSite
+          attribute. Regenerate the session identifier on privilege change
+          (login, role elevation).
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html
+      - id: BP-AUTH-RATE-LIMIT
+        priority: SHOULD
+        text: >-
+          Rate-limit and apply lockout/backoff to authentication endpoints to
+          resist credential stuffing and brute force.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+  - id: BP-AC
+    title: Access Control
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+    requirements:
+      - id: BP-AC-SERVER-SIDE
+        priority: MUST
+        text: >-
+          Enforce authorization on the server for every request that accesses or
+          mutates a resource. Never rely on hidden form fields, client-side
+          checks, or the absence of a UI control.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+      - id: BP-AC-OBJECT-OWNERSHIP
+        priority: MUST
+        text: >-
+          Verify that the authenticated principal owns or may access the
+          specific object referenced by an identifier (prevent IDOR / broken
+          object-level authorization).
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
+      - id: BP-AC-DENY-DEFAULT
+        priority: SHOULD
+        text: >-
+          Default to deny. New routes/handlers must require an explicit
+          authorization decision rather than being open unless restricted.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+  - id: BP-INJ
+    title: Injection & Output Encoding
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html
+    requirements:
+      - id: BP-INJ-SQL-PARAM
+        priority: MUST
+        text: >-
+          Use parameterized queries / prepared statements or a vetted ORM for
+          all database access. Never build SQL by string concatenation with
+          request-derived input.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+      - id: BP-INJ-CMD
+        priority: MUST
+        text: >-
+          Avoid passing user input to a shell. Use argument-array process APIs
+          (no shell) and allow-list values; never interpolate input into a
+          command string.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+      - id: BP-INJ-XSS-ENCODE
+        priority: MUST
+        text: >-
+          Contextually encode untrusted data on output and prefer framework
+          auto-escaping. Avoid innerHTML / dangerouslySetInnerHTML with
+          unsanitized input.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+  - id: BP-CRYPTO
+    title: Cryptography
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+    requirements:
+      - id: BP-CRYPTO-ALGO
+        priority: MUST
+        text: >-
+          Use current, vetted algorithms and library defaults (e.g. AES-GCM,
+          authenticated encryption; SHA-256+). Do not roll your own crypto and
+          do not use DES/RC4/ECB/MD5/SHA-1 for security purposes.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+      - id: BP-CRYPTO-RANDOM
+        priority: MUST
+        text: >-
+          Generate tokens, keys, and IDs with a cryptographically secure RNG
+          (e.g. crypto.randomBytes, secrets, /dev/urandom). Never use Math.random
+          or a seeded PRNG for security values.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+      - id: BP-CRYPTO-TRANSIT
+        priority: MUST
+        text: >-
+          Transmit sensitive data only over TLS. Do not disable certificate
+          validation or downgrade to plaintext for convenience.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
+  - id: BP-SECRETS
+    title: Secrets Management
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    requirements:
+      - id: BP-SECRETS-NO-HARDCODE
+        priority: MUST
+        text: >-
+          Never commit credentials, API keys, or tokens to source. Load secrets
+          from environment or a secret manager; keep them out of code, logs, and
+          client bundles.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+  - id: BP-HEADERS
+    title: Security Headers & Transport
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html
+    requirements:
+      - id: BP-HEADERS-CSP
+        priority: SHOULD
+        text: >-
+          Set a restrictive Content-Security-Policy on HTML responses to limit
+          script sources and mitigate XSS impact.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
+      - id: BP-HEADERS-CORS
+        priority: MUST
+        text: >-
+          Configure CORS with an explicit allow-list of trusted origins. Do not
+          reflect arbitrary Origin or combine wildcard origins with credentials.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Origin_Resource_Sharing_Cheat_Sheet.html
+  - id: BP-VALID
+    title: Input Validation
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+    requirements:
+      - id: BP-VALID-ALLOWLIST
+        priority: SHOULD
+        text: >-
+          Validate request input against an allow-list (type, length, range,
+          format) at the trust boundary before use. Treat all external input as
+          untrusted.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+      - id: BP-VALID-SSRF
+        priority: MUST
+        text: >-
+          When the server fetches a URL derived from input, validate it against
+          an allow-list and block internal/metadata addresses to prevent SSRF.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+  - id: BP-LOG
+    title: Logging & Error Handling
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+    requirements:
+      - id: BP-LOG-NO-SECRETS
+        priority: MUST
+        text: >-
+          Do not log secrets, credentials, tokens, or full sensitive PII. Log
+          security-relevant events (authn/authz failures) without leaking the
+          sensitive payload.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+      - id: BP-ERR-NO-LEAK
+        priority: SHOULD
+        text: >-
+          Return generic error messages to clients; keep stack traces and
+          internal details server-side. Do not expose framework/version detail
+          in responses.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
+  - id: BP-DEPS
+    title: Dependencies & Supply Chain
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Vulnerable_Dependency_Management_Cheat_Sheet.html
+    requirements:
+      - id: BP-DEPS-KNOWN-VULN
+        priority: MUST
+        text: >-
+          Do not introduce dependencies with known high/critical vulnerabilities.
+          Pin versions and run a dependency audit (npm audit, pip-audit, etc.) in
+          CI.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Vulnerable_Dependency_Management_Cheat_Sheet.html

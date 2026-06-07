@@ -193,6 +193,20 @@ def run(args: argparse.Namespace) -> int:
         print(f"↳ Requirements: loaded from plugin cache ({cache})")
         return 0
 
+    # 2b. Bundled best-practices baseline fallback (opt-in via --fallback-baseline).
+    # Only reachable on the cache_fallback path — an explicit --requirements failure
+    # already aborted in step 1 (cache_allowed is False there). Lets the
+    # dev-security-helper degrade to a generic best-practices catalog instead of
+    # aborting when a team has no company requirements source. Other callers
+    # (create-threat-model / audit) never pass the flag, so their behavior is
+    # unchanged.
+    if args.fallback_baseline:
+        baseline = Path(args.fallback_baseline)
+        if baseline.is_file() and baseline.stat().st_size > 0:
+            _write(out_file, baseline.read_bytes())
+            print(f"↳ Requirements: no company source — using bundled best-practices baseline ({baseline})")
+            return 0
+
     # 3. Requested but nothing loaded -> abort.
     return _abort([
         f"Source: {src_loc or '(no source configured)'}  (fail_mode={fail_mode})",
@@ -215,7 +229,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="caller asserts requirements ARE requested (skip enabled re-derivation)")
     p.add_argument("--base-mode", default=None, choices=[None, "quick", "standard", "thorough"])
     p.add_argument("--caller", default="create-threat-model",
-                   choices=["create-threat-model", "audit-security-requirements"])
+                   choices=["create-threat-model", "audit-security-requirements", "verify-requirements"])
+    p.add_argument("--fallback-baseline", default=None,
+                   help="opt-in: on the cache_fallback path, if no company source/cache loads, "
+                        "write this baseline catalog instead of aborting (dev-security-helper). "
+                        "Never overrides an explicit --requirements failure (that still aborts).")
     p.add_argument("--plugin-root", default=None)
     p.add_argument("--cache-path", default=None, help="override plugin cache path")
     p.add_argument("--timeout", type=int, default=15)

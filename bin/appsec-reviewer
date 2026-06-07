@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# appsec-reviewer — dev-facing security review for a code change.
+#
+# Thin CI/CLI wrapper around the appsec-advisor `verify-requirements` skill:
+# resolves the diff, dispatches the requirements-verifier (via Claude Code
+# headless mode), and renders a Markdown report artifact. Checks your change
+# against your company requirements if configured, otherwise a built-in
+# best-practices baseline. Advisory by default; --fail-on makes CI fail.
+#
+# Usage:
+#   appsec-reviewer review --diff <ref> --output <file.md> [options]
+#
+# Example (GitLab CI):
+#   appsec-reviewer review --diff origin/main --output security-review.md
+#
+# Options for `review`:
+#   --diff <ref>            Base ref to diff against (git diff <ref>...HEAD). Required.
+#   --output <file>         Markdown report path. Default: security-review.md
+#   --requirements <src>    Company requirements URL/path (else best-practices baseline).
+#   --fail-on <must|partial> Exit non-zero if an in-scope requirement at/above the
+#                           floor FAILs (or also PARTIALs). Omit = advisory (exit 0).
+#   --priority-floor <p>    MUST (default) | SHOULD | MAY — lowest priority that gates.
+#
+# Auth: uses ANTHROPIC_API_KEY if set, otherwise Claude Code subscription auth.
+set -euo pipefail
+
+die() { echo "appsec-reviewer: $*" >&2; exit 2; }
+
+# Resolve the plugin root (for the renderer + gate scripts).
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  [ -d "$SELF/scripts" ] && CLAUDE_PLUGIN_ROOT="$SELF"
+fi
+[ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -d "$CLAUDE_PLUGIN_ROOT" ] || \
+  die "CLAUDE_PLUGIN_ROOT could not be resolved — set it to the appsec-advisor plugin dir."
+
+SUBCMD="${1:-}"
+[ "$SUBCMD" = "review" ] || die "unknown or missing subcommand '$SUBCMD' (expected: review). See --help."
+shift || true
+
+DIFF_REF=""
+OUTPUT="security-review.md"
+REQUIREMENTS=""
+FAIL_ON=""
+PRIORITY_FLOOR="MUST"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --diff)           DIFF_REF="${2:-}"; shift 2 ;;
+    --output)         OUTPUT="${2:-}"; shift 2 ;;
+    --requirements)   REQUIREMENTS="${2:-}"; shift 2 ;;
+    --fail-on)        FAIL_ON="${2:-}"; shift 2 ;;
+    --priority-floor) PRIORITY_FLOOR="${2:-}"; shift 2 ;;
+    -h|--help)        sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)                die "unknown argument '$1'. See --help." ;;
+  esac
+done
+
+[ -n "$DIFF_REF" ] || die "--diff <ref> is required."
+case "${FAIL_ON:-}" in ""|must|partial) : ;; *) die "--fail-on must be 'must' or 'partial'." ;; esac
+
+OUTPUT_DIR="${PWD}/docs/security"
+mkdir -p "$OUTPUT_DIR"
+VERDICT="$OUTPUT_DIR/.requirements-verification.json"
+
+# Build the skill invocation. Advisory in the skill (the gate decision is made
+# below by requirements_gate.py so the CLI owns the exit code deterministically).
+SKILL_ARGS="--base $DIFF_REF --priority-floor $PRIORITY_FLOOR"
+[ -n "$REQUIREMENTS" ] && SKILL_ARGS="$SKILL_ARGS --requirements $REQUIREMENTS"
+
+command -v claude >/dev/null 2>&1 || die "Claude Code CLI not found. Install it: https://claude.ai/download"
+
+echo "appsec-reviewer: reviewing changes since '$DIFF_REF'…" >&2
+claude -p "/appsec-advisor:verify-requirements $SKILL_ARGS" \
+  --permission-mode bypassPermissions >&2 || true
+
+[ -f "$VERDICT" ] || die "no verdict produced ($VERDICT) — the review did not complete."
+
+# Render the Markdown artifact.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_review_report.py" --verdict "$VERDICT" --output "$OUTPUT"
+
+# Advisory by default; --fail-on flips to the deterministic gate exit code.
+if [ -n "$FAIL_ON" ]; then
+  GATE_ARGS="--verdict $VERDICT --gate --priority-floor $PRIORITY_FLOOR"
+  [ "$FAIL_ON" = "partial" ] && GATE_ARGS="$GATE_ARGS --gate-on partial"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/requirements_gate.py" $GATE_ARGS
+  exit $?
+fi
+exit 0

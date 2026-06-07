@@ -494,3 +494,44 @@ class TestOrgProfileActivation:
         root = self._stage_plugin_root(tmp_path, profile_enabled=True)
         out = self._run(root, force_env="0")
         assert out == {}, out
+
+
+def test_steering_falls_back_to_bestpractices_baseline(tmp_path):
+    """Gap B: with no company catalog present, the steering hook resolves BP-*
+    requirement text from the bundled best-practices baseline. The xss_csrf topic
+    lists SEC-* ids FIRST, so this also proves the filter-then-cap fix (cap-first
+    would have injected zero under a baseline-only catalog)."""
+    import shutil
+
+    repo = Path(__file__).parent.parent
+    root = tmp_path / "plugin"
+    (root / "hooks").mkdir(parents=True)
+    (root / "data").mkdir(parents=True)
+
+    sk = json.loads((repo / "hooks" / "steering_keywords.json").read_text())
+    sk["enabled"] = True
+    (root / "hooks" / "steering_keywords.json").write_text(json.dumps(sk))
+    # Only the baseline catalog is reachable under this plugin root.
+    shutil.copy(
+        repo / "data" / "appsec-bestpractices-baseline.yaml",
+        root / "data" / "appsec-bestpractices-baseline.yaml",
+    )
+
+    env = os.environ.copy()
+    env["APPSEC_COACH"] = "1"
+    env["CLAUDE_PLUGIN_ROOT"] = str(root)
+    payload = json.dumps(
+        {"prompt": "add a content-security-policy header and fix the xss output encoding"}
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    out = json.loads(result.stdout)
+    ctx = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "BP-" in ctx, f"expected a BP-* requirement injected, got:\n{ctx}"
+    assert "- SEC-" not in ctx, f"no SEC-* line should appear under baseline-only:\n{ctx}"

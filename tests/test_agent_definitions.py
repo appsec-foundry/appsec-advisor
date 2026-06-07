@@ -47,6 +47,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-evidence-verifier": 30,  # M2: Phase 10a evidence re-check
     "appsec-abuse-case-verifier": 20,  # Phase 10b: one agent per abuse-case candidate
     "appsec-fragment-fixer": 30,  # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE)
+    "appsec-requirements-verifier": 40,  # standalone (verify-requirements skill); grades a diff vs in-scope requirements
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -63,6 +64,7 @@ INTERNAL_AGENTS = {
     "appsec-evidence-verifier",
     "appsec-abuse-case-verifier",
     "appsec-fragment-fixer",
+    "appsec-requirements-verifier",
 }
 
 # The orchestrator is the only user-facing agent
