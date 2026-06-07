@@ -1,72 +1,72 @@
 generated: '2026-04-09T07:51:52Z'
 source: harvested
 description: KN Application Security Requirements (ASR)
-url: https://asr.int.kn
+url: https://asr.int.example.com
 sources_meta:
 - id: asr-scg
   type: requirement
   title: Secure Coding Guidelines
-  crawl_url: https://asr.int.kn/scg
+  crawl_url: https://asr.int.example.com/scg
   indexed_at: '2026-04-09T07:51:44Z'
   items_count: 26
   mode: structured
-  reference_url: https://asr.int.kn/scg
+  reference_url: https://asr.int.example.com/scg
 - id: asr-ssdlc
   type: requirement
   title: Secure Software Lifecycle (SSDLC)
-  crawl_url: https://asr.int.kn/ssdlc
+  crawl_url: https://asr.int.example.com/ssdlc
   indexed_at: '2026-04-09T07:51:46Z'
   items_count: 18
   mode: structured
-  reference_url: https://asr.int.kn/ssdlc
+  reference_url: https://asr.int.example.com/ssdlc
 - id: asr-sslm
   type: requirement
   title: Secure Software Lifecycle Management (SSLM)
-  crawl_url: https://asr.int.kn/sslm
+  crawl_url: https://asr.int.example.com/sslm
   indexed_at: '2026-04-09T07:51:49Z'
   items_count: 14
   mode: structured
-  reference_url: https://asr.int.kn/sslm
+  reference_url: https://asr.int.example.com/sslm
 - id: appsec-blueprints
   type: blueprint
   title: AppSec Blueprints
-  crawl_url: https://asr.int.kn/blueprints
+  crawl_url: https://asr.int.example.com/blueprints
   indexed_at: '2026-04-09T07:51:51Z'
   items_count: 9
   mode: full
-  reference_url: https://asr.int.kn/blueprints
+  reference_url: https://asr.int.example.com/blueprints
 categories:
 - id: SEC-FRONTEND_SECURITY
-  url: https://asr.int.kn/scg/frontend-security/
+  url: https://asr.int.example.com/scg/frontend-security/
   title: Frontend Security
   requirements:
   - id: SEC-ANTI-CSRF
-    url: https://asr.int.kn/scg/frontend-security#sec-samesite
+    url: https://asr.int.example.com/scg/frontend-security#sec-samesite
     text: |-
       Implement Anti-CSRF protection (e.g. via SameSite cookies) for user sessions. State‑changing actions MUST NOT be performed via HTTP GET
     priority: MUST
   - id: SEC-CLIENT-STORAGE
-    url: https://asr.int.kn/scg/frontend-security#sec-client-storage
+    url: https://asr.int.example.com/scg/frontend-security#sec-client-storage
     text: Do not store sensitive data in any client-side storage mechanism
     priority: MUST
   - id: SEC-CORS
-    url: https://asr.int.kn/scg/frontend-security#sec-cors
+    url: https://asr.int.example.com/scg/frontend-security#sec-cors
     text: Configure CORS restrictively to allow cross-origin requests from the UI
     priority: MUST
   - id: SEC-CSP
-    url: https://asr.int.kn/scg/frontend-security#sec-csp
+    url: https://asr.int.example.com/scg/frontend-security#sec-csp
     text: Activate CSP headers on Internet-facing applications
     priority: SHOULD
   - id: SEC-HSTS
-    url: https://asr.int.kn/scg/frontend-security#sec-hsts
+    url: https://asr.int.example.com/scg/frontend-security#sec-hsts
     text: MUST use the HTTP response header Strict‑Transport‑Security (HSTS) on all Internet‑facing websites
     priority: MUST
   - id: SEC-SECURE-UI-FRAMEWORKS
-    url: https://asr.int.kn/scg/frontend-security#sec-secure-ui-frameworks
+    url: https://asr.int.example.com/scg/frontend-security#sec-secure-ui-frameworks
     text: Only use mature, secure frontend frameworks
     priority: MUST
   - id: SEC-UI-ENCODE
-    url: https://asr.int.kn/scg/frontend-security#sec-ui-encode
+    url: https://asr.int.example.com/scg/frontend-security#sec-ui-encode
     text: Encode all user-controlled parameters at the frontend to prevent Cross-Site Scripting (XSS) attacks
     priority: MUST
   - id: SEC-POSTMESSAGE
@@ -96,406 +96,406 @@ categories:
     cwe_url: https://cwe.mitre.org/data/definitions/1021.html
   source_id: asr-scg
 - id: SEC-HANDLING_SECURITY_EVENTS
-  url: https://asr.int.kn/scg/handling-security-events/
+  url: https://asr.int.example.com/scg/handling-security-events/
   title: Handling Security Events
   requirements:
   - id: SEC-FAIL-SECURELY
-    url: https://asr.int.kn/scg/handling-security-events#sec-fail-securely
+    url: https://asr.int.example.com/scg/handling-security-events#sec-fail-securely
     text: |-
       It MUST be ensured that in the event of any error (expected or unexpected), the application stays in a secure state in which no internal information (such as stack traces) is disclosed to users
     priority: MUST
   source_id: asr-scg
 - id: SEC-HARDENING
-  url: https://asr.int.kn/scg/hardening/
+  url: https://asr.int.example.com/scg/hardening/
   title: Hardening
   requirements:
   - id: SCG-VERSION-HEADER
-    url: https://asr.int.kn/scg/hardening#scg-version-header
+    url: https://asr.int.example.com/scg/hardening#scg-version-header
     text: Disable X‑Powered‑By and mask Server header
     priority: MUST
   - id: SEC-API-EXPOSURE
-    url: https://asr.int.kn/scg/hardening#_must_secure_managementoperational_endpoints
+    url: https://asr.int.example.com/scg/hardening#_must_secure_managementoperational_endpoints
     text: Sensitive management endpoints must not be exposed
     priority: MUST
   source_id: asr-scg
 - id: SEC-SECURE_DATA_ACCESS
-  url: https://asr.int.kn/scg/secure-data-access/
+  url: https://asr.int.example.com/scg/secure-data-access/
   title: Secure Data Access
   requirements:
   - id: SEC-API-AUTH
-    url: https://asr.int.kn/scg/secure-data-access#sec-api-auth
+    url: https://asr.int.example.com/scg/secure-data-access#sec-api-auth
     text: APIs must mutually authenticate using a secure and standard mechanism
     priority: MUST
   - id: SEC-AUTHZ
-    url: https://asr.int.kn/scg/secure-data-access#ec-api-authz
+    url: https://asr.int.example.com/scg/secure-data-access#ec-api-authz
     text: Apply least‑privilege and RBAC to all endpoints
     priority: MUST
   - id: SEC-RATE-LIMITS
-    url: https://asr.int.kn/scg/secure-data-access#sec-rate-limits
+    url: https://asr.int.example.com/scg/secure-data-access#sec-rate-limits
     text: Apply rate limiting to external APIs
     priority: MUST
   - id: SEC-USER-AUTH
-    url: https://asr.int.kn/scg/secure-data-access#_must_securely_authenticate_users
+    url: https://asr.int.example.com/scg/secure-data-access#_must_securely_authenticate_users
     text: Users MUST be authenticated using standard KN authentication mechanisms with mandatory MFA
     priority: MUST
   source_id: asr-scg
 - id: SEC-SECURE_DATA_HANDLING
-  url: https://asr.int.kn/scg/secure-data-handling/
+  url: https://asr.int.example.com/scg/secure-data-handling/
   title: Secure Data Handling
   requirements:
   - id: SCG-DESERIALIZING
-    url: https://asr.int.kn/scg/secure-data-handling#sec-deserializing
+    url: https://asr.int.example.com/scg/secure-data-handling#sec-deserializing
     text: Restrict and validate objects during deserialization
     priority: MUST
   - id: SCG-HARDENXML
-    url: https://asr.int.kn/scg/secure-data-handling#scg-hardenxml
+    url: https://asr.int.example.com/scg/secure-data-handling#scg-hardenxml
     text: Harden XML parsers to prevent XXE attacks
     priority: MUST
   - id: SEC-IV
-    url: https://asr.int.kn/scg/secure-data-handling#scg-iv
+    url: https://asr.int.example.com/scg/secure-data-handling#scg-iv
     text: Validate all external input as restrictively as possible
     priority: MUST
   - id: SEC-SQL
-    url: https://asr.int.kn/scg/secure-data-handling#scg-sql
+    url: https://asr.int.example.com/scg/secure-data-handling#scg-sql
     text: Use parameterized SQL/HQL queries or ORM methods for database queries to prevent SQL injection
     priority: MUST
   - id: SEC-VALIDATE-FILES
-    url: https://asr.int.kn/scg/secure-data-handling#scg-validate-files
+    url: https://asr.int.example.com/scg/secure-data-handling#scg-validate-files
     text: Validate, sanitize, and securely store uploaded files
     priority: MUST
   source_id: asr-scg
 - id: SEC-SECURE_DATA_PROTECTION
-  url: https://asr.int.kn/scg/secure-data-protection/
+  url: https://asr.int.example.com/scg/secure-data-protection/
   title: Secure Data Protection
   requirements:
   - id: SEC-DATAENC
-    url: https://asr.int.kn/scg/secure-data-protection#sec-dataenc
+    url: https://asr.int.example.com/scg/secure-data-protection#sec-dataenc
     text: |-
       Encrypt data that could be ≥ confidential using only secure algorithms. If possible encrypt all stored data (e.g. in CloudX)
     priority: MUST
   - id: SEC-KEGEN
-    url: https://asr.int.kn/scg/secure-data-protection#_must_generate_strong_keys
+    url: https://asr.int.example.com/scg/secure-data-protection#_must_generate_strong_keys
     text: |-
       Tokens/keys used for security (e.g., access tokens, technical user passwords, API keys) MUST be cryptographically random and at least 256‑bit (≈ 32 chars)
     priority: MUST
   - id: SEC-LOGGING
-    url: https://asr.int.kn/scg/secure-data-protection#_must_dont_log_sensitive_data
+    url: https://asr.int.example.com/scg/secure-data-protection#_must_dont_log_sensitive_data
     text: Do not log sensitive data (e.g., PII) at standard log levels. If necessary, use DEBUG only and disable it in production
     priority: MUST
   - id: SEC-NO-GET
-    url: https://asr.int.kn/scg/secure-data-protection#sec-no-get-sensitive
+    url: https://asr.int.example.com/scg/secure-data-protection#sec-no-get-sensitive
     text: Use methods like HTTP POST or PUT instead so that data is transmitted in the HTTP body
     priority: MUST
   - id: SEC-PASSWORDS
-    url: https://asr.int.kn/scg/secure-data-protection#_should_dont_store_user_passwords
+    url: https://asr.int.example.com/scg/secure-data-protection#_should_dont_store_user_passwords
     text: Don’t store user credentials (e.g., passwords); use KN IAM instead
     priority: SHOULD
   - id: SEC-SECRETS
-    url: https://asr.int.kn/scg/secure-data-protection#sec-secrets
+    url: https://asr.int.example.com/scg/secure-data-protection#sec-secrets
     text: Secrets must be stored, generated, and rotated securely
     priority: MUST
   - id: SEC-TLS
-    url: https://asr.int.kn/scg/secure-data-protection#sec-tls
+    url: https://asr.int.example.com/scg/secure-data-protection#sec-tls
     text: All data transmitted externally MUST be encrypted using TLS
     priority: MUST
   source_id: asr-scg
 - id: SSDLC-APPROVED-REPOS
-  url: https://asr.int.kn/ssdlc/build/ssdlc-approved-repos/
+  url: https://asr.int.example.com/ssdlc/build/ssdlc-approved-repos/
   title: Only Use Approved Artifact Repositories
   requirements:
   - id: SSDLC-APPROVED-REPOS
-    url: https://asr.int.kn/ssdlc/build/ssdlc-approved-repos/
+    url: https://asr.int.example.com/ssdlc/build/ssdlc-approved-repos/
     text: |-
       Development teams must exclusively use the KN‑approved artifact repository for: Proxying all dependency downloads Storing all local binary artifacts and dependencies
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-COMMUNITY
-  url: https://asr.int.kn/ssdlc/prepare/ssdlc-join-community/
+  url: https://asr.int.example.com/ssdlc/prepare/ssdlc-join-community/
   title: Join AppSec Teams Channels
   requirements:
   - id: SSDLC-COMMUNITY
-    url: https://asr.int.kn/ssdlc/prepare/ssdlc-join-community/
+    url: https://asr.int.example.com/ssdlc/prepare/ssdlc-join-community/
     text: Join AppSec Teams Channels
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-FIXVULN
-  url: https://asr.int.kn/ssdlc/code/ssdlc-fixvuln/
+  url: https://asr.int.example.com/ssdlc/code/ssdlc-fixvuln/
   title: Fix Security Findings
   requirements:
   - id: SSDLC-FIXVULN
-    url: https://asr.int.kn/ssdlc/code/ssdlc-fixvuln/
+    url: https://asr.int.example.com/ssdlc/code/ssdlc-fixvuln/
     text: SSDLC‑FIXVULN
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-HARDENING
-  url: https://asr.int.kn/ssdlc/deploy/ssdlc-hardening/
+  url: https://asr.int.example.com/ssdlc/deploy/ssdlc-hardening/
   title: Application Application Hardening
   requirements:
   - id: SSDLC-HARDENING
-    url: https://asr.int.kn/ssdlc/deploy/ssdlc-hardening/
+    url: https://asr.int.example.com/ssdlc/deploy/ssdlc-hardening/
     text: Application Application Hardening
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-KNITE
-  url: https://asr.int.kn/ssdlc/deploy/ssdlc-knite/
+  url: https://asr.int.example.com/ssdlc/deploy/ssdlc-knite/
   title: Perform KNITE Onboarding for Product APIs
   requirements:
   - id: SSDLC-KNITE
-    url: https://asr.int.kn/ssdlc/deploy/ssdlc-knite/
+    url: https://asr.int.example.com/ssdlc/deploy/ssdlc-knite/
     text: Perform KNITE Onboarding for Product APIs
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-PEERREVIEWS
-  url: https://asr.int.kn/ssdlc/code/ssdlc-peerreviews/
+  url: https://asr.int.example.com/ssdlc/code/ssdlc-peerreviews/
   title: Conduct Peer Reviews for Security
   requirements:
   - id: SSDLC-PEERREVIEWS
-    url: https://asr.int.kn/ssdlc/code/ssdlc-peerreviews/
+    url: https://asr.int.example.com/ssdlc/code/ssdlc-peerreviews/
     text: SSDLC‑PEERREVIEWS
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-PERMITTED-SW
-  url: https://asr.int.kn/ssdlc/build/ssdlc-permittedsw/
+  url: https://asr.int.example.com/ssdlc/build/ssdlc-permittedsw/
   title: Use Permitted Software Versions
   requirements:
   - id: SSDLC-PERMITTED-SW
-    url: https://asr.int.kn/ssdlc/build/ssdlc-permittedsw/
+    url: https://asr.int.example.com/ssdlc/build/ssdlc-permittedsw/
     text: SSDLC‑PERMITTED‑SW
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-RENOVATE
-  url: https://asr.int.kn/ssdlc/code/ssdlc-renovate/
+  url: https://asr.int.example.com/ssdlc/code/ssdlc-renovate/
   title: Integrate Renovate for Automated Patching
   requirements:
   - id: SSDLC-RENOVATE
-    url: https://asr.int.kn/ssdlc/code/ssdlc-renovate/
+    url: https://asr.int.example.com/ssdlc/code/ssdlc-renovate/
     text: Integrate Renovate for Automated Patching
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SAST
-  url: https://asr.int.kn/ssdlc/build/ssdlc-sast/
+  url: https://asr.int.example.com/ssdlc/build/ssdlc-sast/
   title: Perform Continuous Security Code Scanning (SAST)
   requirements:
   - id: SSDLC-SAST
-    url: https://asr.int.kn/ssdlc/build/ssdlc-sast/
+    url: https://asr.int.example.com/ssdlc/build/ssdlc-sast/
     text: SSDLC‑SAST
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SCA
-  url: https://asr.int.kn/ssdlc/build/ssdlc-sca/
+  url: https://asr.int.example.com/ssdlc/build/ssdlc-sca/
   title: Faciliate Continuous Dependency Scanning (SCA)
   requirements:
   - id: SSDLC-SCA
-    url: https://asr.int.kn/ssdlc/build/ssdlc-sca/
+    url: https://asr.int.example.com/ssdlc/build/ssdlc-sca/
     text: Faciliate Continuous Dependency Scanning (SCA)
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SCM-APPROVED
-  url: https://asr.int.kn/ssdlc/prepare/ssdlc-scm-approved/
+  url: https://asr.int.example.com/ssdlc/prepare/ssdlc-scm-approved/
   title: Use an Approved SCM
   requirements:
   - id: SSDLC-SCM-APPROVED
-    url: https://asr.int.kn/ssdlc/prepare/ssdlc-scm-approved/
+    url: https://asr.int.example.com/ssdlc/prepare/ssdlc-scm-approved/
     text: Host all application source code and pipelines in an approved Source Code Management (SCM) platform
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SCM-HARDENING
-  url: https://asr.int.kn/ssdlc/prepare/ssdlc-scm-hardening/
+  url: https://asr.int.example.com/ssdlc/prepare/ssdlc-scm-hardening/
   title: Secure SCM Repo Settings
   requirements:
   - id: SSDLC-SCM-HARDENING
-    url: https://asr.int.kn/ssdlc/prepare/ssdlc-scm-hardening/
+    url: https://asr.int.example.com/ssdlc/prepare/ssdlc-scm-hardening/
     text: SSDLC‑SCM-HARDENING
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SECCODING
-  url: https://asr.int.kn/ssdlc/code/ssdlc-seccoding/
+  url: https://asr.int.example.com/ssdlc/code/ssdlc-seccoding/
   title: Adhere to Secure Coding Guidelines
   requirements:
   - id: SSDLC-SECCODING
-    url: https://asr.int.kn/ssdlc/code/ssdlc-seccoding/
+    url: https://asr.int.example.com/ssdlc/code/ssdlc-seccoding/
     text: Adhere to Secure Coding Guidelines
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SECDESIGN
-  url: https://asr.int.kn/ssdlc/design/ssdlc-secdesign/
+  url: https://asr.int.example.com/ssdlc/design/ssdlc-secdesign/
   title: Adhere to Secure Design Principles
   requirements:
   - id: SSDLC-SECDESIGN
-    url: https://asr.int.kn/ssdlc/design/ssdlc-secdesign/
+    url: https://asr.int.example.com/ssdlc/design/ssdlc-secdesign/
     text: SSDLC‑SECDESIGN
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SECFINDINGS
-  url: https://asr.int.kn/ssdlc/deploy/ssdlc-secfinding/
+  url: https://asr.int.example.com/ssdlc/deploy/ssdlc-secfinding/
   title: Faciliate Continuous Dependency Scanning (SCA)
   requirements:
   - id: SSDLC-SECFINDINGS
-    url: https://asr.int.kn/ssdlc/deploy/ssdlc-secfinding/
+    url: https://asr.int.example.com/ssdlc/deploy/ssdlc-secfinding/
     text: Faciliate Continuous Dependency Scanning (SCA)
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SM1
-  url: https://asr.int.kn/ssdlc/deploy/ssdlc-sm1/
+  url: https://asr.int.example.com/ssdlc/deploy/ssdlc-sm1/
   title: Basic Secret Protection
   requirements:
   - id: SSDLC-SM1
-    url: https://asr.int.kn/ssdlc/deploy/ssdlc-sm1/
+    url: https://asr.int.example.com/ssdlc/deploy/ssdlc-sm1/
     text: Basic Secret Protection
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-SM2
-  url: https://asr.int.kn/ssdlc/deploy/ssdlc-sm2/
+  url: https://asr.int.example.com/ssdlc/deploy/ssdlc-sm2/
   title: Advanced Secret Protection & Rotation
   requirements:
   - id: SSDLC-SM2
-    url: https://asr.int.kn/ssdlc/deploy/ssdlc-sm2/
+    url: https://asr.int.example.com/ssdlc/deploy/ssdlc-sm2/
     text: Advanced Secret Protection & Rotation
     priority: MUST
   source_id: asr-ssdlc
 - id: SSDLC-TM
-  url: https://asr.int.kn/ssdlc/design/ssdlc-tm/
+  url: https://asr.int.example.com/ssdlc/design/ssdlc-tm/
   title: Assess Security Implications of New Features
   requirements:
   - id: SSDLC-TM
-    url: https://asr.int.kn/ssdlc/design/ssdlc-tm/
+    url: https://asr.int.example.com/ssdlc/design/ssdlc-tm/
     text: SSDLC‑TM
     priority: MUST
   source_id: asr-ssdlc
 - id: SSLM-AUTN
-  url: https://asr.int.kn/sslm/development/sslm-authn/
+  url: https://asr.int.example.com/sslm/development/sslm-authn/
   title: Use KN Auth Service
   requirements:
   - id: SSLM-AUTN
-    url: https://asr.int.kn/sslm/development/sslm-authn/
+    url: https://asr.int.example.com/sslm/development/sslm-authn/
     text: Only use one of the standardized KN authentication services for SSO
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-ENVIRON
-  url: https://asr.int.kn/sslm/planning/sslm-environ/
+  url: https://asr.int.example.com/sslm/planning/sslm-environ/
   title: Seperate Environments
   requirements:
   - id: SSLM-ENVIRON
-    url: https://asr.int.kn/sslm/planning/sslm-environ/
+    url: https://asr.int.example.com/sslm/planning/sslm-environ/
     text: Seperate Environments
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-IASA
-  url: https://asr.int.kn/sslm/pre-golive/sslm-iasa/
+  url: https://asr.int.example.com/sslm/pre-golive/sslm-iasa/
   title: Perform IASA (internal Pentest)
   requirements:
   - id: SSLM-IASA
-    url: https://asr.int.kn/sslm/pre-golive/sslm-iasa/
+    url: https://asr.int.example.com/sslm/pre-golive/sslm-iasa/
     text: Perform IASA (internal Pentest)
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-PUBAPP
-  url: https://asr.int.kn/sslm/pre-golive/sslm-pubapp/
+  url: https://asr.int.example.com/sslm/pre-golive/sslm-pubapp/
   title: Request PUBAPP Approval
   requirements:
   - id: SSLM-PUBAPP
-    url: https://asr.int.kn/sslm/pre-golive/sslm-pubapp/
+    url: https://asr.int.example.com/sslm/pre-golive/sslm-pubapp/
     text: Request PUBAPP Approval
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-REQ
-  url: https://asr.int.kn/sslm/planning/sslm-req/
+  url: https://asr.int.example.com/sslm/planning/sslm-req/
   title: Document Security Requirements
   requirements:
   - id: SSLM-REQ
-    url: https://asr.int.kn/sslm/planning/sslm-req/
+    url: https://asr.int.example.com/sslm/planning/sslm-req/
     text: Document Security Requirements
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-SARA
-  url: https://asr.int.kn/sslm/planning/sslm-sara/
+  url: https://asr.int.example.com/sslm/planning/sslm-sara/
   title: Perform SARA Assessment
   requirements:
   - id: SSLM-SARA
-    url: https://asr.int.kn/sslm/planning/sslm-sara/
+    url: https://asr.int.example.com/sslm/planning/sslm-sara/
     text: Perform SARA Assessment
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-SBOM
-  url: https://asr.int.kn/sslm/development/sslm-sbom/
+  url: https://asr.int.example.com/sslm/development/sslm-sbom/
   title: Provide SBOM
   requirements:
   - id: SSLM-SBOM
-    url: https://asr.int.kn/sslm/development/sslm-sbom/
+    url: https://asr.int.example.com/sslm/development/sslm-sbom/
     text: |-
       3rd‑party applications operated by KN must provide a complete and up‑to‑date Software Bill of Materials (SBOM) in accordance with KN’s Software Supply Chain Security requirements
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-SECINCIDENTS
-  url: https://asr.int.kn/sslm/operations/sslm-secincidents/
+  url: https://asr.int.example.com/sslm/operations/sslm-secincidents/
   title: Manage (potential) Security Incidents
   requirements:
   - id: SSLM-SECINCIDENTS
-    url: https://asr.int.kn/sslm/operations/sslm-secincidents/
+    url: https://asr.int.example.com/sslm/operations/sslm-secincidents/
     text: Manage (potential) security incidents according to Kuehne+Nagel’s established incident management process
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-SECVULN
-  url: https://asr.int.kn/sslm/operations/sslm-secvuln/
+  url: https://asr.int.example.com/sslm/operations/sslm-secvuln/
   title: Manage Vulnerabilities
   requirements:
   - id: SSLM-SECVULN
-    url: https://asr.int.kn/sslm/operations/sslm-secvuln/
+    url: https://asr.int.example.com/sslm/operations/sslm-secvuln/
     text: |-
       Identified vulnerabilities in applications must be continuously managed throughout the lifecycle, in accordance with KN’s SLA-based Operations Policy
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-SSDLC
-  url: https://asr.int.kn/sslm/development/sslm-ssdlc/
+  url: https://asr.int.example.com/sslm/development/sslm-ssdlc/
   title: Adhere to SSDLC Requirements
   requirements:
   - id: SSLM-SSDLC
-    url: https://asr.int.kn/sslm/development/sslm-ssdlc/
+    url: https://asr.int.example.com/sslm/development/sslm-ssdlc/
     text: KN‑developed applications must adhere to KM’s Secure Software Development Lifecycle (SSDLC) requirements
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-TM1
-  url: https://asr.int.kn/sslm/development/sslm-tm1/
+  url: https://asr.int.example.com/sslm/development/sslm-tm1/
   title: Perform Initial Threat Modeling Engagement
   requirements:
   - id: SSLM-TM1
-    url: https://asr.int.kn/sslm/development/sslm-tm1/
+    url: https://asr.int.example.com/sslm/development/sslm-tm1/
     text: |-
       Conduct a threat modeling session, ideally before initial implementation, to identify potential threats and mitigations early in the development process. For SaaS applications, this requirement must be discussed with the AppSec team
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-TM2
-  url: https://asr.int.kn/sslm/operations/sslm-tm2/
+  url: https://asr.int.example.com/sslm/operations/sslm-tm2/
   title: Review Threat Model
   requirements:
   - id: SSLM-TM2
-    url: https://asr.int.kn/sslm/operations/sslm-tm2/
+    url: https://asr.int.example.com/sslm/operations/sslm-tm2/
     text: |-
       Periodically review (and update when necessary) the existing threat model of your application. This control requires that a threat model already exists. If not, refer to: SSLM‑TM1 – Perform Initial Threat Modeling Engagement
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-TRAIN
-  url: https://asr.int.kn/sslm/planning/sslm-train/
+  url: https://asr.int.example.com/sslm/planning/sslm-train/
   title: Ensure Security Know-How of Developers
   requirements:
   - id: SSLM-TRAIN
-    url: https://asr.int.kn/sslm/planning/sslm-train/
+    url: https://asr.int.example.com/sslm/planning/sslm-train/
     text: Ensure Security Know-How of Developers
     priority: MUST
   source_id: asr-sslm
 - id: SSLM-WAF
-  url: https://asr.int.kn/sslm/operations/sslm-waf/
+  url: https://asr.int.example.com/sslm/operations/sslm-waf/
   title: Enable WAF Protection
   requirements:
   - id: SSLM-WAF
-    url: https://asr.int.kn/sslm/operations/sslm-waf/
+    url: https://asr.int.example.com/sslm/operations/sslm-waf/
     text: Protect your application with a Web Application Firewall (WAF) to add an additional security layer
     priority: MUST
   source_id: asr-sslm
 blueprints:
 - id: BP-BLUEPRINTS
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/
+  url: https://asr.int.example.com/blueprints/
   title: AppSec Blueprints
   summary: |-
     These Blueprints provide implementation‑level guidance for building secure, consistent, and solutions across Kuehne+Nagel. They translate our principles, policies, and requirements into actionable patterns that can be directly applied during design and implementation.
@@ -504,16 +504,16 @@ blueprints:
   - _spa_security_blueprint
   sections:
   - title: API Security Blueprint
-    url: https://asr.int.kn/blueprints#_api_security_blueprint
+    url: https://asr.int.example.com/blueprints#_api_security_blueprint
     content: |-
       Provides guidance for securing backend APIs, including authentication, authorization, input validation, and secure communication patterns. See:API Security Blueprint Hardening— Hardening API configuration Hardening— Hardening API configuration Input Validation— Restrictive API input validation Input Validation— Restrictive API input validation Secret Management— Secure secret storage and access Secret Management— Secure secret storage and access Restricting End-User Access— Authentication and Authorization using KN SSO Restricting End-User Access— Authentication and Authorization using KN SSO Restricting Product-to-Product API Access— Authentication and Authorization using KNITE Restricting Product-to-Product API Access— Authentication and Authorization using KNITE CORS— Securing cross-origin access using CORS CORS— Securing cross-origin access using CORS
   - title: SPA Security Blueprint
-    url: https://asr.int.kn/blueprints#_spa_security_blueprint
+    url: https://asr.int.example.com/blueprints#_spa_security_blueprint
     content: |-
       Covers security controls for Single-Page Applications (SPAs), including secure session handling, safe client-side storage, and defense against common web attacks. See:SPA Security Blueprint
 - id: BP-APIBLUEPRINT
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/apiblueprint/
+  url: https://asr.int.example.com/blueprints/apiblueprint/
   title: Security Blueprint for APIs at KN
   summary: |-
     This blueprint outlines the essential practices for building and deployingsecure APIsat KN.
@@ -522,12 +522,12 @@ blueprints:
   - _sections
   sections:
   - title: Sections
-    url: https://asr.int.kn/blueprints/apiblueprint#_sections
+    url: https://asr.int.example.com/blueprints/apiblueprint#_sections
     content: |-
       Hardening— Hardening API configuration Hardening— Hardening API configuration Input Validation— Restrictive API input validation Input Validation— Restrictive API input validation Secret Management— Secure secret storage and access Secret Management— Secure secret storage and access Restricting End-User Access— Authentication and Authorization of APIs with user context using KN SSO Restricting End-User Access— Authentication and Authorization of APIs with user context using KN SSO Restricting Product-to-Product API Access— Authentication and Authorization of Product APIs using KNITE Restricting Product-to-Product API Access— Authentication and Authorization of Product APIs using KNITE CORS— Securing cross origin access using CORS CORS— Securing cross origin access using CORS
 - id: BP-API_HARDENING
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/api-hardening/
+  url: https://asr.int.example.com/blueprints/api-hardening/
   title: API Hardening
   summary: |-
     Sections that differ between stacks show separateSpring BootandNode.jsexamples.
@@ -540,47 +540,47 @@ blueprints:
   - _implement_mend_renovate
   sections:
   - title: 1. Deploy the WAF on Internet‑Facing Applications
-    url: https://asr.int.kn/blueprints/api-hardening#_deploy_the_waf_on_internetfacing_applications
+    url: https://asr.int.example.com/blueprints/api-hardening#_deploy_the_waf_on_internetfacing_applications
     content: |-
       Protect your internet‑facing applications using KN’s WAF (F5 on‑prem, AWS WAF in cloud). Requirement:SSLM-WAF - Enable WAF Protection
     references:
     - id: SSLM-WAF
-      url: https://asr.int.kn/sslm/operations/sslm-waf/
+      url: https://asr.int.example.com/sslm/operations/sslm-waf/
   - title: 2. Transport Encryption
-    url: https://asr.int.kn/blueprints/api-hardening#_transport_encryption
+    url: https://asr.int.example.com/blueprints/api-hardening#_transport_encryption
     content: |-
       HandleallAPI communication usingTLS 1.3; for service‑to‑service, prefermTLS. Requirement:SEC-TLS - Use TLS for all Data at Transit
     references:
     - id: SEC-TLS
-      url: https://asr.int.kn/scg/secure-data-protection#sec-tls
+      url: https://asr.int.example.com/scg/secure-data-protection#sec-tls
   - title: 3. Disable Management and Debug Endpoints
-    url: https://asr.int.kn/blueprints/api-hardening#_disable_management_and_debug_endpoints
+    url: https://asr.int.example.com/blueprints/api-hardening#_disable_management_and_debug_endpoints
     content: |-
       Pattern: Expose only essential public endpoints (e.g.,/health,/info,/ready). Expose only essential public endpoints (e.g.,/health,/info,/ready). /health /info /ready Serve all detailed or sensitive operational endpoints on an internal-only port or interface. Serve all detailed or sensitive operational endpoints on an internal-only port or interface. Prevent external exposure through ingress, routing, or load balancer configuration. Enforce internal-only visibility using firewall rules, service mesh policies, or NetworkPolicies. Use a dedicated management port that is not exposed via public ingress. Only include endpoints needed by probes/uptime checks; leave metrics/debug on the internal port. management: server: # Serve actuator on a non-ingress port port: 8082 endpoints: web: exposure: include: [ 'health', 'info' ] management: server: # Serve actuator on a non-ingress port port: 8082 endpoints: web: exposure: include: [ 'health', 'info' ] Node.js frameworks do not have actuator-style management endpoints by default, but applications often expose debug routes, admin UIs, or metrics endpoints that must be hardened. Never expose--inspect(Node.js debugger port 9229) outside the container. --inspect import express from 'express'; const app = express();           // public API, exposed via ingress const mgmt = express();          // management, NOT exposed via ingress app.get('/', (req, res) => res.json({ status: 'ok' })); mgmt.get('/health', (req, res) => res.json({ status: 'UP' })); mgmt.get('/ready',  (req, res) => res.json({ status: 'READY' })); app.listen(8080); mgmt.listen(8082);               // bind only to internal interface / pod network import express from 'express'; const app = express();           // public API, exposed via ingress const mgmt = express();          // management, NOT exposed via ingress app.get('/', (req, res) => res.json({ status: 'ok' })); mgmt.get('/health', (req, res) => res.json({ status: 'UP' })); mgmt.get('/ready',  (req, res) => res.json({ status: 'READY' })); app.listen(8080); mgmt.listen(8082);               // bind only to internal interface / pod network Requirement:SEC-API-Exposure - Limit Exposure of Management Endpoints / Actuators
     references:
     - id: SEC-API-EXPOSURE
-      url: https://asr.int.kn/scg/hardening#_must_secure_managementoperational_endpoints
+      url: https://asr.int.example.com/scg/hardening#_must_secure_managementoperational_endpoints
   - title: 4. Rate Limiting
-    url: https://asr.int.kn/blueprints/api-hardening#_rate_limiting
+    url: https://asr.int.example.com/blueprints/api-hardening#_rate_limiting
     content: |-
       Prevent abuse (brute force, scraping) and protect availability by limiting excessive traffic. Centrally Set: Edge / Perimeter(F5 WAF on‑prem) Per source IP (or URL path) Throttle floods/brute‑force before backend Default: 2,000 req/s per IP. Application-Specific: Edge/ Perimeter (AWS WAF) Per IP, path, header, or token rule Explicit web‑ACL rules only No defaults. Suggested: TBD API Gateway(WSO2 API Manager) API Providers can set rate limiting via so-called Subscription Rate Limiting Policies (1000/min, 2000/min, 5000/min), but we do not force API Providers to set rate limit policies. Application layer Per user, API key, IP, or business operation Fine‑grained, operation‑aware limitingSpring Boot: Bucket4j / Resilience4jNode.js:express-rate-limit express-rate-limit No defaults. Suggested: TBD express-rate-limit npm install express-rate-limit npm install express-rate-limit import rateLimit from 'express-rate-limit'; // Strict limit for login endpoint const loginLimiter = rateLimit({ windowMs: 60 * 1000,   // 1 minute max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests, please try again later.' }, }); // General API limit per authenticated user const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 300, keyGenerator: (req) => req.auth?.sub ?? req.ip, standardHeaders: true, legacyHeaders: false, }); app.post('/login',    loginLimiter, loginHandler); app.use('/api/',      apiLimiter); import rateLimit from 'express-rate-limit'; // Strict limit for login endpoint const loginLimiter = rateLimit({ windowMs: 60 * 1000,   // 1 minute max: 5, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests, please try again later.' }, }); // General API limit per authenticated user const apiLimiter = rateLimit({ windowMs: 60 * 1000, max: 300, keyGenerator: (req) => req.auth?.sub ?? req.ip, standardHeaders: true, legacyHeaders: false, }); app.post('/login',    loginLimiter, loginHandler); app.use('/api/',      apiLimiter); Examples POST /login:5/min/IP POST /login:5/min/IP POST /login 5/min/IP GET /orders:300/min/user GET /orders:300/min/user GET /orders 300/min/user POST /orders:60/min/user POST /orders:60/min/user POST /orders 60/min/user Response on breach:429 Too Many Requests 429 Too Many Requests Requirement:SEC-RATE-LIMITS - Implement Rate Limits for External APIs
     references:
     - id: SEC-RATE-LIMITS
-      url: https://asr.int.kn/scg/secure-data-access#sec-rate-limits
+      url: https://asr.int.example.com/scg/secure-data-access#sec-rate-limits
   - title: 5. Implement Mend & Renovate
-    url: https://asr.int.kn/blueprints/api-hardening#_implement_mend_renovate
+    url: https://asr.int.example.com/blueprints/api-hardening#_implement_mend_renovate
     content: |-
       Follow the KNSSDLCto bake security into each development stage: Automated dependency management: useRenovateto keep dependencies up to date. Automated dependency management: useRenovateto keep dependencies up to date. Continuous security scanning: useMendfor SCA and SAST to detect vulnerabilities early. Requirements: SSDLC-SCA - Perform Continuous Security Dependency Scanning (SCA) SSDLC-SCA - Perform Continuous Security Dependency Scanning (SCA) SSDLC-SAST - Perform Continuous Security Code Scanning (SAST) SSDLC-SAST - Perform Continuous Security Code Scanning (SAST) SSDLC-RENOVATE - Integrate Renovate for Auto Patching SSDLC-RENOVATE - Integrate Renovate for Auto Patching
     references:
     - id: SSDLC-SCA
-      url: https://asr.int.kn/ssdlc/build/ssdlc-sca/
+      url: https://asr.int.example.com/ssdlc/build/ssdlc-sca/
     - id: SSDLC-SAST
-      url: https://asr.int.kn/ssdlc/build/ssdlc-sast/
+      url: https://asr.int.example.com/ssdlc/build/ssdlc-sast/
     - id: SSDLC-RENOVATE
-      url: https://asr.int.kn/ssdlc/code/ssdlc-renovate/
+      url: https://asr.int.example.com/ssdlc/code/ssdlc-renovate/
 - id: BP-API_VALIDATION
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/api-validation/
+  url: https://asr.int.example.com/blueprints/api-validation/
   title: Input Validation
   summary: |-
     Sections that differ between stacks show separateSpring BootandNode.jsexamples.
@@ -592,33 +592,33 @@ blueprints:
   - _parameterized_data_access
   sections:
   - title: 1. Unexpected Field Handling
-    url: https://asr.int.kn/blueprints/api-validation#_unexpected_field_handling
+    url: https://asr.int.example.com/blueprints/api-validation#_unexpected_field_handling
     content: |-
       Reject or remove any input fields that are not defined in the approved schema. Prevent mass‑assignment and hidden parameter injection by processing only whitelisted fields. Example:Input{ "name": "A", "isAdmin": true }→rejectorstripisAdmin. { "name": "A", "isAdmin": true } isAdmin Requirement:SEC-IV - Restrictively Validate Input Data Against a Specification Use a dedicatedDTO(Data Transfer Object) that declares only the fields your API accepts. The deserializer maps only declared properties, and can be configured to reject any unknown field outright. role isAdmin createdBy Define a dedicated DTO class — separate from the@Entity— and annotate it to fail on unknown properties. @Entity import com.fasterxml.jackson.annotation.JsonIgnoreProperties; // DTO: only the fields the client is allowed to supply @JsonIgnoreProperties(ignoreUnknown = false)  // <-- rejects unknown fields public class OrderRequest { private String name; private Integer amount; // getters / setters } // Entity: never used directly as a request body @Entity public class Order { @Id private Long id; private String name; private Integer amount; private String createdBy;   // internal — must never be set by the caller private Boolean approved;   // internal — must never be set by the caller } import com.fasterxml.jackson.annotation.JsonIgnoreProperties; // DTO: only the fields the client is allowed to supply @JsonIgnoreProperties(ignoreUnknown = false)  // <-- rejects unknown fields public class OrderRequest { private String name; private Integer amount; // getters / setters } // Entity: never used directly as a request body @Entity public class Order { @Id private Long id; private String name; private Integer amount; private String createdBy;   // internal — must never be set by the caller private Boolean approved;   // internal — must never be set by the caller } Map the DTO to the entity explicitly in your service layer: Order order = new Order(); order.setName(request.getName()); order.setAmount(request.getAmount()); // createdBy and approved are set by the service, never from the request Order order = new Order(); order.setName(request.getName()); order.setAmount(request.getAmount()); // createdBy and approved are set by the service, never from the request Alternatively, apply the unknown-field rule globally inapplication.yml: application.yml # application.yml spring: jackson: deserialization: fail-on-unknown-properties: true # application.yml spring: jackson: deserialization: fail-on-unknown-properties: true Define a schema that represents the accepted input — separate from any database model. UseZodstrict mode (rejects unknown keys) orJoias an alternative. With Zod: npm install zod npm install zod import { z } from 'zod'; // Input schema — only the fields the client is allowed to supply const OrderSchema = z.object({ name:   z.string(), amount: z.number(), }).strict();   // <-- rejects any key not listed above app.post('/orders', (req, res) => { const result = OrderSchema.safeParse(req.body); if (!result.success) { return res.status(400).json({ errors: result.error.flatten() }); } // result.data contains only declared fields — map to DB model explicitly const { name, amount } = result.data; }); import { z } from 'zod'; // Input schema — only the fields the client is allowed to supply const OrderSchema = z.object({ name:   z.string(), amount: z.number(), }).strict();   // <-- rejects any key not listed above app.post('/orders', (req, res) => { const result = OrderSchema.safeParse(req.body); if (!result.success) { return res.status(400).json({ errors: result.error.flatten() }); } // result.data contains only declared fields — map to DB model explicitly const { name, amount } = result.data; }); With Joi: npm install joi npm install joi import Joi from 'joi'; const orderSchema = Joi.object({ name:   Joi.string().required(), amount: Joi.number().required(), }).options({ allowUnknown: false });   // default, shown for clarity import Joi from 'joi'; const orderSchema = Joi.object({ name:   Joi.string().required(), amount: Joi.number().required(), }).options({ allowUnknown: false });   // default, shown for clarity
     references:
     - id: SEC-IV
-      url: https://asr.int.kn/scg/secure-data-handling#scg-iv
+      url: https://asr.int.example.com/scg/secure-data-handling#scg-iv
   - title: 2. Implement Restrictive Validation in DTOs
-    url: https://asr.int.kn/blueprints/api-validation#_implement_restrictive_validation_in_dtos
+    url: https://asr.int.example.com/blueprints/api-validation#_implement_restrictive_validation_in_dtos
     content: |-
       Define explicit constraints on every input field — not just type, but also length, range, and allowed characters. Use Bean Validation constraints on your DTO fields: import jakarta.validation.constraints.*; public class InputRequest { @NotBlank @Size(max = 50) @Pattern(regexp = "^[a-zA-Z0-9 _\\.\\-()=;:]+$") private String value; @NotNull @Min(0) @Max(9999) private Integer amount; @NotNull private Status status; @AssertTrue private Boolean active; // Embedded enum public enum Status { NEW, ACTIVE, DISABLED } } import jakarta.validation.constraints.*; public class InputRequest { @NotBlank @Size(max = 50) @Pattern(regexp = "^[a-zA-Z0-9 _\\.\\-()=;:]+$") private String value; @NotNull @Min(0) @Max(9999) private Integer amount; @NotNull private Status status; @AssertTrue private Boolean active; // Embedded enum public enum Status { NEW, ACTIVE, DISABLED } } Use Zod to declare constraints inline with the schema: import { z } from 'zod'; const Status = z.enum(['NEW', 'ACTIVE', 'DISABLED']); const InputSchema = z.object({ value:  z.string() .min(1) .max(50) .regex(/^[a-zA-Z0-9 _.()\-=;:]+$/), amount: z.number().int().min(0).max(9999), status: Status, active: z.literal(true), }).strict(); import { z } from 'zod'; const Status = z.enum(['NEW', 'ACTIVE', 'DISABLED']); const InputSchema = z.object({ value:  z.string() .min(1) .max(50) .regex(/^[a-zA-Z0-9 _.()\-=;:]+$/), amount: z.number().int().min(0).max(9999), status: Status, active: z.literal(true), }).strict(); Requirement:SEC-IV - Restrictively Validate Input Data Against a Specification Links: OWASP Input Validation Cheat Sheet:https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html OWASP Input Validation Cheat Sheet:https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
     references:
     - id: SEC-IV
-      url: https://asr.int.kn/scg/secure-data-handling#scg-iv
+      url: https://asr.int.example.com/scg/secure-data-handling#scg-iv
   - title: 3. Boundary & Size Limits
-    url: https://asr.int.kn/blueprints/api-validation#_boundary_size_limits
+    url: https://asr.int.example.com/blueprints/api-validation#_boundary_size_limits
     content: |-
       Apply strict limits on payload size, field length, array length, and nesting depth. Examples: API GW, max. 10MB API GW, max. 10MB Lambda, max. 6MB Lambda, max. 6MB import express from 'express'; app.use(express.json({ limit: '100kb' })); import express from 'express'; app.use(express.json({ limit: '100kb' }));
   - title: 4. Parameterized Data Access
-    url: https://asr.int.kn/blueprints/api-validation#_parameterized_data_access
+    url: https://asr.int.example.com/blueprints/api-validation#_parameterized_data_access
     content: |-
       To prevent SQL Injection, ensure that all user input is treated strictly as data and can never modify the structure of a query. Spring Data JPA– Derived Queries Ideal for simple lookups and filters. Spring automatically creates parameterized queries based on method names. User findByEmailAndStatus(String email, Status status); User findByEmailAndStatus(String email, Status status); generates:select u from User u where u.email = ?1 and u.status = ?2 select u from User u where u.email = ?1 and u.status = ?2 Spring Data JPA + JPQL (@Query) Named parameters ensure user input cannot alter query structure. @Query("SELECT o FROM Order o WHERE o.email = :email") @Query("SELECT o FROM Order o WHERE o.email = :email") List<Order> findByEmail(@Param("email") String email); List<Order> findByEmail(@Param("email") String email); JPA Criteria API Suitable for complex, composable, or dynamic filters. Queries are built programmatically. JdbcTemplate (Raw SQL) Use?placeholders for performance‑critical queries: ? String sql = "SELECT * FROM orders WHERE email = ?"; String sql = "SELECT * FROM orders WHERE email = ?"; return jdbcTemplate.query(sql, rowMapper, email); return jdbcTemplate.query(sql, rowMapper, email); node-postgres(pg) node-postgres Pass values as the second argument; the driver uses server-side parameter binding. const { rows } = await pool.query( 'SELECT * FROM orders WHERE email = $1', [email] ); const { rows } = await pool.query( 'SELECT * FROM orders WHERE email = $1', [email] ); mysql2 mysql2 Use?placeholders; the library escapes values before sending them to MySQL. ? const [rows] = await connection.execute( 'SELECT * FROM orders WHERE email = ?', [email] ); const [rows] = await connection.execute( 'SELECT * FROM orders WHERE email = ?', [email] ); Prisma ORM All Prisma queries use parameterized statements by default. const orders = await prisma.order.findMany({ where: { email }, }); const orders = await prisma.order.findMany({ where: { email }, }); Avoidprisma.$queryRawUnsafe()— useprisma.$queryRawwith tagged template literals instead. prisma.$queryRawUnsafe() prisma.$queryRaw TypeORM — Query Builder Use named parameters with:paramsyntax: :param const orders = await dataSource .getRepository(Order) .createQueryBuilder('o') .where('o.email = :email', { email }) .getMany(); const orders = await dataSource .getRepository(Order) .createQueryBuilder('o') .where('o.email = :email', { email }) .getMany(); Requirement:SEC-SQL - Use Parameterized Statements or ORM Methods
     references:
     - id: SEC-SQL
-      url: https://asr.int.kn/scg/secure-data-handling#scg-sql
+      url: https://asr.int.example.com/scg/secure-data-handling#scg-sql
 - id: BP-API_SECRETMANAGEMENT
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/api-secretmanagement/
+  url: https://asr.int.example.com/blueprints/api-secretmanagement/
   title: Secret Storage
   summary: |-
     Sections that differ between stacks show separateSpring BootandNode.jsexamples.
@@ -633,44 +633,44 @@ blueprints:
   - _hashicorp_vault
   sections:
   - title: 1. Secret Management in OpenShift
-    url: https://asr.int.kn/blueprints/api-secretmanagement#_secret_management_in_openshift
+    url: https://asr.int.example.com/blueprints/api-secretmanagement#_secret_management_in_openshift
     content: |-
       Requirement:SEC-SECRETS - Securely Handle Technical Secrets Mount OpenShift Secrets as read-only files inside the container. For an official reference see:https://developers.redhat.com/articles/2025/10/01/secure-way-handle-secrets-openshift 1. Create or Update the Secret oc -n <NS> create secret generic myapp-secrets \ --from-file=db-password=./db-password \ --dry-run=client -o yaml | oc apply -f - oc -n <NS> create secret generic myapp-secrets \ --from-file=db-password=./db-password \ --dry-run=client -o yaml | oc apply -f - 2. Restrict Access with RBAC Only the app’s ServiceAccount may read this Secret: apiVersion: rbac.authorization.k8s.io/v1 kind: Role metadata: name: myapp-secret-reader namespace: <NS> rules: - apiGroups: [""] resources: ["secrets"] resourceNames: ["myapp-secrets"] verbs: ["get"] --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: myapp-secret-reader namespace: <NS> subjects: - kind: ServiceAccount name: myapp-sa namespace: <NS> roleRef: kind: Role name: myapp-secret-reader apiGroup: rbac.authorization.k8s.io apiVersion: rbac.authorization.k8s.io/v1 kind: Role metadata: name: myapp-secret-reader namespace: <NS> rules: - apiGroups: [""] resources: ["secrets"] resourceNames: ["myapp-secrets"] verbs: ["get"] --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: myapp-secret-reader namespace: <NS> subjects: - kind: ServiceAccount name: myapp-sa namespace: <NS> roleRef: kind: Role name: myapp-secret-reader apiGroup: rbac.authorization.k8s.io 3. Mount as Read-Only Volume spec: template: spec: serviceAccountName: myapp-sa securityContext: runAsNonRoot: true(1)fsGroup: 1001 containers: - name: myapp image: myapp-image:latest volumeMounts: - name: secret-vol mountPath: /run/secrets readOnly: true(2)volumes: - name: secret-vol secret: secretName: myapp-secrets defaultMode: 0440(3) spec: template: spec: serviceAccountName: myapp-sa securityContext: runAsNonRoot: true(1)fsGroup: 1001 containers: - name: myapp image: myapp-image:latest volumeMounts: - name: secret-vol mountPath: /run/secrets readOnly: true(2)volumes: - name: secret-vol secret: secretName: myapp-secrets defaultMode: 0440(3) 4. Read the Secret Spring Boot reads each file in the mount path as a property named after the filename viaconfigtree. configtree spring: config: import: configtree:/run/secrets/ datasource: url: jdbc:postgresql://db:5432/app username: ${db-username} password: ${db-password} spring: config: import: configtree:/run/secrets/ datasource: url: jdbc:postgresql://db:5432/app username: ${db-username} password: ${db-password} Read the mounted files at startup. Never log or expose the values. const fs = require('fs'); const dbPassword = fs.readFileSync('/run/secrets/db-password', 'utf8').trim(); const fs = require('fs'); const dbPassword = fs.readFileSync('/run/secrets/db-password', 'utf8').trim(); 5. Rotation Mounted files are updated automatically when the Secret changes. Trigger a rolling restart to reload properties: oc -n <NS> rollout restart deploy/<DEPLOYMENT_NAME> oc -n <NS> rollout restart deploy/<DEPLOYMENT_NAME>
     references:
     - id: SEC-SECRETS
-      url: https://asr.int.kn/scg/secure-data-protection#sec-secrets
+      url: https://asr.int.example.com/scg/secure-data-protection#sec-secrets
   - title: 2. Kubernetes Secrets with KMS Encryption (for CloudX)
-    url: https://asr.int.kn/blueprints/api-secretmanagement#_kubernetes_secrets_with_kms_encryption_for_cloudx
+    url: https://asr.int.example.com/blueprints/api-secretmanagement#_kubernetes_secrets_with_kms_encryption_for_cloudx
     content: |-
       Native EKS secret storage encrypted at rest using a customer-managed AWS KMS key. Use this for simple cases that do not require automatic rotation or cross-service secret sharing. For rotation support or secrets shared across AWS services, useAWS Secrets Manager (for CloudX)instead. Requirement:SEC-SECRETS - Securely Handle Technical Secrets 1. Enable KMS Encryption on the Cluster # New cluster aws eks create-cluster \ --name my-cluster \ --encryption-config '[{ "resources": ["secrets"], "provider": { "keyArn": "arn:aws:kms:eu-central-1:ACCOUNT:key/KEY-ID" } }]' # Existing cluster aws eks associate-encryption-config \ --cluster-name my-cluster \ --encryption-config '[{ "resources": ["secrets"], "provider": { "keyArn": "arn:aws:kms:eu-central-1:ACCOUNT:key/KEY-ID" } }]' # New cluster aws eks create-cluster \ --name my-cluster \ --encryption-config '[{ "resources": ["secrets"], "provider": { "keyArn": "arn:aws:kms:eu-central-1:ACCOUNT:key/KEY-ID" } }]' # Existing cluster aws eks associate-encryption-config \ --cluster-name my-cluster \ --encryption-config '[{ "resources": ["secrets"], "provider": { "keyArn": "arn:aws:kms:eu-central-1:ACCOUNT:key/KEY-ID" } }]' 2. Create the Secret kubectl create secret generic myapp-secrets \ --from-literal=db-username=dbuser \ --from-literal=db-password=STRONG_SECRET \ --namespace=production kubectl create secret generic myapp-secrets \ --from-literal=db-username=dbuser \ --from-literal=db-password=STRONG_SECRET \ --namespace=production 3. Restrict Access with RBAC Only the app’s ServiceAccount may read this Secret: apiVersion: rbac.authorization.k8s.io/v1 kind: Role metadata: name: myapp-secret-reader namespace: production rules: - apiGroups: [""] resources: ["secrets"] resourceNames: ["myapp-secrets"] verbs: ["get"] --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: myapp-secret-reader namespace: production subjects: - kind: ServiceAccount name: myapp-sa namespace: production roleRef: kind: Role name: myapp-secret-reader apiGroup: rbac.authorization.k8s.io apiVersion: rbac.authorization.k8s.io/v1 kind: Role metadata: name: myapp-secret-reader namespace: production rules: - apiGroups: [""] resources: ["secrets"] resourceNames: ["myapp-secrets"] verbs: ["get"] --- apiVersion: rbac.authorization.k8s.io/v1 kind: RoleBinding metadata: name: myapp-secret-reader namespace: production subjects: - kind: ServiceAccount name: myapp-sa namespace: production roleRef: kind: Role name: myapp-secret-reader apiGroup: rbac.authorization.k8s.io 4. Mount as Read-Only Volume spec: template: spec: serviceAccountName: myapp-sa securityContext: runAsNonRoot: true(1)fsGroup: 1001 containers: - name: myapp image: myapp-image:latest volumeMounts: - name: secret-vol mountPath: /run/secrets readOnly: true(2)volumes: - name: secret-vol secret: secretName: myapp-secrets defaultMode: 0440(3) spec: template: spec: serviceAccountName: myapp-sa securityContext: runAsNonRoot: true(1)fsGroup: 1001 containers: - name: myapp image: myapp-image:latest volumeMounts: - name: secret-vol mountPath: /run/secrets readOnly: true(2)volumes: - name: secret-vol secret: secretName: myapp-secrets defaultMode: 0440(3) 5. Read the Secret spring: config: import: configtree:/run/secrets/ datasource: url: jdbc:postgresql://db:5432/app username: ${db-username} password: ${db-password} spring: config: import: configtree:/run/secrets/ datasource: url: jdbc:postgresql://db:5432/app username: ${db-username} password: ${db-password} const fs = require('fs'); const username = fs.readFileSync('/run/secrets/db-username', 'utf8').trim(); const password = fs.readFileSync('/run/secrets/db-password', 'utf8').trim(); const fs = require('fs'); const username = fs.readFileSync('/run/secrets/db-username', 'utf8').trim(); const password = fs.readFileSync('/run/secrets/db-password', 'utf8').trim(); 6. Rotation Kubernetes Secrets doNOTsupport automatic rotation. Update manually and trigger a rolling restart: kubectl create secret generic myapp-secrets \ --from-literal=db-username=dbuser \ --from-literal=db-password=NEW_STRONG_SECRET \ --namespace=production \ --dry-run=client -o yaml | kubectl apply -f - kubectl rollout restart deployment/myapp -n production kubectl create secret generic myapp-secrets \ --from-literal=db-username=dbuser \ --from-literal=db-password=NEW_STRONG_SECRET \ --namespace=production \ --dry-run=client -o yaml | kubectl apply -f - kubectl rollout restart deployment/myapp -n production
     references:
     - id: SEC-SECRETS
-      url: https://asr.int.kn/scg/secure-data-protection#sec-secrets
+      url: https://asr.int.example.com/scg/secure-data-protection#sec-secrets
   - title: 3. AWS Secrets Manager (for CloudX)
-    url: https://asr.int.kn/blueprints/api-secretmanagement#_aws_secrets_manager_for_cloudx
+    url: https://asr.int.example.com/blueprints/api-secretmanagement#_aws_secrets_manager_for_cloudx
     content: Requirement:SEC-SECRETS - Securely Handle Technical Secrets
     references:
     - id: SEC-SECRETS
-      url: https://asr.int.kn/scg/secure-data-protection#sec-secrets
+      url: https://asr.int.example.com/scg/secure-data-protection#sec-secrets
   - title: 3.1. 1. Create the Secret
-    url: https://asr.int.kn/blueprints/api-secretmanagement#_1_create_the_secret
+    url: https://asr.int.example.com/blueprints/api-secretmanagement#_1_create_the_secret
     content: |-
       aws secretsmanager create-secret \ --name myapp/db \ --secret-string '{"username":"dbuser","password":"STRONG SECRET"}' aws secretsmanager create-secret \ --name myapp/db \ --secret-string '{"username":"dbuser","password":"STRONG SECRET"}' Grant the application’s IAM role least-privilege access —GetSecretValueon this secret only: GetSecretValue { "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:myapp/db*" } { "Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:myapp/db*" }
   - title: 3.2. 2. Mount via CSI Driver (recommended for EC2)
-    url: https://asr.int.kn/blueprints/api-secretmanagement#_2_mount_via_csi_driver_recommended_for_ec2
+    url: https://asr.int.example.com/blueprints/api-secretmanagement#_2_mount_via_csi_driver_recommended_for_ec2
     content: |-
       The CSI Driver mounts secrets directly from AWS Secrets Manager as files in pod volumes. Secrets are never stored in etcd and no AWS SDK is required in application code. Prerequisites: Secrets Store CSI Driver + AWS Secrets and Configuration Provider (ASCP) installed; IAM authentication configured via Pod Identity or IRSA. Enable Rotation Reconciler helm upgrade -n kube-system csi-secrets-store \ secrets-store-csi-driver/secrets-store-csi-driver \ --set enableSecretRotation=true \ --set rotationPollInterval=3600s helm upgrade -n kube-system csi-secrets-store \ secrets-store-csi-driver/secrets-store-csi-driver \ --set enableSecretRotation=true \ --set rotationPollInterval=3600s Each poll triggers an API call to Secrets Manager. Balance secret freshness with cost. UsejmesPathto extract individual fields from the JSON secret into separate files: jmesPath apiVersion: secrets-store.csi.x-k8s.io/v1 kind: SecretProviderClass metadata: name: myapp-secrets namespace: production spec: provider: aws parameters: region: eu-central-1 objects: | - objectName: "myapp/db" objectType: "secretsmanager" jmesPath: - path: username objectAlias: db-username - path: password objectAlias: db-password apiVersion: secrets-store.csi.x-k8s.io/v1 kind: SecretProviderClass metadata: name: myapp-secrets namespace: production spec: provider: aws parameters: region: eu-central-1 objects: | - objectName: "myapp/db" objectType: "secretsmanager" jmesPath: - path: username objectAlias: db-username - path: password objectAlias: db-password spec: template: spec: serviceAccountName: myapp-sa(1)securityContext: runAsNonRoot: true fsGroup: 1001 containers: - name: myapp image: myapp-image:latest volumeMounts: - name: secrets-store mountPath: "/run/secrets" readOnly: true(2)volumes: - name: secrets-store csi: driver: secrets-store.csi.k8s.io readOnly: true volumeAttributes: secretProviderClass: "myapp-secrets" spec: template: spec: serviceAccountName: myapp-sa(1)securityContext: runAsNonRoot: true fsGroup: 1001 containers: - name: myapp image: myapp-image:latest volumeMounts: - name: secrets-store mountPath: "/run/secrets" readOnly: true(2)volumes: - name: secrets-store csi: driver: secrets-store.csi.k8s.io readOnly: true volumeAttributes: secretProviderClass: "myapp-secrets" spring: config: import: configtree:/run/secrets/ datasource: url: jdbc:postgresql://db:5432/app username: ${db-username} password: ${db-password} spring: config: import: configtree:/run/secrets/ datasource: url: jdbc:postgresql://db:5432/app username: ${db-username} password: ${db-password} const fs = require('fs'); const username = fs.readFileSync('/run/secrets/db-username', 'utf8').trim(); const password = fs.readFileSync('/run/secrets/db-password', 'utf8').trim(); const fs = require('fs'); const username = fs.readFileSync('/run/secrets/db-username', 'utf8').trim(); const password = fs.readFileSync('/run/secrets/db-password', 'utf8').trim(); Trigger a rolling restart after secret rotation to reload properties: kubectl rollout restart deployment/myapp -n production kubectl rollout restart deployment/myapp -n production References Secrets Store CSI Driver Secrets Store CSI Driver AWS Secrets Manager CSI Provider AWS Secrets Manager CSI Provider
   - title: 3.3. 3. Direct SDK Integration (Fargate / alternative)
-    url: https://asr.int.kn/blueprints/api-secretmanagement#_3_direct_sdk_integration_fargate_alternative
+    url: https://asr.int.example.com/blueprints/api-secretmanagement#_3_direct_sdk_integration_fargate_alternative
     content: |-
       Use when the CSI Driver is not available (e.g. Fargate) or when SDK-based resolution is preferred. Spring Cloud AWS resolves secrets transparently via property placeholders — no SDK code needed. Rotation is picked up automatically on next reload. 1. Add dependency <dependency> <groupId>io.awspring.cloud</groupId> <artifactId>spring-cloud-aws-starter-secrets-manager</artifactId> </dependency> <dependency> <groupId>io.awspring.cloud</groupId> <artifactId>spring-cloud-aws-starter-secrets-manager</artifactId> </dependency> 2. Reference in application.yml spring: datasource: url: jdbc:postgresql://db:5432/app username: ${aws:secretsmanager:myapp/db:username} password: ${aws:secretsmanager:myapp/db:password} spring: datasource: url: jdbc:postgresql://db:5432/app username: ${aws:secretsmanager:myapp/db:username} password: ${aws:secretsmanager:myapp/db:password} 3. Or inject with @Value @Value("${aws:secretsmanager:myapp/db:password}") String password; @Value("${aws:secretsmanager:myapp/db:password}") String password; Load the secret once at startup and cache the result — do not fetch on every request. On authentication failure, refetch from Secrets Manager before retrying. import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'; const client = new SecretsManagerClient({ region: 'eu-central-1' }); const { SecretString } = await client.send( new GetSecretValueCommand({ SecretId: 'myapp/db' }) ); const { username, password } = JSON.parse(SecretString); import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager'; const client = new SecretsManagerClient({ region: 'eu-central-1' }); const { SecretString } = await client.send( new GetSecretValueCommand({ SecretId: 'myapp/db' }) ); const { username, password } = JSON.parse(SecretString); References AWS SDK for Java - Secrets Manager AWS SDK for Java - Secrets Manager AWS SDK for JavaScript - Secrets Manager AWS SDK for JavaScript - Secrets Manager ESO AWS Provider (for Fargate) ESO AWS Provider (for Fargate)
   - title: 4. HashiCorp Vault
-    url: https://asr.int.kn/blueprints/api-secretmanagement#_hashicorp_vault
+    url: https://asr.int.example.com/blueprints/api-secretmanagement#_hashicorp_vault
     content: |-
       Consider HashiCorp Vault if your application spanscloud and on-premiseinfrastructure, you require dynamic secrets or fine-grained lease management, or you already operate a Vault cluster. For AWS-only or OpenShift-only workloads the options above are simpler and sufficient. See theVault CSI Provider docsfor Kubernetes integration.
 - id: BP-API_AUTHZ_ENDUSER
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/api-authz-enduser/
+  url: https://asr.int.example.com/blueprints/api-authz-enduser/
   title: End-Users Authentication and Authorization via KN SSO
   summary: |-
     Applies to: Browser‑based web applications (SPAs) and Mobile apps.Requirement:SEC-USER-AUTH - Securely Authenticate Users
@@ -687,44 +687,44 @@ blueprints:
   - _step_3_resourcelevel_authorization
   sections:
   - title: 1. Follow SPA Blueprint & Implement a BFF
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_follow_spa_blueprint_implement_a_bff
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_follow_spa_blueprint_implement_a_bff
     content: |-
       Implement aBackend‑for‑Frontend (BFF)for user‑context API access in your SPA. This keeps tokens out of the browser runtime, reduces XSS/token exfiltration, and enables hardened cookie‑based sessions. See:Security Blueprint for SPAs with Angular
   - title: 2. Configure Client in KN SSO
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_configure_client_in_kn_sso
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_configure_client_in_kn_sso
     content: |-
-      Environments Staging: Create & configure clients athttps://sso.kuehne-nagel.com/self-service/ Staging: Create & configure clients athttps://sso.kuehne-nagel.com/self-service/ Production:First: Request a new profile:https://tic.int.kn/spaces/sso/forms/request-new-applicationThen: Configure via Self‑Service:https://sso.kuehne-nagel.com/ Production: First: Request a new profile:https://tic.int.kn/spaces/sso/forms/request-new-application First: Request a new profile:https://tic.int.kn/spaces/sso/forms/request-new-application Then: Configure via Self‑Service:https://sso.kuehne-nagel.com/ Then: Configure via Self‑Service:https://sso.kuehne-nagel.com/ Configure the Client ❌Global Accessible: public to everyone (incl. self‑registered). Useonlyif internet‑exposed and anonymous access is intended. ❌Global Accessible: public to everyone (incl. self‑registered). Useonlyif internet‑exposed and anonymous access is intended. ✅Only Internal: accessible by KN users. ✅On User Basis: restricted to an explicit allowlist (most restrictive). Configure User Roles The default user role in KN SSO isuser. user In addition KN SSO allows you to assign users to other pre-defined groups (Administrator`,Operater, 'Owner') Operater KN SSO allows you to select from existing roles: So when you have selectedOnly User Basisabove, access would be only granted to the list of users you’ve explicitly granted it to here. Only User Basis To enable custom roles to be added to your OICD token, you would have to define a scope ´APPNAME:authorize` and request it by the client. In case of SARA it is ´SARA:authorize`: Roles are then included in the OICD token like this: { "user": "max.mueller", "internal": true, "resource_access": { "SARA": { "roles": [ "kn:sso:role:user", "kn:sso:role:admin" ] } } { "user": "max.mueller", "internal": true, "resource_access": { "SARA": { "roles": [ "kn:sso:role:user", "kn:sso:role:admin" ] } } Configure OAuth Settings Usually you should not need to change anything at the existing settings (besides adding scopes or audiences): Grant authorization_code authorization_code PKCE enabled enabled Access token TTL 300s(5 minutes) 300s Refresh token TTL 15–30 dayswith BFF,24 hourswithout 15–30 days 24 hours
+      Environments Staging: Create & configure clients athttps://sso.kuehne-nagel.com/self-service/ Staging: Create & configure clients athttps://sso.kuehne-nagel.com/self-service/ Production:First: Request a new profile:https://tic.int.example.com/spaces/sso/forms/request-new-applicationThen: Configure via Self‑Service:https://sso.kuehne-nagel.com/ Production: First: Request a new profile:https://tic.int.example.com/spaces/sso/forms/request-new-application First: Request a new profile:https://tic.int.example.com/spaces/sso/forms/request-new-application Then: Configure via Self‑Service:https://sso.kuehne-nagel.com/ Then: Configure via Self‑Service:https://sso.kuehne-nagel.com/ Configure the Client ❌Global Accessible: public to everyone (incl. self‑registered). Useonlyif internet‑exposed and anonymous access is intended. ❌Global Accessible: public to everyone (incl. self‑registered). Useonlyif internet‑exposed and anonymous access is intended. ✅Only Internal: accessible by KN users. ✅On User Basis: restricted to an explicit allowlist (most restrictive). Configure User Roles The default user role in KN SSO isuser. user In addition KN SSO allows you to assign users to other pre-defined groups (Administrator`,Operater, 'Owner') Operater KN SSO allows you to select from existing roles: So when you have selectedOnly User Basisabove, access would be only granted to the list of users you’ve explicitly granted it to here. Only User Basis To enable custom roles to be added to your OICD token, you would have to define a scope ´APPNAME:authorize` and request it by the client. In case of SARA it is ´SARA:authorize`: Roles are then included in the OICD token like this: { "user": "max.mueller", "internal": true, "resource_access": { "SARA": { "roles": [ "kn:sso:role:user", "kn:sso:role:admin" ] } } { "user": "max.mueller", "internal": true, "resource_access": { "SARA": { "roles": [ "kn:sso:role:user", "kn:sso:role:admin" ] } } Configure OAuth Settings Usually you should not need to change anything at the existing settings (besides adding scopes or audiences): Grant authorization_code authorization_code PKCE enabled enabled Access token TTL 300s(5 minutes) 300s Refresh token TTL 15–30 dayswith BFF,24 hourswithout 15–30 days 24 hours
   - title: 2.1. Handling Refresh Tokens
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_handling_refresh_tokens
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_handling_refresh_tokens
     content: |-
       Refresh tokensMUST stay server‑side(e.g., in the BFF) Refresh tokensMUST stay server‑side(e.g., in the BFF) Treat them assecrets; never expose/store in the browser Treat them assecrets; never expose/store in the browser
   - title: 2.2. Handling Access Tokens
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_handling_access_tokens
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_handling_access_tokens
     content: |-
       Preferred: transmit viasecure cookieswith strong hardening:HttpOnlySecureSameSite=Lax(orStrictif compatible) Preferred: transmit viasecure cookieswith strong hardening: HttpOnly HttpOnly HttpOnly Secure Secure Secure SameSite=Lax(orStrictif compatible) SameSite=Lax(orStrictif compatible) SameSite=Lax Strict Avoid persistent client‑side storage; if unavoidable, add compensating controls:PrefersessionStorageoverlocalStorageTransmit only via HTTP header:Authorization: Bearer <AT>Neverput tokens in URLs (query, fragment, redirects)Enforce strongXSSprotections incl.CSP Avoid persistent client‑side storage; if unavoidable, add compensating controls: PrefersessionStorageoverlocalStorage PrefersessionStorageoverlocalStorage sessionStorage localStorage Transmit only via HTTP header:Authorization: Bearer <AT> Transmit only via HTTP header:Authorization: Bearer <AT> Authorization: Bearer <AT> Neverput tokens in URLs (query, fragment, redirects) Neverput tokens in URLs (query, fragment, redirects) Enforce strongXSSprotections incl.CSP Enforce strongXSSprotections incl.CSP
   - title: 2.3. OAuth Redirects
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_oauth_redirects
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_oauth_redirects
     content: |-
       Redirect URI validationMUSTuse exact allowlist matching. Redirect URLs are configured directly in KN SSO. Redirect URI validationMUSTuse exact allowlist matching. Redirect URLs are configured directly in KN SSO. Redirect URIs must comply with the following requirements:The Redirect URI must be a valid, absolute URI.The URI must not include a fragment component.The URI must not uselocalhostas the host name.The URI must not use a custom URI scheme.The URI must use thehttpsscheme, except when using loopback addresses (127.0.0.1or[::1]), which may usehttp.ForhttpsURIs, a host name must be explicitly specified. Redirect URIs must comply with the following requirements: The Redirect URI must be a valid, absolute URI. The Redirect URI must be a valid, absolute URI. The URI must not include a fragment component. The URI must not uselocalhostas the host name. localhost The URI must not use a custom URI scheme. The URI must not use a custom URI scheme. The URI must use thehttpsscheme, except when using loopback addresses (127.0.0.1or[::1]), which may usehttp. https 127.0.0.1 [::1] http ForhttpsURIs, a host name must be explicitly specified. ForhttpsURIs, a host name must be explicitly specified. https
   - title: '3.1. Step 1: Issuer Validation'
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_step_1_issuer_validation
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_step_1_issuer_validation
     content: |-
       Verify that the token was issued by the right IdP. Following examples are with KN SSO: For KN SSO: spring: security: oauth2: resourceserver: jwt: issuer-uri: https://sso.kuehne-nagel.com/authorization spring: security: oauth2: resourceserver: jwt: issuer-uri: https://sso.kuehne-nagel.com/authorization For KNITE IdP (no OIDC discovery endpoint — usejwk-set-uriinstead): jwk-set-uri spring: security: oauth2: resourceserver: jwt: jwk-set-uri: https://sso.kuehne-nagel.com/authorization spring: security: oauth2: resourceserver: jwt: jwk-set-uri: https://sso.kuehne-nagel.com/authorization Use thejoselibrary, which supports OIDC discovery and manual JWKS configuration. jose npm install jose npm install jose For KN SSO (exposes an OIDC discovery endpoint): import { createRemoteJWKSet, jwtVerify } from 'jose'; const JWKS = createRemoteJWKSet( new URL('https://sso.kuehne-nagel.com/authorization') ); async function verifyToken(token) { const { payload } = await jwtVerify(token, JWKS, { issuer: 'https://sso.kuehne-nagel.com/authorization', }); return payload; } import { createRemoteJWKSet, jwtVerify } from 'jose'; const JWKS = createRemoteJWKSet( new URL('https://sso.kuehne-nagel.com/authorization') ); async function verifyToken(token) { const { payload } = await jwtVerify(token, JWKS, { issuer: 'https://sso.kuehne-nagel.com/authorization', }); return payload; }
   - title: '3.2. Step 2: API‑Level Authorization (via Audience)'
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_step_2_apilevel_authorization_via_audience
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_step_2_apilevel_authorization_via_audience
     content: |-
       Ensure that a token issued for this API. This is done via the audiance (aud) claim in the token. By default KN SSO sets the client-id as the audiance token that can then be verified. aud Here we could also set a custom audiance claim (e.g.orders-api) but for simplicity we use the client-id as audiance in this example. orders-api Validate thataudincludes3c56d267-5997-450b-8a9d-44db83e525bb, and reject the request before any route logic runs if it does not. aud 3c56d267-5997-450b-8a9d-44db83e525bb @PreAuthorize( "authentication != null and " + "authentication.tokenAttributes['aud'] != null and " + "authentication.tokenAttributes['aud'].contains('3c56d267-5997-450b-8a9d-44db83e525bb')" ) @PreAuthorize( "authentication != null and " + "authentication.tokenAttributes['aud'] != null and " + "authentication.tokenAttributes['aud'].contains('3c56d267-5997-450b-8a9d-44db83e525bb')" ) PassaudiencetojwtVerify;josethrows if the claim does not match, and youmustreject the request before any route logic runs. audience jwtVerify jose const { payload } = await jwtVerify(token, JWKS, { issuer:   'https://sso.kuehne-nagel.com/authorization', audience: '3c56d267-5997-450b-8a9d-44db83e525bb', }); const { payload } = await jwtVerify(token, JWKS, { issuer:   'https://sso.kuehne-nagel.com/authorization', audience: '3c56d267-5997-450b-8a9d-44db83e525bb', }); A reusable Express middleware combining issuer and audience checks: export function requireJwt(audience) { return async (req, res, next) => { const auth = req.headers.authorization ?? ''; if (!auth.startsWith('Bearer ')) { return res.status(401).json({ error: 'Missing token' }); } try { const { payload } = await jwtVerify(auth.slice(7), JWKS, { issuer:   'https://sso.kuehne-nagel.com/authorization', audience, }); req.auth = payload; next(); } catch { res.status(401).json({ error: 'Invalid token' }); } }; } export function requireJwt(audience) { return async (req, res, next) => { const auth = req.headers.authorization ?? ''; if (!auth.startsWith('Bearer ')) { return res.status(401).json({ error: 'Missing token' }); } try { const { payload } = await jwtVerify(auth.slice(7), JWKS, { issuer:   'https://sso.kuehne-nagel.com/authorization', audience, }); req.auth = payload; next(); } catch { res.status(401).json({ error: 'Invalid token' }); } }; }
   - title: '3.3. Step 3: Method-Level Authorization'
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_step_3_method_level_authorization
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_step_3_method_level_authorization
     content: |-
       Next we can validate if a client or user role is allowed to access a particular role. Here we focus on user roles that are defined in KN SSO config (see above). To enable custom roles to be added to your OICD token, you would have to define a scope ´APPNAME:authorize` and request it by the client. In case of SARA it is ´SARA:authorize`. After setting up roles, define a dedicated scope for your application — if your application is calledSARA: SARA { "user": "max.mueller", "internal": true, "resource_access": { "SARA": { "roles": [ "kn:sso:role:user", "kn:sso:role:admin" ] } } { "user": "max.mueller", "internal": true, "resource_access": { "SARA": { "roles": [ "kn:sso:role:user", "kn:sso:role:admin" ] } } @DeleteMapping("/{id}") @PreAuthorize("hasAuthority('role:SARA:kn:sso:role:user') void delete(@PathVariable String id) { orderRepo.deleteById(id); } } @DeleteMapping("/{id}") @PreAuthorize("hasAuthority('role:SARA:kn:sso:role:user') void delete(@PathVariable String id) { orderRepo.deleteById(id); } } function requireScope(scope) { return (req, res, next) => { const scopes = (req.auth?.scope ?? '').split(' '); if (!scopes.includes(scope)) { return res.status(403).json({ error: 'Insufficient scope' }); } next(); }; } app.delete( '/orders/:id', requireJwt('orders-api'), requireScope('orders.delete'), async (req, res) => { await orderRepo.deleteById(req.params.id); res.status(204).send(); } ); function requireScope(scope) { return (req, res, next) => { const scopes = (req.auth?.scope ?? '').split(' '); if (!scopes.includes(scope)) { return res.status(403).json({ error: 'Insufficient scope' }); } next(); }; } app.delete( '/orders/:id', requireJwt('orders-api'), requireScope('orders.delete'), async (req, res) => { await orderRepo.deleteById(req.params.id); res.status(204).send(); } );
   - title: '3.4. Step 3: Resource‑Level Authorization'
-    url: https://asr.int.kn/blueprints/api-authz-enduser#_step_3_resourcelevel_authorization
+    url: https://asr.int.example.com/blueprints/api-authz-enduser#_step_3_resourcelevel_authorization
     content: |-
       APIs operating with user context must also verify access to each specific resource to prevent IDOR issues. For routes like/orders/{id}, compare token claims (e.g.,tenant_id,sub) with the resource’s attributes (e.g.,order.tenant_id,owner_id). Grant access only if the caller has the required scopeandthe resource belongs to the same tenant or user indicated by the token. /orders/{id} tenant_id sub order.tenant_id owner_id Example: DELETE /orders/123 DELETE /orders/123 Add resource-level authorization to the delete method via anorderAuthcomponent: orderAuth @DeleteMapping("/{id}") @PreAuthorize( "hasAuthority('role:SARA:kn:sso:role:user') and " + "@orderAuth.canDelete(#id, authentication.name)" ) public void delete(@PathVariable String id) { orderRepo.deleteById(id); } @DeleteMapping("/{id}") @PreAuthorize( "hasAuthority('role:SARA:kn:sso:role:user') and " + "@orderAuth.canDelete(#id, authentication.name)" ) public void delete(@PathVariable String id) { orderRepo.deleteById(id); } @Component("orderAuth") class OrderSecurity { @Autowired private OrderRepository repo; public boolean canDelete(String id, String user) { return repo.findById(id) .map(o -> o.getOwner().equals(user) && o.getStatus() != Status.PAID ) .orElse(false); } } @Component("orderAuth") class OrderSecurity { @Autowired private OrderRepository repo; public boolean canDelete(String id, String user) { return repo.findById(id) .map(o -> o.getOwner().equals(user) && o.getStatus() != Status.PAID ) .orElse(false); } } Additional example — filter at the data layer using a derived query: @GetMapping("/owner/{owner}") List<Order> findByOwner(@PathVariable String owner) { return orderRepo.findByOwner(owner); } @GetMapping("/owner/{owner}") List<Order> findByOwner(@PathVariable String owner) { return orderRepo.findByOwner(owner); } app.delete( '/orders/:id', requireJwt('orders-api'), requireRole('APP123', 'kn:sso:role:user'), async (req, res) => { const order = await orderRepo.findById(req.params.id); if (!order) { return res.status(404).json({ error: 'Not found' }); } // Resource-level check: caller must own the order and it must not be paid if (order.owner !== req.auth.sub || order.status === 'PAID') { return res.status(403).json({ error: 'Access denied' }); } await orderRepo.deleteById(req.params.id); res.status(204).send(); } ); app.delete( '/orders/:id', requireJwt('orders-api'), requireRole('APP123', 'kn:sso:role:user'), async (req, res) => { const order = await orderRepo.findById(req.params.id); if (!order) { return res.status(404).json({ error: 'Not found' }); } // Resource-level check: caller must own the order and it must not be paid if (order.owner !== req.auth.sub || order.status === 'PAID') { return res.status(403).json({ error: 'Access denied' }); } await orderRepo.deleteById(req.params.id); res.status(204).send(); } ); Additional example — filter at the data layer so only owned records are returned: // GET /orders — returns only orders belonging to the authenticated user app.get( '/orders', requireJwt('orders-api'), async (req, res) => { const orders = await orderRepo.findByOwner(req.auth.sub); res.json(orders); } ); // GET /orders — returns only orders belonging to the authenticated user app.get( '/orders', requireJwt('orders-api'), async (req, res) => { const orders = await orderRepo.findByOwner(req.auth.sub); res.json(orders); } );
 - id: BP-API_AUTHZ_KNITE
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/api-authz-knite/
+  url: https://asr.int.example.com/blueprints/api-authz-knite/
   title: Product-to-Product API Authentication and Authorization via KNITE
   summary: 'Scope: Consumer (or product-to-product) APIs.'
   topics:
@@ -738,53 +738,53 @@ blueprints:
   - _step_3_method_or_role_level_authorization
   sections:
   - title: 2. Token Handling
-    url: https://asr.int.kn/blueprints/api-authz-knite#_token_handling
+    url: https://asr.int.example.com/blueprints/api-authz-knite#_token_handling
     content: 'Send tokens only in the HTTP header: Authorization: Bearer <AT> Authorization: Bearer <AT>'
   - title: 3. Token Storage
-    url: https://asr.int.kn/blueprints/api-authz-knite#_token_storage
+    url: https://asr.int.example.com/blueprints/api-authz-knite#_token_storage
     content: SeeSecret Storage Requirement:SEC-API-AUTH - Securely Authenticate API Services
     references:
     - id: SEC-API-AUTH
-      url: https://asr.int.kn/scg/secure-data-access#sec-api-auth
+      url: https://asr.int.example.com/scg/secure-data-access#sec-api-auth
   - title: 3.1. Refresh Tokens
-    url: https://asr.int.kn/blueprints/api-authz-knite#_refresh_tokens
+    url: https://asr.int.example.com/blueprints/api-authz-knite#_refresh_tokens
     content: Donotuse refresh tokens with client credentials.
   - title: 4. Authorizing Requests
-    url: https://asr.int.kn/blueprints/api-authz-knite#_authorizing_requests
+    url: https://asr.int.example.com/blueprints/api-authz-knite#_authorizing_requests
     content: |-
       Authorization needs to be implemented on different layers: API-Level: Is the token valid for this API? (e.g.iss,aud) API-Level: Is the token valid for this API? (e.g.iss,aud) iss aud Method-Level: Is the caller allowed to perform this action? (e.g. scopes/roles likeorders.deleteororders.read) Method-Level: Is the caller allowed to perform this action? (e.g. scopes/roles likeorders.deleteororders.read) orders.delete orders.read Object-Level: Is the caller allowed to perform the action on this specific resource? (e.g. owner, tenant, status). This is usually mainly required for APIs with user context. Object-Level: Is the caller allowed to perform the action on this specific resource? (e.g. owner, tenant, status). This is usually mainly required for APIs with user context. Requirement:SEC-AUTHZ - Implement Restrictive Access Controls All requests must be authorized at all times. Having SSO doesnotreplace proper authorization checks oneachrequest.
     references:
     - id: SEC-AUTHZ
-      url: https://asr.int.kn/scg/secure-data-access#ec-api-authz
+      url: https://asr.int.example.com/scg/secure-data-access#ec-api-authz
   - title: '4.1. Step 1: Issuer Validation'
-    url: https://asr.int.kn/blueprints/api-authz-knite#_step_1_issuer_validation
+    url: https://asr.int.example.com/blueprints/api-authz-knite#_step_1_issuer_validation
     content: |-
       Verify that the token was issued by KNITE IdP. For KN SSO: spring: security: oauth2: resourceserver: jwt: issuer-uri: https://portal.api.kuehne-nagel.com/oauth2/jwks spring: security: oauth2: resourceserver: jwt: issuer-uri: https://portal.api.kuehne-nagel.com/oauth2/jwks For KNITE IdP (no OIDC discovery endpoint — usejwk-set-uriinstead): jwk-set-uri spring: security: oauth2: resourceserver: jwt: jwk-set-uri: https://portal.api.kuehne-nagel.com/oauth2/jwks spring: security: oauth2: resourceserver: jwt: jwk-set-uri: https://portal.api.kuehne-nagel.com/oauth2/jwks Use thejoselibrary, which supports OIDC discovery and manual JWKS configuration. jose npm install jose npm install jose For KN SSO (exposes an OIDC discovery endpoint): import { createRemoteJWKSet, jwtVerify } from 'jose'; const JWKS = createRemoteJWKSet( new URL('https://portal.api.kuehne-nagel.com/oauth2/jwks') ); async function verifyToken(token) { const { payload } = await jwtVerify(token, JWKS, { issuer: 'https://portal.api.kuehne-nagel.com/oauth2/jwks', }); return payload; } import { createRemoteJWKSet, jwtVerify } from 'jose'; const JWKS = createRemoteJWKSet( new URL('https://portal.api.kuehne-nagel.com/oauth2/jwks') ); async function verifyToken(token) { const { payload } = await jwtVerify(token, JWKS, { issuer: 'https://portal.api.kuehne-nagel.com/oauth2/jwks', }); return payload; } For KNITE IdP (no OIDC discovery endpoint — use the JWKS URI directly): import { createRemoteJWKSet, jwtVerify } from 'jose'; const JWKS = createRemoteJWKSet( new URL('https://portal.api.kuehne-nagel.com/oauth2/jwks') ); async function verifyToken(token) { const { payload } = await jwtVerify(token, JWKS); return payload; } import { createRemoteJWKSet, jwtVerify } from 'jose'; const JWKS = createRemoteJWKSet( new URL('https://portal.api.kuehne-nagel.com/oauth2/jwks') ); async function verifyToken(token) { const { payload } = await jwtVerify(token, JWKS); return payload; }
   - title: '4.2. Step 2: API‑Level Authorization (via Audience)'
-    url: https://asr.int.kn/blueprints/api-authz-knite#_step_2_apilevel_authorization_via_audience
+    url: https://asr.int.example.com/blueprints/api-authz-knite#_step_2_apilevel_authorization_via_audience
     content: |-
       Ensure that a token issued for this API. This is done via the audiance (aud) claim in the token. In KNITE this token cannot be customized and is always set to the client-id, so you can verify that the token was issued for this specific API by checking thataudcontains your client-id. aud aud Validate thataudincludes our client id, and reject the request before any route logic runs if it does not. aud @PreAuthorize( "authentication != null and " + "authentication.tokenAttributes['aud'] != null and " + "authentication.tokenAttributes['aud'].contains('3c56d267-5997-450b-8a9d-44db83e525bb')" ) @PreAuthorize( "authentication != null and " + "authentication.tokenAttributes['aud'] != null and " + "authentication.tokenAttributes['aud'].contains('3c56d267-5997-450b-8a9d-44db83e525bb')" ) PassaudiencetojwtVerify;josethrows if the claim does not match, and youmustreject the request before any route logic runs. audience jwtVerify jose const { payload } = await jwtVerify(token, JWKS, { issuer:   'https://portal.api.kuehne-nagel.com/oauth2/jwks', audience: '3c56d267-5997-450b-8a9d-44db83e525bb', }); const { payload } = await jwtVerify(token, JWKS, { issuer:   'https://portal.api.kuehne-nagel.com/oauth2/jwks', audience: '3c56d267-5997-450b-8a9d-44db83e525bb', }); A reusable Express middleware combining issuer and audience checks: export function requireJwt(audience) { return async (req, res, next) => { const auth = req.headers.authorization ?? ''; if (!auth.startsWith('Bearer ')) { return res.status(401).json({ error: 'Missing token' }); } try { const { payload } = await jwtVerify(auth.slice(7), JWKS, { issuer:   'https://portal.api.kuehne-nagel.com/oauth2/jwks', audience, }); req.auth = payload; next(); } catch { res.status(401).json({ error: 'Invalid token' }); } }; } export function requireJwt(audience) { return async (req, res, next) => { const auth = req.headers.authorization ?? ''; if (!auth.startsWith('Bearer ')) { return res.status(401).json({ error: 'Missing token' }); } try { const { payload } = await jwtVerify(auth.slice(7), JWKS, { issuer:   'https://portal.api.kuehne-nagel.com/oauth2/jwks', audience, }); req.auth = payload; next(); } catch { res.status(401).json({ error: 'Invalid token' }); } }; }
   - title: '4.3. Step 3: Method or Role-Level Authorization'
-    url: https://asr.int.kn/blueprints/api-authz-knite#_step_3_method_or_role_level_authorization
+    url: https://asr.int.example.com/blueprints/api-authz-knite#_step_3_method_or_role_level_authorization
     content: |-
       Validate whether the client or user is allowed to access a particular route. For APIs without a user context this is usually done by checking thescopeclaim. scope @DeleteMapping("/{id}") @PreAuthorize("hasAuthority('SCOPE_orders.delete')") void delete(@PathVariable String id) { orderRepo.deleteById(id); } @DeleteMapping("/{id}") @PreAuthorize("hasAuthority('SCOPE_orders.delete')") void delete(@PathVariable String id) { orderRepo.deleteById(id); } function requireScope(scope) { return (req, res, next) => { const scopes = (req.auth?.scope ?? '').split(' '); if (!scopes.includes(scope)) { return res.status(403).json({ error: 'Insufficient scope' }); } next(); }; } app.delete( '/orders/:id', requireJwt('orders-api'), requireScope('orders.delete'), async (req, res) => { await orderRepo.deleteById(req.params.id); res.status(204).send(); } ); function requireScope(scope) { return (req, res, next) => { const scopes = (req.auth?.scope ?? '').split(' '); if (!scopes.includes(scope)) { return res.status(403).json({ error: 'Insufficient scope' }); } next(); }; } app.delete( '/orders/:id', requireJwt('orders-api'), requireScope('orders.delete'), async (req, res) => { await orderRepo.deleteById(req.params.id); res.status(204).send(); } );
 - id: BP-API_CORS
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/api-cors/
+  url: https://asr.int.example.com/blueprints/api-cors/
   title: CORS Enforcement
   summary: 'What: Limit whichoriginsmay call the API from a browser.'
   topics: []
   sections:
   - title: Overview
-    url: https://asr.int.kn/blueprints/api-cors#overview
+    url: https://asr.int.example.com/blueprints/api-cors#overview
     content: |-
-      What: Limit whichoriginsmay call the API from a browser. Explicitallowlistof trusted frontend origins Explicitallowlistof trusted frontend origins No wildcard origins (*) for authenticated APIs No wildcard origins (*) for authenticated APIs Allow only required methods/headers Allow only required methods/headers Validate theOriginheader: IfOrigin!=https://app.example.com→ reject. Configure CORS viaWebMvcConfigurer: @Configuration public class CorsConfig implements WebMvcConfigurer { @Override public void addCorsMappings(CorsRegistry registry) { registry.addMapping("/api/**") .allowedOrigins("https://app.example.com") .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") .allowedHeaders("Authorization", "Content-Type") .allowCredentials(true); } } @Configuration public class CorsConfig implements WebMvcConfigurer { @Override public void addCorsMappings(CorsRegistry registry) { registry.addMapping("/api/**") .allowedOrigins("https://app.example.com") .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") .allowedHeaders("Authorization", "Content-Type") .allowCredentials(true); } } import cors from 'cors'; const ALLOWED_ORIGINS = ['https://app.example.com']; app.use(cors({ origin: (origin, callback) => { if (!origin || ALLOWED_ORIGINS.includes(origin)) { callback(null, true); } else { callback(new Error('CORS: origin not allowed')); } }, methods:          ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders:   ['Authorization', 'Content-Type'], credentials:      true, })); import cors from 'cors'; const ALLOWED_ORIGINS = ['https://app.example.com']; app.use(cors({ origin: (origin, callback) => { if (!origin || ALLOWED_ORIGINS.includes(origin)) { callback(null, true); } else { callback(new Error('CORS: origin not allowed')); } }, methods:          ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders:   ['Authorization', 'Content-Type'], credentials:      true, })); Requirement:SEC-CORS - Implement Cross-Site Requests Securely (CORS) Requirement:SEC-CORS - Implement Cross-Site Requests Securely (CORS) KNITE Blog Article:https://knite.int.kn/api/blog/2025/09/11/cors-on-api-platform/index.html KNITE Blog Article:https://knite.int.kn/api/blog/2025/09/11/cors-on-api-platform/index.html
+      What: Limit whichoriginsmay call the API from a browser. Explicitallowlistof trusted frontend origins Explicitallowlistof trusted frontend origins No wildcard origins (*) for authenticated APIs No wildcard origins (*) for authenticated APIs Allow only required methods/headers Allow only required methods/headers Validate theOriginheader: IfOrigin!=https://app.example.com→ reject. Configure CORS viaWebMvcConfigurer: @Configuration public class CorsConfig implements WebMvcConfigurer { @Override public void addCorsMappings(CorsRegistry registry) { registry.addMapping("/api/**") .allowedOrigins("https://app.example.com") .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") .allowedHeaders("Authorization", "Content-Type") .allowCredentials(true); } } @Configuration public class CorsConfig implements WebMvcConfigurer { @Override public void addCorsMappings(CorsRegistry registry) { registry.addMapping("/api/**") .allowedOrigins("https://app.example.com") .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS") .allowedHeaders("Authorization", "Content-Type") .allowCredentials(true); } } import cors from 'cors'; const ALLOWED_ORIGINS = ['https://app.example.com']; app.use(cors({ origin: (origin, callback) => { if (!origin || ALLOWED_ORIGINS.includes(origin)) { callback(null, true); } else { callback(new Error('CORS: origin not allowed')); } }, methods:          ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders:   ['Authorization', 'Content-Type'], credentials:      true, })); import cors from 'cors'; const ALLOWED_ORIGINS = ['https://app.example.com']; app.use(cors({ origin: (origin, callback) => { if (!origin || ALLOWED_ORIGINS.includes(origin)) { callback(null, true); } else { callback(new Error('CORS: origin not allowed')); } }, methods:          ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders:   ['Authorization', 'Content-Type'], credentials:      true, })); Requirement:SEC-CORS - Implement Cross-Site Requests Securely (CORS) Requirement:SEC-CORS - Implement Cross-Site Requests Securely (CORS) KNITE Blog Article:https://knite.int.example.com/api/blog/2025/09/11/cors-on-api-platform/index.html KNITE Blog Article:https://knite.int.example.com/api/blog/2025/09/11/cors-on-api-platform/index.html
     references:
     - id: SEC-CORS
-      url: https://asr.int.kn/scg/frontend-security#sec-cors
+      url: https://asr.int.example.com/scg/frontend-security#sec-cors
 - id: BP-SPABLUEPRINT
   source_id: appsec-blueprints
-  url: https://asr.int.kn/blueprints/spablueprint/
+  url: https://asr.int.example.com/blueprints/spablueprint/
   title: Security Blueprint for Angular SPAs (with BFF)
   summary: |-
     This blueprint describes concrete measures to build a secure Angular SPA using a Backend‑for‑Frontend (BFF) and KN SSO. It focuses on what to do, why it matters, and how to implement it in day‑to‑day development.
@@ -825,118 +825,118 @@ blueprints:
   - _rules
   sections:
   - title: Frontend Framework
-    url: https://asr.int.kn/blueprints/spablueprint#_frontend_framework
+    url: https://asr.int.example.com/blueprints/spablueprint#_frontend_framework
     content: |-
       UseAngular (latest LTS or supported stable)with hardened compiler and build settings. TypeScript strict mode Set"strict": trueintsconfig.jsonundercompilerOptions. Enables strict null checks, no-implicit-any, and other type-safety rules that eliminate entire classes of runtime bugs. "strict": true tsconfig.json compilerOptions Angular strict templates Set"strictTemplates": trueintsconfig.jsonunderangularCompilerOptions. Enforces type-checking inside component templates — catches property/method mismatches at compile time, not in the browser.ng new --strictenables both this and TypeScript strict mode automatically. "strictTemplates": true tsconfig.json angularCompilerOptions ng new --strict Production build optimization Angular 17+ (esbuildapplicationbuilder): AOT compilation, tree-shaking, and minification are on by default for production builds. No explicitaotorbuildOptimizerflags are needed; ensure"optimization": true(the default) is not disabled inangular.json. application aot buildOptimizer "optimization": true angular.json Why:strict compiler settings reduce entire classes of bugs. Requirement:SEC-UI-FRAMEWORKS – Use Mature Frontend Framework
   - title: Use a Backend‑for‑Frontend (BFF)
-    url: https://asr.int.kn/blueprints/spablueprint#_use_a_backendforfrontend_bff
+    url: https://asr.int.example.com/blueprints/spablueprint#_use_a_backendforfrontend_bff
     content: |-
       The SPA is apublic client; the BFF is aconfidential clientthat holds all OAuth tokens. All browser requests go through/bff/**. /bff/** The BFF: Handles OAuth/OIDC flows with KN SSO Handles OAuth/OIDC flows with KN SSO Stores access + refresh tokens server-side Stores access + refresh tokens server-side Issues hardened session cookies to the browser Issues hardened session cookies to the browser Rotates session identifiersafter authentication and periodically during long sessions (e.g., every 15 minutes) to mitigate session fixation and reduce replay windows Rotates session identifiersafter authentication and periodically during long sessions (e.g., every 15 minutes) to mitigate session fixation and reduce replay windows Why:prevents token exposure to JavaScript and mitigates XSS impact.
   - title: Recommended Pattern
-    url: https://asr.int.kn/blueprints/spablueprint#_recommended_pattern
+    url: https://asr.int.example.com/blueprints/spablueprint#_recommended_pattern
     content: |-
       Let theBFF handle the OAuth/OIDC flow, not the SPA. BFF exposes: /bff/login /bff/login /bff/login /bff/logout /bff/logout /bff/logout /bff/user(minimal data + permissions) /bff/user(minimal data + permissions) /bff/user This prevents access tokens from ever entering the browser.
   - title: 'Optional (Not Recommended): Direct SPA OIDC Setup'
-    url: https://asr.int.kn/blueprints/spablueprint#_optional_not_recommended_direct_spa_oidc_setup
+    url: https://asr.int.example.com/blueprints/spablueprint#_optional_not_recommended_direct_spa_oidc_setup
     content: |-
       Only if no BFF exists. export const authConfig: AuthConfig = { issuer: 'https://sso.kuehne-nagel.com', clientId: 'your-client-id', redirectUri: window.location.origin, responseType: 'code', scope: 'openid profile email', usePkce: true }; export const authConfig: AuthConfig = { issuer: 'https://sso.kuehne-nagel.com', clientId: 'your-client-id', redirectUri: window.location.origin, responseType: 'code', scope: 'openid profile email', usePkce: true }; But note:this exposes tokens to the browser→ not acceptable when a BFF exists. See API Security Blueprint (KN SSO integration) for details.
   - title: 3. Authorization
-    url: https://asr.int.kn/blueprints/spablueprint#_authorization
+    url: https://asr.int.example.com/blueprints/spablueprint#_authorization
     content: |-
       Authorization is only handled on the server-side, please refer to: Access Control Requirement:SEC-API-AUTHZ – Authorize Access Control Requirement:SEC-API-AUTHZ – Authorize API Blueprint:API Security Blueprint API Blueprint:API Security Blueprint
   - title: 4. Secure Session Cookies
-    url: https://asr.int.kn/blueprints/spablueprint#_secure_session_cookies
+    url: https://asr.int.example.com/blueprints/spablueprint#_secure_session_cookies
     content: |-
       Set: HttpOnly HttpOnly HttpOnly Secure Secure Secure SameSite=LaxorStrict SameSite=LaxorStrict SameSite=Lax Strict Example: Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Lax Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Lax Cross-site SSO / iframe use cases:If your flows require cross-site requests (e.g., external IdP redirects, embedded SSO in iframes), set: Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=None Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=None Why:cookies not accessible to JS → resistant to XSS theft. Requirement:SEC-IV - Restrictively Validate Input Data Against a Specification
     references:
     - id: SEC-IV
-      url: https://asr.int.kn/scg/secure-data-handling#scg-iv
+      url: https://asr.int.example.com/scg/secure-data-handling#scg-iv
   - title: 5. CSRF Protection
-    url: https://asr.int.kn/blueprints/spablueprint#_csrf_protection
+    url: https://asr.int.example.com/blueprints/spablueprint#_csrf_protection
     content: |-
       Usually ´SameSite=Lax` cookie setting should be sufficient for CSRF protection in most cases, as it prevents cookies from being sent on cross-site requests. However, if your application has specific cross-site requirements (e.g., external IdP redirects, embedded SSO in iframes), you may need to setSameSite=Noneand implement additional CSRF protections using anti-CSRF tokens. In Angular this is implemented via theHttpClientXsrfModule, which automatically adds anX-XSRF-TOKENheader to outgoing requests based on a cookie value. The BFF must validate this token on the server side for state-changing requests. SameSite=None HttpClientXsrfModule X-XSRF-TOKEN See:https://angular.dev/best-practices/security#cross-site-request-forgery
   - title: 6. Browser Storage
-    url: https://asr.int.kn/blueprints/spablueprint#_browser_storage
+    url: https://asr.int.example.com/blueprints/spablueprint#_browser_storage
     content: |-
       Donotstore: access tokens access tokens refresh tokens refresh tokens API keys API keys privileges (e.g.,isAdmin) privileges (e.g.,isAdmin) isAdmin in: localStorage localStorage localStorage sessionStorage sessionStorage sessionStorage IndexedDB IndexedDB IndexedDB
   - title: Instead
-    url: https://asr.int.kn/blueprints/spablueprint#_instead
+    url: https://asr.int.example.com/blueprints/spablueprint#_instead
     content: |-
       Store only UI state in the browser Store only UI state in the browser Store session/user state on the BFF Store session/user state on the BFF
   - title: Special Cases
-    url: https://asr.int.kn/blueprints/spablueprint#_special_cases
+    url: https://asr.int.example.com/blueprints/spablueprint#_special_cases
     content: |-
       Refresh Tokens:Must be storedserver-side onlyin the BFF’s session store (e.g., Redis or in-memory). The HttpOnly session cookie identifies the session to the BFF — it is not the refresh token itself, and the refresh token must never be placed in a cookie. Refresh Tokens:Must be storedserver-side onlyin the BFF’s session store (e.g., Redis or in-memory). The HttpOnly session cookie identifies the session to the BFF — it is not the refresh token itself, and the refresh token must never be placed in a cookie. Remember Me:Use persistent cookies with secure flags. Why:XSS can extract any JS-accessible storage. Requirement:SEC-CLIENT-STORAGE – Don’t Store Sensitive Data in Client Storage
     references:
     - id: SEC-CLIENT-STORAGE
-      url: https://asr.int.kn/scg/frontend-security#sec-client-storage
+      url: https://asr.int.example.com/scg/frontend-security#sec-client-storage
   - title: 7. XSS Hardening
-    url: https://asr.int.kn/blueprints/spablueprint#_xss_hardening
+    url: https://asr.int.example.com/blueprints/spablueprint#_xss_hardening
     content: |-
       [innerHTML] Prefer: <div>{{userText}}</div> <div [innerText]="innerText"></div> <div>{{userText}}</div> <div [innerText]="innerText"></div> Avoid: <div [innerHTML]="userHtml"></div> <div [innerHTML]="userHtml"></div> If unavoidable → sanitize usingDOMPurifywithTrusted Typessupport. DOMPurify Trusted Types Disables Angular’s built-in XSS protection. When Trusted Types are enabled, these assignments to DOM sinks will be blocked unless created via an allowed TT policy. inject() Prefer DI and typed services Prefer DI and typed services Avoid wrapping unsafe browser APIs (window,document,ElementRef) unless strictly required Avoid wrapping unsafe browser APIs (window,document,ElementRef) unless strictly required window document ElementRef Requirement:SEC-UI-ENCODE – Context-Aware Output Encoding
     references:
     - id: SEC-UI-ENCODE
-      url: https://asr.int.kn/scg/frontend-security#sec-ui-encode
+      url: https://asr.int.example.com/scg/frontend-security#sec-ui-encode
   - title: 8. Trusted Types (TT)
-    url: https://asr.int.kn/blueprints/spablueprint#_trusted_types_tt
+    url: https://asr.int.example.com/blueprints/spablueprint#_trusted_types_tt
     content: |-
       Trusted Types provide browser-level protection against DOM-based XSS by requiring that dangerous DOM sinks only accept values created from approved policies. Modern Angular includes a secure built-in policy"angular". "angular"
   - title: Required CSP Directives
-    url: https://asr.int.kn/blueprints/spablueprint#_required_csp_directives
+    url: https://asr.int.example.com/blueprints/spablueprint#_required_csp_directives
     content: |-
       Add: require-trusted-types-for 'script'; trusted-types angular dompurify default; require-trusted-types-for 'script'; trusted-types angular dompurify default; Donotuse: trusted-types *; trusted-types *; This disables meaningful protection.
   - title: Safe HTML Sanitization (DOMPurify + TT)
-    url: https://asr.int.kn/blueprints/spablueprint#_safe_html_sanitization_dompurify_tt
+    url: https://asr.int.example.com/blueprints/spablueprint#_safe_html_sanitization_dompurify_tt
     content: |-
       import { inject, Injectable } from '@angular/core'; import { DomSanitizer, SafeHtml } from '@angular/platform-browser'; import DOMPurify from 'dompurify'; @Injectable({ providedIn: 'root' }) export class HtmlSanitizerService { private sanitizer = inject(DomSanitizer); sanitize(html: string): SafeHtml { // DOMPurify sanitizes the HTML; RETURN_TRUSTED_TYPE returns a TrustedHTML // object in browsers that support Trusted Types, or a plain string otherwise. const clean = DOMPurify.sanitize(html, { RETURN_TRUSTED_TYPE: true }); // bypassSecurityTrustHtml is safe here because DOMPurify has already stripped // dangerous content. Do NOT use this bypass without prior sanitization. return this.sanitizer.bypassSecurityTrustHtml(clean as string); } } import { inject, Injectable } from '@angular/core'; import { DomSanitizer, SafeHtml } from '@angular/platform-browser'; import DOMPurify from 'dompurify'; @Injectable({ providedIn: 'root' }) export class HtmlSanitizerService { private sanitizer = inject(DomSanitizer); sanitize(html: string): SafeHtml { // DOMPurify sanitizes the HTML; RETURN_TRUSTED_TYPE returns a TrustedHTML // object in browsers that support Trusted Types, or a plain string otherwise. const clean = DOMPurify.sanitize(html, { RETURN_TRUSTED_TYPE: true }); // bypassSecurityTrustHtml is safe here because DOMPurify has already stripped // dangerous content. Do NOT use this bypass without prior sanitization. return this.sanitizer.bypassSecurityTrustHtml(clean as string); } } Usage: <div [innerHTML]="sanitizedHtml"></div> <div [innerHTML]="sanitizedHtml"></div> [innerHTML] SafeHtml TrustedHTML DomSanitizer
   - title: Browser Support Note
-    url: https://asr.int.kn/blueprints/spablueprint#_browser_support_note
+    url: https://asr.int.example.com/blueprints/spablueprint#_browser_support_note
     content: |-
       Trusted Types enforcement is available in Chromium-based browsers and Firefox (since v135, February 2025). Safari/WebKit does not yet support TT enforcement. In browsers that ignore TT directives, CSP still applies, Angular sanitization remains active, and DOMPurify continues to sanitize content. Keep TT directives enabled universally for defense-in-depth.
   - title: Recommended CSP
-    url: https://asr.int.kn/blueprints/spablueprint#_recommended_csp
+    url: https://asr.int.example.com/blueprints/spablueprint#_recommended_csp
     content: |-
       Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://sso.kuehne-nagel.com; worker-src 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types angular dompurify default; Content-Security-Policy: default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://sso.kuehne-nagel.com; worker-src 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types angular dompurify default; For Angular bundles, consider: script-src 'nonce-<random>' 'strict-dynamic'(preferred when you can inject nonces on all inline scripts).'strict-dynamic'is required alongside a nonce to allow Angular’s dynamically loaded lazy-route chunks; without it, code-split bundles are blocked. script-src 'nonce-<random>' 'strict-dynamic'(preferred when you can inject nonces on all inline scripts).'strict-dynamic'is required alongside a nonce to allow Angular’s dynamically loaded lazy-route chunks; without it, code-split bundles are blocked. script-src 'nonce-<random>' 'strict-dynamic' 'strict-dynamic' Avoid: unsafe-inline unsafe-inline unsafe-inline unsafe-eval unsafe-eval unsafe-eval Requirement:SEC-UI-CSP – Implement Content Security Policy
   - title: Do NOT cache sensitive endpoints
-    url: https://asr.int.kn/blueprints/spablueprint#_do_not_cache_sensitive_endpoints
+    url: https://asr.int.example.com/blueprints/spablueprint#_do_not_cache_sensitive_endpoints
     content: |-
       Never cache: /bff/login /bff/login /bff/login /bff/logout /bff/logout /bff/logout /bff/user /bff/user /bff/user /bff/csrf /bff/csrf /bff/csrf /api/private/** /api/private/** /api/private/** any endpoint returning user data any endpoint returning user data
   - title: Cache only static assets
-    url: https://asr.int.kn/blueprints/spablueprint#_cache_only_static_assets
+    url: https://asr.int.example.com/blueprints/spablueprint#_cache_only_static_assets
     content: JS, CSS, HTML JS, CSS, HTML Images, fonts Images, fonts /assets/** /assets/** /assets/**
   - title: Service Worker Do/Don’t
-    url: https://asr.int.kn/blueprints/spablueprint#_service_worker_dodont
+    url: https://asr.int.example.com/blueprints/spablueprint#_service_worker_dodont
     content: |-
       Do not intercept or cache non‑GET requests(POST/PUT/PATCH/DELETE). Do not provide a navigation fallbackthat serves a cachedindex.htmlfor protected routes before authentication is established (avoid showing stale or pre‑SSO content). index.html
   - title: Hardened Service Worker Example
-    url: https://asr.int.kn/blueprints/spablueprint#_hardened_service_worker_example
+    url: https://asr.int.example.com/blueprints/spablueprint#_hardened_service_worker_example
     content: |-
       { "assetGroups": [ { "name": "app-shell", "installMode": "prefetch", "resources": { "files": ["/*.js", "/*.css", "/index.html"] } }, { "name": "static-assets", "installMode": "lazy", "resources": { "files": ["/assets/**"] } } ], "dataGroups": [ { "name": "public-api", "urls": ["/api/public/**"], "cacheConfig": { "strategy": "freshness", "maxAge": "1h", "maxSize": 50 } } ] } { "assetGroups": [ { "name": "app-shell", "installMode": "prefetch", "resources": { "files": ["/*.js", "/*.css", "/index.html"] } }, { "name": "static-assets", "installMode": "lazy", "resources": { "files": ["/assets/**"] } } ], "dataGroups": [ { "name": "public-api", "urls": ["/api/public/**"], "cacheConfig": { "strategy": "freshness", "maxAge": "1h", "maxSize": 50 } } ] }
   - title: Why
-    url: https://asr.int.kn/blueprints/spablueprint#_why
+    url: https://asr.int.example.com/blueprints/spablueprint#_why
     content: Service workers persist responses on disk → never cache sensitive API results.
   - title: Recommendation
-    url: https://asr.int.kn/blueprints/spablueprint#_recommendation
+    url: https://asr.int.example.com/blueprints/spablueprint#_recommendation
     content: |-
       Serve SPA + BFF only over HTTPS. Enable HSTS: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload Strict-Transport-Security: max-age=31536000; includeSubDomains; preload Requirement:SEC-UI-HSTS – Use HSTS
   - title: Referrer Policy
-    url: https://asr.int.kn/blueprints/spablueprint#_referrer_policy
+    url: https://asr.int.example.com/blueprints/spablueprint#_referrer_policy
     content: |-
       Limit leakage of full URLs and query parameters to other origins: Referrer-Policy: strict-origin-when-cross-origin Referrer-Policy: strict-origin-when-cross-origin
   - title: Permissions Policy
-    url: https://asr.int.kn/blueprints/spablueprint#_permissions_policy
+    url: https://asr.int.example.com/blueprints/spablueprint#_permissions_policy
     content: |-
       Disable high-risk or unused web platform features by default: Permissions-Policy: geolocation=(), camera=(), microphone=(), usb=(), bluetooth=(), accelerometer=(), gyroscope=() Permissions-Policy: geolocation=(), camera=(), microphone=(), usb=(), bluetooth=(), accelerometer=(), gyroscope=()
   - title: Use Mend SCA & Renovate
-    url: https://asr.int.kn/blueprints/spablueprint#_use_mend_sca_renovate
+    url: https://asr.int.example.com/blueprints/spablueprint#_use_mend_sca_renovate
     content: |-
       Continuously scan Angular dependencies for known vulnerabilities and perform auto-patching using Renovate. SSDLC-SCA - Perform Continuous Security Dependency Scanning (SCA) SSDLC-SCA - Perform Continuous Security Dependency Scanning (SCA) SSDLC-RENOVATE - Integrate Renovate for Auto Patching SSDLC-RENOVATE - Integrate Renovate for Auto Patching
     references:
     - id: SSDLC-SCA
-      url: https://asr.int.kn/ssdlc/build/ssdlc-sca/
+      url: https://asr.int.example.com/ssdlc/build/ssdlc-sca/
     - id: SSDLC-RENOVATE
-      url: https://asr.int.kn/ssdlc/code/ssdlc-renovate/
+      url: https://asr.int.example.com/ssdlc/code/ssdlc-renovate/
   - title: Rules
-    url: https://asr.int.kn/blueprints/spablueprint#_rules
+    url: https://asr.int.example.com/blueprints/spablueprint#_rules
     content: |-
       Self‑host scripts whenever possible Self‑host scripts whenever possible If using CDN, use Subresource Integrity (SRI): If using CDN, use Subresource Integrity (SRI): <script src="https://cdn.example.com/lib.min.js" integrity="sha384-BASE64HASH..." crossorigin="anonymous"> </script> <script src="https://cdn.example.com/lib.min.js" integrity="sha384-BASE64HASH..." crossorigin="anonymous"> </script>
