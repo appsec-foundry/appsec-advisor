@@ -68,7 +68,7 @@ Incremental reruns help keep the architecture view and threat model aligned with
 - [Manual full-run check](#manual-full-run-check)
 - [Cross-repo context](#cross-repo-context)
 - [Architecture](#architecture)
-- [Additional skills](#additional-skills)
+- [Additional tools](#additional-tools)
 - [Enterprise rollout](#enterprise-rollout)
 - [Roadmap](#roadmap)
 - [Related projects](#related-projects)
@@ -478,33 +478,23 @@ Both routes drive `tests/e2e/run-full.sh`, which:
 
 **Re-checking without a fresh run:** `make e2e-full-keep` replays the assertions against the previous `_last-run/` artifacts — useful while iterating on an assertion or when debugging a failure without burning another LLM budget.
 
-## Additional skills
+## Additional tools
 
-These skills support the main threat-modeling workflow. They can be used independently when you need a narrower review, reporting step, or operational helper.
+These tools support the main threat-modeling workflow. They can be used independently when you need a narrower review, reporting step, or operational helper.
 
-### Requirements audit (*experimental*)
+### Developer tools
+ 
+Developer-facing security review tools share the same active standard: a configured company requirements catalog, or the bundled best-practices baseline when no catalog is configured.
 
-**Command:** `/appsec-advisor:audit-security-requirements`
+| Tool | Type | Scope | Entry point | When to use it |
+|---|---|---|---|---|
+| [Requirements audit](docs/security-requirements-audit-skill.md) (*experimental*) | Skill | Full repository/catalog | `/appsec-advisor:audit-security-requirements` | Check the repository against an AppSec requirements catalog for targeted reviews, PR gates, compliance preparation, or central control-catalog rollout. |
+| [Security Coach hook](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Hook | Prompt-time guidance | `APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-advisor` | Add security guidance to Claude's context while you write security-sensitive code. |
+| [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Agent | Change review engine | `appsec-reviewer` | Embed the reviewer in a Claude Code or Agent SDK workflow. |
+| [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Skill | Interactive diff review | `/appsec-advisor:verify-requirements` | Review current, staged, or base-ref changes from an interactive Claude Code session. |
+| [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli) (*experimental*) | CLI | CI diff review | `appsec-reviewer-cli review --diff origin/main --output security-review.md` | Run the same requirements review headlessly in CI or other automation. |
 
-Checks the repository against an AppSec requirements catalog. Each requirement is assessed as PASS, PARTIAL, or FAIL with file-level evidence and remediation guidance.
-
-Use it for targeted requirement reviews, PR gates, compliance preparation, or teams that maintain a central AppSec control catalog.
-
-Details: [`docs/security-requirements-audit-skill.md`](docs/security-requirements-audit-skill.md) · Catalog setup: [`docs/harvester.md`](docs/harvester.md).
-
-### Security coach (*experimental*)
-
-**Trigger:** `UserPromptSubmit` hook · *off by default*
-
-Injects short, topic-specific security guidance into coding prompts when the prompt touches areas such as authentication, cryptography, injection, IaC, secrets, or LLM features. When a requirements catalog is configured, the coach can reference the relevant control IDs.
-
-Enable per session with:
-
-```bash
-APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-advisor
-```
-
-Details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
+Full guide for the developer helpers: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage.md). Requirements catalog setup: [`docs/harvester.md`](docs/harvester.md). Security Coach configuration details: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
 ### Utility commands
 

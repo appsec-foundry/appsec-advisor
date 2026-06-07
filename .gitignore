@@ -26,6 +26,9 @@ scripts/docs/
 tests/fixtures/e2e/_last-run/
 tests/fixtures/e2e/_last-run-req/
 
+# AppSec runtime state (live progress / in-flight status snapshots)
+.appsec-progress.json
+
 # Persistent caches (auto-created at runtime)
 .cache/
 data/appsec-requirements-fallback.yaml
