@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/requirements-verification.schema.json",
   "title": "Requirements Change-Verification verdict",
-  "description": "Standalone output of the appsec-requirements-verifier subagent (verify-requirements skill). NOT a threat-model render fragment — it never enters compose_threat_model.py. The agent writes only this structured data; scripts/requirements_gate.py reads it to compute the deterministic exit code. See docs/proposal-requirements-verifier-subagent.md.",
+  "description": "Standalone output of the appsec-reviewer subagent (verify-requirements skill). NOT a threat-model render fragment — it never enters compose_threat_model.py. The agent writes only this structured data; scripts/requirements_gate.py reads it to compute the deterministic exit code. See docs/proposal-requirements-verifier-subagent.md.",
   "type": "object",
   "required": ["version", "generated_at", "base_ref", "priority_floor", "summary", "results"],
   "additionalProperties": false,

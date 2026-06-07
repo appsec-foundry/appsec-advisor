@@ -43,7 +43,7 @@ re-frames everything around *help first*.
         ┌───────────────▼─────────┐   ┌──────────▼───────────────────┐
  L1     │ Coach (proactive)       │   │ L2  On-demand check           │
         │ UserPromptSubmit hook   │   │ /verify-requirements skill    │
-        │ injects relevant rule   │   │ + appsec-requirements-verifier│
+        │ injects relevant rule   │   │ + appsec-reviewer│
         │ guidance WHILE coding   │   │ advisory by default,          │
         │ non-blocking            │   │ --gate strictly opt-in        │
         └─────────────────────────┘   └───────────────────────────────┘
@@ -90,7 +90,7 @@ now true at the foundation, for both layers.
 So Layer 1 needs **no new build** — only two wiring fixes (below) to honour the
 "best-practices fallback" goal and to become the single relevance source.
 
-**Naming:** the dev-facing helper is branded **`appsec-reviewer`** (not "coach").
+**Naming:** the dev-facing helper is branded **`appsec-reviewer-cli`** (not "coach").
 See the Naming note at the end.
 
 ### The encapsulation — one relevance source for both layers  ⏳ THE GAP TO FIX
@@ -98,7 +98,7 @@ See the Naming note at the end.
 `hooks/steering_keywords.json` is *already* a structured topic→requirement map.
 The verified duplication (file:line):
 
-- **Gap A — verifier re-describes relevance in prose.** `agents/appsec-requirements-verifier.md:93–108`
+- **Gap A — verifier re-describes relevance in prose.** `agents/appsec-reviewer.md:93–108`
   hand-writes "example signals" (keyword→category) instead of consuming
   `steering_keywords.json`. **Fix:** the verifier's Stage-A reads the shared map
   (`topics.<name>.triggers` → which topics the diff touches →
@@ -123,7 +123,7 @@ welded together. What they legitimately *share* is the **relevance map** and the
 ### Layer 2 — On-demand check: "review what I just changed"  ✅ DONE (re-framed)
 
 The diff-scoped check, now **advisory-first**:
-- `skills/verify-requirements/SKILL.md` + `agents/appsec-requirements-verifier.md`
+- `skills/verify-requirements/SKILL.md` + `agents/appsec-reviewer.md`
   + `scripts/build_verify_diff.py` + `scripts/requirements_gate.py` +
   `schemas/requirements-verification.schema.json` (all from Layer-2's own
   proposal; see `proposal-requirements-verifier-subagent.md`).
@@ -133,7 +133,7 @@ The diff-scoped check, now **advisory-first**:
   (`requirements_gate.py` owns the exit code). Teams that want enforcement get
   it; nobody hits a block by default.
 
-### Layer 3 — `appsec-reviewer` CLI wrapper (clean CI entry)  ⏳ NEW (requested)
+### Layer 3 — `appsec-reviewer-cli` CLI wrapper (clean CI entry)  ⏳ NEW (requested)
 
 Dev teams want to embed this in CI as a **plain command that emits a report
 artifact**, not as `claude -p "/skill …"`. Target invocation (user-supplied):
@@ -142,13 +142,13 @@ artifact**, not as `claude -p "/skill …"`. Target invocation (user-supplied):
 security_review:
   stage: test
   script:
-    - appsec-reviewer review --diff origin/main --output security-review.md
+    - appsec-reviewer-cli review --diff origin/main --output security-review.md
   artifacts:
     paths:
       - security-review.md
 ```
 
-- **Artifact:** a thin executable `bin/appsec-reviewer` (on the team's PATH) with
+- **Artifact:** a thin executable `bin/appsec-reviewer-cli` (on the team's PATH) with
   one subcommand `review`. Flags mirror the user's snippet: `--diff <ref>`
   (→ skill `--base`), `--output <file>` (→ rendered Markdown report), plus
   pass-throughs `--requirements <src>`, `--gate` / `--fail-on`.
@@ -173,13 +173,13 @@ security_review:
 
 | Need | Layer | How |
 |---|---|---|
-| Help *while* I write security-sensitive code | L1 `appsec-reviewer` steering hook | enable once (`APPSEC_COACH=1` / config); automatic, non-blocking |
+| Help *while* I write security-sensitive code | L1 `appsec-reviewer-cli` steering hook | enable once (`APPSEC_COACH=1` / config); automatic, non-blocking |
 | "Review the change I just made" (interactive) | L2 | `/appsec-advisor:verify-requirements` — advisory |
-| CI report artifact on every MR (not blocking) | L3 CLI | `appsec-reviewer review --diff origin/main --output security-review.md` |
+| CI report artifact on every MR (not blocking) | L3 CLI | `appsec-reviewer-cli review --diff origin/main --output security-review.md` |
 | Hard PR/merge enforcement (teams that want it) | L3 + gate | add `--fail-on must` (or L2 `--gate`) |
 | No company catalog at all | L0 | automatic best-practices fallback (`BP-*`) — nothing to configure |
 
-The **easy default** is: enable the steering hook, and run the `appsec-reviewer`
+The **easy default** is: enable the steering hook, and run the `appsec-reviewer-cli`
 CLI in CI to drop a `security-review.md` on each MR. Blocking is opt-in only.
 
 ---
@@ -201,11 +201,11 @@ CLI in CI to drop a `security-review.md` on each MR. Blocking is opt-in only.
 
 **Pending (the actual work):**
 - **Gap A** — wire the verifier's Stage-A to consume `hooks/steering_keywords.json`
-  (shared relevance map) instead of prose signals. `agents/appsec-requirements-verifier.md:93–108`.
+  (shared relevance map) instead of prose signals. `agents/appsec-reviewer.md:93–108`.
 - **Gap B** — add `data/appsec-bestpractices-baseline.yaml` to
   `security_steering.py` `requirements_source.paths` + add BP-* topics to
   `steering_keywords.json` so the steering hook also degrades to best-practices.
-- **Layer 3** — the `bin/appsec-reviewer` CLI wrapper + the deterministic
+- **Layer 3** — the `bin/appsec-reviewer-cli` CLI wrapper + the deterministic
   JSON→Markdown report renderer (the `--output security-review.md` artifact).
 - Stage-A live tuning against real catalog category ids (Layer-2 carry-over).
 
@@ -226,17 +226,17 @@ CLI in CI to drop a `security-review.md` on each MR. Blocking is opt-in only.
 
 ## Naming
 
-The dev-facing helper is branded **`appsec-reviewer`** (per user decision — not
+The dev-facing helper is branded **`appsec-reviewer-cli`** (per user decision — not
 "coach"). Open point: the CI snippet used the binary name `security-review-agent`;
-this proposal standardises on `appsec-reviewer` to match the plugin's `appsec-`
+this proposal standardises on `appsec-reviewer-cli` to match the plugin's `appsec-`
 prefix and avoid collision with the existing `appsec-architect-reviewer` agent.
 The internal artifacts keep their accurate mechanism names
-(`security_steering.py` = the L1 hook; `appsec-requirements-verifier` = the L2
-grader); `appsec-reviewer` is the umbrella product name + the L3 CLI binary.
-**Confirm:** binary name `appsec-reviewer` vs `security-review-agent`, and
+(`security_steering.py` = the L1 hook; `appsec-reviewer` = the L2
+grader); `appsec-reviewer-cli` is the umbrella product name + the L3 CLI binary.
+**Confirm:** binary name `appsec-reviewer-cli` vs `security-review-agent`, and
 whether to physically rename the shipped `security_steering.py` (invasive:
 script + config keys + tests + docs) or keep it as the internal mechanism under
-the `appsec-reviewer` brand.
+the `appsec-reviewer-cli` brand.
 
 ## Non-goals
 - Not a compliance/audit tool (that is `audit-security-requirements`).

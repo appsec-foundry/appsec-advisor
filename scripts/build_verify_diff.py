@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """build_verify_diff.py — compute the change set for verify-requirements.
 
-Resolves the diff the appsec-requirements-verifier subagent will grade and
+Resolves the diff the appsec-reviewer subagent will grade and
 writes it to `<output-dir>/.verify-diff.json` as untrusted data. Keeping this
 in deterministic Python (not inline skill bash) sidesteps the Python-3.10
 f-string / `!=` history-expansion traps and gives the diff resolution a single

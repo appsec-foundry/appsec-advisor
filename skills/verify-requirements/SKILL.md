@@ -1,6 +1,6 @@
 ---
 name: verify-requirements
-description: Help a developer check the code they just changed against their company security requirements — or, if none are configured, against a built-in best-practices baseline. Scopes to the current diff, dispatches the appsec-requirements-verifier subagent to grade only the triggered requirements, and prints concrete, code-aware guidance (what to fix and how). Advisory by default; an opt-in --gate turns it into a CI/merge gate. Complements the full-repo audit-security-requirements skill.
+description: Help a developer check the code they just changed against their company security requirements — or, if none are configured, against a built-in best-practices baseline. Scopes to the current diff, dispatches the appsec-reviewer subagent to grade only the triggered requirements, and prints concrete, code-aware guidance (what to fix and how). Advisory by default; an opt-in --gate turns it into a CI/merge gate. Complements the full-repo audit-security-requirements skill.
 ---
 
 You are helping a developer build secure code. This skill checks the change the
@@ -177,7 +177,7 @@ dispatch the subagent** — an empty diff costs nothing.
 
 ## Step 4 — Dispatch the verifier subagent
 
-Use the Task tool to launch the `appsec-requirements-verifier` subagent. Pass
+Use the Task tool to launch the `appsec-reviewer` subagent. Pass
 inputs in Group A → B → C order (stable → scalars → volatile paths):
 
 ```

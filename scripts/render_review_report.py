@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """render_review_report.py — turn a verify-requirements verdict into Markdown.
 
-Deterministic renderer for the `appsec-reviewer` CLI: reads a
+Deterministic renderer for the `appsec-reviewer-cli` CLI: reads a
 `.requirements-verification.json` verdict (schema:
 requirements-verification.schema.json) and writes a developer-facing Markdown
 report (the `--output security-review.md` artifact). No LLM — the agent already

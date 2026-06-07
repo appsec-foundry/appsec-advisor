@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """requirements_gate.py — deterministic exit-code decision for verify-requirements.
 
-The appsec-requirements-verifier subagent writes a verdict JSON
+The appsec-reviewer subagent writes a verdict JSON
 (`schemas/requirements-verification.schema.json`). This script is the ONLY
 authority on whether a change blocks: it recomputes the gating set from
 `results[]` — never trusting the agent's advisory `gating` / `gating_failures`

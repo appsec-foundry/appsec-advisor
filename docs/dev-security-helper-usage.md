@@ -1,69 +1,56 @@
 # Security review for the code you're writing
 
-Checks the code you wrote against your team's security requirements and tells you what to fix. Works with no setup — if no company catalog is configured it falls back to a built-in best-practices baseline. Advisory by default; a CI gate is opt-in.
+Reviews the code you wrote for security and tells you what to fix. It grades your change against your team's standard — your security requirements when a catalog is configured, a built-in best-practices baseline when it isn't. Advisory by default; a CI gate is opt-in.
 
 ## Components
 
-Three things you use. They share the same requirements catalog, so the advice is consistent wherever it shows up.
+The core is one **agent** (`appsec-reviewer`). You reach it three ways — directly, through a skill, or through a CLI — and there's a separate hook for guidance while you type. They share the same standard, so the advice is consistent wherever it shows up.
 
 | Component | Type | What it does | Use it for |
 |-----------|------|--------------|------------|
-| [Security steering](#security-steering) | Hook | Injects the relevant requirement into Claude's context *before* it answers a security-related prompt. Automatic, never blocks. | proactive guidance while you code |
-| [verify-requirements](#verify-requirements) | Skill | Reviews the change you just made, in your session. | an on-demand read of your diff |
-| [appsec-reviewer](#appsec-reviewer) | CLI | Runs that review in CI and writes a Markdown report (and can fail the build). | merge-request reports, or a gate |
+| [appsec-reviewer](#appsec-reviewer) | Agent | Reviews a change and grades it against the active standard (requirements or best practices). The actual reviewer. | embedding the reviewer in your ASDLC |
+| [verify-requirements](#verify-requirements) | Skill | Runs the reviewer on your current change, in your Claude Code session. | an on-demand read of your diff |
+| [appsec-reviewer-cli](#appsec-reviewer-cli) | CLI | Runs the reviewer in CI and writes a Markdown report (and can fail the build). | merge-request reports, or a gate |
+| [Security steering](#security-steering) | Hook | Injects the relevant requirement into context *before* Claude answers a security-related prompt. Never blocks. | proactive guidance while you code |
 
-Steering is *proactive* (before you write), verify-requirements is *on-demand* (after you write), and appsec-reviewer is the *CI* form of the same review.
+The agent is the unit; the skill and the CLI are front-ends around it (they also add a deterministic pass/fail gate). Steering is separate — it's guidance *before* you write, not a review *after*.
 
-Both the skill and the CLI are front-ends: they dispatch the same worker agent, `appsec-requirements-verifier`, which does the actual grading. You never invoke that agent directly, so it has no section of its own.
+## appsec-reviewer
 
-## Security steering
+The reviewer itself, and the piece you embed in your ASDLC. It reads a diff, works out which security expectations the change implicates, and grades the post-change code — every finding has `file:line` evidence, a code-aware fix, and an effort estimate.
 
-Proactive, passive guidance. A `UserPromptSubmit` hook that prepends the applicable requirements when a prompt is security-relevant (auth, crypto, SQL, secrets, IaC, …) and stays silent otherwise.
+Checking company requirements is only one mode. It grades against the **active standard**: your requirements catalog if one is configured, otherwise the bundled best-practices baseline. The catalog is just an input — same review either way.
 
-Enable per session or per project:
-
-```bash
-APPSEC_COACH=1 claude
-```
-
-```jsonc
-// config.json
-{ "security_coach": { "enabled": true } }
-```
-
-The prompt *"implement the OAuth refresh-token endpoint"* then reaches the model with the auth requirements already in context:
+Embed it directly in your own Claude Code workflow or automation (Agent SDK) by dispatching the `appsec-reviewer` subagent — for example:
 
 ```
-[auth] short-lived tokens with rotation on refresh; validate
-issuer/audience/signature/expiry on every JWT check; MFA for admin paths.
-Applicable requirements:
-  - BP-AUTH-SESSION-COOKIE (MUST): Issue session cookies with HttpOnly, Secure…
+Use the appsec-reviewer agent to review my staged changes.
 ```
 
-## verify-requirements
+Given a base ref (or left to default), it resolves its own diff and catalog and writes `.requirements-verification.json` with the findings. You don't need the skill or the CLI for this; they're just packaged front-ends. The agent produces findings only — if you want a pass/fail exit code, run `requirements_gate.py` over its output (the CLI does this for you).
 
-Reviews your current change on demand. Diffs your branch against its merge-base, picks the requirements the change touches, and grades only those.
-
-```
-/appsec-advisor:verify-requirements
-```
+A graded change looks like:
 
 ```
-AppSec Requirements — Change Verification
-Base   : origin/main..HEAD   (3 files changed)
-Scope  : 2 in-scope of 6 candidate requirements
-
   ● [FAIL] MUST  BP-INJ-SQL-PARAM  Parameterized SQL Queries
   Finding : raw request input reaches sequelize.query() in src/routes/search.ts:23
   Fix     : bind the term — sequelize.query(sql, { replacements: { term } })
   Effort  : M
 ```
 
+## verify-requirements
+
+The interactive front-end: runs the reviewer on your current change from your Claude Code session. It diffs your branch against its merge-base, picks the requirements the change touches, and grades those.
+
+```
+/appsec-advisor:verify-requirements
+```
+
 Exits cleanly (advisory). `--base <ref>` sets the comparison point, `--staged` reviews staged changes, `--gate` makes it exit non-zero on a failure. Full flags: [reference](#flag-reference).
 
-## appsec-reviewer
+## appsec-reviewer-cli
 
-The same review as a CLI command for pipelines. Needs the Claude Code CLI on `PATH` and `ANTHROPIC_API_KEY` (or a subscription login — see [headless-mode.md](headless-mode.md)).
+The CI front-end: runs the reviewer headlessly and writes a Markdown report. Needs the Claude Code CLI on `PATH` and `ANTHROPIC_API_KEY` (or a subscription login — see [headless-mode.md](headless-mode.md)).
 
 **Advisory report (default)** — writes the report, leaves the pipeline green.
 
@@ -72,7 +59,7 @@ The same review as a CLI command for pipelines. Needs the Claude Code CLI on `PA
 security_review:
   stage: test
   script:
-    - appsec-reviewer review --diff origin/main --output security-review.md
+    - appsec-reviewer-cli review --diff origin/main --output security-review.md
   artifacts:
     paths:
       - security-review.md
@@ -93,7 +80,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch origin "$BASE_REF"
-          appsec-reviewer review --diff "origin/$BASE_REF" --output security-review.md
+          appsec-reviewer-cli review --diff "origin/$BASE_REF" --output security-review.md
       - uses: actions/upload-artifact@<commit-sha>
         with: { name: security-review, path: security-review.md }
 ```
@@ -117,7 +104,7 @@ raw request input reaches sequelize.query() at src/routes/search.ts:23
 
 ```yaml
 script:
-  - appsec-reviewer review --diff origin/main --output security-review.md --fail-on must
+  - appsec-reviewer-cli review --diff origin/main --output security-review.md --fail-on must
 ```
 
 `--fail-on must` blocks on a failed `MUST`; `--fail-on partial` also on partials; `--priority-floor should` lets `SHOULD` gate. Exit codes: `0` clean, `1` gating failure, `2` error (e.g. a named `--requirements` source that couldn't load).
@@ -129,17 +116,39 @@ script:
 ```bash
 # .git/hooks/pre-push   (chmod +x)
 #!/usr/bin/env bash
-appsec-reviewer review --diff origin/main --output /tmp/security-review.md --fail-on must
+appsec-reviewer-cli review --diff origin/main --output /tmp/security-review.md --fail-on must
+```
+
+## Security steering
+
+Proactive, passive guidance — separate from the reviewer. A `UserPromptSubmit` hook that prepends the applicable requirements when a prompt is security-relevant (auth, crypto, SQL, secrets, IaC, …) and stays silent otherwise.
+
+```bash
+APPSEC_COACH=1 claude
+```
+
+```jsonc
+// config.json
+{ "security_coach": { "enabled": true } }
+```
+
+The prompt *"implement the OAuth refresh-token endpoint"* then reaches the model with the auth requirements already in context:
+
+```
+[auth] short-lived tokens with rotation on refresh; validate
+issuer/audience/signature/expiry on every JWT check; MFA for admin paths.
+Applicable requirements:
+  - BP-AUTH-SESSION-COOKIE (MUST): Issue session cookies with HttpOnly, Secure…
 ```
 
 ## Requirements source
 
-Uses your configured company catalog if there is one, else the bundled best-practices baseline. Override with `--requirements <src>`, where `<src>` is an `http(s)://` URL or a local file path. No `http(s)` scheme means it's read as a file (relative to where you run it); an unreadable source aborts the run instead of silently falling back — the same contract the threat-model tooling uses.
+The reviewer uses your configured company catalog if there is one, else the bundled best-practices baseline — so it always has something to grade against. Override with `--requirements <src>`, where `<src>` is an `http(s)://` URL or a local file path. No `http(s)` scheme means it's read as a file (relative to where you run it); an unreadable source aborts the run instead of silently falling back — the same contract the threat-model tooling uses.
 
 ```bash
 /appsec-advisor:verify-requirements --requirements ./security/our-requirements.yaml
 /appsec-advisor:verify-requirements --requirements https://reqs.example.com/appsec.yaml
-appsec-reviewer review --diff origin/main --output security-review.md --requirements ./security/reqs.yaml
+appsec-reviewer-cli review --diff origin/main --output security-review.md --requirements ./security/reqs.yaml
 ```
 
 For org-wide defaults, set the source in the org profile — see [org-profiles.md](org-profiles.md) and [security-requirements-audit-skill.md](security-requirements-audit-skill.md). A catalog is YAML, and the IDs are yours to name (no fixed prefix):
@@ -156,7 +165,7 @@ categories:
         url: https://wiki.acme.internal/appsec/auth
 ```
 
-With no source configured and none passed, the check runs against `data/appsec-bestpractices-baseline.yaml` (OWASP-derived: auth, access control, injection, crypto, secrets, headers, validation, logging, dependencies).
+With no source configured and none passed, the review runs against `data/appsec-bestpractices-baseline.yaml` (OWASP-derived: auth, access control, injection, crypto, secrets, headers, validation, logging, dependencies).
 
 ## Flag reference
 
@@ -172,7 +181,7 @@ With no source configured and none passed, the check runs against `data/appsec-b
 | `--requirements <src>` | `http(s)://` URL or local file path (no scheme ⇒ file; aborts if unreadable) |
 | `--md` / `--json` / `--save` | also save a report under `docs/security/` |
 
-`appsec-reviewer review`
+`appsec-reviewer-cli review`
 
 | Flag | Meaning |
 |------|---------|

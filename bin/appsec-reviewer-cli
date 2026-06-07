@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# appsec-reviewer — dev-facing security review for a code change.
+# appsec-reviewer-cli — dev-facing security review for a code change.
 #
 # Thin CI/CLI wrapper around the appsec-advisor `verify-requirements` skill:
 # resolves the diff, dispatches the requirements-verifier (via Claude Code
@@ -9,10 +9,10 @@
 # best-practices baseline. Advisory by default; --fail-on makes CI fail.
 #
 # Usage:
-#   appsec-reviewer review --diff <ref> --output <file.md> [options]
+#   appsec-reviewer-cli review --diff <ref> --output <file.md> [options]
 #
 # Example (GitLab CI):
-#   appsec-reviewer review --diff origin/main --output security-review.md
+#   appsec-reviewer-cli review --diff origin/main --output security-review.md
 #
 # Options for `review`:
 #   --diff <ref>            Base ref to diff against (git diff <ref>...HEAD). Required.
@@ -25,7 +25,7 @@
 # Auth: uses ANTHROPIC_API_KEY if set, otherwise Claude Code subscription auth.
 set -euo pipefail
 
-die() { echo "appsec-reviewer: $*" >&2; exit 2; }
+die() { echo "appsec-reviewer-cli: $*" >&2; exit 2; }
 
 # Resolve the plugin root (for the renderer + gate scripts).
 if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
@@ -71,7 +71,7 @@ SKILL_ARGS="--base $DIFF_REF --priority-floor $PRIORITY_FLOOR"
 
 command -v claude >/dev/null 2>&1 || die "Claude Code CLI not found. Install it: https://claude.ai/download"
 
-echo "appsec-reviewer: reviewing changes since '$DIFF_REF'…" >&2
+echo "appsec-reviewer-cli: reviewing changes since '$DIFF_REF'…" >&2
 claude -p "/appsec-advisor:verify-requirements $SKILL_ARGS" \
   --permission-mode bypassPermissions >&2 || true
 

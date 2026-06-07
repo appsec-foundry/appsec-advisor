@@ -1,4 +1,4 @@
-# Proposal — `appsec-requirements-verifier` subagent + `verify-requirements` skill
+# Proposal — `appsec-reviewer` subagent + `verify-requirements` skill
 
 > **Re-framed 2026-06-07:** this is now **Layer 2 (on-demand check)** of the
 > layered **Dev Security Helper** — see `proposal-dev-security-helper.md`. The
@@ -53,7 +53,7 @@ the changed surface); and it keeps a single, testable contract.
 Three new artifacts + small edits to existing contracts:
 
 ```
-agents/appsec-requirements-verifier.md      # NEW — the subagent (executor)
+agents/appsec-reviewer.md      # NEW — the subagent (executor)
 skills/verify-requirements/SKILL.md         # NEW — thin entry point (dev-facing)
 scripts/requirements_gate.py                # NEW — deterministic exit-code computer
 schemas/fragments/requirements-verification.schema.json   # NEW — verdict schema
@@ -72,7 +72,7 @@ dev / CI ──▶ /appsec-advisor:verify-requirements [--gate] [--base <ref>]
                 │ 2. git diff <base>..HEAD  (or --cached)  → $OUTPUT_DIR/.verify-diff.json  (untrusted data)
                 │ 3. dispatch ────────────────────────────────────────────────┐
                 ▼                                                              ▼
-        deterministic Python                                   appsec-requirements-verifier
+        deterministic Python                                   appsec-reviewer
                 │                                              reads diff + .requirements.yaml,
                 │ 4. requirements_gate.py reads JSON           selects in-scope reqs, verifies each,
                 │    → exit code (advisory|gate)               writes .requirements-verification.json
@@ -164,14 +164,14 @@ gating opt in via `--gate-on partial`.
 
 ---
 
-## 5. Subagent contract — `agents/appsec-requirements-verifier.md`
+## 5. Subagent contract — `agents/appsec-reviewer.md`
 
 Frontmatter (mirrors the roster convention; `model: sonnet` pinned for the
 drift guard, runtime override via dispatch `MODEL_ID`):
 
 ```yaml
 ---
-name: appsec-requirements-verifier
+name: appsec-reviewer
 description: "Verifies a code change (diff) against the in-scope security requirements. Reads .verify-diff.json + .requirements.yaml, selects the triggered requirement subset, grades each PASS/PARTIAL/FAIL/UNVERIFIABLE/NOT_APPLICABLE against the post-change code with file:line evidence + code-aware fix, and writes .requirements-verification.json. Does not decide the gate — that is requirements_gate.py."
 tools: Read, Grep, Bash, Write
 model: sonnet
@@ -328,7 +328,7 @@ Thin orchestrator (no inline grading — it dispatches the subagent):
 3. Resolve plugin root + org profile + requirements source; run
    `fetch_requirements.py` fail-closed gate → `.requirements.yaml`.
 4. Compute the diff sidecar `.verify-diff.json` (git). Empty diff → exit 0, no dispatch.
-5. Dispatch `appsec-requirements-verifier` with the Group A/B/C input ordering.
+5. Dispatch `appsec-reviewer` with the Group A/B/C input ordering.
 6. Run `requirements_gate.py` → exit code. In `--gate` mode propagate; in
    advisory mode always exit 0 but still print the gating count.
 7. Optional `--md/--json/--save` writes under `docs/security/` reusing the audit
@@ -340,7 +340,7 @@ Thin orchestrator (no inline grading — it dispatches the subagent):
 
 | Touch | Action |
 |---|---|
-| **New agent** `appsec-requirements-verifier.md` | add; register in AGENTS.md **roster** (drift-guarded by `tests/test_agent_definitions.py::TestAgentsMdDocDrift`) — note it is **standalone**, *not* in the create-threat-model Phase map |
+| **New agent** `appsec-reviewer.md` | add; register in AGENTS.md **roster** (drift-guarded by `tests/test_agent_definitions.py::TestAgentsMdDocDrift`) — note it is **standalone**, *not* in the create-threat-model Phase map |
 | **Agent-definitions drift test** | `tests/test_agent_definitions.py` pins `model: sonnet` + turn budget for every agent → add the new file's expected row |
 | **New schema** | `requirements-verification.schema.json` → register in `check_fragment_registry.py`, add to `docs/schema-invariants.md`, wire a validator |
 | **New skill** | `skills/verify-requirements/` (+ `config.json` if needed); confirm skill-discovery tests pick it up |
@@ -371,7 +371,7 @@ Thin orchestrator (no inline grading — it dispatches the subagent):
 
 ## 12. Delivered artifacts (2026-06-07)
 
-- `agents/appsec-requirements-verifier.md` — subagent (Sonnet, 40 turns, INTERNAL).
+- `agents/appsec-reviewer.md` — subagent (Sonnet, 40 turns, INTERNAL).
 - `skills/verify-requirements/SKILL.md` — thin entry point (--help, flag parse,
   shared requirements fetch, diff build, dispatch, gate).
 - `scripts/build_verify_diff.py` — deterministic diff sidecar builder.

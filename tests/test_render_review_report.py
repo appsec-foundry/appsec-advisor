@@ -1,4 +1,4 @@
-"""Tests for scripts/render_review_report.py — the appsec-reviewer Markdown artifact."""
+"""Tests for scripts/render_review_report.py — the appsec-reviewer-cli Markdown artifact."""
 from __future__ import annotations
 
 import json
