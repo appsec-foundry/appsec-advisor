@@ -1,61 +1,194 @@
-# Security review for the code you're writing
+# AppSec Reviewer Tools
 
-Reviews the code you wrote for security and tells you what to fix. It grades your change against your team's standard — your security requirements when a catalog is configured, a built-in best-practices baseline when it isn't. Advisory by default; a CI gate is opt-in.
+This document explains the developer-facing security review tools in `appsec-advisor`: the steering hook, the reviewer agent, the interactive skill, and the CI CLI.
 
-## Components
+All tools use the same active standard: a configured company requirements catalog, or the bundled best-practices baseline when no catalog is configured.
 
-The core is one **agent** (`appsec-reviewer`). You reach it three ways — directly, through a skill, or through a CLI — and there's a separate hook for guidance while you type. They share the same standard, so the advice is consistent wherever it shows up.
+## Contents
 
-| Component | Type | What it does | Use it for |
-|-----------|------|--------------|------------|
-| [appsec-reviewer](#appsec-reviewer) | Agent | Reviews a change and grades it against the active standard (requirements or best practices). The actual reviewer. | embedding the reviewer in your ASDLC |
-| [verify-requirements](#verify-requirements) | Skill | Runs the reviewer on your current change, in your Claude Code session. | an on-demand read of your diff |
-| [appsec-reviewer-cli](#appsec-reviewer-cli) | CLI | Runs the reviewer in CI and writes a Markdown report (and can fail the build). | merge-request reports, or a gate |
-| [Security steering](#security-steering) | Hook | Injects the relevant requirement into context *before* Claude answers a security-related prompt. Never blocks. | proactive guidance while you code |
+- [Tool overview](#tool-overview)
+- [How the tools fit together](#how-the-tools-fit-together)
+- [Security steering hook](#security-steering-hook)
+- [appsec-reviewer agent](#appsec-reviewer-agent)
+- [verify-requirements skill](#verify-requirements-skill)
+- [appsec-reviewer-cli](#appsec-reviewer-cli)
+- [Requirements source](#requirements-source)
+- [Outputs and gates](#outputs-and-gates)
+- [CI security notes](#ci-security-notes)
+- [Flag reference](#flag-reference)
 
-The agent is the unit; the skill and the CLI are front-ends around it (they also add a deterministic pass/fail gate). Steering is separate — it's guidance *before* you write, not a review *after*.
+## Tool overview
 
-## appsec-reviewer
+| Tool | Type | What it does | When to use it |
+|------|------|--------------|----------------|
+| [Security steering hook](#security-steering-hook) | Hook | Adds the relevant security guidance to Claude's context while you write, so the requirement is in view before the code even exists. It only advises — it never reviews finished code or blocks anything. | You want automatic reminders as you write security-sensitive code. |
+| [appsec-reviewer](#appsec-reviewer-agent) | Agent | The actual reviewer: it reads a change, works out which security expectations apply, and grades the result with evidence and a suggested fix. It reports findings but leaves the pass/fail decision to a separate step. | You want to embed the reviewer itself into your development process. |
+| [verify-requirements](#verify-requirements-skill) | Skill | The interactive way to run the reviewer from a Claude Code session — it prepares the diff and the requirements for you, runs the agent, and can enforce the result with `--gate`. | You want to review the change you just made, in your session. |
+| [appsec-reviewer-cli](#appsec-reviewer-cli) | CLI | The same review packaged as a command for pipelines: it runs headless, writes a Markdown report you can attach to a merge request, and can fail the build with `--fail-on`. | You want the review to run automatically in CI on every change. |
 
-The reviewer itself, and the piece you embed in your ASDLC. It reads a diff, works out which security expectations the change implicates, and grades the post-change code — every finding has `file:line` evidence, a code-aware fix, and an effort estimate.
+The agent does the actual reviewing; the skill and the CLI are just convenient front-ends around it. The hook is a separate thing — it guides you *before* you write code, rather than reviewing what you already wrote.
 
-Checking company requirements is only one mode. It grades against the **active standard**: your requirements catalog if one is configured, otherwise the bundled best-practices baseline. The catalog is just an input — same review either way.
+## How the tools fit together
 
-Embed it directly in your own Claude Code workflow or automation (Agent SDK) by dispatching the `appsec-reviewer` subagent — for example:
+```text
+Security steering hook
+  -> guidance before code is written
 
+verify-requirements skill
+  -> resolves requirements and diff
+  -> dispatches appsec-reviewer
+  -> writes docs/security/.requirements-verification.json
+  -> optional --gate
+
+appsec-reviewer-cli
+  -> calls verify-requirements headlessly
+  -> renders a Markdown report
+  -> optional --fail-on gate
+
+appsec-reviewer agent
+  -> core reviewer used by the skill and CLI
 ```
+
+The hook is proactive guidance. The agent, skill, and CLI are review paths for code that already changed.
+
+## Security steering hook
+
+The hook runs on `UserPromptSubmit`. It checks the user's prompt for security-relevant topics such as authentication, injection, cryptography, secrets, IaC, and LLM security. When a topic matches, it prepends the matching guidance and requirements before Claude answers.
+
+Enable per session:
+
+```bash
+APPSEC_COACH=1 claude
+```
+
+Enable in plugin config:
+
+```jsonc
+// config.json
+{ "security_coach": { "enabled": true } }
+```
+
+Example prompt:
+
+```text
+implement the OAuth refresh-token endpoint
+```
+
+Example injected context:
+
+```text
+[auth] short-lived tokens with rotation on refresh; validate
+issuer/audience/signature/expiry on every JWT check; MFA for admin paths.
+
+Applicable requirements:
+  - BP-AUTH-SESSION-COOKIE (MUST): Issue session cookies with HttpOnly, Secure...
+```
+
+Operational notes:
+
+- The hook does not call the reviewer agent.
+- The hook does not block prompts.
+- Matching and telemetry are documented in [security-coach-skill.md](security-coach-skill.md).
+
+## appsec-reviewer agent
+
+`appsec-reviewer` is the core reviewer. It reads a diff, determines which requirements or best-practice rules are in scope, and grades the post-change code.
+
+Each finding includes:
+
+- status: `PASS`, `PARTIAL`, `FAIL`, `UNVERIFIABLE`, or `NOT_APPLICABLE`
+- rule or requirement ID
+- `file:line` evidence where available
+- code-aware fix
+- effort estimate
+
+Direct use:
+
+```text
 Use the appsec-reviewer agent to review my staged changes.
 ```
 
-Given a base ref (or left to default), it resolves its own diff and catalog and writes `.requirements-verification.json` with the findings. You don't need the skill or the CLI for this; they're just packaged front-ends. The agent produces findings only — if you want a pass/fail exit code, run `requirements_gate.py` over its output (the CLI does this for you).
+Output:
 
-A graded change looks like:
-
+```text
+.requirements-verification.json
 ```
-  ● [FAIL] MUST  BP-INJ-SQL-PARAM  Parameterized SQL Queries
+
+The agent only writes findings. Gate decisions belong to `scripts/requirements_gate.py`; the skill and CLI call that script when gate mode is enabled.
+
+Console finding shape:
+
+```text
+  - [FAIL] MUST  BP-INJ-SQL-PARAM  Parameterized SQL Queries
   Finding : raw request input reaches sequelize.query() in src/routes/search.ts:23
-  Fix     : bind the term — sequelize.query(sql, { replacements: { term } })
+  Fix     : bind the term: sequelize.query(sql, { replacements: { term } })
   Effort  : M
 ```
 
-## verify-requirements
+## verify-requirements skill
 
-The interactive front-end: runs the reviewer on your current change from your Claude Code session. It diffs your branch against its merge-base, picks the requirements the change touches, and grades those.
+The skill is the interactive entry point for developers using Claude Code.
 
-```
+Run:
+
+```bash
 /appsec-advisor:verify-requirements
 ```
 
-Exits cleanly (advisory). `--base <ref>` sets the comparison point, `--staged` reviews staged changes, `--gate` makes it exit non-zero on a failure. Full flags: [reference](#flag-reference).
+Default behavior:
+
+- resolves the active requirements source
+- builds a diff against the merge-base with upstream
+- dispatches `appsec-reviewer`
+- writes `docs/security/.requirements-verification.json`
+- exits `0` unless `--gate` is set and the deterministic gate fails
+
+Common runs:
+
+```bash
+# Review staged changes.
+/appsec-advisor:verify-requirements --staged
+
+# Compare against a specific base ref.
+/appsec-advisor:verify-requirements --base origin/main
+
+# Enforce locally or in a scripted Claude Code run.
+/appsec-advisor:verify-requirements --gate
+```
+
+Saved reports:
+
+```bash
+/appsec-advisor:verify-requirements --save
+```
+
+`--save` writes both Markdown and JSON reports under `docs/security/`.
 
 ## appsec-reviewer-cli
 
-The CI front-end: runs the reviewer headlessly and writes a Markdown report. Needs the Claude Code CLI on `PATH` and `ANTHROPIC_API_KEY` (or a subscription login — see [headless-mode.md](headless-mode.md)).
+The CLI is the CI and automation wrapper around `verify-requirements`.
 
-**Advisory report (default)** — writes the report, leaves the pipeline green.
+Run:
+
+```bash
+appsec-reviewer-cli review --diff origin/main --output security-review.md
+```
+
+Default behavior:
+
+- invokes `/appsec-advisor:verify-requirements` headlessly
+- writes `docs/security/.requirements-verification.json`
+- renders the requested Markdown report
+- exits `0` unless `--fail-on` is set and the deterministic gate fails
+
+Requirements:
+
+- Claude Code CLI on `PATH`
+- `ANTHROPIC_API_KEY` or Claude Code subscription auth
+
+GitLab CI:
 
 ```yaml
-# GitLab CI
 security_review:
   stage: test
   script:
@@ -65,10 +198,12 @@ security_review:
       - security-review.md
 ```
 
+GitHub Actions:
+
 ```yaml
-# GitHub Actions — hardened; see the security note below
 permissions:
   contents: read
+
 jobs:
   security_review:
     runs-on: ubuntu-latest
@@ -82,76 +217,50 @@ jobs:
           git fetch origin "$BASE_REF"
           appsec-reviewer-cli review --diff "origin/$BASE_REF" --output security-review.md
       - uses: actions/upload-artifact@<commit-sha>
-        with: { name: security-review, path: security-review.md }
+        with:
+          name: security-review
+          path: security-review.md
 ```
 
-The report:
+Report excerpt:
 
 ```markdown
 # Security Review — change verification
 
+| Field | Value |
+|-------|-------|
+| Base ref | `origin/main` |
 | Checked against | built-in best-practices baseline |
-| In-scope        | 2 of 6 candidates |
-| Result          | 🔴 1 fail · 🟡 1 partial · 🟢 0 pass |
+| In-scope requirements | 2 of 6 candidates |
+| Result | 🔴 1 fail · 🟡 1 partial · 🟢 0 pass · ⚪ 0 unverifiable |
 
 ## What to fix
+
 ### 🔴 FAIL · MUST · BP-INJ-SQL-PARAM
-raw request input reaches sequelize.query() at src/routes/search.ts:23
-**Fix:** bind the term via replacements …
-```
 
-**Gate (opt-in)** — add `--fail-on` to exit non-zero (red MR check) when a requirement at or above the floor fails.
+Raw request input reaches `sequelize.query()` at `src/routes/search.ts:23`.
 
-```yaml
-script:
-  - appsec-reviewer-cli review --diff origin/main --output security-review.md --fail-on must
-```
-
-`--fail-on must` blocks on a failed `MUST`; `--fail-on partial` also on partials; `--priority-floor should` lets `SHOULD` gate. Exit codes: `0` clean, `1` gating failure, `2` error (e.g. a named `--requirements` source that couldn't load).
-
-> **Security note — don't hand this secret to untrusted PRs.** The job holds an API key *and* runs an agent over the PR's code, which is attacker-controllable on an external PR. The plugin treats a scanned repo as untrusted input, so a crafted PR could use prompt injection to read the key from the environment ([SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories)). Safe for **private repos with trusted contributors** (same-repo `pull_request`); **not** for fork / public PRs. Never use `pull_request_target` to work around forks not getting secrets — that withholding is the safety mechanism. Prefer ephemeral runners and a dedicated CI key with a spend limit.
-
-**Pre-push hook** — same command, local. Use pre-push (not pre-commit) so it runs once per push.
-
-```bash
-# .git/hooks/pre-push   (chmod +x)
-#!/usr/bin/env bash
-appsec-reviewer-cli review --diff origin/main --output /tmp/security-review.md --fail-on must
-```
-
-## Security steering
-
-Proactive, passive guidance — separate from the reviewer. A `UserPromptSubmit` hook that prepends the applicable requirements when a prompt is security-relevant (auth, crypto, SQL, secrets, IaC, …) and stays silent otherwise.
-
-```bash
-APPSEC_COACH=1 claude
-```
-
-```jsonc
-// config.json
-{ "security_coach": { "enabled": true } }
-```
-
-The prompt *"implement the OAuth refresh-token endpoint"* then reaches the model with the auth requirements already in context:
-
-```
-[auth] short-lived tokens with rotation on refresh; validate
-issuer/audience/signature/expiry on every JWT check; MFA for admin paths.
-Applicable requirements:
-  - BP-AUTH-SESSION-COOKIE (MUST): Issue session cookies with HttpOnly, Secure…
+**Fix:** Bind the term via replacements.
 ```
 
 ## Requirements source
 
-The reviewer uses your configured company catalog if there is one, else the bundled best-practices baseline — so it always has something to grade against. Override with `--requirements <src>`, where `<src>` is an `http(s)://` URL or a local file path. No `http(s)` scheme means it's read as a file (relative to where you run it); an unreadable source aborts the run instead of silently falling back — the same contract the threat-model tooling uses.
+The active standard is resolved in this order:
+
+1. Explicit `--requirements <src>` for the current run.
+2. Configured organization requirements catalog.
+3. Bundled best-practices baseline.
+
+`<src>` can be an `http(s)://` URL or a local file path. A path without an `http(s)` scheme is read relative to the current working directory. If an explicit source cannot be loaded, the run exits with an error instead of silently falling back.
+
+Examples:
 
 ```bash
-/appsec-advisor:verify-requirements --requirements ./security/our-requirements.yaml
-/appsec-advisor:verify-requirements --requirements https://reqs.example.com/appsec.yaml
-appsec-reviewer-cli review --diff origin/main --output security-review.md --requirements ./security/reqs.yaml
+/appsec-advisor:verify-requirements --requirements ./security/requirements.yaml
+appsec-reviewer-cli review --diff origin/main --output security-review.md --requirements ./security/requirements.yaml
 ```
 
-For org-wide defaults, set the source in the org profile — see [org-profiles.md](org-profiles.md) and [security-requirements-audit-skill.md](security-requirements-audit-skill.md). A catalog is YAML, and the IDs are yours to name (no fixed prefix):
+Minimal catalog:
 
 ```yaml
 source: acme-appsec
@@ -160,35 +269,78 @@ categories:
     title: Authentication
     requirements:
       - id: ACME-AUTH-01
-        priority: MUST          # MUST | SHOULD | MAY
+        priority: MUST
         text: Passwords must be stored with Argon2id or bcrypt.
         url: https://wiki.acme.internal/appsec/auth
 ```
 
-With no source configured and none passed, the review runs against `data/appsec-bestpractices-baseline.yaml` (OWASP-derived: auth, access control, injection, crypto, secrets, headers, validation, logging, dependencies).
+Requirement IDs are organization-defined. No fixed prefix is required. For org-wide defaults, use [org-profiles.md](org-profiles.md).
+
+## Outputs and gates
+
+Outputs:
+
+- Hook: no review artifact; optional hook telemetry as described in [security-coach-skill.md](security-coach-skill.md).
+- Agent: `.requirements-verification.json` in its configured output directory.
+- Skill: `docs/security/.requirements-verification.json`; optional saved reports under `docs/security/`.
+- CLI: requested Markdown report and `docs/security/.requirements-verification.json`.
+
+Exit codes:
+
+- `0`: review completed; advisory mode or no gate-violating finding.
+- `1`: gate failed.
+- `2`: usage, requirements-load, or verdict error.
+
+Gate behavior:
+
+- Skill: `--gate` enables non-zero exit on gating failures.
+- CLI: `--fail-on must` blocks failed `MUST` requirements.
+- CLI: `--fail-on partial` blocks failed or partial `MUST` requirements.
+- Skill and CLI: `--priority-floor SHOULD` or `--priority-floor MAY` lowers the gate floor.
+
+Pre-push example:
+
+```bash
+# .git/hooks/pre-push   (chmod +x)
+#!/usr/bin/env bash
+appsec-reviewer-cli review --diff origin/main --output /tmp/security-review.md --fail-on must
+```
+
+## CI security notes
+
+Pull-request code is untrusted input. A CI job that runs the reviewer may expose an API key to attacker-controlled repository content.
+
+Use CI review for private repositories, trusted same-repository pull requests, ephemeral runners, and dedicated low-limit CI API keys.
+
+Do not use it for public fork pull requests with secrets, `pull_request_target` workflows that bypass secret withholding, or shared runners that retain sensitive state.
+
+See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
 
 ## Flag reference
 
-`/appsec-advisor:verify-requirements`
+### `/appsec-advisor:verify-requirements`
 
 | Flag | Meaning |
 |------|---------|
-| `--base <ref>` | compare against `<ref>` (default: merge-base with upstream) |
-| `--staged` | review staged changes only (`git diff --cached`) |
-| `--gate` | exit non-zero on a gating failure (default: advisory) |
-| `--gate-on fail\|partial` | what counts as gating (default `fail`) |
-| `--priority-floor MUST\|SHOULD\|MAY` | lowest priority allowed to gate (default `MUST`) |
-| `--requirements <src>` | `http(s)://` URL or local file path (no scheme ⇒ file; aborts if unreadable) |
-| `--md` / `--json` / `--save` | also save a report under `docs/security/` |
+| `--base <ref>` | Compare against `<ref>`; default is the merge-base with upstream. |
+| `--staged` | Review staged changes only (`git diff --cached`). |
+| `--gate` | Exit non-zero on a gating failure; default is advisory. |
+| `--gate-on fail\|partial` | Select what counts as gating; default is `fail`. |
+| `--priority-floor MUST\|SHOULD\|MAY` | Lowest priority allowed to gate; default is `MUST`. |
+| `--requirements <src>` | Use an `http(s)://` URL or local file path; unreadable explicit sources abort. |
+| `--org-profile <path>` | Use this org profile for source resolution. |
+| `--preset <name>` | Use a preset from the active org profile. |
+| `--no-org-profile` | Ignore packaged or environment-pointed org profiles. |
+| `--md` / `--json` / `--save` | Also save a report under `docs/security/`. |
 
-`appsec-reviewer-cli review`
+### `appsec-reviewer-cli review`
 
 | Flag | Meaning |
 |------|---------|
-| `--diff <ref>` | base ref to diff against (required) |
-| `--output <file>` | report path (default `security-review.md`) |
-| `--requirements <src>` | `http(s)://` URL or local file path (no scheme ⇒ file; aborts if unreadable) |
-| `--fail-on must\|partial` | make CI fail (omit = advisory, exit 0) |
-| `--priority-floor MUST\|SHOULD\|MAY` | lowest priority allowed to gate |
+| `--diff <ref>` | Base ref to diff against; required. |
+| `--output <file>` | Report path; default is `security-review.md`. |
+| `--requirements <src>` | Use an `http(s)://` URL or local file path; unreadable explicit sources abort. |
+| `--fail-on must\|partial` | Make CI fail; omit for advisory mode. |
+| `--priority-floor MUST\|SHOULD\|MAY` | Lowest priority allowed to gate. |
 
 Design rationale: [proposal-dev-security-helper.md](proposal-dev-security-helper.md).
