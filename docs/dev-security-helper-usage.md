@@ -44,8 +44,8 @@ Review staged changes before commit:
 Write an advisory CI report:
 
 ```bash
-export PATH="/path/to/appsec-advisor/bin:$PATH"
 export CLAUDE_PLUGIN_ROOT="/path/to/appsec-advisor"
+export PATH="$CLAUDE_PLUGIN_ROOT/scripts:$PATH"
 appsec-reviewer-cli review --diff origin/main --output security-review.md
 ```
 
@@ -99,7 +99,7 @@ claude --plugin-dir /path/to/appsec-advisor
 
 CLI use needs:
 
-- `appsec-reviewer-cli` on `PATH`, usually by adding the plugin's `bin/` directory.
+- `appsec-reviewer-cli` on `PATH`, usually by adding the plugin's `scripts/` directory.
 - `CLAUDE_PLUGIN_ROOT` pointing at the plugin root when the wrapper cannot resolve it from its own path.
 - Claude Code CLI on `PATH`.
 - `python3` and `git` on `PATH`.
@@ -110,7 +110,7 @@ Minimal shell setup:
 
 ```bash
 export CLAUDE_PLUGIN_ROOT="/path/to/appsec-advisor"
-export PATH="$CLAUDE_PLUGIN_ROOT/bin:$PATH"
+export PATH="$CLAUDE_PLUGIN_ROOT/scripts:$PATH"
 ```
 
 In CI examples below, adjust `CLAUDE_PLUGIN_ROOT` to wherever the plugin is installed or checked out in your runner image.
@@ -260,7 +260,7 @@ security_review:
   stage: test
   script:
     - export CLAUDE_PLUGIN_ROOT="$CI_PROJECT_DIR/appsec-advisor"
-    - export PATH="$CLAUDE_PLUGIN_ROOT/bin:$PATH"
+    - export PATH="$CLAUDE_PLUGIN_ROOT/scripts:$PATH"
     - git fetch origin main
     - appsec-reviewer-cli review --diff origin/main --output security-review.md
   artifacts:
@@ -287,7 +287,7 @@ jobs:
           CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}/appsec-advisor
           BASE_REF: ${{ github.base_ref }}
         run: |
-          export PATH="$CLAUDE_PLUGIN_ROOT/bin:$PATH"
+          export PATH="$CLAUDE_PLUGIN_ROOT/scripts:$PATH"
           git fetch origin "$BASE_REF"
           appsec-reviewer-cli review --diff "origin/$BASE_REF" --output security-review.md
       - uses: actions/upload-artifact@<commit-sha>
@@ -425,7 +425,7 @@ See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
 
 ## Troubleshooting
 
-- `appsec-reviewer-cli: CLAUDE_PLUGIN_ROOT could not be resolved`: set `CLAUDE_PLUGIN_ROOT` to the plugin root and add `$CLAUDE_PLUGIN_ROOT/bin` to `PATH`.
+- `appsec-reviewer-cli: CLAUDE_PLUGIN_ROOT could not be resolved`: set `CLAUDE_PLUGIN_ROOT` to the plugin root and add `$CLAUDE_PLUGIN_ROOT/scripts` to `PATH`.
 - `Claude Code CLI not found`: install Claude Code and make sure `claude` is on `PATH`.
 - `no verdict produced`: the headless Claude run did not complete or did not write `docs/security/.requirements-verification.json`. Re-run the equivalent `/appsec-advisor:verify-requirements --base <ref>` interactively to see the underlying error.
 - `build-verify-diff: git diff failed`: fetch the base ref and verify that `git diff <ref>...HEAD` works locally.

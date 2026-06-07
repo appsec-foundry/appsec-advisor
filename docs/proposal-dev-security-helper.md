@@ -148,7 +148,7 @@ security_review:
       - security-review.md
 ```
 
-- **Artifact:** a thin executable `bin/appsec-reviewer-cli` (on the team's PATH) with
+- **Artifact:** a thin executable `scripts/appsec-reviewer-cli` (on the team's PATH) with
   one subcommand `review`. Flags mirror the user's snippet: `--diff <ref>`
   (→ skill `--base`), `--output <file>` (→ rendered Markdown report), plus
   pass-throughs `--requirements <src>`, `--gate` / `--fail-on`.
@@ -205,7 +205,7 @@ CLI in CI to drop a `security-review.md` on each MR. Blocking is opt-in only.
 - **Gap B** — add `data/appsec-bestpractices-baseline.yaml` to
   `security_steering.py` `requirements_source.paths` + add BP-* topics to
   `steering_keywords.json` so the steering hook also degrades to best-practices.
-- **Layer 3** — the `bin/appsec-reviewer-cli` CLI wrapper + the deterministic
+- **Layer 3** — the `scripts/appsec-reviewer-cli` CLI wrapper + the deterministic
   JSON→Markdown report renderer (the `--output security-review.md` artifact).
 - Stage-A live tuning against real catalog category ids (Layer-2 carry-over).
 
