@@ -7260,13 +7260,14 @@ def _requirements_status_map(ctx: RenderContext) -> dict[str, str]:
             if not cells:
                 continue
             lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
+            _REQ_HEADER_TOKENS = {"id", "requirement", "requirement id"}
             if (
-                any(c in {"id", "requirement"} for c in lowered)
+                any(c in _REQ_HEADER_TOKENS for c in lowered)
                 and "status" in lowered
             ):
                 header = lowered
                 req_idx = next(
-                    (i for i, c in enumerate(header) if c in {"id", "requirement"}),
+                    (i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS),
                     -1,
                 )
                 status_idx = header.index("status")
@@ -7329,9 +7330,10 @@ def _requirements_evidence_findings_map(ctx: RenderContext) -> dict[str, list[st
         if not cells:
             continue
         lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
-        if any(c in {"id", "requirement"} for c in lowered) and "status" in lowered:
+        _REQ_HEADER_TOKENS = {"id", "requirement", "requirement id"}
+        if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
             header = lowered
-            req_idx = next((i for i, c in enumerate(header) if c in {"id", "requirement"}), -1)
+            req_idx = next((i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS), -1)
             evidence_indexes = [
                 i
                 for i, c in enumerate(header)
