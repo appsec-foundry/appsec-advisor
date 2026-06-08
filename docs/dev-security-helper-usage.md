@@ -125,11 +125,19 @@ Enable per session:
 APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-advisor
 ```
 
-Enable in plugin config:
+Enable for all team members via org profile:
 
-```jsonc
-// config.json
-{ "security_coach": { "enabled": true } }
+```yaml
+# org-profile.yaml
+security_coach:
+  enabled_by_default: true
+```
+
+Enable globally in the hook config:
+
+```json
+// hooks/steering_keywords.json
+{ "enabled": true }
 ```
 
 Example prompt:

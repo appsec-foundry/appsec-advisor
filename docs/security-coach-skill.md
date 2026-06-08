@@ -51,14 +51,16 @@ Disabled by default. Three ways to enable.
 APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-advisor
 ```
 
-**Per project (plugin config):**
+**Per team / org profile:**
 
-```json
-// config.json
-{
-  "security_coach": { "enabled": true }
-}
+```yaml
+# org-profile.yaml
+security_coach:
+  enabled_by_default: true
+  max_requirements_per_topic: 3  # optional, default 3
 ```
+
+When a packaged plugin bundles an org profile with `enabled_by_default: true`, the coach is active for all team members without any per-session opt-in.
 
 **Globally (hook config):**
 
@@ -70,7 +72,7 @@ APPSEC_COACH=1 claude --plugin-dir /path/to/appsec-advisor
 }
 ```
 
-Precedence: environment variable wins over project config; project config wins over hook config. Use `APPSEC_COACH=0` to force-disable for a single session without touching any file.
+Precedence: environment variable wins (including as kill switch `APPSEC_COACH=0`), then org profile, then hook config. Use `APPSEC_COACH=0` to force-disable for a single session without touching any file.
 
 ## Trigger logic
 
@@ -162,14 +164,22 @@ If you see a prompt firing that shouldn't, see [Tuning false positives](#tuning-
 
 When a security requirements catalog is loaded (see [`docs/harvester.md`](harvester.md)), matching `SEC-*` requirements are injected alongside the generic guidance. Each rendered line includes the ID, the priority tag (`MUST` / `SHOULD` / `MAY`), and the requirement text taken verbatim from the YAML.
 
-The number of requirements injected per topic is capped at `severity.max_requirements_per_topic` (default 3).
+The number of requirements injected per topic is capped at `severity.max_requirements_per_topic` (default 3). The org profile can lower or raise this cap with `security_coach.max_requirements_per_topic`.
 
 Requirement text is resolved at runtime from whichever YAML is found first along `requirements_source.paths`:
 
-1. `.cache/requirements.yaml` (populated by the harvester)
-2. `data/appsec-requirements-fallback.yaml` (shipped with the plugin)
+1. `.cache/requirements.yaml` (populated by the harvester — URL set via `requirements.source.requirements_yaml_url` in the org profile)
+2. `data/appsec-requirements-fallback.yaml` (shipped with the plugin — company `SEC-*` requirements)
+3. `data/appsec-bestpractices-baseline.yaml` (shipped with the plugin — OWASP-derived `BP-*` best practices, used when no company catalog is present)
 
-Editing the requirements YAML updates the coach output on the very next prompt — no restart, no plugin reinstall.
+The active catalog is exclusive: the first readable file wins. Which catalog is loaded therefore depends on the org profile configuration:
+
+- **Org profile with `requirements_yaml_url`** → harvester populates `.cache/requirements.yaml` → company `SEC-*` / `SSDLC-*` requirements are injected.
+- **No org profile or no URL configured** → falls through to `appsec-requirements-fallback.yaml` (if shipped) or the OWASP `BP-*` baseline.
+
+To control this via packaging, set `requirements.source.requirements_yaml_url` in the org profile. The coach picks up the active catalog on the next prompt — no restart, no plugin reinstall.
+
+The topic keyword lists in `hooks/steering_keywords.json` carry both `SEC-*` and `BP-*` IDs per topic. The coach filters at runtime to only inject IDs present in the active catalog, so the same plugin build works correctly with either a company catalog or the OWASP baseline.
 
 ## Known limitations
 
