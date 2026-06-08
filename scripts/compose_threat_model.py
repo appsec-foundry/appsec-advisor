@@ -1839,11 +1839,12 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
         # the TOC matches the rendered body. Unnumbered sections (Management
         # Summary, Appendix: Run Statistics, etc.) get `""` and the template
         # renders them as a hyphen bullet instead of `N.`.
-        num_match = re.match(r"^(\d+(?:\.\d+)?)\.\s+", clean_heading)
+        # Also handles alphanumeric suffixes like `7b.` (Requirements Compliance).
+        num_match = re.match(r"^(\d+[a-z]?(?:\.\d+)?)\.\s+", clean_heading, re.IGNORECASE)
         section_number = num_match.group(1) if num_match else ""
         # Strip the §-prefix from the display title since the number column
         # carries it now (avoids `7. 7. Security Architecture` doubling).
-        display_title = re.sub(r"^\s*\d+(?:\.\d+)?\.\s+", "", clean_heading)
+        display_title = re.sub(r"^\s*\d+[a-z]?(?:\.\d+)?\.\s+", "", clean_heading, flags=re.IGNORECASE)
         anchor = sec.get("anchor") or _anchor_from_heading(heading)
         children = _toc_children_for_section(ctx, sid, sec)
         entries.append(
@@ -2043,7 +2044,8 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
     # 5→7 jump reads as a rendering bug ("Wo ist Kapitel 6?"), so name the gap
     # explicitly instead. Generic: fires for any missing top-level integer.
     _nums = sorted(
-        {int(e["number"]) for e in entries if e.get("number") and "." not in str(e["number"])}
+        {int(e["number"]) for e in entries
+         if e.get("number") and "." not in str(e["number"]) and str(e["number"]).isdigit()}
     )
     if _nums:
         _missing = [n for n in range(_nums[0], _nums[-1] + 1) if n not in _nums]
@@ -7648,7 +7650,9 @@ def _render_requirements_mapping_table(
         risk_word = (r.get("risk_word") or "").strip()
         emoji = _TOP_THREATS_SEVERITY_EMOJI.get(risk_word.lower(), "")
         risk_cell = f"{emoji} {risk_word.title()}".strip() or "—"
-        status_cell = (r.get("status") or "FAIL").strip() or "FAIL"
+        _status_raw = (r.get("status") or "FAIL").strip() or "FAIL"
+        _status_emoji = {"FAIL": "❌", "PARTIAL": "⚠️", "ANTI-PATTERN": "⚠️"}.get(_status_raw, "")
+        status_cell = f"{_status_emoji} {_status_raw}".strip() if _status_emoji else _status_raw
         # Per-item annotation (2026-06-04): findings carry their severity dot
         # and measures their Variant-B priority prefix — the same vocabulary as
         # every other linked ref. The row-level Risk column shows the requirement
@@ -7835,38 +7839,60 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
     """Derive the ### Requirements Compliance MS subsection.
 
     Extracts the baseline link + PASS/FAIL/ANTI-PATTERN/PARTIAL summary line
-    from the fragment (the only data threat-model.yaml does not carry), then
-    appends a deterministic compact traceability table — failed/partial
-    requirement → findings (F-NNN) → mitigations (M-NNN) — built from threat-model.yaml so
-    the Management Summary surfaces the actual links (the prior regex-scraped
-    bullets silently dropped the Linked-finding column).
+    from the fragment when available, then appends a deterministic compact
+    traceability table built from threat-model.yaml.
 
-    Returns empty string when the fragment is missing or malformed.
+    Falls back gracefully when the fragment has been cleaned up (post-QA
+    runtime_cleanup removes .fragments/): the baseline is derived from
+    .requirements.yaml directly and the deterministic table from yaml threats.
+    Returns empty string only when requirements checking was not enabled at all
+    (no .requirements.yaml and no rows).
     """
     frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
-    if not frag_path.is_file():
+    baseline = ""
+    result_line = ""
+
+    if frag_path.is_file():
+        text = frag_path.read_text(encoding="utf-8")
+        # --- Baseline URL from fragment ---
+        baseline_m = re.search(
+            r"from the \[([^\]]+)\]\(([^)]+)\) baseline",
+            text,
+        )
+        if baseline_m:
+            baseline = f"[{baseline_m.group(1)}]({baseline_m.group(2)})"
+        else:
+            baseline_m2 = re.search(r"from the ([^\n]+?) baseline", text)
+            baseline = baseline_m2.group(1).strip() if baseline_m2 else ""
+        # --- Summary line from fragment ---
+        summary_m = re.search(r"\*\*Summary:\*\*\s*(.+?)(?:\n|$)", text)
+        result_line = summary_m.group(1).strip() if summary_m else ""
+
+    # Derive baseline from .requirements.yaml when fragment is absent or baseline empty.
+    if not baseline:
+        req_path = ctx.output_dir / ".requirements.yaml"
+        if req_path.is_file():
+            try:
+                req_data = yaml.safe_load(req_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                req_data = {}
+            for meta in req_data.get("sources_meta", []) or []:
+                if isinstance(meta, dict) and meta.get("type") == "requirement":
+                    title = (meta.get("title") or "").strip()
+                    url = (meta.get("reference_url") or meta.get("crawl_url") or "").strip()
+                    baseline = f"[{title}]({url})" if (title and url) else title or ""
+                    if baseline:
+                        break
+        if not baseline:
+            baseline = "configured baseline"
+
+    # Deterministic compact traceability table (FAIL/PARTIAL/ANTI-PATTERN only,
+    # highest-risk first, capped) built from threat-model.yaml.
+    rows = _build_requirements_mapping_rows(ctx)
+
+    # When the fragment is gone AND no rows exist in yaml, nothing to show.
+    if not frag_path.is_file() and not rows:
         return ""
-
-    text = frag_path.read_text(encoding="utf-8")
-
-    # --- Baseline URL ---
-    baseline_m = re.search(
-        r"from the \[([^\]]+)\]\(([^)]+)\) baseline",
-        text,
-    )
-    if baseline_m:
-        baseline = f"[{baseline_m.group(1)}]({baseline_m.group(2)})"
-    else:
-        # fall back to plain text when URL is missing
-        baseline_m2 = re.search(r"from the ([^\n]+?) baseline", text)
-        baseline = baseline_m2.group(1).strip() if baseline_m2 else "configured baseline"
-
-    # --- Summary line ---
-    summary_m = re.search(
-        r"\*\*Summary:\*\*\s*(.+?)(?:\n|$)",
-        text,
-    )
-    result_line = summary_m.group(1).strip() if summary_m else ""
 
     # --- Compose the subsection ---
     lines: list[str] = ["### Requirements Compliance", ""]
@@ -7875,10 +7901,6 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
         lines.append(f"**Result:** {result_line}")
     lines.append("")
 
-    # Deterministic compact traceability table (FAIL/PARTIAL/ANTI-PATTERN only,
-    # highest-risk first, capped) built from threat-model.yaml — replaces the
-    # prior regex-scraped bullets that dropped the Linked-finding column.
-    rows = _build_requirements_mapping_rows(ctx)
     table = _render_requirements_mapping_table(ctx, rows, limit=6)
     if table:
         lines.append("**Failed or partial requirements → findings & mitigations:**")

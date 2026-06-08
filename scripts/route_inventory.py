@@ -121,6 +121,9 @@ def _read_lines(path: Path) -> list[str]:
 
 _JS_ROUTE_RE = re.compile(
     r"""(?ix)
+    # Match named router/app variable followed by HTTP-method call and a path literal.
+    # The path literal may appear on the same line or the next few lines (multiline
+    # route definitions like router.get(\n  '/path',\n  middleware,\n  handler)).
     \b(?P<obj>app|router|api|server|fastify|hapi|route|r)\b
     \s*\.\s*
     (?P<method>get|post|put|patch|delete|head|options|all|any)
@@ -128,7 +131,8 @@ _JS_ROUTE_RE = re.compile(
     (?P<quote>['"`])
     (?P<path>[^'"`]+)
     (?P=quote)
-    """
+    """,
+    re.DOTALL,
 )
 
 _JS_DECORATOR_RE = re.compile(
@@ -224,7 +228,7 @@ _AUTHN_PATTERNS = re.compile(
 # window scan cannot see the guard. build_inventory collects these prefixes
 # globally and marks routes underneath them as guarded.
 _GUARD_MOUNT_RE = re.compile(
-    r"""\b(?:app|router)\.(?:use|all|get|post|put|delete|patch|head|options)\(\s*"""
+    r"""\b\w+\.(?:use|all|get|post|put|delete|patch|head|options)\(\s*"""
     r"""['"](?P<path>/[^'"]*)['"]\s*,[^)]*?\b(?:isAuthorized|isAuthenticated|"""
     r"""authenticate|requireAuth|requireLogin|ensureLoggedIn|isLoggedIn|"""
     r"""restrictToLoggedIn|denyAll|passport\.authenticate)\b"""
@@ -282,7 +286,7 @@ def _scan_auth_signals(lines: list[str], handler_line: int) -> tuple[str, str]:
     the MVP and produces false-positive guard claims.
     """
     start = max(0, handler_line - 6)
-    end = min(len(lines), handler_line + 3)
+    end = min(len(lines), handler_line + 8)
     window = "".join(lines[start:end])
 
     authn = "unknown"
@@ -321,21 +325,21 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
     else:
         framework = "express"
 
-    for n, line in enumerate(lines, start=1):
-        for m in _JS_ROUTE_RE.finditer(line):
-            method = m.group("method").upper()
-            route = m.group("path")
-            authn, authz = _scan_auth_signals(lines, n)
-            out.append(RouteCandidate(
-                method=method,
-                path=route,
-                framework=framework,
-                handler_file=str(path).replace("\\", "/"),
-                handler_line=n,
-                authn_signal=authn,
-                authz_signal=authz,
-                management_surface=_detect_management_surface(route),
-            ))
+    for m in _JS_ROUTE_RE.finditer(text):
+        method = m.group("method").upper()
+        route = m.group("path")
+        n = text.count("\n", 0, m.start()) + 1
+        authn, authz = _scan_auth_signals(lines, n)
+        out.append(RouteCandidate(
+            method=method,
+            path=route,
+            framework=framework,
+            handler_file=str(path).replace("\\", "/"),
+            handler_line=n,
+            authn_signal=authn,
+            authz_signal=authz,
+            management_surface=_detect_management_surface(route),
+        ))
 
     if nestjs:
         for n, line in enumerate(lines, start=1):

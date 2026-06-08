@@ -34,6 +34,7 @@ WEAKNESS_DESC_MAX_SENTENCES = 3       # contract target 1-2
 FRAMING_MAX_WORDS = 38                # one introducing sentence
 VERDICT_OPENING_MAX_WORDS = 78        # generous — catches only runaway openings
 VERDICT_BULLET_BODY_MAX_WORDS = 48    # per worst-case-scenario bullet
+VERDICT_CLOSING_MAX_CHARS = 300       # contract max from verdict.schema.json
 
 
 def _words(text: str) -> int:
@@ -56,6 +57,12 @@ def _check_verdict(path: Path, violations: list[str]) -> None:
         violations.append(
             f"ms-verdict.json: opening is {_words(opening)} words "
             f"(max {VERDICT_OPENING_MAX_WORDS})"
+        )
+    closing = data.get("closing") or ""
+    if len(closing) > VERDICT_CLOSING_MAX_CHARS:
+        violations.append(
+            f"ms-verdict.json: closing is {len(closing)} chars "
+            f"(max {VERDICT_CLOSING_MAX_CHARS})"
         )
     for i, b in enumerate(data.get("bullets") or []):
         if not isinstance(b, dict):

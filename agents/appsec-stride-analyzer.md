@@ -517,7 +517,8 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
         }
       ],
       "prior_finding_ref": "<ID from docs/known-threats.yaml (e.g. PT-2025-001) if mapped, or null. External REST-endpoint IDs (APPSEC-YYYY-NNN) go inline in `scenario` instead.>",
-      "cvss_v4": null
+      "cvss_v4": null,
+      "architectural_violation": false   // set true ONLY for findings from the anti-pattern detection table (e.g. SPA without BFF)
     }
   ]
 }

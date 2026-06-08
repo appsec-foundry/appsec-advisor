@@ -122,7 +122,9 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 
 ### `CLAUDE_PLUGIN_ROOT` discovery
 
-Several downstream scripts (`plugin_meta.py`, `baseline_state.py`, `agent_logger.py`) expect `$CLAUDE_PLUGIN_ROOT` to point at the plugin directory. Claude Code sets this when a plugin command runs, but in some harness configurations (e.g. headless `claude -p`, older claude-code releases) the variable is **not** propagated into Bash sub-processes. Resolve it explicitly at the start of the skill and pass it through to every agent invocation:
+Several downstream scripts (`plugin_meta.py`, `baseline_state.py`, `agent_logger.py`) expect `$CLAUDE_PLUGIN_ROOT` to point at the plugin directory. Claude Code sets this when a plugin command runs, but in some harness configurations (e.g. headless `claude -p`, older claude-code releases) the variable is **not** propagated into Bash sub-processes. Resolve it explicitly at the start of the skill and pass it through to every agent invocation.
+
+> **CRITICAL — single Bash call:** The Claude Code `Bash` tool starts a **fresh shell for every tool call** — variables set in one call are not visible in the next. The discovery block and the early flag validation below **must be combined into one single `Bash` tool call** (not two separate calls). If you split them, `$CLAUDE_PLUGIN_ROOT` will be empty when `resolve_config.py` runs and the path expands to `/scripts/resolve_config.py`, causing an immediate "No such file or directory" error.
 
 ```bash
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -135,6 +137,13 @@ if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
   echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved — install the appsec-advisor or set the variable manually." >&2
   exit 2
 fi
+
+# Early flag validation — must run in the same Bash call as the discovery above.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --validate-only "$@"
+VALIDATE_EXIT=$?
+if [ "$VALIDATE_EXIT" -ne 0 ]; then
+  exit "$VALIDATE_EXIT"
+fi
 ```
 
 The resolved value must also be passed verbatim in the Stage 1 and Stage 3 agent prompts (see "Stage 1 — Threat Analysis & Triage" below).
@@ -143,16 +152,12 @@ The resolved value must also be passed verbatim in the Stage 1 and Stage 3 agent
 
 Before any preflight steps run (state cleanup, cache validation, session-bloat detection), validate the user's flags. Invalid flags must produce an immediate error — never silent inference, never preflight side-effects against an unrecognised invocation. The validator is `resolve_config.py --validate-only`: argparse rejects unknown flags with exit 2, the conflict detector rejects mutually-exclusive pairs with exit 1, and the script produces no output / writes no files on success.
 
-```bash
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --validate-only "$@"
-VALIDATE_EXIT=$?
-if [ "$VALIDATE_EXIT" -ne 0 ]; then
-  # argparse / conflict detection already printed the user-facing reason
-  # to stderr. Exit with the same code; no marker-file cleanup needed
-  # because no markers have been touched yet.
-  exit "$VALIDATE_EXIT"
-fi
-```
+The validation is already embedded in the discovery block above — **do not issue a second separate `Bash` tool call for it**. The combined snippet above is the canonical implementation; this section documents the behaviour contract only:
+
+- Unknown flag (e.g. `--qiuck` typo) → argparse prints `usage: …` and `error: unrecognized arguments: --qiuck` to stderr, exits 2. Skill exits 2 immediately.
+- Conflicting flags (e.g. `--rebuild --incremental`) → resolver prints the conflict reason, exits 1. Skill exits 1 immediately.
+- Skill-only flags (currently just `--force`) are stripped by the script before parsing, so they don't trigger false-positive failures here.
+- Clean parse → exit 0, no output, skill proceeds to the preflight steps below.
 
 Behaviour contract:
 - Unknown flag (e.g. `--qiuck` typo) → argparse prints `usage: …` and `error: unrecognized arguments: --qiuck` to stderr, exits 2. Skill exits 2 immediately.
@@ -1970,7 +1975,38 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
    ```
    **On `PS_FAIL=1` → graceful fallback (never hard-fail):** log `PARALLEL_STRIDE_FALLBACK` and dispatch a normal single `STAGE1_PHASE_LIMIT=10b` analyst with `RESUME_FROM_PHASE=9` (it re-runs STRIDE inline per the M1-lite escape clause + the rest of Stage 1). Skip 3c/3d. The default flow is unchanged, so a manifest defect degrades to today's behaviour — no regression.
 
-   3c. **Fan out STRIDE analyzers in parallel.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phase 9 — STRIDE (<N> components)"` where `<N>` is the manifest's `components[]` count. (The per-component `"STRIDE: <NAME>"` Agent rows below render natively in the subagent panel — this label just names the phase group above them.) Read `.stride-dispatch-manifest.json`; for EACH `components[]` entry issue one `Agent` call to `appsec-advisor:appsec-stride-analyzer` — **all in a single message** so they run concurrently (same proven parallel pattern as the Stage-1c abuse-verifier fan-out). **Set each Agent call's `description` to `"STRIDE: <NAME>"`** (the component's `name` from the manifest entry — e.g. `"STRIDE: express-api"`) so the Claude Code subagent panel shows one labelled row per component being analyzed, mirroring the abuse-verifier `"Verify abuse case AC-…"` rows. The component name leads the string because the panel truncates. Map each manifest entry to the analyzer's prompt params (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). **Each dispatch prompt MUST also pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instruct the analyzer to `export OUTPUT_DIR=<value>` as its FIRST Bash call** — `agent_progress.sh` silently no-ops unless `OUTPUT_DIR` is a shell env var, so without the export the analyzer writes `.stride-<id>.json` but skips `.progress/<id>.json`, blinding the watchdog and (pre-fix) false-positiving `check_stride_dispatch.py`. Model = `STRIDE_MODEL`. Wait for all to return — each writes `.stride-<id>.json` + `.progress/<id>.json`. **Issuing the real per-component `Agent` calls here is what makes the run pass the post-Stage-1 gate.** `check_stride_dispatch.py` requires *count-based* dispatch evidence: at least as many `AGENT_SPAWN appsec-stride-analyzer` lines in `.hook-events.log` as the manifest has components (each `Agent` call emits exactly one). **The manifest's existence alone is NOT proof** — it is built in step 3b *before* this fan-out, so it survives a collapse where you build it and then inline STRIDE instead of dispatching; that is the precise failure the gate now catches (it would silently pass pre-2026-06-05). If the spawn count falls short, the gate falls through to the per-component `.progress/` check — so a genuinely-parallel run whose hooks under-logged is still saved by the `.progress/` files the `export OUTPUT_DIR` above guarantees, while a true inline-collapse (no spawns AND no `.progress/`) trips and aborts the run. If a component's analyzer fails, re-dispatch just that one once; if it still fails, fall back to an inline `RESUME_FROM_PHASE=9` analyst for the remainder.
+   3c. **Fan out STRIDE analyzers in parallel.** **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** after the manifest validates, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phase 9 — STRIDE (<N> components)"` where `<N>` is the manifest's `components[]` count. (The per-component `"STRIDE: <NAME>"` Agent rows below render natively in the subagent panel — this label just names the phase group above them.)
+
+   **⚠ HARD CONSTRAINT — ONE MESSAGE, ALL COMPONENTS, NO EXCEPTIONS.** Read `.stride-dispatch-manifest.json`; collect ALL `components[]` entries; issue ALL `Agent` calls to `appsec-advisor:appsec-stride-analyzer` **in a SINGLE message turn** (multiple tool-use blocks in one response). This is NOT optional and NOT sequential: every component must be in the SAME message so Claude Code dispatches them concurrently. **DO NOT send one Agent call, wait for it to finish, then send the next.** That sequential pattern collapses the fan-out to a serial chain, multiplying wall-clock by N (observed in production: 6 components × ~4 min each = 27 min instead of 5 min parallel). Concrete check: if you are about to call Agent for component 2 AFTER component 1 returned, you have already violated this constraint — stop and re-read. The proven model is the Stage-1c abuse-verifier dispatch (SKILL-impl.md §"Stage 1c"): all verifiers dispatched in one message, all run concurrently.
+
+   **Set each Agent call's `description` to `"STRIDE: <NAME>"`** (the component's `name` from the manifest entry — e.g. `"STRIDE: express-api"`) so the Claude Code subagent panel shows one labelled row per component being analyzed. The component name leads the string because the panel truncates. Map each manifest entry to the analyzer's prompt params (`COMPONENT_ID`/`NAME`/`DESCRIPTION`/`PATHS`/`COMPLEXITY`, `MAX_TURNS`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_*`, `TAXONOMY_SLICE_DIR`, and `*_INDEX_PATH` from `index_paths.*`). **Each dispatch prompt MUST also pass `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and instruct the analyzer to `export OUTPUT_DIR=<value>` as its FIRST Bash call** — `agent_progress.sh` silently no-ops unless `OUTPUT_DIR` is a shell env var, so without the export the analyzer writes `.stride-<id>.json` but skips `.progress/<id>.json`, blinding the watchdog and (pre-fix) false-positiving `check_stride_dispatch.py`. Model = `STRIDE_MODEL`. Wait for all to return — each writes `.stride-<id>.json` + `.progress/<id>.json`. **Issuing the real per-component `Agent` calls here is what makes the run pass the post-Stage-1 gate.** `check_stride_dispatch.py` requires *count-based* dispatch evidence: at least as many `AGENT_SPAWN appsec-stride-analyzer` lines in `.hook-events.log` as the manifest has components (each `Agent` call emits exactly one). **The manifest's existence alone is NOT proof** — it is built in step 3b *before* this fan-out, so it survives a collapse where you build it and then inline STRIDE instead of dispatching; that is the precise failure the gate now catches (it would silently pass pre-2026-06-05). If the spawn count falls short, the gate falls through to the per-component `.progress/` check — so a genuinely-parallel run whose hooks under-logged is still saved by the `.progress/` files the `export OUTPUT_DIR` above guarantees, while a true inline-collapse (no spawns AND no `.progress/`) trips and aborts the run.
+
+   **3c-retry — Stub detection and immediate re-dispatch (before Analyst-B).** After all STRIDE agents return, inspect every `.stride-<id>.json` for stub output BEFORE dispatching Analyst-B:
+
+   ```bash
+   STUB_COMPONENTS=""
+   for f in "$OUTPUT_DIR"/.stride-*.json; do
+     [ -f "$f" ] || continue
+     cid=$(basename "$f" .json | sed 's/^\.stride-//')
+     # A stub has threats=[] OR partial=true — both indicate turn-budget exhaustion.
+     IS_STUB=$(python3 -c "
+   import json, sys
+   try:
+     d = json.load(open('$f'))
+     threats = d.get('threats', [])
+     partial = d.get('partial', False)
+     print('yes' if (not threats or partial) else 'no')
+   except Exception:
+     print('no')
+   " 2>/dev/null)
+     if [ "$IS_STUB" = "yes" ]; then
+       STUB_COMPONENTS="$STUB_COMPONENTS $cid"
+       echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [$cid]  WARN   skill  STRIDE_STUB   component=$cid threats=0 — queuing for re-dispatch" >> "$OUTPUT_DIR/.agent-run.log"
+     fi
+   done
+   ```
+
+   For each `$cid` in `$STUB_COMPONENTS`, re-dispatch the single `appsec-stride-analyzer` **once** (foreground, `run_in_background: false`) with the same prompt as the original dispatch. If the retry still produces a stub or fails validation, log `STRIDE_STUB_RETRY_FAILED` and proceed without that component (`merge_threats.py` tolerates missing components). Do NOT re-dispatch more than once per component — a second exhaustion signals the component is too large for the current turn budget, and Analyst-B's merge step will carry forward an empty threat set rather than blocking. Dispatch all stub re-runs **simultaneously in one message** when there are multiple stubs.
 
    3d. **Analyst-B** — **Coarse phase-group label (C-lite, skip when `DRY_RUN=true`):** before dispatching, call `TaskUpdate` on `Stage 1a - Threat Analysis` to set `activeForm: "Phases 9–10b — merge → triage"`. Then: Agent call `description: "Threat Analysis & Triage (merge+triage)"`, prompt sets **`RESUME_FROM_PHASE=9-merge`** (+ normal config + `STAGE1_PHASE_LIMIT=10b`). It skips Phases 1–8 + STRIDE, reuses the `.stride-*.json`, and runs Phase 9 merge → Phase 10/10b → Phase-11 Substeps 1–3. Same post-conditions + checkpoint (`phase=10b status=completed need_render=true`) as the default branch. Then continue to step 4.
 

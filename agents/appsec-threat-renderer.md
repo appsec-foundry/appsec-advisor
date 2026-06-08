@@ -28,7 +28,7 @@ roles you do NOT compose and do NOT run those tail steps.
 |---|---|---|---|
 | `full` (default / unset) | everything below (MS + §7) | — | **YES — you run them** (back-compat, unchanged) |
 | `secarch` | ONLY `security-architecture.md` per the §7 contract below | `architecture-diagrams.md` (deterministic — the skill force-regenerates it from `threat-model.yaml` before AND after this dispatch, so any edit here is always discarded; §2 incl. its `**Key takeaway:**` lines is owned by `pregenerate_fragments.py:gen_architecture_diagrams`), any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
-| `ms` | ONLY `ms-verdict.json`, `ms-architecture-assessment.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
+| `ms` | ONLY `ms-verdict.json`, `ms-architecture-assessment.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`), `requirements-compliance.md` (when `CHECK_REQUIREMENTS=true`); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 
 **Both split roles still run the `## First Action` telemetry** (tag the phase-start
 message with your role, e.g. `[Phase 11/11] §7 enrichment` / `[Phase 11/11]
@@ -124,6 +124,7 @@ Author only the fragments that require LLM judgement or explicitly requested enr
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
 - ~~`.fragments/ms-top-mitigations.json`~~ — **DO NOT author by default.** The composer builds the §1 Top-Mitigations leader-board **deterministically** (`_row_sort_key` ordering + Critical-floor coverage). LLM curation is retired: the marginal re-ordering gain did not justify the extra renderer turns. Skip it unless `ENRICH_TOP_MITIGATIONS=true` is explicitly set. See contract below.
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
+- `.fragments/requirements-compliance.md` when `CHECK_REQUIREMENTS=true` — see authoring contract below
 - ~~`.fragments/top-threats-architecture.md` (Figure 1)~~ — **DO NOT author this fragment.** Figure 1 is built **deterministically** by the composer (`_render_top_threats_architecture`), which is the authoritative single source of truth for that diagram. Hand-authoring is retired: the LLM repeatedly drifted from the agreed format (unstructured layout, missing per-component finding badges, un-annotated actors, attacker→data edges, and out-of-range `linkStyle` indices that crash Mermaid). Skip it — the composer ignores any file you write here except as a no-attack-paths fallback.
 - `.fragments/security-architecture.md` only when `ENRICH_ARCH_FRAGMENTS=true`. (`architecture-diagrams.md` is **not** enriched — it is deterministic and the skill force-regenerates it from `threat-model.yaml` before AND after Stage 2, so any edit here is discarded. §2 — diagrams, intro sentences, and `**Key takeaway:**` lines — is owned by `pregenerate_fragments.py:gen_architecture_diagrams`.)
 
@@ -375,6 +376,55 @@ The Critical Attack Tree renders as an unnumbered `## Critical Attack Tree` sect
 6. **Dual anchor preserved.** The template emits both `#critical-attack-tree` (canonical) and `#critical-attack-chain` (legacy back-compat). External deep-links to the legacy anchor continue to resolve; cross-references inside the model should use the canonical anchor.
 
 The fragment is validated against `schemas/fragments/critical-attack-tree.schema.json` at compose time; a schema-invalid fragment falls back to the soft-skip path. The deterministic `walkthrough_renderer.py` does NOT author this fragment — the LLM judgement on which preconditions combine into which capability is required.
+
+### `security-posture-attack-paths.json` authoring contract
+
+Renders as the Figure 2 attack-paths table in §1. **Author EXACTLY this schema** — the composer rejects any deviation:
+
+```json
+{
+  "schema_version": 1,
+  "actors": ["<actor>"],
+  "attack_paths": [
+    {
+      "class": "<class enum>",
+      "actor": "<actor enum>",
+      "target": "<target string, max 60 chars>",
+      "description": "<1-2 sentence attack narrative, max 200 chars>",
+      "impact": ["<impact enum>"]
+    }
+  ]
+}
+```
+
+**Closed enums — use ONLY these values (do not invent new ones):**
+
+- `actors[]` / `actor`: `External Attacker` · `Authenticated User` · `Malicious Insider` · `Third-Party Integration` · `Supply Chain Actor` · `Unauthenticated User`
+- `class`: `injection` · `auth_bypass` · `session_hijack` · `privilege_escalation` · `data_exfiltration` · `dos` · `supply_chain`
+- `impact[]`: `data_breach` · `account_takeover` · `service_disruption` · `privilege_escalation` · `compliance_violation` · `financial_loss` · `reputational_damage`
+
+Each `attack_paths[]` entry must map to ≥1 Critical or High finding. Derive the list from your STRIDE analysis — do not invent paths not evidenced by findings. Omit the file if no High/Critical findings exist (the section renders nothing).
+
+### `requirements-compliance.md` authoring contract
+
+**Author only when `CHECK_REQUIREMENTS=true`** (the skill passes this flag when `--requirements <file>` was supplied). When this flag is absent, do NOT create this file — compose soft-skips §7b when the fragment is missing.
+
+Renders as §7b Requirements Compliance in the threat model. Read `.requirements.yaml` (path in `$REQUIREMENTS_FILE`) and `.threats-merged.json` to determine which requirements are PASS / PARTIAL / FAIL. Write a Markdown file with this structure:
+
+```markdown
+## 7b. Requirements Compliance
+
+| Requirement | Status | Evidence |
+|-------------|--------|----------|
+| REQ-ID: <title> | ✅ PASS / ⚠️ PARTIAL / ❌ FAIL | <1-sentence evidence or gap description> |
+```
+
+Status rules:
+- **PASS**: no finding in `.threats-merged.json` maps to this requirement (or all mapped findings are Low)
+- **PARTIAL**: ≥1 Medium finding maps to this requirement
+- **FAIL**: ≥1 High or Critical finding maps to this requirement
+
+Map findings to requirements via the `requirement_ids[]` field in `.threats-merged.json` threats (populated by `emit_review_mitigations.py`). Add a short prose summary paragraph above the table (2-4 sentences naming the most important gaps). Do not enumerate every finding — the table is the evidence pointer; details live in §8.
 
 ### `security-architecture.md` authoring
 
@@ -765,6 +815,7 @@ The watchdog writes `$OUTPUT_DIR/.budget-critical` when any agent in this run hi
 | Authoring `ms-critical-attack-tree.json` | **Skip entirely** — the composer soft-skips the section with a warning; safer than a half-built tree |
 | Authoring `attack-walkthroughs.md` | **Skip entirely** — optional fragment, downstream renderer omits the section gracefully when missing |
 | Authoring `security-posture-attack-paths.json` | **Skip entirely** — optional |
+| Authoring `requirements-compliance.md` | **Skip entirely** — compose soft-skips §7b when absent |
 | Enriching pre-generated fragments (`ENRICH_ARCH_FRAGMENTS=true`) | **Skip** — use the pre-generated fragments verbatim |
 | Running `compose_threat_model.py --strict` | Run with `--strict` removed (loose mode) so partial fragments compose into something rather than failing the gate |
 | Running `qa_checks.py all` | **Skip** — QA failures on a partial render are noise; the skill-layer banner already surfaces the wrap-up |
