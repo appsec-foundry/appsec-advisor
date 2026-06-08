@@ -7154,6 +7154,7 @@ _REQ_VIOLATION_STATUSES = frozenset({"FAIL", "PARTIAL", "ANTI-PATTERN"})
 _REQ_NON_VIOLATION_STATUSES = frozenset(
     {"PASS", "N/A", "NA", "NOT APPLICABLE", "UNVERIFIABLE", "NOT OBSERVABLE"}
 )
+_REQ_HEADER_TOKENS = frozenset({"id", "requirement", "requirement id"})
 
 
 def _normalise_requirement_status(raw: Any) -> str:
@@ -7260,7 +7261,6 @@ def _requirements_status_map(ctx: RenderContext) -> dict[str, str]:
             if not cells:
                 continue
             lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
-            _REQ_HEADER_TOKENS = {"id", "requirement", "requirement id"}
             if (
                 any(c in _REQ_HEADER_TOKENS for c in lowered)
                 and "status" in lowered
@@ -7330,7 +7330,6 @@ def _requirements_evidence_findings_map(ctx: RenderContext) -> dict[str, list[st
         if not cells:
             continue
         lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
-        _REQ_HEADER_TOKENS = {"id", "requirement", "requirement id"}
         if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
             header = lowered
             req_idx = next((i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS), -1)
