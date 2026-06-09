@@ -2,6 +2,8 @@
 
 Grades a repository against an `SEC-*` requirements catalog. Faster than a full threat model — fits PR gates, compliance dashboards, and audit preparation.
 
+→ [Back to README](../README.md)
+
 ## Contents
 
 - [What it does](#what-it-does)
@@ -41,8 +43,16 @@ Once a URL is configured (or a cache exists from a prior run), the skill fetches
 
 ## Run
 
-```
+```text
+# Run with the configured catalog
 /appsec-advisor:audit-security-requirements
+
+# Run standalone with a URL
+/appsec-advisor:audit-security-requirements --requirements https://URL/appsec-requirements.yaml
+
+# Use the bundled mock server to test locally before connecting a real catalog
+python3 scripts/mock-server.py
+/appsec-advisor:audit-security-requirements --requirements http://127.0.0.1:4444/requirements.yaml
 ```
 
 ## Three paths to a catalog
