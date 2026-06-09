@@ -5,7 +5,7 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 
-`appsec-advisor` is a Claude Code plugin built around a **threat modeler** — a staged agent pipeline that derives a security architecture model from a repository and applies STRIDE to produce structured findings. On top of that foundation sit a **requirements audit** (grades the codebase against a requirements catalog) and **developer helpers** (change review, pre-commit guidance, CI gates).
+`appsec-advisor` is a Claude Code plugin built around a **threat modeler**: a staged agent pipeline that derives a security architecture model from a repository and applies STRIDE to produce structured findings. On top of that foundation sit a **requirements audit** (grades the codebase against a requirements catalog) and **developer helpers** (change review, pre-commit guidance, CI gates).
 
 ## Problem
 
@@ -19,23 +19,23 @@ That leaves a gap between code scanning and manual architecture review. The thre
 
 The threat modeler treats the repository as the primary evidence source for security architecture review.
 
-* **Code-anchored architecture model:** Architecture, trust boundaries, and data flows are read from the current code — no diagrams to keep in sync.
+* **Code-anchored architecture model:** Architecture, trust boundaries, and data flows are read from the current code, with no diagrams to keep in sync.
 
-* **Staged agent pipeline:** Specialized agents run recon, analysis, triage, and QA as separate stages, bound by shared schemas, contracts, and templates — structured, validatable output instead of freeform LLM responses.
+* **Staged agent pipeline:** Specialized agents run recon, analysis, triage, and QA as separate stages, bound by shared schemas, contracts, and templates: structured, validatable output instead of freeform LLM responses.
 
-* **Catalog-grounded context:** Your requirements, prior threats, and adjacent services feed the analysis — findings reference your controls, not a generic checklist.
+* **Catalog-grounded context:** Your requirements, prior threats, and adjacent services feed the analysis, so findings reference your controls, not a generic checklist.
 
-* **Diff-based reruns:** Findings keep stable IDs across runs — a rescan shows what actually moved, not a fresh report.
+* **Diff-based reruns:** Findings keep stable IDs across runs, so a rescan shows what actually moved, not a fresh report.
 
-* **Architecture-level review:** Findings sit at trust boundaries, service trust, and unauthenticated paths — the architecture risks code scanners miss.
+* **Architecture-level review:** Findings sit at trust boundaries, service trust, and unauthenticated paths: the architecture risks code scanners miss.
 
-A repeatable, code-aware starting point for review — input for architectural judgment, not a verdict. The requirements audit and developer helpers reuse the same catalog and agent infrastructure to extend this into day-to-day development.
+The result is a repeatable, code-aware starting point for review. It supports architectural judgment, but it is not a verdict. The requirements audit and developer helpers reuse the same catalog and agent infrastructure to extend this into day-to-day development.
 
 ## Intended use
 
 `appsec-advisor` is intended for internal enterprise security review workflows.
 
-AppSec and security architecture teams own the plugin configuration, defaults, templates, and review policy. Engineering teams run threat models during design work, review preparation, major changes, or release readiness checks — and use the requirements audit and developer helpers for ongoing compliance checks and change review.
+AppSec and security architecture teams own the plugin configuration, defaults, templates, and review policy. Engineering teams run threat models during design work, review preparation, major changes, or release readiness checks, and use the requirements audit and developer helpers for ongoing compliance checks and change review.
 
 Threat model findings should be validated by an AppSec engineer or security architect before they inform release decisions, remediation commitments, exceptions, or formal risk acceptance.
 
@@ -44,9 +44,9 @@ Threat model findings should be validated by an AppSec engineer or security arch
 ## Security notes
 
 > [!IMPORTANT]
-> **Treat any repository you scan as untrusted input.** Its contents flow into the LLM, so a repo can attempt prompt injection — and because the default Bash allow-list still contains general-purpose interpreters (`python3`, `awk`, `sed`), a successful injection can escalate into local command execution. For third-party or vendor code, run with `--trust-mode untrusted` inside a container or VM. Details in [SECURITY.md → Known issues](SECURITY.md#known-issues--untrusted-repositories).
+> **Treat any repository you scan as untrusted input.** Its contents flow into the LLM, so a repo can attempt prompt injection. Because the default Bash allow-list still contains general-purpose interpreters (`python3`, `awk`, `sed`), a successful injection can escalate into local command execution. For third-party or vendor code, run with `--trust-mode untrusted` inside a container or VM. Details in [SECURITY.md: Known issues](SECURITY.md#known-issues--untrusted-repositories).
 
-**What leaves your machine.** Only the source, manifests, and config of the components under analysis — never the whole repo. Secret snippets surfaced in `.recon-summary.md` are masked (up to 4 characters kept, the rest `****`). The plugin needs `api.anthropic.com` and cannot run air-gapped; cached prompt segments live on Anthropic infrastructure for the cache TTL.
+**What leaves your machine.** Only the source, manifests, and config of the components under analysis, never the whole repo. Secret snippets surfaced in `.recon-summary.md` are masked (up to 4 characters kept, the rest `****`). The plugin needs `api.anthropic.com` and cannot run air-gapped; cached prompt segments live on Anthropic infrastructure for the cache TTL.
 
 **How the report is produced.** The report is rendered by deterministic Python (Jinja), not by the model, so the same input yields the same report. Intermediate artefacts are schema-validated, template conditions use a small parser instead of `eval()`, and `secret_scan.py` blocks `publish-threat-model` from exposing an unmasked secret.
 
@@ -59,6 +59,7 @@ Threat model findings should be validated by an AppSec engineer or security arch
 - [Requirements Audit](#requirements-audit)
 - [Additional developer tools](#additional-developer-tools)
 - [CI integration](#ci-integration)
+- [Plugin development checks](#plugin-development-checks)
 - [Enterprise rollout](#enterprise-rollout)
 - [Roadmap](#roadmap)
 - [Related projects](#related-projects)
@@ -66,7 +67,7 @@ Threat model findings should be validated by an AppSec engineer or security arch
 
 ## Quick start
 
-The steps below get you to your first threat model — the plugin's primary tool. Requirements audit and developer helpers use the same setup and are covered in their own sections below.
+The steps below get you to your first threat model, the plugin's primary tool. Requirements audit and developer helpers use the same setup and are covered in their own sections below.
 
 This plugin requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`.
 
@@ -201,7 +202,7 @@ Covers: output formats, what the recon pass checks, all usage examples, assessme
 
 ## Requirements Audit
 
-`/appsec-advisor:audit-security-requirements` grades the repository against an internal AppSec requirements catalog. Faster than a full threat model — fits PR gates, compliance dashboards, and audit preparation.
+`/appsec-advisor:audit-security-requirements` grades the repository against an internal AppSec requirements catalog. It is faster than a full threat model and fits PR gates, compliance dashboards, and audit preparation.
 
 ```text
 # Run with the configured catalog
@@ -211,7 +212,7 @@ Covers: output formats, what the recon pass checks, all usage examples, assessme
 /appsec-advisor:audit-security-requirements --requirements https://URL/appsec-requirements.yaml
 ```
 
-Both `audit-security-requirements` and the requirements phase of `create-threat-model` read from the same `requirements_yaml_url` in `skills/audit-security-requirements/config.json` — configure it once and both commands pick it up automatically.
+Both `audit-security-requirements` and the requirements phase of `create-threat-model` read from the same `requirements_yaml_url` in `skills/audit-security-requirements/config.json`: configure it once and both commands pick it up automatically.
 
 No catalog yet? Start from the bundled baseline (`data/appsec-requirements-fallback.yaml`) and edit it to your organisation's vocabulary. Once you have live requirements pages (Confluence, Antora, static HTML), `scripts/harvest-requirements.py` can generate and refresh the YAML automatically. → [docs/harvester.md](docs/harvester.md)
 
@@ -221,7 +222,7 @@ Covers: status values, catalog setup, the three paths to a catalog, all flags, a
 
 ## Additional developer tools
 
-The requirements audit (`audit-security-requirements`) is an AppSec-owned compliance gate — it grades a snapshot of the repository against a catalog and produces a structured report for dashboards, audits, and release gates.
+The requirements audit (`audit-security-requirements`) is an AppSec-owned compliance gate: it grades a snapshot of the repository against a catalog and produces a structured report for dashboards, audits, and release gates.
 
 The tools below serve a different purpose: they are developer-facing helpers that give security feedback during active coding or on a diff in progress. They are not audit artifacts. Like the requirements audit they use the configured requirements catalog as their active standard, falling back to the bundled baseline when none is configured.
 
@@ -236,16 +237,45 @@ Full guide: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage
 
 ## CI integration
 
-`scripts/run-headless.sh` runs the same analysis non-interactively and propagates exit codes for CI/CD use. It works for both the threat modeler and the requirements audit.
+`scripts/run-headless.sh` runs `appsec-advisor` non-interactively in the CI/CD
+pipeline of the repository being assessed. It invokes the same Claude Code
+plugin skills as an interactive run and propagates exit codes so downstream
+steps can gate on the result.
 
 ```bash
 ./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5 --sarif
 ```
 
+For a faster requirements-only CI job:
+
+```bash
+./scripts/run-headless.sh --audit-requirements --save-report --max-budget 3
+```
+
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
+## Plugin development checks
+
+For changes to this plugin repository, the deterministic test suite is the
+per-PR safety net. The committed GitHub Actions workflow runs config validation,
+ruff, and pytest across Python 3.10, 3.11, and 3.12:
+
+```bash
+python3 scripts/validate_config.py .
+ruff check scripts/ tests/ hooks/
+ruff format --check scripts/ tests/ hooks/
+pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing
+```
+
+After non-trivial changes to renderers, schemas, phase prompts, hooks, or
+pipeline control flow, run the manual full-run E2E check:
+
+```bash
+make e2e-full
+```
+
 For local regression checks against the external fixture suite, use the manual
-E2E drivers:
+fixture drivers:
 
 ```bash
 ./scripts/e2e_fixture.sh --fixture python-threat-fixture --depth quick --clean-output
@@ -254,20 +284,22 @@ E2E drivers:
 
 The generic single-repo driver supports the Spring, Python, Rust, Go,
 Node.js/TypeScript, and Python/LangChain fixtures from the sibling
-`appsec-advisor-fixtures` checkout. See [`docs/e2e-fixtures.md`](docs/e2e-fixtures.md)
-and [`docs/e2e-cross-repo-fixture.md`](docs/e2e-cross-repo-fixture.md).
+`appsec-advisor-fixtures` checkout. These E2E runs are manual and opt-in because
+they invoke Claude Code and consume LLM budget. See [`CONTRIBUTING.md`](CONTRIBUTING.md),
+[`docs/e2e-fixtures.md`](docs/e2e-fixtures.md), and
+[`docs/e2e-cross-repo-fixture.md`](docs/e2e-cross-repo-fixture.md).
 
 ## Enterprise rollout
 
-For AppSec and Platform teams: treat `appsec-advisor` as the upstream analysis core, wrap it in a company-branded plugin, and ship that to developers. They get one command that runs with your requirements catalog, presets, and guardrails already loaded — no per-developer configuration.
+For AppSec and Platform teams: treat `appsec-advisor` as the upstream analysis core, wrap it in a company-branded plugin, and ship that to developers. They get one command that runs with your requirements catalog, presets, and guardrails already loaded, no per-developer configuration.
 
 What the org-profile buys you over the generic plugin:
 
-- **Your requirements catalog, not the generic baseline** — findings and audit grades reference your internal control IDs and severity definitions.
-- **Fixed cost limits** — token budget and max duration baked in; developers can't accidentally run an unbounded analysis.
-- **Pre-loaded business context** — service classification, regulatory scope, and risk appetite set centrally, not per run.
-- **Consistent presets** — assessment depth, output formats, and SARIF export configured once for the whole org.
-- **Locked surface** — `package-policy.yaml` removes experimental skills or hooks that aren't approved for internal use.
+- **Your requirements catalog, not the generic baseline:** findings and audit grades reference your internal control IDs and severity definitions.
+- **Fixed cost limits:** token budget and max duration baked in; developers can't accidentally run an unbounded analysis.
+- **Pre-loaded business context:** service classification, regulatory scope, and risk appetite set centrally, not per run.
+- **Consistent presets:** assessment depth, output formats, and SARIF export configured once for the whole org.
+- **Locked surface:** `package-policy.yaml` removes experimental skills or hooks that aren't approved for internal use.
 
 The diagram below shows the packaging and distribution flow using "Acme" as a placeholder for your organisation.
 
@@ -310,11 +342,11 @@ Open work items currently shaping the next iterations of the plugin:
 
 - **Richer external context.** The pipeline is anchored almost entirely in the repository itself; structured external context is limited to `docs/related-repos.yaml` and the optional requirements catalog. Additional context sources (architecture decision records, runtime and deployment topology, incident history, prior pentest findings) are planned so the analysis can reason beyond the code alone.
 
-- **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents — design draft in [`sharedstate.md`](sharedstate.md).
+- **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents. Design draft: [`sharedstate.md`](sharedstate.md).
 
-- **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input* — its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. Only being weighed, not committed — goal and reservations in [`proposal-external-threat-model-ingestion.md`](docs/proposal-external-threat-model-ingestion.md).
+- **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input*: its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. This is only being weighed, not committed. Goal and reservations: [`proposal-external-threat-model-ingestion.md`](docs/proposal-external-threat-model-ingestion.md).
 
-- **Scaling to component-heavy repositories.** Component selection follows the attack surface, but STRIDE merge and the per-agent turn budget run serially and strain past ~8–10 components. Rather than drop exposed components to stay under that limit, the run analyses them all and logs that it overran — correct, but slow and costly on large repos. Parallelising the merge step is the open fix.
+- **Scaling to component-heavy repositories.** Component selection follows the attack surface, but STRIDE merge and the per-agent turn budget run serially and strain past about 8 to 10 components. Rather than drop exposed components to stay under that limit, the run analyses them all and logs that it overran. This is correct, but slow and costly on large repos. Parallelising the merge step is the open fix.
 
 ## Related projects
 
@@ -322,7 +354,7 @@ Open work items currently shaping the next iterations of the plugin:
 
 - **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: A Streamlit application for generating STRIDE threat models from a textual system or application description. It is mainly useful for early design discussions and can also generate mitigations, attack trees, risk scores, test cases, and Markdown output.
 
-- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta — Enterprise plans): A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses, validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. It complements `appsec-advisor`: Claude Security is closer to vulnerability discovery and remediation workflow, while `appsec-advisor` is a broader AppSec review assistant for repository analysis, threat modeling, architecture observations, weakness identification, and recommendations.
+- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta for Enterprise plans): A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses, validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. It complements `appsec-advisor`: Claude Security is closer to vulnerability discovery and remediation workflow, while `appsec-advisor` is a broader AppSec review assistant for repository analysis, threat modeling, architecture observations, weakness identification, and recommendations.
 
 ## Contributing
 
