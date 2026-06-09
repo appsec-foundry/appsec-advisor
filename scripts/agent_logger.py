@@ -1362,6 +1362,32 @@ _PROGRESS_EVENTS = re.compile(
 )
 
 
+_PHASE_BOUNDARY_RE = re.compile(r"\b(PHASE_START|PHASE_END)\b")
+
+
+def _mirror_phase_events_to_hook_log(cmd: str, sid: str = "") -> None:
+    """Mirror PHASE_START / PHASE_END lines from .agent-run.log Bash writes
+    into .hook-events.log so that external tooling and tests that read the
+    hook log see phase-boundary events.
+
+    Called only when the Bash command writes to .agent-run.log.
+    """
+    m = _PHASE_BOUNDARY_RE.search(cmd)
+    if not m:
+        return
+    event = m.group(1)
+    # Extract the detail that follows the event keyword in the echo string.
+    after = cmd[m.end():].lstrip()
+    for stop in ('" >>', "' >>", ">> ", '"$', "'$", '" 2>', "' 2>"):
+        idx = after.find(stop)
+        if idx >= 0:
+            after = after[:idx]
+    detail = after.strip().rstrip('"').rstrip("'").strip()
+    if not detail:
+        return
+    _write("INFO ", event, detail, sid)
+
+
 def _emit_substep_progress(cmd: str) -> None:
     """Parse a Bash echo command that writes to .agent-run.log and emit the
     human-readable substep description to stderr.
@@ -2053,15 +2079,14 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
 
         # --- Surface STEP_START / PHASE_START / PHASE_END / AGENT_INVOKE /
         #     AGENT_DONE from orchestrator Bash echo commands.  These are
-        #     written to .agent-run.log by the agent but never pass through
-        #     the hook pipeline.  Extract the human-readable part and emit
-        #     to stderr only (no log file write — the agent already wrote
-        #     the canonical entry).  Default-on: the _PROGRESS_EVENTS regex
-        #     filters to a tight set of phase/step boundary keywords, so
-        #     this does not flood the terminal.  Verbose mode adds the
-        #     finer-grained per-tool events (FILE_*, GREP_*, BASH_OK).
+        #     written to .agent-run.log by the agent.  Mirror PHASE_START
+        #     and PHASE_END to .hook-events.log so test_hook_log_records_phase_progression
+        #     (and any external tooling that reads .hook-events.log) can see
+        #     phase boundaries without parsing .agent-run.log.  All other
+        #     events are emitted to stderr only (no duplication in the log).
         if ".agent-run.log" in cmd_str:
             _emit_substep_progress(cmd_str)
+            _mirror_phase_events_to_hook_log(cmd_str, sid)
 
     # ----- Budget watchdog (count this tool call against agent's maxTurns) -----
     # Runs LAST so any earlier early-return paths still count the call. Failures

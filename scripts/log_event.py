@@ -127,6 +127,9 @@ def _mirror_line(kind: str, detail: str, elapsed: str) -> str:
     return f"  {glyph} {clean}"
 
 
+_PHASE_BOUNDARY_EVENTS = frozenset({"PHASE_START", "PHASE_END"})
+
+
 def _append_log(output_dir: Path, event: str, detail: str, agent: str) -> None:
     log_path = output_dir / ".agent-run.log"
     line = format_line(event, detail, component=agent)
@@ -136,6 +139,16 @@ def _append_log(output_dir: Path, event: str, detail: str, agent: str) -> None:
             fh.write(line)
     except OSError:
         pass  # best-effort — never crash a log write
+    # Mirror phase boundaries to .hook-events.log so external tooling and
+    # tests that read the hook log see phase progression without parsing
+    # .agent-run.log.
+    if event in _PHASE_BOUNDARY_EVENTS:
+        hook_path = output_dir / ".hook-events.log"
+        try:
+            with open(hook_path, "a", encoding="utf-8") as fh:
+                fh.write(line)
+        except OSError:
+            pass
 
 
 def _clean_detail(detail: str) -> str:

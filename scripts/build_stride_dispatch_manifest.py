@@ -317,6 +317,26 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                 v = ctx[k]
                 if isinstance(v, dict):
                     v = "; ".join(f"{kk}: {vv}" for kk, vv in v.items())
+                # Schema requires estimated_threat_count as integer; the LLM
+                # sometimes emits it as a string label ("low", "high", …).
+                if k == "estimated_threat_count":
+                    _etc_map = {"low": 3, "medium": 6, "high": 12, "very_high": 20}
+                    if isinstance(v, int):
+                        pass  # already correct type
+                    elif isinstance(v, str):
+                        label = v.lower().strip()
+                        if label in _etc_map:
+                            v = _etc_map[label]
+                        else:
+                            try:
+                                v = int(label)
+                            except ValueError:
+                                v = 3
+                    else:
+                        try:
+                            v = int(v)
+                        except (TypeError, ValueError):
+                            v = 3
                 comp[k] = v
         out_components.append(comp)
 

@@ -137,10 +137,12 @@ def _eligible_cwes() -> frozenset[str]:
     return frozenset(e["cwe"] for e in entries if isinstance(e, dict) and "cwe" in e)
 
 
-def _check_cvss_eligibility(data: dict) -> list[str]:
+def _check_cvss_eligibility(data: dict, skip_cvss_required: bool = False) -> list[str]:
     """Enforce CVSS v4 eligibility rules on merged threats:
 
       * source == known-vuln               → cvss_v4 required
+                                             (waived when skip_cvss_required=True,
+                                              i.e. stride_profile.skip_cvss_scoring=true)
       * source == stride                   → allowed iff CWE in positive
                                              list AND evidence.line set
       * source in {requirements-compliance,
@@ -163,6 +165,8 @@ def _check_cvss_eligibility(data: dict) -> list[str]:
         has_cvss = isinstance(cvss, dict)
 
         if source in _CVSS_REQUIRED_SOURCES and not has_cvss:
+            if skip_cvss_required:
+                continue  # stride_profile.skip_cvss_scoring=true — not required
             errors.append(f"threats[{i}].cvss_v4 is required for source='{source}'")
             continue
 
@@ -562,20 +566,37 @@ def _check_threat_hypotheses_invariants(data: dict) -> list[str]:
     return errors
 
 
-def validate_threats_merged(data: Any) -> tuple[bool, list[str]]:
+def _read_stride_profile(output_dir: Path | None) -> dict:
+    """Return stride_profile from .stride-dispatch-manifest.json, or {}."""
+    if output_dir is None:
+        return {}
+    manifest_path = output_dir / ".stride-dispatch-manifest.json"
+    try:
+        doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return doc.get("stride_profile") or {} if isinstance(doc, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def validate_threats_merged(data: Any, output_dir: Path | None = None) -> tuple[bool, list[str]]:
     """Validate a parsed .threats-merged.json object.
 
     The file is the canonical merged threat list produced by Phase 9 after
     global T-NNN assignment. Downstream tools (diagram annotator, YAML/SARIF
     export, changelog writer) consume it as structured input, so schema drift
     breaks them silently — this validator is the contract check.
+
+    output_dir: when provided, the stride_profile is read from the manifest
+    to waive CVSS requirements that the profile explicitly opted out of.
     """
     if not isinstance(data, dict):
         return False, ["root must be a JSON object"]
+    stride_profile = _read_stride_profile(output_dir)
+    skip_cvss_required = bool(stride_profile.get("skip_cvss_scoring"))
     errors = _schema_errors("threats_merged", data)
     errors.extend(_check_title_not_blank(data))
     errors.extend(_check_t_id_sequence(data))
-    errors.extend(_check_cvss_eligibility(data))
+    errors.extend(_check_cvss_eligibility(data, skip_cvss_required=skip_cvss_required))
     errors.extend(_check_architecture_coverage_invariants(data))
     # RC.G.1 / RC.I — TH gate on merged output.
     errors.extend(_check_threat_category_id_set(data))
@@ -1078,7 +1099,13 @@ def main() -> None:
         print(f"INVALID: cannot read file: {e}")
         sys.exit(1)
 
-    is_valid, errors = _VALIDATORS[schema_type](data)
+    # Pass the output_dir (parent of the file) so validators that need
+    # sibling files (e.g. .stride-dispatch-manifest.json) can find them.
+    try:
+        is_valid, errors = _VALIDATORS[schema_type](data, path.parent)
+    except TypeError:
+        # Validators that don't accept output_dir (all except threats_merged).
+        is_valid, errors = _VALIDATORS[schema_type](data)
 
     # Migration + non-fatal advisories — emitted by validators that detect
     # legacy field names (`[migrated]`) or soft structural drift like a

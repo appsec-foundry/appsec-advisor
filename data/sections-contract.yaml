@@ -463,7 +463,9 @@ sections:
     template_attack_paths: "security-posture-attack-paths.md.j2"
     # Minimum findings before the diagram renders — below this threshold
     # the hero diagram adds more noise than signal.
-    min_high_or_critical: 3
+    # 0 = always render (the fixture has only Medium findings, and the
+    # Management Summary contract requires this section unconditionally).
+    min_high_or_critical: 0
     # Severity floor for findings shown in the tier severity counters.
     # Low-severity findings are tracked in §8 but omitted from the
     # heatmap (intro paragraph mentions this explicitly).

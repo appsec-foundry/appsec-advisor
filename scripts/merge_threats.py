@@ -34,12 +34,15 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import functools
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from _atomic_io import atomic_write_json, atomic_write_text
 
@@ -63,6 +66,34 @@ _STRIDE_LETTER = {
 }
 
 _CWE_RE = re.compile(r"^CWE-(\d+)$")
+
+
+@functools.lru_cache(maxsize=1)
+def _load_cwe_to_th_map() -> dict[str, str]:
+    """Load the cwe_to_th mapping from data/threat-category-taxonomy.yaml."""
+    path = Path(__file__).resolve().parent.parent / "data" / "threat-category-taxonomy.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return {}
+    raw = doc.get("cwe_to_th") or {}
+    # Values may be a list of TH-IDs; take the first.
+    result: dict[str, str] = {}
+    for cwe, val in raw.items():
+        if isinstance(val, list) and val:
+            result[str(cwe)] = val[0]
+        elif isinstance(val, str):
+            result[str(cwe)] = val
+    return result
+
+
+def _threat_category_id_for(t: dict) -> str | None:
+    """Return the TH-XX id for a threat based on its CWE, or None."""
+    cwe = t.get("cwe")
+    if not isinstance(cwe, str):
+        return None
+    mapping = _load_cwe_to_th_map()
+    return mapping.get(cwe)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +208,18 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
                 t["stride"] = t["stride_category"]
             if t.get("source") in (None, "", "stride-analyzer"):
                 t["source"] = _classify_stride_source(t)
+            # evidence: STRIDE analyzers sometimes emit a list; the
+            # threats-merged schema requires a single object or null.
+            # Coerce list→object by taking the first entry.
+            ev = t.get("evidence")
+            if isinstance(ev, list):
+                t["evidence"] = ev[0] if ev and isinstance(ev[0], dict) else None
+            # architectural_violation: required field — default False.
+            t.setdefault("architectural_violation", False)
+            # threat_category_id: required for source=stride; derive from
+            # CWE→TH taxonomy when missing.
+            if not t.get("threat_category_id"):
+                t["threat_category_id"] = _threat_category_id_for(t)
             # M-18 (configuration-defect tail): if the source ended up as
             # `configuration-defect` and the threat has no LLM-authored
             # mitigation_title yet, stamp a review-shaped hint so the §1
