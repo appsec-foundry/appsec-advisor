@@ -478,6 +478,14 @@ Both routes drive `tests/e2e/run-full.sh`, which:
 
 **Re-checking without a fresh run:** `make e2e-full-keep` replays the assertions against the previous `_last-run/` artifacts — useful while iterating on an assertion or when debugging a failure without burning another LLM budget.
 
+**Additional manual fixture:** Cross-repo context has its own opt-in driver,
+`scripts/e2e_cross_repo_fixture.sh`, backed by the external
+`../appsec-advisor-fixtures/repos/cross-repo-threat-fixture/` suite. It is not
+part of the standard test run; `tests/test_e2e_cross_repo_fixture_script.py`
+only checks the driver contract. See
+[`docs/e2e-cross-repo-fixture.md`](docs/e2e-cross-repo-fixture.md) for the
+manual run command.
+
 ## Additional tools
 
 These tools support the main threat-modeling workflow. They can be used independently when you need a narrower review, reporting step, or operational helper.
