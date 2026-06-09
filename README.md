@@ -39,8 +39,6 @@ AppSec and security architecture teams own the plugin configuration, defaults, t
 
 Threat model findings should be validated by an AppSec engineer or security architect before they inform release decisions, remediation commitments, exceptions, or formal risk acceptance.
 
-Incremental reruns help keep the architecture view and threat model aligned with code changes.
-
 > **Status:** 0.4.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
 
 ## Security notes
@@ -59,7 +57,7 @@ Incremental reruns help keep the architecture view and threat model aligned with
 - [Quick start](#quick-start)
 - [Threat Modeler](#threat-modeler)
 - [Requirements Audit](#requirements-audit)
-- [Additional tools](#additional-tools)
+- [Additional developer tools](#additional-developer-tools)
 - [CI integration](#ci-integration)
 - [Enterprise rollout](#enterprise-rollout)
 - [Roadmap](#roadmap)
@@ -199,11 +197,11 @@ flowchart TB
 
 **→ Full reference: [docs/threat-modeler.md](docs/threat-modeler.md)**
 
-Covers: output formats, what the recon pass checks, all usage examples, assessment depth and cost control, cross-repo context, and pipeline architecture.
+Covers: output formats, what the recon pass checks, all usage examples, assessment depth and cost control, cross-repo context, pipeline architecture, and workflow commands (publish, export, health checks, run recovery).
 
 ## Requirements Audit
 
-`/appsec-advisor:audit-security-requirements` grades the repository against an `SEC-*` requirements catalog. Faster than a full threat model — fits PR gates, compliance dashboards, and audit preparation.
+`/appsec-advisor:audit-security-requirements` grades the repository against an internal AppSec requirements catalog. Faster than a full threat model — fits PR gates, compliance dashboards, and audit preparation.
 
 ```text
 # Run with the configured catalog
@@ -213,19 +211,19 @@ Covers: output formats, what the recon pass checks, all usage examples, assessme
 /appsec-advisor:audit-security-requirements --requirements https://URL/appsec-requirements.yaml
 ```
 
-The threat modeler and the requirements audit share the same catalog. Configure the URL once and both tools pick it up automatically.
+Both `audit-security-requirements` and the requirements phase of `create-threat-model` read from the same `requirements_yaml_url` in `skills/audit-security-requirements/config.json` — configure it once and both commands pick it up automatically.
+
+No catalog yet? Start from the bundled baseline (`data/appsec-requirements-fallback.yaml`) and edit it to your organisation's vocabulary. Once you have live requirements pages (Confluence, Antora, static HTML), `scripts/harvest-requirements.py` can generate and refresh the YAML automatically. → [docs/harvester.md](docs/harvester.md)
 
 **→ Full reference: [docs/security-requirements-audit-skill.md](docs/security-requirements-audit-skill.md)**
 
 Covers: status values, catalog setup, the three paths to a catalog, all flags, and how findings link back to the threat model.
 
-## Additional tools
+## Additional developer tools
 
-These tools support the threat modeler and requirements audit workflows. They can be used independently when you need a narrower review, reporting step, or operational helper.
+The requirements audit (`audit-security-requirements`) is an AppSec-owned compliance gate — it grades a snapshot of the repository against a catalog and produces a structured report for dashboards, audits, and release gates.
 
-### Developer tools
-
-Developer-facing security review tools share the same active standard: a configured company requirements catalog, or the bundled best-practices baseline when no catalog is configured.
+The tools below serve a different purpose: they are developer-facing helpers that give security feedback during active coding or on a diff in progress. They are not audit artifacts. Like the requirements audit they use the configured requirements catalog as their active standard, falling back to the bundled baseline when none is configured.
 
 | Tool | Type | Scope | Entry point | When to use it |
 |---|---|---|---|---|
@@ -235,25 +233,6 @@ Developer-facing security review tools share the same active standard: a configu
 | [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli) (*experimental*) | CLI | CI diff review | `appsec-reviewer-cli review --diff origin/main --output security-review.md` | Run the same requirements review headlessly in CI or other automation. |
 
 Full guide: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage.md) · Requirements catalog setup: [`docs/harvester.md`](docs/harvester.md) · Security Coach: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
-
-### Utility commands
-
-Common workflow helpers:
-
-| Command | Purpose |
-|---|---|
-| `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
-| `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, HTML, SARIF, and/or pentest-tasks. Deterministic — no LLM tokens spent. |
-| `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |
-
-Maintenance and recovery helpers:
-
-| Command | Purpose |
-|---|---|
-| `/appsec-advisor:check-permissions` | Check or update the Claude Code permissions needed for unattended runs. |
-| `/appsec-advisor:threat-model-health` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |
-| `/appsec-advisor:clean-run-state` | Remove stale run-state after an interrupted or crashed assessment. |
-| `/appsec-advisor:fix-run-issues` | Apply safe auto-fixes for issues recorded by the previous run, or print manual repair guidance. |
 
 ## CI integration
 
@@ -267,22 +246,45 @@ For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-m
 
 ## Enterprise rollout
 
-> **For AppSec and Platform teams:** package `appsec-advisor` as a company-branded Claude Code plugin when threat modeling should run with your own AppSec requirements, presets, business context, and cost limits by default.
+For AppSec and Platform teams: treat `appsec-advisor` as the upstream analysis core, wrap it in a company-branded plugin, and ship that to developers. They get one command that runs with your requirements catalog, presets, and guardrails already loaded — no per-developer configuration.
 
-Treat `appsec-advisor` as the upstream analysis core. Build an internal plugin artifact from it, for example `acme-appsec`, and bundle your org profile into that artifact. Developers then run one company command; the profile is loaded automatically.
+What the org-profile buys you over the generic plugin:
 
-```text
-/acme-appsec:create-threat-model
-# uses the bundled Acme profile, default preset, requirements catalog, and guardrails
+- **Your requirements catalog, not the generic baseline** — findings and audit grades reference your internal control IDs and severity definitions.
+- **Fixed cost limits** — token budget and max duration baked in; developers can't accidentally run an unbounded analysis.
+- **Pre-loaded business context** — service classification, regulatory scope, and risk appetite set centrally, not per run.
+- **Consistent presets** — assessment depth, output formats, and SARIF export configured once for the whole org.
+- **Locked surface** — `package-policy.yaml` removes experimental skills or hooks that aren't approved for internal use.
+
+The diagram below shows the packaging and distribution flow using "Acme" as a placeholder for your organisation.
+
+```mermaid
+flowchart LR
+    A["appsec-advisor<br/><i>github.com</i>"]
+
+    subgraph ACME["  Acme  "]
+        direction LR
+        P["org-profile/\nrequirements · presets · cost limits"]
+        B["acme-appsec\ninternal SCM"]
+        D["portal / devcontainer\n/ bootstrap"]
+        DEV(["Developer at Acme"])
+        CMD["/acme-appsec:create-threat-model"]
+    end
+
+    A -->|"pin & package"| B
+    P -->|"bundle"| B
+    B -->|"publish"| D
+    D -->|"install"| DEV
+    DEV -->|"runs"| CMD
+
+    style ACME fill:#f0f4f8,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
+    style A fill:#ffffff,stroke:#334155,stroke-width:1.5px,color:#334155
+    style P fill:#eef2f7,stroke:#334155,color:#0f172a
+    style B fill:#eef2f7,stroke:#334155,color:#0f172a
+    style D fill:#eef2f7,stroke:#334155,color:#0f172a
+    style DEV fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20
+    style CMD fill:#f8fafc,stroke:#cbd5e1,color:#334155
 ```
-
-At a high level:
-
-1. Pin or vendor `appsec-advisor` in an internal packaging repository.
-2. Build a packaged copy with `.claude-plugin/plugin.json` `name` set to your company namespace.
-3. Bundle `org-profile/` into that plugin and point `config.json` at it.
-4. Optionally restrict the packaged surface with `org-profile/package-policy.yaml` so unapproved skills or hooks are not included in the internal artifact.
-5. Validate the packaged copy in CI, then publish it through your normal internal software distribution path, such as a developer portal, plugin marketplace, artifact registry, bootstrap script, managed workstation image, or devcontainer base image.
 
 - Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
 - Runnable CI starters: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · Local build: [Quick start](docs/internal-plugin-packaging.md#quick-start)

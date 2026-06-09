@@ -13,6 +13,7 @@
 - [Assessment depth & cost control](#assessment-depth--cost-control)
 - [Cross-repo context](#cross-repo-context)
 - [Architecture](#architecture)
+- [Workflow commands](#workflow-commands)
 
 ## What you get
 
@@ -300,3 +301,17 @@ These fields are optional. Without them, the scan still uses the upstream model 
 - **Quality gates:** Deterministic QA checks run by default; optional architect review adds deeper technical validation.
 
 ![Threat Model Pipeline](images/threat-model-pipeline.png)
+
+## Workflow commands
+
+Helpers for the threat model lifecycle — run after `create-threat-model` completes or to recover from interrupted runs.
+
+| Command | Purpose |
+|---|---|
+| `/appsec-advisor:publish-threat-model` | Make selected report files trackable in git after the publish checks pass. |
+| `/appsec-advisor:export-threat-model` | Re-export an existing threat model into PDF, HTML, SARIF, and/or pentest-tasks. Deterministic — no LLM tokens spent. |
+| `/appsec-advisor:threat-model-health` | Check whether the current threat model is fresh, stale, missing, or blocked by run debris. |
+| `/appsec-advisor:clean-run-state` | Remove stale run-state after an interrupted or crashed assessment. |
+| `/appsec-advisor:fix-run-issues` | Apply safe auto-fixes for issues recorded by the previous run, or print manual repair guidance. |
+| `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
+| `/appsec-advisor:check-permissions` | Check or update the Claude Code permissions needed for unattended runs. |
