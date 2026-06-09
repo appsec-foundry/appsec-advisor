@@ -244,6 +244,19 @@ Full guide: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage
 
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
+For local regression checks against the external fixture suite, use the manual
+E2E drivers:
+
+```bash
+./scripts/e2e_fixture.sh --fixture python-threat-fixture --depth quick --clean-output
+./scripts/e2e_cross_repo_fixture.sh --depth quick --clean-output
+```
+
+The generic single-repo driver supports the Spring, Python, Rust, Go,
+Node.js/TypeScript, and Python/LangChain fixtures from the sibling
+`appsec-advisor-fixtures` checkout. See [`docs/e2e-fixtures.md`](docs/e2e-fixtures.md)
+and [`docs/e2e-cross-repo-fixture.md`](docs/e2e-cross-repo-fixture.md).
+
 ## Enterprise rollout
 
 For AppSec and Platform teams: treat `appsec-advisor` as the upstream analysis core, wrap it in a company-branded plugin, and ship that to developers. They get one command that runs with your requirements catalog, presets, and guardrails already loaded — no per-developer configuration.
