@@ -314,6 +314,7 @@ Read only when relevant; code/data is authoritative where named.
 - **Cross-repo context** → `docs/related-repos.yaml`, `scripts/load_related_repos.py`, `scripts/build_cross_repo_register.py`, `scripts/slice_cross_repo_for_component.py`.
 - **CLI/run flags** → `skills/create-threat-model/SKILL.md`.
 - **Repo layout and shared prompt context** → [`CONTRIBUTING.md`](CONTRIBUTING.md#repository-layout), `agents/shared/`, `agents/phases/`, `templates/fragments/*.j2`.
+- **Example org packaging repo** → [github.com/matthiasrohr/appsec-advisor-org-packaging-example](https://github.com/matthiasrohr/appsec-advisor-org-packaging-example) — reference implementation of an internal org packaging repo; use it to verify that org-profile schema or packaging script changes still work end-to-end from a consumer's perspective.
 
 ## Editing Guidance
 
@@ -324,6 +325,7 @@ Prefer small, consistent changes. Before changing behavior, identify affected co
 | Agent or phase prompt | schema/output drift, permissions, model routing, prompt-injection exposure, stale phase/artifact names, Group A/B/C order, prose-style anchor |
 | Script command, tool use, or path access | `data/required-permissions.yaml`, `tests/test_check_permissions.py` |
 | Schema, fragment, or report structure | `docs/schema-invariants.md`, contract, schema, producer, renderer, QA, tests |
+| Org-profile schema (`schemas/org-profile.schema.yaml`) or packaging scripts (`scripts/package_internal_plugin.py`, `scripts/smoke_test_package.py`, `scripts/validate_org_profile.py`) | Verify the [example org packaging repo](https://github.com/matthiasrohr/appsec-advisor-org-packaging-example) still builds cleanly — `make package` must pass against the updated upstream |
 | Template (`.j2`) | renderer cell-builder (`compose_threat_model.py`), the schema fields it consumes, `data/sections-contract.yaml` section registration, render/QA tests — never edit the template alone |
 | Cleanup or runtime state | `scripts/runtime_cleanup.py`, `docs/cleanup-whitelist.md`, `docs/audit-artifacts.md`, `tests/test_runtime_cleanup.py` |
 

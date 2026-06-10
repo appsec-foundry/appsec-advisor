@@ -133,6 +133,7 @@ The example repos already use Option 1:
 
 - [GitHub Actions example](../examples/internal-packaging-github)
 - [GitLab CI example](../examples/internal-packaging-gitlab)
+- [Complete example packaging repo](https://github.com/matthiasrohr/appsec-advisor-org-packaging-example) — a ready-to-fork repo with org-profile, CI pipelines, and build scripts
 
 ## Step 2 - Write the org profile
 
