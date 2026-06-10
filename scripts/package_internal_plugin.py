@@ -22,18 +22,32 @@ TEXT_SUFFIXES = {".json", ".md", ".txt", ".yaml", ".yml"}
 TOP_LEVEL_EXCLUDES = {
     ".agents",
     ".cache",
+    ".claude",
     ".codex",
     ".env",
     ".git",
+    ".github",
+    ".gitlab-ci.yml",
+    ".gitignore",
     ".pytest_cache",
     ".ruff_cache",
     ".mypy_cache",
     ".venv",
     ".venv-tests",
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "Makefile",
+    "README.md",
+    "SECURITY.md",
     "build",
     "dist",
+    "examples",
     "htmlcov",
     "node_modules",
+    "tests",
 }
 ANY_LEVEL_EXCLUDES = {"__pycache__"}
 PATH_EXCLUDES = {
@@ -387,6 +401,7 @@ def write_surface_manifest(
     policy_path: Path | None,
     skills: dict,
     hooks: dict,
+    upstream_url: str | None = None,
 ) -> None:
     if policy_path is None:
         policy_ref = None
@@ -403,18 +418,20 @@ def write_surface_manifest(
         "skills": skills,
         "hooks": hooks,
     }
+    if upstream_url:
+        manifest["upstream_url"] = upstream_url
     manifest_path = build / SURFACE_MANIFEST
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 def apply_package_surface_policy(
-    build: Path, policy: dict, policy_path: Path | None
+    build: Path, policy: dict, policy_path: Path | None, upstream_url: str | None = None
 ) -> None:
     surface = _policy_surface(policy)
     skills = apply_skill_policy(build, surface)
     hooks = apply_hook_policy(build, surface)
-    write_surface_manifest(build, policy_path, skills, hooks)
+    write_surface_manifest(build, policy_path, skills, hooks, upstream_url)
 
 
 def _text_files(root: Path):
@@ -502,6 +519,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--build-dir", default="build", help="build output directory")
     parser.add_argument("--dist-dir", default="dist", help="tarball output directory")
     parser.add_argument("--description", default=None, help="plugin.json description override")
+    parser.add_argument("--upstream-url", default=None, help="upstream plugin repository URL recorded in package-surface.json")
     parser.add_argument(
         "--skip-validation",
         action="store_true",
@@ -541,7 +559,7 @@ def main(argv: list[str] | None = None) -> int:
     overlay_org_profile(org_profile, build)
     patch_plugin_json(build, args.name, args.version, args.description)
     patch_config(build)
-    apply_package_surface_policy(build, package_policy, package_policy_path)
+    apply_package_surface_policy(build, package_policy, package_policy_path, args.upstream_url)
     rewrite_namespace(build, args.name)
     check_namespace_leaks(build)
 
