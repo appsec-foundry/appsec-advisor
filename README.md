@@ -333,7 +333,7 @@ flowchart LR
 
 - Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
 - Runnable CI starters: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · Local build: [Quick start](docs/internal-plugin-packaging.md#quick-start)
-- Complete example packaging repo: [github.com/matthiasrohr/appsec-advisor-org-packaging-template](https://github.com/matthiasrohr/appsec-advisor-org-packaging-template)
+- Complete example packaging repo: [github.com/matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)
 
 ## Roadmap
 
