@@ -2,7 +2,7 @@
 
 Focus: the ecosystem-parametric false-negative bugfixes (F1 GitLab pinning,
 F6 uv.lock, F7 Java Gradle locking/verification) from
-docs/analysis-supply-chain-coverage-improvement.md. Before the fix, each of
+docs/analysis/analysis-supply-chain-coverage-improvement.md. Before the fix, each of
 these scored MISSING despite a *good* posture.
 """
 from __future__ import annotations

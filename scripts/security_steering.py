@@ -79,7 +79,7 @@ _DEFAULT_REQ_SOURCE_PATHS = [
     "data/appsec-requirements-fallback.yaml",
     # Vendor-neutral best-practices floor: when no company catalog is present the
     # steering hook still resolves BP-* requirement text (matches the L0
-    # "company else best-practices" behaviour). See proposal-dev-security-helper.md.
+    # "company else best-practices" behaviour). See docs/analysis/proposal-dev-security-helper.md.
     "data/appsec-bestpractices-baseline.yaml",
 ]
 

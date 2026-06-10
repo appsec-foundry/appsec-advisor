@@ -256,9 +256,7 @@ For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-m
 
 ## Plugin development checks
 
-For changes to this plugin repository, the deterministic test suite is the
-per-PR safety net. The committed GitHub Actions workflow runs config validation,
-ruff, and pytest across Python 3.10, 3.11, and 3.12:
+For changes to this plugin repository, the deterministic test suite is the per-PR safety net. The committed GitHub Actions workflow runs config validation, ruff, and pytest across Python 3.10, 3.11, and 3.12:
 
 ```bash
 python3 scripts/validate_config.py .
@@ -267,27 +265,20 @@ ruff format --check scripts/ tests/ hooks/
 pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing
 ```
 
-After non-trivial changes to renderers, schemas, phase prompts, hooks, or
-pipeline control flow, run the manual full-run E2E check:
+After non-trivial changes to renderers, schemas, phase prompts, hooks, or pipeline control flow, run the manual full-run E2E check:
 
 ```bash
 make e2e-full
 ```
 
-For local regression checks against the external fixture suite, use the manual
-fixture drivers:
+For local regression checks against the external fixture suite, use the manual fixture drivers:
 
 ```bash
 ./scripts/e2e_fixture.sh --fixture python-threat-fixture --depth quick --clean-output
 ./scripts/e2e_cross_repo_fixture.sh --depth quick --clean-output
 ```
 
-The generic single-repo driver supports the Spring, Python, Rust, Go,
-Node.js/TypeScript, and Python/LangChain fixtures from the sibling
-`appsec-advisor-fixtures` checkout. These E2E runs are manual and opt-in because
-they invoke Claude Code and consume LLM budget. See [`CONTRIBUTING.md`](CONTRIBUTING.md),
-[`docs/e2e-fixtures.md`](docs/e2e-fixtures.md), and
-[`docs/e2e-cross-repo-fixture.md`](docs/e2e-cross-repo-fixture.md).
+The generic single-repo driver supports the Spring, Python, Rust, Go, Node.js/TypeScript, and Python/LangChain fixtures from the sibling `appsec-advisor-fixtures` checkout. These E2E runs are manual and opt-in because they invoke Claude Code and consume LLM budget. See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/e2e-fixtures.md`](docs/e2e-fixtures.md), and [`docs/e2e-cross-repo-fixture.md`](docs/e2e-cross-repo-fixture.md).
 
 ## Enterprise rollout
 
@@ -345,7 +336,7 @@ Open work items currently shaping the next iterations of the plugin:
 
 - **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents. Design draft: [`sharedstate.md`](sharedstate.md).
 
-- **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input*: its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. This is only being weighed, not committed. Goal and reservations: [`proposal-external-threat-model-ingestion.md`](docs/proposal-external-threat-model-ingestion.md).
+- **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input*: its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. This is only being weighed, not committed. Goal and reservations: [`proposal-external-threat-model-ingestion.md`](docs/analysis/proposal-external-threat-model-ingestion.md).
 
 - **Scaling to component-heavy repositories.** Component selection follows the attack surface, but STRIDE merge and the per-agent turn budget run serially and strain past about 8 to 10 components. Rather than drop exposed components to stay under that limit, the run analyses them all and logs that it overran. This is correct, but slow and costly on large repos. Parallelising the merge step is the open fix.
 

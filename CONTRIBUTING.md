@@ -127,7 +127,8 @@ python3 scripts/harvest-requirements.py           # regenerate fallback requirem
 | `scripts/` | Python helpers used by agents/hooks plus user-facing CLI wrappers (`run-headless.sh`, `harvest-requirements.py`, `mock-server.py`) |
 | `tests/` | Pytest suite — agent definitions, integration, steering, SARIF, schemas |
 | `examples/` | Reference threat model outputs (e.g. OWASP Juice Shop) |
-| `docs/` | Cross-cutting documentation |
+| `docs/` | Cross-cutting reference documentation (handwritten, durable) |
+| `docs/analysis/` | Generated analyses and proposals (`analysis-*`, `proposal-*`) — agent-authored design/investigation write-ups, kept separate from reference docs |
 | `config.json` | Plugin config (external context, pricing, logging) |
 
 ## Agent definition format

@@ -3406,7 +3406,7 @@ def _build_tier_cards(
             sev_line = "(no findings)"
         # Components line. Reference form (2026-05): list the tier's components
         # as `C-NN Name` (global C-NN order), matching Figure 2 in
-        # docs/analysis-top-threats-merge.md where each tier box simply lists
+        # docs/analysis/analysis-top-threats-merge.md where each tier box simply lists
         # the components it contains. Component IDs are emitted plain (no <b>)
         # — bold is reserved for the column-header HDR_A/T/I cells.
         _cnn = {(_c.get("id") or "").strip(): f"C-{_i:02d}" for _i, _c in enumerate(components, start=1)}
@@ -3461,7 +3461,7 @@ def _build_tier_cards(
                 ),
                 # Reference form (2026-05): tier boxes list their COMPONENTS
                 # only (see comp_line above), not weakness-cluster bullets, to
-                # match Figure 2 in docs/analysis-top-threats-merge.md. The
+                # match Figure 2 in docs/analysis/analysis-top-threats-merge.md. The
                 # legacy cluster bullets are intentionally suppressed (empty
                 # list → template uses the name + components_line branch). The
                 # per-class weakness detail lives in the Top Threats table and
