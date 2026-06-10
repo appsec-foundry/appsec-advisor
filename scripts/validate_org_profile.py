@@ -228,10 +228,10 @@ def _check_requirements_url(profile: dict) -> list[str]:
             errors.append(
                 "requirements.source.requirements_yaml_url must not embed credentials"
             )
-        if parsed.scheme not in ("http", "https"):
+        if parsed.scheme and parsed.scheme not in ("http", "https", "file"):
             errors.append(
                 f"requirements.source.requirements_yaml_url scheme '{parsed.scheme}' "
-                f"is not http/https"
+                f"is not http/https/file or a local path"
             )
     return errors
 

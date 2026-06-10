@@ -84,7 +84,6 @@ properties:
         properties:
           requirements_yaml_url:
             type: ["string", "null"]
-            format: uri
           human_source_url:
             type: ["string", "null"]
             format: uri

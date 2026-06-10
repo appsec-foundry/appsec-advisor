@@ -158,6 +158,9 @@ def run(args: argparse.Namespace) -> int:
     cache_allowed = bool(src.get("cache", True)) and fail_mode != "fail_closed"
 
     # 1. Load the source: http(s) -> remote fetch, anything else -> local file.
+    # Strip file:// prefix so _read_local receives a plain path.
+    if src_loc and src_loc.lower().startswith("file://"):
+        src_loc = src_loc[7:]
     if src_loc:
         remote = _is_remote(src_loc)
         try:
