@@ -166,7 +166,7 @@ def extract_commit_metadata(yaml_path: Path) -> dict:
         if sev in counts:
             counts[sev] += 1
         if len(top) < 2 and sev in ("Critical", "High"):
-            tid = t.get("t_id", "")
+            tid = t.get("id", t.get("t_id", ""))
             title = t.get("title", "")
             if tid and title:
                 top.append(f"{tid} {title[:60]}")

@@ -134,6 +134,22 @@ class TestBuildCommitMessage:
         assert "Critical" in subject
         assert "2 threats" in subject
 
+    def test_metadata_top_uses_canonical_id(self, tmp_path):
+        """Top-finding commit lines must come from canonical `id`, not legacy
+        `t_id` — the final threat-model.yaml has no `t_id`, so the prior
+        `t.get("t_id")` made these lines dead in every real run (TG-1, audit
+        2026-06-11). Only Critical/High findings appear, capped at 2."""
+        yaml_path = self._make_yaml(
+            tmp_path,
+            [
+                {"id": "T-001", "title": "SQL Injection", "risk": "Critical"},
+                {"id": "T-002", "title": "SSRF", "risk": "High"},
+                {"id": "T-003", "title": "Verbose error", "risk": "Low"},
+            ],
+        )
+        meta = ptm.extract_commit_metadata(yaml_path)
+        assert meta["top"] == ["T-001 SQL Injection", "T-002 SSRF"]  # Low excluded
+
     def test_body_mentions_related_repos(self, tmp_path):
         yaml_path = self._make_yaml(tmp_path, [])
         msg = ptm.build_commit_message(tmp_path, yaml_path, [])
