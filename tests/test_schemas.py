@@ -18,6 +18,7 @@ ROOT = Path(__file__).parent.parent
 SCHEMAS_DIR = ROOT / "schemas"
 
 ALL_SCHEMAS = sorted(SCHEMAS_DIR.glob("*.schema.yaml"))
+ALL_JSON_SCHEMAS = sorted(SCHEMAS_DIR.glob("*.schema.json"))
 
 
 @pytest.mark.parametrize("schema_path", ALL_SCHEMAS, ids=lambda p: p.name)
@@ -43,3 +44,18 @@ def test_threat_model_output_example_validates() -> None:
         key=lambda e: list(e.absolute_path),
     )
     assert not errors, "\n".join(f"{'.'.join(str(p) for p in e.absolute_path) or 'root'}: {e.message}" for e in errors)
+
+
+@pytest.mark.parametrize("schema_path", ALL_JSON_SCHEMAS, ids=lambda p: p.name)
+def test_json_schema_is_valid_jsonschema(schema_path: Path) -> None:
+    import json
+
+    schema = json.loads(schema_path.read_text())
+    # Raises SchemaError if the schema itself is malformed against the
+    # Draft 2020-12 meta-schema. Top-level schemas/*.schema.json were
+    # previously loaded by no meta-check (TG-2, audit 2026-06-11).
+    Draft202012Validator.check_schema(schema)
+
+
+def test_json_schemas_directory_not_empty() -> None:
+    assert ALL_JSON_SCHEMAS, "schemas/ must contain at least one top-level *.schema.json"

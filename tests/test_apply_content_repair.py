@@ -531,3 +531,33 @@ class TestKebabHelper:
 
     def test_kebab_numeric_preserved(self):
         assert acr._kebab("7.2.1 JWT Bearer") == "7-2-1-jwt-bearer"
+
+
+# ---------------------------------------------------------------------------
+# op-handler ↔ schema enum parity (TG-2, audit 2026-06-11)
+# ---------------------------------------------------------------------------
+
+
+def test_op_handlers_match_schema_op_consts():
+    """Every `op` const the repair-plan schema declares must have a handler, and
+    vice-versa — otherwise apply_content_repair silently rejects a valid plan or
+    accepts an op the schema forbids. qa-content-repair-plan.schema.json was
+    validated by no test until this audit."""
+    schema = json.loads(
+        (REPO_ROOT / "schemas" / "qa-content-repair-plan.schema.json").read_text()
+    )
+    declared: set[str] = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            op = node.get("properties", {}).get("op", {})
+            if isinstance(op, dict) and "const" in op:
+                declared.add(op["const"])
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(schema)
+    assert declared == set(acr._OP_HANDLERS), (declared, set(acr._OP_HANDLERS))
