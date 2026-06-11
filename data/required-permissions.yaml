@@ -75,6 +75,10 @@ required:
     reason: "publish-threat-model skill patches .gitignore with negation exceptions for published files"
     category: file
 
+  - entry: "Edit(${PLUGIN_ROOT}/**)"
+    reason: "fix-run-issues skill applies edit_file actions to plugin agent/config files via the Edit tool (targets resolved relative to $CLAUDE_PLUGIN_ROOT)"
+    category: file
+
   # NOTE: The plugin writes ~30 dot-prefixed sidecar files and dot-directories
   # under OUTPUT_DIR (.recon-summary.md, .assets.json, .dispatch-context/**,
   # .qa-status.json, etc.). These were previously enumerated one-by-one on the
