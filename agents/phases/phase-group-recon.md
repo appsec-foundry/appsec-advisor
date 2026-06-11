@@ -11,8 +11,8 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 1. **Before dispatch:** resolve the recon fingerprint skip (see below) to decide whether recon needs to run at all.
 2. **Resolve the context cache hit** (see `appsec-threat-analyst.md` → Phase 1 Step B staleness check) to decide whether the context-resolver needs to run.
 2b. **Resolve `HAS_IAC_SURFACE`** — run the `compgen` pre-check (see below, before Step 0a) to decide whether the config-scanner needs to run. This check has no dependency on Phase 2 output and must run before the parallel dispatch turn.
-3. **Dispatch all needed agents in a single orchestrator turn** using up to three Agent tool calls (context-resolver, recon-scanner, config-scanner). Each call that is needed gets `run_in_background: true`; if only one agent is dispatched, use `run_in_background: false`. If all three are skipped, jump directly to Phase 3.
-4. **Wait for all background agents to return** before proceeding to Phase 3. Context-resolver typically finishes in 3–6 min; recon-scanner takes 5–15 min. **CRITICAL: When context-resolver returns first, the recon-scanner is still running in the background — do NOT check `.recon-summary.md` at that point and do NOT re-dispatch recon-scanner. Simply wait for the already-running background agent to complete.** Only after the recon-scanner agent itself returns should you read `.recon-summary.md`.
+3. **Dispatch all needed agents as concurrent FOREGROUND Agent calls in a SINGLE message** (context-resolver, recon-scanner, config-scanner — up to three Agent tool calls emitted together in one turn). **Always use `run_in_background: false` (the default) for these recon agents.** Multiple foreground Agent calls in one message run concurrently and ALL of their results return together in the same turn — that is how parallelism is achieved here, with no loss vs. background dispatch (the orchestrator has no interleaved work to do during recon anyway). **Do NOT set `run_in_background: true` and do NOT end your turn after dispatching.** This harness has no SendMessage / background-resume mechanism: a backgrounded recon agent strands the run — the analyst yields with "waiting for completion notifications" and never resumes to Phase 3 (observed 2026-06-11). If all three agents are skipped, jump directly to Phase 3.
+4. **All dispatched agents return in the same turn** (foreground concurrent dispatch). Only after every dispatched agent has returned do you proceed to Phase 3. Read `.recon-summary.md` after the recon-scanner has returned; do NOT re-dispatch any agent that already returned.
 
 **Error handling:** If the context-resolver aborts (requirements unavailable + `CHECK_REQUIREMENTS=true`), halt the assessment regardless of whether recon succeeded. If the recon-scanner fails but the context-resolver succeeded, fall back to minimal inline scan (same as before).
 
@@ -23,9 +23,9 @@ Phase 1 (context-resolver) reads external policy and prior findings. Phase 2 (re
 **→ TOOL CALL REQUIRED (dispatch as part of the parallel batch):**
 - `subagent_type`: `appsec-advisor:appsec-context-resolver`
 - `description`: `Resolve context for threat model`
-- `run_in_background`: `true` (parallel with recon — unless recon is skipped, then `false` is fine)
+- `run_in_background`: `false` (concurrent foreground — dispatched in the SAME message as recon/config so they run in parallel and all return this turn; never background it — this harness cannot resume a backgrounded agent)
 - `model`: `$CONTEXT_RESOLVER_MODEL` from `.skill-config.json` (defaults to `sonnet`; under `--reasoning-model sonnet-economy` becomes `haiku` regardless of depth — pure file-IO + summary task)
-- `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set)
+- `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`, `MODEL_ID=$CONTEXT_RESOLVER_MODEL` (so the agent logs the model it was actually dispatched on — not a hardcoded `sonnet`), `CHECK_REQUIREMENTS=<true|false>`, and `REQUIREMENTS_URL_OVERRIDE=<url>` (only if set)
 
 Log `AGENT_INVOKE` before dispatch. After the agent returns (or cache hit): read `$OUTPUT_DIR/.threat-modeling-context.md` and store team, asset tier, compliance scope, prior findings, known threats, known exceptions, architecture notes, and business context for use throughout the assessment.
 
@@ -66,7 +66,7 @@ fi
 
 1. Log and print: `[Phase 2/11] ⟳ Recon cached — fingerprint unchanged since previous run, reusing .recon-summary.md`
 2. Read the existing `.recon-summary.md` directly (skip Step 1 below).
-3. Jump to Phase 3 (or wait for Phase 1 to complete if it is still running in background).
+3. Proceed to Phase 3 once the other dispatched agents (context-resolver / config-scanner) have returned — they were dispatched as concurrent foreground calls in the same message, so they return this turn.
 
 **If `RECON_SKIP=false`:**
 
@@ -152,9 +152,9 @@ Log `AGENT_INVOKE` before dispatch. Log `AGENT_DONE` after the agent returns.
 **→ TOOL CALL REQUIRED (dispatch as part of the parallel batch):**
 - `subagent_type`: `appsec-advisor:appsec-recon-scanner`
 - `description`: `Reconnaissance scan`
-- `run_in_background`: `true` (parallel with context-resolver — unless context is skipped, then `false` is fine)
+- `run_in_background`: `false` (concurrent foreground — dispatched in the SAME message as context-resolver/config so they run in parallel and all return this turn; never background it — this harness cannot resume a backgrounded agent)
 - `model`: `$RECON_SCANNER_MODEL` from `.skill-config.json`. Default routing is `haiku` at every depth and reasoning tier — recon is grep-based pattern detection plus lookup-table verdicts (e.g. lockfile-disable severity per ecosystem, repo-visibility-conditional severity for self-hosted runners), all decision-table-driven and Haiku-suitable. Override per-run via `APPSEC_RECON_SCANNER_MODEL=sonnet` if a specific repo needs Sonnet's stronger instruction-following on novel patterns.
-- `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>` and `SCAN_MANIFEST=<value of SCAN_MANIFEST variable — true or false>`
+- `prompt`: `REPO_ROOT=<absolute repo path>` and `OUTPUT_DIR=<absolute output path>` and `MODEL_ID=$RECON_SCANNER_MODEL` (so the agent logs the model it was actually dispatched on — not a hardcoded `sonnet`) and `SCAN_MANIFEST=<value of SCAN_MANIFEST variable — true or false>`
 
 After both Phase 1 and Phase 2 have returned, read `$OUTPUT_DIR/.recon-summary.md`. Store contents for Phases 3–11:
 - **Manifest list** (Section 3) → needed by Phase 10 emit_known_bad_libs.py manifest walk
@@ -198,7 +198,7 @@ trust boundaries, Dependabot/Renovate disablement, `.npmrc` TLS bypass).
 `HAS_IAC_SURFACE` is resolved before the parallel dispatch — see "Pre-check —
 resolve HAS_IAC_SURFACE" section above (before Step 0a). The stub file is also
 written there when `HAS_IAC_SURFACE=false`. No further action needed here when
-`HAS_IAC_SURFACE=false` — proceed to Phase 3 after all background agents return.
+`HAS_IAC_SURFACE=false` — proceed to Phase 3 after the concurrently-dispatched foreground agents return.
 
 ### Dispatch — when IaC surface exists
 
@@ -207,15 +207,17 @@ orchestrator turn as context-resolver and recon-scanner):**
 
 - `subagent_type`: `appsec-advisor:appsec-config-scanner`
 - `description`: `Configuration & IaC scan`
-- `run_in_background`: `true` (parallel with Phases 1+2; use `false` only when
-  config-scanner is the sole dispatched agent — see State-Matrix in
-  `appsec-threat-analyst.md` Step B)
+- `run_in_background`: `false` (concurrent foreground — dispatched in the SAME
+  message as context-resolver/recon-scanner so they run in parallel and all
+  return this turn; never background it — this harness cannot resume a
+  backgrounded agent)
 - `model`: `$CONFIG_SCANNER_MODEL` from `.skill-config.json` (defaults to
   `haiku` at all reasoning tiers — YAML-rule-engine task,
   pattern-matching against a static check catalog, Haiku-suitable at every
   depth. Override via `APPSEC_CONFIG_SCANNER_MODEL`.)
 - `prompt`: `REPO_ROOT=<absolute repo path>`, `OUTPUT_DIR=<absolute output path>`,
-  `CLAUDE_PLUGIN_ROOT=<plugin root>`, `ASSESSMENT_DEPTH=<quick|standard|thorough>`
+  `CLAUDE_PLUGIN_ROOT=<plugin root>`, `MODEL_ID=$CONFIG_SCANNER_MODEL`,
+  `ASSESSMENT_DEPTH=<quick|standard|thorough>`
 
 Log `AGENT_INVOKE` and `PHASE_START [Phase 2.5/N]` in the **same Bash batch**
 as Phase 1/2 `AGENT_INVOKE` lines — identical second-level timestamp lets the

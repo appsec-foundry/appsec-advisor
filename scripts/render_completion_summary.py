@@ -584,22 +584,35 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
     # Fix #3 root cause — also capture the agent that EMITTED each PHASE_START
     # so the rendering loop can show "threat-analyst" / "threat-renderer"
     # distinctly when the same phase-id appears twice (Stage 1 vs Stage 2).
-    starts: dict[str, tuple[int, str, str]] = {}  # phase_id -> (epoch, desc, agent)
+    # Per-phase STACK of unmatched PHASE_START tuples, keyed by phase_id. A
+    # stack (not a single overwrite-able value) so each PHASE_END consumes its
+    # matching START via pop(). This prevents a stray/duplicate PHASE_END — e.g.
+    # a Phase-11 substep close mislabeled "[Phase 10b/11]" in STAGE1_PHASE_LIMIT
+    # =10b mode — from re-pairing against an already-closed START and inventing a
+    # phantom "(run 2)" whose duration absorbs the following phase's wall time
+    # (the 2026-06-11 juice-shop "Triage Validation (run 2) 5m17s" artifact).
+    # Mirrors the proven stack-with-pop pairing in
+    # compose_threat_model._scrape_phase_durations. The legitimate dual-stage
+    # case (same phase-id appearing once in Stage 1 and once in Stage 2, each
+    # with its own START+END) still yields two correctly-paired durations.
+    starts: dict[str, list[tuple[int, str, str]]] = {}  # phase_id -> [(epoch, desc, agent)]
     phase_durations: list[tuple[str, str, int, str]] = []  # (id, desc, secs, agent)
     for line in log_text.splitlines():
         m = _PHASE_START_RE.search(line)
         if m:
             am = _PHASE_AGENT_RE.search(line)
             emitter = am.group("agent") if am else ""
-            starts[m.group(2)] = (_iso_to_epoch(m.group(1)), m.group(3).strip(), emitter)
+            starts.setdefault(m.group(2), []).append(
+                (_iso_to_epoch(m.group(1)), m.group(3).strip(), emitter)
+            )
             continue
         m = _PHASE_END_RE.search(line)
         if m:
             phase_id = m.group(2)
             end_ep = _iso_to_epoch(m.group(1))
-            start_info = starts.get(phase_id)
-            if start_info:
-                start_ep, desc, agent = start_info
+            stack = starts.get(phase_id)
+            if stack:
+                start_ep, desc, agent = stack.pop()
                 phase_durations.append((phase_id, desc, end_ep - start_ep, agent))
     stats["phases"] = phase_durations
 

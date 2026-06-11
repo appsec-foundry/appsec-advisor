@@ -511,6 +511,38 @@ def test_operational_strengths_has_three_columns(tmp_path: Path) -> None:
     assert legacy not in rendered, "retired 5-column Operational Strengths form leaked into the render"
 
 
+def test_no_dangling_section7_crossref_when_section7_omitted(tmp_path: Path) -> None:
+    """RCA 2026-06-11: at --quick depth §7 (Security Architecture) is omitted,
+    but the MS 'Operational Strengths' intro (and the empty-state banner) emitted
+    a `[§7](#7-security-architecture)` link unconditionally → a dangling anchor
+    (qa_checks has no section-anchor target validation to catch it). When
+    render_security_architecture is false, NO `#7-security-architecture` cross-ref
+    may survive anywhere in the rendered document."""
+    out = _prepare_output_dir(tmp_path)
+    ymlp = out / "threat-model.yaml"
+    data = yaml.safe_load(ymlp.read_text())
+    data.setdefault("meta", {})["assessment_depth"] = "quick"  # → §7 omitted (no rich prior)
+    ymlp.write_text(yaml.safe_dump(data, sort_keys=False))
+    rendered, _ = compose.render(CONTRACT, out)
+    assert "## 7. Security Architecture" not in rendered, "§7 should be omitted at quick depth"
+    assert "#7-security-architecture" not in rendered, (
+        "dangling §7 anchor leaked into the render while §7 is omitted"
+    )
+    assert "### Operational Strengths" in rendered  # the MS block itself still renders
+
+
+def test_section7_crossref_target_exists_when_emitted(tmp_path: Path) -> None:
+    """Invariant (positive control): whenever a `#7-security-architecture`
+    cross-ref IS emitted (standard/thorough depth, §7 present), its heading
+    anchor target must also be present — i.e. the link never dangles."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    if "#7-security-architecture" in rendered:
+        assert "## 7. Security Architecture" in rendered, (
+            "§7 cross-ref emitted but the §7 heading/anchor is missing — dangling link"
+        )
+
+
 def test_section_3_is_per_finding_walkthroughs(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)

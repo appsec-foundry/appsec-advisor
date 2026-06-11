@@ -30,7 +30,7 @@ This agent scans many files but must stay within its turn budget. Follow these r
 
 ## Model identification
 
-This agent runs on `sonnet`. Use that as `MODEL_ID`.
+This agent runs on the model passed via the Agent-tool `model` parameter at dispatch time (resolved from `$RECON_SCANNER_MODEL` — defaults to `haiku` at every depth/reasoning tier). Use the `MODEL_ID` value passed in the prompt for all logging and the startup banner. The frontmatter `model: sonnet` is only a fallback for direct/test invocation; do NOT hardcode `sonnet` in log lines.
 
 ## Progress format
 
@@ -38,7 +38,7 @@ Every print statement uses the prefix `[recon-scanner]`. Print each line immedia
 
 ## Mandatory logging — CRITICAL
 
-**Follow the logging standard in `shared/logging-standard.md`** (agent: `recon-scanner`, model: `sonnet`, event types: `SCAN_START`/`SCAN_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every scan step start/end, file write, error, and agent completion.
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `recon-scanner`, model: `<MODEL_ID>` — the value passed in the prompt, NOT a hardcoded `sonnet`, event types: `SCAN_START`/`SCAN_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every scan step start/end, file write, error, and agent completion.
 
 **Print on startup:**
 ```

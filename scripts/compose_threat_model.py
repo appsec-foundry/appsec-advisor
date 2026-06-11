@@ -6994,6 +6994,16 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     # empty table. The banner names how many clusters were demoted so
     # the reader knows the section isn't silently broken.
     # ---------------------------------------------------------------------
+    # §7 is omitted at quick depth (render_security_architecture=false); never
+    # emit a [§7](#7-security-architecture) cross-ref there or it dangles
+    # (qa_checks has no section-anchor target validation to catch it).
+    section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
+    sec7_clause = (
+        "See [§7 Security Architecture](#7-security-architecture) for the full "
+        "per-control assessment and "
+        if section7_present
+        else "See "
+    )
     empty_banner = ""
     if clusters and not rendered_rows:
         if demoted_count > 0:
@@ -7003,21 +7013,23 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
                 f"_No defensive cluster currently rates above Weak. "
                 f"{demoted_count} cluster(s) — {sample}{extra} — were demoted "
                 f"because §8 holds open Critical/High findings of the kind "
-                f"each cluster is supposed to prevent. See "
-                f"[§7 Security Architecture](#7-security-architecture) for "
-                f"the full per-control assessment and "
+                f"each cluster is supposed to prevent. {sec7_clause}"
                 f"[§10 Mitigation Register](#10-mitigation-register) for the "
                 f"prioritised fix list._"
             )
-        else:
+        elif section7_present:
             empty_banner = (
                 "_No defensive cluster currently rates above Weak. See "
                 "[§7 Security Architecture](#7-security-architecture) for "
                 "the full per-control assessment._"
             )
+        else:
+            empty_banner = (
+                "_No defensive cluster currently rates above Weak. Per-control "
+                "posture is catalogued in `threat-model.yaml → security_controls[]`._"
+            )
 
     show_intro = ctx.eval_context.get("verdict_severity") in ("yellow", "red") and bool(rendered_rows)
-    section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
     tpl = env.get_template("operational-strengths.md.j2")
     return (
         tpl.render(

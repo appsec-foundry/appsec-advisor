@@ -241,6 +241,46 @@ class TestRunStatistics:
         assert durations["1"] == (17 * 3600 + 43 * 60 + 53) - (17 * 3600 + 41 * 60 + 31)
         assert durations["1"] == 142
 
+    def test_duplicate_phase_end_does_not_invent_phantom_run(self, tmp_path: Path):
+        """RCA 2026-06-11: in STAGE1_PHASE_LIMIT=10b mode the analyst emits a
+        SECOND PHASE_END mislabeled `[Phase 10b/11]` (actually a Phase-11 substep
+        close). The old dict-keyed-without-pop pairing re-paired that stray end
+        against the still-open 10b start, inventing a phantom "(run 2)" whose
+        duration absorbed the following Phase-11 wall time (observed 5m17s for a
+        deterministic sub-second step). The stack-with-pop pairing must consume
+        the start on the first end and DROP the stray duplicate end → exactly one
+        10b row at its real ~29s, no phantom 317s row."""
+        log = textwrap.dedent("""\
+            2026-06-11T13:32:32Z  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10b/11] Triage Validation — deterministic
+            2026-06-11T13:33:01Z  [--------]  INFO   threat-analyst  PHASE_END     [Phase 10b/11] Triage — 23 flags computed_by=deterministic
+            2026-06-11T13:33:12Z  [--------]  INFO   threat-analyst  PHASE_START   [Phase 11/11] Substeps 1-3
+            2026-06-11T13:37:49Z  [--------]  INFO   threat-analyst  PHASE_END     [Phase 10b/11] Triage + Substeps 1-3 complete — yaml written
+        """)
+        (tmp_path / ".agent-run.log").write_text(log)
+        stats = rcs.extract_run_statistics(tmp_path, {})
+        tenb = [p for p in stats["phases"] if p[0] == "10b"]
+        assert len(tenb) == 1, f"expected exactly one 10b row, got {tenb}"
+        assert tenb[0][2] == 29  # 13:33:01 - 13:32:32 — the real deterministic triage
+        # The phantom 317s (5m17s) "run 2" must NOT appear anywhere.
+        assert all(p[2] != 317 for p in stats["phases"]), stats["phases"]
+
+    def test_same_phase_id_in_two_stages_still_yields_two_rows(self, tmp_path: Path):
+        """The stack-with-pop pairing must NOT regress the legitimate dual-stage
+        case: the same phase-id (e.g. Phase 11) appearing once in Stage 1
+        (threat-analyst, substeps) and once in Stage 2 (threat-renderer, compose),
+        each with its own START+END, yields two correctly-paired durations."""
+        log = textwrap.dedent("""\
+            2026-06-11T10:00:00Z  [--------]  INFO   threat-analyst   PHASE_START   [Phase 11/11] Finalization (substeps 1-3)
+            2026-06-11T10:01:00Z  [--------]  INFO   threat-analyst   PHASE_END     [Phase 11/11] Finalization substeps done
+            2026-06-11T10:05:00Z  [--------]  INFO   threat-renderer  PHASE_START   [Phase 11/11] Finalization (compose)
+            2026-06-11T10:07:30Z  [--------]  INFO   threat-renderer  PHASE_END     [Phase 11/11] Finalization compose done
+        """)
+        (tmp_path / ".agent-run.log").write_text(log)
+        stats = rcs.extract_run_statistics(tmp_path, {})
+        p11 = [p for p in stats["phases"] if p[0] == "11"]
+        assert len(p11) == 2, f"expected two Phase-11 rows (Stage1+Stage2), got {p11}"
+        assert {p[2] for p in p11} == {60, 150}  # 1m00s and 2m30s
+
     def test_qa_duration_from_agent_start_and_check_end(self, output_dir: Path):
         stats = rcs.extract_run_statistics(output_dir, {})
         assert stats["qa_secs"] == 300  # 17:55:00 - 17:50:00

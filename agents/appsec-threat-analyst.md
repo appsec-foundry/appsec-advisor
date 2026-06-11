@@ -460,7 +460,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
 
 ### Phases 1–2: Reconnaissance & Context (parallel dispatch)
 
-Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1), recon-scanner (Phase 2), and — when `HAS_IAC_SURFACE=true` — config-scanner (Phase 2.5) in parallel** in a single orchestrator turn. The config-scanner has no dependency on Phase 2 output and runs concurrently with Phases 1+2, saving ~30–90 s wall-clock on repos with IaC surface. (The pre-2026-05 background dep-scanner launch is gone — supply-chain posture is produced deterministically in Phase 10 by `emit_sca_practice.py` / `emit_known_bad_libs.py`, no background dispatch needed.) **Wait for all background agents to return before proceeding to Phase 3.** Context-resolver typically returns first (3–6 min); the recon-scanner continues running in the background (5–15 min). **When context-resolver returns and `.recon-summary.md` is not yet on disk, this is EXPECTED — the recon-scanner is still running. Do NOT re-dispatch recon-scanner. Simply continue waiting for the background agent to complete.** Only after recon-scanner itself returns should you read `.recon-summary.md`. If `.recon-summary.md` is still missing after the recon-scanner agent has returned, fall back to minimal inline scan.
+Follow `phase-group-recon.md`. **Dispatch context-resolver (Phase 1), recon-scanner (Phase 2), and — when `HAS_IAC_SURFACE=true` — config-scanner (Phase 2.5) as concurrent FOREGROUND Agent calls emitted together in a SINGLE message.** Multiple foreground Agent calls in one message run concurrently and ALL return together in that same turn — that is how parallelism is achieved, with no wall-clock loss vs. background dispatch (there is no interleaved orchestrator work during recon). **Use `run_in_background: false` for these recon agents; do NOT background them and do NOT end the turn after dispatching** — this harness has no SendMessage / background-resume, so a backgrounded recon agent strands the run (the analyst yields "waiting for completion notifications" and never resumes to Phase 3; observed 2026-06-11). The config-scanner has no dependency on Phase 2 output and runs concurrently with Phases 1+2. (The pre-2026-05 background dep-scanner launch is gone — supply-chain posture is produced deterministically in Phase 10 by `emit_sca_practice.py` / `emit_known_bad_libs.py`.) **All dispatched agents return in the same turn; only then proceed to Phase 3.** Read `.recon-summary.md` after the recon-scanner has returned; if it is still missing, fall back to minimal inline scan. Do NOT re-dispatch an agent that already returned.
 
 ### Phase 2.5: Configuration & IaC Scan *(conditional — when IaC surface exists)*
 
@@ -1126,23 +1126,23 @@ If `CTX_SKIP=true`, **do not dispatch the context resolver**. Print `  ↳ conte
 
 **Also resolve the recon fingerprint skip** (see `phase-group-recon.md` → "Incremental fingerprint skip") to determine `RECON_SKIP`. **Also resolve `HAS_IAC_SURFACE`** (see `phase-group-recon.md` → "Pre-check — resolve HAS_IAC_SURFACE") in the same Bash batch — all three flags in one turn.
 
-**Dispatch the agents that need to run — in a single orchestrator turn using parallel Agent tool calls:**
+**Dispatch the agents that need to run as concurrent FOREGROUND Agent calls in a SINGLE message** (parallelism = multiple Agent calls in one turn, all returning together; `run_in_background` stays `false`). Never background a recon agent and never yield the turn before they return — this harness cannot resume a backgrounded agent:
 
 | Needs dispatch? | Agent | `run_in_background` |
 |---|---|---|
-| `CTX_SKIP=false` | `appsec-advisor:appsec-context-resolver` | `true` (parallel) |
-| `RECON_SKIP=false` | `appsec-advisor:appsec-recon-scanner` | `true` (parallel) |
-| `HAS_IAC_SURFACE=true` | `appsec-advisor:appsec-config-scanner` | `true` (parallel) |
+| `CTX_SKIP=false` | `appsec-advisor:appsec-context-resolver` | `false` (concurrent foreground — one message) |
+| `RECON_SKIP=false` | `appsec-advisor:appsec-recon-scanner` | `false` (concurrent foreground — one message) |
+| `HAS_IAC_SURFACE=true` | `appsec-advisor:appsec-config-scanner` | `false` (concurrent foreground — one message) |
 
-**State-Matrix — 8 combinations (3 booleans):**
+**State-Matrix — 8 combinations (3 booleans):** in every multi-agent row the agents are dispatched as concurrent foreground calls in one message (`run_in_background: false`), never backgrounded.
 
 | CTX_SKIP | RECON_SKIP | HAS_IAC | Dispatched agents | `run_in_background` |
 |---|---|---|---|---|
-| false | false | true | context + recon + config | all `true` |
-| false | false | false | context + recon | both `true` |
-| true | false | true | recon + config | both `true` |
+| false | false | true | context + recon + config | all `false` (concurrent foreground) |
+| false | false | false | context + recon | both `false` (concurrent foreground) |
+| true | false | true | recon + config | both `false` (concurrent foreground) |
 | true | false | false | recon alone | `false` |
-| false | true | true | context + config | both `true` |
+| false | true | true | context + config | both `false` (concurrent foreground) |
 | false | true | false | context alone | `false` |
 | true | true | true | config alone | `false` |
 | true | true | false | none — jump to Phase 3 | n/a |
@@ -1159,7 +1159,7 @@ DISPATCH_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 [ "$HAS_IAC_SURFACE" = "true" ] && echo "$DISPATCH_TS  [--------]  INFO   config-scanner    AGENT_INVOKE  Configuration & IaC scan (model: $CONFIG_SCANNER_MODEL)" >> "$OUTPUT_DIR/.agent-run.log"
 ```
 
-**Wait for all background agents to complete**, then log `AGENT_DONE` for each. For the config-scanner, also emit `PHASE_END` with `(parallel with Phases 1+2)` suffix — see `phase-group-recon.md` → Phase 2.5 → "After the agent returns" for the exact template.
+**All dispatched agents return together in the same turn** (foreground concurrent dispatch); then log `AGENT_DONE` for each. For the config-scanner, also emit `PHASE_END` with `(parallel with Phases 1+2)` suffix — see `phase-group-recon.md` → Phase 2.5 → "After the agent returns" for the exact template.
 
 **If `CHECK_REQUIREMENTS=true` and `$OUTPUT_DIR/.threat-modeling-context.md` does not exist**, the context-resolver aborted because requirements were unavailable. Print the error and stop the assessment:
 ```

@@ -10,7 +10,7 @@ INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` at 
 
 ## Model identification
 
-This agent runs on `sonnet`. Use that as `MODEL_ID`.
+This agent runs on the model passed via the Agent-tool `model` parameter at dispatch time (resolved from `$CONTEXT_RESOLVER_MODEL` — `haiku` under `--reasoning-model sonnet-economy`, otherwise `sonnet`). Use the `MODEL_ID` value passed in the prompt for all logging and the startup banner. The frontmatter `model: sonnet` is only a fallback for direct/test invocation; do NOT hardcode `sonnet` in log lines.
 
 ## Progress format
 
@@ -18,7 +18,7 @@ Every print statement in this agent uses the prefix `[context-resolver]`. Print 
 
 ## Mandatory logging — CRITICAL
 
-**Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `sonnet`, event types: `STEP_START`/`STEP_END`). Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
+**Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `<MODEL_ID>` — the value passed in the prompt, NOT a hardcoded `sonnet`, event types: `STEP_START`/`STEP_END`). Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
 
 ## Task
 
