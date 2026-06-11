@@ -58,7 +58,7 @@ python3 scripts/mock-server.py
 ## Three paths to a catalog
 
 1. **Adapt the reference baseline.** Copy `data/appsec-requirements-fallback.yaml` (currently 63 requirements across 38 categories, plus 9 blueprint entries) and rewrite the IDs and text to match your organisation. Serve it over HTTP (dev: `python3 scripts/mock-server.py`) or commit it to a Git-hosted raw URL.
-2. **Harvest from internal pages.** Use `scripts/harvest-requirements.py` to crawl existing requirements and blueprint documents, then schedule it to stay in sync. Recommended when an internal wiki or intranet catalog already exists. Setup and CI scheduling: [`docs/harvester.md`](harvester.md).
+2. **Harvest from internal pages.** Use `scripts/harvest_requirements.py` to crawl existing requirements and blueprint documents, then schedule it to stay in sync. Recommended when an internal wiki or intranet catalog already exists. Setup and CI scheduling: [`docs/harvester.md`](harvester.md).
 3. **Pass a URL at invocation.** `--requirements <url>` loads from that URL for a single run without touching the config file. Useful for ad-hoc evaluation or switching between catalogs.
 
 ## Flags

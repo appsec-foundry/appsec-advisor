@@ -107,7 +107,7 @@ python3 scripts/validate_intermediate.py <file.json>  # intermediate file schema
 ```bash
 python3 scripts/mock-server.py [port]             # mock REST endpoints: context + requirements (default 4444)
 ./scripts/run-headless.sh --repo /path --output /out --yaml --sarif
-python3 scripts/harvest-requirements.py           # regenerate fallback requirements YAML
+python3 scripts/harvest_requirements.py           # regenerate fallback requirements YAML
 ```
 
 ## Repository layout
@@ -124,7 +124,7 @@ python3 scripts/harvest-requirements.py           # regenerate fallback requirem
 | `schemas/` | YAML/JSON schemas for intermediate files and output |
 | `templates/` | Report templates (management summary, sections) |
 | `data/` | Reference data — requirements baseline, CWE eligibility lists, heuristics |
-| `scripts/` | Python helpers used by agents/hooks plus user-facing CLI wrappers (`run-headless.sh`, `harvest-requirements.py`, `mock-server.py`) |
+| `scripts/` | Python helpers used by agents/hooks plus user-facing CLI wrappers (`run-headless.sh`, `harvest_requirements.py`, `mock-server.py`) |
 | `tests/` | Pytest suite — agent definitions, integration, steering, SARIF, schemas |
 | `examples/` | Reference threat model outputs (e.g. OWASP Juice Shop) |
 | `docs/` | Cross-cutting reference documentation (handwritten, durable) |

@@ -6,7 +6,7 @@ If your organisation already runs a security-requirements catalog (Confluence, A
 
 ```mermaid
 flowchart LR
-    A["Your requirements pages<br/>(Confluence, Antora, wiki…)"] --> B["harvest-requirements.py<br/><i>crawls + parses</i>"]
+    A["Your requirements pages<br/>(Confluence, Antora, wiki…)"] --> B["harvest_requirements.py<br/><i>crawls + parses</i>"]
     B --> C[("appsec-requirements.yaml")]
     C --> D{"Where does the plugin<br/>read it from?"}
     D -->|"Committed in the repo"| E["raw.githubusercontent.com/…"]
@@ -19,7 +19,7 @@ flowchart LR
 
 Four moving parts:
 
-- **The harvester** — `scripts/harvest-requirements.py`, a one-shot Python script that crawls your pages and writes `appsec-requirements.yaml`.
+- **The harvester** — `scripts/harvest_requirements.py`, a one-shot Python script that crawls your pages and writes `appsec-requirements.yaml`.
 - **The YAML file** — the canonical format the plugin reads. Ships with a 53-requirement example (`data/appsec-requirements-fallback.yaml`) usable as template or starting point.
 - **A way to expose the YAML** — commit it to the plugin repo, publish it to a static URL, or serve it locally via the mock server while iterating.
 - **Plugin config** — `requirements_yaml_url` in `skills/audit-security-requirements/config.json`; once set, every `create-threat-model --requirements` and every `/appsec-advisor:audit-security-requirements` run picks up the catalog without further flags.
@@ -72,10 +72,10 @@ $EDITOR scripts/harvest-config.json
 pip install -r scripts/requirements.txt
 
 # Dry-run first to verify reachability and parsing
-python3 scripts/harvest-requirements.py --dry-run --verbose
+python3 scripts/harvest_requirements.py --dry-run --verbose
 
 # Real run
-HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest-requirements.py
+HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py
 ```
 
 The generated YAML lands at the path in `output` (defaults to `data/appsec-requirements-fallback.yaml`). You can inspect it directly before wiring it up — it's a readable YAML with one section per category, one entry per requirement, plus a `sources_meta` block so you can trace each entry back to the page it came from.
@@ -145,7 +145,7 @@ The harvester is a one-shot script; something else has to run it on a schedule. 
 ```bash
 # crontab -e — run nightly, log to file, commit if anything changed
 0 2 * * * cd /path/to/appsec-advisor && \
-  HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest-requirements.py \
+  HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py \
   && git diff --quiet data/appsec-requirements-fallback.yaml \
   || (git commit -am "chore: refresh appsec requirements [harvester]" && git push) \
   >> /var/log/harvest-requirements.log 2>&1
@@ -172,7 +172,7 @@ jobs:
         with: { python-version: '3.11' }
       - run: pip install -r scripts/requirements.txt
       - env: { HARVEST_AUTH_TOKEN: "${{ secrets.HARVEST_AUTH_TOKEN }}" }
-        run: python3 scripts/harvest-requirements.py
+        run: python3 scripts/harvest_requirements.py
       - name: Commit if changed
         run: |
           if ! git diff --quiet data/appsec-requirements-fallback.yaml; then

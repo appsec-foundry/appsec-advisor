@@ -214,7 +214,7 @@ Covers: output formats, what the recon pass checks, all usage examples, assessme
 
 Both `audit-security-requirements` and the requirements phase of `create-threat-model` read from the same `requirements_yaml_url` in `skills/audit-security-requirements/config.json`: configure it once and both commands pick it up automatically.
 
-No catalog yet? Start from the bundled baseline (`data/appsec-requirements-fallback.yaml`) and edit it to your organisation's vocabulary. Once you have live requirements pages (Confluence, Antora, static HTML), `scripts/harvest-requirements.py` can generate and refresh the YAML automatically. → [docs/harvester.md](docs/harvester.md)
+No catalog yet? Start from the bundled baseline (`data/appsec-requirements-fallback.yaml`) and edit it to your organisation's vocabulary. Once you have live requirements pages (Confluence, Antora, static HTML), `scripts/harvest_requirements.py` can generate and refresh the YAML automatically. → [docs/harvester.md](docs/harvester.md)
 
 **→ Full reference: [docs/security-requirements-audit-skill.md](docs/security-requirements-audit-skill.md)**
 
