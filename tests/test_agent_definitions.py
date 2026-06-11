@@ -629,3 +629,36 @@ class TestProseStyleAnchor:
             f"the prose-style.md load so worked Before/After pairs load at runtime. "
             f"Sonnet imitates examples more reliably than it follows abstract rules."
         )
+
+
+# Agents that read raw, attacker-controlled target-repo content (source,
+# comments, configs, the lines around a finding) and therefore MUST carry an
+# explicit untrusted-content guard so an injected directive cannot steer them.
+# (PI-1/PI-2, audit 2026-06-11.)
+REPO_READING_AGENTS = [
+    "appsec-recon-scanner",
+    "appsec-config-scanner",
+    "appsec-evidence-verifier",
+    "appsec-abuse-case-verifier",
+    "appsec-stride-analyzer",
+    "appsec-threat-renderer",
+    "appsec-context-resolver",
+    "appsec-threat-analyst",
+]
+
+
+class TestUntrustedContentGuard:
+    """Drift guard: every agent that ingests target-repo or external text must
+    state that the content is untrusted data, never instructions. Dropping the
+    guard re-opens the prompt-injection surface silently."""
+
+    @pytest.mark.parametrize("agent_name", REPO_READING_AGENTS)
+    def test_repo_reading_agent_has_untrusted_guard(self, agent_name):
+        path = AGENTS_DIR / f"{agent_name}.md"
+        assert path.is_file(), f"expected agent file missing: {path}"
+        text = path.read_text(encoding="utf-8")
+        assert re.search(r"untrusted|not instructions|never as instructions", text, re.I), (
+            f"{agent_name}.md reads untrusted target-repo content but has no "
+            f"untrusted-content guard. Add the boundary block (see "
+            f"appsec-recon-scanner.md or appsec-threat-analyst.md). PI-1/PI-2."
+        )
