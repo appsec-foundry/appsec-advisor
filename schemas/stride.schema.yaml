@@ -89,6 +89,15 @@ $defs:
       component_id:   { type: string, minLength: 1 }
       component_name: { type: string, minLength: 1 }
       analyzed_at:    { type: string }
+      # Write-first stub bookkeeping (appsec-stride-analyzer.md "Write-first
+      # guarantee"): present while a component is mid-enumeration, cleared on
+      # the final write. Declared so the early stub validates and a future
+      # additionalProperties:false tightening will not silently break it.
+      started_at:     { type: [string, "null"] }
+      partial:        { type: boolean }
+      skipped_categories:
+        type: array
+        items: { $ref: "#/$defs/stride_category" }
       compliance_scope_applied:
         type: array
         items: { type: string }

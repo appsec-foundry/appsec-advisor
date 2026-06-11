@@ -200,7 +200,7 @@ Print each file: `[stride | <COMPONENT_NAME>]   ↳ Reading <filepath>…`
 
 ## Write-first guarantee (mandatory) — never lose the component
 
-**Before you begin STRIDE enumeration (Step 3), `Write` an initial valid `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`** containing the required top-level fields (`component_id`, `started_at`, `threats`) plus:
+**Before you begin STRIDE enumeration (Step 3), `Write` an initial valid `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`** containing the required top-level fields (`component_id`, `component_name`, `analyzed_at`, `threats`) plus:
 - `"partial": true`
 - `"skipped_categories": ["Spoofing","Tampering","Repudiation","Information Disclosure","Denial of Service","Elevation of Privilege"]`
 - `"threats": [ … ]` — any threats already obvious from the Step-2 source reads, or `[]` if none yet.

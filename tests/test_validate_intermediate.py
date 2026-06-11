@@ -101,6 +101,31 @@ def test_stride_minimal_valid():
     assert ok, f"Expected valid stride, got errors: {errors}"
 
 
+def test_write_first_stub_is_schema_valid():
+    """The mandatory STRIDE write-first stub (appsec-stride-analyzer.md
+    "Write-first guarantee") must satisfy stride.schema.yaml — otherwise a
+    budget-cut analyzer leaves a file the orchestrator gate rejects, defeating
+    the partial-but-valid degradation (CD-1, audit 2026-06-11)."""
+    stub = {
+        "component_id": "express-backend",
+        "component_name": "Express Backend",
+        "analyzed_at": "2026-06-11T00:00:00Z",
+        "started_at": "2026-06-11T00:00:00Z",
+        "partial": True,
+        "skipped_categories": [
+            "Spoofing",
+            "Tampering",
+            "Repudiation",
+            "Information Disclosure",
+            "Denial of Service",
+            "Elevation of Privilege",
+        ],
+        "threats": [],
+    }
+    ok, errors = vi.validate_stride(stub)
+    assert ok, f"Write-first stub must be schema-valid, got errors: {errors}"
+
+
 # ---------------------------------------------------------------------------
 # CLI file-not-found
 # ---------------------------------------------------------------------------
