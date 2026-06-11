@@ -1928,21 +1928,19 @@ Invoke the `appsec-advisor:appsec-threat-analyst` agent using `"Threat Analysis 
 
 By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool calls stream directly to the chat so the user sees progress inline (Phase banners, sub-agent dispatches, file writes). No `Monitor` for the foreground Agent itself, no notification choreography — but a **background heartbeat watchdog** runs in parallel (see "Skill-layer heartbeat watchdog" above). **Exception:** when `LIVE_PHASE=true` (opt-in `APPSEC_LIVE_PHASE=1`) the dispatch is instead `run_in_background` + a live-phase Monitor so the current phase renders on the main console — see step 3 → "Live-phase variant" and §"Live-phase Monitor" above.
 
-0. **Snapshot prior artifact stats (incremental only).** Capture `mtime + size` of `threat-model.yaml` and (if it exists) `threat-model.md` so the post-Stage-1 / post-Stage-2 gates can detect a true no-op and skip downstream agent dispatches. **Skip when `MODE != incremental`** — full and rebuild always re-render and re-QA.
+0. **Snapshot prior artifact stats (all modes).** Capture `mtime + size` of `threat-model.yaml` and (if it exists) `threat-model.md` so the post-Stage-1 / post-Stage-2 gates can (a) detect a true no-op on incremental runs and (b) tell a freshly-rendered deliverable from a **stale prior** one. A full/rebuild re-run over an existing OUTPUT_DIR still has the previous `threat-model.md` on disk, so a bare `-f` existence check would misread a mid-Stage-1 death as success (DG-1). Capture in every mode; the cut-off detection below compares against this snapshot.
    ```bash
    YAML_PRE_STAGE1="missing"
    MD_PRE_STAGE1="missing"
-   if [ "$MODE" = "incremental" ]; then
-     if [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
-       YAML_PRE_STAGE1=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null \
-                       || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null \
-                       || echo "missing")
-     fi
-     if [ -f "$OUTPUT_DIR/threat-model.md" ]; then
-       MD_PRE_STAGE1=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
-                     || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+   if [ -f "$OUTPUT_DIR/threat-model.yaml" ]; then
+     YAML_PRE_STAGE1=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null \
+                     || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null \
                      || echo "missing")
-     fi
+   fi
+   if [ -f "$OUTPUT_DIR/threat-model.md" ]; then
+     MD_PRE_STAGE1=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+                   || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+                   || echo "missing")
    fi
    export YAML_PRE_STAGE1 MD_PRE_STAGE1
    ```
@@ -2429,6 +2427,7 @@ fi
 0. **Stage open.** Capture the start timestamp, mark the task in progress, print the banner, and start the heartbeat watchdog (same `skill_watchdog.py` invocation as the other stages — see "Skill-layer heartbeat watchdog"; capture its `task_id` in `HEARTBEAT_TASK_ID`). Skip all of this when `DRY_RUN=true`.
    ```bash
    STAGE_ABUSE_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+   ABUSE_PIPELINE_FAILED=0
    ```
    - `TaskUpdate` `Stage 1c - Abuse Case Verification` → `in_progress`.
    - Banner:
@@ -2439,18 +2438,34 @@ fi
 
 1. **Deterministic match** (no LLM): build candidates from the standard library + org profile + repo-local cases against `.threats-merged.json`. `--repo-root` loads `<repo>/.appsec/abuse-cases/*.yaml` (zero-config repo-local layer).
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" match \
        --output-dir "$OUTPUT_DIR" \
        --repo-root "$REPO_ROOT" \
-       ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} || true
+       ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"}; then
+     ABUSE_PIPELINE_FAILED=1
+     printf '\n\033[1;31m✗ Abuse-case match failed (match_abuse_cases.py match exited nonzero)\033[0m\n' >&2
+   fi
    CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
        list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
    ```
 2. **Verifier fan-out** — for each AC-ID in `$CANDIDATES`, dispatch the `appsec-advisor:appsec-abuse-case-verifier` Agent (`model: sonnet`, foreground) with the prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=sonnet`. **Single-pass sonnet** (perf 2026-06-02): the former haiku-first + bounded-sonnet-escalation two-tier ran its waves *sequentially* (haiku → finalize barrier → sonnet re-verify), and on complex repos most candidates escalated anyway (juice-shop: 5/6) — so the haiku wave was near-pure wasted wall-time for the same final verdicts (sonnet is what produced them). Dispatching sonnet directly collapses it to one wave. Dispatch all candidates together in ONE message (wall-clock ≈ slowest single case). Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file. **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
 3. **Merge + finalize** (deterministic) — produces the final chain verdicts directly from the single sonnet wave:
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR" || true
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR" || true
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR"; then
+     ABUSE_PIPELINE_FAILED=1
+     printf '\n\033[1;31m✗ Abuse-case merge failed (verify_abuse_cases.py merge exited nonzero)\033[0m\n' >&2
+   fi
+   if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" finalize --output-dir "$OUTPUT_DIR"; then
+     ABUSE_PIPELINE_FAILED=1
+     printf '\n\033[1;31m✗ Abuse-case finalize failed (match_abuse_cases.py finalize exited nonzero)\033[0m\n' >&2
+   fi
+   # DG-2: a pipeline crash must NOT masquerade as "no abuse cases apply". When
+   # ABUSE_PIPELINE_FAILED=1 the §9 not-applicable catalog below is rendering
+   # over INCOMPLETE data — surface it loudly. stderr is mirrored into
+   # .agent-run.log in headless mode, so this is recorded for forensics.
+   if [ "$ABUSE_PIPELINE_FAILED" = "1" ]; then
+     printf '  §9 Abuse Cases reflect an INCOMPLETE verification pass (a script failed above).\n' >&2
+   fi
    ```
 
 3b2. **Fold verified chains into severity** (deterministic, no LLM). Now that the abuse verdicts are final, re-run the deterministic triage ranking so a **code-verified `fully_viable` chain bubbles its constituent findings up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** via `--if-deterministic-owner` on the artifact marker `ranking.computed_by` in `.triage-flags.json` — written only by the deterministic Step 6 run — and exits cleanly otherwise. So this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Do NOT gate this on the `APPSEC_TRIAGE_DETERMINISTIC` env var: env vars do not reach skill-level Bash, so an env-gated call silently no-ops on every default run. Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. Under `.budget-critical` every chain is `inconclusive`, so there is nothing to fold and this is a harmless no-op.
@@ -2682,10 +2697,17 @@ Thorough-depth runs whose criteria selection yields the full inventory (commonly
 1. The agent's final text ends with something like `"All 8 STRIDE files ready. Proceeding to merge."` without a closing `ASSESSMENT_END` log entry.
 2. `$OUTPUT_DIR/threat-model.md` does NOT exist after the Agent call returns — but `$OUTPUT_DIR/.stride-*.json` and `$OUTPUT_DIR/.recon-summary.md` are present.
 
-**Detection (mandatory).** Immediately after the Stage 1 Agent call returns, the skill MUST check whether `threat-model.md` exists:
+**Detection (mandatory).** Immediately after the Stage 1 Agent call returns, the skill MUST check whether `threat-model.md` was **freshly produced** — not merely present. A `-f` test alone is unsafe: a full/rebuild re-run leaves the previous run's `threat-model.md` on disk, so it must also be NEWER than the pre-Stage-1 snapshot (DG-1).
 
 ```bash
-if [ ! -f "$OUTPUT_DIR/threat-model.md" ]; then
+MD_POST_STAGE1="missing"
+if [ -f "$OUTPUT_DIR/threat-model.md" ]; then
+  MD_POST_STAGE1=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+                || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+                || echo "missing")
+fi
+# Cut-off if the deliverable is missing OR unchanged since before Stage 1.
+if [ ! -f "$OUTPUT_DIR/threat-model.md" ] || [ "$MD_POST_STAGE1" = "$MD_PRE_STAGE1" ]; then
   # Stage 1 returned without producing the deliverable. Classify the cut-off
   # by inspecting on-disk state — the three branches below correspond to
   # increasingly-late deaths and have different recovery paths.
@@ -2765,7 +2787,13 @@ if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" 
   # existence check that gated the STAGE11_CUTOFF detection above.
 
   # After Stage 2 returns:
+  MD_POST_STAGE2="missing"
   if [ -f "$OUTPUT_DIR/threat-model.md" ]; then
+    MD_POST_STAGE2=$(stat -c '%Y:%s' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+                  || stat -f '%m:%z' "$OUTPUT_DIR/threat-model.md" 2>/dev/null \
+                  || echo "missing")
+  fi
+  if [ -f "$OUTPUT_DIR/threat-model.md" ] && [ "$MD_POST_STAGE2" != "$MD_PRE_STAGE1" ]; then
     # Stage 2 succeeded — clear the cutoff flag and continue into Stage 3.
     STAGE11_CUTOFF=false
     printf '✓ Stage 2 complete — threat-model.md produced. Continuing to Stage 3.\n\n' >&2
