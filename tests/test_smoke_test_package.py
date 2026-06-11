@@ -103,10 +103,7 @@ def test_passes_with_matching_surface_manifest(tmp_path: Path) -> None:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": (
-                                        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/"
-                                        "agent_logger.py"
-                                    ),
+                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"),
                                 }
                             ]
                         }
@@ -171,10 +168,7 @@ def test_fails_when_removed_hook_is_registered(tmp_path: Path) -> None:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": (
-                                        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/"
-                                        "security_steering.py"
-                                    ),
+                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/security_steering.py"),
                                 }
                             ]
                         }

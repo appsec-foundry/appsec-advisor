@@ -131,12 +131,7 @@ def _log_error_loud(output_dir: Path, event: str, detail: str, remedy: str) -> N
 
     # 2. Bright stderr banner so the terminal user sees it without grepping
     try:
-        banner = (
-            f"\n"
-            f"⛔  {event} — {detail}\n"
-            f"    Remedy: {remedy}\n"
-            f"\n"
-        )
+        banner = f"\n⛔  {event} — {detail}\n    Remedy: {remedy}\n\n"
         sys.stderr.write(banner)
         sys.stderr.flush()
     except Exception:
@@ -183,12 +178,8 @@ def _log_error_loud(output_dir: Path, event: str, detail: str, remedy: str) -> N
         pass
 
 
-_SUBSTEP2_START_RE = re.compile(
-    r"STEP_START\s+\[Phase\s*11\]\s+\[2/\d+\]\s+Writing\s+threat-model\.yaml"
-)
-_SUBSTEP2_DONE_RE = re.compile(
-    r"FILE_WRITE\s+\S*threat-model\.yaml\b"
-)
+_SUBSTEP2_START_RE = re.compile(r"STEP_START\s+\[Phase\s*11\]\s+\[2/\d+\]\s+Writing\s+threat-model\.yaml")
+_SUBSTEP2_DONE_RE = re.compile(r"FILE_WRITE\s+\S*threat-model\.yaml\b")
 _ISO_LEAD_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
 
 
@@ -236,11 +227,7 @@ def _substep2_completed_after(output_dir: Path, started_at_iso: str) -> bool:
     # Signal 2 — yaml on disk (robust to a missing FILE_WRITE marker).
     try:
         st = (output_dir / "threat-model.yaml").stat()
-        started_epoch = (
-            datetime.strptime(started_at_iso, "%Y-%m-%dT%H:%M:%SZ")
-            .replace(tzinfo=timezone.utc)
-            .timestamp()
-        )
+        started_epoch = datetime.strptime(started_at_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
         # +1s tolerance: log STEP_START is whole-second, the write may stamp
         # within the same second.
         if st.st_mtime + 1 >= started_epoch:
@@ -302,9 +289,7 @@ def _log_idle_seconds(output_dir: Path, started_at_iso: str) -> float:
         last_non_watchdog_ts = ts
     baseline_iso = last_non_watchdog_ts or started_at_iso
     try:
-        dt = datetime.strptime(baseline_iso, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
+        dt = datetime.strptime(baseline_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except ValueError:
         return 0.0
     return max(0.0, time.time() - dt.timestamp())
@@ -347,9 +332,7 @@ def _hook_log_idle_seconds(output_dir: Path) -> float | None:
     if last_ts is None:
         return None
     try:
-        dt = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc
-        )
+        dt = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except ValueError:
         return None
     return max(0.0, time.time() - dt.timestamp())
@@ -490,6 +473,7 @@ def _is_past_stride_phase(output_dir: Path) -> bool:
     # via stride file presence, so an early-phase checkpoint value here
     # (``phase=1`` … ``phase=8``) cannot trip the false-positive.
     import re as _re
+
     m = _re.search(r"phase=([^\s]+)", text)
     if not m:
         return False

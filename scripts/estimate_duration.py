@@ -462,12 +462,19 @@ def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="estimate_duration.py", add_help=True)
     p.add_argument("--depth", default="standard", choices=("quick", "standard", "thorough"))
     p.add_argument("--mode", default="full", choices=("full", "incremental", "rebuild", "resume"))
-    p.add_argument("--reasoning-model", default="sonnet", choices=("sonnet", "opus-cheap", "opus", "sonnet-economy", "haiku-economy"))
+    p.add_argument(
+        "--reasoning-model",
+        default="sonnet",
+        choices=("sonnet", "opus-cheap", "opus", "sonnet-economy", "haiku-economy"),
+    )
     p.add_argument("--architect-review", action="store_true")
     p.add_argument("--skip-qa", action="store_true")
-    p.add_argument("--skip-abuse-cases", action="store_true",
-                   help="abuse-case verifier fan-out is disabled (mirrors "
-                        "skip_abuse_case_verification); drops the Stage-1c additive")
+    p.add_argument(
+        "--skip-abuse-cases",
+        action="store_true",
+        help="abuse-case verifier fan-out is disabled (mirrors "
+        "skip_abuse_case_verification); drops the Stage-1c additive",
+    )
     p.add_argument("--output-dir", required=True, type=Path)
     p.add_argument("--repo-root", required=True, type=Path)
     p.add_argument("--max-stride-components", type=int, default=5)

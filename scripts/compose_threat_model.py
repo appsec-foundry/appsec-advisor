@@ -101,6 +101,16 @@ DEFAULT_CONTRACT = PLUGIN_ROOT / "data" / "sections-contract.yaml"
 TEMPLATES_DIR = PLUGIN_ROOT / "templates" / "fragments"
 SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
 
+# CSafeLoader is ~11× faster than pure-Python SafeLoader on large YAML files
+# (300 KB threat-model.yaml: 0.447 s vs 0.039 s measured). Identical output
+# for the safe subset all plugin documents use. Mirrors the same pattern in
+# scripts/qa_checks.py _fast_yaml_load.
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _fast_yaml_load(text: str):
+    return yaml.load(text, Loader=_YAML_LOADER)  # noqa: S506
+
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -132,7 +142,6 @@ _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
     "verdict": [".fragments/ms-verdict.json"],
     "architectural_anti_patterns": [".fragments/ms-anti-patterns.json"],
     "ai_exposure_ms": [".fragments/ms-ai-exposure.json"],
-    "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
     "operational_strengths": [".fragments/operational-strengths-overrides.json"],
     "system_overview": [".fragments/system-overview.md"],
     "identified_actors": [],  # computed — no LLM fragment (actors.md §14)
@@ -151,10 +160,6 @@ _SECTION_FRAGMENT_MAP: dict[str, list[str]] = {
 
 _KNOWN_JSON_FRAGMENT_SCHEMAS: dict[str, tuple[str, str]] = {
     "ms-verdict.json": ("verdict", "verdict.schema.json"),
-    "ms-architecture-assessment.json": (
-        "architecture_assessment",
-        "architecture-assessment.schema.json",
-    ),
     "ms-critical-attack-tree.json": (
         "critical_attack_tree",
         "critical-attack-tree.schema.json",
@@ -277,9 +282,7 @@ class RenderContext:
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             if not tid:
                 continue
-            label = _strip_embedded_evidence_file(
-                (t.get("title") or t.get("scenario_short") or "").strip(), t
-            )
+            label = _strip_embedded_evidence_file((t.get("title") or t.get("scenario_short") or "").strip(), t)
             if not label:
                 sc = (t.get("scenario") or t.get("description") or "").strip()
                 if sc:
@@ -339,12 +342,7 @@ class RenderContext:
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             if not tid:
                 continue
-            sev = (
-                t.get("effective_severity")
-                or t.get("risk")
-                or t.get("severity")
-                or ""
-            ).strip()
+            sev = (t.get("effective_severity") or t.get("risk") or t.get("severity") or "").strip()
             if not sev:
                 continue
             idx.setdefault(tid, sev)
@@ -382,14 +380,14 @@ class RenderContext:
             if not mid:
                 continue
             raw = (m.get("priority") or "").strip().lower()
-            if raw in _PRIO_ICON_TBL:            # already a p1..p4 key
+            if raw in _PRIO_ICON_TBL:  # already a p1..p4 key
                 idx.setdefault(mid, raw)
                 continue
-            if raw in sev_to_prio:               # severity word in the priority slot
+            if raw in sev_to_prio:  # severity word in the priority slot
                 idx.setdefault(mid, sev_to_prio[raw])
                 continue
             best = 9
-            for a in (m.get("threat_ids") or m.get("addresses") or []):
+            for a in m.get("threat_ids") or m.get("addresses") or []:
                 am = re.search(r"(\d+)$", str(a))
                 if am:
                     best = min(best, _SEV_RANK_TBL.get(sev_by_num.get(int(am.group(1)), ""), 9))
@@ -717,12 +715,10 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
     format_defect_findings = format_weakness_findings
 
     def format_weakness_components(items: list[dict[str, Any]] | list[str], sep: str = "<br/>") -> str:
-        """Render `affected_components[]` for Architecture Assessment.
+        """Render `affected_components[]` as linked component names.
 
         Accepts either a list of `{id, name}` dicts (preferred) or bare
-        component-id strings (legacy). Component-id resolution against the
-        components dict happens inside ``_render_architecture_assessment``
-        before the template is invoked. `sep` defaults to <br/> for table
+        component-id strings (legacy). `sep` defaults to <br/> for table
         cells; pass ", " for inline prose contexts (Anti-Patterns sub-bullets).
         """
         if not items:
@@ -823,7 +819,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
     env.filters["linkify_refs"] = linkify_refs
     env.filters["format_id_list"] = format_id_list
     env.filters["format_mitigations"] = format_mitigations
-    env.filters["format_defect_findings"] = format_defect_findings   # back-compat alias
+    env.filters["format_defect_findings"] = format_defect_findings  # back-compat alias
     env.filters["format_weakness_findings"] = format_weakness_findings
     env.filters["format_weakness_components"] = format_weakness_components
     env.filters["format_component_list"] = format_component_list
@@ -1059,15 +1055,19 @@ _CWE_REQUIRES_NAME_TOKEN: dict[str, frozenset[str]] = {
     "CWE-759": frozenset({"hash", "salt", "password", "bcrypt", "argon"}),
     "CWE-760": frozenset({"hash", "salt", "password", "bcrypt", "argon"}),
     "CWE-328": frozenset({"hash", "password", "bcrypt", "argon"}),
-    "CWE-321": frozenset({"key", "secret", "kms", "vault", "rotation", "rotate", "manager", "externalize", "externaliz"}),
-    "CWE-798": frozenset({"credential", "secret", "key", "kms", "vault", "rotation", "rotate", "externalize", "externaliz"}),
+    "CWE-321": frozenset(
+        {"key", "secret", "kms", "vault", "rotation", "rotate", "manager", "externalize", "externaliz"}
+    ),
+    "CWE-798": frozenset(
+        {"credential", "secret", "key", "kms", "vault", "rotation", "rotate", "externalize", "externaliz"}
+    ),
     "CWE-352": frozenset({"csrf", "samesite", "double-submit", "anti-csrf", "csurf"}),
     "CWE-918": frozenset({"ssrf", "allowlist", "egress", "url"}),
     "CWE-922": frozenset({"storage", "cookie", "httponly", "localstorage", "session"}),
     "CWE-915": frozenset({"mass-assignment", "mass", "whitelist", "allowlist", "schema", "binding"}),
     "CWE-639": frozenset({"ownership", "object", "idor", "authorization", "scope"}),
     "CWE-347": frozenset({"signature", "algorithm", "jwt", "verify", "whitelist", "allowlist"}),
-    "CWE-94":  frozenset({"eval", "sandbox", "parser", "schema", "input"}),
+    "CWE-94": frozenset({"eval", "sandbox", "parser", "schema", "input"}),
     "CWE-611": frozenset({"xxe", "xml", "entity", "noent"}),
 }
 
@@ -1310,9 +1310,9 @@ def _extract_section_verbatim(md: str, *, top_level_number: int) -> str:
 # Title group goes into group(2) [new] or group(4) [old]; digits into
 # group(1) or group(3). Use `_extract_fnnn_row(match)` to coalesce.
 _FNNN_REGISTER_ROW = re.compile(
-    r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*\*\*([^*\n]+?)\*\*'   # arm A — table, bold title
-    r'|<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|'       # arm B — table, bare title
-    r'|<a id="f-(\d+)"></a>\s*\n#### F-\d+ · ([^\n]+)'         # arm C — card heading (2026-05)
+    r'<a id="f-(\d+)"></a>F-\d+\s*\|\s*\*\*([^*\n]+?)\*\*'  # arm A — table, bold title
+    r'|<a id="f-(\d+)"></a>F-\d+\s*\|\s*([^|\n]+?)\s*\|'  # arm B — table, bare title
+    r'|<a id="f-(\d+)"></a>\s*\n#### F-\d+ · ([^\n]+)'  # arm C — card heading (2026-05)
 )
 
 
@@ -1335,66 +1335,66 @@ def _normalize_register_title(title: str) -> str:
 # _render_mitigations so both §8 title canonicalisation and §9 CWE-name
 # decoration use the SAME vocabulary.
 _CWE_CLASS_NAMES = {
-    "CWE-22":   "Path Traversal",
-    "CWE-23":   "Path Traversal",
-    "CWE-78":   "OS Command Injection",
-    "CWE-79":   "Cross-Site Scripting",
-    "CWE-87":   "Cross-Site Scripting",
-    "CWE-89":   "SQL Injection",
-    "CWE-94":   "Code Injection",
-    "CWE-95":   "Server-Side Template Injection",
-    "CWE-116":  "Improper Output Encoding",
-    "CWE-200":  "Information Disclosure",
-    "CWE-209":  "Error Message Disclosure",
-    "CWE-269":  "Improper Privilege Management",
-    "CWE-284":  "Improper Access Control",
-    "CWE-285":  "Improper Authorization",
-    "CWE-287":  "Improper Authentication",
-    "CWE-290":  "Authentication Bypass by Spoofing",
-    "CWE-294":  "Authentication Bypass by Capture-Replay",
-    "CWE-306":  "Missing Authentication",
-    "CWE-307":  "Missing Rate Limiting (Brute-Force)",
-    "CWE-310":  "Cryptographic Weakness",
-    "CWE-312":  "Cleartext Storage of Sensitive Data",
-    "CWE-321":  "Hardcoded Cryptographic Key",
-    "CWE-326":  "Inadequate Encryption Strength",
-    "CWE-327":  "Use of a Broken or Risky Cryptographic Algorithm",
-    "CWE-328":  "Use of Weak Hash",
-    "CWE-329":  "Predictable IV / Nonce",
-    "CWE-330":  "Use of Insufficiently Random Values",
-    "CWE-345":  "Insufficient Verification of Data Authenticity",
-    "CWE-346":  "Origin Validation Error",
-    "CWE-347":  "Improper Verification of Cryptographic Signature",
-    "CWE-352":  "Cross-Site Request Forgery (CSRF)",
-    "CWE-359":  "Exposure of Private Personal Information",
-    "CWE-400":  "Uncontrolled Resource Consumption",
-    "CWE-434":  "Unrestricted File Upload",
-    "CWE-441":  "Unintended Proxy or Intermediary (Confused Deputy)",
-    "CWE-502":  "Deserialization of Untrusted Data",
-    "CWE-532":  "Sensitive Data in Log Files",
-    "CWE-538":  "Insertion of Sensitive Information into Externally-Accessible File",
-    "CWE-548":  "Directory Listing Exposure",
-    "CWE-552":  "Files / Directories Accessible to External Parties",
-    "CWE-601":  "Open Redirect",
-    "CWE-611":  "XML External Entity (XXE)",
-    "CWE-620":  "Unverified Password Change",
-    "CWE-639":  "Insecure Direct Object Reference (IDOR)",
-    "CWE-640":  "Weak Password Recovery Mechanism",
-    "CWE-674":  "Uncontrolled Recursion",
-    "CWE-693":  "Missing Defense-in-Depth Control",
-    "CWE-732":  "Incorrect Permission Assignment",
-    "CWE-749":  "Exposed Dangerous Method or Function",
-    "CWE-770":  "Allocation of Resources without Limits",
-    "CWE-778":  "Insufficient Logging",
-    "CWE-798":  "Hardcoded Credentials",
-    "CWE-834":  "Excessive Iteration",
-    "CWE-862":  "Missing Authorization",
-    "CWE-863":  "Incorrect Authorization",
-    "CWE-916":  "Password Hash with Insufficient Effort",
-    "CWE-918":  "Server-Side Request Forgery (SSRF)",
-    "CWE-922":  "Insecure Storage of Sensitive Information",
-    "CWE-942":  "Permissive Cross-Origin (CORS) Policy",
-    "CWE-943":  "NoSQL Injection",
+    "CWE-22": "Path Traversal",
+    "CWE-23": "Path Traversal",
+    "CWE-78": "OS Command Injection",
+    "CWE-79": "Cross-Site Scripting",
+    "CWE-87": "Cross-Site Scripting",
+    "CWE-89": "SQL Injection",
+    "CWE-94": "Code Injection",
+    "CWE-95": "Server-Side Template Injection",
+    "CWE-116": "Improper Output Encoding",
+    "CWE-200": "Information Disclosure",
+    "CWE-209": "Error Message Disclosure",
+    "CWE-269": "Improper Privilege Management",
+    "CWE-284": "Improper Access Control",
+    "CWE-285": "Improper Authorization",
+    "CWE-287": "Improper Authentication",
+    "CWE-290": "Authentication Bypass by Spoofing",
+    "CWE-294": "Authentication Bypass by Capture-Replay",
+    "CWE-306": "Missing Authentication",
+    "CWE-307": "Missing Rate Limiting (Brute-Force)",
+    "CWE-310": "Cryptographic Weakness",
+    "CWE-312": "Cleartext Storage of Sensitive Data",
+    "CWE-321": "Hardcoded Cryptographic Key",
+    "CWE-326": "Inadequate Encryption Strength",
+    "CWE-327": "Use of a Broken or Risky Cryptographic Algorithm",
+    "CWE-328": "Use of Weak Hash",
+    "CWE-329": "Predictable IV / Nonce",
+    "CWE-330": "Use of Insufficiently Random Values",
+    "CWE-345": "Insufficient Verification of Data Authenticity",
+    "CWE-346": "Origin Validation Error",
+    "CWE-347": "Improper Verification of Cryptographic Signature",
+    "CWE-352": "Cross-Site Request Forgery (CSRF)",
+    "CWE-359": "Exposure of Private Personal Information",
+    "CWE-400": "Uncontrolled Resource Consumption",
+    "CWE-434": "Unrestricted File Upload",
+    "CWE-441": "Unintended Proxy or Intermediary (Confused Deputy)",
+    "CWE-502": "Deserialization of Untrusted Data",
+    "CWE-532": "Sensitive Data in Log Files",
+    "CWE-538": "Insertion of Sensitive Information into Externally-Accessible File",
+    "CWE-548": "Directory Listing Exposure",
+    "CWE-552": "Files / Directories Accessible to External Parties",
+    "CWE-601": "Open Redirect",
+    "CWE-611": "XML External Entity (XXE)",
+    "CWE-620": "Unverified Password Change",
+    "CWE-639": "Insecure Direct Object Reference (IDOR)",
+    "CWE-640": "Weak Password Recovery Mechanism",
+    "CWE-674": "Uncontrolled Recursion",
+    "CWE-693": "Missing Defense-in-Depth Control",
+    "CWE-732": "Incorrect Permission Assignment",
+    "CWE-749": "Exposed Dangerous Method or Function",
+    "CWE-770": "Allocation of Resources without Limits",
+    "CWE-778": "Insufficient Logging",
+    "CWE-798": "Hardcoded Credentials",
+    "CWE-834": "Excessive Iteration",
+    "CWE-862": "Missing Authorization",
+    "CWE-863": "Incorrect Authorization",
+    "CWE-916": "Password Hash with Insufficient Effort",
+    "CWE-918": "Server-Side Request Forgery (SSRF)",
+    "CWE-922": "Insecure Storage of Sensitive Information",
+    "CWE-942": "Permissive Cross-Origin (CORS) Policy",
+    "CWE-943": "NoSQL Injection",
     "CWE-1004": "Sensitive Cookie without HttpOnly",
     "CWE-1021": "Improper Restriction of UI Rendering Layers (Clickjacking)",
     "CWE-1104": "Use of Unmaintained Third-Party Components",
@@ -1420,9 +1420,7 @@ def _canonical_finding_title(t: dict) -> str:
     (caller decides on a placeholder).
     """
     cwe_raw = (t.get("cwe") or "").strip()
-    cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
-        f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
-    )
+    cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
     class_label = _CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
     if not class_label:
         # Fallback — derive a short noun phrase from the existing title
@@ -1430,7 +1428,25 @@ def _canonical_finding_title(t: dict) -> str:
         raw = _normalize_register_title(t.get("title") or t.get("scenario_short") or "")
         # Drop trailing file-form `— …` if present.
         raw = re.sub(r"\s+—\s+[A-Za-z0-9_./\-]+(?::\d+)?\s*$", "", raw)
-        stopwords = {"a","an","the","of","in","on","at","to","for","by","via","and","or","but","with","from","into"}
+        stopwords = {
+            "a",
+            "an",
+            "the",
+            "of",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "by",
+            "via",
+            "and",
+            "or",
+            "but",
+            "with",
+            "from",
+            "into",
+        }
         tokens = [w for w in raw.split() if w.lower() not in stopwords]
         class_label = " ".join(tokens[:5]).strip(" ,;:.")
     if not class_label:
@@ -1499,14 +1515,6 @@ def _verbatim_fnnn_refs_match(extracted_section: str, prior_md: str, current_thr
 
 
 _SECTION7_DEAD_LINK_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # architecture-assessment.md.j2 closing reference (full sentence only;
-    # do NOT consume preceding newlines — that strips inter-section blank
-    # lines and concatenates the last table row with the next heading).
-    re.compile(
-        r"\n?See \*\*\[§7 Security Architecture\]\(#7-security-architecture\)"
-        r"\*\* for the full per-domain breakdown and control catalog\.\s*\n",
-        re.MULTILINE,
-    ),
     # operational-strengths.md.j2 truncation footnote.
     re.compile(
         r"\n*_\+\d+ additional controls — see "
@@ -1757,8 +1765,9 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
     # components that received a STRIDE pass rather than a hard-coded cap/total.
     components = ctx.yaml_data.get("components") or []
     analyzed = sum(1 for c in components if c.get("threat_ids"))
-    comp_clause = (f"**{analyzed} component{'s' if analyzed != 1 else ''}**"
-                   if analyzed else "**A reduced component set**")
+    comp_clause = (
+        f"**{analyzed} component{'s' if analyzed != 1 else ''}**" if analyzed else "**A reduced component set**"
+    )
     lines = [
         "> ⚠ **Quick depth — reduced-scope assessment.**",
         "> ",
@@ -1778,19 +1787,19 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append("> - **No §3 Attack Walkthroughs** (entirely skipped at `--quick`)")
     else:
         lines.append("> - **§3 Attack Walkthroughs** limited to Critical findings")
-    lines.extend([
-        "> - **No LLM-enriched §7 architecture narrative** (scaffold + control tables only)",
-        "> - **No QA reviewer pass**, no architect-level review",
-        "> ",
-        "> Re-run with `--standard` (≈ +30 min) for full STRIDE coverage and QA, or",
-        "> `--thorough` (≈ +90 min) for architect review and enriched architecture sections.",
-    ])
+    lines.extend(
+        [
+            "> - **No LLM-enriched §7 architecture narrative** (scaffold + control tables only)",
+            "> - **No QA reviewer pass**, no architect-level review",
+            "> ",
+            "> Re-run with `--standard` (≈ +30 min) for full STRIDE coverage and QA, or",
+            "> `--thorough` (≈ +90 min) for architect review and enriched architecture sections.",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
-def _render_skipped_sections_placeholder(
-    ctx: RenderContext, env: jinja2.Environment, section: dict
-) -> str:
+def _render_skipped_sections_placeholder(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Emit a one-line italic notice between §5 and §8 when §6 (Use Cases)
     is permanently removed AND §7 (Security Architecture) is suppressed
     at quick depth. Without this notice the document numbering jumps from
@@ -2044,8 +2053,11 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
     # 5→7 jump reads as a rendering bug ("Wo ist Kapitel 6?"), so name the gap
     # explicitly instead. Generic: fires for any missing top-level integer.
     _nums = sorted(
-        {int(e["number"]) for e in entries
-         if e.get("number") and "." not in str(e["number"]) and str(e["number"]).isdigit()}
+        {
+            int(e["number"])
+            for e in entries
+            if e.get("number") and "." not in str(e["number"]) and str(e["number"]).isdigit()
+        }
     )
     if _nums:
         _missing = [n for n in range(_nums[0], _nums[-1] + 1) if n not in _nums]
@@ -2083,9 +2095,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     ]
     if counts["info"] > 0:
         rd_parts.append(f"⚪ Info: {counts['info']}")
-    risk_distribution = (
-        "**Risk distribution:** " + " · ".join(rd_parts) + f" · **Total: {total}**"
-    )
+    risk_distribution = "**Risk distribution:** " + " · ".join(rd_parts) + f" · **Total: {total}**"
     tpl = env.get_template(section["template"])
     return tpl.render(data=data, risk_distribution=risk_distribution).rstrip() + "\n"
 
@@ -2272,7 +2282,7 @@ def _load_taxonomy(filename: str) -> dict:
     if filename not in _TAXONOMY_CACHE:
         path = PLUGIN_ROOT / "data" / filename
         try:
-            _TAXONOMY_CACHE[filename] = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            _TAXONOMY_CACHE[filename] = _fast_yaml_load(path.read_text(encoding="utf-8")) or {}
         except (FileNotFoundError, yaml.YAMLError):
             _TAXONOMY_CACHE[filename] = {}
     return _TAXONOMY_CACHE[filename]
@@ -2482,12 +2492,14 @@ def _reconcile_attack_path_targets(data: dict, taxonomy: dict, ctx: RenderContex
             continue
         actual = (ap.get("target") or "").strip().lower()
         if actual and actual != canonical_tier:
-            drift_log.append({
-                "class": cls_id,
-                "llm_target": actual,
-                "canonical_target": canonical_tier,
-                "source": "attack-class-taxonomy.default_target_tier",
-            })
+            drift_log.append(
+                {
+                    "class": cls_id,
+                    "llm_target": actual,
+                    "canonical_target": canonical_tier,
+                    "source": "attack-class-taxonomy.default_target_tier",
+                }
+            )
             ap["target"] = canonical_tier
 
     if drift_log:
@@ -2509,9 +2521,7 @@ def _reconcile_attack_path_targets(data: dict, taxonomy: dict, ctx: RenderContex
             pass
 
 
-def _reconcile_attack_path_membership(
-    data: dict, taxonomy: dict, threats: list[dict], ctx: RenderContext
-) -> None:
+def _reconcile_attack_path_membership(data: dict, taxonomy: dict, threats: list[dict], ctx: RenderContext) -> None:
     """M-11: Ensure every taxonomy cluster that has ≥1 matching finding in
     ``yaml.threats`` appears in ``attack_paths[]``. The LLM frequently omits
     low-severity classes (e.g. CSRF with a single Medium finding), even
@@ -2545,16 +2555,12 @@ def _reconcile_attack_path_membership(
             continue
         # Prefer the legacy F-NNN identifier so generated entries match the
         # rest of the fragment's id-namespace (the LLM also writes F-NNN).
-        fid = (
-            (t.get("original_id") or "").strip()
-            or (t.get("id") or "").strip()
-            or (t.get("t_id") or "").strip()
-        )
+        fid = (t.get("original_id") or "").strip() or (t.get("id") or "").strip() or (t.get("t_id") or "").strip()
         if fid:
             findings_by_class.setdefault(slug, []).append(fid)
 
     path_by_slug: dict[str, dict] = {}
-    for ap in (data.get("attack_paths") or []):
+    for ap in data.get("attack_paths") or []:
         if isinstance(ap, dict):
             s = (ap.get("class") or "").strip()
             if s and s not in path_by_slug:
@@ -2581,16 +2587,18 @@ def _reconcile_attack_path_membership(
         if missing:
             ap["findings"] = sorted(cur_set | set(missing))
             merged_any = True
-            gap_log.append({
-                "class": slug,
-                "merged_findings": missing[:8],
-                "merged_count": len(missing),
-                "source": "(3) attack-paths same-class finding merge",
-                "reason": (
-                    f"{len(missing)} finding(s) classify as {slug!r} but were "
-                    f"missing from the LLM-authored path's findings[]"
-                ),
-            })
+            gap_log.append(
+                {
+                    "class": slug,
+                    "merged_findings": missing[:8],
+                    "merged_count": len(missing),
+                    "source": "(3) attack-paths same-class finding merge",
+                    "reason": (
+                        f"{len(missing)} finding(s) classify as {slug!r} but were "
+                        f"missing from the LLM-authored path's findings[]"
+                    ),
+                }
+            )
 
     for slug, fids in findings_by_class.items():
         if slug in existing_slugs:
@@ -2609,17 +2617,19 @@ def _reconcile_attack_path_membership(
             "impact": list(cls.get("default_impacts") or []),
         }
         appended.append(new_entry)
-        gap_log.append({
-            "class": slug,
-            "missing_finding_count": len(new_entry["findings"]),
-            "appended_findings": new_entry["findings"][:5],
-            "source": "M-11 attack-paths gap-filler",
-            "reason": (
-                f"taxonomy cluster {slug!r} has {len(new_entry['findings'])} "
-                f"matching finding(s) in threats[] but no entry in LLM-authored "
-                f"attack_paths"
-            ),
-        })
+        gap_log.append(
+            {
+                "class": slug,
+                "missing_finding_count": len(new_entry["findings"]),
+                "appended_findings": new_entry["findings"][:5],
+                "source": "M-11 attack-paths gap-filler",
+                "reason": (
+                    f"taxonomy cluster {slug!r} has {len(new_entry['findings'])} "
+                    f"matching finding(s) in threats[] but no entry in LLM-authored "
+                    f"attack_paths"
+                ),
+            }
+        )
 
     if not appended:
         if merged_any:
@@ -2652,9 +2662,9 @@ def _reconcile_attack_path_membership(
     combined = list(data.get("attack_paths") or []) + appended
     data["attack_paths"] = sorted(
         combined,
-        key=lambda ap: taxonomy_order.index(
-            (ap.get("class") or "").strip()
-        ) if (ap.get("class") or "").strip() in taxonomy_order else 999,
+        key=lambda ap: taxonomy_order.index((ap.get("class") or "").strip())
+        if (ap.get("class") or "").strip() in taxonomy_order
+        else 999,
     )
 
     try:
@@ -2755,7 +2765,7 @@ def _build_finding_to_path_map(
     return out
 
 
-def _build_finding_to_chain_map(ctx: "RenderContext") -> dict[str, tuple[str, str]]:
+def _build_finding_to_chain_map(ctx: RenderContext) -> dict[str, tuple[str, str]]:
     """Map finding-id (F-NNN / T-NNN) → (link_label, anchor_slug) for §3
     Attack Walkthroughs back-links.
 
@@ -2832,46 +2842,46 @@ def _build_finding_to_chain_map(ctx: "RenderContext") -> dict[str, tuple[str, st
 # author them. Phrases are <= 80 chars (heatmap budget) and describe
 # the structural defect, not the vulnerability instance.
 _CWE_TO_ROOT_CAUSE: dict[str, str] = {
-    "CWE-89":   "missing input neutralization on raw SQL paths",
-    "CWE-943":  "NoSQL operators reachable from user input",
-    "CWE-79":   "untrusted HTML rendered via bypassed sanitizer",
-    "CWE-94":   "user input reaches eval() / sandbox sinks",
-    "CWE-95":   "dynamic code construction from request data",
-    "CWE-611":  "XML parser accepts external entities",
-    "CWE-91":   "XML injection via unvalidated content",
-    "CWE-798":  "hardcoded credentials in source code",
-    "CWE-321":  "hardcoded cryptographic key in source code",
-    "CWE-259":  "default / hardcoded password in code",
-    "CWE-327":  "weak or deprecated cryptographic primitives",
-    "CWE-916":  "weak password hashing algorithm",
-    "CWE-759":  "password hash without per-user salt",
-    "CWE-760":  "predictable salt used in password hash",
-    "CWE-347":  "missing or bypassable token signature checks",
-    "CWE-862":  "missing authorization on protected endpoints",
-    "CWE-284":  "missing access control on protected endpoints",
-    "CWE-863":  "incorrect authorization decisions on resources",
-    "CWE-639":  "missing ownership checks on resource access",
-    "CWE-918":  "unrestricted outbound HTTP from server",
-    "CWE-352":  "no CSRF protection on state-changing requests",
-    "CWE-434":  "file uploads accepted without type/content validation",
-    "CWE-22":   "user input concatenated into filesystem paths",
-    "CWE-23":   "user input concatenated into filesystem paths",
-    "CWE-200":  "sensitive endpoints exposed without authentication",
-    "CWE-209":  "internal errors leaked to clients",
-    "CWE-922":  "session token in JavaScript-readable storage",
-    "CWE-312":  "sensitive data persisted in cleartext",
-    "CWE-538":  "internal files reachable on public routes",
-    "CWE-307":  "no brute-force protection on authentication",
-    "CWE-400":  "unbounded resource consumption paths",
-    "CWE-770":  "missing rate limits on expensive operations",
+    "CWE-89": "missing input neutralization on raw SQL paths",
+    "CWE-943": "NoSQL operators reachable from user input",
+    "CWE-79": "untrusted HTML rendered via bypassed sanitizer",
+    "CWE-94": "user input reaches eval() / sandbox sinks",
+    "CWE-95": "dynamic code construction from request data",
+    "CWE-611": "XML parser accepts external entities",
+    "CWE-91": "XML injection via unvalidated content",
+    "CWE-798": "hardcoded credentials in source code",
+    "CWE-321": "hardcoded cryptographic key in source code",
+    "CWE-259": "default / hardcoded password in code",
+    "CWE-327": "weak or deprecated cryptographic primitives",
+    "CWE-916": "weak password hashing algorithm",
+    "CWE-759": "password hash without per-user salt",
+    "CWE-760": "predictable salt used in password hash",
+    "CWE-347": "missing or bypassable token signature checks",
+    "CWE-862": "missing authorization on protected endpoints",
+    "CWE-284": "missing access control on protected endpoints",
+    "CWE-863": "incorrect authorization decisions on resources",
+    "CWE-639": "missing ownership checks on resource access",
+    "CWE-918": "unrestricted outbound HTTP from server",
+    "CWE-352": "no CSRF protection on state-changing requests",
+    "CWE-434": "file uploads accepted without type/content validation",
+    "CWE-22": "user input concatenated into filesystem paths",
+    "CWE-23": "user input concatenated into filesystem paths",
+    "CWE-200": "sensitive endpoints exposed without authentication",
+    "CWE-209": "internal errors leaked to clients",
+    "CWE-922": "session token in JavaScript-readable storage",
+    "CWE-312": "sensitive data persisted in cleartext",
+    "CWE-538": "internal files reachable on public routes",
+    "CWE-307": "no brute-force protection on authentication",
+    "CWE-400": "unbounded resource consumption paths",
+    "CWE-770": "missing rate limits on expensive operations",
     "CWE-1104": "unmaintained or vulnerable npm dependencies",
-    "CWE-829":  "unverified third-party code loaded at runtime",
-    "CWE-346":  "missing origin checks on cross-origin requests",
-    "CWE-601":  "open redirect via unvalidated URL parameter",
-    "CWE-915":  "mass assignment exposes privileged attributes",
-    "CWE-269":  "privilege checks performed only on the client",
+    "CWE-829": "unverified third-party code loaded at runtime",
+    "CWE-346": "missing origin checks on cross-origin requests",
+    "CWE-601": "open redirect via unvalidated URL parameter",
+    "CWE-915": "mass assignment exposes privileged attributes",
+    "CWE-269": "privilege checks performed only on the client",
     "CWE-1188": "default-on-by-default insecure configuration",
-    "CWE-778":  "insufficient audit logging of security events",
+    "CWE-778": "insufficient audit logging of security events",
 }
 
 
@@ -2907,7 +2917,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "}"
         ),
         "verification": (
-            "Send `{ \"$where\": \"sleep(5000) || true\" }` and confirm the request is rejected "
+            'Send `{ "$where": "sleep(5000) || true" }` and confirm the request is rejected '
             "(HTTP 400) within 100 ms instead of taking ~5 s."
         ),
     },
@@ -2915,7 +2925,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
         "lang": "typescript",
         "code": (
             "// Never call bypassSecurityTrust*; let Angular sanitize.\n"
-            "// template:  <div [innerHTML]=\"product.description\"></div>\n"
+            '// template:  <div [innerHTML]="product.description"></div>\n'
             "// component: no DomSanitizer.bypassSecurityTrustHtml(...)\n"
             "this.product.description = raw  // bound directly; Angular escapes"
         ),
@@ -2959,9 +2969,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "if (!privateKey) throw new Error('JWT_PRIVATE_KEY not set')\n"
             "const token = jwt.sign(claims, privateKey, { algorithm: 'RS256' })"
         ),
-        "verification": (
-            "`git grep -- 'BEGIN RSA PRIVATE KEY'` returns no matches in the working tree."
-        ),
+        "verification": ("`git grep -- 'BEGIN RSA PRIVATE KEY'` returns no matches in the working tree."),
     },
     "CWE-798": {
         "lang": "typescript",
@@ -2972,8 +2980,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "const sig = createHmac('sha256', hmacKey).update(payload).digest('hex')"
         ),
         "verification": (
-            "Run a secret-scanner (trufflehog / git-secrets) on HEAD and confirm zero hits "
-            "in `lib/` and `routes/`."
+            "Run a secret-scanner (trufflehog / git-secrets) on HEAD and confirm zero hits in `lib/` and `routes/`."
         ),
     },
     "CWE-327": {
@@ -2996,8 +3003,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "const ok = await bcrypt.compare(plaintext, storedHash)"
         ),
         "verification": (
-            "`select password from Users limit 1;` returns a `$2b$12$...` bcrypt prefix, "
-            "not a 32-hex md5 string."
+            "`select password from Users limit 1;` returns a `$2b$12$...` bcrypt prefix, not a 32-hex md5 string."
         ),
     },
     "CWE-347": {
@@ -3006,9 +3012,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "// Always verify on the public key; never trust the unsigned header.\n"
             "const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] })"
         ),
-        "verification": (
-            "Tamper one byte in a valid token's payload and confirm `jwt.verify()` throws."
-        ),
+        "verification": ("Tamper one byte in a valid token's payload and confirm `jwt.verify()` throws."),
     },
     "CWE-862": {
         "lang": "typescript",
@@ -3019,9 +3023,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "  next()\n"
             "})"
         ),
-        "verification": (
-            "Hit `/admin/...` with a non-admin JWT and confirm 403 (not 200)."
-        ),
+        "verification": ("Hit `/admin/...` with a non-admin JWT and confirm 403 (not 200)."),
     },
     "CWE-284": {
         "lang": "typescript",
@@ -3032,9 +3034,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "    req.user?.role === role ? next() : res.status(403).end()\n"
             "}"
         ),
-        "verification": (
-            "Cross-check every `/api/*` route for an explicit `requireRole(...)` call; gaps fail CI."
-        ),
+        "verification": ("Cross-check every `/api/*` route for an explicit `requireRole(...)` call; gaps fail CI."),
     },
     "CWE-639": {
         "lang": "typescript",
@@ -3043,9 +3043,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "const basket = await Basket.findByPk(req.params.id)\n"
             "if (!basket || basket.UserId !== req.user.id) return res.status(403).end()"
         ),
-        "verification": (
-            "Authenticate as user A; request `/api/Baskets/<B's id>` and confirm 403."
-        ),
+        "verification": ("Authenticate as user A; request `/api/Baskets/<B's id>` and confirm 403."),
     },
     "CWE-918": {
         "lang": "typescript",
@@ -3057,9 +3055,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "if (/^(10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|127\\.)/.test(url.hostname))\n"
             "  throw new Error('private range blocked')"
         ),
-        "verification": (
-            "POST a URL pointing at `http://169.254.169.254/` and confirm HTTP 400."
-        ),
+        "verification": ("POST a URL pointing at `http://169.254.169.254/` and confirm HTTP 400."),
     },
     "CWE-352": {
         "lang": "typescript",
@@ -3067,10 +3063,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "// Use double-submit cookie / SameSite=Strict for state-changing routes.\n"
             "app.use(csrf({ cookie: { sameSite: 'strict', httpOnly: true, secure: true } }))"
         ),
-        "verification": (
-            "Replay a state-changing POST without the CSRF token from a foreign origin "
-            "and confirm 403."
-        ),
+        "verification": ("Replay a state-changing POST without the CSRF token from a foreign origin and confirm 403."),
     },
     "CWE-434": {
         "lang": "typescript",
@@ -3080,9 +3073,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "if (!ALLOWED.has(file.mimetype)) throw new Error('mime not allowed')\n"
             "if (file.size > 2 * 1024 * 1024) throw new Error('too large')"
         ),
-        "verification": (
-            "Upload a `.html` file with `image/png` mimetype and confirm rejection."
-        ),
+        "verification": ("Upload a `.html` file with `image/png` mimetype and confirm rejection."),
     },
     "CWE-922": {
         "lang": "typescript",
@@ -3092,9 +3083,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "  httpOnly: true, secure: true, sameSite: 'lax', maxAge: 3600_000\n"
             "})"
         ),
-        "verification": (
-            "Open browser DevTools, run `localStorage.getItem('token')` and confirm `null`."
-        ),
+        "verification": ("Open browser DevTools, run `localStorage.getItem('token')` and confirm `null`."),
     },
     "CWE-200": {
         "lang": "typescript",
@@ -3103,9 +3092,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "// app.use('/ftp', serveIndex(...))   // delete\n"
             "app.use('/metrics', requireRole('admin'), promBundle())"
         ),
-        "verification": (
-            "Unauthenticated `GET /metrics` returns 401; `GET /ftp/` returns 404."
-        ),
+        "verification": ("Unauthenticated `GET /metrics` returns 401; `GET /ftp/` returns 404."),
     },
     "CWE-1104": {
         "lang": "bash",
@@ -3115,9 +3102,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "# Upgrade unmaintained packages in package.json, then:\n"
             "npm install && npm test"
         ),
-        "verification": (
-            "`npm audit --omit=dev --audit-level=high` exits 0."
-        ),
+        "verification": ("`npm audit --omit=dev --audit-level=high` exits 0."),
     },
     "CWE-915": {
         "lang": "typescript",
@@ -3130,8 +3115,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "await user.update(patch)"
         ),
         "verification": (
-            "POST `{ \"role\": \"admin\" }` to the register/update endpoint; confirm the "
-            "stored row keeps the default role."
+            'POST `{ "role": "admin" }` to the register/update endpoint; confirm the stored row keeps the default role.'
         ),
     },
     "CWE-307": {
@@ -3142,9 +3126,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "app.use('/rest/user/login',\n"
             "  rateLimit({ windowMs: 60_000, max: 5, standardHeaders: true }))"
         ),
-        "verification": (
-            "Send 10 invalid login attempts from one IP and confirm the 6th returns 429."
-        ),
+        "verification": ("Send 10 invalid login attempts from one IP and confirm the 6th returns 429."),
     },
     "CWE-778": {
         "lang": "typescript",
@@ -3153,9 +3135,7 @@ _MITIGATION_CWE_SNIPPETS: dict[str, dict[str, str]] = {
             "logger.info({ event: 'auth.login.fail', userId, ip: req.ip, reqId })\n"
             "logger.info({ event: 'authz.deny', userId, route: req.path, reqId })"
         ),
-        "verification": (
-            "A failed admin probe leaves an `authz.deny` line in the central log within 1 s."
-        ),
+        "verification": ("A failed admin probe leaves an `authz.deny` line in the central log within 1 s."),
     },
 }
 
@@ -3289,8 +3269,6 @@ def _build_tier_cards(
     # accuracy); only the cluster-line builder uses the routed view.
     _vocab = _load_weakness_classes()
     threats_by_target_tier: dict[str, list[dict]] = {"client": [], "application": [], "data": []}
-    for cid_local, tlist in threats_by_component.items():
-        comp_tier = component_tier_index.get(cid_local) if False else None  # late init below
     # Re-derive component → tier index now (it was populated below the loop
     # in the legacy flow; we need it here for routing).
     _component_tier_index: dict[str, str] = {}
@@ -3406,7 +3384,7 @@ def _build_tier_cards(
             sev_line = "(no findings)"
         # Components line. Reference form (2026-05): list the tier's components
         # as `C-NN Name` (global C-NN order), matching Figure 2 in
-        # docs/analysis/analysis-top-threats-merge.md where each tier box simply lists
+        # docs/analysis-top-threats-merge.md where each tier box simply lists
         # the components it contains. Component IDs are emitted plain (no <b>)
         # — bold is reserved for the column-header HDR_A/T/I cells.
         _cnn = {(_c.get("id") or "").strip(): f"C-{_i:02d}" for _i, _c in enumerate(components, start=1)}
@@ -3461,7 +3439,7 @@ def _build_tier_cards(
                 ),
                 # Reference form (2026-05): tier boxes list their COMPONENTS
                 # only (see comp_line above), not weakness-cluster bullets, to
-                # match Figure 2 in docs/analysis/analysis-top-threats-merge.md. The
+                # match Figure 2 in docs/analysis-top-threats-merge.md. The
                 # legacy cluster bullets are intentionally suppressed (empty
                 # list → template uses the name + components_line branch). The
                 # per-class weakness detail lives in the Top Threats table and
@@ -3486,20 +3464,44 @@ _STRENGTH_CLUSTERS_CACHE: dict[str, Any] | None = None
 # (b) ends with one of these extensions. The list mirrors the source file
 # types the threat-analyzer actually emits — keep it tight; "ext-shaped"
 # tokens (e.g. ".md" in prose) inside non-file phrases shouldn't trigger.
-_FILE_PATH_EXTENSIONS = frozenset({
-    "ts", "tsx", "js", "jsx", "json", "yaml", "yml",
-    "py", "go", "rs", "java", "kt", "rb", "php", "cs",
-    "c", "h", "cpp", "hpp", "swift", "scala",
-    "md", "html", "css", "scss", "sql",
-    "sh", "bash", "ps1",
-    "lock",  # package-lock.json, Cargo.lock etc.
-})
+_FILE_PATH_EXTENSIONS = frozenset(
+    {
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "json",
+        "yaml",
+        "yml",
+        "py",
+        "go",
+        "rs",
+        "java",
+        "kt",
+        "rb",
+        "php",
+        "cs",
+        "c",
+        "h",
+        "cpp",
+        "hpp",
+        "swift",
+        "scala",
+        "md",
+        "html",
+        "css",
+        "scss",
+        "sql",
+        "sh",
+        "bash",
+        "ps1",
+        "lock",  # package-lock.json, Cargo.lock etc.
+    }
+)
 
 # Compiled regex: a "file-shaped" segment is either dotted with a known
 # extension (with optional :line suffix) OR contains a forward-slash path.
-_FILE_LIKE_SEGMENT_RE = re.compile(
-    r"^[A-Za-z0-9_./-]+\.(?:" + "|".join(_FILE_PATH_EXTENSIONS) + r")(?::\d+)?$"
-)
+_FILE_LIKE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_./-]+\.(?:" + "|".join(_FILE_PATH_EXTENSIONS) + r")(?::\d+)?$")
 _PATH_LIKE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_./-]+/[A-Za-z0-9_./-]+$")
 
 
@@ -3552,7 +3554,7 @@ def _normalize_title_to_paren_form(raw_title: str) -> str:
     # contains a space and isn't a pure file path on its own.
     if not _looks_like_file_path(tail) and " " in tail:
         idx = tail.rfind(" ")
-        candidate_path = tail[idx + 1:].strip()
+        candidate_path = tail[idx + 1 :].strip()
         if _looks_like_file_path(candidate_path):
             # Whole tail (qualifier + filepath) goes inside the parens — the
             # qualifier provides reading context that gets lost if we strip it.
@@ -3571,7 +3573,7 @@ def _normalize_title_to_paren_form(raw_title: str) -> str:
     return f"{head} ({tail})"
 
 
-def _normalize_titles_paren_form(yaml_data: dict, output_dir: "Path") -> None:
+def _normalize_titles_paren_form(yaml_data: dict, output_dir: Path) -> None:
     """M-10c orchestration helper: rewrite every threat's ``title`` field
     in-memory and log per-threat normalisations to ``.reconcile-log.json``.
 
@@ -3592,12 +3594,14 @@ def _normalize_titles_paren_form(yaml_data: dict, output_dir: "Path") -> None:
             new = _normalize_title_to_paren_form(raw)
             if isinstance(raw, str) and new != raw:
                 entry["title"] = new
-                normalised.append({
-                    "kind": kind,
-                    "id": entry.get(id_key) or entry.get("id"),
-                    "from": raw,
-                    "to": new,
-                })
+                normalised.append(
+                    {
+                        "kind": kind,
+                        "id": entry.get(id_key) or entry.get("id"),
+                        "from": raw,
+                        "to": new,
+                    }
+                )
 
     _walk(yaml_data.get("threats") or [], "threat", "id")
     _walk(yaml_data.get("mitigations") or [], "mitigation", "id")
@@ -3786,7 +3790,7 @@ def _strip_embedded_evidence_file(title: str, threat: dict | None) -> str:
     idx = t.rfind(" ")
     if idx < 0:
         return t
-    tail = re.sub(r":\d+$", "", t[idx + 1:].rstrip("…").strip())
+    tail = re.sub(r":\d+$", "", t[idx + 1 :].rstrip("…").strip())
     # Tail must look like a path (slash or dotted extension) to be a file
     # token — never strip a plain trailing word like "spa" or "exclusions".
     if not tail or ("/" not in tail and not re.search(r"\.[A-Za-z0-9]{1,6}$", tail)):
@@ -3812,6 +3816,7 @@ def _load_weakness_classes() -> dict[str, Any]:
         _WEAKNESS_CLASSES_CACHE = {"clusters": []}
         return _WEAKNESS_CLASSES_CACHE
     import yaml as _yaml
+
     try:
         _WEAKNESS_CLASSES_CACHE = _yaml.safe_load(candidate.read_text()) or {"clusters": []}
     except Exception:
@@ -3836,6 +3841,7 @@ def _load_architectural_controls() -> dict[str, Any]:
         _ARCH_CONTROLS_CACHE = {}
         return _ARCH_CONTROLS_CACHE
     import yaml as _yaml
+
     try:
         _ARCH_CONTROLS_CACHE = _yaml.safe_load(candidate.read_text()) or {}
     except Exception:
@@ -3855,7 +3861,7 @@ def _strengths_excluded_names() -> set[str]:
     if _STRENGTHS_EXCLUDED_NAMES_CACHE is not None:
         return _STRENGTHS_EXCLUDED_NAMES_CACHE
     tokens: set[str] = set()
-    for entry in (_load_architectural_controls().get("controls") or []):
+    for entry in _load_architectural_controls().get("controls") or []:
         if not isinstance(entry, dict) or not entry.get("excluded_from_strengths"):
             continue
         for key in [entry.get("name")] + list(entry.get("aliases") or []):
@@ -3881,6 +3887,7 @@ def _load_strength_clusters() -> dict[str, Any]:
         _STRENGTH_CLUSTERS_CACHE = {"clusters": []}
         return _STRENGTH_CLUSTERS_CACHE
     import yaml as _yaml
+
     try:
         _STRENGTH_CLUSTERS_CACHE = _yaml.safe_load(candidate.read_text()) or {"clusters": []}
     except Exception:
@@ -3891,9 +3898,9 @@ def _load_strength_clusters() -> dict[str, Any]:
 _EFFECTIVENESS_RANK = {"adequate": 0, "partial": 1, "weak": 2, "missing": 3}
 _EFFECTIVENESS_ICON = {
     "adequate": "✅ Adequate",
-    "partial":  "⚠️ Partial",
-    "weak":     "🔶 Weak",
-    "missing":  "❌ Missing",
+    "partial": "⚠️ Partial",
+    "weak": "🔶 Weak",
+    "missing": "❌ Missing",
 }
 
 
@@ -3928,7 +3935,7 @@ def _classify_control_into_cluster(control: dict, clusters_cfg: list[dict]) -> s
         for cluster in clusters_cfg:
             if cluster.get("id") == "_unmapped":
                 continue
-            for d in (cluster.get("domains") or []):
+            for d in cluster.get("domains") or []:
                 if dom == d.strip().lower():
                     return cluster["id"]
 
@@ -3936,7 +3943,7 @@ def _classify_control_into_cluster(control: dict, clusters_cfg: list[dict]) -> s
     for cluster in clusters_cfg:
         if cluster.get("id") == "_unmapped":
             continue
-        for kw in (cluster.get("name_keywords") or []):
+        for kw in cluster.get("name_keywords") or []:
             if not kw:
                 continue
             if kw.strip().lower() in haystack:
@@ -3954,35 +3961,90 @@ def _classify_control_into_cluster(control: dict, clusters_cfg: list[dict]) -> s
 # but displayed examples prefer strong matches.
 _STRENGTH_TITLE_KEYWORDS: dict[str, list[str]] = {
     "input_handling": [
-        "sql injection", "sqli", "nosql", "$where", "xxe", "ssti",
-        "eval(", "eval ", "rce", "code execution", "path traversal",
-        "command injection", "template injection", "deserial",
+        "sql injection",
+        "sqli",
+        "nosql",
+        "$where",
+        "xxe",
+        "ssti",
+        "eval(",
+        "eval ",
+        "rce",
+        "code execution",
+        "path traversal",
+        "command injection",
+        "template injection",
+        "deserial",
     ],
     "auth_session": [
-        "jwt", "alg:none", "alg none", "auth bypass", "authentication",
-        "privilege", "admin role", "rsa private key", "session",
-        "token", "totp", "2fa", "mfa", "oauth", "saml", "login bypass",
-        "credential", "idor",
+        "jwt",
+        "alg:none",
+        "alg none",
+        "auth bypass",
+        "authentication",
+        "privilege",
+        "admin role",
+        "rsa private key",
+        "session",
+        "token",
+        "totp",
+        "2fa",
+        "mfa",
+        "oauth",
+        "saml",
+        "login bypass",
+        "credential",
+        "idor",
     ],
     "crypto_hygiene": [
-        "md5", " sha-1", " sha1", "hash", "bcrypt", "scrypt", "argon",
-        "hardcoded key", "hardcoded credential", "private key",
-        "weak crypto", "broken crypt",
+        "md5",
+        " sha-1",
+        " sha1",
+        "hash",
+        "bcrypt",
+        "scrypt",
+        "argon",
+        "hardcoded key",
+        "hardcoded credential",
+        "private key",
+        "weak crypto",
+        "broken crypt",
     ],
     "http_stack": [
-        "csrf", "cors", "csp", "content security policy",
-        "wildcard cors", "open redirect", "header injection",
-        "rate limit", "permissions-policy", "hsts",
+        "csrf",
+        "cors",
+        "csp",
+        "content security policy",
+        "wildcard cors",
+        "open redirect",
+        "header injection",
+        "rate limit",
+        "permissions-policy",
+        "hsts",
     ],
     "frontend_resilience": [
-        "xss", "dom xss", "sanitizer", "bypasssecuritytrust",
-        "innerhtml", "trusthtml", "stored xss", "reflected xss",
-        "client-side", "client side",
+        "xss",
+        "dom xss",
+        "sanitizer",
+        "bypasssecuritytrust",
+        "innerhtml",
+        "trusthtml",
+        "stored xss",
+        "reflected xss",
+        "client-side",
+        "client side",
     ],
     "data_protection": [
-        "disclosure", "exposure", "localstorage", "leak",
-        "ftp directory", "directory listing", "encryption keys",
-        "password hash", "pii", "sensitive file",
+        "disclosure",
+        "exposure",
+        "localstorage",
+        "leak",
+        "ftp directory",
+        "directory listing",
+        "encryption keys",
+        "password hash",
+        "pii",
+        "sensitive file",
     ],
 }
 
@@ -4000,18 +4062,10 @@ def _classify_threat_for_strength_cluster(
     used to PROMOTE bypass examples to the front of the displayed list
     so the rendered Gap cell carries unambiguous threats.
     """
-    addressed_classes = set(
-        (s or "").strip().lower()
-        for s in (cluster_cfg.get("addresses_weakness_classes") or [])
-    )
-    addressed_cwes = set(
-        (s or "").strip().upper()
-        for s in (cluster_cfg.get("addresses_cwes") or [])
-    )
+    addressed_classes = set((s or "").strip().lower() for s in (cluster_cfg.get("addresses_weakness_classes") or []))
+    addressed_cwes = set((s or "").strip().upper() for s in (cluster_cfg.get("addresses_cwes") or []))
     cwe_raw = (threat.get("cwe") or "").strip()
-    cwe = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
-        f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
-    )
+    cwe = cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
     cwe_match = False
     if cwe and cwe.upper() in addressed_cwes:
         cwe_match = True
@@ -4050,14 +4104,8 @@ def _threats_for_strength_cluster(
     matches first in the example list so a scrambled-CWE yaml does not
     produce confusingly-labelled examples.
     """
-    addressed_classes = set(
-        (s or "").strip().lower()
-        for s in (cluster_cfg.get("addresses_weakness_classes") or [])
-    )
-    addressed_cwes = set(
-        (s or "").strip().upper()
-        for s in (cluster_cfg.get("addresses_cwes") or [])
-    )
+    addressed_classes = set((s or "").strip().lower() for s in (cluster_cfg.get("addresses_weakness_classes") or []))
+    addressed_cwes = set((s or "").strip().upper() for s in (cluster_cfg.get("addresses_cwes") or []))
     if not addressed_classes and not addressed_cwes:
         return []
     matched: list[tuple[dict, str]] = []
@@ -4070,7 +4118,8 @@ def _threats_for_strength_cluster(
 
 
 def _build_strength_clusters(
-    controls: list[dict], threats_index: dict[str, dict] | None = None,
+    controls: list[dict],
+    threats_index: dict[str, dict] | None = None,
     all_threats: list[dict] | None = None,
 ) -> list[dict]:
     """Return ordered list of cluster dicts, each describing one row
@@ -4110,7 +4159,7 @@ def _build_strength_clusters(
     findings that bypass the cluster, (e) named findings the cluster
     successfully addresses.
     """
-    cfg = (_load_strength_clusters().get("clusters") or [])
+    cfg = _load_strength_clusters().get("clusters") or []
     if not cfg:
         return []
 
@@ -4136,8 +4185,7 @@ def _build_strength_clusters(
         if not non_missing:
             # Cluster has only missing controls — skip (those are §7 gaps).
             continue
-        best_rank = min(_EFFECTIVENESS_RANK.get((m.get("effectiveness") or "partial").lower(), 9)
-                        for m in non_missing)
+        best_rank = min(_EFFECTIVENESS_RANK.get((m.get("effectiveness") or "partial").lower(), 9) for m in non_missing)
         eff = next((k for k, v in _EFFECTIVENESS_RANK.items() if v == best_rank), "partial")
 
         # ---- Contradiction-aware effectiveness cap ----------------------
@@ -4155,10 +4203,10 @@ def _build_strength_clusters(
         # list we PROMOTE "strong" matches to the front so the reader
         # sees unambiguous examples first.
         addressed_for_cap = [t for (t, kind) in matched if kind in {"strong", "cwe_only"}]
-        addressed_critical = [t for t in addressed_for_cap
-                              if (t.get("risk") or t.get("severity") or "").lower() == "critical"]
-        addressed_high = [t for t in addressed_for_cap
-                          if (t.get("risk") or t.get("severity") or "").lower() == "high"]
+        addressed_critical = [
+            t for t in addressed_for_cap if (t.get("risk") or t.get("severity") or "").lower() == "critical"
+        ]
+        addressed_high = [t for t in addressed_for_cap if (t.get("risk") or t.get("severity") or "").lower() == "high"]
         cap_rank = _EFFECTIVENESS_RANK[eff]
         if addressed_critical:
             cap_rank = max(cap_rank, _EFFECTIVENESS_RANK["weak"])
@@ -4170,21 +4218,19 @@ def _build_strength_clusters(
         # render first, falling back to cwe_only when the cluster has no
         # strong matches. This keeps the Gap cell readable even when the
         # Stage-1 yaml carries scrambled CWE fields.
-        strong_match_ids = {
-            (t.get("id") or t.get("t_id") or "")
-            for (t, kind) in matched if kind == "strong"
-        }
+        strong_match_ids = {(t.get("id") or t.get("t_id") or "") for (t, kind) in matched if kind == "strong"}
+
         def _example_sort_key(t: dict) -> tuple[int, str]:
-            tid_ = (t.get("id") or t.get("t_id") or "")
+            tid_ = t.get("id") or t.get("t_id") or ""
             return (0 if tid_ in strong_match_ids else 1, tid_)
+
         addressed_critical = sorted(addressed_critical, key=_example_sort_key)
         addressed_high = sorted(addressed_high, key=_example_sort_key)
 
         # ---- Compact implementations list -------------------------------
         impls: list[str] = []
         for m in non_missing:
-            name = (m.get("architectural_control") or m.get("canonical_name")
-                    or m.get("name") or m.get("control") or "?")
+            name = m.get("architectural_control") or m.get("canonical_name") or m.get("name") or m.get("control") or "?"
             impl = m.get("implementation")
             if isinstance(impl, dict):
                 impl = impl.get("description") or ""
@@ -4225,19 +4271,14 @@ def _build_strength_clusters(
             if addressed_high:
                 parts.append(f"{len(addressed_high)} High")
             sample_ids = [
-                (t.get("id") or t.get("t_id") or "").strip()
-                for t in (addressed_critical + addressed_high)[:3]
+                (t.get("id") or t.get("t_id") or "").strip() for t in (addressed_critical + addressed_high)[:3]
             ]
-            sample_links = ", ".join(
-                f"[{re.sub(r'^T-', 'F-', s)}](#{s.lower()})"
-                for s in sample_ids if s
-            )
+            sample_links = ", ".join(f"[{re.sub(r'^T-', 'F-', s)}](#{s.lower()})" for s in sample_ids if s)
             gap = (
                 f"Bypassed by {' + '.join(parts)} finding(s) of the kind this "
                 f"cluster is supposed to prevent — e.g. {sample_links}."
-                if sample_links else
-                f"Bypassed by {' + '.join(parts)} finding(s) of the kind this "
-                f"cluster is supposed to prevent."
+                if sample_links
+                else f"Bypassed by {' + '.join(parts)} finding(s) of the kind this cluster is supposed to prevent."
             )
         elif addressed_for_cap:
             gap = (
@@ -4262,23 +4303,24 @@ def _build_strength_clusters(
         # bland placeholder. Description is informational only.
         description = desc_tpl.format(comp_summary="this codebase") if desc_tpl else ""
 
-        rendered.append({
-            "id": cid,
-            "label": cluster_cfg.get("label", cid),
-            "description": description,
-            "members": non_missing,
-            "effectiveness": eff,
-            "implementations": impls,
-            "mitigates": mitigates,
-            "mitigates_overflow": mit_overflow,
-            "gap": gap,
-            "open_critical_count": len(addressed_critical),
-            "open_high_count": len(addressed_high),
-        })
+        rendered.append(
+            {
+                "id": cid,
+                "label": cluster_cfg.get("label", cid),
+                "description": description,
+                "members": non_missing,
+                "effectiveness": eff,
+                "implementations": impls,
+                "mitigates": mitigates,
+                "mitigates_overflow": mit_overflow,
+                "gap": gap,
+                "open_critical_count": len(addressed_critical),
+                "open_high_count": len(addressed_high),
+            }
+        )
 
     # Sort: best-effectiveness clusters first, then deterministic by definition order
-    rendered.sort(key=lambda x: (_EFFECTIVENESS_RANK.get(x["effectiveness"], 9),
-                                 cluster_order.index(x["id"])))
+    rendered.sort(key=lambda x: (_EFFECTIVENESS_RANK.get(x["effectiveness"], 9), cluster_order.index(x["id"])))
     return rendered
 
 
@@ -4323,11 +4365,16 @@ def _severity_by_finding_num(threats: list) -> dict:
     return out
 
 
-def _build_register_index(label: str, prefix: str, nums: list,
-                          title_by_num: dict, sev_by_num: dict,
-                          icon_tbl: dict | None = None,
-                          key_label_tbl: dict | None = None,
-                          show_icon: bool = True) -> str:
+def _build_register_index(
+    label: str,
+    prefix: str,
+    nums: list,
+    title_by_num: dict,
+    sev_by_num: dict,
+    icon_tbl: dict | None = None,
+    key_label_tbl: dict | None = None,
+    show_icon: bool = True,
+) -> str:
     """Render a `**<label>:**<br/>🔴 [P-NNN](#p-nnn) — <title><br/>…` jump list.
 
     ``icon_tbl`` defaults to the severity-circle table (§8 Findings index);
@@ -4365,7 +4412,7 @@ def _build_register_index(label: str, prefix: str, nums: list,
     return f"**{label}:**<br/>" + "<br/>".join(chips)
 
 
-def _measure_prio_prefix(ctx: "RenderContext", mid: str) -> str:
+def _measure_prio_prefix(ctx: RenderContext, mid: str) -> str:
     """Variant-B priority prefix (`❶ `) for a BARE measure chip `[M-NNN]`.
 
     The full-label form (`[M-NNN](#m-nnn) — title`) gets this prefix from
@@ -4432,7 +4479,9 @@ def _tier_for_cluster(cluster_id: str, fallback_tier: str, vocab: dict | None = 
 
 
 def _build_tier_cluster_lines(
-    threats: list[dict], *, max_clusters: int = 4,
+    threats: list[dict],
+    *,
+    max_clusters: int = 4,
     arrow_cwe_allow: set[str] | None = None,
 ) -> list[str]:
     """Group `threats` by weakness cluster (per data/weakness-classes.yaml)
@@ -4460,7 +4509,7 @@ def _build_tier_cluster_lines(
     for c in clusters_cfg:
         cid = c.get("id") or ""
         cluster_meta[cid] = c
-        for cwe in (c.get("cwes") or []):
+        for cwe in c.get("cwes") or []:
             cwe_to_cluster[cwe.strip().upper()] = cid
 
     groups: dict[str, list[dict]] = {}
@@ -4495,10 +4544,16 @@ def _build_tier_cluster_lines(
             default=9,
         )
         icon = next((ic for s, ic in _SEV_ICON_TBL.items() if _SEV_RANK_TBL[s] == sev_max), "⚪")
-        rendered.append({
-            "icon": icon, "label": label, "plural_label": plural_label,
-            "variants": seen_vars, "count": len(ts), "sev_rank": sev_max,
-        })
+        rendered.append(
+            {
+                "icon": icon,
+                "label": label,
+                "plural_label": plural_label,
+                "variants": seen_vars,
+                "count": len(ts),
+                "sev_rank": sev_max,
+            }
+        )
 
     # Sort by severity (Critical first), then by count desc.
     rendered.sort(key=lambda x: (x["sev_rank"], -x["count"]))
@@ -4556,7 +4611,11 @@ def _bracket_components_for_tier(
 def _tier_header_summary(display_name: str, comp_ids: list[str], n_findings: int) -> str:
     """Return the tier header label used by the new cluster-row layout."""
     comp_part = ", ".join(comp_ids) if comp_ids else ""
-    return f"{display_name} ({comp_part}) · {n_findings} findings" if comp_part else f"{display_name} · {n_findings} findings"
+    return (
+        f"{display_name} ({comp_part}) · {n_findings} findings"
+        if comp_part
+        else f"{display_name} · {n_findings} findings"
+    )
 
 
 def _collapse_open_registration_actors(attack_paths_data: dict) -> None:
@@ -4865,7 +4924,7 @@ def _build_attack_arrows(
             order.append(key)
         grouped[key].append(a["glyph"])
     grouped_arrows = []
-    for (src, dst) in order:
+    for src, dst in order:
         glyphs = sorted(grouped[(src, dst)], key=lambda g: glyph_rank.get(g, 99))
         stacked = " ".join(glyphs)
         grouped_arrows.append({"src": src, "dst": dst, "glyph": stacked, "label": ""})
@@ -4978,9 +5037,7 @@ def _fig1_label(text: str) -> str:
     return s.replace("&", "&amp;").replace('"', "'")
 
 
-def _render_top_threats_architecture(
-    ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict
-) -> str:
+def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
     """Deterministically build **Figure 1 — Architecture, Trust Boundaries &
     Threats** from ``threat-model.yaml`` + the *already-reconciled*
     ``attack_paths_data``.
@@ -5042,9 +5099,7 @@ def _render_top_threats_architecture(
         return ""
 
     glyph_seq = attack_taxonomy.get("glyph_sequence") or ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
-    cls_by_id = {
-        c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)
-    }
+    cls_by_id = {c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)}
     actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
 
     # Actor collapse: when self-registration is open, an "authenticated" internet
@@ -5103,10 +5158,12 @@ def _render_top_threats_architecture(
         # (2026-05-30 request — keep it short, omit zero counts and Med/Low).
         _sev = comp_sev_count.get(cid) or {}
         _badge = " ".join(
-            p for p in (
+            p
+            for p in (
                 f"🔴 {_sev['Critical']}" if _sev.get("Critical") else "",
                 f"🟠 {_sev['High']}" if _sev.get("High") else "",
-            ) if p
+            )
+            if p
         )
         _name = f"C-{idx:02d} · {_fig1_label(c.get('name') or cid)}"
         comp_label[cid] = f"{_name}<br/><i>{_badge}</i>" if _badge else _name
@@ -5196,8 +5253,10 @@ def _render_top_threats_architecture(
         # would pile every application-control failure onto one box). The victim
         # pseudo-tier is delivered through the client tier.
         tt = (
-            ap.get("_llm_target") or ap.get("target") or cls.get("default_target_tier") or "application"
-        ).strip().lower()
+            (ap.get("_llm_target") or ap.get("target") or cls.get("default_target_tier") or "application")
+            .strip()
+            .lower()
+        )
         if tt == "victim":
             tt = "client"
         return tt if tt in _FIG1_TIER_ORDER else "application"
@@ -5249,8 +5308,7 @@ def _render_top_threats_architecture(
         # Which components do this class's findings actually touch? (used only
         # to decide whether a data-tier propagation edge is warranted).
         touches_data = any(
-            comp_tier.get(fid_component.get((f or "").upper())) == "data"
-            for f in (ap.get("findings") or [])
+            comp_tier.get(fid_component.get((f or "").upper())) == "data" for f in (ap.get("findings") or [])
         )
 
         # T2 — SOLID targets = the DRAWN components in the class's TARGET TIER
@@ -5264,7 +5322,7 @@ def _render_top_threats_architecture(
         # component hit by several classes renders ONE edge with all glyphs.
         target_tier_name = "client" if tt in ("client", "victim") else "application"
         host_comps: list[str] = []
-        for f in (ap.get("findings") or []):
+        for f in ap.get("findings") or []:
             c = fid_component.get((f or "").upper())
             if c and c in _drawn and comp_tier.get(c) == target_tier_name and c not in host_comps:
                 host_comps.append(c)
@@ -5400,9 +5458,7 @@ def _render_top_threats_architecture(
             # classDef carries a reduced font-size so the legend never
             # competes visually with the real component boxes. Stack with
             # <br/> when more than one so a long tier list stays narrow.
-            _names = "<br/>".join(
-                comp_pure_name.get(cid, comp_cnum.get(cid, "C-??")) for cid in tier_hidden
-            )
+            _names = "<br/>".join(comp_pure_name.get(cid, comp_cnum.get(cid, "C-??")) for cid in tier_hidden)
             _note = f"Also assessed — no Critical/High finding:<br/>{_names}"
             lines.append(f'        {sg}_OMITTED["{_fig1_label(_note)}"]:::compmuted')
         lines.append("    end")
@@ -5556,9 +5612,7 @@ def _render_top_threats_architecture(
     if benign_idx:
         lines.append(f"    linkStyle {','.join(str(i) for i in benign_idx)} stroke:#6b7280,stroke-width:1.5px")
     if attack_idx:
-        lines.append(
-            f"    linkStyle {','.join(str(i) for i in attack_idx)} stroke:#b71c1c,stroke-width:2.5px"
-        )
+        lines.append(f"    linkStyle {','.join(str(i) for i in attack_idx)} stroke:#b71c1c,stroke-width:2.5px")
     if prop_idx:
         # Dotted, slightly thinner red — the consequence path, visually
         # subordinate to the solid attack edges but clearly part of the same flow.
@@ -5577,9 +5631,7 @@ def _render_top_threats_architecture(
     # only (see _attack_label), so this single line is where each number is
     # decoded — `① Injection · ② Auth Bypass · …`. One line replaces the former
     # per-edge stacked names that stretched the figure vertically.
-    glyph_legend = " · ".join(
-        f"{g} {glyph_name[g]}".strip() for g in glyph_seq if glyph_name.get(g)
-    )
+    glyph_legend = " · ".join(f"{g} {glyph_name[g]}".strip() for g in glyph_seq if glyph_name.get(g))
     body = intro + "\n\n" + "\n".join(lines) + "\n"
     if glyph_legend:
         body += "\n_Threats: " + glyph_legend + "_\n"
@@ -5645,7 +5697,7 @@ def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonom
     return "\n".join(out) + "\n"
 
 
-def _build_ms_abuse_chain_line(ctx: "RenderContext") -> str:
+def _build_ms_abuse_chain_line(ctx: RenderContext) -> str:
     """One deterministic line for the MS `Security Posture & Top Threats`
     section that surfaces the verified abuse-case chains and links §9.
 
@@ -5670,9 +5722,7 @@ def _build_ms_abuse_chain_line(ctx: "RenderContext") -> str:
         return ""
 
     def _links(items: list[dict]) -> str:
-        return ", ".join(
-            f"[{c.get('id')}](#{str(c.get('id', '')).lower()})" for c in items if c.get("id")
-        )
+        return ", ".join(f"[{c.get('id')}](#{str(c.get('id', '')).lower()})" for c in items if c.get("id"))
 
     segs: list[str] = []
     if viable:
@@ -5680,9 +5730,7 @@ def _build_ms_abuse_chain_line(ctx: "RenderContext") -> str:
     if partial:
         segs.append(f"{len(partial)} partially blocked ({_links(partial)})")
     return (
-        "**Verified attack chains.** "
-        + "; ".join(segs)
-        + ". These chains combine individual findings into end-to-end "
+        "**Verified attack chains.** " + "; ".join(segs) + ". These chains combine individual findings into end-to-end "
         "exploitation paths verified step-by-step against the code — see "
         "[§9 Abuse Cases](#9-abuse-cases) for the per-step breakdown and "
         "blocking mitigations."
@@ -5817,12 +5865,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # individual glyphs and take the max taxonomy position so the range ends
     # at the real last threat (①–⑥), not the number of grouped arrows.
     glyph_rank = {g: i for i, g in enumerate(glyph_seq)}
-    glyphs_used = {
-        g
-        for a in (attack_arrows + relay_arrows)
-        for g in (a.get("glyph") or "").split()
-        if g in glyph_rank
-    }
+    glyphs_used = {g for a in (attack_arrows + relay_arrows) for g in (a.get("glyph") or "").split() if g in glyph_rank}
     if glyphs_used:
         last_idx = max(glyph_rank[g] for g in glyphs_used)
         glyph_range = f"①–{glyph_seq[last_idx]}"
@@ -6079,14 +6122,9 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             f"({' / '.join(_victim_labels)})."
         )
     elif n_actors >= 2:
-        intro_para = (
-            f"**Threat actors.** {n_actors} entities each initiate one "
-            f"or more direct attack classes."
-        )
+        intro_para = f"**Threat actors.** {n_actors} entities each initiate one or more direct attack classes."
     else:
-        intro_para = (
-            "**Threat actors.** One entity initiates every direct attack class."
-        )
+        intro_para = "**Threat actors.** One entity initiates every direct attack class."
 
     paths_template_data = {
         "intro_paragraph": intro_para,
@@ -6306,108 +6344,6 @@ def _compute_top_findings_rows(ctx: RenderContext) -> tuple[list[dict[str, Any]]
     return rendered, len(qualifying_ids)
 
 
-def _render_architecture_assessment(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """Render the §1 Architecture Assessment block.
-
-    Schema migration (2026-05):
-
-    The historical schema key was ``defects[]`` (each item: ``name`` /
-    ``description`` / ``findings[]``). The current schema key is
-    ``weaknesses[]`` (each item: ``category`` / ``description`` /
-    ``affected_components[]`` / ``findings[]``). Per user request the
-    section now leads with the general security-domain *category* (e.g.
-    "Cryptography & Secret Management"), names the affected components
-    explicitly in their own table column, and uses design-review prose
-    (not SAST line citations) in the description.
-
-    The composer auto-upgrades the legacy ``defects[]`` shape on load so
-    a fragment authored by an older renderer still renders correctly:
-    ``name`` is aliased to ``category`` and ``affected_components`` defaults
-    to ``[]``. The template renders ``Defect`` as a column header only when
-    no ``weaknesses[]`` key is present AND the legacy ``defects[]`` shape
-    is detected — for the current schema the column reads "Weakness category".
-
-    ``affected_components[]`` may be bare strings (component-ids) or
-    ``{id, name}`` dicts; this helper enriches bare strings with the
-    component's display name from ``ctx.yaml_data.components[]`` so the
-    template can render the cell with ``[id](#id) — Name``.
-    """
-    data = _load_fragment(ctx, "architecture_assessment", section["fragment"])
-    _validate_fragment("architecture_assessment", data, section["schema"])
-
-    # Back-compat: lift `defects` → `weaknesses` if the fragment still
-    # uses the legacy shape. Keep `defects` field for any external reader
-    # that depends on it.
-    if "weaknesses" not in data and "defects" in data:
-        legacy = data.get("defects") or []
-        weaknesses = []
-        for item in legacy:
-            if not isinstance(item, dict):
-                continue
-            weaknesses.append({
-                "category": item.get("name") or item.get("category") or "",
-                "description": item.get("description") or "",
-                "affected_components": item.get("affected_components") or [],
-                "findings": item.get("findings") or [],
-            })
-        data = dict(data)
-        data["weaknesses"] = weaknesses
-
-    # Enrich affected_components: resolve bare component-ids to {id, name}
-    # using the components index from the canonical YAML so the column
-    # renders with the display name.
-    comp_lookup = _component_lookup(ctx)
-
-    # Auto-derive `affected_components` when the Stage-2 LLM fragment left
-    # them empty. We walk `weaknesses[].findings[].ref`, map each F-/T-NNN
-    # back to its `threats[].component` via the YAML, and emit a unique
-    # list. The fallback runs ONLY when the LLM-provided list is empty —
-    # explicit author-set values are preserved.
-    threats_by_id: dict[str, str] = {}
-    for t in (ctx.yaml_data.get("threats") or []):
-        tid = (t.get("t_id") or t.get("id") or "").strip().upper()
-        comp = (t.get("component") or "").strip()
-        if not tid or not comp:
-            continue
-        threats_by_id[tid] = comp
-        # Register both T-NNN and F-NNN aliases so findings carrying either
-        # form resolve cleanly.
-        if tid.startswith("T-"):
-            threats_by_id.setdefault("F-" + tid[2:], comp)
-        elif tid.startswith("F-"):
-            threats_by_id.setdefault("T-" + tid[2:], comp)
-
-    for w in data.get("weaknesses") or []:
-        raw = w.get("affected_components") or []
-        if not raw:
-            derived: list[str] = []
-            for f in (w.get("findings") or []):
-                ref = (f.get("ref") or "").strip().upper() if isinstance(f, dict) else ""
-                cid = threats_by_id.get(ref)
-                if cid and cid not in derived:
-                    derived.append(cid)
-            raw = derived
-        enriched = []
-        for entry in raw:
-            if isinstance(entry, str):
-                cid = entry.strip()
-                if not cid:
-                    continue
-                meta = comp_lookup.get(cid) or {}
-                enriched.append({"id": cid, "name": (meta.get("name") or cid)})
-            elif isinstance(entry, dict):
-                cid = (entry.get("id") or "").strip()
-                name = (entry.get("name") or "").strip()
-                if cid and not name:
-                    meta = comp_lookup.get(cid) or {}
-                    name = meta.get("name") or cid
-                enriched.append({"id": cid, "name": name})
-        w["affected_components"] = enriched
-
-    tpl = env.get_template(section["template"])
-    return tpl.render(data=data).rstrip() + "\n"
-
-
 def _curate_top_mitigations(
     floor: list[dict[str, Any]],
     extras_sorted: list[dict[str, Any]],
@@ -6496,9 +6432,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             # Strip any evidence-file token the Stage-1 title already carries
             # so the compact form below does not render it twice
             # (`… routes/login.ts (routes/login.ts)`).
-            raw_title = _strip_embedded_evidence_file(
-                (t.get("title") or t.get("scenario_short") or "").strip(), t
-            )
+            raw_title = _strip_embedded_evidence_file((t.get("title") or t.get("scenario_short") or "").strip(), t)
             # compact=True — Top Mitigations Addresses cells stack 4-5
             # findings via `<br/>`; the parens form is more scannable
             # than 4 repeated "in file" phrases per row.
@@ -6609,18 +6543,8 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     # §9 Mitigation Register which carries the full P1/P2/P3 catalogue with
     # `Why` / `How` / verification detail. Cap applied AFTER priority-sort
     # so the highest-priority + highest-leverage items always survive.
-    mit_max = (
-        (ctx.contract["sections"].get("mitigations") or {})
-        .get("table", {})
-        .get("rows", {})
-        .get("max", 5)
-    )
-    mit_min = (
-        (ctx.contract["sections"].get("mitigations") or {})
-        .get("table", {})
-        .get("rows", {})
-        .get("min", 3)
-    )
+    mit_max = (ctx.contract["sections"].get("mitigations") or {}).get("table", {}).get("rows", {}).get("max", 5)
+    mit_min = (ctx.contract["sections"].get("mitigations") or {}).get("table", {}).get("rows", {}).get("min", 3)
     p12_total_before_cap = len(p12_rows)
 
     # ── Top-Mitigations selection: Critical-floor + LLM curation ──────────
@@ -6659,9 +6583,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     except FragmentError:
         pass  # optional — fall back to deterministic extras ordering
 
-    p12_rows = _curate_top_mitigations(
-        floor, sorted(extras, key=_row_sort_key), llm_order, mit_min, mit_max
-    )
+    p12_rows = _curate_top_mitigations(floor, sorted(extras, key=_row_sort_key), llm_order, mit_min, mit_max)
     p12_curated = bool(llm_order)
     p12_dropped = max(0, p12_total_before_cap - len(p12_rows))
 
@@ -6742,14 +6664,10 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         f"Full detail in [§10 Mitigation Register](#10-mitigation-register)."
     )
     if _floor_n:
-        intro += (
-            f" All {_floor_n} mitigation(s) that fix a Critical finding are "
-            f"always listed here"
-            + (
-                f"; the remaining entries are curated by impact: {curation_rationale}"
-                if (p12_curated and curation_rationale)
-                else "."
-            )
+        intro += f" All {_floor_n} mitigation(s) that fix a Critical finding are always listed here" + (
+            f"; the remaining entries are curated by impact: {curation_rationale}"
+            if (p12_curated and curation_rationale)
+            else "."
         )
     footer_parts: list[str] = []
     if overflow_p12:
@@ -6761,7 +6679,8 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         footer_parts.append(f"{pluralize(overflow_p3, 'P3 backlog item')}")
     if footer_parts:
         footer = (
-            "*" + " · ".join(footer_parts)
+            "*"
+            + " · ".join(footer_parts)
             + " in [§10 Mitigation Register](#10-mitigation-register). "
             + "Sorted by priority (P1 first), then component, then leverage "
             + "(most findings first), severity (Critical first), and effort "
@@ -6772,9 +6691,6 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
 
     tpl = env.get_template("mitigations.md.j2")
     return tpl.render(groups=groups, intro=intro, footer=footer).rstrip() + "\n"
-
-
-
 
 
 def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -6869,9 +6785,9 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     # making promises about §7 (which may not exist at quick depth).
     _GAP_BY_EFFECTIVENESS: dict[str, str] = {
         "adequate": "None identified",
-        "partial":  "Covers only part of the attack surface",
-        "weak":     "Implementation uses a weak primitive",
-        "missing":  "Control not implemented",
+        "partial": "Covers only part of the attack surface",
+        "weak": "Implementation uses a weak primitive",
+        "missing": "Control not implemented",
     }
 
     def gap_text(c: dict[str, Any], eff: str) -> str:
@@ -6885,7 +6801,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
         #    (e.g. "express-rate-limit on /rest/user/login only" — the
         #    "only" is the gap). When the string mentions "only" or a
         #    qualifier word, surface the post-qualifier clause.
-        impl = (c.get("implementation") or "")
+        impl = c.get("implementation") or ""
         if isinstance(impl, dict):
             impl = impl.get("description") or ""
         impl = (impl or "").strip()
@@ -6893,7 +6809,8 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
         # Cap at 80 chars so the cell stays scannable.
         m = re.search(
             r"\b(only|limited to|except|except for|but not|missing|disabled|wildcard|commented out|opt-?in|not enforced)\b[^.\n]{0,80}",
-            impl, flags=re.IGNORECASE,
+            impl,
+            flags=re.IGNORECASE,
         )
         if m:
             tail = m.group(0).strip().rstrip(",;:")
@@ -6966,7 +6883,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             desc = (cl.get("description") or "").strip()
             if desc:
                 what_lines.append(f"_{desc}_")
-            for line in (cl.get("implementations") or []):
+            for line in cl.get("implementations") or []:
                 what_lines.append(line)
             what_in_place = "<br/>".join(what_lines) if what_lines else "—"
             gap = cl.get("gap") or _GAP_BY_EFFECTIVENESS.get(eff, _GAP_FALLBACK)
@@ -6975,18 +6892,20 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             mit_overflow = cl.get("mitigates_overflow", 0)
             if mit_overflow > 0:
                 mit_list.append({"ref": None, "label": f"+{mit_overflow} more", "_overflow": True})
-            rendered_rows.append({
-                "label": cl["label"],
-                "architectural_control": cl["label"],  # back-compat key
-                "what_in_place": what_in_place,
-                "implementation": what_in_place,        # back-compat key
-                "effectiveness": eff,
-                "gap": gap,
-                "mitigates": mit_list,
-                "members": members,
-                "open_critical_count": cl.get("open_critical_count", 0),
-                "open_high_count": cl.get("open_high_count", 0),
-            })
+            rendered_rows.append(
+                {
+                    "label": cl["label"],
+                    "architectural_control": cl["label"],  # back-compat key
+                    "what_in_place": what_in_place,
+                    "implementation": what_in_place,  # back-compat key
+                    "effectiveness": eff,
+                    "gap": gap,
+                    "mitigates": mit_list,
+                    "members": members,
+                    "open_critical_count": cl.get("open_critical_count", 0),
+                    "open_high_count": cl.get("open_high_count", 0),
+                }
+            )
         overflow = 0  # clustering covers all eligible controls
     else:
         # Legacy fallback — preserves the old one-row-per-control layout.
@@ -6995,23 +6914,20 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             impl = c.get("implementation")
             if isinstance(impl, dict):
                 impl = impl.get("description") or ""
-            implementation = (
-                (impl or "")
-                or (c.get("description") or "")
-                or (c.get("evidence") or "")
-                or "—"
-            )
+            implementation = (impl or "") or (c.get("description") or "") or (c.get("evidence") or "") or "—"
             if not isinstance(implementation, str):
                 implementation = str(implementation)
-            rendered_rows.append({
-                "label": arch_control_name(c),
-                "architectural_control": arch_control_name(c),
-                "what_in_place": implementation.strip(),
-                "implementation": implementation.strip(),
-                "effectiveness": eff,
-                "gap": gap_text(c, eff),
-                "mitigates": mitigates_cell(c),
-            })
+            rendered_rows.append(
+                {
+                    "label": arch_control_name(c),
+                    "architectural_control": arch_control_name(c),
+                    "what_in_place": implementation.strip(),
+                    "implementation": implementation.strip(),
+                    "effectiveness": eff,
+                    "gap": gap_text(c, eff),
+                    "mitigates": mitigates_cell(c),
+                }
+            )
         overflow = max(0, len(filtered) - max_rows)
 
     # ---------------------------------------------------------------------
@@ -7095,9 +7011,9 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
             )
         else:
             empty_banner = (
-                f"_No defensive cluster currently rates above Weak. See "
-                f"[§7 Security Architecture](#7-security-architecture) for "
-                f"the full per-control assessment._"
+                "_No defensive cluster currently rates above Weak. See "
+                "[§7 Security Architecture](#7-security-architecture) for "
+                "the full per-control assessment._"
             )
 
     show_intro = ctx.eval_context.get("verdict_severity") in ("yellow", "red") and bool(rendered_rows)
@@ -7151,9 +7067,7 @@ def _known_requirement_ids(ctx: RenderContext) -> dict[str, str]:
 
 
 _REQ_VIOLATION_STATUSES = frozenset({"FAIL", "PARTIAL", "ANTI-PATTERN"})
-_REQ_NON_VIOLATION_STATUSES = frozenset(
-    {"PASS", "N/A", "NA", "NOT APPLICABLE", "UNVERIFIABLE", "NOT OBSERVABLE"}
-)
+_REQ_NON_VIOLATION_STATUSES = frozenset({"PASS", "N/A", "NA", "NOT APPLICABLE", "UNVERIFIABLE", "NOT OBSERVABLE"})
 _REQ_HEADER_TOKENS = frozenset({"id", "requirement", "requirement id"})
 
 
@@ -7261,10 +7175,7 @@ def _requirements_status_map(ctx: RenderContext) -> dict[str, str]:
             if not cells:
                 continue
             lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
-            if (
-                any(c in _REQ_HEADER_TOKENS for c in lowered)
-                and "status" in lowered
-            ):
+            if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
                 header = lowered
                 req_idx = next(
                     (i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS),
@@ -7334,9 +7245,7 @@ def _requirements_evidence_findings_map(ctx: RenderContext) -> dict[str, list[st
             header = lowered
             req_idx = next((i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS), -1)
             evidence_indexes = [
-                i
-                for i, c in enumerate(header)
-                if c in {"evidence", "linked threats", "linked findings", "findings"}
+                i for i, c in enumerate(header) if c in {"evidence", "linked threats", "linked findings", "findings"}
             ]
             continue
         if header is None:
@@ -7417,7 +7326,7 @@ def _requirement_blueprints(ctx: RenderContext) -> dict[str, str]:
     return out
 
 
-def _requirement_ids_for_threat(t: dict[str, Any], known_ids: "dict[str, str] | set[str]") -> list[str]:
+def _requirement_ids_for_threat(t: dict[str, Any], known_ids: dict[str, str] | set[str]) -> list[str]:
     """Requirement IDs a threat evidences — order-preserving, de-duplicated.
 
     Sources, in order: the canonical ``violated_requirements[]`` array, the
@@ -7454,9 +7363,7 @@ def _requirement_ids_for_threat(t: dict[str, Any], known_ids: "dict[str, str] | 
             # a standalone token. Only IDs in known_ids match, so CWE/OWASP refs
             # never do; the word-boundary guard avoids partial hits (IF-0021).
             for kid in known_ids:
-                if kid not in out and re.search(
-                    r"(?<![\w-])" + re.escape(kid) + r"(?![\w-])", ref
-                ):
+                if kid not in out and re.search(r"(?<![\w-])" + re.escape(kid) + r"(?![\w-])", ref):
                     _add(kid)
     return out
 
@@ -7543,7 +7450,7 @@ def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]
             for rid in m.get("fulfills_requirements") or []:
                 slot = by_req.get((rid or "").strip())
                 if slot and mid not in slot["measures"]:
-                        slot["measures"].append(mid)
+                    slot["measures"].append(mid)
 
     # When Phase 8b's human-facing compliance row explicitly cites findings,
     # treat that as the authoritative requirement->finding edge. This repairs
@@ -7654,6 +7561,7 @@ def _render_requirements_mapping_table(
         _status_raw = (r.get("status") or "FAIL").strip() or "FAIL"
         _status_emoji = {"FAIL": "❌", "PARTIAL": "⚠️", "ANTI-PATTERN": "⚠️"}.get(_status_raw, "")
         status_cell = f"{_status_emoji} {_status_raw}".strip() if _status_emoji else _status_raw
+
         # Per-item annotation (2026-06-04): findings carry their severity dot
         # and measures their Variant-B priority prefix — the same vocabulary as
         # every other linked ref. The row-level Risk column shows the requirement
@@ -7663,14 +7571,12 @@ def _render_requirements_mapping_table(
             return f"{e} [{fid}](#{fid.lower()})" if e else f"[{fid}](#{fid.lower()})"
 
         find_cell = ", ".join(_find_chip(fid) for fid, _ in r["findings"]) or "—"
-        meas_cell = ", ".join(
-            f"{_measure_prio_prefix(ctx, mid)}[{mid}](#{mid.lower()})" for mid in r["measures"]
-        ) or "—"
+        meas_cell = (
+            ", ".join(f"{_measure_prio_prefix(ctx, mid)}[{mid}](#{mid.lower()})" for mid in r["measures"]) or "—"
+        )
         bp_cell = r.get("blueprint") or "—"
         req_cell = _format_requirement_link(r["req_id"], known_ids)
-        lines.append(
-            f"| {req_cell} | {status_cell} | {risk_cell} | {find_cell} | {meas_cell} | {bp_cell} |"
-        )
+        lines.append(f"| {req_cell} | {status_cell} | {risk_cell} | {find_cell} | {meas_cell} | {bp_cell} |")
     out = "\n".join(lines)
     if limit and len(rows) > limit:
         out += (
@@ -7733,20 +7639,32 @@ def _render_requirements_scope_note(ctx: RenderContext) -> str:
     else:
         lines.append(f"- Source: {source_label}.")
     if org_active:
-        lines.append("- Policy context: organization profile active; configured requirements are treated as the applicable policy set.")
+        lines.append(
+            "- Policy context: organization profile active; configured requirements are treated as the applicable policy set."
+        )
     else:
-        lines.append("- Policy context: no organization profile is active; this is a generic baseline assessment, not a project-specific compliance attestation.")
+        lines.append(
+            "- Policy context: no organization profile is active; this is a generic baseline assessment, not a project-specific compliance attestation."
+        )
     if compliance_scope:
         lines.append(f"- Compliance scope: {', '.join(str(x) for x in compliance_scope)}.")
     else:
-        lines.append("- Compliance scope: no explicit compliance_scope was configured; applicability is inferred from repository evidence.")
+        lines.append(
+            "- Compliance scope: no explicit compliance_scope was configured; applicability is inferred from repository evidence."
+        )
     if repo_scope:
         lines.append(f"- Repository scope filter: {', '.join(str(x) for x in repo_scope)}.")
-    lines.append("- Traceability rule: only FAIL, PARTIAL and ANTI-PATTERN rows are treated as violated requirements; PASS, N/A, NOT OBSERVABLE and UNVERIFIABLE rows are excluded from violation traceability.")
+    lines.append(
+        "- Traceability rule: only FAIL, PARTIAL and ANTI-PATTERN rows are treated as violated requirements; PASS, N/A, NOT OBSERVABLE and UNVERIFIABLE rows are excluded from violation traceability."
+    )
     if bp_count:
-        lines.append("- Blueprint entries are implementation guidance only; they do not add requirements or change PASS/FAIL counts.")
+        lines.append(
+            "- Blueprint entries are implementation guidance only; they do not add requirements or change PASS/FAIL counts."
+        )
     if source_description and "generic baseline" in source_description.lower() and not org_active:
-        lines.append("- Baseline note: the loaded requirements file describes itself as generic; replace it with an organization-specific catalog for contractual reporting.")
+        lines.append(
+            "- Baseline note: the loaded requirements file describes itself as generic; replace it with an organization-specific catalog for contractual reporting."
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -7969,9 +7887,7 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
     components = _component_lookup(ctx)
     impact_tax = _load_business_impact_taxonomy()
     impact_label = {
-        i.get("id"): (i.get("label") or i.get("id"))
-        for i in impact_tax.get("impacts", [])
-        if isinstance(i, dict)
+        i.get("id"): (i.get("label") or i.get("id")) for i in impact_tax.get("impacts", []) if isinstance(i, dict)
     }
 
     attack_paths_data = _load_attack_paths_fragment(ctx, taxonomy, list(threats.values()))
@@ -8042,9 +7958,7 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # criticality inline (same 🔴/🟠/🟡/🟢 vocabulary as the §8/§9
             # indices). Keep it BEFORE the non-breaking link unit; the ` — `
             # title separator downstream passes key on is preserved.
-            f_emoji = _TOP_THREATS_SEVERITY_EMOJI.get(
-                (t.get("risk") or t.get("severity") or "").strip().lower(), ""
-            )
+            f_emoji = _TOP_THREATS_SEVERITY_EMOJI.get((t.get("risk") or t.get("severity") or "").strip().lower(), "")
             f_prefix = f"{f_emoji}&nbsp;" if f_emoji else ""
             # No leading `•` bullet — each finding sits on its own line (joined
             # by <br/> below); a bullet inside a table cell reads as clutter
@@ -8111,9 +8025,7 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
                 ),
                 "findings_cell": "<br/>".join(finding_cells) if finding_cells else "—",
                 "risk_cell": (
-                    f"{risk_emoji} **{risk_word}**<br/>{impact_str}".strip()
-                    if risk_word
-                    else (impact_str or "—")
+                    f"{risk_emoji} **{risk_word}**<br/>{impact_str}".strip() if risk_word else (impact_str or "—")
                 ),
                 "fix_cell": fix_cell,
             }
@@ -8149,9 +8061,7 @@ def _abuse_chain_ms_note(ctx: RenderContext) -> str:
         fid = (t.get("t_id") or t.get("id") or "").strip()
         if not fid:
             continue
-        elevated = _MS_SEV_RANK.get(
-            (t.get("effective_severity") or "").strip().lower(), 0
-        ) > _MS_SEV_RANK.get(
+        elevated = _MS_SEV_RANK.get((t.get("effective_severity") or "").strip().lower(), 0) > _MS_SEV_RANK.get(
             (t.get("risk") or t.get("severity") or "").strip().lower(), 0
         )
         members.append((fid, elevated))
@@ -8295,7 +8205,7 @@ def _attack_tree_node_label(node: dict[str, Any]) -> str:
         if m:
             tid = _normalize_tid_to_fid(m.group(0))
             # Title = the label with the id (and any leading separators) removed.
-            title = (label[: m.start()] + label[m.end():]).strip(" -—:·\t")
+            title = (label[: m.start()] + label[m.end() :]).strip(" -—:·\t")
             if not title:
                 return tid
             _MAX = 32
@@ -8387,7 +8297,7 @@ def _derive_attack_tree_findings(data: dict[str, Any]) -> list[dict[str, str]]:
     """
     out: list[dict[str, str]] = []
     seen: set[str] = set()
-    for n in ((data.get("mermaid") or {}).get("nodes") or []):
+    for n in (data.get("mermaid") or {}).get("nodes") or []:
         if n.get("class") != "leaf":
             continue
         label = n.get("label", "")
@@ -8396,7 +8306,7 @@ def _derive_attack_tree_findings(data: dict[str, Any]) -> list[dict[str, str]]:
         if not fid or fid in seen:
             continue
         seen.add(fid)
-        title = (label[: m.start()] + label[m.end():]).strip(" -—:·") if m else label.strip()
+        title = (label[: m.start()] + label[m.end() :]).strip(" -—:·") if m else label.strip()
         out.append({"id": fid, "title": title, "anchor": "#" + fid.lower()})
     return out
 
@@ -8570,7 +8480,8 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
                 # (e.g. "fragment has 7.13 Defense-in-Depth; expected 7.14").
                 hint_suffix = (
                     _subsection_drift_hint(md, {**section, "required_subsections": _required_subs}, level)
-                    if section_id == "security_architecture" else ""
+                    if section_id == "security_architecture"
+                    else ""
                 )
                 raise FragmentError(
                     section_id,
@@ -8695,7 +8606,7 @@ _ATTACK_WALKTHROUGHS_DEFAULT_INTRO = (
 )
 
 
-def _inject_attack_walkthroughs_intros(ctx: "RenderContext", md: str) -> str:
+def _inject_attack_walkthroughs_intros(ctx: RenderContext, md: str) -> str:
     """Ensure §3 carries a chapter intro paragraph even when the
     LLM-authored fragment skipped it.
 
@@ -8710,11 +8621,11 @@ def _inject_attack_walkthroughs_intros(ctx: "RenderContext", md: str) -> str:
     if not md:
         return md
 
-    def _has_prose_before(heading_match: "re.Match[str]", text: str) -> bool:
+    def _has_prose_before(heading_match: re.Match[str], text: str) -> bool:
         """Return True when there is at least one line of non-blank, non-fence,
         non-heading prose immediately after the heading and before the next
         structural element (another heading or a fenced block)."""
-        tail = text[heading_match.end():]
+        tail = text[heading_match.end() :]
         for line in tail.splitlines():
             stripped = line.strip()
             if not stripped:
@@ -8731,7 +8642,7 @@ def _inject_attack_walkthroughs_intros(ctx: "RenderContext", md: str) -> str:
     # §3 chapter intro
     chap = re.search(r"^## 3\.[ \t]+Attack Walkthroughs\s*$", md, re.MULTILINE)
     if chap and not _has_prose_before(chap, md):
-        md = md[:chap.end()] + "\n\n" + _ATTACK_WALKTHROUGHS_DEFAULT_INTRO + "\n" + md[chap.end():]
+        md = md[: chap.end()] + "\n\n" + _ATTACK_WALKTHROUGHS_DEFAULT_INTRO + "\n" + md[chap.end() :]
 
     return md
 
@@ -9056,7 +8967,7 @@ def _section7_number_and_bulletize(md: str) -> str:
     return "\n".join(out_head + result + out_tail)
 
 
-def _section7_inline_findings_id_only(ctx: "RenderContext", md: str) -> str:
+def _section7_inline_findings_id_only(ctx: RenderContext, md: str) -> str:
     """§7 readability (2026-05-30 user request): in §7 prose, reduce inline
     finding references to ID-only links — the titled enumeration already lives
     in each control's `**Relevant findings**` block, so repeating the title in
@@ -9089,7 +9000,7 @@ def _section7_inline_findings_id_only(ctx: "RenderContext", md: str) -> str:
     # and NOT followed by `]` or a word char.
     _bare_id_re = re.compile(r"(?<![\[\w`/-])([FT]-\d{3,4})(?![\w\]`-])")
 
-    def _bare_to_link(m: "re.Match[str]") -> str:
+    def _bare_to_link(m: re.Match[str]) -> str:
         ref = m.group(1)
         anchor = re.sub(r"^t-", "f-", ref.lower())
         return f"[{ref}](#{anchor})"
@@ -9241,14 +9152,14 @@ _TBL_ROLE_BOUNDS: dict[str, tuple[int, int]] = {
     # the short Asset/Classification/ID columns least (2026-05-30 tuning:
     # desc cap used to equal default cap, so a 193-char Description rendered
     # the same width as a 28-char Asset name).
-    "narrow": (3, 8),     # #, id, auth, effort, priority, method
-    "medium": (7, 14),    # risk, severity, classification, status, verdict, cwe
-    "default": (8, 22),   # control, asset, component, implementation, …
-    "path": (12, 40),     # route, path, endpoint, location, key paths — long
-                          # slash/dotted identifiers that wrap badly at the
-                          # default 22 cap (2026-06-02: /rest/.../:continueCode)
-    "desc": (14, 36),     # description, notes, scenario, reason — capped < links
-    "links": (16, 48),    # finding / threat / mitigation link columns (widest)
+    "narrow": (3, 8),  # #, id, auth, effort, priority, method
+    "medium": (7, 14),  # risk, severity, classification, status, verdict, cwe
+    "default": (8, 22),  # control, asset, component, implementation, …
+    "path": (12, 40),  # route, path, endpoint, location, key paths — long
+    # slash/dotted identifiers that wrap badly at the
+    # default 22 cap (2026-06-02: /rest/.../:continueCode)
+    "desc": (14, 36),  # description, notes, scenario, reason — capped < links
+    "links": (16, 48),  # finding / threat / mitigation link columns (widest)
 }
 _TBL_W_MIN = 3
 # Back-compat representative weights (role cap) — referenced by tests.
@@ -9274,12 +9185,28 @@ def _table_col_role(header: str) -> str:
     # that wrap at the default 22 cap — checked before "desc" so "Key Paths"
     # is a path column, and before "links" so "Location"/"Route" never fall to
     # default. Excludes "evidence" (often file:line, but kept in desc-ish flow).
-    if any(tok in h for tok in ("route", "endpoint", "location", "key path")) \
-            or h in {"path", "paths", "file", "files"}:
+    if any(tok in h for tok in ("route", "endpoint", "location", "key path")) or h in {
+        "path",
+        "paths",
+        "file",
+        "files",
+    }:
         return "path"
-    if any(tok in h for tok in (
-        "description", "notes", "scenario", "reason", "rationale", "details", "meaning", "impact", "assessment", "what it asks",
-    )):
+    if any(
+        tok in h
+        for tok in (
+            "description",
+            "notes",
+            "scenario",
+            "reason",
+            "rationale",
+            "details",
+            "meaning",
+            "impact",
+            "assessment",
+            "what it asks",
+        )
+    ):
         return "desc"
     if any(tok in h for tok in ("finding", "threat", "addresses", "mitigat", "covers", "linked")):
         return "links"
@@ -9298,8 +9225,8 @@ def _table_cell_visible_len(cell: str) -> int:
     longest single entry, not the sum)."""
     longest = 0
     for seg in re.split(r"<br\s*/?>", cell or ""):
-        s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", seg)   # [text](url) → text
-        s = re.sub(r"<[^>]+>", "", s)                       # strip html tags
+        s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", seg)  # [text](url) → text
+        s = re.sub(r"<[^>]+>", "", s)  # strip html tags
         s = s.replace("`", "").replace("**", "").replace("*", "").replace("\u200b", "").strip()
         longest = max(longest, len(s))
     return longest
@@ -9351,10 +9278,7 @@ def _softwrap_prose_table_cells(md: str, width: int = 44) -> str:
     lines = md.split("\n")
     for header_idx, block in _iter_md_table_blocks(md):
         header_cells = _split_table_row(block[0])
-        wrap_cols = {
-            i for i, h in enumerate(header_cells)
-            if _table_col_role(h) in ("desc", "default", "path")
-        }
+        wrap_cols = {i for i, h in enumerate(header_cells) if _table_col_role(h) in ("desc", "default", "path")}
         if not wrap_cols:
             continue
         for body_off in range(2, len(block)):
@@ -9367,14 +9291,11 @@ def _softwrap_prose_table_cells(md: str, width: int = 44) -> str:
             changed = False
             for i in wrap_cols:
                 cell = cells[i]
-                if "](#" in cell:           # carries a cross-ref link — skip
+                if "](#" in cell:  # carries a cross-ref link — skip
                     continue
                 if _table_cell_visible_len(cell) <= width:
                     continue
-                wrapped = "<br/>".join(
-                    _wrap_segment_words(seg, width)
-                    for seg in re.split(r"<br\s*/?>", cell)
-                )
+                wrapped = "<br/>".join(_wrap_segment_words(seg, width) for seg in re.split(r"<br\s*/?>", cell))
                 if wrapped != cell:
                     cells[i] = wrapped
                     changed = True
@@ -9789,7 +9710,13 @@ def _normalize_emdashes(md: str) -> str:
             if stripped.startswith("#"):
                 # Heading line — preserve em dashes (contract checker requires them)
                 processed_lines.append(line)
-            elif (stripped.startswith("- **") or stripped.startswith("- <a id=") or stripped.startswith("- [F-") or stripped.startswith("- [T-") or stripped.startswith("- [M-")) and " — " in line:
+            elif (
+                stripped.startswith("- **")
+                or stripped.startswith("- <a id=")
+                or stripped.startswith("- [F-")
+                or stripped.startswith("- [T-")
+                or stripped.startswith("- [M-")
+            ) and " — " in line:
                 # Actor/attack-path bullet or finding sub-bullet with em-dash — preserve
                 processed_lines.append(line)
             elif stripped.startswith("|") and re.search(r"\]\(#[A-Za-z0-9_-]+\)\s+—\s", line):
@@ -9846,11 +9773,11 @@ def _normalize_line_preserve_inline_code(line: str) -> str:
 # only collapses an EXACT consecutive repeat of the whole label segment, so a
 # label that legitimately contains a repeated word is untouched.
 _DOUBLED_ID_LABEL_RE = re.compile(
-    r"(\]\(#[A-Za-z0-9_-]+\)\s*[—-]\s*)"   # 1: ](#anchor) + first separator
-    r"([^\n<|—]+?)"                          # 2: label text (no newline / < / | / em-dash)
-    r"(?:\s*[—-]\s*|\s+)"                    # repeat separator: hyphen / em-dash / bare space
-    r"\2"                                    # the SAME label again
-    r"(?=\s*(?:<|\||→|$|\n))"                # followed by a cell/line delimiter
+    r"(\]\(#[A-Za-z0-9_-]+\)\s*[—-]\s*)"  # 1: ](#anchor) + first separator
+    r"([^\n<|—]+?)"  # 2: label text (no newline / < / | / em-dash)
+    r"(?:\s*[—-]\s*|\s+)"  # repeat separator: hyphen / em-dash / bare space
+    r"\2"  # the SAME label again
+    r"(?=\s*(?:<|\||→|$|\n))"  # followed by a cell/line delimiter
 )
 
 
@@ -9933,28 +9860,82 @@ _DOT_IDENT_TLD_RE = re.compile(r"(?<![`\[\w/.])([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-
 _FILE_EXTENSION_SUFFIXES: frozenset[str] = frozenset(
     {
         # Code
-        "ts", "tsx", "js", "jsx", "mjs", "cjs",
-        "py", "rb", "go", "rs", "java", "kt", "kts", "scala",
-        "cpp", "cc", "cxx", "hpp", "hxx", "hh",
-        "cs", "fs", "vb",
-        "swift", "m", "mm",
-        "lua", "pl", "pm", "sh", "bash", "zsh", "fish",
-        "php", "phtml",
-        "dart", "ex", "exs", "erl", "hrl",
-        "clj", "cljs", "edn",
-        "ml", "mli",
-        "r", "jl",
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "mjs",
+        "cjs",
+        "py",
+        "rb",
+        "go",
+        "rs",
+        "java",
+        "kt",
+        "kts",
+        "scala",
+        "cpp",
+        "cc",
+        "cxx",
+        "hpp",
+        "hxx",
+        "hh",
+        "cs",
+        "fs",
+        "vb",
+        "swift",
+        "m",
+        "mm",
+        "lua",
+        "pl",
+        "pm",
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "php",
+        "phtml",
+        "dart",
+        "ex",
+        "exs",
+        "erl",
+        "hrl",
+        "clj",
+        "cljs",
+        "edn",
+        "ml",
+        "mli",
+        "r",
+        "jl",
         "sql",
         # Config / data
-        "yml", "yaml", "json", "toml", "ini", "cfg", "conf", "env",
-        "xml", "csv", "tsv",
+        "yml",
+        "yaml",
+        "json",
+        "toml",
+        "ini",
+        "cfg",
+        "conf",
+        "env",
+        "xml",
+        "csv",
+        "tsv",
         "lock",
         # Markup / web
-        "md", "rst", "txt", "rtf",
-        "html", "htm", "css", "scss", "sass", "less",
+        "md",
+        "rst",
+        "txt",
+        "rtf",
+        "html",
+        "htm",
+        "css",
+        "scss",
+        "sass",
+        "less",
         "svg",
         # Container / IaC
-        "tf", "tfvars",
+        "tf",
+        "tfvars",
         # Notes: package.json, tsconfig.json, etc. already covered via
         # _DOT_TLD_KNOWN_NAMES but their general `.json` suffix is here too
         # for consistency. The known-name list takes precedence in the
@@ -10060,20 +10041,24 @@ def _escape_html_payloads_in_prose(md: str) -> str:
     # Split into protected and unprotected chunks. Protected chunks are
     # passed through verbatim; unprotected chunks get the tag wrap.
     PROTECTED_RE = re.compile(
-        r"(```[^\n]*\n.*?\n```"        # fenced code
-        r"|<details\b.*?</details>"    # Story Card code blocks
-        r"|<pre\b.*?</pre>"            # raw <pre>
-        r"|<code\b.*?</code>"          # raw <code>
-        r"|`[^`\n]+`)",                # inline code span
+        r"(```[^\n]*\n.*?\n```"  # fenced code
+        r"|<details\b.*?</details>"  # Story Card code blocks
+        r"|<pre\b.*?</pre>"  # raw <pre>
+        r"|<code\b.*?</code>"  # raw <code>
+        r"|`[^`\n]+`)",  # inline code span
         flags=re.DOTALL,
     )
     out_chunks: list[str] = []
     for chunk in PROTECTED_RE.split(md):
         if not chunk:
             continue
-        if (chunk.startswith("```") or chunk.startswith("<details")
-                or chunk.startswith("<pre") or chunk.startswith("<code")
-                or (chunk.startswith("`") and chunk.endswith("`"))):
+        if (
+            chunk.startswith("```")
+            or chunk.startswith("<details")
+            or chunk.startswith("<pre")
+            or chunk.startswith("<code")
+            or (chunk.startswith("`") and chunk.endswith("`"))
+        ):
             out_chunks.append(chunk)
             continue
         out_chunks.append(_DANGEROUS_HTML_TAG_RE.sub(lambda m: f"`{m.group(0)}`", chunk))
@@ -10298,7 +10283,7 @@ def _apply_outside_changelog(md: str, fn) -> str:
     if not m:
         return fn(md)
     start = m.start()
-    nxt = re.search(r"(?m)^## ", md[m.end():])
+    nxt = re.search(r"(?m)^## ", md[m.end() :])
     end = (m.end() + nxt.start()) if nxt else len(md)
     return fn(md[:start]) + md[start:end] + fn(md[end:])
 
@@ -10572,6 +10557,7 @@ def _mask_secrets(md: str) -> tuple[str, list[str]]:
     # the gate can never trip on the rendered document again.
     try:
         import secret_scan  # sibling script; lazy import keeps module load cheap
+
         md, extra = secret_scan.mask_text(md)
         applied.extend(extra)
     except Exception:
@@ -10729,7 +10715,6 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     # distribution line, and the Verdict opening sentence. A third table
     # restating them in the appendix added length without information.
 
-
     # --- Agent Dispatch Log ------------------------------------------------
     # Suppress the section entirely when no row carries informative
     # Role or Phases content. The Per-Stage Breakdown above already lists
@@ -10740,8 +10725,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     # agents[] block produced something beyond name/model).
     dispatch_rows = _agent_dispatch_rows(ctx, agents_yaml)
     _dispatch_has_content = any(
-        (a.get("role") or "—") not in ("—", "", None)
-        or (a.get("phases") or "—") not in ("—", "", None)
+        (a.get("role") or "—") not in ("—", "", None) or (a.get("phases") or "—") not in ("—", "", None)
         for a in dispatch_rows
     )
     if dispatch_rows and _dispatch_has_content:
@@ -10931,13 +10915,16 @@ def _resolve_security_schema(output_dir: Path) -> str:
       4. default "v2" (since 2026-05)
     """
     import os as _os
+
     forced = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
     if forced in {"v1", "v2"}:
         return forced
     # APPSEC_SCHEMA_V1 is the test-suite pin only (gated to a running pytest via
     # PYTEST_CURRENT_TEST); a stray env var in production can't force legacy v1.
-    if (_os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
-            and "PYTEST_CURRENT_TEST" in _os.environ):
+    if (
+        _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
+        and "PYTEST_CURRENT_TEST" in _os.environ
+    ):
         return "v1"
     cfg = _read_skill_config(output_dir).get("security_schema") or ""
     cfg = cfg.strip().lower() if isinstance(cfg, str) else ""
@@ -11183,9 +11170,7 @@ def _render_composition_notes(ctx: RenderContext, env: jinja2.Environment, secti
             "model satisfies the strict contract."
         )
     else:
-        intro = (
-            "_The composition pipeline ran cleanly with no warnings or retries._"
-        )
+        intro = "_The composition pipeline ran cleanly with no warnings or retries._"
     lines: list[str] = [
         '<a id="appendix-composition-notes"></a>',
         "## Appendix: Composition Notes",
@@ -11443,35 +11428,35 @@ def _render_appendix_vektor_taxonomy(ctx: RenderContext, env: jinja2.Environment
 # CWE not in this map falls back to scenario prose only — no fake
 # generated text.
 _CWE_ROOT_CAUSE: dict[str, str] = {
-    "CWE-22":   "Filesystem path constructed from user input without normalisation against an allow-listed root.",
-    "CWE-79":   "User input rendered into HTML without context-appropriate output encoding (or with the framework's escape mechanism explicitly bypassed).",
-    "CWE-89":   "User input concatenated into SQL strings instead of using parameterised queries.",
-    "CWE-94":   "Dynamic code construction (eval / Function / vm.runInContext) on attacker-influenced input.",
-    "CWE-95":   "Dynamic evaluation of an attacker-controlled expression instead of using a sandboxed expression evaluator.",
-    "CWE-200":  "Sensitive information exposed in API response, URL, or error message.",
-    "CWE-306":  "Privileged endpoint exposed without an authentication middleware in front of it.",
-    "CWE-307":  "No rate-limiting on a brute-force-able endpoint (login / password reset / token validation).",
-    "CWE-319":  "Sensitive data transmitted in clear-text (no TLS / plain-text protocol).",
-    "CWE-321":  "Hard-coded cryptographic key in source code instead of loading from a secret store at runtime.",
-    "CWE-327":  "Use of a broken or risky cryptographic primitive — defaults are not safe in the current threat model.",
-    "CWE-345":  "Security decision relies on a value that is not integrity-protected against the attacker.",
-    "CWE-352":  "State-changing request accepted without a CSRF token or equivalent same-origin guard.",
-    "CWE-400":  "Endpoint accepts unbounded input or runs an unbounded loop without resource caps.",
-    "CWE-502":  "Untrusted serialized data deserialised into live objects, allowing gadget-chain code execution.",
-    "CWE-532":  "Sensitive content (logs, key material) reachable through the public HTTP surface.",
-    "CWE-540":  "Source code or secrets included in the deployed artifact / served by the public file handler.",
-    "CWE-552":  "Sensitive files made reachable through the public HTTP surface without an auth gate.",
-    "CWE-601":  "Redirect target derived from user input without an allow-list, enabling phishing redirects.",
-    "CWE-602":  "Security decision implemented on the client; the trusted server-side check is missing.",
-    "CWE-611":  "XML parser configured to resolve external entities — XXE protection not enabled.",
-    "CWE-639":  "Object reference accepted from the request without an ownership / authorization check.",
-    "CWE-778":  "No audit logging on security-sensitive operations — incident reconstruction not possible.",
-    "CWE-798":  "Hard-coded credentials in source code instead of secret-store lookup.",
-    "CWE-916":  "Outdated / cryptographically broken password hashing algorithm in use (or no key-stretching at all).",
-    "CWE-918":  "Outbound HTTP request target derived from user input without an allow-list / DNS-pinning.",
-    "CWE-922":  "Sensitive data stored client-side in locations accessible to JavaScript (localStorage / sessionStorage).",
-    "CWE-942":  "CORS configuration accepts arbitrary origins (wildcard or reflective Allow-Origin).",
-    "CWE-943":  "User input interpolated into a NoSQL query expression instead of using the driver's parameter-binding API.",
+    "CWE-22": "Filesystem path constructed from user input without normalisation against an allow-listed root.",
+    "CWE-79": "User input rendered into HTML without context-appropriate output encoding (or with the framework's escape mechanism explicitly bypassed).",
+    "CWE-89": "User input concatenated into SQL strings instead of using parameterised queries.",
+    "CWE-94": "Dynamic code construction (eval / Function / vm.runInContext) on attacker-influenced input.",
+    "CWE-95": "Dynamic evaluation of an attacker-controlled expression instead of using a sandboxed expression evaluator.",
+    "CWE-200": "Sensitive information exposed in API response, URL, or error message.",
+    "CWE-306": "Privileged endpoint exposed without an authentication middleware in front of it.",
+    "CWE-307": "No rate-limiting on a brute-force-able endpoint (login / password reset / token validation).",
+    "CWE-319": "Sensitive data transmitted in clear-text (no TLS / plain-text protocol).",
+    "CWE-321": "Hard-coded cryptographic key in source code instead of loading from a secret store at runtime.",
+    "CWE-327": "Use of a broken or risky cryptographic primitive — defaults are not safe in the current threat model.",
+    "CWE-345": "Security decision relies on a value that is not integrity-protected against the attacker.",
+    "CWE-352": "State-changing request accepted without a CSRF token or equivalent same-origin guard.",
+    "CWE-400": "Endpoint accepts unbounded input or runs an unbounded loop without resource caps.",
+    "CWE-502": "Untrusted serialized data deserialised into live objects, allowing gadget-chain code execution.",
+    "CWE-532": "Sensitive content (logs, key material) reachable through the public HTTP surface.",
+    "CWE-540": "Source code or secrets included in the deployed artifact / served by the public file handler.",
+    "CWE-552": "Sensitive files made reachable through the public HTTP surface without an auth gate.",
+    "CWE-601": "Redirect target derived from user input without an allow-list, enabling phishing redirects.",
+    "CWE-602": "Security decision implemented on the client; the trusted server-side check is missing.",
+    "CWE-611": "XML parser configured to resolve external entities — XXE protection not enabled.",
+    "CWE-639": "Object reference accepted from the request without an ownership / authorization check.",
+    "CWE-778": "No audit logging on security-sensitive operations — incident reconstruction not possible.",
+    "CWE-798": "Hard-coded credentials in source code instead of secret-store lookup.",
+    "CWE-916": "Outdated / cryptographically broken password hashing algorithm in use (or no key-stretching at all).",
+    "CWE-918": "Outbound HTTP request target derived from user input without an allow-list / DNS-pinning.",
+    "CWE-922": "Sensitive data stored client-side in locations accessible to JavaScript (localStorage / sessionStorage).",
+    "CWE-942": "CORS configuration accepts arbitrary origins (wildcard or reflective Allow-Origin).",
+    "CWE-943": "User input interpolated into a NoSQL query expression instead of using the driver's parameter-binding API.",
     "CWE-1021": "Clickjacking-friendly framing policy (missing X-Frame-Options / frame-ancestors directive).",
 }
 
@@ -11491,9 +11476,7 @@ def _root_cause_for_cwe(cwe: str | None) -> str | None:
     return _CWE_ROOT_CAUSE.get(key)
 
 
-def _read_evidence_snippet(
-    repo_root: Path | None, file_path: str, line: int | None, context: int
-) -> str | None:
+def _read_evidence_snippet(repo_root: Path | None, file_path: str, line: int | None, context: int) -> str | None:
     """Read ``line ± context`` lines from ``<repo_root>/<file_path>``.
 
     Returns the raw multi-line slice (no HTML escaping, no header line —
@@ -11538,16 +11521,26 @@ def _lang_class_for_file(file_path: str) -> str:
         return "language-dockerfile"
     ext = base.rsplit(".", 1)[-1] if "." in base else ""
     return {
-        "ts": "language-typescript", "tsx": "language-typescript",
-        "js": "language-javascript", "jsx": "language-javascript",
-        "py": "language-python", "rb": "language-ruby",
-        "go": "language-go", "rs": "language-rust",
-        "java": "language-java", "sh": "language-bash",
-        "yaml": "language-yaml", "yml": "language-yaml",
-        "json": "language-json", "toml": "language-toml",
-        "md": "language-markdown", "html": "language-html",
-        "css": "language-css", "scss": "language-scss",
-        "sql": "language-sql", "env": "language-bash",
+        "ts": "language-typescript",
+        "tsx": "language-typescript",
+        "js": "language-javascript",
+        "jsx": "language-javascript",
+        "py": "language-python",
+        "rb": "language-ruby",
+        "go": "language-go",
+        "rs": "language-rust",
+        "java": "language-java",
+        "sh": "language-bash",
+        "yaml": "language-yaml",
+        "yml": "language-yaml",
+        "json": "language-json",
+        "toml": "language-toml",
+        "md": "language-markdown",
+        "html": "language-html",
+        "css": "language-css",
+        "scss": "language-scss",
+        "sql": "language-sql",
+        "env": "language-bash",
     }.get(ext, "")
 
 
@@ -11556,9 +11549,9 @@ def _lang_class_for_file(file_path: str) -> str:
 # evidence snippet; Low findings get a one-sentence root cause only.
 _FINDING_DEPTH: dict[str, dict[str, int]] = {
     "critical": {"snippet_context": 3, "scenario_sentences": 4},
-    "high":     {"snippet_context": 2, "scenario_sentences": 3},
-    "medium":   {"snippet_context": 1, "scenario_sentences": 2},
-    "low":      {"snippet_context": 0, "scenario_sentences": 1},
+    "high": {"snippet_context": 2, "scenario_sentences": 3},
+    "medium": {"snippet_context": 1, "scenario_sentences": 2},
+    "low": {"snippet_context": 0, "scenario_sentences": 1},
 }
 
 # CWE classes where a code snippet does NOT add meaningful information beyond
@@ -11569,18 +11562,18 @@ _FINDING_DEPTH: dict[str, dict[str, int]] = {
 # losing analytical signal. The check is best-effort: when the CWE is
 # missing or not in either list we keep the snippet (legacy behaviour).
 _FINDING_SKIP_SNIPPET_CWES: set[str] = {
-    "CWE-352",   # CSRF — absence of token
-    "CWE-693",   # Protection Mechanism Failure
+    "CWE-352",  # CSRF — absence of token
+    "CWE-693",  # Protection Mechanism Failure
     "CWE-1021",  # Restriction of Rendered UI (CSP missing)
-    "CWE-942",   # Permissive CORS — config-class
-    "CWE-922",   # Insecure Storage of Sensitive Information (localStorage)
-    "CWE-602",   # Client-Side Enforcement of Server-Side Security
-    "CWE-200",   # Generic information disclosure (often config / file-serve)
-    "CWE-916",   # Use of Password Hash With Insufficient Computational Effort
-    "CWE-326",   # Inadequate Encryption Strength
-    "CWE-327",   # Use of a Broken or Risky Cryptographic Algorithm
-    "CWE-321",   # Hard-coded Cryptographic Key (snippet redacted anyway)
-    "CWE-400",   # Resource Consumption (DoS configuration)
+    "CWE-942",  # Permissive CORS — config-class
+    "CWE-922",  # Insecure Storage of Sensitive Information (localStorage)
+    "CWE-602",  # Client-Side Enforcement of Server-Side Security
+    "CWE-200",  # Generic information disclosure (often config / file-serve)
+    "CWE-916",  # Use of Password Hash With Insufficient Computational Effort
+    "CWE-326",  # Inadequate Encryption Strength
+    "CWE-327",  # Use of a Broken or Risky Cryptographic Algorithm
+    "CWE-321",  # Hard-coded Cryptographic Key (snippet redacted anyway)
+    "CWE-400",  # Resource Consumption (DoS configuration)
 }
 
 
@@ -11605,11 +11598,11 @@ def _first_n_sentences(text: str, n: int) -> str:
 # concretely so the reader sees `Evidence: <claim>` followed by `<code>`
 # that obviously realises that claim. Keys are bare CWE numbers (no prefix).
 _EVIDENCE_CWE_CLAIMS: dict[str, str] = {
-    "22":  "User-supplied path components are joined without traversal-safe canonicalisation",
-    "78":  "Untrusted input is concatenated into a shell-executed command string",
-    "79":  "User input is rendered as HTML without contextual output encoding",
-    "89":  "SQL is assembled via string concatenation/interpolation of untrusted input",
-    "94":  "User-supplied code is passed to a runtime evaluator without an allow-list of operations",
+    "22": "User-supplied path components are joined without traversal-safe canonicalisation",
+    "78": "Untrusted input is concatenated into a shell-executed command string",
+    "79": "User input is rendered as HTML without contextual output encoding",
+    "89": "SQL is assembled via string concatenation/interpolation of untrusted input",
+    "94": "User-supplied code is passed to a runtime evaluator without an allow-list of operations",
     "200": "Sensitive runtime values are served unauthenticated to any caller",
     "284": "A protected endpoint is reachable without an authentication or authorization check",
     "287": "The authentication path can be reached without verifying the supplied credential",
@@ -11728,52 +11721,52 @@ def _synthesise_evidence_summary(t: dict, ev_file: str, ev_line: object) -> str:
 # a sentence so the Story Card's **Fix** field always carries actionable
 # guidance even when the linked M-NNN block lives in §9.
 _FIX_ACTION_LEADS: dict[str, str] = {
-    "89":   "Switch all SQL execution to parameterised queries or ORM-bound parameters",
-    "564":  "Switch all SQL execution to parameterised queries or ORM-bound parameters",
-    "943":  "Replace string concatenation in query operators with parameter binding",
-    "78":   "Replace shell invocations with an argv-list API and validate every input",
-    "94":   "Replace runtime code generation (eval/Function/template render) with a data-only execution path",
-    "95":   "Replace runtime code generation (eval/Function/template render) with a data-only execution path",
-    "917":  "Replace dynamic expression evaluation with safe template rendering or a static lookup",
-    "79":   "Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls",
-    "80":   "Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls",
-    "611":  "Disable external entity resolution on every XML parser and reject DOCTYPE declarations",
-    "918":  "Validate the URL scheme + host against an explicit allow-list before issuing outbound requests",
-    "22":   "Resolve and normalise every constructed path and reject anything that escapes the intended base directory",
-    "23":   "Resolve and normalise every constructed path and reject anything that escapes the intended base directory",
-    "352":  "Enforce a same-origin or signed CSRF token on every state-changing endpoint",
-    "284":  "Add explicit server-side authorisation checks on every protected route",
-    "285":  "Add explicit server-side authorisation checks on every protected route",
-    "639":  "Tie every object lookup to the requesting user's identity and reject cross-tenant references",
-    "287":  "Strengthen authentication: enforce a vetted JWT verifier with explicit algorithm, MFA where appropriate",
-    "347":  "Pin the signature algorithm explicitly and reject `alg:none` and unknown algorithms",
-    "798":  "Move the credential out of source control into a secret store and rotate it",
-    "321":  "Move the cryptographic key out of source control into a managed secret store and rotate it",
-    "259":  "Move the credential out of source control into a secret store and rotate it",
-    "327":  "Replace the broken algorithm with a vetted modern primitive (AES-GCM / Argon2id / Ed25519)",
-    "328":  "Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id)",
-    "916":  "Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id)",
-    "330":  "Switch to a cryptographically secure RNG (`crypto.randomBytes` / OS `/dev/urandom`)",
-    "311":  "Encrypt the data in transit and at rest with vetted primitives",
-    "319":  "Force TLS on every transport channel and reject downgrades",
-    "521":  "Enforce a length and complexity policy and reject reused / breached passwords",
-    "307":  "Apply rate limiting and lock-out thresholds on authentication endpoints",
-    "770":  "Bound the request rate and the per-request resource budget on this endpoint",
-    "400":  "Bound the request rate and the per-request resource budget on this endpoint",
-    "434":  "Validate uploaded file type, size, and storage path; never execute uploaded content",
-    "502":  "Use a strict allow-list deserialiser and never accept untrusted gadget chains",
-    "532":  "Strip secrets and PII from every log sink and rotate any token that already leaked",
-    "200":  "Restrict the response to the minimum fields needed and never echo secrets",
-    "209":  "Replace developer error pages with a generic message in production responses",
-    "942":  "Replace the wildcard CORS origin with an explicit allow-list",
+    "89": "Switch all SQL execution to parameterised queries or ORM-bound parameters",
+    "564": "Switch all SQL execution to parameterised queries or ORM-bound parameters",
+    "943": "Replace string concatenation in query operators with parameter binding",
+    "78": "Replace shell invocations with an argv-list API and validate every input",
+    "94": "Replace runtime code generation (eval/Function/template render) with a data-only execution path",
+    "95": "Replace runtime code generation (eval/Function/template render) with a data-only execution path",
+    "917": "Replace dynamic expression evaluation with safe template rendering or a static lookup",
+    "79": "Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls",
+    "80": "Output-encode untrusted strings at every sink and remove all `bypassSecurityTrustHtml` calls",
+    "611": "Disable external entity resolution on every XML parser and reject DOCTYPE declarations",
+    "918": "Validate the URL scheme + host against an explicit allow-list before issuing outbound requests",
+    "22": "Resolve and normalise every constructed path and reject anything that escapes the intended base directory",
+    "23": "Resolve and normalise every constructed path and reject anything that escapes the intended base directory",
+    "352": "Enforce a same-origin or signed CSRF token on every state-changing endpoint",
+    "284": "Add explicit server-side authorisation checks on every protected route",
+    "285": "Add explicit server-side authorisation checks on every protected route",
+    "639": "Tie every object lookup to the requesting user's identity and reject cross-tenant references",
+    "287": "Strengthen authentication: enforce a vetted JWT verifier with explicit algorithm, MFA where appropriate",
+    "347": "Pin the signature algorithm explicitly and reject `alg:none` and unknown algorithms",
+    "798": "Move the credential out of source control into a secret store and rotate it",
+    "321": "Move the cryptographic key out of source control into a managed secret store and rotate it",
+    "259": "Move the credential out of source control into a secret store and rotate it",
+    "327": "Replace the broken algorithm with a vetted modern primitive (AES-GCM / Argon2id / Ed25519)",
+    "328": "Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id)",
+    "916": "Replace the broken hash with a salted password-hashing function (bcrypt/Argon2id)",
+    "330": "Switch to a cryptographically secure RNG (`crypto.randomBytes` / OS `/dev/urandom`)",
+    "311": "Encrypt the data in transit and at rest with vetted primitives",
+    "319": "Force TLS on every transport channel and reject downgrades",
+    "521": "Enforce a length and complexity policy and reject reused / breached passwords",
+    "307": "Apply rate limiting and lock-out thresholds on authentication endpoints",
+    "770": "Bound the request rate and the per-request resource budget on this endpoint",
+    "400": "Bound the request rate and the per-request resource budget on this endpoint",
+    "434": "Validate uploaded file type, size, and storage path; never execute uploaded content",
+    "502": "Use a strict allow-list deserialiser and never accept untrusted gadget chains",
+    "532": "Strip secrets and PII from every log sink and rotate any token that already leaked",
+    "200": "Restrict the response to the minimum fields needed and never echo secrets",
+    "209": "Replace developer error pages with a generic message in production responses",
+    "942": "Replace the wildcard CORS origin with an explicit allow-list",
     "1021": "Add a frame-ancestors directive to the Content Security Policy",
-    "693":  "Add the missing protection mechanism for this surface (CSP / CSRF token / headers)",
+    "693": "Add the missing protection mechanism for this surface (CSP / CSRF token / headers)",
     "1004": "Set `HttpOnly` on every session cookie",
-    "614":  "Set `Secure` on every session cookie and enforce HTTPS-only delivery",
+    "614": "Set `Secure` on every session cookie and enforce HTTPS-only delivery",
     "1275": "Set `SameSite=Lax` or `Strict` on every session cookie",
     "1104": "Replace the unmaintained dependency with a maintained equivalent or fork it under ownership",
     "1395": "Replace the unmaintained dependency with a maintained equivalent or fork it under ownership",
-    "937":  "Upgrade the dependency to a current, supported major version and pin via lockfile",
+    "937": "Upgrade the dependency to a current, supported major version and pin via lockfile",
     "1035": "Upgrade the dependency to a current, supported major version and pin via lockfile",
 }
 
@@ -11796,27 +11789,27 @@ def _fix_action_lead(cwe_norm: str) -> str:
 # code references (file extensions, function-call shape, env-var case)
 # and never doubles existing backticks.
 _CODE_FILE_RE = re.compile(
-    r"(?<![`/\w])"                                       # not already in backticks or inside a path
+    r"(?<![`/\w])"  # not already in backticks or inside a path
     r"([A-Za-z_][A-Za-z0-9_./\\-]*\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|"
     r"yml|yaml|json|xml|toml|ini|env|sh|sql|html|css|scss|md|conf)"
-    r"(?::\d+(?:-\d+)?)?)"                                # optional :line[-end]
+    r"(?::\d+(?:-\d+)?)?)"  # optional :line[-end]
     r"(?![`\w.])"
 )
 _CODE_CALL_RE = re.compile(
     r"(?<![`\w])"
     r"([A-Za-z_][A-Za-z0-9_]*"
-    r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+\(\))"                 # foo.bar() / a.b.c()
+    r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+\(\))"  # foo.bar() / a.b.c()
     r"(?![`\w])"
 )
 _CODE_BARE_CALL_RE = re.compile(
     r"(?<![`\w])"
-    r"([A-Za-z_][A-Za-z0-9_]{2,}\(\))"                    # plain identifier()
+    r"([A-Za-z_][A-Za-z0-9_]{2,}\(\))"  # plain identifier()
     r"(?![`\w])"
 )
 _CODE_DOTTED_RE = re.compile(
     r"(?<![`\w/])"
     r"([a-z][a-zA-Z0-9_]*"
-    r"(?:\.[a-z][a-zA-Z0-9_]*){1,3})"                     # req.body / sequelize.query
+    r"(?:\.[a-z][a-zA-Z0-9_]*){1,3})"  # req.body / sequelize.query
     r"(?![`\w(.])"
 )
 
@@ -11851,18 +11844,20 @@ def _sub_outside_spans(pattern: re.Pattern[str], s: str) -> str:
     entity. Prevents a later code matcher from re-wrapping a token inside a
     span an earlier matcher just created. Tokens that `_code_token_is_embedded`
     flags as mid-expression are left untouched (no partial backticking)."""
+
     def _wrap_seg(seg: str) -> str:
         def _repl(mm: re.Match[str]) -> str:
             if _code_token_is_embedded(seg, mm.start(1), mm.end(1)):
                 return mm.group(0)
             return f"`{mm.group(1)}`"
+
         return pattern.sub(_repl, seg)
 
     out: list[str] = []
     pos = 0
     for m in _CODE_SPAN_MASK_RE.finditer(s):
         if m.start() > pos:
-            out.append(_wrap_seg(s[pos:m.start()]))
+            out.append(_wrap_seg(s[pos : m.start()]))
         out.append(m.group(0))
         pos = m.end()
     if pos < len(s):
@@ -11889,9 +11884,9 @@ def _codify_inline_identifiers(text: str) -> str:
     span_re = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
     for m in span_re.finditer(text):
         if m.start() > pos:
-            parts.append(text[pos:m.start()])      # prose run
-            parts.append("\x00")                   # marker
-        parts.append(m.group(0))                   # passthrough span
+            parts.append(text[pos : m.start()])  # prose run
+            parts.append("\x00")  # marker
+        parts.append(m.group(0))  # passthrough span
         pos = m.end()
     if pos < len(text):
         parts.append(text[pos:])
@@ -11925,7 +11920,7 @@ def _build_threat_card(
     taxonomy: dict[str, dict],
     components: dict,
     repo_root: Path | None,
-    ctx: "RenderContext",
+    ctx: RenderContext,
     fid_to_walkthrough: dict[str, tuple[str, str]] | None = None,
     attack_taxonomy: dict | None = None,
 ) -> str:
@@ -12040,8 +12035,7 @@ def _build_threat_card(
         else:
             for cid_k, c in (components or {}).items():
                 if re.match(r"^C-\d+$", cid_k) and (
-                    c.get("_original_id") == comp_id_raw
-                    or (c.get("name") or "").strip() == comp_id_raw
+                    c.get("_original_id") == comp_id_raw or (c.get("name") or "").strip() == comp_id_raw
                 ):
                     canonical_id = cid_k
                     comp_meta = c
@@ -12185,9 +12179,7 @@ def _build_threat_card(
         return len(stripped) < 10
 
     scenario_sentences = _safe_sentence_split(scenario_clean)
-    has_explicit_impact = bool(
-        (t.get("impact_description") or t.get("impact_summary") or "").strip()
-    )
+    has_explicit_impact = bool((t.get("impact_description") or t.get("impact_summary") or "").strip())
     impact_carve = ""
     if not has_explicit_impact and sev in ("critical", "high") and len(scenario_sentences) >= 2:
         for idx in range(len(scenario_sentences) - 1, 0, -1):
@@ -12232,9 +12224,7 @@ def _build_threat_card(
     # narrative substitute. The R-7 fallback is a one-sentence proof
     # statement; it explicitly references the code structure visible in
     # the snippet on the next line.
-    evidence_summary_explicit = (
-        t.get("evidence_summary") or t.get("evidence_prose") or ""
-    ).strip()
+    evidence_summary_explicit = (t.get("evidence_summary") or t.get("evidence_prose") or "").strip()
     evidence_line = ""
     if evidence_summary_explicit:
         text = evidence_summary_explicit
@@ -12262,6 +12252,7 @@ def _build_threat_card(
     def _is_link_only(s: str) -> bool:
         stripped = re.sub(r"\[[^\]]+\]\([^)]+\)", "", s).strip(" .,;:!?-—·`*_")
         return len(stripped) < 10
+
     impact_text = (t.get("impact_description") or t.get("impact_summary") or "").strip()
     if not impact_text and impact_carve:
         # Sentence we already carved out of `scenario` so Impact is the
@@ -12288,6 +12279,7 @@ def _build_threat_card(
         # Item 9: auto-wrap inline code identifiers in backticks.
         if impact_text:
             impact_text = _codify_inline_identifiers(impact_text)
+
         # R-7 (2026-05): Impact is ALWAYS rendered for Critical/High,
         # even when it overlaps with the Issue prose. The R-5/iter-2
         # substring-dedup was eliminating Impact for ~90% of findings on
@@ -12301,6 +12293,7 @@ def _build_threat_card(
         # and a duplicated Impact line is noise.
         def _norm_cmp(s: str) -> str:
             return re.sub(r"\s+", " ", s.lower().strip(" .,;:!?-—·"))
+
         had_explicit_impact = bool((t.get("impact_description") or t.get("impact_summary") or "").strip())
         if impact_text and len(impact_text) >= 12:
             norm_impact = _norm_cmp(impact_text)
@@ -12334,9 +12327,7 @@ def _build_threat_card(
     # `_fix_action_lead` → mitigation link); here we only normalise the CWE and
     # resolve the mitigation links.
     cwe_raw = (t.get("cwe") or "").strip()
-    cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
-        f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
-    )
+    cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
     mit_ids = t.get("mitigation_ids") or t.get("mitigations") or []
     mit_links = [ctx.linkify_with_label(mid) for mid in mit_ids[:2]]
 
@@ -12397,9 +12388,7 @@ def _build_threat_card(
     # `&#10;` encoding is needed since a card is a markdown block, not a cell.
     snippet_block = ""
     if snippet_relevant:
-        snippet_text = _read_evidence_snippet(
-            repo_root, ev_file, ev_line, depth["snippet_context"]
-        )
+        snippet_text = _read_evidence_snippet(repo_root, ev_file, ev_line, depth["snippet_context"])
         if snippet_text:
             lang = (_lang_class_for_file(ev_file) or "").replace("language-", "")
             snippet_block = f"```{lang}\n// {ev_file}:{ev_line}\n{snippet_text}\n```"
@@ -12439,11 +12428,7 @@ def _build_threat_card(
         sev_disp += f" — {_sev_rat}"
     if (t.get("impact") or "").strip().lower() == "critical" and sev != "critical":
         sev_disp += " _(raw Critical)_"
-    comp_part = (
-        component_line[len("**Component:** "):]
-        if component_line.startswith("**Component:** ")
-        else "—"
-    )
+    comp_part = component_line[len("**Component:** ") :] if component_line.startswith("**Component:** ") else "—"
     loc_part = (f"`{ev_file}`" + (f":{ev_line}" if ev_line else "")) if ev_file else "—"
     meta_line = f"**Severity:** {sev_disp}  ·  **Component:** {comp_part}  ·  **Location:** {loc_part}"
 
@@ -12468,14 +12453,12 @@ def _build_threat_card(
     # follows on its own lines.
     ev_glyph = {"verified": "✓", "verified-prior": "✓", "ambiguous": "◌", "refuted": "⚠"}.get(ec, "")
     ev_word = {
-        "verified": "verified", "verified-prior": "verified",
-        "ambiguous": "ambiguous", "refuted": "refuted",
+        "verified": "verified",
+        "verified-prior": "verified",
+        "ambiguous": "ambiguous",
+        "refuted": "refuted",
     }.get(ec, "")
-    ev_prose = (
-        evidence_line[len("**Evidence:** "):]
-        if evidence_line.startswith("**Evidence:** ")
-        else ""
-    )
+    ev_prose = evidence_line[len("**Evidence:** ") :] if evidence_line.startswith("**Evidence:** ") else ""
     # The Location is already in the meta line — drop any redundant
     # `(\`file:line\`)` parenthetical the evidence summary appended.
     ev_prose = re.sub(r"\s*\(`[^`]*`\)", "", ev_prose).strip()
@@ -12500,14 +12483,14 @@ def _build_threat_card(
     # walkthrough tail (classification_line already carries the linked refs).
     classification_card = classification_line
     if walkthrough_line.startswith("**Attack Walkthrough:** "):
-        wt = walkthrough_line[len("**Attack Walkthrough:** "):]
+        wt = walkthrough_line[len("**Attack Walkthrough:** ") :]
         classification_card = (classification_card or "**Classification:**") + f" · walkthrough {wt}"
 
     # The card has no separate Impact field — fold the carved consequence
     # back into the Issue line so it is never lost (see threatdemo.md).
     issue_card = issue_line
     if impact_line.startswith("**Impact:** "):
-        imp_txt = impact_line[len("**Impact:** "):].strip()
+        imp_txt = impact_line[len("**Impact:** ") :].strip()
         if imp_txt and imp_txt.rstrip(" .").lower() not in (issue_card or "").lower():
             if issue_card:
                 if not issue_card.rstrip().endswith((".", "!", "?")):
@@ -12558,7 +12541,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
     components: dict[str, set[str]] = {}
     for t in threats:
         comp = t.get("component", "")
-        for aid in (t.get("actor_ids") or []):
+        for aid in t.get("actor_ids") or []:
             counts[aid] = counts.get(aid, 0) + 1
             if comp:
                 components.setdefault(aid, set()).add(comp)
@@ -12712,8 +12695,10 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     for t in threats:
         scenario = (t.get("scenario") or "").strip()
         m = _dup_ref_re.match(scenario)
-        if m and m.group(1).upper() in threat_ids and m.group(1).upper() != (
-            (t.get("id") or t.get("t_id") or "").strip().upper()
+        if (
+            m
+            and m.group(1).upper() in threat_ids
+            and m.group(1).upper() != ((t.get("id") or t.get("t_id") or "").strip().upper())
         ):
             continue
         deduped.append(t)
@@ -12725,12 +12710,8 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # M3: tracks whether any row carries an evidence_check marker
     # (refuted or ambiguous). Drives the §8 evidence-check footnote.
     has_evidence_drift = False
-    # Load threat-category taxonomy once.
-    tax_path = PLUGIN_ROOT / "data" / "threat-category-taxonomy.yaml"
-    try:
-        tax_raw = yaml.safe_load(tax_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        tax_raw = {}
+    # Load threat-category taxonomy once (via module-level cache).
+    tax_raw = _load_taxonomy("threat-category-taxonomy.yaml")
     taxonomy: dict[str, dict] = {
         c["id"]: c for c in (tax_raw.get("categories") or []) if isinstance(c, dict) and c.get("id")
     }
@@ -12836,9 +12817,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     ]
     if counts.get("info", 0) > 0:
         rd_parts.append(f"⚪ Info: {counts['info']}")
-    lines.append(
-        f"**Risk Distribution:** " + " · ".join(rd_parts) + f" · **Total findings: {total}**"
-    )
+    lines.append("**Risk Distribution:** " + " · ".join(rd_parts) + f" · **Total findings: {total}**")
     lines.append(
         f"**STRIDE Coverage:** Spoofing: {stride_map['spoofing']} · "
         f"Tampering: {stride_map['tampering']} · Repudiation: {stride_map['repudiation']} · "
@@ -12853,11 +12832,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # (2026-05-30 user request). Each chip targets the `<a id="f-NNN">` anchor
     # the Story Card below declares, so the link always resolves.
     _idx_nums = sorted(
-        {
-            int(m.group(1))
-            for t in threats
-            if (m := re.search(r"(\d+)$", (t.get("id") or t.get("t_id") or "").strip()))
-        }
+        {int(m.group(1)) for t in threats if (m := re.search(r"(\d+)$", (t.get("id") or t.get("t_id") or "").strip()))}
     )
     if _idx_nums:
         # One entry per line (<br/>-stacked), each chip carrying a leading
@@ -12879,9 +12854,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # "Categories at a glance:" catalogue line under these anchors — that
     # was removed (2026-05) per user request as it duplicated the
     # category links already inline in each Finding cell.
-    active_cat_ids = sorted(cats_active.keys(), key=lambda c: (
-        sev_rank.get(cat_eff_severity(c), 99), c
-    ))
+    active_cat_ids = sorted(cats_active.keys(), key=lambda c: (sev_rank.get(cat_eff_severity(c), 99), c))
     if active_cat_ids:
         anchor_block = "".join(f'<a id="{c.lower()}"></a>' for c in active_cat_ids)
         lines.append(anchor_block)
@@ -12955,7 +12928,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         for t in bucket:
             lines.append(
                 _build_threat_card(
-                    t, sev_key, taxonomy, components, repo_root_path, ctx,
+                    t,
+                    sev_key,
+                    taxonomy,
+                    components,
+                    repo_root_path,
+                    ctx,
                     fid_to_walkthrough=fid_to_walkthrough,
                     attack_taxonomy=attack_tax,
                 )
@@ -13138,10 +13116,7 @@ def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: di
     except FileNotFoundError:
         md = ""
     if not md:
-        return (
-            f"{heading}\n\n"
-            "_No abuse cases were identified or mandated for this assessment._\n"
-        )
+        return f"{heading}\n\n_No abuse cases were identified or mandated for this assessment._\n"
     first = next((ln.strip() for ln in md.splitlines() if ln.strip()), "")
     if first != heading:
         raise FragmentError(
@@ -13230,7 +13205,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 _m_prio[_n] = _raw_prio
                 continue
             _best = 9
-            for _a in (mm.get("threat_ids") or mm.get("addresses") or []):
+            for _a in mm.get("threat_ids") or mm.get("addresses") or []:
                 _am = re.search(r"(\d+)$", str(_a))
                 if _am:
                     _best = min(_best, _SEV_RANK_TBL.get(_sev_f.get(int(_am.group(1)), ""), 9))
@@ -13240,17 +13215,20 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
         # the priority is the actionable signal, so the index leads with what
         # must ship first instead of raw ID order (2026-06-02 user request).
         _PRIO_SORT = {"p1": 0, "p2": 1, "p3": 2, "p4": 3}
-        _m_nums_by_prio = sorted(
-            _m_nums, key=lambda n: (_PRIO_SORT.get(_m_prio.get(n, "p3"), 2), n)
-        )
+        _m_nums_by_prio = sorted(_m_nums, key=lambda n: (_PRIO_SORT.get(_m_prio.get(n, "p3"), 2), n))
         lines.append(
             _build_register_index(
                 # Variant B (2026-06-04): a single MONOCHROME circled digit
                 # (❶❷❸❹) whose number is the priority — the colourless parallel
                 # to the §8 Findings-index severity dots, self-explanatory so no
                 # P-tag is needed (supersedes the fill-ramp+text form).
-                "Mitigations index", "M", _m_nums_by_prio, _m_title, _m_prio,
-                icon_tbl=_PRIO_DIGIT_TBL, key_label_tbl=None,
+                "Mitigations index",
+                "M",
+                _m_nums_by_prio,
+                _m_title,
+                _m_prio,
+                icon_tbl=_PRIO_DIGIT_TBL,
+                key_label_tbl=None,
                 show_icon=True,
             )
         )
@@ -13266,8 +13244,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
     _req_status_map = _requirements_status_map(ctx) if _req_enabled else {}
     _req_blueprints = _requirement_blueprints(ctx) if _req_enabled else {}
     _threats_by_id = {
-        (t.get("t_id") or t.get("id") or "").strip().upper(): t
-        for t in (ctx.yaml_data.get("threats") or [])
+        (t.get("t_id") or t.get("id") or "").strip().upper(): t for t in (ctx.yaml_data.get("threats") or [])
     }
 
     # Normalise severity-word priorities that the orchestrator sometimes
@@ -13442,10 +13419,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 if _fmi:
                     file_line_inline = _fmi.group(1)
             if not file_line_inline and addressed:
-                _t_idx = {
-                    (t.get("t_id") or t.get("id") or "").upper(): t
-                    for t in (ctx.yaml_data.get("threats") or [])
-                }
+                _t_idx = {(t.get("t_id") or t.get("id") or "").upper(): t for t in (ctx.yaml_data.get("threats") or [])}
                 _first = _t_idx.get((addressed[0] or "").strip().upper()) or {}
                 _ev = _first.get("evidence") or []
                 if isinstance(_ev, dict):
@@ -13533,8 +13507,10 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                             # requirements there) is surfaced via Fulfills
                             # Requirements above — do NOT also render it as a
                             # cheatsheet `**Reference:**` line.
-                            if r and _known_req_ids and any(
-                                tok.strip() in _known_req_ids for tok in re.findall(r"\[([^\]]+)\]", r)
+                            if (
+                                r
+                                and _known_req_ids
+                                and any(tok.strip() in _known_req_ids for tok in re.findall(r"\[([^\]]+)\]", r))
                             ):
                                 r = ""
                             if r:
@@ -13580,8 +13556,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             extra_cwe_snippets: list[tuple[str, dict]] = []
             if not how_code and not code_example:
                 threats_idx_for_cwe = {
-                    (t.get("t_id") or t.get("id") or "").upper(): t
-                    for t in (ctx.yaml_data.get("threats") or [])
+                    (t.get("t_id") or t.get("id") or "").upper(): t for t in (ctx.yaml_data.get("threats") or [])
                 }
                 seen_cwes: list[str] = []
                 for ref in addressed:
@@ -13745,7 +13720,6 @@ def _render_by_id(ctx: RenderContext, env: jinja2.Environment, section_id: str, 
         "security_posture_at_a_glance": _render_security_posture_at_a_glance,
         "skipped_sections_placeholder": _render_skipped_sections_placeholder,
         "top_findings": _render_top_findings,
-        "architecture_assessment": _render_architecture_assessment,
         "top_threats": _render_top_threats,
         "mitigations": _render_mitigations,
         "operational_strengths": _render_operational_strengths,
@@ -13826,14 +13800,14 @@ def render(
     Returns (rendered_markdown, warnings). Raises FragmentError / ContractError
     on failures.
     """
-    contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+    contract = _fast_yaml_load(contract_path.read_text(encoding="utf-8"))
     if not isinstance(contract, dict) or "sections" not in contract:
         raise ContractError("contract file is missing required 'sections' block")
 
     yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.is_file():
         raise FragmentError("root", f"{yaml_path} not found — run Phase 11 YAML step first")
-    yaml_data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    yaml_data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
     # M-10c: Normalize threats[].title from em-dash form to paren form
     # ("SQL injection — routes/login.ts" → "SQL Injection (routes/login.ts)").
     # In-memory only — the on-disk yaml is left untouched so the schema
@@ -13992,17 +13966,11 @@ def render(
         if sev in severity_counts:
             severity_counts[sev] += 1
 
-    # Load threat-category taxonomy once so lookups are O(1).
-    cat_tax_path = PLUGIN_ROOT / "data" / "threat-category-taxonomy.yaml"
-    category_taxonomy: dict[str, dict[str, Any]] = {}
-    try:
-        if cat_tax_path.is_file():
-            tax_raw = yaml.safe_load(cat_tax_path.read_text(encoding="utf-8")) or {}
-            category_taxonomy = {
-                c.get("id", ""): c for c in (tax_raw.get("categories") or []) if isinstance(c, dict) and c.get("id")
-            }
-    except (OSError, yaml.YAMLError):
-        pass
+    # Load threat-category taxonomy once so lookups are O(1) (via module-level cache).
+    cat_tax_raw = _load_taxonomy("threat-category-taxonomy.yaml")
+    category_taxonomy: dict[str, dict[str, Any]] = {
+        c.get("id", ""): c for c in (cat_tax_raw.get("categories") or []) if isinstance(c, dict) and c.get("id")
+    }
 
     ctx = RenderContext(
         output_dir=output_dir,
@@ -14071,10 +14039,7 @@ def render(
             # banner rendered between Changelog and TOC, plus inline
             # depth notes elsewhere in the document.
             "is_quick_depth": (
-                ((yaml_data.get("meta") or {}).get("assessment_depth") or "")
-                .strip()
-                .lower()
-                == "quick"
+                ((yaml_data.get("meta") or {}).get("assessment_depth") or "").strip().lower() == "quick"
             ),
             # Quick-depth skip flags. Plumbed in so the
             # `required_patterns_condition` on §3 / §9 entries
@@ -14084,16 +14049,9 @@ def render(
             # flag still behave correctly.
             "skip_attack_walkthroughs": (
                 bool(_read_skill_config(output_dir).get("skip_attack_walkthroughs"))
-                or (
-                    ((yaml_data.get("meta") or {}).get("assessment_depth") or "")
-                    .strip()
-                    .lower()
-                    == "quick"
-                )
+                or (((yaml_data.get("meta") or {}).get("assessment_depth") or "").strip().lower() == "quick")
             ),
-            "skip_attack_paths_authoring": bool(
-                _read_skill_config(output_dir).get("skip_attack_paths_authoring")
-            ),
+            "skip_attack_paths_authoring": bool(_read_skill_config(output_dir).get("skip_attack_paths_authoring")),
             "skip_qa": bool(_read_skill_config(output_dir).get("skip_qa")),
             # 13-section schema_v2 — DEFAULT since 2026-05.
             # Resolution order (matches resolve_config.py + qa_checks):
@@ -14234,7 +14192,7 @@ def render(
     if mermaid_rewrites:
         ctx.warnings.append(
             f"mermaid edge-label auto-quoted: {mermaid_rewrites} unsafe label(s) "
-            f"wrapped with \"...\" to prevent parser ambiguity"
+            f'wrapped with "..." to prevent parser ambiguity'
         )
 
     # Final secret-masking pass — redact credential-shaped strings before
@@ -14331,9 +14289,7 @@ def render(
     rendered = _normalize_visible_threat_ids(rendered)
     rendered = _apply_outside_changelog(
         rendered,
-        lambda s: _prepend_mitigation_prio_circles(
-            ctx, _prepend_finding_severity_dots(ctx, s)
-        ),
+        lambda s: _prepend_mitigation_prio_circles(ctx, _prepend_finding_severity_dots(ctx, s)),
     )
 
     return rendered, ctx.warnings
@@ -15094,17 +15050,20 @@ def main(argv: list[str] | None = None) -> int:
     # we ALSO inject `<a id="t-NNN"></a>` adjacent to the threat row so the
     # reference resolves both ways. The `RENDER_WARN: orphan T-NNN` warning is
     # only emitted when the translation could not be resolved (genuine bug).
+    # Shared YAML for T-NNN and F-NNN bridges — read once, used by both passes.
+    _bridge_yaml: dict = {}
+    _bridge_yaml_pat = re.compile(r"\[(?:T|F)-(\d+)\]\(#(?:t|f)-\d+\)")
+    if _bridge_yaml_pat.search(rendered):
+        try:
+            _bridge_yaml = _fast_yaml_load((args.output_dir / "threat-model.yaml").read_text(encoding="utf-8")) or {}
+        except (FileNotFoundError, yaml.YAMLError, OSError):
+            _bridge_yaml = {}
+
     _t_link_pat = re.compile(r"\[T-(\d+)\]\(#t-\d+\)")
     referenced_t = sorted(set(_t_link_pat.findall(rendered)))
     unresolved: list[str] = []
     if referenced_t:
-        # Re-load yaml at this scope (ctx is internal to render()).
-        try:
-            with (args.output_dir / "threat-model.yaml").open(encoding="utf-8") as fh:
-                _yaml_for_bridge = yaml.safe_load(fh) or {}
-        except (FileNotFoundError, yaml.YAMLError, OSError):
-            _yaml_for_bridge = {}
-        threats_ordered = _yaml_for_bridge.get("threats") or []
+        threats_ordered = _bridge_yaml.get("threats") or []
         # Build T-NNN → anchor map using the threat's stored id, NOT its
         # position in the array. The positional approach was wrong: LLM
         # fragments cite T-013 to mean threat id=T-013, never "position 13".
@@ -15186,12 +15145,7 @@ def main(argv: list[str] | None = None) -> int:
     referenced_f = sorted(set(_f_link_pat.findall(rendered)))
     unresolved_f: list[str] = []
     if referenced_f:
-        try:
-            with (args.output_dir / "threat-model.yaml").open(encoding="utf-8") as fh:
-                _yaml_for_f_bridge = yaml.safe_load(fh) or {}
-        except (FileNotFoundError, yaml.YAMLError, OSError):
-            _yaml_for_f_bridge = {}
-        threats_for_f = _yaml_for_f_bridge.get("threats") or []
+        threats_for_f = _bridge_yaml.get("threats") or []
         f_alias: dict[str, tuple[str, str]] = {}
         for i, t in enumerate(threats_for_f, start=1):
             if not isinstance(t, dict):
@@ -15276,8 +15230,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.dry_run:
         try:
             import qa_checks as _qa_checks
+
             mer_report = _qa_checks.check_mermaid_syntax(out_path)
-            for issue in (mer_report.issues or []):
+            for issue in mer_report.issues or []:
                 warnings.append(f"mermaid: {issue}")
         except Exception as _qa_exc:  # pragma: no cover — defensive
             warnings.append(f"mermaid: check skipped — {_qa_exc}")

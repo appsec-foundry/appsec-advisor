@@ -8,8 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "preflight_untrusted.py"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -64,9 +62,7 @@ def test_escaping_symlink_flagged(tmp_path):
 def test_related_repos_url_rejected_in_strict_mode(tmp_path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "related-repos.yaml").write_text(
-        "related:\n"
-        "  - name: bad\n"
-        "    threat_model: http://127.0.0.1/threat-model.yaml\n",
+        "related:\n  - name: bad\n    threat_model: http://127.0.0.1/threat-model.yaml\n",
         encoding="utf-8",
     )
     code, out = _run(tmp_path, "--strict", "--strict-urls")

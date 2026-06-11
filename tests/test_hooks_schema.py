@@ -200,7 +200,6 @@ class TestSteeringKeywordsJson:
             for rid in spec.get("requirements") or []:
                 if isinstance(rid, str) and rid not in known:
                     unresolved.append(f"{name}:{rid}")
-        assert not unresolved, (
-            "shipped steering topic ids not found in any bundled catalog "
-            "(typo?): " + ", ".join(unresolved)
+        assert not unresolved, "shipped steering topic ids not found in any bundled catalog (typo?): " + ", ".join(
+            unresolved
         )

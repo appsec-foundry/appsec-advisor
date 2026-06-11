@@ -29,6 +29,7 @@ Hand-set values are preserved. Idempotent.
 Usage:
     python3 emit_threat_vektors.py <output_dir>
 """
+
 from __future__ import annotations
 
 import re
@@ -37,19 +38,18 @@ from pathlib import Path
 
 import yaml
 
-
 # CWE → vektor overrides. Position-independent — applies regardless of
 # whether the route is authenticated or not.
 _CWE_VEKTOR: dict[str, str] = {
     # repo-read: anything that's an offline-extractable secret/value
-    "CWE-798": "repo-read",   # hardcoded credentials
-    "CWE-321": "repo-read",   # hardcoded crypto key
-    "CWE-312": "repo-read",   # cleartext storage of sensitive info
-    "CWE-540": "repo-read",   # inclusion of sensitive info in source code
+    "CWE-798": "repo-read",  # hardcoded credentials
+    "CWE-321": "repo-read",  # hardcoded crypto key
+    "CWE-312": "repo-read",  # cleartext storage of sensitive info
+    "CWE-540": "repo-read",  # inclusion of sensitive info in source code
     # victim-required: needs a browser victim to interact
-    "CWE-79":   "victim-required",  # XSS
-    "CWE-352":  "victim-required",  # CSRF
-    "CWE-601":  "victim-required",  # open redirect
+    "CWE-79": "victim-required",  # XSS
+    "CWE-352": "victim-required",  # CSRF
+    "CWE-601": "victim-required",  # open redirect
     "CWE-1021": "victim-required",  # frame injection / click-jacking
 }
 
@@ -217,9 +217,7 @@ def main(argv: list[str]) -> int:
         print("Usage: emit_threat_vektors.py <output_dir>", file=sys.stderr)
         return 2
     total, filled, preserved = emit(Path(argv[0]))
-    print(
-        f"emit_threat_vektors: total={total} filled={filled} preserved={preserved}"
-    )
+    print(f"emit_threat_vektors: total={total} filled={filled} preserved={preserved}")
     return 0
 
 

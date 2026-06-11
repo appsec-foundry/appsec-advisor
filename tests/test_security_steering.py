@@ -427,16 +427,12 @@ class TestOrgProfileActivation:
         root = tmp_path / "plugin"
         (root / "hooks").mkdir(parents=True)
         # Hook config disabled — coach must not activate via the static file.
-        static = json.loads(
-            (Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text()
-        )
+        static = json.loads((Path(__file__).parent.parent / "hooks" / "steering_keywords.json").read_text())
         static["enabled"] = False
         (root / "hooks" / "steering_keywords.json").write_text(json.dumps(static))
         # Stage the org profile + config.json pointer.
         (root / "org-profile" / "context").mkdir(parents=True)
-        (root / "org-profile" / "context" / "sso.md").write_text(
-            "---\nid: x\ntype: ecosystem_context\n---\n\n# X\n"
-        )
+        (root / "org-profile" / "context" / "sso.md").write_text("---\nid: x\ntype: ecosystem_context\n---\n\n# X\n")
         profile = {
             "api_version": "appsec-advisor.org-profile/v1",
             "organization": {"id": "acme", "name": "Acme", "profile_version": "test"},
@@ -451,16 +447,19 @@ class TestOrgProfileActivation:
             },
         }
         import yaml
+
         (root / "org-profile" / "org-profile.yaml").write_text(yaml.safe_dump(profile))
         (root / "config.json").write_text(
-            json.dumps({
-                "external_context": {"enabled": False, "rest_url": None},
-                "organization_profile": {
-                    "enabled": True,
-                    "path": "org-profile/org-profile.yaml",
-                    "default_preset": None,
-                },
-            })
+            json.dumps(
+                {
+                    "external_context": {"enabled": False, "rest_url": None},
+                    "organization_profile": {
+                        "enabled": True,
+                        "path": "org-profile/org-profile.yaml",
+                        "default_preset": None,
+                    },
+                }
+            )
         )
         return root
 
@@ -520,9 +519,7 @@ def test_steering_falls_back_to_bestpractices_baseline(tmp_path):
     env = os.environ.copy()
     env["APPSEC_COACH"] = "1"
     env["CLAUDE_PLUGIN_ROOT"] = str(root)
-    payload = json.dumps(
-        {"prompt": "add a content-security-policy header and fix the xss output encoding"}
-    )
+    payload = json.dumps({"prompt": "add a content-security-policy header and fix the xss output encoding"})
     result = subprocess.run(
         [sys.executable, str(SCRIPT)],
         input=payload,

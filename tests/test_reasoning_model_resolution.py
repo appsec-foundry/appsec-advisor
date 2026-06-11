@@ -146,13 +146,15 @@ class TestHaikuEconomyAlias:
     def test_extended_models_alias_matches_canonical(self):
         rc = _load_resolver()
         for depth in ("quick", "standard", "thorough"):
-            assert (rc.resolve_extended_models("haiku-economy", depth)
-                    == rc.resolve_extended_models("sonnet-economy", depth))
+            assert rc.resolve_extended_models("haiku-economy", depth) == rc.resolve_extended_models(
+                "sonnet-economy", depth
+            )
 
     def test_stride_profile_alias_matches_canonical(self):
         rc = _load_resolver()
-        assert (rc.resolve_stride_profile("haiku-economy", "quick")
-                == rc.resolve_stride_profile("sonnet-economy", "quick"))
+        assert rc.resolve_stride_profile("haiku-economy", "quick") == rc.resolve_stride_profile(
+            "sonnet-economy", "quick"
+        )
 
 
 # ---------------------------------------------------------------------------

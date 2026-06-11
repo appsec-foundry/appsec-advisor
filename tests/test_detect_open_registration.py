@@ -5,6 +5,7 @@ Covers the attack_surface[] primary path, the .route-inventory.json fallback
 inventory but absent from the curated 23-row attack_surface[]), and the
 admin-create-user false-positive guards.
 """
+
 from __future__ import annotations
 
 import sys

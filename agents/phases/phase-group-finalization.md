@@ -421,7 +421,7 @@ Run the `baseline_state.py update` block from the "Baseline Cache Update" sectio
 
 ⚠ **Major architectural change — the LLM no longer writes `threat-model.md` directly.** Instead, the orchestrator writes schema-validated data fragments and short prose-Markdown fragments into `$OUTPUT_DIR/.fragments/`, then invokes the deterministic `compose_threat_model.py` renderer to produce the final Markdown. This eliminates the recurring structural-drift failure mode where the LLM invented its own Management Summary layout, dropped the Verdict blockquote, renamed Top Findings to "Top Threats", or numbered sub-sections `1.1 … 1.5`.
 
-**Prose-style anchor — load before authoring any prose fragment.** Every `opening`/`closing`/`bullets[].body` in `ms-verdict.json`, every `verdict_prose`/`framing`/`defects[].description` in `ms-architecture-assessment.json`, and every prose-Markdown fragment under `.fragments/` (system-overview, architecture-diagrams captions, attack-walkthroughs intros, security-architecture domain text, NARRATIVE_PLACEHOLDER replacements) is read by software engineers and architects in the rendered report. Read **both** the rules file and the worked-examples file once at the start of substep 4, before the first fragment Write:
+**Prose-style anchor — load before authoring any prose fragment.** Every `opening`/`closing`/`bullets[].body` in `ms-verdict.json` and every prose-Markdown fragment under `.fragments/` (system-overview, architecture-diagrams captions, attack-walkthroughs intros, security-architecture domain text, NARRATIVE_PLACEHOLDER replacements) is read by software engineers and architects in the rendered report. Read **both** the rules file and the worked-examples file once at the start of substep 4, before the first fragment Write:
 
 ```bash
 cat "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md"
@@ -437,7 +437,6 @@ Run the five-question pre-write self-check from `prose-samples.md` before saving
 | Section | Fragment file | LLM writes | Renderer guarantees |
 |---|---|---|---|
 | Verdict (MS) | `.fragments/ms-verdict.json` | `{severity, opening, bullets[], closing}` — schema-validated against `schemas/fragments/verdict.schema.json` | Red HTML blockquote, F-/T-NNN anchor linkification, 🟢/🟡/🔴 emoji, heading `### Verdict` (unnumbered). |
-| Architecture Assessment (MS) | `.fragments/ms-architecture-assessment.json` | `{verdict_severity, verdict_prose, framing, defects[]}` — schema-validated | 3-column table (Defect / Description / Key Findings), heading `### Architecture Assessment`, closing §7 reference. |
 | Top Findings (MS) | — | (no fragment — derived from `threat-model.yaml` + triage ranking) | 7-column table, canonical sort order, max-20 rows, legend. |
 | Mitigations (MS) | — | (no fragment — derived from `threat-model.yaml → mitigations[]`) | Prioritized + Follow-up sub-tables, 5 columns each, effort-asc sort. |
 | Operational Strengths (MS) | `.fragments/operational-strengths-overrides.json` (optional) | `{intentionally_vulnerable_or_deficient, bottom_line}` | 5-column table filtered from `security_controls[]`, 5–8 rows, bottom-line sentence. |
@@ -454,21 +453,6 @@ Run the five-question pre-write self-check from `prose-samples.md` before saving
 | Out of Scope (§10) | `.fragments/out-of-scope.md` | **DETERMINISTIC ONLY (P2 — A4).** The skill force-regenerates this fragment from `threat-model.yaml → out_of_scope[]`. Phase 11 substep 4 MUST NOT write to this path. | Heading-match validation. |
 | Appendix: Run Statistics | — | (no fragment — derived from `threat-model.yaml → meta.run_statistics`) | Deterministic tables, only rendered when `verbose_report=true`. |
 | Appendix A: Vektor Taxonomy | — | (no fragment — derived from `data/breach-vector-taxonomy.yaml`) | Fixed `<a id="vektor-…">` anchor per vektor. |
-
-### Authoring `ms-architecture-assessment.json`
-
-Do not invent architectural defects from prose intuition alone. Select the 3–6 `defects[]` rows from the highest-signal structured inputs, in this order:
-
-1. `threat-model.yaml → threats[]` clusters keyed by `architectural_theme`. Pick themes with the largest count of High/Critical findings.
-2. `threat-model.yaml → security_controls[]` entries rated `Missing`, `Weak`, or `Partial` that mitigate High/Critical findings.
-3. `.triage-flags.json` / Top Findings clusters where several High/Critical findings share the same CWE family, `finding_type_id`, component boundary, or missing control.
-
-Each defect row must name the design property, not the symptom list. Good row names: `Secrets in source code`, `Missing authorization boundary`, `No centralized input-validation layer`. Bad row names: `Several security issues`, `Critical vulnerabilities found`.
-
-Keep the Management Summary compact:
-- `description` is one sentence.
-- `findings[]` contains the representative F-NNN/T-NNN references that prove the defect.
-- Do not repeat table data in `verdict_prose` or `framing`.
 
 ### Authoring `security-posture-attack-paths.json`
 
@@ -570,7 +554,7 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
 
    The gate writes `$OUTPUT_DIR/.pre-render-report.json` (kept by the post-QA cleanup wave). **Exit code 1 means one of two things:**
    - the `.fragments/` directory is missing entirely — the orchestrator bypassed the fragment pipeline (this used to be silent; since M3.2 it is a hard fail because the downstream compose step never runs when fragments are missing);
-   - one or more of the 8 unconditional required fragments (`ms-verdict.json`, `ms-architecture-assessment.json`, `system-overview.md`, `architecture-diagrams.md`, `attack-walkthroughs.md`, `assets.md`, `attack-surface.md`, `security-architecture.md`) is missing, or a JSON fragment fails its schema.
+   - one or more of the 7 unconditional required fragments (`ms-verdict.json`, `system-overview.md`, `architecture-diagrams.md`, `attack-walkthroughs.md`, `assets.md`, `attack-surface.md`, `security-architecture.md`) is missing, or a JSON fragment fails its schema.
 
    Either way: fix the fragments and repeat the Write + gate cycle before proceeding to compose. **Do not work around this gate by Writing `threat-model.md` directly** — the skill's post-Stage-1 fragment check (see `SKILL.md` → "Post-Stage-1 fragment precondition") re-runs the same check and fails the run visibly.
 
@@ -593,12 +577,12 @@ Validate with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" securi
 
    - **MUST edit only the path(s) listed in `actions[0].fragments_to_rewrite`.**
    - **MUST NOT edit any of these fragments unless they appear in the whitelist:**
-     `ms-verdict.json`, `ms-architecture-assessment.json`, `attack-walkthroughs.md`, `security-posture-attack-paths.json`, `security-architecture.md`, `ms-critical-attack-tree.json`, `compound-chains.json`, `operational-strengths-overrides.json`.
+     `ms-verdict.json`, `attack-walkthroughs.md`, `security-posture-attack-paths.json`, `security-architecture.md`, `ms-critical-attack-tree.json`, `compound-chains.json`, `operational-strengths-overrides.json`.
    - **HARD BAN (P2 — A4):** `system-overview.md`, `architecture-diagrams.md`, `assets.md`, `attack-surface.md`, `out-of-scope.md` are **deterministic-only** and re-generated by the skill from `threat-model.yaml` *after* Phase 11 returns. Any LLM Write to these paths is silently overwritten — do not waste turns on them. If a repair plan names one of these as a target, that is a stale plan; the underlying fix lives in `threat-model.yaml` (regenerate the yaml, then the skill's pre-generator pass produces a clean fragment).
    - **MUST emit a `STEP_START` log line per repair iteration** (single Bash echo to `.agent-run.log` with the iteration counter and the listed fragment path). This keeps the API stream alive during the fix attempt and gives downstream diagnostics a trail. Without this, multi-minute silent edits trigger Anthropic's no-output-token timeout (the 2026-05-01 stream-kill root cause).
    - **MUST stop after 3 attempts per fragment** (compose `RC=4` indicates the per-fragment budget is exhausted). Do NOT retry a 4th time — escalate to the skill-level Re-Render Loop per the exit-code contract below.
 
-   **Forbidden in repair-iteration mode:** opening `ms-verdict.json` or `ms-architecture-assessment.json` to "improve wording" while the actual repair plan flagged a different fragment. The repair plan's `fragments_to_rewrite` is the **only** thing you may edit until compose succeeds. Drift from this rule is a release-blocking violation flagged by `tests/test_pre_render_repair_scope.py` (drift-guard).
+   **Forbidden in repair-iteration mode:** opening `ms-verdict.json` to "improve wording" while the actual repair plan flagged a different fragment. The repair plan's `fragments_to_rewrite` is the **only** thing you may edit until compose succeeds. Drift from this rule is a release-blocking violation flagged by `tests/test_pre_render_repair_scope.py` (drift-guard).
 
    **Exit-code contract:**
    - `0` → render succeeded, plan file is auto-deleted.

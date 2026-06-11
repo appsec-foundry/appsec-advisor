@@ -11,6 +11,7 @@ artifact deterministic is the AGENTS.md "prefer Python for final artifacts" rule
 Shows open (in-scope FAIL/PARTIAL) requirements with finding + code-aware fix +
 effort. PASS / UNVERIFIABLE / NOT_APPLICABLE are summarised in the header only.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -54,8 +55,7 @@ def render(verdict: dict) -> str:
     out.append("")
 
     if not open_reqs:
-        out.append("✅ **No open requirements on this change.** "
-                   "Everything in scope passed (or was not applicable).")
+        out.append("✅ **No open requirements on this change.** Everything in scope passed (or was not applicable).")
         out.append("")
         return "\n".join(out)
 

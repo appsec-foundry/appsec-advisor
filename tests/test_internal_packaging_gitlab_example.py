@@ -10,7 +10,6 @@ from pathlib import Path
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_ROOT = REPO_ROOT / "examples" / "internal-packaging-gitlab"
 PACKAGER = REPO_ROOT / "scripts" / "package_internal_plugin.py"
@@ -39,13 +38,12 @@ def test_upstream_packager_excludes_vcs_and_local_outputs(tmp_path: Path) -> Non
     (upstream / "schemas").mkdir(parents=True)
     _write(
         upstream / "skills" / "create-threat-model" / "SKILL.md",
-        "Run /appsec-advisor:create-threat-model.\n"
-        "Schema appsec-advisor.org-profile/v2 must stay unchanged.\n",
+        "Run /appsec-advisor:create-threat-model.\nSchema appsec-advisor.org-profile/v2 must stay unchanged.\n",
     )
     _write(upstream / "agents" / "dispatch.yaml", "agent: appsec-advisor:worker\n")
     _write(
         upstream / ".git" / "config",
-        "[remote \"origin\"]\nurl = https://token@gitlab.internal/appsec.git\n",
+        '[remote "origin"]\nurl = https://token@gitlab.internal/appsec.git\n',
     )
     _write(upstream / ".agents" / "local.txt", "local")
     _write(upstream / ".codex" / "local.txt", "local")
@@ -201,9 +199,7 @@ plugin_surface:
     )
     _write(
         upstream / "skills" / "audit-security-requirements" / "config.json",
-        json.dumps(
-            {"requirements_source": {"enabled": False, "requirements_yaml_url": None}}
-        ),
+        json.dumps({"requirements_source": {"enabled": False, "requirements_yaml_url": None}}),
     )
     _write(
         upstream / "skills" / "publish-threat-model" / "SKILL.md",
@@ -220,10 +216,7 @@ plugin_surface:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": (
-                                        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/"
-                                        "security_steering.py"
-                                    ),
+                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/security_steering.py"),
                                 }
                             ]
                         }
@@ -233,10 +226,7 @@ plugin_surface:
                             "hooks": [
                                 {
                                     "type": "command",
-                                    "command": (
-                                        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/"
-                                        "agent_logger.py"
-                                    ),
+                                    "command": ("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"),
                                 }
                             ]
                         }
@@ -294,17 +284,12 @@ def test_gitlab_ci_pins_ref_with_single_clone_then_smoke_tests() -> None:
     assert not (EXAMPLE_ROOT / "scripts" / "package.sh").exists()
     assert pipeline["stages"] == ["package"]
     assert pipeline["variables"]["VERSION"] == "0.4.0-internal.${CI_COMMIT_SHORT_SHA}"
-    assert 'apt-get install -y -qq --no-install-recommends git' in "\n".join(
-        pipeline["default"]["before_script"]
-    )
+    assert "apt-get install -y -qq --no-install-recommends git" in "\n".join(pipeline["default"]["before_script"])
     assert "rsync" not in script
     assert "ripgrep" not in script
     assert "tar -czf" not in script
     # A single clone pins the ref via --branch; no separate fetch/checkout dance.
-    assert (
-        'git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" '
-        '"$APPSEC_ADVISOR_URL" upstream/appsec-advisor' in script
-    )
+    assert 'git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" "$APPSEC_ADVISOR_URL" upstream/appsec-advisor' in script
     assert "fetch --depth 1 origin" not in script
     assert "checkout --detach FETCH_HEAD" not in script
     assert "scripts/package_internal_plugin.py" in script

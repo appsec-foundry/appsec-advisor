@@ -520,9 +520,16 @@ class TestCLISmoke:
         out = self._minimal_output_dir(tmp_path)
         r = subprocess.run(
             [
-                sys.executable, str(SCRIPT_PATH),
-                "--output-dir", str(out), "--repo-root", str(out),
-                "--mode", "full", "--assessment-depth", "thorough",
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--output-dir",
+                str(out),
+                "--repo-root",
+                str(out),
+                "--mode",
+                "full",
+                "--assessment-depth",
+                "thorough",
             ],
             capture_output=True,
             text=True,

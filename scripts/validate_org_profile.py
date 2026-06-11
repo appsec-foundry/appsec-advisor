@@ -20,6 +20,7 @@ Exit codes
     1 — validation errors
     2 — usage / IO error
 """
+
 from __future__ import annotations
 
 import argparse
@@ -62,6 +63,7 @@ ALLOWED_OUTPUT_DIR_TOKENS: set[str] = {"repo_name", "repo_slug", "preset", "date
 
 def _load_yaml(path: Path) -> Any:
     import yaml
+
     with path.open() as fh:
         return yaml.safe_load(fh)
 
@@ -176,17 +178,13 @@ def _check_llm_context_paths(profile: dict, profile_dir: Path) -> list[str]:
 def _check_preset_context_refs(profile: dict) -> list[str]:
     errors: list[str] = []
     ctx_ids: set[str] = {
-        d.get("id")
-        for d in ((profile.get("llm_context") or {}).get("documents") or [])
-        if d.get("id")
+        d.get("id") for d in ((profile.get("llm_context") or {}).get("documents") or []) if d.get("id")
     }
     for name, preset in (profile.get("presets") or {}).items():
         doc_ids = ((preset.get("context") or {}).get("document_ids")) or []
         for ref in doc_ids:
             if ref not in ctx_ids:
-                errors.append(
-                    f"preset '{name}': context.document_ids references unknown id '{ref}'"
-                )
+                errors.append(f"preset '{name}': context.document_ids references unknown id '{ref}'")
     return errors
 
 
@@ -197,9 +195,7 @@ def _check_target_rules(profile: dict) -> list[str]:
         repo = target.get("repo")
         repo_path = target.get("repo_path")
         if repo == "profile_default" and not repo_path:
-            errors.append(
-                f"preset '{name}': target.repo=profile_default requires target.repo_path"
-            )
+            errors.append(f"preset '{name}': target.repo=profile_default requires target.repo_path")
         out_dir = target.get("output_dir")
         if out_dir:
             for token in re.findall(r"\{([^{}]+)\}", out_dir):
@@ -212,9 +208,7 @@ def _check_target_rules(profile: dict) -> list[str]:
             # .git/ resolution happens at runtime once REPO_ROOT is known.
             normalized = re.sub(r"\{[^{}]+\}", "x", out_dir)
             if ".git" in Path(normalized).parts:
-                errors.append(
-                    f"preset '{name}': target.output_dir must not contain '.git'"
-                )
+                errors.append(f"preset '{name}': target.output_dir must not contain '.git'")
     return errors
 
 
@@ -225,9 +219,7 @@ def _check_requirements_url(profile: dict) -> list[str]:
     if isinstance(url, str) and url:
         parsed = urlparse(url)
         if parsed.username or parsed.password or "@" in (parsed.netloc or ""):
-            errors.append(
-                "requirements.source.requirements_yaml_url must not embed credentials"
-            )
+            errors.append("requirements.source.requirements_yaml_url must not embed credentials")
         if parsed.scheme and parsed.scheme not in ("http", "https", "file"):
             errors.append(
                 f"requirements.source.requirements_yaml_url scheme '{parsed.scheme}' "
@@ -241,14 +233,10 @@ def _check_skill_toggles(profile: dict) -> list[str]:
     toggles = profile.get("skill_toggles") or {}
     for skill, value in toggles.items():
         if skill not in KNOWN_SKILLS:
-            errors.append(
-                f"skill_toggles: unknown skill '{skill}'; known: {sorted(KNOWN_SKILLS)}"
-            )
+            errors.append(f"skill_toggles: unknown skill '{skill}'; known: {sorted(KNOWN_SKILLS)}")
         if isinstance(value, dict):
             if value.get("enabled") is False and not (value.get("reason") or "").strip():
-                errors.append(
-                    f"skill_toggles: '{skill}' is disabled and should provide a reason"
-                )
+                errors.append(f"skill_toggles: '{skill}' is disabled and should provide a reason")
     return errors
 
 
@@ -303,9 +291,7 @@ def _check_compatibility(profile: dict, plugin_version: str) -> list[str]:
             ">": a > b,
         }[op]
         if not ok:
-            return [
-                f"compatibility.core '{spec}' rejects plugin_version '{plugin_version}'"
-            ]
+            return [f"compatibility.core '{spec}' rejects plugin_version '{plugin_version}'"]
     return []
 
 
@@ -350,9 +336,7 @@ def validate(profile: Any, profile_dir: Path, plugin_version: str | None = None)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Validate an org profile YAML against the org-profile schema."
-    )
+    parser = argparse.ArgumentParser(description="Validate an org profile YAML against the org-profile schema.")
     parser.add_argument("profile", help="path to org-profile.yaml")
     parser.add_argument(
         "--plugin-version",

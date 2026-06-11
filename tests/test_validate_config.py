@@ -185,12 +185,8 @@ class TestRequirementsConfig:
         errors = validate_config._validate_requirements_config(data, "test")
         assert any("must be a valid http:// or https:// URL" in e for e in errors)
 
-    def test_plugin_root_skips_requirements_config_when_skill_removed(
-        self, validate_config, tmp_path: Path
-    ):
-        (tmp_path / "config.json").write_text(
-            '{"external_context": {"enabled": false, "rest_url": null}}\n'
-        )
+    def test_plugin_root_skips_requirements_config_when_skill_removed(self, validate_config, tmp_path: Path):
+        (tmp_path / "config.json").write_text('{"external_context": {"enabled": false, "rest_url": null}}\n')
         errors = validate_config.validate_plugin_root(tmp_path)
         assert errors == []
 

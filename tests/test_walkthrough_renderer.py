@@ -18,8 +18,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "walkthrough_renderer.py"
 
@@ -67,8 +65,7 @@ class TestAttackStepsPlaceholderSubstitution:
         # And the substituted concrete reference appears at least once.
         joined = " ".join(steps)
         assert "lib/insecurity.ts:54" in joined, (
-            "expected substituted file:line in padded step body; got:\n"
-            + "\n".join(steps)
+            "expected substituted file:line in padded step body; got:\n" + "\n".join(steps)
         )
 
     def test_cwe_template_attack_steps_substitute_placeholders(self):
@@ -106,9 +103,7 @@ class TestAttackStepsPlaceholderSubstitution:
 
         assert len(steps) >= renderer.MIN_ATTACK_STEPS
         for s in steps:
-            assert "{file}" not in s and "{line}" not in s, (
-                f"placeholder leaked from padding into step: {s!r}"
-            )
+            assert "{file}" not in s and "{line}" not in s, f"placeholder leaked from padding into step: {s!r}"
 
 
 class TestSequenceDiagramAltElseBlock:
@@ -131,9 +126,7 @@ class TestSequenceDiagramAltElseBlock:
                 "```\n"
             )
         }
-        out = renderer.render_sequence_diagram(
-            threat, flat, "M-005", "Use parameterized queries — routes/search.ts"
-        )
+        out = renderer.render_sequence_diagram(threat, flat, "M-005", "Use parameterized queries — routes/search.ts")
         assert "alt Current state — F-001" in out  # T-NNN normalised to visible F-NNN
         assert "else After M-005 — Use parameterized queries" in out
         assert "    end" in out
@@ -144,9 +137,7 @@ class TestSequenceDiagramAltElseBlock:
         # template={} → render_sequence_diagram uses the hardcoded generic
         # fallback which already has a bare `alt Current state` / `else After`.
         threat = _make_threat("x")
-        out = renderer.render_sequence_diagram(
-            threat, {}, "M-001", "Rotate key out of source — lib/insecurity.ts"
-        )
+        out = renderer.render_sequence_diagram(threat, {}, "M-001", "Rotate key out of source — lib/insecurity.ts")
         assert "alt Current state — F-001" in out  # T-NNN normalised to visible F-NNN
         assert "else After M-001 — Rotate key out of source" in out
         # No duplicate alt block introduced.
@@ -164,9 +155,7 @@ class TestSequenceDiagramAltElseBlock:
                     "evidence": [{"file": "routes/search.ts", "line": 23}],
                 }
             ],
-            "mitigations": [
-                {"id": "M-005", "title": "Use parameterized queries", "threat_ids": ["T-001"]}
-            ],
+            "mitigations": [{"id": "M-005", "title": "Use parameterized queries", "threat_ids": ["T-001"]}],
             "assets": [],
             "attack_surface": [],
         }
@@ -196,9 +185,7 @@ class TestSentenceSplittingRobustness:
 
     def test_eg_abbreviation_does_not_split(self):
         s = "A UNION SELECT payload (e.g. q=') can dump the schema."
-        assert renderer._split_sentences(s) == [
-            "A UNION SELECT payload (e.g. q=') can dump the schema"
-        ]
+        assert renderer._split_sentences(s) == ["A UNION SELECT payload (e.g. q=') can dump the schema"]
 
     def test_real_boundary_still_splits(self):
         s = "First sentence here. Second sentence here."

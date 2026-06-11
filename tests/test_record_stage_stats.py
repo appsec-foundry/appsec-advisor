@@ -355,17 +355,35 @@ def test_hybrid_record_clean_when_llm_agent_with_tokens(tmp_path, capsys):
 
 def test_variant_allows_second_record_for_same_stage(tmp_path):
     """Two records for stage=3 differentiated by --variant are both written."""
-    rec.main(_argv(tmp_path, **{"--stage": "3", "--name": "QA Review",
-                                 "--tokens": "0", "--tool-uses": "0",
-                                 "--agent": "deterministic:qa_checks.py",
-                                 "--model": "none", "--duration-ms": "5000"}))
-    rc2 = rec.main(_argv(tmp_path, **{"--stage": "3", "--variant": "repair",
-                                       "--name": "Re-Render Loop",
-                                       "--agent": "appsec-advisor:appsec-threat-analyst",
-                                       "--model": "claude-sonnet-4-6",
-                                       "--duration-ms": "545553",
-                                       "--tool-uses": "95",
-                                       "--tokens": "119662"}))
+    rec.main(
+        _argv(
+            tmp_path,
+            **{
+                "--stage": "3",
+                "--name": "QA Review",
+                "--tokens": "0",
+                "--tool-uses": "0",
+                "--agent": "deterministic:qa_checks.py",
+                "--model": "none",
+                "--duration-ms": "5000",
+            },
+        )
+    )
+    rc2 = rec.main(
+        _argv(
+            tmp_path,
+            **{
+                "--stage": "3",
+                "--variant": "repair",
+                "--name": "Re-Render Loop",
+                "--agent": "appsec-advisor:appsec-threat-analyst",
+                "--model": "claude-sonnet-4-6",
+                "--duration-ms": "545553",
+                "--tool-uses": "95",
+                "--tokens": "119662",
+            },
+        )
+    )
     assert rc2 == 0
     records = [json.loads(l) for l in (tmp_path / ".stage-stats.jsonl").read_text().splitlines() if l.strip()]
     assert len(records) == 2, "variant must coexist with default record without --allow-duplicates"
@@ -376,8 +394,7 @@ def test_variant_allows_second_record_for_same_stage(tmp_path):
 def test_variant_same_key_still_idempotent(tmp_path, capsys):
     """Two records with same (stage, variant) → still no-op on duplicate."""
     rec.main(_argv(tmp_path, **{"--stage": "3", "--variant": "repair"}))
-    rc = rec.main(_argv(tmp_path, **{"--stage": "3", "--variant": "repair",
-                                      "--tokens": "999"}))
+    rc = rec.main(_argv(tmp_path, **{"--stage": "3", "--variant": "repair", "--tokens": "999"}))
     assert rc == 0
     records = [json.loads(l) for l in (tmp_path / ".stage-stats.jsonl").read_text().splitlines() if l.strip()]
     assert len(records) == 1
@@ -423,8 +440,7 @@ def test_match_hook_event_handles_scan_start(tmp_path):
 def test_match_hook_event_agent_spawn_unchanged(tmp_path):
     """AGENT_SPAWN regex path (positional subagent) must keep its semantics."""
     m = rec._match_hook_event(
-        "2026-05-25T06:46:14Z  [x]  INFO   AGENT_SPAWN  "
-        "appsec-advisor:appsec-threat-analyst  model=sonnet  desc\n"
+        "2026-05-25T06:46:14Z  [x]  INFO   AGENT_SPAWN  appsec-advisor:appsec-threat-analyst  model=sonnet  desc\n"
     )
     assert m is not None
     assert m.group("event") == "AGENT_SPAWN"

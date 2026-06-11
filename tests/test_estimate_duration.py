@@ -107,9 +107,16 @@ class TestParametric:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "full",
-            "--reasoning-model", "sonnet",
-            "--output-dir", str(out_dir), "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--output-dir",
+            str(out_dir),
+            "--repo-root",
+            str(repo),
         )
         # 25 + 5 (abuse) + 8 + 7 + 4 = 49
         assert result["stage1c_min"] == 5, result
@@ -124,9 +131,17 @@ class TestParametric:
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         result = _run_cli(
-            "--depth", "standard", "--mode", "full",
-            "--reasoning-model", "sonnet", "--skip-abuse-cases",
-            "--output-dir", str(out_dir), "--repo-root", str(repo),
+            "--depth",
+            "standard",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "sonnet",
+            "--skip-abuse-cases",
+            "--output-dir",
+            str(out_dir),
+            "--repo-root",
+            str(repo),
         )
         assert result["stage1c_min"] == 0, result
         assert result["total_min"] == 44, result  # 25 + 0 + 8 + 7 + 4

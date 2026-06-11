@@ -199,9 +199,7 @@ def test_env_override_per_agent(monkeypatch):
 def _minimal_cfg(reasoning_mode="sonnet", stride_label="full", reasoning_label=None):
     """Build a minimum cfg dict that satisfies render_configuration_summary."""
     if reasoning_label is None:
-        reasoning_label = (
-            f"{reasoning_mode} (STRIDE: sonnet, triage: sonnet, merger: sonnet)"
-        )
+        reasoning_label = f"{reasoning_mode} (STRIDE: sonnet, triage: sonnet, merger: sonnet)"
     return {
         "repo_root": "/repo",
         "output_dir": "/repo/docs/security",

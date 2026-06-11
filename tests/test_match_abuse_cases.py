@@ -3,14 +3,13 @@
 Covers sink/control matching, scope-qualifier gating, and the structural
 verdict (candidate / partial_candidate / not_applicable).
 """
+
 from __future__ import annotations
 
 import importlib.util
 import json
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "match_abuse_cases.py"

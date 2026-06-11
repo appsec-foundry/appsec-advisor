@@ -32,6 +32,7 @@ pair via the optional `linked_threats_manual[]` field) is preserved.
 Usage:
     python3 enrich_asset_links.py <output_dir> [--report-only]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,7 +41,6 @@ import sys
 from pathlib import Path
 
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Asset class → relevant CWE families
@@ -53,73 +53,109 @@ import yaml
 _ASSET_CLASS_CWES: dict[str, set[str]] = {
     # Credentials / passwords stored
     "credentials": {
-        "CWE-79", "CWE-80",                # XSS that steals from forms
-        "CWE-89", "CWE-90",                # SQL/NoSQL injection that dumps the table
-        "CWE-307", "CWE-308", "CWE-799",   # weak / no rate limiting → cred stuffing
-        "CWE-916", "CWE-759", "CWE-326",   # weak password storage
-        "CWE-256", "CWE-257", "CWE-261",   # plaintext / weak password storage
-        "CWE-522",                         # insufficient password protection
+        "CWE-79",
+        "CWE-80",  # XSS that steals from forms
+        "CWE-89",
+        "CWE-90",  # SQL/NoSQL injection that dumps the table
+        "CWE-307",
+        "CWE-308",
+        "CWE-799",  # weak / no rate limiting → cred stuffing
+        "CWE-916",
+        "CWE-759",
+        "CWE-326",  # weak password storage
+        "CWE-256",
+        "CWE-257",
+        "CWE-261",  # plaintext / weak password storage
+        "CWE-522",  # insufficient password protection
     },
     # JWT / session tokens
     "session_token": {
-        "CWE-79", "CWE-80",                # XSS that steals localStorage
-        "CWE-312", "CWE-922",              # insecure client-side storage
-        "CWE-287", "CWE-294", "CWE-345",   # broken auth / token bypass
-        "CWE-347",                         # signature verification
-        "CWE-352", "CWE-1021",             # CSRF that hijacks the session
-        "CWE-613",                         # insufficient session expiration
+        "CWE-79",
+        "CWE-80",  # XSS that steals localStorage
+        "CWE-312",
+        "CWE-922",  # insecure client-side storage
+        "CWE-287",
+        "CWE-294",
+        "CWE-345",  # broken auth / token bypass
+        "CWE-347",  # signature verification
+        "CWE-352",
+        "CWE-1021",  # CSRF that hijacks the session
+        "CWE-613",  # insufficient session expiration
     },
     # Crypto key material
     "key_material": {
-        "CWE-798", "CWE-321", "CWE-312",   # hardcoded / cleartext keys
-        "CWE-540", "CWE-538",              # info in source / file leak
-        "CWE-22",                          # path traversal that reads the key
-        "CWE-200",                         # information exposure
+        "CWE-798",
+        "CWE-321",
+        "CWE-312",  # hardcoded / cleartext keys
+        "CWE-540",
+        "CWE-538",  # info in source / file leak
+        "CWE-22",  # path traversal that reads the key
+        "CWE-200",  # information exposure
     },
     # Payment / financial data
     "payment_data": {
-        "CWE-89", "CWE-79",                # SQLi / XSS that dumps cards
-        "CWE-285", "CWE-639", "CWE-862",   # broken authorization / IDOR
-        "CWE-311", "CWE-312", "CWE-319",   # cleartext storage / transmission
+        "CWE-89",
+        "CWE-79",  # SQLi / XSS that dumps cards
+        "CWE-285",
+        "CWE-639",
+        "CWE-862",  # broken authorization / IDOR
+        "CWE-311",
+        "CWE-312",
+        "CWE-319",  # cleartext storage / transmission
     },
     # PII / user profile data
     "pii": {
-        "CWE-89", "CWE-79",                # injection / XSS dumps PII
-        "CWE-285", "CWE-639", "CWE-862",   # broken authorization
-        "CWE-200", "CWE-359",              # information exposure
-        "CWE-915",                         # mass assignment
+        "CWE-89",
+        "CWE-79",  # injection / XSS dumps PII
+        "CWE-285",
+        "CWE-639",
+        "CWE-862",  # broken authorization
+        "CWE-200",
+        "CWE-359",  # information exposure
+        "CWE-915",  # mass assignment
     },
     # Order history / transactional data
     "order_data": {
-        "CWE-89",                          # SQLi
-        "CWE-285", "CWE-639", "CWE-862",   # broken authorization
-        "CWE-915",                         # mass assignment
+        "CWE-89",  # SQLi
+        "CWE-285",
+        "CWE-639",
+        "CWE-862",  # broken authorization
+        "CWE-915",  # mass assignment
     },
     # Access logs / audit records
     "access_logs": {
-        "CWE-200", "CWE-532", "CWE-548",   # log / dir exposure
-        "CWE-117",                         # log injection
-        "CWE-285", "CWE-862",              # missing authorization
+        "CWE-200",
+        "CWE-532",
+        "CWE-548",  # log / dir exposure
+        "CWE-117",  # log injection
+        "CWE-285",
+        "CWE-862",  # missing authorization
     },
     # FTP / static file directory
     "ftp_files": {
-        "CWE-22", "CWE-548",               # directory traversal / listing
-        "CWE-200", "CWE-538",              # information disclosure
-        "CWE-285", "CWE-862",              # missing authorization
+        "CWE-22",
+        "CWE-548",  # directory traversal / listing
+        "CWE-200",
+        "CWE-538",  # information disclosure
+        "CWE-285",
+        "CWE-862",  # missing authorization
     },
     # Uploaded files (untrusted input)
     "uploaded_files": {
-        "CWE-22", "CWE-23",                # path traversal in archives
-        "CWE-611",                         # XXE
-        "CWE-434",                         # unrestricted file upload
-        "CWE-776",                         # YAML / XML bomb
-        "CWE-78", "CWE-94", "CWE-95",      # command / code injection via file
+        "CWE-22",
+        "CWE-23",  # path traversal in archives
+        "CWE-611",  # XXE
+        "CWE-434",  # unrestricted file upload
+        "CWE-776",  # YAML / XML bomb
+        "CWE-78",
+        "CWE-94",
+        "CWE-95",  # command / code injection via file
     },
     # Product catalog / public content
     "product_data": {
-        "CWE-79",                          # stored XSS in description
-        "CWE-89",                          # injection in search
-        "CWE-915",                         # mass assignment from admin API
+        "CWE-79",  # stored XSS in description
+        "CWE-89",  # injection in search
+        "CWE-915",  # mass assignment from admin API
     },
     # Challenge state / non-sensitive
     "challenge_state": set(),  # explicitly empty — no real risk surface
@@ -141,19 +177,39 @@ _ASSET_CLASS_RULES: list[tuple[str, tuple[str, ...]]] = [
     #     overlaps with token / key classes.
     #   - "ftp_files" before "uploaded_files": juice-shop's `/ftp` is
     #     accidental directory disclosure, not user-uploaded content.
-    ("credentials",    ("credential", "password", "users table", "user table")),
-    ("key_material",   ("private key", "rsa key", "encryption key", "signing key",
-                        "secret key", "/encryptionkeys", "premium.key", "key material")),
-    ("session_token",  ("session token", "bearer token", "auth token", "jwt token",
-                        "auth session", "token storage")),
-    ("payment_data",   ("payment", "card data", "credit card", "wallet", "stripe", "paypal")),
-    ("pii",            ("pii", "personally identifiable", "personal data", "profile data",
-                        "email address", "phone number", "address book")),
-    ("order_data",     ("order history", "basket", "cart", "checkout", "purchase history")),
-    ("access_logs",    ("access log", "audit log", "morgan", "log file", "log archive")),
-    ("ftp_files",      ("ftp", "/ftp", "acquisitions", "kdbx", "package backup", "ftp directory")),
+    ("credentials", ("credential", "password", "users table", "user table")),
+    (
+        "key_material",
+        (
+            "private key",
+            "rsa key",
+            "encryption key",
+            "signing key",
+            "secret key",
+            "/encryptionkeys",
+            "premium.key",
+            "key material",
+        ),
+    ),
+    ("session_token", ("session token", "bearer token", "auth token", "jwt token", "auth session", "token storage")),
+    ("payment_data", ("payment", "card data", "credit card", "wallet", "stripe", "paypal")),
+    (
+        "pii",
+        (
+            "pii",
+            "personally identifiable",
+            "personal data",
+            "profile data",
+            "email address",
+            "phone number",
+            "address book",
+        ),
+    ),
+    ("order_data", ("order history", "basket", "cart", "checkout", "purchase history")),
+    ("access_logs", ("access log", "audit log", "morgan", "log file", "log archive")),
+    ("ftp_files", ("ftp", "/ftp", "acquisitions", "kdbx", "package backup", "ftp directory")),
     ("uploaded_files", ("uploaded file", "user-uploaded", "user upload", "uploads directory")),
-    ("product_data",   ("product catalog", "product description", "catalog item", "product list")),
+    ("product_data", ("product catalog", "product description", "catalog item", "product list")),
     ("challenge_state", ("ctf state", "challenge state", "challenge progress")),
 ]
 
@@ -162,16 +218,59 @@ _ASSET_CLASS_RULES: list[tuple[str, tuple[str, ...]]] = [
 # Keyword tokenisation (asset name/description ↔ threat title/file basename)
 # ---------------------------------------------------------------------------
 
-_STOPWORDS: frozenset[str] = frozenset({
-    # Generic English filler
-    "a", "an", "the", "of", "and", "or", "for", "in", "on", "with", "to", "by",
-    "is", "are", "was", "were", "be", "as", "at", "via", "using", "from",
-    # Generic security/CS filler that adds no signal
-    "data", "file", "files", "user", "users", "system", "service", "server",
-    "client", "store", "stored", "list", "value", "values",
-    "controller", "component", "module", "handler", "endpoint", "endpoints",
-    "based", "via", "where", "which", "what", "how",
-})
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        # Generic English filler
+        "a",
+        "an",
+        "the",
+        "of",
+        "and",
+        "or",
+        "for",
+        "in",
+        "on",
+        "with",
+        "to",
+        "by",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "as",
+        "at",
+        "via",
+        "using",
+        "from",
+        # Generic security/CS filler that adds no signal
+        "data",
+        "file",
+        "files",
+        "user",
+        "users",
+        "system",
+        "service",
+        "server",
+        "client",
+        "store",
+        "stored",
+        "list",
+        "value",
+        "values",
+        "controller",
+        "component",
+        "module",
+        "handler",
+        "endpoint",
+        "endpoints",
+        "based",
+        "where",
+        "which",
+        "what",
+        "how",
+    }
+)
 
 
 def _tokens(text: str) -> set[str]:
@@ -187,7 +286,7 @@ def _basename_tokens(path: str) -> set[str]:
     if not path:
         return set()
     base = path.rsplit("/", 1)[-1]
-    base = re.sub(r"\.\w+$", "", base)            # drop extension
+    base = re.sub(r"\.\w+$", "", base)  # drop extension
     # camelCase split: insert dash before any uppercase preceded by lowercase
     base = re.sub(r"([a-z])([A-Z])", r"\1-\2", base)
     return _tokens(base)
@@ -197,13 +296,16 @@ def _basename_tokens(path: str) -> set[str]:
 # Core enrichment
 # ---------------------------------------------------------------------------
 
+
 def _classify_asset(asset: dict) -> str:
     """Return the asset class slug for CWE matching, or '' if unclassified."""
-    haystack = " ".join((
-        str(asset.get("name") or ""),
-        str(asset.get("id") or ""),
-        str(asset.get("description") or ""),
-    )).lower()
+    haystack = " ".join(
+        (
+            str(asset.get("name") or ""),
+            str(asset.get("id") or ""),
+            str(asset.get("description") or ""),
+        )
+    ).lower()
     for cls, hints in _ASSET_CLASS_RULES:
         if any(h in haystack for h in hints):
             return cls
@@ -212,8 +314,8 @@ def _classify_asset(asset: dict) -> str:
 
 def _threat_relevance(asset: dict, asset_cls: str, threat: dict) -> tuple[bool, str]:
     """Return (is_relevant, reason). Threat is relevant if:
-       1. CWE matches one of asset_cls' relevant CWEs, OR
-       2. Keyword overlap between asset name/description and threat title/file ≥ 2.
+    1. CWE matches one of asset_cls' relevant CWEs, OR
+    2. Keyword overlap between asset name/description and threat title/file ≥ 2.
     """
     if not isinstance(threat, dict):
         return False, ""
@@ -247,10 +349,7 @@ def enrich(data: dict) -> tuple[dict, dict]:
     if not isinstance(assets, list) or not isinstance(threats, list):
         return data, {}
 
-    threats_by_id = {
-        (t.get("id") or t.get("t_id") or ""): t
-        for t in threats if isinstance(t, dict)
-    }
+    threats_by_id = {(t.get("id") or t.get("t_id") or ""): t for t in threats if isinstance(t, dict)}
 
     summary: dict[str, dict[str, int | list[str]]] = {}
     for a in assets:
@@ -318,8 +417,7 @@ def _format_summary(summary: dict) -> str:
     n_pruned = sum(len(v.get("pruned") or []) for v in summary.values())
     n_kept = sum(int(v.get("kept") or 0) for v in summary.values())
     lines.append(
-        f"enrich_asset_links: {len(summary)} asset(s) processed · "
-        f"+{n_added} added · -{n_pruned} pruned · {n_kept} kept"
+        f"enrich_asset_links: {len(summary)} asset(s) processed · +{n_added} added · -{n_pruned} pruned · {n_kept} kept"
     )
     for aid, s in summary.items():
         cls = s.get("class", "?")
@@ -355,8 +453,7 @@ def main(argv: list[str]) -> int:
 
     if not args.report_only:
         yaml_path.write_text(
-            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096,
-                           default_flow_style=False),
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
             encoding="utf-8",
         )
 

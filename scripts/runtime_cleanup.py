@@ -386,8 +386,7 @@ def run_cleanup(
                 f.write(
                     format_line(
                         "RUNTIME_CLEANUP",
-                        f"stage={stage} removed={len(report['removed'])} "
-                        f"preserved={len(report['preserved'])}",
+                        f"stage={stage} removed={len(report['removed'])} preserved={len(report['preserved'])}",
                         component="runtime-cleanup",
                     )
                 )

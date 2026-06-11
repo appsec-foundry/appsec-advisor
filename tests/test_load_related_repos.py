@@ -402,9 +402,7 @@ class TestUpstreamProperties:
 
     def test_no_consumer_declares_means_no_block(self, tmp_path: Path) -> None:
         tm = _make_tm(
-            attack_surface=[
-                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
-            ],
+            attack_surface=[{"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}],
             component_paths={"AuthController": ["POST /api/v1/payments"]},
         )
         result = self._build_repo(
@@ -426,9 +424,7 @@ class TestUpstreamProperties:
 
     def test_consumer_declares_recorded(self, tmp_path: Path) -> None:
         tm = _make_tm(
-            attack_surface=[
-                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
-            ],
+            attack_surface=[{"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}],
             component_paths={"AuthController": ["POST /api/v1/payments"]},
         )
         result = self._build_repo(
@@ -474,9 +470,7 @@ class TestUpstreamProperties:
 
     def test_no_interface_declared_means_no_upstream_properties(self, tmp_path: Path) -> None:
         tm = _make_tm(
-            attack_surface=[
-                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
-            ],
+            attack_surface=[{"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}],
         )
         result = self._build_repo(
             tmp_path,
@@ -487,9 +481,7 @@ class TestUpstreamProperties:
 
     def test_controls_attached_when_handling_component_matched(self, tmp_path: Path) -> None:
         tm = _make_tm(
-            attack_surface=[
-                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
-            ],
+            attack_surface=[{"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}],
             component_paths={"AuthController": ["POST /api/v1/payments"]},
             security_controls=[
                 {"domain": "Authentication", "control": "JWT bearer", "effectiveness": "Adequate"},
@@ -509,9 +501,7 @@ class TestUpstreamProperties:
 
     def test_controls_dropped_when_no_handling_component(self, tmp_path: Path) -> None:
         tm = _make_tm(
-            attack_surface=[
-                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
-            ],
+            attack_surface=[{"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}],
             # No component.paths references the entry_point — so no handling component.
             security_controls=[
                 {"domain": "Authentication", "control": "JWT bearer", "effectiveness": "Adequate"},
@@ -557,9 +547,7 @@ class TestUpstreamProperties:
 
     def test_expectation_mismatch_validation_detected(self, tmp_path: Path) -> None:
         tm = _make_tm(
-            attack_surface=[
-                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
-            ],
+            attack_surface=[{"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}],
             component_paths={"AuthController": ["POST /api/v1/payments"]},
             security_controls=[
                 {"domain": "Authentication", "control": "JWT bearer", "effectiveness": "Adequate"},
@@ -611,9 +599,7 @@ class TestUpstreamProperties:
         old = (_dt.datetime.now(tz=_dt.timezone.utc) - _dt.timedelta(days=45)).isoformat()
         tm = _make_tm(
             generated=old,
-            attack_surface=[
-                {"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}
-            ],
+            attack_surface=[{"entry_point": "POST /api/v1/payments", "protocol": "HTTPS", "auth_required": True}],
         )
         result = self._build_repo(
             tmp_path,

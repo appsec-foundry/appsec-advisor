@@ -4,6 +4,7 @@ The gate is the single authority on whether a change blocks. It must recompute
 the gating set from results[] and NEVER trust the agent's advisory `gating` /
 `gating_failures` fields. These tests pin every branch of that contract.
 """
+
 from __future__ import annotations
 
 import json
@@ -30,8 +31,15 @@ def _write(tmp_path: Path, results: list[dict]) -> Path:
         "base_ref": "origin/main",
         "priority_floor": "MUST",
         "summary": {
-            "changed_files": 1, "candidates": len(results), "in_scope": sum(1 for r in results if r["in_scope"]),
-            "pass": 0, "partial": 0, "fail": 0, "unverifiable": 0, "not_applicable": 0, "gating_failures": 0,
+            "changed_files": 1,
+            "candidates": len(results),
+            "in_scope": sum(1 for r in results if r["in_scope"]),
+            "pass": 0,
+            "partial": 0,
+            "fail": 0,
+            "unverifiable": 0,
+            "not_applicable": 0,
+            "gating_failures": 0,
         },
         "results": results,
     }
@@ -46,12 +54,14 @@ def _run(verdict_path, *extra):
 
 # --- advisory mode always exits 0 -------------------------------------------
 
+
 def test_advisory_must_fail_exits_zero(tmp_path):
     p = _write(tmp_path, [_result("SEC-SQL", "MUST", "FAIL")])
     assert _run(p) == 0  # advisory: no --gate
 
 
 # --- gate mode core ----------------------------------------------------------
+
 
 def test_gate_must_fail_blocks(tmp_path):
     p = _write(tmp_path, [_result("SEC-SQL", "MUST", "FAIL")])
@@ -75,6 +85,7 @@ def test_not_applicable_never_blocks(tmp_path):
 
 # --- priority floor ----------------------------------------------------------
 
+
 def test_gate_should_fail_below_default_floor_passes(tmp_path):
     p = _write(tmp_path, [_result("SEC-CSP", "SHOULD", "FAIL")])
     assert _run(p, "--gate") == 0  # floor MUST → SHOULD does not gate
@@ -92,6 +103,7 @@ def test_gate_may_floor_blocks_everything(tmp_path):
 
 # --- gate-on partial ---------------------------------------------------------
 
+
 def test_partial_does_not_block_by_default(tmp_path):
     p = _write(tmp_path, [_result("SEC-SQL", "MUST", "PARTIAL")])
     assert _run(p, "--gate") == 0
@@ -103,6 +115,7 @@ def test_partial_blocks_with_gate_on_partial(tmp_path):
 
 
 # --- agent advisory fields are ignored (authoritative recompute) ------------
+
 
 def test_agent_gating_true_but_status_pass_does_not_block(tmp_path):
     # Agent mis-set gating:true on a PASS — the gate must ignore it.
@@ -117,6 +130,7 @@ def test_agent_gating_false_but_real_fail_still_blocks(tmp_path):
 
 
 # --- error handling ----------------------------------------------------------
+
 
 def test_missing_file_exits_two(tmp_path):
     assert _run(tmp_path / "nope.json", "--gate") == 2

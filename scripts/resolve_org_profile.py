@@ -45,6 +45,7 @@ Exit codes
     1 — schema/semantic validation failed
     2 — usage / configuration error (missing --repo for cli_required, etc.)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -131,9 +132,7 @@ def _resolve_path(p: str, plugin_root: Path) -> Path:
     return path.resolve()
 
 
-def discover_active_preset(
-    profile: dict, cli_preset: str | None, env: dict[str, str] | None = None
-) -> str:
+def discover_active_preset(profile: dict, cli_preset: str | None, env: dict[str, str] | None = None) -> str:
     env = env if env is not None else dict(os.environ)
     if cli_preset:
         return cli_preset
@@ -194,10 +193,7 @@ def flatten_preset(
     if cli_repo:
         repo_path = Path(cli_repo).resolve()
     elif repo_policy == "cli_required":
-        errors.append(
-            f"preset '{preset_name}' requires --repo <path> "
-            f"(target.repo=cli_required)"
-        )
+        errors.append(f"preset '{preset_name}' requires --repo <path> (target.repo=cli_required)")
     elif repo_policy == "profile_default" and target.get("repo_path"):
         repo_path = Path(target["repo_path"]).resolve()
 
@@ -224,9 +220,7 @@ def flatten_preset(
         "architect_review": quality.get("architect_review"),
         "attack_walkthroughs": quality.get("attack_walkthroughs"),
         "evidence_recheck": verification.get("evidence_recheck"),
-        "generate_pentest_verification_tasks": verification.get(
-            "generate_pentest_verification_tasks"
-        ),
+        "generate_pentest_verification_tasks": verification.get("generate_pentest_verification_tasks"),
         "max_wall_time": guardrails.get("max_wall_time"),
         "max_cost_usd": guardrails.get("max_cost_usd"),
         "max_resumes": guardrails.get("max_resumes"),
@@ -293,16 +287,18 @@ def build_context_manifest(profile: dict, profile_dir: Path) -> list[dict]:
             size = 0
             loaded = False
             reason = str(exc)
-        manifest.append({
-            "id": d.get("id"),
-            "path": str(full),
-            "purpose": d.get("purpose"),
-            "max_bytes": d.get("max_bytes", 50000),
-            "bytes": size,
-            "sha256": sha,
-            "loaded": loaded,
-            "reason": reason,
-        })
+        manifest.append(
+            {
+                "id": d.get("id"),
+                "path": str(full),
+                "purpose": d.get("purpose"),
+                "max_bytes": d.get("max_bytes", 50000),
+                "bytes": size,
+                "sha256": sha,
+                "loaded": loaded,
+                "reason": reason,
+            }
+        )
     return manifest
 
 
@@ -332,9 +328,7 @@ def resolve(
     ``active`` is False, the rest of the structure carries source metadata
     only and downstream callers should fall back to core defaults."""
     env = env if env is not None else dict(os.environ)
-    profile_path, source = discover_active_profile(
-        cli_org_profile, cli_no_profile, plugin_root, env
-    )
+    profile_path, source = discover_active_profile(cli_org_profile, cli_no_profile, plugin_root, env)
     base: dict[str, Any] = {
         "org_profile": {
             "active": False,
@@ -363,10 +357,7 @@ def resolve(
 
     cfg_default_preset = _config_pointer(plugin_root)[1] if source == "config" else None
     chosen_preset = (
-        cli_preset
-        or env.get("APPSEC_ADVISOR_PRESET")
-        or cfg_default_preset
-        or profile.get("default_preset", "")
+        cli_preset or env.get("APPSEC_ADVISOR_PRESET") or cfg_default_preset or profile.get("default_preset", "")
     )
     if chosen_preset not in (profile.get("presets") or {}):
         return base, [
@@ -417,9 +408,7 @@ def resolve(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Resolve the active org profile + preset and emit defaults."
-    )
+    parser = argparse.ArgumentParser(description="Resolve the active org profile + preset and emit defaults.")
     parser.add_argument("--org-profile", default=None)
     parser.add_argument("--preset", default=None)
     parser.add_argument("--no-org-profile", action="store_true")
@@ -429,11 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--plugin-root", default=None)
     args = parser.parse_args(argv)
 
-    plugin_root = (
-        Path(args.plugin_root).resolve()
-        if args.plugin_root
-        else Path(__file__).resolve().parent.parent
-    )
+    plugin_root = Path(args.plugin_root).resolve() if args.plugin_root else Path(__file__).resolve().parent.parent
     effective, errors = resolve(
         args.org_profile,
         args.preset,

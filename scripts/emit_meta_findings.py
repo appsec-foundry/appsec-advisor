@@ -19,14 +19,13 @@ threats[]. Hand-authored entries with `manual: true` are preserved verbatim.
 Usage:
     python3 emit_meta_findings.py <output_dir>
 """
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 import yaml
-
 
 META_CATEGORIES: list[dict] = [
     {

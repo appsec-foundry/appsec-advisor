@@ -25,7 +25,6 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -143,10 +142,7 @@ def _blocking_mitigations(matched_ids: list[str], step_of_fid: dict[str, int], m
         # §10 Mitigation Register keys anchors off `m_id` (falling back to `id`);
         # mirror that exactly so blocking-mitigation links resolve to #m-nnn.
         mid = (m.get("m_id") or m.get("id") or "").upper()
-        addressed = [
-            _norm_fid(x)
-            for x in (m.get("finding_ids") or m.get("threat_ids") or m.get("addresses") or [])
-        ]
+        addressed = [_norm_fid(x) for x in (m.get("finding_ids") or m.get("threat_ids") or m.get("addresses") or [])]
         hit = [a for a in addressed if a in matched_set]
         if not hit:
             continue
@@ -164,8 +160,9 @@ def _blocking_mitigations(matched_ids: list[str], step_of_fid: dict[str, int], m
     return out
 
 
-def render_case(case: dict, verdict: dict, findings_idx: dict, mitigations: list[dict],
-                match_steps: dict | None = None) -> dict:
+def render_case(
+    case: dict, verdict: dict, findings_idx: dict, mitigations: list[dict], match_steps: dict | None = None
+) -> dict:
     """Build the structured render model for one abuse case (used for both the
     markdown block and the JSON sidecar).
 
@@ -372,9 +369,7 @@ def _catalog_table(rows: list[dict]) -> str:
         "|----------|--------|--------------------|",
     ]
     for r in rows:
-        out.append(
-            f"| {r['title']} | {r.get('source') or 'library'} | {r['reason']} |"
-        )
+        out.append(f"| {r['title']} | {r.get('source') or 'library'} | {r['reason']} |")
     return "\n".join(out)
 
 
@@ -422,9 +417,7 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         p = Path(org_profile)
         profile = rac._load_yaml(p)
         profile_dir = p.parent
-    cases, _ = rac.resolve_abuse_cases(
-        profile, profile_dir, PLUGIN_ROOT, Path(repo_root) if repo_root else None
-    )
+    cases, _ = rac.resolve_abuse_cases(profile, profile_dir, PLUGIN_ROOT, Path(repo_root) if repo_root else None)
     case_by_id = {c["id"]: c for c in cases}
 
     tm_path = output_dir / "threat-model.yaml"
@@ -441,9 +434,7 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         try:
             mdoc = json.loads(matches_path.read_text(encoding="utf-8"))
             for m in mdoc.get("matches", []):
-                matches_by_id[m.get("abuse_case_id")] = {
-                    sm.get("step"): sm for sm in m.get("step_matches", [])
-                }
+                matches_by_id[m.get("abuse_case_id")] = {sm.get("step"): sm for sm in m.get("step_matches", [])}
         except (OSError, json.JSONDecodeError):
             matches_by_id = {}
 
@@ -457,9 +448,7 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         cv = verdict.get("chain_verdict", "inconclusive")
         if cv == "not_applicable":
             continue
-        models.append(
-            render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid))
-        )
+        models.append(render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid)))
     return models
 
 
@@ -478,12 +467,14 @@ def build_catalog_evaluation(output_dir: Path) -> list[dict]:
     rows = []
     for m in mdoc.get("matches", []):
         if m.get("structural_verdict") == "not_applicable":
-            rows.append({
-                "id": m.get("abuse_case_id"),
-                "title": m.get("title") or m.get("abuse_case_id"),
-                "source": m.get("source"),
-                "reason": m.get("reason") or "scope preconditions not met for this codebase",
-            })
+            rows.append(
+                {
+                    "id": m.get("abuse_case_id"),
+                    "title": m.get("title") or m.get("abuse_case_id"),
+                    "source": m.get("source"),
+                    "reason": m.get("reason") or "scope preconditions not met for this codebase",
+                }
+            )
     return sorted(rows, key=lambda r: r["id"] or "")
 
 
@@ -519,12 +510,12 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(
             {"schema_version": 1, "abuse_cases": models, "catalog_evaluated": catalog_rows},
             indent=2,
-        ) + "\n",
+        )
+        + "\n",
         encoding="utf-8",
     )
     sys.stderr.write(
-        f"RENDER_ABUSE_CASES: wrote {len(models)} viable + {len(catalog_rows)} "
-        f"not-applicable case(s) to {md_path}\n"
+        f"RENDER_ABUSE_CASES: wrote {len(models)} viable + {len(catalog_rows)} not-applicable case(s) to {md_path}\n"
     )
     return 0
 

@@ -32,18 +32,15 @@ the renderer must see a taxonomy-clean yaml on its first read.
 Usage:
     python3 enforce_control_taxonomy.py <output_dir>
 """
+
 from __future__ import annotations
 
-import json
-import os
 import re
 import sys
 from pathlib import Path
 
 import yaml
-
 from event_log import format_line
-
 
 # ---------------------------------------------------------------------------
 # Deterministic name rewrites (RC-1)
@@ -96,10 +93,15 @@ _NAME_REWRITE_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     # session_primitive_reroute (`^session token`) moves them to §7.3 and the
     # scaffold emits a contract-clean heading instead of the forbidden
     # `#### 7.2.N JWT Token Issuance` (juice-shop 2026-06 §7.2 REPAIR trigger).
-    (re.compile(r"^jwt(\s+token)?\s+(issuance|generation)(\s+and\s+(verification|validation))?$", re.IGNORECASE),
-     "Session Token Issuance (JWT Based)"),
+    (
+        re.compile(r"^jwt(\s+token)?\s+(issuance|generation)(\s+and\s+(verification|validation))?$", re.IGNORECASE),
+        "Session Token Issuance (JWT Based)",
+    ),
     (re.compile(r"^jwt(\s+token)?\s+signing$", re.IGNORECASE), "Session Token Signing (JWT Based)"),
-    (re.compile(r"^jwt(\s+token)?\s+(verification|validation)$", re.IGNORECASE), "Session Token Validation (JWT Based)"),
+    (
+        re.compile(r"^jwt(\s+token)?\s+(verification|validation)$", re.IGNORECASE),
+        "Session Token Validation (JWT Based)",
+    ),
 )
 
 
@@ -147,27 +149,27 @@ def _canonicalize_name(name: str) -> str | None:
 _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     # §7.2 IAM — authentication mechanisms + auth-flow rate limiting
     (("password", "login"), "Identity and Authentication Controls"),
-    (("user", "registration"),  "Identity and Authentication Controls"),
-    (("oauth",),                "Identity and Authentication Controls"),
-    (("oidc",),                 "Identity and Authentication Controls"),
-    (("openid",),               "Identity and Authentication Controls"),
-    (("saml",),                 "Identity and Authentication Controls"),
-    (("sso",),                  "Identity and Authentication Controls"),
-    (("totp",),                 "Identity and Authentication Controls"),
-    (("mfa",),                  "Identity and Authentication Controls"),
-    (("2fa",),                  "Identity and Authentication Controls"),
-    (("passkey",),              "Identity and Authentication Controls"),
-    (("webauthn",),             "Identity and Authentication Controls"),
-    (("password", "reset"),     "Identity and Authentication Controls"),
-    (("magic", "link"),         "Identity and Authentication Controls"),
-    (("login", "throttling"),   "Identity and Authentication Controls"),
-    (("brute", "force"),        "Identity and Authentication Controls"),
-    (("rate", "limiting"),      "Identity and Authentication Controls"),
-    (("authentication", "rate"),"Identity and Authentication Controls"),
-    (("mtls",),                 "Identity and Authentication Controls"),
-    (("mutual", "tls"),         "Identity and Authentication Controls"),
-    (("api", "key"),            "Identity and Authentication Controls"),
-    (("hmac",),                 "Identity and Authentication Controls"),
+    (("user", "registration"), "Identity and Authentication Controls"),
+    (("oauth",), "Identity and Authentication Controls"),
+    (("oidc",), "Identity and Authentication Controls"),
+    (("openid",), "Identity and Authentication Controls"),
+    (("saml",), "Identity and Authentication Controls"),
+    (("sso",), "Identity and Authentication Controls"),
+    (("totp",), "Identity and Authentication Controls"),
+    (("mfa",), "Identity and Authentication Controls"),
+    (("2fa",), "Identity and Authentication Controls"),
+    (("passkey",), "Identity and Authentication Controls"),
+    (("webauthn",), "Identity and Authentication Controls"),
+    (("password", "reset"), "Identity and Authentication Controls"),
+    (("magic", "link"), "Identity and Authentication Controls"),
+    (("login", "throttling"), "Identity and Authentication Controls"),
+    (("brute", "force"), "Identity and Authentication Controls"),
+    (("rate", "limiting"), "Identity and Authentication Controls"),
+    (("authentication", "rate"), "Identity and Authentication Controls"),
+    (("mtls",), "Identity and Authentication Controls"),
+    (("mutual", "tls"), "Identity and Authentication Controls"),
+    (("api", "key"), "Identity and Authentication Controls"),
+    (("hmac",), "Identity and Authentication Controls"),
     # §7.3 Session and Token Controls — token lifecycle + JWT.
     # JWT is a session-token primitive, NOT a §7.2 authentication mechanism
     # (data/architectural-controls.yaml: JWT sign/validate → domain SessionMgmt).
@@ -175,76 +177,76 @@ _DOMAIN_TOKEN_INDEX: tuple[tuple[tuple[str, ...], str], ...] = (
     # §7.3, consistent with the Phase-8 catalog rule and the
     # auth_method_decomposition gate which reject JWT/token-format headings
     # under §7.2 (2026-05 reconciliation).
-    (("session", "token"),      "Session and Token Controls"),
-    (("token", "storage"),      "Session and Token Controls"),
-    (("token", "revocation"),   "Session and Token Controls"),
-    (("token", "blacklist"),    "Session and Token Controls"),
-    (("token", "blocklist"),    "Session and Token Controls"),
-    (("token", "expiry"),       "Session and Token Controls"),
-    (("session", "expiry"),     "Session and Token Controls"),
-    (("session", "token", "signing"),    "Session and Token Controls"),
+    (("session", "token"), "Session and Token Controls"),
+    (("token", "storage"), "Session and Token Controls"),
+    (("token", "revocation"), "Session and Token Controls"),
+    (("token", "blacklist"), "Session and Token Controls"),
+    (("token", "blocklist"), "Session and Token Controls"),
+    (("token", "expiry"), "Session and Token Controls"),
+    (("session", "expiry"), "Session and Token Controls"),
+    (("session", "token", "signing"), "Session and Token Controls"),
     (("session", "token", "validation"), "Session and Token Controls"),
-    (("jwt",),                  "Session and Token Controls"),
+    (("jwt",), "Session and Token Controls"),
     # §7.4 Authorization
-    (("role", "based", "access"),     "Authorization Controls"),
-    (("rbac",),                       "Authorization Controls"),
-    (("abac",),                       "Authorization Controls"),
+    (("role", "based", "access"), "Authorization Controls"),
+    (("rbac",), "Authorization Controls"),
+    (("abac",), "Authorization Controls"),
     (("authorization", "middleware"), "Authorization Controls"),
-    (("isauthorized",),               "Authorization Controls"),
+    (("isauthorized",), "Authorization Controls"),
     # §7.5 Query Construction / Data Access
-    (("sequelize",),    "Query Construction and Data Access Controls"),
-    (("orm",),          "Query Construction and Data Access Controls"),
+    (("sequelize",), "Query Construction and Data Access Controls"),
+    (("orm",), "Query Construction and Data Access Controls"),
     (("parameterized",), "Query Construction and Data Access Controls"),
     (("prepared", "statement"), "Query Construction and Data Access Controls"),
     # §7.6 Input Boundary Validation
-    (("input", "validation"),       "Input Boundary Validation Controls"),
-    (("schema", "validation"),      "Input Boundary Validation Controls"),
-    (("joi",),                      "Input Boundary Validation Controls"),
-    (("zod",),                      "Input Boundary Validation Controls"),
+    (("input", "validation"), "Input Boundary Validation Controls"),
+    (("schema", "validation"), "Input Boundary Validation Controls"),
+    (("joi",), "Input Boundary Validation Controls"),
+    (("zod",), "Input Boundary Validation Controls"),
     # §7.7 Output Encoding
-    (("output", "encoding"),    "Output Encoding and Rendering Controls"),
-    (("html", "sanitization"),  "Output Encoding and Rendering Controls"),
-    (("dompurify",),            "Output Encoding and Rendering Controls"),
+    (("output", "encoding"), "Output Encoding and Rendering Controls"),
+    (("html", "sanitization"), "Output Encoding and Rendering Controls"),
+    (("dompurify",), "Output Encoding and Rendering Controls"),
     # §7.8 Browser / Cross-Origin
-    (("cors",),                 "Browser and Cross-Origin Controls"),
-    (("csp",),                  "Browser and Cross-Origin Controls"),
+    (("cors",), "Browser and Cross-Origin Controls"),
+    (("csp",), "Browser and Cross-Origin Controls"),
     (("content", "security", "policy"), "Browser and Cross-Origin Controls"),
-    (("helmet",),               "Browser and Cross-Origin Controls"),
-    (("frameguard",),           "Browser and Cross-Origin Controls"),
+    (("helmet",), "Browser and Cross-Origin Controls"),
+    (("frameguard",), "Browser and Cross-Origin Controls"),
     # §7.9 Cryptography / Secrets / Data Protection
-    (("encryption",),           "Cryptography Secrets and Data Protection"),
-    (("secret", "management"),  "Cryptography Secrets and Data Protection"),
-    (("kms",),                  "Cryptography Secrets and Data Protection"),
+    (("encryption",), "Cryptography Secrets and Data Protection"),
+    (("secret", "management"), "Cryptography Secrets and Data Protection"),
+    (("kms",), "Cryptography Secrets and Data Protection"),
     # Password hashing is a credential-STORAGE / crypto-primitive control, not a
     # §7.2 authentication MECHANISM. schema_v2 splits it into §7.9 (the §7.2
     # auth_method_decomposition gate hard-forbids a `#### Password Hashing`
     # heading — it must be folded as a bullet, never a peer mechanism). Stage 1
     # routinely parks a standalone "Password Hashing" control in §7.2 IAM;
     # route it to §7.9 so the scaffold emits a contract-clean heading.
-    (("password", "hashing"),   "Cryptography Secrets and Data Protection"),
-    (("password", "storage"),   "Cryptography Secrets and Data Protection"),
+    (("password", "hashing"), "Cryptography Secrets and Data Protection"),
+    (("password", "storage"), "Cryptography Secrets and Data Protection"),
     # §7.10 File Parser / Outbound
-    (("file", "upload"),    "File Parser and Outbound Request Controls"),
-    (("ssrf",),             "File Parser and Outbound Request Controls"),
+    (("file", "upload"), "File Parser and Outbound Request Controls"),
+    (("ssrf",), "File Parser and Outbound Request Controls"),
     # §7.11 Operations / Supply Chain
-    (("distroless",),       "Operations Runtime and Supply Chain Controls"),
-    (("codeql",),           "Operations Runtime and Supply Chain Controls"),
-    (("dependabot",),       "Operations Runtime and Supply Chain Controls"),
-    (("renovate",),         "Operations Runtime and Supply Chain Controls"),
-    (("npm", "audit"),      "Operations Runtime and Supply Chain Controls"),
+    (("distroless",), "Operations Runtime and Supply Chain Controls"),
+    (("codeql",), "Operations Runtime and Supply Chain Controls"),
+    (("dependabot",), "Operations Runtime and Supply Chain Controls"),
+    (("renovate",), "Operations Runtime and Supply Chain Controls"),
+    (("npm", "audit"), "Operations Runtime and Supply Chain Controls"),
     # New control names emitted by scripts/emit_sca_practice.py (2026-05).
     # The token-routing also catches these via "automated"+"sca" etc., but
     # explicit entries keep the routing unambiguous when the LLM names a
     # control as e.g. "SCA scanning" with extra adjectives.
-    (("automated", "sca"),       "Operations Runtime and Supply Chain Controls"),
-    (("sca", "scanning"),        "Operations Runtime and Supply Chain Controls"),
-    (("dependency", "updates"),  "Operations Runtime and Supply Chain Controls"),
-    (("lockfile",),              "Operations Runtime and Supply Chain Controls"),
+    (("automated", "sca"), "Operations Runtime and Supply Chain Controls"),
+    (("sca", "scanning"), "Operations Runtime and Supply Chain Controls"),
+    (("dependency", "updates"), "Operations Runtime and Supply Chain Controls"),
+    (("lockfile",), "Operations Runtime and Supply Chain Controls"),
     (("library", "track", "record"), "Operations Runtime and Supply Chain Controls"),
     # §7.12 Real-time / Not Applicable — ONLY when explicitly real-time
-    (("websocket",),    "Real-time and Not Applicable Controls"),
-    (("socket", "io"),  "Real-time and Not Applicable Controls"),
-    (("realtime",),     "Real-time and Not Applicable Controls"),
+    (("websocket",), "Real-time and Not Applicable Controls"),
+    (("socket", "io"), "Real-time and Not Applicable Controls"),
+    (("realtime",), "Real-time and Not Applicable Controls"),
 )
 
 
@@ -356,12 +358,8 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
             # name. Token-based (not regex-based) so it survives arbitrary noun
             # suffixes like "key management" / "issuance" / "verification".
             _ctl_name = (c.get("control") or "").strip()
-            session_primitive_reroute = (
-                inferred == "Session and Token Controls"
-                and (
-                    re.match(r"(?i)^session token\b", _ctl_name) is not None
-                    or "jwt" in _tokenise(_ctl_name)
-                )
+            session_primitive_reroute = inferred == "Session and Token Controls" and (
+                re.match(r"(?i)^session token\b", _ctl_name) is not None or "jwt" in _tokenise(_ctl_name)
             )
             # Targeted exception #2 (same rationale as session_primitive_reroute):
             # a standalone password-hashing/storage control is an UNAMBIGUOUS
@@ -375,7 +373,8 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                 and re.match(
                     r"(?i)^password\s+(hashing|storage)\b",
                     (c.get("control") or "").strip(),
-                ) is not None
+                )
+                is not None
             )
             if (
                 not session_primitive_reroute
@@ -389,12 +388,14 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                     # the suffix in place but do not re-route to a different
                     # §7 section.
                     c["domain"] = current_norm + " Controls"
-                    domain_changes.append({
-                        "id": cid,
-                        "from": current_domain,
-                        "to": current_norm + " Controls",
-                        "control": c.get("control"),
-                    })
+                    domain_changes.append(
+                        {
+                            "id": cid,
+                            "from": current_domain,
+                            "to": current_norm + " Controls",
+                            "control": c.get("control"),
+                        }
+                    )
                     flags = list(c.get("audit_flags") or [])
                     token = "control_domain_suffix_normalised"
                     if token not in flags:
@@ -408,12 +409,14 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                 or crypto_primitive_reroute
             ):
                 c["domain"] = inferred
-                domain_changes.append({
-                    "id": cid,
-                    "from": current_domain or "<unset>",
-                    "to": inferred,
-                    "control": c.get("control"),
-                })
+                domain_changes.append(
+                    {
+                        "id": cid,
+                        "from": current_domain or "<unset>",
+                        "to": inferred,
+                        "control": c.get("control"),
+                    }
+                )
                 flags = list(c.get("audit_flags") or [])
                 token = f"control_domain_reclassified_from_{current_domain or 'unset'}"
                 if token not in flags:
@@ -421,8 +424,6 @@ def enforce(data: dict) -> tuple[dict, list[dict], list[dict]]:
                 c["audit_flags"] = flags
 
     return data, name_changes, domain_changes
-
-
 
 
 def _log(output_dir: Path, msg: str) -> None:

@@ -88,8 +88,8 @@ def test_rows_group_by_requirement_and_take_max_severity() -> None:
 def test_legacy_requirement_id_is_honoured_and_unlinked_threats_excluded() -> None:
     rows = compose._build_requirements_mapping_rows(_ctx(_THREATS))
     req_ids = {r["req_id"] for r in rows}
-    assert "SEC-LOG-1" in req_ids       # singular requirement_id picked up
-    assert "T-100" not in req_ids       # stride threat without requirement excluded
+    assert "SEC-LOG-1" in req_ids  # singular requirement_id picked up
+    assert "T-100" not in req_ids  # stride threat without requirement excluded
     log = next(r for r in rows if r["req_id"] == "SEC-LOG-1")
     assert log["measures"] == []
 
@@ -132,11 +132,7 @@ def test_remediation_reference_populates_when_requirement_is_known(tmp_path: Pat
     # When the ID is declared in .requirements.yaml, the traceability table
     # picks it up — so §7b/§MS stop diverging from the §8 `Violated:` note.
     (tmp_path / ".requirements.yaml").write_text(
-        "categories:\n"
-        "- id: C1\n"
-        "  requirements:\n"
-        "  - id: SEC-AUTH-1\n"
-        "    url: https://x/auth\n",
+        "categories:\n- id: C1\n  requirements:\n  - id: SEC-AUTH-1\n    url: https://x/auth\n",
         encoding="utf-8",
     )
     threats = [
@@ -237,11 +233,7 @@ def test_traceability_filters_pass_and_na_statuses_from_compliance_fragment(tmp_
 
 def test_traceability_prefers_compliance_row_finding_links_over_stale_yaml_requirement_ids(tmp_path: Path) -> None:
     (tmp_path / ".requirements.yaml").write_text(
-        "categories:\n"
-        "- id: C1\n"
-        "  requirements:\n"
-        "  - id: SEC-KEY-1\n"
-        "    url: https://x/key\n",
+        "categories:\n- id: C1\n  requirements:\n  - id: SEC-KEY-1\n    url: https://x/key\n",
         encoding="utf-8",
     )
     frag = tmp_path / ".fragments" / "requirements-compliance.md"
@@ -322,9 +314,9 @@ def _fixture_ctx_with_requirements(tmp_path: Path):
 def test_7b_hybrid_inlines_fragment_and_appends_traceability(tmp_path: Path) -> None:
     ctx, section = _fixture_ctx_with_requirements(tmp_path)
     body = compose._render_requirements_compliance(ctx, None, section)
-    assert "OWASP ASVS" in body                       # LLM narrative preserved
-    assert "### Requirement Scope" in body             # deterministic scope guardrail
-    assert "### Requirements Traceability" in body    # deterministic table appended
+    assert "OWASP ASVS" in body  # LLM narrative preserved
+    assert "### Requirement Scope" in body  # deterministic scope guardrail
+    assert "### Requirements Traceability" in body  # deterministic table appended
     assert "| Requirement | Status | Risk | Findings | Maßnahmen | Guidance |" in body
     assert "[F-001](#f-001)" in body and "[M-001](#m-001)" in body
     assert "[BP-API](https://x/bp) · API Auth" in body
@@ -334,10 +326,10 @@ def test_ms_subsection_carries_summary_and_links(tmp_path: Path) -> None:
     ctx, _section = _fixture_ctx_with_requirements(tmp_path)
     ms = compose._render_requirements_compliance_ms(ctx)
     assert ms.startswith("### Requirements Compliance")
-    assert "OWASP ASVS" in ms                          # baseline from fragment
-    assert "3 requirements assessed" in ms             # summary counts preserved
+    assert "OWASP ASVS" in ms  # baseline from fragment
+    assert "3 requirements assessed" in ms  # summary counts preserved
     assert "**Failed or partial requirements → findings & mitigations:**" in ms
-    assert "[F-001](#f-001)" in ms                     # G2 fix: links now present
+    assert "[F-001](#f-001)" in ms  # G2 fix: links now present
     assert "#7b-requirements-compliance" in ms
 
 
@@ -350,9 +342,7 @@ def _prepare_req_output_dir(tmp_path: Path) -> Path:
     data = yaml.safe_load((out / "threat-model.yaml").read_text())
     data.setdefault("meta", {})["check_requirements"] = True
     data["threats"][0]["violated_requirements"] = ["SEC-AUTH-1"]
-    data["threats"][0].setdefault(
-        "mitigation_ids", data["threats"][0].get("mitigation_ids") or ["M-001"]
-    )
+    data["threats"][0].setdefault("mitigation_ids", data["threats"][0].get("mitigation_ids") or ["M-001"])
     (out / "threat-model.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
     frag = out / ".fragments" / "requirements-compliance.md"
     frag.parent.mkdir(parents=True, exist_ok=True)
@@ -373,11 +363,7 @@ def _prepare_req_output_dir(tmp_path: Path) -> Path:
 
 def test_mitigation_register_renders_fulfills_and_blueprint(tmp_path: Path) -> None:
     (tmp_path / ".requirements.yaml").write_text(
-        "categories:\n"
-        "- id: C1\n"
-        "  requirements:\n"
-        "  - id: SEC-AUTH-1\n"
-        "    url: https://x/auth\n",
+        "categories:\n- id: C1\n  requirements:\n  - id: SEC-AUTH-1\n    url: https://x/auth\n",
         encoding="utf-8",
     )
     threats = [
@@ -403,7 +389,7 @@ def test_mitigation_register_renders_fulfills_and_blueprint(tmp_path: Path) -> N
     )
     out = compose._render_mitigation_register(ctx, None, {"heading": "## 10. Mitigation Register"})
     assert "**Fulfills Requirements:**" in out
-    assert "[SEC-AUTH-1](https://x/auth)" in out          # linked via declared URL
+    assert "[SEC-AUTH-1](https://x/auth)" in out  # linked via declared URL
     assert "**Blueprint guidance:**" in out
     assert "BP-API" in out
 
@@ -447,8 +433,7 @@ def test_mitigation_register_filters_pass_requirements(tmp_path: Path) -> None:
     frag = tmp_path / ".fragments" / "requirements-compliance.md"
     frag.parent.mkdir()
     frag.write_text(
-        "## 7b. Requirements Compliance\n\n"
-        "| ID | Status | Evidence |\n|---|---|---|\n| SEC-PASS-1 | **PASS** | ok |\n",
+        "## 7b. Requirements Compliance\n\n| ID | Status | Evidence |\n|---|---|---|\n| SEC-PASS-1 | **PASS** | ok |\n",
         encoding="utf-8",
     )
     threats = [
@@ -476,7 +461,13 @@ def test_mitigation_register_filters_pass_requirements(tmp_path: Path) -> None:
 
 def test_mitigation_register_omits_requirement_lines_when_disabled(tmp_path: Path) -> None:
     threats = [
-        {"id": "T-001", "risk": "high", "title": "x", "violated_requirements": ["SEC-AUTH-1"], "mitigation_ids": ["M-001"]},
+        {
+            "id": "T-001",
+            "risk": "high",
+            "title": "x",
+            "violated_requirements": ["SEC-AUTH-1"],
+            "mitigation_ids": ["M-001"],
+        },
     ]
     mitigations = [{"id": "M-001", "title": "y", "threat_ids": ["T-001"], "priority": "P2", "severity": "High"}]
     ctx = compose.RenderContext(

@@ -70,18 +70,13 @@ def cmd_merge(args: argparse.Namespace) -> int:
             verdicts[cid] = {
                 "abuse_case_id": cid,
                 "step_verdicts": [],
-                "note": "no verifier verdict"
-                + (" (budget-critical)" if budget_critical else ""),
+                "note": "no verifier verdict" + (" (budget-critical)" if budget_critical else ""),
             }
 
     merged = {"schema_version": 1, "verdicts": list(verdicts.values())}
-    (output_dir / ".abuse-case-verdicts.json").write_text(
-        json.dumps(merged, indent=2) + "\n", encoding="utf-8"
-    )
+    (output_dir / ".abuse-case-verdicts.json").write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     sys.stderr.write(
-        f"VERIFY: merged {len(verdicts)} verdict(s)"
-        + (" [budget-critical]" if budget_critical else "")
-        + "\n"
+        f"VERIFY: merged {len(verdicts)} verdict(s)" + (" [budget-critical]" if budget_critical else "") + "\n"
     )
     return 0
 

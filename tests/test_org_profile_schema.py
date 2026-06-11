@@ -4,11 +4,10 @@ Validates the bundled fixture profile, then exercises each semantic rule
 through tiny mutations on a deep-copied dict instead of writing many YAML
 fixtures by hand.
 """
+
 from __future__ import annotations
 
-import copy
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
@@ -80,17 +79,13 @@ def test_context_symlink_escape_fails(tmp_path, acme_profile):
     profile_dir = tmp_path / "profile"
     (profile_dir / "context").mkdir(parents=True)
     (profile_dir / "context" / "leak.md").symlink_to("/etc/hostname")
-    acme_profile["llm_context"]["documents"].append(
-        {"id": "leak", "path": "context/leak.md", "purpose": "other"}
-    )
+    acme_profile["llm_context"]["documents"].append({"id": "leak", "path": "context/leak.md", "purpose": "other"})
     errors = vop.validate(acme_profile, profile_dir)
     assert any("symlink" in e or "outside" in e for e in errors), errors
 
 
 def test_preset_context_document_ids_must_exist(acme_profile):
-    acme_profile["presets"]["appsec-verification"]["context"]["document_ids"].append(
-        "ghost"
-    )
+    acme_profile["presets"]["appsec-verification"]["context"]["document_ids"].append("ghost")
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert any("ghost" in e for e in errors), errors
 
@@ -102,25 +97,19 @@ def test_target_profile_default_requires_repo_path(acme_profile):
 
 
 def test_output_dir_unknown_token_rejected(acme_profile):
-    acme_profile["presets"]["appsec-verification"]["target"]["output_dir"] = (
-        "../{secret_token}"
-    )
+    acme_profile["presets"]["appsec-verification"]["target"]["output_dir"] = "../{secret_token}"
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert any("secret_token" in e for e in errors), errors
 
 
 def test_output_dir_with_git_component_rejected(acme_profile):
-    acme_profile["presets"]["release-review"]["target"]["output_dir"] = (
-        ".git/something"
-    )
+    acme_profile["presets"]["release-review"]["target"]["output_dir"] = ".git/something"
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert any(".git" in e for e in errors), errors
 
 
 def test_requirements_url_with_credentials_rejected(acme_profile):
-    acme_profile["requirements"]["source"]["requirements_yaml_url"] = (
-        "https://user:secret@example.test/x.yaml"
-    )
+    acme_profile["requirements"]["source"]["requirements_yaml_url"] = "https://user:secret@example.test/x.yaml"
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert any("credentials" in e for e in errors), errors
 

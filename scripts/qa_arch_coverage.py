@@ -49,7 +49,6 @@ except ImportError:  # pragma: no cover
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _shared_sources import ARCH_COVERAGE_SOURCES  # noqa: E402
 
-
 _REQUIRES_DOWNSTREAM = {"partial", "weak", "missing", "anti_pattern"}
 _ARCH_SOURCES = ARCH_COVERAGE_SOURCES
 
@@ -121,9 +120,7 @@ def check_completeness(
     tm_merged = threats_merged or {}
 
     visible = (
-        _rule_ids_in_security_controls(tm)
-        | _rule_ids_in_threat_hypotheses(tm)
-        | _rule_ids_in_threats_merged(tm_merged)
+        _rule_ids_in_security_controls(tm) | _rule_ids_in_threat_hypotheses(tm) | _rule_ids_in_threats_merged(tm_merged)
     )
 
     for rule in coverage.get("rules_evaluated") or []:
@@ -139,16 +136,18 @@ def check_completeness(
             continue
         if rule_id in visible:
             continue
-        issues.append({
-            "rule_id": rule_id,
-            "status": status,
-            "kind": "invisible_downstream",
-            "reason": (
-                f"rule {rule_id} (status={status}) is applicable in "
-                f".architecture-coverage.json but appears in none of "
-                f"security_controls[], threat_hypotheses[], or threats[]"
-            ),
-        })
+        issues.append(
+            {
+                "rule_id": rule_id,
+                "status": status,
+                "kind": "invisible_downstream",
+                "reason": (
+                    f"rule {rule_id} (status={status}) is applicable in "
+                    f".architecture-coverage.json but appears in none of "
+                    f"security_controls[], threat_hypotheses[], or threats[]"
+                ),
+            }
+        )
     return issues
 
 
@@ -171,38 +170,46 @@ def check_semantics(
         if t.get("source") not in _ARCH_SOURCES:
             continue
         if t.get("cvss_v4"):
-            issues.append({
-                "kind": "cvss_on_arch_source",
-                "where": f"threats[{i}]",
-                "reason": f"threat with source={t.get('source')} carries CVSS",
-            })
+            issues.append(
+                {
+                    "kind": "cvss_on_arch_source",
+                    "where": f"threats[{i}]",
+                    "reason": f"threat with source={t.get('source')} carries CVSS",
+                }
+            )
         for fld in ("risk", "effective_severity", "severity"):
             if t.get(fld) == "Critical":
-                issues.append({
-                    "kind": "critical_on_arch_source",
-                    "where": f"threats[{i}].{fld}",
-                    "reason": (
-                        f"threat with source={t.get('source')} is Critical "
-                        f"(severity cap applies — promote via compound chain)"
-                    ),
-                })
+                issues.append(
+                    {
+                        "kind": "critical_on_arch_source",
+                        "where": f"threats[{i}].{fld}",
+                        "reason": (
+                            f"threat with source={t.get('source')} is Critical "
+                            f"(severity cap applies — promote via compound chain)"
+                        ),
+                    }
+                )
 
     for i, h in enumerate(tm.get("threat_hypotheses") or []):
         if not isinstance(h, dict):
             continue
         if h.get("cvss_v4"):
-            issues.append({
-                "kind": "cvss_on_hypothesis",
-                "where": f"threat_hypotheses[{i}]",
-                "reason": "hypothesis carries CVSS (forbidden — design gap)",
-            })
+            issues.append(
+                {
+                    "kind": "cvss_on_hypothesis",
+                    "where": f"threat_hypotheses[{i}]",
+                    "reason": "hypothesis carries CVSS (forbidden — design gap)",
+                }
+            )
         for fld in ("risk", "effective_severity", "severity"):
             if h.get(fld) == "Critical":
-                issues.append({
-                    "kind": "critical_on_hypothesis",
-                    "where": f"threat_hypotheses[{i}].{fld}",
-                    "reason": "hypothesis is Critical (forbidden — unproven)",
-                })
+                issues.append(
+                    {
+                        "kind": "critical_on_hypothesis",
+                        "where": f"threat_hypotheses[{i}].{fld}",
+                        "reason": "hypothesis is Critical (forbidden — unproven)",
+                    }
+                )
     return issues
 
 

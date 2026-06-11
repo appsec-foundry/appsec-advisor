@@ -16,6 +16,7 @@ Base-ref resolution order:
 Prints the changed-file count to stdout. Exit 0 on success (including an empty
 diff — that is a valid result, not an error), 2 on a git/usage error.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -121,9 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         "changed_files": changed,
         "diff_unified": unified,
     }
-    (out_dir / ".verify-diff.json").write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    (out_dir / ".verify-diff.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(str(len(changed)))
     return 0
 

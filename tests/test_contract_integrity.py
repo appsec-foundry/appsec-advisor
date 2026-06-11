@@ -315,5 +315,6 @@ def test_v1_iam_block_preserved_for_backcompat(contract):
     it did not delete the v1 surface."""
     v1 = contract["sections"]["security_architecture"].get("domain_required_rules") or {}
     iam = v1.get("7.3 Identity & Access Management") or []
-    assert any(r.get("rule") == "auth_method_decomposition" for r in iam), \
+    assert any(r.get("rule") == "auth_method_decomposition" for r in iam), (
         "v1 auth_method_decomposition was removed — breaks APPSEC_SCHEMA_V1 back-compat"
+    )

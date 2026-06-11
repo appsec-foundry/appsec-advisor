@@ -170,9 +170,9 @@ class TestResolveAssessmentDepth:
         """The operational ceiling does not vary by depth — depth changes the
         criteria predicate (and turn budget), not a component count."""
         ceilings = {
-            d: rc.resolve_assessment_depth(
-                rc.build_parser().parse_args(["--assessment-depth", d])
-            )["max_stride_components"]
+            d: rc.resolve_assessment_depth(rc.build_parser().parse_args(["--assessment-depth", d]))[
+                "max_stride_components"
+            ]
             for d in ("quick", "standard", "thorough")
         }
         assert len(set(ceilings.values())) == 1
@@ -300,15 +300,18 @@ class TestResolveRepoSizeCap:
         return {
             "assessment_depth": "standard",
             "max_stride_components": 10,
-            "stride_turns_simple": 15, "stride_turns_moderate": 22,
-            "stride_turns_complex": 31, "diagram_depth": "standard", "qa_depth": "full",
+            "stride_turns_simple": 15,
+            "stride_turns_moderate": 22,
+            "stride_turns_complex": 31,
+            "diagram_depth": "standard",
+            "qa_depth": "full",
         }
 
     def test_large_repo_keeps_all_components_but_marks_capped(self, monkeypatch):
         monkeypatch.setattr(rc, "_count_source_files", lambda p: 600)
         out = rc.resolve_repo_size_cap(self._cfg(), Path("/tmp/x"))
-        assert out["repo_size_capped"] is True          # → drives economy tier
-        assert "max_stride_components" not in out        # no count touched
+        assert out["repo_size_capped"] is True  # → drives economy tier
+        assert "max_stride_components" not in out  # no count touched
         assert "criteria-selected components" in out["depth_label"]
         assert "capped from" not in out["depth_label"]
 
@@ -319,7 +322,9 @@ class TestResolveRepoSizeCap:
 
     def test_only_at_standard_depth(self, monkeypatch):
         monkeypatch.setattr(rc, "_count_source_files", lambda p: 600)
-        cfg = self._cfg(); cfg["assessment_depth"] = "thorough"; cfg["max_stride_components"] = 8
+        cfg = self._cfg()
+        cfg["assessment_depth"] = "thorough"
+        cfg["max_stride_components"] = 8
         out = rc.resolve_repo_size_cap(cfg, Path("/tmp/x"))
         assert out == {}
 
@@ -668,8 +673,8 @@ class TestCLI:
         profile.parent.mkdir()
         profile.write_text(
             "api_version: appsec-advisor.org-profile/v2\n"
-            "organization: { id: myorg, name: My Org, profile_version: \"1\" }\n"
-            "compatibility: { core: \">=0.4 <0.6\" }\n"
+            'organization: { id: myorg, name: My Org, profile_version: "1" }\n'
+            'compatibility: { core: ">=0.4 <0.6" }\n'
             "default_preset: local-default\n"
             "presets:\n"
             "  local-default:\n"

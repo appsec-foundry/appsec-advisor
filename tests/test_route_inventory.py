@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 
 import jsonschema
-import pytest
-
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "route_inventory.py"
@@ -17,13 +15,14 @@ SCHEMA = json.loads((REPO_ROOT / "schemas" / "route-inventory.schema.json").read
 
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
-import route_inventory  # noqa: E402
 
 
 def _run(repo_root: Path) -> dict:
     proc = subprocess.run(
         [sys.executable, str(SCRIPT), "--repo-root", str(repo_root), "--stdout"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return json.loads(proc.stdout)
 
@@ -87,9 +86,9 @@ def test_spring_get_mapping(tmp_path: Path) -> None:
         "import org.springframework.web.bind.annotation.*;\n"
         "@RestController\n"
         "public class Api {\n"
-        "  @GetMapping(\"/api/users\")\n"
-        "  public String users() { return \"[]\"; }\n"
-        "  @DeleteMapping(\"/api/users/{id}\")\n"
+        '  @GetMapping("/api/users")\n'
+        '  public String users() { return "[]"; }\n'
+        '  @DeleteMapping("/api/users/{id}")\n'
         "  public void delete(@PathVariable Long id) {}\n"
         "}\n"
     )
@@ -104,8 +103,8 @@ def test_aspnet_minimal_apis(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src/Program.cs").write_text(
         "var app = WebApplication.CreateBuilder(args).Build();\n"
-        "app.MapGet(\"/items\", () => \"ok\");\n"
-        "app.MapPost(\"/items\", (Item i) => i);\n"
+        'app.MapGet("/items", () => "ok");\n'
+        'app.MapPost("/items", (Item i) => i);\n'
     )
     inv = _run(tmp_path)
     methods_paths = {(r["method"], r["path"]) for r in inv["routes"]}
@@ -150,11 +149,7 @@ def test_authn_signal_from_nearby_middleware(tmp_path: Path) -> None:
 
 
 def test_authn_signal_defaults_to_unknown(tmp_path: Path) -> None:
-    (tmp_path / "app.ts").write_text(
-        "import express from 'express';\n"
-        "const app = express();\n"
-        "app.get('/public', h);\n"
-    )
+    (tmp_path / "app.ts").write_text("import express from 'express';\nconst app = express();\napp.get('/public', h);\n")
     inv = _run(tmp_path)
     public = [r for r in inv["routes"] if r["path"] == "/public"][0]
     assert public["authn_signal"] == "unknown"
@@ -167,12 +162,11 @@ def test_prefix_mounted_guard_marks_routes_protected(tmp_path: Path) -> None:
     The cross-file prefix pass must mark those routes protected (fixes the
     2026-05-31 'every route auth=unknown' miss)."""
     (tmp_path / "server.ts").write_text(
-        "app.use('/api/BasketItems', security.isAuthorized());\n"
-        "app.get('/api/Users', security.isAuthorized());\n"
+        "app.use('/api/BasketItems', security.isAuthorized());\napp.get('/api/Users', security.isAuthorized());\n"
     )
     (tmp_path / "routes.ts").write_text(
-        "router.get('/api/BasketItems/:id', h);\n"   # protected by the prefix
-        "router.get('/api/Products', h);\n"          # not guarded
+        "router.get('/api/BasketItems/:id', h);\n"  # protected by the prefix
+        "router.get('/api/Products', h);\n"  # not guarded
     )
     inv = _run(tmp_path)
     by_path = {r["path"]: r for r in inv["routes"]}
@@ -188,19 +182,23 @@ def test_missing_auth_suspect_flags_sensitive_unguarded_routes(tmp_path: Path) -
     # bleed the guarded line's `isAuthorized` onto its neighbours.
     pad = "\n" * 12
     (tmp_path / "app.ts").write_text(
-        "app.put('/rest/wallet/balance', h);\n" + pad +       # sensitive write → suspect
-        "app.get('/rest/admin/config', h);\n" + pad +         # management → suspect
-        "app.post('/rest/user/login', h);\n" + pad +          # auth-flow → NOT a suspect
-        "app.post('/api/Orders', security.isAuthorized());\n" + pad +  # guarded → NOT a suspect
-        "app.get('/rest/products', h);\n"                     # GET read, not mgmt → NOT a suspect
+        "app.put('/rest/wallet/balance', h);\n"
+        + pad  # sensitive write → suspect
+        + "app.get('/rest/admin/config', h);\n"
+        + pad  # management → suspect
+        + "app.post('/rest/user/login', h);\n"
+        + pad  # auth-flow → NOT a suspect
+        + "app.post('/api/Orders', security.isAuthorized());\n"
+        + pad  # guarded → NOT a suspect
+        + "app.get('/rest/products', h);\n"  # GET read, not mgmt → NOT a suspect
     )
     inv = _run(tmp_path)
     susp = {r["path"] for r in inv["routes"] if r["missing_auth_suspect"]}
     assert "/rest/wallet/balance" in susp
     assert "/rest/admin/config" in susp
-    assert "/rest/user/login" not in susp          # public by design
-    assert "/api/Orders" not in susp               # guarded
-    assert "/rest/products" not in susp            # GET, non-management
+    assert "/rest/user/login" not in susp  # public by design
+    assert "/api/Orders" not in susp  # guarded
+    assert "/rest/products" not in susp  # GET, non-management
     assert inv["coverage"]["missing_auth_suspect_count"] >= 2
 
 
@@ -213,9 +211,7 @@ def test_excludes_node_modules(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src/app.ts").write_text("app.get('/x', h);")
     (tmp_path / "node_modules/express/lib").mkdir(parents=True)
-    (tmp_path / "node_modules/express/lib/router.js").write_text(
-        "app.get('/should-not-appear', h);"
-    )
+    (tmp_path / "node_modules/express/lib/router.js").write_text("app.get('/should-not-appear', h);")
     inv = _run(tmp_path)
     paths = {r["path"] for r in inv["routes"]}
     assert "/x" in paths
@@ -240,21 +236,14 @@ def test_excludes_build_output(tmp_path: Path) -> None:
 
 def test_route_inventory_validates_against_schema(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
-    (tmp_path / "src/app.ts").write_text(
-        "app.get('/a', h);\n"
-        "router.post('/b', h);\n"
-    )
+    (tmp_path / "src/app.ts").write_text("app.get('/a', h);\nrouter.post('/b', h);\n")
     inv = _run(tmp_path)
     jsonschema.validate(inv, SCHEMA)
 
 
 def test_route_ids_are_unique_and_sequential(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
-    (tmp_path / "src/app.ts").write_text(
-        "app.get('/a', h);\n"
-        "app.get('/b', h);\n"
-        "app.get('/c', h);\n"
-    )
+    (tmp_path / "src/app.ts").write_text("app.get('/a', h);\napp.get('/b', h);\napp.get('/c', h);\n")
     inv = _run(tmp_path)
     ids = [r["route_id"] for r in inv["routes"]]
     assert ids == sorted(set(ids))
@@ -273,9 +262,10 @@ def test_route_inventory_writes_to_output_dir(tmp_path: Path) -> None:
     (tmp_path / "src/app.ts").write_text("app.get('/x', h);")
     out = tmp_path / "output"
     subprocess.run(
-        [sys.executable, str(SCRIPT), "--repo-root", str(tmp_path),
-         "--output-dir", str(out)],
-        capture_output=True, text=True, check=True,
+        [sys.executable, str(SCRIPT), "--repo-root", str(tmp_path), "--output-dir", str(out)],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     target = out / ".route-inventory.json"
     assert target.is_file()

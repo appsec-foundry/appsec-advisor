@@ -17,9 +17,9 @@ from typing import Iterator, NamedTuple
 
 
 class EscapingSymlink(NamedTuple):
-    path: Path           # location inside the repo
-    target: Path         # resolved target (outside repo_root)
-    kind: str            # "file" | "directory" | "broken"
+    path: Path  # location inside the repo
+    target: Path  # resolved target (outside repo_root)
+    kind: str  # "file" | "directory" | "broken"
 
 
 def is_within_repo(path: Path, repo_root: Path) -> bool:
@@ -74,9 +74,7 @@ def iter_escaping_symlinks(
     used to prune common heavyweight directories (``node_modules``,
     ``.git``, …).
     """
-    excluded_dir_names = excluded_dir_names or frozenset(
-        {".git", "node_modules", ".venv", "venv", "__pycache__"}
-    )
+    excluded_dir_names = excluded_dir_names or frozenset({".git", "node_modules", ".venv", "venv", "__pycache__"})
     root_resolved = repo_root.resolve(strict=False)
     for dirpath, dirnames, filenames in os.walk(repo_root, followlinks=False):
         dirnames[:] = [d for d in dirnames if d not in excluded_dir_names]

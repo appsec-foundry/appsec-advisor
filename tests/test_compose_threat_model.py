@@ -99,10 +99,7 @@ def test_render_produces_canonical_ms_structure(tmp_path: Path) -> None:
     # producer was activated but the test fixture predates the fragment
     # producer. Soft-skip warnings for it are expected — filter them
     # out before asserting the warnings list is otherwise empty.
-    filtered = [
-        w for w in warnings
-        if not w.startswith("critical_attack_tree: fragment missing")
-    ]
+    filtered = [w for w in warnings if not w.startswith("critical_attack_tree: fragment missing")]
     assert filtered == [], f"unexpected warnings: {filtered}"
 
     # Management Summary must be unnumbered.
@@ -188,21 +185,22 @@ def test_architectural_anti_patterns_renders_after_verdict(tmp_path: Path) -> No
     s = ms_slice.find("### Security Posture & Top Threats")
     assert v < a < s, f"anti-patterns out of order: verdict={v} ap={a} posture={s}"
     # A linkified finding reference (T-001 normalises to the F-001 anchor).
-    assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), \
+    assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), (
         f"no linkified finding in anti-patterns callout: {ms_slice[a:s]!r}"
+    )
 
     ap_block = ms_slice[a:s]
     # No leading severity glyph before the pattern name — the coloured circle
     # used to collide with the per-finding severity dots (user report 2026-06).
-    assert not re.search(r"[🔴🟠🟡🟢]\s*\*\*SPA without BFF\*\*", ap_block), \
+    assert not re.search(r"[🔴🟠🟡🟢]\s*\*\*SPA without BFF\*\*", ap_block), (
         f"anti-pattern name still carries a leading severity circle: {ap_block!r}"
+    )
     # Clean nested structure (indented sub-bullets), not <br/>↳-crammed.
     assert "↳" not in ap_block, f"legacy ↳ cramming still present: {ap_block!r}"
     assert "_Findings:_" in ap_block
     assert "_Affected components:_" in ap_block  # first pattern declares them
     # Sub-bullets are indented under the pattern bullet.
-    assert re.search(r"\n {4}- _Findings:_", ap_block), \
-        f"findings sub-bullet not indented: {ap_block!r}"
+    assert re.search(r"\n {4}- _Findings:_", ap_block), f"findings sub-bullet not indented: {ap_block!r}"
 
 
 def test_ai_exposure_absent_renders_nothing(tmp_path: Path) -> None:
@@ -260,8 +258,9 @@ def test_ai_exposure_renders_after_anti_patterns(tmp_path: Path) -> None:
     s = ms_slice.find("### Security Posture & Top Threats")
     assert v < a < s, f"ai-exposure out of order: verdict={v} ai={a} posture={s}"
     # A linkified finding reference (T-001 normalises to the F-001 anchor).
-    assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), \
+    assert re.search(r"\[F-00[12]\]\(#f-00[12]\)", ms_slice), (
         f"no linkified finding in ai-exposure callout: {ms_slice[a:s]!r}"
+    )
 
 
 def test_render_is_deterministic(tmp_path: Path) -> None:
@@ -335,23 +334,23 @@ def test_figure1_solid_edges_are_self_describing(tmp_path: Path) -> None:
         for gly in _glyphs_in(lbl):
             titled = bool(re.search(rf"{gly}\s+[A-Za-z]", lbl))
             if (actor, gly) in named:
-                assert not titled, \
-                    f"actor {actor} re-titles already-named glyph {gly}: {lbl!r}"
+                assert not titled, f"actor {actor} re-titles already-named glyph {gly}: {lbl!r}"
             else:
-                assert titled, \
-                    f"actor {actor} first use of glyph {gly} not named: {lbl!r}"
+                assert titled, f"actor {actor} first use of glyph {gly} not named: {lbl!r}"
                 named.add((actor, gly))
     # At least one glyph is named somewhere (sanity — not a fully-bare diagram).
-    assert any(re.search(rf"[{glyphs}]\s+[A-Za-z]", lbl) for _, lbl in solid), \
+    assert any(re.search(rf"[{glyphs}]\s+[A-Za-z]", lbl) for _, lbl in solid), (
         f"no named glyph on any solid attack edge: {solid}"
+    )
     # Dotted edges reference by bare number — a glyph already named on any solid
     # edge must NOT be re-titled on a dotted edge.
     solid_named = {g for _, lbl in solid for g in _glyphs_in(lbl)}
     for lbl in dotted:
         for gly in _glyphs_in(lbl):
             if gly in solid_named:
-                assert not re.search(rf"{gly}\s+[A-Za-z]", lbl), \
+                assert not re.search(rf"{gly}\s+[A-Za-z]", lbl), (
                     f"dotted edge re-titles already-named glyph {gly}: {lbl!r}"
+                )
 
 
 def test_figure1_keeps_data_as_bottom_sink_with_balancing_edges(tmp_path: Path) -> None:
@@ -409,7 +408,7 @@ def test_figure1_keeps_data_as_bottom_sink_with_balancing_edges(tmp_path: Path) 
     fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
     assert fig1.index('subgraph CLIENT["Client Tier') < fig1.index('subgraph APP["Application Tier')
     assert fig1.index('subgraph APP["Application Tier') < fig1.index('subgraph DATA["Data Tier')
-    assert 'CMP_WORKER ~~~ CMP_DB' in fig1
+    assert "CMP_WORKER ~~~ CMP_DB" in fig1
     assert not re.search(r'==>\|"[^"]*"\| CMP_DB\b', fig1), fig1
 
 
@@ -509,9 +508,7 @@ def test_operational_strengths_has_three_columns(tmp_path: Path) -> None:
     assert header in rendered
     # And the retired 5-column form is gone.
     legacy = "| Architectural Control | Implementation | Effectiveness | Gap | Mitigates |"
-    assert legacy not in rendered, (
-        "retired 5-column Operational Strengths form leaked into the render"
-    )
+    assert legacy not in rendered, "retired 5-column Operational Strengths form leaked into the render"
 
 
 def test_section_3_is_per_finding_walkthroughs(tmp_path: Path) -> None:
@@ -532,9 +529,7 @@ def test_section_3_is_per_finding_walkthroughs(tmp_path: Path) -> None:
     # §1, which legitimately renders one `graph LR` diagram.
     s3 = rendered.split("## 3. Attack Walkthroughs", 1)[-1]
     s3 = re.split(r"\n## \d", s3, 1)[0]
-    assert not re.search(r"```mermaid\s*\n\s*graph LR", s3), (
-        "§3 must not contain `graph LR` chain blocks any more"
-    )
+    assert not re.search(r"```mermaid\s*\n\s*graph LR", s3), "§3 must not contain `graph LR` chain blocks any more"
 
 
 def test_evidence_check_badge_renders_on_refuted_and_ambiguous(tmp_path: Path) -> None:
@@ -653,16 +648,13 @@ def test_finding_cell_omits_walkthrough_line_when_no_chains_resolve(tmp_path: Pa
     out = _prepare_output_dir(tmp_path)
     # Replace fragment with a stub that has the required H2 but no chains.
     stub_frag = (
-        "## 3. Attack Walkthroughs\n\n"
-        "_Skipped at this depth — see §8 Findings Register for finding-level detail._\n"
+        "## 3. Attack Walkthroughs\n\n_Skipped at this depth — see §8 Findings Register for finding-level detail._\n"
     )
     (out / ".fragments" / "attack-walkthroughs.md").write_text(stub_frag, encoding="utf-8")
     # The contract gates §3.1 subsection requirement on
     # `not skip_attack_walkthroughs` — set the flag so the missing §3.1
     # heading does not trip required_subsections validation.
-    (out / ".skill-config.json").write_text(
-        json.dumps({"skip_attack_walkthroughs": True}), encoding="utf-8"
-    )
+    (out / ".skill-config.json").write_text(json.dumps({"skip_attack_walkthroughs": True}), encoding="utf-8")
     rendered, _ = compose.render(CONTRACT, out)
     section8 = _slice_threat_register(rendered)
     assert "**Attack Walkthrough:**" not in section8
@@ -745,9 +737,14 @@ def test_chain_map_returns_empty_when_fragment_missing(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_threat_for_cell(scenario: str, *, comp_id: str = "rest-api",
-                          file_: str = "routes/login.ts", line: int = 34,
-                          severity: str = "Critical") -> dict:
+def _make_threat_for_cell(
+    scenario: str,
+    *,
+    comp_id: str = "rest-api",
+    file_: str = "routes/login.ts",
+    line: int = 34,
+    severity: str = "Critical",
+) -> dict:
     """Threat shape exercising _build_finding_cell end-to-end."""
     return {
         "t_id": "T-099",
@@ -806,9 +803,7 @@ def test_finding_cell_component_uses_canonical_C_NN_anchor(tmp_path: Path) -> No
         "(all Story-Card labels uniform bold, 2026-05-29); cell was:\n" + cell
     )
     # The raw slug must NOT appear as a link target.
-    assert "(#rest-api)" not in cell, (
-        "raw slug anchor leaked into Component link instead of canonical C-NN"
-    )
+    assert "(#rest-api)" not in cell, "raw slug anchor leaked into Component link instead of canonical C-NN"
 
 
 def test_finding_cell_component_already_canonical_passes_through(tmp_path: Path) -> None:
@@ -816,13 +811,20 @@ def test_finding_cell_component_already_canonical_passes_through(tmp_path: Path)
     the canonical anchor verbatim — no surprise resolution needed."""
     components = {"C-01": {"name": "REST API"}}
     ctx = compose.RenderContext(
-        output_dir=tmp_path, contract={}, yaml_data={}, triage={},
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
         fragments_dir=tmp_path,
     )
     threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="C-01")
     cell = compose._build_threat_card(
-        t=threat, sev="critical", taxonomy={}, components=components,
-        repo_root=None, ctx=ctx,
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components=components,
+        repo_root=None,
+        ctx=ctx,
     )
     assert "**Component:** [C-01](#c-01) — REST API" in cell
 
@@ -837,14 +839,21 @@ def test_finding_card_folds_consequence_into_issue(tmp_path: Path) -> None:
     )
     components = {"C-01": {"_canonical_id": "C-01", "_original_id": "rest-api", "name": "REST API"}}
     ctx = compose.RenderContext(
-        output_dir=tmp_path, contract={}, yaml_data={}, triage={},
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
         fragments_dir=tmp_path,
     )
     threat = _make_threat_for_cell(scenario, comp_id="C-01")
 
     cell = compose._build_threat_card(
-        t=threat, sev="critical", taxonomy={}, components=components,
-        repo_root=None, ctx=ctx,
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components=components,
+        repo_root=None,
+        ctx=ctx,
     )
 
     # No standalone Impact field; the Issue line carries the consequence.
@@ -865,15 +874,22 @@ def test_finding_cell_explicit_impact_description_does_not_carve_issue(tmp_path:
     )
     components = {"C-01": {"_canonical_id": "C-01", "_original_id": "rest-api", "name": "REST API"}}
     ctx = compose.RenderContext(
-        output_dir=tmp_path, contract={}, yaml_data={}, triage={},
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
         fragments_dir=tmp_path,
     )
     threat = _make_threat_for_cell(scenario, comp_id="C-01")
     threat["impact_description"] = "Loss of forensic ability to reconstruct the attack."
 
     cell = compose._build_threat_card(
-        t=threat, sev="critical", taxonomy={}, components=components,
-        repo_root=None, ctx=ctx,
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components=components,
+        repo_root=None,
+        ctx=ctx,
     )
 
     issue_line = next(l for l in cell.splitlines() if l.startswith("**Issue:**"))
@@ -964,8 +980,8 @@ def test_attack_tree_renders_single_lr_block() -> None:
     # Trimmed palette — the unused classes are gone.
     assert "classDef attacker" not in src and "classDef crit" not in src
     for i in range(4):
-        assert f"L_T{i:03d}" in src                       # internal node id retained (not reader-visible)
-        assert f'["F-{i:03d} — finding"]' in src          # visible leaf label: T-NNN → F-NNN
+        assert f"L_T{i:03d}" in src  # internal node id retained (not reader-visible)
+        assert f'["F-{i:03d} — finding"]' in src  # visible leaf label: T-NNN → F-NNN
 
 
 def test_attack_tree_wide_still_single_block() -> None:
@@ -1056,13 +1072,18 @@ def test_attack_tree_findings_pointer_from_leaves() -> None:
 
 def test_attack_tree_findings_pointer_dedups_and_skips_non_leaves() -> None:
     """Capability/goal nodes are excluded; a repeated finding id appears once."""
-    data = {"mermaid": {"nodes": [
-        {"id": "G", "label": "Goal", "class": "goal"},
-        {"id": "OR_A", "label": "Cap", "class": "or_node"},
-        {"id": "L1", "label": "T-005 SQLi login bypass", "class": "leaf"},
-        {"id": "L2", "label": "T-005 dup", "class": "leaf"},
-        {"id": "L3", "label": "T-009 RCE via eval", "class": "leaf", "finding_ref": "T-009"},
-    ], "edges": []}}
+    data = {
+        "mermaid": {
+            "nodes": [
+                {"id": "G", "label": "Goal", "class": "goal"},
+                {"id": "OR_A", "label": "Cap", "class": "or_node"},
+                {"id": "L1", "label": "T-005 SQLi login bypass", "class": "leaf"},
+                {"id": "L2", "label": "T-005 dup", "class": "leaf"},
+                {"id": "L3", "label": "T-009 RCE via eval", "class": "leaf", "finding_ref": "T-009"},
+            ],
+            "edges": [],
+        }
+    }
     findings = compose._derive_attack_tree_findings(data)
     assert [f["id"] for f in findings] == ["F-005", "F-009"]
     assert findings[0]["title"] == "SQLi login bypass"
@@ -1117,8 +1138,8 @@ def test_changelog_finding_refs_have_no_severity_dot(tmp_path: Path) -> None:
     ctr = _contract_with_changelog_style(tmp_path, "bullets")
     rendered, _ = compose.render(ctr, out)
     section = _extract_changelog_section(rendered)
-    assert "[F-002](#f-002)" in section          # normalised to visible F-NNN
-    assert "[T-002](#t-002)" not in section       # no stale T-NNN
+    assert "[F-002](#f-002)" in section  # normalised to visible F-NNN
+    assert "[T-002](#t-002)" not in section  # no stale T-NNN
     # No severity dot immediately before the changelog finding link.
     assert "🔴 [F-002]" not in section and "🟠 [F-002]" not in section
 
@@ -1159,6 +1180,7 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     assert "| # | Component | Mitigation | Addresses | Effort |" in ms_slice
 
     import re as _re
+
     # The retired in-table divider-row form must NOT appear (regression guard).
     assert not _re.search(
         r"^\|\s*\*\*↳\s+.+?\s+[—\-]\s+\d+\s+item\(s\)\*\*\s*\|",
@@ -1171,16 +1193,15 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     # Priority now rides on the linked mitigation as a single colourless circled
     # digit whose number is the priority (Variant B, 2026-06-04 — ❶❷❸❹) rather
     # than a dedicated bold column cell. Assert the circled-digit prefix renders.
-    assert _re.search(r"[❶❷❸❹]\s+\[M-", ms_slice), (
-        "expected a Variant-B `❶ [M-NNN]` circled-digit priority prefix"
-    )
+    assert _re.search(r"[❶❷❸❹]\s+\[M-", ms_slice), "expected a Variant-B `❶ [M-NNN]` circled-digit priority prefix"
 
     # The Component column carries a label on the first row of each group,
     # linked to the component anchor exactly like the Architecture Assessment
     # "Affected components" cell: `[C-NN](#c-nn) — Name` (or the unlinked
     # "Cross-cutting" sentinel when a mitigation maps to no component).
     data_rows = [
-        ln for ln in ms_slice.splitlines()
+        ln
+        for ln in ms_slice.splitlines()
         if _re.match(r"^\|\s*\*\*\d+\*\*\s*\|", ln)  # rows whose # cell is **N**
     ]
     assert data_rows, "expected at least one numbered data row"
@@ -2562,14 +2583,12 @@ class TestActorCellGuard:
             "renderer must guard `_[obsolete-actor]_` behind a prior-attribution "
             "precondition (review-recommendations §4.5 Guard 1)"
         )
-        assert (
-            'elif not actor_ids and had_actor_history:\n            actor_cell = "_[obsolete-actor]_"'
-            in src
-        ), "Fall-2 marker must require prior-attribution provenance"
-        assert (
-            'elif not actor_ids:\n            # First-run / data-gap state'
-            in src
-        ), "first-run / data-gap empty actor_ids must render neutrally as `—`"
+        assert 'elif not actor_ids and had_actor_history:\n            actor_cell = "_[obsolete-actor]_"' in src, (
+            "Fall-2 marker must require prior-attribution provenance"
+        )
+        assert "elif not actor_ids:\n            # First-run / data-gap state" in src, (
+            "first-run / data-gap empty actor_ids must render neutrally as `—`"
+        )
 
     def test_dormant_marker_requires_provenance(self) -> None:
         """State (Fall 3, guarded): explicit `_status=dormant` only emits
@@ -2581,20 +2600,15 @@ class TestActorCellGuard:
         either (review-recommendations §4.6 + risk-assessment B)."""
         src = Path(compose.__file__).read_text(encoding="utf-8")
         assert (
-            'if status_lower == "dormant" and dormant_provenance_ok:\n'
-            '            actor_cell = "_dormant_"'
+            'if status_lower == "dormant" and dormant_provenance_ok:\n            actor_cell = "_dormant_"'
         ) in src, (
             "dormant marker must be guarded behind provenance evidence; "
             "the unconditional branch is the same anti-pattern that produced "
             "the 31× `_[obsolete-actor]_` defect in juice-shop"
         )
         assert (
-            'elif status_lower == "dormant":\n'
-            "            # Status flag set without supporting provenance"
-        ) in src, (
-            "dormant-without-provenance must render neutrally as `—`, not "
-            "fabricate a Fall-3 state"
-        )
+            'elif status_lower == "dormant":\n            # Status flag set without supporting provenance'
+        ) in src, "dormant-without-provenance must render neutrally as `—`, not fabricate a Fall-3 state"
         # Compose the provenance-check expression itself to make sure all
         # three signals participate.
         assert "dormancy_reason" in src
@@ -2698,7 +2712,7 @@ def test_table_col_weight_roles() -> None:
     assert compose._table_col_role("Route") == "path"
     assert compose._table_col_role("Key Paths") == "path"
     assert compose._table_col_role("Location") == "path"
-    assert w("Route") > w("Method")          # path wider than a narrow column
+    assert w("Route") > w("Method")  # path wider than a narrow column
     assert w("Route") > compose._TBL_W_DEFAULT  # and wider than plain default
 
 
@@ -2872,9 +2886,7 @@ def test_section8_counts_equal_threat_total(tmp_path: Path) -> None:
     assert sc_line, "STRIDE Coverage line missing from rendered §8"
 
     # Per-severity cells, excluding the trailing **Total[ findings]: N** cell.
-    risk_sum = sum(
-        int(n) for n in re.findall(r"(?:Critical|High|Medium|Low|Info):\s*(\d+)", rd_line)
-    )
+    risk_sum = sum(int(n) for n in re.findall(r"(?:Critical|High|Medium|Low|Info):\s*(\d+)", rd_line))
     total_declared_m = re.search(r"Total(?:\s+findings)?:\s*(\d+)", rd_line)
     assert total_declared_m, f"no Total cell in Risk Distribution line: {rd_line!r}"
     total_declared = int(total_declared_m.group(1))
@@ -2885,7 +2897,6 @@ def test_section8_counts_equal_threat_total(tmp_path: Path) -> None:
         f"§8 count drift: risk_sum={risk_sum} total_declared={total_declared} "
         f"stride_sum={stride_sum} yaml_total={yaml_total}"
     )
-
 
 
 # ---------------------------------------------------------------------------
@@ -2937,13 +2948,26 @@ def test_linkify_no_dot_when_severity_unknown(tmp_path: Path) -> None:
 
 
 def test_abuse_chain_ms_note_names_findings_and_chains(tmp_path: Path) -> None:
-    ctx = _dot_ctx(tmp_path, [
-        {"id": "T-011", "effective_severity": "Critical", "risk": "Critical",
-         "verified_chain_ids": ["AC-T-002"], "title": "IDOR"},
-        {"id": "T-014", "effective_severity": "Critical", "risk": "Critical",
-         "verified_chain_ids": ["AC-T-002", "AC-T-004"], "title": "Mass assignment"},
-        {"id": "T-001", "effective_severity": "Critical", "verified_chain_ids": []},
-    ])
+    ctx = _dot_ctx(
+        tmp_path,
+        [
+            {
+                "id": "T-011",
+                "effective_severity": "Critical",
+                "risk": "Critical",
+                "verified_chain_ids": ["AC-T-002"],
+                "title": "IDOR",
+            },
+            {
+                "id": "T-014",
+                "effective_severity": "Critical",
+                "risk": "Critical",
+                "verified_chain_ids": ["AC-T-002", "AC-T-004"],
+                "title": "Mass assignment",
+            },
+            {"id": "T-001", "effective_severity": "Critical", "verified_chain_ids": []},
+        ],
+    )
     note = compose._abuse_chain_ms_note(ctx)
     assert "Attack-chain analysis." in note
     assert "2 findings anchor 2 code-verified attack chains" in note
@@ -2957,10 +2981,18 @@ def test_abuse_chain_ms_note_empty_when_no_verified_chain(tmp_path: Path) -> Non
 
 
 def test_abuse_chain_ms_note_reports_elevation(tmp_path: Path) -> None:
-    ctx = _dot_ctx(tmp_path, [
-        {"id": "T-019", "risk": "High", "effective_severity": "Critical",
-         "verified_chain_ids": ["AC-T-007"], "title": "SSRF"},
-    ])
+    ctx = _dot_ctx(
+        tmp_path,
+        [
+            {
+                "id": "T-019",
+                "risk": "High",
+                "effective_severity": "Critical",
+                "verified_chain_ids": ["AC-T-007"],
+                "title": "SSRF",
+            },
+        ],
+    )
     note = compose._abuse_chain_ms_note(ctx)
     assert "rated above" in note and "individual baseline" in note
 
@@ -2986,12 +3018,15 @@ def test_global_mitigation_circle_pass_dots_bare_link_and_is_idempotent(tmp_path
     out = tmp_path / "out"
     out.mkdir(exist_ok=True)
     ctx = compose.RenderContext(
-        output_dir=out, contract={},
+        output_dir=out,
+        contract={},
         yaml_data={
             "threats": [{"id": "T-003", "effective_severity": "Critical"}],
             "mitigations": [{"id": "M-003", "priority": "P1", "threat_ids": ["T-003"]}],
         },
-        triage={}, fragments_dir=out / ".fragments", severity_taxonomy=_SEV_TAX,
+        triage={},
+        fragments_dir=out / ".fragments",
+        severity_taxonomy=_SEV_TAX,
     )
     md = "Blocking: [M-003](#m-003) breaks the chain."
     once = compose._prepend_mitigation_prio_circles(ctx, md)
@@ -3003,9 +3038,12 @@ def test_global_mitigation_circle_pass_skips_code_spans(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir(exist_ok=True)
     ctx = compose.RenderContext(
-        output_dir=out, contract={},
+        output_dir=out,
+        contract={},
         yaml_data={"threats": [], "mitigations": [{"id": "M-003", "priority": "P1"}]},
-        triage={}, fragments_dir=out / ".fragments", severity_taxonomy=_SEV_TAX,
+        triage={},
+        fragments_dir=out / ".fragments",
+        severity_taxonomy=_SEV_TAX,
     )
     md = "inline `[M-003](#m-003)` stays bare"
     assert compose._prepend_mitigation_prio_circles(ctx, md) == md
@@ -3031,11 +3069,7 @@ def test_softwrap_prose_cells_wraps_long_description_not_links():
 
 
 def test_softwrap_is_idempotent_and_skips_short_cells():
-    md = (
-        "| # | Threat Description | Findings |\n"
-        "|---|---|---|\n"
-        "| 1 | Short note | [F-002](#f-002) |\n"
-    )
+    md = "| # | Threat Description | Findings |\n|---|---|---|\n| 1 | Short note | [F-002](#f-002) |\n"
     once = compose._softwrap_prose_table_cells(md, width=40)
     assert once == md  # short cell + link cell → unchanged
     assert compose._softwrap_prose_table_cells(once, width=40) == once
@@ -3063,6 +3097,7 @@ def test_softwrap_never_breaks_inside_backtick_span():
 # so blueprints reach findings/maßnahmen/MS without depending on LLM behaviour.
 # ---------------------------------------------------------------------------
 
+
 def _reqs_yaml_with_blueprint(tmp_path: Path) -> None:
     (tmp_path / ".requirements.yaml").write_text(
         "categories:\n"
@@ -3088,9 +3123,11 @@ def _ctx_for_mapping(tmp_path: Path, threat: dict):
     frag = tmp_path / ".fragments"
     frag.mkdir(exist_ok=True)
     return compose.RenderContext(
-        output_dir=tmp_path, contract={},
+        output_dir=tmp_path,
+        contract={},
         yaml_data={"threats": [threat], "mitigations": []},
-        triage={}, fragments_dir=frag,
+        triage={},
+        fragments_dir=frag,
     )
 
 
@@ -3104,7 +3141,9 @@ def test_requirement_blueprints_maps_via_cross_reference(tmp_path: Path) -> None
 def test_mapping_row_gets_deterministic_blueprint_when_llm_omits_it(tmp_path: Path) -> None:
     _reqs_yaml_with_blueprint(tmp_path)
     threat = {
-        "t_id": "T-001", "risk": "critical", "mitigation_ids": ["M-001"],
+        "t_id": "T-001",
+        "risk": "critical",
+        "mitigation_ids": ["M-001"],
         "remediation": {"reference": "[AC-004]"},  # no blueprint attached
     }
     rows = compose._build_requirements_mapping_rows(_ctx_for_mapping(tmp_path, threat))
@@ -3115,9 +3154,10 @@ def test_mapping_row_gets_deterministic_blueprint_when_llm_omits_it(tmp_path: Pa
 def test_mapping_row_keeps_llm_blueprint_over_deterministic(tmp_path: Path) -> None:
     _reqs_yaml_with_blueprint(tmp_path)
     threat = {
-        "t_id": "T-001", "risk": "critical", "mitigation_ids": ["M-001"],
-        "remediation": {"reference": "[AC-004]",
-                        "blueprint": "[BP-LLM](https://bp.example/llm) — Custom"},
+        "t_id": "T-001",
+        "risk": "critical",
+        "mitigation_ids": ["M-001"],
+        "remediation": {"reference": "[AC-004]", "blueprint": "[BP-LLM](https://bp.example/llm) — Custom"},
     }
     rows = compose._build_requirements_mapping_rows(_ctx_for_mapping(tmp_path, threat))
     row = next(r for r in rows if r["req_id"] == "AC-004")
@@ -3132,26 +3172,25 @@ def test_mapping_row_keeps_llm_blueprint_over_deterministic(tmp_path: Path) -> N
 # CWE/OWASP refs or partial tokens.
 # ---------------------------------------------------------------------------
 
+
 def test_requirement_ref_recovers_bare_declared_id() -> None:
     known = {"IF-002": "", "AC-004": ""}
-    assert compose._requirement_ids_for_threat(
-        {"remediation": {"reference": "IF-002"}}, known) == ["IF-002"]
+    assert compose._requirement_ids_for_threat({"remediation": {"reference": "IF-002"}}, known) == ["IF-002"]
 
 
 def test_requirement_ref_bracketed_still_matches() -> None:
     known = {"AC-004": ""}
-    assert compose._requirement_ids_for_threat(
-        {"remediation": {"reference": "[AC-004](http://x)"}}, known) == ["AC-004"]
+    assert compose._requirement_ids_for_threat({"remediation": {"reference": "[AC-004](http://x)"}}, known) == [
+        "AC-004"
+    ]
 
 
 def test_requirement_ref_ignores_cwe_and_partial_tokens() -> None:
     known = {"IF-002": ""}
     # CWE refs are not declared requirement IDs → never matched
-    assert compose._requirement_ids_for_threat(
-        {"remediation": {"reference": "CWE-506"}}, known) == []
+    assert compose._requirement_ids_for_threat({"remediation": {"reference": "CWE-506"}}, known) == []
     # word-boundary guard: IF-0021 must not match IF-002
-    assert compose._requirement_ids_for_threat(
-        {"remediation": {"reference": "IF-0021"}}, known) == []
+    assert compose._requirement_ids_for_threat({"remediation": {"reference": "IF-0021"}}, known) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -3161,9 +3200,7 @@ def test_requirement_ref_ignores_cwe_and_partial_tokens() -> None:
 def _bare_ctx(tmp_path):
     frag = tmp_path / ".fragments"
     frag.mkdir(exist_ok=True)
-    return compose.RenderContext(
-        output_dir=tmp_path, contract={}, yaml_data={}, triage={}, fragments_dir=frag
-    )
+    return compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data={}, triage={}, fragments_dir=frag)
 
 
 def test_invalid_attack_paths_fragment_is_non_fatal(tmp_path: Path) -> None:

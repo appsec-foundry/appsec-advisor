@@ -101,11 +101,11 @@ def test_loose_assignment_flagged(secret_scan, raw):
 @pytest.mark.parametrize(
     "raw",
     [
-        "secret: publicKey",            # camelCase code identifier, not a secret
-        "password: security.hash",      # dotted attribute path
-        "secret = config.apiKey",       # dotted path with camelCase tail
-        "token: PublicKey",             # PascalCase identifier
-        "api_key: this.that.other",     # multi-segment dotted path
+        "secret: publicKey",  # camelCase code identifier, not a secret
+        "password: security.hash",  # dotted attribute path
+        "secret = config.apiKey",  # dotted path with camelCase tail
+        "token: PublicKey",  # PascalCase identifier
+        "api_key: this.that.other",  # multi-segment dotted path
     ],
 )
 def test_bareword_code_reference_not_flagged(secret_scan, raw):
@@ -119,15 +119,15 @@ def test_bareword_code_reference_not_flagged(secret_scan, raw):
     "raw",
     [
         "password: 'EinBelegtesBrotMitSchinkenSCHINKEN'",  # quoted literal — flags despite shape
-        "bearer=abcdefghijklmnop",                         # opaque all-lowercase token
-        "token: someopaquetoken1234",                      # has digits
-        "secret = config2apiKey",                          # has a digit → not a pure code ref
+        "bearer=abcdefghijklmnop",  # opaque all-lowercase token
+        "token: someopaquetoken1234",  # has digits
+        "secret = config2apiKey",  # has a digit → not a pure code ref
     ],
 )
 def test_real_or_opaque_credentials_still_flagged(secret_scan, raw):
-    assert any(
-        h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)
-    ), f"expected a loose-pattern hit for {raw!r}"
+    assert any(h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)), (
+        f"expected a loose-pattern hit for {raw!r}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -152,18 +152,18 @@ def test_prose_credential_keyword_not_flagged(secret_scan, raw):
 @pytest.mark.parametrize(
     "raw",
     [
-        "  secret: changeme",                 # YAML key (indent, not mid-sentence) → flags
-        'const secret = mypassword',          # code assignment with `=` → flags
-        "Rotate the secret: hunter2longer",   # prose but value has a digit → flags
-        "the secret: 'existing'",             # quoted value → flags
+        "  secret: changeme",  # YAML key (indent, not mid-sentence) → flags
+        "const secret = mypassword",  # code assignment with `=` → flags
+        "Rotate the secret: hunter2longer",  # prose but value has a digit → flags
+        "the secret: 'existing'",  # quoted value → flags
     ],
 )
 def test_prose_guard_does_not_swallow_real_assignments(secret_scan, raw):
     """The prose guard is narrow: a genuine assignment / key, a digit-bearing
     value, or a quoted value must still flag even in a sentence-like line."""
-    assert any(
-        h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)
-    ), f"expected a loose-pattern hit for {raw!r}"
+    assert any(h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)), (
+        f"expected a loose-pattern hit for {raw!r}"
+    )
 
 
 def test_prose_credential_keyword_not_masked(secret_scan):
@@ -290,9 +290,7 @@ def test_mask_text_password_assignment(secret_scan):
 
 
 def test_mask_text_pem_marker(secret_scan):
-    masked, applied = secret_scan.mask_text(
-        "const k = '-----BEGIN RSA PRIVATE KEY-----\\nMIIC...'"
-    )
+    masked, applied = secret_scan.mask_text("const k = '-----BEGIN RSA PRIVATE KEY-----\\nMIIC...'")
     assert "BEGIN RSA PRIVATE KEY" not in masked
     assert "pem_private_key" in applied
 

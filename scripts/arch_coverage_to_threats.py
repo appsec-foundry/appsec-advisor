@@ -112,7 +112,7 @@ def _build_threat(
     spaced_stride = _STRIDE_NO_SPACE_TO_SPACED.get(stride, stride)
     safe_risk = risk if risk in {"High", "Medium", "Low"} else "Medium"
     threat: dict[str, Any] = {
-        "t_id": None,            # assigned by --merge-into; left None on emit
+        "t_id": None,  # assigned by --merge-into; left None on emit
         "component_id": component_id,
         "component_name": component_name,
         "stride": spaced_stride,
@@ -138,11 +138,7 @@ def _build_threat(
 
 
 def _arch_trace_kwargs(src: dict) -> dict[str, str]:
-    return {
-        key: str(src[key])
-        for key in _ARCH_TRACE_FIELDS
-        if src.get(key)
-    }
+    return {key: str(src[key]) for key in _ARCH_TRACE_FIELDS if src.get(key)}
 
 
 def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
@@ -151,64 +147,76 @@ def select_and_build(coverage: dict) -> tuple[list[dict], list[dict]]:
 
     for cand in coverage.get("anti_pattern_candidates", []) or []:
         if cand.get("confidence") != "high":
-            skipped.append({
-                "rule_id": cand.get("rule_id"),
-                "reason": f"confidence={cand.get('confidence')} — bridge requires high",
-            })
+            skipped.append(
+                {
+                    "rule_id": cand.get("rule_id"),
+                    "reason": f"confidence={cand.get('confidence')} — bridge requires high",
+                }
+            )
             continue
         if cand.get("severity_cap") == "Critical":
-            skipped.append({
-                "rule_id": cand.get("rule_id"),
-                "reason": "severity_cap=Critical not permitted for architecture-coverage",
-            })
+            skipped.append(
+                {
+                    "rule_id": cand.get("rule_id"),
+                    "reason": "severity_cap=Critical not permitted for architecture-coverage",
+                }
+            )
             continue
         rule_id = cand.get("rule_id") or ""
         evidence = cand.get("evidence") or []
-        threats.append(_build_threat(
-            source="architecture-coverage",
-            rule_id=rule_id,
-            title=cand.get("generic_threat_title") or cand.get("title") or rule_id,
-            cwe=cand.get("cwe") or "CWE-693",
-            # bugs2 Bug 1: prefer rule-YAML stride over the legacy
-            # rule_id-keyed fallback map; map kept only as last-resort default
-            # for rules without a stride: field. After bugs2 Bug 6 lands (schema
-            # makes stride required on every candidate), the fallback becomes
-            # unreachable in well-formed inputs.
-            stride=cand.get("stride") or _stride_for_rule(rule_id),
-            threat_category_id=cand.get("threat_category_id"),
-            risk=cand.get("severity_cap") or "Medium",
-            evidence=evidence,
-            **_arch_trace_kwargs(cand),
-        ))
+        threats.append(
+            _build_threat(
+                source="architecture-coverage",
+                rule_id=rule_id,
+                title=cand.get("generic_threat_title") or cand.get("title") or rule_id,
+                cwe=cand.get("cwe") or "CWE-693",
+                # bugs2 Bug 1: prefer rule-YAML stride over the legacy
+                # rule_id-keyed fallback map; map kept only as last-resort default
+                # for rules without a stride: field. After bugs2 Bug 6 lands (schema
+                # makes stride required on every candidate), the fallback becomes
+                # unreachable in well-formed inputs.
+                stride=cand.get("stride") or _stride_for_rule(rule_id),
+                threat_category_id=cand.get("threat_category_id"),
+                risk=cand.get("severity_cap") or "Medium",
+                evidence=evidence,
+                **_arch_trace_kwargs(cand),
+            )
+        )
 
     for hyp in coverage.get("threat_hypotheses", []) or []:
         proof = hyp.get("proof_state")
         if proof != "confirmed":
-            skipped.append({
-                "hypothesis_id": hyp.get("hypothesis_id"),
-                "rule_id": hyp.get("rule_id"),
-                "reason": f"proof_state={proof} — only 'confirmed' is merged to threats[]",
-            })
+            skipped.append(
+                {
+                    "hypothesis_id": hyp.get("hypothesis_id"),
+                    "rule_id": hyp.get("rule_id"),
+                    "reason": f"proof_state={proof} — only 'confirmed' is merged to threats[]",
+                }
+            )
             continue
         if hyp.get("confidence") != "high":
-            skipped.append({
-                "hypothesis_id": hyp.get("hypothesis_id"),
-                "rule_id": hyp.get("rule_id"),
-                "reason": f"confidence={hyp.get('confidence')} — promotion requires high",
-            })
+            skipped.append(
+                {
+                    "hypothesis_id": hyp.get("hypothesis_id"),
+                    "rule_id": hyp.get("rule_id"),
+                    "reason": f"confidence={hyp.get('confidence')} — promotion requires high",
+                }
+            )
             continue
-        threats.append(_build_threat(
-            source="threat-hypothesis",
-            rule_id=hyp.get("rule_id") or "",
-            title=hyp.get("generic_threat_title") or hyp.get("title") or "Architecture-derived threat",
-            cwe=hyp.get("cwe") or "CWE-693",
-            stride=hyp.get("stride") or "Tampering",
-            threat_category_id=hyp.get("threat_category_id"),
-            risk="High",
-            evidence=hyp.get("positive_signals") or [],
-            hypothesis_id=hyp.get("hypothesis_id"),
-            **_arch_trace_kwargs(hyp),
-        ))
+        threats.append(
+            _build_threat(
+                source="threat-hypothesis",
+                rule_id=hyp.get("rule_id") or "",
+                title=hyp.get("generic_threat_title") or hyp.get("title") or "Architecture-derived threat",
+                cwe=hyp.get("cwe") or "CWE-693",
+                stride=hyp.get("stride") or "Tampering",
+                threat_category_id=hyp.get("threat_category_id"),
+                risk="High",
+                evidence=hyp.get("positive_signals") or [],
+                hypothesis_id=hyp.get("hypothesis_id"),
+                **_arch_trace_kwargs(hyp),
+            )
+        )
 
     return threats, skipped
 
@@ -333,11 +341,13 @@ def _build_yaml_hypothesis(
             line_int = int(line) if line is not None else 0
         except (TypeError, ValueError):
             line_int = 0
-        out["evidence"].append({
-            "file": str(file),
-            "line": line_int,
-            "signal": str(signal),
-        })
+        out["evidence"].append(
+            {
+                "file": str(file),
+                "line": line_int,
+                "signal": str(signal),
+            }
+        )
     return out
 
 
@@ -357,8 +367,7 @@ _DEFAULT_VALIDATION_BY_RULE = {
         "cross-tenant access using a low-privilege test account."
     ),
     "ARCH-INPUT-001": (
-        "Confirm whether an external payload reaches a sensitive sink "
-        "without schema or allowlist validation."
+        "Confirm whether an external payload reaches a sensitive sink without schema or allowlist validation."
     ),
 }
 
@@ -412,9 +421,7 @@ def persist_hypotheses(
     doc["threat_hypotheses"] = existing
 
     by_source: dict[str, dict] = {
-        h.get("source_hypothesis_id"): h
-        for h in existing
-        if isinstance(h, dict) and h.get("source_hypothesis_id")
+        h.get("source_hypothesis_id"): h for h in existing if isinstance(h, dict) and h.get("source_hypothesis_id")
     }
 
     next_id = _next_hyp_id(existing)
@@ -452,8 +459,7 @@ def persist_hypotheses(
             encoding="utf-8",
         )
 
-    return {"appended": appended, "updated": updated, "skipped": skipped,
-            "total_hypotheses": len(existing)}
+    return {"appended": appended, "updated": updated, "skipped": skipped, "total_hypotheses": len(existing)}
 
 
 # ---------------------------------------------------------------------------
@@ -466,25 +472,21 @@ def _main(argv: list[str]) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s_emit = sub.add_parser("emit", help="Write .arch-coverage-threats.json")
-    s_emit.add_argument("--input", required=True,
-                        help="Path to .architecture-coverage.json")
+    s_emit.add_argument("--input", required=True, help="Path to .architecture-coverage.json")
     s_emit.add_argument("--output-dir", required=True)
 
     s_merge = sub.add_parser("merge-into", help="Append candidates to .threats-merged.json")
-    s_merge.add_argument("--input", required=True,
-                         help="Path to .architecture-coverage.json")
-    s_merge.add_argument("--threats-merged", required=True,
-                         help="Path to .threats-merged.json (in-place update).")
+    s_merge.add_argument("--input", required=True, help="Path to .architecture-coverage.json")
+    s_merge.add_argument("--threats-merged", required=True, help="Path to .threats-merged.json (in-place update).")
 
     s_persist = sub.add_parser(
-        "persist-hypotheses",
-        help="Merge unpromoted hypotheses into threat-model.yaml#threat_hypotheses[]")
-    s_persist.add_argument("--input", required=True,
-                           help="Path to .architecture-coverage.json")
-    s_persist.add_argument("--threat-model", required=True,
-                           help="Path to threat-model.yaml (in-place update; created if absent)")
-    s_persist.add_argument("--threats-merged",
-                           help="Optional .threats-merged.json — used to link promoted_threat_id")
+        "persist-hypotheses", help="Merge unpromoted hypotheses into threat-model.yaml#threat_hypotheses[]"
+    )
+    s_persist.add_argument("--input", required=True, help="Path to .architecture-coverage.json")
+    s_persist.add_argument(
+        "--threat-model", required=True, help="Path to threat-model.yaml (in-place update; created if absent)"
+    )
+    s_persist.add_argument("--threats-merged", help="Optional .threats-merged.json — used to link promoted_threat_id")
 
     args = p.parse_args(argv)
 
@@ -500,12 +502,19 @@ def _main(argv: list[str]) -> int:
         out_dir = Path(args.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / ".arch-coverage-threats.json"
-        target.write_text(json.dumps({
-            "version": 1,
-            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "threats": threats,
-            "skipped": skipped,
-        }, indent=2) + "\n", encoding="utf-8")
+        target.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "threats": threats,
+                    "skipped": skipped,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         print(str(target))
         return 0
 

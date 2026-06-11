@@ -38,15 +38,14 @@ Exit codes
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
 import os
 import re
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Iterator
 
 try:
     import yaml  # type: ignore[import-untyped]
@@ -145,9 +144,7 @@ def _compile_pattern(p: str, *, name: str, check_id: str) -> re.Pattern[str]:
 def load_checks(checks_path: Path) -> list[Check]:
     raw = yaml.safe_load(checks_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict) or "checks" not in raw:
-        raise ValueError(
-            f"checks file {checks_path} must be a mapping with a top-level `checks:` key"
-        )
+        raise ValueError(f"checks file {checks_path} must be a mapping with a top-level `checks:` key")
 
     out: list[Check] = []
     for entry in raw["checks"]:
@@ -157,9 +154,7 @@ def load_checks(checks_path: Path) -> list[Check]:
         try:
             scope = entry.get("counter_scope") or "window"
             if scope not in ("line", "window", "call"):
-                raise ValueError(
-                    f"check {cid}: counter_scope must be one of line|window|call, got {scope!r}"
-                )
+                raise ValueError(f"check {cid}: counter_scope must be one of line|window|call, got {scope!r}")
             out.append(
                 Check(
                     id=cid,
@@ -213,6 +208,7 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
     `sub/dir/foo.ts` — this is the cross-shell convention that fnmatch
     + PurePath.match do not give us.
     """
+
     # 1) handle brace expansion first
     def expand_braces(s: str) -> str:
         out = []
@@ -314,8 +310,7 @@ def _walk_repo(repo_root: Path) -> Iterator[Path]:
             d
             for d in dirnames
             if not (
-                d.startswith(".")
-                and d not in {".github", ".claude"}  # keep CI / plugin dirs
+                d.startswith(".") and d not in {".github", ".claude"}  # keep CI / plugin dirs
             )
             and d
             not in {
@@ -426,9 +421,7 @@ def scan_file(
 
     findings: list[Finding] = []
     for check in checks:
-        if check.exclude_file_patterns and _matches_any_glob(
-            file_rel, check.exclude_file_patterns
-        ):
+        if check.exclude_file_patterns and _matches_any_glob(file_rel, check.exclude_file_patterns):
             continue
         if not _matches_any_glob(file_rel, check.file_patterns):
             continue
@@ -583,8 +576,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.quiet:
         print(
-            f"source_auth_scanner: wrote {sidecar} ({len(findings)} finding(s); "
-            f"{len(checks)} check(s) run)",
+            f"source_auth_scanner: wrote {sidecar} ({len(findings)} finding(s); {len(checks)} check(s) run)",
             file=sys.stderr,
         )
         if tally:

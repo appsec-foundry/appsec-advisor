@@ -6,7 +6,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -84,12 +83,14 @@ class TestNameCanonicalisation:
         # rewrite rules must match the qualifier-stripped form, otherwise a
         # real name like "JWT Authentication (express-jwt + jsonwebtoken)"
         # slips past every rule and the scaffold emits a forbidden §7.2 heading.
-        assert ect._canonicalize_name(
-            "JWT Authentication (express-jwt + jsonwebtoken)"
-        ) == "Session Token Validation (JWT Based)"
-        assert ect._canonicalize_name(
-            "JWT RS256 Authentication (lib/insecurity.ts)"
-        ) == "Session Token Validation (JWT Based)"
+        assert (
+            ect._canonicalize_name("JWT Authentication (express-jwt + jsonwebtoken)")
+            == "Session Token Validation (JWT Based)"
+        )
+        assert (
+            ect._canonicalize_name("JWT RS256 Authentication (lib/insecurity.ts)")
+            == "Session Token Validation (JWT Based)"
+        )
 
     def test_unknown_name_returns_none(self):
         assert ect._canonicalize_name("Custom Magic Auth") is None
@@ -106,8 +107,7 @@ class TestNameCanonicalisation:
 
 class TestDomainInference:
     def test_rate_limiting_routes_to_iam(self):
-        assert ect._infer_domain("Rate limiting on password reset + 2FA") == \
-            "Identity and Authentication Controls"
+        assert ect._infer_domain("Rate limiting on password reset + 2FA") == "Identity and Authentication Controls"
 
     def test_password_login_routes_to_iam(self):
         assert ect._infer_domain("Password Login") == "Identity and Authentication Controls"
@@ -115,10 +115,8 @@ class TestDomainInference:
     def test_jwt_routes_to_session_token_controls(self):
         """2026-05 reconciliation: JWT is a session-token primitive, so any
         JWT-named control routes to §7.3 Session and Token Controls, NOT §7.2."""
-        assert ect._infer_domain("JWT Bearer Authentication") == \
-            "Session and Token Controls"
-        assert ect._infer_domain("Session Token Validation (JWT Based)") == \
-            "Session and Token Controls"
+        assert ect._infer_domain("JWT Bearer Authentication") == "Session and Token Controls"
+        assert ect._infer_domain("Session Token Validation (JWT Based)") == "Session and Token Controls"
 
     def test_token_storage_routes_to_session(self):
         assert ect._infer_domain("JWT Token Storage") == "Session and Token Controls"
@@ -127,33 +125,32 @@ class TestDomainInference:
         """Password hashing is a crypto-storage primitive (§7.9), NOT a §7.2
         auth mechanism — the §7.2 auth_method_decomposition gate hard-forbids a
         `#### Password Hashing` heading. juice-shop 2026-06-01 §7.2 residual."""
-        assert ect._infer_domain("Password Hashing") == \
-            "Cryptography Secrets and Data Protection"
-        assert ect._infer_domain("Password Storage") == \
-            "Cryptography Secrets and Data Protection"
+        assert ect._infer_domain("Password Hashing") == "Cryptography Secrets and Data Protection"
+        assert ect._infer_domain("Password Storage") == "Cryptography Secrets and Data Protection"
 
     def test_enforce_reroutes_password_hashing_out_of_iam(self):
         """A standalone Password Hashing control Stage 1 parked in §7.2 IAM
         must be re-routed to §7.9 even though §7.2 is a KNOWN domain (the
         conservative don't-shuffle-known-domains guard must not block it)."""
-        data = {"security_controls": [
-            {"id": "SC-1", "control": "Password Hashing",
-             "domain": "Identity and Authentication Controls",
-             "effectiveness": "Weak"},
-        ]}
+        data = {
+            "security_controls": [
+                {
+                    "id": "SC-1",
+                    "control": "Password Hashing",
+                    "domain": "Identity and Authentication Controls",
+                    "effectiveness": "Weak",
+                },
+            ]
+        }
         _, _names, domain_changes = ect.enforce(data)
-        assert data["security_controls"][0]["domain"] == \
-            "Cryptography Secrets and Data Protection"
-        assert any(ch["to"] == "Cryptography Secrets and Data Protection"
-                   for ch in domain_changes)
+        assert data["security_controls"][0]["domain"] == "Cryptography Secrets and Data Protection"
+        assert any(ch["to"] == "Cryptography Secrets and Data Protection" for ch in domain_changes)
 
     def test_websocket_routes_to_realtime(self):
-        assert ect._infer_domain("WebSocket message validation") == \
-            "Real-time and Not Applicable Controls"
+        assert ect._infer_domain("WebSocket message validation") == "Real-time and Not Applicable Controls"
 
     def test_cors_routes_to_browser(self):
-        assert ect._infer_domain("CORS strict origin policy") == \
-            "Browser and Cross-Origin Controls"
+        assert ect._infer_domain("CORS strict origin policy") == "Browser and Cross-Origin Controls"
 
     def test_unknown_name_returns_none(self):
         assert ect._infer_domain("Mystery Control XYZ") is None
@@ -177,10 +174,16 @@ class TestEnforceEndToEnd:
     def test_sc011_real_juiceshop_bug_fixed(self, tmp_path):
         """The exact production drift: SC-011 'Rate limiting on password
         reset + 2FA' parked in §7.12 must move to §7.2 IAM."""
-        data = _make_yaml([
-            {"id": "SC-011", "domain": "Real-time and Not Applicable Controls",
-             "control": "Rate limiting on password reset + 2FA", "verdict": "Adequate"},
-        ])
+        data = _make_yaml(
+            [
+                {
+                    "id": "SC-011",
+                    "domain": "Real-time and Not Applicable Controls",
+                    "control": "Rate limiting on password reset + 2FA",
+                    "verdict": "Adequate",
+                },
+            ]
+        )
         _, names, domains = ect.enforce(data)
         assert names == []
         assert len(domains) == 1
@@ -194,10 +197,16 @@ class TestEnforceEndToEnd:
         Session and Token Controls (JWT is a session-token primitive, not a
         §7.2 mechanism). The targeted 'Session Token …' reroute exception fires
         even though IAM and Session are normally not shuffled."""
-        data = _make_yaml([
-            {"id": "SC-001", "domain": "Identity and Authentication Controls",
-             "control": "JWT RS256 Authentication", "verdict": "Weak"},
-        ])
+        data = _make_yaml(
+            [
+                {
+                    "id": "SC-001",
+                    "domain": "Identity and Authentication Controls",
+                    "control": "JWT RS256 Authentication",
+                    "verdict": "Weak",
+                },
+            ]
+        )
         out, names, domains = ect.enforce(data)
         assert len(names) == 1
         assert names[0]["to"] == "Session Token Validation (JWT Based)"
@@ -213,17 +222,22 @@ class TestEnforceEndToEnd:
         treated as the canonical '... Controls' form, not semantically
         re-routed. Uses a genuine IAM mechanism ('Password Login') so the test
         isolates suffix-normalisation from the JWT→§7.3 reroute."""
-        data = _make_yaml([
-            {"id": "SC-001", "domain": "Identity and Authentication",
-             "control": "Password Login", "verdict": "Weak"},
-        ])
+        data = _make_yaml(
+            [
+                {
+                    "id": "SC-001",
+                    "domain": "Identity and Authentication",
+                    "control": "Password Login",
+                    "verdict": "Weak",
+                },
+            ]
+        )
         out, names, domains = ect.enforce(data)
         # Password Login is already canonical — no name rewrite.
         assert names == []
         # domain gets suffix normalised, not semantically re-routed
         assert any(
-            d["from"] == "Identity and Authentication"
-            and d["to"] == "Identity and Authentication Controls"
+            d["from"] == "Identity and Authentication" and d["to"] == "Identity and Authentication Controls"
             for d in domains
         )
         # final domain is the canonical form
@@ -231,22 +245,38 @@ class TestEnforceEndToEnd:
 
     def test_real_websocket_control_stays_in_realtime(self, tmp_path):
         """A genuine real-time control in §7.12 must NOT be re-routed."""
-        data = _make_yaml([
-            {"id": "SC-099", "domain": "Real-time and Not Applicable Controls",
-             "control": "WebSocket message validation", "verdict": "Missing"},
-        ])
+        data = _make_yaml(
+            [
+                {
+                    "id": "SC-099",
+                    "domain": "Real-time and Not Applicable Controls",
+                    "control": "WebSocket message validation",
+                    "verdict": "Missing",
+                },
+            ]
+        )
         out, names, domains = ect.enforce(data)
         assert names == []
         assert domains == []
         assert out["security_controls"][0]["domain"] == "Real-time and Not Applicable Controls"
 
     def test_idempotent(self, tmp_path):
-        data = _make_yaml([
-            {"id": "SC-001", "domain": "Identity and Authentication",
-             "control": "JWT RS256 Authentication", "verdict": "Weak"},
-            {"id": "SC-011", "domain": "Real-time and Not Applicable Controls",
-             "control": "Rate limiting on password reset + 2FA", "verdict": "Adequate"},
-        ])
+        data = _make_yaml(
+            [
+                {
+                    "id": "SC-001",
+                    "domain": "Identity and Authentication",
+                    "control": "JWT RS256 Authentication",
+                    "verdict": "Weak",
+                },
+                {
+                    "id": "SC-011",
+                    "domain": "Real-time and Not Applicable Controls",
+                    "control": "Rate limiting on password reset + 2FA",
+                    "verdict": "Adequate",
+                },
+            ]
+        )
         # First pass mutates.
         out1, n1, d1 = ect.enforce(data)
         assert n1 and d1
@@ -257,10 +287,16 @@ class TestEnforceEndToEnd:
 
     def test_unknown_domain_re_routed(self, tmp_path):
         """A typo / unknown domain string gets re-routed based on token-match."""
-        data = _make_yaml([
-            {"id": "SC-100", "domain": "BogusDomain",
-             "control": "CORS strict origin policy", "verdict": "Adequate"},
-        ])
+        data = _make_yaml(
+            [
+                {
+                    "id": "SC-100",
+                    "domain": "BogusDomain",
+                    "control": "CORS strict origin policy",
+                    "verdict": "Adequate",
+                },
+            ]
+        )
         out, names, domains = ect.enforce(data)
         assert names == []
         assert len(domains) == 1
@@ -274,20 +310,34 @@ class TestEnforceEndToEnd:
 
 class TestCLI:
     def test_cli_writes_yaml(self, tmp_path):
-        _write_yaml(tmp_path, [
-            {"id": "SC-001", "domain": "Real-time and Not Applicable Controls",
-             "control": "Rate limiting on password reset + 2FA", "verdict": "Adequate"},
-        ])
+        _write_yaml(
+            tmp_path,
+            [
+                {
+                    "id": "SC-001",
+                    "domain": "Real-time and Not Applicable Controls",
+                    "control": "Rate limiting on password reset + 2FA",
+                    "verdict": "Adequate",
+                },
+            ],
+        )
         rc = ect.main([str(tmp_path)])
         assert rc == 0
         data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
         assert data["security_controls"][0]["domain"] == "Identity and Authentication Controls"
 
     def test_cli_report_only_no_write(self, tmp_path):
-        yaml_path = _write_yaml(tmp_path, [
-            {"id": "SC-001", "domain": "Real-time and Not Applicable Controls",
-             "control": "Rate limiting on password reset + 2FA", "verdict": "Adequate"},
-        ])
+        yaml_path = _write_yaml(
+            tmp_path,
+            [
+                {
+                    "id": "SC-001",
+                    "domain": "Real-time and Not Applicable Controls",
+                    "control": "Rate limiting on password reset + 2FA",
+                    "verdict": "Adequate",
+                },
+            ],
+        )
         before = yaml_path.read_text()
         rc = ect.main([str(tmp_path), "--report-only"])
         assert rc == 0
@@ -310,29 +360,29 @@ class TestCLI:
 class TestLogLevelInfoNotWarn:
     def test_drift_logged_as_info(self, tmp_path):
         """When a domain rename fires, the .agent-run.log line is INFO-level."""
-        _write_yaml(tmp_path, [
-            # Domain that needs renaming: legacy alias →
-            # canonical "Identity and Authentication Controls" for
-            # password-reset rate limiting (per architectural-controls.yaml).
-            {"id": "SC-001", "domain": "Real-time and Not Applicable Controls",
-             "control": "Rate limiting on password reset + 2FA", "verdict": "Adequate"},
-        ])
+        _write_yaml(
+            tmp_path,
+            [
+                # Domain that needs renaming: legacy alias →
+                # canonical "Identity and Authentication Controls" for
+                # password-reset rate limiting (per architectural-controls.yaml).
+                {
+                    "id": "SC-001",
+                    "domain": "Real-time and Not Applicable Controls",
+                    "control": "Rate limiting on password reset + 2FA",
+                    "verdict": "Adequate",
+                },
+            ],
+        )
         rc = ect.main([str(tmp_path)])
         assert rc == 0
         log_path = tmp_path / ".agent-run.log"
         assert log_path.is_file(), "expected an audit-log entry for the rename"
-        log_lines = [
-            ln for ln in log_path.read_text(encoding="utf-8").splitlines()
-            if "CONTROL_TAXONOMY_DRIFT" in ln
-        ]
+        log_lines = [ln for ln in log_path.read_text(encoding="utf-8").splitlines() if "CONTROL_TAXONOMY_DRIFT" in ln]
         assert log_lines, "expected at least one CONTROL_TAXONOMY_DRIFT entry"
         for line in log_lines:
-            assert " INFO " in line, (
-                f"taxonomy drift must be INFO-level (routine normalisation), got: {line!r}"
-            )
-            assert " WARN " not in line, (
-                f"taxonomy drift must NOT be WARN-level, got: {line!r}"
-            )
+            assert " INFO " in line, f"taxonomy drift must be INFO-level (routine normalisation), got: {line!r}"
+            assert " WARN " not in line, f"taxonomy drift must NOT be WARN-level, got: {line!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -349,26 +399,36 @@ class TestJwtDomainReroute:
     the §7.2 auth_method_decomposition contract gate."""
 
     def test_jwt_signing_key_management_reroutes_to_session(self):
-        data, _names, domains = ect.enforce(_make_yaml([
-            {"id": "SC-1", "control": "JWT signing key management",
-             "domain": "Identity and Authentication Controls"},
-        ]))
+        data, _names, domains = ect.enforce(
+            _make_yaml(
+                [
+                    {
+                        "id": "SC-1",
+                        "control": "JWT signing key management",
+                        "domain": "Identity and Authentication Controls",
+                    },
+                ]
+            )
+        )
         assert data["security_controls"][0]["domain"] == "Session and Token Controls"
         assert any(d["to"] == "Session and Token Controls" for d in domains)
 
     def test_non_jwt_iam_mechanism_stays_in_72(self):
-        data, _n, _d = ect.enforce(_make_yaml([
-            {"id": "SC-1", "control": "Password-Based Login",
-             "domain": "Identity and Authentication Controls"},
-            {"id": "SC-2", "control": "TOTP 2FA",
-             "domain": "Identity and Authentication Controls"},
-        ]))
+        data, _n, _d = ect.enforce(
+            _make_yaml(
+                [
+                    {"id": "SC-1", "control": "Password-Based Login", "domain": "Identity and Authentication Controls"},
+                    {"id": "SC-2", "control": "TOTP 2FA", "domain": "Identity and Authentication Controls"},
+                ]
+            )
+        )
         assert data["security_controls"][0]["domain"] == "Identity and Authentication Controls"
         assert data["security_controls"][1]["domain"] == "Identity and Authentication Controls"
 
     def test_jwt_reroute_is_idempotent(self):
-        controls = [{"id": "SC-1", "control": "JWT signing key management",
-                     "domain": "Identity and Authentication Controls"}]
+        controls = [
+            {"id": "SC-1", "control": "JWT signing key management", "domain": "Identity and Authentication Controls"}
+        ]
         data, _, _ = ect.enforce(_make_yaml(controls))
         # second pass over the already-rerouted yaml must be a no-op
         data2, _, domains2 = ect.enforce(data)

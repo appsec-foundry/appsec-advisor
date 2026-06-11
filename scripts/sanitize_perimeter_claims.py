@@ -29,6 +29,7 @@ success, 1 on IO/parse error, 2 on bad arguments.
 Usage:
     python3 sanitize_perimeter_claims.py <output_dir>
 """
+
 from __future__ import annotations
 
 import re
@@ -36,7 +37,6 @@ import sys
 from pathlib import Path
 
 import yaml
-
 from perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
 
 # Single neutral replacement appended exactly once when a field is fully
@@ -120,14 +120,16 @@ def sanitize_yaml(data: dict) -> tuple[dict, list[dict]]:
                 cleaned, removed = _sanitize_string(original)
                 if removed:
                     item[field_name] = cleaned
-                    changes.append({
-                        "collection": collection_key,
-                        "id": item.get("id") or item.get("name") or "<anon>",
-                        "field": field_name,
-                        "removed_tokens": removed,
-                        "before": original,
-                        "after": cleaned,
-                    })
+                    changes.append(
+                        {
+                            "collection": collection_key,
+                            "id": item.get("id") or item.get("name") or "<anon>",
+                            "field": field_name,
+                            "removed_tokens": removed,
+                            "before": original,
+                            "after": cleaned,
+                        }
+                    )
     return data, changes
 
 
@@ -153,8 +155,7 @@ def main(argv: list[str]) -> int:
 
     if changes:
         yaml_path.write_text(
-            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096,
-                           default_flow_style=False),
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
             encoding="utf-8",
         )
         summary: dict[tuple[str, str], int] = {}
@@ -163,10 +164,7 @@ def main(argv: list[str]) -> int:
             summary[key] = summary.get(key, 0) + 1
         details = ", ".join(f"{coll}.{field}×{n}" for (coll, field), n in summary.items())
         tokens = sorted({tok for c in changes for tok in c["removed_tokens"]})
-        print(
-            f"sanitize_perimeter_claims: scrubbed {len(changes)} field(s) "
-            f"[{details}]; tokens={','.join(tokens)}"
-        )
+        print(f"sanitize_perimeter_claims: scrubbed {len(changes)} field(s) [{details}]; tokens={','.join(tokens)}")
     else:
         print("sanitize_perimeter_claims: no speculative perimeter claims found — nothing to scrub")
     return 0

@@ -37,9 +37,8 @@ from typing import Any
 
 from _atomic_io import atomic_write_json
 from _shared_sources import (
-    ARCH_ALL_SOURCES,
-    CODE_LEVEL_SOURCES,
     ALL_SOURCES,
+    ARCH_ALL_SOURCES,
 )
 
 # ---------------------------------------------------------------------------

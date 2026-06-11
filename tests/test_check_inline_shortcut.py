@@ -21,12 +21,11 @@ from typing import Iterable
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "check_inline_shortcut.py"
 
-# The 8 fragment names mirror REQUIRED_FRAGMENTS in qa_checks.py. Kept as a
+# The 7 fragment names mirror REQUIRED_FRAGMENTS in qa_checks.py. Kept as a
 # local constant so test assertions don't depend on importing qa_checks at
 # module load time.
 ALL_FRAGMENTS = (
     "ms-verdict.json",
-    "ms-architecture-assessment.json",
     "system-overview.md",
     "architecture-diagrams.md",
     "attack-walkthroughs.md",
@@ -42,7 +41,7 @@ ALL_FRAGMENTS = (
 
 
 def _make_clean_output_dir(tmp_path: Path, fragments: Iterable[str] = ALL_FRAGMENTS) -> Path:
-    """Create an output dir that passes every indicator: 8 fragments,
+    """Create an output dir that passes every indicator: 7 fragments,
     .threats-merged.json + .triage-flags.json + threat-model.md present.
     """
     out = tmp_path / "docs" / "security"
@@ -225,8 +224,8 @@ def test_write_repair_plan_emits_json_on_trip(tmp_path):
     assert plan["schema_version"] == 1
     assert "indicators" in plan and len(plan["indicators"]) >= 1
     assert "missing_fragments" in plan
-    # When fragments=() and qa_checks runs, all 8 required ones are missing.
-    assert len(plan["missing_fragments"]) == 8
+    # When fragments=() and qa_checks runs, all 7 required ones are missing.
+    assert len(plan["missing_fragments"]) == 7
     assert plan["qa_fragments_exit"] == 1
 
 

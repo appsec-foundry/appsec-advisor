@@ -56,10 +56,18 @@ except Exception:  # pragma: no cover
 
 
 _SOURCE_EXTS = {
-    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
     ".py",
-    ".java", ".kt", ".scala",
-    ".cs", ".vb",
+    ".java",
+    ".kt",
+    ".scala",
+    ".cs",
+    ".vb",
     ".go",
     ".rb",
     ".php",
@@ -88,7 +96,9 @@ def _is_excluded(rel: str) -> bool:
         except Exception:  # pragma: no cover
             pass
     parts = rel.split("/")
-    return any(p in {"node_modules", ".git", "dist", "build", "vendor", "target", "out", ".venv", "venv"} for p in parts)
+    return any(
+        p in {"node_modules", ".git", "dist", "build", "vendor", "target", "out", ".venv", "venv"} for p in parts
+    )
 
 
 def _walk_sources(repo_root: Path) -> Iterable[Path]:
@@ -330,16 +340,18 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
         route = m.group("path")
         n = text.count("\n", 0, m.start()) + 1
         authn, authz = _scan_auth_signals(lines, n)
-        out.append(RouteCandidate(
-            method=method,
-            path=route,
-            framework=framework,
-            handler_file=str(path).replace("\\", "/"),
-            handler_line=n,
-            authn_signal=authn,
-            authz_signal=authz,
-            management_surface=_detect_management_surface(route),
-        ))
+        out.append(
+            RouteCandidate(
+                method=method,
+                path=route,
+                framework=framework,
+                handler_file=str(path).replace("\\", "/"),
+                handler_line=n,
+                authn_signal=authn,
+                authz_signal=authz,
+                management_surface=_detect_management_surface(route),
+            )
+        )
 
     if nestjs:
         for n, line in enumerate(lines, start=1):
@@ -347,16 +359,18 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
                 route = (m.group("path") or "/").strip()
                 method = m.group("method").upper()
                 authn, authz = _scan_auth_signals(lines, n + 1)  # decorator above handler
-                out.append(RouteCandidate(
-                    method=method,
-                    path=route,
-                    framework="nestjs",
-                    handler_file=str(path).replace("\\", "/"),
-                    handler_line=n,
-                    authn_signal=authn,
-                    authz_signal=authz,
-                    management_surface=_detect_management_surface(route),
-                ))
+                out.append(
+                    RouteCandidate(
+                        method=method,
+                        path=route,
+                        framework="nestjs",
+                        handler_file=str(path).replace("\\", "/"),
+                        handler_line=n,
+                        authn_signal=authn,
+                        authz_signal=authz,
+                        management_surface=_detect_management_surface(route),
+                    )
+                )
 
     return out
 
@@ -390,16 +404,18 @@ def _extract_python(path: Path, lines: list[str]) -> list[RouteCandidate]:
             route = m.group("path")
             authn, authz = _scan_auth_signals(lines, n + 1)
             for meth in methods:
-                out.append(RouteCandidate(
-                    method=meth,
-                    path=route,
-                    framework=framework,
-                    handler_file=str(path).replace("\\", "/"),
-                    handler_line=n,
-                    authn_signal=authn,
-                    authz_signal=authz,
-                    management_surface=_detect_management_surface(route),
-                ))
+                out.append(
+                    RouteCandidate(
+                        method=meth,
+                        path=route,
+                        framework=framework,
+                        handler_file=str(path).replace("\\", "/"),
+                        handler_line=n,
+                        authn_signal=authn,
+                        authz_signal=authz,
+                        management_surface=_detect_management_surface(route),
+                    )
+                )
 
     if framework == "django":
         for n, line in enumerate(lines, start=1):
@@ -408,17 +424,19 @@ def _extract_python(path: Path, lines: list[str]) -> list[RouteCandidate]:
                 if not route or route == "":
                     continue
                 authn, authz = _scan_auth_signals(lines, n)
-                out.append(RouteCandidate(
-                    method="ANY",
-                    path=route,
-                    framework="django",
-                    handler_file=str(path).replace("\\", "/"),
-                    handler_line=n,
-                    authn_signal=authn,
-                    authz_signal=authz,
-                    management_surface=_detect_management_surface(route),
-                    confidence="low",
-                ))
+                out.append(
+                    RouteCandidate(
+                        method="ANY",
+                        path=route,
+                        framework="django",
+                        handler_file=str(path).replace("\\", "/"),
+                        handler_line=n,
+                        authn_signal=authn,
+                        authz_signal=authz,
+                        management_surface=_detect_management_surface(route),
+                        confidence="low",
+                    )
+                )
 
     return out
 
@@ -438,42 +456,49 @@ def _extract_java(path: Path, lines: list[str]) -> list[RouteCandidate]:
         for m in _JAVA_MAPPING_RE.finditer(line):
             kind = m.group("kind")
             method = {
-                "Get": "GET", "Post": "POST", "Put": "PUT",
-                "Delete": "DELETE", "Patch": "PATCH",
+                "Get": "GET",
+                "Post": "POST",
+                "Put": "PUT",
+                "Delete": "DELETE",
+                "Patch": "PATCH",
             }.get(kind, "ANY")
             route = m.group("path")
             authn, authz = _scan_auth_signals(lines, n + 1)
-            out.append(RouteCandidate(
-                method=method,
-                path=route,
-                framework=framework,
-                handler_file=str(path).replace("\\", "/"),
-                handler_line=n,
-                authn_signal=authn,
-                authz_signal=authz,
-                management_surface=_detect_management_surface(route),
-            ))
+            out.append(
+                RouteCandidate(
+                    method=method,
+                    path=route,
+                    framework=framework,
+                    handler_file=str(path).replace("\\", "/"),
+                    handler_line=n,
+                    authn_signal=authn,
+                    authz_signal=authz,
+                    management_surface=_detect_management_surface(route),
+                )
+            )
 
     if framework == "jaxrs":
         for n, line in enumerate(lines, start=1):
             for m in _JAVA_PATH_RE.finditer(line):
                 route = m.group("path")
                 method = "ANY"
-                lookahead = "".join(lines[n:n + 5])
+                lookahead = "".join(lines[n : n + 5])
                 meth_match = _JAVA_HTTP_METHOD_RE.search(lookahead)
                 if meth_match:
                     method = meth_match.group(1).upper()
                 authn, authz = _scan_auth_signals(lines, n + 2)
-                out.append(RouteCandidate(
-                    method=method,
-                    path=route,
-                    framework="jaxrs",
-                    handler_file=str(path).replace("\\", "/"),
-                    handler_line=n,
-                    authn_signal=authn,
-                    authz_signal=authz,
-                    management_surface=_detect_management_surface(route),
-                ))
+                out.append(
+                    RouteCandidate(
+                        method=method,
+                        path=route,
+                        framework="jaxrs",
+                        handler_file=str(path).replace("\\", "/"),
+                        handler_line=n,
+                        authn_signal=authn,
+                        authz_signal=authz,
+                        management_surface=_detect_management_surface(route),
+                    )
+                )
 
     return out
 
@@ -488,16 +513,18 @@ def _extract_aspnet(path: Path, lines: list[str]) -> list[RouteCandidate]:
                 method = "ANY"
             route = m.group("path")
             authn, authz = _scan_auth_signals(lines, n)
-            out.append(RouteCandidate(
-                method=method,
-                path=route,
-                framework="aspnet-minimal",
-                handler_file=str(path).replace("\\", "/"),
-                handler_line=n,
-                authn_signal=authn,
-                authz_signal=authz,
-                management_surface=_detect_management_surface(route),
-            ))
+            out.append(
+                RouteCandidate(
+                    method=method,
+                    path=route,
+                    framework="aspnet-minimal",
+                    handler_file=str(path).replace("\\", "/"),
+                    handler_line=n,
+                    authn_signal=authn,
+                    authz_signal=authz,
+                    management_surface=_detect_management_surface(route),
+                )
+            )
 
     return out
 

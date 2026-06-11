@@ -67,29 +67,47 @@ _DEFAULT_RULES_YAML = _HERE.parent / "data" / "architecture-coverage-rules.yaml"
 # specialised audits (e.g. lockfile or supply-chain scans that explicitly
 # need to inspect vendored sources). NEVER use this opt-out for normal
 # architecture-coverage runs.
-_DEFAULT_EXCLUDES = frozenset({
-    "node_modules",
-    ".git",
-    "dist",
-    "build",
-    "vendor",
-    "target",
-    "out",
-    ".venv",
-    "venv",
-    ".next",
-    "__pycache__",
-})
+_DEFAULT_EXCLUDES = frozenset(
+    {
+        "node_modules",
+        ".git",
+        "dist",
+        "build",
+        "vendor",
+        "target",
+        "out",
+        ".venv",
+        "venv",
+        ".next",
+        "__pycache__",
+    }
+)
 
 _SOURCE_EXTS = {
-    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".ts",
+    ".tsx",
     ".py",
-    ".java", ".kt", ".scala",
-    ".cs", ".vb",
-    ".go", ".rb", ".php",
-    ".yaml", ".yml", ".json", ".toml", ".conf", ".env",
+    ".java",
+    ".kt",
+    ".scala",
+    ".cs",
+    ".vb",
+    ".go",
+    ".rb",
+    ".php",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".conf",
+    ".env",
     ".properties",
-    ".cfg", ".ini",
+    ".cfg",
+    ".ini",
 }
 
 
@@ -156,7 +174,9 @@ def _plugin_data_file(env_var: str, default: Path, filename: str) -> Path:
 
 
 def _load_rules(path: Path | None = None) -> dict:
-    path = path or _plugin_data_file("ARCH_COVERAGE_RULES_YAML", _DEFAULT_RULES_YAML, "architecture-coverage-rules.yaml")
+    path = path or _plugin_data_file(
+        "ARCH_COVERAGE_RULES_YAML", _DEFAULT_RULES_YAML, "architecture-coverage-rules.yaml"
+    )
     if not path.is_file():
         raise FileNotFoundError(f"architecture-coverage-rules.yaml not found: {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -165,7 +185,7 @@ def _load_rules(path: Path | None = None) -> dict:
     return data
 
 
-def _with_arch_fields(base: dict, rule: "CompiledRule") -> dict:
+def _with_arch_fields(base: dict, rule: CompiledRule) -> dict:
     enriched = dict(base)
     if rule.architectural_theme:
         enriched["architectural_theme"] = rule.architectural_theme
@@ -369,11 +389,13 @@ def _evaluate_mgmt_rule(rule: CompiledRule, inventory: dict | None) -> dict:
         if r.get("authn_signal") in forbid_authn:
             continue
         if r.get("authn_signal") in authn_in and r.get("authz_signal") in authz_in:
-            evidence.append({
-                "file": r.get("handler_file", ""),
-                "line": int(r.get("handler_line", 1)),
-                "signal": f"management surface {r.get('method')} {r.get('path')} authn={r.get('authn_signal')} authz={r.get('authz_signal')}",
-            })
+            evidence.append(
+                {
+                    "file": r.get("handler_file", ""),
+                    "line": int(r.get("handler_line", 1)),
+                    "signal": f"management surface {r.get('method')} {r.get('path')} authn={r.get('authn_signal')} authz={r.get('authz_signal')}",
+                }
+            )
 
     if evidence:
         return {
@@ -387,11 +409,13 @@ def _evaluate_mgmt_rule(rule: CompiledRule, inventory: dict | None) -> dict:
     weak_evidence: list[dict] = []
     for r in mgmt_routes:
         if r.get("authn_signal") in {"unknown", "inherited_unknown"}:
-            weak_evidence.append({
-                "file": r.get("handler_file", ""),
-                "line": int(r.get("handler_line", 1)),
-                "signal": f"management surface {r.get('method')} {r.get('path')} authn={r.get('authn_signal')} — unknown does not escalate",
-            })
+            weak_evidence.append(
+                {
+                    "file": r.get("handler_file", ""),
+                    "line": int(r.get("handler_line", 1)),
+                    "signal": f"management surface {r.get('method')} {r.get('path')} authn={r.get('authn_signal')} — unknown does not escalate",
+                }
+            )
     return {
         "applies": True,
         "status": "partial" if weak_evidence else "present",
@@ -405,15 +429,25 @@ def _evaluate_authz_hyp_rule(rule: CompiledRule, inventory: dict | None) -> dict
     """Hypothesis-only evaluation against inventory: sensitive methods
     (DELETE/PUT/PATCH) with no authz signal."""
     if not inventory:
-        return {"applies": False, "status": "not_applicable", "confidence": "low",
-                "evidence": [], "skip_reason": ".route-inventory.json not available"}
+        return {
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": ".route-inventory.json not available",
+        }
     pat = rule.inventory_pattern or {}
     methods = set(pat.get("sensitive_methods", []) or [])
     authz_states = set(pat.get("require_authz_signal_in", ["absent", "unknown"]))
     min_n = int(pat.get("min_routes", 1) or 1)
     if not methods:
-        return {"applies": False, "status": "not_applicable", "confidence": "low",
-                "evidence": [], "skip_reason": "no inventory_pattern.sensitive_methods configured"}
+        return {
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": "no inventory_pattern.sensitive_methods configured",
+        }
 
     routes = inventory.get("routes", [])
     matches: list[dict] = []
@@ -422,22 +456,28 @@ def _evaluate_authz_hyp_rule(rule: CompiledRule, inventory: dict | None) -> dict
         if r.get("authn_signal") in {"present", "middleware_present", "decorator_present"}:
             has_authenticated = True
         if r.get("method") in methods and r.get("authz_signal") in authz_states:
-            matches.append({
-                "file": r.get("handler_file", ""),
-                "line": int(r.get("handler_line", 1)),
-                "signal": f"sensitive method {r.get('method')} {r.get('path')} authz={r.get('authz_signal')}",
-            })
+            matches.append(
+                {
+                    "file": r.get("handler_file", ""),
+                    "line": int(r.get("handler_line", 1)),
+                    "signal": f"sensitive method {r.get('method')} {r.get('path')} authz={r.get('authz_signal')}",
+                }
+            )
 
     if not has_authenticated:
         return {
-            "applies": False, "status": "not_applicable", "confidence": "low",
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
             "evidence": [],
             "skip_reason": "no authenticated routes — precondition not met",
         }
 
     if len(matches) < min_n:
         return {
-            "applies": True, "status": "present", "confidence": "low",
+            "applies": True,
+            "status": "present",
+            "confidence": "low",
             "evidence": [],
             "skip_reason": None,
         }
@@ -485,8 +525,11 @@ def _evaluate_hard_rule(rule: CompiledRule, repo_root: Path, inventory: dict | N
     hits = _aggregate_hits_for_rule(repo_root, rule)
     if rule.precondition_patterns and not hits.precondition:
         return {
-            "applies": False, "status": "not_applicable", "confidence": "low",
-            "evidence": [], "skip_reason": "no precondition signal in repo",
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": "no precondition signal in repo",
         }
 
     if rule.cooccurrence_window > 0 or rule.cooccurrence_patterns:
@@ -497,12 +540,16 @@ def _evaluate_hard_rule(rule: CompiledRule, repo_root: Path, inventory: dict | N
     if not effective_positive:
         if hits.exculpatory:
             return {
-                "applies": True, "status": "present", "confidence": "medium",
+                "applies": True,
+                "status": "present",
+                "confidence": "medium",
                 "evidence": _evidence_dicts(hits.exculpatory[:2]),
                 "skip_reason": None,
             }
         return {
-            "applies": True, "status": "partial", "confidence": "low",
+            "applies": True,
+            "status": "partial",
+            "confidence": "low",
             "evidence": [],
             "skip_reason": "preconditions present but no positive/exculpatory signal",
         }
@@ -513,7 +560,9 @@ def _evaluate_hard_rule(rule: CompiledRule, repo_root: Path, inventory: dict | N
         status = "weak"
 
     return {
-        "applies": True, "status": status, "confidence": confidence,
+        "applies": True,
+        "status": status,
+        "confidence": confidence,
         "evidence": _evidence_dicts(effective_positive),
         "skip_reason": None,
     }
@@ -526,19 +575,26 @@ def _evaluate_hypothesis_rule(rule: CompiledRule, repo_root: Path, inventory: di
     hits = _aggregate_hits_for_rule(repo_root, rule)
     if rule.precondition_patterns and not hits.precondition:
         return {
-            "applies": False, "status": "not_applicable", "confidence": "low",
-            "evidence": [], "skip_reason": "no precondition signal in repo",
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": "no precondition signal in repo",
         }
 
     if not hits.positive:
         if hits.exculpatory:
             return {
-                "applies": True, "status": "present", "confidence": "medium",
+                "applies": True,
+                "status": "present",
+                "confidence": "medium",
                 "evidence": _evidence_dicts(hits.exculpatory[:2]),
                 "skip_reason": None,
             }
         return {
-            "applies": True, "status": "partial", "confidence": "low",
+            "applies": True,
+            "status": "partial",
+            "confidence": "low",
             "evidence": [],
             "skip_reason": "preconditions present but no positive signal",
         }
@@ -550,7 +606,9 @@ def _evaluate_hypothesis_rule(rule: CompiledRule, repo_root: Path, inventory: di
         status = "partial"
 
     return {
-        "applies": True, "status": status, "confidence": confidence,
+        "applies": True,
+        "status": status,
+        "confidence": confidence,
         "evidence": _evidence_dicts(hits.positive),
         "skip_reason": None,
     }
@@ -568,7 +626,11 @@ def _decision_for_hard(rule: CompiledRule, verdict: dict) -> str:
     if status == "present":
         return "emit_control_only"
     if status == "anti_pattern":
-        return "emit_control_and_threat_candidate" if rule.output == "anti_pattern_candidate" else "emit_anti_pattern_candidate"
+        return (
+            "emit_control_and_threat_candidate"
+            if rule.output == "anti_pattern_candidate"
+            else "emit_anti_pattern_candidate"
+        )
     if status in {"partial", "weak", "missing"}:
         return "emit_control_only"
     return "no_action"
@@ -606,29 +668,39 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
         rule = _compile_rule(rule_dict, "hard")
         verdict = _evaluate_hard_rule(rule, repo_root, inventory)
         decision = _decision_for_hard(rule, verdict)
-        rules_evaluated.append(_with_arch_fields({
-            "rule_id": rule.rule_id,
-            "title": rule.title,
-            "status": verdict["status"],
-            "applies": verdict["applies"],
-            "confidence": verdict["confidence"],
-            "control": rule.control,
-            "domain": rule.domain,
-            "evidence": verdict["evidence"],
-            "skip_reason": verdict.get("skip_reason"),
-            "decision": decision,
-        }, rule))
+        rules_evaluated.append(
+            _with_arch_fields(
+                {
+                    "rule_id": rule.rule_id,
+                    "title": rule.title,
+                    "status": verdict["status"],
+                    "applies": verdict["applies"],
+                    "confidence": verdict["confidence"],
+                    "control": rule.control,
+                    "domain": rule.domain,
+                    "evidence": verdict["evidence"],
+                    "skip_reason": verdict.get("skip_reason"),
+                    "decision": decision,
+                },
+                rule,
+            )
+        )
 
         if verdict["status"] in {"partial", "weak", "missing", "anti_pattern"} and verdict["applies"]:
-            control_assessments.append(_with_arch_fields({
-                "rule_id": rule.rule_id,
-                "control": rule.control,
-                "domain": rule.domain,
-                "status": verdict["status"],
-                "confidence": verdict["confidence"],
-                "evidence": verdict["evidence"],
-                "hypothesis_ids": [],
-            }, rule))
+            control_assessments.append(
+                _with_arch_fields(
+                    {
+                        "rule_id": rule.rule_id,
+                        "control": rule.control,
+                        "domain": rule.domain,
+                        "status": verdict["status"],
+                        "confidence": verdict["confidence"],
+                        "evidence": verdict["evidence"],
+                        "hypothesis_ids": [],
+                    },
+                    rule,
+                )
+            )
 
         if (
             rule.output == "anti_pattern_candidate"
@@ -640,36 +712,46 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
             # from the rule YAML so the bridge can use them without falling
             # back to the legacy _DOMAIN_TO_STRIDE map (which only covered
             # 5 of 9 rules and silently mis-classified the other 4).
-            anti_patterns.append(_with_arch_fields({
-                "rule_id": rule.rule_id,
-                "title": rule.title,
-                "cwe": rule.cwe,
-                "domain": rule.domain,
-                "stride": rule.stride,
-                "threat_category_id": rule.threat_category_id,
-                "severity_cap": rule.severity_cap,
-                "evidence": verdict["evidence"],
-                "confidence": verdict["confidence"],
-                "must_not_carry_cvss": True,
-            }, rule))
+            anti_patterns.append(
+                _with_arch_fields(
+                    {
+                        "rule_id": rule.rule_id,
+                        "title": rule.title,
+                        "cwe": rule.cwe,
+                        "domain": rule.domain,
+                        "stride": rule.stride,
+                        "threat_category_id": rule.threat_category_id,
+                        "severity_cap": rule.severity_cap,
+                        "evidence": verdict["evidence"],
+                        "confidence": verdict["confidence"],
+                        "must_not_carry_cvss": True,
+                    },
+                    rule,
+                )
+            )
 
     for rule_dict in rules_data.get("hypothesis_rules", []) or []:
         rule = _compile_rule(rule_dict, "hypothesis")
         verdict = _evaluate_hypothesis_rule(rule, repo_root, inventory)
         decision = _decision_for_hypothesis(rule, verdict)
 
-        rules_evaluated.append(_with_arch_fields({
-            "rule_id": rule.rule_id,
-            "title": rule.title,
-            "status": verdict["status"],
-            "applies": verdict["applies"],
-            "confidence": verdict["confidence"],
-            "control": rule.control,
-            "domain": rule.domain,
-            "evidence": verdict["evidence"],
-            "skip_reason": verdict.get("skip_reason"),
-            "decision": decision,
-        }, rule))
+        rules_evaluated.append(
+            _with_arch_fields(
+                {
+                    "rule_id": rule.rule_id,
+                    "title": rule.title,
+                    "status": verdict["status"],
+                    "applies": verdict["applies"],
+                    "confidence": verdict["confidence"],
+                    "control": rule.control,
+                    "domain": rule.domain,
+                    "evidence": verdict["evidence"],
+                    "skip_reason": verdict.get("skip_reason"),
+                    "decision": decision,
+                },
+                rule,
+            )
+        )
 
         if verdict["applies"] and verdict["status"] not in {"present", "not_applicable"}:
             hyp_counter.setdefault(rule.hypothesis_id_prefix or "ARCH-HYP-GEN", 0)
@@ -677,35 +759,45 @@ def run(repo_root: Path, output_dir: Path | None, rules_data: dict) -> dict:
             idx = hyp_counter[rule.hypothesis_id_prefix or "ARCH-HYP-GEN"]
             hyp_id = f"{rule.hypothesis_id_prefix}-{idx:03d}"
 
-            hypotheses.append(_with_arch_fields({
-                "hypothesis_id": hyp_id,
-                "rule_id": rule.rule_id,
-                "title": rule.title,
-                "threat_category_id": rule.threat_category_id,
-                "stride": rule.stride,
-                "cwe": rule.cwe,
-                "component_id": None,
-                "domain": rule.domain,
-                "surface": None,
-                "proof_state": "control-derived",
-                "confidence": verdict["confidence"],
-                "weak_or_missing_controls": rule.weak_or_missing_controls,
-                "positive_signals": verdict["evidence"],
-                "negative_signals": [],
-                "exculpatory_signals": [],
-                "decision": "emit_hypothesis_only",
-            }, rule))
+            hypotheses.append(
+                _with_arch_fields(
+                    {
+                        "hypothesis_id": hyp_id,
+                        "rule_id": rule.rule_id,
+                        "title": rule.title,
+                        "threat_category_id": rule.threat_category_id,
+                        "stride": rule.stride,
+                        "cwe": rule.cwe,
+                        "component_id": None,
+                        "domain": rule.domain,
+                        "surface": None,
+                        "proof_state": "control-derived",
+                        "confidence": verdict["confidence"],
+                        "weak_or_missing_controls": rule.weak_or_missing_controls,
+                        "positive_signals": verdict["evidence"],
+                        "negative_signals": [],
+                        "exculpatory_signals": [],
+                        "decision": "emit_hypothesis_only",
+                    },
+                    rule,
+                )
+            )
 
             if rule.output == "control_and_hypothesis":
-                control_assessments.append(_with_arch_fields({
-                    "rule_id": rule.rule_id,
-                    "control": rule.control,
-                    "domain": rule.domain,
-                    "status": "partial",
-                    "confidence": verdict["confidence"],
-                    "evidence": verdict["evidence"],
-                    "hypothesis_ids": [hyp_id],
-                }, rule))
+                control_assessments.append(
+                    _with_arch_fields(
+                        {
+                            "rule_id": rule.rule_id,
+                            "control": rule.control,
+                            "domain": rule.domain,
+                            "status": "partial",
+                            "confidence": verdict["confidence"],
+                            "evidence": verdict["evidence"],
+                            "hypothesis_ids": [hyp_id],
+                        },
+                        rule,
+                    )
+                )
 
     return {
         "version": 1,

@@ -113,13 +113,6 @@ def mutate_verdict_bad_ref_pattern(out: Path) -> None:
     p.write_text(json.dumps(d))
 
 
-def mutate_architecture_assessment_bad_severity(out: Path) -> None:
-    p = out / ".fragments" / "ms-architecture-assessment.json"
-    d = json.loads(p.read_text())
-    d["verdict_severity"] = "not-a-color"
-    p.write_text(json.dumps(d))
-
-
 def mutate_critical_attack_tree_invalid_breach(out: Path) -> None:
     p = out / ".fragments" / "ms-critical-attack-tree.json"
     d = json.loads(p.read_text())
@@ -201,7 +194,6 @@ MUTATIONS = [
     ("verdict-too-few-bullets", mutate_verdict_too_few_bullets, "bullets"),
     ("verdict-too-many-bullets", mutate_verdict_too_many_bullets, "bullets"),
     ("verdict-bad-ref-pattern", mutate_verdict_bad_ref_pattern, "does not match"),
-    ("arch-ass-bad-severity", mutate_architecture_assessment_bad_severity, "verdict_severity"),
     # NB: ms-critical-attack-tree fragment is currently dormant — the
     # `## Critical Attack Tree` block (post-2026-05 hybrid migration) is
     # LLM-authored as prose inside attack-walkthroughs.md per the layout

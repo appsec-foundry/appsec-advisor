@@ -39,6 +39,7 @@ Usage:
 
 Exit codes: 0 always (best-effort emitter; failures are warnings on stderr).
 """
+
 from __future__ import annotations
 
 import re
@@ -52,10 +53,10 @@ _M_ID_RE = re.compile(r"\bM-(\d{3,})\b")
 # Severity → baseline priority (mirrors build_threat_model_yaml.build_mitigations
 # and emit_config_scan_mitigations._SEV_TO_PRI).
 _SEV_TO_PRI = {
-    "Critical":      "P1",
-    "High":          "P2",
-    "Medium":        "P3",
-    "Low":           "P4",
+    "Critical": "P1",
+    "High": "P2",
+    "Medium": "P3",
+    "Low": "P4",
     "Informational": "P4",
 }
 
@@ -95,10 +96,7 @@ def _remediation_how(threat: dict) -> str:
     if isinstance(steps, list) and steps:
         clean = [str(s).strip() for s in steps if str(s).strip()]
         if clean:
-            return " ".join(
-                s if s.endswith((".", ";", ":")) else s + "."
-                for s in clean
-            )
+            return " ".join(s if s.endswith((".", ";", ":")) else s + "." for s in clean)
     # Fall back to a single remediation string or the mitigation title.
     if isinstance(rem, str) and rem.strip():
         return rem.strip()
@@ -121,17 +119,15 @@ def _clear_prior_auto_mitigations(data: dict) -> set[str]:
     if not isinstance(items, list):
         return set()
     stale = {
-        m.get("id") for m in items
+        m.get("id")
+        for m in items
         if isinstance(m, dict)
         and m.get("auto_emitted") is True
         and m.get("auto_source") == "finding-fix"
         and m.get("id")
     }
     if stale:
-        data["mitigations"] = [
-            m for m in items
-            if not (isinstance(m, dict) and m.get("id") in stale)
-        ]
+        data["mitigations"] = [m for m in items if not (isinstance(m, dict) and m.get("id") in stale)]
     return stale
 
 
@@ -195,7 +191,8 @@ def _synthesize(data: dict, state: dict) -> list[dict]:
         # Lowest effort across the group (a Low-effort path keeps it P1).
         efforts = [
             ((m.get("remediation") or {}).get("effort") or "Medium")
-            if isinstance(m.get("remediation"), dict) else "Medium"
+            if isinstance(m.get("remediation"), dict)
+            else "Medium"
             for m in members
         ]
         effort = min(efforts, key=lambda e: {"Low": 0, "Medium": 1, "High": 2}.get(e.capitalize(), 1))
@@ -213,16 +210,16 @@ def _synthesize(data: dict, state: dict) -> list[dict]:
         mid = f"M-{state['counter'] + 1:03d}"
         state["counter"] += 1
         card = {
-            "id":           mid,
-            "title":        g["title"],
-            "kind":         "fix",
-            "priority":     _resolve_priority(sev, effort, vektor),
-            "severity":     sev,
-            "effort":       effort.capitalize(),
-            "threat_ids":   [m["id"] for m in members],
-            "how":          g["how"],
+            "id": mid,
+            "title": g["title"],
+            "kind": "fix",
+            "priority": _resolve_priority(sev, effort, vektor),
+            "severity": sev,
+            "effort": effort.capitalize(),
+            "threat_ids": [m["id"] for m in members],
+            "how": g["how"],
             "auto_emitted": True,
-            "auto_source":  "finding-fix",
+            "auto_source": "finding-fix",
         }
         if cwes:
             card["prevents"] = cwes
@@ -274,6 +271,7 @@ def main() -> int:
     )
 
     from collections import Counter
+
     pri = Counter(c["priority"] for c in new_cards)
     print(
         f"emit_finding_fix_mitigations: appended {len(new_cards)} fix card(s) "

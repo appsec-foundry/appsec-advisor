@@ -68,9 +68,9 @@ def main() -> None:
     acquire_lock = os.path.join(script_dir, "acquire_lock.py")
     if os.path.isfile(acquire_lock):
         import subprocess
+
         result = subprocess.run(
-            [sys.executable, acquire_lock, lock_path,
-             "--heartbeat", f"--phase={args.phase}", f"--step={args.step}"],
+            [sys.executable, acquire_lock, lock_path, "--heartbeat", f"--phase={args.phase}", f"--step={args.step}"],
             capture_output=True,
         )
         if result.returncode != 0:

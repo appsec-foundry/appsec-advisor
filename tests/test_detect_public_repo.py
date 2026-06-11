@@ -1,5 +1,6 @@
 """Unit tests for scripts/detect_public_repo.py — conservative public-repo
 detection that gates the repo-read → internet-anon actor collapse."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -35,17 +36,22 @@ def _repo(tmp: Path, *, license_text: str | None, pkg: dict | None) -> Path:
 
 
 def test_osi_license_plus_public_url_is_public(tmp_path: Path):
-    repo = _repo(tmp_path, license_text=_MIT,
-                pkg={"repository": {"url": "git+https://github.com/acme/app.git"}})
+    repo = _repo(tmp_path, license_text=_MIT, pkg={"repository": {"url": "git+https://github.com/acme/app.git"}})
     verdict, _ = dpr.detect(repo)
     assert verdict is True
 
 
 def test_private_npm_flag_does_not_block_public(tmp_path: Path):
     # juice-shop case: "private": true is the npm-publish flag, not repo visibility.
-    repo = _repo(tmp_path, license_text=_MIT,
-                 pkg={"private": True, "license": "MIT",
-                      "repository": {"url": "git+https://github.com/juice-shop/juice-shop.git"}})
+    repo = _repo(
+        tmp_path,
+        license_text=_MIT,
+        pkg={
+            "private": True,
+            "license": "MIT",
+            "repository": {"url": "git+https://github.com/juice-shop/juice-shop.git"},
+        },
+    )
     verdict, reason = dpr.detect(repo)
     assert verdict is True, reason
 
@@ -57,15 +63,13 @@ def test_license_without_public_url_is_unset(tmp_path: Path):
 
 
 def test_public_url_without_license_is_unset(tmp_path: Path):
-    repo = _repo(tmp_path, license_text=None,
-                 pkg={"repository": "https://github.com/acme/app"})
+    repo = _repo(tmp_path, license_text=None, pkg={"repository": "https://github.com/acme/app"})
     verdict, _ = dpr.detect(repo)
     assert verdict is None
 
 
 def test_main_writes_meta_and_pin_override(tmp_path: Path):
-    repo = _repo(tmp_path, license_text=_MIT,
-                 pkg={"repository": "https://github.com/acme/app"})
+    repo = _repo(tmp_path, license_text=_MIT, pkg={"repository": "https://github.com/acme/app"})
     out = tmp_path / "out"
     out.mkdir()
     (out / "threat-model.yaml").write_text(yaml.safe_dump({"meta": {}, "threats": []}))

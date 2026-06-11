@@ -11,6 +11,7 @@ Used by ``run-headless.sh`` as the default (non-``--verbose``) progress monitor:
 
     tail -F .hook-events.log .agent-run.log | python3 render_progress.py >&2
 """
+
 from __future__ import annotations
 
 import re
@@ -83,17 +84,17 @@ def _clock(when) -> str:
 
 
 def main() -> int:
-    cur_phase = ""          # e.g. "2/11 Reconnaissance"
-    phase_start = None      # datetime the current phase began
-    run_start = None        # datetime the assessment began (or first line)
+    cur_phase = ""  # e.g. "2/11 Reconnaissance"
+    phase_start = None  # datetime the current phase began
+    run_start = None  # datetime the assessment began (or first line)
 
     out = sys.stdout
     is_tty = out.isatty()
     cur_clock = " " * 8
-    cur_when = None        # datetime of the line being processed
-    status_shown = False   # a transient \r heartbeat line is on screen
-    last_perm = None       # datetime of the last permanent (scrolling) line
-    _CLEAR = "\r\033[K"    # carriage-return + clear-to-end-of-line
+    cur_when = None  # datetime of the line being processed
+    status_shown = False  # a transient \r heartbeat line is on screen
+    last_perm = None  # datetime of the last permanent (scrolling) line
+    _CLEAR = "\r\033[K"  # carriage-return + clear-to-end-of-line
 
     # Heartbeats are pure liveness — on a TTY they update one in-place status
     # line (no scroll); off a TTY (log/CI) they are throttled to this interval
@@ -118,8 +119,7 @@ def main() -> int:
             out.write(f"{_CLEAR}{cur_clock}  {line}")  # in-place, no newline
             out.flush()
             status_shown = True
-        elif last_perm is None or cur_when is None or \
-                (cur_when - last_perm).total_seconds() >= _HB_THROTTLE_S:
+        elif last_perm is None or cur_when is None or (cur_when - last_perm).total_seconds() >= _HB_THROTTLE_S:
             w(line)  # off-TTY: occasional scrolling tick only
 
     for raw in sys.stdin:
@@ -139,8 +139,7 @@ def main() -> int:
             reqs = _kv(detail, "CHECK_REQUIREMENTS") == "true"
             req_src = _kv(detail, "REQUIREMENTS_URL_OVERRIDE")
             w()
-            w(f"══ Assessment started · mode={mode}"
-              f"{'  requirements=on' if reqs else ''} ══")
+            w(f"══ Assessment started · mode={mode}{'  requirements=on' if reqs else ''} ══")
             if reqs and req_src:
                 w(f"   requirements ← {req_src}")
             w(f"   Pipeline: {_ROADMAP}")
@@ -196,8 +195,7 @@ def main() -> int:
             total_el = _mins(run_start, when)
             if cur_phase:
                 phase_el = _mins(phase_start, when) if phase_start else "?"
-                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}"
-                          f"   [+{total_el} total]")
+                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}   [+{total_el} total]")
             else:
                 step = _kv(detail, "step") or "startup"
                 heartbeat(f"    · starting up ({step}) — +{total_el}")

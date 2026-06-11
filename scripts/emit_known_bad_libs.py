@@ -15,6 +15,7 @@ into the final meta_findings[] list with deterministic MF-NNN ids.
 Manifest-only (no lockfile walk) — the architectural choice is the
 direct dep, not the transitive surface (sca.md §11).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,7 +28,6 @@ import yaml
 # Local sibling import — works when run as a script via the same scripts/ dir.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lib_manifest import enumerate_deps  # noqa: E402
-
 
 SEVERITY_ORDER = ("Informational", "Low", "Medium", "High", "Critical")
 
@@ -47,7 +47,7 @@ def _build_index(db: dict) -> dict[tuple[str, str], dict]:
     ecosystems (npm `request` vs pip `requests`); the tuple key keeps
     matches strict."""
     out: dict[tuple[str, str], dict] = {}
-    for entry in (db.get("known_bad") or []):
+    for entry in db.get("known_bad") or []:
         if not isinstance(entry, dict):
             continue
         eco = (entry.get("ecosystem") or "").strip()
@@ -74,6 +74,7 @@ def _cap_by_tier(severity: str, tier: str) -> str:
 
 def _normalize_tier(raw: str | None) -> str:
     import re
+
     if not raw:
         return "T2"
     m = re.search(r"\bT(?:ier\s*)?([1-4])\b", raw, re.IGNORECASE)
@@ -128,7 +129,9 @@ def run(repo_root: Path, output_dir: Path, asset_tier_raw: str | None, plugin_ro
         json.dumps({"schema_version": 1, "findings": findings}, indent=2, sort_keys=False),
         encoding="utf-8",
     )
-    print(f"emit_known_bad_libs: tier={tier} → {len(findings)} architectural-choice finding(s) across {len(seen)} matched dep(s)")
+    print(
+        f"emit_known_bad_libs: tier={tier} → {len(findings)} architectural-choice finding(s) across {len(seen)} matched dep(s)"
+    )
     return 0
 
 

@@ -34,12 +34,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Effectiveness enum
@@ -54,6 +52,7 @@ MISSING = "Missing"
 # Recon-summary text helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_recon(output_dir: str, repo_root: str | None) -> str:
     """Return recon-summary text, or empty string if unavailable."""
     recon_path = Path(output_dir) / ".recon-summary.md"
@@ -65,7 +64,7 @@ def _load_recon(output_dir: str, repo_root: str | None) -> str:
 
 def _section(text: str, heading: str) -> str:
     """Extract the text block under a recon-summary section heading."""
-    pattern = rf"(?m)^#{1,4}\s+{re.escape(heading)}.*?$(.*?)(?=^#{1,4}\s|\Z)"
+    pattern = rf"(?m)^#{1, 4}\s+{re.escape(heading)}.*?$(.*?)(?=^#{1, 4}\s|\Z)"
     m = re.search(pattern, text, re.DOTALL | re.MULTILINE)
     return m.group(1) if m else ""
 
@@ -78,6 +77,7 @@ def _has(text: str, *patterns: str) -> bool:
 # Sub-control evaluators
 # ---------------------------------------------------------------------------
 
+
 def _eval_lockfile(recon: str, repo_root: str | None) -> dict[str, str]:
     """Lockfile pinning: is a lockfile present and committed?
 
@@ -87,17 +87,38 @@ def _eval_lockfile(recon: str, repo_root: str | None) -> dict[str, str]:
     Maven-only repo cannot satisfy this row via a lockfile (its integrity story
     is graded under CI install integrity / Enforcer instead).
     """
-    present = _has(recon, r"package-lock\.json", r"yarn\.lock", r"pnpm-lock\.yaml",
-                   r"Pipfile\.lock", r"poetry\.lock", r"uv\.lock", r"requirements\.lock",
-                   r"Gemfile\.lock", r"Cargo\.lock", r"go\.sum", r"composer\.lock",
-                   r"gradle\.lockfile", r"verification-metadata\.xml")
+    present = _has(
+        recon,
+        r"package-lock\.json",
+        r"yarn\.lock",
+        r"pnpm-lock\.yaml",
+        r"Pipfile\.lock",
+        r"poetry\.lock",
+        r"uv\.lock",
+        r"requirements\.lock",
+        r"Gemfile\.lock",
+        r"Cargo\.lock",
+        r"go\.sum",
+        r"composer\.lock",
+        r"gradle\.lockfile",
+        r"verification-metadata\.xml",
+    )
     # Check repo root directly when available
     if not present and repo_root:
         lockfiles = [
-            "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-            "Pipfile.lock", "poetry.lock", "uv.lock", "requirements.lock",
-            "Gemfile.lock", "Cargo.lock", "go.sum", "composer.lock",
-            "gradle.lockfile", "gradle/verification-metadata.xml",
+            "package-lock.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "Pipfile.lock",
+            "poetry.lock",
+            "uv.lock",
+            "requirements.lock",
+            "Gemfile.lock",
+            "Cargo.lock",
+            "go.sum",
+            "composer.lock",
+            "gradle.lockfile",
+            "gradle/verification-metadata.xml",
         ]
         present = any(Path(repo_root, lf).exists() for lf in lockfiles)
 
@@ -108,20 +129,33 @@ def _eval_lockfile(recon: str, repo_root: str | None) -> dict[str, str]:
 
 def _eval_ci_install(recon: str) -> dict[str, str]:
     """CI install integrity: does CI use deterministic install flags?"""
-    deterministic = _has(recon,
-        r"npm\s+ci\b", r"--frozen-lockfile", r"--immutable",
-        r"--require-hashes", r"cargo\s+build\s+--locked",
-        r"dotnet\s+restore\s+--locked", r"bundle\s+install\s+--frozen",
+    deterministic = _has(
+        recon,
+        r"npm\s+ci\b",
+        r"--frozen-lockfile",
+        r"--immutable",
+        r"--require-hashes",
+        r"cargo\s+build\s+--locked",
+        r"dotnet\s+restore\s+--locked",
+        r"bundle\s+install\s+--frozen",
         r"go\s+mod\s+verify",
         # Java — Gradle dependency locking / verification, Maven strict checksums
-        r"--verify-locks", r"verification-metadata", r"--strict-checksums",
+        r"--verify-locks",
+        r"verification-metadata",
+        r"--strict-checksums",
         r"mvn\b[^\n]*\s-C\b",
     )
     mutable = _has(recon, r"npm\s+install\b", r"pip\s+install\b(?!\s+--require-hashes)")
     if deterministic:
-        return {"effectiveness": ADEQUATE, "reason": "CI uses deterministic install commands (npm ci / --frozen-lockfile / equivalent)."}
+        return {
+            "effectiveness": ADEQUATE,
+            "reason": "CI uses deterministic install commands (npm ci / --frozen-lockfile / equivalent).",
+        }
     if mutable:
-        return {"effectiveness": MISSING, "reason": "CI uses mutable install commands (npm install / pip install without hashes)."}
+        return {
+            "effectiveness": MISSING,
+            "reason": "CI uses mutable install commands (npm install / pip install without hashes).",
+        }
     return {"effectiveness": MISSING, "reason": "No CI install step detected."}
 
 
@@ -163,10 +197,10 @@ def _eval_action_pinning(recon: str, repo_root: str | None) -> dict[str, str]:
         gitlab_text = recon
 
     # --- GitHub Actions ---
-    gh_sha = bool(re.search(r"uses:\s*\S+@[0-9a-f]{40}", workflow_text) or
-                  re.search(r"uses:\s*\S+@sha256:", workflow_text))
-    gh_mutable = bool(re.search(r"uses:\s*\S+@v\d", workflow_text) or
-                      re.search(r"uses:\s*\S+@latest", workflow_text))
+    gh_sha = bool(
+        re.search(r"uses:\s*\S+@[0-9a-f]{40}", workflow_text) or re.search(r"uses:\s*\S+@sha256:", workflow_text)
+    )
+    gh_mutable = bool(re.search(r"uses:\s*\S+@v\d", workflow_text) or re.search(r"uses:\s*\S+@latest", workflow_text))
     has_gh = bool(re.search(r"uses:\s*\S+@", workflow_text))
 
     # --- GitLab CI images ---
@@ -186,7 +220,10 @@ def _eval_action_pinning(recon: str, repo_root: str | None) -> dict[str, str]:
     any_pinned = gh_sha or gl_pinned
     any_mutable = gh_mutable or gl_mutable
     if any_pinned and not any_mutable:
-        return {"effectiveness": ADEQUATE, "reason": "All detected CI steps/images pinned to commit SHA or image digest."}
+        return {
+            "effectiveness": ADEQUATE,
+            "reason": "All detected CI steps/images pinned to commit SHA or image digest.",
+        }
     if any_pinned and any_mutable:
         return {"effectiveness": PARTIAL, "reason": "Mix of SHA/digest-pinned and mutable-tag CI references."}
     return {"effectiveness": MISSING, "reason": "CI steps/images pinned to mutable tags (@v<N> / @latest / :tag)."}
@@ -208,9 +245,11 @@ def _eval_container_hygiene(recon: str, repo_root: str | None) -> dict[str, str]
         return {"effectiveness": MISSING, "reason": "No Dockerfile detected."}
 
     digest_pinned = bool(re.search(r"FROM\s+\S+@sha256:[0-9a-f]{64}", dockerfile_text))
-    uses_latest = bool(re.search(r"FROM\s+\S+:latest", dockerfile_text, re.IGNORECASE) or
-                       re.search(r"FROM\s+\S+\s", dockerfile_text) and
-                       not re.search(r"FROM\s+\S+:\S+", dockerfile_text))
+    uses_latest = bool(
+        re.search(r"FROM\s+\S+:latest", dockerfile_text, re.IGNORECASE)
+        or re.search(r"FROM\s+\S+\s", dockerfile_text)
+        and not re.search(r"FROM\s+\S+:\S+", dockerfile_text)
+    )
     version_tagged = bool(re.search(r"FROM\s+\S+:\d", dockerfile_text))
 
     if digest_pinned:
@@ -222,9 +261,15 @@ def _eval_container_hygiene(recon: str, repo_root: str | None) -> dict[str, str]
 
 def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, str]:
     """Dependency confusion: scoped packages / private registry."""
-    has_private_registry = _has(recon,
-        r"registry\.npmrc", r"\.npmrc", r"@\w+/",
-        r"private.*registry", r"verdaccio", r"artifactory", r"nexus",
+    has_private_registry = _has(
+        recon,
+        r"registry\.npmrc",
+        r"\.npmrc",
+        r"@\w+/",
+        r"private.*registry",
+        r"verdaccio",
+        r"artifactory",
+        r"nexus",
     )
     npmrc_path = Path(repo_root or "", ".npmrc") if repo_root else None
     if npmrc_path and npmrc_path.exists():
@@ -236,7 +281,10 @@ def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, s
             pass
 
     if has_private_registry:
-        return {"effectiveness": PARTIAL, "reason": "Scoped packages or private registry references detected — partial protection."}
+        return {
+            "effectiveness": PARTIAL,
+            "reason": "Scoped packages or private registry references detected — partial protection.",
+        }
     return {"effectiveness": MISSING, "reason": "No private registry or scoped package configuration detected."}
 
 
@@ -259,12 +307,21 @@ def _eval_postinstall(recon: str, repo_root: str | None) -> dict[str, str]:
     if not has_postinstall:
         return {"effectiveness": ADEQUATE, "reason": "No postinstall/preinstall hooks detected in package.json."}
     if ignore_scripts:
-        return {"effectiveness": ADEQUATE, "reason": "Install hooks present but --ignore-scripts / npm_config_ignore_scripts configured."}
+        return {
+            "effectiveness": ADEQUATE,
+            "reason": "Install hooks present but --ignore-scripts / npm_config_ignore_scripts configured.",
+        }
     # Hooks exist — classify by content
     hook_cmd = scripts.get("postinstall", scripts.get("preinstall", scripts.get("install", "")))
     if re.search(r"(curl|wget|fetch|http|node\s+-e|eval)", hook_cmd, re.IGNORECASE):
-        return {"effectiveness": MISSING, "reason": f"Postinstall hook executes network/eval operation: {hook_cmd!r:.80}"}
-    return {"effectiveness": PARTIAL, "reason": "Install hooks present (build tasks only); no explicit audit or --ignore-scripts."}
+        return {
+            "effectiveness": MISSING,
+            "reason": f"Postinstall hook executes network/eval operation: {hook_cmd!r:.80}",
+        }
+    return {
+        "effectiveness": PARTIAL,
+        "reason": "Install hooks present (build tasks only); no explicit audit or --ignore-scripts.",
+    }
 
 
 def _eval_dep_management(recon: str, repo_root: str | None) -> dict[str, str]:
@@ -292,13 +349,17 @@ def _eval_dep_management(recon: str, repo_root: str | None) -> dict[str, str]:
 
     if renovate or dependabot:
         tool = "Renovate" if renovate else "Dependabot"
-        return {"effectiveness": PARTIAL, "reason": f"{tool} detected — verify security-updates are explicitly enabled and all ecosystems covered."}
+        return {
+            "effectiveness": PARTIAL,
+            "reason": f"{tool} detected — verify security-updates are explicitly enabled and all ecosystems covered.",
+        }
     return {"effectiveness": MISSING, "reason": "No Renovate or Dependabot configuration detected."}
 
 
 def _eval_cve_scanning(recon: str) -> dict[str, str]:
     """CVE scanning: SCA tool in CI with blocking policy."""
-    blocking = _has(recon,
+    blocking = _has(
+        recon,
         r"npm\s+audit\s+--audit-level=(high|critical)",
         r"snyk\s+test.*--severity-threshold",
         r"trivy.*--exit-code\s+1",
@@ -306,26 +367,52 @@ def _eval_cve_scanning(recon: str) -> dict[str, str]:
         r"osv-scanner.*--fail",
         r"pip-audit.*--fail-on",
     )
-    advisory = _has(recon,
-        r"npm\s+audit\b", r"snyk\s+test\b", r"trivy\b", r"grype\b",
-        r"osv-scanner\b", r"pip-audit\b", r"OWASP.*dependency",
+    advisory = _has(
+        recon,
+        r"npm\s+audit\b",
+        r"snyk\s+test\b",
+        r"trivy\b",
+        r"grype\b",
+        r"osv-scanner\b",
+        r"pip-audit\b",
+        r"OWASP.*dependency",
     )
     if blocking:
-        return {"effectiveness": ADEQUATE, "reason": "SCA tool configured with blocking policy on Critical/High findings."}
+        return {
+            "effectiveness": ADEQUATE,
+            "reason": "SCA tool configured with blocking policy on Critical/High findings.",
+        }
     if advisory:
-        return {"effectiveness": PARTIAL, "reason": "SCA tool present but advisory-only (no blocking exit code configured)."}
+        return {
+            "effectiveness": PARTIAL,
+            "reason": "SCA tool present but advisory-only (no blocking exit code configured).",
+        }
     return {"effectiveness": MISSING, "reason": "No SCA/CVE scanning tool detected in CI or manifests."}
 
 
 def _eval_sca_tooling(recon: str) -> dict[str, str]:
     """SCA tooling: dedicated SCA tool vs. native audit only."""
-    dedicated = _has(recon, r"snyk\b", r"trivy\b", r"grype\b", r"osv-scanner\b",
-                     r"OWASP.*dependency.check", r"dependency.check\b", r"syft\b")
+    dedicated = _has(
+        recon,
+        r"snyk\b",
+        r"trivy\b",
+        r"grype\b",
+        r"osv-scanner\b",
+        r"OWASP.*dependency.check",
+        r"dependency.check\b",
+        r"syft\b",
+    )
     native_only = _has(recon, r"npm\s+audit\b", r"pip-audit\b", r"cargo\s+audit\b")
     if dedicated:
-        return {"effectiveness": ADEQUATE, "reason": "Dedicated SCA tool (Snyk/Trivy/Grype/OSV-Scanner or equivalent) detected."}
+        return {
+            "effectiveness": ADEQUATE,
+            "reason": "Dedicated SCA tool (Snyk/Trivy/Grype/OSV-Scanner or equivalent) detected.",
+        }
     if native_only:
-        return {"effectiveness": PARTIAL, "reason": "Only native audit commands (npm audit / pip-audit) detected — no dedicated SCA tool."}
+        return {
+            "effectiveness": PARTIAL,
+            "reason": "Only native audit commands (npm audit / pip-audit) detected — no dedicated SCA tool.",
+        }
     return {"effectiveness": MISSING, "reason": "No SCA tooling detected in CI or manifests."}
 
 
@@ -362,19 +449,20 @@ def _derive_overall(sub_controls: list[dict[str, Any]]) -> tuple[str, str]:
 # Main assessment
 # ---------------------------------------------------------------------------
 
+
 def assess(output_dir: str, repo_root: str | None) -> dict[str, Any]:
     recon = _load_recon(output_dir, repo_root)
 
     sub_controls = [
-        {"name": "CVE scanning",          **_eval_cve_scanning(recon)},
-        {"name": "Lockfile pinning",       **_eval_lockfile(recon, repo_root)},
-        {"name": "CI install integrity",   **_eval_ci_install(recon)},
-        {"name": "CI/CD action pinning",   **_eval_action_pinning(recon, repo_root)},
+        {"name": "CVE scanning", **_eval_cve_scanning(recon)},
+        {"name": "Lockfile pinning", **_eval_lockfile(recon, repo_root)},
+        {"name": "CI install integrity", **_eval_ci_install(recon)},
+        {"name": "CI/CD action pinning", **_eval_action_pinning(recon, repo_root)},
         {"name": "Container image hygiene", **_eval_container_hygiene(recon, repo_root)},
-        {"name": "Dependency confusion",   **_eval_dependency_confusion(recon, repo_root)},
-        {"name": "Postinstall scripts",    **_eval_postinstall(recon, repo_root)},
-        {"name": "Dependency management",  **_eval_dep_management(recon, repo_root)},
-        {"name": "SCA tooling",            **_eval_sca_tooling(recon)},
+        {"name": "Dependency confusion", **_eval_dependency_confusion(recon, repo_root)},
+        {"name": "Postinstall scripts", **_eval_postinstall(recon, repo_root)},
+        {"name": "Dependency management", **_eval_dep_management(recon, repo_root)},
+        {"name": "SCA tooling", **_eval_sca_tooling(recon)},
     ]
 
     overall_effectiveness, overall_reason = _derive_overall(sub_controls)
@@ -390,13 +478,10 @@ def assess(output_dir: str, repo_root: str | None) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Deterministic supply chain control assessment for Phase 8"
-    )
+    parser = argparse.ArgumentParser(description="Deterministic supply chain control assessment for Phase 8")
     parser.add_argument("output_dir", help="Assessment output directory (docs/security)")
     parser.add_argument("--repo-root", default=None, help="Repository root (optional, improves detection)")
-    parser.add_argument("--report-only", action="store_true",
-                        help="Print JSON to stdout instead of writing file")
+    parser.add_argument("--report-only", action="store_true", help="Print JSON to stdout instead of writing file")
     args = parser.parse_args()
 
     result = assess(args.output_dir, args.repo_root)

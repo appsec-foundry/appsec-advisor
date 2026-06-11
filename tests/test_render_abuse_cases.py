@@ -5,6 +5,7 @@ chain table with verdict-derived status icons, blocking-mitigation links) and
 the no-applicable-case fallback. The rendered links must target anchors the
 report actually emits (#f-nnn in §8, #m-nnn in §10, self #ac-... anchors).
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -12,7 +13,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -23,7 +23,12 @@ SCRIPT = REPO_ROOT / "scripts" / "render_abuse_cases.py"
 # than via a schemas/fragments/*.json (which would couple it to the composer's
 # fragment registry). These keys are what downstream consumers rely on.
 _SIDECAR_REQUIRED_CASE_KEYS = {
-    "id", "title", "source", "combined_risk", "chain_verdict", "rows",
+    "id",
+    "title",
+    "source",
+    "combined_risk",
+    "chain_verdict",
+    "rows",
 }
 
 
@@ -67,12 +72,27 @@ _FULLY_VIABLE = {
             "abuse_case_id": "AC-T-001",
             "chain_verdict": "fully_viable",
             "step_verdicts": [
-                {"step": 1, "verdict": "confirmed", "matched_finding_id": "T-010",
-                 "evidence": {"file": "about.component.ts", "line": 119}, "controls_found": []},
-                {"step": 2, "verdict": "confirmed", "matched_finding_id": "T-046",
-                 "evidence": {"file": "interceptor.ts", "line": 13}, "controls_found": []},
-                {"step": 3, "verdict": "inconclusive", "matched_finding_id": None,
-                 "evidence": {}, "controls_found": []},
+                {
+                    "step": 1,
+                    "verdict": "confirmed",
+                    "matched_finding_id": "T-010",
+                    "evidence": {"file": "about.component.ts", "line": 119},
+                    "controls_found": [],
+                },
+                {
+                    "step": 2,
+                    "verdict": "confirmed",
+                    "matched_finding_id": "T-046",
+                    "evidence": {"file": "interceptor.ts", "line": 13},
+                    "controls_found": [],
+                },
+                {
+                    "step": 3,
+                    "verdict": "inconclusive",
+                    "matched_finding_id": None,
+                    "evidence": {},
+                    "controls_found": [],
+                },
             ],
         }
     ],
@@ -126,16 +146,28 @@ def test_fragment_markdown_structure(tmp_path: Path):
 def test_partially_blocked_icon_and_verdict(tmp_path: Path):
     verdicts = {
         "schema_version": 1,
-        "verdicts": [{
-            "abuse_case_id": "AC-T-002",
-            "chain_verdict": "partially_blocked",
-            "step_verdicts": [
-                {"step": 1, "verdict": "confirmed", "matched_finding_id": "T-001",
-                 "evidence": {"file": "user.ts", "line": 44}, "controls_found": []},
-                {"step": 2, "verdict": "confirmed", "matched_finding_id": "T-002",
-                 "evidence": {"file": "user.ts", "line": 88}, "controls_found": ["allowlist"]},
-            ],
-        }],
+        "verdicts": [
+            {
+                "abuse_case_id": "AC-T-002",
+                "chain_verdict": "partially_blocked",
+                "step_verdicts": [
+                    {
+                        "step": 1,
+                        "verdict": "confirmed",
+                        "matched_finding_id": "T-001",
+                        "evidence": {"file": "user.ts", "line": 44},
+                        "controls_found": [],
+                    },
+                    {
+                        "step": 2,
+                        "verdict": "confirmed",
+                        "matched_finding_id": "T-002",
+                        "evidence": {"file": "user.ts", "line": 88},
+                        "controls_found": ["allowlist"],
+                    },
+                ],
+            }
+        ],
     }
     _setup(tmp_path, verdicts)
     m = rac.build_models(tmp_path, None)[0]
@@ -157,11 +189,20 @@ def test_not_applicable_case_excluded(tmp_path: Path):
 _MATCHES_NA = {
     "schema_version": 1,
     "matches": [
-        {"abuse_case_id": "AC-T-002", "title": "Bulk Data Exfiltration via BOLA",
-         "source": "mandatory", "structural_verdict": "not_applicable",
-         "reason": "no finding matched the required chain step(s) for this scenario"},
-        {"abuse_case_id": "AC-T-001", "title": "Account Takeover via XSS",
-         "source": "mandatory", "structural_verdict": "candidate", "reason": None},
+        {
+            "abuse_case_id": "AC-T-002",
+            "title": "Bulk Data Exfiltration via BOLA",
+            "source": "mandatory",
+            "structural_verdict": "not_applicable",
+            "reason": "no finding matched the required chain step(s) for this scenario",
+        },
+        {
+            "abuse_case_id": "AC-T-001",
+            "title": "Account Takeover via XSS",
+            "source": "mandatory",
+            "structural_verdict": "candidate",
+            "reason": None,
+        },
     ],
 }
 
@@ -206,7 +247,10 @@ def test_main_writes_fragment_and_sidecar_validates(tmp_path: Path):
         missing = _SIDECAR_REQUIRED_CASE_KEYS - set(case)
         assert not missing, f"sidecar case missing keys: {missing}"
         assert case["chain_verdict"] in {
-            "fully_viable", "partially_blocked", "mitigated", "inconclusive",
+            "fully_viable",
+            "partially_blocked",
+            "mitigated",
+            "inconclusive",
         }
         assert case["combined_risk"] in {"Critical", "High", "Medium", "Low", "Informational"}
 

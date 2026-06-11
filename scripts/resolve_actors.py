@@ -28,15 +28,13 @@ import glob as glob_module
 import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
-from pathlib import Path
 
 import yaml
 
-
 # ── helpers ─────────────────────────────────────────────────────────────────
+
 
 def _load_yaml(path: str) -> dict:
     with open(path) as f:
@@ -103,8 +101,7 @@ def _check_stale(actor: dict, repo_root: str) -> bool:
             continue
         try:
             result = subprocess.run(
-                ["rg", "-l", "--pcre2", pattern] + matched,
-                capture_output=True, text=True, timeout=30
+                ["rg", "-l", "--pcre2", pattern] + matched, capture_output=True, text=True, timeout=30
             )
             if result.returncode == 0 and result.stdout.strip():
                 return False  # pattern still matches
@@ -120,7 +117,7 @@ def _sha256(content: str) -> str:
 def _parse_disables(raw: list) -> list[dict]:
     """Normalize disable list: accept str IDs or {id, reason} objects (actors.md §3/§6/§7)."""
     out: list[dict] = []
-    for item in (raw or []):
+    for item in raw or []:
         if isinstance(item, str):
             out.append({"id": item, "reason": None})
         elif isinstance(item, dict) and "id" in item:
@@ -128,9 +125,7 @@ def _parse_disables(raw: list) -> list[dict]:
     return out
 
 
-def _compute_actors_inputs_fingerprint(
-    plugin_root: str, profile_dir: str, add_glob: str, repo_root: str
-) -> str:
+def _compute_actors_inputs_fingerprint(plugin_root: str, profile_dir: str, add_glob: str, repo_root: str) -> str:
     """SHA256 over all actor input files for incremental cache invalidation (actors.md §13)."""
     parts: list[str] = []
     p = os.path.join(plugin_root, "data", "actors", "default-library.yaml")
@@ -151,6 +146,7 @@ def _compute_actors_inputs_fingerprint(
 
 # ── layer loading ────────────────────────────────────────────────────────────
 
+
 def load_plugin_defaults(plugin_root: str) -> list[dict]:
     path = os.path.join(plugin_root, "data", "actors", "default-library.yaml")
     if not os.path.exists(path):
@@ -165,9 +161,7 @@ def load_plugin_defaults(plugin_root: str) -> list[dict]:
     return actors
 
 
-def load_enterprise_actors(
-    org_profile_effective: dict, profile_dir: str
-) -> tuple[list[dict], list[dict], bool, str]:
+def load_enterprise_actors(org_profile_effective: dict, profile_dir: str) -> tuple[list[dict], list[dict], bool, str]:
     """Returns (actors, disables, inherit_defaults, add_glob).
 
     disables is a list of {id, reason} dicts (actors.md §6 — disable_reason is required for audit).
@@ -229,6 +223,7 @@ def load_repo_actors(
 
 # ── reach-equivalence ────────────────────────────────────────────────────────
 
+
 def apply_reach_equivalence(resolved_map: dict, signals: dict, plugin_root: str) -> dict:
     """Apply reach-equivalence collapse rules from default-library.yaml."""
     lib_path = os.path.join(plugin_root, "data", "actors", "default-library.yaml")
@@ -258,6 +253,7 @@ def apply_reach_equivalence(resolved_map: dict, signals: dict, plugin_root: str)
 
 
 # ── main resolver ────────────────────────────────────────────────────────────
+
 
 def resolve(
     plugin_root: str,
@@ -312,25 +308,27 @@ def resolve(
             aid = a["id"]
             if aid in resolved_map:
                 resolved_map[aid] = _deep_merge_actor(resolved_map[aid], a)
-                resolved_map[aid]["_provenance"]["modified_by"] = (
-                    resolved_map[aid]["_provenance"].get("modified_by", []) + ["enterprise"]
-                )
+                resolved_map[aid]["_provenance"]["modified_by"] = resolved_map[aid]["_provenance"].get(
+                    "modified_by", []
+                ) + ["enterprise"]
             else:
                 resolved_map[aid] = copy.deepcopy(a)
     elif ent_actors:
-        run_issues.append({
-            "class": "repo_inherit_org_disabled",
-            "severity": "info",
-            "message": f"Repo set inherit_org: false — {len(ent_actors)} enterprise actor(s) excluded from this run.",
-        })
+        run_issues.append(
+            {
+                "class": "repo_inherit_org_disabled",
+                "severity": "info",
+                "message": f"Repo set inherit_org: false — {len(ent_actors)} enterprise actor(s) excluded from this run.",
+            }
+        )
 
     for a in repo_actors:
         aid = a["id"]
         if aid in resolved_map:
             resolved_map[aid] = _deep_merge_actor(resolved_map[aid], a)
-            resolved_map[aid]["_provenance"]["modified_by"] = (
-                resolved_map[aid]["_provenance"].get("modified_by", []) + ["repo"]
-            )
+            resolved_map[aid]["_provenance"]["modified_by"] = resolved_map[aid]["_provenance"].get(
+                "modified_by", []
+            ) + ["repo"]
         else:
             resolved_map[aid] = copy.deepcopy(a)
 
@@ -350,28 +348,34 @@ def resolve(
             resolved_map[did]["_provenance"]["disable_reason"] = reason
             all_disables.append({"id": did, "by": "enterprise", "reason": reason})
             if not reason:
-                run_issues.append({
-                    "class": "disabled_actor_no_rationale",
-                    "actor_id": did,
-                    "severity": "defect",
-                    "message": f"Enterprise disabled actor {did} without disable_reason (actors.md §6).",
-                })
+                run_issues.append(
+                    {
+                        "class": "disabled_actor_no_rationale",
+                        "actor_id": did,
+                        "severity": "defect",
+                        "message": f"Enterprise disabled actor {did} without disable_reason (actors.md §6).",
+                    }
+                )
     for d in repo_disable:
         did, reason = d["id"], d["reason"]
         if did in resolved_map:
             if resolved_map[did]["_provenance"].get("disabled_by") == "enterprise":
-                print(f"[resolve_actors] WARNING: repo cannot re-enable enterprise-disabled actor {did}", file=sys.stderr)
+                print(
+                    f"[resolve_actors] WARNING: repo cannot re-enable enterprise-disabled actor {did}", file=sys.stderr
+                )
                 continue
             resolved_map[did]["_provenance"]["disabled_by"] = "repo"
             resolved_map[did]["_provenance"]["disable_reason"] = reason
             all_disables.append({"id": did, "by": "repo", "reason": reason})
             if not reason:
-                run_issues.append({
-                    "class": "disabled_actor_no_rationale",
-                    "actor_id": did,
-                    "severity": "defect",
-                    "message": f"Repo disabled actor {did} without disable_reason (actors.md §7).",
-                })
+                run_issues.append(
+                    {
+                        "class": "disabled_actor_no_rationale",
+                        "actor_id": did,
+                        "severity": "defect",
+                        "message": f"Repo disabled actor {did} without disable_reason (actors.md §7).",
+                    }
+                )
 
     # --- Apply activation conditions ---
     for aid, actor in resolved_map.items():
@@ -385,21 +389,25 @@ def resolve(
             # actors.md §0 Done-#1: skipped default-library actors must be visible in the audit
             # ("Kein Actor verschwindet stillschweigend").
             if actor["_provenance"].get("layer") == "plugin":
-                run_issues.append({
-                    "class": "default_actor_skipped",
-                    "actor_id": aid,
-                    "severity": "info",
-                    "message": f"Default actor {aid} not activated — {reason}",
-                })
+                run_issues.append(
+                    {
+                        "class": "default_actor_skipped",
+                        "actor_id": aid,
+                        "severity": "info",
+                        "message": f"Default actor {aid} not activated — {reason}",
+                    }
+                )
             continue
         if "signals not available" in reason:
             actor["_provenance"]["signal_status"] = "activate-with-warning"
-            run_issues.append({
-                "class": "actor_signal_missing",
-                "actor_id": aid,
-                "severity": "info",
-                "message": f"Actor {aid} activated without signal verification — {reason}",
-            })
+            run_issues.append(
+                {
+                    "class": "actor_signal_missing",
+                    "actor_id": aid,
+                    "severity": "info",
+                    "message": f"Actor {aid} activated without signal verification — {reason}",
+                }
+            )
         else:
             actor["_provenance"]["signal_status"] = "normal"
 
@@ -409,25 +417,29 @@ def resolve(
             continue
         if _check_stale(actor, repo_root):
             actor["_provenance"]["stale"] = True
-            run_issues.append({
-                "class": "stale_actor_evidence",
-                "actor_id": aid,
-                "severity": "advisory",
-                "message": f"Actor {aid} evidence pattern no longer matches — may be outdated",
-            })
+            run_issues.append(
+                {
+                    "class": "stale_actor_evidence",
+                    "actor_id": aid,
+                    "severity": "advisory",
+                    "message": f"Actor {aid} evidence pattern no longer matches — may be outdated",
+                }
+            )
 
     # --- Reach-equivalence ---
     resolved_map = apply_reach_equivalence(resolved_map, signals, plugin_root)
 
     # --- Compute actors_inputs_fingerprint (actors.md §13) ---
-    actors_inputs_fingerprint = _compute_actors_inputs_fingerprint(
-        plugin_root, profile_dir, ent_add_glob, repo_root
-    )
+    actors_inputs_fingerprint = _compute_actors_inputs_fingerprint(plugin_root, profile_dir, ent_add_glob, repo_root)
     with open(os.path.join(output_dir, ".actor-fingerprints.json"), "w") as f:
-        json.dump({
-            "schema_version": 1,
-            "actors_inputs_fingerprint": actors_inputs_fingerprint,
-        }, f, indent=2)
+        json.dump(
+            {
+                "schema_version": 1,
+                "actors_inputs_fingerprint": actors_inputs_fingerprint,
+            },
+            f,
+            indent=2,
+        )
 
     # --- Write .actors-merged-static.json (input for discovery agent) ---
     merged_static = {
@@ -447,7 +459,9 @@ def resolve(
     merged_static_path = os.path.join(output_dir, ".actors-merged-static.json")
     with open(merged_static_path, "w") as f:
         json.dump(merged_static, f, indent=2)
-    print(f"[resolve_actors] .actors-merged-static.json written ({len(merged_static['resolved_actors'])} active actors)")
+    print(
+        f"[resolve_actors] .actors-merged-static.json written ({len(merged_static['resolved_actors'])} active actors)"
+    )
 
     # --- Quick-mode: skip discovery, write sentinel ---
     if quick_mode or not discovery_config.get("enabled", True):
@@ -492,10 +506,13 @@ def resolve(
         json.dump(resolved_out, f, indent=2)
 
     active_count = sum(1 for a in resolved_map.values() if a["_provenance"].get("active"))
-    print(f"[resolve_actors] .actors-resolved.json written ({active_count} active, {len(discovery_actors)} from discovery, {len(run_issues)} run-issues)")
+    print(
+        f"[resolve_actors] .actors-resolved.json written ({active_count} active, {len(discovery_actors)} from discovery, {len(run_issues)} run-issues)"
+    )
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Resolve Actor Layer (4-layer merge)")

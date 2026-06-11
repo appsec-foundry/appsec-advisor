@@ -192,15 +192,18 @@ def tally_and_check(sid: str, agent: str, output_dir: str) -> Optional[dict]:
         return None
 
     state = _read_state(output_dir)
-    entry = state.get(sid, {
-        "agent": agent,
-        "turns": 0,
-        "max_turns": max_turns,
-        "warn_emitted": False,
-        "critical_emitted": False,
-        "max_emitted": False,
-        "first_seen": int(time.time()),
-    })
+    entry = state.get(
+        sid,
+        {
+            "agent": agent,
+            "turns": 0,
+            "max_turns": max_turns,
+            "warn_emitted": False,
+            "critical_emitted": False,
+            "max_emitted": False,
+            "first_seen": int(time.time()),
+        },
+    )
     # Refresh agent name (initial Pre may fire before session-agent map is
     # populated; later Post will have it).
     if agent != "unknown":

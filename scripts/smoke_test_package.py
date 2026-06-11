@@ -83,9 +83,7 @@ def check_org_profile_wired(root: Path) -> None:
     config_path = root / "config.json"
     if not config_path.is_file():
         _die("missing config.json")
-    profile = json.loads(config_path.read_text(encoding="utf-8")).get(
-        "organization_profile", {}
-    )
+    profile = json.loads(config_path.read_text(encoding="utf-8")).get("organization_profile", {})
     if profile.get("enabled") is not True:
         _die("config.json organization_profile.enabled is not true")
     rel = profile.get("path")
@@ -101,9 +99,7 @@ def check_org_profile_wired(root: Path) -> None:
 def check_namespace_rewritten(root: Path, name: str) -> None:
     needle = f"{UPSTREAM_NAMESPACE}:"
     leaks = [
-        str(p.relative_to(root))
-        for p in _text_files(root)
-        if needle in p.read_text(encoding="utf-8", errors="ignore")
+        str(p.relative_to(root)) for p in _text_files(root) if needle in p.read_text(encoding="utf-8", errors="ignore")
     ]
     if leaks:
         shown = "\n  - ".join(leaks[:20])
@@ -112,8 +108,7 @@ def check_namespace_rewritten(root: Path, name: str) -> None:
     entry = f"{name}:create-threat-model"
     skills = root / "skills"
     if skills.is_dir() and not any(
-        entry in p.read_text(encoding="utf-8", errors="ignore")
-        for p in _text_files(skills)
+        entry in p.read_text(encoding="utf-8", errors="ignore") for p in _text_files(skills)
     ):
         _die(f"entry command {entry!r} not found under skills/")
 
@@ -141,10 +136,7 @@ def check_surface_manifest(root: Path) -> None:
             _die(f"package surface says hook {hook!r} is removed, but it is registered")
     if "security-coach" in (hooks.get("removed") or []):
         if (root / "hooks" / "steering_keywords.json").exists():
-            _die(
-                "package surface removed security-coach but "
-                "steering_keywords.json is still present"
-            )
+            _die("package surface removed security-coach but steering_keywords.json is still present")
 
 
 def main(argv: list[str] | None = None) -> int:

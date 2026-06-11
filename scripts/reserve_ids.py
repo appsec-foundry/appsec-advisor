@@ -58,12 +58,12 @@ from typing import Any
 # ID-type → (counter key, prefix, default-width). Adding a new ID class
 # means adding one entry here AND adding a counter key to baseline_state.py.
 _ID_TYPES = {
-    "threat":       ("next_threat_id",       "T",   3),
-    "mitigation":   ("next_mitigation_id",   "M",   3),
-    "asset":        ("next_asset_id",        "A",   3),
-    "meta_finding": ("next_meta_finding_id", "MF",  3),
-    "hyp":          ("next_hyp_id",          "HYP", 3),
-    "abuse_case":   ("next_abuse_case_id",   "AC",  3),
+    "threat": ("next_threat_id", "T", 3),
+    "mitigation": ("next_mitigation_id", "M", 3),
+    "asset": ("next_asset_id", "A", 3),
+    "meta_finding": ("next_meta_finding_id", "MF", 3),
+    "hyp": ("next_hyp_id", "HYP", 3),
+    "abuse_case": ("next_abuse_case_id", "AC", 3),
 }
 
 # Lock-acquisition timeout. Phases write sidecars in single-digit ms;
@@ -109,9 +109,7 @@ def _parse_counter(raw: Any, fallback: int = 1) -> int:
     return fallback
 
 
-def reserve(
-    output_dir: Path, id_type: str, count: int
-) -> list[str]:
+def reserve(output_dir: Path, id_type: str, count: int) -> list[str]:
     """Atomically reserve `count` consecutive IDs of the given type.
 
     Returns the list of newly-reserved prefixed IDs (e.g. ["M-008","M-009"]).
@@ -147,8 +145,7 @@ def reserve(
         except json.JSONDecodeError:
             # Corrupted baseline.json — refuse rather than silently wiping it.
             raise RuntimeError(
-                f"baseline.json is malformed JSON; refusing to reserve IDs. "
-                f"Inspect {path} or delete it to start fresh."
+                f"baseline.json is malformed JSON; refusing to reserve IDs. Inspect {path} or delete it to start fresh."
             )
 
         counters = state.setdefault("id_counters", {})

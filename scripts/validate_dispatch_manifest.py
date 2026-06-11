@@ -24,6 +24,7 @@ Exit codes
 1  Manifest invalid — do NOT dispatch.
 2  Usage / IO error (bad path, unreadable schema).
 """
+
 from __future__ import annotations
 
 import argparse

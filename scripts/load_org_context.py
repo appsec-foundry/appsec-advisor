@@ -35,6 +35,7 @@ Exit codes
     1 — at least one hard error (symlink escape, secret detected)
     2 — usage / IO error
 """
+
 from __future__ import annotations
 
 import argparse
@@ -67,10 +68,10 @@ WRAPPER_PREAMBLE = (
 # Conservative secret patterns. False positives are preferable to leaking
 # context that embeds a real credential.
 _SECRET_PATTERNS = [
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),                       # AWS access key
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),  # AWS access key
     re.compile(r"\b(ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}\b"),  # GitHub tokens
-    re.compile(r"\bxox[abopsr]-[A-Za-z0-9-]{10,}\b"),          # Slack tokens
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),         # PEM keys
+    re.compile(r"\bxox[abopsr]-[A-Za-z0-9-]{10,}\b"),  # Slack tokens
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),  # PEM keys
     re.compile(r"\b(password|passwd|secret|api_key|apikey)\s*[:=]\s*['\"][^'\"\n]{8,}", re.IGNORECASE),
 ]
 
@@ -82,6 +83,7 @@ _SECRET_PATTERNS = [
 
 def _load_yaml(path: Path) -> Any:
     import yaml
+
     with path.open() as fh:
         return yaml.safe_load(fh)
 
@@ -94,7 +96,7 @@ def _load_yaml(path: Path) -> Any:
 def _safe_resolve(profile_dir: Path, rel: str) -> tuple[Path | None, str | None]:
     if Path(rel).is_absolute():
         return None, "absolute paths are not allowed"
-    candidate = (profile_dir / rel)
+    candidate = profile_dir / rel
     if candidate.is_symlink():
         return None, "symlink"
     resolved = candidate.resolve()
@@ -119,9 +121,10 @@ def strip_frontmatter(text: str) -> tuple[str, dict | None]:
     match = _FRONTMATTER_RE.match(text)
     if not match:
         return text, None
-    body = text[match.end():]
+    body = text[match.end() :]
     try:
         import yaml
+
         fm = yaml.safe_load(match.group(1)) or {}
     except Exception:  # noqa: BLE001
         fm = {}
@@ -249,13 +252,9 @@ def load(
     for d in docs:
         record = _load_document(profile_dir, d)
         if record.pop("hard_error", False):
-            hard_errors.append(
-                f"document '{record['id']}': {record['reason']}"
-            )
+            hard_errors.append(f"document '{record['id']}': {record['reason']}")
         if record["loaded"]:
-            loaded_pieces.append(
-                f"## Context: {record['id']} ({record['purpose']})\n\n{record['text'].rstrip()}\n"
-            )
+            loaded_pieces.append(f"## Context: {record['id']} ({record['purpose']})\n\n{record['text'].rstrip()}\n")
         manifest.append(record)
 
     if loaded_pieces:
@@ -271,9 +270,7 @@ def load(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Load markdown context referenced by an org profile."
-    )
+    parser = argparse.ArgumentParser(description="Load markdown context referenced by an org profile.")
     parser.add_argument("--profile", required=True)
     parser.add_argument(
         "--document-ids",
@@ -289,11 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: profile not found: {profile_path}", file=sys.stderr)
         return 2
 
-    doc_ids = (
-        [s.strip() for s in args.document_ids.split(",") if s.strip()]
-        if args.document_ids
-        else None
-    )
+    doc_ids = [s.strip() for s in args.document_ids.split(",") if s.strip()] if args.document_ids else None
     wrapped, manifest, hard_errors = load(profile_path, doc_ids)
     if hard_errors:
         for e in hard_errors:
@@ -305,9 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         out_dir = Path(args.output_dir).resolve()
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / ".threat-modeling-context.md").write_text(wrapped)
-        (out_dir / ".org-context-manifest.json").write_text(
-            json.dumps({"documents": manifest}, indent=2) + "\n"
-        )
+        (out_dir / ".org-context-manifest.json").write_text(json.dumps({"documents": manifest}, indent=2) + "\n")
     return 1 if hard_errors else 0
 
 

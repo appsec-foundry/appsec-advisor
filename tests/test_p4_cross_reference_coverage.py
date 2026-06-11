@@ -286,7 +286,13 @@ class TestDeriveControlMitigates:
             # required-token set {signature, jwt, verify} matches the test's
             # "JWT signature verification" control, so the domain match survives
             # the false-positive gate (unlike a hashing CWE + a JWT control).
-            {"id": "T-005", "title": "JWT not verified", "scenario": "jwt signature not validated", "cwe": "CWE-347", "risk": "Critical"},
+            {
+                "id": "T-005",
+                "title": "JWT not verified",
+                "scenario": "jwt signature not validated",
+                "cwe": "CWE-347",
+                "risk": "Critical",
+            },
             # T-006 — IDOR (CWE-639 → Authorization)
             {"id": "T-006", "title": "IDOR", "scenario": "no ownership check", "cwe": "CWE-639", "risk": "High"},
         ]

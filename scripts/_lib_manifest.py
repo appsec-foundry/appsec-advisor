@@ -17,26 +17,34 @@ Design choices:
     we substring-scan; for line-oriented formats (requirements.txt,
     Gemfile, etc.) we report the literal line.
 """
+
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterator
 
 
 @dataclass(frozen=True)
 class Dep:
-    ecosystem: str           # one of: npm, pip, go, maven, gem, composer, cargo, nuget
-    package: str             # canonical package name
-    version: str | None      # raw pin (may include ^/~/>= prefixes); None if unpinned
-    manifest: str            # repo-relative path of the manifest
-    line: int                # 1-based line number in the manifest (best effort)
+    ecosystem: str  # one of: npm, pip, go, maven, gem, composer, cargo, nuget
+    package: str  # canonical package name
+    version: str | None  # raw pin (may include ^/~/>= prefixes); None if unpinned
+    manifest: str  # repo-relative path of the manifest
+    line: int  # 1-based line number in the manifest (best effort)
 
 
 _NPM_MANIFEST_NAMES = ("package.json",)
-_PIP_MANIFEST_NAMES = ("requirements.txt", "requirements-dev.txt", "requirements-test.txt", "pyproject.toml", "setup.py", "Pipfile")
+_PIP_MANIFEST_NAMES = (
+    "requirements.txt",
+    "requirements-dev.txt",
+    "requirements-test.txt",
+    "pyproject.toml",
+    "setup.py",
+    "Pipfile",
+)
 _GO_MANIFEST_NAMES = ("go.mod",)
 _MAVEN_MANIFEST_NAMES = ("pom.xml", "build.gradle", "build.gradle.kts")
 _GEM_MANIFEST_NAMES = ("Gemfile",)
@@ -51,9 +59,14 @@ def discover_manifests(repo_root: Path) -> list[Path]:
     """
     skip = {"node_modules", ".venv", "venv", "vendor", "target", "build", "dist", ".git", ".tox", "__pycache__"}
     all_names = (
-        _NPM_MANIFEST_NAMES + _PIP_MANIFEST_NAMES + _GO_MANIFEST_NAMES
-        + _MAVEN_MANIFEST_NAMES + _GEM_MANIFEST_NAMES + _COMPOSER_MANIFEST_NAMES
-        + _CARGO_MANIFEST_NAMES + _NUGET_MANIFEST_NAMES
+        _NPM_MANIFEST_NAMES
+        + _PIP_MANIFEST_NAMES
+        + _GO_MANIFEST_NAMES
+        + _MAVEN_MANIFEST_NAMES
+        + _GEM_MANIFEST_NAMES
+        + _COMPOSER_MANIFEST_NAMES
+        + _CARGO_MANIFEST_NAMES
+        + _NUGET_MANIFEST_NAMES
     )
     out: list[Path] = []
     for p in repo_root.rglob("*"):
@@ -106,8 +119,7 @@ def parse_manifest(path: Path, repo_root: Path) -> list[Dep]:
 
 def enumerate_deps(repo_root: Path) -> Iterator[Dep]:
     for m in discover_manifests(repo_root):
-        for dep in parse_manifest(m, repo_root):
-            yield dep
+        yield from parse_manifest(m, repo_root)
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +173,11 @@ def _parse_pyproject_toml(path: Path, rel: str) -> list[Dep]:
     for i, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if line.startswith("[") and line.endswith("]"):
-            in_deps = "dependencies" in line.lower() or line in ("[tool.poetry.dependencies]", "[tool.poetry.dev-dependencies]", "[project.dependencies]")
+            in_deps = "dependencies" in line.lower() or line in (
+                "[tool.poetry.dependencies]",
+                "[tool.poetry.dev-dependencies]",
+                "[project.dependencies]",
+            )
             continue
         if in_deps and "=" in line and not line.startswith("#"):
             name = line.split("=", 1)[0].strip().strip('"').strip("'")
@@ -230,7 +246,7 @@ def _parse_go_mod(path: Path, rel: str) -> list[Dep]:
             in_require_block = False
             continue
         if s.startswith("require ") and not s.startswith("require ("):
-            body = s[len("require "):].strip()
+            body = s[len("require ") :].strip()
             m = _GO_REQUIRE_LINE_RE.match(body)
             if m:
                 out.append(Dep("go", m.group(1), m.group(2), rel, i))

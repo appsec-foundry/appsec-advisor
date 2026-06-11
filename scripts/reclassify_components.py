@@ -29,6 +29,7 @@ produces no further changes.
 Usage:
     python3 reclassify_components.py <output_dir>
 """
+
 from __future__ import annotations
 
 import json
@@ -140,7 +141,7 @@ def _primary_component_id(components: list) -> str:
     for c in components:
         if not isinstance(c, dict):
             continue
-        for g in (c.get("paths") or []):
+        for g in c.get("paths") or []:
             if isinstance(g, str) and entry_re.search(g):
                 return (c.get("id") or "").strip()
     for c in components:
@@ -190,13 +191,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         if len(candidate_hits) == 1:
             new_cid = next(iter(candidate_hits))
             token = f"tier_reclassified_from_{current or 'unknown'}"
-        elif (
-            not candidate_hits
-            and current
-            and current not in known_ids
-            and primary_id
-            and primary_id != current
-        ):
+        elif not candidate_hits and current and current not in known_ids and primary_id and primary_id != current:
             # Fallback: `current` is a non-DFD pseudo-component (e.g.
             # "ci-cd-pipeline") with no §2.3 anchor, and its evidence file
             # (Dockerfile, .github/*) matches no component glob, so the
@@ -218,12 +213,14 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         if token not in flags:
             flags.append(token)
         t["evidence_flags"] = flags
-        changes.append({
-            "id": t.get("id") or "<anon>",
-            "from": current or "<unset>",
-            "to": new_cid,
-            "evidence_files": files,
-        })
+        changes.append(
+            {
+                "id": t.get("id") or "<anon>",
+                "from": current or "<unset>",
+                "to": new_cid,
+                "evidence_files": files,
+            }
+        )
 
     if changes:
         _sync_component_threat_ids(components, changes)
@@ -297,13 +294,12 @@ def main(argv: list[str]) -> int:
     data, changes = reclassify(data)
     if changes:
         yaml_path.write_text(
-            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096,
-                           default_flow_style=False),
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
             encoding="utf-8",
         )
         n_merged = _sync_threats_merged(output_dir, changes)
         details = ", ".join(f"{c['id']}:{c['from']}→{c['to']}" for c in changes[:8])
-        more = f" (+{len(changes)-8} more)" if len(changes) > 8 else ""
+        more = f" (+{len(changes) - 8} more)" if len(changes) > 8 else ""
         print(
             f"reclassify_components: reassigned {len(changes)} threat(s) "
             f"[{details}{more}]; updated .threats-merged.json={n_merged}"

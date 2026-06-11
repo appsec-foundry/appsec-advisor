@@ -14,6 +14,7 @@ appear in every mode (default progress and ``--verbose`` raw):
 Both fail soft: a missing/unparseable file prints nothing and exits 0 so the
 wrapper script is never disrupted.
 """
+
 from __future__ import annotations
 
 import sys
@@ -41,16 +42,14 @@ def _summarize_requirements(path: str) -> int:
     if not data:
         return 0
     categories = data.get("categories") or []
-    req_count = sum(len(c.get("requirements") or []) for c in categories
-                    if isinstance(c, dict))
+    req_count = sum(len(c.get("requirements") or []) for c in categories if isinstance(c, dict))
     bp_count = len(data.get("blueprints") or [])
     if not req_count and not bp_count:
         return 0
 
     # Prefer the named sources (sources_meta[].title); fall back to the
     # top-level description so a name is shown whenever one exists.
-    names = [s.get("title") for s in (data.get("sources_meta") or [])
-             if isinstance(s, dict) and s.get("title")]
+    names = [s.get("title") for s in (data.get("sources_meta") or []) if isinstance(s, dict) and s.get("title")]
     name_str = ", ".join(names) if names else (data.get("description") or "")
     name_str = name_str.strip().replace("\n", " ")
     if len(name_str) > 80:
@@ -85,8 +84,7 @@ def _summarize_findings(path: str) -> int:
             continue
         sev = _severity(t)
         if sev in buckets:
-            buckets[sev].append((t.get("id") or t.get("local_id") or "?",
-                                 (t.get("title") or "").strip()))
+            buckets[sev].append((t.get("id") or t.get("local_id") or "?", (t.get("title") or "").strip()))
     crit, high = buckets["Critical"], buckets["High"]
     if not crit and not high:
         return 0
@@ -103,8 +101,7 @@ def _summarize_findings(path: str) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 3 or argv[1] not in ("requirements", "findings"):
-        print("usage: run_summary.py {requirements|findings} <yaml-path>",
-              file=sys.stderr)
+        print("usage: run_summary.py {requirements|findings} <yaml-path>", file=sys.stderr)
         return 2
     mode, path = argv[1], argv[2]
     if not Path(path).is_file():

@@ -38,7 +38,6 @@ SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
 # which fragments validate against which schemas.
 FRAGMENT_SCHEMAS: dict[str, str] = {
     "verdict": "verdict.schema.json",
-    "architecture-assessment": "architecture-assessment.schema.json",
     "critical-attack-tree": "critical-attack-tree.schema.json",
     "compound-chains": "compound-chains.schema.json",
     "operational-strengths-overrides": "operational-strengths-overrides.schema.json",
@@ -72,7 +71,6 @@ _STEM_TO_TYPE: dict[str, str] = {v.replace(".schema.json", ""): k for k, v in FR
 # fragments, they are aggregator inputs (live at OUTPUT_DIR/.X.json).
 _FRAGMENT_FILENAMES: dict[str, str] = {
     "verdict": "ms-verdict.json",
-    "architecture-assessment": "ms-architecture-assessment.json",
     "critical-attack-tree": "ms-critical-attack-tree.json",
     "compound-chains": "compound-chains.json",
     "operational-strengths-overrides": "operational-strengths-overrides.json",
@@ -157,7 +155,6 @@ def run_pre_render_gate(
     compose_threat_model.py run):
 
         ms-verdict.json
-        ms-architecture-assessment.json
         system-overview.md
         architecture-diagrams.md
         attack-walkthroughs.md
@@ -176,7 +173,6 @@ def run_pre_render_gate(
     # scripts (both are run standalone from the skill layer).
     required_fragments = (
         "ms-verdict.json",
-        "ms-architecture-assessment.json",
         "system-overview.md",
         "architecture-diagrams.md",
         "attack-walkthroughs.md",

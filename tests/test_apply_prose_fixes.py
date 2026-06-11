@@ -7,7 +7,6 @@ import sys
 import textwrap
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "apply_prose_fixes.py"
 
@@ -304,9 +303,14 @@ def test_section3_token_block_is_fully_formatted():
     """)
     fixed, _ = prose.apply_fixes(md)
     for tok in (
-        "`express-jwt@0.1.3`", "`jws.verify()`", "`lib/insecurity.ts:57`",
-        "`alg:none`", "`HS256`", "`/encryptionkeys/jwt.pub`",
-        "`jsonwebtoken@0.4.0`", "`CVE-2020-28042`",
+        "`express-jwt@0.1.3`",
+        "`jws.verify()`",
+        "`lib/insecurity.ts:57`",
+        "`alg:none`",
+        "`HS256`",
+        "`/encryptionkeys/jwt.pub`",
+        "`jsonwebtoken@0.4.0`",
+        "`CVE-2020-28042`",
     ):
         assert tok in fixed, f"{tok} not backticked"
     # Idempotent — a second pass changes nothing.

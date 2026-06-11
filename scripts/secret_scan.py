@@ -14,13 +14,13 @@ Run as a script for ad-hoc scans:
 
     python scripts/secret_scan.py path/to/threat-model.md
 """
+
 from __future__ import annotations
 
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-
 
 # Markers that indicate a value has already been masked / redacted.
 # A loose-pattern match whose captured value contains any of these is skipped.
@@ -61,16 +61,12 @@ _PATTERNS: list[_Pattern] = [
     _Pattern("stripe_test_secret", re.compile(r"\bsk_test_[A-Za-z0-9]{24,}\b"), True),
     _Pattern(
         "jwt",
-        re.compile(
-            r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"
-        ),
+        re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b"),
         True,
     ),
     _Pattern(
         "pem_private_key",
-        re.compile(
-            r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"
-        ),
+        re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"),
         True,
     ),
     # --- Loose key/value patterns (mask-marker exempts) ---------------------
@@ -103,9 +99,9 @@ _PATTERNS: list[_Pattern] = [
 # ``deadbeef1234``) are NOT excluded — those stay flagged.
 _CODE_REFERENCE_RE = re.compile(
     r"^(?:"
-    r"[A-Za-z_]+(?:\.[A-Za-z_]+)+"   # dotted path:  security.hash
-    r"|[a-z]+[A-Z][A-Za-z]*"         # camelCase:    publicKey
-    r"|[A-Z][a-z]+[A-Z][A-Za-z]*"    # PascalCase:   PublicKey
+    r"[A-Za-z_]+(?:\.[A-Za-z_]+)+"  # dotted path:  security.hash
+    r"|[a-z]+[A-Z][A-Za-z]*"  # camelCase:    publicKey
+    r"|[A-Z][a-z]+[A-Z][A-Za-z]*"  # PascalCase:   PublicKey
     r")$"
 )
 
@@ -120,9 +116,7 @@ def _looks_like_code_reference(value: str) -> bool:
 _PROSE_WORD_RE = re.compile(r"^[a-z]{4,}$")
 
 
-def _is_prose_credential_false_positive(
-    value: str, op: str | None, quoted: bool, text: str, start: int
-) -> bool:
+def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool, text: str, start: int) -> bool:
     """A credential keyword appearing mid-sentence in prose is not an
     assignment. Example false positive that blocked a release on the
     2026-06-05 juice-shop run::
@@ -205,9 +199,7 @@ def scan_text(text: str) -> list[SecretHit]:
                     continue
                 # Credential keyword used mid-sentence in prose (e.g.
                 # "Rotate the secret: existing rows…") — not an assignment.
-                if _is_prose_credential_false_positive(
-                    value, groups.get("op"), bool(groups.get("q")), text, m.start()
-                ):
+                if _is_prose_credential_false_positive(value, groups.get("op"), bool(groups.get("q")), text, m.start()):
                     continue
             snippet = matched[:80].replace("\n", " ")
             hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start())))
@@ -222,7 +214,7 @@ def scan_file(path: Path) -> list[SecretHit]:
     return scan_text(text)
 
 
-def _mask_match(pat: _Pattern, m: "re.Match[str]") -> str:
+def _mask_match(pat: _Pattern, m: re.Match[str]) -> str:
     """Return the redacted replacement for a single secret match, following
     agents/shared/secret-handling.md: PEM markers fully redacted, strict token
     formats keep their first 4 chars + ``****``, credential assignments keep the
@@ -258,7 +250,8 @@ def mask_text(text: str) -> tuple[str, list[str]]:
         return text, []
     applied: list[str] = []
     for pat in _PATTERNS:
-        def _repl(m: "re.Match[str]", _pat: _Pattern = pat) -> str:
+
+        def _repl(m: re.Match[str], _pat: _Pattern = pat) -> str:
             groups = m.groupdict() or {}
             value = m.group("val") if "val" in groups else m.group(0)
             if not _pat.strict:
@@ -268,9 +261,7 @@ def mask_text(text: str) -> tuple[str, list[str]]:
                     return m.group(0)
                 # Mirror the detector's prose guard so masking never corrupts a
                 # remediation sentence like "Rotate the secret: existing rows…".
-                if _is_prose_credential_false_positive(
-                    value, groups.get("op"), bool(groups.get("q")), text, m.start()
-                ):
+                if _is_prose_credential_false_positive(value, groups.get("op"), bool(groups.get("q")), text, m.start()):
                     return m.group(0)
             applied.append(_pat.name)
             return _mask_match(_pat, m)

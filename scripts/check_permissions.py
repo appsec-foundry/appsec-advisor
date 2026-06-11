@@ -72,9 +72,7 @@ def _validate_against_schema(doc: dict, doc_path: Path, schema_path: Path = SCHE
         jsonschema.validate(doc, schema)
     except jsonschema.ValidationError as exc:
         path = "/".join(str(p) for p in exc.absolute_path) or "<root>"
-        raise SystemExit(
-            f"error: {doc_path} does not match schema at {path}: {exc.message}"
-        )
+        raise SystemExit(f"error: {doc_path} does not match schema at {path}: {exc.message}")
 
 
 def load_required(path: Path = DATA_FILE) -> list[dict]:

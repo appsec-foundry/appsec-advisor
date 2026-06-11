@@ -45,6 +45,7 @@ Exit codes:
   1 — drift detected; ``--report-only`` was set
   2 — usage / IO error
 """
+
 from __future__ import annotations
 
 import argparse
@@ -54,9 +55,7 @@ import sys
 from pathlib import Path
 
 import yaml
-
 from event_log import format_line
-
 
 _TRACKED_FIELDS = (
     # (yaml_field, merged_field) — fields that MUST be byte-identical
@@ -210,21 +209,24 @@ def enforce(output_dir: Path, report_only: bool) -> tuple[int, list[dict]]:
         if "yaml_invariant_drift" not in existing_flags:
             existing_flags.append("yaml_invariant_drift")
         t["evidence_flags"] = existing_flags
-        t.setdefault("invariant_repaired", []).append({
-            "at": _now(),
-            "fields": list(per_threat.keys()),
-        })
+        t.setdefault("invariant_repaired", []).append(
+            {
+                "at": _now(),
+                "fields": list(per_threat.keys()),
+            }
+        )
 
-        _log(output_dir,
-             f"{tid} drift: " + ", ".join(
-                 f"{k}({per_threat[k]['yaml']!r}→{per_threat[k]['merged']!r})"
-                 for k in per_threat if k != "evidence"
-             ))
+        _log(
+            output_dir,
+            f"{tid} drift: "
+            + ", ".join(
+                f"{k}({per_threat[k]['yaml']!r}→{per_threat[k]['merged']!r})" for k in per_threat if k != "evidence"
+            ),
+        )
 
     if drifts and not report_only:
         yaml_path.write_text(
-            yaml.safe_dump(ydoc, sort_keys=False, allow_unicode=True, width=4096,
-                           default_flow_style=False),
+            yaml.safe_dump(ydoc, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
             encoding="utf-8",
         )
 
@@ -237,8 +239,7 @@ def main(argv: list[str]) -> int:
         description="RC.G.3/RC.K — deterministic post-Phase-11 yaml invariant gate.",
     )
     p.add_argument("output_dir", help="$OUTPUT_DIR containing threat-model.yaml + .threats-merged.json.")
-    p.add_argument("--report-only", action="store_true",
-                   help="Print drift but do not rewrite yaml.")
+    p.add_argument("--report-only", action="store_true", help="Print drift but do not rewrite yaml.")
     args = p.parse_args(argv)
 
     output_dir = Path(args.output_dir)
@@ -249,13 +250,12 @@ def main(argv: list[str]) -> int:
         print("enforce_yaml_invariants: yaml ↔ merged in lock-step (0 drifts)")
         return 0
     label = "reported (no rewrite)" if args.report_only else "repaired"
-    print(f"enforce_yaml_invariants: {label} {count} drift(s) "
-          f"across {len({d['threat_id'] for d in drifts})} threat(s)")
+    print(f"enforce_yaml_invariants: {label} {count} drift(s) across {len({d['threat_id'] for d in drifts})} threat(s)")
     for d in drifts[:6]:
         keys = ", ".join(d["fields"].keys())
         print(f"  {d['threat_id']}: {keys}")
     if len(drifts) > 6:
-        print(f"  ... and {len(drifts)-6} more")
+        print(f"  ... and {len(drifts) - 6} more")
     return 1 if args.report_only else 0
 
 

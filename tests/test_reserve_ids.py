@@ -61,22 +61,24 @@ def test_prefixed_string_counter_carry_over(tmp_path: Path):
 
 def test_integer_counter_continues(tmp_path: Path):
     (tmp_path / ".appsec-cache").mkdir()
-    (tmp_path / ".appsec-cache" / "baseline.json").write_text(
-        json.dumps({"id_counters": {"next_threat_id": 35}})
-    )
+    (tmp_path / ".appsec-cache" / "baseline.json").write_text(json.dumps({"id_counters": {"next_threat_id": 35}}))
     assert reserve_ids.reserve(tmp_path, "threat", 2) == ["T-035", "T-036"]
 
 
 def test_preserves_other_baseline_fields(tmp_path: Path):
     """A reservation must not clobber recon_fingerprint, stride_files, etc."""
     (tmp_path / ".appsec-cache").mkdir()
-    (tmp_path / ".appsec-cache" / "baseline.json").write_text(json.dumps({
-        "schema_version": 1,
-        "mode": "full",
-        "recon_fingerprint": {"a.json": "deadbeef"},
-        "stride_files": [{"path": "x.json", "sha256": "abc"}],
-        "id_counters": {"next_threat_id": 5},
-    }))
+    (tmp_path / ".appsec-cache" / "baseline.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "mode": "full",
+                "recon_fingerprint": {"a.json": "deadbeef"},
+                "stride_files": [{"path": "x.json", "sha256": "abc"}],
+                "id_counters": {"next_threat_id": 5},
+            }
+        )
+    )
     reserve_ids.reserve(tmp_path, "mitigation", 1)
     state = json.loads((tmp_path / ".appsec-cache" / "baseline.json").read_text())
     assert state["schema_version"] == 1
@@ -129,10 +131,10 @@ def test_parallel_subprocess_atomicity(tmp_path: Path):
 
     def call_once(_i: int) -> list[str]:
         out = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH),
-             "mitigation", "--count", str(per_proc),
-             "--output-dir", str(tmp_path)],
-            capture_output=True, text=True, check=True,
+            [sys.executable, str(SCRIPT_PATH), "mitigation", "--count", str(per_proc), "--output-dir", str(tmp_path)],
+            capture_output=True,
+            text=True,
+            check=True,
         )
         return json.loads(out.stdout.strip())
 
@@ -150,9 +152,10 @@ def test_parallel_subprocess_atomicity(tmp_path: Path):
 def test_cli_stdout_format(tmp_path: Path):
     """Stdout must be JSON list, parseable by shell consumers."""
     out = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH),
-         "asset", "--count", "3", "--output-dir", str(tmp_path)],
-        capture_output=True, text=True, check=True,
+        [sys.executable, str(SCRIPT_PATH), "asset", "--count", "3", "--output-dir", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     parsed = json.loads(out.stdout.strip())
     assert parsed == ["A-001", "A-002", "A-003"]

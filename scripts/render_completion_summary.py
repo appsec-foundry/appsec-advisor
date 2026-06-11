@@ -289,10 +289,7 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
     except (TypeError, ValueError):
         version_int = None
     is_first_run_full = (
-        mode_val == "full"
-        and (version_int == 1 or version_int is None)
-        and not baseline_val
-        and len(cl) == 1
+        mode_val == "full" and (version_int == 1 or version_int is None) and not baseline_val and len(cl) == 1
     )
     if is_first_run_full:
         return None
@@ -489,7 +486,7 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
     wall_path = output_dir / ".scan-wall-seconds"
     if wall_path.is_file():
         try:
-            w = int((wall_path.read_text(encoding="utf-8").strip() or "0"))
+            w = int(wall_path.read_text(encoding="utf-8").strip() or "0")
             if w > 0:
                 stats["wall_secs"] = w
         except (OSError, ValueError):
@@ -898,10 +895,7 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
     # scan take" figure.
     wall = stats.get("wall_secs")
     if wall and wall > 0:
-        lines.append(
-            f"  Total scan (wall)   : {_fmt_duration(wall)}"
-            "  (end-to-end, incl. orchestration)"
-        )
+        lines.append(f"  Total scan (wall)   : {_fmt_duration(wall)}  (end-to-end, incl. orchestration)")
 
     # Per-phase breakdown.
     # Fix #3 root cause — when the same phase_id is emitted by multiple agents
@@ -910,6 +904,7 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
     # PHASE_START line disambiguates the two rows. When the entries share an
     # emitter (rare), fall back to a positional ``(run N)`` suffix.
     from collections import Counter as _Counter
+
     phase_counts = _Counter(p[0] for p in stats["phases"])
     seen_per_phase: dict[str, int] = {}
     # Fix #4b — known deterministic / Python-script stages have no model.
@@ -940,11 +935,7 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         # appears multiple times AND emitters differ. Otherwise the static
         # map wins so Phase 2 stays as recon-scanner, Phase 9 as
         # stride-analyzer, etc.
-        emitters_for_phase = {
-            (e[3] if len(e) == 4 else "")
-            for e in stats["phases"]
-            if e[0] == phase_id
-        }
+        emitters_for_phase = {(e[3] if len(e) == 4 else "") for e in stats["phases"] if e[0] == phase_id}
         if phase_counts[phase_id] > 1 and len(emitters_for_phase - {""}) > 1:
             agent_name = log_agent or _PHASE_AGENT.get(phase_id, "threat-analyst")
         else:
@@ -952,11 +943,21 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         # Positional suffix only when the (phase_id, agent_name) pair still
         # collides after the emitter-based pick.
         same_pair_count = sum(
-            1 for e in stats["phases"]
-            if e[0] == phase_id and (
-                (len(e) == 4 and (
-                    (e[3] if (phase_counts[e[0]] > 1 and len(emitters_for_phase - {""}) > 1)
-                     else _PHASE_AGENT.get(e[0], "threat-analyst")) == agent_name))
+            1
+            for e in stats["phases"]
+            if e[0] == phase_id
+            and (
+                (
+                    len(e) == 4
+                    and (
+                        (
+                            e[3]
+                            if (phase_counts[e[0]] > 1 and len(emitters_for_phase - {""}) > 1)
+                            else _PHASE_AGENT.get(e[0], "threat-analyst")
+                        )
+                        == agent_name
+                    )
+                )
                 or (len(e) == 3 and _PHASE_AGENT.get(e[0], "threat-analyst") == agent_name)
             )
         )
@@ -1000,17 +1001,12 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         # mathematically meaningless. Use the canonical keys, with safe
         # fallback to the legacy names so older callers that still set
         # `throughput`/`input`/`output` keep working.
-        total_tokens = (
-            totals.get("total_tokens")
-            or totals.get("throughput")
-            or 0
-        )
-        tokens_in   = totals.get("in")  if "in"  in totals else totals.get("input",  0)
-        tokens_out  = totals.get("out") if "out" in totals else totals.get("output", 0)
+        total_tokens = totals.get("total_tokens") or totals.get("throughput") or 0
+        tokens_in = totals.get("in") if "in" in totals else totals.get("input", 0)
+        tokens_out = totals.get("out") if "out" in totals else totals.get("output", 0)
         cache_write = totals.get("cache_write", 0)
-        cache_read  = totals.get("cache_read",  0)
-        if (total_tokens or 0) <= 0 and not cache_write and not cache_read \
-           and totals.get("cost", 0) <= 0:
+        cache_read = totals.get("cache_read", 0)
+        if (total_tokens or 0) <= 0 and not cache_write and not cache_read and totals.get("cost", 0) <= 0:
             # Hook log captured no token data for the orchestrator session
             # (rare — usually means SESSION_STOP fired without a usage block).
             lines.append("  Tokens / Cost       : not captured by Claude Code hooks")
@@ -1557,7 +1553,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--repo-root", type=Path, required=True)
     p.add_argument("--mode", default="full", choices=("full", "incremental", "rebuild", "dry-run"))
-    p.add_argument("--reasoning-model", default="opus-cheap", choices=("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"))
+    p.add_argument(
+        "--reasoning-model",
+        default="opus-cheap",
+        choices=("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"),
+    )
     p.add_argument("--assessment-depth", default="standard", choices=("quick", "standard", "thorough"))
     _bool_pair(p, "write-yaml", "write_yaml", True)
     _bool_pair(p, "write-sarif", "write_sarif", False)

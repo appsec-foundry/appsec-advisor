@@ -39,7 +39,6 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
@@ -164,8 +163,7 @@ def match_case(case: dict, findings: list[dict], signals: set[str] | None) -> di
         unmet_signals = [s for s in req_sigs if signals is not None and s not in signals]
         verdict = "not_applicable"
         reason = (
-            "required precondition(s) absent in this codebase: "
-            + ", ".join(unmet_signals)
+            "required precondition(s) absent in this codebase: " + ", ".join(unmet_signals)
             if unmet_signals
             else "scope preconditions not met for this codebase"
         )
@@ -203,10 +201,10 @@ _INCONCLUSIVE = "inconclusive"
 def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     """Compute the chain verdict from per-step verifier verdicts.
 
-      all required steps confirmed, no controls        -> fully_viable
-      >=1 required confirmed AND >=1 step has a control -> partially_blocked
-      all required steps blocked                        -> mitigated
-      any required step inconclusive (and not viable)   -> inconclusive
+    all required steps confirmed, no controls        -> fully_viable
+    >=1 required confirmed AND >=1 step has a control -> partially_blocked
+    all required steps blocked                        -> mitigated
+    any required step inconclusive (and not viable)   -> inconclusive
     """
     by_step = {v.get("step"): v for v in step_verdicts}
     required_steps = [s for s in case_match.get("step_matches", []) if s.get("required", True)]
@@ -281,9 +279,7 @@ def cmd_match(args: argparse.Namespace) -> int:
 
     matches = [match_case(c, findings, signals) for c in cases]
     result = {"schema_version": 1, "matches": matches}
-    (out_dir / ".abuse-case-matches.json").write_text(
-        json.dumps(result, indent=2) + "\n", encoding="utf-8"
-    )
+    (out_dir / ".abuse-case-matches.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     n_cand = sum(1 for m in matches if m["structural_verdict"] in ("candidate", "partial_candidate"))
     sys.stderr.write(f"MATCH: {len(matches)} cases, {n_cand} candidate(s)\n")
     return 0
@@ -344,8 +340,7 @@ def cmd_list_inconclusive(args: argparse.Namespace) -> int:
     cap = max(0, int(getattr(args, "max", 5) or 0))
     if cap and len(inconclusive) > cap:
         sys.stderr.write(
-            f"ESCALATE: {len(inconclusive)} inconclusive, capping to {cap} "
-            f"(dropped: {', '.join(inconclusive[cap:])})\n"
+            f"ESCALATE: {len(inconclusive)} inconclusive, capping to {cap} (dropped: {', '.join(inconclusive[cap:])})\n"
         )
         inconclusive = inconclusive[:cap]
 
@@ -356,20 +351,9 @@ def cmd_list_inconclusive(args: argparse.Namespace) -> int:
 
 def cmd_finalize(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir) if args.output_dir else None
-    matches_path = (
-        Path(args.matches)
-        if args.matches
-        else (out_dir / ".abuse-case-matches.json")
-    )
-    verdicts_path = (
-        Path(args.verdicts)
-        if args.verdicts
-        else (out_dir / ".abuse-case-verdicts.json")
-    )
-    matches = {
-        m["abuse_case_id"]: m
-        for m in json.loads(matches_path.read_text(encoding="utf-8")).get("matches", [])
-    }
+    matches_path = Path(args.matches) if args.matches else (out_dir / ".abuse-case-matches.json")
+    verdicts_path = Path(args.verdicts) if args.verdicts else (out_dir / ".abuse-case-verdicts.json")
+    matches = {m["abuse_case_id"]: m for m in json.loads(matches_path.read_text(encoding="utf-8")).get("matches", [])}
     vdoc = json.loads(verdicts_path.read_text(encoding="utf-8"))
     verdicts = vdoc.get("verdicts") if isinstance(vdoc, dict) else vdoc
 
@@ -406,7 +390,9 @@ def main(argv: list[str] | None = None) -> int:
     fz.add_argument("--verdicts", default=None)
     fz.set_defaults(func=cmd_finalize)
 
-    li = sub.add_parser("list-inconclusive", help="print candidate ids whose chain verdict is inconclusive (escalation work-list)")
+    li = sub.add_parser(
+        "list-inconclusive", help="print candidate ids whose chain verdict is inconclusive (escalation work-list)"
+    )
     li.add_argument("--output-dir", required=True)
     li.add_argument("--max", type=int, default=5, help="cap the escalation work-list (default 5; 0 = no cap)")
     li.set_defaults(func=cmd_list_inconclusive)

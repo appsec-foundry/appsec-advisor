@@ -16,6 +16,7 @@ narrows the default further. The standalone audit skill respects
 Output is a JSON object printed to stdout — meant for consumption by
 ``resolve_config.py`` and the audit-security-requirements skill.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -140,9 +141,7 @@ def resolve(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Resolve the active requirements source for a skill run."
-    )
+    parser = argparse.ArgumentParser(description="Resolve the active requirements source for a skill run.")
     parser.add_argument("--requirements", default=None, help="CLI requirements URL override")
     parser.add_argument(
         "--no-requirements",
@@ -163,16 +162,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--plugin-root", default=None)
     args = parser.parse_args(argv)
 
-    plugin_root = (
-        Path(args.plugin_root).resolve()
-        if args.plugin_root
-        else Path(__file__).resolve().parent.parent
-    )
-    effective_path = (
-        Path(args.output_dir) / ".org-profile-effective.json"
-        if args.output_dir
-        else None
-    )
+    plugin_root = Path(args.plugin_root).resolve() if args.plugin_root else Path(__file__).resolve().parent.parent
+    effective_path = Path(args.output_dir) / ".org-profile-effective.json" if args.output_dir else None
     effective = _load_effective(effective_path)
     legacy = _load_legacy_default(plugin_root)
     result = resolve(

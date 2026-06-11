@@ -61,8 +61,8 @@ sys.path.insert(0, str(_SCRIPT_DIR))
 
 from _atomic_io import atomic_write_text  # noqa: E402
 
-
 # ─── Helpers ──────────────────────────────────────────────────────────────
+
 
 def _load_json(path: Path, *, required: bool = False) -> Any:
     """Return parsed JSON, None if missing (unless required=True → exit 3)."""
@@ -90,9 +90,7 @@ def _load_yaml(path: Path) -> dict | None:
 
 def _git(args: list[str], cwd: Path) -> str | None:
     try:
-        out = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=5
-        )
+        out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=5)
         if out.returncode != 0:
             return None
         return out.stdout.strip() or None
@@ -138,6 +136,7 @@ def _carry_forward(prior_yaml: dict | None, field: str, sidecar_name: str) -> An
 
 # ─── Field builders ───────────────────────────────────────────────────────
 
+
 def build_meta(
     *,
     skill_cfg: dict,
@@ -153,11 +152,7 @@ def build_meta(
     repo_url = _git(["remote", "get-url", "origin"], repo_root)
 
     # project: sidecar fallback chain — recon-summary, then prior yaml meta.project, then repo basename
-    project = (
-        recon_project
-        or (prior_yaml or {}).get("meta", {}).get("project")
-        or repo_root.name
-    )
+    project = recon_project or (prior_yaml or {}).get("meta", {}).get("project") or repo_root.name
 
     return {
         "schema_version": 1,
@@ -220,8 +215,8 @@ def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
         return title
     m = re.search(r"\s+(?:[—-]\s+)?\(?[\w./-]+:\d+\)?\s*$", title)
     if m:
-        tail = title[m.start():].strip()
-        head = title[:m.start()].rstrip()
+        tail = title[m.start() :].strip()
+        head = title[: m.start()].rstrip()
         keep = limit - len(tail) - 2  # room for "… " join
         if keep >= 8:
             return f"{head[:keep].rstrip()}… {tail}"
@@ -328,10 +323,9 @@ def build_threats(merged: dict) -> tuple[list[dict], list[str]]:
         # enum requires Critical/High/Medium/Low/Informational, cwe must
         # match ^CWE-\d+$). Skip them — they belong in observations[] not
         # threats[].
-        is_info_stub = (
-            (threat.get("likelihood") or "").lower() == "info"
-            or (threat.get("risk") or "").lower() == "info"
-        )
+        is_info_stub = (threat.get("likelihood") or "").lower() == "info" or (
+            threat.get("risk") or ""
+        ).lower() == "info"
         if not threat.get("id") or is_info_stub:
             skipped_stubs += 1
             continue
@@ -356,7 +350,9 @@ def build_threats(merged: dict) -> tuple[list[dict], list[str]]:
             threat["evidence"] = []
         out.append(threat)
     if skipped_stubs:
-        warnings.append(f"threats: {skipped_stubs} observation-stub entries skipped (id=None — Phase 10b notes mis-parked in threats[])")
+        warnings.append(
+            f"threats: {skipped_stubs} observation-stub entries skipped (id=None — Phase 10b notes mis-parked in threats[])"
+        )
     return out, warnings
 
 
@@ -404,14 +400,12 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
 # Coerce sidecar-only kinds to the closest output-schema equivalent so the
 # yaml passes downstream schema validation without losing the LLM's intent.
 _KIND_COERCE = {
-    "process": "review",          # process gaps → human review action
+    "process": "review",  # process gaps → human review action
     "architectural": "investigate",  # arch changes → investigate scope
 }
 
 
-def apply_mitigation_overrides(
-    baseline: list[dict], sidecar: dict | None
-) -> tuple[list[dict], list[str]]:
+def apply_mitigation_overrides(baseline: list[dict], sidecar: dict | None) -> tuple[list[dict], list[str]]:
     """Apply .mitigation-overrides.json splits + additions to the baseline.
 
     Defensive against the common LLM-drift pattern (verified 2026-05-24
@@ -525,16 +519,16 @@ def apply_mitigation_overrides(
         added += 1
 
     if merged:
-        warnings.append(f"mitigation-overrides.additions: {merged} merged onto baseline (authored title/description/reference preserved)")
+        warnings.append(
+            f"mitigation-overrides.additions: {merged} merged onto baseline (authored title/description/reference preserved)"
+        )
     if added:
         warnings.append(f"mitigation-overrides.additions: {added} accepted (true additions)")
 
     return sorted(out.values(), key=lambda m: m["id"]), warnings
 
 
-def build_attack_surface(
-    routes: dict | None, sidecar: dict | None = None
-) -> tuple[list[dict], list[str]]:
+def build_attack_surface(routes: dict | None, sidecar: dict | None = None) -> tuple[list[dict], list[str]]:
     """Compose yaml.attack_surface[] from .route-inventory.json (baseline)
     overlaid with .attack-surface-overrides.json (Phase-6 sidecar).
 
@@ -619,7 +613,9 @@ def build_attack_surface(
         if exclude:
             before = len(baseline_pairs)
             baseline_pairs = [(e, rid) for (e, rid) in baseline_pairs if rid not in exclude]
-            warnings.append(f"attack-surface-overrides.curations.exclude: dropped {before - len(baseline_pairs)} routes")
+            warnings.append(
+                f"attack-surface-overrides.curations.exclude: dropped {before - len(baseline_pairs)} routes"
+            )
         if rationale:
             applied = 0
             for entry, rid in baseline_pairs:
@@ -664,7 +660,9 @@ def build_attack_surface(
         if added:
             warnings.append(f"attack-surface-overrides.additions: {added} entries added")
         if merged:
-            warnings.append(f"attack-surface-overrides.additions: {merged} merged onto baseline (analyst auth/notes override)")
+            warnings.append(
+                f"attack-surface-overrides.additions: {merged} merged onto baseline (analyst auth/notes override)"
+            )
 
     # Class-coverage guard (2026-06-06): an `include_route_ids` allowlist must
     # never leave an entire auth class empty when the route-inventory baseline
@@ -730,17 +728,17 @@ def build_critical_findings(threats: list[dict]) -> list[dict]:
         sev = t.get("effective_severity", t.get("risk", ""))
         if sev in ("Critical", "High"):
             mids = t.get("mitigation_ids", [])
-            out.append({
-                "threat_id": t["id"],
-                "summary": t.get("title", ""),
-                "mitigation_id": mids[0] if mids else None,
-            })
+            out.append(
+                {
+                    "threat_id": t["id"],
+                    "summary": t.get("title", ""),
+                    "mitigation_id": mids[0] if mids else None,
+                }
+            )
     return out
 
 
-def build_tier_root_causes(
-    threats: list[dict], components: list[dict], sidecar: dict | None = None
-) -> dict:
+def build_tier_root_causes(threats: list[dict], components: list[dict], sidecar: dict | None = None) -> dict:
     """Phase 10b sidecar (.tier-root-causes.json) is the canonical source —
     architectural-level prose like "missing input neutralization on raw SQL
     paths" needs LLM synthesis and cannot be derived from threat titles.
@@ -835,14 +833,13 @@ def build_changelog(
 
 # ─── Main ─────────────────────────────────────────────────────────────────
 
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("output_dir", type=Path, help="$OUTPUT_DIR (e.g. docs/security)")
     ap.add_argument("--repo-root", type=Path, default=None)
-    ap.add_argument("--plugin-root", type=Path,
-                    default=Path(os.environ.get("CLAUDE_PLUGIN_ROOT", _SCRIPT_DIR.parent)))
-    ap.add_argument("--dry-run", action="store_true",
-                    help="Print the composed yaml to stdout instead of writing.")
+    ap.add_argument("--plugin-root", type=Path, default=Path(os.environ.get("CLAUDE_PLUGIN_ROOT", _SCRIPT_DIR.parent)))
+    ap.add_argument("--dry-run", action="store_true", help="Print the composed yaml to stdout instead of writing.")
     args = ap.parse_args()
 
     od = args.output_dir
@@ -850,8 +847,7 @@ def main() -> int:
         sys.stderr.write(f"FATAL: output_dir does not exist: {od}\n")
         return 2
 
-    repo_root = args.repo_root or Path(json.loads((od / ".skill-config.json").read_text())
-                                       .get("repo_root", "."))
+    repo_root = args.repo_root or Path(json.loads((od / ".skill-config.json").read_text()).get("repo_root", "."))
 
     # Load required intermediates
     skill_cfg = _load_json(od / ".skill-config.json", required=True)
@@ -883,8 +879,12 @@ def main() -> int:
 
     # Build sections
     meta = build_meta(
-        skill_cfg=skill_cfg, org=org, recon_project=recon_project,
-        plugin_root=args.plugin_root, repo_root=repo_root, prior_yaml=prior_yaml,
+        skill_cfg=skill_cfg,
+        org=org,
+        recon_project=recon_project,
+        plugin_root=args.plugin_root,
+        repo_root=repo_root,
+        prior_yaml=prior_yaml,
     )
 
     threats, threat_warnings = build_threats(merged)
@@ -895,21 +895,21 @@ def main() -> int:
     for w in mit_warnings:
         sys.stderr.write(f"  {w}\n")
 
-    components = (sidecar_components or {}).get("components") \
-        or _carry_forward(prior_yaml, "components", ".components.json")
-    assets = (sidecar_assets or {}).get("assets") \
-        or _carry_forward(prior_yaml, "assets", ".assets.json")
-    trust_boundaries = (sidecar_tb or {}).get("trust_boundaries") \
-        or _carry_forward(prior_yaml, "trust_boundaries", ".trust-boundaries.json")
-    security_controls = (sidecar_sc or {}).get("security_controls") \
-        or _carry_forward(prior_yaml, "security_controls", ".security-controls.json")
+    components = (sidecar_components or {}).get("components") or _carry_forward(
+        prior_yaml, "components", ".components.json"
+    )
+    assets = (sidecar_assets or {}).get("assets") or _carry_forward(prior_yaml, "assets", ".assets.json")
+    trust_boundaries = (sidecar_tb or {}).get("trust_boundaries") or _carry_forward(
+        prior_yaml, "trust_boundaries", ".trust-boundaries.json"
+    )
+    security_controls = (sidecar_sc or {}).get("security_controls") or _carry_forward(
+        prior_yaml, "security_controls", ".security-controls.json"
+    )
 
     # threat_ids per component (derived)
     for comp in components:
         cid = comp.get("id", "")
-        comp["threat_ids"] = sorted(
-            t["id"] for t in threats if t.get("component") == cid
-        )
+        comp["threat_ids"] = sorted(t["id"] for t in threats if t.get("component") == cid)
 
     attack_surface, as_warnings = build_attack_surface(routes, sidecar_as)
     for w in as_warnings:
@@ -919,7 +919,10 @@ def main() -> int:
     tier_rcs = build_tier_root_causes(threats, components, sidecar_trc)
 
     changelog = build_changelog(
-        skill_cfg, threats, components, attack_surface,
+        skill_cfg,
+        threats,
+        components,
+        attack_surface,
         args.plugin_root / ".appsec-cache" / "baseline.json",
         args.plugin_root,
     )
@@ -942,13 +945,17 @@ def main() -> int:
     if tier_rcs:
         doc["tier_root_causes"] = tier_rcs
     if cross_repo:
-        doc["cross_repo_dependencies"] = cross_repo if isinstance(cross_repo, list) else cross_repo.get("dependencies", [])
+        doc["cross_repo_dependencies"] = (
+            cross_repo if isinstance(cross_repo, list) else cross_repo.get("dependencies", [])
+        )
     if threat_hypotheses:
         # Only emit if every entry has the required schema fields; otherwise
         # skip — meta_findings/threat_hypotheses synthesis from raw intermediates
         # is non-trivial and is queued for a follow-up migration step.
-        if all(h.get("threat_category_id") and h.get("proof_state") and h.get("confidence") is not None
-               for h in threat_hypotheses):
+        if all(
+            h.get("threat_category_id") and h.get("proof_state") and h.get("confidence") is not None
+            for h in threat_hypotheses
+        ):
             doc["threat_hypotheses"] = threat_hypotheses
         elif prior_yaml and prior_yaml.get("threat_hypotheses"):
             doc["threat_hypotheses"] = prior_yaml["threat_hypotheses"]
@@ -962,8 +969,7 @@ def main() -> int:
         doc["threat_categories"] = prior_yaml["threat_categories"]
 
     # Render
-    rendered = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True,
-                              default_flow_style=False, width=120)
+    rendered = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False, width=120)
 
     if args.dry_run:
         sys.stdout.write(rendered)
@@ -978,7 +984,8 @@ def main() -> int:
     if validator.exists():
         rc = subprocess.run(
             ["python3", str(validator), "threat_model_output", str(out_path)],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if rc.returncode != 0:
             sys.stderr.write("FATAL: schema validation failed\n")

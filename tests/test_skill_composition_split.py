@@ -157,9 +157,8 @@ def test_renderer_documents_render_scope(orchestrator_text, renderer_text):
     assert "RENDER_ONLY=true" in orchestrator_text
     # Stage 2 (Composition) must explicitly skip Phases 1-10b
     assert "Skip Phases 1–10b" in renderer_text or "skip Phases 1–10b" in renderer_text
-    # The 2 LLM fragments must be named
+    # The LLM fragment must be named
     assert "ms-verdict.json" in renderer_text
-    assert "ms-architecture-assessment.json" in renderer_text
     # The 7 structural ones must be named as pre-generated
     assert "system-overview.md" in renderer_text
     assert "architecture-diagrams.md" in renderer_text

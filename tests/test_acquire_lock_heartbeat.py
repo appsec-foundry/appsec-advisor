@@ -263,8 +263,10 @@ def _write_run_log(tmp_path: Path, *phase_lines: str) -> None:
 
 
 def _phase_start(num: str, total: str, name: str) -> str:
-    return (f"2026-06-06T17:21:26Z  [--------]  INFO   threat-analyst"
-            f"    PHASE_START   [Phase {num}/{total}] {name} — dispatching…")
+    return (
+        f"2026-06-06T17:21:26Z  [--------]  INFO   threat-analyst"
+        f"    PHASE_START   [Phase {num}/{total}] {name} — dispatching…"
+    )
 
 
 def test_bare_heartbeat_phase_derived_from_run_log(tmp_path: Path):

@@ -129,11 +129,10 @@ def _org_profile_status(output_dir: Path) -> dict:
             "base_mode": (eff.get("preset") or {}).get("base_mode"),
             "requirements_label": (eff.get("requirements_source") or {}).get("label"),
             "requirements_url": (eff.get("requirements_source") or {}).get("requirements_yaml_url"),
-            "context_documents": [
-                d["id"] for d in (eff.get("llm_context_documents") or []) if d.get("loaded")
-            ],
+            "context_documents": [d["id"] for d in (eff.get("llm_context_documents") or []) if d.get("loaded")],
             "disabled_skills": [
-                name for name, cfg in (eff.get("skill_toggles") or {}).items()
+                name
+                for name, cfg in (eff.get("skill_toggles") or {}).items()
                 if isinstance(cfg, dict) and cfg.get("enabled") is False
             ],
         }
@@ -334,21 +333,11 @@ def render_text(data: dict) -> str:
     )
 
     capsules = data["capsules"]
-    threat_assessment = capsules.get("threat_assessment", {}).get(
-        "command", "not packaged"
-    )
-    requirements_audit = capsules.get("requirements_audit", {}).get(
-        "command", "not packaged"
-    )
-    threat_row = (
-        f"{threat_assessment}   [--help]"
-        if threat_assessment != "not packaged"
-        else threat_assessment
-    )
+    threat_assessment = capsules.get("threat_assessment", {}).get("command", "not packaged")
+    requirements_audit = capsules.get("requirements_audit", {}).get("command", "not packaged")
+    threat_row = f"{threat_assessment}   [--help]" if threat_assessment != "not packaged" else threat_assessment
     requirements_row = (
-        f"{requirements_audit}   [--help]"
-        if requirements_audit != "not packaged"
-        else requirements_audit
+        f"{requirements_audit}   [--help]" if requirements_audit != "not packaged" else requirements_audit
     )
     buf.append(
         _emit_table(
@@ -400,12 +389,17 @@ def render_text(data: dict) -> str:
             rows.append(("Disabled skills", ", ".join(org["disabled_skills"])))
         buf.append(_emit_table("Org Profile", rows))
     elif org.get("configured"):
-        buf.append(_emit_table("Org Profile", [
-            ("Status", "configured (not yet resolved)"),
-            ("Path", str(org.get("path") or "?")),
-            ("Default preset", str(org.get("default_preset") or "(from profile)")),
-            ("Note", str(org.get("note") or "")),
-        ]))
+        buf.append(
+            _emit_table(
+                "Org Profile",
+                [
+                    ("Status", "configured (not yet resolved)"),
+                    ("Path", str(org.get("path") or "?")),
+                    ("Default preset", str(org.get("default_preset") or "(from profile)")),
+                    ("Note", str(org.get("note") or "")),
+                ],
+            )
+        )
 
     buf.append(_emit_table("Configuration sources", data["config"]))
 
@@ -711,9 +705,7 @@ def main(argv: list[str] | None = None) -> int:
     if _skill_exists("create-threat-model"):
         capsules["threat_assessment"] = {"command": "/appsec-advisor:create-threat-model"}
     if _skill_exists("audit-security-requirements"):
-        capsules["requirements_audit"] = {
-            "command": "/appsec-advisor:audit-security-requirements"
-        }
+        capsules["requirements_audit"] = {"command": "/appsec-advisor:audit-security-requirements"}
 
     data = {
         "plugin": {

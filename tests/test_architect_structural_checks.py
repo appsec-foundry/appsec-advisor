@@ -399,7 +399,8 @@ class TestCvssRisk:
         source was removed in 2026-05 (this test previously asserted on
         source=dep-scan)."""
         _write_json(
-            out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-005", "risk": "Critical", "source": "known-vuln"}]}
+            out_dir / ".threats-merged.json",
+            {"threats": [{"t_id": "T-005", "risk": "Critical", "source": "known-vuln"}]},
         )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         assert [f for f in r["findings"] if f["kind"] == "critical_without_cvss"] == []
@@ -851,9 +852,7 @@ class TestSec7QualityBar:
 
     def test_missing_heading_flagged(self, out_dir):
         # Drop 7.13 → heading-set violation.
-        body = _CLEAN_SEC7 + "\n" + "\n".join(
-            f"### 7.{n} Section {n}\n\nprose\n" for n in range(3, 13)
-        )
+        body = _CLEAN_SEC7 + "\n" + "\n".join(f"### 7.{n} Section {n}\n\nprose\n" for n in range(3, 13))
         _write_text(out_dir / "threat-model.md", _sec7_doc(body))
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
         assert any(f["kind"] == "sec7_v2_heading_set" for f in r["findings"])
@@ -866,8 +865,10 @@ class TestSec7QualityBar:
         assert any(f["kind"] == "section7_h4_status" for f in r["findings"])
 
     def test_legacy_flow_flagged(self, out_dir):
-        body = _CLEAN_SEC7 + "\n**Findings in this flow:** F-001\n\n" + "\n".join(
-            f"### 7.{n} S{n}\n\np\n" for n in range(3, 14)
+        body = (
+            _CLEAN_SEC7
+            + "\n**Findings in this flow:** F-001\n\n"
+            + "\n".join(f"### 7.{n} S{n}\n\np\n" for n in range(3, 14))
         )
         _write_text(out_dir / "threat-model.md", _sec7_doc(body))
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")

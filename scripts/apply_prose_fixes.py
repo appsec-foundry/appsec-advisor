@@ -68,6 +68,7 @@ Idempotent — a second run on the same file produces no diff.
 Usage:
     python3 apply_prose_fixes.py <threat-model.md>
 """
+
 from __future__ import annotations
 
 import re
@@ -77,17 +78,49 @@ from pathlib import Path
 from _slug import github_slug
 from perimeter_patterns import strip_perimeter_absence_sentences
 
-
 _EXTENSIONS = (
-    "ts", "tsx", "js", "jsx", "json", "yaml", "yml",
-    "py", "go", "rs", "java", "kt", "rb", "php", "cs",
-    "c", "h", "cpp", "hpp", "swift", "scala",
-    "md", "html", "css", "scss", "sql",
-    "sh", "bash", "ps1", "toml", "lock", "env",
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "json",
+    "yaml",
+    "yml",
+    "py",
+    "go",
+    "rs",
+    "java",
+    "kt",
+    "rb",
+    "php",
+    "cs",
+    "c",
+    "h",
+    "cpp",
+    "hpp",
+    "swift",
+    "scala",
+    "md",
+    "html",
+    "css",
+    "scss",
+    "sql",
+    "sh",
+    "bash",
+    "ps1",
+    "toml",
+    "lock",
+    "env",
     # Common backup / build artefacts (2026-05): the LLM-authored prose
     # frequently mentions `package.json.bak`, `acquisitions.md`,
     # `incident-support.kdbx` etc. as bare tokens — wrap them too.
-    "bak", "kdbx", "pem", "crt", "p12", "key", "pub",
+    "bak",
+    "kdbx",
+    "pem",
+    "crt",
+    "p12",
+    "key",
+    "pub",
 )
 _PATH_RE = re.compile(
     r"(?P<path>[A-Za-z][\w.-]*/[\w./-]+\.(?:"
@@ -146,9 +179,7 @@ _BARE_FILENAME_RE = re.compile(
     # ``(?:\.[A-Za-z0-9-]+)*`` allows zero or more middle dot-segments
     # before the final recognised extension (was ``?`` which capped at
     # one middle segment).
-    r"(?P<file>[A-Za-z][\w-]+(?:\.[A-Za-z0-9-]+)*\.(?:"
-    + "|".join(_EXTENSIONS)
-    + r")(?::\d+)?)"
+    r"(?P<file>[A-Za-z][\w-]+(?:\.[A-Za-z0-9-]+)*\.(?:" + "|".join(_EXTENSIONS) + r")(?::\d+)?)"
     # Trailing punctuation (period, comma, semicolon, `)`) is allowed —
     # the trailing-punct stripper handles them.
     r"(?![\w/`])"
@@ -158,16 +189,26 @@ _BARE_FILENAME_RE = re.compile(
 # in prose ("crashes the Node.js process") instead of as a file token.
 # Keep this list narrow — adding a name suppresses wrapping for every
 # context, including legitimate file references.
-_BARE_FILENAME_ALLOWLIST: frozenset[str] = frozenset({
-    "Node.js", "node.js",
-    "Vue.js", "vue.js",
-    "Next.js", "next.js",
-    "Nuxt.js", "nuxt.js",
-    "Express.js", "express.js",
-    "Backbone.js", "backbone.js",
-    "Ember.js", "ember.js",
-    "Three.js", "three.js",
-})
+_BARE_FILENAME_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "Node.js",
+        "node.js",
+        "Vue.js",
+        "vue.js",
+        "Next.js",
+        "next.js",
+        "Nuxt.js",
+        "nuxt.js",
+        "Express.js",
+        "express.js",
+        "Backbone.js",
+        "backbone.js",
+        "Ember.js",
+        "ember.js",
+        "Three.js",
+        "three.js",
+    }
+)
 #   - Function-call tokens: `eval()`, `bypassSecurityTrustHtml()`,
 #     `helmet.noSniff()`, `models.sequelize.query()`. Conservative:
 #     requires the parens AND a leading letter so generic prose ("the
@@ -202,24 +243,18 @@ _LIB_VERSION_RE = re.compile(
 #   - CVE identifiers: `CVE-2020-28042`. Distinctive shape, very low
 #     false-positive risk. CVEs inside a markdown link label
 #     (`[CVE-2020-28042](https://…)`) are protected by _MD_LINK_LABEL_RE.
-_CVE_RE = re.compile(
-    r"(?<![\w`-])(?P<cve>CVE-\d{4}-\d{4,7})(?![\w`])"
-)
+_CVE_RE = re.compile(r"(?<![\w`-])(?P<cve>CVE-\d{4}-\d{4,7})(?![\w`])")
 #   - Bare JWT/JWS algorithm names: `HS256`, `RS256`, `ES384`, `PS512`.
 #     The `:` in the negative lookbehind keeps the `HS256` inside `alg:HS256`
 #     out of this pass (that whole literal is owned by _LITERAL_TOKEN_RE);
 #     this pass only catches the algorithm used bare in prose
 #     ("switch to HS256"). Bare `none` is intentionally NOT matched here.
-_ALG_NAME_RE = re.compile(
-    r"(?<![\w`:])(?P<alg>(?:HS|RS|ES|PS)(?:256|384|512))(?![\w`])"
-)
+_ALG_NAME_RE = re.compile(r"(?<![\w`:])(?P<alg>(?:HS|RS|ES|PS)(?:256|384|512))(?![\w`])")
 #   - Bare hash / digest algorithm names used in prose ("unsalted MD5",
 #     "SHA-1 hashing"). These read as code identifiers, not English words,
 #     so they get backticked like any other code token. Restricted to the
 #     named MD/SHA digests so arbitrary capitalised words are never matched.
-_HASH_NAME_RE = re.compile(
-    r"(?<![\w`:/-])(?P<hash>MD[45]|SHA-?(?:1|224|256|384|512))(?![\w`])"
-)
+_HASH_NAME_RE = re.compile(r"(?<![\w`:/-])(?P<hash>MD[45]|SHA-?(?:1|224|256|384|512))(?![\w`])")
 #   - HTTP method + URL path pairs: backtick the path portion of
 #     `GET /support/logs` → `GET \`/support/logs\``.  The method stays
 #     bare so the sentence reads naturally; only the route gets the code
@@ -289,9 +324,7 @@ _MD_LINK_LABEL_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
 # The separator may be an em-dash, en-dash, or a spaced hyphen — the
 # `_bulletize_relevant_findings` post-processor normalises `- ` to `— `
 # only AFTER the per-line wrap pass, so the hyphen form must match here too.
-_LINKED_TITLE_TAIL_RE = re.compile(
-    r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)"
-)
+_LINKED_TITLE_TAIL_RE = re.compile(r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)")
 
 
 def _wrap_line(line: str) -> tuple[str, int]:
@@ -473,19 +506,46 @@ _RHETORICAL_SEVERITY_RE = re.compile(
 # 2026-05 R-7 — Inverse to path-wrapping: strip backticks from tokens that
 # are LABELS / FIELD NAMES / bare HTTP-method nouns, not code fragments.
 # Mirrors ``qa_checks.check_label_as_code`` — same curated allowlist.
-_LABEL_TOKENS_TO_UNWRAP: frozenset[str] = frozenset({
-    # MS / threat-register / mitigation-register field labels
-    "Why", "How", "Effort", "Priority", "Severity",
-    "Addresses", "Component", "Components", "Mitigation", "Mitigations",
-    "Notes", "Vektor", "Classification", "Issue", "Impact", "Fix",
-    "Location", "Evidence",
-    "Verification", "Steps",
-    # Schema column / field names in lower case
-    "notes", "addresses", "priority", "effort", "severity",
-    "verify",
-    # HTTP methods written as bare nouns
-    "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
-})
+_LABEL_TOKENS_TO_UNWRAP: frozenset[str] = frozenset(
+    {
+        # MS / threat-register / mitigation-register field labels
+        "Why",
+        "How",
+        "Effort",
+        "Priority",
+        "Severity",
+        "Addresses",
+        "Component",
+        "Components",
+        "Mitigation",
+        "Mitigations",
+        "Notes",
+        "Vektor",
+        "Classification",
+        "Issue",
+        "Impact",
+        "Fix",
+        "Location",
+        "Evidence",
+        "Verification",
+        "Steps",
+        # Schema column / field names in lower case
+        "notes",
+        "addresses",
+        "priority",
+        "effort",
+        "severity",
+        "verify",
+        # HTTP methods written as bare nouns
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "PATCH",
+        "HEAD",
+        "OPTIONS",
+    }
+)
 _LABEL_AS_CODE_RE = re.compile(r"`(?P<token>[A-Za-z]{3,15})`")
 
 
@@ -494,6 +554,7 @@ def _apply_label_as_code_unwrap(line: str) -> tuple[str, int]:
     allowlist. Anything outside the allowlist stays backticked (it is
     likely a legitimate code reference such as ``eval`` or ``null``)."""
     n = 0
+
     def _sub(m: re.Match[str]) -> str:
         nonlocal n
         tok = m.group("token")
@@ -501,6 +562,7 @@ def _apply_label_as_code_unwrap(line: str) -> tuple[str, int]:
             n += 1
             return tok
         return m.group(0)
+
     new_line = _LABEL_AS_CODE_RE.sub(_sub, line)
     return new_line, n
 
@@ -515,9 +577,7 @@ def _apply_ai_padding_fixes(line: str) -> tuple[str, int]:
 
 def _apply_rhetorical_severity(line: str) -> tuple[str, int]:
     """Rewrite the single most-common rhetorical adjective phrase."""
-    new = _RHETORICAL_SEVERITY_RE.sub(
-        "recoverable by GPU dictionary attack within seconds", line
-    )
+    new = _RHETORICAL_SEVERITY_RE.sub("recoverable by GPU dictionary attack within seconds", line)
     return new, (1 if new != line else 0)
 
 
@@ -660,7 +720,7 @@ def _bulletize_relevant_findings(text: str) -> tuple[str, int]:
         for pos, fm in enumerate(matches):
             link = fm.group(0)
             next_start = matches[pos + 1].start() if pos + 1 < len(matches) else len(body)
-            tail = body[fm.end():next_start]
+            tail = body[fm.end() : next_start]
             rationale = re.sub(r"^\s*[—\-,;·•]\s*", "", tail).strip().rstrip(".·,;")
             items.append((link, rationale))
         if len(items) < 2:
@@ -689,9 +749,7 @@ def _normalize_title_path_tail(text: str) -> tuple[str, int]:
     backticks because those are usually code identifiers rather than the
     canonical title suffix.
     """
-    path_tail_re = re.compile(
-        r"(\s—\s+)((?:[A-Za-z][\w.-]*/)+[\w./-]+\.\w+(?::\d+)?)(?=\s*$)"
-    )
+    path_tail_re = re.compile(r"(\s—\s+)((?:[A-Za-z][\w.-]*/)+[\w./-]+\.\w+(?::\d+)?)(?=\s*$)")
     n = 0
     new_lines = []
     for ln in text.split("\n"):
@@ -703,12 +761,10 @@ def _normalize_title_path_tail(text: str) -> tuple[str, int]:
         if "`" in title_cell:
             new_lines.append(ln)
             continue
-        new_title, c = path_tail_re.subn(
-            lambda mm: f" ({mm.group(2)})", title_cell
-        )
+        new_title, c = path_tail_re.subn(lambda mm: f" ({mm.group(2)})", title_cell)
         if c:
             n += c
-            new_lines.append(m.group(1) + new_title + m.group(3) + ln[m.end():])
+            new_lines.append(m.group(1) + new_title + m.group(3) + ln[m.end() :])
         else:
             new_lines.append(ln)
     return "\n".join(new_lines), n
@@ -739,11 +795,7 @@ def _collapse_consecutive_anchors(text: str) -> tuple[str, int]:
         if not in_fence and _ANCHOR_ONLY_LINE.match(ln):
             run = [ln.strip()]
             j = i + 1
-            while (
-                j < len(lines)
-                and not lines[j].lstrip().startswith("```")
-                and _ANCHOR_ONLY_LINE.match(lines[j])
-            ):
+            while j < len(lines) and not lines[j].lstrip().startswith("```") and _ANCHOR_ONLY_LINE.match(lines[j]):
                 run.append(lines[j].strip())
                 j += 1
             fixes += len(run) - 1

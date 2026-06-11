@@ -3,14 +3,12 @@
 Covers the three merge sources (standard library, org glob, disable list),
 grants/requires chain consistency, and duplicate-id detection.
 """
+
 from __future__ import annotations
 
 import importlib.util
 import sys
-import textwrap
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_abuse_cases.py"

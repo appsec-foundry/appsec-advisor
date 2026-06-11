@@ -20,6 +20,7 @@ Exit codes:
     1  gate mode AND >=1 gating failure
     2  usage / load / malformed-verdict error
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,9 +53,23 @@ def _is_gating(result: dict, floor_rank: int, gate_on_partial: bool) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Compute the verify-requirements gate exit code.")
     parser.add_argument("--verdict", required=True, help="Path to .requirements-verification.json")
-    parser.add_argument("--gate", action="store_true", help="Enforce: non-zero exit on a gating failure. Without it, advisory (always exit 0).")
-    parser.add_argument("--priority-floor", default="MUST", choices=["MUST", "SHOULD", "MAY"], help="Lowest priority that may gate (default MUST).")
-    parser.add_argument("--gate-on", default="fail", choices=["fail", "partial"], help="`fail` (default) gates only FAIL; `partial` also gates PARTIAL.")
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="Enforce: non-zero exit on a gating failure. Without it, advisory (always exit 0).",
+    )
+    parser.add_argument(
+        "--priority-floor",
+        default="MUST",
+        choices=["MUST", "SHOULD", "MAY"],
+        help="Lowest priority that may gate (default MUST).",
+    )
+    parser.add_argument(
+        "--gate-on",
+        default="fail",
+        choices=["fail", "partial"],
+        help="`fail` (default) gates only FAIL; `partial` also gates PARTIAL.",
+    )
     args = parser.parse_args(argv)
 
     path = Path(args.verdict)
@@ -77,7 +92,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"requirements-gate: PASS — no gating failures (floor={args.priority_floor}, gate-on={args.gate_on}).")
     else:
         verb = "BLOCK" if args.gate else "WARN"
-        print(f"requirements-gate: {verb} — {n} gating requirement(s) (floor={args.priority_floor}, gate-on={args.gate_on}):")
+        print(
+            f"requirements-gate: {verb} — {n} gating requirement(s) (floor={args.priority_floor}, gate-on={args.gate_on}):"
+        )
         for r in gating:
             print(f"  - {r.get('priority')} {r.get('id')} [{r.get('status')}]: {r.get('finding', '(no finding text)')}")
 

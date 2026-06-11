@@ -52,17 +52,13 @@ def _stub_stride() -> dict:
 
 
 def _write_stride(output_dir: Path, cid: str, payload: dict) -> None:
-    (output_dir / f".stride-{cid}.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (output_dir / f".stride-{cid}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _write_progress(output_dir: Path, cid: str) -> None:
     pdir = output_dir / ".progress"
     pdir.mkdir(exist_ok=True)
-    (pdir / f"{cid}.json").write_text(
-        json.dumps({"component_id": cid, "step": 4}), encoding="utf-8"
-    )
+    (pdir / f"{cid}.json").write_text(json.dumps({"component_id": cid, "step": 4}), encoding="utf-8")
 
 
 def _write_manifest(output_dir: Path, *cids: str, generated_at: str | None = None) -> None:
@@ -72,9 +68,7 @@ def _write_manifest(output_dir: Path, *cids: str, generated_at: str | None = Non
     }
     if generated_at is not None:
         manifest["generated_at"] = generated_at
-    (output_dir / ".stride-dispatch-manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (output_dir / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def _write_spawns(output_dir: Path, count: int, *, day: str = "2026-06-05") -> None:
@@ -178,9 +172,7 @@ def test_stale_spawns_before_manifest_do_not_suppress(tmp_path):
     for cid in ("frontend-spa", "backend-api"):
         _write_stride(tmp_path, cid, _real_stride())
     _write_spawns(tmp_path, 2, day="2026-06-01")  # last run's spawns, still in log
-    _write_manifest(
-        tmp_path, "frontend-spa", "backend-api", generated_at="2026-06-05T10:00:00Z"
-    )
+    _write_manifest(tmp_path, "frontend-spa", "backend-api", generated_at="2026-06-05T10:00:00Z")
     # no fresh (>= generated_at) spawns, no .progress → collapse, must trip
     assert _run(tmp_path) == 2
 
@@ -191,9 +183,7 @@ def test_fresh_spawns_after_manifest_pass_with_time_bound(tmp_path):
     for cid in ("frontend-spa", "backend-api"):
         _write_stride(tmp_path, cid, _real_stride())
     _write_spawns(tmp_path, 2, day="2026-06-01")  # stale, excluded
-    _write_manifest(
-        tmp_path, "frontend-spa", "backend-api", generated_at="2026-06-05T10:00:00Z"
-    )
+    _write_manifest(tmp_path, "frontend-spa", "backend-api", generated_at="2026-06-05T10:00:00Z")
     _write_spawns(tmp_path, 2, day="2026-06-05")  # this run's spawns, counted
     assert _run(tmp_path) == 0
 

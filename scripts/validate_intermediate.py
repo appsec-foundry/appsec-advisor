@@ -470,11 +470,7 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
         raw_threats = data.get("threats")
         if isinstance(raw_threats, list):
             _data_with_source = dict(data)
-            _data_with_source["threats"] = [
-                {**t, "source": "stride"}
-                for t in raw_threats
-                if isinstance(t, dict)
-            ]
+            _data_with_source["threats"] = [{**t, "source": "stride"} for t in raw_threats if isinstance(t, dict)]
             errors.extend(_check_threat_category_id_set(_data_with_source))
     return len(errors) == 0, errors
 
@@ -503,8 +499,7 @@ def _check_architecture_coverage_invariants(data: dict) -> list[str]:
         rule_id = t.get("rule_id")
         if not isinstance(rule_id, str) or not _RULE_ID_RE.match(rule_id):
             errors.append(
-                f"threats[{i}].rule_id is required for source='{source}' "
-                f"and MUST match ^ARCH-[A-Z]+-[0-9]{{3}}$"
+                f"threats[{i}].rule_id is required for source='{source}' and MUST match ^ARCH-[A-Z]+-[0-9]{{3}}$"
             )
         if t.get("requirement_id"):
             errors.append(
@@ -834,11 +829,7 @@ def _check_component_path_glob_consistency(data: dict) -> list[str]:
         evidence = t.get("evidence") or []
         if not isinstance(evidence, list):
             continue
-        files = [
-            (e.get("file") or "").strip()
-            for e in evidence
-            if isinstance(e, dict) and e.get("file")
-        ]
+        files = [(e.get("file") or "").strip() for e in evidence if isinstance(e, dict) and e.get("file")]
         if not files:
             continue  # no evidence files to compare — tolerated
 
@@ -882,10 +873,7 @@ def _check_component_path_glob_consistency(data: dict) -> list[str]:
         #   - 2+ siblings match (ambiguous — reclassify leaves it alone)
         if len(distinct_suggestions) == 1:
             continue
-        sugg_part = (
-            f" — consider one of component={distinct_suggestions!r}"
-            if distinct_suggestions else ""
-        )
+        sugg_part = f" — consider one of component={distinct_suggestions!r}" if distinct_suggestions else ""
         advisories.append(
             f"[advisory] {tid}: component={comp!r} but evidence file(s) "
             f"{files[:3]!r} do not match any of its paths globs "

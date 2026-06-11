@@ -155,7 +155,8 @@ def _write_v2_sec7_contract(
 ) -> Path:
     all_control_items: list[str] = []
     if coverage_rule:
-        all_control_items.append(textwrap.dedent("""\
+        all_control_items.append(
+            textwrap.dedent("""\
             - rule: control_subsection_coverage
               section_titles:
                 - "7.2 Identity and Authentication Controls"
@@ -165,16 +166,19 @@ def _write_v2_sec7_contract(
                 - "Security assessment"
                 - "Relevant findings"
               enforcement: "error"
-        """))
+        """)
+        )
     if relevant_rule:
-        all_control_items.append(textwrap.dedent("""\
+        all_control_items.append(
+            textwrap.dedent("""\
             - rule: relevant_findings_bullet_list
               section_titles:
                 - "7.2 Identity and Authentication Controls"
               heading_level: 4
               label: "Relevant findings"
               enforcement: "error"
-        """))
+        """)
+        )
     all_control = ""
     if all_control_items:
         all_control = textwrap.indent(
@@ -183,7 +187,8 @@ def _write_v2_sec7_contract(
         )
     recon = ""
     if recon_rule:
-        recon = textwrap.indent(textwrap.dedent("""\
+        recon = textwrap.indent(
+            textwrap.dedent("""\
             "7.2 Identity and Authentication Controls":
               - rule: recon_iam_bridge
                 section_title: "7.2 Identity and Authentication Controls"
@@ -194,13 +199,15 @@ def _write_v2_sec7_contract(
                   - "2fa"
                   - "mfa"
                 enforcement: "error"
-        """), "        ")
+        """),
+            "        ",
+        )
     rules_block = all_control + recon
     if not rules_block:
         rules_block = "        {}\n"
     contract = tmp_path / "sections-contract.yaml"
     contract.write_text(
-        textwrap.dedent(f"""\
+        textwrap.dedent("""\
             document:
               order:
                 - security_architecture
@@ -208,12 +215,12 @@ def _write_v2_sec7_contract(
               security_architecture:
                 heading: "## 7. Security Architecture"
                 required_subsections:
-                  - {{ level: 3, title: "7.1 Legacy Overview" }}
+                  - { level: 3, title: "7.1 Legacy Overview" }
                 schema_v2:
                   required_subsections:
-                    - {{ level: 3, title: "7.1 Security Control Overview" }}
-                    - {{ level: 3, title: "7.2 Identity and Authentication Controls" }}
-                  domain_required_patterns: {{}}
+                    - { level: 3, title: "7.1 Security Control Overview" }
+                    - { level: 3, title: "7.2 Identity and Authentication Controls" }
+                  domain_required_patterns: {}
                   domain_required_rules:
         """)
         + rules_block,
@@ -2255,8 +2262,7 @@ class TestRepairPlanFoldedChecks:
             "## 1. Management Summary\n\nNo findings table rendered here.\n",
         )
         (tmp_path / "threat-model.yaml").write_text(
-            "meta:\n  schema_version: 1\n"
-            "threats:\n  - id: T-001\n  - id: T-002\nmitigations: []\n",
+            "meta:\n  schema_version: 1\nthreats:\n  - id: T-001\n  - id: T-002\nmitigations: []\n",
             encoding="utf-8",
         )
         plan, report = qa.build_repair_plan(md, tmp_path, qa.DEFAULT_CONTRACT_PATH)
@@ -3053,7 +3059,7 @@ class TestUnfoundedPerimeterClaims:
         """
         md = _write_minimal_model(
             tmp_path,
-            "```yaml\nenforcement: \"TLS only; no WAF observed\"\n```\n",
+            '```yaml\nenforcement: "TLS only; no WAF observed"\n```\n',
         )
         r = qa.check_unfounded_perimeter_claims(md)
         assert not r.issues
@@ -3081,8 +3087,7 @@ class TestStrengthsRowQuality:
 
     def test_flags_http_security_headers_row(self, tmp_path: Path):
         body = self._PREAMBLE + (
-            "| HTTP Security Headers | helmet | ⚠️ Partial | CSP absent | T-001 |\n"
-            "\n## 2. Architecture\n"
+            "| HTTP Security Headers | helmet | ⚠️ Partial | CSP absent | T-001 |\n\n## 2. Architecture\n"
         )
         md = _write_minimal_model(tmp_path, body)
         report = qa.check_strengths_row_quality(md)
@@ -3091,8 +3096,7 @@ class TestStrengthsRowQuality:
 
     def test_flags_helmet_row(self, tmp_path: Path):
         body = self._PREAMBLE + (
-            "| Helmet | response-header middleware | ✅ Adequate | none | — |\n"
-            "\n## 2. Architecture\n"
+            "| Helmet | response-header middleware | ✅ Adequate | none | — |\n\n## 2. Architecture\n"
         )
         md = _write_minimal_model(tmp_path, body)
         report = qa.check_strengths_row_quality(md)
@@ -3100,8 +3104,7 @@ class TestStrengthsRowQuality:
 
     def test_flags_hsts_row(self, tmp_path: Path):
         body = self._PREAMBLE + (
-            "| HSTS | Strict-Transport-Security on TLS endpoints | ✅ Adequate | none | — |\n"
-            "\n## 2. Architecture\n"
+            "| HSTS | Strict-Transport-Security on TLS endpoints | ✅ Adequate | none | — |\n\n## 2. Architecture\n"
         )
         md = _write_minimal_model(tmp_path, body)
         report = qa.check_strengths_row_quality(md)
@@ -3136,9 +3139,7 @@ class TestStrengthsRowQuality:
         assert not report.issues
 
     def test_cli_subcommand_exists(self, tmp_path: Path):
-        body = self._PREAMBLE + (
-            "| HTTP Security Headers | helmet | ⚠️ Partial | none | — |\n"
-        )
+        body = self._PREAMBLE + ("| HTTP Security Headers | helmet | ⚠️ Partial | none | — |\n")
         md = _write_minimal_model(tmp_path, body)
         result = _run(["strengths_quality", str(md)])
         assert result.returncode != 0
@@ -3153,6 +3154,7 @@ class TestStrengthsRendererExcludesTacticalHygiene:
 
     def test_excluded_names_includes_http_security_headers(self):
         import importlib.util as _ilu
+
         spec = _ilu.spec_from_file_location("compose_threat_model", REPO_ROOT / "scripts" / "compose_threat_model.py")
         compose = _ilu.module_from_spec(spec)
         sys.modules["compose_threat_model"] = compose
@@ -3201,12 +3203,7 @@ class TestWalkthroughCoverageSourceLineMatch:
         )
 
     def _wrap_section3(self, body: str) -> str:
-        return (
-            "## 3. Attack Walkthroughs\n\n"
-            "### 3.1 Attack Chain Overview\n\nChains.\n\n"
-            + body
-            + "\n\n## 4. Assets\n"
-        )
+        return "## 3. Attack Walkthroughs\n\n### 3.1 Attack Chain Overview\n\nChains.\n\n" + body + "\n\n## 4. Assets\n"
 
     def test_source_line_satisfies_coverage_without_tnnn_in_heading(self, output_dir):
         qa = _load_qa_checks()
@@ -3229,9 +3226,7 @@ class TestWalkthroughCoverageSourceLineMatch:
         self._write_yaml_one_critical(output_dir)
         # §3.2's Source line points at a DIFFERENT threat, so T-001 is missing.
         section = (
-            "### 3.2 Some Other Finding\n\n"
-            "**Source:** [T-002](#t-002) — `x.ts:1`\n\n"
-            "**Attack Steps**\n\n1. step\n"
+            "### 3.2 Some Other Finding\n\n**Source:** [T-002](#t-002) — `x.ts:1`\n\n**Attack Steps**\n\n1. step\n"
         )
         md = output_dir / "threat-model.md"
         md.write_text(self._wrap_section3(section), encoding="utf-8")

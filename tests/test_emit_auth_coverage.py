@@ -4,6 +4,7 @@ Guards the 2026-06-06 juice-shop regression: OAuth social login, user
 registration, and password reset were all present in code (two anchoring
 Critical findings) yet uncataloged, so §7.2 listed only Password + MFA.
 """
+
 from __future__ import annotations
 
 import sys
@@ -30,8 +31,14 @@ class TestDetectionAndRating:
     def test_detected_registration_with_critical_finding_is_unsafe(self):
         data = _yaml(
             controls=[_ctrl("Password-Based Authentication")],
-            threats=[{"id": "T-007", "title": "Mass Assignment via Role Field",
-                      "risk": "Critical", "evidence": {"file": "server.ts"}}],
+            threats=[
+                {
+                    "id": "T-007",
+                    "title": "Mass Assignment via Role Field",
+                    "risk": "Critical",
+                    "evidence": {"file": "server.ts"},
+                }
+            ],
         )
         routes = _routes(("POST", "/api/Users"))
         adds, _ = eac.build_auth_coverage(data, routes, None)
@@ -57,8 +64,14 @@ class TestDetectionAndRating:
         (tmp_path / "frontend" / "src" / "app" / "oauth" / "oauth.component.ts").write_text("x")
         data = _yaml(
             controls=[_ctrl("Password-Based Authentication")],
-            threats=[{"id": "T-003", "title": "OAuth implicit flow weakness",
-                      "risk": "Critical", "evidence": {"file": "oauth.component.ts"}}],
+            threats=[
+                {
+                    "id": "T-003",
+                    "title": "OAuth implicit flow weakness",
+                    "risk": "Critical",
+                    "evidence": {"file": "oauth.component.ts"},
+                }
+            ],
         )
         adds, _ = eac.build_auth_coverage(data, [], tmp_path)
         soc = [a for a in adds if "Social Login" in a["control"]]
@@ -95,11 +108,13 @@ class TestLifecycleAndOptional:
 
 class TestCoverageAndIdempotency:
     def test_already_cataloged_not_duplicated(self):
-        data = _yaml(controls=[
-            _ctrl("Password-Based Authentication"),
-            _ctrl("Multi-Factor Authentication"),
-            _ctrl("User Registration Flow"),
-        ])
+        data = _yaml(
+            controls=[
+                _ctrl("Password-Based Authentication"),
+                _ctrl("Multi-Factor Authentication"),
+                _ctrl("User Registration Flow"),
+            ]
+        )
         routes = _routes(("POST", "/api/Users"), ("POST", "/2fa/verify"), ("POST", "/login"))
         adds, _ = eac.build_auth_coverage(data, routes, None)
         names = {a["control"] for a in adds}
@@ -108,10 +123,12 @@ class TestCoverageAndIdempotency:
 
     def test_apply_is_idempotent(self, tmp_path):
         import yaml
+
         y = {
             "security_controls": [_ctrl("Password-Based Authentication")],
-            "threats": [{"id": "T-007", "title": "Mass Assignment", "risk": "Critical",
-                         "evidence": {"file": "server.ts"}}],
+            "threats": [
+                {"id": "T-007", "title": "Mass Assignment", "risk": "Critical", "evidence": {"file": "server.ts"}}
+            ],
         }
         (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(y))
         inv = {"routes": [{"method": "POST", "path": "/api/Users"}]}

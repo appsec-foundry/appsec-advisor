@@ -219,9 +219,7 @@ class TestEconomyModelPerfFactor:
         dur = int(base2 * 1.3)
         without = agg._extract_perf_anomalies([self._phase_dur("2", dur)], "standard")
         assert len(without) == 1, "size-only budget should flag a 1.3× overshoot"
-        with_eco = agg._extract_perf_anomalies(
-            [self._phase_dur("2", dur)], "standard", economy=True
-        )
+        with_eco = agg._extract_perf_anomalies([self._phase_dur("2", dur)], "standard", economy=True)
         assert with_eco == [], "economy factor (×1.5) should absorb a 1.3× overshoot on phase 2"
 
     def test_economy_does_not_scale_orchestrator_phases(self):
@@ -229,9 +227,7 @@ class TestEconomyModelPerfFactor:
         dur = int(base9 * 1.3)
         # Phase 9 runs on sonnet regardless of reasoning tier → economy must
         # NOT widen its budget; the overshoot stays flagged.
-        flagged = agg._extract_perf_anomalies(
-            [self._phase_dur("9", dur)], "standard", economy=True
-        )
+        flagged = agg._extract_perf_anomalies([self._phase_dur("9", dur)], "standard", economy=True)
         assert len(flagged) == 1, "phase 9 is not economy-bound; overshoot must still flag"
 
 

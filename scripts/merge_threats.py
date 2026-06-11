@@ -43,7 +43,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
 from _atomic_io import atomic_write_json, atomic_write_text
 
 # Stable ordering for the T-NNN deterministic sort.
@@ -225,10 +224,7 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
             # mitigation_title yet, stamp a review-shaped hint so the §1
             # Top Findings cell renders an actionable next step instead of
             # a bare em-dash. Stride-class threats keep their LLM titles.
-            if (
-                t.get("source") == "configuration-defect"
-                and not (t.get("mitigation_title") or "").strip()
-            ):
+            if t.get("source") == "configuration-defect" and not (t.get("mitigation_title") or "").strip():
                 t["mitigation_title"] = (
                     "Confirm the secret is committed (not gitignore'd) "
                     "before rotation; review handoff to a secrets-management "
@@ -269,11 +265,7 @@ def _classify_stride_source(t: dict) -> str:
     title = str(t.get("title") or "")
     ev = t.get("evidence") or {}
     if isinstance(ev, list):
-        ev_files = [
-            (e.get("file") or "").strip()
-            for e in ev
-            if isinstance(e, dict) and e.get("file")
-        ]
+        ev_files = [(e.get("file") or "").strip() for e in ev if isinstance(e, dict) and e.get("file")]
     elif isinstance(ev, dict):
         ev_files = [(ev.get("file") or "").strip()] if ev.get("file") else []
     else:
@@ -365,14 +357,14 @@ def _config_finding_to_threat(f: dict) -> dict:
 # produces deterministic findings whose STRIDE class is fixed by the
 # pattern semantics (so we do not have to LLM-classify after the fact).
 _AUTHZ_TO_STRIDE: dict[str, str] = {
-    "AUTHZ-001": "Tampering",                # BFLA via attacker-controlled owner ID
-    "AUTHZ-002": "Tampering",                # IDOR via raw URL parameter
-    "AUTHZ-003": "Elevation of Privilege",   # Mass assign privilege field
-    "AUTHZ-004": "Elevation of Privilege",   # Mass assign whole body
-    "AUTHZ-005": "Spoofing",                 # JWT verify without algorithms
-    "AUTHZ-006": "Spoofing",                 # JWT decode without verify
-    "AUTHZ-007": "Spoofing",                 # express-jwt without algorithms
-    "AUTHZ-008": "Elevation of Privilege",   # Missing auth middleware
+    "AUTHZ-001": "Tampering",  # BFLA via attacker-controlled owner ID
+    "AUTHZ-002": "Tampering",  # IDOR via raw URL parameter
+    "AUTHZ-003": "Elevation of Privilege",  # Mass assign privilege field
+    "AUTHZ-004": "Elevation of Privilege",  # Mass assign whole body
+    "AUTHZ-005": "Spoofing",  # JWT verify without algorithms
+    "AUTHZ-006": "Spoofing",  # JWT decode without verify
+    "AUTHZ-007": "Spoofing",  # express-jwt without algorithms
+    "AUTHZ-008": "Elevation of Privilege",  # Missing auth middleware
 }
 
 
@@ -385,13 +377,29 @@ def _guess_component_from_path(file_path: str) -> tuple[str, str]:
     we emit here only matter when the auto-reassignment can't decide.
     """
     p = file_path.replace("\\", "/").lower()
-    if any(p.startswith(prefix) for prefix in (
-        "frontend/", "client/", "web/", "ui/", "src/app/", "app/components/",
-    )):
+    if any(
+        p.startswith(prefix)
+        for prefix in (
+            "frontend/",
+            "client/",
+            "web/",
+            "ui/",
+            "src/app/",
+            "app/components/",
+        )
+    ):
         return ("frontend", "Frontend SPA")
-    if any(p.startswith(prefix) for prefix in (
-        "models/", "db/", "database/", "schema/", "prisma/", "migrations/",
-    )):
+    if any(
+        p.startswith(prefix)
+        for prefix in (
+            "models/",
+            "db/",
+            "database/",
+            "schema/",
+            "prisma/",
+            "migrations/",
+        )
+    ):
         return ("data-layer", "Data Layer")
     # Default for everything else (routes/, lib/, controllers/, server.ts,
     # app.ts, …) — the dominant case for Node.js backend apps.
@@ -620,17 +628,17 @@ _CWE_FAMILY: dict[str, str] = {
     "CWE-347": "authn",
     "CWE-640": "authn",
     # Injection family
-    "CWE-89":  "injection",
-    "CWE-78":  "injection",
-    "CWE-94":  "injection",
-    "CWE-77":  "injection",
+    "CWE-89": "injection",
+    "CWE-78": "injection",
+    "CWE-94": "injection",
+    "CWE-77": "injection",
     "CWE-917": "injection",
     "CWE-943": "injection",
     "CWE-1336": "injection",
     # XSS
-    "CWE-79":  "xss",
+    "CWE-79": "xss",
     # File / SSRF / XXE
-    "CWE-22":  "file",
+    "CWE-22": "file",
     "CWE-434": "file",
     "CWE-611": "file",
     "CWE-918": "file",
@@ -828,9 +836,7 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
         sig = {(m.get("cwe") or "", m.get("stride") or "") for m in members}
         if len(sig) <= 1:
             continue
-        group_hash = hashlib.sha256(
-            f"{endpoint}|{family}|{len(members)}".encode()
-        ).hexdigest()[:8]
+        group_hash = hashlib.sha256(f"{endpoint}|{family}|{len(members)}".encode()).hexdigest()[:8]
         out.append(
             {
                 "group_id": f"GE-{group_hash}",
@@ -860,6 +866,7 @@ def _group_candidates(threats: list[dict]) -> list[dict]:
         if g.get("group_key") == "cwe_stride":
             return (0, g.get("cwe") or "", g.get("stride") or "", g["group_id"])
         return (1, g.get("endpoint") or "", g.get("cwe_family") or "", g["group_id"])
+
     out.sort(key=_order)
     return out
 
@@ -1006,14 +1013,10 @@ def _remap_scenario_local_refs(threats: list[dict]) -> list[dict]:
     finding, or a hallucinated number) are left untouched — the pass never
     emits a ref it cannot justify. Idempotent w.r.t. re-running finalize, which
     always starts from the local-ref scenarios in ``.merge-candidates.json``."""
-    loc2tid = {
-        t["id"]: t["t_id"]
-        for t in threats
-        if isinstance(t.get("id"), str) and isinstance(t.get("t_id"), str)
-    }
+    loc2tid = {t["id"]: t["t_id"] for t in threats if isinstance(t.get("id"), str) and isinstance(t.get("t_id"), str)}
     n_fixed = 0
 
-    def _sub(m: "re.Match[str]") -> str:
+    def _sub(m: re.Match[str]) -> str:
         nonlocal n_fixed
         tid = loc2tid.get("F-%03d" % int(m.group(1)))
         if tid and tid != m.group(0):
@@ -1027,8 +1030,7 @@ def _remap_scenario_local_refs(threats: list[dict]) -> list[dict]:
             t["scenario"] = _SCENARIO_REF_RE.sub(_sub, sc)
     if n_fixed:
         print(
-            f"merge_threats: remapped {n_fixed} scenario cross-reference(s) "
-            "from analyzer-local F-ids to global T-ids",
+            f"merge_threats: remapped {n_fixed} scenario cross-reference(s) from analyzer-local F-ids to global T-ids",
             file=sys.stderr,
         )
     return threats

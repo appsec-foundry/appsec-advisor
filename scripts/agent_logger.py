@@ -49,7 +49,6 @@ Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / 
   PostToolUse SCAN_START which incorrectly appeared *after* SESSION_STOP.
 """
 
-import hashlib
 import json
 import os
 import re
@@ -512,6 +511,8 @@ def _redact_path(path_str: str) -> str:
     if not path_str:
         return path_str
     try:
+        import hashlib
+
         digest = hashlib.sha256(path_str.encode("utf-8", errors="replace")).hexdigest()[:8]
     except Exception:
         digest = "????????"
@@ -594,7 +595,7 @@ def _record_tool_end(data: dict) -> int:
             return 0
         path = _active_tool_path(tool_use_id)
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 started_at = int(json.load(fh).get("started_at", 0))
         except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
             pass
@@ -1377,7 +1378,7 @@ def _mirror_phase_events_to_hook_log(cmd: str, sid: str = "") -> None:
         return
     event = m.group(1)
     # Extract the detail that follows the event keyword in the echo string.
-    after = cmd[m.end():].lstrip()
+    after = cmd[m.end() :].lstrip()
     for stop in ('" >>', "' >>", ">> ", '"$', "'$", '" 2>', "' 2>"):
         idx = after.find(stop)
         if idx >= 0:
@@ -2092,7 +2093,7 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     # Runs LAST so any earlier early-return paths still count the call. Failures
     # are swallowed inside the watchdog itself — never blocks the hook.
     try:
-        from budget_watchdog import tally_and_check, format_detail
+        from budget_watchdog import format_detail, tally_and_check
 
         agent = _lookup_session_agent((sid or "")[:8]) or "unknown"
         crossing = tally_and_check(sid, agent, _output_dir())

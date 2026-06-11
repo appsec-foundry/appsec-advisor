@@ -24,7 +24,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from secret_scan import scan_file  # noqa: E402
 
-
 _DEFAULT_TARGETS = (
     "threat-model.md",
     "threat-model.yaml",
@@ -52,8 +51,7 @@ def run(output_dir: Path, *, extra: list[str] | None = None) -> dict:
         hits = scan_file(f)
         if hits:
             by_file[str(f.relative_to(output_dir))] = [
-                {"pattern": h.pattern, "snippet": h.snippet, "line": h.line}
-                for h in hits
+                {"pattern": h.pattern, "snippet": h.snippet, "line": h.line} for h in hits
             ]
             total += len(hits)
     return {

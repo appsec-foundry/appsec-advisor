@@ -2,9 +2,9 @@
 """Deterministic compactness gate for the §1 management-summary LLM fragments.
 
 Purpose (perf 2026-06-05 — "MS rewrite-churn"): the renderer used to re-author
-``ms-verdict.json`` + ``ms-architecture-assessment.json`` 2-3× each, shrinking
-the prose toward the soft "~25 / ~50 word" targets by eye. That speculative
-polishing burned ~2-3 min of Stage-2 wall time for no content gain.
+``ms-verdict.json`` 2-3× each, shrinking the prose toward the soft "~25 / ~50 word"
+targets by eye. That speculative polishing burned ~2-3 min of Stage-2 wall time
+for no content gain.
 
 This script gives the renderer an OBJECTIVE pass/fail so it authors ONCE and
 stops. The budgets below are calibrated to PASS well-formed output with margin
@@ -18,6 +18,7 @@ Exit codes:
 Only the fields named in a violation should be re-authored. Do NOT rewrite a
 field the validator did not flag.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,13 +29,9 @@ from pathlib import Path
 
 # --- Budgets (hard fails). Calibrated against real juice-shop output with
 # --- margin above the contract's soft targets so good prose never churns.
-VERDICT_PROSE_MAX_WORDS = 28          # contract target ~25
-WEAKNESS_DESC_MAX_WORDS = 55          # contract target ~50
-WEAKNESS_DESC_MAX_SENTENCES = 3       # contract target 1-2
-FRAMING_MAX_WORDS = 38                # one introducing sentence
-VERDICT_OPENING_MAX_WORDS = 78        # generous — catches only runaway openings
-VERDICT_BULLET_BODY_MAX_WORDS = 48    # per worst-case-scenario bullet
-VERDICT_CLOSING_MAX_CHARS = 300       # contract max from verdict.schema.json
+VERDICT_OPENING_MAX_WORDS = 78  # generous — catches only runaway openings
+VERDICT_BULLET_BODY_MAX_WORDS = 48  # per worst-case-scenario bullet
+VERDICT_CLOSING_MAX_CHARS = 300  # contract max from verdict.schema.json
 
 
 def _words(text: str) -> int:
@@ -54,55 +51,17 @@ def _check_verdict(path: Path, violations: list[str]) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     opening = data.get("opening") or ""
     if _words(opening) > VERDICT_OPENING_MAX_WORDS:
-        violations.append(
-            f"ms-verdict.json: opening is {_words(opening)} words "
-            f"(max {VERDICT_OPENING_MAX_WORDS})"
-        )
+        violations.append(f"ms-verdict.json: opening is {_words(opening)} words (max {VERDICT_OPENING_MAX_WORDS})")
     closing = data.get("closing") or ""
     if len(closing) > VERDICT_CLOSING_MAX_CHARS:
-        violations.append(
-            f"ms-verdict.json: closing is {len(closing)} chars "
-            f"(max {VERDICT_CLOSING_MAX_CHARS})"
-        )
+        violations.append(f"ms-verdict.json: closing is {len(closing)} chars (max {VERDICT_CLOSING_MAX_CHARS})")
     for i, b in enumerate(data.get("bullets") or []):
         if not isinstance(b, dict):
             continue
         body = b.get("body") or ""
         if _words(body) > VERDICT_BULLET_BODY_MAX_WORDS:
             violations.append(
-                f"ms-verdict.json: bullets[{i}].body is {_words(body)} words "
-                f"(max {VERDICT_BULLET_BODY_MAX_WORDS})"
-            )
-
-
-def _check_assessment(path: Path, violations: list[str]) -> None:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    vp = data.get("verdict_prose") or ""
-    if _words(vp) > VERDICT_PROSE_MAX_WORDS:
-        violations.append(
-            f"ms-architecture-assessment.json: verdict_prose is {_words(vp)} words "
-            f"(max {VERDICT_PROSE_MAX_WORDS})"
-        )
-    framing = data.get("framing") or ""
-    if _words(framing) > FRAMING_MAX_WORDS:
-        violations.append(
-            f"ms-architecture-assessment.json: framing is {_words(framing)} words "
-            f"(max {FRAMING_MAX_WORDS})"
-        )
-    for w in data.get("weaknesses") or []:
-        if not isinstance(w, dict):
-            continue
-        cat = (w.get("category") or "?")[:40]
-        desc = w.get("description") or ""
-        if _words(desc) > WEAKNESS_DESC_MAX_WORDS:
-            violations.append(
-                f"ms-architecture-assessment.json: weakness '{cat}' description is "
-                f"{_words(desc)} words (max {WEAKNESS_DESC_MAX_WORDS})"
-            )
-        if _sentences(desc) > WEAKNESS_DESC_MAX_SENTENCES:
-            violations.append(
-                f"ms-architecture-assessment.json: weakness '{cat}' description has "
-                f"{_sentences(desc)} sentences (max {WEAKNESS_DESC_MAX_SENTENCES})"
+                f"ms-verdict.json: bullets[{i}].body is {_words(body)} words (max {VERDICT_BULLET_BODY_MAX_WORDS})"
             )
 
 
@@ -116,7 +75,6 @@ def main() -> int:
 
     checks = [
         (frag / "ms-verdict.json", _check_verdict),
-        (frag / "ms-architecture-assessment.json", _check_assessment),
     ]
     for path, fn in checks:
         if not path.exists():

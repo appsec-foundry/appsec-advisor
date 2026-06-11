@@ -149,6 +149,7 @@ def test_t_id_must_be_sequential():
 
 # --- _check_component_path_glob_consistency (M-1 advisory) ---------------
 
+
 def _model_two_components(threat_component: str, evidence_file: str) -> dict:
     """Minimal model with two components whose globs do not overlap, plus one
     threat whose evidence file lives under the OTHER component's globs."""

@@ -45,6 +45,7 @@ def _reqs_file(tmp_path: Path) -> str:
 @contextmanager
 def _http_server(body: bytes):
     """Serve ``body`` over http on an ephemeral localhost port; yield the URL."""
+
     class _H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
             self.send_response(200)
@@ -90,9 +91,10 @@ def test_cli_relative_local_path_reads_ok(tmp_path):
     f = tmp_path / "reqs.yaml"
     f.write_text("categories:\n  - id: SEC-REL\n", encoding="utf-8")
     r = subprocess.run(
-        [sys.executable, str(SCRIPT), "--output-dir", str(tmp_path),
-         "--requirements", "reqs.yaml"],
-        cwd=str(tmp_path), capture_output=True, text=True,
+        [sys.executable, str(SCRIPT), "--output-dir", str(tmp_path), "--requirements", "reqs.yaml"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0
     assert "SEC-REL" in (tmp_path / ".requirements.yaml").read_text()
@@ -139,9 +141,10 @@ def test_cli_tilde_local_path_reads_ok(tmp_path):
     home.mkdir()
     (home / "reqs.yaml").write_text("categories:\n  - id: SEC-TILDE\n", encoding="utf-8")
     r = subprocess.run(
-        [sys.executable, str(SCRIPT), "--output-dir", str(tmp_path),
-         "--requirements", "~/reqs.yaml"],
-        env={**os.environ, "HOME": str(home)}, capture_output=True, text=True,
+        [sys.executable, str(SCRIPT), "--output-dir", str(tmp_path), "--requirements", "~/reqs.yaml"],
+        env={**os.environ, "HOME": str(home)},
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0
     assert "SEC-TILDE" in (tmp_path / ".requirements.yaml").read_text()
@@ -162,8 +165,7 @@ def test_cli_missing_source_ignores_cache(tmp_path):
 def _write_org_profile(tmp_path: Path, url: str, cache: bool = True) -> None:
     (tmp_path / ".org-profile-effective.json").write_text(
         json.dumps(
-            {"requirements_source": {"requirements_yaml_url": url, "cache": cache,
-                                     "fail_mode": "cache_fallback"}}
+            {"requirements_source": {"requirements_yaml_url": url, "cache": cache, "fail_mode": "cache_fallback"}}
         ),
         encoding="utf-8",
     )

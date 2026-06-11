@@ -171,12 +171,12 @@ def test_pre_render_gate_fails_on_partial_fragment_set(tmp_path: Path):
     data = json.loads((tmp_path / ".pre-render-report.json").read_text())
     assert data["missing_required"]
     assert "ms-verdict.json" not in data["missing_required"]
-    # The other 7 required fragments must be listed.
-    assert len(data["missing_required"]) == 7
+    # The other 6 required fragments must be listed.
+    assert len(data["missing_required"]) == 6
 
 
 def test_pre_render_gate_passes_with_full_required_set(tmp_path: Path):
-    """All 8 required fragments present → missing_required empty.
+    """All 7 required fragments present → missing_required empty.
 
     The gate still may exit 1 if the JSON stubs fail nested schema rules
     (e.g. minLength, enum constraints). We only assert that the "missing
@@ -184,11 +184,10 @@ def test_pre_render_gate_passes_with_full_required_set(tmp_path: Path):
     """
     frag = tmp_path / ".fragments"
     frag.mkdir()
-    # The two mandatory JSON fragments need readable JSON content. The schema
-    # validation loop may reject them — that's fine, the gate's "missing"
+    # The mandatory JSON fragment needs readable JSON content. The schema
+    # validation loop may reject it — that's fine, the gate's "missing"
     # branch must still be empty.
     (frag / "ms-verdict.json").write_text("{}")
-    (frag / "ms-architecture-assessment.json").write_text("{}")
     # Plain-markdown fragments need no schema validation.
     for name in (
         "system-overview.md",

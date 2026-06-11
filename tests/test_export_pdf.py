@@ -187,6 +187,27 @@ class TestRenderMermaid:
         # but mmdc was only called THRESHOLD times, the rest short-circuited
         assert call_count["n"] == ep.MMDC_FAIL_FAST_THRESHOLD
 
+    def test_parallel_path_mixed_failure_after_probe_success(self, tmp_path):
+        """After the serial probe succeeds, the remaining blocks render via the
+        thread pool; an isolated failure leaves only that block as code and
+        document order of the replacements is preserved."""
+        md = self._md_with_blocks(6)
+
+        def fake_run(cmd, **kw):
+            out = Path(cmd[cmd.index("-o") + 1])
+            if out.name == "diagram-4.png":
+                raise subprocess.CalledProcessError(1, cmd, b"", b"boom")
+            out.write_text("<svg/>")
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            rewritten, ok, fail = ep.render_mermaid_blocks(md, tmp_path)
+        assert ok == 5 and fail == 1
+        assert rewritten.count("![Diagram") == 5
+        assert rewritten.count("```mermaid") == 1
+        # Replacements stay aligned with their position: Diagram 3 precedes Diagram 5.
+        assert rewritten.index("![Diagram 3]") < rewritten.index("![Diagram 5]")
+
 
 # ---------------------------------------------------------------------------
 # rewrite_vscode_links()
@@ -267,7 +288,7 @@ class TestMainCli:
         assert rc == 1
 
     def test_aborts_when_only_mermaid_broken(self, tmp_path):
-        """"Right or nothing" (2026-06-06): pandoc + weasyprint present but
+        """ "Right or nothing" (2026-06-06): pandoc + weasyprint present but
         mmdc/Chrome broken must ABORT, NOT silently ship a diagram-less PDF.
         First preflight (require_mermaid=True) fails on mmdc; the re-probe
         (require_mermaid=False) passes, signalling only mermaid is broken — the
@@ -449,7 +470,7 @@ def test_inject_table_colgroups_content_aware():
         "<th>Description</th><th>Linked Threats</th>\n</tr>\n</thead>\n<tbody>\n"
         "<tr><td>User Credentials Database</td><td>A-001</td><td>Restricted</td>"
         "<td>" + ("x" * 180) + "</td>"
-        "<td><a href=\"#f-001\">F-001</a> (SQL injection authentication bypass via login route)</td></tr>\n"
+        '<td><a href="#f-001">F-001</a> (SQL injection authentication bypass via login route)</td></tr>\n'
         "</tbody>\n</table>"
     )
     out = ep._inject_table_colgroups(html)
@@ -457,14 +478,14 @@ def test_inject_table_colgroups_content_aware():
     pct = [int(x) for x in re.findall(r"width:\s*(\d+)%", out)]
     assert len(pct) == 5
     asset, idc, classification, desc, linked = pct
-    assert idc < classification < asset           # short cols ordered, id narrowest
-    assert desc > asset and linked > desc          # description wide, linked widest
+    assert idc < classification < asset  # short cols ordered, id narrowest
+    assert desc > asset and linked > desc  # description wide, linked widest
     # Idempotent — a second pass does not add another colgroup.
     assert ep._inject_table_colgroups(out) == out
 
 
 def test_inject_table_colgroups_skips_existing():
-    html = "<table>\n<colgroup><col style=\"width: 50%\"/></colgroup>\n<tr><th>A</th><th>B</th></tr>\n</table>"
+    html = '<table>\n<colgroup><col style="width: 50%"/></colgroup>\n<tr><th>A</th><th>B</th></tr>\n</table>'
     assert ep._inject_table_colgroups(html) == html
 
 
@@ -493,13 +514,13 @@ def test_inject_table_colgroups_floors_narrow_columns():
 
 class TestEmojiFallback:
     def test_replaces_tofu_emoji_with_colored_glyph(self):
-        html = "<p>Risk \U0001F534 critical, \U0001F7E0 weak, ✅ ok, ❌ missing</p>"
+        html = "<p>Risk \U0001f534 critical, \U0001f7e0 weak, ✅ ok, ❌ missing</p>"
         out = ep._replace_unsupported_emoji(html)
         # No raw emoji left; replaced by colored DejaVu-safe glyphs.
-        for emo in ("\U0001F534", "\U0001F7E0", "✅", "❌"):
+        for emo in ("\U0001f534", "\U0001f7e0", "✅", "❌"):
             assert emo not in out
         assert '<span style="color: #d1242f">●</span>' in out  # red circle
-        assert "✓" in out and "✗" in out                   # check + cross
+        assert "✓" in out and "✗" in out  # check + cross
 
     def test_keeps_dejavu_safe_glyphs_untouched(self):
         # ✓ ✗ ● ≥ → are already in DejaVu; must not be rewritten.
@@ -507,10 +528,10 @@ class TestEmojiFallback:
         assert ep._replace_unsupported_emoji(html) == html
 
     def test_does_not_touch_emoji_inside_svg(self):
-        html = '<p>\U0001F534</p><svg><text>\U0001F534</text></svg>'
+        html = "<p>\U0001f534</p><svg><text>\U0001f534</text></svg>"
         out = ep._replace_unsupported_emoji(html)
         # The <p> emoji is replaced; the one inside <svg> is preserved verbatim.
-        assert "<svg><text>\U0001F534</text></svg>" in out
+        assert "<svg><text>\U0001f534</text></svg>" in out
         assert out.index("<span") < out.index("<svg")
 
     def test_noop_when_no_emoji(self):
@@ -566,7 +587,9 @@ class TestCoverPage:
 
     def test_no_cover_region_returns_unchanged(self):
         # No <hr> → no cover; pandoc header preserved so a title still shows.
-        html = '<body>\n<header id="title-block-header"><h1 class="title">T</h1></header>\n<h1>Doc</h1>\n<p>x</p>\n</body>'
+        html = (
+            '<body>\n<header id="title-block-header"><h1 class="title">T</h1></header>\n<h1>Doc</h1>\n<p>x</p>\n</body>'
+        )
         assert ep._wrap_cover_page(html) == html
 
 
@@ -588,12 +611,12 @@ class TestTocPageNumbers:
         assert '<h2 id="management-summary">' not in nav
 
     def test_does_not_swallow_unrelated_trailing_list(self):
-        html = _REPORT_HTML + '\n<ol><li>unrelated</li></ol>'
+        html = _REPORT_HTML + "\n<ol><li>unrelated</li></ol>"
         out = ep._wrap_toc(html)
         assert "unrelated" not in re.search(r'<nav class="toc">(.*?)</nav>', out, re.S).group(1)
 
     def test_no_toc_heading_is_noop(self):
-        html = "<h2 id=\"intro\">Intro</h2>\n<ol><li>x</li></ol>"
+        html = '<h2 id="intro">Intro</h2>\n<ol><li>x</li></ol>'
         assert ep._wrap_toc(html) == html
 
     def test_heals_broken_anchor_to_span(self):
@@ -603,17 +626,17 @@ class TestTocPageNumbers:
         as links."""
         html = (
             '<h2 id="table-of-contents">Table of Contents</h2>\n'
-            '<ul>\n'
+            "<ul>\n"
             '<li><a href="#real">Real Section</a></li>\n'
             '<li><a href="#missing">Broken Section</a></li>\n'
-            '</ul>\n'
+            "</ul>\n"
             '<h2 id="real">Real Section</h2>\n'
         )
         out = ep._wrap_toc(html)
         nav = re.search(r'<nav class="toc">(.*?)</nav>', out, re.S).group(1)
-        assert '<a href="#real">Real Section</a>' in nav      # valid link preserved
-        assert '<a href="#missing">' not in nav               # dead link removed
-        assert "<span>Broken Section</span>" in nav           # but text kept
+        assert '<a href="#real">Real Section</a>' in nav  # valid link preserved
+        assert '<a href="#missing">' not in nav  # dead link removed
+        assert "<span>Broken Section</span>" in nav  # but text kept
 
     def test_external_links_untouched(self):
         html = (

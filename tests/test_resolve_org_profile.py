@@ -4,6 +4,7 @@ Covers discovery (CLI > env > config.json), preset resolution, target.repo
 rules, output_dir template expansion, fingerprint stability, and the
 ``--no-org-profile`` short-circuit.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -47,9 +48,7 @@ def isolated_root(tmp_path: Path) -> Path:
     (root / "schemas").symlink_to(REPO_ROOT / "schemas")
     (root / "scripts").symlink_to(REPO_ROOT / "scripts")
     (root / ".claude-plugin").mkdir()
-    (root / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "0.4.0-beta"})
-    )
+    (root / ".claude-plugin" / "plugin.json").write_text(json.dumps({"version": "0.4.0-beta"}))
     return root
 
 
@@ -59,9 +58,7 @@ def isolated_root(tmp_path: Path) -> Path:
 
 
 def test_discovery_no_profile_returns_none(isolated_root):
-    path, source = rop.discover_active_profile(
-        cli_path=None, cli_no_profile=False, plugin_root=isolated_root, env={}
-    )
+    path, source = rop.discover_active_profile(cli_path=None, cli_no_profile=False, plugin_root=isolated_root, env={})
     assert path is None
     assert source == "none"
 
@@ -79,14 +76,16 @@ def test_discovery_cli_beats_env_beats_config(isolated_root):
 
 def test_discovery_env_beats_config(isolated_root):
     (isolated_root / "config.json").write_text(
-        json.dumps({
-            "external_context": {"enabled": False, "rest_url": None},
-            "organization_profile": {
-                "enabled": True,
-                "path": "../some/where.yaml",
-                "default_preset": None,
-            },
-        })
+        json.dumps(
+            {
+                "external_context": {"enabled": False, "rest_url": None},
+                "organization_profile": {
+                    "enabled": True,
+                    "path": "../some/where.yaml",
+                    "default_preset": None,
+                },
+            }
+        )
     )
     path, source = rop.discover_active_profile(
         cli_path=None,
@@ -128,18 +127,18 @@ def test_discovery_config_pointer_is_relative_to_plugin_root(isolated_root):
     target_dir = isolated_root / "org-profile"
     shutil.copytree(FIXTURE_DIR, target_dir)
     (isolated_root / "config.json").write_text(
-        json.dumps({
-            "external_context": {"enabled": False, "rest_url": None},
-            "organization_profile": {
-                "enabled": True,
-                "path": "org-profile/org-profile.yaml",
-                "default_preset": None,
-            },
-        })
+        json.dumps(
+            {
+                "external_context": {"enabled": False, "rest_url": None},
+                "organization_profile": {
+                    "enabled": True,
+                    "path": "org-profile/org-profile.yaml",
+                    "default_preset": None,
+                },
+            }
+        )
     )
-    path, source = rop.discover_active_profile(
-        cli_path=None, cli_no_profile=False, plugin_root=isolated_root, env={}
-    )
+    path, source = rop.discover_active_profile(cli_path=None, cli_no_profile=False, plugin_root=isolated_root, env={})
     assert source == "config"
     assert path == (target_dir / "org-profile.yaml").resolve()
 
@@ -150,9 +149,7 @@ def test_discovery_config_pointer_is_relative_to_plugin_root(isolated_root):
 
 
 def test_resolve_default_preset(isolated_root):
-    effective, errors = rop.resolve(
-        str(FIXTURE_PATH), None, False, None, isolated_root, env={}
-    )
+    effective, errors = rop.resolve(str(FIXTURE_PATH), None, False, None, isolated_root, env={})
     assert errors == []
     assert effective["org_profile"]["active"] is True
     assert effective["preset"]["name"] == "ci-standard"
@@ -165,9 +162,7 @@ def test_resolve_default_preset(isolated_root):
 
 
 def test_resolve_explicit_preset_overrides_default(isolated_root):
-    effective, errors = rop.resolve(
-        str(FIXTURE_PATH), "release-review", False, None, isolated_root, env={}
-    )
+    effective, errors = rop.resolve(str(FIXTURE_PATH), "release-review", False, None, isolated_root, env={})
     assert errors == []
     assert effective["preset"]["name"] == "release-review"
     assert effective["defaults"]["write_pdf"] is True
@@ -175,17 +170,13 @@ def test_resolve_explicit_preset_overrides_default(isolated_root):
 
 
 def test_resolve_unknown_preset_fails(isolated_root):
-    effective, errors = rop.resolve(
-        str(FIXTURE_PATH), "ghost", False, None, isolated_root, env={}
-    )
+    effective, errors = rop.resolve(str(FIXTURE_PATH), "ghost", False, None, isolated_root, env={})
     assert errors
     assert any("ghost" in e for e in errors)
 
 
 def test_org_profile_required_preset_without_repo_fails(isolated_root):
-    effective, errors = rop.resolve(
-        str(FIXTURE_PATH), "appsec-verification", False, None, isolated_root, env={}
-    )
+    effective, errors = rop.resolve(str(FIXTURE_PATH), "appsec-verification", False, None, isolated_root, env={})
     assert any("--repo" in e for e in errors), errors
 
 
@@ -208,9 +199,7 @@ def test_cli_required_preset_with_repo_resolves_output_template(isolated_root, t
 
 
 def test_no_org_profile_returns_inactive(isolated_root):
-    effective, errors = rop.resolve(
-        str(FIXTURE_PATH), None, True, None, isolated_root, env={}
-    )
+    effective, errors = rop.resolve(str(FIXTURE_PATH), None, True, None, isolated_root, env={})
     assert errors == []
     assert effective["org_profile"]["active"] is False
     assert effective["preset"] is None
@@ -221,16 +210,12 @@ def test_fingerprint_changes_when_context_changes(isolated_root, tmp_path):
     staged = tmp_path / "profile"
     shutil.copytree(FIXTURE_DIR, staged)
     profile = staged / "org-profile.yaml"
-    eff1, errs1 = rop.resolve(
-        str(profile), None, False, None, isolated_root, env={}
-    )
+    eff1, errs1 = rop.resolve(str(profile), None, False, None, isolated_root, env={})
     assert errs1 == []
     fp1 = eff1["org_profile"]["profile_fingerprint"]
 
     (staged / "context" / "sso.md").write_text("# changed content\n")
-    eff2, errs2 = rop.resolve(
-        str(profile), None, False, None, isolated_root, env={}
-    )
+    eff2, errs2 = rop.resolve(str(profile), None, False, None, isolated_root, env={})
     assert errs2 == []
     fp2 = eff2["org_profile"]["profile_fingerprint"]
     assert fp1 != fp2
@@ -269,9 +254,7 @@ def test_emit_file_writes_effective_json(isolated_root, tmp_path):
 
 def test_policy_disable_opus_absent_defaults_false(isolated_root):
     """Fixture without a policy block → disable_opus defaults to False."""
-    effective, errors = rop.resolve(
-        str(FIXTURE_PATH), None, False, None, isolated_root, env={}
-    )
+    effective, errors = rop.resolve(str(FIXTURE_PATH), None, False, None, isolated_root, env={})
     assert errors == []
     assert effective["defaults"]["disable_opus"] is False
 
@@ -281,7 +264,7 @@ def test_policy_disable_opus_true(isolated_root, tmp_path):
     profile.write_text(
         "api_version: appsec-advisor.org-profile/v2\n"
         "organization: { id: testco, name: TestCo, profile_version: t1 }\n"
-        "compatibility: { core: \">=0.0 <999.0\" }\n"
+        'compatibility: { core: ">=0.0 <999.0" }\n'
         "policy:\n"
         "  disable_opus: true\n"
         "default_preset: std\n"
@@ -289,9 +272,7 @@ def test_policy_disable_opus_true(isolated_root, tmp_path):
         "  std:\n"
         "    base_mode: standard\n"
     )
-    effective, errors = rop.resolve(
-        str(profile), None, False, None, isolated_root, env={}
-    )
+    effective, errors = rop.resolve(str(profile), None, False, None, isolated_root, env={})
     assert errors == []
     assert effective["org_profile"]["active"] is True
     assert effective["defaults"]["disable_opus"] is True

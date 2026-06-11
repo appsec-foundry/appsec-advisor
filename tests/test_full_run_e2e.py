@@ -88,7 +88,7 @@ REQUIRED_FILES = [
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",  # driver passes --sarif
-    "pentest-tasks.yaml",       # driver passes --pentest-tasks
+    "pentest-tasks.yaml",  # driver passes --pentest-tasks
     ".threats-merged.json",
     ".triage-flags.json",
     ".recon-summary.md",
@@ -97,7 +97,6 @@ REQUIRED_FILES = [
 
 REQUIRED_FRAGMENTS = [
     "ms-verdict.json",
-    "ms-architecture-assessment.json",
     "attack-walkthroughs.md",
     "system-overview.md",
     "assets.md",
@@ -129,18 +128,12 @@ def test_required_fragment_exists(out_dir: Path, name: str) -> None:
     assert path.stat().st_size > 0, f"fragment is empty: {path}"
 
 
-def test_critical_attack_tree_fragment_is_conditional(
-    out_dir: Path, threat_model_yaml: dict
-) -> None:
+def test_critical_attack_tree_fragment_is_conditional(out_dir: Path, threat_model_yaml: dict) -> None:
     """`ms-critical-attack-tree.json` is authored IFF >=2 Critical findings
     exist — the composer's `has_multi_critical` gate (appsec-threat-renderer.md
     :124, phase-group-finalization.md:444). Assert that conditional contract,
     not unconditional presence: a single-Critical run correctly omits it."""
-    critical = sum(
-        1
-        for t in threat_model_yaml.get("threats", [])
-        if str(t.get("risk", "")).lower() == "critical"
-    )
+    critical = sum(1 for t in threat_model_yaml.get("threats", []) if str(t.get("risk", "")).lower() == "critical")
     frag = out_dir / ".fragments" / "ms-critical-attack-tree.json"
     if critical >= 2:
         assert frag.is_file() and frag.stat().st_size > 0, (
@@ -148,8 +141,7 @@ def test_critical_attack_tree_fragment_is_conditional(
         )
     else:
         assert not frag.is_file(), (
-            f"<2 Critical findings ({critical}) but {frag} was authored "
-            "(should be skipped per has_multi_critical gate)"
+            f"<2 Critical findings ({critical}) but {frag} was authored (should be skipped per has_multi_critical gate)"
         )
 
 
@@ -215,14 +207,12 @@ def test_inline_shortcut_gate_did_not_trigger(out_dir: Path) -> None:
     CLI: positional `output_dir`, optional `--depth`."""
     depth = os.environ.get("APPSEC_E2E_DEPTH", "quick")
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "check_inline_shortcut.py"),
-         "--depth", depth, str(out_dir)],
+        [sys.executable, str(SCRIPTS / "check_inline_shortcut.py"), "--depth", depth, str(out_dir)],
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, (
-        f"inline-shortcut bypass detected (exit {result.returncode}):\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        f"inline-shortcut bypass detected (exit {result.returncode}):\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
 
 
@@ -243,8 +233,7 @@ def test_qa_check_passes(out_dir: Path, check: str) -> None:
         text=True,
     )
     assert result.returncode == 0, (
-        f"qa_checks.py {check} failed (exit {result.returncode}):\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        f"qa_checks.py {check} failed (exit {result.returncode}):\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
 
 
@@ -258,9 +247,7 @@ def test_threat_count_in_band(threat_model_yaml: dict) -> None:
     is wide — guard against runaway hallucination."""
     threats = threat_model_yaml.get("threats", [])
     assert len(threats) >= 1, "no threats produced — STRIDE pipeline ran but found nothing"
-    assert len(threats) <= 50, (
-        f"threat count {len(threats)} exceeds sanity ceiling 50 — possible duplication"
-    )
+    assert len(threats) <= 50, f"threat count {len(threats)} exceeds sanity ceiling 50 — possible duplication"
 
 
 def test_at_least_one_component(threat_model_yaml: dict) -> None:
@@ -310,9 +297,7 @@ def test_no_placeholder_leakage_in_markdown(out_dir: Path) -> None:
 def test_hook_log_non_empty(out_dir: Path) -> None:
     log = out_dir / ".hook-events.log"
     lines = log.read_text().splitlines()
-    assert len(lines) > 10, (
-        f".hook-events.log has only {len(lines)} lines — agent dispatch likely failed"
-    )
+    assert len(lines) > 10, f".hook-events.log has only {len(lines)} lines — agent dispatch likely failed"
 
 
 def test_hook_log_records_phase_progression(out_dir: Path) -> None:
@@ -389,9 +374,7 @@ def test_requirements_check_ran(out_dir: Path, threat_model_yaml: dict) -> None:
         "meta.check_requirements is not True but .requirements.yaml exists — "
         "requirements resolved yet the flag did not propagate"
     )
-    assert has_source, (
-        "missing .requirements.yaml — context-resolver did not write the source"
-    )
+    assert has_source, "missing .requirements.yaml — context-resolver did not write the source"
     assert (out_dir / ".fragments" / "requirements-compliance.md").is_file(), (
         "missing requirements-compliance fragment — Phase 8b did not write it"
     )
@@ -413,9 +396,7 @@ def test_keep_runtime_files_honored(out_dir: Path) -> None:
     text = log.read_text(encoding="utf-8", errors="ignore")
     if "RUNTIME_CLEANUP" not in text:
         pytest.skip("runtime_cleanup did not run in this pipeline path")
-    assert ("opt-out" in text) or ("skipped" in text), (
-        "runtime_cleanup ran but did not honor --keep-runtime-files"
-    )
+    assert ("opt-out" in text) or ("skipped" in text), "runtime_cleanup ran but did not honor --keep-runtime-files"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -430,9 +411,7 @@ def test_pdf_exported(out_dir: Path) -> None:
         pytest.skip("driver did not attempt --pdf (pandoc/weasyprint missing)")
     pdf = out_dir / "threat-model.pdf"
     assert pdf.is_file(), "threat-model.pdf missing despite --pdf"
-    assert pdf.stat().st_size > 1024, (
-        f"threat-model.pdf suspiciously small ({pdf.stat().st_size} bytes)"
-    )
+    assert pdf.stat().st_size > 1024, f"threat-model.pdf suspiciously small ({pdf.stat().st_size} bytes)"
     assert pdf.read_bytes()[:5] == b"%PDF-", "threat-model.pdf lacks a %PDF- header"
 
 

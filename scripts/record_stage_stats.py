@@ -81,8 +81,8 @@ HOOK_LOG_FILENAME = ".hook-events.log"
 # wrong positional token (e.g. `repo=/path` being captured as subagent).
 _HOOK_EVENT_AGENT_RE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+"
-    r"\S+\s+"            # session-id bracketed token, e.g. [f13a4710]
-    r"\S+\s+"            # level (INFO/WARN/ERROR)
+    r"\S+\s+"  # session-id bracketed token, e.g. [f13a4710]
+    r"\S+\s+"  # level (INFO/WARN/ERROR)
     r"(?P<event>AGENT_SPAWN|AGENT_INVOKE)\s+"
     r"(?P<subagent>\S+)"
 )
@@ -310,10 +310,9 @@ def main(argv: list[str]) -> int:
     # `_inconsistency` field to the record so /appsec-advisor:status and
     # the completion summary can flag the suspect entry. Non-fatal —
     # writing a flagged record is preferable to losing data.
-    deterministic_claim = (
-        (args.model or "").strip().lower() in ("none", "—", "")
-        or (args.agent or "").strip().startswith("deterministic:")
-    )
+    deterministic_claim = (args.model or "").strip().lower() in ("none", "—", "") or (
+        args.agent or ""
+    ).strip().startswith("deterministic:")
     llm_evidence = (args.tokens or 0) > 0 or (args.tool_uses or 0) > 0
     inconsistency: str | None = None
     if deterministic_claim and llm_evidence:

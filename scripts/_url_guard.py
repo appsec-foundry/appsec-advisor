@@ -26,7 +26,6 @@ import socket
 import urllib.parse
 from typing import Iterable, NamedTuple
 
-
 _ALLOWED_SCHEMES = ("http", "https")
 
 

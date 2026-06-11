@@ -1,4 +1,5 @@
 """Tests for scripts/load_org_context.py."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -6,8 +7,6 @@ import json
 import shutil
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "load_org_context.py"
@@ -81,9 +80,7 @@ def test_symlink_escape_is_hard_error(tmp_path):
 def test_secret_pattern_blocks_load(tmp_path):
     staged = tmp_path / "profile"
     shutil.copytree(FIXTURE_DIR, staged)
-    (staged / "context" / "sso.md").write_text(
-        "# Heading\n\nAKIA1234567890ABCDEF\n"
-    )
+    (staged / "context" / "sso.md").write_text("# Heading\n\nAKIA1234567890ABCDEF\n")
     profile = staged / "org-profile.yaml"
     _, manifest, hard_errors = loc.load(profile, ["sso"])
     assert hard_errors
@@ -114,11 +111,15 @@ def test_frontmatter_is_stripped_from_body():
 def test_emit_file_writes_threat_modeling_context(tmp_path):
     out = tmp_path / "out"
     out.mkdir()
-    rc = loc.main([
-        "--profile", str(FIXTURE_PATH),
-        "--output-dir", str(out),
-        "--emit-file",
-    ])
+    rc = loc.main(
+        [
+            "--profile",
+            str(FIXTURE_PATH),
+            "--output-dir",
+            str(out),
+            "--emit-file",
+        ]
+    )
     assert rc == 0
     assert (out / ".threat-modeling-context.md").exists()
     manifest = json.loads((out / ".org-context-manifest.json").read_text())

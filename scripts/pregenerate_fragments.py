@@ -15,11 +15,10 @@ Six of the eight REQUIRED_FRAGMENTS are pure structural projections of
 (``use-cases.md`` was retired in 2026-05; the §6 numbering gap is intentional.)
 
 Pre-generating these takes 6 LLM Write tool-calls off the orchestrator's
-Phase-11 budget. The remaining two REQUIRED_FRAGMENTS are LLM-authored:
+Phase-11 budget. The remaining REQUIRED_FRAGMENTS are LLM-authored:
 
-  8. ``ms-verdict.json``                    — qualitative verdict
-  9. ``ms-architecture-assessment.json``    — qualitative assessment
-  +  ``attack-walkthroughs.md``             — narrative sequence diagrams
+  8. ``ms-verdict.json``          — qualitative verdict
+  +  ``attack-walkthroughs.md``   — narrative sequence diagrams
 
 Idempotency
 -----------
@@ -51,7 +50,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 import yaml
 
@@ -295,11 +294,7 @@ def _arch_diagram_takeaways(
     top_crit_name = None
     if top_crit_id:
         top_crit_name = next(
-            (
-                (c.get("name") or c.get("id"))
-                for c in components
-                if isinstance(c, dict) and c.get("id") == top_crit_id
-            ),
+            ((c.get("name") or c.get("id")) for c in components if isinstance(c, dict) and c.get("id") == top_crit_id),
             top_crit_id,
         )
     top_crit_n = crit_counts.get(top_crit_id, 0) if top_crit_id else 0
@@ -312,9 +307,7 @@ def _arch_diagram_takeaways(
     )
 
     # --- 2.2 Container Architecture ---
-    decomposition = (
-        f"{n_client} client, {n_app} application and {n_data} data unit(s)"
-    )
+    decomposition = f"{n_client} client, {n_app} application and {n_data} data unit(s)"
     if total_crit and top_crit_name:
         t22 = (
             f"The system decomposes into {decomposition}; {top_crit_name} carries "
@@ -322,10 +315,7 @@ def _arch_diagram_takeaways(
             "blast radius."
         )
     else:
-        t22 = (
-            f"The system decomposes into {decomposition} connected by synchronous "
-            "request paths."
-        )
+        t22 = f"The system decomposes into {decomposition} connected by synchronous request paths."
 
     # --- 2.3 Components ---
     if top and top_n:
@@ -335,10 +325,7 @@ def _arch_diagram_takeaways(
             "source paths and linked threats."
         )
     else:
-        t23 = (
-            "The table below maps each component to its source paths and linked "
-            "threats."
-        )
+        t23 = "The table below maps each component to its source paths and linked threats."
 
     # --- 2.4 Technology Architecture ---
     if n_data:
@@ -2293,15 +2280,21 @@ def gen_assets(yaml_data: dict) -> str:
     def _classification_rank(a: dict) -> int:
         c = re.sub(r"[`*_]", "", (a.get("classification") or "")).strip().lower()
         order = {
-            "restricted": 0, "secret": 0, "top secret": 0,
-            "confidential": 1, "pii": 1, "sensitive": 1,
-            "internal": 2, "private": 2,
+            "restricted": 0,
+            "secret": 0,
+            "top secret": 0,
+            "confidential": 1,
+            "pii": 1,
+            "sensitive": 1,
+            "internal": 2,
+            "private": 2,
             "public": 3,
         }
         for key, rank in order.items():
             if key in c:
                 return rank
         return 4  # unknown / n/a sorts last
+
     assets = sorted(assets, key=_classification_rank)
 
     # Check whether any asset has linked_threats to decide if the column is needed
@@ -2589,11 +2582,7 @@ def _score_threat_path_match(threat: dict, raw_path: str) -> int:
         # `order-history` vs `b2bOrder` share only {order} and neither names the
         # other's segment → no bonus, the spurious link disappears.
         path_words = _word_set(path_clean)
-        path_segs_norm = {
-            _normalize_token(seg)
-            for seg in path_clean.split("/")
-            if len(_normalize_token(seg)) >= 4
-        }
+        path_segs_norm = {_normalize_token(seg) for seg in path_clean.split("/") if len(_normalize_token(seg)) >= 4}
         for ev in threat.get("evidence") or []:
             if not isinstance(ev, dict):
                 continue
@@ -2720,9 +2709,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
     _sev_rank = {"Critical": 4, "High": 3, "Medium": 2, "Low": 1, "Info": 0, "Unknown": 0}
     _sev_emoji = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
     threat_by_id = {
-        (t.get("t_id") or t.get("id") or "").upper(): t
-        for t in (yaml_data.get("threats") or [])
-        if isinstance(t, dict)
+        (t.get("t_id") or t.get("id") or "").upper(): t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)
     }
 
     def _entry_risk(entry: dict) -> str:
@@ -2786,10 +2773,7 @@ def gen_attack_surface(yaml_data: dict) -> str:
         # Large-inventory collapse: only show finding-linked rows individually;
         # the rest are summarised as a total-count hint (2026-06-04 request).
         with_findings = [e for e in bucket_entries if _entry_rank(e) >= 0]
-        collapse = (
-            len(bucket_entries) > _SURFACE_ROW_CAP
-            and len(with_findings) < len(bucket_entries)
-        )
+        collapse = len(bucket_entries) > _SURFACE_ROW_CAP and len(with_findings) < len(bucket_entries)
         shown = with_findings if collapse else bucket_entries
 
         if shown:
@@ -3157,10 +3141,7 @@ def _meta_finding_pointer_for_control(c: dict, yaml_data: dict) -> str:
             if tid:
                 threats_by_id[tid] = t
 
-    if not all(
-        threats_by_id.get(tid, {}).get("source") in _IMPL_ONLY_SOURCES
-        for tid in linked
-    ):
+    if not all(threats_by_id.get(tid, {}).get("source") in _IMPL_ONLY_SOURCES for tid in linked):
         return ""
 
     # Find the matching meta-finding (one whose derived_from intersects
@@ -3178,10 +3159,7 @@ def _meta_finding_pointer_for_control(c: dict, yaml_data: dict) -> str:
         if linked_set & set(derived):
             mfid = (mf.get("id") or "").strip()
             if mfid:
-                return (
-                    f"_See [{mfid}](#{mfid.lower()}) — "
-                    f"{mf.get('title', 'cross-cutting process gap')}._"
-                )
+                return f"_See [{mfid}](#{mfid.lower()}) — {mf.get('title', 'cross-cutting process gap')}._"
     return ""
 
 
@@ -3281,9 +3259,7 @@ def _section_id_for_control_domain(domain: str) -> Optional[str]:
     return None
 
 
-def _format_linked_threats_for_control(
-    control: dict, all_threats: list, max_links: int = 3
-) -> str:
+def _format_linked_threats_for_control(control: dict, all_threats: list, max_links: int = 3) -> str:
     """M-7: Render the `Linked Threats` cell for a §7.2 control row.
 
     Priority:
@@ -3300,9 +3276,7 @@ def _format_linked_threats_for_control(
     if isinstance(explicit, list) and explicit:
         ids = [t for t in explicit if isinstance(t, str) and t.strip()]
         if ids:
-            rendered = ", ".join(
-                f"[{tid}](#{tid.lower()})" for tid in ids[:max_links]
-            )
+            rendered = ", ".join(f"[{tid}](#{tid.lower()})" for tid in ids[:max_links])
             if len(ids) > max_links:
                 rendered += f" (+{len(ids) - max_links})"
             return rendered
@@ -3315,11 +3289,7 @@ def _format_linked_threats_for_control(
     derived = _threats_for_subsection(all_threats, section_id)
     if not derived:
         return "—"
-    ids = [
-        (t.get("id") or "").strip()
-        for t in derived
-        if isinstance(t, dict) and (t.get("id") or "").strip()
-    ]
+    ids = [(t.get("id") or "").strip() for t in derived if isinstance(t, dict) and (t.get("id") or "").strip()]
     ids = ids[:max_links]
     if not ids:
         return "—"
@@ -4256,9 +4226,31 @@ def gen_out_of_scope(yaml_data: dict) -> str:
 
 _CHAIN_TITLE_STOPWORDS = frozenset(
     {
-        "the", "a", "an", "of", "in", "on", "at", "to", "for", "by", "via",
-        "and", "or", "but", "with", "from", "into", "is", "be", "are", "was",
-        "this", "that", "these", "those",
+        "the",
+        "a",
+        "an",
+        "of",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "by",
+        "via",
+        "and",
+        "or",
+        "but",
+        "with",
+        "from",
+        "into",
+        "is",
+        "be",
+        "are",
+        "was",
+        "this",
+        "that",
+        "these",
+        "those",
     }
 )
 
@@ -4408,10 +4400,7 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
             )
         out.append("")
     else:
-        out.append(
-            "_No Critical or High findings present — the chain overview is "
-            "empty for this assessment._"
-        )
+        out.append("_No Critical or High findings present — the chain overview is empty for this assessment._")
         out.append("")
         return "\n".join(out) + "\n"
 
@@ -4454,8 +4443,8 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
         # Mirrors `_canonical_finding_title` in compose_threat_model.py but
         # the pregenerator stays self-contained.
         cwe_raw = (t.get("cwe") or "").strip()
-        cwe_norm = cwe_raw if cwe_raw.upper().startswith("CWE-") else (
-            f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw
+        cwe_norm = (
+            cwe_raw if cwe_raw.upper().startswith("CWE-") else (f"CWE-{cwe_raw}" if cwe_raw.isdigit() else cwe_raw)
         )
         weak_label = _PREGEN_CWE_CLASS_NAMES.get(cwe_norm.upper(), "")
         if not weak_label:
@@ -4515,10 +4504,7 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
         # Sequence Diagram.
         out.append("**Sequence Diagram**")
         out.append("")
-        out.append(
-            "The diagram contrasts the current vulnerable behaviour with "
-            "the post-mitigation state:"
-        )
+        out.append("The diagram contrasts the current vulnerable behaviour with the post-mitigation state:")
         out.append("")
         out.append("```mermaid")
         out.append("sequenceDiagram")
@@ -4545,7 +4531,7 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
             "downstream blast radius (lateral movement, data loss, "
             "regulatory exposure), confidentiality vs integrity vs "
             "availability dimension. Avoid generic phrases like "
-            "\"sensitive data exposed\". -->"
+            '"sensitive data exposed". -->'
         )
         out.append("")
 
@@ -4583,14 +4569,8 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
             f"- [§8 Findings Register entry for {vid}](#{vid.lower()}) — "
             "evidence, classification, full mitigation list."
         )
-        out.append(
-            "- <!-- WALKTHROUGH_FILL: §3.1 chain that uses this finding "
-            "(e.g. `[Chain 2](#chain-2-...)`) -->"
-        )
-        out.append(
-            "- <!-- WALKTHROUGH_FILL: related §3.x walkthroughs that "
-            "share findings or actors -->"
-        )
+        out.append("- <!-- WALKTHROUGH_FILL: §3.1 chain that uses this finding (e.g. `[Chain 2](#chain-2-...)`) -->")
+        out.append("- <!-- WALKTHROUGH_FILL: related §3.x walkthroughs that share findings or actors -->")
         out.append("")
 
     return "\n".join(out) + "\n"
@@ -4599,43 +4579,43 @@ def gen_attack_walkthroughs_skeleton(yaml_data: dict) -> str:
 # Lightweight CWE → class label table for the pregenerator. Kept in sync
 # manually with `_CWE_CLASS_NAMES` in scripts/compose_threat_model.py.
 _PREGEN_CWE_CLASS_NAMES = {
-    "CWE-22":   "Path Traversal",
-    "CWE-23":   "Path Traversal",
-    "CWE-78":   "OS Command Injection",
-    "CWE-79":   "Cross-Site Scripting",
-    "CWE-87":   "Cross-Site Scripting",
-    "CWE-89":   "SQL Injection",
-    "CWE-94":   "Code Injection",
-    "CWE-95":   "Server-Side Template Injection",
-    "CWE-200":  "Information Disclosure",
-    "CWE-269":  "Improper Privilege Management",
-    "CWE-285":  "Improper Authorization",
-    "CWE-287":  "Improper Authentication",
-    "CWE-290":  "Authentication Bypass by Spoofing",
-    "CWE-294":  "Authentication Bypass by Capture-Replay",
-    "CWE-307":  "Missing Rate Limiting (Brute-Force)",
-    "CWE-312":  "Cleartext Storage of Sensitive Data",
-    "CWE-321":  "Hardcoded Cryptographic Key",
-    "CWE-327":  "Use of a Broken or Risky Cryptographic Algorithm",
-    "CWE-328":  "Use of Weak Hash",
-    "CWE-345":  "Insufficient Verification of Data Authenticity",
-    "CWE-347":  "Improper Verification of Cryptographic Signature",
-    "CWE-352":  "Cross-Site Request Forgery (CSRF)",
-    "CWE-400":  "Uncontrolled Resource Consumption",
-    "CWE-434":  "Unrestricted File Upload",
-    "CWE-548":  "Directory Listing Exposure",
-    "CWE-601":  "Open Redirect",
-    "CWE-611":  "XML External Entity (XXE)",
-    "CWE-620":  "Unverified Password Change",
-    "CWE-639":  "Insecure Direct Object Reference (IDOR)",
-    "CWE-693":  "Missing Defense-in-Depth Control",
-    "CWE-798":  "Hardcoded Credentials",
-    "CWE-862":  "Missing Authorization",
-    "CWE-863":  "Incorrect Authorization",
-    "CWE-918":  "Server-Side Request Forgery (SSRF)",
-    "CWE-922":  "Insecure Storage of Sensitive Information",
-    "CWE-942":  "Permissive Cross-Origin (CORS) Policy",
-    "CWE-943":  "NoSQL Injection",
+    "CWE-22": "Path Traversal",
+    "CWE-23": "Path Traversal",
+    "CWE-78": "OS Command Injection",
+    "CWE-79": "Cross-Site Scripting",
+    "CWE-87": "Cross-Site Scripting",
+    "CWE-89": "SQL Injection",
+    "CWE-94": "Code Injection",
+    "CWE-95": "Server-Side Template Injection",
+    "CWE-200": "Information Disclosure",
+    "CWE-269": "Improper Privilege Management",
+    "CWE-285": "Improper Authorization",
+    "CWE-287": "Improper Authentication",
+    "CWE-290": "Authentication Bypass by Spoofing",
+    "CWE-294": "Authentication Bypass by Capture-Replay",
+    "CWE-307": "Missing Rate Limiting (Brute-Force)",
+    "CWE-312": "Cleartext Storage of Sensitive Data",
+    "CWE-321": "Hardcoded Cryptographic Key",
+    "CWE-327": "Use of a Broken or Risky Cryptographic Algorithm",
+    "CWE-328": "Use of Weak Hash",
+    "CWE-345": "Insufficient Verification of Data Authenticity",
+    "CWE-347": "Improper Verification of Cryptographic Signature",
+    "CWE-352": "Cross-Site Request Forgery (CSRF)",
+    "CWE-400": "Uncontrolled Resource Consumption",
+    "CWE-434": "Unrestricted File Upload",
+    "CWE-548": "Directory Listing Exposure",
+    "CWE-601": "Open Redirect",
+    "CWE-611": "XML External Entity (XXE)",
+    "CWE-620": "Unverified Password Change",
+    "CWE-639": "Insecure Direct Object Reference (IDOR)",
+    "CWE-693": "Missing Defense-in-Depth Control",
+    "CWE-798": "Hardcoded Credentials",
+    "CWE-862": "Missing Authorization",
+    "CWE-863": "Incorrect Authorization",
+    "CWE-918": "Server-Side Request Forgery (SSRF)",
+    "CWE-922": "Insecure Storage of Sensitive Information",
+    "CWE-942": "Permissive Cross-Origin (CORS) Policy",
+    "CWE-943": "NoSQL Injection",
     "CWE-1021": "Improper Restriction of UI Rendering Layers (Clickjacking)",
     "CWE-1104": "Use of Unmaintained Third-Party Components",
     "CWE-1321": "Prototype Pollution",
@@ -4649,40 +4629,69 @@ _PREGEN_CWE_CLASS_NAMES = {
 _V2_SUBSECTIONS: tuple[tuple[str, str, str], ...] = (
     # (heading, narrative_hint_for_llm, tier). Tier is retained for backward
     # compatibility with older composer logic; current v2 emits every section.
-    ("7.1 Security Control Overview",
-     "Overview matrix: Control category, Verdict, Main reason. No control IDs "
-     "and no finding-ID columns.", "a"),
-    ("7.2 Identity and Authentication Controls",
-     "Registration, password login, OAuth/OIDC adapters, MFA/TOTP, JWT issuance "
-     "and verification, password reset/change.", "a"),
-    ("7.3 Session and Token Controls",
-     "Browser token storage, request propagation, token lifetime, revocation, "
-     "cookie/session boundary.", "a"),
-    ("7.4 Authorization Controls",
-     "Route middleware, role checks, object-level authorization, client-side "
-     "guards versus server-side enforcement.", "a"),
-    ("7.5 Query Construction and Data Access Controls",
-     "SQL/NoSQL query construction, ORM usage, parameter binding, selector and "
-     "object ownership boundaries.", "a"),
-    ("7.6 Input Boundary Validation Controls",
-     "Request schemas, parser limits, upload constraints, URL/path validation, "
-     "business-rule boundaries.", "a"),
-    ("7.7 Output Encoding and Rendering Controls",
-     "Template escaping, DOM sinks, sanitizer bypasses, HTML rendering contexts.", "a"),
-    ("7.8 Browser and Cross-Origin Controls",
-     "CSP, CORS, CSRF, Helmet/header hardening, browser-side request policy.", "a"),
-    ("7.9 Cryptography Secrets and Data Protection",
-     "Signing keys, HMAC/cookie secrets, password storage, data-at-rest protection.", "a"),
-    ("7.10 File Parser and Outbound Request Controls",
-     "Uploads, archives, XML parsing, unsafe interpreters, SSRF, redirects, "
-     "static or management-surface exposure.", "a"),
-    ("7.11 Operations Runtime and Supply Chain Controls",
-     "Audit logging, runtime/container hardening, dependency determinism, CI "
-     "workflow permissions, package-install controls.", "a"),
-    ("7.12 Real-time and Not Applicable Controls",
-     "WebSocket/real-time channels plus compact absent-domain statements.", "a"),
-    ("7.13 Defense-in-Depth Summary",
-     "Cross-cutting summary of layered controls and residual architecture risk.", "a"),
+    (
+        "7.1 Security Control Overview",
+        "Overview matrix: Control category, Verdict, Main reason. No control IDs and no finding-ID columns.",
+        "a",
+    ),
+    (
+        "7.2 Identity and Authentication Controls",
+        "Registration, password login, OAuth/OIDC adapters, MFA/TOTP, JWT issuance "
+        "and verification, password reset/change.",
+        "a",
+    ),
+    (
+        "7.3 Session and Token Controls",
+        "Browser token storage, request propagation, token lifetime, revocation, cookie/session boundary.",
+        "a",
+    ),
+    (
+        "7.4 Authorization Controls",
+        "Route middleware, role checks, object-level authorization, client-side guards versus server-side enforcement.",
+        "a",
+    ),
+    (
+        "7.5 Query Construction and Data Access Controls",
+        "SQL/NoSQL query construction, ORM usage, parameter binding, selector and object ownership boundaries.",
+        "a",
+    ),
+    (
+        "7.6 Input Boundary Validation Controls",
+        "Request schemas, parser limits, upload constraints, URL/path validation, business-rule boundaries.",
+        "a",
+    ),
+    (
+        "7.7 Output Encoding and Rendering Controls",
+        "Template escaping, DOM sinks, sanitizer bypasses, HTML rendering contexts.",
+        "a",
+    ),
+    (
+        "7.8 Browser and Cross-Origin Controls",
+        "CSP, CORS, CSRF, Helmet/header hardening, browser-side request policy.",
+        "a",
+    ),
+    (
+        "7.9 Cryptography Secrets and Data Protection",
+        "Signing keys, HMAC/cookie secrets, password storage, data-at-rest protection.",
+        "a",
+    ),
+    (
+        "7.10 File Parser and Outbound Request Controls",
+        "Uploads, archives, XML parsing, unsafe interpreters, SSRF, redirects, static or management-surface exposure.",
+        "a",
+    ),
+    (
+        "7.11 Operations Runtime and Supply Chain Controls",
+        "Audit logging, runtime/container hardening, dependency determinism, CI "
+        "workflow permissions, package-install controls.",
+        "a",
+    ),
+    (
+        "7.12 Real-time and Not Applicable Controls",
+        "WebSocket/real-time channels plus compact absent-domain statements.",
+        "a",
+    ),
+    ("7.13 Defense-in-Depth Summary", "Cross-cutting summary of layered controls and residual architecture risk.", "a"),
 )
 
 
@@ -4852,8 +4861,10 @@ def _control_verdict_for_heading(
     if not worst_status and not worst_sev:
         return ""
     status_label = {
-        "missing": "Missing", "weak": "Weak",
-        "partial": "Partial", "adequate": "Adequate",
+        "missing": "Missing",
+        "weak": "Weak",
+        "partial": "Partial",
+        "adequate": "Adequate",
     }.get(worst_status, worst_status.title() if worst_status else "")
     if not status_label and section_threats:
         # Threats present but no control mapped — clearly weak at minimum.
@@ -4876,6 +4887,7 @@ def _v2_slug(title: str) -> str:
     which was the proximate cause of the §7 `#h4-*` TOC drift bug.
     """
     from _slug import github_slug as _gh
+
     slug = _gh(title or "")
     return slug or "control"
 
@@ -4887,41 +4899,104 @@ _V2_CONTROL_HINTS: dict[str, tuple[str, ...]] = {
     # leaking authorization controls into §7.2. Likewise "management" in
     # §7.10 matched "secrets-management" leaking secrets controls into §7.10.
     "7.2 Identity and Authentication Controls": (
-        "identity", "iam", "authentication", "identity-auth", "login", "password-login",
-        "jwt-issu", "oauth-adapter", "oidc-adapter", "totp", "mfa", "2fa", "registration",
+        "identity",
+        "iam",
+        "authentication",
+        "identity-auth",
+        "login",
+        "password-login",
+        "jwt-issu",
+        "oauth-adapter",
+        "oidc-adapter",
+        "totp",
+        "mfa",
+        "2fa",
+        "registration",
     ),
     "7.3 Session and Token Controls": (
-        "session", "token-storage", "cookie", "localstorage", "browser-storage",
+        "session",
+        "token-storage",
+        "cookie",
+        "localstorage",
+        "browser-storage",
     ),
     "7.4 Authorization Controls": (
-        "authorization", "access-control", "rbac", "object-level", "ownership",
+        "authorization",
+        "access-control",
+        "rbac",
+        "object-level",
+        "ownership",
     ),
     "7.5 Query Construction and Data Access Controls": (
-        "query", "sql", "nosql", "orm", "data-access",
+        "query",
+        "sql",
+        "nosql",
+        "orm",
+        "data-access",
     ),
     "7.6 Input Boundary Validation Controls": (
-        "input-validation", "schema-validation", "upload-validation", "request-body",
-        "parser-limit", "rate-limiting",
+        "input-validation",
+        "schema-validation",
+        "upload-validation",
+        "request-body",
+        "parser-limit",
+        "rate-limiting",
     ),
     "7.7 Output Encoding and Rendering Controls": (
-        "output-encoding", "render", "xss", "sanit", "dom-sanit",
+        "output-encoding",
+        "render",
+        "xss",
+        "sanit",
+        "dom-sanit",
     ),
     "7.8 Browser and Cross-Origin Controls": (
-        "browser", "csp", "cors", "csrf", "helmet", "security-headers", "cors-csrf",
+        "browser",
+        "csp",
+        "cors",
+        "csrf",
+        "helmet",
+        "security-headers",
+        "cors-csrf",
     ),
     "7.9 Cryptography Secrets and Data Protection": (
-        "crypto", "cryptography", "secret-manag", "secrets-manag", "key-manag", "kms",
-        "hash", "password-storage", "password hashing", "encryption", "data-protection",
+        "crypto",
+        "cryptography",
+        "secret-manag",
+        "secrets-manag",
+        "key-manag",
+        "kms",
+        "hash",
+        "password-storage",
+        "password hashing",
+        "encryption",
+        "data-protection",
     ),
     "7.10 File Parser and Outbound Request Controls": (
-        "file-security", "file-parser", "xml-parser", "archive", "ssrf", "redirect-allow",
+        "file-security",
+        "file-parser",
+        "xml-parser",
+        "archive",
+        "ssrf",
+        "redirect-allow",
     ),
     "7.11 Operations Runtime and Supply Chain Controls": (
-        "audit", "logging-monitor", "logging-monitoring", "runtime", "container", "dependency",
-        "supply-chain", "ci-cd",
+        "audit",
+        "logging-monitor",
+        "logging-monitoring",
+        "runtime",
+        "container",
+        "dependency",
+        "supply-chain",
+        "ci-cd",
     ),
     "7.12 Real-time and Not Applicable Controls": (
-        "websocket", "real-time", "socket.io", "ai-llm", "llm", "graphql", "grpc",
+        "websocket",
+        "real-time",
+        "socket.io",
+        "ai-llm",
+        "llm",
+        "graphql",
+        "grpc",
     ),
 }
 
@@ -4975,10 +5050,7 @@ def _v2_canonical_section_for_control(c: dict) -> str:
             hints = _V2_CONTROL_HINTS.get(heading, ())
             if any(h in domain for h in hints):
                 return heading
-    haystack = " ".join(
-        str(c.get(k) or "").lower()
-        for k in ("control", "name", "implementation")
-    )
+    haystack = " ".join(str(c.get(k) or "").lower() for k in ("control", "name", "implementation"))
     if not haystack.strip():
         return ""
     for heading in _V2_HEADING_ORDER:
@@ -4997,8 +5069,7 @@ def _v2_controls_for_heading(controls: list[dict], heading: str) -> list[dict]:
     """
     if heading not in _V2_CONTROL_HINTS:
         return []
-    return [c for c in (controls or [])
-            if isinstance(c, dict) and _v2_canonical_section_for_control(c) == heading]
+    return [c for c in (controls or []) if isinstance(c, dict) and _v2_canonical_section_for_control(c) == heading]
 
 
 def _v2_finding_links(threats: list[dict], section: str, max_links: int = 5) -> list[str]:
@@ -5036,32 +5107,32 @@ _FRIENDLY_SUBCONTROL_TITLE: dict[str, str] = {
     # vocabulary used in OWASP ASVS v4 / NIST SP 800-63B. Entries are added
     # ONLY when the raw name is ambiguous or non-standard — controls already
     # named in their canonical form pass through unchanged.
-    "Query Construction":     "Database Query Construction",
-    "Output Encoding":        "Output Encoding and Escaping",
-    "Container Hardening":    "Container Runtime Hardening",
-    "Secret Management":      "Secret and Key Management",
-    "Input Validation":       "Request Input Validation",
+    "Query Construction": "Database Query Construction",
+    "Output Encoding": "Output Encoding and Escaping",
+    "Container Hardening": "Container Runtime Hardening",
+    "Secret Management": "Secret and Key Management",
+    "Input Validation": "Request Input Validation",
     # 2026-05 (user-request point 4): align §7 H4 titles with OWASP ASVS
     # vocabulary so that "JWT authentication" reads as the token-mechanism
     # it actually is, and "Route-level auth middleware" disambiguates as
     # Authorization (the Z) rather than Authentication. Each replacement
     # keeps the original term in parens so existing cross-refs that grep
     # for "JWT" / "DomSanitizer" / etc. still find their target.
-    "JWT authentication":                  "Token-Based Session Authentication (JWT)",
-    "JWT authentication (RS256)":          "Token-Based Session Authentication (JWT, RS256)",
-    "Password hashing":                    "Password Hashing and Credential Storage",
-    "Route-level auth middleware":         "Route-Level Authorization Middleware",
+    "JWT authentication": "Token-Based Session Authentication (JWT)",
+    "JWT authentication (RS256)": "Token-Based Session Authentication (JWT, RS256)",
+    "Password hashing": "Password Hashing and Credential Storage",
+    "Route-level auth middleware": "Route-Level Authorization Middleware",
     "Route-level auth middleware (isAuthorized)": "Route-Level Authorization Middleware (isAuthorized)",
-    "ORM parameterized queries":           "Parameterized ORM Queries",
-    "Request body validation":             "Request Body Schema Validation",
-    "Request rate limiting":               "Authentication Rate Limiting",
-    "Angular DomSanitizer":                "Client-Side Output Sanitization (Angular DomSanitizer)",
-    "HTTP security headers":               "HTTP Security Headers (Helmet)",
-    "HTTP security headers (Helmet)":      "HTTP Security Headers (Helmet)",
+    "ORM parameterized queries": "Parameterized ORM Queries",
+    "Request body validation": "Request Body Schema Validation",
+    "Request rate limiting": "Authentication Rate Limiting",
+    "Angular DomSanitizer": "Client-Side Output Sanitization (Angular DomSanitizer)",
+    "HTTP security headers": "HTTP Security Headers (Helmet)",
+    "HTTP security headers (Helmet)": "HTTP Security Headers (Helmet)",
     "Cross-origin resource sharing policy": "Cross-Origin Resource Sharing (CORS) Policy",
-    "Access logging":                      "Application Access Logging",
-    "JWT stored in localStorage":          "JWT Storage in Browser localStorage",
-    "Secrets and key management":          "Secret and Key Management",
+    "Access logging": "Application Access Logging",
+    "JWT stored in localStorage": "JWT Storage in Browser localStorage",
+    "Secrets and key management": "Secret and Key Management",
     "File upload validation and safe extraction": "File Upload Validation and Safe Archive Extraction",
 }
 
@@ -5158,16 +5229,18 @@ def _v2_lifecycle_bullets(subs: list, threats: list, heading: str) -> list[str]:
                 flinks.append(f"[{fid}](#{fid.lower()})")
         tail = f" → {', '.join(flinks)}" if flinks else ""
         prefix = f"**{name}** — {token}." if token else f"**{name}** —"
-        body = f" {note}" if note else (
-            " <!-- NARRATIVE_PLACEHOLDER: one clause: what this stage does / "
-            "where it breaks. -->"
+        body = (
+            f" {note}"
+            if note
+            else (" <!-- NARRATIVE_PLACEHOLDER: one clause: what this stage does / where it breaks. -->")
         )
         out.append(f"- {prefix}{body}{tail}")
     return out
 
 
-def _emit_v2_grouped_control(lines: list, c: dict, subs: list, threats: list,
-                             heading: str, section_id: str = "", idx: int = 0) -> None:
+def _emit_v2_grouped_control(
+    lines: list, c: dict, subs: list, threats: list, heading: str, section_id: str = "", idx: int = 0
+) -> None:
     """Emit ONE H4 that folds a control's lifecycle stages into bullets.
 
     Used when a `security_controls[]` row sets `group_subcontrols: true`
@@ -5187,10 +5260,12 @@ def _emit_v2_grouped_control(lines: list, c: dict, subs: list, threats: list,
     else:
         lines.append(f"#### {title}")
     lines.append("")
-    lines.append(_v2_status_line(
-        (c.get("effectiveness") or "").strip(),
-        (c.get("effectiveness_reason") or c.get("status_note") or "").strip(),
-    ))
+    lines.append(
+        _v2_status_line(
+            (c.get("effectiveness") or "").strip(),
+            (c.get("effectiveness_reason") or c.get("status_note") or "").strip(),
+        )
+    )
     lines.append("")
     impl = (c.get("implementation") or "").strip()
     if impl:
@@ -5269,8 +5344,9 @@ def _emit_v2_grouped_control(lines: list, c: dict, subs: list, threats: list,
     lines.append("")
 
 
-def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: str,
-                              section_id: str = "", idx: int = 0) -> None:
+def _emit_v2_subcontrol_block(
+    lines: list, sub: dict, threats: list, heading: str, section_id: str = "", idx: int = 0
+) -> None:
     """Emit one §7.x #### block from a `security_controls[].subcontrols[]` entry.
 
     R9 / R12 — Reference-style block carries (in order):
@@ -5314,10 +5390,12 @@ def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: st
     else:
         lines.append(f"#### {title}")
     lines.append("")
-    lines.append(_v2_status_line(
-        (sub.get("effectiveness") or sub.get("status") or "").strip(),
-        (sub.get("status_note") or sub.get("effectiveness_reason") or "").strip(),
-    ))
+    lines.append(
+        _v2_status_line(
+            (sub.get("effectiveness") or sub.get("status") or "").strip(),
+            (sub.get("status_note") or sub.get("effectiveness_reason") or "").strip(),
+        )
+    )
     lines.append("")
     impl = (sub.get("implementation") or "").strip()
     if impl:
@@ -5411,12 +5489,32 @@ def _emit_v2_subcontrol_block(lines: list, sub: dict, threats: list, heading: st
 # the scaffold inserts a sequenceDiagram placeholder. Kept in sync with
 # `sections-contract.yaml → schema_v2.domain_required_rules → '7.2' →
 # auth_method_decomposition.method_whitelist` (R1).
-_FLOW_LIKE_TOKENS = frozenset({
-    "registration", "login", "oauth", "oidc", "openid", "saml", "sso",
-    "totp", "2fa", "mfa", "passkey", "webauthn", "reset", "change",
-    "issuance", "verification", "magic-link", "magic", "mtls",
-    "webhook", "handshake", "ceremony",
-})
+_FLOW_LIKE_TOKENS = frozenset(
+    {
+        "registration",
+        "login",
+        "oauth",
+        "oidc",
+        "openid",
+        "saml",
+        "sso",
+        "totp",
+        "2fa",
+        "mfa",
+        "passkey",
+        "webauthn",
+        "reset",
+        "change",
+        "issuance",
+        "verification",
+        "magic-link",
+        "magic",
+        "mtls",
+        "webhook",
+        "handshake",
+        "ceremony",
+    }
+)
 
 
 def _is_flow_like_control(name: str) -> bool:
@@ -5425,8 +5523,9 @@ def _is_flow_like_control(name: str) -> bool:
     return bool(tokens & _FLOW_LIKE_TOKENS)
 
 
-def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, heading: str,
-                               section_id: str = "", idx: int = 0) -> bool:
+def _emit_v2_subcontrol_legacy(
+    lines: list, c: dict, name: str, threats: list, heading: str, section_id: str = "", idx: int = 0
+) -> bool:
     """Legacy single-block-per-control shape — used when subcontrols[] is empty.
 
     Pre-R9 Stage-1 outputs emit one row per control without subcontrol
@@ -5480,10 +5579,12 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
     else:
         lines.append(f"#### {title}")
     lines.append("")
-    lines.append(_v2_status_line(
-        eff,
-        (c.get("effectiveness_reason") or c.get("status_note") or "").strip(),
-    ))
+    lines.append(
+        _v2_status_line(
+            eff,
+            (c.get("effectiveness_reason") or c.get("status_note") or "").strip(),
+        )
+    )
     lines.append("")
     if impl_text:
         # Stage 1 supplied an implementation paragraph — use it verbatim;
@@ -5576,31 +5677,77 @@ def _emit_v2_subcontrol_legacy(lines: list, c: dict, name: str, threats: list, h
 # substrings matched against control name+domain / threat title+cwe. `meta_flag`
 # marks the mechanism present from a meta boolean alone.
 _AUTH_MECHANISM_SPECS: list[dict] = [
-    {"name": "User registration", "section": "7.2",
-     "control_kw": ["registration", "sign-up", "signup"],
-     "threat_kw": ["registration", "register", "sign-up", "signup", "role field", "mass assignment", "mass-assignment"],
-     "meta_flag": "open_user_registration"},
-    {"name": "Password login", "section": "7.2",
-     "control_kw": ["password authentication", "password-based", "password login", "login"],
-     "threat_kw": ["login authentication bypass", "credential stuffing", "brute force", "brute-force", "authentication bypass"]},
-    {"name": "Password reset / change", "section": "7.2",
-     "control_kw": ["password reset", "password change", "forgot password"],
-     "threat_kw": ["password reset", "reset-password", "reset password", "password change", "forgot password", "security question", "security-question"]},
-    {"name": "Password storage (hashing)", "section": "7.9",
-     "control_kw": ["password hashing", "credential storage", "hashing"],
-     "threat_kw": ["md5", "password hash", "unsalted", "bcrypt", "scrypt", "argon2"]},
-    {"name": "JWT / bearer-token session", "section": "7.3",
-     "control_kw": ["jwt", "session token validation", "bearer", "token validation"],
-     "threat_kw": ["jwt", "json web token", "bearer token", "alg:none", "algorithm confusion", "token forgery"]},
-    {"name": "Session-token storage", "section": "7.3",
-     "control_kw": ["session token storage", "token storage"],
-     "threat_kw": ["localstorage", "local storage", "session theft", "token stored", "httponly"]},
-    {"name": "Multi-factor authentication (TOTP / 2FA)", "section": "7.2",
-     "control_kw": ["totp", "2fa", "mfa", "multi-factor", "multi factor", "two-factor", "two factor"],
-     "threat_kw": ["totp", "2fa", "two-factor", "two factor", "mfa", "multi-factor", "one-time password"]},
-    {"name": "OAuth / OIDC federated login", "section": "7.2",
-     "control_kw": ["oauth", "oidc", "openid", "sso", "saml", "federated", "social login"],
-     "threat_kw": ["oauth", "oidc", "openid", "saml", "single sign-on", "social login"]},
+    {
+        "name": "User registration",
+        "section": "7.2",
+        "control_kw": ["registration", "sign-up", "signup"],
+        "threat_kw": [
+            "registration",
+            "register",
+            "sign-up",
+            "signup",
+            "role field",
+            "mass assignment",
+            "mass-assignment",
+        ],
+        "meta_flag": "open_user_registration",
+    },
+    {
+        "name": "Password login",
+        "section": "7.2",
+        "control_kw": ["password authentication", "password-based", "password login", "login"],
+        "threat_kw": [
+            "login authentication bypass",
+            "credential stuffing",
+            "brute force",
+            "brute-force",
+            "authentication bypass",
+        ],
+    },
+    {
+        "name": "Password reset / change",
+        "section": "7.2",
+        "control_kw": ["password reset", "password change", "forgot password"],
+        "threat_kw": [
+            "password reset",
+            "reset-password",
+            "reset password",
+            "password change",
+            "forgot password",
+            "security question",
+            "security-question",
+        ],
+    },
+    {
+        "name": "Password storage (hashing)",
+        "section": "7.9",
+        "control_kw": ["password hashing", "credential storage", "hashing"],
+        "threat_kw": ["md5", "password hash", "unsalted", "bcrypt", "scrypt", "argon2"],
+    },
+    {
+        "name": "JWT / bearer-token session",
+        "section": "7.3",
+        "control_kw": ["jwt", "session token validation", "bearer", "token validation"],
+        "threat_kw": ["jwt", "json web token", "bearer token", "alg:none", "algorithm confusion", "token forgery"],
+    },
+    {
+        "name": "Session-token storage",
+        "section": "7.3",
+        "control_kw": ["session token storage", "token storage"],
+        "threat_kw": ["localstorage", "local storage", "session theft", "token stored", "httponly"],
+    },
+    {
+        "name": "Multi-factor authentication (TOTP / 2FA)",
+        "section": "7.2",
+        "control_kw": ["totp", "2fa", "mfa", "multi-factor", "multi factor", "two-factor", "two factor"],
+        "threat_kw": ["totp", "2fa", "two-factor", "two factor", "mfa", "multi-factor", "one-time password"],
+    },
+    {
+        "name": "OAuth / OIDC federated login",
+        "section": "7.2",
+        "control_kw": ["oauth", "oidc", "openid", "sso", "saml", "federated", "social login"],
+        "threat_kw": ["oauth", "oidc", "openid", "saml", "single sign-on", "social login"],
+    },
 ]
 
 _AUTH_INV_SECTION_TITLES = {
@@ -5610,8 +5757,11 @@ _AUTH_INV_SECTION_TITLES = {
 }
 
 _AUTH_INV_EFFECTIVENESS_BADGE = {
-    "adequate": "🟢 Adequate", "partial": "🟡 Partial",
-    "weak": "🟠 Weak", "unsafe": "🔴 Unsafe", "missing": "🔴 Missing",
+    "adequate": "🟢 Adequate",
+    "partial": "🟡 Partial",
+    "weak": "🟠 Weak",
+    "unsafe": "🔴 Unsafe",
+    "missing": "🔴 Missing",
 }
 _AUTH_INV_EFFECTIVENESS_RANK = {"adequate": 0, "partial": 1, "weak": 2, "unsafe": 3, "missing": 3}
 _AUTH_INV_RISK_BADGE = {"critical": "🔴 Critical", "high": "🟠 High", "medium": "🟡 Medium", "low": "🟢 Low"}
@@ -5660,13 +5810,15 @@ def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
         if m_ctrls:
             worst = max(
                 ((c.get("effectiveness") or "").strip().lower() for c in m_ctrls),
-                key=lambda e: _AUTH_INV_EFFECTIVENESS_RANK.get(e, -1), default="",
+                key=lambda e: _AUTH_INV_EFFECTIVENESS_RANK.get(e, -1),
+                default="",
             )
             status = _AUTH_INV_EFFECTIVENESS_BADGE.get(worst, "")
         if not status and m_threats:
             worst_r = max(
                 ((t.get("risk") or t.get("severity") or "").strip().lower() for t in m_threats),
-                key=lambda r: _AUTH_INV_RISK_RANK.get(r, -1), default="",
+                key=lambda r: _AUTH_INV_RISK_RANK.get(r, -1),
+                default="",
             )
             status = _AUTH_INV_RISK_BADGE.get(worst_r, "⚠️ At risk")
         if not status:
@@ -5777,15 +5929,17 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     lines.append("| 🟢 Adequate | Control is present and sound | Nothing — keep it |")
     lines.append("| 🟡 Partial | Present, but with meaningful gaps | Close the gap |")
     lines.append("| 🟠 Weak | Present, but has exploitable gaps | Strengthen it |")
-    lines.append("| 🔴 Unsafe | **Present and relied upon, but defeated / trivially bypassable** | **Fix the existing control** |")
+    lines.append(
+        "| 🔴 Unsafe | **Present and relied upon, but defeated / trivially bypassable** | **Fix the existing control** |"
+    )
     lines.append("| 🔴 Missing | **Control was never built** | **Add the control** |")
     lines.append("| — | Not applicable to this codebase | — |")
     lines.append("")
     lines.append(
-        "So \"🔴 Unsafe\" on a control category does *not* mean the control is "
+        'So "🔴 Unsafe" on a control category does *not* mean the control is '
         "absent — it means the control exists but does not hold (e.g. an MD5 "
-        "password hash, a raw-SQL query path, a hardcoded signing key). \"🔴 "
-        "Missing\" is reserved for controls that were never built (e.g. no "
+        'password hash, a raw-SQL query path, a hardcoded signing key). "🔴 '
+        'Missing" is reserved for controls that were never built (e.g. no '
         "Content-Security-Policy header)."
     )
     lines.append("")
@@ -5829,14 +5983,9 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # Findings cells, or §7.1 Main reason cells".
         n_controls = len(matched_controls)
         n_routed = len(routed)
-        control_names = [
-            (c.get("name") or c.get("control") or "").strip()
-            for c in matched_controls
-        ]
+        control_names = [(c.get("name") or c.get("control") or "").strip() for c in matched_controls]
         control_names = [n for n in control_names if n][:2]  # at most 2 examples
-        example_clause = (
-            f" (e.g. {', '.join(control_names)})" if control_names else ""
-        )
+        example_clause = f" (e.g. {', '.join(control_names)})" if control_names else ""
         if verdict.startswith("🔴 Unsafe"):
             if n_routed:
                 reason = (
@@ -5853,10 +6002,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # when several required controls were listed as Missing
             # (2026-06-02: §7.1 showed it on every category).
             if n_controls:
-                lead = (
-                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; "
-                    if n_routed else ""
-                )
+                lead = f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; " if n_routed else ""
                 reason = f"{lead}required controls not in place{example_clause}."
                 if not lead:
                     reason = reason[0].upper() + reason[1:]
@@ -5868,13 +6014,9 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 )
         elif verdict.startswith("🟠 Weak"):
             if n_controls:
-                reason = (
-                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; catalogued controls are weak{example_clause}."
-                )
+                reason = f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; catalogued controls are weak{example_clause}."
             else:
-                reason = (
-                    f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no compensating controls catalogued."
-                )
+                reason = f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; no compensating controls catalogued."
         elif verdict.startswith("🟡 Partial"):
             reason = (
                 f"{n_routed} routed {'finding' if n_routed == 1 else 'findings'}; "
@@ -5907,9 +6049,13 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # drift pattern and recurrently carries speculative perimeter
             # claims like "No WAF in source" that `sanitize_perimeter_claims`
             # then has to scrub).
-            lines.append("**Verdict:** <!-- NARRATIVE_PLACEHOLDER: one of `🟢 Adequate` · `🟡 Partial` · `🟠 Weak` · `🔴 Unsafe` · `🔴 Missing`. -->")
+            lines.append(
+                "**Verdict:** <!-- NARRATIVE_PLACEHOLDER: one of `🟢 Adequate` · `🟡 Partial` · `🟠 Weak` · `🔴 Unsafe` · `🔴 Missing`. -->"
+            )
             lines.append("")
-            lines.append("<!-- §7.13 FORMAT — prose-only, NEVER a table. Two short paragraphs: (1) name the individual controls that exist and the strongest positive control if any (e.g. distroless runtime image, RS256 algorithm choice); (2) name which control-boundary repairs would restore layered defense (e.g. parameterized queries, runtime-injected secrets, strict JWT verification). Do NOT emit a Markdown table — `| header |` lines under §7.13 are a contract violation. Do NOT make speculative perimeter-absence claims (`No WAF`, `No firewall`, `No DAM`) — only positive evidence from the recon scan. -->")
+            lines.append(
+                "<!-- §7.13 FORMAT — prose-only, NEVER a table. Two short paragraphs: (1) name the individual controls that exist and the strongest positive control if any (e.g. distroless runtime image, RS256 algorithm choice); (2) name which control-boundary repairs would restore layered defense (e.g. parameterized queries, runtime-injected secrets, strict JWT verification). Do NOT emit a Markdown table — `| header |` lines under §7.13 are a contract violation. Do NOT make speculative perimeter-absence claims (`No WAF`, `No firewall`, `No DAM`) — only positive evidence from the recon scan. -->"
+            )
             lines.append("")
             lines.append(f"<!-- NARRATIVE_PLACEHOLDER: §{heading} — {hint} (prose paragraphs only) -->")
             lines.append("")
@@ -5951,15 +6097,10 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 continue
 
         section_controls = _v2_controls_for_heading(controls, heading)
-        control_names = [
-            (c.get("control") or c.get("name") or c.get("domain") or "").strip()
-            for c in section_controls
-        ]
+        control_names = [(c.get("control") or c.get("name") or c.get("domain") or "").strip() for c in section_controls]
         control_names = [name for name in control_names if name]
         implemented = [
-            (c.get("implementation") or "").strip()
-            for c in section_controls
-            if (c.get("implementation") or "").strip()
+            (c.get("implementation") or "").strip() for c in section_controls if (c.get("implementation") or "").strip()
         ]
 
         # §7.6 must OPEN with a general validation-approach block before the
@@ -5968,19 +6109,21 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # gate deterministically and the renderer fills the strategy prose
         # instead of running against the gate. Skipped when Stage-1 already
         # supplied an approach-named row as the first §7.6 control.
-        if heading.startswith("7.6 ") and not (
-            control_names and _V2_APPROACH_FIRST_RE.search(control_names[0])
-        ):
-            section_controls = [{
-                "control": "Validation Approach",
-                "name": "Validation Approach",
-                "effectiveness": "",
-                "implementation": "",
-                "subcontrols": [],
-            }] + list(section_controls)
+        if heading.startswith("7.6 ") and not (control_names and _V2_APPROACH_FIRST_RE.search(control_names[0])):
+            section_controls = [
+                {
+                    "control": "Validation Approach",
+                    "name": "Validation Approach",
+                    "effectiveness": "",
+                    "implementation": "",
+                    "subcontrols": [],
+                }
+            ] + list(section_controls)
             control_names = ["Validation Approach"] + control_names
 
-        lines.append("**Verdict:** <!-- NARRATIVE_PLACEHOLDER: choose one of `🟢 Adequate` · `🟡 Partial` · `🟠 Weak` · `🔴 Unsafe` · `🔴 Missing`. Tokens come from `data/sections-contract.yaml → verdict_icons`. -->")
+        lines.append(
+            "**Verdict:** <!-- NARRATIVE_PLACEHOLDER: choose one of `🟢 Adequate` · `🟡 Partial` · `🟠 Weak` · `🔴 Unsafe` · `🔴 Missing`. Tokens come from `data/sections-contract.yaml → verdict_icons`. -->"
+        )
         lines.append("")
         # R5 — `**Controls covered:**` is mechanically derived from
         # security_controls[].control + the H4 subcontrol headings.
@@ -6003,11 +6146,15 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # case + the enriched-path dangling-link repair loop.)
         covered_idx: int | None = None
         if control_names:
-            lines.append("<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->")
+            lines.append(
+                "<!-- The line below is mechanically derived from the controls table — LLM must not re-author it. -->"
+            )
             covered_idx = len(lines)
             lines.append(_COVERED_SENTINEL)
         else:
-            lines.append("**Controls covered:** <!-- NARRATIVE_PLACEHOLDER: list concrete subcontrols as markdown links to H4 headings. -->")
+            lines.append(
+                "**Controls covered:** <!-- NARRATIVE_PLACEHOLDER: list concrete subcontrols as markdown links to H4 headings. -->"
+            )
         lines.append("")
         # R12 — `**Implemented controls:**` MUST open with a positive
         # inventory ("X, Y, Z are present.") and never with a negative
@@ -6021,7 +6168,9 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         if implemented:
             lines.append(f"**Implemented controls:** {'; '.join(implemented[:5])}.")
         else:
-            lines.append("**Implemented controls:** <!-- NARRATIVE_PLACEHOLDER: positive inventory only — name the controls that ARE in place (e.g. \"Angular template escaping, Helmet noSniff/frameguard, multer file-size limit\"). Forbidden openers: \"None\", \"No \", \"Missing\", \"Not implemented\". Concrete gaps belong in the Assessment block. -->")
+            lines.append(
+                '**Implemented controls:** <!-- NARRATIVE_PLACEHOLDER: positive inventory only — name the controls that ARE in place (e.g. "Angular template escaping, Helmet noSniff/frameguard, multer file-size limit"). Forbidden openers: "None", "No ", "Missing", "Not implemented". Concrete gaps belong in the Assessment block. -->'
+            )
         lines.append("")
         lines.append(f"**Assessment:** <!-- NARRATIVE_PLACEHOLDER: §{heading} — {hint} -->")
         lines.append("")
@@ -6077,21 +6226,35 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                     # Login / Registration / Reset / Change / Storage).
                     h4_idx += 1
                     _emit_v2_grouped_control(
-                        lines, c, subs, threats, heading,
-                        section_id=section_id, idx=h4_idx,
+                        lines,
+                        c,
+                        subs,
+                        threats,
+                        heading,
+                        section_id=section_id,
+                        idx=h4_idx,
                     )
                 elif subs:
                     for sub in subs[:9]:
                         h4_idx += 1
                         _emit_v2_subcontrol_block(
-                            lines, sub, threats, heading,
-                            section_id=section_id, idx=h4_idx,
+                            lines,
+                            sub,
+                            threats,
+                            heading,
+                            section_id=section_id,
+                            idx=h4_idx,
                         )
                 else:
                     next_idx = h4_idx + 1
                     emitted = _emit_v2_subcontrol_legacy(
-                        lines, c, name, threats, heading,
-                        section_id=section_id, idx=next_idx,
+                        lines,
+                        c,
+                        name,
+                        threats,
+                        heading,
+                        section_id=section_id,
+                        idx=next_idx,
                     )
                     if emitted:
                         h4_idx = next_idx
@@ -6116,23 +6279,21 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # the anchor uses the same _v2_slug the H4 side-anchors carry.
             if covered_idx is not None:
                 emitted_titles: list[str] = []
-                for ln in lines[covered_idx + 1:]:
+                for ln in lines[covered_idx + 1 :]:
                     m_h4 = re.match(r"^####\s+(.+?)\s*$", ln)
                     if m_h4:
                         title = re.sub(r"^\d+(?:\.\d+)*\s+", "", m_h4.group(1)).strip()
                         if title:
                             emitted_titles.append(title)
                 if emitted_titles:
-                    linked_controls = ", ".join(
-                        f"[{t}](#{_v2_slug(t)})" for t in emitted_titles
-                    )
+                    linked_controls = ", ".join(f"[{t}](#{_v2_slug(t)})" for t in emitted_titles)
                     lines[covered_idx] = f"**Controls covered:** {linked_controls}."
                 else:
                     # Every control was suppressed (no H4 emitted). Drop the
                     # LOCKED comment + sentinel + trailing blank so no dangling
                     # `**Controls covered:**` link survives; the suppressed-
                     # controls note above still lists them for the reader.
-                    del lines[covered_idx - 1: covered_idx + 2]
+                    del lines[covered_idx - 1 : covered_idx + 2]
         else:
             # M5b — Replace the generic "#### Controls To Confirm" fallback.
             # Reference §7 never carries an unnamed catch-all H4. Two cases:
@@ -6146,10 +6307,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             #       the security assessment via the placeholders below.
             links = _v2_finding_links(threats, heading, max_links=5)
             if not links:
-                lines.append(
-                    f"_Not applicable for this codebase — no controls or "
-                    f"findings are routed to {heading}._"
-                )
+                lines.append(f"_Not applicable for this codebase — no controls or findings are routed to {heading}._")
                 lines.append("")
                 continue
             default_mech_raw = _V2_DEFAULT_MECHANISM.get(heading, heading.split(" ", 1)[1])
@@ -6158,7 +6316,9 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             # Emit BOTH the un-friendly slug AND the friendly slug as side
             # anchors so `**Controls covered:**` link variants (LLM-filled
             # placeholder vs. mechanical) both resolve to this H4.
-            lines.append("".join(f'<a id="{s}"></a>' for s in sorted({_v2_slug(default_mech_raw), _v2_slug(default_mech)})))
+            lines.append(
+                "".join(f'<a id="{s}"></a>' for s in sorted({_v2_slug(default_mech_raw), _v2_slug(default_mech)}))
+            )
             lines.append(f"#### {section_id}.1 {default_mech}")
             lines.append("")
             lines.append(_v2_status_line(""))
@@ -6236,11 +6396,11 @@ def main(argv: list[str] | None = None) -> int:
         "--allow-narrative-loss",
         action="store_true",
         help="Acknowledge that --force on security-architecture.md will discard "
-             "any LLM-authored NARRATIVE_PLACEHOLDER fills from Stage 2. Without "
-             "this flag, --force refuses to overwrite security-architecture.md "
-             "when the on-disk version has no remaining NARRATIVE_PLACEHOLDER markers "
-             "(i.e. Stage 2 already filled it). The right tool for surgical updates "
-             "to a Stage-2-filled fragment is scripts/apply_content_repair.py.",
+        "any LLM-authored NARRATIVE_PLACEHOLDER fills from Stage 2. Without "
+        "this flag, --force refuses to overwrite security-architecture.md "
+        "when the on-disk version has no remaining NARRATIVE_PLACEHOLDER markers "
+        "(i.e. Stage 2 already filled it). The right tool for surgical updates "
+        "to a Stage-2-filled fragment is scripts/apply_content_repair.py.",
     )
     parser.add_argument(
         "--depth",
@@ -6284,6 +6444,7 @@ def main(argv: list[str] | None = None) -> int:
     #   3. .skill-config.json → security_schema (set by --schema-v1 in production)
     #   4. default v2
     import os as _os
+
     _forced_schema = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
     # APPSEC_SCHEMA_V1 is the test-suite pin only (gated to a running pytest via
     # PYTEST_CURRENT_TEST); a stray env var in production can't force legacy v1.
@@ -6348,12 +6509,7 @@ def main(argv: list[str] | None = None) -> int:
         # (table rows, "Controls covered:" lines, anchors) without losing
         # narrative should use scripts/apply_content_repair.py with the
         # heading_rename_cascade operator instead.
-        if (
-            args.force
-            and name == "security-architecture.md"
-            and path.exists()
-            and not args.allow_narrative_loss
-        ):
+        if args.force and name == "security-architecture.md" and path.exists() and not args.allow_narrative_loss:
             try:
                 existing = path.read_text(encoding="utf-8")
             except OSError:

@@ -165,9 +165,7 @@ class _SameHostRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401, ARG002, N802
         result = validate_target_url(newurl, strict=self._strict_urls)
         if not result.ok:
-            raise urllib.error.HTTPError(
-                newurl, code, f"redirect rejected: {result.reason}", headers, fp
-            )
+            raise urllib.error.HTTPError(newurl, code, f"redirect rejected: {result.reason}", headers, fp)
         new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
         if new_req is not None and not same_host(self._original_url, newurl):
             for header in ("Authorization", "Cookie"):
@@ -202,9 +200,7 @@ def _fetch_url(
             req.add_header(hname.strip(), hvalue.strip())
         else:
             req.add_header("Authorization", auth.strip())
-    opener = urllib.request.build_opener(
-        _SameHostRedirectHandler(strict_urls=strict_urls, original_url=url)
-    )
+    opener = urllib.request.build_opener(_SameHostRedirectHandler(strict_urls=strict_urls, original_url=url))
     try:
         with opener.open(req, timeout=timeout) as resp:  # noqa: S310
             data = resp.read()
@@ -462,9 +458,7 @@ def _compute_expectation_mismatch(
                     upstream_signal_pieces.append(f"{ctrl.get('domain')}: {ctrl.get('control')}")
         signal_text = " | ".join(upstream_signal_pieces) if upstream_signal_pieces else "unknown"
         if expected_auth.lower() not in signal_text.lower():
-            out["auth"] = (
-                f"expected '{expected_auth}' but upstream signals '{signal_text}'"
-            )
+            out["auth"] = f"expected '{expected_auth}' but upstream signals '{signal_text}'"
 
     if expected_validation:
         signal_pieces: list[str] = []
@@ -476,9 +470,7 @@ def _compute_expectation_mismatch(
                     signal_pieces.append(f"{ctrl.get('domain')}: {ctrl.get('control')}")
         signal_text = " | ".join(signal_pieces) if signal_pieces else "unknown"
         if expected_validation.lower() not in signal_text.lower():
-            out["validation"] = (
-                f"expected '{expected_validation}' but upstream signals '{signal_text}'"
-            )
+            out["validation"] = f"expected '{expected_validation}' but upstream signals '{signal_text}'"
 
     if not out["auth"] and not out["validation"]:
         return None
@@ -553,9 +545,7 @@ def _process_entry(
 
     kind, resolved = _resolve_tm_reference(tm_field, repo_root)
     if kind == "url":
-        raw, fetch_status = _fetch_url(
-            resolved, http_timeout, auth_env=auth_env, strict_urls=strict_urls
-        )
+        raw, fetch_status = _fetch_url(resolved, http_timeout, auth_env=auth_env, strict_urls=strict_urls)
     else:
         raw, fetch_status = _read_local(resolved)
 

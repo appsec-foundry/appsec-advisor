@@ -1760,8 +1760,11 @@ class TestCli:
         scaffold = filled.read_text()
         filled.write_text(re.sub(r"<!--\s*NARRATIVE_PLACEHOLDER.*?-->", "filled narrative.", scaffold, flags=re.DOTALL))
         result = _run_cli(
-            str(output_dir), "--force", "--allow-narrative-loss",
-            "--only", "security-architecture.md",
+            str(output_dir),
+            "--force",
+            "--allow-narrative-loss",
+            "--only",
+            "security-architecture.md",
         )
         assert result.returncode == 0
         # Scaffold restored — NARRATIVE_PLACEHOLDER comments reappear.
@@ -1871,46 +1874,68 @@ class TestSection72ThreatHypothesesTable:
     def test_promoted_hypothesis_excluded(self):
         """Promoted hypotheses live in Section 8 as their T-NNN row —
         they MUST NOT be re-listed in §7.2."""
-        md = pf.gen_security_architecture(_data_with_hyps(
-            _hyp(id="HYP-001"),
-            _hyp(id="HYP-099", promoted_threat_id="T-014"),
-        ))
+        md = pf.gen_security_architecture(
+            _data_with_hyps(
+                _hyp(id="HYP-001"),
+                _hyp(id="HYP-099", promoted_threat_id="T-014"),
+            )
+        )
         assert "HYP-001" in md
         assert "HYP-099" not in md
 
     def test_evidence_renders_with_file_and_line(self):
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
-            evidence=[{"file": "src/server.ts", "line": 42, "signal": "x"}],
-        )))
+        md = pf.gen_security_architecture(
+            _data_with_hyps(
+                _hyp(
+                    evidence=[{"file": "src/server.ts", "line": 42, "signal": "x"}],
+                )
+            )
+        )
         assert "`src/server.ts:42`" in md
 
     def test_evidence_renders_file_only_when_line_missing(self):
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
-            evidence=[{"file": "src/server.ts", "signal": "x"}],
-        )))
+        md = pf.gen_security_architecture(
+            _data_with_hyps(
+                _hyp(
+                    evidence=[{"file": "src/server.ts", "signal": "x"}],
+                )
+            )
+        )
         assert "`src/server.ts`" in md
 
     def test_evidence_counts_additional_entries(self):
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
-            evidence=[
-                {"file": "a.ts", "line": 1, "signal": "x"},
-                {"file": "b.ts", "line": 2, "signal": "y"},
-                {"file": "c.ts", "line": 3, "signal": "z"},
-            ],
-        )))
+        md = pf.gen_security_architecture(
+            _data_with_hyps(
+                _hyp(
+                    evidence=[
+                        {"file": "a.ts", "line": 1, "signal": "x"},
+                        {"file": "b.ts", "line": 2, "signal": "y"},
+                        {"file": "c.ts", "line": 3, "signal": "z"},
+                    ],
+                )
+            )
+        )
         assert "`a.ts:1` +2" in md
 
     def test_control_gap_renders_weak_or_missing_controls(self):
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
-            weak_or_missing_controls=["Parameterized Queries", "ORM Layer"],
-        )))
+        md = pf.gen_security_architecture(
+            _data_with_hyps(
+                _hyp(
+                    weak_or_missing_controls=["Parameterized Queries", "ORM Layer"],
+                )
+            )
+        )
         assert "Parameterized Queries" in md
         assert "ORM Layer" in md
 
     def test_validation_column_uses_validation_objective(self):
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
-            validation_objective="Send UNION SELECT to /login email param.",
-        )))
+        md = pf.gen_security_architecture(
+            _data_with_hyps(
+                _hyp(
+                    validation_objective="Send UNION SELECT to /login email param.",
+                )
+            )
+        )
         assert "Send UNION SELECT to /login email param." in md
 
     def test_validation_column_fallback_when_objective_missing(self):
@@ -1921,18 +1946,26 @@ class TestSection72ThreatHypothesesTable:
 
     def test_validation_text_truncated_when_overlong(self):
         long = "x" * 300
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
-            validation_objective=long,
-        )))
+        md = pf.gen_security_architecture(
+            _data_with_hyps(
+                _hyp(
+                    validation_objective=long,
+                )
+            )
+        )
         # Truncated form ends with ellipsis and is shorter than original
         assert "…" in md
         assert "x" * 300 not in md
 
     def test_pipe_character_escaped_in_user_text(self):
         """The renderer must escape pipes so table layout stays intact."""
-        md = pf.gen_security_architecture(_data_with_hyps(_hyp(
-            title="Risky | column-breaker",
-        )))
+        md = pf.gen_security_architecture(
+            _data_with_hyps(
+                _hyp(
+                    title="Risky | column-breaker",
+                )
+            )
+        )
         assert "Risky \\| column-breaker" in md
 
     def test_hypothesis_table_not_emitted_inside_section_8(self):
@@ -1979,11 +2012,18 @@ class TestSecurityArchitectureV2:
                     "implementation": "The email/password credential routes through one MD5 sink and one raw-SQL path.",
                     "assessment": "Login interpolates user input; the current-password check is skippable.",
                     "subcontrols": [
-                        {"title": "Login", "effectiveness": "Unsafe",
-                         "status_note": "raw SQL login lookup allows authentication bypass",
-                         "relevant_findings": ["T-001"]},
-                        {"title": "Password Storage", "effectiveness": "Unsafe",
-                         "status_note": "unsalted MD5", "relevant_findings": ["T-012"]},
+                        {
+                            "title": "Login",
+                            "effectiveness": "Unsafe",
+                            "status_note": "raw SQL login lookup allows authentication bypass",
+                            "relevant_findings": ["T-001"],
+                        },
+                        {
+                            "title": "Password Storage",
+                            "effectiveness": "Unsafe",
+                            "status_note": "unsalted MD5",
+                            "relevant_findings": ["T-012"],
+                        },
                     ],
                 },
                 {
@@ -2029,6 +2069,7 @@ class TestSecurityArchitectureV2:
     def test_status_badge_on_every_h4(self):
         md = pf.gen_security_architecture_v2(self._data())
         import re as _re
+
         h4s = _re.findall(r"^#### .+$", md, _re.MULTILINE)
         assert h4s, "expected at least one H4"
         # one **Status:** line per emitted H4
@@ -2054,6 +2095,7 @@ class TestSecurityArchitectureV2:
         its 'Main reason' cells, so a control name appears there too; tests want
         the control's OWN §7.x block, not the overview row."""
         import re as _re
+
         blocks = _re.split(r"(?m)^(?=### 7\.\d+ )", md)
         for b in blocks:
             if b.startswith("### 7.") and not b.startswith("### 7.1 ") and needle in b:
@@ -2063,15 +2105,15 @@ class TestSecurityArchitectureV2:
     @staticmethod
     def _covered_labels(section: str) -> list:
         import re as _re
-        cc = next((l for l in section.splitlines()
-                   if l.startswith("**Controls covered:**")), "")
+
+        cc = next((l for l in section.splitlines() if l.startswith("**Controls covered:**")), "")
         return _re.findall(r"\[([^\]]+)\]\(#", cc)
 
     @staticmethod
     def _h4_titles(section: str) -> list:
         import re as _re
-        return [_re.sub(r"^\d+(?:\.\d+)*\s+", "", h).strip()
-                for h in _re.findall(r"(?m)^#### (.+)$", section)]
+
+        return [_re.sub(r"^\d+(?:\.\d+)*\s+", "", h).strip() for h in _re.findall(r"(?m)^#### (.+)$", section)]
 
     def test_controls_covered_lists_only_emitted_h4s(self):
         """B1 regression: a control suppressed by _emit_v2_subcontrol_legacy
@@ -2083,12 +2125,17 @@ class TestSecurityArchitectureV2:
             "components": [],
             "threats": [{"id": "T-008", "cwe": "CWE-352", "title": "CSRF"}],
             "security_controls": [
-                {"domain": "Authorization Controls",
-                 "control": "Role-Based Access Control",
-                 "effectiveness": "Missing", "linked_threats": ["T-008"]},
-                {"domain": "Authorization Controls",
-                 "control": "CSRF Protection",
-                 "effectiveness": "Missing"},  # suppressed: no findings, no impl
+                {
+                    "domain": "Authorization Controls",
+                    "control": "Role-Based Access Control",
+                    "effectiveness": "Missing",
+                    "linked_threats": ["T-008"],
+                },
+                {
+                    "domain": "Authorization Controls",
+                    "control": "CSRF Protection",
+                    "effectiveness": "Missing",
+                },  # suppressed: no findings, no impl
             ],
         }
         md = pf.gen_security_architecture_v2(data)
@@ -2111,9 +2158,7 @@ class TestSecurityArchitectureV2:
             "components": [],
             "threats": [],
             "security_controls": [
-                {"domain": "Authorization Controls",
-                 "control": "CSRF Protection",
-                 "effectiveness": "Missing"},
+                {"domain": "Authorization Controls", "control": "CSRF Protection", "effectiveness": "Missing"},
             ],
         }
         md = pf.gen_security_architecture_v2(data)
@@ -2133,44 +2178,62 @@ class TestV2SectionRouting:
     def test_canonical_domain_routes_even_without_hint_in_name(self):
         # "File Upload Validation" carries no §7.10 hint token in its name,
         # but its domain IS the canonical §7.10 title → must route to §7.10.
-        c = {"control": "File Upload Validation",
-             "domain": "File Parser and Outbound Request Controls"}
-        assert pf._v2_canonical_section_for_control(c) == \
-            "7.10 File Parser and Outbound Request Controls"
+        c = {"control": "File Upload Validation", "domain": "File Parser and Outbound Request Controls"}
+        assert pf._v2_canonical_section_for_control(c) == "7.10 File Parser and Outbound Request Controls"
 
     def test_data_access_domain_does_not_collide_with_authorization(self):
         # Guard against the substring trap: §7.4 hint "access-control" must NOT
         # steal a §7.5 control whose domain ends "...Data Access Controls".
-        c = {"control": "SQL Parameterization (Sequelize ORM)",
-             "domain": "Query Construction and Data Access Controls"}
-        assert pf._v2_canonical_section_for_control(c) == \
-            "7.5 Query Construction and Data Access Controls"
+        c = {"control": "SQL Parameterization (Sequelize ORM)", "domain": "Query Construction and Data Access Controls"}
+        assert pf._v2_canonical_section_for_control(c) == "7.5 Query Construction and Data Access Controls"
 
     def test_hint_fallback_still_works_for_partial_domain(self):
         # Non-canonical / shorthand domain still routes via the hint fallback.
         c = {"control": "SSRF guard", "domain": "ssrf"}
-        assert pf._v2_canonical_section_for_control(c) == \
-            "7.10 File Parser and Outbound Request Controls"
+        assert pf._v2_canonical_section_for_control(c) == "7.10 File Parser and Outbound Request Controls"
 
 
 # ---------------------------------------------------------------------------
 # §7.2 Authentication Mechanisms inventory (2026-05-31, deterministic)
 # ---------------------------------------------------------------------------
 
+
 def _auth_yaml():
     """A yaml fixture exercising mechanisms across the §7.2/§7.3/§7.9 domains."""
     return {
         "meta": {"open_user_registration": True},
         "security_controls": [
-            {"control": "Password Authentication (Login)", "domain": "Identity and Authentication Controls", "effectiveness": "weak"},
-            {"control": "Session Token Validation (JWT Based)", "domain": "Session and Token Controls", "effectiveness": "partial"},
-            {"control": "Password Hashing", "domain": "Cryptography Secrets and Data Protection", "effectiveness": "missing"},
+            {
+                "control": "Password Authentication (Login)",
+                "domain": "Identity and Authentication Controls",
+                "effectiveness": "weak",
+            },
+            {
+                "control": "Session Token Validation (JWT Based)",
+                "domain": "Session and Token Controls",
+                "effectiveness": "partial",
+            },
+            {
+                "control": "Password Hashing",
+                "domain": "Cryptography Secrets and Data Protection",
+                "effectiveness": "missing",
+            },
         ],
         "threats": [
             {"id": "T-001", "title": "JWT forgery via hardcoded RSA private key", "cwe": "CWE-321", "risk": "Critical"},
             {"id": "T-024", "title": "TOTP secrets stored in plaintext in database", "cwe": "CWE-312", "risk": "High"},
-            {"id": "T-029", "title": "Admin account registration via role field manipulation", "cwe": "CWE-269", "risk": "High"},
-            {"id": "T-007", "title": "MD5 password hashing enables offline password recovery", "cwe": "CWE-916", "risk": "Critical"},
+            {
+                "id": "T-029",
+                "title": "Admin account registration via role field manipulation",
+                "cwe": "CWE-269",
+                "risk": "High",
+            },
+            {
+                "id": "T-007",
+                "title": "MD5 password hashing enables offline password recovery",
+                "cwe": "CWE-916",
+                "risk": "Critical",
+            },
         ],
     }
 
@@ -2219,7 +2282,9 @@ def test_auth_inventory_status_from_effectiveness():
 def test_auth_inventory_empty_without_auth():
     yaml_data = {
         "meta": {},
-        "security_controls": [{"control": "Output Encoding / XSS Prevention", "domain": "Output Encoding", "effectiveness": "weak"}],
+        "security_controls": [
+            {"control": "Output Encoding / XSS Prevention", "domain": "Output Encoding", "effectiveness": "weak"}
+        ],
         "threats": [{"id": "T-050", "title": "Stored XSS in product description", "cwe": "CWE-79", "risk": "High"}],
     }
     assert pf._build_auth_mechanism_inventory(yaml_data) == []
@@ -2232,8 +2297,9 @@ def test_auth_inventory_is_frozen_marked_and_single_titles():
     # table, so compose's prose-linkifier never enriches it — emitting a bare
     # ID left it 'leer betitelt', 2026-06-02). The link must show `— <title>`.
     assert block.count("[F-001](#f-001)") == 1
-    assert re.search(r"\[F-001\]\(#f-001\) — \S", block), \
+    assert re.search(r"\[F-001\]\(#f-001\) — \S", block), (
         "§7.2 inventory finding link must carry a title, not a bare ID"
+    )
 
 
 class TestAttackSurfaceLinkPrecision:
@@ -2247,8 +2313,13 @@ class TestAttackSurfaceLinkPrecision:
     """
 
     def _threat(self, tid, evfile, title="x", text="x"):
-        return {"id": tid, "title": title, "scenario": text, "description": text,
-                "evidence": [{"file": evfile, "line": 1}]}
+        return {
+            "id": tid,
+            "title": title,
+            "scenario": text,
+            "description": text,
+            "evidence": [{"file": evfile, "line": 1}],
+        }
 
     def test_word_set_splits_camelcase_and_separators(self):
         # "b2b" splits into b/2/b (each < 3 chars, dropped) → only "order" survives;
@@ -2274,7 +2345,10 @@ class TestAttackSurfaceLinkPrecision:
         # Hyphen↔camel whole-name match: /file-upload ↔ fileUpload.ts.
         assert pf._score_threat_path_match(self._threat("T-009", "routes/fileUpload.ts"), "/file-upload") >= 3
         # ≥2 shared words: /profile/image/url ↔ profileImageUrlUpload.ts.
-        assert pf._score_threat_path_match(self._threat("T-022", "routes/profileImageUrlUpload.ts"), "/profile/image/url") >= 3
+        assert (
+            pf._score_threat_path_match(self._threat("T-022", "routes/profileImageUrlUpload.ts"), "/profile/image/url")
+            >= 3
+        )
 
     def test_derive_drops_spurious_keeps_real_on_mixed_set(self):
         threats = [

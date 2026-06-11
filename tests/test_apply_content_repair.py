@@ -427,7 +427,7 @@ class TestHeadingRenameCascade:
         "\n"
         "**Implemented controls:** JWT RS256 signing via express-jwt.\n"
         "\n"
-        "<a id=\"jwt-rs256-authentication\"></a>\n"
+        '<a id="jwt-rs256-authentication"></a>\n'
         "\n"
         "#### 7.2.1 JWT RS256 Authentication\n"
         "\n"
@@ -498,8 +498,7 @@ class TestHeadingRenameCascade:
         assert rc2 == 1  # action skipped because needle missing
         assert frag.read_text() == snapshot
         # Plan with old==new is a no-op.
-        identity_plan = self._make_plan(old="JWT Bearer Authentication",
-                                        new="JWT Bearer Authentication")
+        identity_plan = self._make_plan(old="JWT Bearer Authentication", new="JWT Bearer Authentication")
         (out / ".qa-content-repair-plan.json").write_text(json.dumps(identity_plan))
         rc3 = acr.main([str(out)])
         assert rc3 == 0
@@ -508,8 +507,7 @@ class TestHeadingRenameCascade:
     def test_cascade_missing_heading_raises(self, tmp_path):
         out = _setup_output_dir(tmp_path)
         # Fragment has no `#### N.M.X JWT RS256 Authentication` heading.
-        _write_fragment(out, "security-architecture.md",
-                        "### 7.2 IAM\n\nSome prose without the target heading.\n")
+        _write_fragment(out, "security-architecture.md", "### 7.2 IAM\n\nSome prose without the target heading.\n")
         (out / ".qa-content-repair-plan.json").write_text(json.dumps(self._make_plan()))
         rc = acr.main([str(out)])
         # action skipped → exit code 1

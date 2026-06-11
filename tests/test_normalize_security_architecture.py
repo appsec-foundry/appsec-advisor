@@ -225,11 +225,9 @@ def test_cli_accepts_output_dir(tmp_path):
 # `required_subsection_missing` gate. normalize_text rewrites the heading back
 # to the contract-exact title when it differs ONLY by punctuation.
 
+
 def test_oxford_comma_heading_canonicalized():
-    md = (
-        "### 7.9 Cryptography, Secrets and Data Protection\n"
-        "Body text.\n"
-    )
+    md = "### 7.9 Cryptography, Secrets and Data Protection\nBody text.\n"
     out, changes = nrm.normalize_text(md)
     assert "### 7.9 Cryptography Secrets and Data Protection" in out
     assert "Cryptography, Secrets" not in out

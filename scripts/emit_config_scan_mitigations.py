@@ -39,6 +39,7 @@ Usage:
 
 Exit codes: 0 always (best-effort emitter; failures are warnings on stderr).
 """
+
 from __future__ import annotations
 
 import re
@@ -56,10 +57,10 @@ _M_ID_RE = re.compile(r"\bM-(\d{3,})\b")
 # Severity → priority (mirrors the table in emit_review_mitigations.py and the
 # build_threat_model_yaml.py:build_mitigations risk_order convention).
 _SEV_TO_PRI = {
-    "Critical":      "P1",
-    "High":          "P2",
-    "Medium":        "P3",
-    "Low":           "P4",
+    "Critical": "P1",
+    "High": "P2",
+    "Medium": "P3",
+    "Low": "P4",
     "Informational": "P4",
 }
 
@@ -149,6 +150,7 @@ _GENERIC_REMEDIATION = {
 # IO helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_iac_checks(plugin_root: Path) -> dict[str, dict]:
     """Index data/config-iac-checks.yaml by check id (`IAC-NNN`)."""
     path = plugin_root / "data" / "config-iac-checks.yaml"
@@ -190,7 +192,8 @@ def _clear_prior_auto_mitigations(data: dict) -> set[str]:
     if not isinstance(items, list):
         return set()
     stale_ids = {
-        m.get("id") for m in items
+        m.get("id")
+        for m in items
         if isinstance(m, dict)
         and m.get("auto_emitted") is True
         and m.get("auto_source") == "config-scan"
@@ -220,9 +223,8 @@ def _clear_stale_threat_refs(data: dict, stale_ids: set[str]) -> None:
 # Resolution
 # ---------------------------------------------------------------------------
 
-def _resolve_remediation(
-    threat: dict, iac_index: dict[str, dict]
-) -> tuple[str, str]:
+
+def _resolve_remediation(threat: dict, iac_index: dict[str, dict]) -> tuple[str, str]:
     """Return (title, how) for the threat. Never returns empty strings."""
     # Path 1 — canonical IAC entry by config_check_id
     cid = threat.get("config_check_id")
@@ -239,33 +241,32 @@ def _resolve_remediation(
     # The scanner emits `check` as a slug, picked up by merge_threats.py and
     # stored on the threat under several possible field names depending on
     # the slice of code that ingested it.  Try them in order.
-    slug = (
-        threat.get("config_check_slug")
-        or threat.get("check")
-        or ""
-    )
+    slug = threat.get("config_check_slug") or threat.get("check") or ""
     if slug not in _BUILTIN_REMEDIATIONS:
         # The current merger drops the scanner's `check` slug, so we have to
         # recover it from the threat narrative. Match against the union of
         # title + scenario + cwe so loose LLM rewrites ("Config Issue" with
         # an HSTS scenario, "Missing Content Security Policy", etc.) still
         # resolve to the right builtin.
-        haystack = " ".join(
-            str(threat.get(k) or "")
-            for k in ("title", "scenario", "cwe", "config_scan_ref")
-        ).lower()
+        haystack = " ".join(str(threat.get(k) or "") for k in ("title", "scenario", "cwe", "config_scan_ref")).lower()
         # Each slug → list of OR'd keyword-groups; a group matches when
         # every keyword in it is present in the haystack. The first slug
         # whose ANY group matches wins.
         slug_patterns: list[tuple[str, list[list[str]]]] = [
-            ("cors-wildcard",            [["cors"]]),
-            ("csp-missing",              [["csp"], ["content-security-policy"], ["content security policy"]]),
-            ("hsts-missing",             [["hsts"], ["strict transport"], ["https enforcement"]]),
-            ("ftp-directory-listing",    [["directory listing"], ["serveindex"], ["/ftp"]]),
-            ("secrets-in-source",        [["hardcoded", "key"], ["hardcoded", "secret"], ["hardcoded", "credential"], ["rsa private"]]),
-            ("package-lock-disabled",    [["package-lock"], ["lockfile"], ["package lock"]]),
-            ("gha-no-permissions-block", [["workflow", "permissions"], ["github_token"], ["github-actions", "permissions"]]),
-            ("dockerfile-unsafe-perm",   [["unsafe-perm"], ["unsafe perm"]]),
+            ("cors-wildcard", [["cors"]]),
+            ("csp-missing", [["csp"], ["content-security-policy"], ["content security policy"]]),
+            ("hsts-missing", [["hsts"], ["strict transport"], ["https enforcement"]]),
+            ("ftp-directory-listing", [["directory listing"], ["serveindex"], ["/ftp"]]),
+            (
+                "secrets-in-source",
+                [["hardcoded", "key"], ["hardcoded", "secret"], ["hardcoded", "credential"], ["rsa private"]],
+            ),
+            ("package-lock-disabled", [["package-lock"], ["lockfile"], ["package lock"]]),
+            (
+                "gha-no-permissions-block",
+                [["workflow", "permissions"], ["github_token"], ["github-actions", "permissions"]],
+            ),
+            ("dockerfile-unsafe-perm", [["unsafe-perm"], ["unsafe perm"]]),
         ]
         for candidate, groups in slug_patterns:
             for kws in groups:
@@ -286,9 +287,8 @@ def _resolve_remediation(
 # Synthesis
 # ---------------------------------------------------------------------------
 
-def _synthesize_fix_mitigations(
-    data: dict, state: dict, iac_index: dict[str, dict]
-) -> list[dict]:
+
+def _synthesize_fix_mitigations(data: dict, state: dict, iac_index: dict[str, dict]) -> list[dict]:
     new_cards: list[dict] = []
     threats = data.get("threats") or []
     for t in threats:
@@ -306,18 +306,20 @@ def _synthesize_fix_mitigations(
         title, how = _resolve_remediation(t, iac_index)
         sev = t.get("risk") or "Medium"
         mid = _allocate_next_m_id(state)
-        new_cards.append({
-            "id":           mid,
-            "title":        title,
-            "kind":         "fix",
-            "priority":     _SEV_TO_PRI.get(sev, "P3"),
-            "severity":     sev,
-            "threat_ids":   [tid],
-            "how":          how,
-            "effort":       "Low",
-            "auto_emitted": True,
-            "auto_source":  "config-scan",
-        })
+        new_cards.append(
+            {
+                "id": mid,
+                "title": title,
+                "kind": "fix",
+                "priority": _SEV_TO_PRI.get(sev, "P3"),
+                "severity": sev,
+                "threat_ids": [tid],
+                "how": how,
+                "effort": "Low",
+                "auto_emitted": True,
+                "auto_source": "config-scan",
+            }
+        )
         # Link the mitigation back to the threat (the field name is
         # `mitigation_ids` per threat-model.output.schema.yaml — historical
         # `mitigations` shape on the threat side is not part of the output
@@ -331,6 +333,7 @@ def _synthesize_fix_mitigations(
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     if len(sys.argv) < 2:
@@ -379,15 +382,16 @@ def main() -> int:
     data["mitigations"] = sorted(existing, key=_sort_key)
 
     yaml_path.write_text(
-        yaml.safe_dump(
-            data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False
-        ),
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
         encoding="utf-8",
     )
 
-    iac_hits = sum(1 for c in new_cards if c["how"].startswith(_GENERIC_REMEDIATION["how"][:20]) is False
-                                          and any(c["title"] == iac_index[k].get("name")
-                                                  for k in iac_index))
+    iac_hits = sum(
+        1
+        for c in new_cards
+        if c["how"].startswith(_GENERIC_REMEDIATION["how"][:20]) is False
+        and any(c["title"] == iac_index[k].get("name") for k in iac_index)
+    )
     builtin_hits = sum(1 for c in new_cards if c["title"] in {e["title"] for e in _BUILTIN_REMEDIATIONS.values()})
     generic_hits = sum(1 for c in new_cards if c["title"] == _GENERIC_REMEDIATION["title"])
 

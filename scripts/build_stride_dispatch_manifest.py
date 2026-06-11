@@ -22,6 +22,7 @@ The analyst-context JSON (optional) maps component_id → a dict of any of:
 ``known_llm_patterns``, ``supply_chain_findings``, ``estimated_threat_count``,
 ``focus_paths``, ``exclude_paths``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,7 +34,7 @@ from pathlib import Path
 # resolve_config.DEPTH_PARAMS; imported when available, else a synced fallback
 # (kept identical by tests/test_dispatch_manifest.py::test_depth_params_in_sync).
 _FALLBACK_DEPTH_PARAMS = {
-    "quick":    {"simple": 10, "moderate": 15, "complex": 20},
+    "quick": {"simple": 10, "moderate": 15, "complex": 20},
     "standard": {"simple": 15, "moderate": 22, "complex": 31},
     "thorough": {"simple": 20, "moderate": 28, "complex": 35},
 }
@@ -63,9 +64,7 @@ def _trust_boundaries_for(component_id: str, all_boundaries: list) -> str:
         if not isinstance(b, dict):
             continue
         touches = (
-            component_id == b.get("from")
-            or component_id == b.get("to")
-            or component_id in (b.get("components") or [])
+            component_id == b.get("from") or component_id == b.get("to") or component_id in (b.get("components") or [])
         )
         if touches:
             name = b.get("name", b.get("id", "boundary"))
@@ -137,23 +136,22 @@ def _is_internal_only(c: dict) -> bool:
     never silently dropped."""
     if not _zones(c):
         return False  # exposure-unknown → fail-safe, never silently dropped
-    return not (_is_exposed(c) or _is_cicd(c) or _is_crown_jewel(c)
-                or _is_auth(c) or _is_frontend(c))
+    return not (_is_exposed(c) or _is_cicd(c) or _is_crown_jewel(c) or _is_auth(c) or _is_frontend(c))
 
 
 def _priority(c: dict) -> int:
     """Lower = kept first when an operational ceiling forces overflow drops."""
     if _is_auth(c):
-        return 0          # M3.4 invariant — never drop
+        return 0  # M3.4 invariant — never drop
     if _is_frontend(c):
-        return 1          # frontend attack-surface invariant — never drop
+        return 1  # frontend attack-surface invariant — never drop
     if _is_exposed(c):
-        return 2          # directly reachable by an external actor — never drop (cap lifts)
+        return 2  # directly reachable by an external actor — never drop (cap lifts)
     if _is_crown_jewel(c):
         return 3
     if _is_cicd(c):
         return 4
-    return 5              # internal-only / transitively-reachable — drop first
+    return 5  # internal-only / transitively-reachable — drop first
 
 
 def _selection_reasons(c: dict, depth: str) -> list:
@@ -212,8 +210,13 @@ def select_stride_components(components: list, depth: str, ceiling: int | None =
 
     if not migrated:
         report = {
-            "mode": "passthrough", "depth": depth, "reason": "no deployment_zones in .components.json — un-migrated",
-            "selected": [c["id"] for c in comps], "excluded": [], "lifted": False, "ceiling": ceiling,
+            "mode": "passthrough",
+            "depth": depth,
+            "reason": "no deployment_zones in .components.json — un-migrated",
+            "selected": [c["id"] for c in comps],
+            "excluded": [],
+            "lifted": False,
+            "ceiling": ceiling,
         }
         return comps, report
 
@@ -237,16 +240,25 @@ def select_stride_components(components: list, depth: str, ceiling: int | None =
         excluded = excluded + overflow_dropped
 
     report = {
-        "mode": "criteria", "depth": depth, "ceiling": ceiling, "lifted": lifted,
-        "selected": [{"id": c["id"], "priority": _priority(c), "reasons": _selection_reasons(c, depth)} for c in selected],
-        "excluded": [{"id": c["id"], "reason": ("ceiling-overflow" if c in overflow_dropped
-                                                 else "out-of-scope at depth=" + depth)} for c in excluded],
+        "mode": "criteria",
+        "depth": depth,
+        "ceiling": ceiling,
+        "lifted": lifted,
+        "selected": [
+            {"id": c["id"], "priority": _priority(c), "reasons": _selection_reasons(c, depth)} for c in selected
+        ],
+        "excluded": [
+            {
+                "id": c["id"],
+                "reason": ("ceiling-overflow" if c in overflow_dropped else "out-of-scope at depth=" + depth),
+            }
+            for c in excluded
+        ],
     }
     return selected, report
 
 
-def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path,
-          ceiling: int | None = None) -> dict:
+def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path, ceiling: int | None = None) -> dict:
     import datetime as _dt
 
     dp = _depth_params()
@@ -261,8 +273,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     # Persist the selection rationale so a run is auditable (which components were
     # analyzed and why) and so EXPOSURE_CAP_LIFT can be post-hoc verified.
     try:
-        (output_dir / ".stride-selection.json").write_text(
-            json.dumps(selection_report, indent=2), encoding="utf-8")
+        (output_dir / ".stride-selection.json").write_text(json.dumps(selection_report, indent=2), encoding="utf-8")
     except OSError:
         pass
 
@@ -310,9 +321,17 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
         # analyzer expect a flat text string. Normalize dict-shaped text fields
         # to "key: value; ..." here at the deterministic LLM→schema boundary so
         # validate_dispatch_manifest.py does not reject the manifest.
-        for k in ("interfaces", "controls", "known_secrets", "known_vulns",
-                  "known_llm_patterns", "supply_chain_findings",
-                  "estimated_threat_count", "focus_paths", "exclude_paths"):
+        for k in (
+            "interfaces",
+            "controls",
+            "known_secrets",
+            "known_vulns",
+            "known_llm_patterns",
+            "supply_chain_findings",
+            "estimated_threat_count",
+            "focus_paths",
+            "exclude_paths",
+        ):
             if k in ctx and ctx[k] not in (None, "", []):
                 v = ctx[k]
                 if isinstance(v, dict):
@@ -343,7 +362,9 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     return {
         "schema_version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "stride_profile": analyst_context.get("_stride_profile", "full") if isinstance(analyst_context, dict) else "full",
+        "stride_profile": analyst_context.get("_stride_profile", "full")
+        if isinstance(analyst_context, dict)
+        else "full",
         "components": out_components,
     }
 
@@ -354,11 +375,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--depth", default="standard", choices=["quick", "standard", "thorough"])
     ap.add_argument("--analyst-context", type=Path, default=None)
     ap.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
-    ap.add_argument("--ceiling", type=int, default=None,
-                    help="Operational safety ceiling on the selected component count "
-                         "(merge/turn-budget guard). NOT the selection number — auth/"
-                         "frontend/exposed are never dropped (cap lifts with a log). "
-                         "Omit for unbounded (the recon hint cap already bounds the inventory).")
+    ap.add_argument(
+        "--ceiling",
+        type=int,
+        default=None,
+        help="Operational safety ceiling on the selected component count "
+        "(merge/turn-budget guard). NOT the selection number — auth/"
+        "frontend/exposed are never dropped (cap lifts with a log). "
+        "Omit for unbounded (the recon hint cap already bounds the inventory).",
+    )
     ns = ap.parse_args(argv)
 
     ctx = _read_json(ns.analyst_context, {}) if ns.analyst_context else {}
@@ -369,15 +394,19 @@ def main(argv: list[str] | None = None) -> int:
     sel = _read_json(ns.output_dir / ".stride-selection.json", {})
     out = ns.output_dir / ".stride-dispatch-manifest.json"
     out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"OK: wrote {out} ({len(manifest['components'])} components, depth={ns.depth}, "
-          f"selection={sel.get('mode', '?')})")
+    print(
+        f"OK: wrote {out} ({len(manifest['components'])} components, depth={ns.depth}, "
+        f"selection={sel.get('mode', '?')})"
+    )
     if sel.get("lifted"):
         n_sel = len(sel.get("selected", []))
         n_drop = len([e for e in sel.get("excluded", []) if e.get("reason") == "ceiling-overflow"])
         tail = f"; dropped {n_drop} internal-only component(s)" if n_drop else ""
-        print(f"EXPOSURE_CAP_LIFT: {n_sel} earned components exceed the operational ceiling "
-              f"({ns.ceiling}) — analyzing all (no exposed/ci-cd/crown-jewel/auth/frontend "
-              f"component dropped; STRIDE merge/turn-budget may be stressed){tail}.")
+        print(
+            f"EXPOSURE_CAP_LIFT: {n_sel} earned components exceed the operational ceiling "
+            f"({ns.ceiling}) — analyzing all (no exposed/ci-cd/crown-jewel/auth/frontend "
+            f"component dropped; STRIDE merge/turn-budget may be stressed){tail}."
+        )
     return 0
 
 

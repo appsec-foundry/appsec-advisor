@@ -23,6 +23,7 @@ or `ambiguous` from the LLM verifier is left untouched. The script never
 Usage:
     python3 validate_evidence_lines.py <output_dir> --repo-root <REPO_ROOT>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,7 +32,6 @@ import sys
 from pathlib import Path
 
 import yaml
-
 
 # A "comment-only" line is one whose stripped form starts with a recognised
 # comment marker AND nothing else of substance follows. We deliberately do
@@ -100,9 +100,7 @@ def _resolve_evidence_file(repo_root: Path, file_token: str) -> Path | None:
     # avoid silently mis-routing.
     base = Path(file_token).name
     matches = list(repo_root.rglob(base))
-    matches = [m for m in matches if m.is_file()
-               and "/node_modules/" not in str(m)
-               and "/.git/" not in str(m)]
+    matches = [m for m in matches if m.is_file() and "/node_modules/" not in str(m) and "/.git/" not in str(m)]
     if len(matches) == 1:
         return matches[0]
     return None
@@ -233,8 +231,9 @@ def validate_yaml(data: dict, repo_root: Path) -> tuple[dict, dict]:
 
 
 def main(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="validate_evidence_lines",
-                                description="Deterministic evidence-line validation backstop.")
+    p = argparse.ArgumentParser(
+        prog="validate_evidence_lines", description="Deterministic evidence-line validation backstop."
+    )
     p.add_argument("output_dir", help="Directory containing threat-model.yaml.")
     p.add_argument("--repo-root", required=True, help="Root of the analyzed repository.")
     args = p.parse_args(argv)
@@ -259,8 +258,7 @@ def main(argv: list[str]) -> int:
 
     data, stats = validate_yaml(data, repo_root)
     yaml_path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096,
-                       default_flow_style=False),
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
         encoding="utf-8",
     )
     print(

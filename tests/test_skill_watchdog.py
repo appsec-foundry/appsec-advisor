@@ -235,9 +235,7 @@ def test_stride_progress_suppressed_when_past_stride_phase(out_dir, silent_heart
         json.dumps({"component_id": "auth", "step": 9, "total": 9, "label": "done"})
     )
     (out_dir / ".stride-auth.json").write_text(json.dumps({"threats": []}))
-    (out_dir / ".appsec-checkpoint").write_text(
-        "phase=11 status=writing_output timestamp=2026-05-25T07:00:00Z\n"
-    )
+    (out_dir / ".appsec-checkpoint").write_text("phase=11 status=writing_output timestamp=2026-05-25T07:00:00Z\n")
     sw.watch(
         output_dir=out_dir,
         plugin_root=REPO_ROOT,
@@ -283,9 +281,7 @@ def test_stride_progress_suppressed_during_repair_phase(out_dir, silent_heartbea
     """A `phase=repair/N` checkpoint must also suppress STRIDE_PROGRESS."""
     sw = silent_heartbeat
     (out_dir / ".stride-auth.json").write_text(json.dumps({"threats": []}))
-    (out_dir / ".appsec-checkpoint").write_text(
-        "phase=repair/1 status=in_progress timestamp=2026-05-25T07:00:00Z\n"
-    )
+    (out_dir / ".appsec-checkpoint").write_text("phase=repair/1 status=in_progress timestamp=2026-05-25T07:00:00Z\n")
     sw.watch(
         output_dir=out_dir,
         plugin_root=REPO_ROOT,
@@ -321,9 +317,7 @@ class TestSubstep2IdleDetection:
         "(canonical baseline)…\n"
     )
 
-    def test_fires_loud_error_when_idle_exceeds_threshold(
-        self, out_dir, silent_heartbeat, capsys
-    ):
+    def test_fires_loud_error_when_idle_exceeds_threshold(self, out_dir, silent_heartbeat, capsys):
         sw = silent_heartbeat
         # STEP_START 1 hour ago, no FILE_WRITE → idle ~3600s, threshold 300s
         (out_dir / ".agent-run.log").write_text(self.SUBSTEP2_START_LINE)
@@ -360,8 +354,7 @@ class TestSubstep2IdleDetection:
         """STEP_START + FILE_WRITE both present → substep is done, no alarm."""
         sw = silent_heartbeat
         (out_dir / ".agent-run.log").write_text(
-            self.SUBSTEP2_START_LINE
-            + "2026-05-25T10:00:04Z  [a]  INFO   threat-analyst  "
+            self.SUBSTEP2_START_LINE + "2026-05-25T10:00:04Z  [a]  INFO   threat-analyst  "
             "FILE_WRITE   /tmp/threat-model.yaml\n"
         )
         sw.watch(
@@ -377,9 +370,7 @@ class TestSubstep2IdleDetection:
         assert not (out_dir / ".substep2-idle").exists()
         assert not (out_dir / ".run-issues.json").exists()
 
-    def test_does_not_fire_when_yaml_on_disk_without_filewrite_marker(
-        self, out_dir, silent_heartbeat
-    ):
+    def test_does_not_fire_when_yaml_on_disk_without_filewrite_marker(self, out_dir, silent_heartbeat):
         """STEP_START present, NO FILE_WRITE log marker, but threat-model.yaml
         exists on disk (fresh mtime) → Substep 2 is done, no alarm.
 
@@ -411,8 +402,7 @@ class TestSubstep2IdleDetection:
         """No STEP_START Substep 2 yet → detector quiet."""
         sw = silent_heartbeat
         (out_dir / ".agent-run.log").write_text(
-            "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  "
-            "ASSESSMENT_START   started\n"
+            "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  ASSESSMENT_START   started\n"
         )
         sw.watch(
             output_dir=out_dir,
@@ -443,9 +433,7 @@ class TestSubstep2IdleDetection:
         )
         assert not (out_dir / ".substep2-idle").exists()
 
-    def test_watchdog_own_lines_do_not_reset_idle_window(
-        self, out_dir, silent_heartbeat
-    ):
+    def test_watchdog_own_lines_do_not_reset_idle_window(self, out_dir, silent_heartbeat):
         """The watchdog emits WATCHDOG_START to .agent-run.log; that line
         must NOT count as orchestrator activity (it is the watchdog speaking
         about itself, not the agent making progress)."""
@@ -474,9 +462,6 @@ class TestSubstep2IdleDetection:
 # ---------------------------------------------------------------------------
 
 
-import os as _os
-
-
 class TestRunIdleHelper:
     """`_run_idle_seconds` takes the FRESHEST of two activity signals: the
     latest NON-heartbeat line in .hook-events.log (tool granularity) and the
@@ -494,9 +479,7 @@ class TestRunIdleHelper:
     def test_fresh_hook_activity_masks_stale_agent_log(self, out_dir, silent_heartbeat):
         sw = silent_heartbeat
         # agent-run.log last non-watchdog entry is ancient → that signal is huge…
-        (out_dir / ".agent-run.log").write_text(
-            "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n"
-        )
+        (out_dir / ".agent-run.log").write_text("2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n")
         # …but a tool just appended a timestamped non-heartbeat line → fresh.
         (out_dir / ".hook-events.log").write_text(self._hook_line(sw))
         idle = sw._run_idle_seconds(out_dir, self.OLD_FLOOR)
@@ -507,9 +490,7 @@ class TestRunIdleHelper:
         # every 60 s with HEARTBEAT lines while the run is genuinely stalled.
         # Those must NOT count as activity, so the stale agent-run signal wins.
         sw = silent_heartbeat
-        (out_dir / ".agent-run.log").write_text(
-            "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n"
-        )
+        (out_dir / ".agent-run.log").write_text("2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n")
         # Only fresh HEARTBEAT lines in the hook log — no real tool activity.
         now = sw._ts_now()
         (out_dir / ".hook-events.log").write_text(
@@ -520,13 +501,9 @@ class TestRunIdleHelper:
 
     def test_reports_idle_when_both_signals_stale(self, out_dir, silent_heartbeat):
         sw = silent_heartbeat
-        (out_dir / ".agent-run.log").write_text(
-            "2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n"
-        )
+        (out_dir / ".agent-run.log").write_text("2026-05-25T10:00:00Z  [a]  INFO   threat-analyst  STEP_START   x\n")
         # Hook log's latest non-heartbeat line is ~10 min old (no tool since).
-        old_ts = (
-            datetime.now(timezone.utc) - timedelta(seconds=600)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        old_ts = (datetime.now(timezone.utc) - timedelta(seconds=600)).strftime("%Y-%m-%dT%H:%M:%SZ")
         (out_dir / ".hook-events.log").write_text(self._hook_line(sw, ts=old_ts))
         idle = sw._run_idle_seconds(out_dir, self.OLD_FLOOR)
         assert 590 <= idle <= 620  # ~10 min idle

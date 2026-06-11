@@ -39,10 +39,13 @@ def _minimal_yaml(threats: list[dict]) -> dict:
     }
 
 
-def _run(output_dir: Path, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+def _run(
+    output_dir: Path, env_extra: dict | None = None, extra_args: list[str] | None = None
+) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env.update(env_extra or {})
-    return subprocess.run([sys.executable, str(SCRIPT), str(output_dir)], env=env, capture_output=True, text=True)
+    cmd = [sys.executable, str(SCRIPT), str(output_dir), *(extra_args or [])]
+    return subprocess.run(cmd, env=env, capture_output=True, text=True)
 
 
 def test_feature_flag_default_off(tmp_path: Path) -> None:
@@ -393,7 +396,9 @@ def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> 
         """Run the real CLI (writes threat-model.yaml + .triage-flags.json back)."""
         res = subprocess.run(
             [sys.executable, str(SCRIPT), str(out_dir), "--force"],
-            env=env, capture_output=True, text=True,
+            env=env,
+            capture_output=True,
+            text=True,
         )
         assert res.returncode == 0, res.stderr
 
@@ -421,3 +426,53 @@ def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> 
     after3 = yaml.safe_load((tmp_path / "threat-model.yaml").read_text(encoding="utf-8"))
     f3 = next(t for t in after3["threats"] if t["id"] == "F-1")
     assert f3["effective_severity"] == "Critical"
+
+
+def test_if_deterministic_owner_noop_without_marker(tmp_path: Path) -> None:
+    """--if-deterministic-owner exits cleanly when no deterministic ranking marker exists.
+
+    Stage 1c (SKILL-impl step 3b2) re-runs the fold with this flag instead of the
+    env feature flag — env vars don't reach skill-level Bash (gotcha 2026-06-10)."""
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml([]))
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": ""}, ["--if-deterministic-owner"])
+    assert res.returncode == 0
+    assert "not the ranking owner" in res.stdout
+    assert not (tmp_path / ".triage-flags.json").is_file()
+
+
+def test_if_deterministic_owner_noop_on_llm_ranking(tmp_path: Path) -> None:
+    """An LLM-authored ranking block (different computed_by) must not be clobbered."""
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml([]))
+    flags = {
+        "version": 2,
+        "flags": [],
+        "summary": {},
+        "ranking": {"computed_by": "appsec-triage-validator (LLM Step 6)"},
+    }
+    (tmp_path / ".triage-flags.json").write_text(json.dumps(flags), encoding="utf-8")
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": ""}, ["--if-deterministic-owner"])
+    assert res.returncode == 0
+    assert "not the ranking owner" in res.stdout
+    assert json.loads((tmp_path / ".triage-flags.json").read_text(encoding="utf-8")) == flags
+
+
+def test_if_deterministic_owner_folds_chains_without_env(tmp_path: Path) -> None:
+    """End-to-end Stage 1c fold: deterministic marker present → the re-run works
+    WITHOUT the env flag and elevates the verified chain keystone."""
+    threats = [{"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"}]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+    # Phase 10b deterministic run writes the owner marker (ranking.computed_by).
+    res0 = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+    assert res0.returncode == 0, res0.stderr
+    # Stage 1c: abuse sidecars appear, fold re-runs with --if-deterministic-owner
+    # and the env flag explicitly UNSET (default-run conditions).
+    verdicts, matches = _ac_docs("fully_viable")
+    (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": ""}, ["--if-deterministic-owner"])
+    assert res.returncode == 0, res.stderr
+    assert "ranking written" in res.stdout
+    after = yaml.safe_load((tmp_path / "threat-model.yaml").read_text(encoding="utf-8"))
+    f = next(t for t in after["threats"] if t["id"] == "F-1")
+    assert f["effective_severity"] == "Critical"
+    assert f["verified_chain_ids"] == ["AC-T-001"]

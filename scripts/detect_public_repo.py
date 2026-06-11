@@ -31,6 +31,7 @@ preserved across re-runs.
 Usage:
     python3 detect_public_repo.py <output_dir> --repo-root <repo>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -79,7 +80,9 @@ def _git_remote_public(repo: Path) -> bool:
     try:
         out = subprocess.run(
             ["git", "-C", str(repo), "config", "--get-regexp", r"^remote\..*\.url$"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         ).stdout
     except Exception:
         return False
@@ -127,9 +130,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if "public_source_repo_pinned" in meta:
         meta["public_source_repo"] = bool(meta["public_source_repo_pinned"])
-        sys.stderr.write(
-            f"detect_public_repo: pinned → public_source_repo={meta['public_source_repo']}\n"
-        )
+        sys.stderr.write(f"detect_public_repo: pinned → public_source_repo={meta['public_source_repo']}\n")
     else:
         verdict, reason = detect(Path(args.repo_root))
         if verdict is None:

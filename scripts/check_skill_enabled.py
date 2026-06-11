@@ -17,6 +17,7 @@ The script reads ``$OUTPUT_DIR/.org-profile-effective.json`` if present;
 without it, it falls through to ``enabled`` so the legacy code path is
 preserved when no org profile is active.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -80,9 +81,7 @@ def check(skill: str, output_dir: Path | None, help_only: bool) -> tuple[int, st
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Check whether a skill is enabled under the active org profile."
-    )
+    parser = argparse.ArgumentParser(description="Check whether a skill is enabled under the active org profile.")
     parser.add_argument("skill", help="user-facing skill name (e.g. export-threat-model)")
     parser.add_argument(
         "--output-dir",

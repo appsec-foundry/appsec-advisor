@@ -151,15 +151,9 @@ def _section_is_not_applicable(segs: list[_Seg], idx: int) -> bool:
 # --------------------------------------------------------------------------- #
 def _label_block(label: str) -> str:
     if label.strip().lower() == "relevant findings":
-        return (
-            "\n**Relevant findings**\n\n"
-            "- None identified for this control.\n"
-        )
+        return "\n**Relevant findings**\n\n- None identified for this control.\n"
     if label.strip().lower() == "security assessment":
-        return (
-            "\n**Security assessment**\n\n"
-            "_Not assessed in detail; see the control overview in §7.1._\n"
-        )
+        return "\n**Security assessment**\n\n_Not assessed in detail; see the control overview in §7.1._\n"
     return f"\n**{label}**\n\n_Not specified._\n"
 
 
@@ -279,9 +273,7 @@ def _ensure_subsection_labels(md: str, rules_map: dict, changes: list[str]) -> s
                     block = _label_block(lab)
                     segs[ci].body.append(block)
                     body_text += block
-                    changes.append(
-                        f"control_subsection_coverage: added '**{lab}**' to §{st} #### {segs[ci].heading!r}"
-                    )
+                    changes.append(f"control_subsection_coverage: added '**{lab}**' to §{st} #### {segs[ci].heading!r}")
     return _serialize(segs)
 
 
@@ -411,7 +403,9 @@ def normalize_file(path: Path, write: bool = True, contract_path: Path = qc.DEFA
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Normalize §7 security-architecture.md to the contract structural floor.")
     ap.add_argument("path", help="path to security-architecture.md (or output-dir/.fragments/security-architecture.md)")
-    ap.add_argument("--check", action="store_true", help="report changes that WOULD be made; exit 1 if any; do not write")
+    ap.add_argument(
+        "--check", action="store_true", help="report changes that WOULD be made; exit 1 if any; do not write"
+    )
     ap.add_argument("--contract", default=str(qc.DEFAULT_CONTRACT_PATH), help="sections-contract.yaml path")
     args = ap.parse_args(argv)
 

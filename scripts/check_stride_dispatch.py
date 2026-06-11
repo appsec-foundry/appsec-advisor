@@ -91,8 +91,7 @@ _STUB_MARKERS = ("trivial-component", "no detailed stride")
 def _is_stub_threat(threat: dict) -> bool:
     """True when a single threat is the M24 trivial-component placeholder."""
     blob = " ".join(
-        str(threat.get(k, ""))
-        for k in ("title", "description", "skip_reason", "resolution_reason")
+        str(threat.get(k, "")) for k in ("title", "description", "skip_reason", "resolution_reason")
     ).lower()
     return any(marker in blob for marker in _STUB_MARKERS)
 
@@ -117,9 +116,7 @@ def _stride_has_real_threats(stride_path: Path) -> bool:
     threats = data.get("threats")
     if not isinstance(threats, list) or not threats:
         return False
-    return any(
-        isinstance(t, dict) and not _is_stub_threat(t) for t in threats
-    )
+    return any(isinstance(t, dict) and not _is_stub_threat(t) for t in threats)
 
 
 def _stride_analyzer_spawn_count(output_dir: Path, since: str | None = None) -> int:
@@ -159,9 +156,7 @@ def _stride_analyzer_spawn_count(output_dir: Path, since: str | None = None) -> 
 def _read_manifest(output_dir: Path) -> dict:
     """Parse ``.stride-dispatch-manifest.json`` (``{}`` when absent/unreadable)."""
     try:
-        data = json.loads(
-            (output_dir / ".stride-dispatch-manifest.json").read_text(encoding="utf-8")
-        )
+        data = json.loads((output_dir / ".stride-dispatch-manifest.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}

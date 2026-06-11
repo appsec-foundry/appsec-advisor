@@ -29,6 +29,7 @@ stale note); a hand-authored ``severity_rationale_manual: true`` is preserved.
 Usage:
     python3 emit_severity_rationale.py <output_dir>
 """
+
 from __future__ import annotations
 
 import json
@@ -44,6 +45,7 @@ _SEV_ORDER = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
 def _sev_rank(label: str) -> int:
     return _SEV_ORDER.get((label or "").strip().lower(), 0)
+
 
 # always_critical CWEs whose Critical rating is CONTEXTUAL (only Critical on an
 # unauthenticated / low-distance endpoint) rather than intrinsic. These warrant
@@ -128,9 +130,7 @@ def _chain_rationale(t: dict, ac_titles: dict[str, str]) -> str:
     if len(chains) > 2:
         chain_str += f", +{len(chains) - 2} more"
 
-    elevated = _sev_rank(t.get("effective_severity") or "") > _sev_rank(
-        t.get("risk") or t.get("severity") or ""
-    )
+    elevated = _sev_rank(t.get("effective_severity") or "") > _sev_rank(t.get("risk") or t.get("severity") or "")
     if elevated:
         eff_label = (t.get("effective_severity") or "").strip() or "a higher rating"
         return f"elevated to {eff_label} as a verified attack-chain {role} in {chain_str}; see §9"

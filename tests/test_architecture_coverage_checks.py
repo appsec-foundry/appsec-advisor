@@ -8,8 +8,6 @@ import sys
 from pathlib import Path
 
 import jsonschema
-import pytest
-
 
 REPO_ROOT = Path(__file__).parent.parent
 ENGINE = REPO_ROOT / "scripts" / "architecture_coverage_checks.py"
@@ -17,9 +15,15 @@ ROUTE_INV = REPO_ROOT / "scripts" / "route_inventory.py"
 SCHEMA = json.loads((REPO_ROOT / "schemas" / "architecture-coverage.schema.json").read_text())
 
 ALL_RULE_IDS = {
-    "ARCH-COOKIE-001", "ARCH-CORS-001", "ARCH-JWT-001",
-    "ARCH-TLS-001", "ARCH-MGMT-001",
-    "ARCH-XSS-001", "ARCH-SQLI-001", "ARCH-AUTHZ-001", "ARCH-INPUT-001",
+    "ARCH-COOKIE-001",
+    "ARCH-CORS-001",
+    "ARCH-JWT-001",
+    "ARCH-TLS-001",
+    "ARCH-MGMT-001",
+    "ARCH-XSS-001",
+    "ARCH-SQLI-001",
+    "ARCH-AUTHZ-001",
+    "ARCH-INPUT-001",
 }
 
 
@@ -34,9 +38,10 @@ def _run_engine(repo: Path, output_dir: Path | None = None) -> dict:
 def _build_inventory(repo: Path, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        [sys.executable, str(ROUTE_INV), "--repo-root", str(repo),
-         "--output-dir", str(output_dir)],
-        check=True, capture_output=True, text=True,
+        [sys.executable, str(ROUTE_INV), "--repo-root", str(repo), "--output-dir", str(output_dir)],
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -59,8 +64,7 @@ def test_every_rule_appears_in_rules_evaluated(tmp_path: Path) -> None:
 
 def test_output_validates_against_schema(tmp_path: Path) -> None:
     (tmp_path / "app.ts").write_text(
-        "app.use(cors({origin:'*', credentials:true}));\n"
-        "const dsn = 'postgres://u:p@h/db?sslmode=disable';\n"
+        "app.use(cors({origin:'*', credentials:true}));\nconst dsn = 'postgres://u:p@h/db?sslmode=disable';\n"
     )
     out = _run_engine(tmp_path)
     jsonschema.validate(out, SCHEMA)
@@ -72,12 +76,7 @@ def test_output_validates_against_schema(tmp_path: Path) -> None:
 
 
 def test_cors_wildcard_with_credentials_anti_pattern(tmp_path: Path) -> None:
-    (tmp_path / "server.ts").write_text(
-        "app.use(cors({\n"
-        "  origin: '*',\n"
-        "  credentials: true,\n"
-        "}));\n"
-    )
+    (tmp_path / "server.ts").write_text("app.use(cors({\n  origin: '*',\n  credentials: true,\n}));\n")
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-CORS-001")
     assert v["status"] == "anti_pattern"
@@ -94,10 +93,7 @@ def test_cors_wildcard_with_credentials_anti_pattern(tmp_path: Path) -> None:
 
 def test_cors_specific_origin_no_anti_pattern(tmp_path: Path) -> None:
     (tmp_path / "server.ts").write_text(
-        "app.use(cors({\n"
-        "  origin: 'https://app.example.com',\n"
-        "  credentials: true,\n"
-        "}));\n"
+        "app.use(cors({\n  origin: 'https://app.example.com',\n  credentials: true,\n}));\n"
     )
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-CORS-001")
@@ -107,9 +103,7 @@ def test_cors_specific_origin_no_anti_pattern(tmp_path: Path) -> None:
 
 
 def test_cors_anti_pattern_has_severity_cap_not_critical(tmp_path: Path) -> None:
-    (tmp_path / "server.ts").write_text(
-        "app.use(cors({ origin: '*', credentials: true }));\n"
-    )
+    (tmp_path / "server.ts").write_text("app.use(cors({ origin: '*', credentials: true }));\n")
     out = _run_engine(tmp_path)
     cors = [c for c in out["anti_pattern_candidates"] if c["rule_id"] == "ARCH-CORS-001"]
     assert cors and cors[0]["severity_cap"] != "Critical"
@@ -124,8 +118,7 @@ def test_cors_anti_pattern_has_severity_cap_not_critical(tmp_path: Path) -> None
 
 def test_jwt_verify_without_algorithms_is_weak(tmp_path: Path) -> None:
     (tmp_path / "auth.ts").write_text(
-        "import jwt from 'jsonwebtoken';\n"
-        "export function check(t){ return jwt.verify(t, 'secret'); }\n"
+        "import jwt from 'jsonwebtoken';\nexport function check(t){ return jwt.verify(t, 'secret'); }\n"
     )
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-JWT-001")
@@ -135,8 +128,7 @@ def test_jwt_verify_without_algorithms_is_weak(tmp_path: Path) -> None:
 
 def test_jwt_with_algorithm_whitelist_present(tmp_path: Path) -> None:
     (tmp_path / "auth.ts").write_text(
-        "import jwt from 'jsonwebtoken';\n"
-        "jwt.verify(t, key, { algorithms: ['RS256'] });\n"
+        "import jwt from 'jsonwebtoken';\njwt.verify(t, key, { algorithms: ['RS256'] });\n"
     )
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-JWT-001")
@@ -145,10 +137,7 @@ def test_jwt_with_algorithm_whitelist_present(tmp_path: Path) -> None:
 
 def test_jwt_max_severity_high(tmp_path: Path) -> None:
     """Per critical-criteria.yaml CWE-347 individual cap is High."""
-    (tmp_path / "auth.py").write_text(
-        "import jwt\n"
-        "data = jwt.decode(t, verify=False)\n"
-    )
+    (tmp_path / "auth.py").write_text("import jwt\ndata = jwt.decode(t, verify=False)\n")
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-JWT-001")
     assert v["applies"]
@@ -161,9 +150,7 @@ def test_jwt_max_severity_high(tmp_path: Path) -> None:
 
 
 def test_tls_sslmode_disable_anti_pattern(tmp_path: Path) -> None:
-    (tmp_path / "db.ts").write_text(
-        "export const dsn = 'postgres://u:p@h/db?sslmode=disable';\n"
-    )
+    (tmp_path / "db.ts").write_text("export const dsn = 'postgres://u:p@h/db?sslmode=disable';\n")
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-TLS-001")
     assert v["status"] == "anti_pattern"
@@ -172,9 +159,7 @@ def test_tls_sslmode_disable_anti_pattern(tmp_path: Path) -> None:
 
 
 def test_tls_localhost_http_is_not_finding(tmp_path: Path) -> None:
-    (tmp_path / "dev.ts").write_text(
-        "const local = 'http://localhost:3000/api';\n"
-    )
+    (tmp_path / "dev.ts").write_text("const local = 'http://localhost:3000/api';\n")
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-TLS-001")
     assert v["status"] in {"present", "partial"}
@@ -186,9 +171,7 @@ def test_tls_localhost_http_is_not_finding(tmp_path: Path) -> None:
 
 
 def test_cookie_httponly_false_is_weak(tmp_path: Path) -> None:
-    (tmp_path / "session.ts").write_text(
-        "app.use(session({ secret:'x', cookie:{ httpOnly:false, secure:false } }));\n"
-    )
+    (tmp_path / "session.ts").write_text("app.use(session({ secret:'x', cookie:{ httpOnly:false, secure:false } }));\n")
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-COOKIE-001")
     assert v["applies"] is True
@@ -211,9 +194,7 @@ def test_cookie_no_signal_is_not_applicable(tmp_path: Path) -> None:
 def test_mgmt_route_with_middleware_present_not_weak(tmp_path: Path) -> None:
     out_dir = tmp_path / "out"
     (tmp_path / "app.ts").write_text(
-        "const router = express.Router();\n"
-        "router.use(requireAuth);\n"
-        "router.get('/admin/users', h);\n"
+        "const router = express.Router();\nrouter.use(requireAuth);\nrouter.get('/admin/users', h);\n"
     )
     _build_inventory(tmp_path, out_dir)
     out = _run_engine(tmp_path, out_dir)
@@ -225,8 +206,7 @@ def test_mgmt_route_unknown_authn_does_not_escalate(tmp_path: Path) -> None:
     """arch.md §Pipeline-Integration Punkt 8: unknown MUST NOT escalate."""
     out_dir = tmp_path / "out"
     (tmp_path / "app.ts").write_text(
-        "const app = express();\n"
-        "app.get('/admin/users', h);\n"   # no nearby middleware → authn=unknown
+        "const app = express();\napp.get('/admin/users', h);\n"  # no nearby middleware → authn=unknown
     )
     _build_inventory(tmp_path, out_dir)
     out = _run_engine(tmp_path, out_dir)
@@ -262,8 +242,7 @@ def test_xss_hypothesis_does_not_emit_anti_pattern(tmp_path: Path) -> None:
 
 def test_sqli_hypothesis_only_on_concat(tmp_path: Path) -> None:
     (tmp_path / "login.ts").write_text(
-        "const q = 'SELECT * FROM users WHERE id = ' + req.params.id;\n"
-        "await db.query(q);\n"
+        "const q = 'SELECT * FROM users WHERE id = ' + req.params.id;\nawait db.query(q);\n"
     )
     out = _run_engine(tmp_path)
     sqli_hyp = [h for h in out["threat_hypotheses"] if h["rule_id"] == "ARCH-SQLI-001"]
@@ -291,11 +270,7 @@ def test_authz_hypothesis_not_applicable_without_authenticated_routes(tmp_path: 
     """arch.md: keine zentrale AuthZ-Bibliothek ist nicht automatisch BAC.
     Without ANY authenticated route, the hypothesis precondition is not met."""
     out_dir = tmp_path / "out"
-    (tmp_path / "app.ts").write_text(
-        "const app = express();\n"
-        "app.get('/public', h);\n"
-        "app.delete('/items/:id', h);\n"
-    )
+    (tmp_path / "app.ts").write_text("const app = express();\napp.get('/public', h);\napp.delete('/items/:id', h);\n")
     _build_inventory(tmp_path, out_dir)
     out = _run_engine(tmp_path, out_dir)
     v = _verdict(out, "ARCH-AUTHZ-001")
@@ -306,7 +281,7 @@ def test_authz_hypothesis_weak_when_sensitive_method_lacks_authz(tmp_path: Path)
     out_dir = tmp_path / "out"
     (tmp_path / "app.ts").write_text(
         "const router = express.Router();\n"
-        "router.use(requireAuth);\n"     # authn middleware
+        "router.use(requireAuth);\n"  # authn middleware
         "router.delete('/items/:id', h);\n"  # sensitive, no authz signal
     )
     _build_inventory(tmp_path, out_dir)
@@ -323,9 +298,7 @@ def test_authz_hypothesis_weak_when_sensitive_method_lacks_authz(tmp_path: Path)
 
 def test_no_hypothesis_carries_proof_state_confirmed(tmp_path: Path) -> None:
     (tmp_path / "x.ts").write_text(
-        "element.innerHTML = req.query.name;\n"
-        "const q = 'SELECT * WHERE u = ' + req.body.u;\n"
-        "db.query(q);\n"
+        "element.innerHTML = req.query.name;\nconst q = 'SELECT * WHERE u = ' + req.body.u;\ndb.query(q);\n"
     )
     out = _run_engine(tmp_path)
     for h in out["threat_hypotheses"]:
@@ -335,8 +308,7 @@ def test_no_hypothesis_carries_proof_state_confirmed(tmp_path: Path) -> None:
 
 def test_anti_pattern_candidates_never_critical(tmp_path: Path) -> None:
     (tmp_path / "x.ts").write_text(
-        "app.use(cors({ origin:'*', credentials:true }));\n"
-        "const dsn='postgres://u:p@h/db?sslmode=disable';\n"
+        "app.use(cors({ origin:'*', credentials:true }));\nconst dsn='postgres://u:p@h/db?sslmode=disable';\n"
     )
     out = _run_engine(tmp_path)
     for c in out["anti_pattern_candidates"]:

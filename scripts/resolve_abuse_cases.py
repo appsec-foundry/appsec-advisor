@@ -63,10 +63,7 @@ def _check_grants_requires(case: dict, label: str) -> list[str]:
     for i, step in enumerate(chain):
         req = (step.get("requires") or "").strip()
         if req and req not in granted and i > 0:
-            errors.append(
-                f"{label}: step {step.get('step')} requires '{req}' "
-                f"which no earlier step grants"
-            )
+            errors.append(f"{label}: step {step.get('step')} requires '{req}' which no earlier step grants")
         grants = (step.get("grants") or "").strip()
         if grants:
             granted.add(grants)

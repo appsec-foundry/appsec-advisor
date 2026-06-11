@@ -53,6 +53,7 @@ Why passive only:
   tool. The plugin's job is the **architectural posture** signal
   ("does this team practice patch management?"), not per-CVE reporting.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,10 +69,16 @@ from pathlib import Path
 # also filtered out so generated-file churn does not contaminate the count.
 _MANIFEST_NAMES = {
     "package.json",
-    "requirements.txt", "requirements-dev.txt", "requirements-test.txt",
-    "Pipfile", "pyproject.toml", "setup.py",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "requirements-test.txt",
+    "Pipfile",
+    "pyproject.toml",
+    "setup.py",
     "go.mod",
-    "pom.xml", "build.gradle", "build.gradle.kts",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
     "Gemfile",
     "composer.json",
     "Cargo.toml",
@@ -82,7 +89,7 @@ _VENDOR_DIR_PARTS = {"node_modules", ".venv", "venv", "vendor", "target", "build
 # Subject patterns for dependency-update commits. Matched case-insensitive.
 _DEP_UPDATE_PATTERNS = (
     r"\bbump\b",
-    r"\bbumps?\s+\S+\s+from\b",            # dependabot canonical "Bumps X from"
+    r"\bbumps?\s+\S+\s+from\b",  # dependabot canonical "Bumps X from"
     r"\bupdate\s+\S+\s+to\s+\d",
     r"\bupgrade\s+\S+\s+to\s+\d",
     r"\bchore\(deps\)",
@@ -98,7 +105,9 @@ def _is_git_repo(repo_root: Path) -> bool:
     try:
         r = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "--is-inside-work-tree"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return r.returncode == 0 and r.stdout.strip() == "true"
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
@@ -127,7 +136,9 @@ def _git_log(repo_root: Path, since_days: int, paths: list[str]) -> list[dict]:
     if not paths:
         return []
     cmd = [
-        "git", "-C", str(repo_root),
+        "git",
+        "-C",
+        str(repo_root),
         "log",
         f"--since={since_days} days ago",
         "--no-merges",
@@ -163,14 +174,22 @@ def _gh_dep_pr_count(repo_root: Path, since_days: int) -> int | None:
     try:
         r = subprocess.run(
             [
-                "gh", "pr", "list",
-                "--state", "merged",
-                "--limit", "200",
-                "--search", f"label:dependencies OR title:bump OR title:\"chore(deps)\" OR author:app/dependabot OR author:app/renovate merged:>={_iso_days_ago(since_days)}",
-                "--json", "number,title,mergedAt,author",
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "merged",
+                "--limit",
+                "200",
+                "--search",
+                f'label:dependencies OR title:bump OR title:"chore(deps)" OR author:app/dependabot OR author:app/renovate merged:>={_iso_days_ago(since_days)}',
+                "--json",
+                "number,title,mergedAt,author",
             ],
             cwd=str(repo_root),
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -185,6 +204,7 @@ def _gh_dep_pr_count(repo_root: Path, since_days: int) -> int | None:
 
 def _iso_days_ago(days: int) -> str:
     import datetime as _dt
+
     return (_dt.datetime.utcnow() - _dt.timedelta(days=days)).strftime("%Y-%m-%d")
 
 
@@ -250,10 +270,12 @@ def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description="Passive dep-update-activity detector (git-log + optional gh CLI)")
     p.add_argument("--repo-root", required=True, type=Path)
     p.add_argument("--output-dir", required=True, type=Path)
-    p.add_argument("--window-days", type=int, default=90,
-                   help="Look-back window for git log + gh pr list (default: 90 days)")
-    p.add_argument("--no-gh", action="store_true",
-                   help="Skip the optional gh CLI PR-count signal even when gh is on PATH")
+    p.add_argument(
+        "--window-days", type=int, default=90, help="Look-back window for git log + gh pr list (default: 90 days)"
+    )
+    p.add_argument(
+        "--no-gh", action="store_true", help="Skip the optional gh CLI PR-count signal even when gh is on PATH"
+    )
     args = p.parse_args(argv)
     if not args.repo_root.is_dir():
         print(f"emit_dep_update_activity: repo-root not a directory: {args.repo_root}", file=sys.stderr)

@@ -884,10 +884,7 @@ class TestExtractParam:
         # The first OUTPUT_DIR= occurrence is inside inline code; the clean
         # bullet form comes later. _extract_param keys off the first match,
         # so the first match must itself sanitize cleanly.
-        text = (
-            "Run `export OUTPUT_DIR=/abs/docs/security` first.\n"
-            "- OUTPUT_DIR=/abs/docs/security\n"
-        )
+        text = "Run `export OUTPUT_DIR=/abs/docs/security` first.\n- OUTPUT_DIR=/abs/docs/security\n"
         assert _extract_param(text, "OUTPUT_DIR") == "/abs/docs/security"
 
 
@@ -1692,9 +1689,7 @@ class TestAssessmentSummaryIdle:
         (output_dir / ".hook-events.log").write_text("\n".join(hook) + "\n", encoding="utf-8")
         (output_dir / ".assessment-owner-sid").write_text("cb7b5188", encoding="utf-8")
         if agent_run_lines:
-            (output_dir / ".agent-run.log").write_text(
-                "\n".join(agent_run_lines) + "\n", encoding="utf-8"
-            )
+            (output_dir / ".agent-run.log").write_text("\n".join(agent_run_lines) + "\n", encoding="utf-8")
 
     def _summary_line(self, output_dir: Path) -> str:
         text = (output_dir / ".hook-events.log").read_text(encoding="utf-8")
@@ -1713,8 +1708,7 @@ class TestAssessmentSummaryIdle:
             [
                 "2026-06-06T05:05:42Z  [--------]  WARN   RUN_IDLE   "
                 "no run activity for 244s (threshold=240s) — slow API…",
-                "2026-06-06T05:26:50Z  [--------]  INFO   RUN_RESUMED   "
-                "activity resumed after 1268s idle (this stall)",
+                "2026-06-06T05:26:50Z  [--------]  INFO   RUN_RESUMED   activity resumed after 1268s idle (this stall)",
             ],
         )
         _write_assessment_summary("cb7b5188")

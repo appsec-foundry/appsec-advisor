@@ -286,7 +286,7 @@ class TestTierClusterArrowConsistency:
         # CWE-89 (SQL injection) is in the allow-set; CWE-321 (hardcoded
         # cryptographic key) is NOT — it should be filtered out.
         threats = [
-            {"id": "T-001", "cwe": "CWE-89",  "title": "SQLi",         "risk": "critical"},
+            {"id": "T-001", "cwe": "CWE-89", "title": "SQLi", "risk": "critical"},
             {"id": "T-002", "cwe": "CWE-321", "title": "Hardcoded key", "risk": "critical"},
         ]
         allow = {"CWE-89"}
@@ -300,7 +300,7 @@ class TestTierClusterArrowConsistency:
         """When the caller does not pass an allow-set, every cluster
         is rendered exactly as before (no filtering)."""
         threats = [
-            {"id": "T-001", "cwe": "CWE-89",  "title": "SQLi",          "risk": "critical"},
+            {"id": "T-001", "cwe": "CWE-89", "title": "SQLi", "risk": "critical"},
             {"id": "T-002", "cwe": "CWE-321", "title": "Hardcoded key", "risk": "critical"},
         ]
         lines_filtered = compose._build_tier_cluster_lines(threats, arrow_cwe_allow={"CWE-89"})
@@ -619,38 +619,6 @@ class TestComposeSmokeAllFourInvariants:
                 }
             )
         )
-        (frag / "ms-architecture-assessment.json").write_text(
-            json.dumps(
-                {
-                    "verdict_severity": "red",
-                    "verdict_prose": "**The architecture has no effective boundary.** "
-                    "Multiple cross-cutting defects compound across "
-                    "authentication, injection, and secret management.",
-                    "framing": "Three structural defects account for all critical findings:",
-                    "defects": [
-                        {
-                            "name": "Hardcoded secrets in source",
-                            "description": "RSA signing key committed to public repo enables "
-                            "permanent JWT forgery without server interaction.",
-                            "findings": [{"ref": "F-001", "label": "RSA key committed"}],
-                        },
-                        {
-                            "name": "Raw SQL string interpolation",
-                            "description": "Login route concatenates user input into raw SQL "
-                            "queries, enabling unauthenticated admin bypass.",
-                            "findings": [{"ref": "F-002", "label": "SQLi on login"}],
-                        },
-                        {
-                            "name": "Eval-based business logic",
-                            "description": "B2B handler runs user input through a bypassable "
-                            "sandbox primitive, enabling authenticated RCE.",
-                            "findings": [{"ref": "F-003", "label": "RCE via sandbox escape"}],
-                        },
-                    ],
-                    "closing_ref_anchor": "#7-security-architecture",
-                }
-            )
-        )
         # Walkthrough — must contain at least one sequenceDiagram per contract.
         (frag / "attack-walkthroughs.md").write_text(
             "## 3. Attack Walkthroughs\n\n"
@@ -718,9 +686,5 @@ class TestComposeSmokeAllFourInvariants:
         #     author `ms-critical-attack-tree.json`, so the optional MS
         #     attack-tree section is soft-skipped.
         _ignorable = ("NARRATIVE_PLACEHOLDER", "critical_attack_tree: fragment missing")
-        non_placeholder_warnings = [
-            w for w in warnings if not any(tok in w for tok in _ignorable)
-        ]
-        assert non_placeholder_warnings == [], (
-            f"unexpected compose warnings: {non_placeholder_warnings}"
-        )
+        non_placeholder_warnings = [w for w in warnings if not any(tok in w for tok in _ignorable)]
+        assert non_placeholder_warnings == [], f"unexpected compose warnings: {non_placeholder_warnings}"

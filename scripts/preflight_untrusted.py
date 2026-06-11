@@ -30,7 +30,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _path_guard import iter_escaping_symlinks  # noqa: E402
 from _url_guard import validate_target_url  # noqa: E402
 
-
 _REPO_OWNED_CLAUDE_PATHS = (
     ".claude/settings.json",
     ".claude/settings.local.json",

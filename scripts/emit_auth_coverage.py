@@ -32,6 +32,7 @@ are stripped before recompute.
 Usage:
     python3 emit_auth_coverage.py <output_dir> [--repo-root <path>]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -173,9 +174,7 @@ def _effectiveness_for(worst_sev: str, has_finding: bool) -> str:
     return "Weak"
 
 
-def build_auth_coverage(
-    yaml_data: dict, routes: list, repo_root: Path | None
-) -> tuple[list[dict], list[str]]:
+def build_auth_coverage(yaml_data: dict, routes: list, repo_root: Path | None) -> tuple[list[dict], list[str]]:
     """Return (new_control_rows, notes) to append to security_controls[]."""
     controls = yaml_data.get("security_controls") or []
     threats = yaml_data.get("threats") or []
@@ -183,10 +182,9 @@ def build_auth_coverage(
 
     # Is password authentication present at all? (gates the lifecycle-Missing rows)
     pw = next((m for m in _MECHANISMS if m["key"] == "password_login"), None)
-    password_present = bool(
-        _existing_covers(controls, pw["coverage_re"])
-        or _route_evidence(routes, pw["route_re"])
-    ) if pw else False
+    password_present = (
+        bool(_existing_covers(controls, pw["coverage_re"]) or _route_evidence(routes, pw["route_re"])) if pw else False
+    )
 
     additions: list[dict] = []
     for m in _MECHANISMS:
@@ -212,8 +210,7 @@ def build_auth_coverage(
                     f"{m['control']} is present but was not in the Phase-8 control "
                     f"catalog; rated from linked finding(s)."
                     if ids
-                    else f"{m['control']} is present in scope but was not individually "
-                    f"assessed — review required."
+                    else f"{m['control']} is present in scope but was not individually assessed — review required."
                 ),
                 "auto_source": "auth-coverage",
             }
@@ -225,24 +222,23 @@ def build_auth_coverage(
                 f"effectiveness={eff}; findings={ids or '—'})"
             )
         elif m["lifecycle_required"] and password_present:
-            additions.append({
-                "domain": _IAM_DOMAIN,
-                "control": m["control"],
-                "kind": "lifecycle",
-                "effectiveness": "Missing",
-                "implementation": None,
-                "evidence": "No endpoint detected in scope",
-                "main_reason": (
-                    f"{m['control']} is an expected lifecycle control for "
-                    f"password-based authentication but no endpoint was found — "
-                    f"confirm whether the flow exists or is genuinely absent."
-                ),
-                "auto_source": "auth-coverage",
-            })
-            notes.append(
-                f"auth-coverage: added '{m['control']}' as Missing "
-                f"(lifecycle-required, not detected)"
+            additions.append(
+                {
+                    "domain": _IAM_DOMAIN,
+                    "control": m["control"],
+                    "kind": "lifecycle",
+                    "effectiveness": "Missing",
+                    "implementation": None,
+                    "evidence": "No endpoint detected in scope",
+                    "main_reason": (
+                        f"{m['control']} is an expected lifecycle control for "
+                        f"password-based authentication but no endpoint was found — "
+                        f"confirm whether the flow exists or is genuinely absent."
+                    ),
+                    "auto_source": "auth-coverage",
+                }
             )
+            notes.append(f"auth-coverage: added '{m['control']}' as Missing (lifecycle-required, not detected)")
         # else: optional variant, genuinely absent → do not fabricate.
 
     return additions, notes

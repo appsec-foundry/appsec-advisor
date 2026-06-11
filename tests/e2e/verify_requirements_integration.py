@@ -8,6 +8,7 @@ NOT invent requirement/blueprint IDs that contradict the provided set.
 
 Exit 0 = all checks passed, 1 = a check failed.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -86,15 +87,20 @@ def main() -> int:
     data = yaml.safe_load(tm_yaml.read_text(encoding="utf-8")) or {}
 
     # --- gate flag
-    chk("meta.check_requirements is True",
+    chk(
+        "meta.check_requirements is True",
         data.get("meta", {}).get("check_requirements") is True,
-        f"got {data.get('meta', {}).get('check_requirements')!r}")
+        f"got {data.get('meta', {}).get('check_requirements')!r}",
+    )
 
     # --- the written source matches what we fed in (same req-id universe)
     if reqs_file.is_file():
         w_req, w_bp = _provided_ids(reqs_file)
-        chk("written .requirements.yaml == provided source (req ids)",
-            w_req == req_ids, f"written={len(w_req)} provided={len(req_ids)}")
+        chk(
+            "written .requirements.yaml == provided source (req ids)",
+            w_req == req_ids,
+            f"written={len(w_req)} provided={len(req_ids)}",
+        )
 
     # --- referenced ids across threats + mitigations
     threats = data.get("threats", []) or []
@@ -104,7 +110,9 @@ def main() -> int:
     for t in threats:
         ids = [i for i in _threat_req_ids(t) if i]
         # keep only tokens that look like our provided ID shape OR are declared
-        ids = [i for i in ids if i in req_ids] + [i for i in ids if re.match(r"^[A-Z]{2,4}-\d{3}$", i) and i not in req_ids]
+        ids = [i for i in ids if i in req_ids] + [
+            i for i in ids if re.match(r"^[A-Z]{2,4}-\d{3}$", i) and i not in req_ids
+        ]
         rid_hits = [i for i in _threat_req_ids(t) if i in req_ids]
         if rid_hits:
             threats_with_req += 1
@@ -118,30 +126,34 @@ def main() -> int:
     req_shaped = {r for r in referenced_reqs if re.match(r"^[A-Z]{2,4}-\d{3}$", r)}
     bp_shaped = {b for b in referenced_bps if b.startswith("BP-")}
 
-    chk("at least one finding references a provided requirement",
-        threats_with_req > 0, f"{threats_with_req} threats carry a provided req id")
+    chk(
+        "at least one finding references a provided requirement",
+        threats_with_req > 0,
+        f"{threats_with_req} threats carry a provided req id",
+    )
 
     # --- CONTRADICTION checks: every requirement-shaped / blueprint id the LLM
     #     referenced must be in the provided set (no invented IDs).
     unknown_reqs = sorted(req_shaped - req_ids)
     unknown_bps = sorted(bp_shaped - bp_ids)
-    chk("no invented requirement IDs (referenced ⊆ provided)",
-        not unknown_reqs, f"unknown={unknown_reqs}")
-    chk("no invented blueprint IDs (referenced ⊆ provided)",
-        not unknown_bps, f"unknown={unknown_bps}")
+    chk("no invented requirement IDs (referenced ⊆ provided)", not unknown_reqs, f"unknown={unknown_reqs}")
+    chk("no invented blueprint IDs (referenced ⊆ provided)", not unknown_bps, f"unknown={unknown_bps}")
 
     # --- markdown integration: compliance section + management summary
     md = tm_md.read_text(encoding="utf-8") if tm_md.is_file() else ""
-    chk("md mentions a provided requirement id",
-        any(r in md for r in req_ids), "")
-    chk("md has a requirements/compliance section",
-        bool(re.search(r"(?i)requirement|compliance", md)), "")
+    chk("md mentions a provided requirement id", any(r in md for r in req_ids), "")
+    chk("md has a requirements/compliance section", bool(re.search(r"(?i)requirement|compliance", md)), "")
     # management summary block references requirements
     ms_match = re.search(r"(?is)(management\s+summary|zusammenfassung).{0,8000}", md)
     ms_ok = bool(ms_match) and any(r in ms_match.group(0) for r in req_ids)
-    chk("management summary references a provided requirement (or compliance)",
-        ms_ok or bool(re.search(r"(?is)(management\s+summary|zusammenfassung).{0,8000}(requirement|compliance|anforderung)", md)),
-        "")
+    chk(
+        "management summary references a provided requirement (or compliance)",
+        ms_ok
+        or bool(
+            re.search(r"(?is)(management\s+summary|zusammenfassung).{0,8000}(requirement|compliance|anforderung)", md)
+        ),
+        "",
+    )
 
     # --- evidence dump
     print("\n── evidence ──────────────────────────────────────────────")
@@ -169,7 +181,7 @@ def _report(checks: list[tuple[str, bool, str]]) -> int:
         if not ok:
             failed += 1
     print("──────────────────────────────────────────────────────────")
-    print(f"  {'PASS' if failed == 0 else 'FAIL'}: {len(checks)-failed}/{len(checks)} checks passed")
+    print(f"  {'PASS' if failed == 0 else 'FAIL'}: {len(checks) - failed}/{len(checks)} checks passed")
     return 1 if failed else 0
 
 

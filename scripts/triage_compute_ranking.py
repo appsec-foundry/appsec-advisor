@@ -286,9 +286,7 @@ def _detect_chains(findings: list[dict], chain_specs: list[dict]) -> list[dict]:
     return active
 
 
-def _detect_verified_abuse_chains(
-    findings: list[dict], verdicts_doc: Any, matches_doc: Any
-) -> list[dict]:
+def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, matches_doc: Any) -> list[dict]:
     """Build chain entries (same shape as ``_detect_chains``) from CODE-VERIFIED
     abuse-case verdicts, so the existing effective-severity elevation
     (keystone/contributor + caps + no-downgrade) drives the finding ratings.
@@ -301,11 +299,7 @@ def _detect_verified_abuse_chains(
     at Critical. Returns [] when the sidecars are absent (non-fatal)."""
     if not isinstance(verdicts_doc, dict) or not isinstance(matches_doc, dict):
         return []
-    verdict_by_id = {
-        v.get("abuse_case_id"): v
-        for v in (verdicts_doc.get("verdicts") or [])
-        if isinstance(v, dict)
-    }
+    verdict_by_id = {v.get("abuse_case_id"): v for v in (verdicts_doc.get("verdicts") or []) if isinstance(v, dict)}
 
     # The abuse-case matcher binds ``matched_finding_id`` from
     # ``.threats-merged.json`` using ``f_id|t_id|id`` — which need NOT be the
@@ -609,8 +603,8 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
     )
     all_chains = active_chains + verified_chains
     role_by_id: dict[str, str] = {}
-    chain_membership: dict[str, list[str]] = {}      # compound-chain ids (CC-*)
-    verified_membership: dict[str, list[str]] = {}   # verified abuse-case ids (AC-*)
+    chain_membership: dict[str, list[str]] = {}  # compound-chain ids (CC-*)
+    verified_membership: dict[str, list[str]] = {}  # verified abuse-case ids (AC-*)
     for ch in active_chains:
         for k in ch.get("keystones") or []:
             role_by_id[k] = "keystone"
@@ -962,11 +956,40 @@ def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
         return False
 
 
+def _is_deterministic_ranking_owner(output_dir: Path) -> bool:
+    """True when a prior deterministic Step 6 run owns the ranking block.
+
+    The marker is ``ranking.computed_by`` in ``.triage-flags.json`` — written
+    only by this script (see the ranking dicts in ``compute_ranking``). The
+    LLM-driven Step 6 fallback writes its own ranking block without this
+    value, so the Stage 1c fold (``--if-deterministic-owner``) stays a no-op
+    there and never clobbers LLM-refined rankings.
+    """
+    flags_path = output_dir / ".triage-flags.json"
+    try:
+        with flags_path.open(encoding="utf-8") as fh:
+            flags = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return False
+    computed_by = ((flags.get("ranking") or {}).get("computed_by")) or ""
+    return computed_by.startswith("triage_compute_ranking.py")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("output_dir", type=Path, help="$OUTPUT_DIR with threat-model.yaml and .triage-flags.json")
     parser.add_argument("--repo-root", type=Path, default=None)
     parser.add_argument("--force", action="store_true", help="Bypass the APPSEC_TRIAGE_DETERMINISTIC=1 feature flag")
+    parser.add_argument(
+        "--if-deterministic-owner",
+        action="store_true",
+        help="Run only when .triage-flags.json shows this script as the "
+        "ranking owner (ranking.computed_by from a prior deterministic Step "
+        "6 run); exit cleanly otherwise. Bypasses the env feature flag — "
+        "for skill-level re-runs (Stage 1c fold) where env vars don't reach "
+        "the orchestrator Bash and the LLM-ranking fallback must not be "
+        "clobbered.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Compute the ranking but don't write back to disk")
     parser.add_argument(
         "--bootstrap-yaml",
@@ -978,7 +1001,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.force and os.environ.get("APPSEC_TRIAGE_DETERMINISTIC", "") not in ("1", "true", "yes"):
+    if args.if_deterministic_owner:
+        if not _is_deterministic_ranking_owner(args.output_dir.resolve()):
+            print(
+                "triage_compute_ranking: .triage-flags.json carries no deterministic "
+                "ranking marker (ranking.computed_by) — not the ranking owner, exiting cleanly"
+            )
+            return 0
+    elif not args.force and os.environ.get("APPSEC_TRIAGE_DETERMINISTIC", "") not in ("1", "true", "yes"):
         print("triage_compute_ranking: feature flag APPSEC_TRIAGE_DETERMINISTIC=1 not set — exiting cleanly")
         return 0
 

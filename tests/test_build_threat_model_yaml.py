@@ -2,6 +2,7 @@
 (2026-06-02): title/affected_parameter clamps + cvss_v4 shape coercion, so the
 deterministic Phase-11-Substep-2 builder always yields a schema-valid yaml even
 when STRIDE analyzers emit verbose titles or a non-canonical cvss_v4."""
+
 from __future__ import annotations
 
 import importlib.util
@@ -27,7 +28,9 @@ def test_clamp_title_short_passthrough():
 
 
 def test_clamp_title_enforces_maxlen_preserving_locator():
-    long = "CPU Exhaustion via MarsDB $where JavaScript Injection blocking the event loop routes/showProductReviews.ts:31"
+    long = (
+        "CPU Exhaustion via MarsDB $where JavaScript Injection blocking the event loop routes/showProductReviews.ts:31"
+    )
     out = b._clamp_title(long)
     assert len(out) <= 80
     assert out.endswith("routes/showProductReviews.ts:31")  # locator preserved
@@ -41,12 +44,17 @@ def test_clamp_title_no_locator_truncates_with_ellipsis():
 
 
 def test_normalize_cvss_v4_coerces_score_and_source():
-    raw = {"vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H",
-           "score": 9.4, "severity": "Critical"}
+    raw = {
+        "vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H",
+        "score": 9.4,
+        "severity": "Critical",
+    }
     out = b._normalize_cvss_v4(raw)
     assert out == {
-        "vector": raw["vector"], "base_score": 9.4,
-        "severity": "Critical", "source": "stride-analyzer",
+        "vector": raw["vector"],
+        "base_score": 9.4,
+        "severity": "Critical",
+        "source": "stride-analyzer",
     }
 
 
@@ -65,6 +73,7 @@ def test_normalize_cvss_v4_keeps_valid_source():
 # Two builder/schema gaps forced Phase-11 Substep 2 into an 8-rebuild +
 # 5-hand-patch loop (4m37s instead of <30s). Both are now closed.
 import re
+
 import yaml
 
 OUTPUT_SCHEMA = ROOT / "schemas" / "threat-model.output.schema.yaml"
@@ -126,12 +135,14 @@ def test_effectiveness_unsafe_accepted_by_output_schema():
 # and once present, bool("unknown") flipped every route to authenticated).
 # ---------------------------------------------------------------------------
 
+
 def _routes(*specs):
     """specs: (method, path, authn_signal) → route-inventory shape."""
-    return {"routes": [
-        {"method": m, "path": p, "authn_signal": a, "route_id": f"r{i}"}
-        for i, (m, p, a) in enumerate(specs)
-    ]}
+    return {
+        "routes": [
+            {"method": m, "path": p, "authn_signal": a, "route_id": f"r{i}"} for i, (m, p, a) in enumerate(specs)
+        ]
+    }
 
 
 def test_attack_surface_unknown_authn_is_not_authenticated():
@@ -163,10 +174,11 @@ def test_attack_surface_sidecar_override_on_collision():
     # Baseline heuristic says authenticated; analyst sidecar says it is the
     # open-registration endpoint → analyst verdict wins, entry not duplicated.
     routes = _routes(("POST", "/api/Users", "middleware_present"))
-    sidecar = {"additions": [
-        {"entry_point": "POST /api/Users", "protocol": "HTTP",
-         "auth_required": False, "notes": "open registration"}
-    ]}
+    sidecar = {
+        "additions": [
+            {"entry_point": "POST /api/Users", "protocol": "HTTP", "auth_required": False, "notes": "open registration"}
+        ]
+    }
     out, warnings = b.build_attack_surface(routes, sidecar)
     assert len(out) == 1
     assert out[0]["auth_required"] is False
@@ -175,9 +187,7 @@ def test_attack_surface_sidecar_override_on_collision():
 
 
 def test_attack_surface_empty_baseline_falls_back_to_additions():
-    sidecar = {"additions": [
-        {"entry_point": "GET /x", "protocol": "HTTP", "auth_required": False}
-    ]}
+    sidecar = {"additions": [{"entry_point": "GET /x", "protocol": "HTTP", "auth_required": False}]}
     out, _ = b.build_attack_surface(None, sidecar)
     assert len(out) == 1 and out[0]["entry_point"] == "GET /x"
 
@@ -186,10 +196,11 @@ def test_attack_surface_empty_baseline_falls_back_to_additions():
 # all-unauthenticated include allowlist dropped every authenticated route, so
 # §5.2 Authenticated Entry Points rendered "(0)" on apps with dozens of guards).
 
+
 def test_attack_surface_include_allowlist_does_not_empty_auth_class():
     routes = _routes(
-        ("POST", "/login", "unknown"),            # r0 unauth — analyst keeps
-        ("GET", "/api/admin", "middleware_present"),   # r1 auth — dropped by include
+        ("POST", "/login", "unknown"),  # r0 unauth — analyst keeps
+        ("GET", "/api/admin", "middleware_present"),  # r1 auth — dropped by include
         ("PUT", "/api/orders/1", "middleware_present"),  # r2 auth — dropped by include
     )
     # Analyst's vuln-focused include list keeps only the unauthenticated route.
@@ -205,22 +216,22 @@ def test_attack_surface_include_allowlist_does_not_empty_auth_class():
 
 def test_attack_surface_guard_honours_exclude():
     routes = _routes(
-        ("POST", "/login", "unknown"),                 # r0 unauth — included
-        ("GET", "/api/admin", "middleware_present"),   # r1 auth — restored
+        ("POST", "/login", "unknown"),  # r0 unauth — included
+        ("GET", "/api/admin", "middleware_present"),  # r1 auth — restored
         ("GET", "/api/secret", "middleware_present"),  # r2 auth — explicitly excluded
     )
     sidecar = {"curations": {"include_route_ids": ["r0"], "exclude_route_ids": ["r2"]}}
     out, _ = b.build_attack_surface(routes, sidecar)
     eps = {e["entry_point"] for e in out}
-    assert "GET /api/admin" in eps          # restored by the guard
-    assert "GET /api/secret" not in eps     # exclude wins over the guard
+    assert "GET /api/admin" in eps  # restored by the guard
+    assert "GET /api/secret" not in eps  # exclude wins over the guard
 
 
 def test_attack_surface_guard_noop_when_both_classes_present():
     routes = _routes(
-        ("POST", "/login", "unknown"),                 # r0 unauth
-        ("GET", "/api/admin", "middleware_present"),   # r1 auth
-        ("GET", "/api/other", "middleware_present"),   # r2 auth — not in include
+        ("POST", "/login", "unknown"),  # r0 unauth
+        ("GET", "/api/admin", "middleware_present"),  # r1 auth
+        ("GET", "/api/other", "middleware_present"),  # r2 auth — not in include
     )
     # Include list already spans both classes → guard must not fire.
     sidecar = {"curations": {"include_route_ids": ["r0", "r1"]}}
@@ -237,8 +248,12 @@ def test_attack_surface_guard_noop_when_both_classes_present():
 # into the yaml, else a --requirements run that ran Phase 8b renders nothing.
 def _meta(**cfg):
     return b.build_meta(
-        skill_cfg=cfg, org=None, recon_project=None,
-        plugin_root=ROOT, repo_root=ROOT, prior_yaml=None,
+        skill_cfg=cfg,
+        org=None,
+        recon_project=None,
+        plugin_root=ROOT,
+        repo_root=ROOT,
+        prior_yaml=None,
     )
 
 

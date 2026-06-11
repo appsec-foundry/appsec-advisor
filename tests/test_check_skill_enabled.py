@@ -1,12 +1,11 @@
 """Tests for scripts/check_skill_enabled.py."""
+
 from __future__ import annotations
 
 import importlib.util
 import json
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "check_skill_enabled.py"

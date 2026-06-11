@@ -358,11 +358,7 @@ def _assemble_context(cfg, matched_topics, req_index):
         # the right set survives depending on which catalog is loaded. Capping
         # first would let absent ids consume the per-topic budget and inject fewer
         # (or zero) lines under the baseline catalog.
-        req_ids = [
-            rid
-            for rid in (spec.get("requirements") or [])
-            if isinstance(rid, str) and req_index.get(rid)
-        ]
+        req_ids = [rid for rid in (spec.get("requirements") or []) if isinstance(rid, str) and req_index.get(rid)]
         req_ids = req_ids[:max_per_topic]
         resolved_lines = []
         for rid in req_ids:

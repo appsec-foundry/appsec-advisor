@@ -8,6 +8,7 @@ Asserts that:
     preset-enabled outputs
   * --org-profile + --no-org-profile cancel out
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -64,24 +65,33 @@ def test_org_profile_activation_via_cli(tmp_path):
 
 
 def test_no_requirements_overrides_profile_default(tmp_path):
-    cfg = _resolve([
-        "--org-profile", str(FIXTURE),
-        "--no-requirements",
-        "--output", str(tmp_path),
-        "auth",
-    ])
+    cfg = _resolve(
+        [
+            "--org-profile",
+            str(FIXTURE),
+            "--no-requirements",
+            "--output",
+            str(tmp_path),
+            "auth",
+        ]
+    )
     assert cfg["org_profile"]["active"] is True
     assert cfg["check_requirements"] is False
     assert cfg["requirements_label"] == "disabled (--no-requirements)"
 
 
 def test_quick_default_in_profile_disables_create_requirements(tmp_path):
-    cfg = _resolve([
-        "--org-profile", str(FIXTURE),
-        "--assessment-depth", "quick",
-        "--output", str(tmp_path),
-        "auth",
-    ])
+    cfg = _resolve(
+        [
+            "--org-profile",
+            str(FIXTURE),
+            "--assessment-depth",
+            "quick",
+            "--output",
+            str(tmp_path),
+            "auth",
+        ]
+    )
     assert cfg["assessment_depth"] == "quick"
     assert cfg["org_profile"]["active"] is True
     assert cfg["check_requirements"] is False
@@ -89,12 +99,17 @@ def test_quick_default_in_profile_disables_create_requirements(tmp_path):
 
 
 def test_bare_requirements_flag_overrides_quick_profile_default(tmp_path):
-    cfg = _resolve([
-        "--org-profile", str(FIXTURE),
-        "--assessment-depth", "quick",
-        "--output", str(tmp_path),
-        "--requirements",
-    ])
+    cfg = _resolve(
+        [
+            "--org-profile",
+            str(FIXTURE),
+            "--assessment-depth",
+            "quick",
+            "--output",
+            str(tmp_path),
+            "--requirements",
+        ]
+    )
     assert cfg["assessment_depth"] == "quick"
     assert cfg["check_requirements"] is True
     assert cfg["requirements_url_override"] is None
@@ -102,13 +117,18 @@ def test_bare_requirements_flag_overrides_quick_profile_default(tmp_path):
 
 
 def test_no_sarif_overrides_preset(tmp_path):
-    cfg = _resolve([
-        "--org-profile", str(FIXTURE),
-        "--preset", "release-review",
-        "--no-sarif",
-        "--output", str(tmp_path),
-        "auth",
-    ])
+    cfg = _resolve(
+        [
+            "--org-profile",
+            str(FIXTURE),
+            "--preset",
+            "release-review",
+            "--no-sarif",
+            "--output",
+            str(tmp_path),
+            "auth",
+        ]
+    )
     assert cfg["org_profile"]["active"] is True
     assert cfg["preset"]["name"] == "release-review"
     # release-review enables sarif/pdf/pentest_tasks; --no-sarif still wins.
@@ -116,44 +136,63 @@ def test_no_sarif_overrides_preset(tmp_path):
 
 
 def test_no_pentest_tasks_overrides_preset(tmp_path):
-    cfg = _resolve([
-        "--org-profile", str(FIXTURE),
-        "--preset", "release-review",
-        "--no-pentest-tasks",
-        "--output", str(tmp_path),
-        "auth",
-    ])
+    cfg = _resolve(
+        [
+            "--org-profile",
+            str(FIXTURE),
+            "--preset",
+            "release-review",
+            "--no-pentest-tasks",
+            "--output",
+            str(tmp_path),
+            "auth",
+        ]
+    )
     assert cfg["write_pentest_tasks"] is False
 
 
 def test_no_org_profile_disables_active_profile(tmp_path):
-    cfg = _resolve([
-        "--org-profile", str(FIXTURE),
-        "--no-org-profile",
-        "--output", str(tmp_path),
-        "auth",
-    ])
+    cfg = _resolve(
+        [
+            "--org-profile",
+            str(FIXTURE),
+            "--no-org-profile",
+            "--output",
+            str(tmp_path),
+            "auth",
+        ]
+    )
     assert cfg["org_profile"]["active"] is False
 
 
 def test_cli_required_preset_without_repo_fails(tmp_path):
     with pytest.raises(SystemExit):
-        _resolve([
-            "--org-profile", str(FIXTURE),
-            "--preset", "appsec-verification",
-            "--output", str(tmp_path),
-            "auth",
-        ])
+        _resolve(
+            [
+                "--org-profile",
+                str(FIXTURE),
+                "--preset",
+                "appsec-verification",
+                "--output",
+                str(tmp_path),
+                "auth",
+            ]
+        )
 
 
 def test_unknown_preset_fails(tmp_path):
     with pytest.raises(SystemExit):
-        _resolve([
-            "--org-profile", str(FIXTURE),
-            "--preset", "ghost-preset",
-            "--output", str(tmp_path),
-            "auth",
-        ])
+        _resolve(
+            [
+                "--org-profile",
+                str(FIXTURE),
+                "--preset",
+                "ghost-preset",
+                "--output",
+                str(tmp_path),
+                "auth",
+            ]
+        )
 
 
 def test_emit_file_writes_org_profile_effective(tmp_path):

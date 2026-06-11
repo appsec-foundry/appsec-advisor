@@ -45,6 +45,7 @@ This script is idempotent — re-running rewrites the SCA rows and the
 sidecar list. Hand-authored rows (any non-SCA-practice control) are
 preserved verbatim in .security-controls.json.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,10 +53,8 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Iterable
 
 import yaml
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -153,6 +152,7 @@ _TIER_RE = re.compile(r"\bT(?:ier\s*)?([1-4])\b", re.IGNORECASE)
 # Asset-tier resolution
 # ---------------------------------------------------------------------------
 
+
 def _normalize_tier(raw: str | None) -> str:
     """Normalize 'Tier 1 — Restricted' / 'T1' / 'tier-1' → 'T1'.
 
@@ -169,6 +169,7 @@ def _normalize_tier(raw: str | None) -> str:
 # ---------------------------------------------------------------------------
 # Detection — fully deterministic, file-system driven
 # ---------------------------------------------------------------------------
+
 
 def _read_ci_files(repo_root: Path) -> list[tuple[Path, str]]:
     out: list[tuple[Path, str]] = []
@@ -262,7 +263,17 @@ def classify_auto_updates(repo_root: Path, output_dir: Path) -> tuple[str, list[
             try:
                 cfg = yaml.safe_load((repo_root / _DEPENDABOT_PATH).read_text(encoding="utf-8", errors="replace"))
                 covered = {u.get("package-ecosystem") for u in (cfg or {}).get("updates", []) if isinstance(u, dict)}
-                eco_alias = {"npm": {"npm", "yarn", "pnpm"}, "pip": {"pip"}, "gomod": {"go"}, "bundler": {"gem"}, "composer": {"composer"}, "cargo": {"cargo"}, "maven": {"maven"}, "gradle": {"maven"}, "nuget": {"nuget"}}
+                eco_alias = {
+                    "npm": {"npm", "yarn", "pnpm"},
+                    "pip": {"pip"},
+                    "gomod": {"go"},
+                    "bundler": {"gem"},
+                    "composer": {"composer"},
+                    "cargo": {"cargo"},
+                    "maven": {"maven"},
+                    "gradle": {"maven"},
+                    "nuget": {"nuget"},
+                }
                 covered_norm: set[str] = set()
                 for c in covered:
                     if c in eco_alias:
@@ -288,7 +299,9 @@ def classify_lockfile_hygiene(repo_root: Path) -> tuple[str, list[str]]:
         # Find any acceptable lockfile for this ecosystem.
         candidates = []
         if eco == "npm":
-            candidates = list(_LOCKFILE_PATTERNS["npm"]) + list(_LOCKFILE_PATTERNS["yarn"]) + list(_LOCKFILE_PATTERNS["pnpm"])
+            candidates = (
+                list(_LOCKFILE_PATTERNS["npm"]) + list(_LOCKFILE_PATTERNS["yarn"]) + list(_LOCKFILE_PATTERNS["pnpm"])
+            )
         elif eco in _LOCKFILE_PATTERNS:
             candidates = list(_LOCKFILE_PATTERNS[eco])
         found = False
@@ -319,7 +332,10 @@ def _detect_ecosystems(repo_root: Path) -> set[str]:
         for p in repo_root.rglob(manifest_name):
             if not p.is_file():
                 continue
-            if any(part in {"node_modules", ".venv", "venv", "vendor", ".git", "target", "build", "dist"} for part in p.parts):
+            if any(
+                part in {"node_modules", ".venv", "venv", "vendor", ".git", "target", "build", "dist"}
+                for part in p.parts
+            ):
                 continue
             out.add(eco)
             break
@@ -329,6 +345,7 @@ def _detect_ecosystems(repo_root: Path) -> set[str]:
 # ---------------------------------------------------------------------------
 # Sidecar writers
 # ---------------------------------------------------------------------------
+
 
 def _load_existing_security_controls(path: Path) -> dict:
     if not path.is_file():
@@ -347,7 +364,8 @@ def _load_existing_security_controls(path: Path) -> dict:
 def _upsert_sca_rows(controls: list[dict], rows: list[dict]) -> list[dict]:
     """Replace any existing rows in the SCA-practice triple, append new ones."""
     kept = [
-        c for c in controls
+        c
+        for c in controls
         if not (isinstance(c, dict) and c.get("domain") == DOMAIN and c.get("control") in SCA_CONTROLS)
     ]
     return kept + rows
@@ -377,6 +395,7 @@ def _severity_for(policy: dict, control: str, tier: str, effectiveness: str) -> 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def run(repo_root: Path, output_dir: Path, asset_tier_raw: str | None, plugin_root: Path) -> int:
     tier = _normalize_tier(asset_tier_raw)
@@ -435,7 +454,10 @@ def run(repo_root: Path, output_dir: Path, asset_tier_raw: str | None, plugin_ro
                     "title": f"{row['control']}: {row['effectiveness'].lower()}",
                     "category": "Insufficient Patch Management",
                     "summary": _missing_finding_summary(row["control"], row["effectiveness"], tier),
-                    "evidence": [{"file": e.split(":", 1)[0], "line": int(e.split(":", 1)[1]) if ":" in e else 1} for e in (evidence_files or [])],
+                    "evidence": [
+                        {"file": e.split(":", 1)[0], "line": int(e.split(":", 1)[1]) if ":" in e else 1}
+                        for e in (evidence_files or [])
+                    ],
                     "severity": severity,
                     "control": row["control"],
                     "effectiveness": row["effectiveness"],
@@ -492,10 +514,10 @@ def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description="Emit SCA-practice control rows + MF findings")
     p.add_argument("--repo-root", required=True, type=Path)
     p.add_argument("--output-dir", required=True, type=Path)
-    p.add_argument("--asset-tier", default=None,
-                   help='Raw asset-tier string (e.g. "Tier 1 — Restricted" / "T2"). Default: T2.')
-    p.add_argument("--plugin-root", default=None, type=Path,
-                   help="Override plugin root for severity-policy lookup")
+    p.add_argument(
+        "--asset-tier", default=None, help='Raw asset-tier string (e.g. "Tier 1 — Restricted" / "T2"). Default: T2.'
+    )
+    p.add_argument("--plugin-root", default=None, type=Path, help="Override plugin root for severity-policy lookup")
     args = p.parse_args(argv)
 
     plugin_root = args.plugin_root or Path(__file__).resolve().parent.parent

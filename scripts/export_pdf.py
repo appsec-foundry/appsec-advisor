@@ -288,6 +288,46 @@ MERMAID_FENCE_RE = re.compile(
 
 MMDC_FAIL_FAST_THRESHOLD = 3
 
+# Each mmdc invocation boots Node + Puppeteer + headless Chrome (~2-5 s);
+# the rendering itself is milliseconds. A real report carries 20+ diagrams,
+# so serial invocation costs minutes of pure Chrome startup. Rendering is
+# subprocess-bound, so a small thread pool gives a near-linear speedup.
+MMDC_PARALLEL_WORKERS = 4
+
+
+def _render_one_mermaid(n: int, source: str, work_dir: Path) -> tuple[bool, str, str]:
+    """Render block *n* via mmdc. Returns (ok, replacement_md, error_line)."""
+    mmd_path = work_dir / f"diagram-{n}.mmd"
+    png_path = work_dir / f"diagram-{n}.png"
+    mmd_path.write_text(source, encoding="utf-8")
+    try:
+        subprocess.run(
+            [
+                "mmdc",
+                "-i",
+                str(mmd_path),
+                "-o",
+                str(png_path),
+                "-s",
+                "2",
+                "-b",
+                "white",
+                "-q",
+                *mmdc_render_args(),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=60,
+            env=mmdc_env(),
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        stderr = getattr(exc, "stderr", b"") or b""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        error_line = stderr.strip().splitlines()[-1] if stderr.strip() else str(exc)
+        return False, "", error_line
+    return True, f"\n![Diagram {n}]({png_path.name})\n", ""
+
 
 def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
     """Replace each ```mermaid block with an <img> tag pointing at a PNG.
@@ -302,66 +342,78 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
     A block that fails to render is left as-is in the Markdown so the PDF
     still contains the diagram source rather than a missing image.
 
-    Once `MMDC_FAIL_FAST_THRESHOLD` consecutive failures occur (typical case:
-    Puppeteer's Chrome binary is missing, every block will fail the same way)
-    we stop calling mmdc altogether and let remaining blocks pass through.
-    Saves ~1s startup per remaining diagram and 14× the same stack trace in
-    the log.
+    Probe-then-parallel: blocks render serially until the first success
+    proves the mmdc/Chrome environment works, then the remainder fans out
+    over `MMDC_PARALLEL_WORKERS` threads (each mmdc call boots its own
+    Chrome, so the work is subprocess-bound and threads suffice). If the
+    first `MMDC_FAIL_FAST_THRESHOLD` blocks all fail with zero successes
+    (typical case: Puppeteer's Chrome binary is missing, every block will
+    fail the same way) we stop calling mmdc altogether and let remaining
+    blocks pass through — saves ~1s startup per remaining diagram and 14×
+    the same stack trace in the log.
     """
-    counter = {"n": 0, "rendered": 0, "failed": 0}
+    matches = list(MERMAID_FENCE_RE.finditer(md_text))
+    if not matches:
+        return md_text, 0, 0
+
+    # replacements[i] is None while block i+1 is unrendered / failed.
+    replacements: list[Optional[str]] = [None] * len(matches)
+    rendered = 0
+    failed = 0
     first_error: list[str] = []
-    bail_out = [False]
+
+    def _note_failure(n: int, error_line: str) -> None:
+        if not first_error:
+            first_error.append(error_line)
+            sys.stderr.write(f"[export_pdf] mmdc failed on diagram {n}: {error_line}\n")
+
+    # Serial probe: until the first success or the fail-fast bail.
+    next_idx = 0
+    bailed = False
+    while next_idx < len(matches):
+        ok, repl, error_line = _render_one_mermaid(next_idx + 1, matches[next_idx].group(1), work_dir)
+        if ok:
+            replacements[next_idx] = repl
+            rendered += 1
+            next_idx += 1
+            break
+        failed += 1
+        _note_failure(next_idx + 1, error_line)
+        next_idx += 1
+        if failed >= MMDC_FAIL_FAST_THRESHOLD:
+            bailed = True
+            sys.stderr.write(
+                f"[export_pdf] mmdc failed on first {MMDC_FAIL_FAST_THRESHOLD} diagrams — "
+                f"giving up, remaining blocks will stay as code\n"
+            )
+            break
+
+    remaining = list(range(next_idx, len(matches)))
+    if bailed:
+        failed += len(remaining)
+    elif remaining:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(MMDC_PARALLEL_WORKERS, len(remaining))) as pool:
+            futures = {i: pool.submit(_render_one_mermaid, i + 1, matches[i].group(1), work_dir) for i in remaining}
+        for i in remaining:
+            ok, repl, error_line = futures[i].result()
+            if ok:
+                replacements[i] = repl
+                rendered += 1
+            else:
+                failed += 1
+                _note_failure(i + 1, error_line)
+
+    counter = {"n": 0}
 
     def replace(match: re.Match) -> str:
+        repl = replacements[counter["n"]]
         counter["n"] += 1
-        n = counter["n"]
-        if bail_out[0]:
-            counter["failed"] += 1
-            return match.group(0)
-        source = match.group(1)
-        mmd_path = work_dir / f"diagram-{n}.mmd"
-        png_path = work_dir / f"diagram-{n}.png"
-        mmd_path.write_text(source, encoding="utf-8")
-        try:
-            subprocess.run(
-                [
-                    "mmdc",
-                    "-i",
-                    str(mmd_path),
-                    "-o",
-                    str(png_path),
-                    "-s",
-                    "2",
-                    "-b",
-                    "white",
-                    "-q",
-                    *mmdc_render_args(),
-                ],
-                check=True,
-                capture_output=True,
-                timeout=60,
-                env=mmdc_env(),
-            )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            counter["failed"] += 1
-            if not first_error:
-                stderr = getattr(exc, "stderr", b"") or b""
-                if isinstance(stderr, bytes):
-                    stderr = stderr.decode("utf-8", errors="replace")
-                first_error.append(stderr.strip().splitlines()[-1] if stderr.strip() else str(exc))
-                sys.stderr.write(f"[export_pdf] mmdc failed on diagram {n}: {first_error[0]}\n")
-            if counter["failed"] >= MMDC_FAIL_FAST_THRESHOLD and counter["rendered"] == 0:
-                bail_out[0] = True
-                sys.stderr.write(
-                    f"[export_pdf] mmdc failed on first {MMDC_FAIL_FAST_THRESHOLD} diagrams — "
-                    f"giving up, remaining blocks will stay as code\n"
-                )
-            return match.group(0)
-        counter["rendered"] += 1
-        return f"\n![Diagram {n}]({png_path.name})\n"
+        return repl if repl is not None else match.group(0)
 
     rewritten = MERMAID_FENCE_RE.sub(replace, md_text)
-    return rewritten, counter["rendered"], counter["failed"]
+    return rewritten, rendered, failed
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +468,21 @@ def _colw_role(header: str) -> str:
         return "narrow"
     if h in {"risk", "severity", "cwe", "cwes", "status", "verdict", "classification", "required role", "role"}:
         return "medium"
-    if any(t in h for t in ("description", "notes", "scenario", "reason", "rationale", "details", "meaning", "impact", "assessment", "what it asks")):
+    if any(
+        t in h
+        for t in (
+            "description",
+            "notes",
+            "scenario",
+            "reason",
+            "rationale",
+            "details",
+            "meaning",
+            "impact",
+            "assessment",
+            "what it asks",
+        )
+    ):
         return "desc"
     if any(t in h for t in ("finding", "threat", "addresses", "mitigat", "covers", "linked")):
         return "links"
@@ -438,7 +504,7 @@ def _inject_table_colgroups(html: str) -> str:
     cell_re = re.compile(r"<t[hd][^>]*>(.*?)</t[hd]>", re.DOTALL | re.IGNORECASE)
     row_re = re.compile(r"<tr[^>]*>(.*?)</tr>", re.DOTALL | re.IGNORECASE)
 
-    def _one(m: "re.Match[str]") -> str:
+    def _one(m: re.Match[str]) -> str:
         open_tag, inner = m.group(1), m.group(2)
         if "<colgroup" in inner.lower():
             return m.group(0)
@@ -540,14 +606,14 @@ def _wrap_toc(html: str) -> str:
     hm = _TOC_HEADING_RE.search(html)
     if not hm:
         return html
-    rest = html[hm.end():]
+    rest = html[hm.end() :]
     nxt = re.search(r"<h2\b", rest, re.IGNORECASE)
     end = hm.end() + (nxt.start() if nxt else len(rest))
-    region = html[hm.start():end]
+    region = html[hm.start() : end]
 
     ids = set(_ID_RE.findall(html))
 
-    def _heal(m: "re.Match[str]") -> str:
+    def _heal(m: re.Match[str]) -> str:
         href, _attrs, text = m.group(1), m.group(2), m.group(3)
         if href.startswith("#") and href[1:] not in ids:
             return f"<span>{text}</span>"
@@ -555,7 +621,7 @@ def _wrap_toc(html: str) -> str:
 
     region = _ANCHOR_RE.sub(_heal, region)
     wrapped = f'<nav class="toc">\n{region}\n</nav>\n'
-    return html[:hm.start()] + wrapped + html[end:]
+    return html[: hm.start()] + wrapped + html[end:]
 
 
 # ---------------------------------------------------------------------------
@@ -567,15 +633,15 @@ def _wrap_toc(html: str) -> str:
 # badge still reads as a colored mark. DejaVu coverage verified for the targets
 # (● U+25CF, ✓ U+2713, ✗ U+2717, ▲ U+25B2, ★ U+2605).
 _EMOJI_FALLBACKS: dict[str, tuple[str, str]] = {
-    "\U0001F534": ("●", "#d1242f"),  # 🔴 red circle
-    "\U0001F7E0": ("●", "#bc4c00"),  # 🟠 orange circle
-    "\U0001F7E1": ("●", "#9a6700"),  # 🟡 yellow/amber circle
-    "\U0001F7E2": ("●", "#1a7f37"),  # 🟢 green circle
-    "\U0001F535": ("●", "#0969da"),  # 🔵 blue circle
-    "✅":     ("✓", "#1a7f37"),  # ✅ -> green check
-    "❌":     ("✗", "#d1242f"),  # ❌ -> red cross
-    "⚠":     ("▲", "#9a6700"),  # ⚠ -> amber triangle
-    "⭐":     ("★", "#9a6700"),  # ⭐ -> amber star
+    "\U0001f534": ("●", "#d1242f"),  # 🔴 red circle
+    "\U0001f7e0": ("●", "#bc4c00"),  # 🟠 orange circle
+    "\U0001f7e1": ("●", "#9a6700"),  # 🟡 yellow/amber circle
+    "\U0001f7e2": ("●", "#1a7f37"),  # 🟢 green circle
+    "\U0001f535": ("●", "#0969da"),  # 🔵 blue circle
+    "✅": ("✓", "#1a7f37"),  # ✅ -> green check
+    "❌": ("✗", "#d1242f"),  # ❌ -> red cross
+    "⚠": ("▲", "#9a6700"),  # ⚠ -> amber triangle
+    "⭐": ("★", "#9a6700"),  # ⭐ -> amber star
 }
 
 _SVG_BLOCK_RE = re.compile(r"<svg\b.*?</svg>", re.DOTALL | re.IGNORECASE)
@@ -600,7 +666,7 @@ def _replace_unsupported_emoji(html: str) -> str:
     parts: list[str] = []
     last = 0
     for m in _SVG_BLOCK_RE.finditer(html):
-        parts.append(sub(html[last:m.start()]))
+        parts.append(sub(html[last : m.start()]))
         parts.append(m.group(0))
         last = m.end()
     parts.append(sub(html[last:]))
@@ -759,8 +825,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--require-mermaid",
         action="store_true",
-        help="Deprecated/redundant: Mermaid rendering is now required by default. "
-        "Kept for backward compatibility.",
+        help="Deprecated/redundant: Mermaid rendering is now required by default. Kept for backward compatibility.",
     )
     parser.add_argument(
         "--keep-html",

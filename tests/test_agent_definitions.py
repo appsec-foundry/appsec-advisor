@@ -161,7 +161,12 @@ class TestMaxTurnsCeilings:
         not as a sub-agent of the orchestrator — it has its own independent
         turn budget invoked by the skill after the orchestrator finishes.
         """
-        skill_level_agents = {"appsec-qa-reviewer", "appsec-architect-reviewer", "appsec-threat-renderer", "appsec-fragment-fixer"}
+        skill_level_agents = {
+            "appsec-qa-reviewer",
+            "appsec-architect-reviewer",
+            "appsec-threat-renderer",
+            "appsec-fragment-fixer",
+        }
         all_turns = {}
         for f in agent_files():
             meta, _ = parse_frontmatter(f)
@@ -538,7 +543,7 @@ class TestScanExcludesCentralization:
 # Prose-style anchor centralization (AGENTS.md Rule 10)
 #
 # Every agent or phase-group file that authors prose for the rendered report
-# (verdict, architecture-assessment, STRIDE scenarios, security-architecture
+# (verdict, STRIDE scenarios, security-architecture
 # domain text, MS template) must reference `agents/shared/prose-style.md` as
 # the runtime style anchor. This is the drift guard for the casework — if a
 # refactor silently removes the reference, the QA reviewer loses the
@@ -555,8 +560,8 @@ AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "shared" / "ms-template.md",
 ]
 
-# Subset that authors the Management-Summary prose fields (verdict +
-# architecture-assessment) and therefore MUST load the worked Before/After
+# Subset that authors the Management-Summary prose fields (verdict)
+# and therefore MUST load the worked Before/After
 # pairs in prose-samples.md, not just the rules in prose-style.md. The
 # stride-analyzer authors scenario/mitigation strings and the ms-template
 # is template prose only — both are covered by prose-style.md alone for now.
@@ -618,7 +623,7 @@ class TestProseStyleAnchor:
         text = agent_file.read_text(encoding="utf-8")
         assert "shared/prose-samples.md" in text, (
             f"{agent_file.relative_to(AGENTS_DIR.parent)} authors Management-Summary "
-            f"prose (ms-verdict.json / ms-architecture-assessment.json) but does not "
+            f"prose (ms-verdict.json) but does not "
             f"reference `agents/shared/prose-samples.md`. Add a "
             f"`cat $CLAUDE_PLUGIN_ROOT/agents/shared/prose-samples.md` block alongside "
             f"the prose-style.md load so worked Before/After pairs load at runtime. "

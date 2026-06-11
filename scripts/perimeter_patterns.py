@@ -11,13 +11,20 @@ from __future__ import annotations
 
 import re
 
-
 PERIMETER_ABSENCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("WAF", re.compile(r"\b(?:no|missing|absent|without|lacks?|lacking)\s+(?:a\s+|any\s+)?WAF\b", re.IGNORECASE)),
-    ("WAF", re.compile(r"\bWAF\s+(?:is\s+)?(?:not\s+(?:present|configured|in\s+place|deployed)|missing|absent)\b", re.IGNORECASE)),
+    (
+        "WAF",
+        re.compile(
+            r"\bWAF\s+(?:is\s+)?(?:not\s+(?:present|configured|in\s+place|deployed)|missing|absent)\b", re.IGNORECASE
+        ),
+    ),
     ("WAF", re.compile(r"\bno\s+web\s+application\s+firewall\b", re.IGNORECASE)),
     ("network firewall", re.compile(r"\b(?:no|missing|absent|without)\s+(?:network\s+)?firewall\b", re.IGNORECASE)),
-    ("IDS/IPS", re.compile(r"\b(?:no|missing|absent|without)\s+(?:IDS|IPS|IDS/IPS|intrusion\s+detection)\b", re.IGNORECASE)),
+    (
+        "IDS/IPS",
+        re.compile(r"\b(?:no|missing|absent|without)\s+(?:IDS|IPS|IDS/IPS|intrusion\s+detection)\b", re.IGNORECASE),
+    ),
     ("API gateway", re.compile(r"\b(?:no|missing|absent|without)\s+(?:API\s+gateway|api-gateway)\b", re.IGNORECASE)),
     ("reverse proxy", re.compile(r"\b(?:no|missing|absent|without)\s+reverse\s+proxy\b", re.IGNORECASE)),
     ("secret scanning", re.compile(r"\b(?:no|missing|absent|without)\s+secret\s+scanning\b", re.IGNORECASE)),

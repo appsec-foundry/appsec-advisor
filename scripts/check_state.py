@@ -372,8 +372,7 @@ def classify(output_dir: Path) -> dict:
         if is_hung:
             if lock.get("alive") is False:
                 reasons.append(
-                    f"lock PID {pid} is not running and heartbeat is "
-                    f"{int(hb_age or 0)}s old (> {threshold}s threshold)"
+                    f"lock PID {pid} is not running and heartbeat is {int(hb_age or 0)}s old (> {threshold}s threshold)"
                 )
             else:
                 reasons.append(

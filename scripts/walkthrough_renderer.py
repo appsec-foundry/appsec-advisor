@@ -74,14 +74,8 @@ SEVERITY_PHRASES: dict[str, str] = {
         "High impact — exploitation meaningfully weakens a control or exposes a "
         "confidential surface; some prerequisites apply"
     ),
-    "medium": (
-        "Medium impact — exploitation is bounded in blast radius or requires "
-        "non-trivial chained conditions"
-    ),
-    "low": (
-        "Low impact — limited blast radius, substantial prerequisites, or strong "
-        "compensating controls in place"
-    ),
+    "medium": ("Medium impact — exploitation is bounded in blast radius or requires non-trivial chained conditions"),
+    "low": ("Low impact — limited blast radius, substantial prerequisites, or strong compensating controls in place"),
 }
 
 # Vektor-derived Attacker Profile narrative. Picked by `threat.vektor`.
@@ -284,20 +278,28 @@ def _excerpt(evidence: dict | None, limit: int = 120) -> str:
 
 
 _INJECTION_VECTOR_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\bsearch\b.*\b(query|param|input|term)\b|\?q=", re.IGNORECASE),
-     "Crafted search query (HTML payload in `q=` parameter)"),
-    (re.compile(r"\bregister(?:ation)?\b.*\bemail\b|\bemail\b.*\bpayload\b", re.IGNORECASE),
-     "Stored attacker-controlled email at registration (HTML payload)"),
-    (re.compile(r"\bfeedback\b.*\bcomment\b|\bcomment\b.*\b(submit|post)\b|\buser feedback\b", re.IGNORECASE),
-     "Stored feedback / comment submission (HTML payload)"),
-    (re.compile(r"\bproduct\b.*\b(description|name|review)\b", re.IGNORECASE),
-     "Stored product description / review (HTML payload)"),
-    (re.compile(r"\bprofile\b.*\b(image|name|bio)\b", re.IGNORECASE),
-     "Stored profile field (HTML payload)"),
-    (re.compile(r"\b(stored|persisted)\b", re.IGNORECASE),
-     "Stored attacker-controlled content (HTML payload)"),
-    (re.compile(r"\b(reflected|url|querystring)\b", re.IGNORECASE),
-     "Reflected attacker-controlled input (HTML payload)"),
+    (
+        re.compile(r"\bsearch\b.*\b(query|param|input|term)\b|\?q=", re.IGNORECASE),
+        "Crafted search query (HTML payload in `q=` parameter)",
+    ),
+    (
+        re.compile(r"\bregister(?:ation)?\b.*\bemail\b|\bemail\b.*\bpayload\b", re.IGNORECASE),
+        "Stored attacker-controlled email at registration (HTML payload)",
+    ),
+    (
+        re.compile(r"\bfeedback\b.*\bcomment\b|\bcomment\b.*\b(submit|post)\b|\buser feedback\b", re.IGNORECASE),
+        "Stored feedback / comment submission (HTML payload)",
+    ),
+    (
+        re.compile(r"\bproduct\b.*\b(description|name|review)\b", re.IGNORECASE),
+        "Stored product description / review (HTML payload)",
+    ),
+    (re.compile(r"\bprofile\b.*\b(image|name|bio)\b", re.IGNORECASE), "Stored profile field (HTML payload)"),
+    (re.compile(r"\b(stored|persisted)\b", re.IGNORECASE), "Stored attacker-controlled content (HTML payload)"),
+    (
+        re.compile(r"\b(reflected|url|querystring)\b", re.IGNORECASE),
+        "Reflected attacker-controlled input (HTML payload)",
+    ),
 )
 
 
@@ -462,7 +464,7 @@ def render_attacker_profile(
     profile = ATTACKER_PROFILES.get(vektor, ATTACKER_PROFILES["internet-user"])
     if vektor == "internet-user" and yaml_meta.get("open_user_registration"):
         profile = profile + OPEN_REG_SUFFIX
-    overrides = (template.get("attacker_profile_overrides") or {})
+    overrides = template.get("attacker_profile_overrides") or {}
     if isinstance(overrides, dict) and vektor in overrides and overrides[vektor]:
         profile = str(overrides[vektor]).strip()
     return profile
@@ -524,12 +526,14 @@ _STEP_SQL_PROSE_CUT_RE = re.compile(
 )
 
 
-def _wrap_step_sql(m: "re.Match[str]") -> str:
+def _wrap_step_sql(m: re.Match[str]) -> str:
     sql = m.group(1).strip()
     sql = _STEP_SQL_PROSE_CUT_RE.sub("", sql).strip()
     if sql and _STEP_SQL_SIGNAL_RE.search(sql):
         return f"`{sql}`"
     return m.group(0)
+
+
 # Code function call — a dotted member-call (`crypto.createHash('md5')`,
 # `vm.runInContext()`, `libxmljs2.parseXml()`) OR a simple empty-arg call
 # (`safeEval()`). Both are unambiguous code the LLM scenario routinely leaves
@@ -538,7 +542,7 @@ def _wrap_step_sql(m: "re.Match[str]") -> str:
 _STEP_CALL_RE = re.compile(
     r"(?<![`\w])("
     r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\([^()]{0,80}\)"  # dotted call
-    r"|[A-Za-z_]\w*\(\)"                                  # bare empty-arg call
+    r"|[A-Za-z_]\w*\(\)"  # bare empty-arg call
     r")(?!`)"
 )
 # `X`.member / `X`-NNN splits left behind when the LLM backticked only the
@@ -605,12 +609,16 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     # `routes/login.ts:34` file:line. Both are register fields, not steps;
     # uncaught they surface as nonsense steps ("2. CWE-89.",
     # "3. routes/login.ts:34.").
-    raw_scenario = re.sub(
-        r"(?:\s*(?:CWE-\d+|[\w./-]+\.[A-Za-z]{1,6}:\d+)\s*\.?\s*)+$",
-        "",
-        raw_scenario,
-        flags=re.IGNORECASE,
-    ).rstrip(". ").strip()
+    raw_scenario = (
+        re.sub(
+            r"(?:\s*(?:CWE-\d+|[\w./-]+\.[A-Za-z]{1,6}:\d+)\s*\.?\s*)+$",
+            "",
+            raw_scenario,
+            flags=re.IGNORECASE,
+        )
+        .rstrip(". ")
+        .strip()
+    )
     # Normalise dot-runs ("AND password... yielding") to a single ellipsis
     # char BEFORE sentence-splitting. `_split_sentences` breaks on `.!?` + space
     # but NOT on `…`, so an ellipsis stays a stylistic pause instead of carving
@@ -622,15 +630,19 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
     # Defensive: drop any residual sentence that is ONLY a CWE tagline or a
     # bare file:line token (covers mid-string metadata the strips above missed).
     sentences = [
-        s for s in sentences
+        s
+        for s in sentences
         if not re.match(r"^\s*(?:CWE\s*:?\s*)?CWE-\d+\.?\s*$", s, flags=re.IGNORECASE)
         and not re.match(r"^[\w./-]+\.[A-Za-z]{1,6}:\d+\.?\s*$", s)
     ]
-    template_steps = list(template.get("attack_steps_template") or [
-        "Send the crafted payload to the endpoint backed by `{file}:{line}`.",
-        "The vulnerable code path accepts the payload without enforcing the missing control.",
-        "The response confirms the bypass.",
-    ])
+    template_steps = list(
+        template.get("attack_steps_template")
+        or [
+            "Send the crafted payload to the endpoint backed by `{file}:{line}`.",
+            "The vulnerable code path accepts the payload without enforcing the missing control.",
+            "The response confirms the bypass.",
+        ]
+    )
 
     evidence = (threat.get("evidence") or [{}])[0] or {}
     mapping = {
@@ -654,7 +666,7 @@ def render_attack_steps(threat: dict, template: dict) -> list[str]:
             break
         if cand not in body:
             body.append(cand)
-    return [f"{i+1}. {_format_step_code(s.rstrip('.'))}." for i, s in enumerate(body[:MIN_ATTACK_STEPS])]
+    return [f"{i + 1}. {_format_step_code(s.rstrip('.'))}." for i, s in enumerate(body[:MIN_ATTACK_STEPS])]
 
 
 def _format_template_string(raw: str, mapping: dict) -> str:
@@ -713,12 +725,8 @@ def _ensure_alt_else_block(diagram: str, tid: str, mid: str, mit_title: str) -> 
 
     if re.search(r"^\s*alt\b", diagram, re.M):
         # Generic-fallback path already has an alt block — just relabel.
-        diagram = re.sub(
-            r"^(\s*)alt\b.*$", lambda m: f"{m.group(1)}{alt_label}", diagram, count=1, flags=re.M
-        )
-        diagram = re.sub(
-            r"^(\s*)else\b.*$", lambda m: f"{m.group(1)}{else_label}", diagram, count=1, flags=re.M
-        )
+        diagram = re.sub(r"^(\s*)alt\b.*$", lambda m: f"{m.group(1)}{alt_label}", diagram, count=1, flags=re.M)
+        diagram = re.sub(r"^(\s*)else\b.*$", lambda m: f"{m.group(1)}{else_label}", diagram, count=1, flags=re.M)
         return diagram
 
     attacker, target = _diagram_actors(diagram)
@@ -895,7 +903,9 @@ def render_cross_references(
         bullets.append(f"Sibling findings (same CWE class): {sib_links}")
     else:
         bullets.append(f"Sibling findings (same CWE class): none — {cwe or 'this class'} is unique in this assessment")
-    bullets.append(f"§7 Security Architecture coverage for `{(threat.get('component') or 'the affected component').strip()}`")
+    bullets.append(
+        f"§7 Security Architecture coverage for `{(threat.get('component') or 'the affected component').strip()}`"
+    )
     return bullets
 
 
@@ -954,7 +964,9 @@ def _render_walkthrough_block(
     _sev_key = (threat.get("effective_severity") or threat.get("risk") or "").strip().lower()
     _dot = SEVERITY_DOT.get(_sev_key, "")
     _dot_prefix = f"{_dot} " if _dot else ""
-    lines.append(f"**Source:** {_dot_prefix}[{fid}](#{_anchor(fid)}) — `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`")
+    lines.append(
+        f"**Source:** {_dot_prefix}[{fid}](#{_anchor(fid)}) — `{file_hint or '<unknown>'}:{evidence.get('line') or '?'}`"
+    )
     lines.append("")
     lines.append(
         f"Severity **{(threat.get('risk') or 'High').strip()}** "

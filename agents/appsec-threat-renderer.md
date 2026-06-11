@@ -28,7 +28,7 @@ roles you do NOT compose and do NOT run those tail steps.
 |---|---|---|---|
 | `full` (default / unset) | everything below (MS + §7) | — | **YES — you run them** (back-compat, unchanged) |
 | `secarch` | ONLY `security-architecture.md` per the §7 contract below | `architecture-diagrams.md` (deterministic — the skill force-regenerates it from `threat-model.yaml` before AND after this dispatch, so any edit here is always discarded; §2 incl. its `**Key takeaway:**` lines is owned by `pregenerate_fragments.py:gen_architecture_diagrams`), any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
-| `ms` | ONLY `ms-verdict.json`, `ms-architecture-assessment.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`), `requirements-compliance.md` (when `CHECK_REQUIREMENTS=true`); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
+| `ms` | ONLY `ms-verdict.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`), `requirements-compliance.md` (when `CHECK_REQUIREMENTS=true`); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 
 **Both split roles still run the `## First Action` telemetry** (tag the phase-start
 message with your role, e.g. `[Phase 11/11] §7 enrichment` / `[Phase 11/11]
@@ -96,7 +96,7 @@ The outcome must be visible in `.agent-run.log`, `.appsec-progress.json`, and `.
 
 ## Style Anchor
 
-Before authoring `ms-verdict.json`, `ms-architecture-assessment.json`, or enriched security-architecture prose, read **both** the rules file and the worked-examples file:
+Before authoring `ms-verdict.json` or enriched security-architecture prose, read **both** the rules file and the worked-examples file:
 
 ```text
 $CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md
@@ -120,7 +120,6 @@ That file is **not** a template to be rendered — it is the proven reference sh
 Author only the fragments that require LLM judgement or explicitly requested enrichment:
 
 - `.fragments/ms-verdict.json` — do NOT cite exact severity counts in the `opening` prose (e.g. "eight Critical and eleven High"); those drift from the real totals. The composer injects an authoritative deterministic `**Risk distribution:** 🔴 Critical: N · 🟠 High: M · …` line directly under the opening. Describe posture + consequence in words; let the injected line carry the numbers.
-- `.fragments/ms-architecture-assessment.json`
 - `.fragments/ms-critical-attack-tree.json` only when `threats[].risk == Critical` count is ≥ 2 in `threat-model.yaml` (the composer gate is `has_multi_critical`; skip authoring when fewer than 2 Critical findings exist)
 - ~~`.fragments/ms-top-mitigations.json`~~ — **DO NOT author by default.** The composer builds the §1 Top-Mitigations leader-board **deterministically** (`_row_sort_key` ordering + Critical-floor coverage). LLM curation is retired: the marginal re-ordering gain did not justify the extra renderer turns. Skip it unless `ENRICH_TOP_MITIGATIONS=true` is explicitly set. See contract below.
 - `.fragments/security-posture-attack-paths.json` unless `SKIP_ATTACK_PATHS_AUTHORING=true`
@@ -167,14 +166,9 @@ edit `_render_top_threats_architecture` (and its tests), not this agent prompt.
 
 ### MS prose — single-pass discipline (perf 2026-06-05, hard rule)
 
-Author `ms-verdict.json` and `ms-architecture-assessment.json` **exactly once
-each**. Do **NOT** re-open or rewrite an MS fragment to "tighten", "polish", or
-"shrink toward the word budget" by eye — that speculative re-authoring (the
-former 2-3× churn per fragment) burned Stage-2 wall time for zero content gain.
-The word budgets below are a deterministic contract; meet them on the first
-write.
+Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS fragment to "tighten", "polish", or "shrink toward the word budget" by eye — that speculative re-authoring (the former 2-3× churn per fragment) burned Stage-2 wall time for zero content gain. The word budgets below are a deterministic contract; meet them on the first write.
 
-After authoring **both** MS fragments, run the compactness gate **once**:
+After authoring the MS fragment, run the compactness gate **once**:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
@@ -263,56 +257,6 @@ Renders as the optional **`### AI / LLM Exposure`** callout in the Management Su
 ```
 
 **Naming vocabulary** (canonical OWASP LLM Top-10 risk names; do not invent one to pad the list): `Prompt Injection` (LLM01) · `Sensitive Information Disclosure` (LLM02) · `Model Supply Chain` (LLM03) · `Data & Model Poisoning` (LLM04) · `Improper Output Handling` (LLM05) · `Excessive Agency` (LLM06) · `System Prompt Leakage` (LLM07) · `Vector & Embedding Weaknesses` (LLM08) · `Misinformation` (LLM09) · `Unbounded Consumption` (LLM10). Map each to its `owasp_llm_id` and anchor it to the finding(s) where you recorded it.
-
-### `ms-architecture-assessment.json` authoring contract
-
-The Architecture Assessment renders as a 4-column table in §1: `Weakness category | Affected component(s) | Description | Key findings`. The fragment schema is:
-
-```json
-{
-  "verdict_severity": "red | amber | green",
-  "verdict_prose": "**Verdict — <1 short sentence posture statement, max ~25 words>.**",
-  "framing": "<one-line sentence introducing the table>",
-  "weaknesses": [
-    {
-      "category": "<general security domain, NOT a finding restatement>",
-      "affected_components": ["C-01", "C-02"],
-      "description": "<design-review prose — see authoring rules below>",
-      "findings": [
-        { "ref": "T-001", "label": "<short title>" }
-      ]
-    }
-  ]
-}
-```
-
-**Mandatory authoring rules.** These are enforced through reviewer expectations and the section MUST be authored to satisfy all of them:
-
-1. **`category` is a general security domain.** The category is a top-level security architecture concept — not a code-fragment summary, not a finding restatement. Use the same vocabulary as the §7 sub-section titles where appropriate. Reference categories:
-   - `Identity and Authentication` · `Session and Token Lifecycle` · `Authorization and Access Control`
-   - `Query Construction and Data Access` · `Input Validation and Untrusted Input Handling`
-   - `Output Encoding and Rendering` · `Browser and Cross-Origin Controls`
-   - `Cryptography and Secret Management` · `File Parser and Outbound Request Controls`
-   - `Operations, Runtime and Supply Chain` · `Logging, Monitoring and Audit`
-
-   ❌ Bad: `Hardcoded credentials in source` · `bypassSecurityTrustHtml in six components` · `SQL string interpolation in routes/login.ts`
-   ✅ Good: `Cryptography and Secret Management` · `Output Encoding and Rendering` · `Query Construction and Data Access`
-
-2. **`description` is design-review prose, NOT SAST line-listing.** The description names the *structural* problem — what security boundary is failing and why it spans multiple call-sites. Reference affected files or component groups *generically*; never enumerate `routes/login.ts:34, routes/search.ts:12` line-by-line — the reader can pull that from the linked findings. **Target 1-2 short sentences (max ~50 words).** Keep it tight; details belong in the linked §7 / §8 entries.
-
-   ❌ Bad: `routes/login.ts:34 calls models.sequelize.query() with template literals. routes/search.ts:23 does the same. routes/admin.ts:67 also uses raw SQL.`
-   ✅ Good: `Login and search flows both string-interpolate untrusted input into raw SQL, bypassing the ORM's parameter binding. Same anti-pattern repeated across multiple routes — not an isolated regression.`
-
-3. **`affected_components[]` MUST use canonical `C-NN` ids** (schema pattern `^C-\d{2,}$`, e.g. `C-01`, `C-02`) — NEVER the slug/name form. Read `threat-model.yaml` `components[]`: the ids are assigned by enumeration order (`C-01` = first component, `C-02` = second, …). **Map the component you mean to its `C-NN` id before writing.** The renderer auto-enriches a bare `C-NN` to `[C-NN](#c-nn) — Component Name` in the rendered column. Cross-cutting weaknesses list all relevant `C-NN` ids.
-
-   ❌ Bad (the 2026-06-05 parallel-render drift — fails `compose --strict`): `["express-backend", "angular-spa"]`
-   ✅ Good: `["C-01", "C-02"]`
-
-4. **Forbidden words.** Do NOT use `defect`, `defects`, or `vulnerability` in `category` or `description` strings. Use `weakness` only as a noun (`this weakness spans …`) — never as a content-free hedge (`the weakness lies in …` is already banned in `prose-style.md` and applies here verbatim).
-
-5. **Findings list is curation, not exhaustion.** `findings[]` carries the 1-4 most representative findings per weakness (Critical/High preferred). It is NOT every finding routed to that category — those live in §8 Threat Register and §7 control-block trailers.
-
-Legacy fragments using the `defects[]` shape with `name`/`description`/`findings` (no `category`, no `affected_components`) are accepted as back-compat (composer aliases `name` → `category`) but new authoring MUST use the `weaknesses[]` shape with the four fields above.
 
 ### `ms-top-mitigations.json` authoring contract
 
@@ -811,7 +755,6 @@ The watchdog writes `$OUTPUT_DIR/.budget-critical` when any agent in this run hi
 | Before this action | If `.budget-critical` exists, do this instead |
 |---|---|
 | Authoring `ms-verdict.json` | Author with minimal viable content (the schema allows brief prose); skip optional sections |
-| Authoring `ms-architecture-assessment.json` | Same — minimal viable content |
 | Authoring `ms-critical-attack-tree.json` | **Skip entirely** — the composer soft-skips the section with a warning; safer than a half-built tree |
 | Authoring `attack-walkthroughs.md` | **Skip entirely** — optional fragment, downstream renderer omits the section gracefully when missing |
 | Authoring `security-posture-attack-paths.json` | **Skip entirely** — optional |

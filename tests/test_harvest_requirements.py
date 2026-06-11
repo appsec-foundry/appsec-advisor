@@ -96,8 +96,7 @@ def test_resolve_references_keeps_known_skips_unknown_and_dedupes():
         "SSLM-WAF": "https://req.example/sslm-waf",
     }
     text = (
-        "Authenticate via SEC-AUTH-1 and protect with SSLM-WAF. "
-        "See SEC-AUTH-1 again. UNKNOWN-99 is not in the catalog."
+        "Authenticate via SEC-AUTH-1 and protect with SSLM-WAF. See SEC-AUTH-1 again. UNKNOWN-99 is not in the catalog."
     )
     refs = harvester.resolve_references(text, req_url_map)
 
@@ -140,8 +139,6 @@ def test_add_references_to_blueprints_annotates_only_matching_sections():
 
     assert total == 1
     secs = blueprints[0]["sections"]
-    assert secs[0]["references"] == [
-        {"id": "SEC-AUTH-1", "url": "https://req.example/sec-auth-1"}
-    ]
+    assert secs[0]["references"] == [{"id": "SEC-AUTH-1", "url": "https://req.example/sec-auth-1"}]
     # A section with no resolvable ID is left untouched (no empty references key).
     assert "references" not in secs[1]

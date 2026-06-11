@@ -43,7 +43,6 @@ contains exactly these sub-sections, in this order:
 
     ### Verdict (with a red HTML <blockquote …>)
     ### Top Findings
-    ### Architecture Assessment
     ### Mitigations
     ### Operational Strengths
 
@@ -115,7 +114,10 @@ RISK_DIST_RE = re.compile(
     + r"Low:\s*(\d+)"
     # Optional Info cell (only rendered when count > 0). Captured into
     # group(5); the rest of the parser must treat None as 0.
-    + r"(?:" + _DELIM + _SEV_ICON + r"Info:\s*(\d+))?"
+    + r"(?:"
+    + _DELIM
+    + _SEV_ICON
+    + r"Info:\s*(\d+))?"
     # Both `**Total: N**` and `**Total findings: N**` accepted.
     + _DELIM
     + r"\**Total(?:\s+findings)?:\s*(\d+)\**"
@@ -166,6 +168,7 @@ def _strip_code_fences(text: str) -> str:
     whole-line blanking was safe; the Story-Card layout puts ``<pre>…</pre>``
     inside the table-row line, which we must NOT blank wholesale.
     """
+
     # Step 1 — blank <pre>…</pre> content while preserving line slots. Any
     # internal `\n` becomes empty so line numbers stay aligned; surrounding
     # text on the same line is kept.
@@ -177,6 +180,7 @@ def _strip_code_fences(text: str) -> str:
         # token visually marked so downstream checks that explicitly want to
         # see a pre tag continue to do so without consuming content.
         return "\n" * inner.count("\n")
+
     text = _HTML_PRE_BLOCK_RE.sub(_blank_pre, text)
 
     # Step 2 — original Markdown fenced-block stripping (line-based).
@@ -311,13 +315,16 @@ class _PrePass:
         if not isinstance(cls._contract, dict):
             return
         import os as _os
+
         # 1. Explicit env override wins (CI / smoke tests).
         schema = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
         # APPSEC_SCHEMA_V1 is the test-suite pin only (gated to a running pytest
         # via PYTEST_CURRENT_TEST); a stray env var in production can't force v1.
-        if (not schema
-                and _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
-                and "PYTEST_CURRENT_TEST" in _os.environ):
+        if (
+            not schema
+            and _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
+            and "PYTEST_CURRENT_TEST" in _os.environ
+        ):
             schema = "v1"
         # 2. Skill-config next to MD.
         if not schema and cls._md_path is not None:
@@ -325,6 +332,7 @@ class _PrePass:
             if cfg.is_file():
                 try:
                     import json as _json
+
                     cfg_data = _json.loads(cfg.read_text(encoding="utf-8"))
                     schema = (cfg_data.get("security_schema") or "").strip().lower()
                 except (OSError, ValueError):
@@ -495,8 +503,6 @@ def _load_label_index(md_path: Path) -> dict[str, tuple[str, str]]:
     if not yaml_path.is_file():
         return {}
     try:
-        import yaml as _yaml
-
         data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
     except Exception:
         return {}
@@ -865,7 +871,7 @@ def check_strengths_row_quality(md_path: Path) -> Report:
         report.ok = 1
         return report
     # End the section at the next `## ` or `### ` heading.
-    rest = text[sec_start + len("### Operational Strengths"):]
+    rest = text[sec_start + len("### Operational Strengths") :]
     m = re.search(r"\n#{2,3}\s", rest)
     body = rest[: m.start()] if m else rest
     flagged = 0
@@ -1126,7 +1132,6 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         "Security Posture at a Glance": "Security Posture & Top Threats",
         "Top Threats": "Security Posture & Top Threats",
         "Top Findings": "Security Posture & Top Threats",
-        "Architecture Assessment": "Security Posture & Top Threats",
         "Top Critical Findings": "Security Posture & Top Threats",
         "Top Risks": "Security Posture & Top Threats",
         "Critical Findings": "Security Posture & Top Threats",
@@ -1293,8 +1298,7 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
          ``condition`` gates evaluated against simple counters).
       2. No forbidden_subsection_patterns appear under Management Summary.
       3. Required tables present the declared number of columns with the
-         declared headers (Top Findings: 6 cols; Architecture Assessment:
-         3 cols; Operational Strengths: 5 cols; Mitigations sub-tables:
+         declared headers (Top Findings: 6 cols; Operational Strengths: 5 cols; Mitigations sub-tables:
          5 cols each).
     """
 
@@ -1372,7 +1376,7 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
         parent_body_start = parent_match.end()
         next_h2 = re.search(r"(?m)^##\s+", stripped_text[parent_body_start:])
         parent_body = (
-            stripped_text[parent_body_start: parent_body_start + next_h2.start()]
+            stripped_text[parent_body_start : parent_body_start + next_h2.start()]
             if next_h2
             else stripped_text[parent_body_start:]
         )
@@ -1390,25 +1394,20 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
                 continue
             hashes = "#" * level
             if title:
-                sub_re = re.compile(
-                    rf"(?m)^{re.escape(hashes)}\s+{re.escape(title)}[ \t]*$"
-                )
+                sub_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+{re.escape(title)}[ \t]*$")
                 display = f"{hashes} {title}"
             else:
                 try:
                     sub_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+{pattern}[ \t]*$")
                 except re.error as err:
                     report.issues.append(
-                        f"invalid required_subsection pattern under {parent_heading!r}: "
-                        f"/{pattern}/ ({err})"
+                        f"invalid required_subsection pattern under {parent_heading!r}: /{pattern}/ ({err})"
                     )
                     continue
                 display = f"{hashes} /{pattern}/"
             sub_match = sub_re.search(parent_body)
             if not sub_match:
-                report.issues.append(
-                    f"required subsection missing under {parent_heading!r}: {display!r}"
-                )
+                report.issues.append(f"required subsection missing under {parent_heading!r}: {display!r}")
                 continue
             if sub_match.start() < last_sub_idx:
                 report.issues.append(
@@ -1439,51 +1438,61 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     # switched layouts in M3.10; the legacy form is intentionally NOT in
     # the accept-list so reports rendered by old code are flagged.
     table_checks = [
-        # 2026-05 — Top Threats is the merged section that replaced Top
-        # Findings + Architecture Assessment. One row per attack class.
-        ("top_threats", "Top Threats", [
-            "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |",
-        ]),
-        ("operational_strengths", "Operational Strengths", [
-            # M3.10 — categorical-cluster layout
-            "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
-            # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
-            "| Strength | What's in Place | Effectiveness |",
-            # Post-2026-05 empty-state — every cluster demoted to Weak, no
-            # table rendered, only an italic explanatory banner. Accept the
-            # banner's stable opener as evidence the section was authored.
-            "No defensive cluster currently rates above Weak",
-        ]),
-        ("mitigations", "Top Mitigations", [
-            # 2026-06-03 — Priority column dropped: the rollout priority now
-            # rides on the linked mitigation as a leading prefix (2026-06-04
-            # Variant B: a monochrome circled digit, `❶`…`❹`), so the
-            # dedicated column is redundant.
-            "| # | Component | Mitigation | Addresses | Effort |",
-            # Post-2026-05-29 — numbered table with a dedicated Component
-            # column (label printed once per group, blank on continuation
-            # rows). Replaces the in-table divider-row form, which rendered
-            # the component label displaced in the `#`/ID column.
-            "| # | Priority | Component | Mitigation | Addresses | Effort |",
-            # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
-            # added so each data row carries an at-a-glance position; divider
-            # rows continue to carry the component label in the first cell.
-            "| # | Priority | Mitigation | Addresses | Effort |",
-            # Post-2026-05 iteration 1 — single central table, sub-grouped by
-            # component via divider rows; Component column dropped.
-            "| Priority | Mitigation | Addresses | Effort |",
-            # M3.10 legacy — kept as accepted form so legacy reports are not
-            # falsely flagged.
-            "| Priority | Mitigation | Component | Addresses | Effort |",
-        ]),
+        # 2026-05 — Top Threats merged Top Findings into one section. One row per attack class.
+        (
+            "top_threats",
+            "Top Threats",
+            [
+                "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |",
+            ],
+        ),
+        (
+            "operational_strengths",
+            "Operational Strengths",
+            [
+                # M3.10 — categorical-cluster layout
+                "| Strength | What's in Place | Effectiveness | Gap | Mitigates |",
+                # 3-col fallback when Gap + Mitigates are suppressed (all rows generic)
+                "| Strength | What's in Place | Effectiveness |",
+                # Post-2026-05 empty-state — every cluster demoted to Weak, no
+                # table rendered, only an italic explanatory banner. Accept the
+                # banner's stable opener as evidence the section was authored.
+                "No defensive cluster currently rates above Weak",
+            ],
+        ),
+        (
+            "mitigations",
+            "Top Mitigations",
+            [
+                # 2026-06-03 — Priority column dropped: the rollout priority now
+                # rides on the linked mitigation as a leading prefix (2026-06-04
+                # Variant B: a monochrome circled digit, `❶`…`❹`), so the
+                # dedicated column is redundant.
+                "| # | Component | Mitigation | Addresses | Effort |",
+                # Post-2026-05-29 — numbered table with a dedicated Component
+                # column (label printed once per group, blank on continuation
+                # rows). Replaces the in-table divider-row form, which rendered
+                # the component label displaced in the `#`/ID column.
+                "| # | Priority | Component | Mitigation | Addresses | Effort |",
+                # Post-2026-05 iteration 3 — numbered table. Sequential `#` column
+                # added so each data row carries an at-a-glance position; divider
+                # rows continue to carry the component label in the first cell.
+                "| # | Priority | Mitigation | Addresses | Effort |",
+                # Post-2026-05 iteration 1 — single central table, sub-grouped by
+                # component via divider rows; Component column dropped.
+                "| Priority | Mitigation | Addresses | Effort |",
+                # M3.10 legacy — kept as accepted form so legacy reports are not
+                # falsely flagged.
+                "| Priority | Mitigation | Component | Addresses | Effort |",
+            ],
+        ),
     ]
     for _sid, label, accepted_headers in table_checks:
         if label not in text:
             continue
         if not any(h in text for h in accepted_headers):
             report.issues.append(
-                f"{label} table does not match contract column schema "
-                f"(expected one of: {accepted_headers!r})"
+                f"{label} table does not match contract column schema (expected one of: {accepted_headers!r})"
             )
 
     if not report.issues:
@@ -1528,7 +1537,6 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
     "architectural_anti_patterns": [".fragments/ms-anti-patterns.json"],
     "ai_exposure_ms": [".fragments/ms-ai-exposure.json"],  # optional — only when LLM/AI surface
     "top_findings": [],  # computed
-    "architecture_assessment": [".fragments/ms-architecture-assessment.json"],
     "mitigations": [],  # computed
     "operational_strengths": [".fragments/operational-strengths-overrides.json"],
     "system_overview": [".fragments/system-overview.md"],
@@ -1549,12 +1557,10 @@ CONTRACT_SECTION_FRAGMENTS: dict[str, list[str]] = {
 
 
 # Label → contract section id mapping for table-schema-drift issues
-# (Top Findings / Architecture Assessment / Operational Strengths /
-# Prioritized Mitigations). Used to point the orchestrator at the
-# correct fragment when a column schema does not match.
+# (Top Findings / Operational Strengths / Prioritized Mitigations).
+# Used to point the orchestrator at the correct fragment when a column schema does not match.
 _TABLE_LABEL_TO_SECTION: dict[str, str] = {
     "Top Findings": "top_findings",
-    "Architecture Assessment": "architecture_assessment",
     "Operational Strengths": "operational_strengths",
     "Prioritized Mitigations": "mitigations",
 }
@@ -2115,14 +2121,12 @@ def build_repair_plan(
                     "section_id": "management_summary",
                     "fragments_to_rewrite": [
                         ".fragments/ms-verdict.json",
-                        ".fragments/ms-architecture-assessment.json",
                     ],
                     "remediation": (
                         f"Delete the `### {title}` heading (and its body) from the "
                         f"offending fragment. The canonical MS sub-sections are "
-                        f"Verdict / Top Findings / Architecture Assessment / "
-                        f"Mitigations / Operational Strengths (in that order) — "
-                        f"no other `###` headings are allowed under "
+                        f"Verdict / Top Findings / Mitigations / Operational Strengths "
+                        f"(in that order) — no other `###` headings are allowed under "
                         f"`## Management Summary`."
                     ),
                 }
@@ -2549,46 +2553,28 @@ def _is_suspicious_evidence_line(line: str, ext: str) -> tuple[bool, str]:
     return False, ""
 
 
-def _replay_absence_grep(
-    repo_root: Path,
-    pattern: str,
-    search_paths: list[str],
-    skip_under: Optional[Path] = None,
-) -> Optional[int]:
-    """Re-run a STRIDE-analyzer absence grep deterministically.
+class _GrepCache:
+    """Per-call cache for _replay_absence_grep — file lists + file contents.
 
-    Returns the new hit count, or ``None`` when the pattern is invalid or
-    no search path resolves. Normalizes BRE-style ``\\|`` alternation to
-    ERE ``|`` so analyzers that emit either style both work. Walks the
-    listed paths with the standard exclusion set. ``skip_under``, when
-    given, prunes any file path that is inside that directory — used to
-    keep the QA pre-pass from matching the analyzer's own output
-    artifacts (``.threats-merged.json``, ``threat-model.yaml``) when the
-    analyzer recorded ``search_paths: ["."]``.
+    Scoped to a single ``check_evidence_integrity`` call so memory is
+    bounded to one QA pass. Without this, every absence-evidence claim
+    re-walks the same search paths and re-reads the same files. The
+    pathological case is empty ``search_paths`` defaulting to ``["."]``
+    (full repo scan) repeated N times.
     """
-    normalized = pattern.replace(r"\|", "|")
-    try:
-        regex = re.compile(normalized)
-    except re.error:
-        return None
-    if not search_paths:
-        search_paths = ["."]
-    skip_under_resolved = skip_under.resolve() if skip_under else None
-    total = 0
-    any_resolved = False
-    for sp in search_paths:
-        base = (repo_root / sp).resolve()
-        try:
-            base.relative_to(repo_root.resolve())
-        except ValueError:
-            continue
-        if not base.exists():
-            continue
-        any_resolved = True
+
+    def __init__(self) -> None:
+        self._file_lists: dict[tuple[Path, Optional[Path]], list[Path]] = {}
+        self._texts: dict[Path, str] = {}
+
+    def get_files(self, base: Path, skip_under_resolved: Optional[Path]) -> list[Path]:
+        key = (base, skip_under_resolved)
+        if key in self._file_lists:
+            return self._file_lists[key]
+        files: list[Path] = []
         if base.is_file():
             files = [base]
         else:
-            files = []
             for root, dirs, names in os.walk(base):
                 dirs[:] = [d for d in dirs if d not in _EVIDENCE_SKIP_DIRS]
                 if skip_under_resolved is not None:
@@ -2602,11 +2588,87 @@ def _replay_absence_grep(
                     p = Path(root) / n
                     if p.suffix.lower() in _EVIDENCE_CODE_EXTS:
                         files.append(p)
-        for f in files:
+        self._file_lists[key] = files
+        return files
+
+    def read_text(self, path: Path) -> Optional[str]:
+        if path not in self._texts:
             try:
-                txt = f.read_text(encoding="utf-8", errors="replace")
+                self._texts[path] = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
-                continue
+                self._texts[path] = None  # type: ignore[assignment]
+        return self._texts[path]
+
+
+def _replay_absence_grep(
+    repo_root: Path,
+    pattern: str,
+    search_paths: list[str],
+    skip_under: Optional[Path] = None,
+    *,
+    cache: Optional[_GrepCache] = None,
+) -> Optional[int]:
+    """Re-run a STRIDE-analyzer absence grep deterministically.
+
+    Returns the new hit count, or ``None`` when the pattern is invalid or
+    no search path resolves. Normalizes BRE-style ``\\|`` alternation to
+    ERE ``|`` so analyzers that emit either style both work. Walks the
+    listed paths with the standard exclusion set. ``skip_under``, when
+    given, prunes any file path that is inside that directory — used to
+    keep the QA pre-pass from matching the analyzer's own output
+    artifacts (``.threats-merged.json``, ``threat-model.yaml``) when the
+    analyzer recorded ``search_paths: ["."]``.
+
+    Pass a ``_GrepCache`` instance (shared across calls within one
+    ``check_evidence_integrity`` invocation) to avoid re-walking and
+    re-reading the same directories/files for every absence-evidence claim.
+    """
+    normalized = pattern.replace(r"\|", "|")
+    try:
+        regex = re.compile(normalized)
+    except re.error:
+        return None
+    if not search_paths:
+        search_paths = ["."]
+    skip_under_resolved = skip_under.resolve() if skip_under else None
+    repo_root_resolved = repo_root.resolve()
+    total = 0
+    any_resolved = False
+    for sp in search_paths:
+        base = (repo_root / sp).resolve()
+        try:
+            base.relative_to(repo_root_resolved)
+        except ValueError:
+            continue
+        if not base.exists():
+            continue
+        any_resolved = True
+        files = cache.get_files(base, skip_under_resolved) if cache else None
+        if files is None:
+            files = []
+            if base.is_file():
+                files = [base]
+            else:
+                for root, dirs, names in os.walk(base):
+                    dirs[:] = [d for d in dirs if d not in _EVIDENCE_SKIP_DIRS]
+                    if skip_under_resolved is not None:
+                        try:
+                            Path(root).resolve().relative_to(skip_under_resolved)
+                            dirs[:] = []
+                            continue
+                        except ValueError:
+                            pass
+                    for n in names:
+                        p = Path(root) / n
+                        if p.suffix.lower() in _EVIDENCE_CODE_EXTS:
+                            files.append(p)
+        for f in files:
+            txt = cache.read_text(f) if cache else None
+            if txt is None:
+                try:
+                    txt = f.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
             total += sum(1 for _ in regex.finditer(txt))
     return total if any_resolved else None
 
@@ -2649,8 +2711,6 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
             return report
     elif yaml_path.is_file():
         try:
-            import yaml  # type: ignore[import-not-found]
-
             data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
             raw = data.get("threats", [])
             if isinstance(raw, list):
@@ -2663,6 +2723,7 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
         return report
 
     repo_root_resolved = repo_root.resolve()
+    grep_cache = _GrepCache()
     file_cache: dict[Path, list[str]] = {}
 
     def _load_lines(path: Path) -> list[str] | None:
@@ -2727,6 +2788,7 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
                     pattern,
                     paths,
                     skip_under=output_dir,
+                    cache=grep_cache,
                 )
                 if new_count is None:
                     # Invalid pattern or unresolvable paths — informational.
@@ -2842,8 +2904,15 @@ def check_section7_narrative_placeholders(md_path: Path) -> Report:
 # Negative openers that disqualify a paragraph from being a "positive intro".
 # Case-insensitive, word-boundary-anchored.
 _NEGATIVE_OPENERS = (
-    "no ", "none", "missing", "not implemented", "not present",
-    "there is no", "there are no", "nothing ", "absent",
+    "no ",
+    "none",
+    "missing",
+    "not implemented",
+    "not present",
+    "there is no",
+    "there are no",
+    "nothing ",
+    "absent",
 )
 
 # Words counted toward the 25-word floor for the positive intro paragraph.
@@ -2992,9 +3061,7 @@ def check_section7_h4_status(md_path: Path) -> Report:
         return report
     for title, body, h4_line in _walk_h4_blocks(section):
         stripped_body = _strip_code_fences(body)
-        has_status = any(
-            line.strip().startswith("**Status:") for line in stripped_body.splitlines()
-        )
+        has_status = any(line.strip().startswith("**Status:") for line in stripped_body.splitlines())
         if not has_status:
             absolute_line = start_line + h4_line - 1
             report.warnings.append(
@@ -3053,20 +3120,21 @@ def check_section7_fence_intro_sentence(md_path: Path) -> Report:
             j -= 1
         if j < 0:
             report.issues.append(
-                f"§7 fence at line {abs_offset + i + 1} ({line.strip()}) — "
-                f"has no introducing sentence."
+                f"§7 fence at line {abs_offset + i + 1} ({line.strip()}) — has no introducing sentence."
             )
             continue
         prev = lines[j].rstrip()
         # Structural markers that disqualify as intro:
-        if (prev.lstrip().startswith("####") or
-            prev.lstrip().startswith("### ") or
-            prev.strip().startswith("**Security assessment") or
-            prev.strip().startswith("**Relevant findings") or
-            prev.strip().startswith("**Verdict") or
-            prev.strip().startswith("**Controls covered") or
-            prev.strip().startswith("**Implemented controls") or
-            prev.strip().startswith("**Assessment")):
+        if (
+            prev.lstrip().startswith("####")
+            or prev.lstrip().startswith("### ")
+            or prev.strip().startswith("**Security assessment")
+            or prev.strip().startswith("**Relevant findings")
+            or prev.strip().startswith("**Verdict")
+            or prev.strip().startswith("**Controls covered")
+            or prev.strip().startswith("**Implemented controls")
+            or prev.strip().startswith("**Assessment")
+        ):
             report.issues.append(
                 f"§7 fence at line {abs_offset + i + 1} — preceding line is "
                 f"a structural marker (`{prev.strip()[:40]}…`), not an "
@@ -3115,9 +3183,11 @@ def check_section7_finding_link_duplicate(md_path: Path) -> Report:
         parts = re.split(r"\s+[—–-]\s+", trailer)
         if len(parts) < 2:
             continue
+
         # Tokenise each part.
         def tokens(s: str) -> list[str]:
             return [t.lower() for t in re.findall(r"[A-Za-z]{3,}", s)]
+
         first = tokens(parts[0])
         rest = " ".join(tokens(" ".join(parts[1:])))
         if not first:
@@ -3143,17 +3213,72 @@ _RELEVANT_FINDING_BULLET_RE = re.compile(
 )
 
 # Stop-words ignored when comparing F-NNN title tokens against rationale text.
-_SEMANTIC_STOPWORDS: frozenset[str] = frozenset({
-    "the", "a", "an", "of", "for", "and", "or", "via", "in", "on", "to",
-    "with", "from", "by", "is", "are", "be", "as", "at", "this", "that",
-    "has", "have", "had", "any", "all", "can", "may", "will", "would",
-    "should", "could", "such", "into", "onto", "uses", "use", "used",
-    "using", "than", "then", "when", "where", "what", "how", "via",
-    # Generic security filler that doesn't disambiguate one finding from another
-    "attack", "attacker", "user", "users", "vulnerable", "vulnerability",
-    "finding", "control", "controls", "issue", "endpoint", "endpoints",
-    "request", "response", "data", "value", "values",
-})
+_SEMANTIC_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "of",
+        "for",
+        "and",
+        "or",
+        "via",
+        "in",
+        "on",
+        "to",
+        "with",
+        "from",
+        "by",
+        "is",
+        "are",
+        "be",
+        "as",
+        "at",
+        "this",
+        "that",
+        "has",
+        "have",
+        "had",
+        "any",
+        "all",
+        "can",
+        "may",
+        "will",
+        "would",
+        "should",
+        "could",
+        "such",
+        "into",
+        "onto",
+        "uses",
+        "use",
+        "used",
+        "using",
+        "than",
+        "then",
+        "when",
+        "where",
+        "what",
+        "how",  # Generic security filler that doesn't disambiguate one finding from another
+        "attack",
+        "attacker",
+        "user",
+        "users",
+        "vulnerable",
+        "vulnerability",
+        "finding",
+        "control",
+        "controls",
+        "issue",
+        "endpoint",
+        "endpoints",
+        "request",
+        "response",
+        "data",
+        "value",
+        "values",
+    }
+)
 
 
 def _semantic_tokens(text: str) -> set[str]:
@@ -3254,6 +3379,7 @@ def _annotate_id_refs(md_path: Path) -> int:
     """
     try:
         import yaml as _yaml
+
         ydata = _yaml.safe_load((md_path.parent / "threat-model.yaml").read_text(encoding="utf-8")) or {}
     except Exception:
         return 0
@@ -3280,7 +3406,7 @@ def _annotate_id_refs(md_path: Path) -> int:
         else:
             best = 9
             rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-            for a in (mit.get("threat_ids") or mit.get("addresses") or []):
+            for a in mit.get("threat_ids") or mit.get("addresses") or []:
                 am = re.search(r"(\d+)$", str(a))
                 if am:
                     best = min(best, rank.get(sev_by_num.get(am.group(1).zfill(3), ""), 9))
@@ -3546,7 +3672,7 @@ _HEADING_RE = re.compile(r"^(?P<hashes>\s{0,3}#{1,6})\s+(?P<text>.*?)\s*$", re.M
 # These never belong in the visible heading — they break TOC slug
 # resolution and render as literal text in gfm. Stripped before hygiene.
 _HEADING_ATTR_TRAILER_RE = re.compile(r"\s*\{[^{}]*\}\s*$")
-_HEADING_DATA_SOURCE_RE = re.compile(r'\s*\{?\s*#?[\w-]*\s*data-source-line\s*=[^}]*\}?\s*$')
+_HEADING_DATA_SOURCE_RE = re.compile(r"\s*\{?\s*#?[\w-]*\s*data-source-line\s*=[^}]*\}?\s*$")
 
 
 def strip_heading_attribute_artifacts(md_path: Path) -> tuple[Report, str]:
@@ -3593,8 +3719,7 @@ def check_heading_hygiene(md_path: Path) -> Report:
         # Pandoc/Kramdown attribute trailer leaking into visible heading?
         if "{#" in heading_text or "data-source-line" in heading_text:
             report.issues.append(
-                f"heading contains attribute-syntax artefact ({{#...}} / "
-                f"data-source-line): `{heading_text[:120]}`"
+                f"heading contains attribute-syntax artefact ({{#...}} / data-source-line): `{heading_text[:120]}`"
             )
             continue
         # Unbalanced parens in the heading?
@@ -4073,7 +4198,7 @@ def _apply_mermaid_autofixes(md_text: str) -> tuple[str, list[str]]:
                     patched_lines.append(f"{lead}Note over {alias}: {text}")
                     fixes.append(
                         f"mermaid auto-fix (participant_alias_unquote): "
-                        f"`{kind} {alias} as \"{text[:60]}\"` → "
+                        f'`{kind} {alias} as "{text[:60]}"` → '
                         f"`{kind} {alias}` + Note over {alias}"
                     )
                 else:
@@ -4668,6 +4793,7 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
                     f"§{section_title}: `**{controls_label}:**` contains no markdown links — "
                     f"link each covered control to its {hashes} subsection."
                 )
+
             # Heading lookup must tolerate the `7.X.N <title>` numbering
             # convention (2026-05) — the `**Controls covered:**` link text
             # carries the bare control name, the H4 carries that name plus
@@ -4708,6 +4834,7 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
                 # Allow `<number> <target>` form (e.g. `7.2.1 JWT Authentication`).
                 stripped = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip()
                 return stripped == target
+
             for control_name in linked_controls:
                 if not any(_heading_matches(control_name, h) for h in subsections):
                     report.issues.append(
@@ -4723,8 +4850,7 @@ def check_control_subsection_coverage(md_path: Path, contract_path: Path = DEFAU
                 )
                 if not required_re.search(subsection_body):
                     report.issues.append(
-                        f"§{section_title} {hashes} {heading!r}: missing "
-                        f"`**{required_label}**` label."
+                        f"§{section_title} {hashes} {heading!r}: missing `**{required_label}**` label."
                     )
 
     return _finalize_auth_report(report, enforcement)
@@ -4801,7 +4927,7 @@ def check_relevant_findings_bullet_list(md_path: Path, contract_path: Path = DEF
                     )
                     break
 
-                for next_line in lines[idx + 1:]:
+                for next_line in lines[idx + 1 :]:
                     stripped = next_line.strip()
                     if not stripped or stripped.startswith("<!--"):
                         continue
@@ -4815,10 +4941,7 @@ def check_relevant_findings_bullet_list(md_path: Path, contract_path: Path = DEF
                     )
                     break
                 else:
-                    report.issues.append(
-                        f"§{section_title} {hashes} {heading!r}: "
-                        f"`**{label}**` has no bullet list."
-                    )
+                    report.issues.append(f"§{section_title} {hashes} {heading!r}: `**{label}**` has no bullet list.")
                 break
 
     return _finalize_auth_report(report, enforcement)
@@ -5606,7 +5729,7 @@ def _check_mermaid_label_safety(report: Report, heading: str, raw: str) -> None:
             report.issues.append(
                 f"§{heading}: mermaid edge label `|{payload}|` contains "
                 f"characters that mermaid may tokenise ambiguously (`:` `--` `'` `\"` `(` `)`); "
-                f"wrap with `\"...\"` — e.g. `|\"{payload.strip()}\"|`"
+                f'wrap with `"..."` — e.g. `|"{payload.strip()}"|`'
             )
 
 
@@ -5875,7 +5998,6 @@ def _critical_threats_from_yaml(output_dir: Path) -> list[dict]:
     if not yaml_path.is_file():
         return []
     try:
-        import yaml as _yaml  # local — qa_checks doesn't import yaml at module scope
         data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
     except (OSError, Exception):
         return []
@@ -5959,7 +6081,7 @@ def check_walkthrough_coverage(
             f"one walkthrough per Critical ({len(crits)} expected)."
         )
         return report
-    tail = text[m3.end():]
+    tail = text[m3.end() :]
     nxt = re.search(r"^##\s+\d+\.\s", tail, re.MULTILINE)
     sec3 = tail[: nxt.start()] if nxt else tail
 
@@ -5974,10 +6096,8 @@ def check_walkthrough_coverage(
     h3_matches = list(h3_re.finditer(sec3))
     subsection_blocks: list[str] = []
     for idx, mh in enumerate(h3_matches):
-        block_end = (
-            h3_matches[idx + 1].start() if idx + 1 < len(h3_matches) else len(sec3)
-        )
-        subsection_blocks.append(sec3[mh.start():block_end])
+        block_end = h3_matches[idx + 1].start() if idx + 1 < len(h3_matches) else len(sec3)
+        subsection_blocks.append(sec3[mh.start() : block_end])
 
     # Each per-Critical block declares its owning threat on the canonical
     # `**Source:** [T-NNN]` line; fall back to a T-NNN/F-NNN token in the
@@ -5988,9 +6108,7 @@ def check_walkthrough_coverage(
     # Tolerate the leading severity dot the composer's global annotation pass
     # prepends to the finding link (`**Source:** 🔴 [F-001](#f-001)`); the dot
     # sits between `**Source:**` and the `[F/T-NNN]` link.
-    source_re = re.compile(
-        r"\*\*Source:\*\*\s*(?:[🔴🟠🟡🟢⚪](?:\s|&nbsp;)*)?\[[TF]-(\d{3,4})\]"
-    )
+    source_re = re.compile(r"\*\*Source:\*\*\s*(?:[🔴🟠🟡🟢⚪](?:\s|&nbsp;)*)?\[[TF]-(\d{3,4})\]")
     seen_t_ids: set[str] = set()
     for block in subsection_blocks:
         ms = source_re.search(block)
@@ -6026,9 +6144,7 @@ def check_walkthrough_coverage(
         )
         # Per-missing entries for repair-plan granularity.
         for m in missing:
-            report.issues.append(
-                f"§3 missing walkthrough for {m['id']} — {m['title'][:120]}"
-            )
+            report.issues.append(f"§3 missing walkthrough for {m['id']} — {m['title'][:120]}")
 
     if not report.issues:
         report.ok = 1
@@ -6104,7 +6220,7 @@ def check_walkthrough_depth(
     if not m3:
         report.ok = 1
         return report
-    tail = text[m3.end():]
+    tail = text[m3.end() :]
     nxt = re.search(r"^##\s+\d+\.\s", tail, re.MULTILINE)
     sec3 = tail[: nxt.start()] if nxt else tail
 
@@ -6121,16 +6237,22 @@ def check_walkthrough_depth(
             # Two patterns combined:
             #   (a) `<id>[`, `<id>(`, `<id>{`  — node with shape body
             #   (b) `<arrow> <id>` where arrow ∈ {-->, -.->, ==>, ~~~~, --, ...}
-            node_shape = re.compile(
-                r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*[\[\(\{]"
-            )
+            node_shape = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*[\[\(\{]")
             node_after_arrow = re.compile(
                 r"(?:--\s*>|-\.\s*->|==\s*>|~~~)\s*\|?[^|]*?\|?\s*"
                 r"([A-Za-z_][A-Za-z0-9_]*)\b"
             )
             mermaid_keywords = {
-                "subgraph", "end", "classdef", "class", "linkstyle",
-                "style", "click", "direction", "graph", "flowchart",
+                "subgraph",
+                "end",
+                "classdef",
+                "class",
+                "linkstyle",
+                "style",
+                "click",
+                "direction",
+                "graph",
+                "flowchart",
             }
             for idx, raw in enumerate(blocks, start=1):
                 seen: set[str] = set()
@@ -6174,9 +6296,7 @@ def check_walkthrough_depth(
             )
 
         if require_alt_else:
-            seq_blocks = re.findall(
-                r"```mermaid\n(.*?)\n```", body, re.DOTALL
-            )
+            seq_blocks = re.findall(r"```mermaid\n(.*?)\n```", body, re.DOTALL)
             seq_blocks = [b for b in seq_blocks if "sequenceDiagram" in b]
             if not seq_blocks:
                 report.issues.append(
@@ -6248,14 +6368,10 @@ def check_walkthrough_depth(
     body_31_full = _extract_h3_section_body(text, "3.1 Attack Chain Overview") or ""
     if body_31_full:
         # Count `#### Chain N — ...` headings.
-        chain_h4_re = re.compile(
-            r"^####\s+Chain\s+\d+\s+—\s+\S", re.MULTILINE
-        )
+        chain_h4_re = re.compile(r"^####\s+Chain\s+\d+\s+—\s+\S", re.MULTILINE)
         chain_h4_count = len(chain_h4_re.findall(body_31_full))
         # Count graph LR blocks.
-        graph_lr_count = len(re.findall(
-            r"```mermaid\s*\n\s*graph\s+LR", body_31_full
-        ))
+        graph_lr_count = len(re.findall(r"```mermaid\s*\n\s*graph\s+LR", body_31_full))
 
         if require_chain_heading and graph_lr_count > 0 and chain_h4_count == 0:
             report.issues.append(
@@ -6265,12 +6381,7 @@ def check_walkthrough_depth(
                 "per `#### Chain N` block (forbidden mega-block form)."
             )
 
-        if (
-            require_chain_heading
-            and chain_h4_count > 0
-            and graph_lr_count > 0
-            and chain_h4_count != graph_lr_count
-        ):
+        if require_chain_heading and chain_h4_count > 0 and graph_lr_count > 0 and chain_h4_count != graph_lr_count:
             report.issues.append(
                 f"§3.1 Attack Chain Overview: {chain_h4_count} chain "
                 f"heading(s) but {graph_lr_count} graph LR block(s) — "
@@ -6278,9 +6389,7 @@ def check_walkthrough_depth(
             )
 
         if require_chain_takeaway and chain_h4_count > 0:
-            takeaway_count = len(re.findall(
-                r"^\*\*Key takeaway:\*\*", body_31_full, re.MULTILINE
-            ))
+            takeaway_count = len(re.findall(r"^\*\*Key takeaway:\*\*", body_31_full, re.MULTILINE))
             if takeaway_count < chain_h4_count:
                 report.issues.append(
                     f"§3.1 Attack Chain Overview: {chain_h4_count} "
@@ -6474,8 +6583,7 @@ def check_paragraph_density(md_path: Path, contract_path: Path = DEFAULT_CONTRAC
     rules_map = sec.get("domain_required_rules") or {}
     all_domain_rules = rules_map.get("all_domains") or []
     threshold_rule = next(
-        (r for r in all_domain_rules if isinstance(r, dict)
-         and r.get("rule") == "paragraph_density_threshold"),
+        (r for r in all_domain_rules if isinstance(r, dict) and r.get("rule") == "paragraph_density_threshold"),
         None,
     )
     if threshold_rule is None:
@@ -6512,9 +6620,7 @@ def check_paragraph_density(md_path: Path, contract_path: Path = DEFAULT_CONTRAC
         heading = sec_match.group(1).strip()
         body = sec_match.group(2)
         # Strip table lines (start with `|`) so dense register rows are excluded.
-        body_no_tables = "\n".join(
-            ln for ln in body.splitlines() if not table_line_re.match(ln)
-        )
+        body_no_tables = "\n".join(ln for ln in body.splitlines() if not table_line_re.match(ln))
         # Skip falls-short blocks — check_falls_short_format owns those.
         for fs in falls_short_block_re.findall(body_no_tables):
             body_no_tables = body_no_tables.replace(fs, "")
@@ -6635,17 +6741,40 @@ def check_inline_code_format(md_path: Path) -> Report:
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
 
     extensions = (
-        "ts", "tsx", "js", "jsx", "json", "yaml", "yml",
-        "py", "go", "rs", "java", "kt", "rb", "php", "cs",
-        "c", "h", "cpp", "hpp", "swift", "scala",
-        "md", "html", "css", "scss", "sql",
-        "sh", "bash", "ps1", "toml", "lock", "env",
+        "ts",
+        "tsx",
+        "js",
+        "jsx",
+        "json",
+        "yaml",
+        "yml",
+        "py",
+        "go",
+        "rs",
+        "java",
+        "kt",
+        "rb",
+        "php",
+        "cs",
+        "c",
+        "h",
+        "cpp",
+        "hpp",
+        "swift",
+        "scala",
+        "md",
+        "html",
+        "css",
+        "scss",
+        "sql",
+        "sh",
+        "bash",
+        "ps1",
+        "toml",
+        "lock",
+        "env",
     )
-    path_re = re.compile(
-        r"[A-Za-z][\w.-]*/[\w./-]+\.(?:"
-        + "|".join(extensions)
-        + r")(?::\d+)?\b"
-    )
+    path_re = re.compile(r"[A-Za-z][\w.-]*/[\w./-]+\.(?:" + "|".join(extensions) + r")(?::\d+)?\b")
     backtick_span_re = re.compile(r"`[^`\n]+`")
     md_link_url_re = re.compile(r"\]\(([^)]+)\)")
     html_attr_re = re.compile(r'(?:href|src|action|formaction)="[^"]+"')
@@ -6685,6 +6814,7 @@ def check_inline_code_format(md_path: Path) -> Report:
     if flagged:
         # Aggregate per-token to keep output compact.
         from collections import Counter
+
         counter = Counter(tok for _, tok in flagged)
         for tok, n in counter.most_common(20):
             lines_with = sorted({ln for ln, t in flagged if t == tok})[:3]
@@ -6721,19 +6851,46 @@ def check_inline_code_format(md_path: Path) -> Report:
 # Add a token here only when it has been observed as a false positive in
 # a real assessment — the allowlist's purpose is to flag drift, not to
 # strip backticks from anything that could conceivably be a label.
-_LABEL_TOKENS: frozenset[str] = frozenset({
-    # MS / threat-register / mitigation-register field labels
-    "Why", "How", "Effort", "Priority", "Severity",
-    "Addresses", "Component", "Components", "Mitigation", "Mitigations",
-    "Notes", "Vektor", "Classification", "Issue", "Impact", "Fix",
-    "Location", "Evidence",
-    "Verification", "Steps",
-    # Schema column / field names in lower case
-    "notes", "addresses", "priority", "effort", "severity",
-    "verify",  # JWT verify ALONE — should be jwt.verify() if code
-    # HTTP methods written as bare nouns ("takes one HTTP POST")
-    "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
-})
+_LABEL_TOKENS: frozenset[str] = frozenset(
+    {
+        # MS / threat-register / mitigation-register field labels
+        "Why",
+        "How",
+        "Effort",
+        "Priority",
+        "Severity",
+        "Addresses",
+        "Component",
+        "Components",
+        "Mitigation",
+        "Mitigations",
+        "Notes",
+        "Vektor",
+        "Classification",
+        "Issue",
+        "Impact",
+        "Fix",
+        "Location",
+        "Evidence",
+        "Verification",
+        "Steps",
+        # Schema column / field names in lower case
+        "notes",
+        "addresses",
+        "priority",
+        "effort",
+        "severity",
+        "verify",  # JWT verify ALONE — should be jwt.verify() if code
+        # HTTP methods written as bare nouns ("takes one HTTP POST")
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "PATCH",
+        "HEAD",
+        "OPTIONS",
+    }
+)
 
 # Detects ``` `Word` ``` in prose where Word matches the allowlist. The
 # token MUST be exactly one identifier (no dots, no parens, no slashes —
@@ -6790,6 +6947,7 @@ def check_label_as_code(md_path: Path) -> Report:
                 flagged.append((lineno, tok))
     if flagged:
         from collections import Counter
+
         counter = Counter(tok for _, tok in flagged)
         for tok, n in counter.most_common(20):
             lines_with = sorted({ln for ln, t in flagged if t == tok})[:3]
@@ -6824,32 +6982,31 @@ def check_label_as_code(md_path: Path) -> Report:
 # Order matters only for readability; the matcher checks all.
 _ARCH_PROSE_BANNED_PATTERNS: list[tuple[str, str]] = [
     # (regex, friendly_name)
-    (r"\bcodified rule\b",                    "codified rule"),
-    (r"\benforced (?:parameterization |secret |authorization |authentication )?boundary\b",
-                                              "enforced ... boundary"),
-    (r"\bmechanism layer\b",                  "mechanism layer"),
-    (r"\bcentral [A-Za-z]+? layer\b",         "central ... layer"),
-    (r"\bsecret management substrate\b",      "secret management substrate"),
-    (r"\bpolicy layer\b",                     "policy layer"),
-    (r"\bsecurity posture\b",                 "security posture"),
-    (r"\bdefense-in-depth posture\b",         "defense-in-depth posture"),
-    (r"\barchitectural anti-pattern\b",       "architectural anti-pattern"),
-    (r"\bat its core\b",                      "at its core"),
-    (r"\bfundamentally,\b",                   "fundamentally"),
-    (r"\bin essence\b",                       "in essence"),
-    (r"\bthe weakness lies in\b",             "the weakness lies in"),
-    (r"\bleverages?\b",                       "leverages"),
-    (r"\bcutting-edge\b",                     "cutting-edge"),
-    (r"\bseamless(?:ly)?\b",                  "seamless"),
-    (r"\bcomprehensive\b",                    "comprehensive"),
-    (r"\bensures? that\b",                    "ensures that"),
-    (r"\bfacilitates?\b",                     "facilitates"),
-    (r"\brobust(?:ly)?\b",                    "robust"),
+    (r"\bcodified rule\b", "codified rule"),
+    (r"\benforced (?:parameterization |secret |authorization |authentication )?boundary\b", "enforced ... boundary"),
+    (r"\bmechanism layer\b", "mechanism layer"),
+    (r"\bcentral [A-Za-z]+? layer\b", "central ... layer"),
+    (r"\bsecret management substrate\b", "secret management substrate"),
+    (r"\bpolicy layer\b", "policy layer"),
+    (r"\bsecurity posture\b", "security posture"),
+    (r"\bdefense-in-depth posture\b", "defense-in-depth posture"),
+    (r"\barchitectural anti-pattern\b", "architectural anti-pattern"),
+    (r"\bat its core\b", "at its core"),
+    (r"\bfundamentally,\b", "fundamentally"),
+    (r"\bin essence\b", "in essence"),
+    (r"\bthe weakness lies in\b", "the weakness lies in"),
+    (r"\bleverages?\b", "leverages"),
+    (r"\bcutting-edge\b", "cutting-edge"),
+    (r"\bseamless(?:ly)?\b", "seamless"),
+    (r"\bcomprehensive\b", "comprehensive"),
+    (r"\bensures? that\b", "ensures that"),
+    (r"\bfacilitates?\b", "facilitates"),
+    (r"\brobust(?:ly)?\b", "robust"),
     # Textbook-purpose padding — trailing clauses restating why the
     # control class exists in the abstract. Add no fact about THIS app.
-    (r"\bwith the intention that\b",          "with the intention that"),
-    (r"\bwith the expectation that\b",        "with the expectation that"),
-    (r"\bis (?:expected|intended) to\b",      "is expected/intended to"),
+    (r"\bwith the intention that\b", "with the intention that"),
+    (r"\bwith the expectation that\b", "with the expectation that"),
+    (r"\bis (?:expected|intended) to\b", "is expected/intended to"),
 ]
 
 # Definitional opener regex — first sentence of a §7.X body whose first
@@ -6877,9 +7034,7 @@ _FORMULAIC_OPENER_RE = re.compile(
 _SEC7_H4_HEADING_RE = re.compile(r"^#### .+$", re.MULTILINE)
 
 # Section heading regex for §7.X — captures the section number + title.
-_SEC7_HEADING_RE = re.compile(
-    r"^### (7\.\d+(?:\.\d+)?)\s+(.*?)\s*$", re.MULTILINE
-)
+_SEC7_HEADING_RE = re.compile(r"^### (7\.\d+(?:\.\d+)?)\s+(.*?)\s*$", re.MULTILINE)
 
 
 def _first_prose_line(segment: str) -> str:
@@ -7067,7 +7222,6 @@ def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = Non
         return report
 
     try:
-        import yaml as _yaml
         data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8"))
     except Exception:
         report.ok = 1
@@ -7110,7 +7264,7 @@ def check_finding_range_homogeneous(md_path: Path, output_dir: Path | None = Non
         report.ok = 1
         return report
     sec8_start = text.find("\n## 8.", sec7_start)
-    sec7 = text[sec7_start: sec8_start if sec8_start > 0 else len(text)]
+    sec7 = text[sec7_start : sec8_start if sec8_start > 0 else len(text)]
 
     # Range pattern: two F-NNN links joined by an en-dash (–, U+2013) or
     # em-dash (—, U+2014) on the SAME line. Plain ASCII hyphen `-` is a
@@ -7197,7 +7351,6 @@ def _load_weakness_classes() -> dict:
         _WEAKNESS_CLASSES_CACHE_QA = {"clusters": []}
         return _WEAKNESS_CLASSES_CACHE_QA
     try:
-        import yaml as _yaml
         _WEAKNESS_CLASSES_CACHE_QA = _fast_yaml_load(candidate.read_text()) or {"clusters": []}
     except Exception:
         _WEAKNESS_CLASSES_CACHE_QA = {"clusters": []}
@@ -7239,7 +7392,6 @@ def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) ->
         return report
 
     try:
-        import yaml as _yaml
         data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8"))
     except Exception:
         report.ok = 1
@@ -7258,9 +7410,9 @@ def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) ->
     # LLM analyst keeps a finding under a non-dep cluster but the underlying
     # cause is a vulnerable library version.
     _LIB_TOKENS = (
-        r"express-jwt\s+\d",          # express-jwt 0.x
-        r"\bnotevil\b",                # notevil sandbox
-        r"libxmljs2?\s+\d",            # libxmljs2 0.x
+        r"express-jwt\s+\d",  # express-jwt 0.x
+        r"\bnotevil\b",  # notevil sandbox
+        r"libxmljs2?\s+\d",  # libxmljs2 0.x
         r"\bsanitize-html\b\s+\d",
         r"\bjsonwebtoken\b\s+[\d.]+",
         r"\bnode-fetch\b\s+[\d.]+",
@@ -7289,7 +7441,7 @@ def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) ->
             candidate_fids.append((fid, f"cluster=outdated_deps ({cwe})"))
             continue
         # 3) Library token in title or evidence excerpt
-        title = (t.get("title") or "")
+        title = t.get("title") or ""
         ev = t.get("evidence") or {}
         excerpts: list[str] = []
         if isinstance(ev, dict):
@@ -7331,7 +7483,7 @@ def check_dependency_cross_ref(md_path: Path, output_dir: Path | None = None) ->
         return report
 
     # End at next `### 7.` or `## ` heading.
-    rest = text[m_sec.end():]
+    rest = text[m_sec.end() :]
     next_heading = re.search(r"\n#{2,3}\s", rest)
     sec_body = rest[: next_heading.start() if next_heading else len(rest)]
 
@@ -7452,7 +7604,7 @@ def check_rhetorical_severity(md_path: Path) -> Report:
         sec_key = f"§{sec_num} {sec_title}"
         for pat, name in compiled:
             for m in pat.finditer(body):
-                snippet = body[max(0, m.start() - 30):m.end() + 30].replace("\n", " ").strip()
+                snippet = body[max(0, m.start() - 30) : m.end() + 30].replace("\n", " ").strip()
                 hits.setdefault(sec_key, []).append(f"{name!r} — …{snippet}…")
     for sec_key, found in hits.items():
         report.issues.append(
@@ -7541,16 +7693,21 @@ def check_section_opener_restates_heading(md_path: Path) -> Report:
 
 _AI_PADDING_PATTERNS: list[tuple[str, str]] = [
     (r"\bit is worth noting (?:that\b)?", "it is worth noting"),
-    (r"\bit (?:should be|is important to) (?:noted|mentioned|noted|noted that|noted as|"
-     r"note(?:d)?|mention(?:ed)?|highlight(?:ed)?|understand|understood|considered|emphasised|"
-     r"emphasized)\b", "it should be noted / it is important to"),
+    (
+        r"\bit (?:should be|is important to) (?:noted|mentioned|noted|noted that|noted as|"
+        r"note(?:d)?|mention(?:ed)?|highlight(?:ed)?|understand|understood|considered|emphasised|"
+        r"emphasized)\b",
+        "it should be noted / it is important to",
+    ),
     (r"\b(?:furthermore|moreover|additionally),", "furthermore/moreover/additionally,"),
     (r"\bin summary,", "in summary,"),
     (r"\bto conclude,", "to conclude,"),
     (r"\b(?:essentially|notably|crucially|importantly),", "essentially/notably/crucially/importantly,"),
     (r"\bone (?:important )?(?:aspect|thing) (?:is|to (?:note|consider))\b", "one important aspect is"),
-    (r"\bthis (?:section|chapter) (?:will discuss|aims to|seeks to|presents|provides|details)\b",
-     "this section will discuss/aims to"),
+    (
+        r"\bthis (?:section|chapter) (?:will discuss|aims to|seeks to|presents|provides|details)\b",
+        "this section will discuss/aims to",
+    ),
     (r"\bin (?:the\s+context\s+of|order\s+to)\b", "in the context of / in order to"),
     (r"\bin terms of\b", "in terms of"),
 ]
@@ -7664,9 +7821,22 @@ def check_subcontrol_naming_canonical(md_path: Path, contract_path: Path = DEFAU
         return report
 
     # Build operation-suffix tokens — Mechanism + Operation form is valid.
-    operation_tokens = {"enrollment", "verification", "issuance", "reset", "change",
-                        "registration", "sign-in", "sign-up", "signup", "login",
-                        "flow", "adapter", "middleware", "handshake"}
+    operation_tokens = {
+        "enrollment",
+        "verification",
+        "issuance",
+        "reset",
+        "change",
+        "registration",
+        "sign-in",
+        "sign-up",
+        "signup",
+        "login",
+        "flow",
+        "adapter",
+        "middleware",
+        "handshake",
+    }
 
     forbidden_hits: list[tuple[str, str]] = []
     non_canonical: list[str] = []
@@ -7809,12 +7979,21 @@ def check_na_against_recon(md_path: Path, output_dir: Path | None = None) -> Rep
 
     # Per-domain recon signals. Order: title pattern in §7 → recon tokens.
     _DOMAIN_RECON_TOKENS = (
-        (re.compile(r"^###\s+7\.\d+\s+(.*?)WebSocket", re.MULTILINE | re.IGNORECASE),
-         "WebSocket", ("socket.io", "websocket", "ws://", "wss://")),
-        (re.compile(r"^###\s+7\.\d+\s+(.*?)(AI\s*/\s*LLM|AI/LLM|LLM)", re.MULTILINE | re.IGNORECASE),
-         "AI/LLM", ("openai", "anthropic", "langchain", "llamaindex", " llm ", "ollama")),
-        (re.compile(r"^###\s+7\.\d+\s+(.*?)Real-time", re.MULTILINE | re.IGNORECASE),
-         "Real-time", ("socket.io", "websocket", "real-time", "sse ", "eventsource")),
+        (
+            re.compile(r"^###\s+7\.\d+\s+(.*?)WebSocket", re.MULTILINE | re.IGNORECASE),
+            "WebSocket",
+            ("socket.io", "websocket", "ws://", "wss://"),
+        ),
+        (
+            re.compile(r"^###\s+7\.\d+\s+(.*?)(AI\s*/\s*LLM|AI/LLM|LLM)", re.MULTILINE | re.IGNORECASE),
+            "AI/LLM",
+            ("openai", "anthropic", "langchain", "llamaindex", " llm ", "ollama"),
+        ),
+        (
+            re.compile(r"^###\s+7\.\d+\s+(.*?)Real-time", re.MULTILINE | re.IGNORECASE),
+            "Real-time",
+            ("socket.io", "websocket", "real-time", "sse ", "eventsource"),
+        ),
     )
 
     flagged: list[str] = []
@@ -7830,7 +8009,7 @@ def check_na_against_recon(md_path: Path, output_dir: Path | None = None) -> Rep
             seen_section_starts.add(sec_match.start())
             heading_end = sec_match.end()
             # Read up to ~600 chars after the heading or until the next heading.
-            window = text[heading_end: heading_end + 600]
+            window = text[heading_end : heading_end + 600]
             next_heading = re.search(r"\n#{2,3}\s", window)
             body = window[: next_heading.start() if next_heading else len(window)]
             if "_Not applicable" not in body and "_not applicable" not in body.lower():
@@ -8308,7 +8487,7 @@ _MD_THREAT_ROW_RE = re.compile(
     r"\|\s*\[(?:F|T)-(\d{3,4})\]"  # form 1: markdown-link in a table cell
     r"|"
     r"<a\s+id=\"[ft]-(\d{3,4})\">"  # form 2: anchor-tag — table ID cell OR
-    r")",                            #         card heading (2026-05); no `|` prefix
+    r")",  #         card heading (2026-05); no `|` prefix
     re.IGNORECASE,
 )
 _MD_MITIGATION_HEADING_RE = re.compile(
@@ -8496,7 +8675,6 @@ def check_summary_bullets(md_path: Path) -> Report:
 # must exist on every run that passed through compose_threat_model.py.
 REQUIRED_FRAGMENTS = (
     "ms-verdict.json",
-    "ms-architecture-assessment.json",
     "system-overview.md",
     "architecture-diagrams.md",
     "attack-walkthroughs.md",
@@ -8766,7 +8944,7 @@ def _check_figure1_architecture_layout(report: Report, section: str) -> None:
     if fig1_pos < 0:
         return
     fig2_pos = section.find("**Figure 2", fig1_pos)
-    fig1_scope = section[fig1_pos: fig2_pos if fig2_pos > fig1_pos else len(section)]
+    fig1_scope = section[fig1_pos : fig2_pos if fig2_pos > fig1_pos else len(section)]
     blocks = [m.group("body") for m in _MERMAID_BODY_RE.finditer(fig1_scope)]
     if not blocks:
         report.issues.append("A1: Figure 1 is present but has no ```mermaid block")
@@ -8782,8 +8960,7 @@ def _check_figure1_architecture_layout(report: Report, section: str) -> None:
     expected = sorted(present_tiers, key=tier_order.index)
     if present_tiers != expected:
         report.issues.append(
-            "A2: Figure 1 subgraph order must follow "
-            f"`ZONE_ACTORS → CLIENT → APP → DATA`; got {present_tiers!r}"
+            f"A2: Figure 1 subgraph order must follow `ZONE_ACTORS → CLIENT → APP → DATA`; got {present_tiers!r}"
         )
 
     actors_block = _extract_subgraph_block(mermaid, "ZONE_ACTORS")
@@ -8796,15 +8973,10 @@ def _check_figure1_architecture_layout(report: Report, section: str) -> None:
         return
 
     edges = list(_iter_fig1_edges(mermaid))
-    solid_to_data = [
-        (src, dst)
-        for src, op, dst in edges
-        if op == "==>" and dst in data_nodes
-    ]
+    solid_to_data = [(src, dst) for src, op, dst in edges if op == "==>" and dst in data_nodes]
     if solid_to_data:
         report.issues.append(
-            "A3: Figure 1 must not draw solid attack edges into DATA nodes; "
-            f"offending edges: {solid_to_data!r}"
+            f"A3: Figure 1 must not draw solid attack edges into DATA nodes; offending edges: {solid_to_data!r}"
         )
 
     actor_to_data = [
@@ -8820,9 +8992,7 @@ def _check_figure1_architecture_layout(report: Report, section: str) -> None:
 
     if app_nodes:
         app_to_data_sources = {
-            src
-            for src, op, dst in edges
-            if src in app_nodes and dst in data_nodes and op in {"-->", "-.->", "~~~"}
+            src for src, op, dst in edges if src in app_nodes and dst in data_nodes and op in {"-->", "-.->", "~~~"}
         }
         if not app_to_data_sources:
             report.issues.append(
@@ -8847,10 +9017,7 @@ def _declared_node_ids(block: str) -> set[str]:
 
 def _iter_fig1_edges(mermaid: str) -> list[tuple[str, str, str]]:
     """Return ``(src, op, dst)`` triples for simple Figure 1 flowchart edges."""
-    return [
-        (m.group("src"), m.group("op"), m.group("dst"))
-        for m in _FIG1_EDGE_RE.finditer(mermaid)
-    ]
+    return [(m.group("src"), m.group("op"), m.group("dst")) for m in _FIG1_EDGE_RE.finditer(mermaid)]
 
 
 def _check_heatmap_undeclared_nodes(report: Report, mermaid: str, tiers_block: str) -> None:

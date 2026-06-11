@@ -31,7 +31,6 @@ import hashlib
 import json
 import os
 import sys
-from pathlib import Path
 
 import yaml
 
@@ -186,13 +185,15 @@ def main() -> None:
         with open(out_path, "w") as f:
             json.dump(slice_data, f, indent=2)
         slice_files.append(out_path)
-        slice_summary.append({
-            "component_id": comp_id,
-            "component_type": component.get("component_type"),
-            "actor_count": slice_data["actor_count"],
-            "actor_ids": [a["id"] for a in slice_data["relevant_actors"]],
-            "slice_path": out_path,
-        })
+        slice_summary.append(
+            {
+                "component_id": comp_id,
+                "component_type": component.get("component_type"),
+                "actor_count": slice_data["actor_count"],
+                "actor_ids": [a["id"] for a in slice_data["relevant_actors"]],
+                "slice_path": out_path,
+            }
+        )
         print(f"[slice_actors]   {comp_id}: {slice_data['actor_count']} actors → {out_path}")
 
     # Write manifest

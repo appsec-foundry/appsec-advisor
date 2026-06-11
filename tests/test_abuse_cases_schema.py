@@ -3,9 +3,9 @@
 A valid library document passes; each required field, enum, and pattern is
 exercised through a tiny mutation on a deep-copied valid case.
 """
+
 from __future__ import annotations
 
-import copy
 from pathlib import Path
 
 import jsonschema

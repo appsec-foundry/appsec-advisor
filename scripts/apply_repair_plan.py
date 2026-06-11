@@ -88,14 +88,14 @@ def _fix_toc_nested_link(md_text: str) -> tuple[str, int]:
     # The outer link target may or may not equal the inner — both are
     # broken from a renderer point of view, so we accept either.
     pattern = re.compile(
-        r"\["                       # outer [
-        r"([^\[\]]*?)"              # group 1: prefix text inside outer label (lazy, no brackets)
-        r"\["                       # inner [
-        r"([^\]]+?)"                # group 2: inner label
-        r"\]\(#[^)]+\)"             # inner ](#anchor)
-        r"([^\[\]]*?)"              # group 3: suffix text inside outer label
-        r"\]"                       # outer ]
-        r"\((#[^)]+)\)"             # group 4: outer (#anchor)
+        r"\["  # outer [
+        r"([^\[\]]*?)"  # group 1: prefix text inside outer label (lazy, no brackets)
+        r"\["  # inner [
+        r"([^\]]+?)"  # group 2: inner label
+        r"\]\(#[^)]+\)"  # inner ](#anchor)
+        r"([^\[\]]*?)"  # group 3: suffix text inside outer label
+        r"\]"  # outer ]
+        r"\((#[^)]+)\)"  # group 4: outer (#anchor)
     )
 
     new_text, count = pattern.subn(r"[\1\2\3](\4)", md_text)
@@ -146,8 +146,7 @@ def apply_plan(output_dir: Path, plan: dict) -> dict:
             # Reserved for future expansion. Falling here means the type
             # is declared supported but the dispatch arm is missing.
             print(
-                f"[repair-plan] internal: type {atype!r} declared "
-                f"supported but no handler dispatched",
+                f"[repair-plan] internal: type {atype!r} declared supported but no handler dispatched",
                 file=sys.stderr,
             )
             skipped.append(atype)
@@ -242,8 +241,7 @@ def main(argv: list[str]) -> int:
         print(f"[repair-plan] {t}: {n} substitution(s)", file=sys.stderr)
     if report["skipped_types"]:
         print(
-            f"[repair-plan] skipped (non-mechanical): "
-            f"{sorted(set(report['skipped_types']))}",
+            f"[repair-plan] skipped (non-mechanical): {sorted(set(report['skipped_types']))}",
             file=sys.stderr,
         )
 

@@ -144,9 +144,7 @@ def patch_plugin_json(build: Path, name: str, version: str, description: str | N
     data["name"] = name
     data["version"] = version
     data["description"] = (
-        description
-        if description is not None
-        else f"Internal packaged build of appsec-advisor for {name}."
+        description if description is not None else f"Internal packaged build of appsec-advisor for {name}."
     )
     plugin_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -175,9 +173,7 @@ def _load_yaml_or_json(path: Path) -> dict:
         try:
             import yaml
         except ImportError:
-            _die(
-                "package policy YAML requires PyYAML; install pyyaml or use a .json policy file"
-            )
+            _die("package policy YAML requires PyYAML; install pyyaml or use a .json policy file")
         try:
             data = yaml.safe_load(text)
         except yaml.YAMLError as exc:
@@ -189,9 +185,7 @@ def _load_yaml_or_json(path: Path) -> dict:
     return data
 
 
-def load_package_policy(
-    org_profile: Path, explicit_path: str | None
-) -> tuple[dict, Path | None]:
+def load_package_policy(org_profile: Path, explicit_path: str | None) -> tuple[dict, Path | None]:
     if explicit_path:
         path = Path(explicit_path).resolve()
         if not path.is_file():
@@ -233,10 +227,7 @@ def _read_name_list(block: dict, key: str, surface: str) -> set[str] | None:
             duplicates.add(name)
         seen.add(name)
     if duplicates:
-        _die(
-            f"package policy plugin_surface.{surface}.{key} contains duplicates: "
-            f"{sorted(duplicates)}"
-        )
+        _die(f"package policy plugin_surface.{surface}.{key} contains duplicates: {sorted(duplicates)}")
     return seen
 
 
@@ -254,10 +245,7 @@ def _resolve_keep_set(
         _die(f"package policy plugin_surface.{surface} must be a mapping/object")
     unknown_keys = set(block) - {"include", "exclude"}
     if unknown_keys:
-        _die(
-            f"package policy plugin_surface.{surface} has unknown keys: "
-            f"{sorted(unknown_keys)}"
-        )
+        _die(f"package policy plugin_surface.{surface} has unknown keys: {sorted(unknown_keys)}")
     include = _read_name_list(block, "include", surface)
     exclude = _read_name_list(block, "exclude", surface)
     if include is not None and exclude is not None:
@@ -275,10 +263,7 @@ def _resolve_keep_set(
     keep = set(selected) if include is not None else (available - selected)
     missing_required = required - keep
     if missing_required:
-        _die(
-            f"package policy plugin_surface.{surface} must keep required names: "
-            f"{sorted(missing_required)}"
-        )
+        _die(f"package policy plugin_surface.{surface} must keep required names: {sorted(missing_required)}")
     return keep
 
 
@@ -286,11 +271,7 @@ def _available_skills(build: Path) -> set[str]:
     skills_dir = build / "skills"
     if not skills_dir.is_dir():
         return set()
-    return {
-        path.parent.name
-        for path in skills_dir.glob("*/SKILL.md")
-        if path.is_file()
-    }
+    return {path.parent.name for path in skills_dir.glob("*/SKILL.md") if path.is_file()}
 
 
 def _hook_id(command: str) -> str | None:
@@ -509,9 +490,7 @@ def remove_stale_archive(name: str, version: str, dist_dir: Path) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build and validate an internal appsec-advisor plugin package."
-    )
+    parser = argparse.ArgumentParser(description="Build and validate an internal appsec-advisor plugin package.")
     parser.add_argument("--source", default=".", help="upstream appsec-advisor checkout")
     parser.add_argument("--org-profile", required=True, help="org-profile directory to bundle")
     parser.add_argument("--name", required=True, help="internal plugin name / command namespace")
@@ -519,7 +498,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--build-dir", default="build", help="build output directory")
     parser.add_argument("--dist-dir", default="dist", help="tarball output directory")
     parser.add_argument("--description", default=None, help="plugin.json description override")
-    parser.add_argument("--upstream-url", default=None, help="upstream plugin repository URL recorded in package-surface.json")
+    parser.add_argument(
+        "--upstream-url", default=None, help="upstream plugin repository URL recorded in package-surface.json"
+    )
     parser.add_argument(
         "--skip-validation",
         action="store_true",
@@ -533,10 +514,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--package-policy",
         default=None,
-        help=(
-            "optional package surface policy; defaults to "
-            "org-profile/package-policy.yaml when present"
-        ),
+        help=("optional package surface policy; defaults to org-profile/package-policy.yaml when present"),
     )
     return parser.parse_args(argv)
 

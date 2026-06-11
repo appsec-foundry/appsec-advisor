@@ -40,7 +40,6 @@ Exit codes
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import sys
@@ -69,6 +68,7 @@ def _read_local(path: str) -> bytes:
     Relative paths resolve against the current working directory; ``~`` expands.
     """
     return Path(path).expanduser().read_bytes()
+
 
 # Reuse the single source of truth for source resolution + fail_mode.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -113,11 +113,7 @@ def run(args: argparse.Namespace) -> int:
         print(f"error: output dir does not exist: {output_dir}", file=sys.stderr)
         return 3
 
-    plugin_root = (
-        Path(args.plugin_root).resolve()
-        if args.plugin_root
-        else Path(__file__).resolve().parent.parent
-    )
+    plugin_root = Path(args.plugin_root).resolve() if args.plugin_root else Path(__file__).resolve().parent.parent
     out_file = output_dir / ".requirements.yaml"
     cache = _cache_path(args.cache_path, plugin_root)
 
@@ -182,12 +178,14 @@ def run(args: argparse.Namespace) -> int:
                     if remote
                     else "Verify the path points at an existing, readable file."
                 )
-                return _abort([
-                    f"Source: {src_loc}  (fail_mode={fail_mode})",
-                    f"Reason: {exc}",
-                    "The source was passed explicitly (--requirements) and must",
-                    f"load. {hint}",
-                ])
+                return _abort(
+                    [
+                        f"Source: {src_loc}  (fail_mode={fail_mode})",
+                        f"Reason: {exc}",
+                        "The source was passed explicitly (--requirements) and must",
+                        f"load. {hint}",
+                    ]
+                )
             print(f"↳ Requirements: source load failed ({src_loc}) — checking plugin cache…", file=sys.stderr)
 
     # 2. Cache fallback (cache_fallback mode only).
@@ -211,12 +209,14 @@ def run(args: argparse.Namespace) -> int:
             return 0
 
     # 3. Requested but nothing loaded -> abort.
-    return _abort([
-        f"Source: {src_loc or '(no source configured)'}  (fail_mode={fail_mode})",
-        "The configured source did not load and no usable plugin cache exists.",
-        "Fix: make the requirements source reachable, populate the cache, or",
-        "re-run with --no-requirements to skip the requirements check.",
-    ])
+    return _abort(
+        [
+            f"Source: {src_loc or '(no source configured)'}  (fail_mode={fail_mode})",
+            "The configured source did not load and no usable plugin cache exists.",
+            "Fix: make the requirements source reachable, populate the cache, or",
+            "re-run with --no-requirements to skip the requirements check.",
+        ]
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -225,18 +225,26 @@ def main(argv: list[str] | None = None) -> int:
         description="Deterministic fetch-or-abort gate for security requirements.",
     )
     p.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR"), required=False)
-    p.add_argument("--requirements", default=None,
-                   help="requirements source override: http(s):// URL or a local file path")
+    p.add_argument(
+        "--requirements", default=None, help="requirements source override: http(s):// URL or a local file path"
+    )
     p.add_argument("--no-requirements", action="store_true")
-    p.add_argument("--require", action="store_true",
-                   help="caller asserts requirements ARE requested (skip enabled re-derivation)")
+    p.add_argument(
+        "--require", action="store_true", help="caller asserts requirements ARE requested (skip enabled re-derivation)"
+    )
     p.add_argument("--base-mode", default=None, choices=[None, "quick", "standard", "thorough"])
-    p.add_argument("--caller", default="create-threat-model",
-                   choices=["create-threat-model", "audit-security-requirements", "verify-requirements"])
-    p.add_argument("--fallback-baseline", default=None,
-                   help="opt-in: on the cache_fallback path, if no company source/cache loads, "
-                        "write this baseline catalog instead of aborting (dev-security-helper). "
-                        "Never overrides an explicit --requirements failure (that still aborts).")
+    p.add_argument(
+        "--caller",
+        default="create-threat-model",
+        choices=["create-threat-model", "audit-security-requirements", "verify-requirements"],
+    )
+    p.add_argument(
+        "--fallback-baseline",
+        default=None,
+        help="opt-in: on the cache_fallback path, if no company source/cache loads, "
+        "write this baseline catalog instead of aborting (dev-security-helper). "
+        "Never overrides an explicit --requirements failure (that still aborts).",
+    )
     p.add_argument("--plugin-root", default=None)
     p.add_argument("--cache-path", default=None, help="override plugin cache path")
     p.add_argument("--timeout", type=int, default=15)

@@ -105,18 +105,12 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
                 errors.append(f"{path}: 'organization_profile.path' must be a string or null")
             default_preset = org.get("default_preset")
             if default_preset is not None and not isinstance(default_preset, str):
-                errors.append(
-                    f"{path}: 'organization_profile.default_preset' must be a string or null"
-                )
+                errors.append(f"{path}: 'organization_profile.default_preset' must be a string or null")
             if enabled is True and not prof_path:
-                errors.append(
-                    f"{path}: 'organization_profile.enabled' is true but 'path' is null"
-                )
+                errors.append(f"{path}: 'organization_profile.enabled' is true but 'path' is null")
             unknown_org = set(org.keys()) - {"enabled", "path", "default_preset"}
             if unknown_org:
-                errors.append(
-                    f"{path}: unknown keys in 'organization_profile': {sorted(unknown_org)}"
-                )
+                errors.append(f"{path}: unknown keys in 'organization_profile': {sorted(unknown_org)}")
 
     # Reject unknown top-level keys
     # JSON has no native comments. The committed config permits a top-level
@@ -180,8 +174,8 @@ def _validate_yaml_against_schema(data_path: Path, schema_path: Path) -> list[st
         return [f"{schema_path}: schema file not found"]
 
     try:
-        import yaml
         import jsonschema
+        import yaml
     except ImportError as e:  # pragma: no cover - test env has both deps
         return [f"{data_path}: YAML schema validation requires missing dependency {e.name!r}"]
 

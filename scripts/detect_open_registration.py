@@ -25,6 +25,7 @@ takes precedence and is preserved across re-runs.
 Usage:
     python3 detect_open_registration.py <output_dir>
 """
+
 from __future__ import annotations
 
 import json
@@ -34,14 +35,13 @@ from pathlib import Path
 
 import yaml
 
-
 # Patterns that mark a route as user-registration. Case-insensitive.
 # Anchored loosely — `/api/v2/users` should match `/users`.
 _REGISTRATION_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\bregister\b", re.IGNORECASE),
     re.compile(r"\bsign[-_]?up\b", re.IGNORECASE),
     re.compile(r"/sign[-_]?up\b", re.IGNORECASE),
-    re.compile(r"/users?\s*$", re.IGNORECASE),       # POST /users, /api/users
+    re.compile(r"/users?\s*$", re.IGNORECASE),  # POST /users, /api/users
     re.compile(r"/accounts?\s*$", re.IGNORECASE),
     re.compile(r"/users?/create", re.IGNORECASE),
     re.compile(r"/auth/(register|signup)\b", re.IGNORECASE),
@@ -127,10 +127,7 @@ def detect(yaml_data: dict, routes: list | None = None) -> tuple[bool, str]:
     # Fallback — attack_surface[] had nothing; consult the full route inventory.
     for route in routes or []:
         if isinstance(route, dict) and _route_is_open_registration(route):
-            return True, (
-                f"registration route in .route-inventory.json: "
-                f"POST {route.get('path')}"
-            )
+            return True, (f"registration route in .route-inventory.json: POST {route.get('path')}")
     return False, "no unauthenticated registration route found in attack_surface[] or route inventory"
 
 
@@ -170,9 +167,7 @@ def main(argv: list[str]) -> int:
     data["meta"] = meta
 
     yaml_path.write_text(
-        yaml.safe_dump(
-            data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False
-        ),
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
         encoding="utf-8",
     )
     print(f"detect_open_registration: open_user_registration={open_reg}  ({reason})")

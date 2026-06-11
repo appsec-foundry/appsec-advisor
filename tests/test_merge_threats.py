@@ -120,14 +120,22 @@ class TestEvidenceDedup:
         b2b = _threat(
             component_id="b2b-api",
             title="Remote code execution via B2B order sandbox escape",
-            cwe="CWE-94", stride="Tampering", risk="Critical",
-            likelihood="High", impact="Critical", evidence=dict(ev),
+            cwe="CWE-94",
+            stride="Tampering",
+            risk="Critical",
+            likelihood="High",
+            impact="Critical",
+            evidence=dict(ev),
         )
         express = _threat(
             component_id="express-backend",
             title="RCE via B2B order sandbox escape",
-            cwe="CWE-94", stride="Elevation of Privilege", risk="Critical",
-            likelihood="High", impact="Critical", evidence=dict(ev),
+            cwe="CWE-94",
+            stride="Elevation of Privilege",
+            risk="Critical",
+            likelihood="High",
+            impact="Critical",
+            evidence=dict(ev),
         )
         return b2b, express
 
@@ -142,10 +150,17 @@ class TestEvidenceDedup:
 
     def test_higher_risk_member_wins(self, mt):
         ev = {"file": "routes/x.ts", "line": 9}
-        low = _threat(component_id="a", cwe="CWE-94", stride="Tampering",
-                      risk="High", evidence=dict(ev), title="t-high")
-        crit = _threat(component_id="b", cwe="CWE-94", stride="Elevation of Privilege",
-                       risk="Critical", evidence=dict(ev), title="t-crit")
+        low = _threat(
+            component_id="a", cwe="CWE-94", stride="Tampering", risk="High", evidence=dict(ev), title="t-high"
+        )
+        crit = _threat(
+            component_id="b",
+            cwe="CWE-94",
+            stride="Elevation of Privilege",
+            risk="Critical",
+            evidence=dict(ev),
+            title="t-crit",
+        )
         # first-seen is the lower-risk one; the Critical must still win
         result = mt._dedupe_evidence([low, crit])
         assert len(result) == 1
@@ -160,10 +175,10 @@ class TestEvidenceDedup:
     def test_no_concrete_line_is_too_coarse_to_merge(self, mt):
         # bare file (line 0 / absent) must NOT collapse — many distinct
         # findings legitimately share a file.
-        a = _threat(component_id="c", cwe="CWE-94", stride="Tampering",
-                    evidence={"file": "server.ts", "line": 0})
-        b = _threat(component_id="c", cwe="CWE-94", stride="Elevation of Privilege",
-                    evidence={"file": "server.ts", "line": 0})
+        a = _threat(component_id="c", cwe="CWE-94", stride="Tampering", evidence={"file": "server.ts", "line": 0})
+        b = _threat(
+            component_id="c", cwe="CWE-94", stride="Elevation of Privilege", evidence={"file": "server.ts", "line": 0}
+        )
         assert len(mt._dedupe_evidence([a, b])) == 2
 
 
@@ -183,8 +198,11 @@ class TestScenarioRefRemap:
         # "T-009"; after global assignment F-009 becomes T-008.
         threats = [
             {"id": "F-009", "t_id": "T-008", "scenario": "MD5 hashing."},
-            {"id": "F-017", "t_id": "T-021",
-             "scenario": "Combined with MD5 password hashing (T-009), this enables takeover."},
+            {
+                "id": "F-017",
+                "t_id": "T-021",
+                "scenario": "Combined with MD5 password hashing (T-009), this enables takeover.",
+            },
         ]
         out = mt._remap_scenario_local_refs(threats)
         assert "(T-008)" in out[1]["scenario"]
@@ -194,8 +212,7 @@ class TestScenarioRefRemap:
         # a scenario ref whose local id is not in the table (deduped /
         # config-scan / hallucinated) must NOT be rewritten.
         threats = [
-            {"id": "F-001", "t_id": "T-001",
-             "scenario": "See also T-099 which does not exist locally."},
+            {"id": "F-001", "t_id": "T-001", "scenario": "See also T-099 which does not exist locally."},
         ]
         out = mt._remap_scenario_local_refs(threats)
         assert "T-099" in out[0]["scenario"]

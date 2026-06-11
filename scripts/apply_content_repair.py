@@ -182,22 +182,15 @@ def _op_heading_rename_cascade(text: str, op: dict) -> str:
         )
         text, h_n = bare_heading_pat.subn(rf"\1{new_name}", text, count=1)
     if h_n == 0:
-        raise ApplyError(
-            f"heading_rename_cascade: no H4 heading found for "
-            f"old_name={old_name!r:.80} — needle missing"
-        )
+        raise ApplyError(f"heading_rename_cascade: no H4 heading found for old_name={old_name!r:.80} — needle missing")
 
     # (2) Anchor tag — best effort. Match `<a id="<old-kebab>"></a>` (HTML).
-    anchor_pat = re.compile(
-        r'<a\s+id="' + re.escape(old_kebab) + r'"\s*>\s*</a>'
-    )
+    anchor_pat = re.compile(r'<a\s+id="' + re.escape(old_kebab) + r'"\s*>\s*</a>')
     text = anchor_pat.sub(f'<a id="{new_kebab}"></a>', text)
 
     # (3) Markdown link with the old anchor — match `[Some Text](#<old-kebab>)`
     # — replace BOTH the link text (when it equals old_name) and the anchor.
-    link_text_anchor_pat = re.compile(
-        r"\[" + re.escape(old_name) + r"\]\(#" + re.escape(old_kebab) + r"\)"
-    )
+    link_text_anchor_pat = re.compile(r"\[" + re.escape(old_name) + r"\]\(#" + re.escape(old_kebab) + r"\)")
     text = link_text_anchor_pat.sub(f"[{new_name}](#{new_kebab})", text)
     # And: link with different text but same anchor (rare; preserve label).
     bare_anchor_pat = re.compile(r"\]\(#" + re.escape(old_kebab) + r"\)")
@@ -261,7 +254,7 @@ def _validate_plan(plan: dict) -> list[str]:
             errs.append(
                 f"actions[{i}].operation must be a JSON object with an 'op' key, "
                 f"got {type(op).__name__} — the flat form "
-                f"(operation:\"replace_string\" + search_text/replace_text) is not "
+                f'(operation:"replace_string" + search_text/replace_text) is not '
                 f"supported; use the nested object "
                 f"{{'op': 'replace_string', 'find': ..., 'replace': ...}}"
             )
@@ -337,13 +330,15 @@ def apply_plan(plan: dict, output_dir: Path) -> dict:
                 # Defensive: the validator already rejects this at plan level,
                 # but guard the library entry point too so a non-dict operation
                 # can never raise an uncaught AttributeError here.
-                report["skipped"].append({
-                    "index": idx,
-                    "reason": (
-                        f"operation is not an object (got {type(op).__name__}); "
-                        f"flat form unsupported — use nested {{'op': ...}}"
-                    ),
-                })
+                report["skipped"].append(
+                    {
+                        "index": idx,
+                        "reason": (
+                            f"operation is not an object (got {type(op).__name__}); "
+                            f"flat form unsupported — use nested {{'op': ...}}"
+                        ),
+                    }
+                )
                 report["exit_code"] = 1
                 print(
                     f"[content-repair] ✗ action[{idx}] check={action.get('check', '?')} "

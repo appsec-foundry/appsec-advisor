@@ -202,8 +202,7 @@ def _run_used_economy_model(output_dir: Path) -> bool:
         cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return str(cfg.get("reasoning_model", "")).strip().lower() in (
-        "sonnet-economy", "haiku-economy")
+    return str(cfg.get("reasoning_model", "")).strip().lower() in ("sonnet-economy", "haiku-economy")
 
 
 # Sub-agent token-output ceiling — abnormal Sonnet sessions go up to
@@ -762,9 +761,7 @@ def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
         if "inconclusive" in verdicts and "blocked" not in verdicts:
             ac_id = v.get("abuse_case_id") or "AC-?"
             title = v.get("title") or ac_id
-            n_inc = sum(
-                1 for s in steps if isinstance(s, dict) and (s.get("verdict") or "").lower() == "inconclusive"
-            )
+            n_inc = sum(1 for s in steps if isinstance(s, dict) and (s.get("verdict") or "").lower() == "inconclusive")
             issues.append(
                 {
                     "category": "abuse_case_inconclusive",

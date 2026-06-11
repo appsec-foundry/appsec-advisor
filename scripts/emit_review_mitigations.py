@@ -31,6 +31,7 @@ an `auto_source` discriminator so a re-run can clear and regenerate them.
 Usage:
     python3 emit_review_mitigations.py <output_dir>
 """
+
 from __future__ import annotations
 
 import re
@@ -44,25 +45,26 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _shared_sources import ARCH_ALL_SOURCES  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # CWE → injection-class allowlist for M-20 PoC hints.
 # ---------------------------------------------------------------------------
 
-_INJECTION_CWES = frozenset({
-    "CWE-89",   # SQL injection
-    "CWE-90",   # LDAP injection
-    "CWE-78",   # OS command injection
-    "CWE-79",   # XSS
-    "CWE-91",   # XML injection
-    "CWE-94",   # Code injection / eval
-    "CWE-95",   # Server-side template injection
-    "CWE-611", # XXE
-    "CWE-639", # IDOR (BOLA)
-    "CWE-918", # SSRF
-    "CWE-601", # Open redirect
-    "CWE-943", # NoSQL injection
-})
+_INJECTION_CWES = frozenset(
+    {
+        "CWE-89",  # SQL injection
+        "CWE-90",  # LDAP injection
+        "CWE-78",  # OS command injection
+        "CWE-79",  # XSS
+        "CWE-91",  # XML injection
+        "CWE-94",  # Code injection / eval
+        "CWE-95",  # Server-side template injection
+        "CWE-611",  # XXE
+        "CWE-639",  # IDOR (BOLA)
+        "CWE-918",  # SSRF
+        "CWE-601",  # Open redirect
+        "CWE-943",  # NoSQL injection
+    }
+)
 
 
 _M_ID_RE = re.compile(r"\bM-(\d{3,})\b")
@@ -113,22 +115,13 @@ def _clear_prior_auto_mitigations(data: dict) -> None:
     items = data.get("mitigations") or []
     if not isinstance(items, list):
         return
-    surviving = [
-        m for m in items
-        if not (isinstance(m, dict) and m.get("auto_emitted") is True)
-    ]
+    surviving = [m for m in items if not (isinstance(m, dict) and m.get("auto_emitted") is True)]
     # Also unlink dropped M-NNNs from threats[].mitigations[].
-    dropped_ids = {
-        (m.get("id") or "").strip()
-        for m in items
-        if isinstance(m, dict) and m.get("auto_emitted") is True
-    }
+    dropped_ids = {(m.get("id") or "").strip() for m in items if isinstance(m, dict) and m.get("auto_emitted") is True}
     if dropped_ids:
         for t in data.get("threats") or []:
             if isinstance(t, dict) and isinstance(t.get("mitigations"), list):
-                t["mitigations"] = [
-                    mid for mid in t["mitigations"] if mid not in dropped_ids
-                ]
+                t["mitigations"] = [mid for mid in t["mitigations"] if mid not in dropped_ids]
     data["mitigations"] = surviving
 
 
@@ -162,9 +155,8 @@ def _link_threat_to_mitigation(threats_by_id: dict, tid: str, mid: str) -> None:
 # M-15 / M-16: evidence_check ∈ {ambiguous, refuted}
 # ---------------------------------------------------------------------------
 
-def _synthesize_evidence_review(
-    data: dict, state: dict, threats_by_id: dict
-) -> list[dict]:
+
+def _synthesize_evidence_review(data: dict, state: dict, threats_by_id: dict) -> list[dict]:
     """One review card per threat with evidence_check ∈ {ambiguous, refuted}."""
     new_cards: list[dict] = []
     for t in data.get("threats") or []:
@@ -199,18 +191,20 @@ def _synthesize_evidence_review(
                 "reintroduces the defect, and that the finding can be closed."
             )
             reason = "evidence-verifier returned refuted"
-        new_cards.append({
-            "id": mid,
-            "title": title,
-            "kind": "review",
-            "priority": "P3",
-            "threat_ids": [tid],
-            "how": how,
-            "review_target": target,
-            "review_reason": reason,
-            "auto_emitted": True,
-            "auto_source": f"evidence-check-{ec}",
-        })
+        new_cards.append(
+            {
+                "id": mid,
+                "title": title,
+                "kind": "review",
+                "priority": "P3",
+                "threat_ids": [tid],
+                "how": how,
+                "review_target": target,
+                "review_reason": reason,
+                "auto_emitted": True,
+                "auto_source": f"evidence-check-{ec}",
+            }
+        )
         _link_threat_to_mitigation(threats_by_id, tid, mid)
     return new_cards
 
@@ -240,9 +234,7 @@ def _arch_theme_key(threat: dict) -> str:
     return f"{cwe}@{comp}"
 
 
-def _synthesize_architectural_investigate(
-    data: dict, state: dict, threats_by_id: dict
-) -> list[dict]:
+def _synthesize_architectural_investigate(data: dict, state: dict, threats_by_id: dict) -> list[dict]:
     """ONE investigate card per architectural_theme cluster (volume control).
     Each card aggregates all T-NNNs in the cluster into its threat_ids."""
     clusters: dict[str, list[dict]] = {}
@@ -267,11 +259,7 @@ def _synthesize_architectural_investigate(
         # with the architectural marker. Strip the (file) suffix so the
         # title reads as a class.
         descriptor = _short_weakness(members[0].get("title") or theme)
-        component = (
-            members[0].get("component")
-            or members[0].get("component_id")
-            or "the affected component"
-        )
+        component = members[0].get("component") or members[0].get("component_id") or "the affected component"
         mid = _allocate_next_m_id(state)
         tids = sorted({(t.get("id") or "").strip() for t in members if t.get("id")})
         how = (
@@ -285,18 +273,20 @@ def _synthesize_architectural_investigate(
             f"This single review card covers {len(members)} clustered "
             f"finding(s) under the same theme to avoid §9 inflation."
         )
-        new_cards.append({
-            "id": mid,
-            "title": f"Architecture review: validate {descriptor} in {component}",
-            "kind": "investigate",
-            "priority": "P2",
-            "threat_ids": tids,
-            "how": how,
-            "review_target": component,
-            "review_reason": f"source ∈ {{architectural-anti-pattern, coverage-gap}}; theme={theme}",
-            "auto_emitted": True,
-            "auto_source": "architectural-theme-cluster",
-        })
+        new_cards.append(
+            {
+                "id": mid,
+                "title": f"Architecture review: validate {descriptor} in {component}",
+                "kind": "investigate",
+                "priority": "P2",
+                "threat_ids": tids,
+                "how": how,
+                "review_target": component,
+                "review_reason": f"source ∈ {{architectural-anti-pattern, coverage-gap}}; theme={theme}",
+                "auto_emitted": True,
+                "auto_source": "architectural-theme-cluster",
+            }
+        )
         for tid in tids:
             _link_threat_to_mitigation(threats_by_id, tid, mid)
     return new_cards
@@ -307,18 +297,18 @@ def _synthesize_architectural_investigate(
 # ---------------------------------------------------------------------------
 
 _CWE_TO_POC_TEMPLATE: dict[str, str] = {
-    "CWE-89": "{method} {route} with {{{param}: \"' OR 1=1--\"}}  (SQL injection)",
-    "CWE-90": "{method} {route} with {{{param}: \"*)(uid=*)\"}}  (LDAP injection)",
-    "CWE-78": "{method} {route} with {{{param}: \"; id\"}}  (OS command injection)",
-    "CWE-79": "{method} {route} with {{{param}: \"<svg onload=alert(1)>\"}}  (XSS payload)",
-    "CWE-91": "{method} {route} with {{{param}: \"<![CDATA[<script>...</script>]]>\"}}  (XML injection)",
+    "CWE-89": '{method} {route} with {{{param}: "\' OR 1=1--"}}  (SQL injection)',
+    "CWE-90": '{method} {route} with {{{param}: "*)(uid=*)"}}  (LDAP injection)',
+    "CWE-78": '{method} {route} with {{{param}: "; id"}}  (OS command injection)',
+    "CWE-79": '{method} {route} with {{{param}: "<svg onload=alert(1)>"}}  (XSS payload)',
+    "CWE-91": '{method} {route} with {{{param}: "<![CDATA[<script>...</script>]]>"}}  (XML injection)',
     "CWE-94": "{method} {route} with {{{param}: \"require('child_process').exec('id')\"}}  (code injection)",
     "CWE-95": "{method} {route} with {{{param}: \"{{constructor.constructor('return process')()}}\"}}  (template injection)",
-    "CWE-611": "{method} {route} with body containing <!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\"]>  (XXE)",
+    "CWE-611": '{method} {route} with body containing <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd"]>  (XXE)',
     "CWE-639": "{method} {route} with {{{param}: <other-user-id>}}  (IDOR)",
-    "CWE-918": "{method} {route} with {{{param}: \"http://169.254.169.254/latest/meta-data/\"}}  (SSRF)",
-    "CWE-601": "{method} {route} with {{{param}: \"//evil.example.com\"}}  (open redirect)",
-    "CWE-943": "{method} {route} with {{{param}: {{\"$gt\": \"\"}}}}  (NoSQL injection)",
+    "CWE-918": '{method} {route} with {{{param}: "http://169.254.169.254/latest/meta-data/"}}  (SSRF)',
+    "CWE-601": '{method} {route} with {{{param}: "//evil.example.com"}}  (open redirect)',
+    "CWE-943": '{method} {route} with {{{param}: {{"$gt": ""}}}}  (NoSQL injection)',
 }
 
 
@@ -361,12 +351,12 @@ def _extract_route_for_threat(threat: dict) -> str:
         # `routes/login.ts` → `/<inferred>` (heuristic; users will refine)
         base = f.rsplit("/", 1)[-1].rsplit(".", 1)[0]
         return f"/{base.lower()}"
-    return f"/<endpoint>"
+    return "/<endpoint>"
 
 
 def _extract_method_for_threat(threat: dict) -> str:
     """Heuristic: derive HTTP method from common keywords in title/scenario."""
-    text = f"{threat.get('title','')} {threat.get('scenario','')}".lower()
+    text = f"{threat.get('title', '')} {threat.get('scenario', '')}".lower()
     for verb in ("POST", "PUT", "DELETE", "PATCH", "GET"):
         if verb.lower() in text:
             return verb
@@ -376,6 +366,7 @@ def _extract_method_for_threat(threat: dict) -> str:
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
+
 
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
@@ -402,9 +393,7 @@ def main(argv: list[str]) -> int:
     _clear_prior_auto_mitigations(data)
 
     threats_by_id = {
-        (t.get("id") or "").strip(): t
-        for t in (data.get("threats") or [])
-        if isinstance(t, dict) and t.get("id")
+        (t.get("id") or "").strip(): t for t in (data.get("threats") or []) if isinstance(t, dict) and t.get("id")
     }
 
     state = {"counter": _scan_max_m_id(data)}
@@ -421,9 +410,7 @@ def main(argv: list[str]) -> int:
         data["mitigations"] = existing + new_cards
 
     yaml_path.write_text(
-        yaml.safe_dump(
-            data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False
-        ),
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
         encoding="utf-8",
     )
 

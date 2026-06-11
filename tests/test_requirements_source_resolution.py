@@ -1,11 +1,10 @@
 """Tests for scripts/resolve_requirements_source.py."""
+
 from __future__ import annotations
 
 import importlib.util
 import sys
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_requirements_source.py"
@@ -14,9 +13,7 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_requirements_source.py"
 def _load_module():
     if "resolve_requirements_source" in sys.modules:
         return sys.modules["resolve_requirements_source"]
-    spec = importlib.util.spec_from_file_location(
-        "resolve_requirements_source", SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("resolve_requirements_source", SCRIPT_PATH)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["resolve_requirements_source"] = mod
     assert spec.loader is not None
@@ -55,26 +52,20 @@ def test_cli_url_wins():
 
 
 def test_no_requirements_wins_over_profile():
-    result = rrs.resolve(
-        None, True, "standard", "create-threat-model", EFFECTIVE, LEGACY
-    )
+    result = rrs.resolve(None, True, "standard", "create-threat-model", EFFECTIVE, LEGACY)
     assert result["enabled"] is False
     assert result["source"] == "disabled"
 
 
 def test_profile_used_when_no_cli_override():
-    result = rrs.resolve(
-        None, False, "standard", "create-threat-model", EFFECTIVE, LEGACY
-    )
+    result = rrs.resolve(None, False, "standard", "create-threat-model", EFFECTIVE, LEGACY)
     assert result["enabled"] is True
     assert result["source"] == "org-profile"
     assert result["url"] == PROFILE_RS["requirements_yaml_url"]
 
 
 def test_quick_default_inactive_disables_for_quick_mode():
-    result = rrs.resolve(
-        None, False, "quick", "create-threat-model", EFFECTIVE, LEGACY
-    )
+    result = rrs.resolve(None, False, "quick", "create-threat-model", EFFECTIVE, LEGACY)
     assert result["enabled"] is False
     assert result["source"] == "org-profile"
     # URL stays present so status output can still show where it would
@@ -89,19 +80,13 @@ def test_quick_default_active_enables_when_profile_allows():
             "create_threat_model": {"default_active": True, "quick_default_active": True},
         }
     }
-    result = rrs.resolve(
-        None, False, "quick", "create-threat-model", effective, LEGACY
-    )
+    result = rrs.resolve(None, False, "quick", "create-threat-model", effective, LEGACY)
     assert result["enabled"] is True
 
 
 def test_standalone_audit_respects_toggle():
-    effective = {
-        "requirements_source": {**PROFILE_RS, "standalone_audit": {"enabled": False}}
-    }
-    result = rrs.resolve(
-        None, False, None, "audit-security-requirements", effective, LEGACY
-    )
+    effective = {"requirements_source": {**PROFILE_RS, "standalone_audit": {"enabled": False}}}
+    result = rrs.resolve(None, False, None, "audit-security-requirements", effective, LEGACY)
     assert result["enabled"] is False
 
 
