@@ -25,6 +25,9 @@ scripts/docs/
 # sensitivity rationale as docs/security/ above — never commit.
 tests/fixtures/e2e/_last-run/
 tests/fixtures/e2e/_last-run-req/
+# eval-threat-model skill working dir (brief + judge/verify sidecars +
+# EVAL-REVIEW.md). Same threat-data sensitivity rationale — never commit.
+.eval-out/
 
 # AppSec runtime state (live progress / in-flight status snapshots)
 .appsec-progress.json

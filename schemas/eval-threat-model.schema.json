@@ -1,0 +1,339 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/appsec-advisor/eval-threat-model.schema.json",
+  "title": "eval-threat-model artifacts",
+  "description": "Structured artifact contracts for the developer-facing eval-threat-model skill.",
+  "$defs": {
+    "dimension": {
+      "type": "string",
+      "enum": [
+        "stride_coverage",
+        "severity_proportionality",
+        "threat_plausibility",
+        "recommendation_actionability",
+        "missed_surface"
+      ]
+    },
+    "finding_dimension": {
+      "type": "string",
+      "enum": [
+        "stride_coverage",
+        "severity_proportionality",
+        "threat_plausibility",
+        "recommendation_actionability",
+        "missed_surface",
+        "recon_fidelity"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low", "info"]
+    },
+    "component": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "paths",
+        "threat_count",
+        "stride_present",
+        "stride_absent",
+        "paths_exist"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": ["string", "null"] },
+        "kind": { "type": ["string", "null"] },
+        "paths": { "type": "array", "items": { "type": "string" } },
+        "threat_count": { "type": "integer", "minimum": 0 },
+        "stride_present": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "stride_absent": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        },
+        "paths_exist": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["path", "exists"],
+                "properties": {
+                  "path": { "type": "string" },
+                  "exists": { "type": "boolean" }
+                },
+                "additionalProperties": false
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "threat": {
+      "type": "object",
+      "required": [
+        "id",
+        "component",
+        "component_id",
+        "stride",
+        "severity",
+        "likelihood",
+        "impact",
+        "title",
+        "scenario",
+        "controls_in_place",
+        "cwe",
+        "source",
+        "evidence",
+        "mitigation_ids"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "component": { "type": ["string", "null"] },
+        "component_id": { "type": ["string", "null"] },
+        "stride": { "type": ["string", "null"] },
+        "severity": { "type": ["string", "null"] },
+        "likelihood": { "type": ["string", "null"] },
+        "impact": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "scenario": { "type": ["string", "null"] },
+        "controls_in_place": { "type": ["string", "null"] },
+        "cwe": {},
+        "source": {},
+        "evidence": {},
+        "mitigation_ids": { "type": "array" }
+      },
+      "additionalProperties": false
+    },
+    "mitigation": {
+      "type": "object",
+      "required": ["id", "title", "priority", "why", "how", "verification", "addresses"],
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "title": { "type": ["string", "null"] },
+        "priority": { "type": ["string", "null"] },
+        "why": { "type": ["string", "null"] },
+        "how": { "type": ["string", "null"] },
+        "verification": { "type": ["string", "null"] },
+        "addresses": { "type": "array" }
+      },
+      "additionalProperties": false
+    },
+    "brief": {
+      "type": "object",
+      "required": [
+        "version",
+        "run_dir",
+        "repo",
+        "project",
+        "recon_summary",
+        "components",
+        "threats",
+        "mitigations",
+        "dimensions",
+        "signals"
+      ],
+      "properties": {
+        "version": { "const": 1 },
+        "run_dir": { "type": "string" },
+        "repo": { "type": ["string", "null"] },
+        "project": { "type": "object" },
+        "recon_summary": { "type": "string" },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
+        "threats": { "type": "array", "items": { "$ref": "#/$defs/threat" } },
+        "mitigations": { "type": "array", "items": { "$ref": "#/$defs/mitigation" } },
+        "dimensions": {
+          "type": "array",
+          "prefixItems": [
+            { "const": "stride_coverage" },
+            { "const": "severity_proportionality" },
+            { "const": "threat_plausibility" },
+            { "const": "recommendation_actionability" },
+            { "const": "missed_surface" }
+          ],
+          "items": false
+        },
+        "signals": {
+          "type": "object",
+          "required": ["stride_coverage", "missed_surface", "recon_fidelity"],
+          "properties": {
+            "stride_coverage": { "type": "object" },
+            "missed_surface": {
+              "type": "object",
+              "required": ["zero_threat_components", "low_threat_components"],
+              "properties": {
+                "zero_threat_components": { "type": "array", "items": { "type": "string" } },
+                "low_threat_components": { "type": "array", "items": { "type": "string" } }
+              },
+              "additionalProperties": false
+            },
+            "recon_fidelity": {
+              "type": "object",
+              "required": ["missing_paths"],
+              "properties": {
+                "missing_paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["component", "path"],
+                    "properties": {
+                      "component": { "type": "string" },
+                      "path": { "type": "string" }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "det_finding": {
+      "type": "object",
+      "required": ["id", "dimension", "severity", "target_id", "title", "detail", "source"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^DET-\\d{3}$" },
+        "dimension": { "const": "recon_fidelity" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "target_id": { "type": "string" },
+        "title": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "minLength": 1 },
+        "source": { "const": "deterministic" }
+      },
+      "additionalProperties": false
+    },
+    "det_findings": {
+      "type": "object",
+      "required": ["version", "findings"],
+      "properties": {
+        "version": { "const": 1 },
+        "findings": { "type": "array", "items": { "$ref": "#/$defs/det_finding" } }
+      },
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["cand_id", "severity", "target_id", "title", "detail", "evidence", "suggested_fix"],
+      "properties": {
+        "cand_id": { "type": "string", "pattern": "^[a-z_]+-\\d+$" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "target_id": { "type": "string" },
+        "title": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "string", "minLength": 1 },
+        "suggested_fix": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "judge": {
+      "type": "object",
+      "required": ["dimension", "version", "candidates"],
+      "properties": {
+        "dimension": { "$ref": "#/$defs/dimension" },
+        "version": { "const": 1 },
+        "candidates": { "type": "array", "items": { "$ref": "#/$defs/candidate" } }
+      },
+      "additionalProperties": false
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["cand_id", "verdict", "reason"],
+      "properties": {
+        "cand_id": { "type": "string", "pattern": "^[a-z_]+-\\d+$" },
+        "verdict": { "type": "string", "enum": ["real", "false_positive"] },
+        "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "verify": {
+      "type": "object",
+      "required": ["dimension", "version", "verdicts"],
+      "properties": {
+        "dimension": { "$ref": "#/$defs/dimension" },
+        "version": { "const": 1 },
+        "verdicts": { "type": "array", "items": { "$ref": "#/$defs/verdict" } }
+      },
+      "additionalProperties": false
+    },
+    "confirmed_finding": {
+      "type": "object",
+      "required": ["dimension", "severity", "target_id", "title", "verify_reason"],
+      "properties": {
+        "id": { "type": "string" },
+        "cand_id": { "type": "string" },
+        "dimension": { "$ref": "#/$defs/finding_dimension" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "target_id": { "type": "string" },
+        "title": { "type": "string", "minLength": 1 },
+        "detail": { "type": "string" },
+        "evidence": { "type": "string" },
+        "suggested_fix": { "type": "string" },
+        "source": { "type": "string" },
+        "verify_reason": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["id"] },
+        { "required": ["cand_id"] }
+      ],
+      "additionalProperties": false
+    },
+    "results": {
+      "type": "object",
+      "required": ["version", "summary", "confirmed", "dropped"],
+      "properties": {
+        "version": { "const": 1 },
+        "summary": {
+          "type": "object",
+          "required": ["confirmed_total", "by_severity", "dropped_total", "per_dimension"],
+          "properties": {
+            "confirmed_total": { "type": "integer", "minimum": 0 },
+            "by_severity": {
+              "type": "object",
+              "required": ["critical", "high", "medium", "low", "info"],
+              "properties": {
+                "critical": { "type": "integer", "minimum": 0 },
+                "high": { "type": "integer", "minimum": 0 },
+                "medium": { "type": "integer", "minimum": 0 },
+                "low": { "type": "integer", "minimum": 0 },
+                "info": { "type": "integer", "minimum": 0 }
+              },
+              "additionalProperties": false
+            },
+            "dropped_total": { "type": "integer", "minimum": 0 },
+            "per_dimension": {
+              "type": "object",
+              "propertyNames": { "$ref": "#/$defs/dimension" },
+              "additionalProperties": {
+                "type": "object",
+                "required": ["candidates", "confirmed", "dropped"],
+                "properties": {
+                  "candidates": { "type": "integer", "minimum": 0 },
+                  "confirmed": { "type": "integer", "minimum": 0 },
+                  "dropped": { "type": "integer", "minimum": 0 }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "confirmed": { "type": "array", "items": { "$ref": "#/$defs/confirmed_finding" } },
+        "dropped": { "type": "array", "items": { "$ref": "#/$defs/confirmed_finding" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

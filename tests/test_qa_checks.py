@@ -890,6 +890,68 @@ class TestYamlMdConsistencyCheck:
         r = qa.check_yaml_md_consistency(md, yml)
         assert r.issues == []
 
+    def test_asset_linked_threats_html_table(self, tmp_path):
+        # The §4 Assets table is rewritten to fixed-layout HTML by qa autofix;
+        # the asset↔threat cross-reference check must parse the HTML form too,
+        # not just the GFM pipe rows (juice-shop 2026-06-11).
+        md = textwrap.dedent(
+            """
+            ## 4. Assets
+
+            <table style="table-layout:fixed;width:100%">
+            <colgroup><col style="width:20%"><col style="width:6%"><col style="width:12%"><col style="width:29%"><col style="width:33%"></colgroup>
+            <thead><tr><th>Asset</th><th>ID</th><th>Classification</th><th>Description</th><th>Linked Threats</th></tr></thead>
+            <tbody>
+            <tr><td>Creds</td><td style="white-space:nowrap">A-001</td><td>Restricted</td><td>x</td><td><a href="#f-001">F-001</a><br/><a href="#f-002">F-002</a></td></tr>
+            </tbody>
+            </table>
+
+            ## 8. Findings
+
+            <a id="f-001"></a><a id="f-002"></a>
+            """
+        ).strip()
+        yml = textwrap.dedent(
+            """
+            meta: {schema_version: 1}
+            threats: [{id: F-001}, {id: F-002}]
+            mitigations: []
+            assets:
+              - {id: A-001, linked_threats: [T-001, T-002]}
+            """
+        ).strip()
+        m, y = self._write_pair(tmp_path, md, yml)
+        r = qa.check_yaml_md_consistency(m, y)
+        assert not any("linked_threats mismatch" in i for i in r.issues), r.issues
+
+    def test_asset_linked_threats_html_table_detects_drift(self, tmp_path):
+        # And it still DETECTS a genuine mismatch in the HTML form.
+        md = textwrap.dedent(
+            """
+            ## 4. Assets
+
+            <table><tbody>
+            <tr><td>Creds</td><td style="white-space:nowrap">A-001</td><td>R</td><td>x</td><td><a href="#f-001">F-001</a></td></tr>
+            </tbody></table>
+
+            ## 8. Findings
+
+            <a id="f-001"></a><a id="f-002"></a>
+            """
+        ).strip()
+        yml = textwrap.dedent(
+            """
+            meta: {schema_version: 1}
+            threats: [{id: F-001}, {id: F-002}]
+            mitigations: []
+            assets:
+              - {id: A-001, linked_threats: [T-001, T-002]}
+            """
+        ).strip()
+        m, y = self._write_pair(tmp_path, md, yml)
+        r = qa.check_yaml_md_consistency(m, y)
+        assert any("A-001 linked_threats mismatch" in i for i in r.issues), r.issues
+
     def test_threat_drift(self, tmp_path):
         md, yml = self._write_pair(
             tmp_path,
@@ -3365,3 +3427,199 @@ def test_section7_h4_positive_intro_skips_anti_pattern_label(tmp_path: Path):
     intro_report = qa.check_section7_h4_positive_intro(md)
     assert not any("no positive intro" in i for i in intro_report.issues), intro_report.issues
     assert not any("too short" in i for i in intro_report.issues), intro_report.issues
+
+
+# ---------------------------------------------------------------------------
+# linkify_anchors — §2 Top-Threats span doubling (2026-06-11 juice-shop)
+# The composer wraps ONLY the link in a nowrap span and puts the title AFTER
+# the close tag: `<span>[F-006](#f-006)</span> — Title`. The sub_existing
+# suffix pass mis-read the `</span>` (not whitespace) right after the link as
+# "unlabelled" and re-appended the yaml title INSIDE the span — doubling every
+# §2 finding title.
+# ---------------------------------------------------------------------------
+
+
+def _write_yaml(path: Path, body: str) -> None:
+    (path / "threat-model.yaml").write_text(body, encoding="utf-8")
+
+
+def test_linkify_anchors_no_double_when_title_after_span(tmp_path: Path):
+    _write_yaml(
+        tmp_path,
+        "threats:\n"
+        "  - id: T-006\n"
+        "    title: SQL Injection via Raw Query String Interpolation (routes/login.ts:34)\n",
+    )
+    # Real composer output: link wrapped in the span, title AFTER `</span>`,
+    # separator is a HYPHEN (compose normalises em-dash→hyphen before persist).
+    cell = (
+        '<span style="white-space:nowrap">🔴&nbsp;[F-006](#f-006)</span>'
+        " - SQL Injection via Raw Query String Interpolation (routes/login.ts:34) "
+        '<span style="white-space:nowrap">→&nbsp;[C-03](#c-03)</span>'
+    )
+    md = _write_minimal_model(tmp_path, f"## 2 Threat Landscape\n\n| # | Findings |\n|---|---|\n| ① | {cell} |\n")
+    _report, out = qa.linkify_anchors(md)
+    # The bare link inside the span must NOT get a re-appended ` — Title`.
+    assert "[F-006](#f-006) — " not in out, out
+    # Title still present exactly once.
+    assert out.count("SQL Injection via Raw Query String Interpolation") == 1, out
+
+
+def test_linkify_anchors_labels_bare_mitigation_outside_span(tmp_path: Path):
+    # The §2/§8 Fix column carries `<span>❶ [M-006](#m-006)</span>` with NO title
+    # after the span — these MUST be labelled, and the title MUST land OUTSIDE the
+    # nowrap span. If it were injected before `</span>` the whole ~110ch sentence
+    # becomes one unbreakable run and the Fix column overflows off-screen
+    # (juice-shop 2026-06-11).
+    _write_yaml(
+        tmp_path,
+        "mitigations:\n  - id: M-006\n    title: Replace raw sequelize.query() with a parameterised query\n",
+    )
+    cell = '<span style="white-space:nowrap">❶ [M-006](#m-006)</span><br/>'
+    md = _write_minimal_model(tmp_path, f"## 2 Threat Landscape\n\n| Fix |\n|---|\n| {cell} |\n")
+    _report, out = qa.linkify_anchors(md)
+    # Title appended AFTER the close tag — the nowrap span still wraps only the
+    # marker + id, so the title is free to wrap on normal spaces.
+    assert '[M-006](#m-006)</span> — Replace raw sequelize.query()' in out, out
+    # And NOT before it (the span must not swallow the title).
+    assert 'sequelize.query() with a parameterised query</span>' not in out, out
+
+
+def test_linkify_anchors_fix_span_label_is_idempotent(tmp_path: Path):
+    # Re-running on an already-labelled Fix cell must NOT double the title.
+    _write_yaml(
+        tmp_path,
+        "mitigations:\n  - id: M-006\n    title: Replace raw sequelize.query() with a parameterised query\n",
+    )
+    cell = (
+        '<span style="white-space:nowrap">❶ [M-006](#m-006)</span>'
+        " — Replace raw sequelize.query() with a parameterised query<br/>"
+    )
+    md = _write_minimal_model(tmp_path, f"## 2 Threat Landscape\n\n| Fix |\n|---|\n| {cell} |\n")
+    _report, out = qa.linkify_anchors(md)
+    assert out.count("Replace raw sequelize.query() with a parameterised query") == 1, out
+
+
+def test_linkify_anchors_still_labels_bare_finding_link(tmp_path: Path):
+    # Guard against over-correcting: a genuinely bare `[F-006](#f-006)` in prose
+    # (no following title) must still receive its ` — Title` suffix.
+    _write_yaml(
+        tmp_path,
+        "threats:\n  - id: T-006\n    title: SQL Injection via Raw Query String Interpolation (routes/login.ts:34)\n",
+    )
+    md = _write_minimal_model(tmp_path, "## 5 Attack Surface\n\nSee [F-006](#f-006) for the login sink.\n")
+    _report, out = qa.linkify_anchors(md)
+    assert "[F-006](#f-006) — SQL Injection via Raw Query String Interpolation" in out, out
+
+
+# ---------------------------------------------------------------------------
+# §5 Attack-Surface entry-point tables → fixed-layout HTML (2026-06-11)
+# ---------------------------------------------------------------------------
+def test_render_inline_md_to_html_covers_cell_vocabulary():
+    cell = "🔴 [F-007](#f-007) (SQL Injection)<br/>handler: `server.ts:600` **note**"
+    html = qa._render_inline_md_to_html(cell)
+    assert '<a href="#f-007">F-007</a>' in html
+    assert "<code>server.ts:600</code>" in html
+    assert "<br/>" in html
+    assert "<strong>note</strong>" in html
+    assert "🔴" in html  # emoji passes through
+    # No raw markdown link/code/bold delimiters leak through.
+    assert "](#" not in html and "`" not in html and "**" not in html
+
+
+def test_render_inline_md_to_html_escapes_specials():
+    assert qa._render_inline_md_to_html("a < b & c > d") == "a &lt; b &amp; c &gt; d"
+
+
+_AS_GFM = (
+    "| Method | Route | Risk | Notes |\n"
+    "|------|------|------|------|\n"
+    "| GET | `/rest/products/search` | 🔴 Critical | [F-007](#f-007)<br/>handler: `server.ts:600` |\n"
+    "| POST | `/file-upload` | 🟠 High | [F-015](#f-015) |\n"
+)
+
+
+def test_attack_surface_tables_to_html_converts_and_pins_widths():
+    out, count = qa._attack_surface_tables_to_html(f"### 5.1 Unauthenticated\n\n{_AS_GFM}\n_footer._\n")
+    assert count == 1
+    assert '<table style="table-layout:fixed;width:100%">' in out
+    # Shared colgroup pins identical widths.
+    assert "".join(f'<col style="width:{w}">' for w in qa._AS_COL_WIDTHS) in out
+    # Cell markdown is pre-rendered to HTML (markdown-it won't parse it inside <table>).
+    assert '<a href="#f-007">F-007</a>' in out and "<code>/rest/products/search</code>" in out
+    # Route cell carries overflow-wrap so long routes wrap inside the fixed column.
+    assert 'overflow-wrap:anywhere' in out
+    # Surrounding markdown (heading, footer) is untouched.
+    assert "### 5.1 Unauthenticated" in out and "_footer._" in out
+    # No GFM pipe rows survive for the converted table.
+    assert "| GET |" not in out
+
+
+def test_attack_surface_tables_to_html_is_idempotent():
+    once, c1 = qa._attack_surface_tables_to_html(_AS_GFM)
+    twice, c2 = qa._attack_surface_tables_to_html(once)
+    assert c1 == 1 and c2 == 0 and twice == once
+
+
+def test_attack_surface_tables_to_html_identical_columns_both_tables():
+    two = f"### 5.1\n\n{_AS_GFM}\n### 5.2\n\n{_AS_GFM}\n"
+    out, count = qa._attack_surface_tables_to_html(two)
+    assert count == 2
+    # Both tables emit the SAME colgroup → identical column widths.
+    assert out.count("".join(f'<col style="width:{w}">' for w in qa._AS_COL_WIDTHS)) == 2
+
+
+def test_attack_surface_tables_to_html_leaves_other_tables_alone():
+    other = "| Control | Status |\n|---|---|\n| CSP | 🟠 Weak |\n"
+    out, count = qa._attack_surface_tables_to_html(other)
+    assert count == 0 and out == other
+
+
+_ASSET_GFM = (
+    "| Asset | ID | Classification | Description | Linked Threats |\n"
+    "|------|----|------|------|------|\n"
+    "| User Credentials | A-001 | Restricted | User email and `MD5`-hashed<br/>passwords stored in SQLite. | "
+    "🔴 [F-006](#f-006) — SQL Injection<br/>🟠 [F-013](#f-013) — Weak Hash |\n"
+)
+
+
+def test_asset_table_converts_with_nowrap_id_and_reflowed_description():
+    out, count = qa._attack_surface_tables_to_html(f"## 4. Assets\n\n{_ASSET_GFM}\n")
+    assert count == 1
+    assert '<table style="table-layout:fixed;width:100%">' in out
+    assert "".join(f'<col style="width:{w}">' for w in qa._ASSET_COL_WIDTHS) in out
+    # A-001 ID cell is nowrap so the hyphen never breaks ("A-\n001").
+    assert '<td style="white-space:nowrap">A-001</td>' in out
+    # Description (prose col) has its soft-wrap <br/> stripped → reflows clean.
+    desc_cell = out.split("<td>User email and", 1)[1].split("</td>", 1)[0]
+    assert "<br/>" not in desc_cell and "<code>MD5</code>" in desc_cell
+    # Linked-Threats (link-stack col) KEEPS its <br/> between findings.
+    assert '<a href="#f-006">F-006</a> — SQL Injection<br/>' in out
+    assert '<a href="#f-013">F-013</a> — Weak Hash' in out
+
+
+def test_asset_and_attack_surface_specs_widths_sum_to_100():
+    for widths in (qa._AS_COL_WIDTHS, qa._ASSET_COL_WIDTHS, qa._STRENGTH_COL_WIDTHS):
+        assert sum(int(w.rstrip("%")) for w in widths) == 100
+
+
+def test_operational_strengths_table_converts_keeping_structural_breaks():
+    # "What's in Place" carries STRUCTURAL <br/> (italic description, then one
+    # implementation per line) that must survive the HTML conversion; only the
+    # 44-char soft-wrap artifacts (compose now omits them) would be unwanted.
+    gfm = (
+        "| Strength | What's in Place | Effectiveness | Gap | Mitigates |\n"
+        "|---|---|---|---|---|\n"
+        "| **Container Hardening** | _Build-time and runtime hardening._<br/>Automated SCA scanning<br/>"
+        "Container Security | ✅ Adequate | - | - |\n"
+    )
+    out, count = qa._attack_surface_tables_to_html(f"### Operational Strengths\n\n{gfm}\n")
+    assert count == 1 and '<table style="table-layout:fixed;width:100%">' in out
+    # Italic description rendered to <em> (markdown-it won't parse `_..._` inside
+    # a raw <table>), and the STRUCTURAL <br/> (description + each implementation)
+    # preserved.
+    assert (
+        "<em>Build-time and runtime hardening.</em><br/>Automated SCA scanning<br/>Container Security" in out
+    ), out
+    # Strength cell bold rendered too.
+    assert "<strong>Container Hardening</strong>" in out

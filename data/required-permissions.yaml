@@ -79,6 +79,14 @@ required:
     reason: "fix-run-issues skill applies edit_file actions to plugin agent/config files via the Edit tool (targets resolved relative to $CLAUDE_PLUGIN_ROOT)"
     category: file
 
+  - entry: "Read(${REPO_ROOT}/.eval-out/**)"
+    reason: "eval-threat-model harness + appsec-eval-judge read the brief and judge/verify sidecars under the default eval output dir"
+    category: file
+
+  - entry: "Write(${REPO_ROOT}/.eval-out/**)"
+    reason: "eval_threat_model.py and appsec-eval-judge write the brief, candidate/verdict sidecars, and EVAL-REVIEW.md under the default eval output dir"
+    category: file
+
   # NOTE: The plugin writes ~30 dot-prefixed sidecar files and dot-directories
   # under OUTPUT_DIR (.recon-summary.md, .assets.json, .dispatch-context/**,
   # .qa-status.json, etc.). These were previously enumerated one-by-one on the

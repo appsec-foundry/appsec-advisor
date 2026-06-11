@@ -33,3 +33,4 @@ docs/security/.taxonomy-slices
 docs/security/.dispatch-context
 docs/security/.merge-context
 docs/security/.active-tool-calls
+.eval-out

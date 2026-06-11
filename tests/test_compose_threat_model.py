@@ -511,6 +511,24 @@ def test_operational_strengths_has_three_columns(tmp_path: Path) -> None:
     assert legacy not in rendered, "retired 5-column Operational Strengths form leaked into the render"
 
 
+def test_operational_strengths_gap_stacks_sample_findings(tmp_path: Path) -> None:
+    """RCA 2026-06-11: the Gap cell's "Bypassed by … e.g. F-012, F-016" sample
+    links were comma-joined, so the qa label pass appended all three full titles
+    onto ONE ~250ch line whose max-content dominated markdown-it's auto table
+    layout and starved the "What's in Place" column to one-word-per-line. The
+    sample links must be `<br/>`-stacked (lead line ends `e.g.<br/>`) so each
+    title lands on its own line and the cell's per-segment max-content stays
+    bounded."""
+    import inspect
+
+    src = inspect.getsource(compose._build_strength_clusters)
+    assert '"<br/>".join(' in src and "e.g.<br/>" in src, (
+        "Gap sample findings must be <br/>-stacked, not comma-joined, or the "
+        "Operational Strengths 'What's in Place' column collapses"
+    )
+    assert "e.g. {sample_links}" not in src, "Gap reverted to a single-line comma-joined sample list"
+
+
 def test_no_dangling_section7_crossref_when_section7_omitted(tmp_path: Path) -> None:
     """RCA 2026-06-11: at --quick depth §7 (Security Architecture) is omitted,
     but the MS 'Operational Strengths' intro (and the empty-state banner) emitted

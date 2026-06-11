@@ -793,8 +793,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             # is 2-3 digits; one combined regex would lose the digit-count
             # distinction. Keep them separate for clarity + idempotency.
             #
-            # Lookahead `(?!\s+[—(])` skips refs already followed by either
-            # em-dash form (`[ID](#id) — Label`) OR parens form
+            # Lookahead `(?!(?:</span>)?\s+[—(])` skips refs already followed by
+            # either em-dash form (`[ID](#id) — Label`) OR parens form
             # (`[ID](#id) (short_label)` — produced by
             # `compose._linkify_bare_refs_in_prose` via
             # `linkify_with_short_label`). Without the `(` exclusion the
@@ -802,13 +802,45 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             # existing parens, producing the duplicate-title form
             # `[F-001](#f-001) — Title — file (Title)` flagged by
             # `check_section7_finding_link_duplicate`.
+            # The optional `(</span>)?` capture is span-aware: it pulls a
+            # trailing `white-space:nowrap` close tag INTO the match so the
+            # appended ` — Label` lands AFTER `</span>`, never inside it. Two
+            # cases this gets right:
+            #   1. §2/§8 Fix column — the composer wraps ONLY `❶ [M-006](#m-006)`
+            #      in the nowrap span and leaves the title to this pass. Before
+            #      the `(</span>)?` capture, the title was injected BEFORE the
+            #      close tag (`<span>❶ [M-006](#m-006) — Replace raw …login.ts</span>`),
+            #      turning a ~12ch atomic unit into a ~110ch UNBREAKABLE run that
+            #      forced the Fix column min-width past the viewport and pushed it
+            #      off-screen (juice-shop 2026-06-11). Now the title sits outside
+            #      the span (`<span>❶ [M-006](#m-006)</span> — Replace raw …`) and
+            #      wraps on normal spaces, so the column min-width drops to the
+            #      longest word.
+            #   2. §2 Findings doubling — `<span>[F-006](#f-006)</span> - Title`
+            #      already carries a title; the lookahead consumes `</span>` then
+            #      sees ` - Title` (`\s*[-—]`) and SKIPS, so the title is not
+            #      re-appended.
+            # Two mutually-exclusive branches keyed on `</span>` presence — NOT a
+            # single optional `(</span>)?`. An optional group backtracks: on an
+            # already-labelled span cell (`…m-006)</span> — Title`) the span-consuming
+            # form fails the post-span lookahead, the engine then retries WITHOUT
+            # consuming `</span>`, that bare form sees `</span>` (not a dash) ahead,
+            # matches, and re-injects the title INSIDE the span — doubling it. The
+            # `(?!</span>)` guard on the second branch makes the branches disjoint
+            # so no backtrack can rescue a failed span match.
+            #   branch 1 — `</span>` follows: consume it (group 2), match only when
+            #     it is NOT already followed by a dash (`(?!\s*[-—])`); sub_existing
+            #     then appends ` — Label` AFTER the close tag (outside the span).
+            #   branch 2 — no `</span>`: match only when not already labelled with a
+            #     dash (`\s*[-—]`, hyphen OR em-dash) or short-label parens (`\s+[(]`).
+            # Idempotent: a re-run hits branch 1, sees ` — Title`, and skips.
             new_line = re.sub(
-                r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?!\s+[—(])",
+                r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?:(</span>)(?!\s*[-—])|(?!</span>)(?!\s*[-—]|\s+[(]))",
                 sub_existing,
                 new_line,
             )
             new_line = re.sub(
-                r"\[(TH-\d{2,3})\]\(#th-\d+\)(?!\s+[—(])",
+                r"\[(TH-\d{2,3})\]\(#th-\d+\)(?:(</span>)(?!\s*[-—])|(?!</span>)(?!\s*[-—]|\s+[(]))",
                 sub_existing,
                 new_line,
             )
@@ -885,23 +917,39 @@ def check_strengths_row_quality(md_path: Path) -> Report:
         if all(set(c) <= set("-:") for c in cells):  # markdown separator
             continue
         control_cell = cells[0]
-        for pat in _STRENGTHS_FORBIDDEN_CONTROL_PATTERNS:
-            if pat.search(control_cell):
-                report.issues.append(
-                    f"Operational Strengths row names tactical baseline "
-                    f"hygiene (`{control_cell[:60]}`) instead of an "
-                    f"architectural strength — drop this row. HTTP-header "
-                    f"hardening is filtered by `excluded_from_strengths` "
-                    f"in architectural-controls.yaml; do not override "
-                    f"without architectural justification."
-                )
-                flagged += 1
-                break
+        if _flag_forbidden_strength_control(control_cell, report):
+            flagged += 1
         if flagged >= 25:
             break
+    # HTML form (qa autofix rewrites the table to fixed-layout <table>): the
+    # control name is the first <td> of each <tr>.
+    for tr in re.finditer(r"<tr>(.*?)</tr>", body, re.DOTALL):
+        if flagged >= 25:
+            break
+        tds = re.findall(r"<td[^>]*>(.*?)</td>", tr.group(1), re.DOTALL)
+        if not tds:
+            continue
+        control_cell = re.sub(r"<[^>]+>", "", tds[0]).strip()
+        if control_cell and _flag_forbidden_strength_control(control_cell, report):
+            flagged += 1
     if not flagged:
         report.ok = 1
     return report
+
+
+def _flag_forbidden_strength_control(control_cell: str, report: Report) -> bool:
+    for pat in _STRENGTHS_FORBIDDEN_CONTROL_PATTERNS:
+        if pat.search(control_cell):
+            report.issues.append(
+                f"Operational Strengths row names tactical baseline "
+                f"hygiene (`{control_cell[:60]}`) instead of an "
+                f"architectural strength — drop this row. HTTP-header "
+                f"hardening is filtered by `excluded_from_strengths` "
+                f"in architectural-controls.yaml; do not override "
+                f"without architectural justification."
+            )
+            return True
+    return False
 
 
 def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Report:
@@ -1490,7 +1538,16 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     for _sid, label, accepted_headers in table_checks:
         if label not in text:
             continue
-        if not any(h in text for h in accepted_headers):
+        # Also accept the fixed-layout HTML form: qa autofix rewrites some tables
+        # to `<table table-layout:fixed>` for stable column widths, so a GFM
+        # `| A | B |` header signature is equally satisfied by its `<th>A</th>
+        # <th>B</th>` thead (juice-shop 2026-06-11 §1 Operational Strengths).
+        accepted = list(accepted_headers)
+        for h in accepted_headers:
+            if h.startswith("|"):
+                cols = [c.strip() for c in h.strip().strip("|").split("|")]
+                accepted.append("".join(f"<th>{c}</th>" for c in cols))
+        if not any(h in text for h in accepted):
             report.issues.append(
                 f"{label} table does not match contract column schema (expected one of: {accepted_headers!r})"
             )
@@ -3440,6 +3497,171 @@ def _annotate_id_refs(md_path: Path) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# §5 Attack-Surface entry-point tables → fixed-layout HTML (2026-06-11)
+# markdown-it (VS Code preview / GitHub) IGNORES GFM separator widths and
+# auto-sizes EACH table independently by content, so §5.1 and §5.2 never line
+# up and the long-route column is handed most of the width. Re-emitting the two
+# entry-point tables as one HTML `<table style="table-layout:fixed">` with a
+# shared percentage `<colgroup>` pins BOTH to identical columns and makes long
+# routes wrap inside the Route column instead of stretching it. This runs LAST
+# (after every link/dot/title/backtick enrichment pass) because markdown-it does
+# NOT parse markdown inside a raw <table> block — so each cell's inline markdown
+# (code spans, `[id](#anchor)` links, **bold**) must be pre-rendered to HTML at
+# conversion time. Idempotent: a doc whose §5 tables are already HTML has no
+# matching GFM header, so the pass is a no-op on re-runs.
+# ---------------------------------------------------------------------------
+_AS_TABLE_HEADERS = ("Method", "Route", "Risk", "Notes")
+# Shared column widths (must sum to 100). Route is deliberately kept modest so
+# long routes wrap to several short lines rather than one wide column.
+_AS_COL_WIDTHS = ("9%", "30%", "14%", "47%")
+_ASSET_TABLE_HEADERS = ("Asset", "ID", "Classification", "Description", "Linked Threats")
+_ASSET_COL_WIDTHS = ("20%", "6%", "12%", "29%", "33%")
+_STRENGTH_TABLE_HEADERS = ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates")
+_STRENGTH_COL_WIDTHS = ("18%", "28%", "13%", "30%", "11%")
+# Each spec: (headers, widths, {col_idx: inline-style}, prose_col_indices).
+# - inline-style per column: `white-space:nowrap` pins short IDs (A-004 must
+#   never break at its hyphen); `overflow-wrap:anywhere` lets a long route /
+#   asset name wrap inside its fixed column.
+# - prose_col_indices: columns whose soft-wrap `<br/>` (inserted by compose's
+#   `_softwrap_prose_table_cells` for narrow GFM rendering) is stripped so the
+#   prose reflows cleanly to the fixed column width instead of breaking at the
+#   stale ~44-char boundary. NOT applied to link-stack columns (Notes / Linked
+#   Threats) where each `<br/>` deliberately separates one finding per line.
+_FIXED_LAYOUT_SPECS = (
+    (_AS_TABLE_HEADERS, _AS_COL_WIDTHS, {1: "overflow-wrap:anywhere"}, frozenset()),
+    (
+        _ASSET_TABLE_HEADERS,
+        _ASSET_COL_WIDTHS,
+        {0: "overflow-wrap:anywhere", 1: "white-space:nowrap", 4: "overflow-wrap:anywhere"},
+        frozenset({3}),  # Description reflows; Linked Threats keeps its <br/> stack
+    ),
+    (
+        _STRENGTH_TABLE_HEADERS,
+        _STRENGTH_COL_WIDTHS,
+        {
+            0: "overflow-wrap:anywhere",
+            1: "overflow-wrap:anywhere",
+            3: "overflow-wrap:anywhere",
+            4: "overflow-wrap:anywhere",
+        },
+        # No prose_cols: "What's in Place" carries STRUCTURAL <br/> (italic
+        # description line, then one implementation per line) that must survive;
+        # compose now exempts this table from soft-wrap so there are no stale
+        # 44-char artifact breaks to strip. Gap keeps its finding <br/> stack.
+        frozenset(),
+    ),
+)
+_AS_SEP_LINE_RE = re.compile(r"^\s*\|[\s:\-|]+\|\s*$")
+_AS_INLINE_TOKEN_RE = re.compile(
+    r"(?P<br><br\s*/?>)"
+    r"|\[(?P<ltext>[^\]]+)\]\((?P<lhref>[^)]+)\)"
+    r"|\*\*(?P<bold>[^*]+)\*\*"
+    # Italic: content excludes `_`/`*` AND `<` so a lone `_id`/`$where`-style
+    # token in a finding title (single underscore, or one whose partner is on
+    # the far side of a `<br/>`) can never be mis-parsed as an italic span.
+    r"|(?<![A-Za-z0-9])_(?P<ital_u>[^_<]+)_(?![A-Za-z0-9])"
+    r"|(?<![A-Za-z0-9*])\*(?P<ital_s>[^*<]+)\*(?![A-Za-z0-9*])"
+)
+
+
+def _as_html_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _render_inline_md_to_html(text: str) -> str:
+    """Render the small inline-markdown vocabulary used in §5 entry-point cells
+    (inline `code`, `[label](target)` links, `**bold**`, `<br/>`, emoji, plain
+    text) to HTML. Code spans are split out FIRST so link/bold/escape never
+    touch their contents."""
+    out: list[str] = []
+    for i, part in enumerate(re.split(r"(`[^`]+`)", text)):
+        if i % 2 == 1:  # `code`
+            out.append(f"<code>{_as_html_escape(part[1:-1])}</code>")
+            continue
+        pos = 0
+        for m in _AS_INLINE_TOKEN_RE.finditer(part):
+            if m.start() > pos:
+                out.append(_as_html_escape(part[pos : m.start()]))
+            if m.group("br") is not None:
+                out.append("<br/>")
+            elif m.group("ltext") is not None:
+                href = _as_html_escape(m.group("lhref")).replace('"', "&quot;")
+                out.append(f'<a href="{href}">{_as_html_escape(m.group("ltext"))}</a>')
+            elif m.group("bold") is not None:
+                out.append(f"<strong>{_as_html_escape(m.group('bold'))}</strong>")
+            else:
+                ital = m.group("ital_u") if m.group("ital_u") is not None else m.group("ital_s")
+                out.append(f"<em>{_as_html_escape(ital)}</em>")
+            pos = m.end()
+        if pos < len(part):
+            out.append(_as_html_escape(part[pos:]))
+    return "".join(out)
+
+
+def _split_gfm_row(line: str) -> list[str]:
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _match_fixed_layout_spec(header_line: str):
+    """Return the `_FIXED_LAYOUT_SPECS` entry whose headers exactly match this
+    GFM header row, else None."""
+    cells = tuple(_split_gfm_row(header_line))
+    for spec in _FIXED_LAYOUT_SPECS:
+        if cells == spec[0]:
+            return spec
+    return None
+
+
+def _attack_surface_tables_to_html(md: str) -> tuple[str, int]:
+    """Replace each GFM table whose header matches a `_FIXED_LAYOUT_SPECS` entry
+    (§5 entry-point tables, §4 Assets table) with a fixed-layout HTML table that
+    pins identical column widths. Returns (new_md, tables_converted)."""
+    lines = md.split("\n")
+    out: list[str] = []
+    i, n, converted = 0, len(lines), 0
+    while i < n:
+        spec = _match_fixed_layout_spec(lines[i]) if lines[i].lstrip().startswith("|") else None
+        if spec and i + 1 < n and _AS_SEP_LINE_RE.match(lines[i + 1]):
+            j = i + 2
+            while j < n and lines[j].lstrip().startswith("|"):
+                j += 1
+            out.extend(_emit_as_html_table(lines[i + 2 : j], spec))
+            converted += 1
+            i = j
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out), converted
+
+
+def _emit_as_html_table(body_rows: list[str], spec) -> list[str]:
+    headers, widths, styles, prose_cols = spec
+    ncol = len(headers)
+    html = ['<table style="table-layout:fixed;width:100%">']
+    html.append("<colgroup>" + "".join(f'<col style="width:{w}">' for w in widths) + "</colgroup>")
+    html.append("<thead><tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr></thead>")
+    html.append("<tbody>")
+    for row in body_rows:
+        cells = (_split_gfm_row(row) + [""] * ncol)[:ncol]
+        tds = []
+        for idx, cell in enumerate(cells):
+            if idx in prose_cols:
+                cell = re.sub(r"<br\s*/?>", " ", cell).strip()
+            st = styles.get(idx)
+            extra = f' style="{st}"' if st else ""
+            tds.append(f"<td{extra}>{_render_inline_md_to_html(cell)}</td>")
+        html.append("<tr>" + "".join(tds) + "</tr>")
+    html.append("</tbody>")
+    html.append("</table>")
+    return html
+
+
 def cmd_autofix(md_path: Path, repo_root: Path) -> int:
     """Run only the five in-place auto-fixing passes and write the corrected
     Markdown back: links, anchors, MS structure, cell-format, and the
@@ -3478,12 +3700,22 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
     # severity dot / priority circle. Best-effort + idempotent.
     if _annotate_id_refs(md):
         _PrePass.reset()
+    # §5 entry-point tables → fixed-layout HTML. MUST be the last mutating pass:
+    # markdown-it does not parse markdown inside a raw <table>, so the cells are
+    # pre-rendered to HTML here, after every link/dot/title/backtick enrichment
+    # above has run on the GFM form. Idempotent.
+    as_converted = 0
+    as_text, as_converted = _attack_surface_tables_to_html(md.read_text(encoding="utf-8"))
+    if as_converted and as_text != md.read_text(encoding="utf-8"):
+        md.write_text(as_text, encoding="utf-8")
+        _PrePass.reset()
     fixes = (
         len(link_report.fixes)
         + len(anchor_report.fixes)
         + len(ms_report.fixes)
         + len(cell_report.fixes)
         + len(attr_strip_report.fixes)
+        + as_converted
     )
     print(json.dumps({"autofix": {"fix_count": fixes}}, indent=2))
     return 0
@@ -8560,7 +8792,10 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
         else:
             # Build a per-asset-ID → set-of-T-NNN map from the MD table cells.
             # Each row that contains an asset ID (A-NNN) is parsed; the last
-            # cell is expected to be the Linked Threats column.
+            # cell is expected to be the Linked Threats column. Both the GFM
+            # pipe-table form AND the fixed-layout HTML form (qa autofix rewrites
+            # the §4 Assets table to <table> for stable column widths) are parsed
+            # so the cross-reference check survives the conversion.
             _ASSET_ROW_RE = re.compile(
                 r"\|\s*[^|]+\|\s*(A-\d{3,4})\s*\|[^|]*\|[^|]*\|([^|\n]*)",
                 re.MULTILINE,
@@ -8572,6 +8807,19 @@ def check_yaml_md_consistency(md_path: Path, yaml_path: Path) -> Report:
                 cell = m.group(2)
                 tids = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(cell)}
                 md_asset_lt[aid] = tids
+            # HTML `<tr>` rows (fixed-layout conversion): the ID column is the
+            # <td> whose text is exactly A-NNN; the Linked Threats column is the
+            # last <td>.
+            for tr in re.finditer(r"<tr>(.*?)</tr>", sec4_body, re.DOTALL):
+                tds = re.findall(r"<td[^>]*>(.*?)</td>", tr.group(1), re.DOTALL)
+                aid = None
+                for cell in tds:
+                    am = re.match(r"^\s*(A-\d{3,4})\s*$", re.sub(r"<[^>]+>", "", cell))
+                    if am:
+                        aid = am.group(1)
+                        break
+                if aid and tds:
+                    md_asset_lt[aid] = {t.group(1).upper() for t in _ANY_FINDING_RE.finditer(tds[-1])}
 
             def _normalize_id(s: str) -> str:
                 # Normalize T-NNN ↔ F-NNN: compose renders threat IDs with the

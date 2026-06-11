@@ -48,6 +48,7 @@ EXPECTED_MAX_TURNS = {
     "appsec-abuse-case-verifier": 20,  # Phase 10b: one agent per abuse-case candidate
     "appsec-fragment-fixer": 30,  # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE)
     "appsec-reviewer": 40,  # embeddable diff-scoped security reviewer (requirements or best-practices); skill/CLI/direct
+    "appsec-eval-judge": 30,  # dev/test semantic-quality judge for the eval-threat-model skill (JUDGE/VERIFY modes)
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -443,6 +444,7 @@ AGENT_FILES_WITH_ZERO_BUDGET = [
     AGENTS_DIR / "appsec-threat-merger.md",
     AGENTS_DIR / "appsec-architect-reviewer.md",
     AGENTS_DIR / "appsec-config-scanner.md",
+    AGENTS_DIR / "appsec-eval-judge.md",
     AGENTS_DIR / "phases" / "phase-group-recon.md",
 ]
 
@@ -644,6 +646,7 @@ REPO_READING_AGENTS = [
     "appsec-threat-renderer",
     "appsec-context-resolver",
     "appsec-threat-analyst",
+    "appsec-eval-judge",
 ]
 
 

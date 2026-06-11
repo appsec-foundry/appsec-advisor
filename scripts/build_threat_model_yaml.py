@@ -183,7 +183,13 @@ def build_meta(
     }
 
 
-_TITLE_DASH_RE = re.compile(r"\s*[—–-]\s*")
+# Collapse dash *separators* (spaced hyphen/en/em, or a bare em/en dash) to a
+# single space — but NEVER a bare ASCII hyphen inside an identifier or path
+# (`search-result`, `X-Frame-Options`). The old `\s*[—–-]\s*` matched any
+# hyphen regardless of surrounding whitespace, rewriting
+# `search-result/search-result.component.ts` → `search result/search result...`
+# in every finding title (juice-shop 2026-06-11).
+_TITLE_DASH_RE = re.compile(r"\s+[—–-]\s+|[—–]")
 _TITLE_PARENS_RE = re.compile(r"\(([^)]*)\)")
 _TITLE_WS_RE = re.compile(r"\s+")
 
@@ -285,16 +291,32 @@ def _clean_title(raw: str) -> str:
     if s and not s[0].isupper():
         s = s[0].upper() + s[1:]
     # Schema docs cap "weakness class" at ~80 chars; total with suffix can
-    # exceed maxLength. Truncate the body, preserve the file:line suffix.
-    suffix = f" ({parens[-1]})" if parens else ""
-    body_cap = 80 - len(suffix)
-    if len(s) > body_cap:
-        # Reserve one char for the ellipsis so body + "…" + suffix == 80,
-        # not 81. The off-by-one previously pushed the result one char over
-        # maxLength, which tripped the _clamp_title fallback below — and that
-        # truncation is not paren-aware, so it chopped into the "(file:line)"
-        # suffix, emitting an unclosed "(" that violates the title pattern.
-        s = s[: body_cap - 1].rstrip().rstrip(",;:-") + "…"
+    # exceed maxLength. Prefer shortening the file-path suffix to its basename
+    # over chopping the weakness wording — a long path
+    # (`frontend/src/app/search-result/search-result.component.ts:132`) was
+    # crushing the description to "Stored and Refl…"; the full path still lives
+    # in evidence_file / location (juice-shop 2026-06-11).
+    suffix_inner = parens[-1] if parens else ""
+    suffix = f" ({suffix_inner})" if suffix_inner else ""
+    if suffix_inner and "/" in suffix_inner and len(s) + len(suffix) > 80:
+        suffix_inner = suffix_inner.rsplit("/", 1)[-1]
+        suffix = f" ({suffix_inner})"
+    if len(s) + len(suffix) > 80:
+        # The weakness phrase + locator overflows the schema's 80-char title
+        # cap. NEVER ellipsis-truncate the weakness wording: a clipped
+        # "…Cookie Prot…" title is propagated verbatim to every cross-reference
+        # link (qa _load_label_index reads title as-is) AND slugged into
+        # anchors, producing inconsistent finding titles across the document
+        # and ugly "…" §3 walkthrough headings (juice-shop 2026-06-11). The
+        # locator already lives in evidence_file and the §8 Location cell, so
+        # DROP the "(file)" suffix and keep the FULL weakness phrase whenever
+        # the weakness fits on its own. Only hard-truncate when the weakness
+        # wording itself exceeds the cap (genuinely unavoidable, very rare).
+        if len(s) <= 80:
+            suffix = ""
+        else:
+            s = s[:79].rstrip().rstrip(",;:-") + "…"
+            suffix = ""
     return f"{s}{suffix}"
 
 
@@ -664,38 +686,36 @@ def build_attack_surface(routes: dict | None, sidecar: dict | None = None) -> tu
                 f"attack-surface-overrides.additions: {merged} merged onto baseline (analyst auth/notes override)"
             )
 
-    # Class-coverage guard (2026-06-06): an `include_route_ids` allowlist must
-    # never leave an entire auth class empty when the route-inventory baseline
-    # actually has that class. The Phase-6 analyst writes a vuln-focused include
-    # list that is almost entirely UNauthenticated routes (it curates "what is
-    # interesting to attack"), so a naive allowlist silently drops the whole
-    # authenticated surface and §5.2 Authenticated Entry Points renders "(0)"
-    # even on apps with dozens of guarded endpoints (juice-shop: 52 authenticated
-    # routes dropped). §5 must represent BOTH classes; when a class is empty in
-    # the curated output but present in the post-exclude baseline, restore that
-    # class's baseline entries. The §5 renderer collapses large buckets to the
-    # finding-linked rows + a total-count line, so restoring the full class stays
-    # readable while making the count honest.
+    # Completeness guard (2026-06-11): §5 must represent the FULL reachable
+    # attack surface — the entire deduped route-inventory baseline minus
+    # explicit excludes — NOT just the analyst's vuln-focused `include_route_ids`
+    # pick. The earlier class-coverage guard only restored a class when it was
+    # ENTIRELY empty, so an include allowlist that happened to keep a few routes
+    # in each class still silently dropped the rest of the surface (juice-shop
+    # 2026-06-11: include kept 8 authenticated + 19 unauthenticated of 112, both
+    # classes non-empty → guard never fired → §5 reported 27/112). The LLM-written
+    # include list is unreliable and must NOT govern §5 membership; it only marks
+    # which rows carry the analyst's curated notes/priority (applied above via
+    # `rationale_by_id` + additions). Restore every post-exclude baseline route
+    # not already present so the count is honest. An explicit `exclude_route_ids`
+    # still wins, and the §5 renderer's large-bucket cap keeps the display short
+    # (finding-linked rows listed individually + a "_N further entry point(s)…_"
+    # summary line). The pentest export already consumes the full attack_surface[].
     if full_baseline_pairs:
-        present = {True: False, False: False}
-        seen_eps: set[str] = set()
-        for e in out:
-            present[bool(e.get("auth_required"))] = True
-            seen_eps.add(e.get("entry_point"))
+        seen_eps: set[str] = {e.get("entry_point") for e in out}
         restored = 0
         for entry, rid in full_baseline_pairs:
             if rid in exclude_ids:
                 continue  # an explicit exclude is honoured even by the guard
-            cls = bool(entry.get("auth_required"))
-            if not present[cls] and entry.get("entry_point") not in seen_eps:
+            if entry.get("entry_point") not in seen_eps:
                 out.append(entry)
                 seen_eps.add(entry.get("entry_point"))
                 restored += 1
         if restored:
             warnings.append(
-                f"attack-surface class-coverage guard: restored {restored} baseline "
-                f"route(s) so both auth classes are represented (include allowlist "
-                f"had emptied one class)"
+                f"attack-surface completeness guard: restored {restored} baseline "
+                f"route(s) so §5 reflects the full reachable surface (include "
+                f"allowlist governs per-row notes/priority, not membership)"
             )
 
     return out, warnings

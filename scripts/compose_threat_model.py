@@ -4273,10 +4273,19 @@ def _build_strength_clusters(
             sample_ids = [
                 (t.get("id") or t.get("t_id") or "").strip() for t in (addressed_critical + addressed_high)[:3]
             ]
-            sample_links = ", ".join(f"[{re.sub(r'^T-', 'F-', s)}](#{s.lower()})" for s in sample_ids if s)
+            # Stack the sample links with <br/> (not ", ") so the qa label pass
+            # appends each finding's full title + file:line on its OWN line. A
+            # comma-join leaves all 3 titles on a single ~250ch line whose
+            # max-content dominates markdown-it's auto table layout, starving the
+            # "What's in Place" column down to one-word-per-line (juice-shop
+            # 2026-06-11 screenshot). `_softwrap_prose_table_cells` cannot rescue
+            # it — that pass runs at compose time, before the titles are appended,
+            # and skips any cell carrying a `](#` link. Pre-breaking here bounds
+            # the cell's per-segment max-content instead.
+            sample_links = "<br/>".join(f"[{re.sub(r'^T-', 'F-', s)}](#{s.lower()})" for s in sample_ids if s)
             gap = (
                 f"Bypassed by {' + '.join(parts)} finding(s) of the kind this "
-                f"cluster is supposed to prevent — e.g. {sample_links}."
+                f"cluster is supposed to prevent — e.g.<br/>{sample_links}."
                 if sample_links
                 else f"Bypassed by {' + '.join(parts)} finding(s) of the kind this cluster is supposed to prevent."
             )
@@ -9271,6 +9280,21 @@ def _wrap_segment_words(seg: str, width: int) -> str:
     return "<br/>".join(out)
 
 
+# Tables that qa autofix re-emits as fixed-layout HTML (`<table table-layout:
+# fixed>` + colgroup). They must be EXEMPT from soft-wrapping: the fixed column
+# reflows prose on its own, and the 44-char `<br/>` breaks soft-wrap would inject
+# survive verbatim into the HTML cells as confusing mid-phrase line breaks
+# (juice-shop §4 Assets Description, §1 Operational Strengths "What's in Place").
+# Keep in sync with qa_checks `_FIXED_LAYOUT_SPECS`.
+_FIXED_LAYOUT_TABLE_HEADERS = frozenset(
+    {
+        ("Method", "Route", "Risk", "Notes"),
+        ("Asset", "ID", "Classification", "Description", "Linked Threats"),
+        ("Strength", "What's in Place", "Effectiveness", "Gap", "Mitigates"),
+    }
+)
+
+
 def _softwrap_prose_table_cells(md: str, width: int = 44) -> str:
     """Soft-wrap long PROSE table cells with `<br/>` so markdown-it (the VS Code
     preview / GitHub) — which auto-sizes columns by content and IGNORES the
@@ -9290,6 +9314,8 @@ def _softwrap_prose_table_cells(md: str, width: int = 44) -> str:
     lines = md.split("\n")
     for header_idx, block in _iter_md_table_blocks(md):
         header_cells = _split_table_row(block[0])
+        if tuple(h.strip() for h in header_cells) in _FIXED_LAYOUT_TABLE_HEADERS:
+            continue  # becomes fixed-layout HTML — reflows itself, don't inject <br/>
         wrap_cols = {i for i, h in enumerate(header_cells) if _table_col_role(h) in ("desc", "default", "path")}
         if not wrap_cols:
             continue
