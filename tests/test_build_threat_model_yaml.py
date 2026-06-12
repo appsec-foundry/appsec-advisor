@@ -146,7 +146,9 @@ def test_clean_title_collapses_spaced_dash_separator():
 
 def test_clean_title_basename_suffix_preserves_description():
     # Long path → basename so the description survives instead of "Stored and Refl…".
-    raw = "Stored and Reflected XSS via trust HTML bypass (frontend/src/app/search-result/search-result.component.ts:132)"
+    raw = (
+        "Stored and Reflected XSS via trust HTML bypass (frontend/src/app/search-result/search-result.component.ts:132)"
+    )
     out = b._clamp_title(b._clean_title(raw))
     assert len(out) <= 80
     assert out.endswith("(search-result.component.ts:132)")  # basename suffix
@@ -236,8 +238,13 @@ def test_attack_surface_dedup_conservative_auth():
 def test_attack_surface_carries_relevance_tags_from_inventory():
     routes = {
         "routes": [
-            {"method": "POST", "path": "/rest/user/login", "authn_signal": "unknown",
-             "route_id": "r0", "relevance_tags": ["authentication"]},
+            {
+                "method": "POST",
+                "path": "/rest/user/login",
+                "authn_signal": "unknown",
+                "route_id": "r0",
+                "relevance_tags": ["authentication"],
+            },
             {"method": "GET", "path": "/rest/products", "authn_signal": "unknown", "route_id": "r1"},
         ]
     }
@@ -252,10 +259,20 @@ def test_attack_surface_relevance_tags_union_on_dedup():
     # Same method+path registered twice with different tags → union, deduped row.
     routes = {
         "routes": [
-            {"method": "GET", "path": "/api/Users/:id", "authn_signal": "middleware_present",
-             "route_id": "r0", "relevance_tags": ["missing-authz"]},
-            {"method": "GET", "path": "/api/Users/:id", "authn_signal": "middleware_present",
-             "route_id": "r1", "relevance_tags": ["management"]},
+            {
+                "method": "GET",
+                "path": "/api/Users/:id",
+                "authn_signal": "middleware_present",
+                "route_id": "r0",
+                "relevance_tags": ["missing-authz"],
+            },
+            {
+                "method": "GET",
+                "path": "/api/Users/:id",
+                "authn_signal": "middleware_present",
+                "route_id": "r1",
+                "relevance_tags": ["management"],
+            },
         ]
     }
     out, _ = b.build_attack_surface(routes, None)
@@ -363,3 +380,41 @@ def test_build_meta_propagates_check_requirements_true():
 def test_build_meta_check_requirements_defaults_false():
     assert _meta()["check_requirements"] is False
     assert _meta(check_requirements=False)["check_requirements"] is False
+
+
+# ---------------------------------------------------------------------------
+# build_component_selection — §1 Scope / verdict coverage transparency
+# ---------------------------------------------------------------------------
+
+
+def test_component_selection_criteria_with_exclusions():
+    m = _load()
+    comps = [{"id": "web", "name": "Web"}, {"id": "auth", "name": "Auth"}, {"id": "db", "name": "DB"}]
+    sel = {
+        "mode": "criteria",
+        "selected": [
+            {"id": "web", "reasons": ["frontend attack surface (mandatory)"]},
+            {"id": "auth", "reasons": ["auth (M3.4 mandatory)"]},
+        ],
+        "excluded": [{"id": "db", "reason": "out-of-scope at depth=standard"}],
+    }
+    cs = m.build_component_selection(sel, comps)
+    assert cs["analyzed"] == 2
+    assert cs["total"] == 3
+    assert [s["name"] for s in cs["selected"]] == ["Web", "Auth"]
+    assert cs["excluded"][0]["name"] == "DB"
+    assert "out-of-scope" in cs["excluded"][0]["reason"]
+
+
+def test_component_selection_passthrough_no_exclusions():
+    m = _load()
+    comps = [{"id": "a", "name": "A"}]
+    sel = {"mode": "passthrough", "selected": ["a"], "excluded": []}
+    cs = m.build_component_selection(sel, comps)
+    assert cs["analyzed"] == 1 and cs["total"] == 1 and cs["excluded"] == []
+
+
+def test_component_selection_none_when_absent():
+    m = _load()
+    assert m.build_component_selection(None, []) is None
+    assert m.build_component_selection({}, []) is None

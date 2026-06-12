@@ -137,6 +137,47 @@ def _carry_forward(prior_yaml: dict | None, field: str, sidecar_name: str) -> An
 # ─── Field builders ───────────────────────────────────────────────────────
 
 
+def build_component_selection(sel: dict | None, components: list) -> dict | None:
+    """Summarise `.stride-selection.json` into a reader-facing scope block.
+
+    Returns ``{mode, analyzed, total, selected:[{id,name,reasons}],
+    excluded:[{id,name,reason}]}`` or ``None`` when no selection sidecar exists.
+    Lets §1 Scope state *how many* of the modeled components received full STRIDE
+    analysis and *why*, and which were not analyzed and why — instead of implying
+    every modeled component was assessed equally.
+    """
+    if not isinstance(sel, dict) or not sel.get("selected"):
+        return None
+    name_by_id = {
+        c.get("id"): (c.get("name") or c.get("id")) for c in (components or []) if isinstance(c, dict) and c.get("id")
+    }
+
+    def _name(cid: str) -> str:
+        return name_by_id.get(cid, cid)
+
+    def _norm_sel(e: object) -> dict:
+        if isinstance(e, dict):
+            cid = e.get("id")
+            return {"id": cid, "name": _name(cid), "reasons": list(e.get("reasons") or [])}
+        return {"id": e, "name": _name(e), "reasons": []}
+
+    def _norm_exc(e: object) -> dict:
+        if isinstance(e, dict):
+            cid = e.get("id")
+            return {"id": cid, "name": _name(cid), "reason": e.get("reason") or "not selected at this depth"}
+        return {"id": e, "name": _name(e), "reason": "not selected at this depth"}
+
+    selected = [_norm_sel(e) for e in (sel.get("selected") or [])]
+    excluded = [_norm_exc(e) for e in (sel.get("excluded") or [])]
+    return {
+        "mode": sel.get("mode"),
+        "analyzed": len(selected),
+        "total": len(selected) + len(excluded),
+        "selected": selected,
+        "excluded": excluded,
+    }
+
+
 def build_meta(
     *,
     skill_cfg: dict,
@@ -927,6 +968,12 @@ def main() -> int:
     components = (sidecar_components or {}).get("components") or _carry_forward(
         prior_yaml, "components", ".components.json"
     )
+
+    # Scope transparency: surface which components received full STRIDE analysis
+    # and why, and which were not analyzed and why (from .stride-selection.json).
+    component_selection = build_component_selection(_load_json(od / ".stride-selection.json"), components)
+    if component_selection:
+        meta["component_selection"] = component_selection
     assets = (sidecar_assets or {}).get("assets") or _carry_forward(prior_yaml, "assets", ".assets.json")
     trust_boundaries = (sidecar_tb or {}).get("trust_boundaries") or _carry_forward(
         prior_yaml, "trust_boundaries", ".trust-boundaries.json"

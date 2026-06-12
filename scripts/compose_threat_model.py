@@ -327,7 +327,7 @@ class RenderContext:
             return ""
         if self._label_index is None:
             self._label_index = self._build_label_index()
-        return self._label_index.get(ref.strip().upper(), "")
+        return _codify_label_locator(self._label_index.get(ref.strip().upper(), ""))
 
     def _build_severity_index(self) -> dict[str, str]:
         """Map every finding ref (T-NNN + F-NNN alias) → its rated severity.
@@ -1764,10 +1764,16 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
     # frontend + auth + internet-exposed only), so report the actual number of
     # components that received a STRIDE pass rather than a hard-coded cap/total.
     components = ctx.yaml_data.get("components") or []
-    analyzed = sum(1 for c in components if c.get("threat_ids"))
-    comp_clause = (
-        f"**{analyzed} component{'s' if analyzed != 1 else ''}**" if analyzed else "**A reduced component set**"
-    )
+    meta = ctx.yaml_data.get("meta") or {}
+    cs = meta.get("component_selection") if isinstance(meta.get("component_selection"), dict) else None
+    if cs and cs.get("total"):
+        # Authoritative count from .stride-selection.json: N analyzed of M modeled.
+        comp_clause = f"**{cs.get('analyzed', 0)} of {cs.get('total')} components**"
+    else:
+        analyzed = sum(1 for c in components if c.get("threat_ids"))
+        comp_clause = (
+            f"**{analyzed} component{'s' if analyzed != 1 else ''}**" if analyzed else "**A reduced component set**"
+        )
     lines = [
         "> ⚠ **Quick depth — reduced-scope assessment.**",
         "> ",
@@ -1854,6 +1860,9 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
         # Strip the §-prefix from the display title since the number column
         # carries it now (avoids `7. 7. Security Architecture` doubling).
         display_title = re.sub(r"^\s*\d+[a-z]?(?:\.\d+)?\.\s+", "", clean_heading, flags=re.IGNORECASE)
+        # The TOC carries no inline code — strip backticks a heading locator may
+        # have left in the title (e.g. `### 3.1 SQL Injection (`search.ts:42`)`).
+        display_title = _strip_label_code(display_title)
         anchor = sec.get("anchor") or _anchor_from_heading(heading)
         children = _toc_children_for_section(ctx, sid, sec)
         entries.append(
@@ -1931,7 +1940,7 @@ def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any])
                 continue
         children.append(
             {
-                "title": title,
+                "title": _strip_label_code(title),
                 "anchor": _anchor_from_heading(f"### {title}"),
             }
         )
@@ -2096,8 +2105,24 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     if counts["info"] > 0:
         rd_parts.append(f"⚪ Info: {counts['info']}")
     risk_distribution = "**Risk distribution:** " + " · ".join(rd_parts) + f" · **Total: {total}**"
+    # Deterministic scope-coverage line — PL-facing. States how many components
+    # were analyzed in depth vs. modeled, computed from meta.component_selection
+    # (.stride-selection.json), so the executive verdict never implies the whole
+    # system was assessed when only a criteria-selected subset was.
+    scope_coverage = ""
+    cs = (ctx.yaml_data.get("meta") or {}).get("component_selection")
+    if isinstance(cs, dict) and (cs.get("excluded") or []):
+        analyzed = cs.get("analyzed", 0)
+        total_comp = cs.get("total", analyzed)
+        n_exc = len(cs.get("excluded") or [])
+        scope_coverage = (
+            f"**Scope:** {analyzed} of {total_comp} components received full STRIDE analysis — "
+            f"the externally-reachable, authentication-bearing, and business-critical surface. "
+            f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
+            f"(see [§1 Scope](#scope))."
+        )
     tpl = env.get_template(section["template"])
-    return tpl.render(data=data, risk_distribution=risk_distribution).rstrip() + "\n"
+    return tpl.render(data=data, risk_distribution=risk_distribution, scope_coverage=scope_coverage).rstrip() + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -11853,6 +11878,46 @@ _CODE_DOTTED_RE = re.compile(
 
 
 _CODE_SPAN_MASK_RE = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
+
+# A finding/mitigation title carries its evidence pointer as a TRAILING
+# parenthetical locator — `(routes/api/Users)`, `(updateProductReviews.ts:18)`,
+# `(package.json:7)`, `(Dockerfile)`. The LLM backticks it inconsistently, so the
+# same report shows `(`a.ts:18`)` next to `(routes/api/Users)`. These two helpers
+# normalise it deterministically: code locators are ALWAYS monospaced in rendered
+# labels, prose / STRIDE tags ((S·E), (I)) are never touched, and the Table of
+# Contents strips the backticks entirely.
+_LOCATOR_TOKEN_RE = re.compile(r"^[A-Za-z0-9_@][\w./\\@-]*(?::\d+(?:-\d+)?)?$")
+_NOEXT_CODE_FILES = {
+    "dockerfile", "makefile", "jenkinsfile", "procfile", "gemfile",
+    "rakefile", "vagrantfile", "brewfile", "gulpfile", "gruntfile",
+}
+
+
+def _codify_label_locator(label: str) -> str:
+    """Backtick the trailing ``(<locator>)`` of a finding/mitigation label when it
+    is a code locator (file path, file:line, route path, or an extensionless
+    config filename like Dockerfile). Idempotent; leaves prose, STRIDE tags, and
+    already-backticked locators untouched. Only the locator is wrapped."""
+    if not label or "(" not in label:
+        return label
+    m = re.search(r"\(([^()]+)\)\s*$", label)
+    if not m:
+        return label
+    inner = m.group(1).strip()
+    if "`" in inner:  # already formatted → idempotent
+        return label
+    looks_like_code = bool(_LOCATOR_TOKEN_RE.match(inner)) and (
+        "." in inner or "/" in inner or "\\" in inner or ":" in inner or inner.lower() in _NOEXT_CODE_FILES
+    )
+    if not looks_like_code:
+        return label
+    return f"{label[: m.start()]}(`{inner}`){label[m.end():]}"
+
+
+def _strip_label_code(label: str) -> str:
+    """Remove inline-code backticks from a label — for the TOC, which must carry
+    no monospaced code (`updateProductReviews.ts:18` → updateProductReviews.ts:18)."""
+    return label.replace("`", "") if label else label
 
 
 def _code_token_is_embedded(seg: str, ms: int, me: int) -> bool:

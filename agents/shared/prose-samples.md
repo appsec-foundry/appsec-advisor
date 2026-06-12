@@ -247,3 +247,32 @@ Five questions to ask about each prose field you just wrote:
    a diagnosis ("the missing piece is X") or drop the sentence.
 
 ≥2 negative answers → rewrite the field before saving.
+
+---
+
+## Pair G — MS Verdict bullet ALTITUDE (`ms-verdict.json::bullets[].body`)
+
+The Verdict is the one block the **product owner / project lead** reads. Bullets must state the *business consequence* and the *class* of weakness — the `refs` field already links the engineer to the finding. Config-level detail (config keys, library versions, CVE numbers, file:line, framework symbols, ports) belongs in §8/§7, never here.
+
+### BEFORE (engineer altitude — wrong for the Verdict)
+
+> - **Unauthenticated access to all endpoints** — `package.json` lists only `express`, `lodash`, and `sequelize` — no `jsonwebtoken`, `passport`, or session library. Every route on port 3000 is reachable without credentials.
+> - **Prototype pollution enables authorization bypass** — `lodash@4.17.10` (CVE-2019-10744, CVSS 9.8) lets a crafted JSON body inject onto `Object.prototype`; any route calling `_.merge` with request input poisons auth-flag checks.
+> - **Session cookie missing `httpOnly`/`secure`** — `res.cookie()` is called without the hardening flags, so an XSS payload can read the session token.
+
+### Diagnose
+- Names the manifest, library versions, CVE numbers, `_.merge`, port 3000, `httpOnly` — none of which a PL can act on; they bury the point.
+- "missing httpOnly" is a config-line finding, not an executive risk — it does not belong in the Verdict at all.
+- The PL needs: *what can an attacker do to the business, and what broad class of practice is missing.*
+
+### AFTER (product-owner altitude)
+
+> - **Anyone can use the app without signing in** — it ships no authentication layer, so every function is open to unauthenticated callers on the public internet.
+> - **Attackers can read or change the whole database** — the app builds database queries by pasting request text straight into SQL instead of using a query layer, so a crafted request can run arbitrary database commands or reach other customers' data.
+> - **The application skips several standard security practices** — among them server-side authorization and hardened session handling, which together let an attacker escalate from a normal account toward admin access.
+
+### Regel
+1. **Lead with the business outcome** ("anyone can use the app without signing in"), not the mechanism.
+2. **Describe the missing control as a class** ("no authentication layer", "skips several standard practices"), not a config key.
+3. **No config keys / versions / CVE / file:line / framework symbols** in `body` — the `refs` pointer carries the detail for the engineer who follows the link.
+4. **A pure config-line ("missing httpOnly") is not a Verdict bullet** — fold it into a broader "hardened session handling" class or leave it to §7.

@@ -543,9 +543,7 @@ def test_no_dangling_section7_crossref_when_section7_omitted(tmp_path: Path) -> 
     ymlp.write_text(yaml.safe_dump(data, sort_keys=False))
     rendered, _ = compose.render(CONTRACT, out)
     assert "## 7. Security Architecture" not in rendered, "§7 should be omitted at quick depth"
-    assert "#7-security-architecture" not in rendered, (
-        "dangling §7 anchor leaked into the render while §7 is omitted"
-    )
+    assert "#7-security-architecture" not in rendered, "dangling §7 anchor leaked into the render while §7 is omitted"
     assert "### Operational Strengths" in rendered  # the MS block itself still renders
 
 
@@ -3278,3 +3276,119 @@ def test_invalid_non_fallback_fragment_still_fatal(tmp_path: Path) -> None:
     (ctx.fragments_dir / "ms-verdict.json").write_text("{}", encoding="utf-8")
     with pytest.raises((compose.FragmentError, compose.ContractError)):
         compose._validate_known_json_fragments(ctx)
+
+
+# ---------------------------------------------------------------------------
+# Component-selection scope transparency (verdict scope line + quick banner)
+# ---------------------------------------------------------------------------
+
+
+def _cs_with_exclusions() -> dict:
+    return {
+        "mode": "criteria",
+        "analyzed": 2,
+        "total": 4,
+        "selected": [
+            {"id": "web", "name": "Web", "reasons": ["frontend attack surface (mandatory)"]},
+            {"id": "auth", "name": "Auth", "reasons": ["auth (M3.4 mandatory)"]},
+        ],
+        "excluded": [
+            {"id": "w", "name": "Worker", "reason": "out-of-scope at depth=standard"},
+            {"id": "db", "name": "DB", "reason": "out-of-scope at depth=standard"},
+        ],
+    }
+
+
+def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
+    frag = tmp_path / ".fragments"
+    frag.mkdir(parents=True)
+    (frag / "ms-verdict.json").write_text(
+        json.dumps(
+            {
+                "severity": "red",
+                "opening": "Not production-ready. The application leaves its most sensitive operations open to anyone.",
+                "bullets": [
+                    {
+                        "title": "Anyone can act as admin",
+                        "body": "An unauthenticated caller reaches every privileged action.",
+                        "refs": ["F-001"],
+                    },
+                    {
+                        "title": "Customer data is reachable",
+                        "body": "Any logged-in user can read other customers' records.",
+                        "refs": ["F-002"],
+                    },
+                ],
+                "closing": "Address authentication and authorization before any production use.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    yaml_data = {"meta": {"component_selection": _cs_with_exclusions()}, "threats": []}
+    ctx = compose.RenderContext(output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={}, fragments_dir=frag)
+    env = compose._build_jinja_env(ctx)
+    section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
+    out = compose._render_verdict(ctx, env, section)
+    assert "**Scope:** 2 of 4 components received full STRIDE analysis" in out
+    assert "other 2 (lower-priority / internal) were not individually assessed" in out
+
+
+def test_quick_banner_shows_n_of_m(tmp_path: Path) -> None:
+    yaml_data = {"meta": {"component_selection": _cs_with_exclusions()}, "components": []}
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data=yaml_data,
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"is_quick_depth": True},
+    )
+    env = compose._build_jinja_env(ctx)
+    out = compose._render_quick_mode_notice(ctx, env, {})
+    assert "**2 of 4 components**" in out
+
+
+# ---------------------------------------------------------------------------
+# Consistent code formatting of title/label locators (+ code-free TOC)
+# ---------------------------------------------------------------------------
+
+
+def test_codify_label_locator_backticks_code_consistently():
+    f = compose._codify_label_locator
+    # file:line, route path, bare filename, extensionless config file → backticked
+    assert (
+        f("Missing Ownership Check (updateProductReviews.ts:18)")
+        == "Missing Ownership Check (`updateProductReviews.ts:18`)"
+    )
+    assert (
+        f("Mass Assignment via Finale-REST (routes/api/Users)")
+        == "Mass Assignment via Finale-REST (`routes/api/Users`)"
+    )
+    assert f("Prototype Pollution (package.json:7)") == "Prototype Pollution (`package.json:7`)"
+    assert f("Root Container (Dockerfile)") == "Root Container (`Dockerfile`)"
+
+
+def test_codify_label_locator_leaves_non_code_untouched():
+    f = compose._codify_label_locator
+    assert f("Hardcoded Secrets & Weak Cryptography (S·E)") == "Hardcoded Secrets & Weak Cryptography (S·E)"
+    assert f("Some Finding (I)") == "Some Finding (I)"
+    assert f("Some Finding (verified)") == "Some Finding (verified)"
+    assert f("Add JWT authentication middleware") == "Add JWT authentication middleware"
+
+
+def test_codify_label_locator_is_idempotent():
+    f = compose._codify_label_locator
+    once = f("Missing Ownership Check (changePassword.ts:39)")
+    assert f(once) == once
+
+
+def test_strip_label_code_removes_backticks_for_toc():
+    assert compose._strip_label_code("SQL Injection (`search.ts:42`)") == "SQL Injection (search.ts:42)"
+
+
+def test_lookup_label_applies_codify(tmp_path: Path) -> None:
+    yaml_data = {"threats": [{"id": "F-001", "title": "Missing Ownership Check (updateProductReviews.ts:18)"}]}
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={}, fragments_dir=tmp_path
+    )
+    assert ctx.lookup_label("F-001") == "Missing Ownership Check (`updateProductReviews.ts:18`)"

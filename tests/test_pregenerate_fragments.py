@@ -344,12 +344,20 @@ class TestAttackSurface:
         a plain finding-free route is still summarised (2026-06-11 request)."""
         entries = [{"endpoint": f"GET /noise/{i}", "method": "GET", "auth_required": False} for i in range(40)]
         entries.append(
-            {"endpoint": "POST /rest/user/login", "method": "POST", "auth_required": False,
-             "relevance_tags": ["authentication"]}
+            {
+                "endpoint": "POST /rest/user/login",
+                "method": "POST",
+                "auth_required": False,
+                "relevance_tags": ["authentication"],
+            }
         )
         entries.append(
-            {"endpoint": "PUT /rest/wallet/balance", "method": "PUT", "auth_required": False,
-             "relevance_tags": ["missing-auth"]}
+            {
+                "endpoint": "PUT /rest/wallet/balance",
+                "method": "PUT",
+                "auth_required": False,
+                "relevance_tags": ["missing-auth"],
+            }
         )
         data = {"attack_surface": entries}
         md = pf.gen_attack_surface(data)
@@ -2401,3 +2409,39 @@ class TestWrappableRoute:
         assert out.replace("​", "") == route
         # A break opportunity after every slash.
         assert out.count("​") >= route.count("/")
+
+
+def test_system_overview_renders_component_selection_transparency():
+    mod = _load_module()
+    comps = [
+        {"id": "web", "name": "Web Frontend"},
+        {"id": "auth", "name": "Auth Service"},
+        {"id": "worker", "name": "Worker"},
+        {"id": "db", "name": "Database"},
+    ]
+    cs = {
+        "mode": "criteria",
+        "analyzed": 2,
+        "total": 4,
+        "selected": [
+            {"id": "web", "name": "Web Frontend", "reasons": ["frontend attack surface (mandatory)"]},
+            {"id": "auth", "name": "Auth Service", "reasons": ["auth (M3.4 mandatory)"]},
+        ],
+        "excluded": [
+            {"id": "worker", "name": "Worker", "reason": "out-of-scope at depth=standard"},
+            {"id": "db", "name": "Database", "reason": "out-of-scope at depth=standard"},
+        ],
+    }
+    yaml_data = {"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps}
+    out = mod.gen_system_overview(yaml_data)
+    assert "**2 of 4**" in out
+    assert "not individually analyzed" in out
+    assert "Worker" in out and "Database" in out
+    assert "Selection criteria" in out
+
+
+def test_system_overview_no_selection_falls_back_to_plain_scope():
+    mod = _load_module()
+    comps = [{"id": "a", "name": "A"}]
+    out = mod.gen_system_overview({"meta": {"project": {"name": "X"}}, "components": comps})
+    assert "covers 1 component of X" in out

@@ -227,12 +227,52 @@ def gen_system_overview(yaml_data: dict) -> str:
 
     lines.append("### Scope")
     lines.append("")
-    lines.append(
-        f"This threat model covers {len(components)} {'component' if len(components) == 1 else 'components'} of {name}: "
-        + ", ".join(f"**{c.get('name', c.get('id', '?'))}**" for c in components)
-        + "."
-    )
-    lines.append("")
+    cs = meta.get("component_selection") if isinstance(meta.get("component_selection"), dict) else None
+    excluded = (cs or {}).get("excluded") or []
+    if cs and excluded:
+        # Components were narrowed to a STRIDE-analyzed subset — make the coverage
+        # and the selection rationale explicit instead of implying every modeled
+        # component was assessed equally.
+        total = cs.get("total") or len(components)
+        analyzed = cs.get("analyzed") or 0
+        sel_names = [s.get("name") or s.get("id") for s in (cs.get("selected") or [])]
+        exc_names = [e.get("name") or e.get("id") for e in excluded]
+        # Distinct selection criteria actually triggered (truthful — only mention
+        # ci-cd / crown-jewel etc. if a selected component matched on it).
+        crit = []
+        for s in cs.get("selected") or []:
+            for r in s.get("reasons") or []:
+                head = r.split(" (")[0].strip()
+                if head and head not in crit:
+                    crit.append(head)
+        crit_clause = (" Selection criteria: " + "; ".join(crit) + ".") if crit else ""
+        lines.append(
+            f"{name} comprises **{total}** modeled components. This threat model applied full "
+            f"STRIDE threat analysis to **{analyzed} of {total}** — the components on the "
+            f"externally-reachable, authentication-bearing, and business-critical surface: "
+            + ", ".join(f"**{n}**" for n in sel_names)
+            + f".{crit_clause}"
+        )
+        lines.append("")
+        lines.append(
+            f"The remaining **{len(exc_names)}** component(s) were **not individually analyzed** at this "
+            f"assessment depth (lower-priority / internal surface): "
+            + ", ".join(exc_names)
+            + ". Re-run at a higher `--assessment-depth` to extend STRIDE coverage to them."
+        )
+        lines.append("")
+    else:
+        lines.append(
+            f"This threat model covers {len(components)} {'component' if len(components) == 1 else 'components'} of {name}: "
+            + ", ".join(f"**{c.get('name', c.get('id', '?'))}**" for c in components)
+            + "."
+        )
+        if cs and not excluded:
+            lines.append("")
+            lines.append(
+                f"All {cs.get('total') or len(components)} modeled components received full STRIDE threat analysis."
+            )
+        lines.append("")
 
     out_of_scope = (meta.get("scope") or {}).get("out_of_scope") or []
     if out_of_scope:
