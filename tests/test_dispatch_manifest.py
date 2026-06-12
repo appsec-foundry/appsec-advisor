@@ -330,6 +330,31 @@ def test_select_exposure_unknown_failsafe_included_at_standard():
     assert "mystery" not in {c["id"] for c in selected_q}
 
 
+def test_select_runtime_only_zone_is_exposure_unknown_not_internal():
+    """A component tagged ONLY with a runtime/where-it-runs zone
+    (``docker-container``) carries no reachability signal, so it must hit the
+    exposure-unknown fail-safe (included at standard+), NOT be treated as
+    internal-only and dropped. Regression for 2026-06-12: b2b-api — a
+    JWT-protected /b2b/v2 REST API with a vm.runInContext RCE, tagged only
+    ``docker-container`` and not crown-jewel — was silently excluded at
+    standard depth, leaving the whole component unanalyzed.
+    """
+    comps = [
+        _c("backend-api", zones=["internet"]),
+        _c("b2b-api", zones=["docker-container"]),  # runtime-only, not sensitive
+        _c("internal-worker", zones=["internal-network"]),  # genuine internal → still out
+    ]
+    selected, report = bm.select_stride_components(comps, "standard")
+    ids = {c["id"] for c in selected}
+    assert "b2b-api" in ids, "runtime-only zone must not exclude a component at standard"
+    assert "internal-worker" not in ids, "a genuine internal-network component is still excluded"
+    reasons = {s["id"]: s["reasons"] for s in report["selected"]}
+    assert "exposure-unknown (fail-safe inclusion)" in reasons["b2b-api"]
+    # Still minimal at quick (fail-safe is standard+ only).
+    selected_q, _ = bm.select_stride_components(comps, "quick")
+    assert "b2b-api" not in {c["id"] for c in selected_q}
+
+
 def test_select_ceiling_sheds_only_internal_never_earned():
     """The ceiling may shed ONLY genuinely-internal components — never anything
     earned by exposure/ci-cd/crown-jewel/auth/frontend. Live-run regression

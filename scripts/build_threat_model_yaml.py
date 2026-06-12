@@ -857,20 +857,24 @@ def build_changelog(
     threats: list[dict],
     components: list[dict],
     attack_surface: list[dict],
-    baseline_path: Path | None,
+    existing_changelog: list[dict] | None,
     plugin_root: Path,
+    current_sha: str | None = None,
 ) -> list[dict]:
-    """Append new entry to existing baseline changelog (or create new).
+    """Prepend a new entry to the prior changelog history (newest first).
+
+    `existing_changelog` is the prior ``threat-model.yaml``'s ``changelog[]`` —
+    the committed, accumulating store (see baseline_state.py "Separation of
+    concerns": the yaml owns the changelog, NOT the .appsec-cache runtime
+    baseline.json). The history is additive: each genuine run extends it,
+    never overwrites. A re-build against an identical state (same commit /
+    date / mode / plugin+analysis version) replaces the matching prior entry
+    instead of piling up a duplicate, so the builder is idempotent.
 
     Schema: required [version, date, mode]. added/changed/resolved are
     OBJECTS containing typed sub-arrays (threats[], components[], etc.).
     """
-    existing: list[dict] = []
-    if baseline_path and baseline_path.exists():
-        try:
-            existing = (json.loads(baseline_path.read_text()) or {}).get("changelog", []) or []
-        except json.JSONDecodeError:
-            pass
+    existing: list[dict] = list(existing_changelog or [])
 
     plugin_ver, analysis_ver = _plugin_version(plugin_root)
     mode = skill_cfg.get("mode", "full")
@@ -886,7 +890,7 @@ def build_changelog(
         "plugin_version": plugin_ver,
         "analysis_version": analysis_ver,
         "baseline_sha": None,
-        "current_sha": None,  # patched by main() after _git call
+        "current_sha": current_sha,
         "changed_files": None,
         "reanalyzed_components": sorted({c.get("id", "") for c in components if c.get("id")}),
         "carried_forward_components": [],
@@ -898,7 +902,22 @@ def build_changelog(
         "changed": {"threats": []},
         "resolved": {"threats": [], "reason_by_id": {}},
     }
-    return [new_entry, *existing]
+
+    # Idempotent re-build: drop any prior entry that describes the identical
+    # run state, then prepend the fresh one. Distinct scans (new commit, later
+    # date, plugin upgrade, mode switch) keep their own entries and accumulate.
+    def _entry_key(e: dict) -> tuple:
+        return (
+            e.get("current_sha"),
+            e.get("date"),
+            e.get("mode"),
+            e.get("plugin_version"),
+            e.get("analysis_version"),
+        )
+
+    new_key = _entry_key(new_entry)
+    deduped = [e for e in existing if _entry_key(e) != new_key]
+    return [new_entry, *deduped]
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────
@@ -999,11 +1018,10 @@ def main() -> int:
         threats,
         components,
         attack_surface,
-        args.plugin_root / ".appsec-cache" / "baseline.json",
+        (prior_yaml or {}).get("changelog"),
         args.plugin_root,
+        current_sha=(meta.get("git") or {}).get("commit_sha"),
     )
-    if changelog:
-        changelog[0]["current_sha"] = meta["git"]["commit_sha"]
 
     # Compose final document
     doc: dict[str, Any] = {

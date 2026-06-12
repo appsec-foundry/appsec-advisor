@@ -2916,6 +2916,47 @@ class TestCrossReferenceLabellingInvariant:
             doubled = f"— {label} — {label}"
             assert doubled not in second, f"label {label!r} was suffixed twice"
 
+    def test_html_nested_finding_link_detector(self, tmp_path):
+        """check_html_nested_finding_link flags the §4/§5 double-link render
+        corruption (`<a href="#f-001">[F-001](#f-001)</a>`) and passes on the
+        clean single-link form. Belt-and-suspenders for the linkify_anchors
+        idempotency guard.
+        """
+        clean = tmp_path / "clean.md"
+        clean.write_text(
+            '<td>🔴 <a href="#f-001">F-001</a> — SQL Injection '
+            "(<code>routes/login.ts:34</code>)</td>\n"
+        )
+        rep_clean = qa.check_html_nested_finding_link(clean)
+        assert rep_clean.ok == 1 and not rep_clean.issues
+
+        corrupt = tmp_path / "corrupt.md"
+        corrupt.write_text(
+            '<td>🔴 <a href="#f-001">[F-001](#f-001) — SQL Injection — '
+            "routes/login.ts:34</a> — SQL Injection (<code>routes/login.ts:34</code>)</td>\n"
+        )
+        rep_bad = qa.check_html_nested_finding_link(corrupt)
+        assert rep_bad.ok == 0 and len(rep_bad.issues) == 1
+
+    def test_linkify_skips_html_anchor_text(self, tmp_path):
+        """A bare ID that is the visible text of an already-rendered HTML
+        anchor (`<a href="#f-001">F-001</a>`, as the §4/§5 fixed-layout HTML
+        tables emit) must NOT be re-linkified into
+        `<a href="#f-001">[F-001](#f-001)</a>`. Regression for the §4 Assets
+        double-link corruption seen when Stage 3's `qa_checks all` ran after
+        the pre-agent `autofix` had already HTML-converted the table.
+        """
+        md = self._write_pair(
+            tmp_path,
+            '<td>🔴 <a href="#f-001">F-001</a> — SQL Injection in login endpoint '
+            '(<code>routes/login.ts:34</code>)<br/>'
+            '🔴 <a href="#f-002">F-002</a> — Hardcoded RSA private key in source</td>\n',
+        )
+        _, new_text = qa.linkify_anchors(md)
+        assert '<a href="#f-001">F-001</a>' in new_text
+        assert '<a href="#f-001">[F-001](#f-001)</a>' not in new_text
+        assert '<a href="#f-002">[F-002](#f-002)</a>' not in new_text
+
     def test_linkify_skips_existing_em_dash_description(self, tmp_path):
         """When the author wrote `[T-001](#t-001) — Custom`, the linkifier
         leaves the existing description alone (no doubled em-dash).

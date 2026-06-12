@@ -418,3 +418,62 @@ def test_component_selection_none_when_absent():
     m = _load()
     assert m.build_component_selection(None, []) is None
     assert m.build_component_selection({}, []) is None
+
+
+# ─── changelog accumulation (regression: changelog was OVERWRITTEN, not extended) ──
+#
+# build_changelog historically read the prior history from
+# $CLAUDE_PLUGIN_ROOT/.appsec-cache/baseline.json — a file that the writer
+# (baseline_state.py) puts in $OUTPUT_DIR and that never carries a `changelog`
+# key. So `existing` was always [] and every run reset changelog to a single
+# entry. The fix seeds `existing` from the prior threat-model.yaml's
+# changelog[] (the committed, accumulating store). These tests pin "extend".
+
+_CL_CFG = {"mode": "full", "assessment_depth": "standard", "reasoning_model": "sonnet-economy"}
+_CL_THREATS = [{"id": "T-001", "component": "comp-a"}]
+_CL_COMPS = [{"id": "comp-a"}]
+
+
+def test_changelog_first_run_single_entry(tmp_path):
+    b = _load()
+    cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
+    assert len(cl) == 1
+    assert cl[0]["current_sha"] == "sha-1"
+    assert cl[0]["added"]["threats"] == ["T-001"]
+
+
+def test_changelog_second_run_extends_not_overwrites(tmp_path):
+    b = _load()
+    run1 = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
+    threats2 = [{"id": "T-001", "component": "comp-a"}, {"id": "T-002", "component": "comp-a"}]
+    run2 = b.build_changelog(_CL_CFG, threats2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2")
+    # History grew and is newest-first; the prior entry survives verbatim.
+    assert len(run2) == 2
+    assert run2[0]["current_sha"] == "sha-2"
+    assert run2[1]["current_sha"] == "sha-1"
+    assert run2[0]["added"]["threats"] == ["T-001", "T-002"]
+    assert run2[1] == run1[0]
+
+
+def test_changelog_accumulates_across_three_runs(tmp_path):
+    b = _load()
+    cl = None
+    for i in range(1, 4):
+        cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], cl, tmp_path, current_sha=f"sha-{i}")
+    assert [e["current_sha"] for e in cl] == ["sha-3", "sha-2", "sha-1"]
+
+
+def test_changelog_idempotent_rebuild_same_state_no_duplicate(tmp_path):
+    b = _load()
+    run1 = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
+    # Re-build against the IDENTICAL commit/date/mode/version → replace, not pile up.
+    rerun = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], run1, tmp_path, current_sha="sha-1")
+    assert len(rerun) == 1
+    assert rerun[0]["current_sha"] == "sha-1"
+
+
+def test_changelog_none_history_treated_as_empty(tmp_path):
+    b = _load()
+    cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha=None)
+    assert len(cl) == 1
+    assert cl[0]["current_sha"] is None

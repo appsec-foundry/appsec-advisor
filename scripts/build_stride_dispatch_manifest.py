@@ -85,6 +85,29 @@ def _trust_boundaries_for(component_id: str, all_boundaries: list) -> str:
 # ---------------------------------------------------------------------------
 EXPOSED_ZONES = frozenset({"internet", "dmz", "client-device", "mobile-device"})
 CICD_ZONES = frozenset({"ci-cd-runtime", "ci-cd-secrets", "build-pipeline", "deployment-pipeline"})
+# Pure runtime / where-it-runs zones carry NO internet-reachability signal. A
+# component tagged ONLY with these is exposure-UNKNOWN for selection purposes
+# and must hit the fail-safe inclusion branch, not be treated as "internal-only"
+# and dropped. (2026-06-12: b2b-api — a JWT-protected /b2b/v2 REST API with a
+# vm.runInContext RCE — was tagged only `docker-container` and silently excluded
+# at standard depth, leaving the whole component unanalyzed.)
+RUNTIME_ONLY_ZONES = frozenset(
+    {
+        "docker-container",
+        "container",
+        "kubernetes",
+        "k8s",
+        "pod",
+        "vm",
+        "virtual-machine",
+        "serverless",
+        "lambda",
+        "function",
+        "host",
+        "process",
+        "runtime",
+    }
+)
 _AUTH_HINTS = ("auth", "identity", "login", "session", "jwt", "oauth", "iam", "2fa", "mfa")
 _FRONTEND_HINTS = ("frontend", "spa", "web-client", "react", "angular", "vue")
 
@@ -99,6 +122,17 @@ def _component_text(c: dict) -> str:
 def _zones(c: dict) -> set:
     z = c.get("deployment_zones") or []
     return {str(x).strip().lower() for x in z if str(x).strip()}
+
+
+def _reachability_zones(c: dict) -> set:
+    """Deployment zones that actually carry an internet-reachability signal.
+
+    Runtime/where-it-runs tags (``RUNTIME_ONLY_ZONES``) are filtered out: a
+    component tagged only with those is exposure-UNKNOWN, so the selection's
+    fail-safe inclusion branch must fire rather than the "zones present →
+    treat as internal-only" path that silently drops it.
+    """
+    return _zones(c) - RUNTIME_ONLY_ZONES
 
 
 def _is_auth(c: dict) -> bool:
@@ -134,7 +168,7 @@ def _is_internal_only(c: dict) -> bool:
     are the ONLY components the operational ceiling may shed — everything that
     earned selection by a positive criterion (or exposure-unknown fail-safe) is
     never silently dropped."""
-    if not _zones(c):
+    if not _reachability_zones(c):
         return False  # exposure-unknown → fail-safe, never silently dropped
     return not (_is_exposed(c) or _is_cicd(c) or _is_crown_jewel(c) or _is_auth(c) or _is_frontend(c))
 
@@ -168,7 +202,7 @@ def _selection_reasons(c: dict, depth: str) -> list:
         reasons.append("crown-jewel (credentials/PII/payment/secrets)")
     if depth == "thorough" and not reasons:
         reasons.append("transitively reachable (thorough)")
-    if not _zones(c) and not _is_auth(c) and not _is_frontend(c) and depth != "quick":
+    if not _reachability_zones(c) and not _is_auth(c) and not _is_frontend(c) and depth != "quick":
         reasons.append("exposure-unknown (fail-safe inclusion)")
     return reasons
 
@@ -185,11 +219,13 @@ def _in_scope(c: dict, depth: str) -> bool:
     # standard + thorough
     if _is_cicd(c) or _is_crown_jewel(c):
         return True
-    if not _zones(c):
-        # Exposure-unknown: fail-safe toward inclusion at standard+ (do not let a
-        # mis-tagged/untagged component silently become a whole-component blind spot).
+    if not _reachability_zones(c):
+        # Exposure-unknown (no zones, or runtime-only zones like docker-container
+        # that carry no reachability signal): fail-safe toward inclusion at
+        # standard+ (do not let a mis-tagged/untagged component silently become a
+        # whole-component blind spot).
         return True
-    # Zones present but none exposed/cicd → internal-only: thorough only.
+    # Reachability zones present but none exposed/cicd → internal-only: thorough only.
     return depth == "thorough"
 
 

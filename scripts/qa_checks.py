@@ -599,6 +599,25 @@ def _load_th_label_index(md_text: str) -> dict[str, tuple[str, str]]:
     return idx
 
 
+_HTML_ANCHOR_OPEN_TAIL_RE = re.compile(r"<a\b[^>]*>\s*$")
+
+
+def _is_html_anchor_text(line: str, start: int, end: int) -> bool:
+    """True when ``line[start:end]`` is the visible text of an already-rendered
+    HTML anchor (``<a href="#...">ID</a>``).
+
+    ``linkify_anchors`` must not re-inject a markdown link into such text. The
+    §4 Assets / §5 entry-point tables are pre-rendered to fixed-layout HTML by
+    ``_attack_surface_tables_to_html`` (cells become ``<a href="#f-001">F-001</a>``).
+    A second mutating pass (e.g. Stage 3's ``qa_checks all`` after the pre-agent
+    ``autofix``) would otherwise turn that into the doubled
+    ``<a href="#f-001">[F-001](#f-001)</a> — title (file)`` form. Guarding on
+    "ID sits between an open ``<a …>`` tag and its ``</a>``" makes the pass
+    idempotent against the HTML-converted tables.
+    """
+    return bool(_HTML_ANCHOR_OPEN_TAIL_RE.search(line[:start])) and line[end:].lstrip().startswith("</a>")
+
+
 def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     report = Report("anchors")
     text = md_path.read_text(encoding="utf-8")
@@ -694,6 +713,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             start = match.start()
             prefix = new_line[max(0, start - 2) : start]
             suffix = new_line[match.end() : match.end() + 2]
+            if _is_html_anchor_text(new_line, start, match.end()):
+                return full
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
             if '<a id="t-' in new_line[max(0, start - 30) : start + 10]:
@@ -710,6 +731,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             start = match.start()
             prefix = new_line[max(0, start - 2) : start]
             suffix = new_line[match.end() : match.end() + 2]
+            if _is_html_anchor_text(new_line, start, match.end()):
+                return full
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
             if '<a id="m-' in new_line[max(0, start - 30) : start + 10]:
@@ -730,6 +753,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             start = match.start()
             prefix = new_line[max(0, start - 2) : start]
             suffix = new_line[match.end() : match.end() + 2]
+            if _is_html_anchor_text(new_line, start, match.end()):
+                return full
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
             if '<a id="f-' in new_line[max(0, start - 30) : start + 10]:
@@ -750,6 +775,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             start = match.start()
             prefix = new_line[max(0, start - 2) : start]
             suffix = new_line[match.end() : match.end() + 2]
+            if _is_html_anchor_text(new_line, start, match.end()):
+                return full
             if prefix.endswith("[") or suffix.startswith("]("):
                 return full
             if '<a id="th-' in new_line[max(0, start - 30) : start + 10]:
@@ -3342,6 +3369,48 @@ def check_section7_finding_link_duplicate(md_path: Path) -> Report:
     return report
 
 
+_HTML_ANCHOR_SPAN_RE = re.compile(r"<a\b[^>]*>(?P<inner>.*?)</a>", re.DOTALL)
+_NESTED_MD_ID_LINK_RE = re.compile(r"\[[A-Za-z]{1,3}-\d{2,4}\]\(#")
+
+
+def check_html_nested_finding_link(md_path: Path) -> Report:
+    """Flag a markdown ID link nested INSIDE an HTML anchor's visible text —
+    e.g. ``<a href="#f-001">[F-001](#f-001)</a>``.
+
+    The §4 Assets / §5 entry-point tables are pre-rendered to fixed-layout HTML
+    by ``_attack_surface_tables_to_html`` (cells become
+    ``<a href="#f-001">F-001</a>``). A non-idempotent re-linkify pass can
+    re-inject the markdown link into the anchor text, producing the doubled
+    ``<a href="#f-001">[F-001](#f-001)</a> — title (file)`` corruption (the
+    finding-link format contract — ``agents/shared/ms-template.md`` — wants a
+    single clean ``🔴 F-001 — title (file)`` link). This is a render-pipeline
+    defect, not authorable content, so a hit is a hard format defect.
+
+    Producer-side it is prevented by ``linkify_anchors``'s
+    ``_is_html_anchor_text`` guard; this detector is the belt-and-suspenders so
+    a future regression in any cell-enrichment pass cannot ship the corruption
+    silently.
+    """
+    report = Report(check="html_nested_finding_link")
+    if not md_path.is_file():
+        report.issues.append(f"file not found: {md_path}")
+        return report
+    text = md_path.read_text(encoding="utf-8")
+    hits = 0
+    for m in _HTML_ANCHOR_SPAN_RE.finditer(text):
+        if _NESTED_MD_ID_LINK_RE.search(m.group("inner")):
+            hits += 1
+            if hits <= 8:
+                report.issues.append(
+                    "markdown ID link nested inside HTML anchor text "
+                    f"(render corruption): {m.group(0)[:100]}"
+                )
+    if hits > 8:
+        report.issues.append(f"... and {hits - 8} more nested-link occurrence(s)")
+    report.ok = 1 if not report.issues else 0
+    return report
+
+
 _RELEVANT_FINDING_BULLET_RE = re.compile(
     r"^[ \t]*[-*][ \t]+\[(F-\d{3,4})\]\(#f-\d{3,4}\)[ \t]+[—\-][ \t]+(.+?)\s*$",
     re.MULTILINE,
@@ -3942,6 +4011,11 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # underlying authoring rule is enforced at the renderer. Each remains
     # callable as a standalone subcommand.
     section7_h4_status_report = check_section7_h4_status(md)
+    # Belt-and-suspenders: a markdown ID link nested inside an HTML anchor
+    # (`<a href="#f-001">[F-001](#f-001)</a>`) is the §4/§5 double-link render
+    # corruption. Prevented producer-side by linkify_anchors' idempotency
+    # guard; detected here so a future regression cannot ship silently.
+    html_nested_link_report = check_html_nested_finding_link(md)
     summary = {
         "links": link_report.as_dict(),
         "anchors": anchor_report.as_dict(),
@@ -3978,6 +4052,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "subcontrol_naming_canonical": subcontrol_naming_report.as_dict(),
         "ai_padding_phrases": ai_padding_report.as_dict(),
         "section7_h4_status": section7_h4_status_report.as_dict(),
+        "html_nested_finding_link": html_nested_link_report.as_dict(),
     }
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
@@ -9916,6 +9991,13 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py section7_finding_link_duplicate <md>", file=sys.stderr)
             return 2
         report = check_section7_finding_link_duplicate(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "html_nested_finding_link":
+        if len(argv) != 3:
+            print("usage: qa_checks.py html_nested_finding_link <md>", file=sys.stderr)
+            return 2
+        report = check_html_nested_finding_link(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "section7_finding_reference_semantic":
