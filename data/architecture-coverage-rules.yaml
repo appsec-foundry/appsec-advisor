@@ -4,7 +4,7 @@
 #   * hard_rules         — 5 high-confidence rules (arch.md §Erste Lieferung)
 #                          may emit anti_pattern_candidates or strong control
 #                          assessments; severity capped per critical-criteria.yaml.
-#   * hypothesis_rules   — 4 conservative threat-hypothesis rules
+#   * hypothesis_rules   — 6 conservative threat-hypothesis rules
 #                          (arch.md §Threat-Hypothesis-Regeln).
 #                          MUST default to emit_hypothesis_only; promotion to
 #                          a hard candidate requires source-to-sink evidence
@@ -453,6 +453,89 @@ hypothesis_rules:
       Capped at High — IDOR is single-resource scope; Critical only when the resource itself is a privilege grant (role:admin) or a cross-tenant secret.
     reviewer_note: >
       Trace the route's middleware chain to ensure no upstream authorize() narrows the query.
+
+  - id: ARCH-AUTHN-001
+    title: "State-changing or management route without an authentication gate"
+    architectural_theme: Authentication
+    generic_threat_title: "Unauthenticated access to a privileged operation"
+    hypothesis_id_prefix: ARCH-HYP-AUTHN
+    control: "Route Authentication"
+    domain: IAM
+    cwe: CWE-306
+    threat_category_id: TH-06
+    stride: ElevationOfPrivilege
+    weak_or_missing_controls:
+      - "Route Authentication Middleware"
+      - "Server-Side Session Enforcement"
+    preconditions:
+      - kind: route_inventory_signal
+        description: "Route inventory exists with per-route auth signals."
+    positive_signals:
+      # Consumes route_inventory.py's missing_auth_suspect flag (state-changing
+      # or management route, authn=unknown, not public-by-design). Previously
+      # computed but unconsumed — dead signal.
+      inventory_pattern:
+        route_flag: missing_auth_suspect
+        min_routes: 1
+    severity_cap: High
+    output: hypothesis_only
+    review_intent: >
+      Hypothesis: a POST/PUT/DELETE/PATCH or admin/management route is registered with no authentication middleware in scope — verify the chain is not gated upstream by a centrally-mounted guard the static scan could not see.
+    finding_when:
+      - "Route registration line carries no auth marker AND no upstream app.use mount protects its path prefix"
+      - "Management/debug/metrics endpoint reachable without a session"
+    not_a_finding_when:
+      - "An upstream app.use('/prefix', authMiddleware) protects the route (read the mount)"
+      - "Endpoint is unauthenticated by design (login, register, captcha, health, webhook)"
+    required_evidence: >
+      Route registration line plus the absence of a protecting middleware mount on its path prefix.
+    severity_reason: >
+      Capped at High — a missing-auth suspect is a hypothesis; confirmation requires showing no upstream guard exists.
+    reviewer_note: >
+      Trace the path prefix back to server bootstrap; a single app.use guard can cover the whole router.
+
+  - id: ARCH-BOLA-001
+    title: "Authenticated object-addressing route without an authorization gate (BOLA/IDOR surface)"
+    architectural_theme: Authorization
+    generic_threat_title: "Broken object-level authorization (BOLA/IDOR)"
+    hypothesis_id_prefix: ARCH-HYP-BOLA
+    control: "Object-Level Ownership Check"
+    domain: AuthZ
+    cwe: CWE-639
+    threat_category_id: TH-06
+    stride: ElevationOfPrivilege
+    weak_or_missing_controls:
+      - "Object-Level Ownership Check"
+      - "Tenant Scoping"
+    preconditions:
+      - kind: route_inventory_signal
+        description: "Route inventory exists with per-route auth signals."
+    positive_signals:
+      # Consumes route_inventory.py's missing_authz_suspect flag (authenticated,
+      # object-addressing route — path carries an id — with no detected
+      # role/ownership gate). The canonical BOLA/IDOR primitive.
+      inventory_pattern:
+        route_flag: missing_authz_suspect
+        min_routes: 1
+    exculpatory_signals:
+      any_pattern:
+        - "(?i)\\b(casbin|oso|opa|cancancan|pundit|@PreAuthorize|requireRole|hasPermission)\\b"
+    severity_cap: High
+    output: hypothesis_only
+    review_intent: >
+      Hypothesis: a logged-in user can read or mutate another tenant's record by swapping the resource id in the URL, because the handler resolves the object by id without constraining on req.user / owner / tenant.
+    finding_when:
+      - "GET/PUT/DELETE/PATCH on /resource/:id where the lookup WHERE clause lacks an owner/tenant co-clause"
+      - "Update/delete endpoints that take the resource id from the URL without verifying ownership"
+    not_a_finding_when:
+      - "A tenant-aware ORM hook injects tenantId/ownerId on every query (verified by reading the hook)"
+      - "The object is non-owned reference data (public catalog) the route legitimately exposes to any authenticated user"
+    required_evidence: >
+      Handler showing the object resolved by URL id with no ownership predicate.
+    severity_reason: >
+      Capped at High — IDOR is single-resource scope; Critical only when the resource is itself a privilege grant or a cross-tenant secret.
+    reviewer_note: >
+      Read the handler's query: confirm there is no req.user.id / tenantId co-clause and no upstream ownership middleware.
 
   - id: ARCH-INPUT-001
     title: "Broken input validation exposure"

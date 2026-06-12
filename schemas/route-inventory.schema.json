@@ -49,6 +49,10 @@
         "missing_auth_suspect_count": {
           "type": "integer",
           "minimum": 0
+        },
+        "missing_authz_suspect_count": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }
@@ -127,6 +131,19 @@
         "missing_auth_suspect": {
           "type": "boolean",
           "description": "Advisory warning (NOT a finding): a state-changing (POST/PUT/DELETE/PATCH) or management route with no detected auth guard — looks like it should require authentication. Review candidate."
+        },
+        "missing_authz_suspect": {
+          "type": "boolean",
+          "description": "Advisory warning (NOT a finding): an authenticated, object-addressing route (path carries a resource id) with no detected role/ownership gate — the canonical BOLA/IDOR surface. Hypothesis only; 'unknown' authz != proven-absent."
+        },
+        "relevance_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["registration", "authentication", "management", "missing-auth", "missing-authz"]
+          },
+          "uniqueItems": true,
+          "description": "Display-relevance reasons (NOT findings): why a finding-free route still merits an individual row in §5 Attack Surface — it sits on the registration / authentication surface, is a management endpoint, or is a missing-auth/authz suspect. Consumed by pregenerate_fragments.gen_attack_surface to exempt these rows from the large-inventory collapse."
         },
         "confidence": {
           "type": "string",

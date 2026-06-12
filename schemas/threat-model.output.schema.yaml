@@ -283,6 +283,10 @@ properties:
         protocol:      { type: string }
         auth_required: { type: [boolean, "null"] }
         notes:         { type: [string, "null"] }
+        # Display-relevance reasons carried from .route-inventory.json so §5 keeps
+        # a finding-free auth/registration/management/suspect route individually
+        # listed instead of collapsing it into the "N further entry points" hint.
+        relevance_tags: { type: array, items: { type: string } }
 
   trust_boundaries:
     type: array

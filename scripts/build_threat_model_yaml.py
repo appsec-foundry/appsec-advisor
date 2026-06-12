@@ -594,6 +594,12 @@ def build_attack_surface(routes: dict | None, sidecar: dict | None = None) -> tu
                 "auth_required": auth_required,
                 "notes": "; ".join(notes_parts) or None,
             }
+            # Carry the route inventory's display-relevance tags so §5 can keep a
+            # finding-free auth/registration/management/suspect route out of the
+            # large-inventory collapse (see pregenerate_fragments.gen_attack_surface).
+            rel_tags = [t for t in (r.get("relevance_tags") or []) if isinstance(t, str)]
+            if rel_tags:
+                entry["relevance_tags"] = rel_tags
             baseline_pairs.append((entry, r.get("route_id")))
 
     # Dedup baseline by entry_point. route_inventory.py can emit the same
@@ -614,6 +620,9 @@ def build_attack_surface(routes: dict | None, sidecar: dict | None = None) -> tu
                 prev["auth_required"] = bool(prev.get("auth_required")) and bool(entry.get("auth_required"))
                 if not prev.get("notes") and entry.get("notes"):
                     prev["notes"] = entry["notes"]
+                merged_tags = set(prev.get("relevance_tags") or []) | set(entry.get("relevance_tags") or [])
+                if merged_tags:
+                    prev["relevance_tags"] = sorted(merged_tags)
         baseline_pairs = list(collapsed.values())
 
     # Snapshot the full deduped baseline + the exclude set so the class-coverage

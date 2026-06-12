@@ -491,6 +491,63 @@ def _evaluate_authz_hyp_rule(rule: CompiledRule, inventory: dict | None) -> dict
     }
 
 
+def _evaluate_inventory_flag_rule(rule: CompiledRule, inventory: dict | None) -> dict:
+    """Hypothesis from a per-route advisory flag the inventory already computes
+    (``missing_auth_suspect`` / ``missing_authz_suspect``).
+
+    route_inventory.py sets these booleans per route but, before this rule
+    existed, nothing consumed them — the signal was dead. The flag is a
+    *suspect*, never a proof (the window scan cannot see a centralised gate;
+    'unknown' != 'absent'), so a match seeds an investigate-class hypothesis,
+    never a hard finding."""
+    if not inventory:
+        return {
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": ".route-inventory.json not available",
+        }
+    pat = rule.inventory_pattern or {}
+    flag = pat.get("route_flag")
+    min_n = int(pat.get("min_routes", 1) or 1)
+    if not flag:
+        return {
+            "applies": False,
+            "status": "not_applicable",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": "no inventory_pattern.route_flag configured",
+        }
+    routes = inventory.get("routes", []) or []
+    matches = [
+        {
+            "file": r.get("handler_file", ""),
+            "line": int(r.get("handler_line", 1)),
+            "signal": (
+                f"{r.get('method')} {r.get('path')} authn={r.get('authn_signal')} authz={r.get('authz_signal')}"
+            ),
+        }
+        for r in routes
+        if r.get(flag) is True
+    ]
+    if len(matches) < min_n:
+        return {
+            "applies": True,
+            "status": "present",
+            "confidence": "low",
+            "evidence": [],
+            "skip_reason": None,
+        }
+    return {
+        "applies": True,
+        "status": "weak",
+        "confidence": "medium",
+        "evidence": matches[:8],
+        "skip_reason": None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Engine
 # ---------------------------------------------------------------------------
@@ -571,6 +628,8 @@ def _evaluate_hard_rule(rule: CompiledRule, repo_root: Path, inventory: dict | N
 def _evaluate_hypothesis_rule(rule: CompiledRule, repo_root: Path, inventory: dict | None) -> dict:
     if rule.rule_id == "ARCH-AUTHZ-001":
         return _evaluate_authz_hyp_rule(rule, inventory)
+    if (rule.inventory_pattern or {}).get("route_flag"):
+        return _evaluate_inventory_flag_rule(rule, inventory)
 
     hits = _aggregate_hits_for_rule(repo_root, rule)
     if rule.precondition_patterns and not hits.precondition:

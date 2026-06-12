@@ -651,7 +651,7 @@ After writing `.recon-summary.md`, write a second file `$OUTPUT_DIR/.recon-signa
     "has_ci_pipeline": "<file:line or 'none'>",
     "has_external_apis": "<file:line or 'none'>",
     "has_client_storage": "<file:line or 'none'>",
-    "has_multi_tenancy_signal": "<file:line describing BOTH conditions or 'none'>",
+    "has_multi_tenancy_signal": "<file:line describing BOTH conditions; OR when a tenant_id column exists but NO scoping pattern is found, prefix the note 'ISOLATION-GAP: ' + the tenant_id location — a cross-tenant access risk (TH-20) the STRIDE analyzer must trace even though the boolean stays false; OR 'none'>",
     "has_open_self_registration": "<file:line or 'none'>"
   },
   "signal_classification": {
@@ -669,7 +669,7 @@ After writing `.recon-summary.md`, write a second file `$OUTPUT_DIR/.recon-signa
 ```
 
 **Signal assignment rules:**
-- `has_multi_tenancy_signal` requires **both** sub-conditions — this is the most commonly over-triggered signal. When only a tenant_id column exists without scoping middleware, set to `false` and note in `signal_evidence`.
+- `has_multi_tenancy_signal` requires **both** sub-conditions — this is the most commonly over-triggered signal. When only a tenant_id column exists without scoping middleware, keep the boolean `false` (avoids over-activating multi-tenant actors) BUT record it in `signal_evidence` with the `ISOLATION-GAP:` prefix — a tenant column with no enforced scoping is exactly the broken-isolation case and must stay visible to the STRIDE analyzer as a TH-20 candidate, not silently dropped.
 - `has_open_self_registration` classification: deterministic when a registration route is found AND it clearly lacks gating (no invite/payment/approval patterns in the same file/module). Ambiguous cases → `llm-fallback` classification.
 - All other signals are deterministic from existing Grep evidence — do not call LLM inference.
 - Missing evidence for a signal → `false` (conservative). The Actor resolver will activate actors with `signal_status: activate-with-warning` as fallback only for signals that are structurally unknowable (e.g. single-file repos with no package.json).

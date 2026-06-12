@@ -36,7 +36,7 @@ import json
 import os
 import re
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -259,6 +259,19 @@ _PUBLIC_BY_DESIGN_RE = re.compile(
     r"webhook|webhooks)\b"
 )
 
+# Positive security-relevance patterns — INTENTIONALLY NARROWER than
+# _PUBLIC_BY_DESIGN_RE, which also matches health/ping/version/webhook noise we
+# do NOT want to surface. A finding-free route whose path matches one of these
+# still earns an individual row in §5 Attack Surface because it sits on the
+# account-lifecycle / identity surface an attacker probes first. These drive the
+# per-route `relevance_tags` advisory — display signal only, never a finding.
+_REGISTRATION_PATH_RE = re.compile(r"(?i)(?:^|/)(?:register|signup|sign-up)\b")
+_AUTHFLOW_PATH_RE = re.compile(
+    r"(?i)(?:^|/)(?:login|logout|signin|sign-in|password|passwd|"
+    r"reset-password|forgot-password|forgot|recover|token|jwt|oauth|openid|"
+    r"sso|saml|2fa|mfa|otp|session|credential)\b"
+)
+
 _AUTHZ_PATTERNS = re.compile(
     r"(?i)\b("
     r"requireRole|hasPermission|hasRole|checkPermission|authorize|"
@@ -268,6 +281,32 @@ _AUTHZ_PATTERNS = re.compile(
     r"can\?|ability\.can|enforce\("
     r")\b"
 )
+
+# Path-prefix middleware mounting that carries an authoriZation guard (role /
+# permission / policy), e.g.
+#   app.use('/api/admin', requireRole('admin'))
+#   router.use('/billing', authorize('billing:write'))
+# Mirrors _GUARD_MOUNT_RE (which only resolves authN) so a centralised authZ
+# layer mounted away from the handler is not mis-read as "no authz". Without
+# this lift, every route under a central RBAC mount stays authz=unknown and
+# floods the BOLA hypothesis with false positives.
+_AUTHZ_GUARD_MOUNT_RE = re.compile(
+    r"""\b\w+\.(?:use|all|get|post|put|delete|patch)\(\s*"""
+    r"""['"](?P<path>/[^'"]*)['"]\s*,[^)]*?\b(?:requireRole|hasPermission|hasRole|"""
+    r"""checkPermission|authorize|RolesAllowed|requirePermission|enforce|"""
+    r"""casbin|oso|opa|can|ability)\b"""
+)
+
+# A route path that addresses a specific object by id — the BOLA/IDOR surface.
+# Matches Express/Rails ':id', FastAPI/Spring/.NET '{id}'/'{id:int}', and
+# Flask/Django '<id>'/'<int:id>'.
+_PATH_PARAM_RE = re.compile(r":[A-Za-z_][\w-]*|\{[A-Za-z_][\w:-]*\}|<[A-Za-z_][\w:-]*>")
+
+# Signal values that mean "a guard WAS detected" (authN or authZ). A route is a
+# missing-authz suspect only when it is authenticated (authN present) AND no
+# authZ gate was detected.
+_AUTHN_PRESENT = {"present", "middleware_present", "decorator_present"}
+_AUTHZ_PRESENT = {"present", "middleware_present", "decorator_present"}
 
 
 @dataclass
@@ -281,6 +320,8 @@ class RouteCandidate:
     authz_signal: str = "unknown"
     management_surface: bool = False
     missing_auth_suspect: bool = False
+    missing_authz_suspect: bool = False
+    relevance_tags: list[str] = field(default_factory=list)
     confidence: str = "medium"
 
 
@@ -562,16 +603,21 @@ def build_inventory(repo_root: Path) -> dict:
     frameworks_seen: set[str] = set()
     unsupported: list[str] = []
     guarded_prefixes: set[str] = set()
+    authz_guarded_prefixes: set[str] = set()
 
     for src in _walk_sources(repo_root):
         try:
             lines = src.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
         except OSError:
             lines = []
+        blob = "".join(lines)
         # Collect path prefixes mounted with an auth guard (cross-file: a guard
         # in server.ts protects handlers defined in routes/*.ts).
-        for gm in _GUARD_MOUNT_RE.finditer("".join(lines)):
+        for gm in _GUARD_MOUNT_RE.finditer(blob):
             guarded_prefixes.add(gm.group("path").rstrip("/") or "/")
+        # Same, for authoriZation guards (role/permission/policy middleware).
+        for gm in _AUTHZ_GUARD_MOUNT_RE.finditer(blob):
+            authz_guarded_prefixes.add(gm.group("path").rstrip("/") or "/")
         try:
             extracted = _extract_file(repo_root, src)
         except Exception:  # pragma: no cover
@@ -581,16 +627,21 @@ def build_inventory(repo_root: Path) -> dict:
             all_routes.append(r)
 
     # Apply prefix guards + compute the missing-auth advisory flag.
-    def _prefix_guarded(path: str) -> bool:
+    def _prefix_match(path: str, prefixes: set[str]) -> bool:
         p = (path or "").rstrip("/") or "/"
-        for g in guarded_prefixes:
+        for g in prefixes:
             if p == g or p.startswith(g + "/"):
                 return True
         return False
 
     for r in all_routes:
-        if r.authn_signal == "unknown" and _prefix_guarded(r.path):
+        if r.authn_signal == "unknown" and _prefix_match(r.path, guarded_prefixes):
             r.authn_signal = "middleware_present"
+        # Cross-file authZ lift: a route under a centrally-mounted role/permission
+        # guard is authorized even though the per-handler window scan cannot see
+        # the mount. Mirrors the authN lift above.
+        if r.authz_signal == "unknown" and _prefix_match(r.path, authz_guarded_prefixes):
+            r.authz_signal = "middleware_present"
         # Warning (not a finding): a state-changing or management route with no
         # detected auth guard looks like it SHOULD require authentication —
         # unless it is an auth-flow / public-probe endpoint (login, register,
@@ -601,6 +652,35 @@ def build_inventory(repo_root: Path) -> dict:
             and not _PUBLIC_BY_DESIGN_RE.search(r.path or "")
         ):
             r.missing_auth_suspect = True
+        # Advisory (not a finding): an AUTHENTICATED, object-addressing route
+        # (path carries a resource id) with no detected role/ownership gate is
+        # the canonical BOLA/IDOR primitive — a logged-in user swaps the id for
+        # another tenant's record. Hypothesis, not assertion: the scan cannot
+        # prove a gate is absent (unknown != absent), so this seeds an
+        # investigate-class hypothesis, never a hard finding.
+        if (
+            r.authn_signal in _AUTHN_PRESENT
+            and r.authz_signal not in _AUTHZ_PRESENT
+            and bool(_PATH_PARAM_RE.search(r.path or ""))
+            and not _PUBLIC_BY_DESIGN_RE.search(r.path or "")
+        ):
+            r.missing_authz_suspect = True
+        # Display relevance (NOT a finding): reasons a route still merits an
+        # individual §5 row even with zero linked findings. The renderer keeps
+        # these out of the "N further entry points" collapse and shows the
+        # reason as a review chip. Order is deterministic.
+        tags: list[str] = []
+        if _REGISTRATION_PATH_RE.search(r.path or ""):
+            tags.append("registration")
+        if _AUTHFLOW_PATH_RE.search(r.path or ""):
+            tags.append("authentication")
+        if r.management_surface:
+            tags.append("management")
+        if r.missing_auth_suspect:
+            tags.append("missing-auth")
+        if r.missing_authz_suspect:
+            tags.append("missing-authz")
+        r.relevance_tags = tags
 
     seen_keys: set[tuple] = set()
     deduped: list[RouteCandidate] = []
@@ -626,12 +706,15 @@ def build_inventory(repo_root: Path) -> dict:
             "authz_signal": d["authz_signal"],
             "management_surface": d["management_surface"],
             "missing_auth_suspect": d["missing_auth_suspect"],
+            "missing_authz_suspect": d["missing_authz_suspect"],
+            "relevance_tags": d["relevance_tags"],
             "confidence": d["confidence"],
         }
         routes_out.append(ordered)
 
     mgmt_count = sum(1 for r in routes_out if r["management_surface"])
     missing_auth_count = sum(1 for r in routes_out if r["missing_auth_suspect"])
+    missing_authz_count = sum(1 for r in routes_out if r["missing_authz_suspect"])
 
     return {
         "version": 1,
@@ -644,6 +727,7 @@ def build_inventory(repo_root: Path) -> dict:
             "route_count": len(routes_out),
             "management_surface_count": mgmt_count,
             "missing_auth_suspect_count": missing_auth_count,
+            "missing_authz_suspect_count": missing_authz_count,
         },
     }
 

@@ -203,6 +203,42 @@ def test_missing_auth_suspect_flags_sensitive_unguarded_routes(tmp_path: Path) -
 
 
 # ---------------------------------------------------------------------------
+# relevance_tags — display signal for finding-free §5 rows
+# ---------------------------------------------------------------------------
+
+
+def test_relevance_tags_flag_auth_registration_and_suspect_routes(tmp_path: Path) -> None:
+    """A finding-free route still earns §5 visibility when it sits on the
+    auth / registration / management surface or is a missing-auth/authz suspect.
+    A plain authenticated read with no id and no auth-flow path carries none."""
+    pad = "\n" * 12
+    (tmp_path / "app.ts").write_text(
+        "app.post('/rest/user/login', h);\n"  # authentication
+        + pad
+        + "app.post('/api/Users/register', h);\n"  # registration (+ POST, but public-by-design login/register suppresses missing-auth)
+        + pad
+        + "app.get('/metrics', h);\n"  # management surface
+        + pad
+        + "app.put('/rest/wallet/balance', h);\n"  # state-changing, unguarded → missing-auth
+        + pad
+        + "app.get('/rest/products', h);\n"  # plain read, no relevance
+    )
+    inv = _run(tmp_path)
+    tags = {r["path"]: set(r.get("relevance_tags") or []) for r in inv["routes"]}
+    assert "authentication" in tags["/rest/user/login"]
+    assert "registration" in tags["/api/Users/register"]
+    assert "management" in tags["/metrics"]
+    assert "missing-auth" in tags["/rest/wallet/balance"]
+    assert tags["/rest/products"] == set()  # no relevance → may be collapsed in §5
+
+
+def test_relevance_tags_validates_against_schema(tmp_path: Path) -> None:
+    (tmp_path / "app.ts").write_text("app.post('/rest/user/login', h);\napp.get('/metrics', h);\n")
+    inv = _run(tmp_path)
+    jsonschema.validate(inv, SCHEMA)
+
+
+# ---------------------------------------------------------------------------
 # Excludes
 # ---------------------------------------------------------------------------
 
@@ -271,3 +307,62 @@ def test_route_inventory_writes_to_output_dir(tmp_path: Path) -> None:
     assert target.is_file()
     data = json.loads(target.read_text())
     assert data["version"] == 1
+
+
+# ---------------------------------------------------------------------------
+# missing_authz_suspect (BOLA surface) + cross-file authZ lift
+# ---------------------------------------------------------------------------
+
+
+def _route(inv: dict, method: str, path: str) -> dict:
+    hits = [r for r in inv["routes"] if r["method"] == method and r["path"] == path]
+    assert hits, f"{method} {path} not in inventory"
+    return hits[0]
+
+
+def test_missing_authz_suspect_on_authenticated_object_route(tmp_path: Path) -> None:
+    """Authenticated (central authN mount), object-addressing (:id), no authZ
+    gate → BOLA suspect."""
+    (tmp_path / "app.ts").write_text(
+        "const app = express();\n"
+        "app.use('/api/orders', security.isAuthorized());\n"
+        "app.get('/api/orders/:id', getOrder);\n"
+        "app.put('/api/orders/:id', updateOrder);\n"
+    )
+    inv = _run(tmp_path)
+    assert _route(inv, "GET", "/api/orders/:id")["authn_signal"] == "middleware_present"
+    assert _route(inv, "GET", "/api/orders/:id")["missing_authz_suspect"] is True
+    assert _route(inv, "PUT", "/api/orders/:id")["missing_authz_suspect"] is True
+    assert inv["coverage"]["missing_authz_suspect_count"] >= 2
+
+
+def test_missing_authz_suspect_cleared_by_central_authz_mount(tmp_path: Path) -> None:
+    """A centrally-mounted role guard lifts authz cross-file → not a suspect (P1b)."""
+    (tmp_path / "app.ts").write_text(
+        "const app = express();\n"
+        "app.use('/api/orders', security.isAuthorized());\n"
+        "app.use('/api/orders', requireRole('user'));\n"
+        "app.get('/api/orders/:id', getOrder);\n"
+    )
+    inv = _run(tmp_path)
+    r = _route(inv, "GET", "/api/orders/:id")
+    assert r["authz_signal"] == "middleware_present"
+    assert r["missing_authz_suspect"] is False
+
+
+def test_missing_authz_suspect_not_on_unauthenticated_route(tmp_path: Path) -> None:
+    """Public (no authN) object route is not a BOLA suspect — precision guard."""
+    (tmp_path / "app.ts").write_text("const app = express();\napp.get('/api/products/:id', getProduct);\n")
+    inv = _run(tmp_path)
+    assert _route(inv, "GET", "/api/products/:id")["missing_authz_suspect"] is False
+
+
+def test_missing_authz_suspect_not_on_collection_route(tmp_path: Path) -> None:
+    """No path parameter → not object-addressing → not a suspect."""
+    (tmp_path / "app.ts").write_text(
+        "const app = express();\n"
+        "app.use('/api/orders', security.isAuthorized());\n"
+        "app.get('/api/orders', listOrders);\n"
+    )
+    inv = _run(tmp_path)
+    assert _route(inv, "GET", "/api/orders")["missing_authz_suspect"] is False

@@ -1,9 +1,10 @@
 # source-auth-checks.yaml — deterministic source-code authorization checks
 #
 # Used by `scripts/source_auth_scanner.py`. Each check targets a specific
-# privilege-escalation / broken-access-control pattern in Node.js + Express
-# source code and emits a finding when the pattern matches AND no
-# counter-pattern is found within the configured window.
+# privilege-escalation / broken-access-control pattern in source code
+# (Node/Express + TypeScript for AUTHZ-001..008; Python and Java for the
+# AUTHZ-1xx/2xx mass-assignment + JWT checks) and emits a finding when the
+# pattern matches AND no counter-pattern is found within the configured window.
 #
 # Designed to complement (not replace) the LLM-driven Phase-9 STRIDE
 # analyzer: these patterns have very low false-positive rates and produce
@@ -435,3 +436,153 @@ checks:
       either trusts the URL itself or relies on a downstream check that
       the static signature cannot prove exists.
     remediation: "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only."
+
+  # ===================================================================
+  # Multi-language checks (Python, Java) — mass assignment + JWT.
+  # BOLA/IDOR and missing-route-auth for non-Node stacks are covered
+  # deterministically by route_inventory.py + the architecture-coverage
+  # ARCH-BOLA-001 / ARCH-AUTHN-001 hypotheses (multi-framework). These
+  # checks add the patterns the route inventory cannot see: privileged
+  # mass-assignment and unverified token handling.
+  # ===================================================================
+
+  # ----- Python -----------------------------------------------------
+  # AUTHZ-101 — Mass assignment of a privileged field from the request
+  # body (Django / DRF / Flask / FastAPI). request.data['role'] etc.
+  - id: AUTHZ-101
+    name: "Mass assignment — privileged field accepted from request body (Python)"
+    description: >
+      A handler reads a privileged attribute (role / is_staff /
+      is_superuser / permissions / groups) directly from request.data /
+      request.POST / request.json. Without a serializer allowlist the
+      client self-elevates by adding the field to the payload.
+    file_patterns:
+      - "**/*.py"
+    exclude_file_patterns:
+      - "**/test_*.py"
+      - "**/*_test.py"
+      - "**/tests/**"
+      - "**/conftest.py"
+      - "**/migrations/**"
+      - "**/.venv/**"
+      - "**/venv/**"
+      - "**/site-packages/**"
+      - "**/settings*.py"
+    pattern: 'request\.(?:data|POST|json|query_params)(?:\.get\(\s*|\s*\[\s*)[''"](role|is_staff|is_superuser|is_admin|is_active|permissions?|groups?|scopes?|user_type|account_type)[''"]'
+    counter_scope: window
+    counter_window: 8
+    counter_patterns:
+      - 'serializer\.(is_valid|validated_data|save)'
+      - 'read_only_fields'
+      - '\bfields\s*=\s*[\[(]'
+      - 'request\.user\.is_(staff|superuser|admin)'
+    severity_if_violated: Critical
+    cwe: CWE-915
+    finding_type: FT-041
+    breach_vector: "Internet User"
+    rationale: >
+      Server code that consumes request.data['role'] / ['is_staff'] etc.
+      without a serializer allowlist trusts the client. An attacker adds
+      {"is_staff": true} to the request to escalate.
+    remediation: "Bind request data through a DRF serializer (or explicit allowlist) with role/is_staff marked read_only; never copy privilege fields from the raw request."
+
+  # AUTHZ-102 — Whole-body mass assignment to a Python ORM via **spread.
+  - id: AUTHZ-102
+    name: "Mass assignment — request body spread into ORM create/update (Python)"
+    description: >
+      request.data / request.POST is splat-expanded (**) into a Django /
+      SQLAlchemy model constructor or .objects.create / update_or_create
+      without a preceding allowlist. Every client-supplied key becomes a
+      column write.
+    file_patterns:
+      - "**/*.py"
+    exclude_file_patterns:
+      - "**/test_*.py"
+      - "**/*_test.py"
+      - "**/tests/**"
+      - "**/conftest.py"
+      - "**/migrations/**"
+      - "**/.venv/**"
+      - "**/venv/**"
+      - "**/site-packages/**"
+    pattern: '\.(objects\.(?:create|update_or_create|get_or_create)|create|update)\(\s*\*\*\s*request\.(data|POST|json|query_params)'
+    counter_scope: window
+    counter_window: 6
+    counter_patterns:
+      - 'serializer\.(is_valid|validated_data|save)'
+      - 'validated_data'
+      - 'pydantic|BaseModel'
+    severity_if_violated: High
+    cwe: CWE-915
+    finding_type: FT-041
+    breach_vector: "Internet User"
+    rationale: >
+      Model(**request.data) / Model.objects.create(**request.data) maps
+      every request key to a column, including is_staff / is_superuser /
+      owner_id, unless an allowlist (serializer.validated_data) runs first.
+    remediation: "Construct the model from serializer.validated_data (DRF) or an explicit field allowlist, never from **request.data."
+
+  # AUTHZ-103 — PyJWT decode without an algorithms allowlist.
+  - id: AUTHZ-103
+    name: "JWT decode missing algorithms allowlist (Python / PyJWT)"
+    description: >
+      `jwt.decode(token, key)` is called without an `algorithms=` argument,
+      or with `options={"verify_signature": False}`. Either accepts a
+      forged token (algorithm confusion / unsigned).
+    file_patterns:
+      - "**/*.py"
+    exclude_file_patterns:
+      - "**/test_*.py"
+      - "**/*_test.py"
+      - "**/tests/**"
+      - "**/conftest.py"
+      - "**/.venv/**"
+      - "**/venv/**"
+      - "**/site-packages/**"
+    pattern: '\bjwt\.decode\s*\('
+    counter_scope: call
+    counter_window: 6
+    counter_patterns:
+      - 'algorithms\s*='
+    severity_if_violated: Critical
+    cwe: CWE-347
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: >
+      PyJWT before 2.0 defaulted to accepting the token's own alg header;
+      without an explicit algorithms allowlist an attacker forges tokens
+      (alg:none, or RSA-pubkey-as-HMAC-secret).
+    remediation: "Always pass algorithms=['RS256'] (or the project's alg) to jwt.decode and never set verify_signature False on an auth path."
+
+  # ----- Java / Spring ----------------------------------------------
+  # AUTHZ-201 — jjwt parser that reads an UNSIGNED JWT (parseClaimsJwt /
+  # parsePlaintextJwt) — no signature verification at all.
+  - id: AUTHZ-201
+    name: "JWT parsed without signature verification (Java / jjwt)"
+    description: >
+      jjwt's `parseClaimsJwt` / `parsePlaintextJwt` (note: no trailing
+      's') parse an UNSIGNED token and perform no signature check. Driving
+      authorization off those claims trusts any forged token. The signed
+      variants are `parseClaimsJws` / `parseSignedClaims`.
+    file_patterns:
+      - "**/*.java"
+      - "**/*.kt"
+    exclude_file_patterns:
+      - "**/test/**"
+      - "**/*Test.java"
+      - "**/*Tests.java"
+      - "**/target/**"
+      - "**/build/**"
+    pattern: '\.(parseClaimsJwt|parsePlaintextJwt)\s*\('
+    counter_scope: line
+    counter_window: 0
+    counter_patterns: []
+    severity_if_violated: Critical
+    cwe: CWE-347
+    finding_type: FT-030
+    breach_vector: "Internet Anon"
+    rationale: >
+      parseClaimsJwt accepts an unsigned token: an attacker mints arbitrary
+      claims (sub, roles, scope) with no key. Only the *Jws / parseSignedClaims
+      variants verify the signature.
+    remediation: "Replace parseClaimsJwt/parsePlaintextJwt with parseClaimsJws/parseSignedClaims and a configured signing key; reject unsigned tokens."

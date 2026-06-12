@@ -397,6 +397,18 @@ def _evidence_snippet(lines: list[str], idx: int) -> str:
     return "\n".join(out)
 
 
+def _source_type_for(file_rel: str) -> str:
+    """Derive the schema `source_type` from the file extension."""
+    lower = file_rel.lower()
+    if lower.endswith(".py"):
+        return "python_source"
+    if lower.endswith((".java", ".kt")):
+        return "java_source"
+    if lower.endswith((".ts", ".tsx")):
+        return "typescript_source"
+    return "nodejs_source"
+
+
 def _title_with_location(check: Check, file: str, line: int) -> str:
     # Mirrors the "<weakness class> — <file[:line]>" convention used by the
     # plugin's threat titles (see feedback_threat_model_finding_titles.md).
@@ -436,7 +448,7 @@ def scan_file(
                     local_id="",  # filled in by aggregator
                     check_id=check.id,
                     finding_type_id=check.finding_type,
-                    source_type="nodejs_source",
+                    source_type=_source_type_for(file_rel),
                     file=file_rel,
                     line=line_idx + 1,
                     evidence_snippet=_evidence_snippet(lines, line_idx),

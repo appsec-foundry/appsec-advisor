@@ -338,6 +338,30 @@ class TestAttackSurface:
         assert "41 total" in md
         assert ".route-inventory.json" in md
 
+    def test_collapse_keeps_relevance_tagged_finding_free_rows(self):
+        """A finding-free route with a relevance tag (auth/registration/management/
+        suspect) stays individually listed even in a large, collapsing inventory —
+        a plain finding-free route is still summarised (2026-06-11 request)."""
+        entries = [{"endpoint": f"GET /noise/{i}", "method": "GET", "auth_required": False} for i in range(40)]
+        entries.append(
+            {"endpoint": "POST /rest/user/login", "method": "POST", "auth_required": False,
+             "relevance_tags": ["authentication"]}
+        )
+        entries.append(
+            {"endpoint": "PUT /rest/wallet/balance", "method": "PUT", "auth_required": False,
+             "relevance_tags": ["missing-auth"]}
+        )
+        data = {"attack_surface": entries}
+        md = pf.gen_attack_surface(data)
+        # Relevance-tagged finding-free rows are shown with their review chip.
+        assert "/rest/user/login" in md
+        assert "/rest/wallet/balance" in md
+        assert "⚑ Review: auth/token endpoint" in md
+        assert "⚑ Review: no auth guard detected" in md
+        # Plain noise rows are still collapsed.
+        assert "/noise/0" not in md
+        assert "40 further entry point(s)" in md
+
     def test_small_inventory_lists_every_row(self):
         """Below the cap, no rows are omitted and no total-hint note appears."""
         data = {

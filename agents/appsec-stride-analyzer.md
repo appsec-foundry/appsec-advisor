@@ -90,7 +90,7 @@ Run config:
 - `MAX_TURNS` — soft target. The frontmatter `maxTurns` is the hard ceiling.
 - `ESTIMATED_THREAT_COUNT` — `low` (≤3) / `moderate` (4–7) / `high` (≥8). Drives pacing (see *Turn budget self-regulation*).
 - `STRIDE_PROFILE_JSON` — JSON object from `resolve_stride_profile()`. When `stride_profile_label = "quick (depth-reduced via sonnet-economy)"`, apply *Quick-mode adjustments* in Step 3. The flag values mirror `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py` — keep that file and the Step-3 table in sync.
-- `ASSESSMENT_DEPTH` — `quick` / `standard` / `thorough`. Gates the Step-2 raw-SQL IDOR trace (skipped at `quick`).
+- `ASSESSMENT_DEPTH` — `quick` / `standard` / `thorough`. Drives turn ceilings and diagram depth; the Step-2 raw-SQL IDOR trace now runs at every depth (access-control recall must not depend on depth).
 
 Paths:
 - `REPO_ROOT` — source code root
@@ -163,7 +163,7 @@ Use this map to:
 1. Identify model files to read (set as effective FOCUS_PATHS).
 2. Identify which route handlers contain raw queries (= injection-prone, prioritize for Tampering analysis).
 3. Trace association chains (= IDOR-prone if authorization misses the join).
-4. **Raw-SQL IDOR trace (conditional — `ASSESSMENT_DEPTH ∈ {standard, thorough}` only).** For each entry in `raw_query_routes[]`, inspect the WHERE clause and the route's auth posture:
+4. **Raw-SQL IDOR trace (every depth).** This is the LLM complement to the deterministic broken-access-control layer (`source_auth_scanner.py` AUTHZ-001/002 and the `ARCH-BOLA-001` route matrix): the regex layer cannot read a multi-clause raw-SQL WHERE, so this trace runs at `quick` too — kept cheap by the per-category threat cap and the one-threat-per-route-file rule below. For each entry in `raw_query_routes[]`, inspect the WHERE clause and the route's auth posture:
    - **Skip rows where** the route is part of a documented public-catalog surface (no auth middleware, no Owner/Tenant column on the model). E.g. `SELECT * FROM products WHERE id = :id` on an unauth `/products/:id` is legitimate, not IDOR.
    - **Flag rows where** the route requires auth AND the WHERE clause references an attacker-controllable identifier (`req.params.id`, `req.query.id`, `req.body.id`) WITHOUT also constraining on caller identity (`userId = req.user.id`, `tenantId = req.user.tenantId`, `ownerId = req.user.sub`). The missing constraint is the IDOR primitive.
    - **Likelihood/Impact heuristic:** when the model owns an Owner/Tenant column AND the route handler doesn't include it in the WHERE clause, raise Likelihood to High. Map to TH-06 (or TH-20 when the model has a `tenant_id` / `organization_id` / `workspace_id` column).

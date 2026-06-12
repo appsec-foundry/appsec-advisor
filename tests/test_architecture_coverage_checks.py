@@ -23,6 +23,8 @@ ALL_RULE_IDS = {
     "ARCH-XSS-001",
     "ARCH-SQLI-001",
     "ARCH-AUTHZ-001",
+    "ARCH-AUTHN-001",
+    "ARCH-BOLA-001",
     "ARCH-INPUT-001",
 }
 
@@ -337,3 +339,66 @@ def test_writes_to_output_dir(tmp_path: Path) -> None:
     assert target.is_file()
     data = json.loads(target.read_text())
     assert data["version"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Inventory-flag hypotheses — ARCH-BOLA-001 / ARCH-AUTHN-001
+# (consume route_inventory.py missing_authz_suspect / missing_auth_suspect)
+# ---------------------------------------------------------------------------
+
+
+def test_bola_rule_fires_on_missing_authz_suspect(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    (repo / "app.ts").write_text(
+        "const app = express();\n"
+        "app.use('/api/orders', security.isAuthorized());\n"
+        "app.get('/api/orders/:id', getOrder);\n"
+        "app.delete('/api/orders/:id', delOrder);\n"
+    )
+    _build_inventory(repo, out)
+    res = _run_engine(repo, out)
+    v = _verdict(res, "ARCH-BOLA-001")
+    assert v["applies"] is True
+    assert v["status"] == "weak"
+    assert v["decision"] == "emit_hypothesis_only"
+    hyps = [h for h in res["threat_hypotheses"] if h["rule_id"] == "ARCH-BOLA-001"]
+    assert hyps and hyps[0]["proof_state"] != "confirmed"
+
+
+def test_bola_rule_silent_when_authz_present(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    (repo / "app.ts").write_text(
+        "const app = express();\n"
+        "app.use('/api/orders', security.isAuthorized());\n"
+        "app.use('/api/orders', requireRole('user'));\n"
+        "app.get('/api/orders/:id', getOrder);\n"
+    )
+    _build_inventory(repo, out)
+    v = _verdict(_run_engine(repo, out), "ARCH-BOLA-001")
+    assert v["status"] == "present"  # applies, but no suspects → no hypothesis
+
+
+def test_authn_rule_fires_on_missing_auth_suspect(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    (repo / "app.ts").write_text("const app = express();\napp.post('/api/admin/users', createUser);\n")
+    _build_inventory(repo, out)
+    res = _run_engine(repo, out)
+    v = _verdict(res, "ARCH-AUTHN-001")
+    assert v["applies"] is True
+    assert v["status"] == "weak"
+    assert v["decision"] == "emit_hypothesis_only"
+
+
+def test_inventory_flag_rules_not_applicable_without_inventory(tmp_path: Path) -> None:
+    """No .route-inventory.json → graceful not_applicable, no crash."""
+    res = _run_engine(tmp_path)  # no output_dir → no inventory loaded
+    for rid in ("ARCH-BOLA-001", "ARCH-AUTHN-001"):
+        v = _verdict(res, rid)
+        assert v["applies"] is False
+        assert v["status"] == "not_applicable"

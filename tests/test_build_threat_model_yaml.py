@@ -233,6 +233,36 @@ def test_attack_surface_dedup_conservative_auth():
     assert out[0]["auth_required"] is False
 
 
+def test_attack_surface_carries_relevance_tags_from_inventory():
+    routes = {
+        "routes": [
+            {"method": "POST", "path": "/rest/user/login", "authn_signal": "unknown",
+             "route_id": "r0", "relevance_tags": ["authentication"]},
+            {"method": "GET", "path": "/rest/products", "authn_signal": "unknown", "route_id": "r1"},
+        ]
+    }
+    out, _ = b.build_attack_surface(routes, None)
+    by_ep = {e["entry_point"]: e for e in out}
+    assert by_ep["POST /rest/user/login"].get("relevance_tags") == ["authentication"]
+    # A route with no tags carries no relevance_tags key (clean yaml).
+    assert "relevance_tags" not in by_ep["GET /rest/products"]
+
+
+def test_attack_surface_relevance_tags_union_on_dedup():
+    # Same method+path registered twice with different tags → union, deduped row.
+    routes = {
+        "routes": [
+            {"method": "GET", "path": "/api/Users/:id", "authn_signal": "middleware_present",
+             "route_id": "r0", "relevance_tags": ["missing-authz"]},
+            {"method": "GET", "path": "/api/Users/:id", "authn_signal": "middleware_present",
+             "route_id": "r1", "relevance_tags": ["management"]},
+        ]
+    }
+    out, _ = b.build_attack_surface(routes, None)
+    assert len(out) == 1
+    assert set(out[0]["relevance_tags"]) == {"missing-authz", "management"}
+
+
 def test_attack_surface_sidecar_override_on_collision():
     # Baseline heuristic says authenticated; analyst sidecar says it is the
     # open-registration endpoint → analyst verdict wins, entry not duplicated.

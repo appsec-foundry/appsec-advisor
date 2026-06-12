@@ -2669,6 +2669,38 @@ def _coerce_surface_list(value: Any) -> list:
     return []
 
 
+# Human labels for the route-inventory `relevance_tags` (route_inventory.py).
+# `management` is omitted on purpose — the Notes column already carries the
+# "Management surface" token for those rows, so repeating it in the chip would
+# duplicate. The tag is still used for the keep-decision below.
+_RELEVANCE_LABELS = {
+    "registration": "registration flow",
+    "authentication": "auth/token endpoint",
+    "missing-auth": "no auth guard detected",
+    "missing-authz": "no authz guard detected",
+}
+
+
+def _entry_relevance_tags(entry: dict) -> list[str]:
+    """The route-inventory display-relevance tags carried onto a §5 entry."""
+    if not isinstance(entry, dict):
+        return []
+    return [t for t in (entry.get("relevance_tags") or []) if isinstance(t, str)]
+
+
+def _relevance_chip(entry: dict) -> str:
+    """A short '⚑ Review: …' note explaining why a finding-free row is listed.
+    Empty string when the entry carries no displayable relevance reason."""
+    labels: list[str] = []
+    for t in _entry_relevance_tags(entry):
+        lbl = _RELEVANCE_LABELS.get(t)
+        if lbl and lbl not in labels:
+            labels.append(lbl)
+    if not labels:
+        return ""
+    return "⚑ Review: " + ", ".join(labels)
+
+
 def gen_attack_surface(yaml_data: dict) -> str:
     """## 5. Attack Surface — required ### 5.1 + ### 5.2 sub-sections."""
     surface = yaml_data.get("attack_surface") or {}
@@ -2746,7 +2778,10 @@ def gen_attack_surface(yaml_data: dict) -> str:
     lines.append(
         "Network-reachable entry points classified by authentication requirement. "
         "Each row links to the threat(s) referenced in its **Notes** column. The "
-        "**Risk** column reflects the highest-severity linked finding."
+        "**Risk** column reflects the highest-severity linked finding. Entry points "
+        "with no linked finding are still listed when they sit on a sensitive surface "
+        "(authentication, registration, management) or look like a missing-auth/authz "
+        "suspect — marked **⚑ Review** in Notes."
     )
     lines.append("")
 
@@ -2764,17 +2799,21 @@ def gen_attack_surface(yaml_data: dict) -> str:
         # §5.2 Authenticated subsection the table sits in, so a per-row Auth
         # cell would be 100% redundant (every §5.1 row "No", every §5.2 "Yes").
         #
-        # Sort by risk descending, then by route (contract §5 rule) so the
-        # highest-severity entry points read first (2026-05-30 request).
+        # Sort by risk descending, then relevance-flagged finding-free rows
+        # before plain ones, then by route (contract §5 rule) so the highest-
+        # signal entry points read first (2026-05-30 / 2026-06-11 requests).
         bucket_entries = sorted(
             bucket_entries,
-            key=lambda e: (-_entry_rank(e), _attack_surface_route(e).lower()),
+            key=lambda e: (-_entry_rank(e), 0 if _entry_relevance_tags(e) else 1, _attack_surface_route(e).lower()),
         )
-        # Large-inventory collapse: only show finding-linked rows individually;
-        # the rest are summarised as a total-count hint (2026-06-04 request).
-        with_findings = [e for e in bucket_entries if _entry_rank(e) >= 0]
-        collapse = len(bucket_entries) > _SURFACE_ROW_CAP and len(with_findings) < len(bucket_entries)
-        shown = with_findings if collapse else bucket_entries
+        # Large-inventory collapse: show finding-linked rows individually, AND
+        # finding-free rows that carry a route-inventory relevance tag (auth /
+        # registration / management / missing-auth/authz) — these are exactly
+        # the "no finding yet, still worth a look" entry points a reader needs
+        # to see (2026-06-11 request). Everything else is summarised as a total.
+        keep = [e for e in bucket_entries if _entry_rank(e) >= 0 or _entry_relevance_tags(e)]
+        collapse = len(bucket_entries) > _SURFACE_ROW_CAP and len(keep) < len(bucket_entries)
+        shown = keep if collapse else bucket_entries
 
         if shown:
             lines.append("| Method | Route | Risk | Notes |")
@@ -2786,6 +2825,12 @@ def gen_attack_surface(yaml_data: dict) -> str:
                 route = _attack_surface_route(entry)
                 risk_lbl = _entry_risk(entry)
                 notes = _attack_surface_notes(entry)
+                # For a finding-free row, append the review chip so the reader
+                # knows WHY a row with no linked finding is listed.
+                if _entry_rank(entry) < 0:
+                    chip = _relevance_chip(entry)
+                    if chip:
+                        notes = f"{notes}<br/>_{chip}_" if notes else f"_{chip}_"
                 lines.append(f"| {method} | `{_wrappable_route(route)}` | {risk_lbl} | {notes} |")
 
         omitted = len(bucket_entries) - len(shown)
@@ -2794,9 +2839,9 @@ def gen_attack_surface(yaml_data: dict) -> str:
                 lines.append("")
             lines.append(
                 f"_{omitted} further entry point(s) in this category carry no linked finding "
-                f"and are not listed individually ({len(bucket_entries)} total). The complete "
-                f"route inventory is available in `.route-inventory.json` and, when exported, "
-                f"`pentest-tasks.yaml`._"
+                f"and no elevated review signal, and are not listed individually "
+                f"({len(bucket_entries)} total). The complete route inventory is available in "
+                f"`.route-inventory.json` and, when exported, `pentest-tasks.yaml`._"
             )
 
     lines.append(f"### 5.1 Unauthenticated Entry Points ({len(unauth)})")
