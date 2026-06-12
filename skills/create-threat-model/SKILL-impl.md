@@ -3405,6 +3405,12 @@ loop:
       gate_rc=$?
       if gate_rc == 2:
           print release-blocker banner with the items the gate flagged; exit 2
+      if gate_rc == 1:
+          # `.qa-status.json` missing/unreadable → the release-blocker gate could
+          # not run, so we cannot prove the report is clean. Fail closed (abort)
+          # rather than shipping an unverified report. (qa_release_gate.py: 0=ok,
+          # 1=missing/unreadable, 2=blocker.)
+          print ".qa-status.json missing/unreadable — release-blocker gate could not run; aborting (fail-closed)"; exit 2
       print manual-review banner; break the loop
 
   if   qa_status.status == "pass":           break the QA loop

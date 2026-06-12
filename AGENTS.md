@@ -223,7 +223,7 @@ Frontmatter pin (always Sonnet — runtime model overrides in table below). Turn
 - `agents/appsec-stride-analyzer.md` — Sonnet, 40 max turns — Phase 9; one instance per major component → `.stride-<component-id>.json`.
 - `agents/appsec-threat-merger.md` — Sonnet, 12 max turns — Post-Phase 9 fan-in; merge/keep/consolidate decisions on candidate duplicates from `merge_threats.py`. Does not perform STRIDE itself.
 - `agents/appsec-evidence-verifier.md` — Sonnet, 30 max turns — Between Phase 10 and 10b; samples findings, re-reads `evidence.file ±5`, and labels `verified` / `refuted` / `ambiguous` so refuted findings cannot elevate compound chains.
-- `agents/appsec-abuse-case-verifier.md` — Sonnet, 20 max turns — Phase 10b; one agent per abuse-case candidate (parallel fan-out). Verifies a single AC end-to-end against code, emitting per-step `confirmed` / `blocked` / `inconclusive` verdicts → `.abuse-case-verdict-<AC-ID>.json`. Writes a pre-seeded verdict file FIRST (finding ids copied from the matcher) so a cut-off agent still leaves a valid file. Dispatched with a `haiku` override.
+- `agents/appsec-abuse-case-verifier.md` — Sonnet, 20 max turns — Phase 10c; one agent per abuse-case candidate (parallel fan-out). Verifies a single AC end-to-end against code, emitting per-step `confirmed` / `blocked` / `inconclusive` verdicts → `.abuse-case-verdict-<AC-ID>.json`. Writes a pre-seeded verdict file FIRST (finding ids copied from the matcher) so a cut-off agent still leaves a valid file. Dispatched with a `haiku` override.
 - `agents/appsec-triage-validator.md` — Sonnet, 20 max turns — Phase 10b; cross-component rating consistency, L/I outlier detection, and P1/P2 prioritisation checks → `.triage-flags.json`.
 - `agents/appsec-threat-renderer.md` — Sonnet, 80 max turns — Stage 2 (Phase 11); fresh-budget renderer that composes from validated fragments. Never re-runs analysis.
 - `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns — Stage 3; broken-link / cross-reference / placeholder / YAML-MD consistency checks; applies permitted soft fixes in-place and emits repair plans for structural fixes.
@@ -262,6 +262,7 @@ Default (`standard` + `opus-cheap`): Haiku for context/recon/config, Sonnet for 
 | 2     | 1 | `phase-group-recon.md`           | `appsec-recon-scanner` |
 | 2.5   | 1 | `phase-group-recon.md`           | `appsec-config-scanner` *(conditional: IaC surface; parallel with Phases 1+2)* |
 | 2.6   | 1 | `phase-group-recon.md`           | orchestrator (script-driven coverage pre-pass) |
+| 2.7   | 1 | `phase-group-recon.md`           | `appsec-actor-discoverer` *(conditional: skipped in quick-mode)* |
 | 3     | 1 | `phase-group-architecture.md`    | orchestrator (architecture modeling) |
 | 3b    | 1 | `phase-group-architecture.md`    | orchestrator (F-only architecture-derived findings) |
 | 4     | 1 | `phase-group-architecture.md`    | orchestrator (attack walkthroughs) |
@@ -272,6 +273,7 @@ Default (`standard` + `opus-cheap`): Haiku for context/recon/config, Sonnet for 
 | 10    | 1 | `phase-group-threats.md`         | orchestrator + `appsec-threat-merger` |
 | 10a   | 1 | `phase-group-threats.md`         | `appsec-evidence-verifier` |
 | 10b   | 1 | `phase-group-threats.md`         | `appsec-triage-validator` |
+| 10c   | 1 | `phase-group-threats.md`         | `appsec-abuse-case-verifier` *(fan-out, one per abuse-case candidate; non-fatal)* |
 | 11    | 2 | `phase-group-finalization.md`    | `appsec-threat-renderer` |
 | QA    | 3 | (post-stage)                     | `appsec-qa-reviewer` |
 | Arch  | 4 | (post-stage, advisory only)      | `appsec-architect-reviewer` |

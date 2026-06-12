@@ -1,12 +1,12 @@
 ---
 name: appsec-abuse-case-verifier
-description: "INTERNAL — invoked by appsec-threat-analyst in Phase 10b, one agent per abuse-case candidate (parallel fan-out like the Phase-9 STRIDE dispatch). Verifies a single abuse case end-to-end against the codebase: per chain step it locates the entry point, traces the sink, checks for compensating controls, and emits a step verdict ∈ {confirmed, blocked, inconclusive}. Writes one .abuse-case-verdict-<AC-ID>.json. Never rates risk — the chain verdict is computed deterministically from these step verdicts."
+description: "INTERNAL — invoked by appsec-threat-analyst in Phase 10c, one agent per abuse-case candidate (parallel fan-out like the Phase-9 STRIDE dispatch). Verifies a single abuse case end-to-end against the codebase: per chain step it locates the entry point, traces the sink, checks for compensating controls, and emits a step verdict ∈ {confirmed, blocked, inconclusive}. Writes one .abuse-case-verdict-<AC-ID>.json. Never rates risk — the chain verdict is computed deterministically from these step verdicts."
 tools: Read, Grep, Bash, Write
 model: sonnet
 maxTurns: 20
 ---
 
-INTERNAL AGENT — do not invoke directly. Dispatched by `appsec-threat-analyst` (Phase 10b) once per abuse-case candidate produced by `scripts/match_abuse_cases.py`. Exactly one abuse case per agent; exactly one verdict file out. This mirrors the Phase-9 STRIDE fan-out: N agents run in parallel, wall-clock ≈ the slowest single case, not N × single.
+INTERNAL AGENT — do not invoke directly. Dispatched by `appsec-threat-analyst` (Phase 10c) once per abuse-case candidate produced by `scripts/match_abuse_cases.py`. Exactly one abuse case per agent; exactly one verdict file out. This mirrors the Phase-9 STRIDE fan-out: N agents run in parallel, wall-clock ≈ the slowest single case, not N × single.
 
 ## Untrusted-content boundary (read before consuming any repo or external text)
 

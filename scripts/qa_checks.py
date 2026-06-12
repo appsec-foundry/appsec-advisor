@@ -609,6 +609,13 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # `[ID](#id) — Label` in one pass.  Empty dict ⇒ legacy bare-link
     # behaviour (never breaks the call site if yaml is missing).
     label_idx = _load_label_index(md_path)
+    # §4a single-source: reuse compose's locator codifier so the cross-ref
+    # labels injected here render the `(`file:line`)` form that compose's
+    # `linkify_with_label` emits — without it the same finding shows
+    # `(f.ts:18)` in prose (this pass) vs `(`f.ts:18`)` in §8 tables (compose).
+    # Deferred import mirrors the `_manifest_readers` idiom; compose only
+    # imports qa_checks function-locally, so there is no import cycle.
+    from compose_threat_model import _codify_label_locator
     # Merge the TH-NN label index parsed from the rendered MD itself —
     # TH-NN titles live in §8 / §7.2 declarations, not in the yaml.
     # Same {ID: (label, anchor)} shape so the suffix logic below stays
@@ -672,7 +679,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             entry = label_idx.get(full.upper())
             if entry:
                 label, anchor = entry
-                return f"[{full}](#{anchor}) — {label}"
+                return f"[{full}](#{anchor}) — {_codify_label_locator(label)}"
             return f"[{full}](#{fallback_anchor})"
 
         # Linkify bare T-NNN not already part of a link or an anchor.
@@ -787,7 +794,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 if pre.endswith("| ") and post.startswith(" |"):
                     return match.group(0)
                 label, _ = entry
-                return f"{match.group(0)} — {label}"
+                return f"{match.group(0)} — {_codify_label_locator(label)}"
 
             # Two patterns because F/T/M ids are 3-4 digits while TH-NN
             # is 2-3 digits; one combined regex would lose the digit-count
