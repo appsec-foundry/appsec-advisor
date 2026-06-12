@@ -780,6 +780,108 @@ def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _extract_gate_events(output_dir: Path) -> list[dict]:
+    """Surface Stage-2/Stage-3 gate friction that left a *persistent artifact*.
+
+    The log-based extractors only see events that wrote a recognised
+    ``agent_logger`` line. The contract / inline-shortcut / QA gates instead
+    signal via an exit code plus an on-disk JSON file — so a run that finished
+    with unresolved contract drift (a lingering ``.qa-repair-plan.json``) or a
+    QA status that never reached ``pass`` was reported ``clean``. This is the
+    exact blind spot behind the 2026-06-12 juice-shop run: the ``repair_plan``
+    gate tripped (exit 1, ``.qa-repair-plan.json`` written) yet ``.run-issues``
+    showed clean. On a *clean* run the skill removes the repair plans and writes
+    ``.qa-status.json:{"status":"pass"}``, so each branch below only fires on
+    genuinely non-clean state.
+    """
+    issues: list[dict] = []
+
+    # 1. Contract / QA repair plan still on disk → the gate found drift the
+    #    Re-Render Loop did not (or could not) clear. The skill unlinks this on
+    #    a clean pass, so its presence at completion time is a real signal.
+    qa_plan = output_dir / ".qa-repair-plan.json"
+    if qa_plan.is_file():
+        try:
+            plan = json.loads(qa_plan.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            plan = {}
+        if isinstance(plan, dict):
+            status = str(plan.get("status") or "").strip().lower()
+            if status in ("fail", "manual_review"):
+                actions = plan.get("actions") or []
+                headings = [
+                    str(a.get("heading") or a.get("section_id") or a.get("check") or "?")
+                    for a in actions
+                    if isinstance(a, dict)
+                ]
+                n = plan.get("issue_count") if isinstance(plan.get("issue_count"), int) else len(actions)
+                issues.append(
+                    {
+                        "category": "contract_gate_drift",
+                        "severity": "warning",
+                        "title": (
+                            f"QA contract gate left an unresolved repair plan "
+                            f"(status={status}, {n} item(s)): {_clip(', '.join(headings), 90)}"
+                        ),
+                        "evidence": {
+                            "log_file": ".qa-repair-plan.json",
+                            "log_line": 1,
+                            "raw_event": f"status={status} actions={headings[:6]}",
+                            "status": status,
+                            "items": headings[:12],
+                            "outcome": "unresolved",
+                        },
+                    }
+                )
+
+    # 2. Inline-shortcut repair plan still on disk → Stage-2 hard gate never
+    #    cleanly passed (the skill preserves this only on the exhausted-retries
+    #    path). Error severity — the rendered doc may be contract-incomplete.
+    inline_plan = output_dir / ".inline-shortcut-repair-plan.json"
+    if inline_plan.is_file():
+        issues.append(
+            {
+                "category": "inline_shortcut_unresolved",
+                "severity": "error",
+                "title": "Stage-2 inline-shortcut gate left an unresolved repair plan (auto-retry exhausted)",
+                "evidence": {
+                    "log_file": ".inline-shortcut-repair-plan.json",
+                    "log_line": 1,
+                    "raw_event": "inline-shortcut repair plan present at completion",
+                    "outcome": "unresolved",
+                },
+            }
+        )
+
+    # 3. QA status never reached pass. The deterministic gate / QA agent writes
+    #    this; a non-pass value at completion means the doc shipped with a QA
+    #    concern the pipeline did not clear.
+    qa_status = output_dir / ".qa-status.json"
+    if qa_status.is_file():
+        try:
+            st = json.loads(qa_status.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            st = {}
+        status = str((st or {}).get("status") or "").strip().lower()
+        if status and status not in ("pass", "ok", "clean"):
+            issues.append(
+                {
+                    "category": "qa_status_not_pass",
+                    "severity": "warning",
+                    "title": f"QA status did not reach pass (status={status})",
+                    "evidence": {
+                        "log_file": ".qa-status.json",
+                        "log_line": 1,
+                        "raw_event": _clip(json.dumps(st), 200),
+                        "status": status,
+                        "outcome": "not_pass",
+                    },
+                }
+            )
+
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -846,6 +948,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
+    issues.extend(_extract_gate_events(output_dir))
 
     # Assign deterministic IDs (ordered by category then evidence line).
     issues.sort(key=lambda i: (i["category"], i["evidence"].get("log_line", 0)))

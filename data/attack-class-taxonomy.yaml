@@ -41,7 +41,7 @@ classes:
     stride: "T·I"
     description: >-
       user input flows into a server-side interpreter (SQL, NoSQL, XML,
-      YAML, LDAP, OS shell) without parameterisation or schema
+      YAML, LDAP, OS shell) without parameterization or schema
       validation.
     default_actor: internet-anon
     default_target_tier: application
@@ -92,7 +92,7 @@ classes:
     threat_label: "Broken Authorization & Access Control"
     stride: "E·I"
     description: >-
-      authorisation checks are absent or bypassable, allowing horizontal
+      authorization checks are absent or bypassable, allowing horizontal
       and vertical privilege jumps from a self-registered or low-rights
       account. Includes mass-assignment of privileged attributes.
     default_actor: internet-anon
@@ -149,7 +149,7 @@ classes:
     stride: "E"
     description: >-
       user-supplied data reaches a server-side code-execution sink
-      (`eval`, sandbox primitives, deserialisation, prototype-pollution
+      (`eval`, sandbox primitives, deserialization, prototype-pollution
       gadgets) and breaks out into arbitrary native execution.
     default_actor: internet-anon
     default_target_tier: application
@@ -171,7 +171,7 @@ classes:
     stride: "T·I"
     description: >-
       attacker-controlled content is rendered in the victim's browser
-      without sanitisation; combined with session tokens held in
+      without sanitization; combined with session tokens held in
       JavaScript-readable storage, any payload yields immediate
       account takeover.
     default_actor: victim-required   # arrow points AT the victim

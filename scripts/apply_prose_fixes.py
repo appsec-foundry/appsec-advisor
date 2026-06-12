@@ -385,6 +385,17 @@ def _wrap_line(line: str) -> tuple[str, int]:
             if span_re is _LINKED_TITLE_TAIL_RE and group_or_special in (
                 "path",
                 "urlpath",
+                # Bare filenames ending in a known code extension
+                # (`last-login-ip.component.html:10`, `b2bOrder.ts`) and
+                # function calls (`next()`) are as unambiguously code as a
+                # slash-path and were left bare in finding/mitigation title
+                # tails — §4 Linked-Threats, §8 Fix-cell (user report
+                # 2026-06-12). They penetrate the title-tail mask too; weakness
+                # nouns / hash names / library names still stay bare (their
+                # passes do NOT appear here), and the link itself stays
+                # protected by _MD_LINK_LABEL_RE / _MD_LINK_URL_RE.
+                "file",
+                "fn",
             ):
                 continue
             for m in span_re.finditer(line):
@@ -933,6 +944,55 @@ def apply_fixes(text: str) -> tuple[str, int]:
         + section8_fixes
     )
     return body, total
+
+
+def apply_code_formatting(text: str) -> tuple[str, int]:
+    """Formatting-only subset of ``apply_fixes`` — backtick code/path tokens
+    (and normalise title path tails) WITHOUT the prose-content passes
+    (AI-padding, rhetorical-severity, perimeter-claim strip).
+
+    This exists so ``qa_checks.cmd_autofix`` can run code-token backticking as a
+    self-contained pass right before the §4/§5 GFM→HTML conversion. The skill's
+    canonical flow backticks paths via the standalone ``apply_prose_fixes`` step,
+    but that runs BEFORE the cell-rebuilding autofix passes, so a later recompose
+    (diagnostic, ``--rerender``, or the Re-Render Loop's fragment-fixer) shipped
+    the deliverable with bare ``server.ts:663`` / unconverted tables. Folding the
+    formatting into autofix makes ``compose → qa_checks autofix`` fully recover.
+    Idempotent: an already-backticked token is in the forbidden-zone mask.
+    """
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    in_fence = False
+    in_html_block = False
+    total = 0
+    for raw in lines:
+        nl = "\n" if raw.endswith("\n") else ""
+        line = raw[:-1] if nl else raw
+        stripped = line.lstrip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            out.append(raw)
+            continue
+        if in_fence:
+            out.append(raw)
+            continue
+        if "<blockquote" in stripped:
+            in_html_block = True
+        if in_html_block:
+            if "</blockquote>" in stripped:
+                in_html_block = False
+            out.append(raw)
+            continue
+        if stripped.startswith("#"):  # headings stay clean (no backticks)
+            out.append(raw)
+            continue
+        new_line, n1 = _wrap_line(line)
+        new_line, n5 = _apply_label_as_code_unwrap(new_line)
+        total += n1 + n5
+        out.append(new_line + nl)
+    body = "".join(out)
+    body, title_fixes = _normalize_title_path_tail(body)
+    return body, total + title_fixes
 
 
 def _canonicalize_section8_name(text: str) -> tuple[str, int]:

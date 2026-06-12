@@ -443,3 +443,46 @@ def test_controls_covered_legacy_inline_form_preserved():
     )
     out, _ = prose.apply_fixes(md)
     assert "**Controls covered:** [7.4.1 Route-Level Authorization](#741-route-level-authorization)" in out
+
+
+# ---------------------------------------------------------------------------
+# 2026-06-12 — code-token backticking in finding/mitigation title tails
+# ---------------------------------------------------------------------------
+
+
+def test_title_tail_bare_filename_gets_backticked():
+    """A bare filename:line in a finding link-title tail (`[F-017](#f-017) — …
+    last-login-ip.component.html:10`) was left unformatted because the `file`
+    pass did not penetrate the title-tail mask. It now does."""
+    line = ("| x | [F-017](#f-017) — Stored XSS via DomSanitizer in "
+            "last-login-ip.component.html:10 |")
+    out, n = prose._wrap_line(line)
+    assert "`last-login-ip.component.html:10`" in out
+
+
+def test_title_tail_function_call_gets_backticked():
+    line = "**Fix:** → [M-027](#m-027) — Sanitize responses before passing to next() in b2bOrder.ts"
+    out, n = prose._wrap_line(line)
+    assert "`next()`" in out
+    assert "`b2bOrder.ts`" in out
+
+
+def test_title_tail_weakness_noun_stays_bare():
+    """The mask still protects non-code title text — a weakness noun like
+    'Injection' must NOT be backticked."""
+    line = "| x | [F-009](#f-009) — SQL Injection via raw interpolation |"
+    out, _ = prose._wrap_line(line)
+    assert "`Injection`" not in out
+    assert "`SQL`" not in out
+
+
+def test_apply_code_formatting_is_formatting_only():
+    """apply_code_formatting backticks code tokens but does NOT run the prose
+    content passes (it must be safe to call from qa_checks.cmd_autofix)."""
+    md = "The handler at server.ts:663 fetches the URL.\n"
+    out, n = prose.apply_code_formatting(md)
+    assert "`server.ts:663`" in out
+    # Headings stay clean.
+    md2 = "#### M-001 — Sanitize next() in b2bOrder.ts\n"
+    out2, _ = prose.apply_code_formatting(md2)
+    assert out2 == md2  # heading untouched

@@ -3832,20 +3832,19 @@ def _shorten_title_for_xref(raw_title: str, threat: dict | None = None, *, compa
     path = parsed_path or re.sub(r"(\.[A-Za-z0-9]{1,6}):\d+$", r"\1", ev_file)
     final_param = param or parsed_param
 
-    # Compose the new form.
+    # Compose the new form. The affected PARAMETER is intentionally dropped —
+    # the finding-title contract is `<weakness class> — <file[:line]>` only, no
+    # payloads / parameters / code (user report 2026-06-12: cells read
+    # `… (routes/login.ts, "email")`). `final_param` is still resolved above for
+    # back-compat but never rendered into the label.
+    _ = final_param  # noqa: F841 — resolved for parsing symmetry, deliberately unused
     if path:
         if compact:
             # Parens form for table-cell contexts (Top Mitigations).
-            if final_param:
-                return f'{weakness} ({path}, "{final_param}")'
             return f"{weakness} ({path})"
         # "in file <path>" when path looks like a file; "in <path>" otherwise.
         in_phrase = "in file" if re.search(r"\.[A-Za-z0-9]{1,6}$", path) else "in"
-        if final_param:
-            return f'{weakness} {in_phrase} {path} ("{final_param}")'
         return f"{weakness} {in_phrase} {path}"
-    if final_param:
-        return f'{weakness} ("{final_param}")'
     return weakness
 
 
@@ -4447,11 +4446,61 @@ _PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
 _INDEX_PATH_TAIL_RE = re.compile(r"\s+—\s+(?:[\w.-]+/)*[\w.-]+\.\w+(?::\d+)?\s*$")
 
 
+def _paragraphize_issue_card(issue_card: str, *, min_chars: int = 300, per_para: int = 2) -> str:
+    """Break a long ``**Issue:** …`` narrative into ~``per_para``-sentence
+    paragraphs (blank-line separated) so it reads as distinct beats instead of
+    one dense block. No-op for short Issues or non-Issue input."""
+    prefix = "**Issue:** "
+    if not issue_card or not issue_card.startswith(prefix):
+        return issue_card
+    body = issue_card[len(prefix):].strip()
+    if len(body) <= min_chars:
+        return issue_card
+    sents = _safe_sentence_split(body)
+    if len(sents) <= 2:
+        return issue_card
+    paras = [" ".join(sents[i : i + per_para]).strip() for i in range(0, len(sents), per_para)]
+    paras = [p for p in paras if p]
+    return prefix + "\n\n".join(paras)
+
+
+def _escape_heading_placeholders(title: str) -> str:
+    """Escape bare ``<placeholder>`` angle-bracket tokens in a heading title to
+    HTML entities so they render literally instead of being parsed as an unknown
+    HTML tag and silently dropped — ``#### M-007 — Pin base image to @sha256:``
+    lost ``<digest>`` (user report 2026-06-12). Headings stay backtick-free (the
+    title-exemption rule), so we escape rather than code-span. ``<br/>`` and any
+    real inline HTML tag we emit are left untouched."""
+    return re.sub(r"<(?!br\b)([A-Za-z][\w-]*)>", r"&lt;\1&gt;", title or "")
+
+
 def _index_short_title(title: str, limit: int = 72) -> str:
-    """Drop a trailing ` — file[:line]` tail and cap length for a jump-list chip."""
+    """Drop a trailing ` — file[:line]` tail and cap length for a jump-list chip.
+
+    The truncation MUST keep backtick code spans balanced. The chips are joined
+    into one `<br/>`-separated block, so a blind ``s[:limit]`` slice that lands
+    INSIDE a code span leaves an unclosed backtick that bleeds into every
+    following chip — markdown then renders M-018…M-025 as one giant code span
+    swallowed by M-017 (the 2026-06-12 juice-shop §10 Mitigations-index break).
+    We cut at a word boundary, close any dangling code span, and reduce stray
+    `[text](url)` fragments to their visible text first.
+    """
     s = _INDEX_PATH_TAIL_RE.sub("", title or "").strip()
+    # Reduce markdown links to visible text so a cut never splits `[t](url)`.
+    s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+    # Backtick bare `<placeholder>` tokens (e.g. `@sha256:<digest>`) so the
+    # angle-bracket text is not parsed as an (unknown) HTML tag and dropped —
+    # M-007 rendered "Pin base image to @sha256:" with `<digest>` silently
+    # eaten (user report 2026-06-12). Skip `<br/>` (the chips' own separator).
+    s = re.sub(r"(?<!`)<(?!br\b)([a-z][a-z0-9_-]*)>(?!`)", r"`<\1>`", s)
     if len(s) > limit:
-        s = s[: limit - 1].rstrip() + "…"
+        # Prefer a whitespace break point so we never slice mid-word / mid-token.
+        cut = s.rfind(" ", 0, limit - 1)
+        if cut < limit // 2:
+            cut = limit - 1
+        s = _close_backticks(s[:cut].rstrip(",; :—–-")) + "…"
+    else:
+        s = _close_backticks(s)
     return s
 
 
@@ -8876,12 +8925,15 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         raw_slug = raw.lower()
         if raw_slug and raw_slug != canonical.lower():
             anchors.append(f'<a id="{raw_slug}"></a>')
+        # Keep the visible C-NN id on one line — a narrow ID column (esp. in the
+        # PDF/weasyprint layout) otherwise breaks at the hyphen (`C-\n01`), the
+        # same defect the §4 Assets HTML conversion fixes via white-space:nowrap
+        # (user report 2026-06-12). The empty `<a id>` anchors are unaffected.
+        id_cell = f'{"".join(anchors)}<span style="white-space:nowrap">{canonical}</span>'
         if has_runtime:
-            table_lines.append(
-                f"| {''.join(anchors)}{canonical} | {name} | {kind} | {runtime} | {paths_cell} | {th_cell} |"
-            )
+            table_lines.append(f"| {id_cell} | {name} | {kind} | {runtime} | {paths_cell} | {th_cell} |")
         else:
-            table_lines.append(f"| {''.join(anchors)}{canonical} | {name} | {kind} | {paths_cell} | {th_cell} |")
+            table_lines.append(f"| {id_cell} | {name} | {kind} | {paths_cell} | {th_cell} |")
     table_lines.append("")
     insertion = "\n".join(table_lines)
     # Replace the section body (between `### 2.3 …` and the next `### `) with
@@ -9405,8 +9457,20 @@ def _softwrap_prose_table_cells(md: str, width: int = 44) -> str:
     lines = md.split("\n")
     for header_idx, block in _iter_md_table_blocks(md):
         header_cells = _split_table_row(block[0])
-        if tuple(h.strip() for h in header_cells) in _FIXED_LAYOUT_TABLE_HEADERS:
+        _hdr = tuple(h.strip() for h in header_cells)
+        if _hdr in _FIXED_LAYOUT_TABLE_HEADERS:
             continue  # becomes fixed-layout HTML — reflows itself, don't inject <br/>
+        # Structural-threats / security-posture table (`# | Threat Description |
+        # …`): its Threat-Description cell is a `**title**<br/>_(stride)_<br/>prose`
+        # composite. The 44-char soft-wrap chopped the prose into 4-5 stub lines
+        # ("…server-side<br/>interpreter…<br/>OS<br/>shell…") that read as random
+        # breaks in the PDF (user report 2026-06-12). It carries `<a id="path-*">`
+        # anchors referenced by the §6 heatmap, so it can't be HTML-converted
+        # safely — exempt it and let the PDF's proportional column widths wrap the
+        # prose naturally. (markdown-it sizes it wider, but the Findings column's
+        # `<br/>`-stacked links balance the row.)
+        if _hdr[:2] == ("#", "Threat Description"):
+            continue
         wrap_cols = {i for i, h in enumerate(header_cells) if _table_col_role(h) in ("desc", "default", "path")}
         if not wrap_cols:
             continue
@@ -10265,30 +10329,37 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
       * Jinja template literals in computed sections (already handled).
     """
     # Build a cache of bare-ref → labelled-ref substitutions so we don't
-    # re-lookup the same ID over and over.
-    cache: dict[str, str] = {}
+    # re-lookup the same ID over and over. Keyed on (ref, table) because the
+    # two contexts render the cross-reference differently (see resolve()).
+    cache: dict[tuple[str, bool], str] = {}
 
-    def resolve(ref: str) -> str:
-        # Use parens form for inline prose so the rendered text reads as
-        # `[T-005](#t-005) (Reflected XSS via search query parameter)`
-        # rather than `… — Reflected XSS … — search-result.component.ts`
-        # (the latter is a torn-link construct after _normalize_emdashes
-        # converts the separator em-dash to a hyphen mid-line).
-        if ref not in cache:
-            cache[ref] = ctx.linkify_with_short_label(ref)
-        return cache[ref]
+    def resolve(ref: str, table: bool) -> str:
+        # TABLE cells (§5 Attack-Surface Notes, etc.) use the CANONICAL em-dash
+        # form `[F-NNN](#f-nnn) — Weakness (file:line)` so every finding link is
+        # identical across §2 / §4 / §5 / §8 (user report 2026-06-12: §5 used a
+        # parens short form `(Weakness)` while everywhere else used em-dash).
+        # Genuine INLINE PROSE keeps the parens short form so a mid-sentence
+        # citation reads `… [T-005](#t-005) (Reflected XSS) …` rather than a
+        # double-em-dash torn-link construct.
+        key = (ref, table)
+        if key not in cache:
+            cache[key] = ctx.linkify_with_label(ref) if table else ctx.linkify_with_short_label(ref)
+        return cache[key]
 
     # Find every bare `[X-NNN](#x-nnn)` that is NOT followed by an existing
     # em-dash label OR an existing parens label — both are signs the link
     # has already been enriched and re-expanding would double-label.
-    def sub_ref(m: re.Match) -> str:
-        ref = m.group(1)
-        # Skip citation style `*([F-009](#f-009))*` — check surrounding chars.
-        start = m.start()
-        prefix = md[max(0, start - 3) : start]
-        if prefix.endswith("*(") or prefix.endswith("*("):
-            return m.group(0)
-        return resolve(ref)
+    def make_sub(line_text: str, table: bool):
+        def sub_ref(m: re.Match) -> str:
+            ref = m.group(1)
+            # Skip citation style `*([F-009](#f-009))*` — check surrounding chars
+            # within THIS line (m.start() is line-relative).
+            start = m.start()
+            if line_text[max(0, start - 2) : start].endswith("*("):
+                return m.group(0)
+            return resolve(ref, table)
+
+        return sub_ref
 
     # Skip fenced code blocks so refs inside ```javascript blocks stay literal.
     # Skip heading lines (leading `#` on a line) so labels are never injected
@@ -10327,7 +10398,7 @@ def _linkify_bare_refs_in_prose(ctx: RenderContext, md: str) -> str:
                 # builders) AND refs already followed by ` (<label>)` (parens
                 # form, produced by linkify_with_short_label in prose).
                 r"\[([FTM]-\d{3,4})\]\(#[ftm]-\d+\)(?!\s+[—(])",
-                sub_ref,
+                make_sub(line, _strip.startswith("|")),
                 line,
             )
         out_chunks.append("\n".join(lines))
@@ -12582,7 +12653,7 @@ def _build_threat_card(
     head_title = re.sub(r"\s+—\s+\S.*$", "", raw_title).strip() or raw_title
     if ec == "refuted":
         head_title = f"~~{head_title}~~ ⚠"
-    heading = f"#### {visible_id} · {head_title}"
+    heading = f"#### {visible_id} · {_escape_heading_placeholders(head_title)}"
 
     # Meta line — Severity · Component · Location.
     sev_disp = f"{ctx.severity_emoji(sev)} {ctx.severity_label(sev)}".strip()
@@ -12598,7 +12669,11 @@ def _build_threat_card(
     if (t.get("impact") or "").strip().lower() == "critical" and sev != "critical":
         sev_disp += " _(raw Critical)_"
     comp_part = component_line[len("**Component:** ") :] if component_line.startswith("**Component:** ") else "—"
-    loc_part = (f"`{ev_file}`" + (f":{ev_line}" if ev_line else "")) if ev_file else "—"
+    # Keep file AND line inside ONE code span (`lib/insecurity.ts:58`) — the
+    # earlier form ``` `file`:line ``` left the line number bare outside the
+    # backticks (user report 2026-06-12). Mirrors the `loc` construction at
+    # _strip/_synthesise_evidence_summary which already span the whole token.
+    loc_part = (f"`{ev_file}" + (f":{ev_line}" if ev_line else "") + "`") if ev_file else "—"
     meta_line = f"**Severity:** {sev_disp}  ·  **Component:** {comp_part}  ·  **Location:** {loc_part}"
 
     # Root cause — systemic control failure from the attack-class taxonomy
@@ -12667,6 +12742,13 @@ def _build_threat_card(
                 issue_card = f"{issue_card} {imp_txt}"
             else:
                 issue_card = f"**Issue:** {imp_txt}"
+
+    # Readability (2026-06-12): a long Issue narrative crammed into one ~1000-char
+    # paragraph is hard to follow. Break it into ~2-sentence paragraphs so the
+    # mechanism / consequence / impact read as distinct beats. Blank-line
+    # separated (same paragraph mechanic the fields use below), so it survives
+    # GFM / Pandoc / weasyprint. No-op for short Issues.
+    issue_card = _paragraphize_issue_card(issue_card)
 
     # Each field is a separate paragraph (blank-line separated), exactly like
     # the §9 Mitigation-Register blocks. A single newline would NOT survive
@@ -13440,7 +13522,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             mid = m.get("m_id") or m.get("id") or "-"
             title = (m.get("title") or m.get("mitigation_title") or "(untitled)").strip()
             lines.append(f'<a id="{mid.lower()}"></a>')
-            lines.append(f"#### {mid} — {title}")
+            lines.append(f"#### {mid} — {_escape_heading_placeholders(title)}")
             lines.append("")
 
             # Addresses as a bulleted list of linkified refs (reference layout).

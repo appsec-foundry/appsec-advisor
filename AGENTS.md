@@ -307,6 +307,23 @@ Model-flag deprecation:
 - `--reasoning-model` selects the routing tier (`sonnet-economy`, `opus-cheap`, `sonnet`, `opus`). `haiku-economy` is a deprecated alias for `sonnet-economy` — still accepted, normalised on input (the tier keeps STRIDE/triage/merger on Sonnet; only the deterministic-leaning periphery runs on Haiku, so the old name oversold it).
 - `--stride-model` is a deprecated compatibility override for STRIDE only; prefer `--reasoning-model`.
 
+### Deliverable presentation invariants
+
+User-visible Markdown/PDF quality rules. Each is **deterministically enforced** (Stage-1 / Stage-2 LLM authoring is unreliable under turn pressure — see "final validation and rendering are deterministic Python" in Read First) and pinned by a regression test, so they survive a re-author / recompose. Do **not** "fix" a regression by editing the deliverable or an agent prompt — change the enforcer (and its test) named below.
+
+| Invariant | Rule | Enforcer (script · function) | Drift-guard test |
+|---|---|---|---|
+| Finding title | `<Weakness class> — <file:line>` only; no `via <impl>`, params, payloads, code, library versions | `emit_clean_finding_titles.py` (auto-emitter pass) + `agents/shared/finding-title-contract.md` | `tests/test_emit_clean_finding_titles.py` |
+| Finding cross-ref link | identical everywhere: `<dot> [F-NNN](#f-nnn) — Weakness (file:line)`; table cells em-dash, inline prose parens | `compose_threat_model.py:_linkify_bare_refs_in_prose` (table-aware) + `linkify_with_label` | `tests/test_compose_threat_model.py::test_prose_linkifier_table_cells_use_emdash_form` |
+| Mitigation title | clear general class-level label, not a remediation instruction; CWE-keyed + keyword-disambiguated. NOT LLM-authored — the CWE→title map IS the contract (style rubric in the module docstring); no `agents/shared` doc | `emit_general_mitigation_titles.py` (auto-emitter pass) | `tests/test_emit_general_mitigation_titles.py` |
+| §10 Mitigations-index | truncation keeps backtick code spans balanced (else one chip's unclosed span swallows the rest) | `compose_threat_model.py:_index_short_title` | `tests/test_compose_threat_model.py::test_index_short_title_keeps_backticks_balanced` |
+| §8 Issue readability | long Issue narrative split into ~2-sentence blank-line paragraphs | `compose_threat_model.py:_paragraphize_issue_card` | `tests/test_compose_threat_model.py::test_paragraphize_issue_card_splits_long_narrative` |
+| Code-token backticking | bare `file:line` / `func()` wrapped; file+line in ONE span; runs as the LAST mutation | `qa_checks.py:cmd_autofix` → `apply_prose_fixes.py:apply_code_formatting` (+ `_LINKED_TITLE_TAIL_RE` lets `file`/`fn` penetrate title tails) | `tests/test_qa_checks.py::test_autofix_backticks_paths_and_converts_attack_surface` |
+| §4/§5 table widths + ID nowrap | §4 Assets + §5.1/§5.2 fixed-layout HTML, identical colgroups, `A-NN` nowrap | `qa_checks.py:_attack_surface_tables_to_html` + `_FIXED_LAYOUT_SPECS`; components `C-NN` via `compose:_inject_components_table` nowrap span | `tests/test_qa_checks.py` (autofix) |
+| §6 structural-threat descriptions | US English; no 44-char `<br/>` soft-wrap on the `# \| Threat Description` table | `data/attack-class-taxonomy.yaml`; `compose:_softwrap_prose_table_cells` exemption | `tests/test_compose_threat_model.py::test_attack_class_taxonomy_uses_us_english` |
+
+**Critical ordering rule (root cause of repeated code-format / table regressions).** The §4/§5 GFM→HTML table conversion **and** path-backticking live ONLY in `qa_checks.py:cmd_autofix` — NOT in `compose_threat_model.py` or `cmd_all`. They MUST be the **last** mutation on `threat-model.md`. Any bare `compose_threat_model.py` run after the Stage-3 gate (diagnostic, `--rerender`, Re-Render-Loop fragment-fixer) drops them — always re-run `qa_checks.py autofix` afterwards. The canonical final sequence is `compose --strict → apply_prose_fixes → qa_checks autofix`.
+
 ## References
 
 Read only when relevant; code/data is authoritative where named.

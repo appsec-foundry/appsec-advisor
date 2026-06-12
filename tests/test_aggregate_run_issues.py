@@ -279,3 +279,46 @@ class TestSessionStopUnknownFilter:
         issues = agg._extract_session_stop_anomalies(log)
         assert len(issues) == 1
         assert issues[0]["category"] == "high_token_usage"
+
+
+# ---------------------------------------------------------------------------
+# _extract_gate_events — persistent gate artifacts (2026-06-12 blind spot)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractGateEvents:
+    def test_unresolved_contract_repair_plan_flagged(self, tmp_path):
+        (tmp_path / ".qa-repair-plan.json").write_text(
+            '{"status":"fail","issue_count":1,"actions":'
+            '[{"type":"missing_section","heading":"## 4. Assets","section_id":"assets"}]}',
+            encoding="utf-8",
+        )
+        issues = agg._extract_gate_events(tmp_path)
+        assert any(i["category"] == "contract_gate_drift" for i in issues)
+        i = next(i for i in issues if i["category"] == "contract_gate_drift")
+        assert i["severity"] == "warning"
+        assert "## 4. Assets" in i["evidence"]["items"]
+
+    def test_non_pass_qa_status_flagged(self, tmp_path):
+        (tmp_path / ".qa-status.json").write_text('{"status":"fail"}', encoding="utf-8")
+        issues = agg._extract_gate_events(tmp_path)
+        assert any(i["category"] == "qa_status_not_pass" for i in issues)
+
+    def test_inline_shortcut_plan_flagged_as_error(self, tmp_path):
+        (tmp_path / ".inline-shortcut-repair-plan.json").write_text("{}", encoding="utf-8")
+        issues = agg._extract_gate_events(tmp_path)
+        i = next(i for i in issues if i["category"] == "inline_shortcut_unresolved")
+        assert i["severity"] == "error"
+
+    def test_clean_run_yields_no_gate_issues(self, tmp_path):
+        # The shape a clean run leaves: qa-status=pass, no repair plans.
+        (tmp_path / ".qa-status.json").write_text('{"status":"pass"}', encoding="utf-8")
+        assert agg._extract_gate_events(tmp_path) == []
+
+    def test_aggregate_surfaces_drift_instead_of_clean(self, tmp_path):
+        """End-to-end: a completed run that left an unresolved repair plan must
+        NOT be reported as run_status=clean (the 2026-06-12 regression)."""
+        (tmp_path / ".qa-repair-plan.json").write_text('{"status":"fail","issue_count":1,"actions":[]}', encoding="utf-8")
+        data = agg.aggregate(tmp_path, "quick")
+        assert data["run_status"] == "issues"
+        assert any(i["category"] == "contract_gate_drift" for i in data["issues"])

@@ -1344,6 +1344,55 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONTRACT_PATH = PLUGIN_ROOT / "data" / "sections-contract.yaml"
 
 
+def _resolve_contract_run_flags(output_dir: Path) -> dict:
+    """Resolve the depth / skip flags the composer used, from on-disk run state.
+
+    `check_contract` must evaluate the contract's `condition` gates against the
+    SAME context the composer used — otherwise depth-conditional sections (§3
+    Attack Walkthroughs, §7 Security Architecture) are flagged as "missing" on a
+    `--quick` run where they are *intentionally* suppressed. Mirrors
+    `compose_threat_model.py`'s eval_context construction (the
+    `is_quick_depth` / `skip_attack_walkthroughs` derivation at ~L14210-14221):
+    both flags fall back to a depth==quick default so a legacy config without the
+    explicit key still behaves correctly.
+
+    Reads `threat-model.yaml` (meta.assessment_depth) and `.skill-config.json`
+    from `output_dir`. Best-effort: any read/parse error falls back to the
+    permissive standard-depth defaults (the pre-fix behaviour).
+    """
+    depth = ""
+    cfg: dict = {}
+    try:
+        import yaml as _yaml  # qa_checks doesn't import yaml at module scope
+
+        ck_yaml = output_dir / "threat-model.yaml"
+        if ck_yaml.is_file():
+            meta = (_yaml.safe_load(ck_yaml.read_text(encoding="utf-8")) or {}).get("meta") or {}
+            depth = str(meta.get("assessment_depth") or "").strip().lower()
+    except Exception:
+        pass
+    try:
+        cfg_path = output_dir / ".skill-config.json"
+        if cfg_path.is_file():
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        cfg = {}
+    if not depth:
+        depth = str(cfg.get("assessment_depth") or "standard").strip().lower()
+    is_quick = depth == "quick"
+    skip_walkthroughs = (
+        bool(cfg.get("skip_attack_walkthroughs") or cfg.get("SKIP_ATTACK_WALKTHROUGHS"))
+        or is_quick
+    )
+    return {
+        "depth": depth,
+        "is_quick_depth": is_quick,
+        "skip_attack_walkthroughs": skip_walkthroughs,
+        "check_requirements": bool(cfg.get("check_requirements") or cfg.get("CHECK_REQUIREMENTS")),
+        "verbose_report": bool(cfg.get("verbose") or cfg.get("VERBOSE_REPORT")),
+    }
+
+
 def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
     """Validate the rendered markdown against sections-contract.yaml.
 
@@ -1368,16 +1417,38 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
     # 1. Section order + presence.
     rd = RISK_DIST_RE.search(text)
     critical_count = int(rd.group(1)) if rd else 0
+
+    # Resolve the depth / skip flags the composer actually used so the
+    # `condition` gates below evaluate against the SAME context. Without this
+    # the env hardcoded `render_security_architecture=True` and omitted
+    # `skip_attack_walkthroughs`, so a `--quick` run (where the composer
+    # suppresses §3 and §7 per sections-contract.yaml) was reported as
+    # "expected section missing: '## 3. Attack Walkthroughs' / '## 7. Security
+    # Architecture'" — a false positive that tripped the Stage-3 repair_plan
+    # gate (exit 1) on every quick run. See _resolve_contract_run_flags.
+    _flags = _resolve_contract_run_flags(md_path.parent)
+    # §7 mirrors the composer's `render_security_architecture = _resolve_
+    # security_arch_override(...) != ""`: suppressed at quick depth UNLESS a
+    # rich prior §7 was carried forward (rerender) — in which case §7 *is* in
+    # the rendered doc. So at quick depth we expect §7 only when its heading is
+    # actually present; at standard/thorough it is always expected (unchanged).
+    _sec7_section = contract.get("sections", {}).get("security_architecture") or {}
+    _sec7_heading = (_sec7_section.get("heading") or "## 7. Security Architecture").strip()
+    _sec7_present = bool(re.search(rf"(?m)^{re.escape(_sec7_heading)}[ \t]*$", text))
+    _render_sec7 = (not _flags["is_quick_depth"]) or _sec7_present
+
     env = {
         "critical_count": critical_count,
         "high_count": int(rd.group(2)) if rd else 0,
         "medium_count": int(rd.group(3)) if rd else 0,
         "low_count": int(rd.group(4)) if rd else 0,
-        "check_requirements": False,
-        "verbose_report": False,  # matches renderer default (meta flag off)
+        "check_requirements": _flags["check_requirements"],
+        "verbose_report": _flags["verbose_report"],
         "triage_has_warnings": False,
         "has_out_of_scope": True,
-        "render_security_architecture": True,
+        "is_quick_depth": _flags["is_quick_depth"],
+        "skip_attack_walkthroughs": _flags["skip_attack_walkthroughs"],
+        "render_security_architecture": _render_sec7,
     }
 
     expected_headings: list[str] = []
@@ -3707,6 +3778,22 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
     # severity dot / priority circle. Best-effort + idempotent.
     if _annotate_id_refs(md):
         _PrePass.reset()
+    # Code-token backticking (paths, file:line, function calls) — runs HERE,
+    # AFTER the link/cell-rebuild passes (so a rebuilt title-tail cell is not
+    # re-emitted bare) and BEFORE the GFM→HTML table conversion (so the §5 Notes
+    # `server.ts:663` becomes a `<code>` cell, not bare text). Folding this into
+    # autofix makes `compose → qa_checks autofix` a complete cleaning pass that
+    # survives a later recompose. Best-effort + idempotent.
+    apf_fixes = 0
+    try:
+        import apply_prose_fixes as _apf  # sibling script
+
+        _apf_text, apf_fixes = _apf.apply_code_formatting(md.read_text(encoding="utf-8"))
+        if apf_fixes and _apf_text != md.read_text(encoding="utf-8"):
+            md.write_text(_apf_text, encoding="utf-8")
+            _PrePass.reset()
+    except Exception:
+        apf_fixes = 0
     # §5 entry-point tables → fixed-layout HTML. MUST be the last mutating pass:
     # markdown-it does not parse markdown inside a raw <table>, so the cells are
     # pre-rendered to HTML here, after every link/dot/title/backtick enrichment
@@ -3722,6 +3809,7 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
         + len(ms_report.fixes)
         + len(cell_report.fixes)
         + len(attr_strip_report.fixes)
+        + apf_fixes
         + as_converted
     )
     print(json.dumps({"autofix": {"fix_count": fixes}}, indent=2))

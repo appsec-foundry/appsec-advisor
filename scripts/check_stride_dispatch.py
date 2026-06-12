@@ -41,9 +41,14 @@ produced without dispatching the analyzer — the only writer of progress
 files.
 
 Positive dispatch evidence that suppresses the signal is **count-based**:
-at least as many ``AGENT_SPAWN  appsec-stride-analyzer`` lines in
+at least as many dispatched ``appsec-stride-analyzer`` analyzers in
 ``.hook-events.log`` as the ``.stride-dispatch-manifest.json`` planned
-components (or, with no manifest, any such spawn). The manifest's *mere
+components (or, with no manifest, any dispatch). A dispatch is proven by
+EITHER an ``AGENT_SPAWN`` (PreToolUse) OR an ``AGENT_INVOKE`` (PostToolUse)
+line — both are emitted per analyzer, and the harness occasionally logs only
+one of the pair, so counting both (deduped by ``COMPONENT_ID``) avoids the
+false-trip seen on 2026-06-12 (1 SPAWN + 4 INVOKE for a real 4-way fan-out).
+The manifest's *mere
 existence* is deliberately NOT proof — it is written by
 ``build_stride_dispatch_manifest.py`` from Analyst-A's output *before* the
 skill fans the analyzers out, so it survives the exact inline-collapse this
@@ -80,8 +85,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
+
+# Extracts the dispatched component from a hook line's trailing
+# ``[… COMPONENT_ID=<id> …]`` payload. Both AGENT_SPAWN and AGENT_INVOKE
+# carry it (agent_logger.py propagates COMPONENT_ID into the pair block).
+_COMPONENT_ID_RE = re.compile(r"COMPONENT_ID=([^\s\]]+)")
 
 # A threat is a trivial-skip stub placeholder when its text carries this
 # marker (see phase-group-threats.md "Trivial-component skip (M24)").
@@ -119,38 +130,65 @@ def _stride_has_real_threats(stride_path: Path) -> bool:
     return any(isinstance(t, dict) and not _is_stub_threat(t) for t in threats)
 
 
-def _stride_analyzer_spawn_count(output_dir: Path, since: str | None = None) -> int:
-    """Number of dispatched ``appsec-stride-analyzer`` Agent calls in the hook log.
+def _stride_dispatch_evidence_count(output_dir: Path, since: str | None = None) -> int:
+    """How many distinct ``appsec-stride-analyzer`` dispatches the hook log proves.
 
-    Each parallel-fan-out STRIDE dispatch emits exactly one
-    ``AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer`` line to
-    ``.hook-events.log`` (``scripts/agent_logger.py``). Counting them is the
-    *positive proof the fan-out actually fired* — re-dispatch-on-failure only
-    adds lines, so the count is a lower bound on attempts.
+    Each dispatched analyzer emits BOTH an ``AGENT_SPAWN`` (PreToolUse) and an
+    ``AGENT_INVOKE`` (PostToolUse) line to ``.hook-events.log``
+    (``scripts/agent_logger.py``). Counting *only* ``AGENT_SPAWN`` (the
+    pre-2026-06-12 behaviour) under-reported whenever the harness logged the
+    PostToolUse hook but dropped the PreToolUse one for some dispatches — the
+    2026-06-12 juice-shop run logged 1 ``AGENT_SPAWN`` but 4 ``AGENT_INVOKE`` for
+    a genuinely-parallel 4-component fan-out, so the gate under-counted (1 < 4),
+    fell through to ``.progress``, and false-tripped on the two components whose
+    analyzer happened not to write a progress file.
 
-    ``.hook-events.log`` is **append-only across runs** (truncated only by 5 MB
-    rotation, never at ``ASSESSMENT_START``), so a prior run's stride spawns
-    linger. ``since`` (the manifest's ``generated_at``, an ISO-8601 Zulu
-    timestamp written in step 3b immediately *before* this run's fan-out) bounds
-    the count to the current run: every legitimate spawn carries a leading
-    timestamp ``>= since``; stale spawns from an earlier run are older and
-    excluded. ISO-8601 Zulu is fixed-width, so lexicographic compare ==
+    Both event types are equally conclusive dispatch proof, so this counts the
+    union. To avoid double-counting the SPAWN+INVOKE pair of the same dispatch it
+    dedupes by ``COMPONENT_ID`` when the lines carry it (the parallel fan-out
+    always passes ``COMPONENT_ID=<id>``); when no component id is parseable
+    (serial / legacy lines) it falls back to ``max(spawn_lines, invoke_lines)``,
+    which is the true dispatch count without double-counting the pair.
+
+    ``.hook-events.log`` is **append-only across runs**, so a prior run's
+    dispatches linger. ``since`` (the manifest's ``generated_at``, written in
+    step 3b immediately *before* this run's fan-out) bounds the count to the
+    current run: every legitimate dispatch line carries a leading timestamp
+    ``>= since``. ISO-8601 Zulu is fixed-width, so lexicographic compare ==
     chronological. Without ``since`` (no manifest) all matching lines count.
     """
     try:
         text = (output_dir / ".hook-events.log").read_text(encoding="utf-8")
     except OSError:
         return 0
-    count = 0
+    component_ids: set[str] = set()
+    spawn_lines = 0
+    invoke_lines = 0
     for line in text.splitlines():
-        if "AGENT_SPAWN" not in line or "appsec-stride-analyzer" not in line:
+        if "appsec-stride-analyzer" not in line:
+            continue
+        is_spawn = "AGENT_SPAWN" in line
+        is_invoke = "AGENT_INVOKE" in line
+        if not (is_spawn or is_invoke):
             continue
         if since is not None:
             ts = line.split("  ", 1)[0].strip()
             if ts < since:
-                continue  # stale spawn from an earlier run — not this run's
-        count += 1
-    return count
+                continue  # stale dispatch from an earlier run — not this run's
+        if is_spawn:
+            spawn_lines += 1
+        if is_invoke:
+            invoke_lines += 1
+        m = _COMPONENT_ID_RE.search(line)
+        if m:
+            component_ids.add(m.group(1))
+    if component_ids:
+        return len(component_ids)
+    return max(spawn_lines, invoke_lines)
+
+
+# Back-compat alias — older callers / tests referenced the spawn-only name.
+_stride_analyzer_spawn_count = _stride_dispatch_evidence_count
 
 
 def _read_manifest(output_dir: Path) -> dict:
@@ -195,8 +233,8 @@ def _stride_was_dispatched(output_dir: Path) -> bool:
         # Bound the spawn count to this run via the manifest's own timestamp —
         # the fan-out reads the manifest, so every real spawn is at-or-after it.
         since = manifest.get("generated_at")
-        return _stride_analyzer_spawn_count(output_dir, since=since) >= expected
-    return _stride_analyzer_spawn_count(output_dir) > 0
+        return _stride_dispatch_evidence_count(output_dir, since=since) >= expected
+    return _stride_dispatch_evidence_count(output_dir) > 0
 
 
 def detect_inlined_components(output_dir: Path) -> list[str]:

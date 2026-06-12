@@ -270,6 +270,78 @@ def test_contract_v2_rejects_legacy_sec7_headings(monkeypatch, tmp_path: Path):
     assert any("7.1 Security Control Overview" in issue for issue in report.issues)
 
 
+def _write_depth_contract(path: Path) -> Path:
+    """Minimal contract with two depth-conditional sections (§3 walkthroughs on
+    `not skip_attack_walkthroughs`, §7 security-architecture on
+    `render_security_architecture`) plus always-on sections around them."""
+    contract = path / "depth-contract.yaml"
+    contract.write_text(
+        textwrap.dedent("""\
+            contract_version: 1
+            document:
+              order:
+                - { id: system_overview }
+                - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }
+                - { id: assets }
+                - { id: security_architecture, condition: "render_security_architecture" }
+                - { id: threat_register }
+            sections:
+              system_overview: { heading: "## 1. System Overview" }
+              attack_walkthroughs: { heading: "## 3. Attack Walkthroughs" }
+              assets: { heading: "## 4. Assets" }
+              security_architecture: { heading: "## 7. Security Architecture" }
+              threat_register: { heading: "## 8. Findings Register" }
+        """),
+        encoding="utf-8",
+    )
+    return contract
+
+
+_DOC_WITHOUT_3_AND_7 = textwrap.dedent("""\
+    # Threat Model
+
+    **Risk Distribution:** Critical: 8 · High: 14 · Medium: 4 · Low: 1 · **Total: 27**
+
+    ## 1. System Overview
+    overview body
+    ## 4. Assets
+    assets body
+    ## 8. Findings Register
+    findings body
+    """)
+
+
+def test_contract_quick_depth_suppresses_optional_sections(tmp_path: Path):
+    """Regression (2026-06-12): at --quick the composer suppresses §3 and §7, so
+    check_contract must NOT flag them as 'expected section missing'. Previously
+    the env hardcoded render_security_architecture=True and omitted
+    skip_attack_walkthroughs, producing a false positive that tripped the
+    Stage-3 repair_plan gate (exit 1) on every quick run."""
+    qa._PrePass.reset()
+    contract = _write_depth_contract(tmp_path)
+    md = _write_minimal_model(tmp_path, _DOC_WITHOUT_3_AND_7)
+    (tmp_path / ".skill-config.json").write_text('{"assessment_depth": "quick"}', encoding="utf-8")
+
+    report = qa.check_contract(md, contract)
+
+    assert not any("3. Attack Walkthroughs" in i for i in report.issues), report.issues
+    assert not any("7. Security Architecture" in i for i in report.issues), report.issues
+
+
+def test_contract_standard_depth_still_enforces_optional_sections(tmp_path: Path):
+    """The depth-aware env must NOT weaken enforcement at standard/thorough: a
+    standard run that is genuinely missing §3 / §7 is still flagged."""
+    qa._PrePass.reset()
+    contract = _write_depth_contract(tmp_path)
+    md = _write_minimal_model(tmp_path, _DOC_WITHOUT_3_AND_7)
+    (tmp_path / ".skill-config.json").write_text('{"assessment_depth": "standard"}', encoding="utf-8")
+
+    report = qa.check_contract(md, contract)
+
+    assert any("3. Attack Walkthroughs" in i for i in report.issues), report.issues
+    assert any("7. Security Architecture" in i for i in report.issues), report.issues
+
+
 def test_control_subsection_coverage_requires_linked_h4(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
@@ -3623,3 +3695,45 @@ def test_operational_strengths_table_converts_keeping_structural_breaks():
     ), out
     # Strength cell bold rendered too.
     assert "<strong>Container Hardening</strong>" in out
+
+
+# ---------------------------------------------------------------------------
+# 2026-06-12 — cmd_autofix folds code-token backticking in BEFORE the §5/§4
+# GFM→HTML conversion, so `compose → qa_checks autofix` is a complete cleaning
+# pass that survives a later recompose (the deliverable shipped bare
+# `server.ts:663` because path-backticking was not part of autofix).
+# ---------------------------------------------------------------------------
+
+
+def test_autofix_backticks_paths_and_converts_attack_surface(tmp_path: Path):
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 5. Attack Surface
+
+            ### 5.1 Unauthenticated Entry Points
+
+            | Method | Route | Risk | Notes |
+            |---|---|---|---|
+            | GET | /profile | Critical | handler: server.ts:663 |
+            """),
+    )
+    rc = qa.cmd_autofix(md, tmp_path)
+    assert rc == 0
+    text = md.read_text(encoding="utf-8")
+    # §5 became a fixed-layout HTML table AND the bare file:line is now a code cell.
+    assert "table-layout:fixed" in text
+    assert "<code>server.ts:663</code>" in text
+    assert "handler: server.ts:663 |" not in text  # no bare GFM remnant
+
+
+def test_autofix_is_idempotent_on_paths(tmp_path: Path):
+    qa._PrePass.reset()
+    md = _write_minimal_model(tmp_path, "The sink is at `lib/insecurity.ts:54` in prose.\n")
+    qa.cmd_autofix(md, tmp_path)
+    first = md.read_text(encoding="utf-8")
+    qa._PrePass.reset()
+    qa.cmd_autofix(md, tmp_path)
+    assert md.read_text(encoding="utf-8") == first
+    assert first.count("`lib/insecurity.ts:54`") == 1  # not double-wrapped

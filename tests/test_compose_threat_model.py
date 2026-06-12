@@ -3392,3 +3392,102 @@ def test_lookup_label_applies_codify(tmp_path: Path) -> None:
         output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={}, fragments_dir=tmp_path
     )
     assert ctx.lookup_label("F-001") == "Missing Ownership Check (`updateProductReviews.ts:18`)"
+
+
+# ---------------------------------------------------------------------------
+# 2026-06-12 deliverable defect fixes (mitigation index, headings, IDs)
+# ---------------------------------------------------------------------------
+
+
+def test_index_short_title_keeps_backticks_balanced():
+    """The §10 Mitigations-index truncation must never leave an unclosed code
+    span — an odd backtick bled M-017's title into M-018..M-025 as one giant
+    code span (the catastrophic 2026-06-12 break)."""
+    f = compose._index_short_title
+    t = ("Replace `.decode(token)` with `.verify(token, key, { algorithms: [...] })` "
+         "and gate authorization on the verified payload only.")
+    out = f(t)
+    assert out.count("`") % 2 == 0, out
+    assert out.endswith("…")
+    # A short title with balanced backticks is returned intact (still balanced).
+    short = f("Add `permissions: { contents: read }` at workflow root")
+    assert short.count("`") % 2 == 0
+
+
+def test_index_short_title_backticks_angle_placeholder():
+    """`<digest>`-style placeholders must be code-spanned in the index chip so
+    they are not parsed as an HTML tag and dropped (M-007 lost `<digest>`)."""
+    out = compose._index_short_title("Pin base image to @sha256:<digest>")
+    assert "`<digest>`" in out
+
+
+def test_escape_heading_placeholders():
+    """Headings stay backtick-free, so a `<placeholder>` is HTML-entity escaped
+    (not code-spanned) to render literally instead of vanishing."""
+    f = compose._escape_heading_placeholders
+    assert f("Pin base image to @sha256:<digest>") == "Pin base image to @sha256:&lt;digest&gt;"
+    # `<br/>` and the rest of normal prose are untouched.
+    assert f("Title with no placeholder") == "Title with no placeholder"
+    assert "<br/>" in f("Line one<br/>line two")
+
+
+def test_softwrap_exempts_structural_threats_table():
+    """The `# | Threat Description | …` posture table must NOT get the 44-char
+    `<br/>` soft-wrap (it chopped the description into random stub lines)."""
+    md = (
+        "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |\n"
+        "|---|--------------------|------------------------|---------------|-----|\n"
+        "| ① | **Insecure Query** _(T·I)_ user input flows into a server-side "
+        "interpreter without parameterization or schema validation here. | x | y | z |\n"
+    )
+    out = compose._softwrap_prose_table_cells(md)
+    # No mid-prose <br/> was injected into the Threat Description cell.
+    assert "server-side<br/>" not in out
+    assert "<br/>interpreter" not in out
+
+
+def test_attack_class_taxonomy_uses_us_english():
+    """Structural-threat class descriptions render verbatim into the §6 posture
+    table; they must use US spelling (parameterization / authorization), not the
+    UK forms that leaked into the 2026-06-12 deliverable."""
+    tax = Path(__file__).parent.parent / "data" / "attack-class-taxonomy.yaml"
+    text = tax.read_text(encoding="utf-8")
+    for uk in ("parameterisation", "authorisation", "sanitisation", "deserialisation"):
+        assert uk not in text, "UK spelling %r present in attack-class-taxonomy.yaml" % uk
+
+
+def test_paragraphize_issue_card_splits_long_narrative():
+    f = compose._paragraphize_issue_card
+    long = ("**Issue:** " + " ".join(
+        f"Sentence number {i} describes a distinct security beat in detail here." for i in range(1, 7)
+    ))
+    out = f(long)
+    assert out.count("\n\n") >= 2  # multiple paragraphs
+    assert out.startswith("**Issue:** ")
+    # Short issue is untouched.
+    short = "**Issue:** One short sentence."
+    assert f(short) == short
+    # Non-Issue input passes through.
+    assert f("**Fix:** do the thing") == "**Fix:** do the thing"
+
+
+def test_prose_linkifier_table_cells_use_emdash_form():
+    """§5 attack-surface table cells must use the canonical em-dash form
+    `[F-NNN](#f-nnn) — Weakness (file)`, consistent with §2/§4/§8 — not the
+    parens short form. Genuine inline prose keeps the parens form."""
+    yaml_data = {
+        "threats": [
+            {"id": "T-014", "title": "Server-Side Template Injection — routes/userProfile.ts:62",
+             "risk": "Critical", "cwe": "CWE-94",
+             "evidence": {"file": "routes/userProfile.ts", "line": 62}},
+        ],
+    }
+    ctx = compose.RenderContext(
+        output_dir=Path("."), contract={}, yaml_data=yaml_data, triage={}, fragments_dir=Path("."),
+    )
+    table_md = "| GET | `/profile` | Critical | [F-014](#f-014) |"
+    prose_md = "The attacker exploits [F-014](#f-014) directly."
+    out_tbl = compose._linkify_bare_refs_in_prose(ctx, table_md)
+    out_prose = compose._linkify_bare_refs_in_prose(ctx, prose_md)
+    assert "[F-014](#f-014) — " in out_tbl  # em-dash in the table cell
+    assert "[F-014](#f-014) (" in out_prose  # parens in inline prose

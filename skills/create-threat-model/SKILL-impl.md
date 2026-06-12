@@ -2327,6 +2327,20 @@ if [ "$DRY_RUN" = "false" ]; then
     # emit_config_scan_mitigations so config-scan threats are already linked
     # and skipped.
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_finding_fix_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
+    # Clean finding TITLES (2026-06-12) — normalize threats[].title to
+    # `<weakness class> — <file:line>` (strip `via <impl>`, parens, params,
+    # embedded files). The verbose code-laden titles otherwise render into every
+    # xref cell (§2/§4/§2.3/§8). Idempotent (_title_source). Runs before the
+    # mitigation-title pass (independent; that keys on CWE, not title).
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_clean_finding_titles.py" "$OUTPUT_DIR" 2>&1 || true
+    # General mitigation TITLES (2026-06-12) — runs AFTER all mitigation
+    # emitters so it generalizes the full set. Stage 1 authors detailed
+    # remediation instructions as mitigation_title ("Replace `.decode(token)`
+    # with `.verify(...)`…", "Add HEALTHCHECK CMD curl -f http://…"); this
+    # rewrites the §10 register/index TITLE to a clear class-level label keyed
+    # on the addressed CWE (the actionable detail stays in the block body's
+    # How/steps/code). Idempotent (stashes _title_source).
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_general_mitigation_titles.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true

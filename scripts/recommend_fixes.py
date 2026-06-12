@@ -413,6 +413,97 @@ def _recommend_compose_retries_section(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_contract_gate_drift(issue: dict, output_dir: Path) -> dict:
+    """A QA contract repair plan was left unresolved on disk."""
+    ev = issue.get("evidence", {})
+    items = ev.get("items") or []
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": (
+            "The Stage-3 contract gate flagged section drift that was not cleared. "
+            "Re-render from fragments, or — if the flagged section is depth-conditional "
+            "(§3 walkthroughs / §7 security-architecture at --quick) — this is a checker bug."
+        ),
+        "rationale": (
+            "A lingering .qa-repair-plan.json means check_contract found an expected "
+            "section missing (or out of order). Genuine drift is fixed by recomposing "
+            "from the fragments. But the contract gate evaluates depth/skip conditions: "
+            "§3 and §7 are intentionally suppressed at --quick, so a plan naming ONLY "
+            f"those is a false positive. Flagged items: {', '.join(str(i) for i in items[:6]) or '(see plan)'}."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".qa-repair-plan.json",
+                "details": "Inspect the `actions[].heading` list — are the named sections genuinely expected at this depth?",
+            },
+            {
+                "type": "rerun",
+                "target": "/appsec-advisor:create-threat-model --rerender",
+                "details": "Recompose from the existing fragments when the drift is real (a fragment was edited or a renderer/contract change landed).",
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_inline_shortcut_unresolved(issue: dict, output_dir: Path) -> dict:
+    """The Stage-2 inline-shortcut hard gate never cleanly passed."""
+    return {
+        "category": "rerun",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "high",
+        "summary": "Stage-2 inline-shortcut auto-retry was exhausted — the rendered document may be contract-incomplete.",
+        "rationale": (
+            "A surviving .inline-shortcut-repair-plan.json means compose could not "
+            "produce a contract-clean threat-model.md within MAX_INLINE_RETRIES. The "
+            "deliverable on disk may be missing required sections."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".inline-shortcut-repair-plan.json",
+                "details": "Read the repair plan for the indicators (A1/A2/B/C + missing fragments).",
+            },
+            {
+                "type": "rerun",
+                "target": "/appsec-advisor:create-threat-model --rebuild",
+                "details": "A contract-compliant Phase-11 output is reachable from the on-disk artifacts; if this reproduces, file a plugin bug.",
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_qa_status_not_pass(issue: dict, output_dir: Path) -> dict:
+    """`.qa-status.json` shows a non-pass status at completion."""
+    ev = issue.get("evidence", {})
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "medium",
+        "risk_level": "medium",
+        "summary": f"QA status is {ev.get('status', '?')!r} (not pass) — the document shipped with an unresolved QA concern.",
+        "rationale": (
+            "The deterministic gate or the QA reviewer wrote a non-pass status. The "
+            "report still exists but a check (contract, mermaid, placeholders, "
+            "yaml↔md consistency) did not clear."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".qa-status.json",
+                "details": "Read the status note + any referenced repair plan to see which check failed.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_default(issue: dict, output_dir: Path) -> dict:
     """Fallback for unknown categories."""
     return {
@@ -448,6 +539,9 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "bash_warn": _recommend_bash_warn,
     "auto_retry_fired": _recommend_auto_retry_fired,
     "compose_retries_section": _recommend_compose_retries_section,
+    "contract_gate_drift": _recommend_contract_gate_drift,
+    "inline_shortcut_unresolved": _recommend_inline_shortcut_unresolved,
+    "qa_status_not_pass": _recommend_qa_status_not_pass,
 }
 
 

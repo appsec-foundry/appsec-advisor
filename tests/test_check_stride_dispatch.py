@@ -199,6 +199,50 @@ def test_agent_spawn_hook_evidence_suppresses_false_positive(tmp_path):
     assert _run(tmp_path) == 0
 
 
+def test_agent_invoke_evidence_suppresses_false_positive(tmp_path):
+    """The 2026-06-12 juice-shop false positive: a genuinely-parallel 4-way
+    fan-out where the harness logged only 1 AGENT_SPAWN but 4 AGENT_INVOKE
+    (one per dispatched analyzer, each carrying COMPONENT_ID), and 2 analyzers
+    did not write a .progress file. Counting both event types deduped by
+    COMPONENT_ID proves all 4 were dispatched → NOT inlined."""
+    cids = ("backend-api", "frontend-spa", "file-upload-service", "b2b-api")
+    for cid in cids:
+        _write_stride(tmp_path, cid, _real_stride())
+    # progress for only 2 of 4 (the original FP condition)
+    _write_progress(tmp_path, "b2b-api")
+    _write_progress(tmp_path, "file-upload-service")
+    _write_manifest(tmp_path, *cids, generated_at="2026-06-12T14:43:00Z")
+    log = (
+        "2026-06-12T14:46:41Z  [sess]  INFO  AGENT_SPAWN   "
+        "appsec-advisor:appsec-stride-analyzer  model=sonnet  STRIDE: backend-api  "
+        "[REPO_ROOT=/r  COMPONENT_ID=backend-api]\n"
+    )
+    for ts, cid in (
+        ("14:50:15", "backend-api"),
+        ("14:54:10", "b2b-api"),
+        ("14:54:16", "frontend-spa"),
+        ("14:54:42", "file-upload-service"),
+    ):
+        log += (
+            f"2026-06-12T{ts}Z  [sess]  INFO  AGENT_INVOKE  "
+            f"appsec-advisor:appsec-stride-analyzer  model=sonnet  STRIDE: {cid}  "
+            f"[REPO_ROOT=/r  COMPONENT_ID={cid}]\n"
+        )
+    (tmp_path / ".hook-events.log").write_text(log, encoding="utf-8")
+    assert _run(tmp_path) == 0
+
+
+def test_invoke_only_evidence_without_component_id_uses_max(tmp_path):
+    """No manifest, real stride file, no .progress, but an AGENT_INVOKE line
+    (no COMPONENT_ID) → max(spawn,invoke) fallback still proves a dispatch."""
+    _write_stride(tmp_path, "backend-api", _real_stride())
+    (tmp_path / ".hook-events.log").write_text(
+        "2026-06-04T10:00:00Z  [sess]  INFO  AGENT_INVOKE  appsec-advisor:appsec-stride-analyzer  model=sonnet\n",
+        encoding="utf-8",
+    )
+    assert _run(tmp_path) == 0
+
+
 def test_partial_inline_trips(tmp_path):
     """One dispatched component, one inlined → trips on the inlined one."""
     _write_stride(tmp_path, "frontend-spa", _real_stride())
