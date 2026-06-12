@@ -471,6 +471,73 @@ class TestResolveIncrementalMode:
         assert out["mode"] == "full"
         assert out["incremental"] is False
 
+    # --- Depth-increase override (auto-incremental → full) -------------------
+
+    def _yaml_with_depth(self, tmp_path, depth):
+        (tmp_path / "threat-model.yaml").write_text(
+            f"meta:\n  schema_version: 1\n  assessment_depth: {depth}\nthreats: []\n"
+        )
+
+    def test_depth_increase_quick_to_standard_forces_full(self, tmp_path):
+        self._yaml_with_depth(tmp_path, "quick")
+        ns = rc.build_parser().parse_args(["--assessment-depth", "standard"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "full"
+        assert out["incremental"] is False
+        assert "depth increased" in out["mode_label"]
+        assert "quick" in out["depth_upgrade_reason"] and "standard" in out["depth_upgrade_reason"]
+
+    def test_depth_increase_standard_to_thorough_forces_full(self, tmp_path):
+        self._yaml_with_depth(tmp_path, "standard")
+        ns = rc.build_parser().parse_args(["--assessment-depth", "thorough"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "full"
+        assert "depth increased: standard → thorough" in out["mode_label"]
+
+    def test_same_depth_stays_incremental(self, tmp_path):
+        self._yaml_with_depth(tmp_path, "standard")
+        ns = rc.build_parser().parse_args(["--assessment-depth", "standard"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "incremental"
+
+    def test_shallower_depth_stays_incremental(self, tmp_path):
+        self._yaml_with_depth(tmp_path, "thorough")
+        ns = rc.build_parser().parse_args(["--assessment-depth", "quick"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "incremental"
+
+    def test_no_depth_flag_defaults_standard_vs_quick_baseline_forces_full(self, tmp_path):
+        # No --assessment-depth → effective "standard"; quick baseline is shallower.
+        self._yaml_with_depth(tmp_path, "quick")
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "full"
+
+    def test_baseline_without_depth_stays_incremental(self, tmp_path):
+        # Pre-depth baseline (no meta.assessment_depth) → unknown → no upgrade.
+        (tmp_path / "threat-model.yaml").write_text("meta:\n  schema_version: 1\nthreats: []\n")
+        ns = rc.build_parser().parse_args(["--assessment-depth", "thorough"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "incremental"
+
+    def test_explicit_incremental_honored_despite_depth_increase(self, tmp_path):
+        # Explicit --incremental is always honored as-is (Rule 2/3 short-circuits
+        # before the auto depth-increase override).
+        self._yaml_with_depth(tmp_path, "quick")
+        ns = rc.build_parser().parse_args(["--incremental", "--assessment-depth", "thorough"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "incremental"
+
+    def test_depth_upgrade_reason_flows_into_run_plan_verdict(self, tmp_path):
+        self._yaml_with_depth(tmp_path, "quick")
+        ns = rc.build_parser().parse_args(["--assessment-depth", "thorough"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        cfg = {"mode": "full", "incremental": False, "baseline_state": "structured",
+               "mode_label": out["mode_label"], "depth_upgrade_reason": out["depth_upgrade_reason"]}
+        v = rc._run_plan_verdict(cfg, None, None, None)
+        assert v["verdict"] == "RUN — full assessment (existing model)"
+        assert "incremental cannot deepen" in v["reason"]
+
 
 # ---------------------------------------------------------------------------
 # End-to-end CLI smoke
@@ -914,3 +981,61 @@ class TestOpusBan:
         patch = rc.apply_opus_ban(cfg, True)
         assert patch["reasoning_model"] == "sonnet"
         assert patch["merger_model"] == "sonnet"
+
+
+# ---------------------------------------------------------------------------
+# Run-plan verdict: full scan over an existing model must explain itself
+# ---------------------------------------------------------------------------
+
+
+class TestFullOverExistingReason:
+    def _cfg(self, **over):
+        base = {
+            "mode": "full",
+            "incremental": False,
+            "baseline_state": "structured",
+            "mode_label": "full",
+            "repo_root": "/r",
+            "output_dir": "/o",
+            "plugin_version": "0.4.0-beta",
+            "analysis_version": 2,
+            "skip_qa": False,
+            "architect_review": False,
+        }
+        base.update(over)
+        return base
+
+    def test_explicit_full_over_existing_model_names_existing(self):
+        v = rc._run_plan_verdict(self._cfg(), None, None, None)
+        assert v["verdict"] == "RUN — full assessment (existing model)"
+        assert "existing model present" in v["reason"]
+        assert "--full requested" in v["reason"]
+
+    def test_first_run_has_no_existing_suffix(self):
+        v = rc._run_plan_verdict(self._cfg(baseline_state="empty"), None, None, None)
+        assert v["verdict"] == "RUN — full assessment"
+        assert "first full assessment" in v["reason"]
+
+    def test_incompatible_schema_reason(self):
+        v = rc._run_plan_verdict(self._cfg(), None, None, "incompatible")
+        assert "incompatible" in v["reason"]
+        assert "full rebuild required" in v["reason"]
+
+    def test_plugin_minor_drift_reason(self):
+        pre = {"plugin_version": {"baseline": "0.3.0", "current": "0.4.0", "tier": "minor"}}
+        v = rc._run_plan_verdict(self._cfg(), pre, None, None)
+        assert "plugin upgraded (minor)" in v["reason"]
+
+    def test_mode_upgrade_reason_passthrough(self):
+        cfg = self._cfg(mode_upgraded_reason="existing model present; switched to full — broad delta")
+        v = rc._run_plan_verdict(cfg, None, None, None)
+        assert v["reason"] == "existing model present; switched to full — broad delta"
+
+    def test_prior_label_appended_when_present(self):
+        cfg = self._cfg(baseline_prior_label="v3 (2026-06-10)")
+        v = rc._run_plan_verdict(cfg, None, None, None)
+        assert "[replaces v3 (2026-06-10)]" in v["reason"]
+
+    def test_rebuild_reason_unchanged(self):
+        v = rc._run_plan_verdict(self._cfg(mode="rebuild", mode_label="rebuild"), None, None, None)
+        assert v["verdict"] == "REBUILD — wipe + full re-assessment"

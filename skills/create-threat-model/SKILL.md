@@ -14,3 +14,10 @@ cat "$CLAUDE_PLUGIN_ROOT/skills/create-threat-model/HELP.txt"
 
 **Case 2 — any other arguments (or no arguments):**
 Read `<base-dir>/SKILL-impl.md` in full (base-dir is on the `Base directory for this skill:` line in the invocation header), then follow all instructions in that file to run the assessment.
+
+Read it **silently** and proceed straight to execution. Do **not** narrate
+your reading: no "this is a large file", no "let me map its structure first",
+no description of how you are chunking or scanning the file. The user sees this
+meta-commentary as noise. Just read what you need and begin running the
+pipeline — your first user-visible output should be pipeline progress, not
+remarks about the instruction file.

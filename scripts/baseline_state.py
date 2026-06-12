@@ -299,6 +299,22 @@ def cmd_update(args: argparse.Namespace) -> int:
     stride_files = _hash_stride_files(output_dir)
     slice_files = _hash_slice_files(output_dir)
 
+    # Working-tree snapshot: content hashes of every file that is dirty-vs-HEAD
+    # right now (the moment this baseline is written). cmd_check_changes uses it
+    # so a file left uncommitted-but-unmodified across runs is recognised as
+    # unchanged-since-the-threat-model rather than re-scanned every time it
+    # shows up in `git diff`. Manifests are already covered by the recon
+    # fingerprint; this generalises the same content comparison to any file.
+    out_rel_snap = _output_dir_relative_to_repo(output_dir, repo_root)
+    _, working_dirty = _git_diff_names(repo_root, None)
+    working_dirty = _filter_diff_paths_via_scan_excludes(working_dirty, out_rel_snap)
+    working_tree_snapshot: dict[str, str] = {}
+    for rel in working_dirty:
+        try:
+            working_tree_snapshot[rel] = _sha256(repo_root / rel)
+        except OSError:
+            continue
+
     plugin_meta = _load_plugin_meta() if _load_plugin_meta else {}
     plugin_version = plugin_meta.get("plugin_version", "unknown")
     analysis_version = int(plugin_meta.get("analysis_version", 0))
@@ -317,6 +333,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         },
         "stride_files": stride_files,
         "slice_files": slice_files,
+        "working_tree_snapshot": working_tree_snapshot,
         "last_run_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
@@ -658,6 +675,59 @@ def _classify_changed_files_relevance(
         return all_files, [], {}
 
 
+# High-blast-radius change: a change here typically affects far more of the
+# threat surface than the single component whose path-glob it matches, yet the
+# incremental dirty-set maps it to ONE component and carries every other
+# component forward. These substrings flag a changed file as "security-critical
+# or attack-surface-changing" so the skill can RECOMMEND a full scan (it never
+# silently forces one — the narrow incremental scope is what under-analyzes
+# these). The list is deliberately broad: an over-match only surfaces an
+# advisory, while a miss is a real coverage gap. Matched case-insensitively as a
+# substring of the path.
+#
+# Three tiers (one flat list — all feed the same recommend-full trigger):
+#   A. Security primitives — auth / crypto / session / input-validation / …
+#   B. Trust-boundary & I/O surface — routes, endpoints, interfaces in/out, the
+#      request/response contract. A NEW route or a changed interface expands the
+#      attack surface, which a delta scope scoped to one component never re-models.
+#   C. Architecture & data model — middleware, gateways, adapters, ORM/entities,
+#      model files, migrations: changing a layer ripples across components.
+# Deliberately EXCLUDED (would match nearly every backend file → alert fatigue,
+# signal lost): "service", "module", "domain", "core", "lib", "util", "app".
+_SECURITY_CRITICAL_SUBSTRINGS = (
+    # A — security primitives
+    "auth", "login", "logout", "session", "token", "jwt", "oauth", "saml", "sso",
+    "crypto", "cipher", "encrypt", "decrypt", "secret", "vault", "credential",
+    "password", "passwd", "kms", "keystore", "csrf", "cors", "csp", "rbac", "acl",
+    "permission", "authoriz", "guard", "ratelimit", "rate-limit", "rate_limit",
+    "valid", "sanitiz", "escape",
+    # B — trust-boundary & I/O surface (routes, interfaces, request/response)
+    "route", "router", "endpoint", "controller", "handler", "resolver", "webhook",
+    "graphql", "grpc", "proto", "openapi", "swagger", "api", "rest", "rpc",
+    "serializ", "deserializ", "marshal", "schema", "dto", "payload",
+    "upload", "download", "ingest", "webhooks",
+    # C — architecture, layers & data model
+    "middleware", "interceptor", "gateway", "adapter", "provider", "migration",
+    "entity", "entities", "model", "repository", "dao", "orm", "layer",
+)
+
+
+def _classify_security_critical(paths: list[str]) -> list[str]:
+    """Return the subset of ``paths`` that look security-critical or
+    attack-surface-changing (routes / interfaces / architecture / data model).
+
+    Pure path heuristic (no file read): a substring hit on any segment of the
+    normalised, lower-cased path. Caller passes the already security-relevant
+    set so noise is pre-excluded.
+    """
+    hits: list[str] = []
+    for p in paths:
+        norm = p.replace("\\", "/").lower()
+        if any(sub in norm for sub in _SECURITY_CRITICAL_SUBSTRINGS):
+            hits.append(p)
+    return hits
+
+
 def _filter_diff_paths_via_scan_excludes(paths: list[str], output_dir_rel: str | None) -> list[str]:
     """Drop paths the scanner would never look at anyway.
 
@@ -718,6 +788,71 @@ def _output_dir_relative_to_repo(output_dir: Path, repo_root: Path) -> str | Non
     return rel.as_posix()
 
 
+def _build_baseline_content_hashes(cache_path: Path) -> dict[str, str]:
+    """Map ``{repo-relative-path: bare-hex-sha256}`` for every file whose
+    content was hashed into the baseline at the last threat-model generation.
+
+    Sources, merged in this order (later wins on key collision):
+      1. ``recon_fingerprint`` manifests / dockerfiles / iac — always present.
+      2. ``working_tree_snapshot`` — content hashes of the files that were
+         dirty-vs-HEAD when the baseline was written (added by ``cmd_update``).
+
+    This lets ``cmd_check_changes`` ask the only question that matters for an
+    incremental re-run — *did this file's content actually change since the
+    last threat model?* — instead of *is this file dirty vs the last commit?*.
+    A repo whose working tree carries a persistent uncommitted edit (a vendored
+    manifest tweak, a local lockfile change) is dirty-vs-HEAD forever; without
+    this content comparison every re-run would re-scan it even though nothing
+    moved since the report was built.
+    """
+    data = _read_existing(cache_path)
+    out: dict[str, str] = {}
+    fp = data.get("recon_fingerprint", {}) or {}
+    for bucket in ("manifests", "dockerfiles", "iac"):
+        for rel, h in (fp.get(bucket) or {}).items():
+            if isinstance(h, str):
+                out[rel] = h.split(":", 1)[-1]  # strip "sha256:" prefix
+    for rel, h in (data.get("working_tree_snapshot") or {}).items():
+        if isinstance(h, str):
+            out[rel] = h.split(":", 1)[-1]
+    return out
+
+
+def _split_unchanged_vs_baseline(
+    repo_root: Path,
+    paths: list[str],
+    baseline_hashes: dict[str, str],
+) -> tuple[list[str], list[str]]:
+    """Split ``paths`` into ``(changed, unchanged)`` by current content.
+
+    A path is *unchanged* when the baseline recorded a content hash for it and
+    the file's current on-disk bytes still hash to that value — i.e. it is
+    byte-identical to the last-analyzed state, so it is not a real change since
+    the last threat model even though ``git diff`` lists it (working tree dirty
+    vs HEAD). Paths with no recorded hash, or whose content now differs, stay in
+    ``changed``. Unreadable files conservatively stay in ``changed``.
+    """
+    if not baseline_hashes:
+        return list(paths), []
+    changed: list[str] = []
+    unchanged: list[str] = []
+    for rel in paths:
+        recorded = baseline_hashes.get(rel)
+        if not recorded:
+            changed.append(rel)
+            continue
+        try:
+            current = _sha256(repo_root / rel).split(":", 1)[-1]
+        except OSError:
+            changed.append(rel)
+            continue
+        if current == recorded:
+            unchanged.append(rel)
+        else:
+            changed.append(rel)
+    return changed, unchanged
+
+
 def cmd_check_changes(args: argparse.Namespace) -> int:
     """Unified fast-path pre-check for incremental runs.
 
@@ -771,8 +906,26 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     committed_excluded = [p for p in committed_raw if p not in committed]
     working_excluded = [p for p in working_raw if p not in working]
 
-    # Recon fingerprint
     cache_path = output_dir / ".appsec-cache" / "baseline.json"
+
+    # Content-equality pre-filter: drop files that git lists as changed but
+    # whose current bytes are identical to what the baseline last analyzed.
+    # This is what makes "incremental" mean "changed since the last threat
+    # model" rather than "dirty vs the last commit" — a persistently
+    # uncommitted-but-unmodified manifest no longer forces a re-scan on every
+    # invocation. Uses content hashes recorded at the last generation (recon
+    # fingerprint + working-tree snapshot); see _build_baseline_content_hashes.
+    baseline_content_hashes = _build_baseline_content_hashes(cache_path)
+    committed, committed_unchanged = _split_unchanged_vs_baseline(
+        repo_root, committed, baseline_content_hashes
+    )
+    working, working_unchanged = _split_unchanged_vs_baseline(
+        repo_root, working, baseline_content_hashes
+    )
+    content_unchanged = list(dict.fromkeys(committed_unchanged + working_unchanged))
+
+    # Recon fingerprint
+
     fingerprint_match = False
     if cache_path.is_file():
         try:
@@ -806,6 +959,15 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
             repo_root, baseline_sha, all_changed
         )
 
+    # Among the security-relevant changes, flag the high-blast-radius ones:
+    # security primitives (auth/crypto/session/validation), trust-boundary & I/O
+    # surface (routes/endpoints/interfaces/schemas), and architecture/data-model
+    # changes (middleware/gateway/adapter/ORM/model/migration). The incremental
+    # dirty-set maps each to a single component and carries the rest forward —
+    # exactly the case where the narrow scope under-analyzes. The skill uses this
+    # count to RECOMMEND a full scan (never to silently force one).
+    security_critical = _classify_security_critical(security_relevant)
+
     # Decision
     if no_source_changes and version_tier in ("equal", "patch"):
         status = "unchanged"
@@ -832,6 +994,11 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         "working_tree_change_count": len(working),
         "security_relevant_changes": security_relevant[:50],
         "security_relevant_change_count": len(security_relevant),
+        # High-blast-radius subset: security primitives + attack-surface changes
+        # (routes / interfaces / schemas / middleware / models / migrations).
+        # Drives the skill's "critical change → recommend full" trigger.
+        "security_critical_changes": security_critical[:50],
+        "security_critical_change_count": len(security_critical),
         "noise_only_changes": noise_only[:50],
         "fingerprint_match": fingerprint_match,
         "plugin_version": {
@@ -844,6 +1011,11 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
         # (plugin output dir + path_prefixes/directories from scan-excludes.yaml).
         "excluded_pre_filter_count": len(committed_excluded) + len(working_excluded),
         "excluded_pre_filter_sample": (committed_excluded + working_excluded)[:10],
+        # Files git lists as changed but whose content is byte-identical to the
+        # last-analyzed state (dirty-vs-HEAD but unchanged-since-threat-model).
+        # Dropped before relevance classification so they never trigger a run.
+        "content_unchanged_dropped_count": len(content_unchanged),
+        "content_unchanged_dropped_sample": content_unchanged[:10],
         # Per-file relevance reasons feed the human-readable pre-check
         # banner so users can see WHY a run was triggered (e.g. which
         # manifest dependency was added, which auth path matched).

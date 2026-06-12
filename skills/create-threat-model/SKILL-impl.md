@@ -2,6 +2,19 @@
 
 This file is loaded on demand by SKILL.md for non-help invocations. Do not modify the frontmatter routing logic; edit this file for implementation changes.
 
+> **Reading protocol — suppress meta-narration.** This file is large; read it
+> as needed, but do **not** narrate that fact to the user. No "this is a large
+> orchestration file", no "let me map its structure before continuing", no
+> running commentary on how you are scanning or chunking it. The same silence
+> applies to **executing** the pipeline: do **not** announce the Bash you are
+> about to run — no "let me execute the pipeline preamble", no "I'll run the
+> combined pre-flight sequence in one shell", no "first I'll resolve config",
+> no narration of which commands you are bundling into a shell. Just call the
+> tool. Suppress all of it **silently** (same rule as the TaskList contract
+> below) — do not announce that you are suppressing it either. The user's first
+> visible output should be pipeline progress (the Pre-flight summary render),
+> not remarks about reading this file or running its commands.
+
 ## Pipeline Overview (Stage-D, post-M2.13)
 
 > **TaskList contract — read before tracking progress.** The boxes in the
@@ -1088,6 +1101,27 @@ For `--full` / `--rebuild` / first-run paths the verdict is `RUN — full
 assessment` and the pipeline is `recon -> architecture -> STRIDE -> triage
 -> render -> QA` (plus QA / architect review when those flags are on).
 
+**Full scan over an existing model — the `Reason` line is MANDATORY.** When a
+complete prior `threat-model.yaml` exists (`baseline_state` ∈ {`structured`,
+`legacy`}) and the run is nonetheless full, the verdict line is `RUN — full
+assessment (existing model)` and the `Reason` MUST name *why* the incremental
+fast-path was not taken — never leave it implicit. Apply this precedence (the
+same logic as `resolve_config.py:_full_over_existing_reason`):
+
+| Trigger | Reason text |
+|---|---|
+| assessment depth increased vs baseline | `existing model was built at '<base>' depth; --assessment-depth <cur> requested — incremental cannot deepen carried-forward components, so a full re-assessment runs` (auto-incremental → full; set by `resolve_incremental_mode`, highest precedence) |
+| `COMPAT_LABEL=incompatible` | `existing model present, but its analysis_version is incompatible with this plugin — full rebuild required` |
+| `COMPAT_LABEL=older-compatible` | `existing model present; analysis schema drifted (older but compatible) — full refresh applies new categories to all findings` |
+| plugin tier ∈ {minor, major} | `existing model present; plugin upgraded (<tier>) — full refresh re-applies updated analysis to all components` |
+| mode upgraded by the Full-Scan Recommendation Prompt | the upgrade trigger that fired (`MODE_UPGRADED_REASON` — e.g. broad delta / plugin drift / schema drift) |
+| `--rebuild` | `wipes prior model + cache, no T-ID stability` |
+| explicit `--full` (no other trigger) | `existing model present; --full requested — complete re-assessment (changelog history preserved)` |
+
+(First-run / `baseline_state=empty` keeps `RUN — full assessment` with reason
+`no prior threat-model.yaml in output dir — first full assessment`; no
+"existing model" suffix.)
+
 #### Summary template
 
 Substitute the bracketed `<...>` fields from `RESOLVED_JSON`,
@@ -1164,6 +1198,33 @@ identifies the block to the user.
 ```bash
 case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
   noop:* | noise:* | changes:noop_global_only | changes:noop_empty_input)
+    # Missing-export backstop. The repo is unchanged so the pipeline is
+    # skipped — but the user may have added an export flag (--pdf / --html)
+    # whose artifact does not exist yet from a prior run. The existing
+    # threat-model.md is final and canonical, so we can produce the missing
+    # export directly (deterministic, no LLM, no stages) instead of forcing a
+    # pointless full re-scan. Only generate artifacts that are REQUESTED AND
+    # ABSENT; an already-present export is left untouched.
+    #   • PDF / HTML derive purely from threat-model.md → produced here.
+    #   • SARIF (--sarif) is a Stage-2 RENDER product, not a post-stage export;
+    #     if it is requested-but-missing, re-rendering is required — tell the
+    #     user to re-run with --rerender rather than silently doing nothing.
+    if [ "${WRITE_PDF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.pdf" ]; then
+      printf '\n  No source changes — reusing existing threat model; requested PDF is missing, generating it now.\n' >&2
+      # UNSANDBOXED: mermaid → headless Chrome needs socket() (see PDF Export §). Non-fatal.
+      python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" \
+        --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.pdf" \
+        2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+    fi
+    if [ "${WRITE_HTML:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.html" ]; then
+      printf '\n  No source changes — reusing existing threat model; requested HTML is missing, generating it now.\n' >&2
+      python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" \
+        --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.html" \
+        2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+    fi
+    if [ "${WRITE_SARIF:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.sarif.json" ]; then
+      printf '\n  Note: --sarif requested but threat-model.sarif.json is absent. SARIF is a render product;\n  re-run with --rerender to regenerate it from the existing Stage-1 artifacts.\n' >&2
+    fi
     rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
     exit 0
     ;;
@@ -1193,6 +1254,7 @@ After the fast-path and the Plugin Version Compatibility Gate, and **before** th
 | Analysis-version drifted | `COMPAT_LABEL` | `older-compatible` (baseline yaml's `analysis_version` is older but compatible with the current plugin) |
 | Plugin-version drifted | `PLUGIN_TIER` | `minor` \| `major` (semver bump even if `analysis_version` did not move — the runtime prompts / heuristics may still be different) |
 | Broad source delta | `SEC_CHANGE_COUNT` vs `MAX_STRIDE_COMPONENTS` | security-relevant file count is large relative to the operational component ceiling: `SEC_CHANGE_COUNT / MAX_STRIDE_COMPONENTS >= 0.8` (integer: `SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS >= 8`) — a broad delta where a full scan gives better T-ID stability |
+| Critical / attack-surface change | `CRITICAL_CHANGE_COUNT` | one or more changed files are high-blast-radius: **security primitives** (auth / crypto / session / validation / CORS / CSP) **or** **trust-boundary & I/O surface** (new/changed routes, endpoints, controllers, interfaces, GraphQL/gRPC/OpenAPI, serializers, schemas) **or** **architecture / data model** (middleware, gateways, adapters, ORM/entities, model files, migrations); `security_critical_change_count > 0` from the fast-path. The incremental dirty-set maps such a file to a single component and carries every other component forward — but a new route or a shared-code change expands or shifts the attack surface in ways a delta scope never re-models. Fires **regardless of count** (a single such file is enough). |
 
 ```bash
 # Only evaluate when mode was auto-detected incremental.
@@ -1219,6 +1281,17 @@ if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
   # Integer arithmetic: count*10/max >= 8  ⟺  count/max >= 0.8
   if [ "$(( SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS ))" -ge 8 ] && [ "$SEC_CHANGE_COUNT" -gt 0 ]; then
     PROMPT_REASONS="${PROMPT_REASONS}    • ${SEC_CHANGE_COUNT} security-relevant files changed (broad delta vs the ${MAX_STRIDE_COMPONENTS}-component operational ceiling) — full scan gives better T-ID stability at similar cost\n"
+  fi
+
+  # Critical / attack-surface change — fires on a SINGLE file. Security
+  # primitives (auth/crypto/session/validation) OR trust-boundary & I/O surface
+  # (new/changed routes, endpoints, interfaces, schemas) OR architecture/data
+  # model (middleware, gateway, adapter, ORM, model, migration). A delta scope
+  # re-examines just the one component the file's path-glob matched.
+  CRITICAL_CHANGE_COUNT=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("security_critical_change_count",0))' 2>/dev/null || echo 0)
+  CRITICAL_SAMPLE=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(", ".join(d.get("security_critical_changes",[])[:3]))' 2>/dev/null || echo '')
+  if [ "$CRITICAL_CHANGE_COUNT" -gt 0 ]; then
+    PROMPT_REASONS="${PROMPT_REASONS}    • ${CRITICAL_CHANGE_COUNT} critical / attack-surface file(s) changed (${CRITICAL_SAMPLE}) — security primitive, route/interface, or architecture/model change with system-wide blast radius; incremental only re-scans the one matching component and carries dependents forward\n"
   fi
 
   if [ -n "$PROMPT_REASONS" ]; then
@@ -1251,8 +1324,34 @@ if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
         MODE="full"
         INCREMENTAL="false"
         MODE_UPGRADED_BY_PROMPT=true
+        # Carry the trigger that justified the upgrade into the re-rendered
+        # Pre-flight Reason line (§"Full scan over an existing model"). Collapse
+        # the first PROMPT_REASONS bullet to a one-liner; fall back to a generic
+        # phrase. The post-upgrade summary surfaces this so a full scan over an
+        # existing model is never unexplained.
+        MODE_UPGRADED_REASON=$(printf '%b' "$PROMPT_REASONS" | sed -n 's/^[[:space:]]*•[[:space:]]*//p' | head -1)
+        [ -z "$MODE_UPGRADED_REASON" ] && MODE_UPGRADED_REASON="auto-incremental upgraded to full at user request"
+        MODE_UPGRADED_REASON="existing model present; switched to full — ${MODE_UPGRADED_REASON}"
         ;;
     esac
+  fi
+fi
+
+# Non-interactive backstop for the critical / attack-surface trigger. The
+# prompt above is interactive-only (CI / --no-confirm / non-TTY all skip it),
+# but a security-primitive, route/interface, or architecture/model change is a
+# CORRECTNESS concern, not a preference — so even when we cannot prompt we
+# still (a) print a visible advisory and (b) set
+# RECOMMEND_FULL=true so Phase 11 renders the "consider --full" callout in the
+# report and sets meta.recommend_full_rerun. We do NOT silently force a full
+# scan in CI: that could 10× an automated run's cost/time on a 1-line change.
+if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
+    && { [ "$NO_CONFIRM" = "true" ] || [ "${APPSEC_CI_MODE:-}" = "1" ] || [ ! -t 0 ]; }; then
+  CRITICAL_CHANGE_COUNT=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("security_critical_change_count",0))' 2>/dev/null || echo 0)
+  if [ "$CRITICAL_CHANGE_COUNT" -gt 0 ]; then
+    CRITICAL_SAMPLE=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(", ".join(d.get("security_critical_changes",[])[:3]))' 2>/dev/null || echo '')
+    printf '\n⚠ %s critical / attack-surface file(s) changed (%s) — security primitive, route/interface, or architecture/model change; incremental re-scans only the matching component and carries dependents forward.\n  Consider re-running with --full. (Set meta.recommend_full_rerun in this run.)\n' "$CRITICAL_CHANGE_COUNT" "$CRITICAL_SAMPLE" >&2
+    RECOMMEND_FULL=true
   fi
 fi
 ```
@@ -1331,7 +1430,7 @@ if [ "$MODE_UPGRADED_BY_PROMPT" = "true" ]; then
 fi
 ```
 
-Then re-emit the Pre-flight summary per the §"Summary template" rules above, prefixed with the line `Pre-flight (post mode-upgrade)`. Do **not** call `--config-summary` here — it would print the legacy Configuration Summary on top of the new Pre-flight summary, recreating the exact duplication this consolidation removed.
+Then re-emit the Pre-flight summary per the §"Summary template" rules above, prefixed with the line `Pre-flight (post mode-upgrade)`. The verdict is now `RUN — full assessment (existing model)`, and its `Reason` line MUST be the `MODE_UPGRADED_REASON` captured at the switch (per the §"Full scan over an existing model" precedence table) — so the user sees exactly why the existing model is being fully re-scanned. Do **not** call `--config-summary` here — it would print the legacy Configuration Summary on top of the new Pre-flight summary, recreating the exact duplication this consolidation removed.
 
 ### need_render intercept (G-1 — before Rebuild Pre-flight Wipe)
 

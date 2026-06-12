@@ -69,6 +69,17 @@ INCREMENTAL / CI
   --resume                     Continue from the last saved checkpoint
   --base <ref>                 Git ref to diff against (default: prior scan commit)
   --pr-mode                    Focused delta report for an MR/PR (implies --incremental)
+
+  Auto behavior (no mode flag): runs incremental when a prior model exists.
+    Asking for a deeper assessment depth than the prior run forces a full scan
+    (incremental cannot deepen carried-forward components). On a no-op rerun,
+    a newly requested PDF/HTML export that does not exist yet is still produced
+    without re-scanning. A changed critical / attack-surface file — security
+    primitive (auth/crypto/session/validation), new/changed route or interface
+    (endpoint/controller/GraphQL/schema), or architecture/model change
+    (middleware/gateway/adapter/ORM/model/migration) — prompts a recommendation
+    to re-run with --full.
+
   --no-qa                      Skip the Stage 3 QA reviewer (implied by quick)
   --dry-run                    Run the full pipeline but write nothing to the repo
   --no-confirm / --yes         Skip interactive confirmation prompts

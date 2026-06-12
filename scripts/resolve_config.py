@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -920,6 +921,34 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
 
     # Rule 5/6/7: no flag.
     if state == "structured":
+        # Depth-increase override. The baseline records the assessment_depth it
+        # was generated at (threat-model.yaml meta). If the user now asks for a
+        # DEEPER depth (quick → standard → thorough), auto-incremental is the
+        # wrong mode even on an unchanged repo: incremental only re-analyzes
+        # changed files, so the deeper analysis would never reach the
+        # carried-forward components. Force a full re-assessment so the new
+        # depth applies to every component. A SAME-or-SHALLOWER depth keeps the
+        # normal auto-incremental (nothing new to deepen).
+        cur_depth = ns.assessment_depth or "standard"
+        base_depth, _src = _extract_baseline_assessment_depth(output_dir)
+        if base_depth is not None and _depth_increased(cur_depth, base_depth):
+            return {
+                "mode":              "full",
+                "mode_label":        f"full (depth increased: {base_depth} → {cur_depth})",
+                "incremental":       False,
+                "rebuild":           False,
+                "baseline_state":    state,
+                "depth_upgrade_reason": (
+                    f"existing model was built at '{base_depth}' depth; "
+                    f"--assessment-depth {cur_depth} requested — incremental cannot "
+                    f"deepen carried-forward components, so a full re-assessment runs"
+                ),
+                "post_summary_note": (
+                    f"Assessment depth increased ({base_depth} → {cur_depth}); running a "
+                    f"full scan so the deeper analysis applies to every component "
+                    f"(incremental would only re-scan changed files)."
+                ),
+            }
         return {
             "mode":             "incremental",
             "mode_label":       "incremental (auto)",
@@ -959,6 +988,45 @@ def _detect_baseline_state(output_dir: Path) -> str:
     if (output_dir / "threat-model.md").is_file():
         return "legacy"
     return "empty"
+
+
+# Ordered shallow → deep. A higher rank means more analysis (STRIDE turn budget,
+# diagram + QA depth). Only an INCREASE in rank forces a full re-assessment over
+# an existing model; same-or-shallower keeps auto-incremental.
+_DEPTH_RANK = {"quick": 0, "standard": 1, "thorough": 2}
+
+
+def _depth_increased(current: str, baseline: str) -> bool:
+    """True iff ``current`` depth is strictly deeper than ``baseline``.
+
+    Unknown depth strings rank as ``standard`` (the default) so a malformed or
+    future label never silently forces or suppresses an upgrade.
+    """
+    cur = _DEPTH_RANK.get((current or "standard").strip().lower(), 1)
+    base = _DEPTH_RANK.get((baseline or "standard").strip().lower(), 1)
+    return cur > base
+
+
+def _extract_baseline_assessment_depth(output_dir: Path) -> tuple[Optional[str], str]:
+    """Return (assessment_depth, source) for the prior baseline.
+
+    Reads ``meta.assessment_depth`` from the committed ``threat-model.yaml``
+    (the authoritative baseline; written by build_threat_model_yaml). Mirrors
+    baseline_state._extract_baseline_analysis_version: a simple root-aligned
+    line match avoids pulling in pyyaml for one string field. Returns
+    (None, "missing") when no depth is recorded (pre-depth baselines) so the
+    caller treats it as "unknown — do not force an upgrade".
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+    if yaml_path.is_file():
+        try:
+            text = yaml_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        m = re.search(r"(?m)^\s{2}assessment_depth:\s*\"?(\w+)\"?\s*$", text)
+        if m:
+            return (m.group(1), "threat-model.yaml")
+    return (None, "missing")
 
 
 def read_requirements_config(plugin_root: Path) -> bool:
@@ -1766,6 +1834,52 @@ def render_run_plan(
     return "\n".join(lines) + "\n"
 
 
+def _full_over_existing_reason(
+    cfg: dict,
+    pre_check: dict | None,
+    compat_label: str | None,
+) -> str:
+    """Explain why a FULL scan is running while a complete model already exists.
+
+    Surfaced on the run-plan Reason line so a full re-assessment over an
+    existing threat model is never unexplained. Trigger precedence:
+      0. assessment depth increased vs the baseline (cfg["depth_upgrade_reason"]).
+      1. analysis_version incompatible  → full rebuild is mandatory.
+      2. analysis schema older-compatible → full refresh re-applies new
+         categories to every finding.
+      3. plugin minor/major drift        → full refresh re-applies updated
+         analysis to all components.
+      4. explicit mode-upgrade reason (cfg["mode_upgraded_reason"], set when
+         the auto-incremental → full prompt switched the mode).
+      5. otherwise an explicit --full / --dry-run request.
+    The prior model's version/date is appended when available so the user
+    knows exactly which report is being replaced.
+    """
+    tier = ((pre_check or {}).get("plugin_version", {}) or {}).get("tier", "equal")
+    if cfg.get("depth_upgrade_reason"):
+        # Highest precedence: the user explicitly asked for a deeper assessment
+        # depth than the baseline was built at. This is the trigger that flipped
+        # the auto-incremental mode to full (resolve_incremental_mode), so name
+        # it first.
+        base = str(cfg["depth_upgrade_reason"])
+    elif compat_label == "incompatible":
+        base = ("existing model present, but its analysis_version is "
+                "incompatible with this plugin — full rebuild required")
+    elif compat_label == "older-compatible":
+        base = ("existing model present; analysis schema drifted (older but "
+                "compatible) — full refresh applies new categories to all findings")
+    elif tier in ("minor", "major"):
+        base = (f"existing model present; plugin upgraded ({tier}) — full "
+                f"refresh re-applies updated analysis to all components")
+    elif cfg.get("mode_upgraded_reason"):
+        base = str(cfg["mode_upgraded_reason"])
+    else:
+        base = ("existing model present; --full requested — complete "
+                "re-assessment (changelog history preserved)")
+    prior = cfg.get("baseline_prior_label")
+    return f"{base} [replaces {prior}]" if prior else base
+
+
 def _run_plan_verdict(
     cfg: dict,
     pre_check: dict | None,
@@ -1792,13 +1906,19 @@ def _run_plan_verdict(
         # full / first-run / bootstrap-from-legacy
         baseline_state = cfg.get("baseline_state")
         if baseline_state == "empty":
-            reason = "no prior threat-model.yaml in output dir"
+            reason = "no prior threat-model.yaml in output dir — first full assessment"
         elif baseline_state == "legacy":
             reason = "legacy threat-model.md without yaml — bootstrap full run"
         else:
-            reason = "user requested --full (or --dry-run forces full)"
+            # A complete prior model exists, yet we are running a FULL scan over
+            # it. Name the trigger explicitly so the user understands WHY the
+            # incremental fast-path was not taken (the #1 "why is it re-scanning
+            # an existing model?" question).
+            reason = _full_over_existing_reason(cfg, pre_check, compat_label)
         return {
-            "verdict":   "RUN — full assessment",
+            "verdict":   "RUN — full assessment (existing model)"
+                         if baseline_state not in ("empty", "legacy")
+                         else "RUN — full assessment",
             "mode_line": cfg.get("mode_label", "full"),
             "pipeline":  _pipeline_string(cfg, full=True),
             "reason":    reason,

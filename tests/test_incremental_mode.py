@@ -1537,6 +1537,69 @@ def _init_git_repo(path: Path) -> None:
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=path, check=True)
 
 
+def _load_baseline_state_module():
+    import importlib.util
+    if "baseline_state" in sys.modules:
+        return sys.modules["baseline_state"]
+    spec = importlib.util.spec_from_file_location("baseline_state", BASELINE_STATE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["baseline_state"] = mod
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestSecurityCriticalClassifier:
+    """_classify_security_critical flags high-blast-radius changes so the skill
+    can recommend a full scan: security primitives, trust-boundary / I/O surface
+    (routes, interfaces, schemas), and architecture / data-model changes — the
+    cases where the incremental delta scope under-analyzes."""
+
+    bs = _load_baseline_state_module()
+
+    @pytest.mark.parametrize("path", [
+        # A — security primitives
+        "src/auth/login.py",
+        "lib/crypto/cipher.go",
+        "app/middleware/session.ts",
+        "internal/validation/sanitize.rs",
+        "config/cors.yaml",
+        "services/authz/rbac.java",
+        "src/security/jwt_token.py",
+        # B — trust-boundary & I/O surface (routes / interfaces / schemas)
+        "src/api/routes/users.py",
+        "internal/controllers/order_controller.go",
+        "schema/graphql/user.graphql",
+        "api/openapi.yaml",
+        "src/serializers/payment.rb",
+        "src/handlers/webhook.ts",
+        "proto/order.proto",
+        # C — architecture, layers & data model
+        "src/models/user.py",
+        "db/migrations/0007_add_orders.sql",
+        "src/adapters/payment_gateway.ts",
+        "internal/repository/order_dao.java",
+    ])
+    def test_critical_paths_flagged(self, path):
+        assert self.bs._classify_security_critical([path]) == [path]
+
+    @pytest.mark.parametrize("path", [
+        "src/products/catalog.py",
+        "web/styles/theme.css",
+        "docs/onboarding-guide.md",
+        "i18n/translations/de.json",
+    ])
+    def test_non_critical_paths_not_flagged(self, path):
+        assert self.bs._classify_security_critical([path]) == []
+
+    def test_mixed_returns_only_critical_subset(self):
+        files = ["src/products/catalog.py", "src/auth/login.py", "README.md"]
+        assert self.bs._classify_security_critical(files) == ["src/auth/login.py"]
+
+    def test_empty_input(self):
+        assert self.bs._classify_security_critical([]) == []
+
+
 class TestPluginVersionDrift:
     def test_equal_exits_zero(self):
         r = _run_plugin_meta(["compare-plugin-versions", "--baseline", "1.2.3", "--current", "1.2.3"])
@@ -1667,6 +1730,11 @@ class TestCheckChanges:
         data = json.loads(r.stdout)
         assert data["status"] == "changed"
         assert data["security_relevant_change_count"] >= 1
+        # The changed file lives under src/auth/login.py — high-blast-radius
+        # security code, so it must also be flagged security-critical so the
+        # skill can recommend a full scan.
+        assert data["security_critical_change_count"] >= 1
+        assert any("login.py" in p for p in data["security_critical_changes"])
 
     def test_no_baseline_exits_three(self, tmp_path):
         repo = tmp_path / "empty"
