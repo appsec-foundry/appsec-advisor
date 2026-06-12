@@ -323,31 +323,34 @@ The fragment is validated against `schemas/fragments/critical-attack-tree.schema
 
 ### `security-posture-attack-paths.json` authoring contract
 
-Renders as the Figure 2 attack-paths table in §1. **Author EXACTLY this schema** — the composer rejects any deviation:
+Renders as the Figure 2 attack-paths table in §1. **Author EXACTLY this schema** (`schemas/fragments/security-posture-attack-paths.schema.json`, `additionalProperties:false`). The composer schema-validates and **silently falls back to a deterministic CWE-derived table on ANY deviation**, so a single wrong enum value means everything you authored here (descriptions, finding links) is discarded — get the slugs exactly right:
 
 ```json
 {
   "schema_version": 1,
-  "actors": ["<actor>"],
+  "actors": ["internet-anon"],
   "attack_paths": [
     {
-      "class": "<class enum>",
-      "actor": "<actor enum>",
-      "target": "<target string, max 60 chars>",
-      "description": "<1-2 sentence attack narrative, max 200 chars>",
-      "impact": ["<impact enum>"]
+      "class": "injection",
+      "actor": "internet-anon",
+      "target": "data",
+      "description": "<ONE generic sentence about the class as a whole, 30–280 chars — CWE-cluster level, not a per-vector walkthrough>",
+      "findings": ["F-001", "F-014"],
+      "impact": ["customer-data-exfiltration"]
     }
   ]
 }
 ```
 
-**Closed enums — use ONLY these values (do not invent new ones):**
+**Closed enums — use ONLY these exact slugs (lowercase, hyphenated). The composer rejects anything else; do NOT invent, capitalise, pluralise, or use underscores:**
 
-- `actors[]` / `actor`: `External Attacker` · `Authenticated User` · `Malicious Insider` · `Third-Party Integration` · `Supply Chain Actor` · `Unauthenticated User`
-- `class`: `injection` · `auth_bypass` · `session_hijack` · `privilege_escalation` · `data_exfiltration` · `dos` · `supply_chain`
-- `impact[]`: `data_breach` · `account_takeover` · `service_disruption` · `privilege_escalation` · `compliance_violation` · `financial_loss` · `reputational_damage`
+- `actors[]` / `actor` (slug from `data/posture-actor-labels.yaml`): `internet-anon` (unauthenticated, internet-reachable) · `internet-user` (authenticated ordinary user) · `internet-priv-user` (authenticated privileged/admin) · `build-time` (CI/build-pipeline actor) · `repo-read` (needs read access to source/committed secrets) · `victim-required` (needs a victim to interact — e.g. clicks a link). For victim-targeting classes (XSS/CSRF) `actor` is the *targeted* party → use `victim-required`. Every `attack_paths[].actor` MUST also appear in the top-level `actors[]` array.
+- `class` (slug from `data/attack-class-taxonomy.yaml`, each used at most once across the array): `injection` · `auth-bypass` · `privilege-escalation` · `sensitive-data-exposure` · `remote-code-execution` · `cross-site-scripting` · `cross-site-request-forgery`.
+- `target` (which side of the diagram the arrow lands on): `client` · `application` · `data` · `victim`.
+- `impact[]` (business-impact slug from `data/business-impact-taxonomy.yaml`, 1–4, most severe first): `full-admin-takeover` · `full-server-compromise` · `customer-data-exfiltration` · `customer-session-hijack`.
+- `findings[]` (optional but expected, 1–12 `F-NNN`/`T-NNN` ids): the findings that belong to this class — this is HOW the entry "maps to ≥1 Critical/High finding". `attack_chains[]` (optional, up to 5 `cc-NN` ids): compound chains that materialise the class.
 
-Each `attack_paths[]` entry must map to ≥1 Critical or High finding. Derive the list from your STRIDE analysis — do not invent paths not evidenced by findings. Omit the file if no High/Critical findings exist (the section renders nothing).
+Each `attack_paths[]` entry must map to ≥1 Critical or High finding via `findings[]`. Derive the list from your STRIDE analysis — do not invent paths not evidenced by findings. Omit a class entirely when it has no findings (do NOT emit it with an empty list); omit the whole file if no High/Critical findings exist (the section renders nothing).
 
 ### `requirements-compliance.md` authoring contract
 

@@ -372,6 +372,21 @@ def _wrap_line(line: str) -> tuple[str, int]:
             _HTML_PRE_RE,
             _HTML_CODE_INLINE_RE,
         ):
+            # The linked-title TAIL exemption (`](#m-036) — …title…`) keeps
+            # weakness nouns / hash names / library names bare in title
+            # contexts. But a file PATH (directory separator + filename,
+            # optionally `:line`) is unambiguously code and SHOULD be
+            # backticked even when it trails a mitigation/finding link — the
+            # §2 Fix cell, §8 story-card titles, and §9 register all rendered
+            # `routes/fileUpload.ts:83`-style tails unformatted (user report
+            # 2026-06-12). So the two path-shaped passes are allowed to reach
+            # into the title tail; every other pass still respects it, and the
+            # link itself stays protected by _MD_LINK_LABEL_RE/_MD_LINK_URL_RE.
+            if span_re is _LINKED_TITLE_TAIL_RE and group_or_special in (
+                "path",
+                "urlpath",
+            ):
+                continue
             for m in span_re.finditer(line):
                 forbidden.append((m.start(), m.end()))
         forbidden.sort()

@@ -195,6 +195,32 @@ def test_function_call_skips_paren_prose():
     assert "`()`" not in fixed
 
 
+def test_path_in_linked_title_tail_is_wrapped():
+    """2026-06-12 — a file:line PATH trailing a mitigation/finding link
+    (e.g. the §2 Fix cell or §9 register) must be backticked. The
+    `_LINKED_TITLE_TAIL_RE` exemption keeps weakness nouns bare but a path is
+    unambiguously code, so the path-shaped passes reach into the tail."""
+    md = (
+        "**Fix:** Bound the request rate on this endpoint → "
+        "❸ [M-036](#m-036) — Manual review: verify XML Entity Expansion DoS "
+        "in File Upload at routes/fileUpload.ts:83\n"
+    )
+    fixed, n = prose.apply_fixes(md)
+    assert n >= 1
+    assert "`routes/fileUpload.ts:83`" in fixed
+    # The link and the link label are untouched.
+    assert "[M-036](#m-036)" in fixed
+
+
+def test_weakness_noun_in_linked_title_tail_stays_bare():
+    """The path-penetration of the title-tail exemption is path-only: weakness
+    nouns / hash names trailing a finding link must still NOT be backticked."""
+    md = "Critical: [F-002](#f-002) — MD5 hashing without salt is reversible.\n"
+    fixed, _ = prose.apply_fixes(md)
+    assert "`MD5`" not in fixed
+    assert "[F-002](#f-002) — MD5 hashing without salt" in fixed
+
+
 def test_jwt_literal_alg_none_is_wrapped():
     md = "Submit a token with alg:none to bypass verification.\n"
     fixed, n = prose.apply_fixes(md)
