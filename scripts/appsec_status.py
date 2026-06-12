@@ -199,9 +199,9 @@ def _config_summary(req_cfg_path: Path, plugin_cfg_path: Path) -> list[tuple[str
             mode = "auto-load " if enabled else "on-demand "
             rows.append(("Requirements YAML", f"{mode}-> {url} ({cache_state})"))
         else:
-            fallback = PLUGIN_ROOT / "data" / "appsec-requirements-fallback.yaml"
+            fallback = PLUGIN_ROOT / "data" / "appsec-bestpractices-baseline.yaml"
             fallback_state = "present" if fallback.is_file() else "missing"
-            rows.append(("Requirements YAML", f"bundled fallback ({fallback_state})"))
+            rows.append(("Requirements YAML", f"vendor-neutral baseline ({fallback_state})"))
 
     # Steering keywords
     if "security-coach" not in _registered_hook_ids():

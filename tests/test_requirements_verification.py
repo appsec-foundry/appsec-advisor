@@ -181,6 +181,42 @@ def test_baseline_is_vendor_neutral_and_well_formed():
     assert "int.kn" not in text and "asr.int" not in text
 
 
+def test_no_internal_company_references_in_tracked_files():
+    """No git-tracked file may ship internal-company references.
+
+    Harvest output (e.g. data/appsec-requirements-fallback.yaml) is gitignored
+    and must stay out of tracking; only the vendor-neutral baseline ships.
+    """
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split("\0")
+
+    markers = ("int.kn", "asr.int.kn", "kuehne-nagel", "3c56d267-5997-450b-8a9d-44db83e525bb")
+    # This test itself names the markers; exclude it from the content scan.
+    self_rel = str(Path(__file__).relative_to(ROOT)).replace("\\", "/")
+
+    offenders = []
+    for rel in tracked:
+        if not rel or rel == self_rel:
+            continue
+        p = ROOT / rel
+        try:
+            blob = p.read_text(encoding="utf-8", errors="ignore")
+        except (OSError, UnicodeError):
+            continue
+        hits = [m for m in markers if m in blob]
+        if hits:
+            offenders.append((rel, hits))
+
+    assert not offenders, "internal-company references in tracked files: " + "; ".join(
+        f"{rel} -> {hits}" for rel, hits in offenders
+    )
+
+
 def test_fetch_falls_back_to_baseline_when_no_company_source(tmp_path):
     import fetch_requirements
 
