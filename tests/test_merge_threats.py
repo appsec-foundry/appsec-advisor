@@ -539,3 +539,29 @@ class TestInvalidStrideJSONDiagnostics:
         assert "»" in ctx and "«" in ctx
         # Newlines are escaped so the diagnostic stays single-line.
         assert "\n" not in mt._json_error_context("a\nb", pos=1, radius=2)
+
+
+# ---------------------------------------------------------------------------
+# resolved_prior_findings union (incremental affirmed-fix channel)
+# ---------------------------------------------------------------------------
+
+
+class TestResolvedPriorUnion:
+    def test_union_stamps_component_id(self, mt):
+        pairs = [
+            ("auth", {"resolved_prior_findings": [{"prior_id": "T-007", "reason": "fixed"}]}),
+            ("api", {"resolved_prior_findings": [
+                {"prior_id": "T-009", "reason": "patched", "component_id": "explicit"}]}),
+            ("empty", {"threats": []}),
+        ]
+        out = mt._collect_resolved_prior_findings(pairs)
+        assert {r["prior_id"] for r in out} == {"T-007", "T-009"}
+        by_id = {r["prior_id"]: r for r in out}
+        assert by_id["T-007"]["component_id"] == "auth"        # stamped from pair
+        assert by_id["T-009"]["component_id"] == "explicit"    # caller value preserved
+
+    def test_skips_entries_without_prior_id(self, mt):
+        pairs = [("auth", {"resolved_prior_findings": [
+            {"reason": "no id"}, {"prior_id": "T-1", "reason": "ok"}]})]
+        out = mt._collect_resolved_prior_findings(pairs)
+        assert [r["prior_id"] for r in out] == ["T-1"]

@@ -76,6 +76,10 @@ if [ "$INCREMENTAL" = "true" ]; then
     | sort -u | sed '/^$/d')
   echo "CHANGED_FILES ($(echo "$CHANGED_FILES" | wc -l)):"
   echo "$CHANGED_FILES"
+  # Baseline depth — passed to re-dispatched analyzers as PRIOR_ASSESSMENT_DEPTH
+  # so they apply the conservative carry rule when this run is shallower.
+  PRIOR_ASSESSMENT_DEPTH=$(python3 -c "import json; print(json.load(open('$OUTPUT_DIR/.appsec-cache/baseline.json')).get('last_run_depth') or 'none')" 2>/dev/null || echo none)
+  echo "PRIOR_ASSESSMENT_DEPTH:$PRIOR_ASSESSMENT_DEPTH"
 fi
 ```
 
@@ -203,7 +207,7 @@ For each component, use Agent tool:
   `REPO_ROOT`, `OUTPUT_DIR`, `COMPLIANCE_SCOPE`, `ASSET_TIER`, `TAXONOMY_SLICE_DIR` (path only; the file contents differ per component but the path template is stable), `STRIDE_PROFILE` (inline JSON from `.skill-config.json → stride_profile`; `{"stride_profile_label": "full"}` at Standard/Thorough or any non-economy reasoning-mode; depth-reduced JSON only when `--reasoning-model sonnet-economy` AND `--assessment-depth quick` — see `agents/appsec-stride-analyzer.md` → "Quick-mode adjustments" for A-F semantics)
 
   **Group B — component-specific scalars and short lists:**
-  `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `COMPONENT_PATHS` (Fix #7 root cause — comma-separated `paths` globs from the component definition; the STRIDE analyzer uses these to refuse emitting a threat whose `evidence[0].file` is outside the globs, preventing the "SQL injection found in routes/search.ts recorded as component=data-layer" attack-target-tier drift that `reclassify_components.py` is currently the deterministic-only safety net for), `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26), `FOCUS_PATHS` (M15/M20 — see below), `EXCLUDE_PATHS` (M16 — only when extending scan-excludes.yaml is not enough)
+  `COMPONENT_ID`, `COMPONENT_NAME`, `COMPONENT_DESCRIPTION`, `COMPONENT_COMPLEXITY`, `COMPONENT_PATHS` (Fix #7 root cause — comma-separated `paths` globs from the component definition; the STRIDE analyzer uses these to refuse emitting a threat whose `evidence[0].file` is outside the globs, preventing the "SQL injection found in routes/search.ts recorded as component=data-layer" attack-target-tier drift that `reclassify_components.py` is currently the deterministic-only safety net for), `MAX_TURNS`, `ESTIMATED_THREAT_COUNT`, `INTERFACES`, `TRUST_BOUNDARIES`, `CONTROLS`, `KNOWN_SECRETS`, `KNOWN_VULNS`, `KNOWN_LLM_PATTERNS`, `SUPPLY_CHAIN_FINDINGS` (for `ci-cd-pipeline` component only, from recon-summary 7.14–7.17 and 7.26), `FOCUS_PATHS` (M15/M20 — see below), `EXCLUDE_PATHS` (M16 — only when extending scan-excludes.yaml is not enough), `PRIOR_ASSESSMENT_DEPTH` (incremental only — the `assessment_depth` of the run that produced the baseline, from `.appsec-cache/baseline.json.last_run_depth`; pass `none` on a full/first run. The analyzer compares it to `ASSESSMENT_DEPTH` to drive the prior-finding carry-vs-drop disposition — see `agents/appsec-stride-analyzer.md` → "Prior-finding disposition")
 
   **Group C — volatile context file paths (emit LAST):**
   `PRIOR_FINDINGS_INDEX_PATH`, `KNOWN_THREATS_INDEX_PATH`, `CROSS_REPO_CONTEXT_PATH`, `PHASE_8B_VIOLATIONS_INDEX_PATH`, `RELEVANT_ACTORS_INDEX_PATH` — each is either a JSON file under `$OUTPUT_DIR/.dispatch-context/<COMPONENT_ID>/` or `none`. Do **not** inline the JSON arrays in the prompt. The old inline names (`PRIOR_FINDINGS_INDEX`, `KNOWN_THREATS_INDEX`, `CROSS_REPO_CONTEXT`, `PHASE_8B_VIOLATIONS_INDEX`) are accepted only as a legacy fallback for older orchestrator prompts.

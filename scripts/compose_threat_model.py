@@ -1859,6 +1859,21 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append("> - **No §3 Attack Walkthroughs** (entirely skipped at `--quick`)")
     else:
         lines.append("> - **§3 Attack Walkthroughs** limited to Critical findings")
+    # Incremental depth-downgrade transparency: prior threats re-injected by the
+    # reconciler (build_threat_model_yaml.reconcile_incremental_threats) because
+    # this shallower quick run could not re-confirm them. Surface the count once
+    # (not per-threat in §8) so the reader knows these were not re-verified here.
+    carried = sum(
+        1
+        for t in (ctx.yaml_data.get("threats") or [])
+        if (t.get("evidence_check") or "") == "carried-unverified-shallower-depth"
+    )
+    if carried:
+        lines.append(
+            f"> - **{carried} prior finding{'s' if carried != 1 else ''} carried forward "
+            "without re-verification** (preserved from a prior deeper scan that this quick "
+            "run was too shallow to re-confirm — re-run at the prior depth to re-verify)"
+        )
     lines.extend(
         [
             "> - **No LLM-enriched §7 architecture narrative** (scaffold + control tables only)",

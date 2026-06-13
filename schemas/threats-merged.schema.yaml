@@ -17,6 +17,23 @@ properties:
   generated_at:
     type: string
 
+  resolved_prior_findings:
+    # Incremental re-scan only. Union of every analyzed component's
+    # `resolved_prior_findings[]` (stride.schema.yaml) — prior findings the
+    # re-scan affirmatively confirmed FIXED. Consumed by the deterministic
+    # reconciler in build_threat_model_yaml.py to resolve (vs carry) a dropped
+    # prior threat. Optional; absent on full/first runs.
+    type: array
+    items:
+      type: object
+      required: [prior_id, reason]
+      properties:
+        prior_id:     { type: string }
+        component_id: { type: [string, "null"] }
+        cwe:          { type: [string, "null"] }
+        title:        { type: [string, "null"] }
+        reason:       { type: string }
+
   threats:
     type: array
     items:

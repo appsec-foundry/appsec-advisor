@@ -91,6 +91,7 @@ Run config:
 - `ESTIMATED_THREAT_COUNT` — `low` (≤3) / `moderate` (4–7) / `high` (≥8). Drives pacing (see *Turn budget self-regulation*).
 - `STRIDE_PROFILE_JSON` — JSON object from `resolve_stride_profile()`. When `stride_profile_label = "quick (depth-reduced via sonnet-economy)"`, apply *Quick-mode adjustments* in Step 3. The flag values mirror `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py` — keep that file and the Step-3 table in sync.
 - `ASSESSMENT_DEPTH` — `quick` / `standard` / `thorough`. Drives turn ceilings and diagram depth; the Step-2 raw-SQL IDOR trace now runs at every depth (access-control recall must not depend on depth).
+- `PRIOR_ASSESSMENT_DEPTH` — `quick` / `standard` / `thorough` / `none`. The depth of the baseline run (incremental only). When it is DEEPER than `ASSESSMENT_DEPTH`, apply the conservative carry rule in Step 1 to prior findings you cannot confirm fixed (disposition #3 below). `none` on full/first runs → normal disposition, no carry rule.
 
 Paths:
 - `REPO_ROOT` — source code root
@@ -121,7 +122,14 @@ For each entry in the known-threats index:
 
 For each prior-findings-index entry with `status: open`: treat as mandatory verification target using the embedded `evidence.file` / `line` / `excerpt`. Do not re-search the repo — the orchestrator already captured the location.
 
-**When the re-read confirms the issue still exists**, set `evidence_check: "verified-prior"` on the emitted threat. When the re-read shows the code changed and the issue is gone, do **not** emit the threat (the orchestrator's resolved-threats list captures it instead). Threats not derived from a prior-finding re-read default to `evidence_check: "unchecked"`; the Phase 10b `appsec-evidence-verifier` updates them.
+**Prior-finding disposition (three-way):**
+1. **Still present** — the cited code still exhibits the issue → emit the threat with `evidence_check: "verified-prior"`.
+2. **Affirmatively fixed** — you can point to the specific change that removes it (control added, vulnerable path deleted, input now validated/encoded) → do **not** emit it, AND record it in the output's `resolved_prior_findings[]` array (see *Output*) with the prior `id`, its `cwe`/`title`, and a one-line `reason`. The deterministic reconciler uses this to mark it resolved instead of carrying it forward.
+3. **Could not confirm either way** — you did not re-read deeply enough to assert present-or-fixed (typical at reduced depth, e.g. `skip_verification_greps`):
+   - if `PRIOR_ASSESSMENT_DEPTH` is DEEPER than `ASSESSMENT_DEPTH` → **carry it**: emit the prior threat unchanged with `evidence_check: "carried-unverified-shallower-depth"`. Absence of confirmation at reduced depth is **not** evidence of a fix.
+   - otherwise (equal/deeper current depth, or `PRIOR_ASSESSMENT_DEPTH=none`) → do not emit; the deterministic reconciler records it as resolved-not-reproduced.
+
+Threats not derived from a prior-finding re-read default to `evidence_check: "unchecked"`; the Phase 10b `appsec-evidence-verifier` updates them.
 
 **Capture `started_at`** at the START of this step: `$(date -u +%Y-%m-%dT%H:%M:%SZ)`. Persist it in your working notes and emit as the second top-level field of the output JSON. Without it `record_component_durations.py` cannot per-component the Phase-9 estimate.
 
@@ -251,6 +259,8 @@ Apply when `STRIDE_PROFILE_JSON.stride_profile_label = "quick (depth-reduced via
 | `turn_budget_hard_cap` | `25` | Hard-stop at turn 25 regardless of `MAX_TURNS`. |
 
 All 6 STRIDE categories, the LLM / Supply-chain / SPA conditional sub-blocks, and the finding quality standard are unchanged at Quick.
+
+**Prior-finding disposition at reduced depth:** `skip_verification_greps` cuts the verification grep, not the prior-finding obligation. When `PRIOR_ASSESSMENT_DEPTH` is deeper than this run, a prior finding you skipped the grep for falls into disposition #3 (carry — `evidence_check: "carried-unverified-shallower-depth"`), never into "fixed". Only an affirmative fix observation (disposition #2) resolves a prior finding.
 
 ### Actor-driven iteration — mandatory when `COMPONENT_ACTORS` is non-empty
 
@@ -476,6 +486,14 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
   "started_at": "<ISO 8601 captured at Step 1 start — REQUIRED>",
   "analyzed_at": "<ISO 8601 captured just before write — REQUIRED>",
   "compliance_scope_applied": ["<standard>"],
+  "resolved_prior_findings": [
+    {
+      "prior_id": "<the id from PRIOR_FINDINGS_INDEX_PATH — only for findings you AFFIRMATIVELY confirmed FIXED, disposition #2>",
+      "cwe": "<CWE-NNN or null>",
+      "title": "<prior finding title or null>",
+      "reason": "<one line — the specific change that removes it, e.g. 'parameterized query added at db.ts:42', MAX 200 chars>"
+    }
+  ],
   "threats": [
     {
       "local_id": "<COMPONENT_ID>-001",

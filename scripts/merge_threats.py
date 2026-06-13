@@ -1130,6 +1130,22 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _collect_resolved_prior_findings(pairs: list[tuple[str, dict]]) -> list[dict]:
+    """Union the per-component ``resolved_prior_findings[]`` (incremental
+    affirmed-fix lists, stride.schema.yaml) from every stride file. Stamps each
+    entry with its ``component_id`` so the reconciler in build_threat_model_yaml
+    can match the dropped prior threat by component + fingerprint."""
+    out: list[dict] = []
+    for cid, data in pairs:
+        for r in (data.get("resolved_prior_findings") or []):
+            if not isinstance(r, dict) or not r.get("prior_id"):
+                continue
+            entry = dict(r)
+            entry.setdefault("component_id", cid)
+            out.append(entry)
+    return out
+
+
 def cmd_collect(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     if not out_dir.exists():
@@ -1141,6 +1157,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         print(f"merge_threats: no .stride-*.json files found in {out_dir}", file=sys.stderr)
         return 1
 
+    resolved_prior = _collect_resolved_prior_findings(pairs)
     flat = _flatten_threats(pairs)
     # Phase 2.5 — append config/IaC findings as additional threats with
     # source='config-scan' so the downstream dedup/grouping/T-ID assignment
@@ -1178,6 +1195,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         "auto_decisions": auto_decisions,
         "threats": deduped,  # fully flattened, exact-dedup applied
         "candidate_groups": candidates,  # groups >= 2 that need LLM judgment
+        "resolved_prior_findings": resolved_prior,  # incremental affirmed-fix union
     }
 
     out_path = out_dir / ".merge-candidates.json"
@@ -1224,6 +1242,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         "version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "threats": threats,
+        "resolved_prior_findings": cand.get("resolved_prior_findings") or [],
     }
 
     out_path = out_dir / ".threats-merged.json"

@@ -573,3 +573,144 @@ def test_changelog_none_history_treated_as_empty(tmp_path):
     cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha=None)
     assert len(cl) == 1
     assert cl[0]["current_sha"] is None
+
+
+# ─── Incremental depth-downgrade reconciliation (B1+B2) ────────────────────
+# reconcile_incremental_threats re-injects prior threats of RE-ANALYZED
+# components that a shallower re-scan dropped without an affirmative fix, and
+# records honest changelog buckets. See
+# docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md.
+
+import hashlib as _hashlib
+
+
+def _setup_incremental(tmp_path, *, prior_depth, stride):
+    """stride: {cid: (baseline_bytes, current_bytes)}.
+
+    A component is "re-analyzed" when baseline_bytes differ from current_bytes (the on-disk
+    .stride file no longer matches the baseline hash); "carried-forward" when they
+    are equal.
+    """
+    cache = tmp_path / ".appsec-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    sf = {}
+    for cid, (baseline_bytes, current_bytes) in stride.items():
+        sf[cid] = {"sha256": "sha256:" + _hashlib.sha256(baseline_bytes).hexdigest()}
+        (tmp_path / f".stride-{cid}.json").write_bytes(current_bytes)
+    (cache / "baseline.json").write_text(
+        json.dumps({"last_run_depth": prior_depth, "stride_files": sf})
+    )
+
+
+def _prior_threat(tid, comp, cwe, title):
+    return {"id": tid, "component": comp, "cwe": cwe, "title": title,
+            "risk": "High", "likelihood": "Medium", "impact": "High"}
+
+
+def test_reanalyzed_component_ids_detects_sha_mismatch(tmp_path):
+    _setup_incremental(tmp_path, prior_depth="thorough", stride={
+        "auth": (b'{"a":1}', b'{"a":2}'),    # changed -> re-analyzed
+        "api": (b'{"b":1}', b'{"b":1}'),      # unchanged -> carried-forward
+    })
+    assert b._reanalyzed_component_ids(tmp_path) == {"auth"}
+
+
+def test_reanalyzed_component_ids_none_without_baseline(tmp_path):
+    assert b._reanalyzed_component_ids(tmp_path) is None
+
+
+def test_reconcile_carries_dropped_prior_threat_at_shallower_depth(tmp_path):
+    _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
+    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
+    new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi (db.ts:3)"}]
+    out, recon = b.reconcile_incremental_threats(
+        new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
+    carried = [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
+    assert len(carried) == 1
+    assert carried[0]["title"] == "Weak auth (login.ts:10)"
+    # fresh, collision-free id (continues after T-001)
+    assert carried[0]["id"] == "T-002"
+    assert recon is not None
+    assert recon["reanalyzed_ids"] == ["auth"]
+    assert recon["resolved_reason_by_id"] == {}
+
+
+def test_reconcile_resolves_when_analyzer_affirms_fix(tmp_path):
+    _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
+    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
+    resolved_prior = {"T-007": "MFA enforced at login.ts:10"}
+    out, recon = b.reconcile_incremental_threats(
+        [], prior, [{"id": "auth"}], tmp_path, "quick", resolved_prior)
+    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
+    assert recon["resolved_reason_by_id"] == {"T-007": "MFA enforced at login.ts:10"}
+
+
+def test_reconcile_no_carry_at_equal_depth(tmp_path):
+    _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
+    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
+    out, recon = b.reconcile_incremental_threats(
+        [], prior, [{"id": "auth"}], tmp_path, "quick", {})
+    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
+    # equal depth → recorded as resolved, not silently dropped
+    assert recon["resolved_reason_by_id"]["T-007"].startswith("not reproduced")
+
+
+def test_reconcile_skips_carried_forward_component(tmp_path):
+    # api unchanged → carried-forward → its prior threats must NOT be touched
+    _setup_incremental(tmp_path, prior_depth="thorough", stride={"api": (b"same", b"same")})
+    prior = {"threats": [_prior_threat("T-007", "api", "CWE-89", "SQLi (q.ts:9)")]}
+    out, recon = b.reconcile_incremental_threats(
+        [], prior, [{"id": "api"}], tmp_path, "quick", {})
+    assert out == []                       # nothing injected
+    assert recon["resolved_reason_by_id"] == {}
+    assert recon["carried_forward_ids"] == ["api"]
+
+
+def test_reconcile_no_double_count_when_reemitted(tmp_path):
+    _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
+    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
+    # analyzer re-emitted the same finding (same fingerprint) under a fresh id
+    new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-287",
+                    "title": "Weak auth (login.ts:10)"}]
+    out, recon = b.reconcile_incremental_threats(
+        new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
+    assert len(out) == 1                    # no re-injection
+    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
+
+
+def test_reconcile_noop_on_full_run(tmp_path):
+    # no baseline.json → full/first run → no-op, recon_info None
+    prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
+    out, recon = b.reconcile_incremental_threats(
+        [{"id": "T-001", "component": "auth"}], prior, [{"id": "auth"}], tmp_path, "quick", {})
+    assert recon is None
+    assert len(out) == 1
+
+
+def test_changelog_incremental_buckets_populated(tmp_path):
+    recon = {
+        "reanalyzed_ids": ["auth"],
+        "carried_forward_ids": ["api"],
+        "resolved_reason_by_id": {"T-009": "fixed at x.ts:1"},
+        "carried_ids": ["T-002"],
+        "added_ids": ["T-001"],
+    }
+    cl = b.build_changelog(
+        {"mode": "incremental", "assessment_depth": "quick"},
+        [{"id": "T-001", "component": "auth"}, {"id": "T-002", "component": "auth"}],
+        [{"id": "auth"}, {"id": "api"}], [], None, tmp_path,
+        current_sha="sha-x", recon_info=recon)
+    e = cl[0]
+    assert e["reanalyzed_components"] == ["auth"]
+    assert e["carried_forward_components"] == ["api"]
+    assert e["added"]["threats"] == ["T-001"]
+    assert e["resolved"]["threats"] == ["T-009"]
+    assert e["resolved"]["reason_by_id"] == {"T-009": "fixed at x.ts:1"}
+
+
+def test_changelog_full_run_unchanged_without_recon(tmp_path):
+    # recon_info=None (full run) keeps the legacy "treat as full" behavior
+    cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="s")
+    assert cl[0]["carried_forward_components"] == []
+    assert cl[0]["added"]["threats"] == ["T-001"]
+    assert cl[0]["resolved"] == {"threats": [], "reason_by_id": {}}

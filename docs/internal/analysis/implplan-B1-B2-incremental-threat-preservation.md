@@ -1,6 +1,24 @@
 # Implementation Plan — B1 + B2: preserve prior threats on depth-downgrade incremental re-scan
 
-**Status:** Plan only — NOTHING implemented. Exact diffs below are proposals.
+**Status:** ✅ IMPLEMENTED 2026-06-13 (uncommitted). Decisions locked: **A** = strictly-shallower
+carry; **B** = `resolved_prior_findings` via `.stride`→merge→`.threats-merged.json`; **C** = one
+aggregate disclosure line in the quick-mode banner (no per-threat §8 markers). Full suite 3980 passed.
+
+**Deviation found during verification (and fixed):** `merge_threats._assign_t_ids` restarts global
+T-numbering at T-001 every run, so a carried threat re-injected with its *prior* id would collide
+with a freshly-assigned one — the side-condition #2 "keep prior id verbatim" was WRONG. Carried
+threats now get a fresh, collision-free id continuing after the current max. Also: the reconciler
+runs **before** `build_mitigations` (not just before the threat_ids loop) so carried threats get a
+§10 Mitigation Register entry.
+
+Files: `schemas/{stride,threats-merged,threat-model.output}.schema.yaml`, `scripts/merge_threats.py`,
+`scripts/build_threat_model_yaml.py`, `scripts/compose_threat_model.py`,
+`agents/phases/phase-group-threats.md`, `agents/appsec-stride-analyzer.md`, tests in
+`tests/test_{build_threat_model_yaml,merge_threats,compose_threat_model}.py`.
+
+---
+
+**Original plan (for reference) — NOTHING implemented when written.**
 **Date:** 2026-06-13
 **Parent:** `proposal-depth-downgrade-incremental-preservation.md`
 **Bug:** A DIRTY component re-scanned at a shallower depth (`thorough/standard → quick --incremental`)

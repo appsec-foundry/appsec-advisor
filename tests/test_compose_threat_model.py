@@ -3348,6 +3348,38 @@ def test_quick_banner_shows_n_of_m(tmp_path: Path) -> None:
     assert "**2 of 4 components**" in out
 
 
+def test_quick_banner_discloses_carried_unverified_threats(tmp_path: Path) -> None:
+    """Incremental depth-downgrade: prior threats re-injected by the reconciler
+    (evidence_check=carried-unverified-shallower-depth) are disclosed once in the
+    quick-mode banner, not silently presented as freshly verified."""
+    yaml_data = {
+        "components": [],
+        "threats": [
+            {"id": "T-001", "component": "api", "evidence_check": "verified-prior"},
+            {"id": "T-002", "component": "api", "evidence_check": "carried-unverified-shallower-depth"},
+            {"id": "T-003", "component": "api", "evidence_check": "carried-unverified-shallower-depth"},
+        ],
+    }
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={},
+        fragments_dir=tmp_path, eval_context={"is_quick_depth": True},
+    )
+    out = compose._render_quick_mode_notice(ctx, compose._build_jinja_env(ctx), {})
+    assert "2 prior findings carried forward" in out
+    assert "re-run at the prior depth" in out
+
+
+def test_quick_banner_no_disclosure_when_no_carried_threats(tmp_path: Path) -> None:
+    yaml_data = {"components": [], "threats": [
+        {"id": "T-001", "component": "api", "evidence_check": "unchecked"}]}
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={},
+        fragments_dir=tmp_path, eval_context={"is_quick_depth": True},
+    )
+    out = compose._render_quick_mode_notice(ctx, compose._build_jinja_env(ctx), {})
+    assert "carried forward" not in out
+
+
 # ---------------------------------------------------------------------------
 # Consistent code formatting of title/label locators (+ code-free TOC)
 # ---------------------------------------------------------------------------

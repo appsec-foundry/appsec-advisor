@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -133,6 +134,163 @@ def _carry_forward(prior_yaml: dict | None, field: str, sidecar_name: str) -> An
         f"or run --full once with the legacy LLM Substep 2 to bootstrap.\n"
     )
     sys.exit(4)
+
+
+# ─── Incremental threat reconciliation (depth-downgrade preservation) ──────
+#
+# When a DIRTY component is re-scanned at a SHALLOWER depth than the run that
+# produced the baseline, its `.stride-<id>.json` is overwritten and prior
+# threats the shallow scan did not re-emit would silently vanish. This
+# deterministic reconciler is the authoritative safety net (the analyzer-side
+# carry rule in appsec-stride-analyzer.md is advisory): it re-injects such prior
+# threats — unless the analyzer affirmatively confirmed a fix — and records
+# honest changelog buckets. See
+# docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md.
+
+_DEPTH_RANK = {"quick": 0, "standard": 1, "thorough": 2}
+
+
+def _threat_fingerprint(t: dict) -> tuple:
+    """Stable cross-run identity: component + cwe + location-stripped title.
+    Mirrors the re-dispatch fingerprint contract in phase-group-threats.md:50."""
+    comp = (t.get("component") or t.get("component_id") or "").strip().lower()
+    cwe = (t.get("cwe") or "").strip().upper()
+    title = re.sub(r"\s*\([^()]*:\d+\)\s*$", "", (t.get("title") or "")).strip().lower()
+    return (comp, cwe, title)
+
+
+def _depth_is_shallower(cur: str | None, prior: str | None) -> bool:
+    """True iff `cur` is strictly shallower than `prior` (both known)."""
+    c = _DEPTH_RANK.get((cur or "").strip().lower())
+    p = _DEPTH_RANK.get((prior or "").strip().lower())
+    return c is not None and p is not None and c < p
+
+
+def _load_last_run_depth(output_dir: Path) -> str | None:
+    """The baseline run's assessment depth from `.appsec-cache/baseline.json`.
+    At builder time baseline.json still reflects the PRIOR run (it is rewritten
+    only after compose — same contract the §7 carry-forward relies on)."""
+    bpath = output_dir / ".appsec-cache" / "baseline.json"
+    if not bpath.is_file():
+        return None
+    try:
+        return json.loads(bpath.read_text()).get("last_run_depth") or None
+    except (OSError, ValueError):
+        return None
+
+
+def _reanalyzed_component_ids(output_dir: Path) -> set[str] | None:
+    """Components whose `.stride-<id>.json` changed vs the baseline hash → were
+    re-analyzed this run. Returns None when no baseline exists (full/first run),
+    signalling the caller to skip reconciliation entirely.
+
+    Carried-forward components reuse their exact prior stride file, so their
+    sha256 matches the baseline and they are excluded — their threats survive
+    naturally through the merge and need no re-injection."""
+    bpath = output_dir / ".appsec-cache" / "baseline.json"
+    if not bpath.is_file():
+        return None
+    try:
+        prior_hashes = json.loads(bpath.read_text()).get("stride_files") or {}
+    except (OSError, ValueError):
+        return None
+    changed: set[str] = set()
+    for cid, rec in prior_hashes.items():
+        sfile = output_dir / f".stride-{cid}.json"
+        if not sfile.is_file():
+            continue  # removed component — handled by the removal path, not here
+        actual = "sha256:" + hashlib.sha256(sfile.read_bytes()).hexdigest()
+        if actual != (rec or {}).get("sha256"):
+            changed.add(cid)
+    return changed
+
+
+def _index_resolved_prior(merged: dict) -> dict[str, str]:
+    """Map every analyzer-affirmed fix to a reason, keyed by BOTH the prior id
+    and the threat fingerprint, so the reconciler can match either way."""
+    out: dict[str, str] = {}
+    for r in (merged.get("resolved_prior_findings") or []):
+        if not isinstance(r, dict):
+            continue
+        reason = (r.get("reason") or "").strip() or "fix confirmed by re-scan"
+        pid = r.get("prior_id")
+        if pid:
+            out[pid] = reason
+        fp = _threat_fingerprint(
+            {"component": r.get("component_id"), "cwe": r.get("cwe"), "title": r.get("title")}
+        )
+        out[fp] = reason
+    return out
+
+
+def reconcile_incremental_threats(
+    threats: list[dict],
+    prior_yaml: dict | None,
+    components: list[dict],
+    output_dir: Path,
+    cur_depth: str | None,
+    resolved_prior: dict,
+) -> tuple[list[dict], dict | None]:
+    """Re-inject prior threats of RE-ANALYZED components that a shallower
+    re-scan dropped without an affirmative fix. Mutates/extends ``threats`` and
+    returns ``(threats, recon_info)`` where ``recon_info`` is None for
+    full/first runs (no baseline) or a dict of honest changelog buckets.
+
+    Only carries when the current depth is strictly shallower than the baseline
+    depth — at equal/deeper depth a non-reproduced prior threat is genuinely
+    resolved (recorded, no longer silently dropped)."""
+    reanalyzed = _reanalyzed_component_ids(output_dir)
+    if reanalyzed is None or not prior_yaml:
+        return threats, None
+
+    prior_depth = _load_last_run_depth(output_dir)
+    shallower = _depth_is_shallower(cur_depth, prior_depth)
+
+    present = {_threat_fingerprint(t) for t in threats}
+    prior_fps = {_threat_fingerprint(pt) for pt in (prior_yaml.get("threats") or [])}
+
+    # merge_threats._assign_t_ids restarts global T-numbering at T-001 every run,
+    # so a carried threat's prior id may collide with a freshly-assigned one.
+    # Continue numbering after the current maximum to stay collision-free.
+    next_t_num = max(
+        (int(m.group(1)) for t in threats for m in [re.match(r"^T-(\d+)$", str(t.get("id") or ""))] if m),
+        default=0,
+    )
+
+    resolved_reason_by_id: dict[str, str] = {}
+    carried_ids: list[str] = []
+
+    for pt in (prior_yaml.get("threats") or []):
+        comp = pt.get("component") or pt.get("component_id") or ""
+        if comp not in reanalyzed:
+            continue  # carried-forward component → threats already intact
+        fp = _threat_fingerprint(pt)
+        if fp in present:
+            continue  # re-emitted by the analyzer (B1) → keep, no double-inject
+        pid = pt.get("id", "")
+        if pid in resolved_prior or fp in resolved_prior:
+            resolved_reason_by_id[pid] = resolved_prior.get(pid) or resolved_prior.get(fp)
+            continue
+        if shallower:
+            next_t_num += 1
+            carried = dict(pt)
+            carried["id"] = f"T-{next_t_num:03d}"
+            carried["evidence_check"] = "carried-unverified-shallower-depth"
+            threats.append(carried)
+            present.add(fp)
+            carried_ids.append(carried["id"])
+        else:
+            resolved_reason_by_id[pid] = "not reproduced at equal-or-deeper depth"
+
+    all_ids = {c.get("id", "") for c in components if c.get("id")}
+    recon_info = {
+        "reanalyzed_ids": sorted(reanalyzed & all_ids),
+        "carried_forward_ids": sorted(all_ids - reanalyzed),
+        "resolved_reason_by_id": resolved_reason_by_id,
+        "carried_ids": sorted(carried_ids),
+        "added_ids": sorted(t["id"] for t in threats if t.get("id") and _threat_fingerprint(t) not in prior_fps),
+    }
+    return threats, recon_info
 
 
 # ─── Field builders ───────────────────────────────────────────────────────
@@ -925,6 +1083,7 @@ def build_changelog(
     existing_changelog: list[dict] | None,
     plugin_root: Path,
     current_sha: str | None = None,
+    recon_info: dict | None = None,
 ) -> list[dict]:
     """Prepend a new entry to the prior changelog history (newest first).
 
@@ -957,15 +1116,33 @@ def build_changelog(
         "baseline_sha": None,
         "current_sha": current_sha,
         "changed_files": None,
-        "reanalyzed_components": sorted({c.get("id", "") for c in components if c.get("id")}),
-        "carried_forward_components": [],
+        "reanalyzed_components": (
+            recon_info["reanalyzed_ids"] if recon_info is not None
+            else sorted({c.get("id", "") for c in components if c.get("id")})
+        ),
+        "carried_forward_components": (
+            recon_info["carried_forward_ids"] if recon_info is not None else []
+        ),
         "added": {
-            "threats": [t["id"] for t in threats],
+            # Full run: every threat is added vs the empty baseline. Incremental
+            # with a baseline: only fingerprint-new threats (carried/preserved
+            # ones are not "added").
+            "threats": (
+                recon_info["added_ids"] if recon_info is not None
+                else [t["id"] for t in threats]
+            ),
             "components": sorted({c.get("id", "") for c in components if c.get("id")}),
             "attack_surface": [],
         },
         "changed": {"threats": []},
-        "resolved": {"threats": [], "reason_by_id": {}},
+        "resolved": (
+            {
+                "threats": sorted((recon_info["resolved_reason_by_id"]).keys()),
+                "reason_by_id": dict(recon_info["resolved_reason_by_id"]),
+            }
+            if recon_info is not None
+            else {"threats": [], "reason_by_id": {}}
+        ),
     }
 
     # Idempotent re-build: drop any prior entry that describes the identical
@@ -1046,14 +1223,31 @@ def main() -> int:
     threats, threat_warnings = build_threats(merged)
     for w in threat_warnings:
         sys.stderr.write(f"  {w}\n")
-    mitigations = build_mitigations(threats)
-    mitigations, mit_warnings = apply_mitigation_overrides(mitigations, sidecar_mo)
-    for w in mit_warnings:
-        sys.stderr.write(f"  {w}\n")
 
     components = (sidecar_components or {}).get("components") or _carry_forward(
         prior_yaml, "components", ".components.json"
     )
+
+    # Incremental depth-downgrade preservation: re-inject prior threats of
+    # re-analyzed components that a shallower re-scan dropped without an
+    # affirmative fix. Runs BEFORE build_mitigations so carried threats get a §10
+    # register entry, and BEFORE the threat_ids derivation so they are counted
+    # per component. Carried threats receive fresh, collision-free T-ids
+    # (merge_threats._assign_t_ids restarts global numbering every run, so the
+    # prior id cannot be reused safely). No-op on full/first runs.
+    threats, recon_info = reconcile_incremental_threats(
+        threats,
+        prior_yaml,
+        components,
+        od,
+        skill_cfg.get("assessment_depth", "standard"),
+        _index_resolved_prior(merged),
+    )
+
+    mitigations = build_mitigations(threats)
+    mitigations, mit_warnings = apply_mitigation_overrides(mitigations, sidecar_mo)
+    for w in mit_warnings:
+        sys.stderr.write(f"  {w}\n")
 
     # Scope transparency: surface which components received full STRIDE analysis
     # and why, and which were not analyzed and why (from .stride-selection.json).
@@ -1088,6 +1282,7 @@ def main() -> int:
         (prior_yaml or {}).get("changelog"),
         args.plugin_root,
         current_sha=(meta.get("git") or {}).get("commit_sha"),
+        recon_info=recon_info,
     )
 
     # Compose final document
