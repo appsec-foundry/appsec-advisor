@@ -122,6 +122,17 @@ _STAGE1C_ABUSE: dict[str, float] = {
 # within-stage share is already folded into _STAGE1_BASE).
 _TRANSITION_BUFFER = 8.0
 
+# Standby/hang sanity ceiling for the measured last_run_cache value. A run
+# suspended mid-flight (machine sleep) or hung writes an end-to-end
+# last_run_seconds that includes the dead time — observed: 232 min for an
+# ~85 min thorough run after standby (2.83× the parametric estimate).
+# Replaying that would be worse than the formula, so a measurement above
+# FACTOR × parametric is rejected and the estimator falls through. 2.5 sits
+# below the observed 2.83× standby case yet well above any legitimately slow
+# run (real anchors land ~1.0-1.2× parametric; a genuine 2.5× overrun is
+# already pathological and almost certainly a stall, not honest compute).
+_STANDBY_CEILING_FACTOR = 2.5
+
 # Reasoning-model multiplier on Stage 1 (STRIDE + triage).
 _MODEL_FACTOR: dict[str, float] = {
     "sonnet": 1.0,
@@ -273,9 +284,16 @@ def _count_repo_files(repo_root: Path) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _last_run_cache(output_dir: Path, mode: str, depth: str) -> tuple[dict[str, float], str] | None:
+def _last_run_cache(
+    output_dir: Path, mode: str, depth: str, parametric_total: float
+) -> tuple[dict[str, float], str] | None:
     """Highest-priority source: the last successful run on the SAME repo
     in the SAME mode & depth wrote its wall-clock. We replay that.
+
+    ``parametric_total`` is the formula estimate, used as a standby/hang
+    sanity ceiling (see ``_STANDBY_CEILING_FACTOR``): an implausibly large
+    measurement (machine slept mid-run) is rejected so the caller falls
+    through to component_durations / parametric instead of replaying it.
 
     M5 enhancement: when component_durations is present in baseline.json,
     use the per-component sum as a Phase-9 estimator. The remaining
@@ -295,6 +313,9 @@ def _last_run_cache(output_dir: Path, mode: str, depth: str) -> tuple[dict[str, 
     if last_depth and last_depth != depth:
         return None
     total_min = last_seconds / 60.0
+    # Standby/hang guard — reject a measurement that dwarfs the formula.
+    if parametric_total > 0 and total_min > _STANDBY_CEILING_FACTOR * parametric_total:
+        return None
     # We don't know the exact per-stage split from the cache alone, but the
     # banner shows a "Stage 1: ~N min" figure — emitting 0 there rendered a
     # misleading "Stage 1: ~0 min". The 2026-06 juice-shop anchors put
@@ -519,6 +540,20 @@ def main(argv: list[str]) -> int:
     p.add_argument("--sec-change-count", type=int, default=0)
     args = p.parse_args(argv[1:])
 
+    # Parametric is both the final fallback AND the sanity reference for the
+    # measured last_run_cache value (a run that spanned machine standby or a
+    # hang writes an absurd last_run_seconds; the formula bounds what is
+    # plausible). Computed up-front — ~100ms for one `git ls-files`.
+    parametric_breakdown, _parametric_source = _parametric(
+        args.depth,
+        args.reasoning_model,
+        args.repo_root,
+        args.architect_review,
+        args.skip_qa,
+        args.skip_abuse_cases,
+    )
+    parametric_total = parametric_breakdown["total"]
+
     # Source priority — try each strategy in order, take the first hit.
     breakdown: dict[str, float] | None = None
     source: str = "parametric"
@@ -533,7 +568,7 @@ def main(argv: list[str]) -> int:
         # initial parametric run all consult the last-run cache before
         # falling back to formula. Incremental uses its own ratio path.
         if args.mode != "incremental":
-            result = _last_run_cache(args.output_dir, args.mode, args.depth)
+            result = _last_run_cache(args.output_dir, args.mode, args.depth, parametric_total)
             if result:
                 breakdown, source = result
 
@@ -553,14 +588,7 @@ def main(argv: list[str]) -> int:
             breakdown, source = result
 
     if breakdown is None:
-        breakdown, source = _parametric(
-            args.depth,
-            args.reasoning_model,
-            args.repo_root,
-            args.architect_review,
-            args.skip_qa,
-            args.skip_abuse_cases,
-        )
+        breakdown, source = parametric_breakdown, "parametric"
 
     out = {
         "source": source,

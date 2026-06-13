@@ -202,6 +202,72 @@ class TestLastRunCache:
         assert result["source"] == "last_run_cache"
         assert result["total_min"] == 44  # ROUND(2670/60) == 44.5 → 44 with banker's rounding
 
+    def test_standby_inflated_measurement_rejected(self, tmp_path: Path):
+        """A run suspended mid-flight (machine standby) writes an absurd
+        last_run_seconds (observed: 13908 s = 232 min for an ~85 min thorough
+        run). The standby/hang guard must reject it and fall back to the
+        formula rather than replay ~232 min on the next run."""
+        out = tmp_path / "out"
+        out.mkdir()
+        self._make_cache(
+            out,
+            last_run_seconds=13908,  # 232 min — standby-poisoned
+            last_run_mode="full",
+            last_run_depth="thorough",
+        )
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        for i in range(500):  # 1.0 size factor → parametric ≈ 82 min
+            (repo / f"f{i}.py").touch()
+        result = _run_cli(
+            "--depth",
+            "thorough",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "opus-cheap",
+            "--architect-review",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
+        )
+        # 232 min > 2.5 × 82 ≈ 205 → measurement rejected, parametric wins.
+        assert result["source"] == "parametric", result
+        assert result["total_min"] < 120, result
+
+    def test_plausible_measurement_still_used(self, tmp_path: Path):
+        """A measurement within the sanity ceiling is replayed as before —
+        the guard must not reject honest (even somewhat slow) runs."""
+        out = tmp_path / "out"
+        out.mkdir()
+        self._make_cache(
+            out,
+            last_run_seconds=5400,  # 90 min — slow but plausible for thorough
+            last_run_mode="full",
+            last_run_depth="thorough",
+        )
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        for i in range(500):
+            (repo / f"f{i}.py").touch()
+        result = _run_cli(
+            "--depth",
+            "thorough",
+            "--mode",
+            "full",
+            "--reasoning-model",
+            "opus-cheap",
+            "--architect-review",
+            "--output-dir",
+            str(out),
+            "--repo-root",
+            str(repo),
+        )
+        # 90 min < 2.5 × 82 → kept.
+        assert result["source"] == "last_run_cache", result
+        assert result["total_min"] == 90, result
+
     def test_cache_miss_when_mode_differs(self, tmp_path: Path):
         out = tmp_path / "out"
         out.mkdir()
