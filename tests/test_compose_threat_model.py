@@ -1665,9 +1665,13 @@ def test_changelog_table_renders_one_row_per_version(tmp_path: Path) -> None:
     # Empty cells render as ASCII hyphen — `_normalize_emdashes` applies to
     # changelog table rows because the row carries no anchor links (anchor-
     # link rows are excluded from normalisation; this one is not).
+    # Run numbers are POSITIONAL (newest = highest), not the entry's schema
+    # version field. The incremental row has a git baseline so it shows the
+    # +A/~C/-R delta.
     assert "| v2 | 2026-04-23 | incremental | - | - | `cb6fb8a` → `a1b2c3d` | +2 / ~1 / -1 | 7 files | - |" in section
-    # v1 row: initial marker and mode=full.
-    assert "| v1 | 2026-04-19 | full | - | - | _(initial)_ | +0 / ~0 / -0 | - | Initial assessment |" in section
+    # v1 row: from-scratch full snapshot (no baseline) → honest count, not a
+    # fake "+N added"; initial marker; mode=full.
+    assert "| v1 | 2026-04-19 | full | - | - | _(initial)_ | 0 total | - | Initial assessment |" in section
     # Newest first.
     assert section.index("| v2 |") < section.index("| v1 |")
 
@@ -1698,10 +1702,12 @@ def test_changelog_table_latest_run_detail_block(tmp_path: Path) -> None:
     )
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
-    # The single-table format is preserved (table row exists).
-    assert "| v3 |" in section
-    # The latest-run detail block enumerates the finding ids (visible F-NNN form).
-    assert "**Latest run (v3)" in section
+    # The single-table format is preserved (table row exists). Run number is
+    # POSITIONAL — a lone entry is v1 regardless of its schema-version field.
+    assert "| v1 |" in section
+    # The latest-run detail block enumerates the finding ids (visible F-NNN
+    # form). It renders because the entry carries a git baseline_sha.
+    assert "**Latest run (v1)" in section
     assert "- **Added (1):**" in section
     assert "F-030" in section
     # Architecture / changed / resolved bullets are NOT emitted because
@@ -1709,6 +1715,60 @@ def test_changelog_table_latest_run_detail_block(tmp_path: Path) -> None:
     assert "- **Changed" not in section
     assert "- **Resolved" not in section
     assert "- **Architecture:**" not in section
+
+
+def test_changelog_detail_block_links_new_ids_without_titles_and_lists_resolved(tmp_path: Path) -> None:
+    """Iterative-scan contract: the detail block links NEW finding IDs (no
+    titles), lists RESOLVED IDs as plain text (removed → no dangling anchor)."""
+    out = _prepare_output_dir(tmp_path)
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "date": "2026-05-10",
+                "mode": "incremental",
+                "delta_basis": "incremental",
+                "baseline_sha": "a1b2c3d4e5f67890abcdef1234567890abcdef12",
+                "current_sha": "b2c3d4e5f67890abcdef1234567890abcdef1234",
+                "added": {"threats": ["T-020", "T-021"], "components": [], "attack_surface": []},
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": ["T-010"], "reason_by_id": {"T-010": "fixed"}},
+            },
+            {"date": "2026-05-01", "mode": "full", "added": {"threats": ["T-001"]}},
+        ],
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _extract_changelog_section(rendered)
+    # New IDs are linked and inline (no " - <title>" suffix).
+    assert "**Added (2):**" in section
+    assert "(#f-020)" in section and "(#f-021)" in section
+    # Resolved IDs are present but NOT linked (the finding is gone).
+    assert "**Resolved (1):**" in section
+    assert "(#f-010)" not in section and "(#t-010)" not in section
+
+
+def test_changelog_detail_block_reports_no_change_on_empty_iterative(tmp_path: Path) -> None:
+    """An unchanged iterative run renders an explicit "no threat-level changes"
+    line rather than silently omitting the detail block."""
+    out = _prepare_output_dir(tmp_path)
+    _rewrite_changelog(
+        out,
+        [
+            {
+                "date": "2026-05-11",
+                "mode": "incremental",
+                "delta_basis": "incremental",
+                "baseline_sha": "b2c3d4e5f67890abcdef1234567890abcdef1234",
+                "added": {"threats": [], "components": [], "attack_surface": []},
+                "changed": {"threats": [], "notes_by_id": {}},
+                "resolved": {"threats": [], "reason_by_id": {}},
+            },
+            {"date": "2026-05-10", "mode": "incremental"},
+        ],
+    )
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _extract_changelog_section(rendered)
+    assert "No threat-level changes since the previous run" in section
 
 
 def test_changelog_table_code_column_combines_files_and_lines(tmp_path: Path) -> None:

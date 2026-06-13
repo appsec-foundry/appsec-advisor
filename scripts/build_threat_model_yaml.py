@@ -159,6 +159,49 @@ def _threat_fingerprint(t: dict) -> tuple:
     return (comp, cwe, title)
 
 
+def _fp_str(t: dict) -> str:
+    """Serialize _threat_fingerprint() to a stable `comp|cwe|title` string for
+    persistence in the changelog entry (enables cross-run delta computation)."""
+    comp, cwe, title = _threat_fingerprint(t)
+    return f"{comp}|{cwe}|{title}"
+
+
+def _changelog_note(
+    *,
+    delta_basis: str,
+    prior_entry: dict | None,
+    prior_depth: str | None,
+    cur_depth: str | None,
+    prior_n: int | None,
+    cur_n: int,
+    n_added: int,
+    n_resolved: int,
+) -> str:
+    """Short auto-summary for the changelog Note column (≤~12 words).
+
+    Examples:
+      first run                         → "first full scan"
+      fp-delta, depth changed           → "depth standard→thorough; +5/-17 vs prior"
+      fp-delta, depth same              → "+5/-17 vs prior"
+      count-only (legacy prior, no fps) → "depth standard→thorough; 60→48 (count-only)"
+    """
+    if delta_basis == "initial" or prior_entry is None:
+        return "first full scan"
+    parts: list[str] = []
+    if prior_depth and cur_depth and prior_depth != cur_depth:
+        parts.append(f"depth {prior_depth}→{cur_depth}")
+    if delta_basis == "fingerprint":
+        parts.append(f"+{n_added}/-{n_resolved} vs prior")
+    else:  # count-only / incremental fallback
+        if prior_n is not None and prior_n != cur_n:
+            parts.append(f"{prior_n}→{cur_n} threats")
+        elif prior_n is not None:
+            parts.append(f"{cur_n} threats (stable)")
+        if delta_basis == "count-only":
+            parts.append("count-only")
+    return "; ".join(parts)
+
+
 def _depth_is_shallower(cur: str | None, prior: str | None) -> bool:
     """True iff `cur` is strictly shallower than `prior` (both known)."""
     c = _DEPTH_RANK.get((cur or "").strip().lower())
@@ -1102,47 +1145,104 @@ def build_changelog(
 
     plugin_ver, analysis_ver = _plugin_version(plugin_root)
     mode = skill_cfg.get("mode", "full")
+    cur_depth = skill_cfg.get("assessment_depth", "standard")
+    cur_n = len(threats)
 
-    # For full runs, every component+threat is "added" vs the empty baseline.
-    # Incremental runs would need a baseline-diff; v1 treats incremental as full.
+    # Self-contained delta source: every entry stores its threat FINGERPRINTS
+    # ("component|cwe|location-stripped-title"). A full run cannot diff against
+    # the prior threat OBJECTS (the yaml was overwritten in place), but it CAN
+    # diff its fingerprints against the PRIOR ENTRY's stored fingerprints. This
+    # makes a --full re-run over an existing model surface a real per-finding
+    # delta (the flag's promise) instead of marking every threat "added".
+    cur_fps = [_fp_str(t) for t in threats]
+    cur_fp_set = set(cur_fps)
+    prior_entry = existing[0] if existing else None
+    prior_fps_list = (prior_entry or {}).get("fingerprints") or []
+    prior_fp_set = set(prior_fps_list)
+    prior_has_fps = bool(prior_entry) and bool(prior_fps_list)
+    prior_depth = (prior_entry or {}).get("assessment_depth")
+    prior_n = (
+        (prior_entry or {}).get("threat_count")
+        if (prior_entry or {}).get("threat_count") is not None
+        else len(((prior_entry or {}).get("added") or {}).get("threats") or [])
+        if prior_entry
+        else None
+    )
+
+    if recon_info is not None:
+        # Incremental path (baseline-diff already computed upstream) — unchanged.
+        delta_basis = "incremental"
+        added_threats = recon_info["added_ids"]
+        carried_components = recon_info["carried_forward_ids"]
+        reanalyzed = recon_info["reanalyzed_ids"]
+        resolved_block = {
+            "threats": sorted(recon_info["resolved_reason_by_id"].keys()),
+            "reason_by_id": dict(recon_info["resolved_reason_by_id"]),
+        }
+    elif prior_has_fps:
+        # Full run over a FINGERPRINTED prior entry → real per-finding delta.
+        delta_basis = "fingerprint"
+        added_threats = sorted(t["id"] for t in threats if t.get("id") and _fp_str(t) not in prior_fp_set)
+        resolved_fps = sorted(prior_fp_set - cur_fp_set)
+        reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
+        carried_components = []
+        resolved_block = {
+            # T-IDs are not stable across full runs, so resolved findings are
+            # identified by their (prior) fingerprint label, not a dangling
+            # T-NNN anchor. The template renders these as plain text.
+            "threats": [],
+            "fingerprints": resolved_fps,
+            "reason_by_id": {},
+        }
+    else:
+        # First run, OR a prior entry that predates fingerprinting (legacy) →
+        # no comparable baseline, so we honestly report a snapshot count rather
+        # than a fake "+N added" delta.
+        delta_basis = "count-only" if prior_entry else "initial"
+        added_threats = [t["id"] for t in threats]
+        reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
+        carried_components = []
+        resolved_block = {"threats": [], "reason_by_id": {}}
+
+    note = _changelog_note(
+        delta_basis=delta_basis,
+        prior_entry=prior_entry,
+        prior_depth=prior_depth,
+        cur_depth=cur_depth,
+        prior_n=prior_n,
+        cur_n=cur_n,
+        n_added=len(added_threats),
+        n_resolved=len(resolved_block.get("fingerprints") or resolved_block.get("threats") or []),
+    )
+
     new_entry = {
-        "version": 1,  # changelog entry schema version, not plugin version
+        "version": 1,  # changelog entry SCHEMA version (the run sequence number
+        # is derived positionally at render time — newest entry = highest vN).
         "date": _dt.date.today().isoformat(),
         "mode": mode,
-        "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
+        "assessment_depth": cur_depth,
         "reasoning_model": skill_cfg.get("reasoning_model", "sonnet-economy"),
         "plugin_version": plugin_ver,
         "analysis_version": analysis_ver,
         "baseline_sha": None,
         "current_sha": current_sha,
         "changed_files": None,
-        "reanalyzed_components": (
-            recon_info["reanalyzed_ids"] if recon_info is not None
-            else sorted({c.get("id", "") for c in components if c.get("id")})
-        ),
-        "carried_forward_components": (
-            recon_info["carried_forward_ids"] if recon_info is not None else []
-        ),
+        # Delta bookkeeping (new 2026-06-13).
+        "threat_count": cur_n,
+        "fingerprints": cur_fps,
+        "delta_basis": delta_basis,
+        "previous_date": (prior_entry or {}).get("date"),
+        "previous_threat_count": prior_n,
+        "reanalyzed_components": reanalyzed,
+        "carried_forward_components": carried_components,
         "added": {
-            # Full run: every threat is added vs the empty baseline. Incremental
-            # with a baseline: only fingerprint-new threats (carried/preserved
-            # ones are not "added").
-            "threats": (
-                recon_info["added_ids"] if recon_info is not None
-                else [t["id"] for t in threats]
-            ),
+            "threats": added_threats,
             "components": sorted({c.get("id", "") for c in components if c.get("id")}),
             "attack_surface": [],
         },
         "changed": {"threats": []},
-        "resolved": (
-            {
-                "threats": sorted((recon_info["resolved_reason_by_id"]).keys()),
-                "reason_by_id": dict(recon_info["resolved_reason_by_id"]),
-            }
-            if recon_info is not None
-            else {"threats": [], "reason_by_id": {}}
-        ),
+        "resolved": resolved_block,
+        "note": note,
     }
 
     # Idempotent re-build: drop any prior entry that describes the identical

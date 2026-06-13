@@ -1204,6 +1204,15 @@ identifies the block to the user.
 ```bash
 case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
   noop:* | noise:* | changes:noop_global_only | changes:noop_empty_input)
+    # Iterative no-op: surface the threat delta explicitly even though nothing
+    # changed (the user asked for delta output on every iterative run, incl.
+    # "no changes"). No new changelog entry is written on a no-op, so the delta
+    # is 0/0 against the existing baseline by construction. Derive the baseline
+    # run number positionally from the existing changelog length.
+    if [ "$MODE" = "incremental" ]; then
+      BASE_V=$(python3 -c "import yaml;d=yaml.safe_load(open('$OUTPUT_DIR/threat-model.yaml')) or {};print(len(d.get('changelog') or []) or 1)" 2>/dev/null || echo 1)
+      printf '\n  Threat delta vs baseline (v%s): 0 new, 0 resolved — no source changes since the last assessment.\n' "$BASE_V" >&2
+    fi
     # Missing-export backstop. The repo is unchanged so the pipeline is
     # skipped — but the user may have added an export flag (--pdf / --html)
     # whose artifact does not exist yet from a prior run. The existing

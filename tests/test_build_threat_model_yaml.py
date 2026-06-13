@@ -541,14 +541,84 @@ def test_changelog_first_run_single_entry(tmp_path):
 def test_changelog_second_run_extends_not_overwrites(tmp_path):
     b = _load()
     run1 = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
-    threats2 = [{"id": "T-001", "component": "comp-a"}, {"id": "T-002", "component": "comp-a"}]
+    # T-001 persists (same fingerprint as run1), T-002 is genuinely new.
+    threats2 = [
+        {"id": "T-001", "component": "comp-a"},
+        {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"},
+    ]
     run2 = b.build_changelog(_CL_CFG, threats2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2")
     # History grew and is newest-first; the prior entry survives verbatim.
     assert len(run2) == 2
     assert run2[0]["current_sha"] == "sha-2"
     assert run2[1]["current_sha"] == "sha-1"
-    assert run2[0]["added"]["threats"] == ["T-001", "T-002"]
+    # A full run over a FINGERPRINTED prior computes a real per-finding delta:
+    # T-001 is carried (not added), only the genuinely-new T-002 is added.
+    assert run2[0]["delta_basis"] == "fingerprint"
+    assert run2[0]["added"]["threats"] == ["T-002"]
     assert run2[1] == run1[0]
+
+
+def test_changelog_first_run_is_initial_with_fingerprints(tmp_path):
+    b = _load()
+    cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
+    e = cl[0]
+    assert e["delta_basis"] == "initial"
+    assert e["note"] == "first full scan"
+    assert e["threat_count"] == 1
+    assert e["fingerprints"]  # stored for the NEXT run to diff against
+    assert e["previous_date"] is None
+
+
+def test_changelog_full_delta_resolves_by_fingerprint(tmp_path):
+    b = _load()
+    # Run 1 (standard): two findings.
+    t1 = [
+        {"id": "T-001", "component": "comp-a", "cwe": "CWE-89", "title": "SQLi"},
+        {"id": "T-002", "component": "comp-b", "cwe": "CWE-639", "title": "IDOR"},
+    ]
+    run1 = b.build_changelog(_CL_CFG, t1, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
+    # Run 2 (thorough): T-001 persists, T-002 gone, a new finding appears.
+    cfg2 = {"mode": "full", "assessment_depth": "thorough", "reasoning_model": "opus-cheap"}
+    t2 = [
+        {"id": "T-001", "component": "comp-a", "cwe": "CWE-89", "title": "SQLi"},
+        {"id": "T-050", "component": "comp-c", "cwe": "CWE-94", "title": "RCE"},
+    ]
+    run2 = b.build_changelog(cfg2, t2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2")
+    e = run2[0]
+    assert e["delta_basis"] == "fingerprint"
+    assert e["added"]["threats"] == ["T-050"]
+    # Resolved is carried as the prior FINGERPRINT (T-IDs aren't stable), not a
+    # dangling T-NNN.
+    assert e["resolved"]["fingerprints"] == ["comp-b|CWE-639|idor"]
+    assert e["previous_date"] == run1[0]["date"]
+    assert e["previous_threat_count"] == 2
+    assert "depth standard→thorough" in e["note"]
+    assert "+1/-1 vs prior" in e["note"]
+
+
+def test_changelog_count_only_when_prior_lacks_fingerprints(tmp_path):
+    b = _load()
+    # Simulate a legacy prior entry (pre-fingerprinting): no `fingerprints` key.
+    legacy_prior = [
+        {
+            "version": 1,
+            "date": "2026-06-12",
+            "mode": "full",
+            "assessment_depth": "standard",
+            "added": {"threats": ["T-001", "T-002", "T-003"]},
+            "changed": {"threats": []},
+            "resolved": {"threats": []},
+        }
+    ]
+    cfg2 = {"mode": "full", "assessment_depth": "thorough", "reasoning_model": "opus-cheap"}
+    t2 = [{"id": "T-001", "component": "comp-a", "cwe": "CWE-89", "title": "SQLi"}]
+    cl = b.build_changelog(cfg2, t2, _CL_COMPS, [], legacy_prior, tmp_path, current_sha="sha-2")
+    e = cl[0]
+    assert e["delta_basis"] == "count-only"
+    assert e["threat_count"] == 1
+    assert e["previous_threat_count"] == 3  # len(prior added.threats)
+    assert "count-only" in e["note"]
+    assert "3→1 threats" in e["note"]
 
 
 def test_changelog_accumulates_across_three_runs(tmp_path):

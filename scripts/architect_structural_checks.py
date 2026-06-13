@@ -298,6 +298,43 @@ _VERDICT_ALARMING_SIGNALS = (
     "require urgent",
 )
 
+# Negators that flip an "acceptable" signal into an alarming one when they
+# directly precede it — e.g. "not production-ready", "far from secure by
+# default". Without this guard the substring "production-ready" matches inside
+# "not production-ready" and a correctly-alarming Verdict over a Critical-laden
+# model is wrongly flagged as understating risk (the 2026-06-13 juice-shop
+# run's "not production-ready" verdict tripped verdict_understates_critical).
+_VERDICT_NEGATORS = (
+    "not",
+    "never",
+    "isn't",
+    "aren't",
+    "no longer",
+    "far from",
+    "anything but",
+    "hardly",
+)
+
+
+def _signal_present(text: str, signals: tuple[str, ...]) -> bool:
+    """True if any signal appears in `text` and is NOT directly negated.
+
+    A signal counts as negated when one of `_VERDICT_NEGATORS` ends within the
+    ~16 characters immediately preceding the match (covers "not ",
+    "far from ", etc.). `text` is assumed lower-cased by the caller.
+    """
+    for sig in signals:
+        start = 0
+        while True:
+            idx = text.find(sig, start)
+            if idx == -1:
+                break
+            window = text[max(0, idx - 16):idx]
+            if not any(neg in window for neg in _VERDICT_NEGATORS):
+                return True
+            start = idx + 1
+    return False
+
 _RISK_DIST_RE = re.compile(
     # Match either "Risk Distribution:", "**Risk Distribution**:" or
     # "**Risk Distribution:**" — colon position inside/outside the bold
@@ -376,8 +413,9 @@ def check_ms_verdict(tm_md_path: Path, threats_merged_path: Path) -> dict[str, A
             "findings": [],
         }
 
-    # Rhetoric vs. reality
-    says_acceptable = any(sig in verdict for sig in _VERDICT_ACCEPTABLE_SIGNALS)
+    # Rhetoric vs. reality. Negation-aware so "not production-ready" is NOT
+    # read as an acceptable posture (see _signal_present / _VERDICT_NEGATORS).
+    says_acceptable = _signal_present(verdict, _VERDICT_ACCEPTABLE_SIGNALS)
     says_alarming = any(sig in verdict for sig in _VERDICT_ALARMING_SIGNALS)
 
     if says_acceptable and actual["Critical"] >= 1:
@@ -1020,6 +1058,12 @@ _SEC7_FLOSKELN = (
     "with the expectation that",
 )
 _SEC7_OPENER_RE = re.compile(r"^\s*The (application|system|server)\b", re.I)
+# §7 H4 label probes. The colon may sit INSIDE the bold span
+# (`**Security assessment:**`) or be absent (`**Relevant findings**`) — both
+# are contract-valid, so tolerate the optional `:` rather than literal-matching
+# one fixed form (the literal form false-positived on the whole section).
+_SEC7_ASSESSMENT_LABEL_RE = re.compile(r"\*\*Security assessment:?\*\*")
+_SEC7_FINDINGS_LABEL_RE = re.compile(r"\*\*Relevant findings:?\*\*")
 
 
 def _extract_sec7_body(tm_md: str) -> str:
@@ -1091,7 +1135,12 @@ def check_sec7_quality_bar(tm_md_path: Path) -> dict[str, Any]:
         num = h.group(1)
         if "**Status:**" not in block:
             h4_no_status.append(num)
-        if "**Security assessment**" not in block or "**Relevant findings**" not in block:
+        # Tolerate an optional colon INSIDE the bold span — the renderer emits
+        # `**Security assessment:**` (colon) but `**Relevant findings**` (no
+        # colon). A literal `"**Security assessment**" not in block` check
+        # false-positives on every block (the 2026-06-13 juice-shop run flagged
+        # all 33 H4s although the labels were present). Match either form.
+        if not _SEC7_ASSESSMENT_LABEL_RE.search(block) or not _SEC7_FINDINGS_LABEL_RE.search(block):
             h4_no_labels.append(num)
         # concrete-opener heuristic: first non-empty prose line after the Status badge.
         after_status = re.split(r"\*\*Status:\*\*[^\n]*\n", block, maxsplit=1)

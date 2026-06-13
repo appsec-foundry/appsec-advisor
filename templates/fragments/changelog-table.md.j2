@@ -1,18 +1,26 @@
 {#- Changelog — tabular rendering.
 
-    One row per version; most recent first. Inline delta cells use the
-    `+A / ~C / -R` shorthand (added / changed / resolved). The detail
-    block below the table enumerates threats for the LATEST entry, but
-    only when the run is incremental (baseline_sha set) — for the
-    initial full scan every threat is "added" by definition, so the
-    bullet list would just restate the entire register.
+    One row per run; most recent first. The "v" column is a positional RUN
+    SEQUENCE number (newest entry = highest vN), NOT the entry's schema-version
+    field (which is a constant). Inline delta cells use the `+A / ~C / -R`
+    shorthand (added / changed / resolved).
+
+    Delta basis (entry.delta_basis):
+      • fingerprint — full run diffed against the PRIOR entry's stored
+        fingerprints → real per-finding delta. Detail block lists added
+        (linked) + resolved (by prior fingerprint label, no dangling anchor).
+      • incremental — baseline-diff computed upstream (git baseline_sha set).
+      • count-only — a prior entry exists but predates fingerprinting, so we
+        show a snapshot count ("N total") instead of a fake "+N added".
+      • initial — first run on this repo.
 
     Data shape per entry (see schemas/threat-model.output.schema.yaml):
-      version, date, mode, baseline_sha, current_sha
+      version, date, mode, baseline_sha, current_sha, delta_basis,
+      threat_count, previous_date, previous_threat_count, fingerprints[]
       changed_files, changed_lines ({insertions, deletions})
-      added:    { threats: [T-NNN,...], components: [C-NN,...], attack_surface: [E-NN,...] }
-      changed:  { threats: [T-NNN,...], notes_by_id: { T-NNN: "..." } }
-      resolved: { threats: [T-NNN,...], reason_by_id: { T-NNN: "..." } }
+      added:    { threats: [T-NNN,...], components: [...], attack_surface: [...] }
+      changed:  { threats: [T-NNN,...] }
+      resolved: { threats: [T-NNN,...], fingerprints: ["comp|cwe|title",...], reason_by_id: {...} }
       reanalyzed_components, carried_forward_components, note
 
     Inputs:
@@ -26,19 +34,25 @@ _Append-only history of assessment runs. Most recent first._
 | Version | Date | Mode | Depth | Reasoning | Baseline → Current | Δ Threats | Code | Note |
 |---------|------|------|-------|-----------|--------------------|-----------|------|------|
 {% for entry in changelog %}
-{%- set v             = entry.version -%}
+{%- set run_no        = (changelog | length) - loop.index0 -%}
+{%- set prior_run     = run_no - 1 -%}
 {%- set date          = entry.date or '—' -%}
 {%- set mode          = (entry.mode or 'full') | lower -%}
 {%- set depth         = (entry.assessment_depth or '—') | lower -%}
 {%- set reasoning     = entry.reasoning_model or '—' -%}
+{%- set basis         = entry.delta_basis or '' -%}
 {%- set baseline_sha  = entry.baseline_sha or '' -%}
 {%- set current_sha   = entry.current_sha or '' -%}
 {%- set has_baseline  = (baseline_sha | length) > 0 -%}
 {%- set short_base    = baseline_sha[:7] -%}
-{%- set short_cur     = current_sha[:7] if current_sha else '—' -%}
+{%- set short_cur     = current_sha[:7] if current_sha else '' -%}
 {%- set added_t       = (entry.added.threats   if entry.added   else []) | default([]) -%}
 {%- set changed_t     = (entry.changed.threats if entry.changed else []) | default([]) -%}
 {%- set resolved_t    = (entry.resolved.threats if entry.resolved else []) | default([]) -%}
+{%- set resolved_fp   = (entry.resolved.fingerprints if entry.resolved else []) | default([]) -%}
+{%- set n_resolved    = (resolved_fp | length) if resolved_fp else (resolved_t | length) -%}
+{%- set threat_count  = entry.threat_count | default(added_t | length) -%}
+{%- set has_prior     = (entry.previous_date or '') | length > 0 -%}
 {%- set changed_files = entry.changed_files | default(none) -%}
 {%- set cl            = entry.changed_lines or {} -%}
 {%- set ins           = cl.insertions | default(none) -%}
@@ -49,13 +63,26 @@ _Append-only history of assessment runs. Most recent first._
     keep `note` ≤12 words. -#}
 {%- if note|length > 60 -%}{%- set note = note[:58] ~ '…' -%}{%- endif -%}
 {%- if note -%}{%- set note = note | replace('|', '\\|') -%}{%- endif -%}
-{%- set delta_cell = '+' ~ (added_t|length) ~ ' / ~' ~ (changed_t|length) ~ ' / -' ~ (resolved_t|length) -%}
+{#- Δ Threats: the +added / ~changed / -resolved delta only when the row
+    represents a real diff against a baseline — a git baseline (incremental),
+    a fingerprint delta (full over an existing model), or an explicit
+    incremental basis. A from-scratch full snapshot (no baseline, everything
+    in `added`) shows an honest count instead of a fake "+N added". -#}
+{%- set is_delta_row = has_baseline or basis in ['fingerprint', 'incremental'] -%}
+{%- if is_delta_row -%}
+{%- set delta_cell = '+' ~ (added_t|length) ~ ' / ~' ~ (changed_t|length) ~ ' / -' ~ n_resolved -%}
+{%- else -%}
+{%- set delta_cell = (threat_count | string) ~ ' total' -%}
+{%- endif -%}
+{#- Baseline → Current cell. Git baseline (incremental) shows the sha range;
+    a full run over an existing model shows "(vs v<prior>)"; a first run shows
+    "(initial)". -#}
 {%- if has_baseline -%}
 {%- set sha_cell = '`' ~ short_base ~ '` → `' ~ short_cur ~ '`' -%}
-{%- elif v == 1 and mode == 'full' -%}
-{%- set sha_cell = '_(initial)_' -%}
+{%- elif has_prior -%}
+{%- set sha_cell = ('`' ~ short_cur ~ '` ' if short_cur else '') ~ '(vs v' ~ prior_run ~ ')' -%}
 {%- else -%}
-{%- set sha_cell = '—' -%}
+{%- set sha_cell = '_(initial)_' -%}
 {%- endif -%}
 {%- set code_parts = [] -%}
 {%- if changed_files is not none and changed_files -%}
@@ -65,41 +92,44 @@ _Append-only history of assessment runs. Most recent first._
 {%- set _ = code_parts.append('+' ~ ins ~ '/-' ~ dels) -%}
 {%- endif -%}
 {%- set code_cell = code_parts | join(', ') if code_parts else '—' -%}
-| v{{ v }} | {{ date }} | {{ mode }} | {{ depth }} | {{ reasoning }} | {{ sha_cell }} | {{ delta_cell }} | {{ code_cell }} | {{ note or '—' }} |
+| v{{ run_no }} | {{ date }} | {{ mode }} | {{ depth }} | {{ reasoning }} | {{ sha_cell }} | {{ delta_cell }} | {{ code_cell }} | {{ note or '—' }} |
 {% endfor %}
-{#- Detail block for the LATEST entry. Skipped on the initial full scan:
-    every threat is by definition "added" then, so a bullet list restating
-    the Threat Register adds length without information. For incremental
-    runs the block lists added / changed / resolved threats as bullets,
-    each with the threat title so the reader can see what the delta
-    actually means without jumping to §8. -#}
+{#- Detail block for the LATEST entry. Rendered when the latest run has a
+    comparable baseline (incremental git diff OR a fingerprint delta) AND there
+    is an actual delta to show. Skipped for the initial / count-only run where
+    "everything is added" would just restate the Threat Register. -#}
 {%- if changelog -%}
 {%- set latest = changelog[0] -%}
+{%- set latest_run = changelog | length -%}
 {%- set la_t   = (latest.added.threats     if latest.added    else []) | default([]) -%}
 {%- set lc_t   = (latest.changed.threats   if latest.changed  else []) | default([]) -%}
 {%- set lr_t   = (latest.resolved.threats  if latest.resolved else []) | default([]) -%}
+{%- set lr_fp  = (latest.resolved.fingerprints if latest.resolved else []) | default([]) -%}
+{%- set latest_basis = latest.delta_basis or '' -%}
 {%- set latest_has_baseline = (latest.baseline_sha or '') | length > 0 -%}
-{%- if latest_has_baseline and (la_t or lc_t or lr_t) %}
+{%- set show_detail = latest_has_baseline or latest_basis in ['incremental', 'fingerprint'] -%}
+{#- On any iterative run (incremental git-baseline OR full-over-existing
+    fingerprint delta) enumerate the actual finding IDs — definitely the new
+    ones, and the resolved ones where possible. IDs are linked WITHOUT titles
+    (compact, the title lives in §8). Resolved findings are NOT linked: they no
+    longer exist in this document, so a `#t-nnn` link would dangle. The block
+    renders even with zero delta so an unchanged iterative run is explicit. -#}
+{%- if show_detail %}
 
-**Latest run (v{{ latest.version }}) — threat-level delta:**
-
+**Latest run (v{{ latest_run }}) — threat-level delta:**
 {% if la_t %}
-- **Added ({{ la_t|length }}):**
-{%- for tid in la_t %}
-  - [{{ tid }}](#{{ tid|lower }}){% if threats_by_id and threats_by_id.get(tid) %} - {{ threats_by_id.get(tid) }}{% endif %}
-{%- endfor %}
+- **Added ({{ la_t|length }}):** {% for tid in la_t %}[{{ tid }}](#{{ tid|lower }}){{ ", " if not loop.last }}{% endfor %}
 {% endif -%}
 {% if lc_t %}
-- **Changed ({{ lc_t|length }}):**
-{%- for tid in lc_t %}
-  - [{{ tid }}](#{{ tid|lower }}){% if threats_by_id and threats_by_id.get(tid) %} - {{ threats_by_id.get(tid) }}{% endif %}
-{%- endfor %}
+- **Changed ({{ lc_t|length }}):** {% for tid in lc_t %}[{{ tid }}](#{{ tid|lower }}){{ ", " if not loop.last }}{% endfor %}
 {% endif -%}
 {% if lr_t %}
-- **Resolved ({{ lr_t|length }}):**
-{%- for tid in lr_t %}
-  - [{{ tid }}](#{{ tid|lower }}){% if threats_by_id and threats_by_id.get(tid) %} - {{ threats_by_id.get(tid) }}{% endif %}
-{%- endfor %}
+- **Resolved ({{ lr_t|length }}):** {% for tid in lr_t %}{{ tid }}{{ ", " if not loop.last }}{% endfor %} _(removed since the prior run — not linked: no longer in this document)_
+{% elif lr_fp %}
+- **Resolved ({{ lr_fp|length }}):** {% for fp in lr_fp %}{%- set fpp = fp.split('|') %}{{ (fpp[2] if fpp|length > 2 else fp) | title }}{% if fpp|length > 1 and fpp[1] %} ({{ fpp[1] }}){% endif %}{{ "; " if not loop.last }}{% endfor %} _(identified by fingerprint — T-IDs are not stable across full runs)_
+{% endif -%}
+{% if not (la_t or lc_t or lr_t or lr_fp) %}
+_No threat-level changes since the previous run (v{{ latest_run - 1 }})._
 {% endif -%}
 {%- endif -%}
 {%- endif -%}

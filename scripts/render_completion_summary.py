@@ -296,10 +296,33 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
     if is_first_run_full:
         return None
 
+    # An "iterative" run (incremental git-baseline, or a full run that diffed
+    # against a prior fingerprinted entry) ALWAYS reports its threat delta on
+    # the console — including an explicit "no new / no resolved" line when
+    # nothing changed. Non-iterative full snapshots keep the old suppression.
+    basis = e.get("delta_basis")
+    is_iterative = (
+        basis in ("incremental", "fingerprint")
+        or mode_val == "incremental"
+        or bool(baseline_val)
+    )
+
+    # Resolved on a full fingerprint delta are carried as prior fingerprints
+    # (T-IDs aren't stable across full runs), not as resolved.threats.
+    resolved_fps = (e.get("resolved") or {}).get("fingerprints") or []
+    resolved_fp_labels = [
+        (fp.split("|")[2] or fp).strip() for fp in resolved_fps if isinstance(fp, str)
+    ]
+
     # Only render when the entry has delta data. First-run full assessments
-    # produce a changelog[0] but with empty deltas — skip those.
-    has_delta = bool(added_ids or changed_ids or resolved_ids)
-    if not has_delta and not (e.get("reanalyzed_components") or e.get("carried_forward_components")):
+    # produce a changelog[0] but with empty deltas — skip those, but never skip
+    # an iterative run (the user asked for output even when nothing changed).
+    has_delta = bool(added_ids or changed_ids or resolved_ids or resolved_fp_labels)
+    if (
+        not is_iterative
+        and not has_delta
+        and not (e.get("reanalyzed_components") or e.get("carried_forward_components"))
+    ):
         return None
 
     notes_by_id = (e.get("changed") or {}).get("notes_by_id") or {}
@@ -324,6 +347,12 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
         "reanalyzed_n": len(e.get("reanalyzed_components") or []),
         "carried_n": len(e.get("carried_forward_components") or []),
         "cl_mode": e.get("mode", "?"),
+        "is_iterative": is_iterative,
+        # Full ID lists (no titles) for the console New/Resolved lines. Resolved
+        # IDs are plain (removed findings have no current anchor); a full
+        # fingerprint delta falls back to the prior fingerprint labels.
+        "added_id_list": list(added_ids),
+        "resolved_id_list": list(resolved_ids) or resolved_fp_labels,
         "baseline_short": baseline_sha[:12] if baseline_sha != "n/a" else "n/a",
         # Run sequence number is positional (newest entry = total count), NOT
         # the entry's constant schema-version field. The newest entry is cl[0].
@@ -787,6 +816,16 @@ def render_change_summary(cs: dict) -> list[str]:
     if cs["cl_mode"] == "incremental":
         components_line += f", {cs['carried_n']} carried forward"
     lines.append(components_line)
+    # Iterative runs list the actual finding IDs (no titles) — new ones and,
+    # where identifiable, removed ones — and say so explicitly even when the
+    # delta is empty, so an unchanged re-scan is never silent.
+    if cs.get("is_iterative"):
+        new_ids = cs.get("added_id_list") or []
+        gone_ids = cs.get("resolved_id_list") or []
+        lines.append(f"  New IDs    : {', '.join(new_ids) if new_ids else 'none'}")
+        lines.append(f"  Removed IDs: {', '.join(gone_ids) if gone_ids else 'none'}")
+        if not new_ids and not gone_ids:
+            lines.append("  (no new or resolved findings since the baseline)")
     lines.append(f"  Changelog : v{cs['version']} prepended to threat-model.md")
     return lines
 

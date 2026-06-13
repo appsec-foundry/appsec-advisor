@@ -153,6 +153,78 @@ class TestChangeSummary:
         assert cs["cl_mode"] == "incremental"
         assert cs["baseline_short"] == "abcdef123456"
 
+    def test_incremental_new_and_removed_ids_listed_without_titles(self):
+        yaml_data = {
+            "threats": [{"id": "T-010", "risk": "High", "title": "X"}],
+            "changelog": [
+                {
+                    "date": "2026-04-23",
+                    "mode": "incremental",
+                    "delta_basis": "incremental",
+                    "baseline_sha": "abcdef1234567890",
+                    "added": {"threats": ["T-010", "T-011"]},
+                    "changed": {"threats": []},
+                    "resolved": {"threats": ["T-001"], "reason_by_id": {"T-001": "fixed"}},
+                },
+                {"date": "2026-04-19", "mode": "full"},
+            ],
+        }
+        cs = rcs.extract_change_summary(yaml_data)
+        assert cs["is_iterative"] is True
+        assert cs["added_id_list"] == ["T-010", "T-011"]
+        assert cs["resolved_id_list"] == ["T-001"]
+        lines = rcs.render_change_summary(cs)
+        assert "  New IDs    : T-010, T-011" in lines
+        assert "  Removed IDs: T-001" in lines
+
+    def test_incremental_no_changes_still_reports(self):
+        yaml_data = {
+            "threats": [],
+            "changelog": [
+                {
+                    "date": "2026-04-23",
+                    "mode": "incremental",
+                    "delta_basis": "incremental",
+                    "baseline_sha": "abcdef1234567890",
+                    "added": {"threats": []},
+                    "changed": {"threats": []},
+                    "resolved": {"threats": []},
+                },
+                {"date": "2026-04-19", "mode": "full"},
+            ],
+        }
+        # An unchanged iterative run is NOT suppressed — it reports explicitly.
+        cs = rcs.extract_change_summary(yaml_data)
+        assert cs is not None
+        lines = rcs.render_change_summary(cs)
+        assert "  New IDs    : none" in lines
+        assert "  Removed IDs: none" in lines
+        assert "  (no new or resolved findings since the baseline)" in lines
+
+    def test_resolved_ids_from_fingerprint_delta_on_full_run(self):
+        # A full run over a fingerprinted prior carries resolved findings as
+        # prior fingerprint labels (T-IDs aren't stable across full runs).
+        yaml_data = {
+            "threats": [],
+            "changelog": [
+                {
+                    "date": "2026-04-23",
+                    "mode": "full",
+                    "delta_basis": "fingerprint",
+                    "previous_date": "2026-04-19",
+                    "added": {"threats": []},
+                    "changed": {"threats": []},
+                    "resolved": {"threats": [], "fingerprints": ["data-layer|CWE-639|idor"]},
+                },
+                {"date": "2026-04-19", "mode": "full"},
+            ],
+        }
+        cs = rcs.extract_change_summary(yaml_data)
+        assert cs["is_iterative"] is True
+        assert cs["resolved_id_list"] == ["idor"]
+        lines = rcs.render_change_summary(cs)
+        assert "  Removed IDs: idor" in lines
+
     def test_threat_delta_limits_each_group_to_three(self):
         yaml_data = {
             "threats": [{"id": f"T-{i:03d}", "risk": "High", "title": f"Threat {i}"} for i in range(1, 6)],

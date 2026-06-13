@@ -211,6 +211,31 @@ class TestMsVerdict:
         kinds = [f["kind"] for f in r["findings"]]
         assert "verdict_understates_critical" in kinds
 
+    def test_verdict_negated_production_ready_not_understated(self, out_dir):
+        """Regression (2026-06-13 juice-shop): a verdict saying the system is
+        'not production-ready' over a Critical-laden model must NOT trip
+        verdict_understates_critical — the substring 'production-ready' is
+        negated. Root cause was a bare substring match ignoring negation."""
+        _write_text(
+            out_dir / "threat-model.md",
+            """
+            # Threat Model
+            ## Management Summary
+
+            > **Verdict**: The system is not production-ready; ten Critical
+            > findings allow full account takeover and server-side RCE.
+
+            **Risk Distribution:** Critical: 10 · High: 30 · Medium: 6 · Low: 2 · **Total:** 48
+        """,
+        )
+        _write_json(
+            out_dir / ".threats-merged.json",
+            {"threats": [{"risk": "Critical"}] * 10 + [{"risk": "High"}] * 30},
+        )
+        r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
+        kinds = [f["kind"] for f in r["findings"]]
+        assert "verdict_understates_critical" not in kinds
+
     def test_verdict_overstates_risk(self, out_dir):
         _write_text(
             out_dir / "threat-model.md",
@@ -863,6 +888,22 @@ class TestSec7QualityBar:
         _write_text(out_dir / "threat-model.md", _sec7_doc(body))
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
         assert any(f["kind"] == "section7_h4_status" for f in r["findings"])
+
+    def test_h4_labels_with_colon_inside_span_not_flagged(self, out_dir):
+        """Regression (2026-06-13 juice-shop): the renderer emits
+        `**Security assessment:**` (colon INSIDE the bold span). A literal
+        `'**Security assessment**' not in block` check false-positived
+        sec7_v2_h4_labels on every H4 block. The label probe must tolerate the
+        optional colon."""
+        colon = _CLEAN_SEC7.replace("**Security assessment**", "**Security assessment:**")
+        # sanity: the fixture really does use the colon form now
+        assert "**Security assessment:**" in colon
+        body = colon + "\n" + "\n".join(f"### 7.{n} S{n}\n\np\n" for n in range(3, 14))
+        _write_text(out_dir / "threat-model.md", _sec7_doc(body))
+        r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
+        assert not any(f["kind"] == "sec7_v2_h4_labels" for f in r["findings"]), [
+            f["kind"] for f in r["findings"]
+        ]
 
     def test_legacy_flow_flagged(self, out_dir):
         body = (

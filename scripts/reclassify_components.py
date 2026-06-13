@@ -104,6 +104,41 @@ def _component_for(file_path: str, matchers: list[tuple[str, list[re.Pattern[str
     return hits
 
 
+def _glob_specificity(glob: str) -> int:
+    """Higher = more specific. An exact file path (`routes/memory.ts`) outranks
+    a broad directory glob (`routes/**`): we score the literal (non-wildcard)
+    character count and subtract one per `*` so wildcards never beat literals
+    of the same prefix length."""
+    return len(glob.replace("*", "")) - glob.count("*")
+
+
+def _most_specific_candidate(
+    files: list[str],
+    candidate_ids,
+    raw_glob_index: dict[str, list[str]],
+    primary_id: str,
+) -> str:
+    """Pick the registered component whose MATCHING path glob is most specific.
+
+    Used only to resolve a non-registered placeholder component (see the
+    `reclassify` driver) when an evidence file is claimed by >1 component via
+    overlapping globs — e.g. `routes/memory.ts` matched by both
+    `express-backend:routes/**` and `file-upload-service:routes/memory.ts`.
+    The exact-path owner wins (here file-upload-service), which both resolves
+    the dangling §8 anchor AND is the semantically correct owner. Ties break
+    toward `primary_id`, then lexicographically for run-to-run determinism.
+    """
+    def _best_spec(cid: str) -> int:
+        best = -1
+        for g in raw_glob_index.get(cid, []):
+            pat = _glob_to_regex(g)
+            if any(pat.search(f) for f in files):
+                best = max(best, _glob_specificity(g))
+        return best
+
+    return max(candidate_ids, key=lambda cid: (_best_spec(cid), cid == primary_id, cid))
+
+
 def _sort_tid(tid: str) -> tuple[int, str]:
     """Sort key that keeps T-NNN in numeric order."""
     try:
@@ -162,6 +197,16 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
     matcher_index = {cid: pats for cid, pats in matchers}
     known_ids = {(c.get("id") or "").strip() for c in components if isinstance(c, dict)}
     primary_id = _primary_component_id(components)
+    # Raw path globs per component — needed to score glob specificity when a
+    # placeholder component has to be resolved against an evidence file that
+    # multiple components' globs match (see `_most_specific_candidate`).
+    raw_glob_index = {
+        (c.get("id") or "").strip(): [
+            g.strip() for g in (c.get("paths") or []) if isinstance(g, str) and g.strip()
+        ]
+        for c in components
+        if isinstance(c, dict) and (c.get("id") or "").strip()
+    }
 
     changes: list[dict] = []
     threats = data.get("threats") or []
@@ -191,19 +236,37 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         if len(candidate_hits) == 1:
             new_cid = next(iter(candidate_hits))
             token = f"tier_reclassified_from_{current or 'unknown'}"
-        elif not candidate_hits and current and current not in known_ids and primary_id and primary_id != current:
-            # Fallback: `current` is a non-DFD pseudo-component (e.g.
-            # "ci-cd-pipeline") with no §2.3 anchor, and its evidence file
-            # (Dockerfile, .github/*) matches no component glob, so the
-            # candidate search above found nothing. Map it to the primary
-            # application component so the §8 Component link resolves to a real
-            # `#c-NN` anchor instead of dangling at `#ci-cd-pipeline`. This
-            # mirrors the existing behaviour for CI/Docker findings whose
-            # evidence DID glob-match a real component (e.g. server.ts).
-            new_cid = primary_id
-            token = f"pseudo_component_reassigned_from_{current}"
+        elif current and current not in known_ids and primary_id:
+            # `current` is a NON-REGISTERED placeholder/phantom component id —
+            # the "backend-api" default emitted by
+            # merge_threats._guess_component_from_path, or a pseudo component
+            # like "ci-cd-pipeline". It has no §2.3 component section, so the
+            # §8/§6/§3 Component link dangles at a missing anchor (the
+            # 2026-06-13 juice-shop T-002 dead `#backend-api` link). Unlike a
+            # real registered component there is nothing legitimate to preserve,
+            # so the resolver MUST land it on a registered component:
+            #   • >=2 candidates (evidence file claimed by overlapping globs,
+            #     e.g. routes/memory.ts hit by both `routes/**` and an exact
+            #     `routes/memory.ts`) → the MOST SPECIFIC glob wins (exact path
+            #     beats a broad dir/**), which is also the correct owner.
+            #   • 0 candidates (Dockerfile, .github/* — evidence matches no
+            #     component glob) → fall back to the primary application
+            #     component so the link resolves to a real `#c-NN` anchor.
+            if candidate_hits:
+                new_cid = _most_specific_candidate(
+                    files, candidate_hits.keys(), raw_glob_index, primary_id
+                )
+                token = f"phantom_component_resolved_from_{current}"
+            elif primary_id != current:
+                new_cid = primary_id
+                token = f"pseudo_component_reassigned_from_{current}"
+            else:
+                continue
         else:
-            # 0 or 2+ real candidates — too ambiguous to reassign.
+            # `current` is a REAL registered component whose evidence merely
+            # spans a boundary, or a genuinely ambiguous real-component case —
+            # do NOT move a legitimately-assigned threat just because its
+            # evidence crosses a glob.
             continue
         if t.get("component"):
             t["component"] = new_cid
@@ -226,6 +289,34 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         _sync_component_threat_ids(components, changes)
 
     return data, changes
+
+
+def unresolved_phantoms(data: dict) -> list[tuple[str, str]]:
+    """Postcondition check: return (threat_id, component) for every threat whose
+    component is NOT a registered components[].id after reclassification.
+
+    A non-empty result means the resolver could not land a threat on a real
+    component (e.g. zero registered components, or a threat with no evidence
+    file) — the §8/§6/§3 Component link for those threats will dangle at a
+    missing anchor. The contract is "every threats[].component ∈ registered
+    set"; this surfaces violations instead of letting them ship silently.
+    """
+    components = data.get("components") or []
+    known = {
+        (c.get("id") or "").strip()
+        for c in components
+        if isinstance(c, dict) and (c.get("id") or "").strip()
+    }
+    if not known:
+        return []
+    out: list[tuple[str, str]] = []
+    for t in data.get("threats") or []:
+        if not isinstance(t, dict):
+            continue
+        cur = (t.get("component") or t.get("component_id") or "").strip()
+        if cur and cur not in known:
+            out.append((t.get("id") or "<anon>", cur))
+    return out
 
 
 def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
@@ -306,6 +397,19 @@ def main(argv: list[str]) -> int:
         )
     else:
         print("reclassify_components: no tier-confusion drift found — nothing to reassign")
+
+    # Postcondition: every threats[].component must now be a registered
+    # component id. A leftover phantom would dangle the §8/§6/§3 Component link
+    # at a missing anchor — surface it loudly rather than ship it silently.
+    leftovers = unresolved_phantoms(data)
+    if leftovers:
+        sample = ", ".join(f"{tid}:{cid}" for tid, cid in leftovers[:6])
+        print(
+            f"reclassify_components: WARNING {len(leftovers)} threat(s) still carry a "
+            f"non-registered component [{sample}] — their §8 Component link will "
+            f"dangle. Check components[].paths cover the evidence files.",
+            file=sys.stderr,
+        )
     return 0
 
 
