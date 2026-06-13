@@ -1,0 +1,51 @@
+name: release
+
+# Fires when a v* tag is pushed (the release act in the GitFlow model:
+# dev → main merge, then tag main). Re-runs the full gate on the exact
+# tagged commit, asserts version/tag/changelog consistency, then publishes
+# a GitHub release. Pre-releases (alpha/beta/rc tags) are marked --prerelease.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write  # gh release create
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tests/requirements-test.txt
+          pip install -r scripts/requirements.txt
+          pip install ruff==0.11.13
+
+      - name: Release gate (check + version/tag/changelog)
+        run: make release-check
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          prerelease=""
+          case "$version" in
+            *a*|*b*|*rc*|*-*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "See CHANGELOG.md for the full list of changes." \
+            $prerelease

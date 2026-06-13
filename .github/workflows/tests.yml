@@ -2,9 +2,9 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 jobs:
@@ -40,9 +40,8 @@ jobs:
       - name: Validate plugin config
         run: python3 scripts/validate_config.py .
 
-      - name: Fragment-registry drift (advisory)
+      - name: Fragment-registry drift
         run: python3 scripts/check_fragment_registry.py
-        continue-on-error: true
 
       - name: Run pytest
         run: pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing

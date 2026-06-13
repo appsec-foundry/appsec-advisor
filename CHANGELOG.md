@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-beta — 2026-06-13
 
 ### QA pre-pass performance — defer the detector battery off the clean path
 
@@ -96,8 +96,6 @@ See `sca.md` for the full scope rationale and design proposal that motivated thi
 ---
 
 **TodoWrite subjects: em-dash → hyphen-minus.** The six top-level stage subjects (`Preparing workspace`, `Stage 1 - Threat Analysis and Triage`, `Stage 2 - Report Rendering`, `Stage 3 - QA Review`, `Stage 4 - Architect Review`, `Final summary + cleanup`) now use hyphen-minus (`-`) instead of em-dash (`—`). The Claude Code TodoWrite TUI renderer mis-handles the em-dash's UTF-8 width (1 column / 3 bytes) on partial redraws, causing adjacent task labels to bleed together (observed: `Final summary` + `Stage 3 — QA Review` rendered as `Final 3ummQA Review`). Section headers and prose in `SKILL-impl.md` keep em-dashes where rendering is unaffected.
-
-## 0.4.0-beta — 2026-05-25
 
 > **Version reset.** Internal dev tagging ran up to 0.9.x during private
 > development. The first public release is published as `0.4.0-beta` to

@@ -60,6 +60,29 @@ lint:  ## Ruff check + format check
 	@ruff format --check scripts/ tests/ hooks/
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Release gates
+#
+# `check`         — the continuous gate. Runs on every dev/main push & PR in CI.
+#                   Must be green on EVERY commit (code health + drift guards).
+# `release-check` — superset, for the release boundary only. Adds version/tag/
+#                   changelog hygiene. Run it when PREPARING a release (version
+#                   bumped + CHANGELOG entry written), not on routine dev commits.
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: check
+check:  ## Continuous gate: lint, format, config, drift, full test suite
+	@ruff check scripts/ tests/ hooks/
+	@ruff format --check scripts/ tests/ hooks/
+	@python3 scripts/validate_config.py .
+	@python3 scripts/check_fragment_registry.py
+	@python3 -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing
+
+.PHONY: release-check
+release-check:  ## Release-boundary gate: `check` + version/tag/changelog consistency
+	@$(MAKE) --no-print-directory check
+	@python3 scripts/check_release_meta.py
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Help
 # ─────────────────────────────────────────────────────────────────────────────
 
