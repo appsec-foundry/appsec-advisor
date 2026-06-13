@@ -817,7 +817,8 @@ def _is_within(path: Path, parent: Path) -> bool:
 
 
 def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
-                              dry_run: bool) -> dict:
+                              dry_run: bool,
+                              cur_check_requirements: Optional[bool] = None) -> dict:
     """Detect baseline state + apply the first-match-wins rules.
 
     Returns a dict with ``mode``, ``mode_label``, ``incremental``,
@@ -949,6 +950,59 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
                     f"(incremental would only re-scan changed files)."
                 ),
             }
+        # Requirements-toggle override (Variante B — compares the FINAL resolved
+        # check_requirements, so a quick-depth auto-disable counts as a real
+        # toggle). The baseline records whether it was built against security
+        # requirements (meta.check_requirements). Incremental only re-analyzes
+        # changed files, so it can neither add requirement tags to
+        # carried-forward components when requirements are newly requested, nor
+        # cleanly strip the requirement enrichment baked into carried-forward
+        # threats when requirements are switched off. Two asymmetric outcomes:
+        #   - requirements ADDED (off → on): additive + explicit intent
+        #     (--requirements). Auto-upgrade to a full re-assessment so every
+        #     component gets requirement coverage; just inform the user.
+        #   - requirements DROPPED (on → off): destructive — overwrites the
+        #     requirements-enriched model and silently strips the §7b/§10
+        #     traceability. The off state is often the default, so this is
+        #     easily hit by accident. Hard-stop and require an explicit --full
+        #     to consent to overwriting the existing model.
+        # Explicit --incremental bypasses this (handled above, Rule 2/3) — the
+        # same honor-the-explicit-flag contract as the depth-increase override.
+        if cur_check_requirements is not None:
+            base_req = _extract_baseline_check_requirements(output_dir)
+            if base_req is not None and base_req != cur_check_requirements:
+                if cur_check_requirements and not base_req:
+                    return {
+                        "mode":              "full",
+                        "mode_label":        "full (requirements added — model rebuilt against security requirements)",
+                        "incremental":       False,
+                        "rebuild":           False,
+                        "baseline_state":    state,
+                        "mode_upgraded_reason": (
+                            "existing model was built WITHOUT a security-requirements "
+                            "check; --requirements now requested — incremental cannot "
+                            "add requirement coverage to carried-forward components, "
+                            "so a full re-assessment runs"
+                        ),
+                        "post_summary_note": (
+                            "Security requirements were newly requested; running a "
+                            "full scan so the requirements check applies to every "
+                            "component (incremental would only re-scan changed files)."
+                        ),
+                    }
+                raise SystemExit(
+                    f"Error: the existing threat model at {output_dir} was built "
+                    f"WITH a security-requirements check, but this run has "
+                    f"requirements disabled.\n"
+                    f"  An incremental scan cannot remove the requirements "
+                    f"enrichment baked into carried-forward findings — it would "
+                    f"silently drop the Requirements Compliance section (§7b / §10 "
+                    f"traceability) while leaving stale requirement tags on "
+                    f"unchanged threats.\n"
+                    f"  Fix: re-run with --full to overwrite the existing model "
+                    f"without requirements (changelog history is preserved), or "
+                    f"pass --requirements to keep the compliance coverage."
+                )
         return {
             "mode":             "incremental",
             "mode_label":       "incremental (auto)",
@@ -1027,6 +1081,26 @@ def _extract_baseline_assessment_depth(output_dir: Path) -> tuple[Optional[str],
         if m:
             return (m.group(1), "threat-model.yaml")
     return (None, "missing")
+
+
+def _extract_baseline_check_requirements(output_dir: Path) -> Optional[bool]:
+    """Return ``meta.check_requirements`` (bool) from the prior baseline.
+
+    Reads the committed ``threat-model.yaml``. Mirrors
+    _extract_baseline_assessment_depth: a root-aligned line match avoids
+    pulling in pyyaml for one boolean. Returns None when the field is absent
+    (pre-feature baselines) so the caller treats it as "unknown — do not gate".
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+    if yaml_path.is_file():
+        try:
+            text = yaml_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        m = re.search(r"(?m)^\s{2}check_requirements:\s*(true|false)\b", text)
+        if m:
+            return m.group(1) == "true"
+    return None
 
 
 def read_requirements_config(plugin_root: Path) -> bool:
@@ -1411,7 +1485,8 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     cfg.update(resolve_default_tier_for_capped_repos(cfg, ns))
 
     cfg.update(resolve_incremental_mode(
-        ns, Path(cfg["output_dir"]), ns.dry_run
+        ns, Path(cfg["output_dir"]), ns.dry_run,
+        cur_check_requirements=cfg.get("check_requirements"),
     ))
 
     # M11 — wall-time deadline parsing. Accept "3600" (s), "60m", "1h".

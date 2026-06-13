@@ -538,6 +538,93 @@ class TestResolveIncrementalMode:
         assert v["verdict"] == "RUN — full assessment (existing model)"
         assert "incremental cannot deepen" in v["reason"]
 
+    # --- Requirements-toggle override (Variante B — final-resolved compare) ---
+
+    def _yaml_with_req(self, tmp_path, check_requirements):
+        val = "true" if check_requirements else "false"
+        (tmp_path / "threat-model.yaml").write_text(
+            f"meta:\n  schema_version: 1\n  check_requirements: {val}\nthreats: []\n"
+        )
+
+    def test_requirements_added_off_to_on_forces_full(self, tmp_path):
+        self._yaml_with_req(tmp_path, False)
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_incremental_mode(
+            ns, tmp_path, dry_run=False, cur_check_requirements=True
+        )
+        assert out["mode"] == "full"
+        assert out["incremental"] is False
+        assert "requirements added" in out["mode_label"]
+        assert "without" in out["mode_upgraded_reason"].lower()
+
+    def test_requirements_dropped_on_to_off_aborts(self, tmp_path):
+        self._yaml_with_req(tmp_path, True)
+        ns = rc.build_parser().parse_args([])
+        with pytest.raises(SystemExit) as exc:
+            rc.resolve_incremental_mode(
+                ns, tmp_path, dry_run=False, cur_check_requirements=False
+            )
+        msg = str(exc.value)
+        assert "requirements disabled" in msg
+        assert "--full" in msg
+
+    def test_requirements_unchanged_on_stays_incremental(self, tmp_path):
+        self._yaml_with_req(tmp_path, True)
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_incremental_mode(
+            ns, tmp_path, dry_run=False, cur_check_requirements=True
+        )
+        assert out["mode"] == "incremental"
+
+    def test_requirements_unchanged_off_stays_incremental(self, tmp_path):
+        self._yaml_with_req(tmp_path, False)
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_incremental_mode(
+            ns, tmp_path, dry_run=False, cur_check_requirements=False
+        )
+        assert out["mode"] == "incremental"
+
+    def test_requirements_baseline_without_field_stays_incremental(self, tmp_path):
+        # Pre-feature baseline (no meta.check_requirements) → unknown → no gate.
+        (tmp_path / "threat-model.yaml").write_text(
+            "meta:\n  schema_version: 1\nthreats: []\n"
+        )
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_incremental_mode(
+            ns, tmp_path, dry_run=False, cur_check_requirements=False
+        )
+        assert out["mode"] == "incremental"
+
+    def test_requirements_cur_unknown_skips_gate(self, tmp_path):
+        # cur_check_requirements=None (caller did not pass it) → backward-compat no-op.
+        self._yaml_with_req(tmp_path, True)
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "incremental"
+
+    def test_explicit_incremental_bypasses_requirements_drop(self, tmp_path):
+        # Explicit --incremental is honored as-is (Rule 2/3 short-circuits),
+        # same honor-the-explicit-flag contract as the depth-increase override.
+        self._yaml_with_req(tmp_path, True)
+        ns = rc.build_parser().parse_args(["--incremental"])
+        out = rc.resolve_incremental_mode(
+            ns, tmp_path, dry_run=False, cur_check_requirements=False
+        )
+        assert out["mode"] == "incremental"
+
+    def test_requirements_added_reason_flows_into_run_plan_verdict(self, tmp_path):
+        self._yaml_with_req(tmp_path, False)
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_incremental_mode(
+            ns, tmp_path, dry_run=False, cur_check_requirements=True
+        )
+        cfg = {"mode": "full", "incremental": False, "baseline_state": "structured",
+               "mode_label": out["mode_label"],
+               "mode_upgraded_reason": out["mode_upgraded_reason"]}
+        v = rc._run_plan_verdict(cfg, None, None, None)
+        assert v["verdict"] == "RUN — full assessment (existing model)"
+        assert "incremental cannot add requirement coverage" in v["reason"]
+
 
 # ---------------------------------------------------------------------------
 # End-to-end CLI smoke
