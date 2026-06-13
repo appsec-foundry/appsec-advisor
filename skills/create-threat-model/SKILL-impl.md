@@ -3957,7 +3957,7 @@ scan-friendly summary in this fixed order:
 7. `Outputs` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
 8. Conditional health / run-issues / security notice blocks
 9. `Next Steps` — 1–5 conditional action lines
-10. `Run Statistics` — total + per-phase durations, agent roster, tokens + cost when extractable
+10. `Run Statistics` — total + per-stage durations (from `.stage-stats.jsonl`), agent roster, tokens + cost when extractable
 11. `Logs`
 
 The script's rendering logic (file-listing rules, Change Summary conditionals, Next Steps priority, placeholder patching) is covered by `tests/test_render_completion_summary.py`. If the contract needs to change, edit the script and its tests — never the skill layer.

@@ -444,6 +444,11 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         "qa_secs": None,
         "arch_secs": None,
         "phases": [],
+        # Per-stage rows from .stage-stats.jsonl (authoritative). Each entry:
+        # (stage:int, variant:str, name:str, agent:str, model:str, secs:int).
+        # Rendered as the per-stage breakdown — preferred over the log-derived
+        # ``phases`` list, which is lossy in the parallel-STRIDE path.
+        "stage_rows": [],
         "agents": {},
         # Authoritative total wall-clock when stage-stats.jsonl is present.
         # render_run_statistics prefers this over assess+qa+arch when set.
@@ -472,6 +477,16 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
                 ms = rec.get("duration_ms")
                 if isinstance(ms, (int, float)) and ms > 0:
                     total_ms += int(ms)
+                stats["stage_rows"].append(
+                    (
+                        rec.get("stage"),
+                        rec.get("variant") or "",
+                        rec.get("name") or "",
+                        (rec.get("agent") or "—").split(":")[-1],
+                        rec.get("model") or "?",
+                        int(ms) // 1000 if isinstance(ms, (int, float)) and ms > 0 else 0,
+                    )
+                )
         except OSError:
             total_ms = 0
         if total_ms > 0:
@@ -853,7 +868,7 @@ _PHASE_AGENT = {
 
 
 def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
-    if stats["assess_secs"] is None and not stats["phases"]:
+    if stats["assess_secs"] is None and not stats["phases"] and not stats["stage_rows"]:
         # Nothing to render — skip the whole block rather than
         # printing zeroes and placeholders.
         return []
@@ -910,86 +925,41 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
     if wall and wall > 0:
         lines.append(f"  Total scan (wall)   : {_fmt_duration(wall)}  (end-to-end, incl. orchestration)")
 
-    # Per-phase breakdown.
-    # Fix #3 root cause — when the same phase_id is emitted by multiple agents
-    # (Stage 1 ``threat-analyst`` AND Stage 2 ``threat-renderer`` both log
-    # ``PHASE_START [Phase 11/11]``), the emitting-agent name from each
-    # PHASE_START line disambiguates the two rows. When the entries share an
-    # emitter (rare), fall back to a positional ``(run N)`` suffix.
-    from collections import Counter as _Counter
-
-    phase_counts = _Counter(p[0] for p in stats["phases"])
-    seen_per_phase: dict[str, int] = {}
-    # Fix #4b — known deterministic / Python-script stages have no model.
-    # Render those as "deterministic" rather than the misleading "?".
-    deterministic_agents = {"triage-validator"}
-    for entry in stats["phases"]:
-        # Tuple shape grew to (id, desc, secs, agent) — keep backward compat
-        # with older 3-tuple entries.
-        if len(entry) == 4:
-            phase_id, desc_from_log, secs, log_agent = entry
-        else:
-            phase_id, desc_from_log, secs = entry
-            log_agent = ""
-        canonical = _PHASE_DESCRIPTIONS.get(phase_id, f"Phase {phase_id}")
-        seen_per_phase[phase_id] = seen_per_phase.get(phase_id, 0) + 1
-        desc = canonical
-        # Agent name selection — Fix #3 root cause + preserve Fix #4 sub-agent
-        # rendering.
-        #   • Phase 2 / 9 / 10b: PHASE_START is emitted by the orchestrator
-        #     (threat-analyst) but the work is delegated to a sub-agent
-        #     (recon-scanner, stride-analyzer, triage-validator). The static
-        #     _PHASE_AGENT map is the source of truth for the displayed
-        #     worker, NOT the log emitter.
-        #   • Phase 11 — emitted by two different agents (Stage 1 analyst,
-        #     Stage 2 renderer). Here the log emitter IS the disambiguator
-        #     and must override the static map.
-        # Decision rule: use the log emitter only when the same phase_id
-        # appears multiple times AND emitters differ. Otherwise the static
-        # map wins so Phase 2 stays as recon-scanner, Phase 9 as
-        # stride-analyzer, etc.
-        emitters_for_phase = {(e[3] if len(e) == 4 else "") for e in stats["phases"] if e[0] == phase_id}
-        if phase_counts[phase_id] > 1 and len(emitters_for_phase - {""}) > 1:
-            agent_name = log_agent or _PHASE_AGENT.get(phase_id, "threat-analyst")
-        else:
-            agent_name = _PHASE_AGENT.get(phase_id, "threat-analyst")
-        # Positional suffix only when the (phase_id, agent_name) pair still
-        # collides after the emitter-based pick.
-        same_pair_count = sum(
-            1
-            for e in stats["phases"]
-            if e[0] == phase_id
-            and (
-                (
-                    len(e) == 4
-                    and (
-                        (
-                            e[3]
-                            if (phase_counts[e[0]] > 1 and len(emitters_for_phase - {""}) > 1)
-                            else _PHASE_AGENT.get(e[0], "threat-analyst")
-                        )
-                        == agent_name
-                    )
-                )
-                or (len(e) == 3 and _PHASE_AGENT.get(e[0], "threat-analyst") == agent_name)
-            )
-        )
-        if same_pair_count > 1:
-            desc = f"{canonical} (run {seen_per_phase[phase_id]})"
-        model = stats["agents"].get(agent_name)
-        if not model:
-            model = "deterministic" if agent_name in deterministic_agents else "?"
-        duration = _fmt_duration(secs) if secs > 0 else "(inline)"
-        # Format: "    Phase N   <desc>  <agent (model)>  : <dur>"
-        phase_tag = f"Phase {phase_id}".ljust(10)
+    # Per-stage breakdown.
+    # Sourced from ``.stage-stats.jsonl`` (one record per Stage agent dispatch,
+    # written by ``record_stage_stats.py``). This is the authoritative timing
+    # source — it captures every dispatch including Stage 2 renderer and Stage 3
+    # repair iterations, and is robust to the parallel-STRIDE path where the
+    # ``.agent-run.log`` PHASE markers get overwritten or skipped. Replaces the
+    # older log-derived per-phase block, which rendered ``(inline)`` for most
+    # rows in the default parallel run.
+    stage_rows = sorted(
+        stats["stage_rows"],
+        key=lambda r: (r[0] if isinstance(r[0], (int, float)) else 99, r[1]),
+    )
+    stage_nums_present = {r[0] for r in stage_rows}
+    for stage, variant, name, agent, model, secs in stage_rows:
+        # ``abuse-verification`` is the Stage-1 sub-step rendered as "1c"
+        # everywhere else (TUI row, report table). Repair variants keep the
+        # numeric stage and surface the variant in the description.
+        label = "1c" if variant == "abuse-verification" else str(stage if stage is not None else "—")
+        desc = name or f"Stage {stage}"
+        if variant and variant != "abuse-verification":
+            desc = f"{desc} ({variant})"
+        duration = _fmt_duration(secs) if secs > 0 else "(n/a)"
+        stage_tag = f"Stage {label}".ljust(10)
         desc_col = desc.ljust(28)[:28]
-        agent_col = f"{agent_name} ({model})".ljust(32)
-        lines.append(f"    {phase_tag}{desc_col}{agent_col}: {duration:>8}")
+        agent_col = f"{agent} ({model})".ljust(32)
+        lines.append(f"    {stage_tag}{desc_col}{agent_col}: {duration:>8}")
 
+    # QA review is not a recorded stage (no .stage-stats.jsonl row) — surface it
+    # from the log-derived qa_secs when present.
     if stats["qa_secs"]:
         agent_col = f"qa-reviewer ({stats['agents'].get('qa-reviewer', '?')})".ljust(32)
         lines.append(f"    {'QA':<10}{'QA Review'.ljust(26)}{agent_col}: {_fmt_duration(stats['qa_secs']):>8}")
-    if stats["arch_secs"]:
+    # Architect review is recorded as Stage 4 in the jsonl — only fall back to
+    # the log-derived arch_secs row when no Stage 4 record exists (older runs).
+    if stats["arch_secs"] and 4 not in stage_nums_present:
         model = stats["agents"].get("architect-reviewer", "?")
         agent_col = f"architect-reviewer ({model})".ljust(32)
         lines.append(
