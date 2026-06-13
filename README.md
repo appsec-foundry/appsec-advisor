@@ -220,6 +220,12 @@ No catalog yet? Start from the bundled baseline (`data/appsec-requirements-fallb
 
 Covers: status values, catalog setup, the three paths to a catalog, all flags, and how findings link back to the threat model.
 
+## Plugin configuration
+
+The root `config.json` is the committed runtime config for safe defaults. Use `config.local.json` for local or internal overrides; it is git-ignored and loaded ahead of `config.json` where supported.
+
+Supported root blocks are `external_context` (optional REST business context), `pricing` (token-cost calculation), `logging` (verbose hook output and log rotation), and `organization_profile` (packaged org-profile pointer). Run `python3 scripts/validate_config.py .` after changing plugin config files.
+
 ## Additional developer tools
 
 The requirements audit (`audit-security-requirements`) is an AppSec-owned compliance gate: it grades a snapshot of the repository against a catalog and produces a structured report for dashboards, audits, and release gates.

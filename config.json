@@ -1,5 +1,5 @@
 {
-  "_comment": "Safe defaults committed to source control. For local overrides (e.g. rest_url), copy to config.local.json — that file is git-ignored.",
+  "_comment": "Plugin runtime config for external_context, pricing, logging, and organization_profile. JSON has no // comments; consumers that support local overrides read config.local.json, which is git-ignored.",
   "external_context": {
     "enabled": true,
     "rest_url": null
