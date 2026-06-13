@@ -8,10 +8,15 @@ The skill prints a Stage-1 banner like::
 Earlier versions of that banner used a single hardcoded number per
 ``ASSESSMENT_DEPTH`` (`15` / `25` / `40`) regardless of mode, repo size,
 prior measurements, reasoning model, or which stages were enabled.
-Empirical runs on `juice-shop` (see `.run-observations-*.md`) showed the
-actual wall-clock was 36–44 min for `standard --full`, i.e. **+50 %**
-beyond the user's mental expectation, and the spread depends strongly on
-factors the banner ignored.
+Empirical runs on `juice-shop` showed the actual wall-clock kept growing
+as features landed: 36–44 min for `standard --full` in 2026-04, then
+~76 min standard / ~81 min thorough by 2026-06 (see `/home/mrohr/scans`
+anchors). The parametric constants were recalibrated 2026-06-13 against
+those anchors. The spread depends strongly on API-tier idle (~25-30 % of
+wall) and resume/re-dispatch overhead, neither of which is visible at
+banner-print time — so the parametric path is a ballpark; the
+``last_run_cache`` replay of a prior measured total is the accurate
+source once a successful run has written it.
 
 This helper aggregates **everything we already know** at banner-print
 time (no LLM call, no agent dispatch, only files the skill is already
@@ -53,13 +58,19 @@ from pathlib import Path
 # new run observations land. All values in MINUTES.
 # ---------------------------------------------------------------------------
 
-# Stage 1 (Phases 1–10b) base time per assessment depth, calibrated
-# against juice-shop observations (24m–27m for standard).
-# quick=20 calibrated 2026-04-28: Phase 1 (5m) + Phase 2 (5m parallel) +
-# Phases 3-8 (5m) + Phase 9 STRIDE×3 (4m) + Phase 10/10b (2m) ≈ 21m total.
+# Stage 1 (Phases 1–10b) base time per assessment depth. RECALIBRATED
+# 2026-06-13 against fresh juice-shop anchors (/home/mrohr/scans):
+#   standard --full sonnet-economy  → 76 min wall (Stage-1 wall ≈ 41 min)
+#   thorough --full opus-cheap +arch → 81 min wall (Stage-1 wall ≈ 39 min)
+# The earlier base (20/25/40, anchored to a 44-min 2026-04-26 run) under-
+# estimated standard by ~35 %. Real Stage-1 WALL on both anchors is ~39–41
+# min — within-stage API-tier idle dominates, so the base now reflects the
+# observed wall, not the agent self-time. Between-stage idle lives in
+# _TRANSITION_BUFFER. quick has no measured anchor; scaled to land ~53 min
+# total on a juice-shop-sized repo (matches the operator's ~55-min recall).
 _STAGE1_BASE: dict[str, float] = {
-    "quick": 20.0,
-    "standard": 25.0,
+    "quick": 32.0,
+    "standard": 38.0,
     "thorough": 40.0,
 }
 
@@ -103,9 +114,13 @@ _STAGE1C_ABUSE: dict[str, float] = {
 }
 
 # Skill-layer transition buffer — pre-flight wipe, task-list bootstrap,
-# stage hand-offs, completion summary. Empirical: ~5 min unaccounted
-# wall-clock summed across the run.
-_TRANSITION_BUFFER = 4.0
+# stage hand-offs, completion summary, AND between-stage API-tier idle.
+# RECALIBRATED 2026-06-13: the 2026-06 juice-shop anchors show ~20 min of
+# cross-stage wall-clock unaccounted by the per-stage self-times (API
+# stalls between the analyst/renderer/QA dispatches). 4 min was far too
+# low; 8 min splits the within-vs-between-stage idle conservatively (the
+# within-stage share is already folded into _STAGE1_BASE).
+_TRANSITION_BUFFER = 8.0
 
 # Reasoning-model multiplier on Stage 1 (STRIDE + triage).
 _MODEL_FACTOR: dict[str, float] = {
@@ -280,11 +295,22 @@ def _last_run_cache(output_dir: Path, mode: str, depth: str) -> tuple[dict[str, 
     if last_depth and last_depth != depth:
         return None
     total_min = last_seconds / 60.0
-    # We don't know the per-stage split from the cache alone — emit it
-    # as a single "total" line and zero out the synthetic stages so the
-    # caller can show "expected ~N min (from last run)".
+    # We don't know the exact per-stage split from the cache alone, but the
+    # banner shows a "Stage 1: ~N min" figure — emitting 0 there rendered a
+    # misleading "Stage 1: ~0 min". The 2026-06 juice-shop anchors put
+    # Stage-1 wall at ~54 % of the end-to-end wall (41/76 standard, 39/81
+    # thorough ≈ 0.48-0.54), so approximate the split with 0.54 and leave
+    # the remaining stages folded into the (accurate) total.
+    stage1_min = total_min * 0.54
     return (
-        {"stage1": 0.0, "stage2": 0.0, "stage3": 0.0, "stage4": 0.0, "transition": 0.0, "total": total_min},
+        {
+            "stage1": stage1_min,
+            "stage2": 0.0,
+            "stage3": 0.0,
+            "stage4": 0.0,
+            "transition": 0.0,
+            "total": total_min,
+        },
         "last_run_cache",
     )
 
@@ -316,17 +342,29 @@ def _component_durations_estimate(
         return None
     # Phase 9 wall-clock = max(top_secs) (parallel) + 30s merge overhead.
     phase_9_seconds = max(top_secs) + 30
-    # Phase 1-8 + Phase 10b parametric: ~7 min standard, ~5 min quick, ~10 min thorough.
-    phase_other_seconds = {"quick": 300, "standard": 420, "thorough": 600}.get(depth, 420)
+    # Phase 1-8 + Phase 10b. RECALIBRATED 2026-06-13: the stored
+    # component_durations are agent self-times (max ~160s on standard
+    # juice-shop), well below the real Phase-9 wall, so phase_other must
+    # carry the bulk of the observed ~38-41 min Stage-1 wall. Raised from
+    # 300/420/600 to reflect recon + context + cross-phase idle.
+    phase_other_seconds = {"quick": 540, "standard": 720, "thorough": 900}.get(depth, 720)
     stage1_min = (phase_9_seconds + phase_other_seconds) / 60.0
+    # Mirror the parametric additive structure (was a flat `+13` that
+    # silently dropped the Stage-1c abuse fan-out). Reuse the module
+    # constants so this path tracks any future recalibration of them.
+    stage1c = _STAGE1C_ABUSE.get(depth, 0.0)
+    stage2 = _STAGE2_COMPOSITION[depth]
+    stage3 = _STAGE3_QA[depth]
+    transition = _TRANSITION_BUFFER
     return (
         {
             "stage1": stage1_min,
-            "stage2": 6.0,
-            "stage3": 5.0,
+            "stage1c": stage1c,
+            "stage2": stage2,
+            "stage3": stage3,
             "stage4": 0.0,
-            "transition": 2.0,
-            "total": stage1_min + 13.0,
+            "transition": transition,
+            "total": stage1_min + stage1c + stage2 + stage3 + transition,
         },
         "component_durations",
     )

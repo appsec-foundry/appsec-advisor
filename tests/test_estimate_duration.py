@@ -1,11 +1,15 @@
 """Tests for scripts/estimate_duration.py — the wall-clock estimator.
 
-Calibration anchor: a juice-shop standard --full run on 2026-04-26
-measured 44 min 30 s wall-clock from ASSESSMENT_START to QA finish (see
-.run-observations-20260426-1955.md and .agent-run.log). The parametric
-path on a 1399-file repo with depth=standard / mode=full / model=sonnet
-must produce a total within ±5 minutes of that measurement, otherwise
-the brackets in `_size_factor_from_files` are mis-calibrated.
+Calibration anchors (RECALIBRATED 2026-06-13): fresh juice-shop runs in
+/home/mrohr/scans measured ~76 min wall for `standard --full` and ~81 min
+for `thorough --full --architect-review`. The 2026-04 anchor (44 min) is
+obsolete — the pipeline grew (abuse-case fan-out, more STRIDE components,
+heavier composition) and API-tier idle now adds ~25-30 % of wall. The
+parametric constants (`_STAGE1_BASE`, `_TRANSITION_BUFFER`) were bumped to
+land standard ≈ 66 min / thorough ≈ 82 min on a 1.0× repo. The standard
+anchor was resume-contaminated (~76 incl. a re-dispatch), so the
+parametric target is set conservatively below it to avoid over-estimating
+clean runs.
 """
 
 from __future__ import annotations
@@ -69,9 +73,9 @@ class TestParametric:
             "--repo-root",
             str(repo),
         )
-        # 40 × 1.0 × 1.10 + 11 + 9 + 6 + 4 = 74
+        # 40 × 1.0 × 1.05 + 6 (abuse) + 11 + 9 + 6 + 8 (transition) = 82
         assert result["source"] == "parametric"
-        assert 65 <= result["total_min"] <= 85, result
+        assert 75 <= result["total_min"] <= 90, result
         assert result["stage4_min"] >= 5, "architect-review stage 4 must be present"
 
     def test_quick_skip_qa(self, tmp_path: Path):
@@ -94,8 +98,8 @@ class TestParametric:
         )
         assert result["stage3_min"] == 0, "QA disabled → stage 3 must be 0"
         # Tiny repo (no source files) → 0.6 size factor.
-        # 20 × 0.6 × 1.0 + 9 + 0 + 0 + 4 = 25.
-        assert 23 <= result["total_min"] <= 27, result
+        # 32 × 0.6 × 1.0 + 0 (abuse off at quick) + 9 + 0 + 8 = 36.
+        assert 33 <= result["total_min"] <= 39, result
 
     def test_standard_includes_stage1c_abuse(self, tmp_path: Path):
         """Standard depth runs the abuse-case fan-out by default → the
@@ -118,9 +122,9 @@ class TestParametric:
             "--repo-root",
             str(repo),
         )
-        # 25 + 5 (abuse) + 8 + 7 + 4 = 49
+        # 38 + 5 (abuse) + 8 + 7 + 8 (transition) = 66
         assert result["stage1c_min"] == 5, result
-        assert result["total_min"] == 49, result
+        assert result["total_min"] == 66, result
 
     def test_skip_abuse_cases_zeroes_stage1c(self, tmp_path: Path):
         """--no-abuse-cases (→ --skip-abuse-cases) drops the Stage-1c additive."""
@@ -144,7 +148,7 @@ class TestParametric:
             str(repo),
         )
         assert result["stage1c_min"] == 0, result
-        assert result["total_min"] == 44, result  # 25 + 0 + 8 + 7 + 4
+        assert result["total_min"] == 61, result  # 38 + 0 + 8 + 7 + 8
 
     def test_size_factor_brackets(self):
         """The _size_factor_from_files brackets are calibrated against the
@@ -275,8 +279,8 @@ class TestResume:
             str(repo),
         )
         assert result["source"] == "resume_checkpoint"
-        # Standard table: phases 9+10+11 = 15 + 0.5 + 1 = 16.5 → +stage2(8)+stage3(7)+buffer(4) ≈ 36
-        assert result["total_min"] < 40, result
+        # Standard table: phases 9+10+11 = 15 + 0.5 + 1 = 16.5 → +stage2(8)+stage3(7)+buffer(8) ≈ 40
+        assert result["total_min"] < 42, result
         assert result["stage1_min"] >= 15
 
     def test_resume_after_phase_2_keeps_most_phases(self, tmp_path: Path):
@@ -330,8 +334,8 @@ class TestIncremental:
             str(repo),
         )
         assert result["source"] == "incremental_dirty_set"
-        # 1/5 dirty → Phase 9 ≈ 3 min; total ≈ 25 min (vs 44 for full).
-        assert result["total_min"] < 35, result
+        # 1/5 dirty → Phase 9 ≈ 3 min; total ≈ 38 min (vs 66 for full).
+        assert result["total_min"] < 42, result
         assert result["total_min"] >= 18, result
 
     def test_all_dirty_approaches_full_run(self, tmp_path: Path):
@@ -382,8 +386,8 @@ class TestEdgeCases:
             str(tmp_path / "does-not-exist"),
         )
         assert result["source"] == "parametric"
-        # 25 × 0.6 + 5 (Stage-1c abuse) + 8 + 7 + 4 = 39
-        assert 33 <= result["total_min"] <= 44, result
+        # 38 × 0.6 + 5 (Stage-1c abuse) + 8 + 7 + 8 = 51
+        assert 45 <= result["total_min"] <= 56, result
 
     def test_malformed_checkpoint_falls_through(self, tmp_path: Path):
         out = tmp_path / "out"

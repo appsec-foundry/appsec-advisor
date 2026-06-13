@@ -1874,6 +1874,7 @@ printf '%s' "$ASSESSMENT_START_EPOCH" > "$OUTPUT_DIR/.scan-start-epoch" 2>/dev/n
 SOURCE_HINT=""
 case "$EST_SOURCE" in
   last_run_cache)        SOURCE_HINT="from last run on this repo" ;;
+  component_durations)   SOURCE_HINT="from prior run component timings" ;;
   resume_checkpoint)     SOURCE_HINT="remaining after checkpoint"  ;;
   incremental_dirty_set) SOURCE_HINT="incremental, $SEC_CHANGE_COUNT relevant file(s), ceiling $MAX_STRIDE_COMPONENTS components" ;;
   parametric)            SOURCE_HINT="parametric" ;;
@@ -3974,15 +3975,24 @@ estimate to within ±5 % of reality.
 
 ```bash
 # Prefer the first ASSESSMENT_START timestamp in .agent-run.log (the actual
-# orchestrator-Phase-1 start) over ASSESSMENT_START_EPOCH. The shell variable
-# is captured before the Stage 1 Agent dispatch and therefore includes any
+# orchestrator-Phase-1 start) over the epoch markers. The markers are
+# captured before the Stage 1 Agent dispatch and therefore include any
 # user-confirm wait time on the permission prompt — which would inflate
 # last_run_seconds and corrupt the next run's estimate. The log timestamp is
 # only written once the orchestrator is actually running. Fallback chain:
-# log -> ASSESSMENT_START_EPOCH -> skip.
-RUN_START_EPOCH=$(python3 - "$OUTPUT_DIR/.agent-run.log" "${ASSESSMENT_START_EPOCH:-0}" <<'PYEOF'
+# log -> .scan-start-epoch FILE -> ASSESSMENT_START_EPOCH shell var -> skip.
+#
+# The `.scan-start-epoch` file (written at skill start) is the durable
+# fallback: the ASSESSMENT_START_EPOCH shell variable does NOT survive
+# across the skill's separate Bash invocations, so by the time this
+# finalization block runs it is usually empty -> "0" -> the write was
+# silently skipped and last_run_seconds never persisted (the gap that left
+# `last_run_seconds=None` in real anchor caches while component_durations
+# survived). Reading the file closes that hole without losing the log's
+# wait-time-excluding accuracy preference.
+RUN_START_EPOCH=$(python3 - "$OUTPUT_DIR/.agent-run.log" "$OUTPUT_DIR/.scan-start-epoch" "${ASSESSMENT_START_EPOCH:-0}" <<'PYEOF'
 import sys, re, datetime
-log_path, fallback = sys.argv[1], sys.argv[2]
+log_path, scan_start_path, fallback = sys.argv[1], sys.argv[2], sys.argv[3]
 ts_re = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b')
 try:
     with open(log_path, encoding='utf-8', errors='replace') as fh:
@@ -3992,6 +4002,14 @@ try:
                 dt = datetime.datetime.strptime(m.group(1), '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc)
                 print(int(dt.timestamp()))
                 sys.exit(0)
+except OSError:
+    pass
+# Durable file marker — survives across Bash invocations, unlike the shell var.
+try:
+    raw = open(scan_start_path, encoding='utf-8').read().strip()
+    if raw.isdigit() and int(raw) > 0:
+        print(int(raw))
+        sys.exit(0)
 except OSError:
     pass
 print(fallback)
@@ -4043,7 +4061,7 @@ EOF
 fi
 ```
 
-`RUN_START_EPOCH` is derived from the first `ASSESSMENT_START` line in `.agent-run.log` so that pre-dispatch user-confirm wait time is excluded from `last_run_seconds`. `ASSESSMENT_START_EPOCH` is captured at the top of the skill as a fallback (and is still used by the deadline watchdog at §"Wall-time + cost deadline watchdog"). Best-effort: if both signals are missing the cache write is skipped and the next-run estimator falls back to the parametric formula. The cache write itself uses `python3` rather than `jq`, so the field is persisted on systems without `jq` installed.
+`RUN_START_EPOCH` is derived from the first `ASSESSMENT_START` line in `.agent-run.log` so that pre-dispatch user-confirm wait time is excluded from `last_run_seconds`. The durable `.scan-start-epoch` file is the next fallback (it survives across the skill's separate Bash invocations, unlike the in-memory `ASSESSMENT_START_EPOCH` shell variable, which is usually empty by the time this block runs — the historic cause of `last_run_seconds` never being written), and the shell variable is the last resort (and is still used by the deadline watchdog at §"Wall-time + cost deadline watchdog"). Best-effort: if all three signals are missing the cache write is skipped and the next-run estimator falls back to the parametric formula. The cache write itself uses `python3` rather than `jq`, so the field is persisted on systems without `jq` installed.
 
 ### Persist per-component durations for next-run Phase-9 estimate (M5)
 

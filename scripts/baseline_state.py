@@ -337,6 +337,27 @@ def cmd_update(args: argparse.Namespace) -> int:
         "last_run_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
+    # Carry forward the next-run estimator's fields. `cmd_update` rewrites
+    # baseline.json from a fresh dict, so without this any baseline write
+    # that runs after a prior run's finalization (recon-skip baseline,
+    # --incremental/--rebuild re-runs) would silently wipe `last_run_seconds`
+    # and the per-component STRIDE durations — exactly the gap that left
+    # `last_run_seconds=None` in the 2026-06 juice-shop anchor caches while
+    # `component_durations`/`last_run_at` survived. These are pure carry-
+    # through (the run-end finalization in SKILL-impl.md owns the writes);
+    # we only refuse to destroy them. id_counters is already preserved above.
+    for _carry in (
+        "last_run_seconds",
+        "last_run_mode",
+        "last_run_depth",
+        "last_run_iso",
+        "component_durations",
+        "component_durations_recorded_at",
+        "component_durations_phase_9_start",
+    ):
+        if _carry in existing and _carry not in state:
+            state[_carry] = existing[_carry]
+
     cache_dir.mkdir(parents=True, exist_ok=True)
     # Atomic tempfile+rename — a crash mid-write must leave the prior cache
     # intact or the file absent, never a truncated JSON. See _atomic_io.py.
