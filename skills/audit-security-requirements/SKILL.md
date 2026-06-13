@@ -5,6 +5,22 @@ description: Audit the current repository against a security requirements catalo
 
 You are auditing whether security requirements are implemented in the current repository. Follow the steps below exactly.
 
+## Output discipline (professional, quiet)
+
+This skill produces an audit report — present it like a tool, not a chat. The
+user-visible output is, in order: the `AppSec Requirements Audit` title +
+**Requirements Source** banner (Step 1b), then the **Results** block and open
+requirements (Step 3), and the saved-file lines (Step 4). Between those, scan
+the repository **silently**.
+
+Do **not** narrate reasoning or step transitions. Forbidden filler includes
+lines like "Now load threat model context…", "Banner first, then I'll grade",
+"Let me scan systematically", "Now gathering codebase evidence". Tool calls run
+without a running commentary. The only progress line permitted between the
+banner and the results is a single, optional `Auditing <n> requirements against
+the codebase…`. Internal caveats (e.g. an empty `violated_requirements` map)
+are not surfaced as prose — they simply produce empty cross-links.
+
 ## `--help` — inline help (early exit)
 
 If the user's arguments contain `--help` or `-h`, **do not scan the repository**. Print the block below verbatim to the conversation and exit with status 0.
@@ -280,9 +296,14 @@ fi
 
 Read `REQ_RESOLUTION` and print a banner so the user always knows **which
 requirements are in effect and how current they are** before any findings.
-Derive a human "fetched N days ago" from `freshness.age_days`. Example:
+This banner — led by the title rule — is the **first user-visible output of the
+skill**; nothing precedes it (no preamble, no "loading…" narration). Derive a
+human "fetched N days ago" from `freshness.age_days`. Example:
 
 ```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ AppSec Requirements Audit
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Requirements Source
   Catalog  : Acme Application Security Requirements
   Source   : remembered · https://security.example.com/appsec-requirements.yaml
@@ -292,6 +313,9 @@ Requirements Source
   Freshness: ● fresh (cache < 30 days)
   Override : --update (refresh) · --cache-only · --demo · --requirements <url> · --status · --clear-requirements
 ```
+
+After the banner, scan silently. The only line permitted before the Step 3
+results is a single optional `Auditing <n> requirements against the codebase…`.
 
 Banner rules:
 - **Always print a `Loaded   :` line** naming the concrete on-disk path the catalog bytes were actually read from **this run** — so it is never ambiguous that the `Source` URL was not necessarily contacted. Derive it from `disposition` + `cache_path` + `url`:
@@ -430,17 +454,15 @@ ANSI color rules:
 | Field labels (`Finding`, `Risk`, etc.) | dim gray (`\033[2m`) |
 | Paths / line references | dim gray (`\033[2m`) |
 
-### 3a — Header
+### 3a — Results header
 
-Print the header and stats block:
+The catalog source/provenance was already shown in the Step 1b banner, so the
+results header does **not** repeat the title or the `Source` line — it opens the
+verdict. Print a compact header and stats block:
 
 ```
-AppSec Requirements Audit
-Repo   : <Project Name>
-Source : <remote url | plugin cache path>
-Scope  : <n> requirements checked<, filter: <filter> if set>
+Results · <Project Name> · <n> requirements<, filter: <filter> if set>
 
-Result
   ● FAIL          <n>
   ● PARTIAL       <n>
   ● PASS          <n>
@@ -454,8 +476,8 @@ synonyms such as "ignored" or "untestable". Right-align the counts in a single
 column as shown.
 
 If the resolution banner reported `demo: true`, print a yellow line directly
-under the header: `⚠ DEMO catalog — results do not reflect your organization's
-requirements.` Keep the `Source :` line pointing at the example file.
+under the results header: `⚠ DEMO catalog — results do not reflect your
+organization's requirements.`
 
 ### 3b — Findings
 
