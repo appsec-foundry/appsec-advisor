@@ -419,10 +419,11 @@ Assign one of four statuses:
 
 Collect for each requirement:
 - Status
+- **Requirement statement**: the requirement's verbatim `text` from the catalog (Step 1c). Carry it through to the outputs unchanged — never replace it with the derived title or a paraphrase.
 - Evidence: file path(s) and line number(s) — formatted as VS Code deep links `[path:line](vscode://file/ABSOLUTE_REPO_ROOT/path:line)`
 - One-line finding
 - For **FAIL**, **PARTIAL**, and **UNVERIFIABLE** additionally collect:
-  - **Fix**: a specific, codebase-aware recommendation. Reference exact file and function names. Do not give generic advice if the specific code is available. For console output, keep it to one to three concise lines; for Markdown output, include a short before/after code block when meaningful code evidence exists.
+  - **Fix**: the control **prescribed by the requirement**, made concrete for this repository — anchored to the catalog, not invented. Ground it in (a) the requirement's own `text` (what it demands) and (b) the matched blueprint section from `blueprint_map[<id>]` (Step 1c-ii), the catalog's prescribed "how". The model's contribution is to map that prescribed control onto the exact file / function / config key in the repo (which call to change, which setting to set) — **not** to introduce a mechanism or requirement the catalog does not call for, and not generic best-practice padding. Reference exact file and function names; when a blueprint matched, name it and let the blueprint link carry the detail. For console output keep it to one to three concise lines; for Markdown output, include a short before/after code block when meaningful code evidence exists. If neither the requirement nor a blueprint prescribes a specific mechanism, state the minimal concrete change that satisfies the demand here and say so — do not over-specify.
   - **Effort**: `S` (< 1 hour, isolated change), `M` (half day, several files), or `L` (multi-day, architectural change)
 
 ---
@@ -537,6 +538,7 @@ Per-finding block:
 
 ```
 🔴 MUST · `SEC-SQL` — **Parameterized SQL Queries**
+> Use parameterized SQL/HQL queries or ORM methods for database queries to prevent SQL injection.
 Finding : raw request input reaches sequelize.query() in routes/search.ts:23
 Risk    : attacker-controlled search terms can alter the SQL predicate
 Evidence: routes/search.ts:23
@@ -548,6 +550,13 @@ Links   : [requirement](https://reqs.example/sec-sql) · [blueprint](https://…
 
 Rules:
 
+- **Requirement statement:** directly under the title, quote the requirement's
+  **verbatim `text`** from the catalog (parsed in Step 1c) as a Markdown
+  blockquote `> …`. This is the actual demand being graded — never the derived
+  title and never a paraphrase. If the catalog text is very long (> ~240 chars),
+  trim to its first sentence and append `…` for the console only; the Markdown
+  and JSON outputs keep the full text. If a catalog entry has no `text`, omit the
+  blockquote.
 - **First line:** `<CIRCLE> <PRIORITY> · `<ID>` — **<Short Title>**`. The two
   axes are kept distinct and non-redundant: the **circle is the audit verdict**
   (status) and the **priority is the requirement's obligation** — an orthogonal
@@ -565,7 +574,11 @@ Rules:
 - **Finding:** one concrete sentence naming the file/function/config key and the failing mechanism.
 - **Risk:** one concrete sentence fragment describing what the attacker or misuse path can do. No hype.
 - **Evidence:** one line with up to three `path:line` entries. If there is no direct file evidence, use a concise process/config evidence phrase such as `no .github/workflows SAST job found`.
-- **Fix:** one to three concise lines. Prefer code-aware guidance using the actual API, config key, or file name. It may include 1-2 short code fragments inline when that makes the required change clearer. Do not render a full before/after code block in the console.
+- **Fix:** one to three concise lines that make the **control prescribed by the requirement** concrete for this repository — it is anchored to the catalog, not free-form best practice the model prefers. Specifically:
+  - The fix must satisfy the requirement's own `text` (the demand quoted above) and, when `blueprint_map[<id>]` matched (Step 1c-ii), follow that **blueprint section's prescribed approach** — name it and rely on the blueprint link for the "how". Do not substitute an unrelated or contradicting remedy.
+  - The model's job is to map that prescribed control onto the actual file / API / config key in the repo (e.g. *which* call to change, *which* setting to set) — not to invent a requirement or a mechanism the catalog does not call for.
+  - If the catalog/blueprint does not prescribe a specific mechanism, say what the requirement demands and the minimal concrete change here; do not pad with generic advice.
+  - It may include 1-2 short code fragments inline. Do not render a full before/after code block in the console.
 - **Effort:** `S`, `M`, or `L` (in an ANSI terminal, colour it green / yellow / red).
 - **Links:** render each reference as a real Markdown link whose target is the
   URL **from the loaded catalog**, so the user can click straight through to the
@@ -629,6 +642,8 @@ only open requirements (`FAIL` and `PARTIAL`). Do not include `PASS` or
 
 ### 🔴 FAIL · MUST · SEC-SQL — Parameterized SQL Queries
 
+> **Requirement:** Use parameterized SQL/HQL queries or ORM methods for database queries to prevent SQL injection.
+
 Raw request input reaches `sequelize.query()` at `routes/search.ts:23`, so the query predicate can be changed by user-controlled input.
 
 **Evidence:** `routes/search.ts:23`
@@ -676,6 +691,10 @@ Markdown rules:
   (`Status | Priority | ID | Requirement | Effort`) listing every open
   requirement in the sort order below. The detailed `###` blocks follow
   beneath it, so a reviewer can scan the whole gap list before reading details.
+- Directly under each `###` heading, quote the requirement's **verbatim `text`**
+  from the catalog as `> **Requirement:** <text>` (full text, not the derived
+  title, not a paraphrase) — this is the demand being audited. Omit only when
+  the catalog entry has no `text`.
 - Close the report with the one-line effort legend shown above
   (`*Effort: S = … · M = … · L = …*`), preceded by a `---` rule.
 - Sort open requirements with the same order as console output.
