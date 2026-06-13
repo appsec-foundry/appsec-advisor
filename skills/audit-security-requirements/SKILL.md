@@ -523,7 +523,7 @@ Otherwise print `Open Requirements` followed by one block per open requirement.
 Per-finding block:
 
 ```
-🔴 FAIL  MUST  SEC-SQL  **Parameterized SQL Queries**
+🔴 FAIL · MUST · `SEC-SQL` — **Parameterized SQL Queries**
 Finding : raw request input reaches sequelize.query() in routes/search.ts:23
 Risk    : attacker-controlled search terms can alter the SQL predicate
 Evidence: routes/search.ts:23
@@ -535,12 +535,17 @@ Links   : [requirement](https://reqs.example/sec-sql) · [blueprint](https://…
 
 Rules:
 
-- **First line:** `<CIRCLE> <STATUS>  <PRIORITY>  <ID>  **<Short Title>**`.
+- **First line:** `<CIRCLE> <STATUS> · <PRIORITY> · `<ID>` — **<Short Title>**`.
+  This delimits the four fields explicitly so the eye reads a clear hierarchy:
+  coloured circle → bold title → code-span ID → plain status/priority.
   - `<CIRCLE>` is 🔴 for `FAIL`, 🟡 for `PARTIAL` — so the gap list scans as a
     coloured column down the left edge.
-  - `<STATUS>` is the word `FAIL` or `PARTIAL` (no brackets — the circle already
-    carries the colour).
-  - Keep the title to 3-8 words in Title Case and render it in `**bold**`.
+  - `<STATUS>` is the word `FAIL` or `PARTIAL`; follow it and `<PRIORITY>` with a
+    middle dot ` · ` separator (the circle already carries the colour).
+  - Render `<ID>` as an inline `code` span so it stands apart from the prose
+    title, then an em dash ` — ` before the title.
+  - Keep the title to 3-8 words in Title Case and render it in `**bold**` — it is
+    the visual anchor of the block.
   - Do not use Markdown headings.
 - **Finding:** one concrete sentence naming the file/function/config key and the failing mechanism.
 - **Risk:** one concrete sentence fragment describing what the attacker or misuse path can do. No hype.
