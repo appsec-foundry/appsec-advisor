@@ -100,7 +100,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     summary = recompute_summary(data)
-    stored = data.get("summary")
+    stored = data.get("summary") if isinstance(data.get("summary"), dict) else None
+    # The model is instructed to leave summary as zeros (a placeholder); the
+    # script fills it. Only flag a genuine miscount — a stored summary that was
+    # actually populated (non-zero) yet disagrees — not the zero placeholder.
+    stored_populated = bool(stored) and any(v for v in stored.values())
+    miscounted = stored_populated and stored != summary
+
     if args.write or stored != summary:
         data["summary"] = summary
         if args.write:
@@ -109,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     stats_line = " ".join(f"{k}={summary[k]}" for k in ("total", "pass", "partial", "fail", "unverifiable", "not_applicable"))
     print(stats_line)
     if not args.quiet:
-        if stored is not None and stored != recompute_summary(data):
+        if miscounted:
             print("requirements-report: note — stored summary disagreed with results[]; recomputed value is authoritative.", file=sys.stderr)
         open_n = summary["fail"] + summary["partial"]
         print(

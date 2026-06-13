@@ -76,6 +76,25 @@ def test_schema_invalid_verdict_fails(tmp_path):
     assert "schema-invalid" in r.stderr
 
 
+def test_zero_placeholder_summary_emits_no_miscount_note(tmp_path):
+    """The model writes summary as zeros by design — that must NOT warn."""
+    f = tmp_path / ".requirements-audit.json"
+    f.write_text(json.dumps(_verdict()), encoding="utf-8")  # summary all zeros
+    r = subprocess.run([sys.executable, str(REPORT), "--audit", str(f)], capture_output=True, text=True)
+    assert r.returncode == 0
+    assert "disagreed" not in r.stderr
+
+
+def test_populated_wrong_summary_warns(tmp_path):
+    v = _verdict()
+    v["summary"] = {"total": 99, "pass": 99, "partial": 0, "fail": 0, "unverifiable": 0, "not_applicable": 0}
+    f = tmp_path / ".requirements-audit.json"
+    f.write_text(json.dumps(v), encoding="utf-8")
+    r = subprocess.run([sys.executable, str(REPORT), "--audit", str(f)], capture_output=True, text=True)
+    assert r.returncode == 0
+    assert "disagreed" in r.stderr
+
+
 def test_missing_verdict_errors(tmp_path):
     r = subprocess.run([sys.executable, str(REPORT), "--audit", str(tmp_path / "nope.json")], capture_output=True, text=True)
     assert r.returncode == 2

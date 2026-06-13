@@ -142,7 +142,7 @@ Error: unknown argument '<TOKEN>'
   [CATEGORY_FILTER]        Optional substring (e.g. AUTH, SQL) — no -- prefix
   --md                     Save the rendered report as Markdown
   --pdf                    Save the report as PDF (also writes the Markdown)
-  --json                   Save the raw findings as JSON
+  --json                   Copy the structured verdict to JSON
   --save                   --md, --pdf and --json
   --requirements <url>     Override the configured requirements YAML source
   --update                 Force a fresh re-fetch and refresh the cache
