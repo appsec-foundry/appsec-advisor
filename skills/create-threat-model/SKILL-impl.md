@@ -3959,10 +3959,21 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     $( [ "$CHECK_REQUIREMENTS" = "true"  ] && echo "--check-requirements" || echo "--no-check-requirements" ) \
     $( [ "$ARCHITECT_REVIEW"   = "true"  ] && echo "--architect-review"   || echo "--no-architect-review" ) \
     $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \
+    $( [ "$VERBOSE_REPORT"       = "true" ] && echo "--verbose" ) \
     --patch-placeholders
 ```
 
 The `--patch-placeholders` flag rewrites `_pending_` markers in the MD's `## Appendix: Run Statistics` section with the extracted durations and models. Idempotent — a second invocation is a no-op.
+
+The `--verbose` flag (passed only when `VERBOSE_REPORT=true`) expands the console `-- Run Statistics --` block. **Default** prints just the timing headline (`Net agent compute` / `Idle / standby` / `Total elapsed (wall)`); **verbose** adds the per-stage duration breakdown, the standby/suspend split, the agent roster, and the token/cost detail. This mirrors the MD `## Appendix: Run Statistics` section, which is likewise only appended when `VERBOSE_REPORT=true`.
+
+**Surface the script's stdout verbatim as your final message.** The script's
+output *is* the completion summary the user sees. Reproduce it verbatim — do
+**not** compose your own "Summary" narrative, file-size table, or prose recap on
+top of it. The user sees only what you emit as your final turn; re-summarizing
+silently drops the deterministic per-stage statistics and timing the script
+computed. If you want to add a one-line pointer (e.g. "Start at the Management
+Summary"), append it *after* the verbatim block, never in place of it.
 
 **What the script produces (format contract):** the output is an unboxed,
 scan-friendly summary in this fixed order:
@@ -3976,7 +3987,7 @@ scan-friendly summary in this fixed order:
 7. `Outputs` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
 8. Conditional health / run-issues / security notice blocks
 9. `Next Steps` — 1–5 conditional action lines
-10. `Run Statistics` — total + per-stage durations (from `.stage-stats.jsonl`), agent roster, tokens + cost when extractable
+10. `Run Statistics` — timing headline (net compute / idle / wall) always; per-stage durations (from `.stage-stats.jsonl`), agent roster, and tokens + cost only when `--verbose` is passed
 11. `Logs`
 
 The script's rendering logic (file-listing rules, Change Summary conditionals, Next Steps priority, placeholder patching) is covered by `tests/test_render_completion_summary.py`. If the contract needs to change, edit the script and its tests — never the skill layer.

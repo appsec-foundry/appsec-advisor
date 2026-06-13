@@ -916,7 +916,7 @@ _PHASE_AGENT = {
 }
 
 
-def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
+def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = False) -> list[str]:
     if stats["assess_secs"] is None and not stats["phases"] and not stats["stage_rows"]:
         # Nothing to render — skip the whole block rather than
         # printing zeroes and placeholders.
@@ -961,7 +961,9 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         if wall and wall > net:
             idle_total = wall - net
             lines.append(f"  Idle / standby      : {_fmt_duration(idle_total)}  (excluded from net compute)")
-            if standby > 0:
+            # The standby/suspend vs API+orchestration split is extra detail —
+            # verbose-only. The default summary keeps a single Idle line.
+            if verbose and standby > 0:
                 lines.append(
                     f"     standby/suspend  : {_fmt_duration(standby)}  "
                     f"(>10m gap — machine asleep or hung dispatch)"
@@ -973,11 +975,15 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
                 # Make explicit that the headline wall includes dead standby
                 # time, and surface the standby-corrected figure the estimator
                 # uses as the next-run basis.
-                net_wall = timing.get("net_wall_secs") or (wall - standby)
-                lines.append(
-                    f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  "
-                    f"(standby excluded — basis for the next estimate)"
-                )
+                # The standby-corrected "Net run" figure is verbose-only detail;
+                # the default keeps just the raw end-to-end wall (which still
+                # notes the standby it includes).
+                if verbose:
+                    net_wall = timing.get("net_wall_secs") or (wall - standby)
+                    lines.append(
+                        f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  "
+                        f"(standby excluded — basis for the next estimate)"
+                    )
                 lines.append(
                     f"  Total elapsed (wall): {_fmt_duration(wall)}  "
                     f"(end-to-end, incl. {_fmt_duration(standby)} standby)"
@@ -989,6 +995,12 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         # assess+qa+arch sum so the block is not empty.
         suffix = f"  ({' + '.join(legacy_parts)})" if legacy_parts else ""
         lines.append(f"  Total (legacy)      : {_fmt_duration(legacy_total)}{suffix}")
+
+    # Everything below — the per-stage duration breakdown, the agent roster, and
+    # the token/cost block — is verbose-only. The default summary stops at the
+    # timing headline (net compute / idle / wall); `--verbose` adds the detail.
+    if not verbose:
+        return lines
 
     # Per-stage breakdown.
     # Sourced from ``.stage-stats.jsonl`` (one record per Stage agent dispatch,
@@ -1476,7 +1488,7 @@ def render_summary(
     lines.extend(render_run_issues(run_issues, plugin_dev=cfg.get("plugin_dev", False)))
     lines.extend(render_next_steps(next_steps))
     lines.extend(render_security_notice(output_dir))
-    lines.extend(render_run_statistics(stats, cost))
+    lines.extend(render_run_statistics(stats, cost, verbose=cfg.get("verbose", False)))
     lines.extend(render_log_files(output_dir))
 
     return "\n".join(lines) + "\n"
@@ -1627,6 +1639,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--patch-placeholders", action="store_true")
     p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Add the per-stage duration breakdown, agent roster, and token/cost "
+        "detail to the Run Statistics block. Default shows only the timing headline.",
+    )
+    p.add_argument(
         "--no-print",
         dest="no_print",
         action="store_true",
@@ -1652,6 +1670,7 @@ def main(argv: list[str] | None = None) -> int:
         "check_requirements": args.check_requirements,
         "architect_review": args.architect_review,
         "plugin_dev": args.plugin_dev,
+        "verbose": args.verbose,
     }
 
     if args.mode == "dry-run":

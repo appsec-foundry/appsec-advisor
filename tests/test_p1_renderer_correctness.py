@@ -448,6 +448,50 @@ class TestTotalDurationFromStageStats:
         text = "\n".join(out)
         assert "Total elapsed (wall)" not in text
 
+    def test_render_default_hides_per_stage_breakdown(self, tmp_path: Path):
+        """Default (non-verbose) Run Statistics shows only the timing headline —
+        net compute / idle / wall — and omits the per-stage duration rows."""
+        self._write_jsonl(
+            tmp_path,
+            [
+                {"stage": 1, "duration_ms": 1620_000, "name": "Threat Analysis & Triage",
+                 "agent": "appsec-advisor:appsec-threat-analyst", "model": "sonnet"},
+                {"stage": 2, "duration_ms": 300_000, "name": "Report Rendering",
+                 "agent": "appsec-advisor:appsec-threat-renderer", "model": "sonnet"},
+            ],
+        )
+        (tmp_path / ".scan-wall-seconds").write_text("3420", encoding="utf-8")  # 57m
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        out = rcs.render_run_statistics(stats, None)  # verbose defaults to False
+        text = "\n".join(out)
+        # Timing headline present.
+        assert "Net agent compute" in text
+        assert "Idle / standby" in text
+        assert "Total elapsed (wall)" in text
+        # Per-stage rows absent in the default summary.
+        assert "Threat Analysis & Triage" not in text
+        assert "Report Rendering" not in text
+
+    def test_render_verbose_adds_per_stage_breakdown(self, tmp_path: Path):
+        """`--verbose` (verbose=True) adds the per-stage duration rows below the
+        same timing headline."""
+        self._write_jsonl(
+            tmp_path,
+            [
+                {"stage": 1, "duration_ms": 1620_000, "name": "Threat Analysis & Triage",
+                 "agent": "appsec-advisor:appsec-threat-analyst", "model": "sonnet"},
+                {"stage": 2, "duration_ms": 300_000, "name": "Report Rendering",
+                 "agent": "appsec-advisor:appsec-threat-renderer", "model": "sonnet"},
+            ],
+        )
+        (tmp_path / ".scan-wall-seconds").write_text("3420", encoding="utf-8")
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        out = rcs.render_run_statistics(stats, None, verbose=True)
+        text = "\n".join(out)
+        assert "Net agent compute" in text
+        assert "Threat Analysis & Triage" in text
+        assert "Report Rendering" in text
+
 
 # ---------------------------------------------------------------------------
 # Cross-cutting smoke (compose runs, all four invariants hold)
