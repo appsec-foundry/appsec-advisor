@@ -1,6 +1,6 @@
 ---
 name: audit-security-requirements
-description: Audit the current repository against a security requirements catalog and verify whether each requirement is implemented. Requirement IDs follow your catalog's own naming scheme (e.g. SEC-CSP-1, SCG-HARDENXML, or anything your YAML defines); tagging code with those IDs is optional and not required. Prints open requirements to the conversation with color-coded status and concise evidence. When you save an artifact (Markdown, PDF, JSON) or use --gate, it also persists a deterministic structured verdict (.requirements-audit.json) and can act as a CI gate.
+description: Audit the current repository against a security requirements catalog and verify whether each requirement is implemented. Requirement IDs follow your catalog's own naming scheme (e.g. SEC-CSP-1, SCG-HARDENXML, or anything your YAML defines); tagging code with those IDs is optional and not required. Prints open requirements to the conversation with color-coded status and concise evidence. Optionally saves Markdown/PDF reports. With --json or --gate it also persists a deterministic structured verdict (.requirements-audit.json) and can act as a CI gate.
 ---
 
 You are auditing whether security requirements are implemented in the current repository. Follow the steps below exactly.
@@ -28,6 +28,25 @@ PARTIAL, …"), never narrate which requirements passed or why some are N/A, nev
 write a closing paragraph. PASS / UNVERIFIABLE / NOT_APPLICABLE items are counted
 in the block and never described. If it is not the count block, an open-finding
 block, or the footer, it does not belong in the output.
+
+**Saved files are always reported.** Whenever a report or verdict is written,
+the **last** lines of the output name each written path (Steps 4a–4c) — so the
+user always sees where output went.
+
+**`--quiet` mode.** When `quiet_mode` is set, suppress the Step 1b banner and the
+entire Step 3 render (no count block, no findings, no footer). Still grade, still
+write the requested saves. The ONLY output is a single status line followed by
+the saved path(s):
+
+```
+audit: 64 graded · 28 fail · 8 partial · 5 pass · 10 unverifiable · 13 n/a
+saved:
+  docs/security/appsec-requirements-report.md
+```
+
+In `--quiet` with `--gate`, also print the one-line `requirements-gate:` verdict
+and honour its exit code. If `--quiet` is given without any save flag, there is
+nothing to write — print just the status line.
 
 ## `--help` — inline help (early exit)
 
@@ -78,6 +97,8 @@ OUTPUT FLAGS
   --json                   copy the structured verdict to
                            docs/security/appsec-requirements-report.json
   --save                   --md, --pdf and --json
+  --quiet                  suppress the banner + findings; print only a one-line
+                           status and the saved file path(s). Use with a save flag.
 
 GATE FLAGS (CI / merge gate — advisory by default)
   --gate                   exit non-zero when a gating requirement fails.
@@ -87,11 +108,11 @@ GATE FLAGS (CI / merge gate — advisory by default)
 
 DEFAULT BEHAVIOUR
   A plain run prints a banner (catalog, source, fetch date, count, freshness),
-  grades the catalog, and prints the open requirements — fast and quiet, no
-  files written. Saving an artifact (--md/--pdf/--json/--save) or gating
-  (--gate) additionally builds a deterministic structured verdict
+  grades the catalog, and prints the open requirements — no files written.
+  --md/--pdf additionally write the human report. --json or --gate additionally
+  build a deterministic structured verdict
   (docs/security/.requirements-audit.json, schema-validated, counts recomputed)
-  and runs the gate. A fresh cache (< 30 days) is reused without a network
+  and run the gate. A fresh cache (< 30 days) is reused without a network
   round-trip; a stale cache triggers a refresh that falls back to the cache.
 
 See `/appsec-advisor:status` for plugin & configuration status, and
@@ -111,6 +132,7 @@ The user may pass arguments after the skill name. Parse them now:
 - `--pdf` — save `docs/security/appsec-requirements-report.pdf` (converted from the Markdown report, which is written too)
 - `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
 - `--save` — save all formats (`--md`, `--pdf`, `--json`)
+- `--quiet` — suppress the banner and the findings render; after grading + saving, print only a one-line status plus the saved file path(s). Intended with a save flag; the grading, verdict, and gate still run as requested.
 - `--requirements <src>` — override the configured `requirements_yaml_url` for this run. `<src>` is an http(s):// URL (fetched remotely) or a local file path (absolute or relative). The source must load; there is no cache fallback when an explicit source is provided.
 - `--update` — force a fresh re-fetch from the remembered/configured source and refresh the plugin cache before auditing.
 - `--cache-only` — use the plugin cache only; never touch the network.
@@ -124,9 +146,9 @@ The user may pass arguments after the skill name. Parse them now:
 - `--preset <name>` — use a specific preset when resolving the active org profile.
 - `--no-org-profile` — ignore any packaged or env-pointed org profile for this run.
 
-Store the resolved flags: `save_md`, `save_pdf`, `save_json`, `category_filter`,
-`requirements_url_override`, `update`, `cache_only`, `demo`, `status_mode`,
-`clear_requirements`, `gate_mode`, `gate_on` (default `fail`),
+Store the resolved flags: `save_md`, `save_pdf`, `save_json`, `quiet_mode`,
+`category_filter`, `requirements_url_override`, `update`, `cache_only`, `demo`,
+`status_mode`, `clear_requirements`, `gate_mode`, `gate_on` (default `fail`),
 `priority_floor` (default `MUST`), `org_profile_override`, `preset_override`,
 `no_org_profile`.
 
@@ -153,6 +175,7 @@ Error: unknown argument '<TOKEN>'
   --pdf                    Save the report as PDF (also writes the Markdown)
   --json                   Copy the structured verdict to JSON
   --save                   --md, --pdf and --json
+  --quiet                  Suppress banner + findings; print status + saved paths
   --requirements <url>     Override the configured requirements YAML source
   --update                 Force a fresh re-fetch and refresh the cache
   --cache-only             Use the plugin cache only; never touch the network
@@ -332,7 +355,11 @@ fi
 Read `REQ_RESOLUTION` and print a banner so the user always knows **which
 requirements are in effect and how current they are** before any findings.
 This banner — led by the title rule — is the **first user-visible output of the
-skill**; nothing precedes it (no preamble, no "loading…" narration). Derive a
+skill**; nothing precedes it (no preamble, no "loading…" narration). **Print it
+now, immediately after resolution and BEFORE Step 2 grading** — grading 60+
+requirements is the slow part (tens of seconds), so emitting the banner first
+gives the user fast feedback instead of a long silent wait. Do not batch all
+output until the end. (Skip the banner entirely under `--quiet`.) Derive a
 human "fetched N days ago" from `freshness.age_days`. Example:
 
 ```
@@ -457,12 +484,13 @@ Collect for each requirement:
 
 ### 2.5 — Persist the structured verdict (ONLY when an artifact or gate is requested)
 
-**Skip this whole step for a plain console run.** Serialising a full
-per-requirement verdict is only worth its cost when the user asked for a
-machine-readable artifact or a gate — i.e. when **any** of `save_json`,
-`save_pdf`, `save_md`, or `gate_mode` is set. When none are set, do NOT build a
-verdict file and do NOT write helper scripts; go straight to Step 3 and render
-the console from your grading (a plain run stays fast and quiet).
+**Run this step ONLY when `save_json` or `gate_mode` is set** — those are the two
+modes that actually consume the structured verdict (`--json` exposes it, `--gate`
+gates on it). For everything else — a plain run, or `--md` / `--pdf` (whose
+human report is authored directly from your grading in Step 4a) — **skip this
+step entirely**: do NOT build a verdict file and do NOT write helper scripts.
+Serialising 60+ per-requirement entries is the slow, noisy part; pay it only
+when something downstream reads the JSON.
 
 When the verdict IS needed, it is the canonical output the saved reports and the
 gate derive from. Build it directly with the `Write` tool — you already produced
