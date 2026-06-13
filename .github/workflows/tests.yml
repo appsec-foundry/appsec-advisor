@@ -44,4 +44,12 @@ jobs:
         run: python3 scripts/check_fragment_registry.py
 
       - name: Run pytest
-        run: pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing
+        run: pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: false

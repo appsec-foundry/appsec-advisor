@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
+[![codecov](https://codecov.io/gh/matthiasrohr/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/matthiasrohr/appsec-advisor)
 
 `appsec-advisor` is a Claude Code plugin built around a **threat modeler**: a staged agent pipeline that derives a security architecture model from a repository and applies STRIDE to produce structured findings. On top of that foundation sit a **requirements audit** (grades the codebase against a requirements catalog) and **developer helpers** (change review, pre-commit guidance, CI gates).
 
