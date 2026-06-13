@@ -43,19 +43,40 @@ data/appsec-requirements-fallback.yaml
 Thumbs.db
 *.swp
 *.swo
+.idea
 .vscode/settings.json
+.vscode/
 .idea/
+
+# Local shell/user config copied into a checkout by developer tooling.
+.bash_profile
+.bashrc
+.gitconfig
+.profile
+.ripgreprc
+.zprofile
+.zshrc
 
 # ----------------------------------------------------------------------------
 # Local Claude runtime state
 # ----------------------------------------------------------------------------
 .claude/*.lock
+.claude/.mcp.json
+.claude/agents/
+.claude/hooks/
+.claude/skills/
+.claude/worktrees/
+
+# Local Codex runtime state
+.agents/
+.codex/
 
 # ----------------------------------------------------------------------------
 # Local config overrides (may contain sensitive URLs or internal endpoints)
 # ----------------------------------------------------------------------------
 # Copy config.json → config.local.json and set rest_url / pricing there.
 # The committed config.json holds safe defaults only.
+.mcp.json
 config.local.json
 skills/check-appsec-requirements/config.local.json
 .claude/settings.local.json
