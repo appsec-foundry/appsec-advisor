@@ -43,16 +43,22 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_E
 
 Before dispatching the recon-scanner, check whether Phase 2 can be skipped entirely. Phase 2 is the single most expensive phase in the orchestrator (25 turns + 24 grep categories), so skipping it when nothing security-relevant has changed is the biggest token-saving lever in incremental mode.
 
-**Skip condition** — all three must be true:
+**Skip condition** — the recon-summary must exist AND the run must be eligible AND the fingerprint must match:
 
-1. `INCREMENTAL=true`
-2. `$OUTPUT_DIR/.recon-summary.md` exists from the previous run
-3. `baseline_state.py check-fingerprint` exits 0 (recon fingerprint unchanged)
+1. `$OUTPUT_DIR/.recon-summary.md` exists from the previous run
+2. The run is **eligible** for recon reuse — either:
+   - `INCREMENTAL=true` (the orchestrator's git-diff STRIDE pass back-stops a stale recon), or
+   - `RECON_REUSE_ELIGIBLE=true` — an **auto-upgraded** full run (depth increased / `--requirements` added on an unchanged baseline; set by `resolve_config`, never on explicit `--full`)
+3. `baseline_state.py check-fingerprint` exits 0 (recon fingerprint unchanged). On the auto-upgraded-full path we additionally pass `--require-clean-tree` — there is no incremental STRIDE delta to catch a source change, so the repo must be **git-provably** unchanged (committed-since-baseline + working tree + untracked), not merely manifest-unchanged.
 
 ```bash
-if [ "$INCREMENTAL" = "true" ] && [ -f "$OUTPUT_DIR/.recon-summary.md" ]; then
-  if python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" check-fingerprint \
-       --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1; then
+if [ -f "$OUTPUT_DIR/.recon-summary.md" ] \
+   && { [ "$INCREMENTAL" = "true" ] || [ "$RECON_REUSE_ELIGIBLE" = "true" ]; }; then
+  # Auto-upgraded-full reuse has no incremental git-diff back-stop, so demand a
+  # git-provably clean tree. Incremental keeps the lighter manifest-only check.
+  FP_ARGS="check-fingerprint --output-dir $OUTPUT_DIR --repo-root $REPO_ROOT"
+  [ "$INCREMENTAL" != "true" ] && FP_ARGS="$FP_ARGS --require-clean-tree"
+  if python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" $FP_ARGS 2>&1; then
     RECON_SKIP="true"
   else
     RECON_SKIP="false"
@@ -73,7 +79,7 @@ fi
 1. Run Step 1 (recon-scanner dispatch) as part of the parallel batch.
 2. After the recon-scanner returns, the updated fingerprint will be written to `.appsec-cache/baseline.json` during Phase 11 — no action needed here.
 
-**Conservative fingerprinting rule:** `baseline_state.py` uses a whitelist of known manifest/Dockerfile/IaC file types. If a new unknown file type shows up that might carry security-relevant changes (e.g. a novel IaC format), the fingerprint check will still say "unchanged" for that file — which is unsafe. Mitigation: when in doubt about coverage, force a full scan with `--full`. The fingerprint is a best-effort optimization, not a correctness guarantee.
+**Conservative fingerprinting rule:** `baseline_state.py` uses a whitelist of known manifest/Dockerfile/IaC file types. If a new unknown file type shows up that might carry security-relevant changes (e.g. a novel IaC format), the bare fingerprint check will still say "unchanged" for that file — which is unsafe. On the **incremental** path this is back-stopped by the orchestrator's git-diff STRIDE pass; on the **auto-upgraded-full** reuse path it is back-stopped by `--require-clean-tree`, which fails the skip if *any* tracked-or-untracked file differs from the baseline commit (so a novel-format or brand-new source file forces recon to run). A persistent uncommitted-but-identical edit will conservatively defeat the optimization (recon runs) — a perf miss, never a correctness miss. Mitigation when in doubt about coverage: force a full scan with `--full` (explicit `--full` never reuses recon). The fingerprint is a best-effort optimization, not a correctness guarantee.
 
 ### Pre-check — resolve HAS_IAC_SURFACE (before parallel dispatch)
 

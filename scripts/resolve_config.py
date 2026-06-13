@@ -939,6 +939,11 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
                 "incremental":       False,
                 "rebuild":           False,
                 "baseline_state":    state,
+                # Auto-upgraded full (user did not type --full): the repo is
+                # unchanged, only the requested depth deepened. Eligible to reuse
+                # the prior recon if the tree is git-provably clean — the recon
+                # gate enforces that with check-fingerprint --require-clean-tree.
+                "reuse_recon_eligible": True,
                 "depth_upgrade_reason": (
                     f"existing model was built at '{base_depth}' depth; "
                     f"--assessment-depth {cur_depth} requested — incremental cannot "
@@ -978,6 +983,10 @@ def resolve_incremental_mode(ns: argparse.Namespace, output_dir: Path,
                         "incremental":       False,
                         "rebuild":           False,
                         "baseline_state":    state,
+                        # Auto-upgraded full (user did not type --full): repo
+                        # unchanged, only --requirements newly requested. Eligible
+                        # to reuse prior recon when the tree is git-provably clean.
+                        "reuse_recon_eligible": True,
                         "mode_upgraded_reason": (
                             "existing model was built WITHOUT a security-requirements "
                             "check; --requirements now requested — incremental cannot "

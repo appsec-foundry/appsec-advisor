@@ -782,6 +782,11 @@ MODE=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.s
 INCREMENTAL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['incremental']).lower())")
 REBUILD=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['rebuild']).lower())")
 RERENDER=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('rerender',False)).lower())")
+# Auto-upgraded-full recon reuse: set by resolve_config on the depth-increase /
+# requirements-added overrides (NOT on explicit --full or first run). Tells the
+# recon gate it may skip Phase 2 when the tree is git-provably clean. See
+# phase-group-recon.md "Incremental fingerprint skip".
+RECON_REUSE_ELIGIBLE=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('reuse_recon_eligible',False)).lower())")
 # Full-M1: parallel STRIDE fan-out at the skill (Level-0) instead of serial
 # inline STRIDE inside a single Level-1 analyst. DEFAULT-ON for from-scratch
 # runs (full/rebuild) — no env var needed. Opt-OUT with APPSEC_PARALLEL_STRIDE=0
@@ -3082,6 +3087,7 @@ Pass the following variables to the agent prompt:
 - `CHECK_REQUIREMENTS=<true|false>`
 - `REQUIREMENTS_URL_OVERRIDE=<url>` (only if `--requirements <url>` was provided)
 - `INCREMENTAL=<true|false>`
+- `RECON_REUSE_ELIGIBLE=<true|false>` (default `false`; set `true` by `resolve_config` only on an **auto-upgraded** full run — depth increased or `--requirements` newly added against an unchanged baseline, never on explicit `--full` or a first run. When `true`, Phase 2's recon gate in `phase-group-recon.md` may skip recon and reuse the prior `.recon-summary.md` **iff** the tree is git-provably clean (`check-fingerprint --require-clean-tree`). Lets a depth/requirements re-run on an unchanged repo avoid the ~6 min recon while still re-running STRIDE/triage at the new depth.)
 - `REBUILD=<true|false>` (when `true`, Phase 11 writes a `note: "full rebuild — prior threat model and changelog history were discarded on user request (--rebuild)"` into the fresh `v1` changelog entry — the pre-flight wipe already removed the baseline so the orchestrator itself runs as if first-ever)
 - `KEEP_RUNTIME_FILES=<true|false>` (default `false`; when `true` Phase 11 skips cleanup of transient artifacts — useful for debugging)
 - `SCAN_MANIFEST=<true|false>` (default `false`; when `true` the recon-scanner writes every processed file path to `$OUTPUT_DIR/.scan-manifest.txt`)

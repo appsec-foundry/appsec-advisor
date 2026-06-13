@@ -494,6 +494,31 @@ class TestResolveIncrementalMode:
         assert out["mode"] == "full"
         assert "depth increased: standard → thorough" in out["mode_label"]
 
+    def test_depth_increase_sets_reuse_recon_eligible(self, tmp_path):
+        # Auto-upgraded full (depth deepened on an unchanged baseline) is eligible
+        # to reuse the prior recon when the tree is git-provably clean.
+        self._yaml_with_depth(tmp_path, "standard")
+        ns = rc.build_parser().parse_args(["--assessment-depth", "thorough"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["reuse_recon_eligible"] is True
+
+    def test_explicit_full_not_reuse_recon_eligible(self, tmp_path):
+        # Explicit --full is the trust-nothing escape hatch: never reuse recon.
+        self._yaml_with_depth(tmp_path, "standard")
+        ns = rc.build_parser().parse_args(["--full", "--assessment-depth", "thorough"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "full"
+        assert out.get("reuse_recon_eligible") is not True
+
+    def test_auto_incremental_not_reuse_recon_eligible(self, tmp_path):
+        # Plain auto-incremental skips recon via its own INCREMENTAL=true gate; it
+        # does not need (and must not carry) the auto-upgraded-full reuse flag.
+        self._yaml_with_depth(tmp_path, "standard")
+        ns = rc.build_parser().parse_args(["--assessment-depth", "standard"])
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
+        assert out["mode"] == "incremental"
+        assert out.get("reuse_recon_eligible") is not True
+
     def test_same_depth_stays_incremental(self, tmp_path):
         self._yaml_with_depth(tmp_path, "standard")
         ns = rc.build_parser().parse_args(["--assessment-depth", "standard"])
@@ -556,6 +581,8 @@ class TestResolveIncrementalMode:
         assert out["incremental"] is False
         assert "requirements added" in out["mode_label"]
         assert "without" in out["mode_upgraded_reason"].lower()
+        # Auto-upgraded full on an unchanged baseline → eligible to reuse recon.
+        assert out["reuse_recon_eligible"] is True
 
     def test_requirements_dropped_on_to_off_aborts(self, tmp_path):
         self._yaml_with_req(tmp_path, True)

@@ -1549,6 +1549,91 @@ def _load_baseline_state_module():
     return mod
 
 
+class TestReconReuseCleanTree:
+    """`check-fingerprint --require-clean-tree` — the strong, git-aware guard
+    backing the auto-upgraded-full recon-reuse path (depth-increase /
+    requirements-added on an unchanged repo). The bare fingerprint is
+    manifest-only; --require-clean-tree additionally demands a git-provably
+    unchanged tree (committed-since-baseline + working tree + untracked)."""
+
+    @pytest.fixture
+    def gitrepo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        (repo / "package.json").write_text('{"name":"x","version":"1.0.0"}')
+        (repo / "app.py").write_text("def handler(): return 'ok'\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "app"], cwd=repo, check=True)
+        return repo
+
+    @pytest.fixture
+    def outdir(self, tmp_path: Path, gitrepo: Path) -> Path:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=gitrepo,
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        d = tmp_path / "out"
+        d.mkdir()
+        (d / "threat-model.yaml").write_text(
+            f"meta:\n  git:\n    commit_sha: '{head}'\nthreats: []\n"
+        )
+        # Seed the fingerprint cache from the clean committed state.
+        _run_bs("update", "--output-dir", str(d), "--repo-root", str(gitrepo), "--mode", "full")
+        return d
+
+    def test_clean_tree_allows_skip(self, gitrepo, outdir):
+        r = _run_bs("check-fingerprint", "--output-dir", str(outdir),
+                    "--repo-root", str(gitrepo), "--require-clean-tree")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "unchanged" in r.stdout
+
+    def test_untracked_source_file_blocks_skip(self, gitrepo, outdir):
+        # Brand-new, never-git-added source file — git diff is blind to it, but
+        # ls-files --others catches it. Manifest fingerprint is still unchanged.
+        (gitrepo / "routes_admin.py").write_text("def admin(): ...\n")
+        r = _run_bs("check-fingerprint", "--output-dir", str(outdir),
+                    "--repo-root", str(gitrepo), "--require-clean-tree")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "not clean" in r.stdout
+
+    def test_modified_tracked_source_blocks_skip(self, gitrepo, outdir):
+        # Edit a non-manifest source file: fingerprint unchanged, but the working
+        # tree is dirty → require-clean-tree must run recon.
+        (gitrepo / "app.py").write_text("def handler(): return 'pwned'\n")
+        r = _run_bs("check-fingerprint", "--output-dir", str(outdir),
+                    "--repo-root", str(gitrepo), "--require-clean-tree")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "not clean" in r.stdout
+
+    def test_default_mode_ignores_source_change(self, gitrepo, outdir):
+        # WITHOUT --require-clean-tree the bare fingerprint is manifest-only by
+        # design (incremental back-stops it with git-diff STRIDE). A source-only
+        # edit must still report "unchanged" — regression guard for the
+        # incremental path's behavior.
+        (gitrepo / "app.py").write_text("def handler(): return 'changed'\n")
+        r = _run_bs("check-fingerprint", "--output-dir", str(outdir),
+                    "--repo-root", str(gitrepo))
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "unchanged" in r.stdout
+
+    def test_non_git_repo_blocks_skip(self, tmp_path):
+        # No git + no provable baseline → conservative: run recon.
+        repo = tmp_path / "plain"
+        repo.mkdir()
+        (repo / "package.json").write_text('{"name":"x","version":"1.0.0"}')
+        d = tmp_path / "out"
+        d.mkdir()
+        (d / "threat-model.yaml").write_text(
+            "meta:\n  git:\n    commit_sha: abc1234\nthreats: []\n"
+        )
+        _run_bs("update", "--output-dir", str(d), "--repo-root", str(repo), "--mode", "full")
+        r = _run_bs("check-fingerprint", "--output-dir", str(d),
+                    "--repo-root", str(repo), "--require-clean-tree")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "not git-provable" in r.stderr
+
+
 class TestSecurityCriticalClassifier:
     """_classify_security_critical flags high-blast-radius changes so the skill
     can recommend a full scan: security primitives, trust-boundary / I/O surface

@@ -516,6 +516,36 @@ def cmd_check_fingerprint(args: argparse.Namespace) -> int:
     current_fp = _compute_recon_fingerprint(repo_root, exclude_rel_prefix=out_rel)
 
     if cached_fp == current_fp:
+        # The bare fingerprint is manifest/Dockerfile/IaC-only — blind to
+        # application source. On the incremental path that is fine: the
+        # orchestrator's git-diff STRIDE pass back-stops a source change. On the
+        # auto-upgraded-full recon-reuse path there is NO such back-stop, so the
+        # caller passes --require-clean-tree to demand a PROVABLY unchanged repo
+        # (git-aware: committed-since-baseline + working tree + untracked).
+        if getattr(args, "require_clean_tree", False):
+            baseline_sha = _extract_baseline_commit_sha(output_dir)
+            # A non-git repo makes every git probe fail silently (→ looks
+            # "clean"), and without a baseline SHA we cannot prove the committed
+            # history is unchanged. Either case: we cannot prove cleanliness, so
+            # be conservative and run recon.
+            if baseline_sha is None or _git_head(repo_root) is None:
+                print(
+                    "RECON_CHECK: --require-clean-tree but repo is not git-provable "
+                    "(no baseline commit_sha or not a git repo) — running Phase 2 recon",
+                    file=sys.stderr,
+                )
+                return 1
+            committed, working = _git_diff_names(repo_root, baseline_sha)
+            committed = _filter_diff_paths_via_scan_excludes(committed, out_rel)
+            working = _filter_diff_paths_via_scan_excludes(working, out_rel)
+            if committed or working:
+                sample = (committed + working)[:5]
+                print(
+                    "RECON_CHECK: fingerprint matches but working tree not clean "
+                    f"({len(committed) + len(working)} changed: {', '.join(sample)}) — "
+                    "running Phase 2 recon"
+                )
+                return 1
         print("RECON_CHECK: fingerprint unchanged — Phase 2 may be skipped")
         return 0
 
@@ -609,6 +639,20 @@ def _git_diff_names(repo_root: Path, base_ref: str | None) -> tuple[list[str], l
         # Include staged changes too (diff --cached)
         r = subprocess.run(
             ["git", "-C", str(repo_root), "diff", "--name-only", "--cached"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=15,
+        )
+        if r.returncode == 0:
+            for ln in r.stdout.splitlines():
+                if ln and ln not in working:
+                    working.append(ln)
+        # Untracked (new, never git-added) files. `git diff` is blind to these,
+        # but a brand-new source file (e.g. a new route handler) IS a source
+        # change that must invalidate a no-source-changes / recon-reuse verdict.
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "--others", "--exclude-standard"],
             capture_output=True,
             text=True,
             env=env,
@@ -1530,6 +1574,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ck.add_argument("--output-dir", required=True)
     ck.add_argument("--repo-root", required=True)
+    ck.add_argument(
+        "--require-clean-tree",
+        action="store_true",
+        help="In addition to the fingerprint match, require a git-provably "
+        "unchanged repo (committed-since-baseline + working tree + untracked). "
+        "Used by the auto-upgraded-full recon-reuse path, which has no "
+        "incremental git-diff STRIDE pass to back-stop a stale recon.",
+    )
     ck.set_defaults(func=cmd_check_fingerprint)
 
     cc = sub.add_parser(
