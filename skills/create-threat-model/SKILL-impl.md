@@ -1567,6 +1567,7 @@ Full run: discarding stale intermediate artifacts to avoid cross-contamination.
     .progress/ (per-agent progress tracker — will be recreated)
     .fragments/ (compose inputs from prior contract version)
     .pre-render-repair-plan.json, .qa-repair-plan.json, .architect-repair-plan.json (stale repair signals)
+    .stage-stats.jsonl, .run-issues-fixes.json (prior-run observability — must not bleed into this run's stats)
   Preserved:
     threat-model.md, threat-model.yaml, threat-model.sarif.json (overwritten by orchestrator)
     .appsec-cache/ (baseline cache; used for incremental fingerprint comparison)
@@ -1586,8 +1587,16 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".assessment-summary-emitted" -o -name ".phase-epoch" \
      -o -name ".session-agent-map" -o -name ".prior-findings-index.json" \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
-     -o -name ".architect-repair-plan.json" \) \
+     -o -name ".architect-repair-plan.json" \
+     -o -name ".stage-stats.jsonl" -o -name ".run-issues-fixes.json" \) \
   -print -delete 2>/dev/null | wc -l)
+# .stage-stats.jsonl + .run-issues-fixes.json are run-scoped observability,
+# NOT carried-forward state. Before 2026-06-13 the full-run wipe omitted them
+# (only --rebuild cleared .stage-stats.jsonl), so a --full run over an existing
+# OUTPUT_DIR inherited the PRIOR run's stage rows. record_stage_stats.py is
+# idempotent per (stage, variant) → it then no-ops on the new run's records and
+# the completion summary reports last run's timings. Wiping them here makes a
+# full run record only its own stages.
 # .fragments/ MUST be wiped. Stale fragments from a previous contract
 # version (e.g. §7 layout prior to the 7.8/7.9 insertion) are the
 # single biggest cause of Phase 11 compose failures — the orchestrator
@@ -4019,6 +4028,19 @@ if [ "$RUN_START_EPOCH" -gt 0 ]; then
   RUN_END_EPOCH=$(date +%s)
   RUN_SECONDS=$(( RUN_END_EPOCH - RUN_START_EPOCH ))
   RUN_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # Standby-correct the persisted figure. A run suspended mid-flight (machine
+  # standby) or with a hung dispatch produces a raw end-to-end RUN_SECONDS
+  # dominated by dead time (observed: 232 min for ~95 min of real work), which
+  # would poison the next run's estimate. run_timing.py isolates per-stage
+  # standby/suspend gaps (>10 min wall-minus-compute); prefer its net-of-standby
+  # wall when it is available AND shorter than the raw span. The displayed
+  # Completion Summary uses the same helper, so the persisted basis matches the
+  # "Net run (wall−sleep)" line the user just saw.
+  NET_WALL=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/run_timing.py" \
+      --output-dir "$OUTPUT_DIR" --net-wall-seconds 2>/dev/null)
+  if [ -n "$NET_WALL" ] && [ "$NET_WALL" -gt 0 ] 2>/dev/null && [ "$NET_WALL" -lt "$RUN_SECONDS" ]; then
+    RUN_SECONDS="$NET_WALL"
+  fi
   CACHE_DIR="$OUTPUT_DIR/.appsec-cache"
   CACHE_FILE="$CACHE_DIR/baseline.json"
   mkdir -p "$CACHE_DIR" 2>/dev/null

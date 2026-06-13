@@ -399,10 +399,8 @@ class TestTotalDurationFromStageStats:
 
         out = rcs.render_run_statistics(stats, None)
         text = "\n".join(out)
-        # Total comes from jsonl: 1900+250+45+600 = 2795s = 46m 35s
-        assert "Total stage compute : 46m 35s" in text
-        # Breakdown surfaces the delta line for stages the legacy path missed.
-        assert "renderer + repair: 14m 55s" in text
+        # Net comes from jsonl: 1900+250+45+600 = 2795s = 46m 35s
+        assert "Net agent compute   : 46m 35s" in text
 
     def test_render_run_statistics_falls_back_when_jsonl_absent(self, tmp_path: Path):
         """No jsonl → use the legacy assess+qa+arch sum unchanged."""
@@ -412,10 +410,8 @@ class TestTotalDurationFromStageStats:
         stats["arch_secs"] = 240
         out = rcs.render_run_statistics(stats, None)
         text = "\n".join(out)
-        # 1900 + 60 + 240 = 2200 s = 36m 40s — legacy path
-        assert "Total stage compute : 36m 40s" in text
-        # No "renderer + repair" delta line because jsonl wasn't read.
-        assert "renderer + repair" not in text
+        # 1900 + 60 + 240 = 2200 s = 36m 40s — legacy path (no .stage-stats.jsonl)
+        assert "Total (legacy)      : 36m 40s" in text
 
     def test_wall_clock_marker_extracted(self, tmp_path: Path):
         """`.scan-wall-seconds` is read as the true end-to-end wall-clock."""
@@ -441,8 +437,8 @@ class TestTotalDurationFromStageStats:
         stats["assess_secs"] = 1620
         out = rcs.render_run_statistics(stats, None)
         text = "\n".join(out)
-        assert "Total stage compute : 27m 00s" in text
-        assert "Total scan (wall)   : 57m 00s" in text
+        assert "Net agent compute   : 27m 00s" in text
+        assert "Total elapsed (wall): 57m 00s" in text
 
     def test_render_omits_wall_clock_line_when_absent(self, tmp_path: Path):
         self._write_jsonl(tmp_path, [{"stage": 1, "duration_ms": 1620_000}])
@@ -450,7 +446,7 @@ class TestTotalDurationFromStageStats:
         stats["assess_secs"] = 1620
         out = rcs.render_run_statistics(stats, None)
         text = "\n".join(out)
-        assert "Total scan (wall)" not in text
+        assert "Total elapsed (wall)" not in text
 
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,8 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
+
 BANNER_WIDTH = 62
 RULE = "═" * BANNER_WIDTH
 SECTION_RULE = "-" * 59  # matches the `--- Foo ---` dividers in the template
@@ -323,7 +325,9 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
         "carried_n": len(e.get("carried_forward_components") or []),
         "cl_mode": e.get("mode", "?"),
         "baseline_short": baseline_sha[:12] if baseline_sha != "n/a" else "n/a",
-        "version": e.get("version", "?"),
+        # Run sequence number is positional (newest entry = total count), NOT
+        # the entry's constant schema-version field. The newest entry is cl[0].
+        "version": len(cl),
         "date": e.get("date", "?"),
         "changed_files": e.get("changed_files"),
         "added_entries": added_entries,
@@ -458,6 +462,12 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         # compute and therefore excludes the orchestration gaps between
         # dispatches + the preamble. Written by the skill at completion.
         "wall_secs": None,
+        # Net-vs-wall breakdown with standby/suspend isolated (run_timing.py).
+        # Used to render the net compute / idle / standby lines so a run that
+        # sat in machine standby reports an honest net figure instead of a
+        # wall-clock dominated by sleep. Single source shared with the skill's
+        # last_run_seconds writer.
+        "timing": run_timing.compute_timing(output_dir),
     }
 
     # Total wall-clock from .stage-stats.jsonl. Lines are JSON objects with
@@ -875,55 +885,71 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
     lines = [""]
     lines.append(f"  -- Run Statistics {SECTION_RULE[:42]}")
 
-    # Total duration header.
-    # Prefer the jsonl-sourced total (sums every recorded stage including
-    # Stage 2 renderer and REPAIR_MODE iterations) over the legacy
-    # assess+qa+arch path which only captured Stage 1's ASSESSMENT_END.
-    # The per-stage parts list is still rendered as a breakdown so the
-    # user sees what makes up the total.
-    parts = []
+    # Total duration header — net agent compute vs. end-to-end wall, with
+    # machine standby/suspend explicitly isolated (run_timing.py). A run that
+    # sat in standby otherwise reports a wall-clock dominated by sleep plus a
+    # confusing unexplained gap; breaking standby out makes the NET time the
+    # user actually spent unambiguous.
+    timing = stats.get("timing") or {}
+    net_compute = timing.get("net_compute_secs") or 0
+    wall = timing.get("wall_secs") or stats.get("wall_secs") or 0
+    standby = timing.get("standby_secs") or 0
+
+    # Legacy assess+qa+arch sum — fallback only for pre-stage-stats runs
+    # (no .stage-stats.jsonl, so net_compute is 0).
     legacy_total = 0
+    legacy_parts = []
     if stats["assess_secs"] is not None:
-        parts.append(f"assessment: {_fmt_duration(stats['assess_secs'])}")
+        legacy_parts.append(f"assessment: {_fmt_duration(stats['assess_secs'])}")
         legacy_total += stats["assess_secs"]
     if stats["qa_secs"]:
-        parts.append(f"QA review: {_fmt_duration(stats['qa_secs'])}")
+        legacy_parts.append(f"QA review: {_fmt_duration(stats['qa_secs'])}")
         legacy_total += stats["qa_secs"]
     if stats["arch_secs"]:
-        parts.append(f"architect review: {_fmt_duration(stats['arch_secs'])}")
+        legacy_parts.append(f"architect review: {_fmt_duration(stats['arch_secs'])}")
         legacy_total += stats["arch_secs"]
 
-    total_from_stages = stats.get("total_secs_from_stages")
-    if total_from_stages and total_from_stages > 0:
-        # When the jsonl-sourced total exceeds the legacy parts sum (because
-        # Stage 2 / repair iterations are missing from the log scan), surface
-        # that delta as an extra entry so the breakdown remains explanatory.
-        # Fix #9 root cause has restored assess_secs to a Stage-1-only figure
-        # (uses ASSESSMENT_END, not "last PHASE_END") so the legacy "parts"
-        # list now adds up meaningfully again — keep them in the suffix.
-        total = total_from_stages
-        delta = total - legacy_total
-        if delta > 0 and parts:
-            parts.append(f"renderer + repair: {_fmt_duration(delta)}")
-        elif delta < 0 and parts:
-            # Defensive: if assess_secs over-counts (very-old logs without an
-            # ASSESSMENT_END timestamp at all), drop the legacy parts list so
-            # the displayed total stays consistent with the headline figure.
-            parts = []
-        suffix = f"  ({' + '.join(parts)})" if parts else ""
-        lines.append(f"  Total stage compute : {_fmt_duration(total)}{suffix}")
-    elif legacy_total:
-        suffix = f"  ({' + '.join(parts)})" if parts else ""
-        lines.append(f"  Total stage compute : {_fmt_duration(legacy_total)}{suffix}")
+    # Net = agent compute from .stage-stats.jsonl. The legacy assess+qa+arch
+    # sum is used ONLY when no stage stats exist (so the two paths never both
+    # print). Stage-data path shows the full Net / Idle / Wall breakdown;
+    # legacy path shows a single total line.
+    net = net_compute or stats.get("total_secs_from_stages") or 0
+    if net:
+        lines.append(f"  Net agent compute   : {_fmt_duration(net)}  (sum of per-stage agent time)")
 
-    # True end-to-end wall-clock of the whole scan. Rendered as a peer of the
-    # stage-compute total so the user can see both at a glance — the gap
-    # between them is orchestration overhead (between-dispatch turns, preamble,
-    # permission waits), not agent work. This is the headline "how long did the
-    # scan take" figure.
-    wall = stats.get("wall_secs")
-    if wall and wall > 0:
-        lines.append(f"  Total scan (wall)   : {_fmt_duration(wall)}  (end-to-end, incl. orchestration)")
+        # Idle / standby breakdown — only when a wall-clock is available to
+        # compare against the net compute.
+        if wall and wall > net:
+            idle_total = wall - net
+            lines.append(f"  Idle / standby      : {_fmt_duration(idle_total)}  (excluded from net compute)")
+            if standby > 0:
+                lines.append(
+                    f"     standby/suspend  : {_fmt_duration(standby)}  "
+                    f"(>10m gap — machine asleep or hung dispatch)"
+                )
+                lines.append(f"     API + orchestr.  : {_fmt_duration(max(0, idle_total - standby))}")
+
+        if wall and wall > 0:
+            if standby > 0:
+                # Make explicit that the headline wall includes dead standby
+                # time, and surface the standby-corrected figure the estimator
+                # uses as the next-run basis.
+                net_wall = timing.get("net_wall_secs") or (wall - standby)
+                lines.append(
+                    f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  "
+                    f"(standby excluded — basis for the next estimate)"
+                )
+                lines.append(
+                    f"  Total elapsed (wall): {_fmt_duration(wall)}  "
+                    f"(end-to-end, incl. {_fmt_duration(standby)} standby)"
+                )
+            else:
+                lines.append(f"  Total elapsed (wall): {_fmt_duration(wall)}  (end-to-end, incl. orchestration)")
+    elif legacy_total:
+        # Pre-stage-stats run: no .stage-stats.jsonl. Fall back to the legacy
+        # assess+qa+arch sum so the block is not empty.
+        suffix = f"  ({' + '.join(legacy_parts)})" if legacy_parts else ""
+        lines.append(f"  Total (legacy)      : {_fmt_duration(legacy_total)}{suffix}")
 
     # Per-stage breakdown.
     # Sourced from ``.stage-stats.jsonl`` (one record per Stage agent dispatch,
@@ -938,6 +964,10 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         key=lambda r: (r[0] if isinstance(r[0], (int, float)) else 99, r[1]),
     )
     stage_nums_present = {r[0] for r in stage_rows}
+    # Idle/standby annotation per row, keyed by (stage, variant). The per-row
+    # figure is agent COMPUTE (duration_ms); when its wall window also held a
+    # standby/suspend gap, flag it so the user sees WHERE the dead time was.
+    idle_by_key = {(s.get("stage"), s.get("variant") or ""): s for s in timing.get("stages") or []}
     for stage, variant, name, agent, model, secs in stage_rows:
         # ``abuse-verification`` is the Stage-1 sub-step rendered as "1c"
         # everywhere else (TUI row, report table). Repair variants keep the
@@ -950,7 +980,11 @@ def render_run_statistics(stats: dict, cost: Optional[dict]) -> list[str]:
         stage_tag = f"Stage {label}".ljust(10)
         desc_col = desc.ljust(28)[:28]
         agent_col = f"{agent} ({model})".ljust(32)
-        lines.append(f"    {stage_tag}{desc_col}{agent_col}: {duration:>8}")
+        tinfo = idle_by_key.get((stage, variant or ""))
+        standby_note = ""
+        if tinfo and tinfo.get("is_standby") and tinfo.get("idle_secs"):
+            standby_note = f"   ⏸ +{_fmt_duration(tinfo['idle_secs'])} standby"
+        lines.append(f"    {stage_tag}{desc_col}{agent_col}: {duration:>8}{standby_note}")
 
     # QA review is not a recorded stage (no .stage-stats.jsonl row) — surface it
     # from the log-derived qa_secs when present.
