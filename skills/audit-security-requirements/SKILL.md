@@ -286,6 +286,7 @@ Derive a human "fetched N days ago" from `freshness.age_days`. Example:
 Requirements Source
   Catalog  : Acme Application Security Requirements
   Source   : remembered · https://security.example.com/appsec-requirements.yaml
+  Loaded   : plugin cache /home/you/appsec-advisor/.cache/requirements.yaml
   Fetched  : 2026-06-05 (7 days ago) · catalog generated 2026-04-09
   Count    : 63 requirements
   Freshness: ● fresh (cache < 30 days)
@@ -293,6 +294,12 @@ Requirements Source
 ```
 
 Banner rules:
+- **Always print a `Loaded   :` line** naming the concrete on-disk path the catalog bytes were actually read from **this run** — so it is never ambiguous that the `Source` URL was not necessarily contacted. Derive it from `disposition` + `cache_path` + `url`:
+  - `cache` / `cache_only` / `cache_after_fetch_fail` → `Loaded   : plugin cache <cache_path>`
+  - `fetched` → `Loaded   : freshly fetched from <url> → cached at <cache_path>`
+  - `local` → `Loaded   : local file <url>`
+  - `demo` → `Loaded   : packaged example <url>`
+  When the bytes came from the cache, the `Source` line still shows the remembered/configured URL (where the cache came from) and the `Loaded` line shows the cache file that was actually read.
 - If `demo` is `true`, title the catalog line `Catalog  : <desc>  ⚠ DEMO — not your organization's requirements` and colour it yellow. The audit still runs, but every report it writes must carry the DEMO stamp (Steps 3a/4a).
 - If `surfaced` is `true` (a local `docs/security/requirements.yaml` is in effect), add a line `Note     : using local repo catalog (overrides org profile)`.
 - If `freshness.stale` is `true`, render `Freshness: ● STALE (cache ≥ 30 days) — refresh with --update` in yellow, and note that an `--update` attempt was already made this run if the disposition is `cache_after_fetch_fail`.
