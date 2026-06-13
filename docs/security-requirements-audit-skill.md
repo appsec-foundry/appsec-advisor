@@ -12,6 +12,7 @@ Grades a repository against a security requirements catalog. Requirement IDs fol
 - [Where the catalog comes from](#where-the-catalog-comes-from)
 - [Source lifecycle: remember, refresh, inspect](#source-lifecycle-remember-refresh-inspect)
 - [Flags](#flags)
+- [Structured verdict & CI gate](#structured-verdict--ci-gate)
 - [Shared source with the threat model](#shared-source-with-the-threat-model)
 
 ## What it does
@@ -24,8 +25,9 @@ Walks every requirement in the loaded catalog and assigns one of:
 | **PARTIAL** | Evidence found, but gaps exist — listed explicitly with file/line |
 | **FAIL** | No evidence found, or evidence contradicts the requirement |
 | **UNVERIFIABLE** | Static analysis cannot prove the requirement either way |
+| **NOT_APPLICABLE** | The requirement does not apply to this repo (e.g. XML hardening with no XML parsing); never gates |
 
-The console output lists only open requirements: `FAIL` and `PARTIAL`. Passed and unverifiable requirements are counted in the summary but not expanded. Open requirements include the grounded file/line evidence, a concrete risk statement, effort, and a code-aware fix. Saved Markdown reports add short before/after snippets where the repository contains meaningful code evidence.
+The console lists only the open requirements (`FAIL`, `PARTIAL`) — each with file/line evidence, a concrete risk, effort, and a catalog-anchored fix. The other statuses are counted in the summary block but not expanded. Saved Markdown reports add short before/after snippets where there is meaningful code evidence.
 
 ## Prerequisites
 
@@ -70,19 +72,16 @@ Every run prints a **startup banner** before any findings — which catalog is i
 |---|--------|-------|
 | 1 | `--requirements <src>` | Explicit http(s) URL or local path, this run only. Fail-closed (no cache fallback). |
 | 2 | `--demo` | Packaged `examples/appsec-requirements-example.yaml`. Report is stamped **DEMO**. |
-| 3 | `docs/security/requirements.yaml` | A developer-authored **local repo catalog**. Overrides the org profile and is surfaced in the banner (`Note: using local repo catalog`). Note the non-dot name — distinct from the generated `.requirements.yaml`. |
+| 3 | `docs/security/requirements.yaml` | A developer-authored **local repo catalog**. Overrides the org profile, surfaced in the banner. Non-dot name — distinct from the generated `.requirements.yaml`. |
 | 4 | Active org profile | The org profile's `requirements.source`, honouring `standalone_audit.enabled`. |
-
-> **Governance override (org policy wins over a passive local file).** If the
-> active org profile configures a requirements source but sets
-> `requirements.standalone_audit.enabled: false`, the standalone audit is
-> **blocked even when a local `docs/security/requirements.yaml` is present** — a
-> file committed to the repo must not silently defeat the org policy. Only an
-> explicit per-run override (`--requirements <src>` or `--demo`) runs the audit
-> anyway. With the toggle enabled (or no org source at all), the precedence
-> table above applies unchanged and the local file wins over the org source.
 | 5 | Legacy config | `skills/audit-security-requirements/config.json` when it carries a URL. |
 | 6 | Remembered source | The URL the catalog was last fetched from, served from the plugin cache (`.cache/requirements.yaml` + `.cache/requirements.source.json`). |
+
+**Governance override:** if the org profile configures a source but sets
+`standalone_audit.enabled: false`, the audit is blocked **even when a local
+`docs/security/requirements.yaml` exists** — a committed file must not silently
+defeat org policy. Only an explicit `--requirements` or `--demo` overrides it.
+Otherwise the table applies as-is (local file beats the org source).
 
 Three ways to author the catalog itself: adapt the reference baseline (`data/appsec-requirements-fallback.yaml` — 63 requirements across 38 categories plus 9 blueprints) and serve it over HTTP or a raw Git URL; harvest internal pages with `scripts/harvest_requirements.py` ([`docs/harvester.md`](harvester.md)); or drop a `docs/security/requirements.yaml` straight into the repo.
 
@@ -117,7 +116,7 @@ caught at harvest time.
 
 Once a configured or remembered source loads successfully, the skill **remembers the URL** (with a fetch timestamp and content hash) in `.cache/requirements.source.json` and refreshes the cached catalog. That memory drives the default freshness behaviour and the maintenance flags:
 
-- **Fresh cache is reused without a network round-trip.** A cache younger than **30 days** is served directly (fast, offline-friendly). The banner shows `Freshness: ● fresh`.
+- **Fresh cache is reused without a network round-trip.** A cache younger than **30 days** is served directly (fast, offline-friendly). The banner shows `Freshness: 🟢 fresh`.
 - **Stale cache triggers a refresh attempt.** A cache ≥ 30 days old (or `--update`) re-fetches from the remembered/configured source; if that source is unreachable, the run falls back to the cached copy and says so (`source unreachable this run — served the cached copy`).
 - **`--update`** forces a fresh re-fetch and cache refresh regardless of freshness.
 - **`--cache-only`** never touches the network — uses the cache, or errors if it is empty.
@@ -136,10 +135,11 @@ All flags accepted by `/appsec-advisor:audit-security-requirements`. Each one ch
 | `--demo` | Audit against the packaged example catalog; report is stamped **DEMO** |
 | `--status` | Show which requirements would be used (source, date, count, freshness), then exit |
 | `--clear-requirements` | Forget the remembered source and delete the cached catalog, then exit |
-| `<CATEGORY_FILTER>` | Limit the audit to matching requirement IDs/categories (e.g. `SEC-AUTH`, `AUTH`); MUST-level requirements are always included |
+| `<CATEGORY_FILTER>` | Grade only requirements whose ID/category matches (e.g. `SEC-AUTH`, `AUTH`) — narrows scope; an unfiltered run grades the whole catalog |
 | `--org-profile <path>` / `--preset <name>` / `--no-org-profile` | Control org-profile source resolution |
 | `--md` / `--pdf` / `--json` | Save the report as Markdown / PDF / JSON (`--pdf` also writes the Markdown it is converted from; needs pandoc + weasyprint) |
 | `--save` | Save all formats (`--md`, `--pdf`, `--json`) |
+| `--quiet` | Suppress the banner + findings; print only a one-line status and the saved file path(s) |
 | `--gate` | Enforce a CI gate: exit non-zero when a gating requirement fails (advisory otherwise) |
 | `--gate-on <fail\|partial>` | What gates: `fail` (default) or `fail`+`partial` |
 | `--priority-floor <MUST\|SHOULD\|MAY>` | Lowest priority eligible to gate (default `MUST`) |
