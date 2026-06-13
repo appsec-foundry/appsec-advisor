@@ -54,6 +54,9 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import requirements_state as rstate  # noqa: E402
+
 try:
     import requests
     import urllib3
@@ -1090,6 +1093,19 @@ def run(args: argparse.Namespace) -> int:
     print(f"  Categories:   {len(req_categories)}")
     print(f"  Requirements: {total_reqs}")
     print(f"  Blueprints:   {len(blueprints)}")
+
+    # Validate the harvested output against the canonical catalog schema so a
+    # malformed crawl is caught here rather than silently under-parsed by the
+    # skills that consume it.
+    cat_errors, cat_warnings = rstate.validate_catalog(output_path.read_bytes())
+    for w in cat_warnings:
+        print(f"  ⚠ schema warning: {w}")
+    if cat_errors:
+        for e in cat_errors[:6]:
+            print(f"  ✗ schema error: {e}", file=sys.stderr)
+        print("✗ Harvested catalog failed schema validation (see schemas/requirements-catalog.schema.yaml).", file=sys.stderr)
+        return 2
+
     return 0 if failed == 0 else 2
 
 

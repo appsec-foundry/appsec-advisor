@@ -80,6 +80,14 @@ HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py
 
 The generated YAML lands at the path in `output` (defaults to `data/appsec-requirements-fallback.yaml`). You can inspect it directly before wiring it up — it's a readable YAML with one section per category, one entry per requirement, plus a `sources_meta` block so you can trace each entry back to the page it came from.
 
+### Output format & validation
+
+The harvester writes the **canonical catalog format** defined by [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml) — the same shape both `audit-security-requirements` and `create-threat-model` consume through the shared fetch gate. After writing, the harvester validates its own output against that schema: structural breakage fails the run (exit 2), while content-quality issues (a category with no requirements, a requirement missing `text`, duplicate IDs) print as warnings. To validate any catalog by hand — for example in CI before publishing:
+
+```bash
+python3 scripts/requirements_state.py --validate data/appsec-requirements-fallback.yaml [--strict]
+```
+
 ## The harvester, in one config
 
 A single JSON file drives the crawler. Below is the minimum useful shape; defaults cover the rest.

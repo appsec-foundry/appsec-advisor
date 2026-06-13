@@ -1,6 +1,6 @@
 ---
 name: audit-security-requirements
-description: Audit the current repository against tagged security requirements (e.g. [SEC-CSP-1]) and verify whether each one is implemented. Prints open requirements to the conversation with color-coded status and concise evidence. Optionally saves as JSON or Markdown.
+description: Audit the current repository against a security requirements catalog and verify whether each requirement is implemented. Requirement IDs follow your catalog's own naming scheme (e.g. SEC-CSP-1, SCG-HARDENXML, or anything your YAML defines); tagging code with those IDs is optional and not required. Prints open requirements to the conversation with color-coded status and concise evidence. Optionally saves as JSON or Markdown.
 ---
 
 You are auditing whether security requirements are implemented in the current repository. Follow the steps below exactly.
@@ -10,7 +10,7 @@ You are auditing whether security requirements are implemented in the current re
 If the user's arguments contain `--help` or `-h`, **do not scan the repository**. Print the block below verbatim to the conversation and exit with status 0.
 
 ```
-/appsec-advisor:audit-security-requirements — Audit a repo against the SEC-* baseline.
+/appsec-advisor:audit-security-requirements — Audit a repo against your security requirements.
 
 USAGE
   /appsec-advisor:audit-security-requirements [CATEGORY_FILTER] [FLAGS]
@@ -19,23 +19,46 @@ USAGE
   (e.g. "SEC-AUTH" or "AUTH"). When given, only matching requirements are
   checked. MUST-level requirements are always included regardless of filter.
 
-FLAGS
-  --md                     Save the rendered report as
+WHERE REQUIREMENTS COME FROM (highest priority first)
+  1. --requirements <src>      explicit source for this run (no cache fallback)
+  2. --demo                    packaged example catalog (clearly stamped DEMO)
+  3. docs/security/requirements.yaml   a local repo catalog, if present
+                               (beats the org profile; surfaced in the banner)
+  4. the active org profile's configured source
+  5. the legacy configured source
+  6. the remembered source     the URL the catalog was last fetched from,
+                               served from the plugin cache
+  On first use with none of the above, the audit explains what to pass and
+  offers to run against --demo.
+
+SOURCE FLAGS
+  --requirements <src>     http(s):// URL or local file path (abs/rel/~).
+  --update                 force a fresh re-fetch from the remembered/configured
+                           source and refresh the cache.
+  --cache-only             use the plugin cache only; never touch the network.
+  --demo                   audit against the packaged example catalog (DEMO).
+  --status                 show which requirements WOULD be used (source, date,
+                           count, freshness) and exit — no audit, no fetch.
+  --clear-requirements     forget the remembered source + cached catalog, exit.
+  --org-profile <path>     use this org profile for source resolution.
+  --preset <name>          use a specific preset from the active org profile.
+  --no-org-profile         ignore packaged/env-pointed org profiles.
+
+OUTPUT FLAGS
+  --md                     save the rendered report as
                            docs/security/appsec-requirements-report.md
-  --json                   Save the raw findings as
+  --json                   save the raw findings as
                            docs/security/appsec-requirements-report.json
-  --save                   Both --md and --json
-  --requirements <src>     Load the requirements YAML from <src> instead
-                           of the configured source; no cache fallback.
-                           <src> is an http(s):// URL (fetched remotely) or
-                           a local file path (absolute, relative, or ~).
-  --org-profile <path>     Use this org profile for source resolution.
-  --preset <name>          Use a specific preset from the active org profile.
-  --no-org-profile         Ignore packaged/env-pointed org profiles.
+  --save                   both --md and --json
+
+DEFAULT BEHAVIOUR
+  Every audit prints a banner first: which catalog is in effect, where it came
+  from, when it was fetched, how many requirements, and whether it is still
+  fresh (cache younger than 30 days is reused without a network round-trip;
+  older triggers a refresh attempt, falling back to the cache if unreachable).
 
 See `/appsec-advisor:status` for plugin & configuration status, and
-`docs/configuration.md` → "Security Requirements Management" for the source
-resolution rules.
+`docs/security-requirements-audit-skill.md` for the full source-resolution rules.
 ```
 
 After printing, exit. Do not read any files or perform any other action.
@@ -51,12 +74,18 @@ The user may pass arguments after the skill name. Parse them now:
 - `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
 - `--save` — save both formats
 - `--requirements <src>` — override the configured `requirements_yaml_url` for this run. `<src>` is an http(s):// URL (fetched remotely) or a local file path (absolute or relative). The source must load; there is no cache fallback when an explicit source is provided.
+- `--update` — force a fresh re-fetch from the remembered/configured source and refresh the plugin cache before auditing.
+- `--cache-only` — use the plugin cache only; never touch the network.
+- `--demo` — audit against the packaged example catalog. The report is stamped **DEMO**.
+- `--status` — **mode flag**: print the resolution banner (source, date, count, freshness) and exit. Do not scan the repository.
+- `--clear-requirements` — **mode flag**: forget the remembered source and delete the cached catalog, then exit. Do not scan the repository.
 - `--org-profile <path>` — use this org profile for source resolution instead of the packaged default.
 - `--preset <name>` — use a specific preset when resolving the active org profile.
 - `--no-org-profile` — ignore any packaged or env-pointed org profile for this run.
 
 Store the resolved flags: `save_md`, `save_json`, `category_filter`,
-`requirements_url_override`, `org_profile_override`, `preset_override`,
+`requirements_url_override`, `update`, `cache_only`, `demo`, `status_mode`,
+`clear_requirements`, `org_profile_override`, `preset_override`,
 `no_org_profile`.
 
 #### Reject unknown flags (hard fail)
@@ -78,6 +107,11 @@ Error: unknown argument '<TOKEN>'
   --json                   Save the raw findings as JSON
   --save                   Both --md and --json
   --requirements <url>     Override the configured requirements YAML source
+  --update                 Force a fresh re-fetch and refresh the cache
+  --cache-only             Use the plugin cache only; never touch the network
+  --demo                   Audit against the packaged example catalog (DEMO)
+  --status                 Show which requirements would be used, then exit
+  --clear-requirements     Forget the remembered source + cache, then exit
   --org-profile <path>     Override the packaged org profile
   --preset <name>          Select an org-profile preset
   --no-org-profile         Ignore org-profile defaults
@@ -134,37 +168,63 @@ if [ "$ORG_RESOLVE_EXIT" -ne 0 ]; then
 fi
 ```
 
-Resolve the source with `scripts/resolve_requirements_source.py`. Resolution
-order is: explicit `--requirements <src>` > `--no-org-profile` / active org
-profile source and `standalone_audit.enabled` > legacy
-`skills/audit-security-requirements/config.json` > plugin cache fallback.
+#### Mode flags — `--clear-requirements` and `--status` exit early
+
+These two flags are maintenance/inspection modes. Handle them **before** any
+repository scan. If `CLEAR_REQUIREMENTS` is set, run the gate's clear mode and
+exit; the skill does not audit on this invocation:
 
 ```bash
-REQ_SOURCE_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR")
-[ -n "$REQUIREMENTS_URL_OVERRIDE" ] && REQ_SOURCE_ARGS+=(--requirements "$REQUIREMENTS_URL_OVERRIDE")
-
-REQ_SOURCE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_requirements_source.py" \
-  "${REQ_SOURCE_ARGS[@]}")
-REQ_SOURCE_ENABLED=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('enabled',False)).lower())")
-REQ_SOURCE_KIND=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('source') or '')")
+if [ "$CLEAR_REQUIREMENTS" = "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" \
+    --caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" --clear-requirements
+  exit 0
+fi
 ```
 
-If `REQ_SOURCE_KIND` is `org-profile` and `REQ_SOURCE_ENABLED` is `false`,
-abort. This is the org profile's explicit `requirements.standalone_audit.enabled:
-false` setting; do not silently fall back to the legacy config or cache.
+#### Honour an org profile that disables the standalone audit (governance-first)
+
+Resolve the source first. When the active org profile configures a requirements
+source but sets `requirements.standalone_audit.enabled: false`, that governance
+decision wins — **even if a local `docs/security/requirements.yaml` is present**.
+A passive in-repo catalog must not silently defeat the org policy. Only an
+explicit per-run override — `--requirements <src>` or `--demo` (which resolve to
+source `cli` / `demo`) — bypasses the block.
 
 ```bash
-if [ "$REQ_SOURCE_KIND" = "org-profile" ] && [ "$REQ_SOURCE_ENABLED" != "true" ]; then
-  echo "✗ Requirements audit is disabled by the active org profile." >&2
-  echo "  Set requirements.standalone_audit.enabled: true or pass --requirements <src>." >&2
+REQ_SOURCE_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT")
+[ -n "$REQUIREMENTS_URL_OVERRIDE" ] && REQ_SOURCE_ARGS+=(--requirements "$REQUIREMENTS_URL_OVERRIDE")
+[ "$DEMO" = "true" ] && REQ_SOURCE_ARGS+=(--demo)
+
+REQ_SOURCE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_requirements_source.py" "${REQ_SOURCE_ARGS[@]}")
+REQ_SOURCE_KIND=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('source') or '')")
+ORG_AUDIT_DISABLED=$(printf '%s' "$REQ_SOURCE_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('org_audit_disabled',False)).lower())")
+
+# Block when the org disabled the standalone audit, unless an explicit per-run
+# source (--requirements / --demo → source cli/demo) overrides it.
+if [ "$ORG_AUDIT_DISABLED" = "true" ] && [ "$REQ_SOURCE_KIND" != "cli" ] && [ "$REQ_SOURCE_KIND" != "demo" ]; then
+  echo "✗ Requirements audit is disabled by the active org profile (standalone_audit.enabled: false)." >&2
+  if [ "$REQ_SOURCE_KIND" = "local" ]; then
+    echo "  A local docs/security/requirements.yaml does not override this org policy." >&2
+  fi
+  echo "  Override for this run with --requirements <src> or --demo, or set" >&2
+  echo "  requirements.standalone_audit.enabled: true in the org profile." >&2
   exit 2
 fi
 ```
 
-Fetch or load the requirements through the shared deterministic gate. Explicit
-`--requirements <src>` is fail-closed with no cache fallback. Without an explicit
-source, this audit is an explicit user action: require a usable org-profile or
-legacy source, or a populated plugin cache.
+#### Fetch or inspect through the shared deterministic gate
+
+Resolution precedence (highest first): explicit `--requirements <src>` >
+`--demo` > local `docs/security/requirements.yaml` > active org-profile source
+(honouring `standalone_audit.enabled`) > legacy config > remembered source via
+the plugin cache. A **local repo catalog overrides the org profile** and is
+surfaced in the banner. The gate also writes a `.requirements-resolution.json`
+sidecar describing the chosen source — render it as the startup banner.
+
+Pass the user's source flags straight through to the gate. `--status` is a
+no-fetch inspection mode; every other invocation loads the catalog:
 
 ```bash
 FETCH_ARGS=(--caller audit-security-requirements --output-dir "$AUDIT_OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT")
@@ -173,18 +233,71 @@ if [ -n "$REQUIREMENTS_URL_OVERRIDE" ]; then
 else
   FETCH_ARGS+=(--require)
 fi
+[ "$DEMO" = "true" ]       && FETCH_ARGS+=(--demo)
+[ "$UPDATE" = "true" ]     && FETCH_ARGS+=(--update)
+[ "$CACHE_ONLY" = "true" ] && FETCH_ARGS+=(--cache-only)
+[ "$STATUS_MODE" = "true" ] && FETCH_ARGS+=(--status)
 
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" "${FETCH_ARGS[@]}"
 REQ_FETCH_EXIT=$?
+
+REQ_RESOLUTION="$AUDIT_OUTPUT_DIR/.requirements-resolution.json"
+REQUIREMENTS_YAML="$AUDIT_OUTPUT_DIR/.requirements.yaml"
+```
+
+**First-run / no-source handling (`REQ_FETCH_EXIT` == 2).** The gate aborts with
+exit 2 only when requirements were requested but nothing loaded — no configured
+source, and an empty cache. This is the genuine first-run case. Do not proceed
+to scan. Print the guidance below, then **offer to run against the packaged demo
+catalog** (decision A). When running interactively you may ask the user with
+`AskUserQuestion` whether to re-run with `--demo`; otherwise just print the hint
+and exit 2:
+
+```
+No security requirements are configured yet, and the plugin cache is empty.
+
+Tell the audit where your requirements live, one of:
+  • --requirements https://your-org/appsec-requirements.yaml   (fetch + remember)
+  • drop a catalog at docs/security/requirements.yaml          (local repo file)
+  • configure an org profile (see docs/org-profiles.md)
+
+Or try it now against the bundled example catalog:
+  /appsec-advisor:audit-security-requirements --demo
+```
+
+For any other non-zero, non-2 exit, propagate it:
+
+```bash
 if [ "$REQ_FETCH_EXIT" = "2" ]; then
-  exit 2
+  exit 2   # after printing the first-run guidance above
 fi
 if [ "$REQ_FETCH_EXIT" -ne 0 ]; then
   exit "$REQ_FETCH_EXIT"
 fi
-
-REQUIREMENTS_YAML="$AUDIT_OUTPUT_DIR/.requirements.yaml"
 ```
+
+#### Render the startup banner (always, before scanning)
+
+Read `REQ_RESOLUTION` and print a banner so the user always knows **which
+requirements are in effect and how current they are** before any findings.
+Derive a human "fetched N days ago" from `freshness.age_days`. Example:
+
+```
+Requirements Source
+  Catalog  : Acme Application Security Requirements
+  Source   : remembered · https://security.example.com/appsec-requirements.yaml
+  Fetched  : 2026-06-05 (7 days ago) · catalog generated 2026-04-09
+  Count    : 63 requirements
+  Freshness: ● fresh (cache < 30 days)
+  Override : --update (refresh) · --cache-only · --demo · --requirements <url> · --status · --clear-requirements
+```
+
+Banner rules:
+- If `demo` is `true`, title the catalog line `Catalog  : <desc>  ⚠ DEMO — not your organization's requirements` and colour it yellow. The audit still runs, but every report it writes must carry the DEMO stamp (Steps 3a/4a).
+- If `surfaced` is `true` (a local `docs/security/requirements.yaml` is in effect), add a line `Note     : using local repo catalog (overrides org profile)`.
+- If `freshness.stale` is `true`, render `Freshness: ● STALE (cache ≥ 30 days) — refresh with --update` in yellow, and note that an `--update` attempt was already made this run if the disposition is `cache_after_fetch_fail`.
+- If `disposition` is `cache_after_fetch_fail`, add `Source    : unreachable this run — served the cached copy` so the user knows the network refresh failed.
+- If `STATUS_MODE` is set, print the banner and **stop here** — do not scan the repository, do not render findings, exit 0.
 
 Use `REQUIREMENTS_YAML` as the loaded catalog in Step 1c. The skill cannot
 produce meaningful results without this file.
@@ -214,15 +327,23 @@ blueprint_map[ref.id] → { bp_id, bp_title, section_title, section_url }
 
 This map is used in Step 3b to show relevant blueprint guidance alongside violations.
 
-### 1d — Scan for requirement references in the repository
+### 1d — Scan for inline requirement references (optional, non-essential)
 
-Search source code, comments, and documentation for occurrences of all requirement IDs:
+Some teams annotate code with their requirement IDs; one common convention is
+the bracket form `[<ID>]` (e.g. `[SEC-CSP-1]`). Many teams use a **different
+convention or none at all** — that is expected. This scan is a convenience that
+surfaces such references when they exist; the audit does **not** depend on it,
+and finding zero references is normal and fine. Requirement IDs come from the
+loaded catalog (Step 1c) and may use any naming scheme.
 
 ```bash
+# Optional — only meaningful if this repo uses the [<ID>] tag convention.
 grep -rn "\[<ID>\]" --include="*.{ts,js,py,go,java,kt,rb,cs,php,md,yaml,yml}"
 ```
 
-Run for every known requirement ID (or a combined regex). This surfaces code that already references requirements.
+Run for every known requirement ID (or a combined regex) if you scan at all.
+Grading in Step 2 searches for actual implementation evidence per requirement
+and is independent of any inline tag.
 
 ---
 
@@ -324,6 +445,10 @@ status label keeps its own color. Use the canonical status token `UNVERIFIABLE` 
 the Step 2 status table and the JSON `unverifiable` stat. Do not invent
 synonyms such as "ignored" or "untestable". Right-align the counts in a single
 column as shown.
+
+If the resolution banner reported `demo: true`, print a yellow line directly
+under the header: `⚠ DEMO catalog — results do not reflect your organization's
+requirements.` Keep the `Source :` line pointing at the example file.
 
 ### 3b — Findings
 
@@ -456,6 +581,11 @@ sequelize.query("select * from product where name like :term", {
 
 Markdown rules:
 
+- If the resolution banner reported `demo: true`, insert a blockquote warning
+  directly under the `#` title: `> ⚠ **DEMO catalog** — audited against the
+  packaged example requirements, not your organization's. Configure a real
+  source with --requirements / an org profile.` Also set the metadata
+  `| Source |` cell to `packaged example (DEMO)`.
 - Prefix every status — in the summary metadata table, the overview table, and
   each `###` heading — with its criticality circle, reusing the threat model's
   house palette: 🔴 FAIL · 🟡 PARTIAL · 🟢 PASS · ⚪ UNVERIFIABLE. Keep the
@@ -528,4 +658,4 @@ print a second `Save:` line.
 
 ---
 
-Note: if no `[SEC-*]` tags are found in the analyzed repo itself that is fine — the loaded requirements baseline is always checked regardless of existing code references. The skill requires a requirements YAML to be available (explicit `--requirements`, active org-profile source, legacy configured source, or plugin cache). If none is available, the skill aborts in Step 1b.
+Note: the analyzed repository does **not** need to tag its code with requirement IDs. The `[<ID>]` bracket form (e.g. `[SEC-CSP-1]`) is just one optional convention; many teams use a different scheme or none, and finding zero inline references is fine — the loaded catalog is always graded in full from codebase evidence regardless of inline tags. The skill requires a requirements catalog to be available, resolved in this priority order: explicit `--requirements`, `--demo`, a local `docs/security/requirements.yaml`, the active org-profile source, the legacy configured source, or the remembered source served from the plugin cache. On a fresh machine with none of these, the skill prints first-run guidance and offers `--demo` instead of failing cryptically (Step 1b). A successful fetch from a configured/remembered source remembers the URL (`.cache/requirements.source.json`) and refreshes the cache; a fresh cache (< 30 days) is reused without a network round-trip, while a stale cache triggers a refresh attempt that falls back to the cache when the source is unreachable.

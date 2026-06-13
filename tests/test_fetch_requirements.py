@@ -206,6 +206,126 @@ def test_require_with_unreachable_source_and_no_cache_aborts(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# new modes: demo / cache-only / status / clear / update / freshness
+# ---------------------------------------------------------------------------
+def _sidecar(cache: Path, url: str, fetched_at: str) -> None:
+    (cache.parent / "requirements.source.json").write_text(
+        json.dumps({"url": url, "fetched_at": fetched_at, "source_kind": "org-profile", "count": 1}),
+        encoding="utf-8",
+    )
+
+
+def _iso_days_ago(days: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+
+
+def test_demo_loads_packaged_example_without_caching(tmp_path):
+    cache = tmp_path / "cache.yaml"
+    r = _run(tmp_path, "--demo", "--cache-path", str(cache))
+    assert r.returncode == 0
+    assert "categories" in (tmp_path / ".requirements.yaml").read_text()
+    assert not cache.exists()  # demo is fail_closed — never cached
+    summary = json.loads((tmp_path / ".requirements-resolution.json").read_text())
+    assert summary["demo"] is True
+
+
+def test_cache_only_uses_cache(tmp_path):
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("categories:\n  - id: OFFLINE\n", encoding="utf-8")
+    r = _run(tmp_path, "--cache-only", "--cache-path", str(cache))
+    assert r.returncode == 0
+    assert "OFFLINE" in (tmp_path / ".requirements.yaml").read_text()
+
+
+def test_cache_only_aborts_without_cache(tmp_path):
+    r = _run(tmp_path, "--cache-only", "--cache-path", str(tmp_path / "none.yaml"))
+    assert r.returncode == 2
+
+
+def test_status_emits_summary_without_fetching(tmp_path):
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("categories:\n  - id: SEC-X\n", encoding="utf-8")
+    _write_org_profile(tmp_path, str(tmp_path / "missing.yaml"))
+    r = _run(tmp_path, "--status", "--cache-path", str(cache))
+    assert r.returncode == 0
+    assert (tmp_path / ".requirements-resolution.json").is_file()
+    # status must NOT write the resolved catalog
+    assert not (tmp_path / ".requirements.yaml").exists()
+
+
+def test_clear_requirements_removes_cache_and_sidecar(tmp_path):
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("categories: []\n", encoding="utf-8")
+    _sidecar(cache, "https://x/y", _iso_days_ago(1))
+    r = _run(tmp_path, "--clear-requirements", "--cache-path", str(cache))
+    assert r.returncode == 0
+    assert not cache.exists()
+    assert not (cache.parent / "requirements.source.json").exists()
+
+
+def test_fresh_cache_skips_network(tmp_path):
+    """A fresh cache is used directly; the (different) source is not read."""
+    source = tmp_path / "src.yaml"
+    source.write_text("categories:\n  - id: SEC-SOURCE\n", encoding="utf-8")
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("categories:\n  - id: SEC-CACHED\n", encoding="utf-8")
+    _sidecar(cache, str(source), _iso_days_ago(2))
+    _write_org_profile(tmp_path, str(source))
+    r = _run(tmp_path, "--require", "--cache-path", str(cache))
+    assert r.returncode == 0
+    assert "SEC-CACHED" in (tmp_path / ".requirements.yaml").read_text()
+
+
+def test_update_forces_refetch_over_fresh_cache(tmp_path):
+    source = tmp_path / "src.yaml"
+    source.write_text("categories:\n  - id: SEC-SOURCE\n", encoding="utf-8")
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("categories:\n  - id: SEC-CACHED\n", encoding="utf-8")
+    _sidecar(cache, str(source), _iso_days_ago(2))
+    _write_org_profile(tmp_path, str(source))
+    r = _run(tmp_path, "--update", "--cache-path", str(cache))
+    assert r.returncode == 0
+    assert "SEC-SOURCE" in (tmp_path / ".requirements.yaml").read_text()
+    assert "SEC-SOURCE" in cache.read_text()  # cache refreshed
+
+
+def test_cache_fallback_fetch_writes_sidecar(tmp_path):
+    source = tmp_path / "src.yaml"
+    source.write_text("categories:\n  - id: SEC-NEW\n", encoding="utf-8")
+    cache = tmp_path / "cache.yaml"
+    _write_org_profile(tmp_path, str(source))
+    r = _run(tmp_path, "--require", "--cache-path", str(cache))
+    assert r.returncode == 0
+    sidecar = json.loads((cache.parent / "requirements.source.json").read_text())
+    assert sidecar["url"] == str(source)
+    assert sidecar["fetched_at"]
+
+
+# ---------------------------------------------------------------------------
+# catalog schema validation at the gate
+# ---------------------------------------------------------------------------
+def test_garbage_source_fails_validation(tmp_path):
+    """An explicit source that loads but is not a catalog (e.g. a 404 HTML page)
+    aborts instead of silently grading as zero requirements."""
+    f = tmp_path / "notacatalog.yaml"
+    f.write_text("<!DOCTYPE html><html>404 Not Found</html>\n", encoding="utf-8")
+    r = _run(tmp_path, "--requirements", str(f))
+    assert r.returncode == 2
+    assert "not a valid requirements catalog" in r.stderr
+
+
+def test_valid_catalog_with_warnings_still_passes(tmp_path):
+    """Zero requirements is a warning, not a hard failure."""
+    f = tmp_path / "thin.yaml"
+    f.write_text("categories:\n  - id: C\n", encoding="utf-8")
+    r = _run(tmp_path, "--requirements", str(f))
+    assert r.returncode == 0
+    assert "0 requirements" in r.stderr
+
+
+# ---------------------------------------------------------------------------
 # tool error
 # ---------------------------------------------------------------------------
 def test_missing_output_dir_errors(tmp_path):

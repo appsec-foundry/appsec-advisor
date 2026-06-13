@@ -1,0 +1,140 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/requirements-catalog.schema.yaml
+title: Security requirements catalog
+description: |
+  The canonical interchange format for a security-requirements catalog. ONE
+  shape is produced by the harvester (`scripts/harvest_requirements.py`) and
+  consumed by BOTH skills through the shared fetch gate
+  (`scripts/fetch_requirements.py` → `$OUTPUT_DIR/.requirements.yaml`):
+
+    * `audit-security-requirements` — grades each requirement against the repo.
+    * `create-threat-model` — Phase 8b maps threats to violated requirement IDs
+      and emits the §7b compliance table + mitigation `Fulfills:` references.
+
+  Both load the same file and both accept `--requirements <http(s) URL | local
+  path>`. A developer-authored local catalog may also be dropped at
+  `docs/security/requirements.yaml`.
+
+  Validation philosophy (enforced by `requirements_state.validate_catalog`):
+  this schema fixes only the STRUCTURAL contract that makes a document a catalog
+  at all — a mapping with a `categories` array, each category carrying an `id`,
+  each requirement carrying an `id`. Content quality (missing `text`/`priority`,
+  unknown priority value, zero requirements, duplicate IDs) is reported as a
+  WARNING rather than a hard failure, so minor drift never breaks a run while a
+  404 HTML page, a truncated file, or a wrong-shaped document fails loudly.
+
+type: object
+required: [categories]
+additionalProperties: true
+properties:
+
+  generated:
+    description: ISO-8601 timestamp the catalog was produced (metadata only).
+    type: string
+  source:
+    description: Provenance label, e.g. "harvested", "bundled-bestpractices".
+    type: string
+  description:
+    description: Human description of the catalog (shown in the audit banner).
+    type: string
+  url:
+    description: Canonical home of the catalog (metadata only; nullable).
+    type: [string, "null"]
+  sources_meta:
+    description: Optional per-source provenance records (harvester output).
+    type: array
+    items:
+      type: object
+      additionalProperties: true
+
+  categories:
+    description: >-
+      Requirement groups. May be empty (e.g. the "skipped" stub written when no
+      requirements check is requested).
+    type: array
+    items:
+      type: object
+      required: [id]
+      additionalProperties: true
+      properties:
+        id:
+          description: Stable category identifier (any naming scheme).
+          type: string
+          minLength: 1
+        title:
+          description: Human category title (recommended; shown in reports).
+          type: string
+        url:
+          type: [string, "null"]
+        requirements:
+          description: >-
+            The requirements in this category. A category with no requirements
+            is permitted (grouping placeholder) but yields a content warning.
+          type: array
+          items:
+            type: object
+            required: [id]
+            additionalProperties: true
+            properties:
+              id:
+                description: >-
+                  Stable requirement identifier in your catalog's own scheme
+                  (e.g. SEC-CSP-1, SCG-HARDENXML, REQ-014). This is the key both
+                  skills map to; it does NOT need to appear as a tag in the
+                  analyzed code.
+                type: string
+                minLength: 1
+              text:
+                description: >-
+                  The requirement statement. Strongly recommended — it is the
+                  basis for grading; a missing/empty text yields a warning.
+                type: string
+              priority:
+                description: >-
+                  Obligation level. Recommended values: MUST / SHOULD / MAY.
+                  Other values are accepted but warned about.
+                type: string
+              url:
+                description: Link to the authoritative requirement (nullable).
+                type: [string, "null"]
+
+  blueprints:
+    description: >-
+      Optional implementation blueprints. The audit surfaces a blueprint section
+      alongside a violation when one of its `references[].id` matches.
+    type: array
+    items:
+      type: object
+      required: [id]
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+          minLength: 1
+        title:
+          type: string
+        url:
+          type: [string, "null"]
+        sections:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              title:
+                type: string
+              url:
+                type: [string, "null"]
+              references:
+                type: array
+                items:
+                  # A reference may be a bare ID string or an object with `id`.
+                  oneOf:
+                    - type: string
+                    - type: object
+                      required: [id]
+                      additionalProperties: true
+                      properties:
+                        id:
+                          type: string
+                          minLength: 1
