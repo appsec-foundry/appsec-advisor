@@ -146,7 +146,9 @@ All flags accepted by `/appsec-advisor:audit-security-requirements`. Each one ch
 
 ## Structured verdict & CI gate
 
-Every run — regardless of output flags — writes a structured verdict to
+A plain console run stays light — it grades and prints, without writing files.
+When you **save an artifact (`--md`/`--pdf`/`--json`/`--save`) or gate
+(`--gate`)**, the skill also writes a structured verdict to
 `docs/security/.requirements-audit.json` ([`schemas/requirements-audit.schema.json`](../schemas/requirements-audit.schema.json)):
 one `results[]` entry per graded requirement (status, priority, `in_scope`,
 evidence, finding, fix, the verbatim requirement text, blueprint and threat-model

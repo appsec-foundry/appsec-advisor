@@ -1,6 +1,6 @@
 ---
 name: audit-security-requirements
-description: Audit the current repository against a security requirements catalog and verify whether each requirement is implemented. Requirement IDs follow your catalog's own naming scheme (e.g. SEC-CSP-1, SCG-HARDENXML, or anything your YAML defines); tagging code with those IDs is optional and not required. Prints open requirements to the conversation with color-coded status and concise evidence, always persists a structured verdict (.requirements-audit.json), and can act as a CI gate. Optionally saves Markdown, PDF, or JSON.
+description: Audit the current repository against a security requirements catalog and verify whether each requirement is implemented. Requirement IDs follow your catalog's own naming scheme (e.g. SEC-CSP-1, SCG-HARDENXML, or anything your YAML defines); tagging code with those IDs is optional and not required. Prints open requirements to the conversation with color-coded status and concise evidence. When you save an artifact (Markdown, PDF, JSON) or use --gate, it also persists a deterministic structured verdict (.requirements-audit.json) and can act as a CI gate.
 ---
 
 You are auditing whether security requirements are implemented in the current repository. Follow the steps below exactly.
@@ -78,11 +78,12 @@ GATE FLAGS (CI / merge gate — advisory by default)
                            lowest priority that may gate (default MUST).
 
 DEFAULT BEHAVIOUR
-  Every audit prints a banner first (catalog, source, fetch date, count,
-  freshness), then grades the catalog, ALWAYS writes a structured verdict to
-  docs/security/.requirements-audit.json (validated; counts recomputed
-  deterministically), prints the open requirements, and runs the gate in
-  advisory mode. A fresh cache (< 30 days) is reused without a network
+  A plain run prints a banner (catalog, source, fetch date, count, freshness),
+  grades the catalog, and prints the open requirements — fast and quiet, no
+  files written. Saving an artifact (--md/--pdf/--json/--save) or gating
+  (--gate) additionally builds a deterministic structured verdict
+  (docs/security/.requirements-audit.json, schema-validated, counts recomputed)
+  and runs the gate. A fresh cache (< 30 days) is reused without a network
   round-trip; a stale cache triggers a refresh that falls back to the cache.
 
 See `/appsec-advisor:status` for plugin & configuration status, and
@@ -446,12 +447,20 @@ Collect for each requirement:
   - **Fix**: the control **prescribed by the requirement**, made concrete for this repository — anchored to the catalog, not invented. Ground it in (a) the requirement's own `text` (what it demands) and (b) the matched blueprint section from `blueprint_map[<id>]` (Step 1c-ii), the catalog's prescribed "how". The model's contribution is to map that prescribed control onto the exact file / function / config key in the repo (which call to change, which setting to set) — **not** to introduce a mechanism or requirement the catalog does not call for, and not generic best-practice padding. Reference exact file and function names; when a blueprint matched, name it and let the blueprint link carry the detail. For console output keep it to one to three concise lines; for Markdown output, include a short before/after code block when meaningful code evidence exists. If neither the requirement nor a blueprint prescribes a specific mechanism, state the minimal concrete change that satisfies the demand here and say so — do not over-specify.
   - **Effort**: `S` (< 1 hour, isolated change), `M` (half day, several files), or `L` (multi-day, architectural change)
 
-### 2.5 — Assemble + persist the structured verdict (deterministic backbone)
+### 2.5 — Persist the structured verdict (ONLY when an artifact or gate is requested)
 
-The verdict — not the prose — is the canonical output. The console, the saved
-reports, and the gate all derive from it, so the model authors the **fields**
-and a script owns the **counts and the gate decision** (the model never
-hand-tallies 63 statuses and never decides the gate).
+**Skip this whole step for a plain console run.** Serialising a full
+per-requirement verdict is only worth its cost when the user asked for a
+machine-readable artifact or a gate — i.e. when **any** of `save_json`,
+`save_pdf`, `save_md`, or `gate_mode` is set. When none are set, do NOT build a
+verdict file and do NOT write helper scripts; go straight to Step 3 and render
+the console from your grading (a plain run stays fast and quiet).
+
+When the verdict IS needed, it is the canonical output the saved reports and the
+gate derive from. Build it directly with the `Write` tool — you already produced
+these fields while grading; keep it quiet (no narration). A short one-off
+serialisation script is acceptable here since an artifact was explicitly
+requested, but the plain run must never reach this step.
 
 **Assemble** one object per `schemas/requirements-audit.schema.json`:
 
@@ -559,9 +568,9 @@ text and glyphs without escapes.
 
 The catalog source/provenance was already shown in the Step 1b banner, so the
 results header does **not** repeat the title or the `Source` line — it opens the
-verdict. **Use the counts from the Step 2.5 stats line verbatim** (`total`,
-`pass`, `partial`, `fail`, `unverifiable`, `not_applicable`) — never re-count by
-hand. Print a compact header and stats block:
+verdict. **Counts:** if Step 2.5 ran (an artifact/gate was requested), use the
+`requirements_report.py` stats line verbatim. Otherwise (plain run) tally them
+directly from your grading. Print a compact header and stats block:
 
 ```
 Results · <Project Name> · <total> requirements<, filter: <filter> if set>
@@ -826,9 +835,11 @@ print a second `Save:` line.
 
 ## Step 5 — Gate (deterministic; advisory by default)
 
+**Only when the verdict was written in Step 2.5** (an artifact/gate was
+requested). A plain console run has no verdict file — skip this step entirely.
+
 The **script**, not the model, decides whether the audit blocks. Run it on the
-verdict from Step 2.5 — always, so the advisory summary is printed; the exit
-code is only enforced under `--gate`:
+verdict — advisory (prints the summary, exit 0) unless `--gate` enforces it:
 
 ```bash
 GATE_ARGS=(--verdict "$AUDIT_OUTPUT_DIR/.requirements-audit.json"
