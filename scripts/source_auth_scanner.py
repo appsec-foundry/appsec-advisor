@@ -217,7 +217,7 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
             if s[i] == "{":
                 j = s.find("}", i)
                 if j == -1:
-                    out.append(re.escape(s[i]))
+                    out.append(s[i])
                     i += 1
                     continue
                 alts = s[i + 1 : j].split(",")
@@ -234,7 +234,7 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
             if s[i] == "{":
                 j = s.find("}", i)
                 if j == -1:
-                    result.append(re.escape(s[i]))
+                    result.append(s[i])
                     i += 1
                     continue
                 alts = s[i + 1 : j].split(",")
@@ -258,6 +258,10 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
         elif expanded[i : i + 2] == "**":
             out.append(".*")
             i += 2
+        elif expanded[i : i + 3] == "(?:":
+            # Internal brace-expansion token, not a glob `?` wildcard.
+            out.append("(?:")
+            i += 3
         elif ch == "*":
             out.append("[^/]*")
             i += 1

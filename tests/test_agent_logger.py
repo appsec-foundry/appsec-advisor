@@ -18,7 +18,13 @@ PLUGIN_ROOT = Path(__file__).parent.parent
 # Import internals for direct unit testing
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
-from agent_logger import _agent_model, _clip, _extract_param, _mask_secrets  # noqa: E402
+from agent_logger import (  # noqa: E402
+    _agent_model,
+    _clip,
+    _extract_param,
+    _mask_secrets,
+    _mirror_phase_events_to_hook_log,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -330,6 +336,58 @@ class TestAgentSpawn:
         assert not (default_log.exists() and "AGENT_SPAWN" in default_log.read_text()), (
             "AGENT_SPAWN leaked to cwd/docs/security — OUTPUT_DIR recovery regressed"
         )
+
+
+class TestPhaseSnapshotRefresh:
+    """Regression (2026-06-13 juice-shop run): the orchestrator emits most
+    PHASE_START/PHASE_END events via raw ``echo … >> .agent-run.log`` writes,
+    which bypass ``log_event.py`` — the only writer of ``.appsec-progress.json``
+    besides ``stride_progress.py``. As a result the live-status snapshot froze
+    on the Phase 1 context-resolver STEP_START for the entire ~44-min run while
+    the pipeline silently advanced to Phase 11. The PostToolUse hook's
+    phase-boundary mirror now also refreshes the snapshot so the live view keeps
+    advancing regardless of emit path."""
+
+    def _echo(self, event: str, label: str) -> str:
+        return (
+            f'echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   '
+            f'threat-analyst  {event}   {label}" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null'
+        )
+
+    def test_raw_echo_phase_start_refreshes_snapshot(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        _mirror_phase_events_to_hook_log(
+            self._echo("PHASE_START", "[Phase 11/11] Finalization (Substeps 1-3)"), "4c575d1b"
+        )
+        snap = json.loads((tmp_path / ".appsec-progress.json").read_text())
+        assert snap["event"] == "PHASE_START"
+        assert snap["phase"] == "11"
+        assert snap["phase_total"] == "11"
+        assert snap["status"] == "phase_started"
+        assert snap["label"] == "Finalization (Substeps 1-3)"
+
+    def test_raw_echo_phase_end_refreshes_snapshot(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        # Sub-phase label without /N (e.g. [Phase 2.6]) must still parse.
+        _mirror_phase_events_to_hook_log(
+            self._echo("PHASE_END", "[Phase 2.6] Architecture Coverage Pre-pass complete"), ""
+        )
+        snap = json.loads((tmp_path / ".appsec-progress.json").read_text())
+        assert snap["event"] == "PHASE_END"
+        assert snap["phase"] == "2.6"
+        assert snap["status"] == "phase_completed"
+
+    def test_log_event_invocation_does_not_double_fire(self, tmp_path, monkeypatch):
+        """A ``log_event.py … phase-start`` call already updates the snapshot
+        in-band; the boundary mirror must not also fire for it (the kebab-case
+        ``phase-start`` arg carries no literal PHASE_START keyword)."""
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        cmd = (
+            'python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" '
+            'phase-start "[Phase 3/11] Architecture Modeling"'
+        )
+        _mirror_phase_events_to_hook_log(cmd, "4c575d1b")
+        assert not (tmp_path / ".appsec-progress.json").exists()
 
 
 # ===========================================================================

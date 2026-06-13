@@ -1366,10 +1366,39 @@ _PROGRESS_EVENTS = re.compile(
 _PHASE_BOUNDARY_RE = re.compile(r"\b(PHASE_START|PHASE_END)\b")
 
 
+def _refresh_progress_snapshot(event: str, detail: str, sid: str = "") -> None:
+    """Keep ``.appsec-progress.json`` fresh for phase events emitted via raw
+    ``echo … >> .agent-run.log`` writes.
+
+    Those echoes bypass ``log_event.py`` (the only other writer of the
+    snapshot besides ``stride_progress.py``), so without this refresh the
+    live-status readers (``appsec_status.py``, ``watch_run.py``,
+    ``/appsec-advisor:status --live``) freeze on the last phase that happened
+    to route through ``log_event.py`` — typically the Phase 1 context-resolver
+    ``STEP_START`` — for the entire remainder of the run, while the pipeline
+    silently advances through ``.agent-run.log`` to Phase 11.
+
+    Reuses ``log_event``'s payload builder so the snapshot shape stays
+    identical across both producers. Best-effort; never raises.
+    """
+    try:
+        from log_event import _progress_payload, _write_progress  # type: ignore
+
+        kind = "phase-start" if event == "PHASE_START" else "phase-end"
+        agent = _lookup_session_agent((sid or "")[:8]) or "threat-analyst"
+        payload = _progress_payload(kind, event, detail, agent)
+        _write_progress(Path(_output_dir()), payload)
+    except Exception:
+        pass
+
+
 def _mirror_phase_events_to_hook_log(cmd: str, sid: str = "") -> None:
     """Mirror PHASE_START / PHASE_END lines from .agent-run.log Bash writes
     into .hook-events.log so that external tooling and tests that read the
     hook log see phase-boundary events.
+
+    Also refreshes ``.appsec-progress.json`` so the live-status snapshot keeps
+    advancing for phases emitted via raw echo (see _refresh_progress_snapshot).
 
     Called only when the Bash command writes to .agent-run.log.
     """
@@ -1387,6 +1416,7 @@ def _mirror_phase_events_to_hook_log(cmd: str, sid: str = "") -> None:
     if not detail:
         return
     _write("INFO ", event, detail, sid)
+    _refresh_progress_snapshot(event, detail, sid)
 
 
 def _emit_substep_progress(cmd: str) -> None:

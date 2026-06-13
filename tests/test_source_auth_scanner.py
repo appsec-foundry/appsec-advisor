@@ -11,6 +11,8 @@ to stop that regression recurring.
 
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +26,61 @@ SCHEMA = REPO_ROOT / "schemas" / "source-auth-findings.schema.yaml"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import source_auth_scanner as S  # noqa: E402
+
+
+def _check(
+    *,
+    cid: str = "TEST-001",
+    file_patterns: list[str] | None = None,
+    exclude_file_patterns: list[str] | None = None,
+    pattern: str = "BAD",
+    counter_scope: str = "window",
+    counter_patterns: list[str] | None = None,
+) -> S.Check:
+    return S.Check(
+        id=cid,
+        name="Test authorization check",
+        description="",
+        file_patterns=file_patterns or ["**/*.js"],
+        exclude_file_patterns=exclude_file_patterns or [],
+        pattern=re.compile(pattern),
+        counter_scope=counter_scope,
+        counter_window=3,
+        counter_patterns=[re.compile(p) for p in (counter_patterns or [])],
+        severity_if_violated="High",
+        cwe="CWE-862",
+        finding_type="missing-authz",
+        breach_vector="internet-anon",
+        rationale="test rationale",
+        remediation="fix it",
+    )
+
+
+def _checks_yaml(**overrides) -> str:
+    fields = {
+        "id": "TEST-001",
+        "name": "Test authorization check",
+        "file_patterns": ["**/*.js"],
+        "pattern": "BAD",
+        "counter_scope": "window",
+        "counter_patterns": [],
+        "severity_if_violated": "High",
+        "cwe": "CWE-862",
+        "finding_type": "missing-authz",
+        "breach_vector": "internet-anon",
+        "rationale": "test rationale",
+        "remediation": "fix it",
+    }
+    fields.update(overrides)
+    lines = ["checks:", "-"]
+    for key, value in fields.items():
+        lines.append(f"  {key}: {json.dumps(value)}")
+    return "\n".join(lines) + "\n"
+
+
+def _write_checks(path: Path, **overrides) -> Path:
+    path.write_text(_checks_yaml(**overrides), encoding="utf-8")
+    return path
 
 
 def _scan(tmp_path: Path) -> list:
@@ -132,6 +189,67 @@ def test_emitted_sidecar_validates_against_schema(tmp_path: Path) -> None:
     assert rc2 == 0
 
 
+def test_main_rejects_invalid_repo_and_missing_output_dir(tmp_path: Path, capsys) -> None:
+    assert S.main(["--repo-root", str(tmp_path / "missing"), "--dry-run"]) == 2
+    assert "is not a directory" in capsys.readouterr().err
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert S.main(["--repo-root", str(repo), "--checks", str(CHECKS)]) == 2
+    assert "--output-dir is required" in capsys.readouterr().err
+
+
+def test_main_rejects_unresolved_or_missing_checks(tmp_path: Path, monkeypatch, capsys) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    monkeypatch.setattr(S, "_discover_plugin_root", lambda: None)
+    assert S.main(["--repo-root", str(repo), "--dry-run"]) == 2
+    assert "cannot resolve plugin root" in capsys.readouterr().err
+
+    assert S.main(["--repo-root", str(repo), "--checks", str(tmp_path / "missing.yaml"), "--dry-run"]) == 2
+    assert "checks file" in capsys.readouterr().err
+
+
+def test_main_rejects_bad_checks_file(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    bad_checks = tmp_path / "bad-checks.yaml"
+    _write_checks(bad_checks, pattern="[")
+
+    assert S.main(["--repo-root", str(repo), "--checks", str(bad_checks), "--dry-run"]) == 2
+
+    assert "failed to load checks" in capsys.readouterr().err
+
+
+def test_main_dry_run_prints_findings_and_summary(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.js").write_text("BAD\n", encoding="utf-8")
+    checks = _write_checks(tmp_path / "checks.yaml")
+
+    assert S.main(["--repo-root", str(repo), "--checks", str(checks), "--dry-run"]) == 0
+
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)[0]["check_id"] == "TEST-001"
+    assert "1 finding(s) across 1 check(s)" in captured.err
+
+
+def test_main_writes_sidecar_and_non_quiet_tally(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    (repo / "app.js").write_text("BAD\n", encoding="utf-8")
+    checks = _write_checks(tmp_path / "checks.yaml")
+
+    assert S.main(["--repo-root", str(repo), "--output-dir", str(out), "--checks", str(checks)]) == 0
+
+    captured = capsys.readouterr()
+    assert (out / ".source-auth-findings.json").is_file()
+    assert "wrote" in captured.err
+    assert "TEST-001" in captured.err
+
+
 def test_merge_threats_ingests_findings(tmp_path: Path) -> None:
     """The producer↔consumer contract: a sidecar on disk becomes merged threats."""
     import merge_threats as M
@@ -178,6 +296,122 @@ def test_skill_impl_invokes_scanner_in_prepass() -> None:
 def test_all_eight_checks_load() -> None:
     checks = S.load_checks(CHECKS)
     assert {c.id for c in checks} >= {f"AUTHZ-00{n}" for n in range(1, 9)}
+
+
+def test_load_checks_rejects_invalid_contracts(tmp_path: Path) -> None:
+    bad_root = tmp_path / "bad-root.yaml"
+    bad_root.write_text("not_checks: []\n", encoding="utf-8")
+    try:
+        S.load_checks(bad_root)
+    except ValueError as exc:
+        assert "top-level `checks:`" in str(exc)
+    else:  # pragma: no cover - defensive assertion style for clearer failure
+        raise AssertionError("invalid root was accepted")
+
+    missing_id = tmp_path / "missing-id.yaml"
+    _write_checks(missing_id, id="")
+    try:
+        S.load_checks(missing_id)
+    except ValueError as exc:
+        assert "missing id" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("check without id was accepted")
+
+    bad_scope = tmp_path / "bad-scope.yaml"
+    _write_checks(bad_scope, counter_scope="project")
+    try:
+        S.load_checks(bad_scope)
+    except ValueError as exc:
+        assert "counter_scope" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("invalid scope was accepted")
+
+    bad_regex = tmp_path / "bad-regex.yaml"
+    _write_checks(bad_regex, pattern="[")
+    try:
+        S.load_checks(bad_regex)
+    except ValueError as exc:
+        assert "invalid regex" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("invalid regex was accepted")
+
+    missing_name = tmp_path / "missing-name.yaml"
+    missing_name.write_text(
+        _checks_yaml().replace('  name: "Test authorization check"\n', ""),
+        encoding="utf-8",
+    )
+    try:
+        S.load_checks(missing_name)
+    except ValueError as exc:
+        assert "missing required field" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("missing required field was accepted")
+
+
+def test_glob_matcher_handles_braces_question_and_char_classes() -> None:
+    assert S._matches_any_glob("src/foo.js", ["src/{foo,bar}.js"])
+    assert S._matches_any_glob("src/Auth.ts", ["src/[A-Z]uth.t?"])
+    assert S._matches_any_glob("src/{oops.js", ["src/{oops.js"])
+    assert S._matches_any_glob("src/file[.js", ["src/file[.js"])
+    assert not S._matches_any_glob("src/baz.js", ["src/{foo,bar}.js"])
+
+
+def test_call_scope_without_closing_paren_returns_capped_window() -> None:
+    assert S._scope_lines_for_call(["guard(", "  req.body.userId", "  more"], 0, 2) == [
+        "guard(",
+        "  req.body.userId",
+        "  more",
+    ]
+
+
+def test_evidence_snippet_truncates_long_lines() -> None:
+    snippet = S._evidence_snippet(["x" * 250], 0)
+    assert "..." in snippet
+    assert len(snippet.split(": ", 1)[1]) == 200
+
+
+def test_scan_file_skips_large_missing_and_empty_files(tmp_path: Path, monkeypatch) -> None:
+    check = _check()
+    big = tmp_path / "big.js"
+    big.write_text("BAD\n", encoding="utf-8")
+    monkeypatch.setattr(S, "_MAX_FILE_BYTES", 1)
+    assert S.scan_file(big, "big.js", [check]) == []
+
+    assert S.scan_file(tmp_path / "missing.js", "missing.js", [check]) == []
+
+    empty = tmp_path / "empty.js"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setattr(S, "_MAX_FILE_BYTES", 1_500_000)
+    assert S.scan_file(empty, "empty.js", [check]) == []
+
+
+def test_scan_repo_skips_outside_and_universally_excluded_paths(tmp_path: Path, monkeypatch) -> None:
+    excluded = tmp_path / "node_modules" / "pkg" / "bad.js"
+    excluded.parent.mkdir(parents=True)
+    excluded.write_text("BAD\n", encoding="utf-8")
+    outside = tmp_path.parent / "outside.js"
+    outside.write_text("BAD\n", encoding="utf-8")
+    normal = tmp_path / "src" / "bad.js"
+    normal.parent.mkdir()
+    normal.write_text("BAD\n", encoding="utf-8")
+
+    monkeypatch.setattr(S, "_walk_repo", lambda _repo_root: iter([outside, excluded, normal]))
+
+    findings = S.scan_repo(tmp_path, [_check()])
+
+    assert [f.file for f in findings] == ["src/bad.js"]
+
+
+def test_discover_plugin_root_prefers_env_and_returns_none_when_unresolved(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+    assert S._discover_plugin_root() == tmp_path
+
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT")
+    script = tmp_path / "elsewhere" / "scripts" / "source_auth_scanner.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("", encoding="utf-8")
+    monkeypatch.setattr(S, "__file__", str(script))
+    assert S._discover_plugin_root() is None
 
 
 # ---------------------------------------------------------------------------
