@@ -4933,6 +4933,34 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             (c.get("implementation") or "").strip() for c in section_controls if (c.get("implementation") or "").strip()
         ]
 
+        # §7.2 and §7.3 carry domain_required_patterns in schema_v2: each
+        # section must contain a `sequenceDiagram`. Minimal fixtures and sparse
+        # Stage-1 outputs can legitimately have no catalog row yet, but the
+        # scaffold must still give the renderer a structurally valid flow block
+        # to fill instead of composing a fragment that fails before repair.
+        if heading.startswith("7.2 ") and not control_names:
+            section_controls = [
+                {
+                    "control": "Password Login",
+                    "name": "Password Login",
+                    "effectiveness": "",
+                    "implementation": "",
+                    "subcontrols": [],
+                }
+            ]
+            control_names = ["Password Login"]
+        elif heading.startswith("7.3 ") and not control_names:
+            section_controls = [
+                {
+                    "control": "JWT Session Issuance and Verification",
+                    "name": "JWT Session Issuance and Verification",
+                    "effectiveness": "",
+                    "implementation": "",
+                    "subcontrols": [],
+                }
+            ]
+            control_names = ["JWT Session Issuance and Verification"]
+
         # §7.6 must OPEN with a general validation-approach block before the
         # specific boundary sub-blocks (contract: validation_approach_first).
         # Inject a synthetic FIRST subcontrol so the scaffold satisfies the

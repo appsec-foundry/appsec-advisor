@@ -469,4 +469,4 @@ See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
 | `--fail-on must\|partial` | Make CI fail; omit for advisory mode. `must` gates FAIL findings, `partial` gates FAIL and PARTIAL findings. |
 | `--priority-floor MUST\|SHOULD\|MAY` | Lowest priority allowed to gate; default is `MUST`. |
 
-Design rationale: [proposal-dev-security-helper.md](analysis/proposal-dev-security-helper.md).
+Design rationale: [proposal-dev-security-helper.md](internal/analysis/proposal-dev-security-helper.md).

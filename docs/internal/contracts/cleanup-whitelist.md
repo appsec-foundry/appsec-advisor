@@ -4,7 +4,7 @@ Files and directories that `scripts/runtime_cleanup.py` always wipes from `$OUTP
 
 Single source of truth: `scripts/runtime_cleanup.py` (`ALWAYS_FILES`, `ALWAYS_DIRS` constants). This file mirrors the same list and is pinned by `tests/test_runtime_cleanup.py::TestCleanupWhitelistDoc::test_filename_mentioned_in_docs` so the two cannot drift.
 
-Audit artifacts (`docs/audit-artifacts.md`) and incremental anchors (`.appsec-cache/baseline.json`) are **never** in this list.
+Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental anchors (`.appsec-cache/baseline.json`) are **never** in this list.
 
 ## Always-cleaned files
 

@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "e2e_spring_fixture.sh"
-DOC = ROOT / "docs" / "e2e-spring-fixture.md"
+DOC = ROOT / "docs" / "internal" / "runbooks" / "e2e-spring-fixture.md"
 
 
 def test_e2e_spring_fixture_script_exists_and_documents_defaults():

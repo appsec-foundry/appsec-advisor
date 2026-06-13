@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproducible per-run measurement (Phase A0 of docs/refactoring-plan.md).
+"""Reproducible per-run measurement (Phase A0 of docs/internal/runbooks/refactoring-plan.md).
 
 Folds the telemetry the plugin already emits into one ``.run-metrics.json``
 file so that performance and cost claims become falsifiable. This is *not*

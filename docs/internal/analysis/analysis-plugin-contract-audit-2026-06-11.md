@@ -42,7 +42,7 @@ doppelt lautlos.
 - Fix (bidirektional, §4): Stub im Prompt um `component_name` + `analyzed_at` ergänzen (beide in Step 1 bekannt) UND `started_at`/`partial`/`skipped_categories` im Schema deklarieren.
 
 ### [CD-2] §4e beschreibt vscode://-Links, die compose nicht mehr emittiert (Med)
-- `AGENTS.md:89` + `docs/schema-invariants.md:65` verlangen `[basename:line](vscode://file/…)` in §8; `grep -rn "vscode://" scripts/compose_threat_model.py` → 0 Treffer; §8-Karte rendert `**Location:** \`file:line\`` (compose:11934, :1469). Doku ist die stale Seite (Card-Layout-Redesign 2026-05 ist der gewollte Stand) → §4e in beiden Docs aktualisieren.
+- `AGENTS.md:89` + `docs/internal/contracts/schema-invariants.md:65` verlangen `[basename:line](vscode://file/…)` in §8; `grep -rn "vscode://" scripts/compose_threat_model.py` → 0 Treffer; §8-Karte rendert `**Location:** \`file:line\`` (compose:11934, :1469). Doku ist die stale Seite (Card-Layout-Redesign 2026-05 ist der gewollte Stand) → §4e in beiden Docs aktualisieren.
 
 ### [CD-3] `threat_category_id` Pflicht in Prompt + Hard-Gate, fehlt in beiden Schemas (Med)
 - `agents/appsec-stride-analyzer.md:468` (REQUIRED) + `scripts/validate_intermediate.py:244` (Hard-Gate RC.G.1/RC.I) vs. `schemas/stride.schema.yaml` / `schemas/threats-merged.schema.yaml`: 0 Treffer. Schema („single source of truth", validate_intermediate.py:6) schweigt zu einem Feld, ohne das Merger-TH-Dedup und §8-Gruppierung kollabieren. → Feld (`^TH-\d{2}$`, nullable) in beiden Schemas deklarieren.
@@ -57,13 +57,13 @@ doppelt lautlos.
 - `AGENTS.md:226` (Roster: „Phase 10b") vs. `phase-group-threats.md:1790` („Phase 10c") vs. `SKILL-impl.md:2412` („Stage 1c"); Phase-Map (AGENTS.md:256-276) hat weder 2.7 (existiert: `phase-group-recon.md:344`) noch 10c. → Phase-Map + Roster (+ Pinning-Test in test_agent_definitions.py) auf EINEN konsistenten Namen ziehen; Phasen-Dateien sind die operative Wahrheit.
 
 ### [CD-7] §4a-„only legal producer"-Claim von compose widerlegt (Med)
-- `docs/schema-invariants.md:14-15` / `AGENTS.md:85`: nur `qa_checks.py:linkify_anchors` produziert titled Cross-Refs — aber `compose_threat_model.py:459/509` (`linkify_with_label`, F-/M-/TH-) und :2252 (`_format_finding_link`) emittieren sie ebenfalls. §12-geleitete Editoren fixen sonst den falschen Producer. → §4a-Doku um die sanktionierten compose-Producer ergänzen.
+- `docs/internal/contracts/schema-invariants.md:14-15` / `AGENTS.md:85`: nur `qa_checks.py:linkify_anchors` produziert titled Cross-Refs — aber `compose_threat_model.py:459/509` (`linkify_with_label`, F-/M-/TH-) und :2252 (`_format_finding_link`) emittieren sie ebenfalls. §12-geleitete Editoren fixen sonst den falschen Producer. → §4a-Doku um die sanktionierten compose-Producer ergänzen.
 
 ### [CD-8] Compose-Pre-Pass-Map verfehlt zwei registrierte Fragmente (Low)
 - compose:1608 („validate every known JSON fragment") — `_KNOWN_JSON_FRAGMENT_SCHEMAS` (compose:161) fehlt `ms-ai-exposure.json` + `ms-top-mitigations.json` (beide in validate_fragment.py:79-80 registriert); `ms-top-mitigations.json` wird ganz ohne Schema-Check konsumiert (compose:6579); `check_fragment_registry.py:154` prüft nur declared→disk. → beide Dateinamen ergänzen; Registry-Check bidirektional machen.
 
 ### [CD-9] §4b-Konsequenz-Claim stale (Low)
-- `docs/schema-invariants.md:46` behauptet `threats[].mitigations` rendere `—`; compose:7409/7471/7987 hat inzwischen den Fallback `t.get("mitigation_ids") or t.get("mitigations")`. → Konsequenz-Satz in der Doku aktualisieren (Fallback ist Härtung, kein Bug).
+- `docs/internal/contracts/schema-invariants.md:46` behauptet `threats[].mitigations` rendere `—`; compose:7409/7471/7987 hat inzwischen den Fallback `t.get("mitigation_ids") or t.get("mitigations")`. → Konsequenz-Satz in der Doku aktualisieren (Fallback ist Härtung, kein Bug).
 
 ### [CD-10] `_SECARCH_SUBSECTIONS` „7.9 AI / LLM" — verifiziert: nur v1-Pfad, latent (Low)
 - `pregenerate_fragments.py:2843` vs. `data/sections-contract.yaml:1275` („7.9 Cryptography…"). Default ist v2 (`gen_security_architecture_v2`, pregenerate:6536-6540); die stale Liste füttert nur den Legacy-v1-Pfad (`--schema-v1`). Dazu widersprüchliches Kommentar-Paar pregenerate:3861-3871 (Suppress vs. Stub-Emit; Code emittiert Stub). → als v1-legacy annotieren oder v1-Pfad bei EOL löschen; Kommentare bereinigen.
@@ -194,7 +194,7 @@ doppelt lautlos.
 ## MR — Verantwortlichkeiten & Wartbarkeit
 
 ### [MR-1] Harvester-Rename bricht 4 user-facing Doks (High)
-- Real: `scripts/harvest_requirements.py` (Commit 3033e8e). Stale: README.md:217, CONTRIBUTING.md:110+:127, docs/harvester.md:9/22/75/78, docs/security-requirements-audit-skill.md:61 — alle `harvest-requirements.py`. Ironie: docs/refactoring-plan.md:573 lehnte den Rename ab, „weil er Caller bricht". → Sweep-Replace in den 4 Doks (oder Kompat-Wrapper).
+- Real: `scripts/harvest_requirements.py` (Commit 3033e8e). Stale: README.md:217, CONTRIBUTING.md:110+:127, docs/harvester.md:9/22/75/78, docs/security-requirements-audit-skill.md:61 — alle `harvest-requirements.py`. Ironie: docs/internal/runbooks/refactoring-plan.md:573 lehnte den Rename ab, „weil er Caller bricht". → Sweep-Replace in den 4 Doks (oder Kompat-Wrapper).
 
 ### [MR-2] validate_finding_refs.py + apply_finding_refs_repair.py an nichts verdrahtet (Med)
 - Referenzieren nur einander (grep über agents/skills/scripts/tests/hooks/Makefile: nichts); komplette validate→repair→apply-Pipeline ohne Aufrufer driftet still vom Renderer-Contract weg. → in QA-/Repair-Loop verdrahten oder entfernen (Owner-Entscheid).

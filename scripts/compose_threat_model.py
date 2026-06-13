@@ -8684,7 +8684,17 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     # Per-subsection patterns, e.g. §7.3 MUST contain a sequenceDiagram.
     # Scoped: we only check the slice of the fragment that sits under the
     # named subsection heading until the next level-3 heading.
-    for domain_title, patterns in (section.get("domain_required_patterns") or {}).items():
+    domain_required_patterns = section.get("domain_required_patterns") or {}
+    try:
+        schema_v2_active = bool(ctx.eval_context.get("security_schema") == "v2")
+    except Exception:
+        schema_v2_active = False
+    if schema_v2_active and section_id == "security_architecture":
+        v2_patterns = (section.get("schema_v2") or {}).get("domain_required_patterns")
+        if isinstance(v2_patterns, dict) and v2_patterns:
+            domain_required_patterns = v2_patterns
+
+    for domain_title, patterns in domain_required_patterns.items():
         m = re.search(r"^###\s+" + re.escape(domain_title) + r"\s*$", md, re.MULTILINE)
         if not m:
             continue  # subsection isn't present — already flagged above

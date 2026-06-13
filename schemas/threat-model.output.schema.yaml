@@ -605,9 +605,12 @@ properties:
           # schemas/threats-merged.schema.yaml and
           # agents/appsec-evidence-verifier.md for the full state
           # machine. Renderers may surface this as a small marker in
-          # the Threat Register row.
+          # the Threat Register row. `carried-unverified-shallower-depth` marks
+          # a prior threat carried into a shallower incremental re-scan that
+          # could not re-confirm it (see threats-merged.schema.yaml).
           type: [string, "null"]
-          enum: [verified, verified-prior, refuted, ambiguous, unchecked, null]
+          enum: [verified, verified-prior, refuted, ambiguous, unchecked,
+                 carried-unverified-shallower-depth, null]
         evidence_flags:
           # Parallel to triage_flags. Populated by the
           # appsec-evidence-verifier sub-agent. Opaque to the schema.

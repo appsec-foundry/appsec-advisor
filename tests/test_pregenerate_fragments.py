@@ -1217,8 +1217,13 @@ class TestSecurityArchitecture:
         assert "**Security assessment**" in body
         assert "**Relevant findings**" in body
 
-    def test_empty_control_catalog_uses_not_applicable_stub(self):
-        """v2 does not fabricate legacy IAM flow blocks when no control/finding is routed."""
+    def test_empty_control_catalog_keeps_required_auth_session_flow_scaffolds(self):
+        """v2 still emits §7.2/§7.3 flow anchors when the catalog is empty.
+
+        The Composer enforces schema_v2.domain_required_patterns for these
+        sections, so the pregenerator must provide a fillable scaffold instead
+        of a not-applicable stub.
+        """
         md = pf.gen_security_architecture(
             {
                 "components": [],
@@ -1227,9 +1232,15 @@ class TestSecurityArchitecture:
         )
         identity_section = re.search(r"### 7\.2 .+?(?=### 7\.3 )", md, re.DOTALL)
         assert identity_section is not None
-        body = identity_section.group(0)
-        assert "_Not applicable for this codebase" in body
-        assert "#### 7.2.1" not in body
+        identity_body = identity_section.group(0)
+        assert "#### 7.2.1 Password Login" in identity_body
+        assert "sequenceDiagram" in identity_body
+
+        session_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
+        assert session_section is not None
+        session_body = session_section.group(0)
+        assert "#### 7.3.1 JWT Session Issuance and Verification" in session_body
+        assert "sequenceDiagram" in session_body
 
 
 class TestOutOfScope:

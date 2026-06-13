@@ -26,7 +26,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).parent.parent
 FINALIZATION_MD = PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md"
 AGENTS_MD = PLUGIN_ROOT / "AGENTS.md"
-CLEANUP_WHITELIST_MD = PLUGIN_ROOT / "docs" / "cleanup-whitelist.md"
+CLEANUP_WHITELIST_MD = PLUGIN_ROOT / "docs" / "internal" / "contracts" / "cleanup-whitelist.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
 SKILL_IMPL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
@@ -286,7 +286,7 @@ class TestScriptWhitelist:
 
 
 class TestCleanupWhitelistDoc:
-    """The cleanup whitelist is documented in `docs/cleanup-whitelist.md`
+    """The cleanup whitelist is documented in `docs/internal/contracts/cleanup-whitelist.md`
     (single human-readable mirror of the constants in
     `scripts/runtime_cleanup.py`). AGENTS.md retains the policy paragraphs
     and a pointer.
@@ -298,8 +298,8 @@ class TestCleanupWhitelistDoc:
         )
 
     def test_agents_md_points_at_whitelist_doc(self, agents_text):
-        assert "docs/cleanup-whitelist.md" in agents_text, (
-            "AGENTS.md cleanup section must reference docs/cleanup-whitelist.md so readers can find the full list."
+        assert "docs/internal/contracts/cleanup-whitelist.md" in agents_text, (
+            "AGENTS.md cleanup section must reference docs/internal/contracts/cleanup-whitelist.md so readers can find the full list."
         )
 
     @pytest.mark.parametrize(
@@ -309,7 +309,7 @@ class TestCleanupWhitelistDoc:
     def test_filename_mentioned_in_docs(self, whitelist_text, filename):
         # Both `.progress/` (with trailing slash) and `.progress` should match.
         assert filename in whitelist_text, (
-            f"docs/cleanup-whitelist.md must mention {filename!r} so the doc stays in sync with the script."
+            f"docs/internal/contracts/cleanup-whitelist.md must mention {filename!r} so the doc stays in sync with the script."
         )
 
     def test_keep_runtime_files_flag_mentioned(self, agents_text):

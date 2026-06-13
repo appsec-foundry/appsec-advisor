@@ -157,8 +157,14 @@ properties:
           # verifier reads the cited file:line. Triage may use this field
           # in effective_severity decisions (a refuted finding is not
           # elevated by compound-chain membership).
+          # `carried-unverified-shallower-depth` — set by the deterministic
+          # incremental reconciler (build_threat_model_yaml.py) or the analyzer
+          # at reduced depth on a prior threat carried forward because the
+          # current scan was too shallow to re-confirm it. Triage must NOT
+          # elevate it; QA must NOT demand fresh evidence for it.
           type: [string, "null"]
-          enum: [verified, verified-prior, refuted, ambiguous, unchecked, null]
+          enum: [verified, verified-prior, refuted, ambiguous, unchecked,
+                 carried-unverified-shallower-depth, null]
         evidence_flags:
           # Annotated by the appsec-evidence-verifier. Parallel to
           # triage_flags. Each entry carries a flag_id (EV-NNN),

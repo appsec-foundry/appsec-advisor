@@ -342,7 +342,7 @@ Thin orchestrator (no inline grading — it dispatches the subagent):
 |---|---|
 | **New agent** `appsec-reviewer.md` | add; register in AGENTS.md **roster** (drift-guarded by `tests/test_agent_definitions.py::TestAgentsMdDocDrift`) — note it is **standalone**, *not* in the create-threat-model Phase map |
 | **Agent-definitions drift test** | `tests/test_agent_definitions.py` pins `model: sonnet` + turn budget for every agent → add the new file's expected row |
-| **New schema** | `requirements-verification.schema.json` → register in `check_fragment_registry.py`, add to `docs/schema-invariants.md`, wire a validator |
+| **New schema** | `requirements-verification.schema.json` → register in `check_fragment_registry.py`, add to `docs/internal/contracts/schema-invariants.md`, wire a validator |
 | **New skill** | `skills/verify-requirements/` (+ `config.json` if needed); confirm skill-discovery tests pick it up |
 | **`requirements_gate.py`** | new script; add to `data/required-permissions.yaml` **only if** it introduces a command not already under `Bash(*)` — it does not (pure Python + git). Read/Write of `$OUTPUT_DIR/**` + Read `$REPO_ROOT/**` are already permitted. **Net: no new permission entries expected** — re-verify at implementation. |
 | **Logging** | route all log lines through `scripts/event_log.py` (agent id `requirements-verifier`); no hand-rolled f-strings (§13) |

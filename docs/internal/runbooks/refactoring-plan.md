@@ -285,7 +285,7 @@ Diese Maßnahmen sind nicht phasen-gegated wie A/B/C. Sie können größtenteils
 | Coverage nicht in CI | `pytest-cov>=5` ist in `tests/requirements-test.txt`, aber CI ruft `pytest` ohne `--cov` auf → kein Baseline-Wert vorhanden. |
 | 5 verschiedene YAML-Loader | `migrate_v3_to_v4`, `triage_compute_ranking`, `architect_structural_checks`, `slice_taxonomy`, `render_completion_summary` mit je unterschiedlicher Fehler-Semantik (raise vs. None vs. `{}` vs. caller-default vs. dict-type-check + import-fallback). |
 | Fragment-Registry-Pfade nirgendwo zentral dokumentiert | 4 Maps verstreut über 3 Files. `AGENTS.md` Rule 4 hat den Workflow, aber nicht die konkreten Pfade. |
-| Keine `docs/adding-a-section.md` Doku | Walkthrough für neue Sections fehlt komplett. |
+| Keine `docs/internal/runbooks/adding-a-section.md` Doku | Walkthrough für neue Sections fehlt komplett. |
 | `CONTRIBUTING.md` (62 Zeilen) ohne Code-Style-Erwartung | Keine Erwähnung von Lint/Type-Hints/Pre-Commit. |
 
 ---
@@ -437,7 +437,7 @@ Module map:
 **Aufwand:** 30 Min
 **Risiko:** null
 
-**Was:** An `docs/schema-invariants.md` neue Section §4f anhängen, die alle 4 Registry-Maps mit Datei + Zeile listet. In `AGENTS.md` Rule 4 Sub-Bullet auf §4f verweisen.
+**Was:** An `docs/internal/contracts/schema-invariants.md` neue Section §4f anhängen, die alle 4 Registry-Maps mit Datei + Zeile listet. In `AGENTS.md` Rule 4 Sub-Bullet auf §4f verweisen.
 
 **Verifizierte Pfade:**
 - `_SECTION_FRAGMENT_MAP` — `scripts/compose_threat_model.py:89`
@@ -509,7 +509,7 @@ Diese Felder erwecken den Eindruck, das Plugin könne Operator-Vergleiche und `i
 
 ---
 
-### M8 — `docs/adding-a-section.md`
+### M8 — `docs/internal/runbooks/adding-a-section.md`
 
 **Aufwand:** 1 Std
 **Risiko:** null

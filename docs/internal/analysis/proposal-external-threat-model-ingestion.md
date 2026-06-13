@@ -27,7 +27,7 @@ Aufschieben: MS-TMT `.tm7`, pytm, Threagile, Threatspec. **Kein** Threat Model: 
 
 - **Detection:** deterministisches Skript im Recon-Step-0 (analog `recon_patterns.py`) → `.external-threat-models.json`. Content-Sniff, `node_modules`/`$OUTPUT_DIR` ausschließen, Eigenoutput per `meta.analyst`-Provenance aussortieren.
 - **Kontext:** über den **bestehenden** `known-threats`-Kanal (`context-resolver` Step 4i) bzw. einen Step 4j — kein neuer Sektionsapparat nötig.
-- **Findings-Sektion:** 5-Datei-Sektionspfad (`docs/adding-a-section.md`), `fragment_type: data`, `condition: render_external_reconciliation`.
+- **Findings-Sektion:** 5-Datei-Sektionspfad (`docs/internal/runbooks/adding-a-section.md`), `fragment_type: data`, `condition: render_external_reconciliation`.
 - **Verifikation:** **nicht** der zeilenbasierte `evidence-verifier` (externe Threats sind Prosa ohne `file:line` — vgl. Präzedenzfall `source: known-vuln`, der bewusst `unchecked` bleibt). Verifikation = **Reconciliation** gegen eigene grounded findings.
 - **Flags:** `--import-threat-model[=PATH]` · `--no-import-threat-model` · `--import-mode context|known-threats|off`. Interaktiv → fragen; headless/`--yes` → Default `context` (nicht-autoritativ), nie blockieren.
 

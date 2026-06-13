@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "e2e_fixture.sh"
-DOC = ROOT / "docs" / "e2e-fixtures.md"
+DOC = ROOT / "docs" / "internal" / "runbooks" / "e2e-fixtures.md"
 
 
 def test_e2e_fixture_script_exists_and_documents_supported_fixtures():

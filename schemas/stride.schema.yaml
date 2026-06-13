@@ -102,6 +102,24 @@ $defs:
         type: array
         items: { type: string }
 
+      resolved_prior_findings:
+        # Incremental re-scan only. Prior findings this re-scan affirmatively
+        # confirmed FIXED (disposition #2 in appsec-stride-analyzer.md
+        # "prior-finding disposition"). The deterministic reconciler in
+        # build_threat_model_yaml.py uses this to mark them resolved instead
+        # of carrying them forward. Advisory: when omitted, the reconciler
+        # conservatively carries unconfirmed priors at shallower depth.
+        type: array
+        items:
+          type: object
+          required: [prior_id, reason]
+          additionalProperties: false
+          properties:
+            prior_id: { type: string }
+            cwe:      { type: [string, "null"] }
+            title:    { type: [string, "null"] }
+            reason:   { type: string, maxLength: 200 }
+
       threats:
         type: array
         items:
@@ -150,8 +168,12 @@ $defs:
               # (Phase 10b pre-step) updates them to `verified`,
               # `refuted`, or `ambiguous` after re-reading the cited
               # file:line. See appsec-evidence-verifier.md for semantics.
+              # `carried-unverified-shallower-depth` — the analyzer carried a
+              # prior finding it could not re-confirm because the current scan
+              # is shallower than the baseline (see "prior-finding disposition").
               type: [string, "null"]
-              enum: [verified, verified-prior, refuted, ambiguous, unchecked, null]
+              enum: [verified, verified-prior, refuted, ambiguous, unchecked,
+                     carried-unverified-shallower-depth, null]
             controls_absent_evidence:
               # Records the absence-grep that supports the "control X is
               # not present" claim used to justify this threat. Written

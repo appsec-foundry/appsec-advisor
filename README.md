@@ -284,7 +284,7 @@ For local regression checks against the external fixture suite, use the manual f
 ./scripts/e2e_cross_repo_fixture.sh --depth quick --clean-output
 ```
 
-The generic single-repo driver supports the Spring, Python, Rust, Go, Node.js/TypeScript, and Python/LangChain fixtures from the sibling `appsec-advisor-fixtures` checkout. These E2E runs are manual and opt-in because they invoke Claude Code and consume LLM budget. See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/e2e-fixtures.md`](docs/e2e-fixtures.md), and [`docs/e2e-cross-repo-fixture.md`](docs/e2e-cross-repo-fixture.md).
+The generic single-repo driver supports the Spring, Python, Rust, Go, Node.js/TypeScript, and Python/LangChain fixtures from the sibling `appsec-advisor-fixtures` checkout. These E2E runs are manual and opt-in because they invoke Claude Code and consume LLM budget. See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/internal/runbooks/e2e-fixtures.md`](docs/internal/runbooks/e2e-fixtures.md), and [`docs/internal/runbooks/e2e-cross-repo-fixture.md`](docs/internal/runbooks/e2e-cross-repo-fixture.md).
 
 ## Enterprise rollout
 
@@ -342,7 +342,7 @@ Open work items currently shaping the next iterations of the plugin:
 
 - **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents. Design draft: [`sharedstate.md`](sharedstate.md).
 
-- **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input*: its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. This is only being weighed, not committed. Goal and reservations: [`proposal-external-threat-model-ingestion.md`](docs/analysis/proposal-external-threat-model-ingestion.md).
+- **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input*: its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. This is only being weighed, not committed. Goal and reservations: [`proposal-external-threat-model-ingestion.md`](docs/internal/analysis/proposal-external-threat-model-ingestion.md).
 
 - **Scaling to component-heavy repositories.** Component selection follows the attack surface, but STRIDE merge and the per-agent turn budget run serially and strain past about 8 to 10 components. Rather than drop exposed components to stay under that limit, the run analyses them all and logs that it overran. This is correct, but slow and costly on large repos. Parallelising the merge step is the open fix.
 

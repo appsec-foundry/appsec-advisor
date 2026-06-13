@@ -34,6 +34,16 @@ This chapter is organized by security-control category. The fixture keeps the pr
 
 JWT-based login signs session tokens for authenticated users and is the primary identity handoff between the API and browser client.
 
+The diagram shows the login-to-token handoff:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as Express API
+    U->>API: email and password
+    API-->>U: signed JWT
+```
+
 **Status:** Weak
 
 **Security assessment**
@@ -73,6 +83,18 @@ The control exists, but the fixture does not establish uniform enforcement acros
 #### Browser Token Storage
 
 The browser sends the JWT back to the API for authenticated requests.
+
+The diagram shows the token lifecycle after authentication:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant Store as Browser Storage
+    participant API as Express API
+    U->>Store: persist JWT
+    U->>API: Authorization: Bearer token
+    API-->>U: protected response
+```
 
 **Status:** Weak
 

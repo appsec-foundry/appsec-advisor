@@ -2,7 +2,7 @@
 
 Step-by-step walkthrough for adding a new section to the generated threat model. Use this when adding entirely new content (e.g. a §X "Cloud Posture" section), not when adjusting an existing section's body. The mechanical points where drift can creep in are flagged with **Drift hazard** notes.
 
-Five files must be touched in sequence. Skipping any one of them either (a) silently strips the new section out of the rendered Markdown or (b) breaks a downstream validator. The same five files own the registry maps documented in [`schema-invariants.md` §4f](./schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth).
+Five files must be touched in sequence. Skipping any one of them either (a) silently strips the new section out of the rendered Markdown or (b) breaks a downstream validator. The same five files own the registry maps documented in [`schema-invariants.md` §4f](../contracts/schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth).
 
 ## 1. Declare the section in the contract
 
@@ -34,7 +34,7 @@ Create `schemas/fragments/cloud-posture.schema.json` — JSON Schema draft 2020-
 
 ## 3. Wire the five registry maps
 
-Add an entry to each of these (paths and current line numbers in [`schema-invariants.md` §4f](./schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth)):
+Add an entry to each of these (paths and current line numbers in [`schema-invariants.md` §4f](../contracts/schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth)):
 
 | Map | What to add |
 |---|---|
@@ -44,7 +44,7 @@ Add an entry to each of these (paths and current line numbers in [`schema-invari
 | `_FRAGMENT_FILENAMES` in `validate_fragment.py` | `"cloud-posture": "cloud-posture.json"` — fragment id → on-disk filename |
 | `CONTRACT_SECTION_FRAGMENTS` in `qa_checks.py` | `"cloud_posture": ["cloud-posture"],` — section_id → repairable fragment ids |
 
-**Drift hazard:** these five maps overlap because each consumer reads only the slice it needs. Adding to four of the five is the classic silent breakage — the composer renders nothing for the section, or the QA repair plan can't ask the LLM to regenerate it. `scripts/check_fragment_registry.py` is the automated gate (see Phase A1 of `docs/refactoring-plan.md`); if present, it MUST stay green.
+**Drift hazard:** these five maps overlap because each consumer reads only the slice it needs. Adding to four of the five is the classic silent breakage — the composer renders nothing for the section, or the QA repair plan can't ask the LLM to regenerate it. `scripts/check_fragment_registry.py` is the automated gate (see Phase A1 of `docs/internal/runbooks/refactoring-plan.md`); if present, it MUST stay green.
 
 ## 4. Render the section
 
@@ -70,7 +70,7 @@ Add a focused test in `tests/test_compose_threat_model.py` that:
 2. Drops a fragment file with both happy-path and edge-case payloads.
 3. Asserts the section header and one stable invariant of the rendered body.
 
-If the section introduces a new ID class (e.g. `CP-NN`), also extend `scripts/qa_checks.py:linkify_anchors` per [`schema-invariants.md` §4a](./schema-invariants.md#4a-cross-reference-labelling-invariant): the linkifier is the only legal producer of titled cross-references, so a new ID class needs a new substitution function or it will render as a bare `[CP-01](#cp-01)` reference everywhere.
+If the section introduces a new ID class (e.g. `CP-NN`), also extend `scripts/qa_checks.py:linkify_anchors` per [`schema-invariants.md` §4a](../contracts/schema-invariants.md#4a-cross-reference-labelling-invariant): the linkifier is the only legal producer of titled cross-references, so a new ID class needs a new substitution function or it will render as a bare `[CP-01](#cp-01)` reference everywhere.
 
 ## Quick verification
 

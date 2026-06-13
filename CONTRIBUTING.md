@@ -69,7 +69,7 @@ Both routes drive `tests/e2e/run-full.sh`, which:
 `../appsec-advisor-fixtures/repos/cross-repo-threat-fixture/` suite. It is not
 part of the standard test run; `tests/test_e2e_cross_repo_fixture_script.py`
 only checks the driver contract. See
-[`docs/e2e-cross-repo-fixture.md`](docs/e2e-cross-repo-fixture.md) for the
+[`docs/internal/runbooks/e2e-cross-repo-fixture.md`](docs/internal/runbooks/e2e-cross-repo-fixture.md) for the
 manual run command.
 
 #### Targeted tests before finishing a non-trivial change
@@ -128,7 +128,7 @@ python3 scripts/harvest_requirements.py           # regenerate fallback requirem
 | `tests/` | Pytest suite — agent definitions, integration, steering, SARIF, schemas |
 | `examples/` | Reference threat model outputs (e.g. OWASP Juice Shop) |
 | `docs/` | Cross-cutting reference documentation (handwritten, durable) |
-| `docs/analysis/` | Generated analyses and proposals (`analysis-*`, `proposal-*`) — agent-authored design/investigation write-ups, kept separate from reference docs |
+| `docs/internal/analysis/` | Generated analyses and proposals (`analysis-*`, `proposal-*`) — agent-authored design/investigation write-ups, kept separate from reference docs |
 | `config.json` | Plugin config (external context, pricing, logging) |
 
 ## Agent definition format
@@ -152,7 +152,7 @@ New public functions take type hints. The existing surface is partly typed; we d
 
 ## Adding components
 
-When adding a new section to the generated threat model, see [`docs/adding-a-section.md`](docs/adding-a-section.md). It walks through the five registry maps that must stay aligned — those maps are documented at [`docs/schema-invariants.md` §4f](docs/schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth).
+When adding a new section to the generated threat model, see [`docs/internal/runbooks/adding-a-section.md`](docs/internal/runbooks/adding-a-section.md). It walks through the five registry maps that must stay aligned — those maps are documented at [`docs/internal/contracts/schema-invariants.md` §4f](docs/internal/contracts/schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth).
 
 ## Reporting security issues
 

@@ -80,14 +80,14 @@ Do not silently relax schemas to make invalid output pass.
 
 ### 4a–4f. Schema invariants
 
-Authoritative source: `docs/schema-invariants.md`. Consult it before editing schemas, the renderer, or `qa_checks.py:linkify_anchors`. One-line summary of each sub-invariant:
+Authoritative source: `docs/internal/contracts/schema-invariants.md`. Consult it before editing schemas, the renderer, or `qa_checks.py:linkify_anchors`. One-line summary of each sub-invariant:
 
 - **§4a** — Cross-reference labelling: every `T-NNN` / `F-NNN` / `M-NNN` / `TH-NN` outside its declaration renders as `[ID](#anchor) — <short-title>`. Only `qa_checks.py:linkify_anchors` may produce these.
 - **§4b** — Mitigation synthesis: P1/P2/P3 threats ⇒ `mitigations[]` non-empty; canonical fields are `id`/`title`/`threat_ids`/`priority` and `threats[].mitigation_ids`.
 - **§4c** — `components[].threat_ids[]` is the reverse index of `threats[j].component`; the `pregenerate_fragments.py` fallback must stay.
 - **§4d** — `SKIP_ATTACK_WALKTHROUGHS=true` skips `check_ms_structure` Check 4 and `check_chain_compactness`; mirrored in `data/sections-contract.yaml`.
 - **§4e** — §8 source-file links: threats with `evidence.file` render `[basename:line](vscode://file/…)`, not the bare `C-NN` anchor.
-- **§4f** — Adding/renaming a fragment requires touching five registry maps across `compose_threat_model.py`, `validate_fragment.py`, `qa_checks.py` (+ `data/sections-contract.yaml` + schema + the fragment's `.j2` template under `templates/fragments/` when it renders via one). Path table in `docs/schema-invariants.md` §4f.
+- **§4f** — Adding/renaming a fragment requires touching five registry maps across `compose_threat_model.py`, `validate_fragment.py`, `qa_checks.py` (+ `data/sections-contract.yaml` + schema + the fragment's `.j2` template under `templates/fragments/` when it renders via one). Path table in `docs/internal/contracts/schema-invariants.md` §4f.
 
 ### 5. Keep IDs stable
 
@@ -119,7 +119,7 @@ If yes, update `data/required-permissions.yaml` in the same change — otherwise
 
 Do not casually change cleanup behavior. Runtime cleanup is controlled by `scripts/runtime_cleanup.py` and `tests/test_runtime_cleanup.py`. Audit artifacts must not be deleted unless explicitly designed and tested.
 
-The list of must-preserve audit artifacts lives in `docs/audit-artifacts.md`. In particular, `.appsec-cache/baseline.json` is the carry-forward anchor for incremental scans — deleting it forces a cold full scan and breaks T-ID stability.
+The list of must-preserve audit artifacts lives in `docs/internal/contracts/audit-artifacts.md`. In particular, `.appsec-cache/baseline.json` is the carry-forward anchor for incremental scans — deleting it forces a cold full scan and breaks T-ID stability.
 
 ### 9. Tests matter, but separate baseline failures
 
@@ -296,9 +296,9 @@ Phase-9 STRIDE dispatch prompts must preserve the Group A → B → C ordering d
 
 ### Runtime artifact cleanup
 
-Implemented by `scripts/runtime_cleanup.py`, drift-guarded by `tests/test_runtime_cleanup.py`. `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` disables cleanup for debugging. Must preserve audit artifacts (`docs/audit-artifacts.md`) and incremental anchors.
+Implemented by `scripts/runtime_cleanup.py`, drift-guarded by `tests/test_runtime_cleanup.py`. `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` disables cleanup for debugging. Must preserve audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental anchors.
 
-Full always-cleaned list: **`docs/cleanup-whitelist.md`** (mirrors the constants in `runtime_cleanup.py`; the test pins both copies in sync).
+Full always-cleaned list: **`docs/internal/contracts/cleanup-whitelist.md`** (mirrors the constants in `runtime_cleanup.py`; the test pins both copies in sync).
 
 Mode-awareness: `incremental=false` may rebuild transient state on a full-scan path; incremental runs preserve carry-forward state used for T-ID stability.
 
@@ -328,8 +328,8 @@ User-visible Markdown/PDF quality rules. Each is **deterministically enforced** 
 
 Read only when relevant; code/data is authoritative where named.
 
-- **Schema/report contracts** → `docs/schema-invariants.md`, `data/sections-contract.yaml`, `scripts/validate_fragment.py`, `schemas/fragments/*.schema.json`.
-- **Runtime/config contracts** → `scripts/resolve_config.py`, `scripts/runtime_cleanup.py`, `docs/cleanup-whitelist.md`, `data/required-permissions.yaml`.
+- **Schema/report contracts** → `docs/internal/contracts/schema-invariants.md`, `data/sections-contract.yaml`, `scripts/validate_fragment.py`, `schemas/fragments/*.schema.json`.
+- **Runtime/config contracts** → `scripts/resolve_config.py`, `scripts/runtime_cleanup.py`, `docs/internal/contracts/cleanup-whitelist.md`, `data/required-permissions.yaml`.
 - **Output/security policy catalogs** → `data/cvss-eligible-cwes.yaml`, `data/pentest-eligible-cwes.yaml`, `scripts/plugin_meta.py`.
 - **Cross-repo context** → `docs/related-repos.yaml`, `scripts/load_related_repos.py`, `scripts/build_cross_repo_register.py`, `scripts/slice_cross_repo_for_component.py`.
 - **CLI/run flags** → `skills/create-threat-model/SKILL.md`.
@@ -344,10 +344,10 @@ Prefer small, consistent changes. Before changing behavior, identify affected co
 |---|---|
 | Agent or phase prompt | schema/output drift, permissions, model routing, prompt-injection exposure, stale phase/artifact names, Group A/B/C order, prose-style anchor |
 | Script command, tool use, or path access | `data/required-permissions.yaml`, `tests/test_check_permissions.py` |
-| Schema, fragment, or report structure | `docs/schema-invariants.md`, contract, schema, producer, renderer, QA, tests |
+| Schema, fragment, or report structure | `docs/internal/contracts/schema-invariants.md`, contract, schema, producer, renderer, QA, tests |
 | Org-profile schema (`schemas/org-profile.schema.yaml`) or packaging scripts (`scripts/package_internal_plugin.py`, `scripts/smoke_test_package.py`, `scripts/validate_org_profile.py`) | Verify the [example org packaging repo](https://github.com/matthiasrohr/appsec-advisor-org-packaging-example) still builds cleanly — `make package` must pass against the updated upstream |
 | Template (`.j2`) | renderer cell-builder (`compose_threat_model.py`), the schema fields it consumes, `data/sections-contract.yaml` section registration, render/QA tests — never edit the template alone |
-| Cleanup or runtime state | `scripts/runtime_cleanup.py`, `docs/cleanup-whitelist.md`, `docs/audit-artifacts.md`, `tests/test_runtime_cleanup.py` |
+| Cleanup or runtime state | `scripts/runtime_cleanup.py`, `docs/internal/contracts/cleanup-whitelist.md`, `docs/internal/contracts/audit-artifacts.md`, `tests/test_runtime_cleanup.py` |
 
 When uncertain, preserve the deterministic pipeline and make the LLM do less, not more.
 

@@ -1,7 +1,7 @@
 # Run baselines (Phase A0)
 
 Frozen per-run measurements used as the **before** number for any
-performance/token claim (see `docs/refactoring-plan.md` → A0). Without a
+performance/token claim (see `docs/internal/runbooks/refactoring-plan.md` → A0). Without a
 baseline here, no PR may assert a token or wall-time improvement.
 
 ## How a baseline is produced

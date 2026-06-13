@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fragment-registry drift linter (Phase A1 of docs/refactoring-plan.md).
+"""Fragment-registry drift linter (Phase A1 of docs/internal/runbooks/refactoring-plan.md).
 
 Cross-checks the fragment ↔ schema ↔ section relation that is implicitly
 encoded across five Python maps + the YAML contract + the on-disk schema
@@ -198,8 +198,8 @@ def main(argv: list[str] | None = None) -> int:
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         print(
-            f"\n{len(errors)} drift(s) found. See docs/schema-invariants.md §4f "
-            "and docs/adding-a-section.md for the canonical paths.",
+            f"\n{len(errors)} drift(s) found. See docs/internal/contracts/schema-invariants.md §4f "
+            "and docs/internal/runbooks/adding-a-section.md for the canonical paths.",
             file=sys.stderr,
         )
         return 1

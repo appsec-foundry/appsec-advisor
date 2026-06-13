@@ -172,7 +172,7 @@ Plus **Beziehungs-Mapping** (extern → eigene T-IDs: 1:1 / 1:n / keine) und **C
 
 **Was die Sektion NICHT tun darf:** eigene Risk-Ratings ändern, Counts beeinflussen, externe Threats in den Merge schieben. **Paralleles Ledger.**
 
-**Integrationskosten (ehrlich, code-verifiziert):** `docs/adding-a-section.md` verlangt **5 Dateien in Sequenz** (`sections-contract.yaml` → Schema → 5 Registry-Maps → `compose_threat_model.py` → Validatoren). `fragment_type: data` (tabellarisch), `condition: "render_external_reconciliation"` (nur wenn ein externes Modell importiert wurde). Nicht trivial, aber dokumentierter Standardpfad.
+**Integrationskosten (ehrlich, code-verifiziert):** `docs/internal/runbooks/adding-a-section.md` verlangt **5 Dateien in Sequenz** (`sections-contract.yaml` → Schema → 5 Registry-Maps → `compose_threat_model.py` → Validatoren). `fragment_type: data` (tabellarisch), `condition: "render_external_reconciliation"` (nur wenn ein externes Modell importiert wurde). Nicht trivial, aber dokumentierter Standardpfad.
 
 ## 2.5 Schärfste Design-Gefahr: Zirkuläre Bestätigung
 

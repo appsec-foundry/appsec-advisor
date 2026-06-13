@@ -165,14 +165,12 @@ def mutate_attack_surface_rename_5_1(out: Path) -> None:
 
 
 def mutate_sec_arch_strip_7_3_diagram(out: Path) -> None:
-    # §7.3 carries an active `domain_required_patterns` gate (each auth method
-    # flow needs its own sequenceDiagram). Neutralise every sequenceDiagram in
-    # the §7.3 slice so the gate fires. (A bare heading rename no longer
-    # triggers enforcement under the v2 default — the gate `continue`s when the
-    # v1 IAM heading is absent — so we exercise the pattern requirement instead.)
+    # §7.3 carries an active `domain_required_patterns` gate through the
+    # schema_v2 overlay. Neutralise every sequenceDiagram in the §7.3 slice so
+    # the gate fires.
     p = out / ".fragments" / "security-architecture.md"
     txt = p.read_text()
-    head = "### 7.3 Identity & Access Management"
+    head = "### 7.3 Session and Token Controls"
     start = txt.index(head)
     end = txt.index("### 7.4", start)
     txt = txt[:start] + txt[start:end].replace("sequenceDiagram", "flowchart TD") + txt[end:]
@@ -209,7 +207,7 @@ MUTATIONS = [
     ("system-overview-wrong-head", mutate_system_overview_wrong_heading, "must begin with"),
     ("walkthroughs-missing-seqdiagram", mutate_attack_walkthroughs_missing_seqdiagram, "sequenceDiagram"),
     ("attack-surface-rename-5-1", mutate_attack_surface_rename_5_1, "5.1 Unauthenticated Entry Points"),
-    ("sec-arch-7-3-strip-diagram", mutate_sec_arch_strip_7_3_diagram, "7.3 Identity"),
+    ("sec-arch-7-3-strip-diagram", mutate_sec_arch_strip_7_3_diagram, "7.3 Session"),
 ]
 
 
