@@ -474,7 +474,7 @@ ANSI color rules:
 | Effort `S` | green (`\033[32m`) |
 | Effort `M` | yellow (`\033[33m`) |
 | Effort `L` | red (`\033[31m`) |
-| Link labels (`requirement`, `blueprint`, `threat model F-NNN`) | cyan (`\033[36m`) |
+| Links (catalog URLs, `F-NNN` reference) | cyan (`\033[36m`) |
 | Field labels (`Finding`, `Risk`, etc.) | dim gray (`\033[2m`) |
 | Paths / line references | dim gray (`\033[2m`) |
 
@@ -545,7 +545,7 @@ Evidence: routes/search.ts:23
 Fix     : replace string interpolation with bound parameters.
           Use `sequelize.query(sql, { replacements: { term } })` or the ORM query builder.
 Effort  : M
-Links   : [requirement](https://reqs.example/sec-sql) · [blueprint](https://…) · [F-014](docs/security/threat-model.md#f-014)
+Links   : https://reqs.example/sec-sql · [F-014](docs/security/threat-model.md#f-014)
 ```
 
 Rules:
@@ -580,14 +580,13 @@ Rules:
   - If the catalog/blueprint does not prescribe a specific mechanism, say what the requirement demands and the minimal concrete change here; do not pad with generic advice.
   - It may include 1-2 short code fragments inline. Do not render a full before/after code block in the console.
 - **Effort:** `S`, `M`, or `L` (in an ANSI terminal, colour it green / yellow / red).
-- **Links:** render each reference as a real Markdown link whose target is the
-  URL **from the loaded catalog**, so the user can click straight through to the
-  authoritative requirement:
-  - `requirement` → `requirements[].url` for this requirement (parsed in Step 1c). Omit this link only when the catalog entry has no `url`.
-  - `blueprint` → the `section_url` from `blueprint_map[<id>]` (Step 1c-ii), when one matched.
-  - `threat model F-NNN` → `docs/security/threat-model.md#f-nnn`, only when `req_to_threats[<id>]` is non-empty (Step 1.5).
-  Use the canonical label text (`requirement`, `blueprint`, `F-NNN`) as the link
-  label — never print the bare URL. Separate present links with ` · `.
+- **Links:** print the **bare URL(s) from the loaded catalog** — no `requirement` /
+  `blueprint` label word in front (the URL is the link; a label plus URL just reads
+  doubled in most renderers). Order and sources:
+  - the requirement URL → `requirements[].url` (parsed in Step 1c). Omit the whole Links line when the catalog entry has no `url` and there is nothing else to link.
+  - the blueprint URL → the `section_url` from `blueprint_map[<id>]` (Step 1c-ii), when one matched — appended as a second bare URL.
+  - threat model → `[F-NNN](docs/security/threat-model.md#f-nnn)`, only when `req_to_threats[<id>]` is non-empty (Step 1.5). Keep the `F-NNN` label here — it is an identifier pointing at a local anchor, not a web URL.
+  Separate the present links with ` · `.
 - Separate finding blocks with one blank line. Do not use `---` separators, box drawing, or accent stripes — keep it copy-paste clean.
 
 ### 3c — Footer
