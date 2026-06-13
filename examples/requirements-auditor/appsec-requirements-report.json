@@ -1,0 +1,1453 @@
+{
+  "version": 1,
+  "generated_at": "2026-06-13T00:00:00Z",
+  "model_id": "claude-opus-4-8[1m]",
+  "repository": "OWASP Juice Shop",
+  "requirements_source": "demo",
+  "catalog": {
+    "description": "Generic baseline using public OWASP references. Customize by setting requirements_yaml_url in config.json to point to your organization's requirements.",
+    "generated": "2026-04-07T00:00:00Z",
+    "url": null,
+    "count": 64
+  },
+  "filter": null,
+  "demo": true,
+  "priority_floor": "MUST",
+  "summary": {
+    "total": 64,
+    "pass": 5,
+    "partial": 8,
+    "fail": 28,
+    "unverifiable": 10,
+    "not_applicable": 13
+  },
+  "results": [
+    {
+      "id": "WEB-001",
+      "category": "CAT-WEB",
+      "category_title": "Web & Frontend Security",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Implement Anti-CSRF protection (e.g. via SameSite cookies) for user sessions. State-changing actions MUST NOT be performed via HTTP GET",
+      "title": "Missing Anti-CSRF Controls",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 182
+        }
+      ],
+      "finding": "no SameSite cookie attribute or CSRF token enforcement; CORS is wide-open at server.ts:182",
+      "risk": "cross-site request forgery against authenticated state-changing endpoints",
+      "fix": "Set SameSite=Strict/Lax on the session cookie and add CSRF tokens, keeping state changes off HTTP GET.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "CSRF Protection",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "WEB-002",
+      "category": "CAT-WEB",
+      "category_title": "Web & Frontend Security",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Do not store sensitive data in any client-side storage mechanism (localStorage, sessionStorage, IndexedDB, cookies without HttpOnly)",
+      "title": "Session Token In localStorage",
+      "evidence": [
+        {
+          "file": "frontend/src/app/app.guard.ts",
+          "line": 18
+        },
+        {
+          "file": "frontend/src/app/app.guard.ts",
+          "line": 35
+        }
+      ],
+      "finding": "JWT auth token persisted in localStorage at frontend/src/app/app.guard.ts:18,35",
+      "risk": "any XSS payload can exfiltrate the bearer token; no HttpOnly protection",
+      "fix": "Move the session into an HttpOnly, Secure, SameSite cookie via a BFF; keep it out of web storage.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Browser Storage",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "WEB-003",
+      "category": "CAT-WEB",
+      "category_title": "Web & Frontend Security",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Configure CORS restrictively; use an explicit allowlist of trusted origins and never use wildcard (*) for authenticated APIs",
+      "title": "Wildcard CORS",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 181
+        },
+        {
+          "file": "server.ts",
+          "line": 182
+        }
+      ],
+      "finding": "app.use(cors()) with no origin allowlist at server.ts:182; comment labels it 'Allow everything!'",
+      "risk": "any origin can issue credentialed cross-origin requests to the API",
+      "fix": "Configure an explicit cors({ origin: <allowlist> }); never wildcard for authenticated APIs.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-CORS",
+        "section": "Overview",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "WEB-004",
+      "category": "CAT-WEB",
+      "category_title": "Web & Frontend Security",
+      "priority": "SHOULD",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Activate Content-Security-Policy (CSP) headers on all internet-facing applications; avoid unsafe-inline and unsafe-eval directives",
+      "title": "No Content Security Policy",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 185
+        }
+      ],
+      "finding": "helmet.contentSecurityPolicy() not configured; no CSP meta in frontend/src/index.html",
+      "risk": "no defense-in-depth against injected script execution",
+      "fix": "Add a restrictive helmet.contentSecurityPolicy({ directives }) without unsafe-inline/unsafe-eval.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Recommended CSP",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "WEB-005",
+      "category": "CAT-WEB",
+      "category_title": "Web & Frontend Security",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Set the Strict-Transport-Security (HSTS) response header on all internet-facing services with a minimum max-age of one year",
+      "title": "Missing HSTS Header",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 185
+        }
+      ],
+      "finding": "helmet supplies noSniff/frameguard but helmet.hsts() is never applied (server.ts:185-188)",
+      "risk": "no browser HTTPS enforcement; vulnerable to SSL-strip downgrade",
+      "fix": "Add app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true })) (min one year).",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "HSTS Header",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "WEB-006",
+      "category": "CAT-WEB",
+      "category_title": "Web & Frontend Security",
+      "priority": "MUST",
+      "status": "PASS",
+      "in_scope": true,
+      "requirement_text": "Use only mature, actively maintained frontend frameworks; enable strict TypeScript mode and production build hardening",
+      "title": "Mature Frontend Framework",
+      "evidence": [],
+      "finding": "uses Angular (mature, maintained) with TypeScript strict mode",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Frontend Framework",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "WEB-007",
+      "category": "CAT-WEB",
+      "category_title": "Web & Frontend Security",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Encode all user-controlled output at the frontend to prevent Cross-Site Scripting (XSS); use framework-native binding rather than raw innerHTML",
+      "title": "Unsafe HTML Sink Bypass",
+      "evidence": [
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 60
+        },
+        {
+          "file": "frontend/src/app/track-result/track-result.component.ts",
+          "line": 48
+        }
+      ],
+      "finding": "bypassSecurityTrustHtml() applied to user-controlled values at administration.component.ts:60,78 and track-result.component.ts:48",
+      "risk": "stored/reflected XSS \u2014 Angular's sanitizer is explicitly bypassed",
+      "fix": "Remove bypassSecurityTrust* and use framework-native interpolation binding, per the XSS Prevention cheat sheet.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Trusted Types (TT)",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "WEB-008",
+      "category": "CAT-WEB",
+      "category_title": "Web & Frontend Security",
+      "priority": "SHOULD",
+      "status": "PARTIAL",
+      "in_scope": true,
+      "requirement_text": "Set Referrer-Policy and Permissions-Policy response headers to limit information leakage and browser feature exposure",
+      "title": "Missing Referrer/Permissions-Policy",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 189
+        }
+      ],
+      "finding": "a feature-policy (payment) header is set (server.ts:189) but no Referrer-Policy and no modern Permissions-Policy",
+      "risk": "referrer leakage and broad browser-feature exposure",
+      "fix": "Add Referrer-Policy and a modern Permissions-Policy header (helmet), per the HTTP Headers cheat sheet.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Additional Security Headers",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "EH-001",
+      "category": "CAT-EH",
+      "category_title": "Error Handling & Security Events",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "On any error (expected or unexpected) the application MUST remain in a secure state and MUST NOT disclose internal details (stack traces, SQL, paths) to clients",
+      "title": "Stack Traces Disclosed On Error",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 676
+        },
+        {
+          "file": "server.ts",
+          "line": 719
+        }
+      ],
+      "finding": "Express errorhandler() at server.ts:676 returns full stack traces; errorhandler.title leaks the Express version at server.ts:719",
+      "risk": "internal paths, SQL, and stack frames disclosed to users",
+      "fix": "Restrict errorhandler to development; in production keep a secure state and emit no internal detail, per the Error Handling cheat sheet.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-ERROR-HANDLING",
+        "section": "1. Global Error Handler",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "EH-002",
+      "category": "CAT-EH",
+      "category_title": "Error Handling & Security Events",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Return generic error messages to clients; log detailed diagnostics server-side only",
+      "title": "Detailed Errors Returned To Clients",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 676
+        }
+      ],
+      "finding": "the dev errorhandler() returns detailed diagnostics in the HTTP response (server.ts:676)",
+      "risk": "diagnostic detail exposed to anonymous clients",
+      "fix": "Return a generic error body to clients and log details server-side only, as the requirement states.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-ERROR-HANDLING",
+        "section": "2. Safe Error Responses",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "EH-003",
+      "category": "CAT-EH",
+      "category_title": "Error Handling & Security Events",
+      "priority": "MUST",
+      "status": "PARTIAL",
+      "in_scope": true,
+      "requirement_text": "Handle authentication and authorization failures consistently to avoid information disclosure through timing or response differences",
+      "title": "Inconsistent Auth Failure Handling",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 676
+        }
+      ],
+      "finding": "login returns a generic credential error, but other endpoints surface differentiated 401/403/500 and error detail across handlers",
+      "risk": "response/timing differences enable user enumeration and probing",
+      "fix": "Normalise authn/authz failure responses (status + body + timing) across handlers, per the Authentication cheat sheet.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-ERROR-HANDLING",
+        "section": "3. Authentication & Authorization Error Consistency",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "HN-001",
+      "category": "CAT-HN",
+      "category_title": "System Hardening",
+      "priority": "MUST",
+      "status": "PARTIAL",
+      "in_scope": true,
+      "requirement_text": "Disable technology-disclosure headers (X-Powered-By, Server) or replace them with a non-descriptive value",
+      "title": "Server Header Not Masked",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 188
+        },
+        {
+          "file": "server.ts",
+          "line": 719
+        }
+      ],
+      "finding": "x-powered-by is disabled (server.ts:188) but the Express Server header is unmasked and errorhandler.title leaks the Express version (server.ts:719)",
+      "risk": "framework/version fingerprinting aids targeted exploits",
+      "fix": "Also strip/replace the Server header and remove the version from the error title.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html"
+    },
+    {
+      "id": "HN-002",
+      "category": "CAT-HN",
+      "category_title": "System Hardening",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Sensitive management and debug endpoints MUST NOT be reachable from public networks; serve them on a dedicated internal-only interface or port",
+      "title": "Management Endpoints Public",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 718
+        },
+        {
+          "file": "server.ts",
+          "line": 286
+        }
+      ],
+      "finding": "/metrics (Prometheus) served unauthenticated at server.ts:718 and Swagger /api-docs at server.ts:286",
+      "risk": "operational surface and full API schema reachable by anonymous users",
+      "fix": "Move /metrics and /api-docs to an internal-only interface/port, per the REST Security cheat sheet.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-HARDENING",
+        "section": "3. Disable Management and Debug Endpoints",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "HN-003",
+      "category": "CAT-HN",
+      "category_title": "System Hardening",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Disable all unused features, modules, and default accounts before deploying to production",
+      "title": "Default Accounts / Unused Features Enabled",
+      "evidence": [],
+      "finding": "the app seeds default/demo accounts (incl. admin) and ships extensive demo functionality enabled by default",
+      "risk": "known default credentials and surplus features widen the attack surface",
+      "fix": "Remove default/seed accounts and disable unused modules before production, per A05 Security Misconfiguration.",
+      "effort": "M",
+      "url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
+    },
+    {
+      "id": "HN-004",
+      "category": "CAT-HN",
+      "category_title": "System Hardening",
+      "priority": "SHOULD",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Deploy a Web Application Firewall (WAF) in front of all internet-facing applications",
+      "title": "WAF Deployment",
+      "evidence": [],
+      "finding": "WAF is a deployment-layer control not present in the repo",
+      "fix": "Deploy a WAF in front of internet-facing services per the requirement.",
+      "effort": "M",
+      "url": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/",
+      "blueprint": {
+        "id": "BP-API-HARDENING",
+        "section": "1. Deploy a WAF on Internet-Facing Applications",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "AC-001",
+      "category": "CAT-AC",
+      "category_title": "Authentication & Access Control",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "All API-to-API calls MUST use mutual authentication via a standard mechanism (e.g. OAuth 2.0 client credentials, mTLS)",
+      "title": "No Mutual API Authentication",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 23
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 56
+        }
+      ],
+      "finding": "service auth relies on a self-signed RS256 JWT whose private key is hardcoded (lib/insecurity.ts:23); no mTLS or client-credentials flow",
+      "risk": "anyone with the embedded key mints valid tokens for any service call",
+      "fix": "Use a standard mutual mechanism (OAuth2 client-credentials or mTLS) per the requirement; stop signing with an in-source key.",
+      "effort": "L",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-AUTHZ-SERVICE",
+        "section": "3. Token Storage",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "AC-002",
+      "category": "CAT-AC",
+      "category_title": "Authentication & Access Control",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Apply least-privilege and role-based access control (RBAC) to all endpoints; deny by default",
+      "title": "No RBAC / Deny-By-Default",
+      "evidence": [],
+      "finding": "endpoints lack a central deny-by-default authorization layer; access is not role-scoped (pervasive IDOR)",
+      "risk": "vertical/horizontal privilege escalation across users and admin functions",
+      "fix": "Add deny-by-default RBAC middleware and per-endpoint role checks, as the Access Control cheat sheet prescribes.",
+      "effort": "L",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Authorization",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "AC-003",
+      "category": "CAT-AC",
+      "category_title": "Authentication & Access Control",
+      "priority": "MUST",
+      "status": "PARTIAL",
+      "in_scope": true,
+      "requirement_text": "Apply rate limiting to all externally reachable API endpoints to prevent brute-force and scraping attacks",
+      "title": "Rate Limiting Incomplete",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 594
+        },
+        {
+          "file": "server.ts",
+          "line": 343
+        }
+      ],
+      "finding": "rateLimit covers /rest/user/reset-password and a few endpoints (server.ts:343,458-471) but not /rest/user/login (server.ts:594) or most APIs",
+      "risk": "credential brute-force and scraping on unthrottled routes",
+      "fix": "Extend express-rate-limit to all externally reachable endpoints, including login.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-HARDENING",
+        "section": "4. Rate Limiting",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "AC-004",
+      "category": "CAT-AC",
+      "category_title": "Authentication & Access Control",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "End users MUST be authenticated through a central identity provider using a standard protocol (OIDC/SAML) with mandatory MFA",
+      "title": "No Central IdP / Mandatory MFA",
+      "evidence": [
+        {
+          "file": "routes/login.ts",
+          "line": 34
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 56
+        }
+      ],
+      "finding": "custom email/password login in routes/login.ts; no OIDC/SAML IdP, MFA optional",
+      "risk": "credential-based account takeover without federated MFA",
+      "fix": "Authenticate via an OIDC/SAML central IdP with mandatory MFA as the requirement states.",
+      "effort": "L",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Use a Backend-for-Frontend (BFF)",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "AC-005",
+      "category": "CAT-AC",
+      "category_title": "Authentication & Access Control",
+      "priority": "MUST",
+      "status": "PARTIAL",
+      "in_scope": true,
+      "requirement_text": "Validate OAuth token claims (issuer, audience, expiry) on every request; do not cache authorization decisions beyond the token TTL",
+      "title": "Token Claims Partly Validated",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 54
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 191
+        }
+      ],
+      "finding": "expressJwt verifies signature and expiry, but issuer/audience claims are neither set nor validated (lib/insecurity.ts:54,191)",
+      "risk": "a token from any issuer with the (public) key is accepted",
+      "fix": "Set and validate issuer + audience (alongside expiry) on every request, per the JWT cheat sheet.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-AUTHZ-SERVICE",
+        "section": "4.2. Step 2: API-Level Authorization (via Audience)",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "AC-006",
+      "category": "CAT-AC",
+      "category_title": "Authentication & Access Control",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Enforce resource-level authorization checks to prevent Insecure Direct Object Reference (IDOR); compare token identity claims against the requested resource",
+      "title": "IDOR / No Resource-Level Authz",
+      "evidence": [],
+      "finding": "object access is not ownership-scoped \u2014 baskets/orders/feedback resolve by id without comparing the caller's identity claim",
+      "risk": "users read and modify other users' resources by changing the id",
+      "fix": "Compare the JWT identity claim against the requested resource's owner on every object access, per the IDOR cheat sheet.",
+      "effort": "L",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-AUTHZ-ENDUSER",
+        "section": "3.4. Step 4: Resource-Level Authorization",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IV-001",
+      "category": "CAT-IV",
+      "category_title": "Input Validation & Data Handling",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Validate all external input as restrictively as possible; reject unknown fields rather than ignoring them (allowlist over denylist)",
+      "title": "Input Not Restrictively Validated",
+      "evidence": [
+        {
+          "file": "routes/search.ts",
+          "line": 23
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 42
+        }
+      ],
+      "finding": "no schema/allowlist validation layer; raw req.body/req.query flow into SQL, file paths, and parsers",
+      "risk": "injection and traversal across multiple sinks from unvalidated input",
+      "fix": "Add allowlist schema validation per route (express-validator/zod) that rejects unknown fields before sinks.",
+      "effort": "L",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-VALIDATION",
+        "section": "2. Implement Restrictive Validation in DTOs",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IV-002",
+      "category": "CAT-IV",
+      "category_title": "Input Validation & Data Handling",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Harden XML parsers to prevent XXE attacks; disable external entity resolution and DTD processing",
+      "title": "XML Parser Allows External Entities",
+      "evidence": [
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 83
+        }
+      ],
+      "finding": "libxml.parseXml(data, { noent: true }) at routes/fileUpload.ts:83 resolves external entities (XXE)",
+      "risk": "file disclosure / SSRF via crafted DOCTYPE in uploaded complaint XML",
+      "fix": "Remove noent:true (default false) and disable DTD loading, as the XXE Prevention cheat sheet prescribes.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html"
+    },
+    {
+      "id": "IV-003",
+      "category": "CAT-IV",
+      "category_title": "Input Validation & Data Handling",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Restrict and validate object graphs during deserialization; never deserialize untrusted data into privileged types",
+      "title": "Unsafe Deserialization Of Uploads",
+      "evidence": [
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 117
+        },
+        {
+          "file": "routes/b2bOrder.ts",
+          "line": 9
+        }
+      ],
+      "finding": "yaml.load() runs on attacker-uploaded files in a vm sandbox at routes/fileUpload.ts:117; notevil eval on B2B order data at routes/b2bOrder.ts:9",
+      "risk": "YAML-bomb DoS and sandbox-escape attempts from untrusted content",
+      "fix": "Restrict/validate before deserializing untrusted documents and drop the vm+notevil eval path, per the Deserialization cheat sheet.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html"
+    },
+    {
+      "id": "IV-004",
+      "category": "CAT-IV",
+      "category_title": "Input Validation & Data Handling",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Use parameterized queries, prepared statements, or ORM methods for all database access; never concatenate user input into query strings",
+      "title": "Raw String-Interpolated SQL",
+      "evidence": [
+        {
+          "file": "routes/login.ts",
+          "line": 34
+        },
+        {
+          "file": "routes/search.ts",
+          "line": 23
+        }
+      ],
+      "finding": "user input concatenated into sequelize.query() at routes/login.ts:34 and routes/search.ts:23",
+      "risk": "authentication bypass and UNION-based data exfiltration via SQL injection",
+      "fix": "Use bound replacements \u2014 sequelize.query(sql, { replacements }) \u2014 or ORM finders; never concatenate input.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-VALIDATION",
+        "section": "4. Parameterized Data Access",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IV-005",
+      "category": "CAT-IV",
+      "category_title": "Input Validation & Data Handling",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Validate, sanitize, and securely store uploaded files; enforce content-type verification, size limits, and safe storage paths",
+      "title": "Insecure Upload Handling",
+      "evidence": [
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 42
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 45
+        }
+      ],
+      "finding": "complaint upload writes archive entries to uploads/complaints/ + fileName without path containment (routes/fileUpload.ts:42-45) \u2014 zip-slip",
+      "risk": "path-traversal write outside the upload dir; XXE/deserialization from content",
+      "fix": "Verify each entry path stays under the upload root and enforce content-type + size limits before parsing, per the File Upload cheat sheet.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html"
+    },
+    {
+      "id": "IV-006",
+      "category": "CAT-IV",
+      "category_title": "Input Validation & Data Handling",
+      "priority": "MUST",
+      "status": "PARTIAL",
+      "in_scope": true,
+      "requirement_text": "Apply strict limits on payload size, field length, array length, and JSON nesting depth to prevent resource exhaustion",
+      "title": "Payload Limits Not Enforced",
+      "evidence": [
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 62
+        }
+      ],
+      "finding": "upload size is only checked to solve a challenge (routes/fileUpload.ts:62), not enforced; no global body-size/field/depth limits set",
+      "risk": "oversized or deeply-nested payloads can exhaust memory/CPU",
+      "fix": "Set explicit body-parser size limits and field/array/depth caps, per the Denial of Service cheat sheet.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-VALIDATION",
+        "section": "3. Boundary & Size Limits",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "DP-001",
+      "category": "CAT-DP",
+      "category_title": "Data Protection & Cryptography",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Encrypt confidential data at rest using approved algorithms (AES-256-GCM or equivalent); apply full-disk or database-level encryption for all production data stores",
+      "title": "Data Not Encrypted At Rest",
+      "evidence": [],
+      "finding": "SQLite DB and uploaded files persist in plaintext; no database/disk encryption",
+      "risk": "disk or backup access exposes user PII and credentials directly",
+      "fix": "Enable database-/disk-level AES-256 encryption for production stores, as the requirement demands.",
+      "effort": "L",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html"
+    },
+    {
+      "id": "DP-002",
+      "category": "CAT-DP",
+      "category_title": "Data Protection & Cryptography",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Security tokens, API keys, and cryptographic keys MUST be generated using a cryptographically secure random source and be at least 256 bits (32 bytes) of entropy",
+      "title": "Weak / Hardcoded Keys",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 44
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 23
+        }
+      ],
+      "finding": "24-char hardcoded HMAC secret (lib/insecurity.ts:44) and an embedded 1024-bit RSA private key (lib/insecurity.ts:23)",
+      "risk": "keys are public in source and under-strength \u2014 tokens are forgeable",
+      "fix": "Generate >=256-bit keys from a CSPRNG at deploy time and load from a secret manager, never from source.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html"
+    },
+    {
+      "id": "DP-003",
+      "category": "CAT-DP",
+      "category_title": "Data Protection & Cryptography",
+      "priority": "MUST",
+      "status": "PARTIAL",
+      "in_scope": true,
+      "requirement_text": "Transmit sensitive data in the HTTP request body (POST/PUT) rather than in URLs or query parameters",
+      "title": "Some Sensitive Data On GET",
+      "evidence": [],
+      "finding": "login/password ops use POST, but several sensitive lookups/state reads flow through GET query strings",
+      "risk": "sensitive values captured in logs, proxies, and browser history",
+      "fix": "Move the remaining sensitive parameters into POST/PUT request bodies.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-AUTHZ-SERVICE",
+        "section": "2. Token Handling",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "DP-004",
+      "category": "CAT-DP",
+      "category_title": "Data Protection & Cryptography",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Do not store user credentials (passwords); delegate authentication to a central identity service",
+      "title": "User Passwords Stored (MD5)",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 43
+        }
+      ],
+      "finding": "credentials stored locally, hashed with MD5 at lib/insecurity.ts:43",
+      "risk": "trivially crackable hashes on database compromise",
+      "fix": "Delegate authentication to a central identity service rather than storing passwords, as the requirement directs.",
+      "effort": "L",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html"
+    },
+    {
+      "id": "DP-005",
+      "category": "CAT-DP",
+      "category_title": "Data Protection & Cryptography",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Secrets (passwords, API keys, certificates) MUST be stored in a dedicated secret manager; rotate them regularly and on suspected compromise",
+      "title": "Secrets Not In A Secret Manager",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 23
+        },
+        {
+          "file": "lib/insecurity.ts",
+          "line": 44
+        }
+      ],
+      "finding": "RSA private key and HMAC secret committed in lib/insecurity.ts; no managed storage or rotation",
+      "risk": "credential compromise via repo read; a leaked key stays valid indefinitely",
+      "fix": "Move secrets to a dedicated secret manager with rotation, per the Secrets Management cheat sheet.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SECRET-MANAGEMENT",
+        "section": "2. Cloud Secrets Manager",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "DP-006",
+      "category": "CAT-DP",
+      "category_title": "Data Protection & Cryptography",
+      "priority": "MUST",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "All data transmitted over external networks MUST be encrypted with TLS 1.2 or higher; prefer TLS 1.3 and mTLS for service-to-service communication",
+      "title": "TLS In Transit",
+      "evidence": [],
+      "finding": "app serves plain HTTP; external TLS is expected to terminate at a load balancer not in this repo",
+      "fix": "Ensure all external traffic is TLS-encrypted at the edge.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-API-HARDENING",
+        "section": "2. Transport Encryption",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "DP-007",
+      "category": "CAT-DP",
+      "category_title": "Data Protection & Cryptography",
+      "priority": "MUST",
+      "status": "PASS",
+      "in_scope": true,
+      "requirement_text": "Do not disable TLS certificate verification; never set insecure flags such as verify=false, rejectUnauthorized=false, or equivalent",
+      "title": "TLS Verification Not Disabled",
+      "evidence": [],
+      "finding": "no rejectUnauthorized/strictSSL or NODE_TLS_REJECT_UNAUTHORIZED overrides found",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"
+    },
+    {
+      "id": "SC-001",
+      "category": "CAT-SC",
+      "category_title": "Supply Chain & Dependency Security",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Integrate automated Software Composition Analysis (SCA) into the CI/CD pipeline; block builds on critical or high vulnerabilities with no fix available",
+      "title": "No SCA In CI",
+      "evidence": [],
+      "finding": "CI runs CodeQL (SAST) and ZAP (DAST) but no SCA scan; bom.json generation alone is not scanning",
+      "risk": "known-vulnerable dependencies ship undetected",
+      "fix": "Add an SCA scan (e.g. OWASP Dependency-Check) that blocks the build on critical/high findings.",
+      "effort": "S",
+      "url": "https://owasp.org/www-project-dependency-check/",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Dependency Hygiene",
+        "url": "https://owasp.org/www-project-dependency-check/"
+      }
+    },
+    {
+      "id": "SC-002",
+      "category": "CAT-SC",
+      "category_title": "Supply Chain & Dependency Security",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Pin direct dependencies to exact versions and verify integrity (e.g. lockfiles, checksums, or hash pinning); do not use floating version ranges in production builds",
+      "title": "Dependencies Not Pinned / No Lockfile",
+      "evidence": [],
+      "finding": ".npmrc sets package-lock=false and no package-lock.json is committed; package.json uses floating ^ ranges",
+      "risk": "non-reproducible builds; unverified, drifting transitive dependencies",
+      "fix": "Commit a lockfile (remove package-lock=false) and pin direct dependencies to exact versions.",
+      "effort": "M",
+      "url": "https://owasp.org/www-project-dependency-check/",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Build Integrity",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "SC-003",
+      "category": "CAT-SC",
+      "category_title": "Supply Chain & Dependency Security",
+      "priority": "MUST",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Pull packages only from approved, internal registries or well-known public registries; do not reference packages from untrusted or personal namespaces",
+      "title": "Approved Registries",
+      "evidence": [],
+      "finding": "no evidence of an approved/internal registry pin in .npmrc",
+      "fix": "Pull packages only from approved registries; configure in .npmrc/CI.",
+      "effort": "S",
+      "url": "https://owasp.org/www-project-dependency-check/"
+    },
+    {
+      "id": "SC-004",
+      "category": "CAT-SC",
+      "category_title": "Supply Chain & Dependency Security",
+      "priority": "SHOULD",
+      "status": "PASS",
+      "in_scope": true,
+      "requirement_text": "Generate and publish a Software Bill of Materials (SBOM) for each production release to enable rapid impact assessment during supply-chain incidents",
+      "title": "SBOM Generated",
+      "evidence": [],
+      "finding": "cyclonedx-npm SBOM generation wired in package.json (sbom script)",
+      "url": "https://owasp.org/www-project-cyclonedx/"
+    },
+    {
+      "id": "SC-005",
+      "category": "CAT-SC",
+      "category_title": "Supply Chain & Dependency Security",
+      "priority": "SHOULD",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Review transitive dependency trees regularly; remove unused dependencies and replace abandoned packages with maintained alternatives",
+      "title": "Transitive Dependency Review",
+      "evidence": [],
+      "finding": "periodic transitive-tree review is a process control not visible in the repo",
+      "fix": "Review transitive trees regularly and remove unused dependencies.",
+      "effort": "M",
+      "url": "https://owasp.org/www-project-dependency-check/",
+      "blueprint": {
+        "id": "BP-SPA-BFF",
+        "section": "Dependency Hygiene",
+        "url": "https://owasp.org/www-project-dependency-check/"
+      }
+    },
+    {
+      "id": "SC-006",
+      "category": "CAT-SC",
+      "category_title": "Supply Chain & Dependency Security",
+      "priority": "MUST",
+      "status": "PASS",
+      "in_scope": true,
+      "requirement_text": "Run Static Application Security Testing (SAST) in the CI/CD pipeline on every pull request and fail builds on high-severity findings",
+      "title": "SAST In CI",
+      "evidence": [],
+      "finding": "CodeQL SAST workflow at .github/workflows/codeql-analysis.yml",
+      "url": "https://owasp.org/www-community/controls/Static_Code_Analysis",
+      "blueprint": {
+        "id": "BP-API-HARDENING",
+        "section": "5. Implement Dependency and Code Scanning",
+        "url": "https://owasp.org/www-project-dependency-check/"
+      }
+    },
+    {
+      "id": "LM-001",
+      "category": "CAT-LM",
+      "category_title": "Security Logging & Monitoring",
+      "priority": "MUST",
+      "status": "PARTIAL",
+      "in_scope": true,
+      "requirement_text": "Log all security-relevant events (authentication success/failure, authorization failure, privilege escalation, configuration changes) with sufficient context to support incident investigation",
+      "title": "Partial Security-Event Logging",
+      "evidence": [
+        {
+          "file": "lib/logger.ts",
+          "line": 8
+        },
+        {
+          "file": "server.ts",
+          "line": 338
+        }
+      ],
+      "finding": "winston + morgan access logging exist (lib/logger.ts, server.ts:338) but authn/authz failures and privilege changes are not systematically logged",
+      "risk": "insufficient trail to investigate auth abuse or escalation",
+      "fix": "Emit structured security-event logs for auth success/failure, authz denial, and config changes with request context.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-ERROR-HANDLING",
+        "section": "4. Server-Side Diagnostics",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "LM-002",
+      "category": "CAT-LM",
+      "category_title": "Security Logging & Monitoring",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Use structured log formats (e.g. JSON) with consistent fields (timestamp, request-id, user-id, action, outcome); avoid free-text-only log entries for security events",
+      "title": "Logs Not Structured",
+      "evidence": [
+        {
+          "file": "lib/logger.ts",
+          "line": 12
+        }
+      ],
+      "finding": "winston logger uses format.simple() (free text) at lib/logger.ts:12, not structured JSON",
+      "risk": "security events are hard to parse, correlate, and alert on",
+      "fix": "Switch the winston format to JSON with consistent fields, per the Logging cheat sheet.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SECURITY-LOGGING",
+        "section": "1. Structured Logging Format",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "LM-003",
+      "category": "CAT-LM",
+      "category_title": "Security Logging & Monitoring",
+      "priority": "MUST",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Forward security logs to a centralized, tamper-resistant log aggregation system; do not rely solely on local application logs",
+      "title": "Centralized Log Aggregation",
+      "evidence": [],
+      "finding": "log forwarding to a central tamper-resistant store is a deployment concern",
+      "fix": "Forward security logs to a centralized, tamper-resistant aggregator.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SECURITY-LOGGING",
+        "section": "4. Centralized Log Aggregation",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "LM-004",
+      "category": "CAT-LM",
+      "category_title": "Security Logging & Monitoring",
+      "priority": "SHOULD",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Retain security logs for a minimum of 90 days online and 12 months in cold storage to support forensic investigations and compliance requirements",
+      "title": "Log Retention",
+      "evidence": [],
+      "finding": "retention policy is operational, not determinable from code",
+      "fix": "Retain security logs 90d online / 12mo archived per the requirement.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SECURITY-LOGGING",
+        "section": "6. Log Retention",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "LM-005",
+      "category": "CAT-LM",
+      "category_title": "Security Logging & Monitoring",
+      "priority": "SHOULD",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Define alerting rules for anomalous patterns (e.g. repeated auth failures, privilege escalation, unusual data access volumes) and route alerts to an on-call channel",
+      "title": "Alerting Rules",
+      "evidence": [],
+      "finding": "alerting on anomalous patterns is operational, not in the repo",
+      "fix": "Define alerting rules for repeated auth failures and anomalies.",
+      "effort": "M",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SECURITY-LOGGING",
+        "section": "5. Alerting Rules",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "LM-006",
+      "category": "CAT-LM",
+      "category_title": "Security Logging & Monitoring",
+      "priority": "MUST",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Never include sensitive values (tokens, passwords, PII, credit-card numbers) in log entries at any severity level",
+      "title": "No Sensitive Values In Logs",
+      "evidence": [],
+      "finding": "no obvious token/PII logging found, but full log-content review is out of static scope",
+      "fix": "Confirm tokens/PII/PANs are never logged; redact at the logger.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Vocabulary_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-SECURITY-LOGGING",
+        "section": "3. Sensitive Data Redaction",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Vocabulary_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IF-001",
+      "category": "CAT-IF",
+      "category_title": "Infrastructure & Container Security",
+      "priority": "MUST",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Container images MUST be scanned for known vulnerabilities before deployment; block promotion of images with critical or high vulnerabilities that have a fix available",
+      "title": "No Container Image Vulnerability Scan",
+      "evidence": [],
+      "finding": "no image scanner (Trivy/Grype) in .github/workflows/; the image is built and shipped unscanned",
+      "risk": "vulnerable OS/runtime layers ship to production undetected",
+      "fix": "Add a Trivy/Grype scan gate to CI that blocks critical/high fixable findings, per the Docker Security cheat sheet.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-CONTAINER-SECURITY",
+        "section": "1. Image Hardening",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IF-002",
+      "category": "CAT-IF",
+      "category_title": "Infrastructure & Container Security",
+      "priority": "MUST",
+      "status": "PASS",
+      "in_scope": true,
+      "requirement_text": "Containers MUST NOT run as root; set a non-root UID in the Dockerfile and enforce it via a security policy (e.g. PodSecurity admission, OPA)",
+      "title": "Non-Root Container",
+      "evidence": [],
+      "finding": "Dockerfile runs as USER 65532 on a distroless base image",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-CONTAINER-SECURITY",
+        "section": "5. PodSecurity Standards",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IF-003",
+      "category": "CAT-IF",
+      "category_title": "Infrastructure & Container Security",
+      "priority": "SHOULD",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Mount container filesystems as read-only where possible; use explicitly declared writable volume mounts for required data paths",
+      "title": "Read-Only Container FS",
+      "evidence": [],
+      "finding": "read-only root filesystem is a runtime/orchestrator setting not in the repo",
+      "fix": "Mount the container filesystem read-only where possible at runtime.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-CONTAINER-SECURITY",
+        "section": "2. Runtime Policy",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IF-004",
+      "category": "CAT-IF",
+      "category_title": "Infrastructure & Container Security",
+      "priority": "MUST",
+      "status": "UNVERIFIABLE",
+      "in_scope": true,
+      "requirement_text": "Drop all Linux capabilities not required by the application; do not use privileged containers in production",
+      "title": "Drop Linux Capabilities",
+      "evidence": [],
+      "finding": "capability dropping is a runtime/orchestrator setting not in the repo",
+      "fix": "Drop all unneeded Linux capabilities and never add NET_RAW at runtime.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-CONTAINER-SECURITY",
+        "section": "6. Seccomp Profiles",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IF-005",
+      "category": "CAT-IF",
+      "category_title": "Infrastructure & Container Security",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Apply network policies (or equivalent micro-segmentation controls) to restrict pod-to-pod communication to explicitly required flows",
+      "title": "Network Policies",
+      "evidence": [],
+      "finding": "no Kubernetes/IaC manifests in the repo to which micro-segmentation would apply",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-CONTAINER-SECURITY",
+        "section": "3. Network Policy",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IF-006",
+      "category": "CAT-IF",
+      "category_title": "Infrastructure & Container Security",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Infrastructure-as-Code (IaC) definitions MUST be scanned with a policy-as-code tool (e.g. tfsec, Checkov) in the CI/CD pipeline; block critical misconfigurations",
+      "title": "IaC Policy Scan",
+      "evidence": [],
+      "finding": "repo ships no Terraform/IaC definitions to scan",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-CONTAINER-SECURITY",
+        "section": "4. IaC Security Scanning",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IF-007",
+      "category": "CAT-IF",
+      "category_title": "Infrastructure & Container Security",
+      "priority": "SHOULD",
+      "status": "FAIL",
+      "in_scope": true,
+      "requirement_text": "Pin base images to an immutable digest (SHA256) rather than a mutable tag; rebuild images regularly to incorporate upstream security patches",
+      "title": "Base Image Not Pinned To Digest",
+      "evidence": [
+        {
+          "file": "Dockerfile",
+          "line": 1
+        },
+        {
+          "file": "Dockerfile",
+          "line": 23
+        }
+      ],
+      "finding": "Dockerfile pins by mutable tag (FROM node:24, gcr.io/distroless/nodejs24-debian13), not a SHA256 digest",
+      "risk": "the base image can change under the same tag, undermining reproducibility/provenance",
+      "fix": "Pin each FROM to an immutable @sha256:... digest and rebuild regularly, per the Docker Security cheat sheet.",
+      "effort": "S",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-CONTAINER-SECURITY",
+        "section": "1. Image Hardening",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "IF-008",
+      "category": "CAT-IF",
+      "category_title": "Infrastructure & Container Security",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Store IaC templates in version control; apply code review and approval gates before any infrastructure change reaches production",
+      "title": "IaC In Version Control",
+      "evidence": [],
+      "finding": "repo ships no production IaC templates",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html",
+      "blueprint": {
+        "id": "BP-CONTAINER-SECURITY",
+        "section": "4. IaC Security Scanning",
+        "url": "https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html"
+      }
+    },
+    {
+      "id": "LLM-001",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Sanitize and validate all user input before incorporating it into LLM prompts.\nUse parameterized prompt templates with strict separation between system instructions and user content.\nNever concatenate raw user input directly into system prompts via string formatting.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm01-prompt-injection/",
+      "blueprint": {
+        "id": "BP-LLM-SECURITY",
+        "section": "1. Prompt Injection Defense",
+        "url": "https://genai.owasp.org/llmrisk/llm01-prompt-injection/"
+      }
+    },
+    {
+      "id": "LLM-002",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Filter LLM output before returning it to users to prevent leakage of PII, credentials, internal paths, or training data.\nImplement output validation that checks for sensitive patterns (API keys, internal URLs, personal data) before delivery.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/",
+      "blueprint": {
+        "id": "BP-LLM-SECURITY",
+        "section": "2. Output Filtering & Validation",
+        "url": "https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/"
+      }
+    },
+    {
+      "id": "LLM-003",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "SHOULD",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Pin LLM SDK and model versions explicitly. Verify model integrity via checksums when loading from external registries.\nUse only trusted model sources and maintain an inventory of all AI/ML dependencies.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm03-supply-chain/"
+    },
+    {
+      "id": "LLM-004",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "SHOULD",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Validate and sanitize all data ingested into RAG knowledge bases and vector stores.\nRestrict who can update the knowledge base and maintain an audit trail for all embedding updates.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm04-data-and-model-poisoning/",
+      "blueprint": {
+        "id": "BP-LLM-SECURITY",
+        "section": "4. RAG & Vector Store Security",
+        "url": "https://genai.owasp.org/llmrisk/llm08-vector-and-embedding-weaknesses/"
+      }
+    },
+    {
+      "id": "LLM-005",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Treat all LLM output as untrusted input. Never use LLM output directly in eval(), exec(), raw SQL queries,\nshell commands, innerHTML, or downstream API calls without sanitization and validation.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm05-improper-output-handling/",
+      "blueprint": {
+        "id": "BP-LLM-SECURITY",
+        "section": "2. Output Filtering & Validation",
+        "url": "https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/"
+      }
+    },
+    {
+      "id": "LLM-006",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Implement a permission model for LLM tool use. Limit tool access to the minimum required capability.\nRequire human approval for destructive or irreversible operations (delete, write, execute, send).",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm06-excessive-agency/",
+      "blueprint": {
+        "id": "BP-LLM-SECURITY",
+        "section": "3. Tool Permission Model",
+        "url": "https://genai.owasp.org/llmrisk/llm06-excessive-agency/"
+      }
+    },
+    {
+      "id": "LLM-007",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Keep system prompts server-side only; never include them in client-side bundles.\nDo not log system prompts at debug level. Do not echo system prompt content in error messages.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm07-system-prompt-leakage/",
+      "blueprint": {
+        "id": "BP-LLM-SECURITY",
+        "section": "6. System Prompt Protection",
+        "url": "https://genai.owasp.org/llmrisk/llm07-system-prompt-leakage/"
+      }
+    },
+    {
+      "id": "LLM-008",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "SHOULD",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Enforce authentication and authorization on all vector database queries.\nRate-limit similarity search endpoints. Validate embedding dimensions and content before indexing.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm08-vector-and-embedding-weaknesses/",
+      "blueprint": {
+        "id": "BP-LLM-SECURITY",
+        "section": "4. RAG & Vector Store Security",
+        "url": "https://genai.owasp.org/llmrisk/llm08-vector-and-embedding-weaknesses/"
+      }
+    },
+    {
+      "id": "LLM-009",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "SHOULD",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Clearly label AI-generated content with appropriate disclaimers.\nGround LLM outputs against authoritative data sources where factual accuracy is required.\nLog AI-generated responses for audit and correction.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm09-misinformation/"
+    },
+    {
+      "id": "LLM-010",
+      "category": "CAT-LLM",
+      "category_title": "AI / LLM Security (OWASP LLM Top 10)",
+      "priority": "MUST",
+      "status": "NOT_APPLICABLE",
+      "in_scope": false,
+      "requirement_text": "Set max_tokens limits on all LLM API calls. Implement per-user and per-session rate limits.\nMonitor token consumption and set cost alerting thresholds. Implement circuit breakers for runaway costs.",
+      "title": "LLM Control Not Applicable",
+      "evidence": [],
+      "finding": "no real LLM/RAG/vector-DB integration \u2014 juicy-chat-bot is a static intent matcher, not an LLM",
+      "url": "https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/",
+      "blueprint": {
+        "id": "BP-LLM-SECURITY",
+        "section": "5. Cost Control & Rate Limiting",
+        "url": "https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/"
+      }
+    }
+  ]
+}
