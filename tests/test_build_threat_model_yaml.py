@@ -6,6 +6,9 @@ when STRIDE analyzers emit verbose titles or a non-canonical cvss_v4."""
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -380,6 +383,99 @@ def test_build_meta_propagates_check_requirements_true():
 def test_build_meta_check_requirements_defaults_false():
     assert _meta()["check_requirements"] is False
     assert _meta(check_requirements=False)["check_requirements"] is False
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_cli_merges_supply_chain_sidecars_into_meta_findings(tmp_path: Path):
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    out.mkdir()
+    _write_json(
+        out / ".skill-config.json",
+        {
+            "mode": "full",
+            "assessment_depth": "standard",
+            "reasoning_model": "sonnet-economy",
+            "stride_model": "sonnet",
+            "scope": [],
+        },
+    )
+    _write_json(out / ".threats-merged.json", {"threats": []})
+    _write_json(out / ".components.json", {"schema_version": 1, "components": [{"id": "C-01", "name": "API"}]})
+    _write_json(
+        out / ".assets.json",
+        {"schema_version": 1, "assets": [{"name": "Customer data", "classification": "Confidential"}]},
+    )
+    _write_json(
+        out / ".trust-boundaries.json",
+        {"schema_version": 1, "trust_boundaries": [{"name": "Internet to API"}]},
+    )
+    _write_json(
+        out / ".security-controls.json",
+        {
+            "schema_version": 1,
+            "security_controls": [
+                {
+                    "domain": "Operations Runtime and Supply Chain Controls",
+                    "control": "Automated SCA scanning",
+                    "effectiveness": "Missing",
+                }
+            ],
+        },
+    )
+    _write_json(
+        out / ".sca-practice-findings.json",
+        {
+            "schema_version": 1,
+            "findings": [
+                {
+                    "title": "Automated SCA scanning: missing",
+                    "category": "Insufficient Patch Management",
+                    "summary": "SCA scanning is not configured.",
+                    "derived_from": [],
+                    "severity": "High",
+                    "control": "Automated SCA scanning",
+                    "effectiveness": "Missing",
+                    "source": "sca-practice",
+                }
+            ],
+        },
+    )
+    _write_json(
+        out / ".known-bad-libs-findings.json",
+        {
+            "schema_version": 1,
+            "findings": [
+                {
+                    "title": "Library request (npm) has known track record: deprecated_abandoned",
+                    "category": "Insufficient Patch Management",
+                    "summary": "The dependency is deprecated and unmaintained.",
+                    "derived_from": [],
+                    "severity": "Medium",
+                    "control": "Library track-record review",
+                    "effectiveness": "Weak",
+                    "source": "known-bad-libs",
+                }
+            ],
+        },
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(out), "--repo-root", str(repo), "--plugin-root", str(ROOT)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    rendered = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))
+    assert [mf["id"] for mf in rendered["meta_findings"]] == ["MF-001", "MF-002"]
+    assert [mf["source"] for mf in rendered["meta_findings"]] == ["sca-practice", "known-bad-libs"]
+    assert all(mf["derived_from"] == [] for mf in rendered["meta_findings"])
 
 
 # ---------------------------------------------------------------------------

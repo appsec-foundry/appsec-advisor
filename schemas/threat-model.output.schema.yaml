@@ -827,9 +827,11 @@ properties:
     #
     # Meta-findings DO NOT use T-NNN ids (T-NNN is a contiguous sequence
     # asserted by validate_intermediate._check_t_id_sequence). They carry
-    # their own MF-NNN prefix and link back to the underlying T-NNN list
-    # via `derived_from`. Renders in §7 as "Architectural Process Gaps"
-    # callouts and in §9 Mitigation Register as a separate block.
+    # their own MF-NNN prefix. `derived_from` links back to underlying
+    # T-NNNs when the meta-finding is threat-derived; process-level
+    # sidecars such as supply-chain posture may use an empty list.
+    # Renders in §7 as "Architectural Process Gaps" callouts and in
+    # §9 Mitigation Register as a separate block.
     type: [array, "null"]
     items:
       type: object
@@ -856,9 +858,9 @@ properties:
           minLength: 1
         derived_from:
           # T-NNN ids of the underlying findings that triggered this
-          # meta-finding. The renderer uses this for back-links.
+          # meta-finding. Empty for process-level findings with no direct
+          # threat linkage, such as passive supply-chain posture.
           type: array
-          minItems: 2
           items:
             type: string
             pattern: "^T-\\d{3,}$"

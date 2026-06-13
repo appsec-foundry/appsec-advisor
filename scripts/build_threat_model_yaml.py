@@ -24,6 +24,7 @@ Optional intermediates (gracefully degraded):
 
 Phase-output sidecars (NEW — preferred when present, falls back to prior yaml):
   .components.json, .assets.json, .trust-boundaries.json, .security-controls.json
+  .sca-practice-findings.json, .known-bad-libs-findings.json
 
 Output: $OUTPUT_DIR/threat-model.yaml (atomic write, schema-validated).
 
@@ -808,6 +809,70 @@ def build_critical_findings(threats: list[dict]) -> list[dict]:
     return out
 
 
+_MF_ID_RE = re.compile(r"^MF-(\d{3,})$")
+
+
+def build_meta_findings(prior_yaml: dict | None, sidecars: list[dict | None]) -> list[dict]:
+    """Build final meta_findings[] from current-run sidecars.
+
+    The passive supply-chain emitters write MF-shaped candidates without IDs.
+    This builder is the deterministic fan-in point: it allocates stable dense
+    MF-NNN IDs in sidecar order and preserves hand-authored prior entries.
+    When no current-run sidecar produced findings, prior yaml is carried
+    forward for backwards-compatible incremental runs.
+    """
+    raw_findings: list[dict] = []
+    for sidecar in sidecars:
+        if not isinstance(sidecar, dict):
+            continue
+        findings = sidecar.get("findings") or []
+        if not isinstance(findings, list):
+            continue
+        raw_findings.extend(f for f in findings if isinstance(f, dict))
+
+    prior_findings = (prior_yaml or {}).get("meta_findings") or []
+    if not raw_findings:
+        return prior_findings if isinstance(prior_findings, list) else []
+
+    out: list[dict] = []
+    if isinstance(prior_findings, list):
+        out.extend(m for m in prior_findings if isinstance(m, dict) and m.get("manual") is True)
+
+    max_seen = 0
+    for existing in out:
+        m = _MF_ID_RE.fullmatch(str(existing.get("id") or ""))
+        if m:
+            max_seen = max(max_seen, int(m.group(1)))
+    counter = max_seen + 1
+
+    seen_keys: set[tuple[str, str, str]] = set()
+    for raw in raw_findings:
+        title = _clamp_title(str(raw.get("title") or raw.get("control") or "Architectural meta-finding"), 100)
+        category = str(raw.get("category") or "Insufficient Patch Management")
+        summary = str(raw.get("summary") or title).strip()
+        source = str(raw.get("source") or "sidecar")
+        key = (source, title, category)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        derived_from = [
+            tid for tid in (raw.get("derived_from") or []) if isinstance(tid, str) and re.fullmatch(r"T-\d{3,}", tid)
+        ]
+        entry = dict(raw)
+        entry["id"] = f"MF-{counter:03d}"
+        entry["title"] = title
+        entry["category"] = category
+        entry["summary"] = summary or title
+        entry["derived_from"] = derived_from
+        if source:
+            entry["source"] = source
+        out.append(entry)
+        counter += 1
+
+    return out
+
+
 def build_tier_root_causes(threats: list[dict], components: list[dict], sidecar: dict | None = None) -> dict:
     """Phase 10b sidecar (.tier-root-causes.json) is the canonical source —
     architectural-level prose like "missing input neutralization on raw SQL
@@ -957,6 +1022,8 @@ def main() -> int:
     sidecar_mo = _load_json(od / ".mitigation-overrides.json")
     sidecar_as = _load_json(od / ".attack-surface-overrides.json")
     sidecar_trc = _load_json(od / ".tier-root-causes.json")
+    sidecar_sca_findings = _load_json(od / ".sca-practice-findings.json")
+    sidecar_known_bad_findings = _load_json(od / ".known-bad-libs-findings.json")
 
     # Prior yaml (fallback source for fields whose sidecar is missing)
     prior_yaml = _load_yaml(od / "threat-model.yaml")
@@ -1053,10 +1120,9 @@ def main() -> int:
             doc["threat_hypotheses"] = threat_hypotheses
         elif prior_yaml and prior_yaml.get("threat_hypotheses"):
             doc["threat_hypotheses"] = prior_yaml["threat_hypotheses"]
-    # meta_findings synthesis (config-scan-findings → MF-NNN with category enum)
-    # is judgment-heavy — carry forward from prior yaml when available, else skip.
-    if prior_yaml and prior_yaml.get("meta_findings"):
-        doc["meta_findings"] = prior_yaml["meta_findings"]
+    meta_findings = build_meta_findings(prior_yaml, [sidecar_sca_findings, sidecar_known_bad_findings])
+    if meta_findings:
+        doc["meta_findings"] = meta_findings
     if prior_yaml and "security_architecture" in prior_yaml:
         doc["security_architecture"] = prior_yaml["security_architecture"]
     if prior_yaml and prior_yaml.get("threat_categories"):
