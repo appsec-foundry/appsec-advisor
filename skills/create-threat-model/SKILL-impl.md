@@ -3502,6 +3502,12 @@ loop:
       python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_content_repair.py "$OUTPUT_DIR" || true
       python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py \
           --output-dir "$OUTPUT_DIR" --strict || true
+      # Canonical finalization tail — the --strict recompose above discards the
+      # autofix-applied §4/§5 GFM→HTML fixed-layout tables + path-backticking
+      # (autofix-exclusive; see AGENTS.md "Critical ordering rule"). Re-apply so
+      # the repaired document does not regress to plain wide-column GFM tables.
+      python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py "$OUTPUT_DIR/threat-model.md" || true
+      python3 $CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py autofix "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" || true
   read   $OUTPUT_DIR/.qa-status.json   (qa_status)
   read   $OUTPUT_DIR/.qa-repair-plan.json   (qa_plan, optional)
 
@@ -3581,14 +3587,18 @@ The applier is followed by a fresh `compose_threat_model.py --strict` so the fra
 **Sprint 1D-bis (M3.6) — release-blocker scan on `manual_review`.** The manual-review short-circuit is correct *only* when the unfixable items are cosmetic (e.g. checker false-positives). Some `manual_review_items` describe defects that make the rendered model unfit for use — these MUST abort the run rather than silently ship. Before printing the manual-review banner, scan `.qa-status.json → manual_review_items[*].issue` (and any item-level `description`) for **any** release-blocker pattern:
 
 ```
+# Mirrors scripts/qa_release_gate.py RELEASE_BLOCKER_PATTERNS (case-insensitive
+# match). That script is the single source of truth — keep this copy in sync.
 RELEASE_BLOCKER_PATTERNS = (
   "untitled",                 # Mitigation Register `(untitled)` headings — Step 1 / 4 fix
+  "(untitled)",
   "orphan",                   # orphaned T-NNN / M-NNN cross-references
   "broken anchor",            # broken-anchor / no-anchor diagnostics
-  "(untitled)",
-  "Mitigation column empty",  # MS Mitigations table empty cells
+  "mitigation column empty",  # MS Mitigations table empty cells
   "title fields missing",
   "linked but no title",
+  "no title",                 # generic "no title" / "missing title"
+  "missing title",
 )
 ```
 
@@ -3669,6 +3679,7 @@ This replaces the former heavy `appsec-threat-analyst` REPAIR_MODE dispatch: a c
 2. Load the repair plan; for each `action`, re-author the listed `fragments_to_rewrite` so the next compose pass emits a contract-clean document. The orchestrator's repair branch is the **only** legal writer of `.fragments/*.{json,md}` — it never touches `threat-model.md` directly.
 3. Re-invoke `python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py --output-dir $OUTPUT_DIR --strict` (Phase 11 Substep 5).
 3b. **Re-run `apply_prose_fixes.py` on the freshly composed `threat-model.md`** (`python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py $OUTPUT_DIR/threat-model.md`). A `compose_threat_model.py --strict` rebuild regenerates the Markdown from fragments and therefore **discards** the deterministic prose-fix pass that the pre-agent gate (§"Pre-agent contract gate") applied before the repair — without this re-run the final document ships with unbackticked code tokens (function calls like `eval()`, file paths like `lib/insecurity.ts:23`, weak-hash names like `MD5`) in tables, §2 Top-Threats cells, and §3 Attack-Walkthrough steps. Idempotent; safe to run after every recompose. (Mirrors the call at the §"Pre-agent contract gate" so the post-repair document matches the pre-repair contract.)
+3c. **Re-run `qa_checks.py autofix` as the LAST mutation** (`python3 $CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py autofix $OUTPUT_DIR/threat-model.md $REPO_ROOT`). The recompose at step 3 also discards the autofix-exclusive **§4/§5 GFM→HTML fixed-layout table conversion + `A-NN`/`C-NN` nowrap** (and the links/anchors/MS-structure/cell-format passes) — these live ONLY in `qa_checks.py:cmd_autofix`, never in `compose`, so a bare recompose ships them as plain wide-column GFM tables. This is the canonical final sequence `compose --strict → apply_prose_fixes → qa_checks autofix` (AGENTS.md → "Critical ordering rule"); skipping it is the root cause of repeated §4/§5 table + code-format regressions on repaired runs.
 4. Re-run the QA contract gate (Phase 11 Substep 6) as before.
 5. Log `REPAIR_END` with the iteration number, the fragment paths that were rewritten, and the final `qa_checks.py contract` exit code.
 

@@ -43,10 +43,12 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
        --output-dir "$OUTPUT_DIR" --strict
    ```
    A non-zero exit is a repair failure — emit `RENDER_FAILED` and let the skill's loop count this iteration as unsuccessful.
-4. **Re-run the deterministic prose-fix pass** — a `--strict` recompose regenerates the Markdown from fragments and discards the prose-fix pass the pre-agent gate applied, so re-apply it (idempotent):
+4. **Re-run the deterministic finalization tail** — a `--strict` recompose regenerates the Markdown from fragments and therefore discards **every** post-compose mutation the pre-agent gate applied. Re-apply the canonical tail in order (both idempotent):
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" "$OUTPUT_DIR/threat-model.md"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" autofix "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"
    ```
+   `apply_prose_fixes.py` re-backticks bare code tokens; `qa_checks.py autofix` re-applies the links / anchors / MS-structure / cell-format passes **and the §4/§5 GFM→HTML fixed-layout table conversion + `A-NN`/`C-NN` nowrap** — these live ONLY in `autofix` and would otherwise ship as plain wide-column GFM tables. `autofix` MUST be the **last** mutation on `threat-model.md` (AGENTS.md → "Critical ordering rule"). Skipping it is the root cause of the repeated §4/§5 table + code-format regressions on repaired runs.
 5. Re-run the QA contract gate for observability:
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract "$OUTPUT_DIR/threat-model.md"

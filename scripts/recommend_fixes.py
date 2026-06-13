@@ -162,7 +162,7 @@ def _recommend_perf_anomaly_phase(issue: dict, output_dir: Path) -> dict:
         "rationale": (
             f"This phase exceeded the {issue['evidence'].get('multiplier', 1.0)}× threshold "
             f"for the assessment depth. Common causes: (a) sub-agent stuck in long "
-            f"reasoning loop, (b) external command (git, dep_scan) slow, (c) repo "
+            f"reasoning loop, (b) external command (git, gh) slow, (c) repo "
             f"size larger than expected.{inferred_note}"
         ),
         "actions": [

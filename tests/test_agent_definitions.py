@@ -213,6 +213,35 @@ class TestAgentInventory:
         missing = expected - found
         assert not missing, f"Missing agent files: {missing}"
 
+
+# ---------------------------------------------------------------------------
+# Re-Render-Loop finalization tail (AGENTS.md "Critical ordering rule")
+# ---------------------------------------------------------------------------
+
+
+class TestFragmentFixerFinalizationTail:
+    """The fragment-fixer recomposes from fragments, which discards the
+    autofix-exclusive §4/§5 GFM→HTML fixed-layout table conversion + path
+    backticking. The canonical tail `compose --strict → apply_prose_fixes →
+    qa_checks autofix` MUST run after the recompose, with `autofix` LAST,
+    else repaired runs ship regressed §4/§5 tables. Recurring regression
+    class — see AGENTS.md "Critical ordering rule"."""
+
+    def test_fragment_fixer_reruns_autofix_after_prose_fixes(self):
+        body = (AGENTS_DIR / "appsec-fragment-fixer.md").read_text(encoding="utf-8")
+        prose_idx = body.find("apply_prose_fixes.py")
+        autofix_idx = body.find("qa_checks.py autofix")
+        compose_idx = body.find("compose_threat_model.py")
+        assert prose_idx != -1, "fragment-fixer must re-run apply_prose_fixes after recompose"
+        assert autofix_idx != -1, (
+            "fragment-fixer must re-run `qa_checks.py autofix` after recompose — "
+            "it owns the §4/§5 GFM→HTML table conversion that compose drops"
+        )
+        assert compose_idx < prose_idx < autofix_idx, (
+            "canonical order must be compose --strict → apply_prose_fixes → "
+            "qa_checks autofix (autofix is the LAST mutation)"
+        )
+
     def test_no_unexpected_agents(self):
         """Fail loudly if a new agent is added without updating this test suite."""
         found = {f.stem for f in agent_files()}
