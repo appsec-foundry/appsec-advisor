@@ -83,6 +83,10 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["scripts"]
+# pytest-cov 7 delegates subprocess measurement to coverage.py. Several tests
+# execute scripts via subprocess to match hook/CLI behavior; patching here makes
+# those child interpreters contribute to the same coverage run.
+patch = ["subprocess"]
 
 [tool.coverage.report]
 # Regression floor — current total is ~55%. Anything below this fails the

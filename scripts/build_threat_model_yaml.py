@@ -499,7 +499,7 @@ def _normalize_cvss_v4(v4):
 def _clean_title(raw: str) -> str:
     """Best-effort transform of merged-threat title to schema pattern.
 
-    Schema pattern: ^[A-Z][^()@`]+?(?:\s*\([^()]+\))?$
+    Schema pattern: ^[A-Z][^()@`]+?(?:\\s*\\([^()]+\\))?$
       - first char uppercase
       - no parens/at/backtick in body
       - optionally one parenthesized suffix at end

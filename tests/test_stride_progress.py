@@ -6,6 +6,7 @@ and TTY-aware marker fallback.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -19,7 +20,7 @@ def _run(
     cmd = [sys.executable, str(PLUGIN_SCRIPTS / "stride_progress.py"), str(output_dir), str(expected)]
     if force:
         cmd.append("--force")
-    env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(PLUGIN_SCRIPTS)}
+    env = {**os.environ, "PATH": "/usr/bin:/bin", "PYTHONPATH": str(PLUGIN_SCRIPTS)}
     if env_extra:
         env.update(env_extra)
     # Ensure stderr is not a tty so ASCII fallback is exercised

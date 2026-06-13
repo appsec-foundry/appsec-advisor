@@ -282,6 +282,30 @@ def _has_agent_error(log_path: Path) -> bool:
     return any("AGENT_ERROR" in line for line in tail)
 
 
+def _write_cleanup_log(output_dir: Path, report: dict[str, Any]) -> None:
+    log_path = output_dir / ".agent-run.log"
+    try:
+        with log_path.open("a", encoding="utf-8") as f:
+            if report["skipped"]:
+                f.write(
+                    format_line(
+                        "RUNTIME_CLEANUP",
+                        f"skipped ({report['skip_reason']})",
+                        component="runtime-cleanup",
+                    )
+                )
+            else:
+                f.write(
+                    format_line(
+                        "RUNTIME_CLEANUP",
+                        f"stage={report['stage']} removed={len(report['removed'])} preserved={len(report['preserved'])}",
+                        component="runtime-cleanup",
+                    )
+                )
+    except OSError:
+        pass  # non-fatal
+
+
 def run_cleanup(
     output_dir: Path,
     stage: str,
@@ -304,21 +328,21 @@ def run_cleanup(
         report["skip_reason"] = f"output_dir not a directory: {output_dir}"
         return report
 
+    def _skip(reason: str) -> dict[str, Any]:
+        report["skipped"] = True
+        report["skip_reason"] = reason
+        _write_cleanup_log(output_dir, report)
+        return report
+
     # --- safety gates --------------------------------------------------------
     if not force:
         env_keep = os.environ.get("KEEP_RUNTIME_FILES", "").lower() == "true"
         if keep_runtime_files or env_keep:
-            report["skipped"] = True
-            report["skip_reason"] = "opt-out (--keep-runtime-files / KEEP_RUNTIME_FILES=true)"
-            return report
+            return _skip("opt-out (--keep-runtime-files / KEEP_RUNTIME_FILES=true)")
         if not (output_dir / "threat-model.md").is_file():
-            report["skipped"] = True
-            report["skip_reason"] = "threat-model.md missing — run incomplete"
-            return report
+            return _skip("threat-model.md missing — run incomplete")
         if _has_agent_error(output_dir / ".agent-run.log"):
-            report["skipped"] = True
-            report["skip_reason"] = "AGENT_ERROR present in recent log lines"
-            return report
+            return _skip("agent error present in recent log lines")
 
     # --- resolve which paths are in scope for this stage --------------------
     files: list[str] = []
@@ -371,27 +395,7 @@ def run_cleanup(
             report["not_present"].append(f"{name}/")
 
     # --- log ----------------------------------------------------------------
-    log_path = output_dir / ".agent-run.log"
-    try:
-        with log_path.open("a", encoding="utf-8") as f:
-            if report["skipped"]:
-                f.write(
-                    format_line(
-                        "RUNTIME_CLEANUP",
-                        f"skipped ({report['skip_reason']})",
-                        component="runtime-cleanup",
-                    )
-                )
-            else:
-                f.write(
-                    format_line(
-                        "RUNTIME_CLEANUP",
-                        f"stage={stage} removed={len(report['removed'])} preserved={len(report['preserved'])}",
-                        component="runtime-cleanup",
-                    )
-                )
-    except OSError:
-        pass  # non-fatal
+    _write_cleanup_log(output_dir, report)
 
     return report
 

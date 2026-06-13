@@ -12,16 +12,21 @@ gates so that:
   * the safety gates (KEEP_RUNTIME_FILES, threat-model.md presence,
     AGENT_ERROR check) cannot silently disappear.
 
-The test does not run the cleanup script itself — Phase 11 cleanup is a
-Bash block emitted by the orchestrator at runtime, not a standalone script.
-What we can check from a pure Python test is the documentation contract.
+The suite pins the documentation contract and also executes the standalone
+runtime_cleanup.py behavior directly. The behavior tests cover the safety
+gates and stage-specific cleanup waves so the text guards do not drift away
+from the script's actual deletion decisions.
 """
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+import runtime_cleanup as rc
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 FINALIZATION_MD = PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md"
@@ -246,6 +251,136 @@ class TestCleanupGates:
             "runtime_cleanup.py must append a RUNTIME_CLEANUP line to .agent-run.log "
             "so the user can audit what was removed"
         )
+
+
+# ---------------------------------------------------------------------------
+# Runtime behavior — execute the cleanup logic, not just text drift guards.
+# ---------------------------------------------------------------------------
+
+
+def _completed_output_dir(tmp_path: Path) -> Path:
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "threat-model.md").write_text("# completed\n", encoding="utf-8")
+    return out
+
+
+def _write_json(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+class TestRuntimeCleanupBehavior:
+    def test_keep_runtime_files_flag_skips_and_logs(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        transient = out / ".merge-candidates.json"
+        transient.write_text("{}", encoding="utf-8")
+
+        report = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=True, force=False)
+
+        assert report["skipped"] is True
+        assert "opt-out" in report["skip_reason"]
+        assert transient.exists()
+        log_text = (out / ".agent-run.log").read_text(encoding="utf-8")
+        assert "RUNTIME_CLEANUP" in log_text and "skipped" in log_text
+
+    def test_keep_runtime_files_env_skips(self, tmp_path, monkeypatch):
+        out = _completed_output_dir(tmp_path)
+        transient = out / ".merge-candidates.json"
+        transient.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("KEEP_RUNTIME_FILES", "true")
+
+        report = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=False, force=False)
+
+        assert report["skipped"] is True
+        assert transient.exists()
+
+    def test_missing_threat_model_skips_unless_forced(self, tmp_path):
+        out = tmp_path / "out"
+        out.mkdir()
+        transient = out / ".merge-candidates.json"
+        transient.write_text("{}", encoding="utf-8")
+
+        skipped = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=False, force=False)
+        forced = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=False, force=True)
+
+        assert skipped["skipped"] is True
+        assert "threat-model.md missing" in skipped["skip_reason"]
+        assert forced["skipped"] is False
+        assert ".merge-candidates.json" in forced["removed"]
+        assert not transient.exists()
+
+    def test_agent_error_skips_without_self_poisoning_log(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        transient = out / ".merge-candidates.json"
+        transient.write_text("{}", encoding="utf-8")
+        (out / ".agent-run.log").write_text("2026-06-13T00:00:00Z [s] ERROR AGENT_ERROR worker failed\n")
+
+        report = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=False, force=False)
+
+        assert report["skipped"] is True
+        assert transient.exists()
+        # The cleanup skip line must not create another uppercase AGENT_ERROR
+        # token that would keep future cleanup runs stuck on their own audit log.
+        log_lines = (out / ".agent-run.log").read_text(encoding="utf-8").splitlines()
+        assert sum("AGENT_ERROR" in line for line in log_lines) == 1
+
+    def test_post_architect_removes_status_and_plan_after_pass(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        _write_json(out / ".architect-status.json", {"status": "pass"})
+        _write_json(out / ".architect-repair-plan.json", {"issue_count": 0})
+        (out / ".architect-review.md").write_text("# review\n", encoding="utf-8")
+
+        report = rc.run_cleanup(out, stage="post-architect", keep_runtime_files=False, force=False)
+
+        assert report["skipped"] is False
+        assert ".architect-status.json" in report["removed"]
+        assert ".architect-repair-plan.json" in report["removed"]
+        assert not (out / ".architect-status.json").exists()
+        assert not (out / ".architect-repair-plan.json").exists()
+        assert (out / ".architect-review.md").exists()
+
+    def test_post_architect_preserves_files_when_review_not_clean(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        _write_json(out / ".architect-status.json", {"status": "repair_required"})
+        _write_json(out / ".architect-repair-plan.json", {"issue_count": 1})
+
+        report = rc.run_cleanup(out, stage="post-architect", keep_runtime_files=False, force=False)
+
+        assert report["skipped"] is False
+        assert not report["removed"]
+        assert ".architect-status.json / .architect-repair-plan.json" in report["preserved"][0]
+        assert (out / ".architect-status.json").exists()
+        assert (out / ".architect-repair-plan.json").exists()
+
+    def test_never_artifacts_survive_all_stage_cleanup(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        (out / ".merge-candidates.json").write_text("{}", encoding="utf-8")
+        for name in (".sca-practice-findings.json", ".known-bad-libs-findings.json", "threat-model.yaml"):
+            (out / name).write_text("{}\n", encoding="utf-8")
+
+        report = rc.run_cleanup(out, stage="all", keep_runtime_files=False, force=False)
+
+        assert ".merge-candidates.json" in report["removed"]
+        assert not (out / ".merge-candidates.json").exists()
+        assert (out / ".sca-practice-findings.json").exists()
+        assert (out / ".known-bad-libs-findings.json").exists()
+        assert (out / "threat-model.yaml").exists()
+
+    def test_cli_json_report_is_machine_readable(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        (out / ".merge-candidates.json").write_text("{}", encoding="utf-8")
+
+        result = subprocess.run(
+            [sys.executable, str(RUNTIME_CLEANUP_PY), str(out), "--stage", "pre-qa", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+        assert result.returncode == 0, result.stderr
+        report = json.loads(result.stdout)
+        assert report["skipped"] is False
+        assert report["removed"] == [".merge-candidates.json"]
 
 
 # ---------------------------------------------------------------------------
