@@ -310,7 +310,7 @@ Requirements Source
   Loaded   : plugin cache /home/you/appsec-advisor/.cache/requirements.yaml
   Fetched  : 2026-06-05 (7 days ago) · catalog generated 2026-04-09
   Count    : 63 requirements
-  Freshness: ● fresh (cache < 30 days)
+  Freshness: 🟢 fresh (cache < 30 days)
   Override : --update (refresh) · --cache-only · --demo · --requirements <url> · --status · --clear-requirements
 ```
 
@@ -326,7 +326,7 @@ Banner rules:
   When the bytes came from the cache, the `Source` line still shows the remembered/configured URL (where the cache came from) and the `Loaded` line shows the cache file that was actually read.
 - If `demo` is `true`, title the catalog line `Catalog  : <desc>  ⚠ DEMO — not your organization's requirements` and colour it yellow. The audit still runs, but every report it writes must carry the DEMO stamp (Steps 3a/4a).
 - If `surfaced` is `true` (a local `docs/security/requirements.yaml` is in effect), add a line `Note     : using local repo catalog (overrides org profile)`.
-- If `freshness.stale` is `true`, render `Freshness: ● STALE (cache ≥ 30 days) — refresh with --update` in yellow, and note that an `--update` attempt was already made this run if the disposition is `cache_after_fetch_fail`.
+- If `freshness.stale` is `true`, render `Freshness: 🟡 STALE (cache ≥ 30 days) — refresh with --update`, and note that an `--update` attempt was already made this run if the disposition is `cache_after_fetch_fail`.
 - If `disposition` is `cache_after_fetch_fail`, add `Source    : unreachable this run — served the cached copy` so the user knows the network refresh failed.
 - If `STATUS_MODE` is set, print the banner and **stop here** — do not scan the repository, do not render findings, exit 0.
 
@@ -427,17 +427,28 @@ Print a concise console summary plus only open requirements. "Open" means
 the console output. Keep `PASS` and `UNVERIFIABLE` in internal stats and JSON
 output only.
 
-Use ANSI colors when the target terminal supports them and `NO_COLOR` is not
-set. If color support is unknown, render the same text and glyphs without ANSI
-escape codes. Do not use emoji in the console output — use the geometric glyphs
-`●` (filled) and `○` (hollow), which colorize cleanly via ANSI and degrade to
-plain characters when color is off.
+**Colour primitive.** This report is shown in the conversation as rendered
+Markdown, where raw ANSI escapes do **not** colourise. The reliable, real-colour
+indicator is the **coloured-circle emoji**, so each stats row and each open
+finding leads with a criticality circle:
 
-Each stats row and each open-requirement block leads with a **criticality dot**
-that encodes status at a glance: filled `●` for the actionable statuses, hollow
-`○` for the non-actionable `UNVERIFIABLE`. The dot color always matches the
-status color in the table below, so the report reads as a single coherent
-red/yellow/green scale.
+| Status | Circle |
+|--------|--------|
+| FAIL | 🔴 |
+| PARTIAL | 🟡 |
+| PASS (stats only) | 🟢 |
+| UNVERIFIABLE (stats only) | ⚪ |
+
+This is the **same house palette as the Markdown report** (Step 4a), so console
+and report read identically. Use exactly one circle per line — it carries the
+colour; do not add box drawing or background fills. Render the finding **title
+in `**bold**`** (Markdown bold renders in the conversation). Requirement and
+blueprint references are real Markdown links (see Links rule in 3b).
+
+The ANSI escape table below is a **fallback for genuine ANSI-terminal / CLI
+embedding only** (where emoji may be undesirable); in the conversation the
+coloured circles + Markdown bold/links carry the colour. When `NO_COLOR` is set
+or colour is unavailable, the circles still render as distinct glyphs.
 
 ANSI color rules:
 
@@ -475,10 +486,10 @@ verdict. Print a compact header and stats block:
 ```
 Results · <Project Name> · <n> requirements<, filter: <filter> if set>
 
-  ● FAIL          <n>
-  ● PARTIAL       <n>
-  ● PASS          <n>
-  ○ UNVERIFIABLE  <n>
+  🔴 FAIL          <n>
+  🟡 PARTIAL       <n>
+  🟢 PASS          <n>
+  ⚪ UNVERIFIABLE  <n>
 ```
 
 Color each leading dot per the ANSI table (red / yellow / green / dim); the
@@ -512,31 +523,38 @@ Otherwise print `Open Requirements` followed by one block per open requirement.
 Per-finding block:
 
 ```
-● [FAIL] MUST  SEC-SQL  Parameterized SQL Queries
+🔴 FAIL  MUST  SEC-SQL  **Parameterized SQL Queries**
 Finding : raw request input reaches sequelize.query() in routes/search.ts:23
 Risk    : attacker-controlled search terms can alter the SQL predicate
 Evidence: routes/search.ts:23
 Fix     : replace string interpolation with bound parameters.
           Use `sequelize.query(sql, { replacements: { term } })` or the ORM query builder.
 Effort  : M
-Links   : requirement · blueprint · threat model F-014
+Links   : [requirement](https://reqs.example/sec-sql) · [blueprint](https://…) · [F-014](docs/security/threat-model.md#f-014)
 ```
 
 Rules:
 
-- **First line:** `<DOT> [<STATUS>] <PRIORITY>  <ID>  <Short Title>`, where
-  `<DOT>` is a colored `●` — red for `FAIL`, yellow for `PARTIAL` — so the gap
-  list scans as a colored column down the left edge.
-  - Use `[FAIL]` or `[PARTIAL]` exactly.
-  - Keep the title to 3-8 words in Title Case. Render the title **bold** so it
-    anchors the block; the priority and ID keep their own colours (table above).
+- **First line:** `<CIRCLE> <STATUS>  <PRIORITY>  <ID>  **<Short Title>**`.
+  - `<CIRCLE>` is 🔴 for `FAIL`, 🟡 for `PARTIAL` — so the gap list scans as a
+    coloured column down the left edge.
+  - `<STATUS>` is the word `FAIL` or `PARTIAL` (no brackets — the circle already
+    carries the colour).
+  - Keep the title to 3-8 words in Title Case and render it in `**bold**`.
   - Do not use Markdown headings.
 - **Finding:** one concrete sentence naming the file/function/config key and the failing mechanism.
 - **Risk:** one concrete sentence fragment describing what the attacker or misuse path can do. No hype.
 - **Evidence:** one line with up to three `path:line` entries. If there is no direct file evidence, use a concise process/config evidence phrase such as `no .github/workflows SAST job found`.
 - **Fix:** one to three concise lines. Prefer code-aware guidance using the actual API, config key, or file name. It may include 1-2 short code fragments inline when that makes the required change clearer. Do not render a full before/after code block in the console.
-- **Effort:** `S`, `M`, or `L`, coloured green / yellow / red respectively (a small badge mirroring the risk scale).
-- **Links:** short labels only, rendered in cyan: `requirement`, `blueprint`, `threat model F-NNN`. Do not print full URLs in the console; save them for Markdown/JSON.
+- **Effort:** `S`, `M`, or `L` (in an ANSI terminal, colour it green / yellow / red).
+- **Links:** render each reference as a real Markdown link whose target is the
+  URL **from the loaded catalog**, so the user can click straight through to the
+  authoritative requirement:
+  - `requirement` → `requirements[].url` for this requirement (parsed in Step 1c). Omit this link only when the catalog entry has no `url`.
+  - `blueprint` → the `section_url` from `blueprint_map[<id>]` (Step 1c-ii), when one matched.
+  - `threat model F-NNN` → `docs/security/threat-model.md#f-nnn`, only when `req_to_threats[<id>]` is non-empty (Step 1.5).
+  Use the canonical label text (`requirement`, `blueprint`, `F-NNN`) as the link
+  label — never print the bare URL. Separate present links with ` · `.
 - Separate finding blocks with one blank line. Do not use `---` separators, box drawing, or accent stripes — keep it copy-paste clean.
 
 ### 3c — Footer
