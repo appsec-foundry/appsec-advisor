@@ -10,6 +10,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import yaml
+
 SCRIPT = Path(__file__).parent.parent / "scripts" / "emit_clean_finding_titles.py"
 
 
@@ -28,6 +30,14 @@ def _t(title, file="routes/x.ts", line=10, **extra):
     t = {"id": "T-001", "title": title, "evidence": {"file": file, "line": line}}
     t.update(extra)
     return t
+
+
+def _write_yaml(output_dir: Path, data: dict) -> None:
+    (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _read_yaml(output_dir: Path) -> dict:
+    return yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
 
 
 def test_strips_via_mechanism_and_param():
@@ -65,6 +75,22 @@ def test_deep_path_basenamed():
     assert ecf.build_clean_title("Stored XSS", t) == "Stored XSS — comp.component.html:5"
 
 
+def test_fallback_uses_embedded_file_when_evidence_has_no_file():
+    t = _t("open redirect in routes/redirect.ts:12", file="", line=12)
+    assert ecf.build_clean_title(t["title"], t) == "Open redirect — routes/redirect.ts:12"
+
+
+def test_missing_or_malformed_evidence_falls_back_to_weakness_only():
+    assert ecf.build_clean_title("", {"evidence": "not-a-list"}) == ""
+    assert ecf.build_clean_title("open redirect", {"evidence": [{"line": 12}]}) == "Open redirect"
+
+
+def test_apply_skips_non_dict_and_empty_title_entries():
+    d = {"threats": ["not-a-threat", {"id": "T-001", "title": ""}, {"id": "T-002", "title": "Already clean"}]}
+    assert ecf.apply(d) == 0
+    assert d["threats"][2]["_title_source"] == "Already clean"
+
+
 def test_idempotent():
     d = {"threats": [_t("SQL Injection (routes/login.ts:34)", file="routes/login.ts", line=34)]}
     assert ecf.apply(d) == 1
@@ -72,3 +98,44 @@ def test_idempotent():
     assert ecf.apply(d) == 0
     assert d["threats"][0]["title"] == first == "SQL Injection — routes/login.ts:34"
     assert d["threats"][0]["_title_source"] == "SQL Injection (routes/login.ts:34)"
+
+
+def test_main_writes_cleaned_yaml(tmp_path, capsys):
+    _write_yaml(
+        tmp_path,
+        {"threats": [_t("SQL Injection via string concatenation (routes/login.ts:34)", file="routes/login.ts", line=34)]},
+    )
+
+    assert ecf.main([str(tmp_path)]) == 0
+
+    data = _read_yaml(tmp_path)
+    assert data["threats"][0]["title"] == "SQL Injection — routes/login.ts:34"
+    assert "cleaned 1 finding title" in capsys.readouterr().out
+
+
+def test_main_report_only_prints_preview_without_writing(tmp_path, capsys):
+    _write_yaml(
+        tmp_path,
+        {
+            "threats": [
+                _t("SQL Injection via string concatenation (routes/login.ts:34)", file="routes/login.ts", line=34),
+                "not-a-threat",
+            ]
+        },
+    )
+
+    assert ecf.main([str(tmp_path), "--report-only"]) == 0
+
+    out = capsys.readouterr().out
+    assert "T-001:" in out
+    assert "'SQL Injection — routes/login.ts:34'" in out
+    assert _read_yaml(tmp_path)["threats"][0]["title"] == "SQL Injection via string concatenation (routes/login.ts:34)"
+
+
+def test_main_best_effort_noops_for_missing_and_unreadable_yaml(tmp_path, capsys):
+    assert ecf.main([str(tmp_path)]) == 0
+    assert "no threat-model.yaml" in capsys.readouterr().err
+
+    (tmp_path / "threat-model.yaml").write_text("threats: [\n", encoding="utf-8")
+    assert ecf.main([str(tmp_path)]) == 0
+    assert "unreadable yaml" in capsys.readouterr().err
