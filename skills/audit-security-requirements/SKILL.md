@@ -21,6 +21,14 @@ banner and the results is a single, optional `Auditing <n> requirements against
 the codebase…`. Internal caveats (e.g. an empty `violated_requirements` map)
 are not surfaced as prose — they simply produce empty cross-links.
 
+**No prose summary of the verdict.** The result is exactly two things: the fixed
+`Results` count block (Step 3a) and the per-requirement open-finding blocks
+(Step 3b). Never collapse the counts into a sentence ("Of 64: 28 FAIL, 8
+PARTIAL, …"), never narrate which requirements passed or why some are N/A, never
+write a closing paragraph. PASS / UNVERIFIABLE / NOT_APPLICABLE items are counted
+in the block and never described. If it is not the count block, an open-finding
+block, or the footer, it does not belong in the output.
+
 ## `--help` — inline help (early exit)
 
 If the user's arguments contain `--help` or `-h`, **do not scan the repository**. Print the block below verbatim to the conversation and exit with status 0.
@@ -570,7 +578,13 @@ The catalog source/provenance was already shown in the Step 1b banner, so the
 results header does **not** repeat the title or the `Source` line — it opens the
 verdict. **Counts:** if Step 2.5 ran (an artifact/gate was requested), use the
 `requirements_report.py` stats line verbatim. Otherwise (plain run) tally them
-directly from your grading. Print a compact header and stats block:
+directly from your grading.
+
+Render this as a **fixed block — never as a prose sentence or paragraph.** This
+is the single biggest formatting rule: do NOT write "Of 64: 28 FAIL, 8 PARTIAL,
+…" as a sentence, do NOT explain the NOT_APPLICABLE/PASS items in prose here, do
+NOT list "notable passes". One header line, then one aligned count row per
+status, each led by its colour circle:
 
 ```
 Results · <Project Name> · <total> requirements<, filter: <filter> if set>
@@ -582,14 +596,18 @@ Results · <Project Name> · <total> requirements<, filter: <filter> if set>
   ➖ NOT_APPLICABLE <not_applicable>   (omit this row when not_applicable is 0)
 ```
 
-Color each leading circle per its status. Use the canonical status token `UNVERIFIABLE` here — the same label used in
-the Step 2 status table and the JSON `unverifiable` stat. Do not invent
-synonyms such as "ignored" or "untestable". Right-align the counts in a single
-column as shown.
+Use the canonical status token `UNVERIFIABLE` — the same label used in the
+Step 2 status table. Do not invent synonyms such as "ignored" or "untestable".
+Right-align the counts in a single column as shown. After this block go straight
+to the open-requirement blocks (Step 3b) — no interstitial summary prose.
 
-If the resolution banner reported `demo: true`, print a yellow line directly
-under the results header: `⚠ DEMO catalog — results do not reflect your
-organization's requirements.`
+If `demo: true`, print **one** line immediately above the `Results` line (not
+merged into it, not expanded into a paragraph):
+`⚠ DEMO catalog — results do not reflect your organization's requirements.`
+
+If `not_applicable > 0`, you MAY add a single terse scope line directly under the
+block — at most one sentence, e.g. `Scope: 13 N/A — no IaC/Terraform and no real
+LLM component in this repo.` Never a multi-line rationale, never a list.
 
 ### 3b — Findings
 
