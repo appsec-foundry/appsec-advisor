@@ -127,6 +127,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     data = yaml.safe_load(tm_path.read_text(encoding="utf-8")) or {}
     meta = data.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        data["meta"] = meta
 
     if "public_source_repo_pinned" in meta:
         meta["public_source_repo"] = bool(meta["public_source_repo_pinned"])
