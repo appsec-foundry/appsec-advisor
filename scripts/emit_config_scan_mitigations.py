@@ -183,6 +183,13 @@ def _allocate_next_m_id(state: dict) -> str:
     return f"M-{state['counter']:03d}"
 
 
+def _write_yaml(path: Path, data: dict) -> None:
+    path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
 def _clear_prior_auto_mitigations(data: dict) -> set[str]:
     """Drop prior auto_source="config-scan" cards and return their IDs.
 
@@ -366,6 +373,8 @@ def main() -> int:
     state = {"counter": _scan_max_m_id(data)}
     new_cards = _synthesize_fix_mitigations(data, state, iac_index)
     if not new_cards:
+        if stale_ids:
+            _write_yaml(yaml_path, data)
         print("emit_config_scan_mitigations: no config-scan threats needing a fix card", file=sys.stderr)
         return 0
 
@@ -381,10 +390,7 @@ def main() -> int:
 
     data["mitigations"] = sorted(existing, key=_sort_key)
 
-    yaml_path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
-        encoding="utf-8",
-    )
+    _write_yaml(yaml_path, data)
 
     iac_hits = sum(
         1
