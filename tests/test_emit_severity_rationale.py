@@ -203,3 +203,84 @@ def test_chain_membership_without_verified_ids_gets_no_chain_note(tmp_path: Path
     )
     esr.emit(out)
     assert "severity_rationale" not in _reload(out)[0]
+
+
+def test_baseline_loader_handles_missing_and_string_entries(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(esr, "_CRITERIA_PATH", tmp_path / "missing.yaml")
+    assert esr._load_baseline_high_cwes() == set()
+
+    criteria = tmp_path / "critical-criteria.yaml"
+    criteria.write_text(
+        yaml.safe_dump({"never_individual_critical": ["cwe-123", {"cwe": "CWE-456"}, {"no_cwe": "ignored"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(esr, "_CRITERIA_PATH", criteria)
+
+    assert esr._load_baseline_high_cwes() == {"CWE-123", "CWE-456"}
+
+
+def test_abuse_case_title_loader_skips_bad_sidecars_and_non_dict_entries(tmp_path: Path) -> None:
+    (tmp_path / ".abuse-case-matches.json").write_text("{not-json", encoding="utf-8")
+    (tmp_path / ".abuse-case-verdicts.json").write_text(
+        json.dumps({"verdicts": ["not-a-dict", {"id": "AC-T-009", "name": "Credential Replay"}]}),
+        encoding="utf-8",
+    )
+
+    assert esr._load_abuse_case_titles(tmp_path) == {"AC-T-009": "Credential Replay"}
+
+
+def test_chain_note_truncates_after_two_chain_ids() -> None:
+    note = esr._chain_rationale(
+        {
+            "risk": "High",
+            "effective_severity": "High",
+            "chain_role": "contributor",
+            "verified_chain_ids": ["AC-T-001", "AC-T-002", "AC-T-003"],
+        },
+        {"AC-T-001": "First", "AC-T-002": "Second", "AC-T-003": "Third"},
+    )
+
+    assert "AC-T-001 (First), AC-T-002 (Second), +1 more" in note
+
+
+def test_precise_chain_note_subsumes_generic_baseline_high_note() -> None:
+    note = esr._rationale_for(
+        {
+            "risk": "Critical",
+            "effective_severity": "Critical",
+            "cwe": "CWE-123",
+            "chain_role": "keystone",
+            "verified_chain_ids": ["AC-T-001"],
+        },
+        {"CWE-123"},
+        {},
+    )
+
+    assert note == "verified attack-chain keystone in AC-T-001; see §9"
+
+
+def test_emit_handles_missing_invalid_and_non_mapping_yaml(tmp_path: Path, capsys) -> None:
+    assert esr.emit(tmp_path) == (0, 0)
+    assert "no yaml" in capsys.readouterr().err
+
+    (tmp_path / "threat-model.yaml").write_text("threats: [\n", encoding="utf-8")
+    assert esr.emit(tmp_path) == (0, 0)
+    assert "parse failed" in capsys.readouterr().err
+
+    (tmp_path / "threat-model.yaml").write_text("- not-a-mapping\n", encoding="utf-8")
+    assert esr.emit(tmp_path) == (0, 0)
+
+
+def test_emit_skips_non_dict_threat_entries(tmp_path: Path) -> None:
+    out = _write(tmp_path, ["not-a-threat", {"id": "T-001", "risk": "Critical", "cwe": "CWE-89"}])
+
+    assert esr.emit(out) == (2, 0)
+
+
+def test_main_usage_and_success_output(tmp_path: Path, capsys) -> None:
+    assert esr.main([]) == 2
+    assert "Usage:" in capsys.readouterr().err
+
+    out = _write(tmp_path, [{"id": "T-001", "risk": "Critical", "cwe": "CWE-321", "vektor": "repo-read"}])
+    assert esr.main([str(out)]) == 0
+    assert "total=1 annotated=1" in capsys.readouterr().out
