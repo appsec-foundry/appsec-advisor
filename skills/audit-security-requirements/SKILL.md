@@ -63,9 +63,11 @@ SOURCE FLAGS
 OUTPUT FLAGS
   --md                     save the rendered report as
                            docs/security/appsec-requirements-report.md
+  --pdf                    save a PDF (docs/security/appsec-requirements-report.pdf);
+                           also writes the Markdown it is converted from
   --json                   save the raw findings as
                            docs/security/appsec-requirements-report.json
-  --save                   both --md and --json
+  --save                   --md, --pdf and --json
 
 DEFAULT BEHAVIOUR
   Every audit prints a banner first: which catalog is in effect, where it came
@@ -87,8 +89,9 @@ The user may pass arguments after the skill name. Parse them now:
 
 - **Category filter** — any word that does not start with `--` (e.g. `AUTH`, `SQL`) — filter results to requirements whose ID or category contains this string. `MUST` requirements are always included regardless of filter.
 - `--md` — save results as `docs/security/appsec-requirements-report.md` after rendering
+- `--pdf` — save `docs/security/appsec-requirements-report.pdf` (converted from the Markdown report, which is written too)
 - `--json` — save results as `docs/security/appsec-requirements-report.json` after rendering
-- `--save` — save both formats
+- `--save` — save all formats (`--md`, `--pdf`, `--json`)
 - `--requirements <src>` — override the configured `requirements_yaml_url` for this run. `<src>` is an http(s):// URL (fetched remotely) or a local file path (absolute or relative). The source must load; there is no cache fallback when an explicit source is provided.
 - `--update` — force a fresh re-fetch from the remembered/configured source and refresh the plugin cache before auditing.
 - `--cache-only` — use the plugin cache only; never touch the network.
@@ -99,10 +102,13 @@ The user may pass arguments after the skill name. Parse them now:
 - `--preset <name>` — use a specific preset when resolving the active org profile.
 - `--no-org-profile` — ignore any packaged or env-pointed org profile for this run.
 
-Store the resolved flags: `save_md`, `save_json`, `category_filter`,
+Store the resolved flags: `save_md`, `save_pdf`, `save_json`, `category_filter`,
 `requirements_url_override`, `update`, `cache_only`, `demo`, `status_mode`,
 `clear_requirements`, `org_profile_override`, `preset_override`,
 `no_org_profile`.
+
+`--save` sets `save_md`, `save_pdf` and `save_json`. `--pdf` implies `save_md`
+(the PDF is converted from the Markdown report).
 
 #### Reject unknown flags (hard fail)
 
@@ -120,8 +126,9 @@ Error: unknown argument '<TOKEN>'
 /appsec-advisor:audit-security-requirements accepts only:
   [CATEGORY_FILTER]        Optional substring (e.g. AUTH, SQL) — no -- prefix
   --md                     Save the rendered report as Markdown
+  --pdf                    Save the report as PDF (also writes the Markdown)
   --json                   Save the raw findings as JSON
-  --save                   Both --md and --json
+  --save                   --md, --pdf and --json
   --requirements <url>     Override the configured requirements YAML source
   --update                 Force a fresh re-fetch and refresh the cache
   --cache-only             Use the plugin cache only; never touch the network
@@ -577,8 +584,9 @@ Always print one footer block after open requirements:
 ```
 Output
   Save Markdown: /appsec-advisor:audit-security-requirements --md
+  Save PDF     : /appsec-advisor:audit-security-requirements --pdf
   Save JSON    : /appsec-advisor:audit-security-requirements --json
-  Save both    : /appsec-advisor:audit-security-requirements --save
+  Save all     : /appsec-advisor:audit-security-requirements --save
 ```
 
 If one or more reports were saved in Step 4, print the written file paths
@@ -724,7 +732,32 @@ Write structured JSON to `docs/security/appsec-requirements-report.json` using t
 
 Print: `✓ JSON report written to docs/security/appsec-requirements-report.json`
 
-### 4c — If neither flag is set
+### 4c — If `save_pdf` is true
+
+The PDF is converted from the Markdown report, so this runs **after** Step 4a
+(which always runs when `save_pdf` is set, because `--pdf` implies `save_md`).
+Convert it with the shared, deterministic exporter — the requirements report has
+no Mermaid diagrams, so pass `--no-mermaid` (skips mmdc/Chrome; needs only
+pandoc + weasyprint):
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" \
+  --input "$AUDIT_OUTPUT_DIR/appsec-requirements-report.md" \
+  --output "$AUDIT_OUTPUT_DIR/appsec-requirements-report.pdf" \
+  --no-mermaid
+PDF_EXIT=$?
+```
+
+Handle the result by exit code (the exporter is self-describing on stderr):
+- `0` — print `✓ PDF report written to docs/security/appsec-requirements-report.pdf`.
+- `1` — a hard dependency (pandoc or weasyprint) is missing. This is **non-fatal**: the Markdown report was still written. Print:
+  `⚠ PDF skipped — install pandoc + weasyprint (the Markdown report was saved).`
+- `2` / `3` — input/conversion error. Print `⚠ PDF conversion failed (see message above); the Markdown report was saved.`
+
+Never abort the audit because the PDF step failed — the console findings and the
+Markdown report are the primary deliverables.
+
+### 4d — If no output flag is set
 
 The save-command reminder is already covered by the Step 3 footer. Do not
 print a second `Save:` line.

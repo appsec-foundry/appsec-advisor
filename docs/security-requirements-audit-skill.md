@@ -138,7 +138,8 @@ All flags accepted by `/appsec-advisor:audit-security-requirements`. Each one ch
 | `--clear-requirements` | Forget the remembered source and delete the cached catalog, then exit |
 | `<CATEGORY_FILTER>` | Limit the audit to matching requirement IDs/categories (e.g. `SEC-AUTH`, `AUTH`); MUST-level requirements are always included |
 | `--org-profile <path>` / `--preset <name>` / `--no-org-profile` | Control org-profile source resolution |
-| `--md` / `--json` / `--save` | Save a Markdown / JSON / both report(s) |
+| `--md` / `--pdf` / `--json` | Save the report as Markdown / PDF / JSON (`--pdf` also writes the Markdown it is converted from; needs pandoc + weasyprint) |
+| `--save` | Save all formats (`--md`, `--pdf`, `--json`) |
 
 ## Shared source with the threat model
 
