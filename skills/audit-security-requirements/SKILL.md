@@ -451,8 +451,20 @@ ANSI color rules:
 | `SHOULD` | yellow (`\033[33m`) |
 | `MAY` | cyan (`\033[36m`) |
 | Requirement ID | cyan (`\033[36m`) |
+| Short title (first line) | bold (`\033[1m`) |
+| Effort `S` | green (`\033[32m`) |
+| Effort `M` | yellow (`\033[33m`) |
+| Effort `L` | red (`\033[31m`) |
+| Link labels (`requirement`, `blueprint`, `threat model F-NNN`) | cyan (`\033[36m`) |
 | Field labels (`Finding`, `Risk`, etc.) | dim gray (`\033[2m`) |
 | Paths / line references | dim gray (`\033[2m`) |
+
+Keep the colour budget restrained: the dot + status + priority + ID anchor the
+line, the bold title carries the eye, and the Effort badge mirrors the
+red/yellow/green risk scale. Do not add box drawing, accent stripes, or
+background colours — the report must stay clean and copy-paste friendly. When
+colour is unavailable (`NO_COLOR` or unknown terminal) render the identical
+text and glyphs without escapes.
 
 ### 3a — Results header
 
@@ -516,15 +528,16 @@ Rules:
   `<DOT>` is a colored `●` — red for `FAIL`, yellow for `PARTIAL` — so the gap
   list scans as a colored column down the left edge.
   - Use `[FAIL]` or `[PARTIAL]` exactly.
-  - Keep the title to 3-8 words in Title Case.
+  - Keep the title to 3-8 words in Title Case. Render the title **bold** so it
+    anchors the block; the priority and ID keep their own colours (table above).
   - Do not use Markdown headings.
 - **Finding:** one concrete sentence naming the file/function/config key and the failing mechanism.
 - **Risk:** one concrete sentence fragment describing what the attacker or misuse path can do. No hype.
 - **Evidence:** one line with up to three `path:line` entries. If there is no direct file evidence, use a concise process/config evidence phrase such as `no .github/workflows SAST job found`.
 - **Fix:** one to three concise lines. Prefer code-aware guidance using the actual API, config key, or file name. It may include 1-2 short code fragments inline when that makes the required change clearer. Do not render a full before/after code block in the console.
-- **Effort:** `S`, `M`, or `L`.
-- **Links:** short labels only: `requirement`, `blueprint`, `threat model F-NNN`. Do not print full URLs in the console; save them for Markdown/JSON.
-- Separate finding blocks with one blank line. Do not use `---` separators.
+- **Effort:** `S`, `M`, or `L`, coloured green / yellow / red respectively (a small badge mirroring the risk scale).
+- **Links:** short labels only, rendered in cyan: `requirement`, `blueprint`, `threat model F-NNN`. Do not print full URLs in the console; save them for Markdown/JSON.
+- Separate finding blocks with one blank line. Do not use `---` separators, box drawing, or accent stripes — keep it copy-paste clean.
 
 ### 3c — Footer
 
