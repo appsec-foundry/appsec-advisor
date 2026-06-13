@@ -114,6 +114,13 @@ def _scan_max_m_id(data: dict) -> int:
     return max_n
 
 
+def _write_yaml(path: Path, data: dict) -> None:
+    path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+
 def _clear_prior_auto_mitigations(data: dict) -> set[str]:
     items = data.get("mitigations") or []
     if not isinstance(items, list):
@@ -253,6 +260,8 @@ def main() -> int:
     state = {"counter": _scan_max_m_id(data)}
     new_cards = _synthesize(data, state)
     if not new_cards:
+        if stale:
+            _write_yaml(yaml_path, data)
         print("emit_finding_fix_mitigations: no uncovered code findings — nothing to emit", file=sys.stderr)
         return 0
 
@@ -265,10 +274,7 @@ def main() -> int:
         return (int(mt.group(1)) if mt else 99999, mid)
 
     data["mitigations"] = sorted(existing, key=_sort_key)
-    yaml_path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
-        encoding="utf-8",
-    )
+    _write_yaml(yaml_path, data)
 
     from collections import Counter
 
