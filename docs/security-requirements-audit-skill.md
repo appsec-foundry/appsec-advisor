@@ -140,6 +140,32 @@ All flags accepted by `/appsec-advisor:audit-security-requirements`. Each one ch
 | `--org-profile <path>` / `--preset <name>` / `--no-org-profile` | Control org-profile source resolution |
 | `--md` / `--pdf` / `--json` | Save the report as Markdown / PDF / JSON (`--pdf` also writes the Markdown it is converted from; needs pandoc + weasyprint) |
 | `--save` | Save all formats (`--md`, `--pdf`, `--json`) |
+| `--gate` | Enforce a CI gate: exit non-zero when a gating requirement fails (advisory otherwise) |
+| `--gate-on <fail\|partial>` | What gates: `fail` (default) or `fail`+`partial` |
+| `--priority-floor <MUST\|SHOULD\|MAY>` | Lowest priority eligible to gate (default `MUST`) |
+
+## Structured verdict & CI gate
+
+Every run — regardless of output flags — writes a structured verdict to
+`docs/security/.requirements-audit.json` ([`schemas/requirements-audit.schema.json`](../schemas/requirements-audit.schema.json)):
+one `results[]` entry per graded requirement (status, priority, `in_scope`,
+evidence, finding, fix, the verbatim requirement text, blueprint and threat-model
+links). The summary counts are **recomputed deterministically** by
+`scripts/requirements_report.py` (the model authors the fields; the script owns
+the tally), so the Result block never drifts from a hand-count. `--json` simply
+copies this verdict to `appsec-requirements-report.json`.
+
+The pass/fail gate is decided by `scripts/requirements_gate.py` — the **same**
+deterministic gate the diff-scoped `verify-requirements` skill uses — reading
+the verdict's `results[]`, never the model's advisory flags. A requirement gates
+when `in_scope AND status==FAIL (or PARTIAL with --gate-on partial) AND priority
+>= floor`. Advisory by default; `--gate` makes the run exit non-zero on a gating
+failure, so it drops into CI:
+
+```bash
+/appsec-advisor:audit-security-requirements --gate            # block on a failing MUST
+/appsec-advisor:audit-security-requirements --gate --gate-on partial --priority-floor SHOULD
+```
 
 ## Shared source with the threat model
 

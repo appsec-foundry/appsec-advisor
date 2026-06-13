@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/requirements-audit.schema.json",
+  "title": "Full-repo requirements audit verdict",
+  "description": "Structured output of audit-security-requirements. The skill writes this every run (docs/security/.requirements-audit.json); scripts/requirements_report.py recomputes the summary + renders, and scripts/requirements_gate.py reads results[] for the deterministic CI exit code. Full-repo counterpart to the diff-scoped requirements-verification.schema.json: same results[] field contract (so the shared gate reads both), envelope reflects the full-repo mode (no base_ref/changed_files).",
+  "type": "object",
+  "required": ["version", "generated_at", "repository", "priority_floor", "summary", "results"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "generated_at": { "type": "string", "description": "ISO 8601 UTC." },
+    "model_id": { "type": "string" },
+    "repository": { "type": "string", "description": "Git remote URL or directory name." },
+    "requirements_source": { "type": "string", "description": "remote | cached | local | demo — catalog provenance." },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "description": { "type": ["string", "null"] },
+        "generated": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "count": { "type": ["integer", "null"] }
+      }
+    },
+    "filter": { "type": ["string", "null"], "description": "Category/ID substring filter, or null." },
+    "demo": { "type": "boolean", "description": "True when graded against the packaged example catalog." },
+    "priority_floor": {
+      "type": "string",
+      "enum": ["MUST", "SHOULD", "MAY"],
+      "description": "Lowest priority eligible to gate (echoed for requirements_gate.py)."
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "pass", "partial", "fail", "unverifiable", "not_applicable"],
+      "additionalProperties": false,
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "pass": { "type": "integer", "minimum": 0 },
+        "partial": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "unverifiable": { "type": "integer", "minimum": 0 },
+        "not_applicable": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "priority", "status", "in_scope"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "Requirement ID in the catalog's own scheme." },
+          "category": { "type": "string" },
+          "category_title": { "type": "string" },
+          "priority": { "type": "string", "enum": ["MUST", "SHOULD", "MAY"] },
+          "status": {
+            "type": "string",
+            "enum": ["PASS", "PARTIAL", "FAIL", "UNVERIFIABLE", "NOT_APPLICABLE"],
+            "description": "NOT_APPLICABLE = the requirement does not apply to this repo (e.g. XML hardening with no XML parsing); never gates."
+          },
+          "in_scope": {
+            "type": "boolean",
+            "description": "false ⇒ NOT_APPLICABLE; recorded for transparency, never gates. Full-repo grading sets true for every applicable requirement."
+          },
+          "requirement_text": { "type": ["string", "null"], "description": "The verbatim catalog text being graded." },
+          "title": { "type": ["string", "null"], "description": "Short 3-8 word Title-Case label." },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["file"],
+              "additionalProperties": false,
+              "properties": {
+                "file": { "type": "string" },
+                "line": { "type": ["integer", "null"] }
+              }
+            }
+          },
+          "finding": { "type": "string", "description": "One concrete sentence naming the file/function/config and the mechanism." },
+          "risk": { "type": "string" },
+          "fix": { "type": "string", "description": "Catalog-anchored, code-aware recommendation (FAIL/PARTIAL/UNVERIFIABLE)." },
+          "effort": { "type": "string", "enum": ["S", "M", "L"] },
+          "url": { "type": ["string", "null"] },
+          "blueprint": {
+            "type": ["object", "null"],
+            "additionalProperties": true,
+            "properties": {
+              "id": { "type": "string" },
+              "section": { "type": "string" },
+              "url": { "type": ["string", "null"] }
+            }
+          },
+          "threats": {
+            "type": "array",
+            "description": "Linked threat-model findings (F-NNN) from violated_requirements, when available.",
+            "items": {
+              "type": "object",
+              "required": ["f_id"],
+              "additionalProperties": true,
+              "properties": {
+                "f_id": { "type": "string" },
+                "risk": { "type": "string" },
+                "title": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
