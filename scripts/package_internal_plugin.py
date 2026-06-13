@@ -47,6 +47,7 @@ TOP_LEVEL_EXCLUDES = {
     "examples",
     "htmlcov",
     "node_modules",
+    "pyproject.toml",
     "tests",
 }
 ANY_LEVEL_EXCLUDES = {"__pycache__"}

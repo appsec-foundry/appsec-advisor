@@ -80,3 +80,12 @@ addopts = "--strict-markers --strict-config"
 filterwarnings = [
     "error::DeprecationWarning:scripts",
 ]
+
+[tool.coverage.run]
+source = ["scripts"]
+
+[tool.coverage.report]
+# Regression floor — current total is ~55%. Anything below this fails the
+# coverage run (exit 2) in CI, `make test`, and `make coverage` alike.
+# Ratchet upward as coverage improves; never lower it to make a PR pass.
+fail_under = 50

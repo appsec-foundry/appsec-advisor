@@ -46,8 +46,13 @@ e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no 
 # ─────────────────────────────────────────────────────────────────────────────
 
 .PHONY: test
-test:  ## Run the standard pytest suite (no LLM, ~10s)
-	@python3 -m pytest tests/ -v --tb=short
+test:  ## Run the standard pytest suite with coverage (no LLM)
+	@python3 -m pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing
+
+.PHONY: coverage
+coverage:  ## Run the suite + write an HTML coverage report to htmlcov/index.html
+	@python3 -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing --cov-report=html
+	@echo "HTML report: htmlcov/index.html"
 
 .PHONY: lint
 lint:  ## Ruff check + format check
