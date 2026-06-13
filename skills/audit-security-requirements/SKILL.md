@@ -518,12 +518,18 @@ Open Requirements
   None. All verifiable requirements passed.
 ```
 
-Otherwise print `Open Requirements` followed by one block per open requirement.
+Otherwise print `Open Requirements`, a one-line legend, then one block per open
+requirement:
+
+```
+Open Requirements
+🔴 failed · 🟡 partial — worst-first (FAIL before PARTIAL, MUST before SHOULD)
+```
 
 Per-finding block:
 
 ```
-🔴 FAIL · MUST · `SEC-SQL` — **Parameterized SQL Queries**
+🔴 MUST · `SEC-SQL` — **Parameterized SQL Queries**
 Finding : raw request input reaches sequelize.query() in routes/search.ts:23
 Risk    : attacker-controlled search terms can alter the SQL predicate
 Evidence: routes/search.ts:23
@@ -535,15 +541,17 @@ Links   : [requirement](https://reqs.example/sec-sql) · [blueprint](https://…
 
 Rules:
 
-- **First line:** `<CIRCLE> <STATUS> · <PRIORITY> · `<ID>` — **<Short Title>**`.
-  This delimits the four fields explicitly so the eye reads a clear hierarchy:
-  coloured circle → bold title → code-span ID → plain status/priority.
-  - `<CIRCLE>` is 🔴 for `FAIL`, 🟡 for `PARTIAL` — so the gap list scans as a
-    coloured column down the left edge.
-  - `<STATUS>` is the word `FAIL` or `PARTIAL`; follow it and `<PRIORITY>` with a
-    middle dot ` · ` separator (the circle already carries the colour).
-  - Render `<ID>` as an inline `code` span so it stands apart from the prose
-    title, then an em dash ` — ` before the title.
+- **First line:** `<CIRCLE> <PRIORITY> · `<ID>` — **<Short Title>**`. The two
+  axes are kept distinct and non-redundant: the **circle is the audit verdict**
+  (status) and the **priority is the requirement's obligation** — an orthogonal
+  pair, exactly like InSpec (result + impact) or Prowler (status + severity).
+  - `<CIRCLE>` is the status: 🔴 for `FAIL`, 🟡 for `PARTIAL`. Do **not** also
+    print the word `FAIL`/`PARTIAL` on the line — it would duplicate the circle
+    (the list is already failures-only). The one-line legend above explains the
+    circles, so colour is never the sole signal.
+  - `<PRIORITY>` is `MUST` / `SHOULD` / `MAY`, followed by a middle dot ` · `.
+  - Render `<ID>` as an inline `code` span, then an em dash ` — ` before the
+    title.
   - Keep the title to 3-8 words in Title Case and render it in `**bold**` — it is
     the visual anchor of the block.
   - Do not use Markdown headings.
