@@ -19,13 +19,7 @@ import qa_checks as qc  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _use_schema_v2(monkeypatch):
-    """The normalizer targets the §7 schema_v2 rules (the production default).
-    conftest pins APPSEC_SCHEMA_V1=1 for the suite; APPSEC_SECURITY_SCHEMA takes
-    priority over it (qa_checks._apply_schema_v2_overlay), so set it to v2 here.
-    Reset the path-keyed contract cache before and after so the v2 overlay is
-    (re)applied for these tests and does not leak into the v1-shaped suite.
-    """
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
+    """Reset the path-keyed contract cache around each normalizer test."""
     qc._PrePass._contract = None
     qc._PrePass._contract_path = None
     yield

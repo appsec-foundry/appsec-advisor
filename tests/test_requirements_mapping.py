@@ -336,7 +336,7 @@ def test_ms_subsection_carries_summary_and_links(tmp_path: Path) -> None:
 def _prepare_req_output_dir(tmp_path: Path) -> Path:
     """Copy the fixture to a temp output dir and patch it on disk for a full
     compose.render (check_requirements on, threats requirement-linked, fragment
-    present). Runs under the suite-wide APPSEC_SCHEMA_V1 pin (see conftest)."""
+    present)."""
     out = tmp_path / "output"
     shutil.copytree(FIXTURE, out)
     data = yaml.safe_load((out / "threat-model.yaml").read_text())

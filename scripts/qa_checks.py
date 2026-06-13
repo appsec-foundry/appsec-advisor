@@ -290,57 +290,21 @@ class _PrePass:
                 cls._contract = _fast_yaml_load(contract_path.read_text(encoding="utf-8")) or {}
             except (OSError, _yaml.YAMLError):
                 cls._contract = {}
-            # schema_v2 — when active (.skill-config.json carries
-            # `security_schema: v2`), swap the §7 contract surface with the
+            # schema_v2 — swap the §7 contract surface with the current
             # v2 layout/rules so downstream checks validate the rendered MD
-            # against the current security-architecture model. The swap is
-            # in-memory only; the YAML file on disk keeps both surfaces.
+            # against the supported security-architecture model. The swap is
+            # in-memory only; the YAML file keeps the current v2 block grouped.
             cls._apply_schema_v2_overlay()
         return cls._contract
 
     @classmethod
     def _apply_schema_v2_overlay(cls) -> None:
-        """Swap security_architecture §7 contract fields → schema_v2 fields
-        when the active config selects v2 (default since 2026-05). Reads
-        the schema from (in order):
-          1. `APPSEC_SECURITY_SCHEMA` env-var (smoke-test / forced override)
-          2. `.skill-config.json` next to the current MD
-          3. default: v2
-        Set `APPSEC_SECURITY_SCHEMA=v1` to keep the legacy 14-section layout
-        — useful when QA-checking a threat-model that was rendered before the
-        2026-05 v2 default flip and has not yet been re-rendered. (The legacy
-        `APPSEC_SCHEMA_V1=1` shortcut is now the test-suite pin only and is
-        ignored outside pytest.)
+        """Swap security_architecture §7 contract fields → schema_v2 fields.
+
+        The legacy v1 layout has been removed; v2 is the only supported
+        security-architecture contract.
         """
         if not isinstance(cls._contract, dict):
-            return
-        import os as _os
-
-        # 1. Explicit env override wins (CI / smoke tests).
-        schema = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
-        # APPSEC_SCHEMA_V1 is the test-suite pin only (gated to a running pytest
-        # via PYTEST_CURRENT_TEST); a stray env var in production can't force v1.
-        if (
-            not schema
-            and _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
-            and "PYTEST_CURRENT_TEST" in _os.environ
-        ):
-            schema = "v1"
-        # 2. Skill-config next to MD.
-        if not schema and cls._md_path is not None:
-            cfg = cls._md_path.parent / ".skill-config.json"
-            if cfg.is_file():
-                try:
-                    import json as _json
-
-                    cfg_data = _json.loads(cfg.read_text(encoding="utf-8"))
-                    schema = (cfg_data.get("security_schema") or "").strip().lower()
-                except (OSError, ValueError):
-                    schema = ""
-        # 3. Default — v2 since 2026-05.
-        if schema not in {"v1", "v2"}:
-            schema = "v2"
-        if schema != "v2":
             return
         sec = (cls._contract.get("sections") or {}).get("security_architecture")
         if not isinstance(sec, dict):

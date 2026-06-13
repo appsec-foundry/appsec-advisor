@@ -617,8 +617,6 @@ models.sequelize.query(`SELECT * FROM Products WHERE ((name LIKE '%${criteria}%'
 - [F-011](#f-011) - NoSQL injection in product review updates.
 ```
 
-**Legacy compatibility (schema_v1 only).** For v1 reports keep the old QB-2 `What/How/Where` three-block pattern — those reports are validated by the legacy contract. Never mix v1/v2 headings in one §7.
-
 **Pre-save self-check (mandatory).** Before you `Write` or `Edit` `security-architecture.md`, verify:
 
 0. **Zero NARRATIVE_PLACEHOLDER tokens survive.** Run

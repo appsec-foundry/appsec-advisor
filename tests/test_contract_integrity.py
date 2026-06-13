@@ -276,12 +276,10 @@ def test_required_subsections_entries_are_well_formed(contract):
 
 
 # ---------------------------------------------------------------------------
-# §7 schema v1→v2 drift resolution (2026-05-31).
+# §7 schema v2 drift resolution (2026-05-31).
 # The strong per-auth-method enforcement (per-#### sequenceDiagram) was
-# migrated from the dead v1 IAM key onto the active schema_v2 rule, and §7.6
-# gained an approach-first rule. The v1 block stays for APPSEC_SCHEMA_V1=1
-# back-compat. These lock that contract shape so the drift cannot silently
-# reopen.
+# migrated onto the active schema_v2 rule, and §7.6 gained an approach-first
+# rule. These lock that contract shape so the drift cannot silently reopen.
 # ---------------------------------------------------------------------------
 
 
@@ -308,13 +306,3 @@ def test_v2_section76_has_validation_approach_first(contract):
     assert rule.get("enforcement") == "error"
     assert rule.get("approach_heading_patterns"), "no approach_heading_patterns declared"
 
-
-def test_v1_iam_block_preserved_for_backcompat(contract):
-    """The v1 §7.3 IAM domain rules must remain (APPSEC_SCHEMA_V1=1 + the
-    v1-pinned test suite depend on them) — migration re-homed enforcement,
-    it did not delete the v1 surface."""
-    v1 = contract["sections"]["security_architecture"].get("domain_required_rules") or {}
-    iam = v1.get("7.3 Identity & Access Management") or []
-    assert any(r.get("rule") == "auth_method_decomposition" for r in iam), (
-        "v1 auth_method_decomposition was removed — breaks APPSEC_SCHEMA_V1 back-compat"
-    )

@@ -230,7 +230,6 @@ def _write_v2_sec7_contract(
 
 
 def test_contract_v2_enforces_required_subsections(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path)
     md = _write_minimal_model(
@@ -251,7 +250,6 @@ def test_contract_v2_enforces_required_subsections(monkeypatch, tmp_path: Path):
 
 
 def test_contract_v2_rejects_legacy_sec7_headings(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path)
     md = _write_minimal_model(
@@ -343,7 +341,6 @@ def test_contract_standard_depth_still_enforces_optional_sections(tmp_path: Path
 
 
 def test_control_subsection_coverage_requires_linked_h4(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
     md = _write_minimal_model(
@@ -377,7 +374,6 @@ def test_control_subsection_coverage_requires_linked_h4(monkeypatch, tmp_path: P
 
 
 def test_control_subsection_coverage_accepts_v2_shape(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
     md = _write_minimal_model(
@@ -421,7 +417,6 @@ def test_control_subsection_coverage_matches_code_spanned_control_name(monkeypat
     backtick-asymmetric comparison raises a false-positive
     `control_subsection_coverage` failure the re-render loop cannot converge on.
     """
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
     md = _write_minimal_model(
@@ -462,7 +457,6 @@ def test_control_subsection_coverage_matches_backslash_escaped_dot(monkeypatch, 
     the escape pass). `_heading_matches` must tolerate the one-backslash
     divergence — otherwise the control_subsection_coverage gate false-positives
     and the re-render loop never converges (juice-shop 2026-06-01 §7.12)."""
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path, coverage_rule=True)
     md = _write_minimal_model(
@@ -497,7 +491,6 @@ def test_control_subsection_coverage_matches_backslash_escaped_dot(monkeypatch, 
 
 
 def test_relevant_findings_bullet_list_rejects_inline_form(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path, relevant_rule=True)
     md = _write_minimal_model(
@@ -525,7 +518,6 @@ def test_relevant_findings_bullet_list_rejects_inline_form(monkeypatch, tmp_path
 
 
 def test_relevant_findings_bullet_list_accepts_bullets(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path, relevant_rule=True)
     md = _write_minimal_model(
@@ -557,7 +549,6 @@ def test_relevant_findings_bullet_list_accepts_bullets(monkeypatch, tmp_path: Pa
 
 
 def test_recon_iam_bridge_uses_v2_section_title(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     contract = _write_v2_sec7_contract(tmp_path, recon_rule=True)
     (tmp_path / ".recon-summary.md").write_text("route: /rest/2fa\n", encoding="utf-8")
@@ -592,7 +583,6 @@ def test_recon_iam_bridge_uses_v2_section_title(monkeypatch, tmp_path: Path):
 
 
 def test_auth_flow_method_requires_diagram(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     md = _write_minimal_model(
         tmp_path,
@@ -623,7 +613,6 @@ def test_auth_flow_method_requires_diagram(monkeypatch, tmp_path: Path):
 
 
 def test_auth_flow_method_accepts_diagram(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     md = _write_minimal_model(
         tmp_path,
@@ -661,7 +650,6 @@ def test_auth_flow_method_accepts_diagram(monkeypatch, tmp_path: Path):
 def test_auth_nonflow_method_exempt_from_diagram(monkeypatch, tmp_path: Path):
     """API-key / anonymous auth has no meaningful sequence — the per-flow gate
     must NOT demand a diagram for it (Freiräume: only flow methods are gated)."""
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     md = _write_minimal_model(
         tmp_path,
@@ -692,7 +680,6 @@ def test_auth_nonflow_method_exempt_from_diagram(monkeypatch, tmp_path: Path):
 
 
 def test_validation_approach_first_rejects_specific_first(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     md = _write_minimal_model(
         tmp_path,
@@ -722,7 +709,6 @@ def test_validation_approach_first_rejects_specific_first(monkeypatch, tmp_path:
 
 
 def test_validation_approach_first_accepts_approach_first(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     md = _write_minimal_model(
         tmp_path,
@@ -762,7 +748,6 @@ def test_validation_approach_first_accepts_approach_first(monkeypatch, tmp_path:
 
 
 def test_validation_approach_first_skips_not_applicable(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("APPSEC_SECURITY_SCHEMA", "v2")
     qa._PrePass.reset()
     md = _write_minimal_model(
         tmp_path,
@@ -1572,482 +1557,6 @@ class TestBulletListFilter:
 
 
 # ---------------------------------------------------------------------------
-# check_auth_method_decomposition — §7.3 IAM per-auth-method contract rule
-# ---------------------------------------------------------------------------
-
-
-class TestAuthMethodDecomposition:
-    """Exercises the `auth_method_decomposition` rule declared in
-    sections-contract.yaml under security_architecture.domain_required_rules.
-
-    The rule enforces that every row of the §7.3 IAM control table has a
-    matching `#### <method>` subsection with its own sequenceDiagram and a
-    `**Findings in this flow:**` trailer.  T-IDs in the trailer must be a
-    subset of the row's Linked Threats cell (bidirectional consistency).
-    """
-
-    # Contract templates. The rule only runs when the contract declares
-    # `auth_method_decomposition` — so every test writes its own minimal
-    # contract alongside the MD.
-
-    _CONTRACT_BASE = textwrap.dedent("""\
-        document:
-          order: []
-        severity_taxonomy: {}
-        sections:
-          security_architecture:
-            heading: "## 7. Security Architecture"
-            heading_numbered: true
-            fragment_type: markdown
-            fragment: "security-architecture.md"
-            domain_required_rules:
-              "7.3 Identity & Access Management":
-                - rule: "auth_method_decomposition"
-                  table_column: "Control"
-                  heading_level: 4
-                  trailer_label: "Findings in this flow"
-                  match_style: "token-subset"
-                  synonyms: []
-                  enforcement: "ENFORCEMENT"
-        """)
-
-    def _write_contract(self, tmp_path, enforcement: str = "error", synonyms_yaml: str = "[]") -> Path:
-        c = self._CONTRACT_BASE.replace("ENFORCEMENT", enforcement)
-        c = c.replace("synonyms: []", f"synonyms: {synonyms_yaml}")
-        path = tmp_path / "contract.yaml"
-        path.write_text(c)
-        return path
-
-    def _write_md(self, tmp_path, body: str) -> Path:
-        md = tmp_path / "threat-model.md"
-        # Prepend an outer ## heading so the §7.3 slice is bounded at EOF too.
-        md.write_text("## 7. Security Architecture\n\n" + body + "\n")
-        return md
-
-    # -----------------------------------------------------------------------
-    # Full-coverage happy path
-    # -----------------------------------------------------------------------
-
-    _FULL_SEC73 = textwrap.dedent("""\
-        ### 7.3 Identity & Access Management
-
-        Authentication uses RS256 JWT signing.
-
-        | Domain | Control | Implementation | Effectiveness | Linked Threats |
-        |--------|---------|----------------|---------------|----------------|
-        | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
-        | IAM | Google OAuth | provider | 🔶 Weak | [T-002](#t-002) — open redirect |
-
-        #### Password Login Flow
-
-        Vulnerable sequence.
-
-        ```mermaid
-        sequenceDiagram
-          User->>API: login
-        ```
-
-        **Findings in this flow:** [T-001](#t-001) — SQLi
-
-        #### Google OAuth Flow
-
-        OAuth sequence.
-
-        ```mermaid
-        sequenceDiagram
-          User->>API: /oauth/cb
-        ```
-
-        **Findings in this flow:** [T-002](#t-002) — open redirect
-
-        """)
-
-    def test_full_coverage_error_mode_passes(self, tmp_path):
-        contract = self._write_contract(tmp_path, enforcement="error")
-        md = self._write_md(tmp_path, self._FULL_SEC73)
-        report = qa.check_auth_method_decomposition(md, contract)
-        assert report.issues == [], report.issues
-        assert report.warnings == []
-        assert report.ok == 1
-
-    # -----------------------------------------------------------------------
-    # Missing subsection for a row
-    # -----------------------------------------------------------------------
-
-    def test_missing_subsection_for_row_is_flagged(self, tmp_path):
-        contract = self._write_contract(tmp_path, enforcement="error")
-        # Two rows in the control table but only one matching #### subsection.
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Domain | Control | Implementation | Effectiveness | Linked Threats |
-            |--------|---------|----------------|---------------|----------------|
-            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
-            | IAM | Google OAuth | provider | 🔶 Weak | [T-002](#t-002) — open redirect |
-
-            #### Password Login Flow
-
-            ```mermaid
-            sequenceDiagram
-              User->>API: login
-            ```
-
-            **Findings in this flow:** [T-001](#t-001) — SQLi
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        joined = " ".join(report.issues)
-        assert "Google OAuth" in joined
-        assert "no #### subsection matches control-table row" in joined
-
-    # -----------------------------------------------------------------------
-    # Missing sequenceDiagram inside a ####
-    # -----------------------------------------------------------------------
-
-    def test_missing_sequence_diagram_in_subsection_is_flagged(self, tmp_path):
-        contract = self._write_contract(tmp_path, enforcement="error")
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Domain | Control | Implementation | Effectiveness | Linked Threats |
-            |--------|---------|----------------|---------------|----------------|
-            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
-
-            #### Password Login Flow
-
-            No diagram here.
-
-            **Findings in this flow:** [T-001](#t-001) — SQLi
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        joined = " ".join(report.issues)
-        assert "missing `sequenceDiagram`" in joined
-
-    # -----------------------------------------------------------------------
-    # Missing Findings-trailer
-    # -----------------------------------------------------------------------
-
-    def test_missing_findings_trailer_is_flagged(self, tmp_path):
-        contract = self._write_contract(tmp_path, enforcement="error")
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Domain | Control | Implementation | Effectiveness | Linked Threats |
-            |--------|---------|----------------|---------------|----------------|
-            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
-
-            #### Password Login Flow
-
-            ```mermaid
-            sequenceDiagram
-              User->>API: login
-            ```
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        joined = " ".join(report.issues)
-        assert "Findings in this flow" in joined
-        assert "trailer" in joined
-
-    # -----------------------------------------------------------------------
-    # T-ID in trailer not in matching row's Linked Threats cell
-    # -----------------------------------------------------------------------
-
-    def test_trailer_tid_not_in_row_is_flagged(self, tmp_path):
-        contract = self._write_contract(tmp_path, enforcement="error")
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Domain | Control | Implementation | Effectiveness | Linked Threats |
-            |--------|---------|----------------|---------------|----------------|
-            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
-
-            #### Password Login Flow
-
-            ```mermaid
-            sequenceDiagram
-              User->>API: login
-            ```
-
-            **Findings in this flow:** [T-001](#t-001) — SQLi, [T-099](#t-099) — rogue
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        joined = " ".join(report.issues)
-        assert "T-099" in joined
-        assert "bidirectional consistency" in joined
-
-    # -----------------------------------------------------------------------
-    # Token-subset matching
-    # -----------------------------------------------------------------------
-
-    def test_token_subset_match_allows_suffix_in_heading(self, tmp_path):
-        """row 'Google OAuth' should match heading 'Google OAuth 2.0 Flow'
-        via token-subset (tokens {google, oauth} ⊆ {google, oauth, 2, 0, flow})."""
-        contract = self._write_contract(tmp_path, enforcement="error")
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Domain | Control | Implementation | Effectiveness | Linked Threats |
-            |--------|---------|----------------|---------------|----------------|
-            | IAM | Google OAuth | provider | 🔶 Weak | [T-002](#t-002) — open redirect |
-
-            #### Google OAuth 2.0 Flow
-
-            ```mermaid
-            sequenceDiagram
-              User->>Google: SSO
-            ```
-
-            **Findings in this flow:** [T-002](#t-002) — open redirect
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        assert report.issues == [], report.issues
-
-    # -----------------------------------------------------------------------
-    # Synonym override
-    # -----------------------------------------------------------------------
-
-    def test_synonyms_override_lets_mismatched_names_pass(self, tmp_path):
-        """row 'JWT Signing' shares a subsection 'JWT Issuance' — token-subset
-        alone would fail (signing ∉ heading tokens), synonyms override fixes it."""
-        syn_yaml = '[{"row": "JWT Signing", "heading": "JWT Issuance"}]'
-        contract = self._write_contract(tmp_path, enforcement="error", synonyms_yaml=syn_yaml)
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Domain | Control | Implementation | Effectiveness | Linked Threats |
-            |--------|---------|----------------|---------------|----------------|
-            | IAM | JWT Signing | insecurity.ts:56 | 🔶 Weak | [T-001](#t-001) — RSA key |
-
-            #### JWT Issuance
-
-            ```mermaid
-            sequenceDiagram
-              API->>Auth: sign
-            ```
-
-            **Findings in this flow:** [T-001](#t-001) — RSA key
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        assert report.issues == [], report.issues
-
-    # -----------------------------------------------------------------------
-    # No rule declared in contract — check is a no-op
-    # -----------------------------------------------------------------------
-
-    def test_no_rule_in_contract_is_noop(self, tmp_path):
-        # Bare contract without domain_required_rules at all.
-        (tmp_path / "contract.yaml").write_text(
-            'document:\n  order: []\nsections:\n  security_architecture:\n    heading: "## 7. Security Architecture"\n'
-        )
-        md = self._write_md(tmp_path, "### 7.3 Identity & Access Management\n")
-        report = qa.check_auth_method_decomposition(md, tmp_path / "contract.yaml")
-        assert report.ok == 1
-        assert report.issues == []
-        assert report.warnings == []
-
-    # -----------------------------------------------------------------------
-    # enforcement: warning moves issues into warnings
-    # -----------------------------------------------------------------------
-
-    def test_warning_mode_diverts_issues_to_warnings(self, tmp_path):
-        contract = self._write_contract(tmp_path, enforcement="warning")
-        # One row + one matching subsection but the subsection has NO
-        # sequenceDiagram AND no trailer — in error mode this is 2 issues,
-        # both of which warning-mode demotes to report.warnings.
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Domain | Control | Implementation | Effectiveness | Linked Threats |
-            |--------|---------|----------------|---------------|----------------|
-            | IAM | Password Login | handler | 🔶 Weak | [T-001](#t-001) — SQLi |
-
-            #### Password Login Flow
-
-            Prose without a diagram or a trailer.
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        assert report.issues == [], report.issues
-        assert len(report.warnings) == 2, report.warnings
-        joined = " ".join(report.warnings)
-        assert "sequenceDiagram" in joined
-        assert "Findings in this flow" in joined
-        assert report.ok == 1
-
-    # -----------------------------------------------------------------------
-    # §7.3 absent from MD is handled as no-op
-    # -----------------------------------------------------------------------
-
-    def test_section_73_absent_is_noop(self, tmp_path):
-        contract = self._write_contract(tmp_path, enforcement="error")
-        md = self._write_md(tmp_path, "### 7.2 Key Architectural Risks\n\nbody\n")
-        report = qa.check_auth_method_decomposition(md, contract)
-        assert report.ok == 1
-        assert report.issues == []
-
-    # -----------------------------------------------------------------------
-    # Structural gates — heading_pattern + required_trailers + required_body_elements
-    # (Fix 7: §7.3 auth-flow mini-report shape)
-    # -----------------------------------------------------------------------
-
-    _CONTRACT_WITH_STRUCTURE = textwrap.dedent("""\
-        document:
-          order: []
-        severity_taxonomy: {}
-        sections:
-          security_architecture:
-            heading: "## 7. Security Architecture"
-            heading_numbered: true
-            fragment_type: markdown
-            fragment: "security-architecture.md"
-            domain_required_rules:
-              "7.3 Identity & Access Management":
-                - rule: "auth_method_decomposition"
-                  table_column: "Control"
-                  heading_level: 4
-                  trailer_label: "Findings in this flow"
-                  heading_pattern: '^7\\.3\\.\\d+\\s+.+\\s+Flow$'
-                  required_trailers:
-                    - "Risk assessment"
-                    - "Findings in this flow"
-                  required_body_elements:
-                    - "sequenceDiagram"
-                  match_style: "token-subset"
-                  synonyms: []
-                  enforcement: "error"
-        """)
-
-    def _write_contract_with_structure(self, tmp_path) -> Path:
-        p = tmp_path / "contract.yaml"
-        p.write_text(self._CONTRACT_WITH_STRUCTURE)
-        return p
-
-    def test_heading_pattern_requires_7_3_N_prefix(self, tmp_path):
-        contract = self._write_contract_with_structure(tmp_path)
-        # Heading is "#### Password Login Flow" — lacks 7.3.N prefix.
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Control | Linked Threats |
-            |---|---|
-            | Password Login | [T-001](#t-001) — SQLi |
-
-            #### Password Login Flow
-
-            Flow intro.
-
-            ```mermaid
-            sequenceDiagram
-              User->>API: login
-            ```
-
-            **Risk assessment:** Critical risk summary. **Residual risk:** Critical.
-
-            **Findings in this flow:** [T-001](#t-001) — SQLi
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        joined = " ".join(report.issues)
-        assert "heading does not match required pattern" in joined
-        assert "7.3.N" in joined or "7\\.3\\.\\d+" in joined
-
-    def test_required_trailer_risk_assessment_missing(self, tmp_path):
-        contract = self._write_contract_with_structure(tmp_path)
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Control | Linked Threats |
-            |---|---|
-            | Password Login | [T-001](#t-001) — SQLi |
-
-            #### 7.3.1 Password Login Flow
-
-            Flow intro.
-
-            ```mermaid
-            sequenceDiagram
-              User->>API: login
-            ```
-
-            **Findings in this flow:** [T-001](#t-001) — SQLi
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        joined = " ".join(report.issues)
-        assert "Risk assessment" in joined
-        assert "missing" in joined.lower()
-
-    def test_required_body_element_sequence_diagram_absent(self, tmp_path):
-        contract = self._write_contract_with_structure(tmp_path)
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Control | Linked Threats |
-            |---|---|
-            | Password Login | [T-001](#t-001) — SQLi |
-
-            #### 7.3.1 Password Login Flow
-
-            Flow without a diagram.
-
-            **Risk assessment:** Critical. **Residual risk:** Critical.
-
-            **Findings in this flow:** [T-001](#t-001) — SQLi
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        joined = " ".join(report.issues)
-        assert "sequenceDiagram" in joined
-
-    def test_full_structured_block_is_clean(self, tmp_path):
-        contract = self._write_contract_with_structure(tmp_path)
-        body = textwrap.dedent("""\
-            ### 7.3 Identity & Access Management
-
-            | Control | Linked Threats |
-            |---|---|
-            | Password Login | [T-001](#t-001) — SQLi |
-
-            #### 7.3.1 Password Login Flow
-
-            The login endpoint is vulnerable.
-
-            ```mermaid
-            sequenceDiagram
-              User->>API: login
-            ```
-
-            | Control | Implementation | Effectiveness | Finding |
-            |---|---|---|---|
-            | SQL Parameterization | Absent | Missing | [T-001](#t-001) |
-
-            **Risk assessment:** Critical risk. **Residual risk:** Critical — unauth bypass possible.
-
-            **Findings in this flow:** [T-001](#t-001) — SQLi
-
-            """)
-        md = self._write_md(tmp_path, body)
-        report = qa.check_auth_method_decomposition(md, contract)
-        assert report.issues == [], report.issues
-        assert report.ok == 1
-
-
-# ---------------------------------------------------------------------------
 # check_security_posture_structure — invariants D / E / C / F / G / N / B / L
 #
 # Regression tests for the template-vs-checker drift that fired four false
@@ -2745,62 +2254,6 @@ class TestRowIsAuthMethodHelper:
         assert qa._row_is_auth_method("OAuth", [None, 42, "oauth"])  # type: ignore[list-item]
 
 
-class TestAuthMethodDecompositionWhitelistIntegration:
-    """End-to-end: a §7.3 with mixed rows + the default whitelist must NOT
-    flag implementation rows for missing #### Flow sub-sections."""
-
-    @pytest.fixture
-    def section_73_with_mixed_rows(self, tmp_path):
-        """§7.3 with one real auth method (`Password Login`) plus three
-        non-method rows (`Password Hashing`, `Login Rate Limiting`,
-        `express-jwt middleware`). Only the auth-method row gets a
-        sub-section — the others should not trigger warnings under the
-        whitelist filter."""
-        body = textwrap.dedent("""\
-            ## 7. Security Architecture
-
-            ### 7.3 Identity & Access Management
-
-            | Domain | Control | Implementation | Effectiveness | Linked Threats |
-            |--------|---------|----------------|---------------|----------------|
-            | IAM | Password Login | `routes/login.ts` | 🔶 Weak | [T-001](#t-001) |
-            | IAM | Password Hashing | `lib/insecurity.ts:43` | ❌ Missing | [T-002](#t-002) |
-            | IAM | Login Rate Limiting | none | ❌ Missing | — |
-            | IAM | express-jwt middleware | v0.1.3 | 🔶 Weak | — |
-
-            #### 7.3.1 Password Login Flow
-
-            Endpoint: `POST /rest/user/login`. Implementation: `routes/login.ts:34`.
-
-            ```mermaid
-            sequenceDiagram
-                User->>API: POST /login
-            ```
-
-            **Risk assessment:** Critical — SQL injection bypass present. **Residual risk:** Critical — bypass.
-
-            **Findings in this flow:** [T-001](#t-001) — SQL Injection
-            """)
-        return _write_minimal_model(tmp_path, body)
-
-    def test_whitelist_filters_non_method_rows(self, section_73_with_mixed_rows):
-        """With the default whitelist, only the real auth-method row
-        ('Password Login') is required to have a sub-section. The three
-        implementation rows must NOT trigger 'no #### subsection matches
-        control-table row …' warnings."""
-        report = qa.check_auth_method_decomposition(section_73_with_mixed_rows)
-        # Implementation/cross-cutting rows MUST NOT produce per-row
-        # missing-subsection warnings.
-        unwanted_substrings = [
-            "Password Hashing",
-            "Login Rate Limiting",
-            "express-jwt middleware",
-        ]
-        for w in report.warnings:
-            for s in unwanted_substrings:
-                assert s not in w, f"unexpected warning targeting non-method row: {w}"
-
-
 class TestCrossReferenceLabellingInvariant:
     """Pin the cross-reference labelling invariant from AGENTS.md §4a.
 
@@ -3139,14 +2592,14 @@ class TestThreatModelOutputSchemaTitleRequired:
 class TestHeadingAttributeStrip:
     """Pandoc/Kramdown `{#anchor ...}` and `data-source-line=...` residue
     must be stripped from headings before hygiene runs. Users have seen
-    truncated trailers like `{#713-secret-management-cross-cutting
+    truncated trailers like `{#713-defense-in-depth-summary
     data-source-line="` leak into visible section titles.
     """
 
     def test_strips_pandoc_attribute_trailer(self, tmp_path: Path):
         md = _write_minimal_model(
             tmp_path,
-            "### 7.13 Secret Management (cross-cutting) {#713-secret-management-cross-cutting}\n\nbody\n",
+            "### 7.13 Defense-in-Depth Summary {#713-defense-in-depth-summary}\n\nbody\n",
         )
         report, _ = qa.strip_heading_attribute_artifacts(md)
         assert report.fixes, "expected at least one heading to be stripped"
@@ -3158,19 +2611,19 @@ class TestHeadingAttributeStrip:
         """
         md = _write_minimal_model(
             tmp_path,
-            '### 7.13 Secret Management (cross-cutting) {#713-secret-management-cross-cutting data-source-line="\n\nbody\n',
+            '### 7.13 Defense-in-Depth Summary {#713-defense-in-depth-summary data-source-line="\n\nbody\n',
         )
         report, _ = qa.strip_heading_attribute_artifacts(md)
         assert report.fixes, "expected truncated trailer to be stripped"
         text = md.read_text()
         assert "data-source-line" not in text
         assert "{#" not in text
-        assert "### 7.13 Secret Management (cross-cutting)" in text
+        assert "### 7.13 Defense-in-Depth Summary" in text
 
     def test_clean_headings_untouched(self, tmp_path: Path):
         md = _write_minimal_model(
             tmp_path,
-            "### 7.13 Secret Management (cross-cutting)\n\n### 8. Findings Register\n",
+            "### 7.13 Defense-in-Depth Summary\n\n### 8. Findings Register\n",
         )
         before = md.read_text()
         report, _ = qa.strip_heading_attribute_artifacts(md)
@@ -3183,7 +2636,7 @@ class TestHeadingAttributeStrip:
         """
         md = _write_minimal_model(
             tmp_path,
-            "### 7.13 Secret Management (cross-cutting) {#anchor}\n",
+            "### 7.13 Defense-in-Depth Summary {#anchor}\n",
         )
         report = qa.check_heading_hygiene(md)
         assert any("attribute-syntax" in i for i in report.issues), report.issues

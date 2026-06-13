@@ -77,15 +77,15 @@ def minimal_yaml_data():
         },
         "security_controls": [
             {
-                "domain": "Identity & Access Management",
-                "control": "JWT auth",
-                "implementation": "express-jwt",
+                "domain": "Identity and Authentication Controls",
+                "control": "Password-Based Authentication",
+                "implementation": "Express password login",
                 "effectiveness": "weak",
                 "notes": "outdated",
             },
             {
-                "domain": "Input Validation",
-                "control": "Sanitization",
+                "domain": "Input Boundary Validation Controls",
+                "control": "Validation Approach",
                 "implementation": "manual",
                 "effectiveness": "missing",
                 "notes": "no validator",
@@ -482,54 +482,54 @@ class TestArchitectureDataFlows:
 
 
 class TestSecurityArchitectureCWEMapping:
-    """§7 must surface threats by CWE when no controls cataloged."""
+    """§7 v2 must surface threats by contract CWE routing when no controls are cataloged."""
+
+    @staticmethod
+    def _h3_section(md: str, start: str, end: str) -> str:
+        match = re.search(rf"(?ms)^### {re.escape(start)}\b.*?(?=^### {re.escape(end)}\b)", md)
+        assert match is not None
+        return match.group(0)
 
     def _data(self, threats):
         return {
             "meta": {"project": {"name": "x"}},
             "components": [{"id": "c1", "name": "C1", "paths": ["a"]}],
             "security_controls": [
-                # IAM control present so §7.3 is the only "controls cataloged" section
+                # Auth control present so §7.2 is the only cataloged-control section.
                 {
-                    "control": "JWT Auth",
-                    "domain": "Identity & Access Management",
-                    "implementation": "express-jwt",
+                    "control": "Password-Based Authentication",
+                    "domain": "Identity and Authentication Controls",
+                    "implementation": "Express password login",
                     "effectiveness": "weak",
                 },
             ],
             "threats": threats,
         }
 
-    def test_websocket_threats_surface_in_7_8_via_title(self):
+    def test_ssrf_threats_surface_in_7_10_via_cwe(self):
         threats = [
             {
                 "id": "T-100",
-                "cwe": "CWE-306",
-                "title": "Socket.IO Events Lack Authentication",
-                "scenario": "WebSocket events bypass auth.",
+                "cwe": "CWE-918",
+                "title": "SSRF via image fetcher",
+                "scenario": "Outbound image fetch reaches internal hosts.",
                 "risk": "High",
             },
         ]
         md = pf.gen_security_architecture(self._data(threats))
-        # §7.8 should reference T-100 (rendered as F-100 visible label
-        # after P4 normalisation; anchor stays valid via dual-anchor
-        # emission in compose._render_threat_register).
-        sec_7_8 = md.split("### 7.8")[1].split("### 7.9")[0]
-        assert "T-100" in sec_7_8 or "F-100" in sec_7_8
+        sec_7_10 = self._h3_section(md, "7.10", "7.11")
+        assert "F-100" in sec_7_10
 
-    def test_input_validation_threats_surface_in_7_5_via_cwe(self):
+    def test_query_construction_threats_surface_in_7_5_via_cwe(self):
         threats = [
-            {"id": "T-200", "cwe": "CWE-79", "title": "Stored XSS", "scenario": "...", "risk": "High"},
+            {"id": "T-200", "cwe": "CWE-89", "title": "SQL injection", "scenario": "...", "risk": "High"},
         ]
         md = pf.gen_security_architecture(self._data(threats))
-        # §7.5 has IAM control too? Actually the data has only an IAM
-        # control. §7.5 has no controls → falls back to threat-mapping.
-        # P4 normalises T-NNN → F-NNN visible label.
-        sec_7_5 = md.split("### 7.5")[1].split("### 7.6")[0]
-        assert "T-200" in sec_7_5 or "F-200" in sec_7_5
+        sec_7_5 = self._h3_section(md, "7.5", "7.6")
+        assert "F-200" in sec_7_5
 
-    def test_unrelated_threat_does_not_match_7_8(self):
-        """Regression: 'allows' / 'answers' must NOT trigger 'ws ' substring match."""
+    def test_unrelated_threat_does_not_match_7_12(self):
+        """Regression guard: title text alone must not route into the real-time bucket."""
         threats = [
             {
                 "id": "T-300",
@@ -540,33 +540,8 @@ class TestSecurityArchitectureCWEMapping:
             },
         ]
         md = pf.gen_security_architecture(self._data(threats))
-        sec_7_8 = md.split("### 7.8")[1].split("### 7.9")[0]
-        assert "T-300" not in sec_7_8, "T-300 has nothing to do with WebSockets — must not appear in §7.8"
-
-
-class TestControlNotesFallback:
-    """_control_notes must fall through notes → effectiveness_reason → gaps[0]."""
-
-    def test_notes_field_takes_precedence(self):
-        c = {"notes": "primary", "effectiveness_reason": "secondary", "gaps": ["tertiary"]}
-        assert pf._control_notes(c) == "primary"
-
-    def test_falls_back_to_effectiveness_reason(self):
-        c = {"effectiveness_reason": "this is the reason", "gaps": ["a gap"]}
-        assert pf._control_notes(c) == "this is the reason"
-
-    def test_falls_back_to_first_gap(self):
-        c = {"gaps": ["first concrete gap", "second gap"]}
-        assert pf._control_notes(c) == "first concrete gap"
-
-    def test_returns_empty_when_nothing_present(self):
-        assert pf._control_notes({}) == ""
-        assert pf._control_notes({"notes": ""}) == ""
-
-    def test_safe_on_non_dict_input(self):
-        assert pf._control_notes("not a dict") == ""
-        assert pf._control_notes(None) == ""
-
+        sec_7_12 = self._h3_section(md, "7.12", "7.13")
+        assert "F-300" not in sec_7_12, "F-300 has nothing to do with real-time controls"
 
 class TestSystemContextDiagram:
     """§2.1 mermaid is now derived from yaml actors / surface / threats."""
@@ -833,64 +808,6 @@ class TestTechnologyArchitectureDiagram:
         assert 'subgraph APP["Application Tier"]' in sec_2_4
         assert 'subgraph DATA["Data Tier"]' in sec_2_4
         assert "TB1" not in sec_2_4
-
-
-class TestIamFlowSequence:
-    """§7.3.1 IAM Flow chooses template based on control name + impl."""
-
-    def test_jwt_template_chosen_for_jwt_control(self):
-        seq = pf._iam_flow_sequence("JWT RS256 Authentication", "express-jwt + jsonwebtoken", [])
-        text = "\n".join(seq)
-        assert "Browser / SPA" in text
-        assert "Express Backend" in text
-        assert "JWT Signing Key" in text
-        # Should be auto-numbered for clarity.
-        assert "autonumber" in text
-
-    def test_oauth_template_chosen_for_oauth_control(self):
-        seq = pf._iam_flow_sequence("OAuth 2.0", "passport-oauth2", [])
-        text = "\n".join(seq)
-        assert "OAuth/OIDC Provider" in text
-        assert "code_challenge" in text
-
-    def test_basic_auth_template_chosen(self):
-        seq = pf._iam_flow_sequence("Basic Authentication", "express-basic-auth", [])
-        text = "\n".join(seq)
-        assert "Basic base64" in text
-        assert "bcrypt" in text
-
-    def test_generic_fallback_when_no_match(self):
-        seq = pf._iam_flow_sequence("Some Other Method", "custom impl", [])
-        text = "\n".join(seq)
-        # Generic stub markers
-        assert "Identity Store" in text
-        assert "credentials / token" in text
-
-    def test_jwt_attack_annotations_fire_when_threats_match(self):
-        threats = [
-            {"id": "T-X", "cwe": "CWE-347", "title": "alg:none"},
-            {"id": "T-Y", "cwe": "CWE-321", "title": "Hardcoded RSA key"},
-            {"id": "T-Z", "cwe": "CWE-922", "title": "Token in localStorage"},
-        ]
-        seq = pf._iam_flow_sequence("JWT RS256 Authentication", "jsonwebtoken", threats)
-        text = "\n".join(seq)
-        assert "alg:none" in text  # alg-confusion note
-        assert "hardcoded" in text.lower()  # credential-theft note
-        assert "localStorage" in text  # session-hijack note
-
-    def test_jwt_no_annotations_when_no_relevant_threats(self):
-        seq = pf._iam_flow_sequence(
-            "JWT RS256",
-            "jwt",
-            [
-                {"id": "T-1", "cwe": "CWE-79", "title": "Stored XSS unrelated"},
-            ],
-        )
-        text = "\n".join(seq)
-        # None of the warning notes should appear
-        assert "alg:none accepted" not in text
-        assert "Private key hardcoded" not in text
-
 
 # ---------------------------------------------------------------------------
 # D1.5 — refined diagram enrichments (C/D/E/F/G/J/L/A/B)
@@ -1270,285 +1187,49 @@ class TestSecurityArchitecture:
         md = pf.gen_security_architecture(minimal_yaml_data)
         assert md.startswith("## 7. Security Architecture\n")
 
-    def test_has_all_14_subsections(self, minimal_yaml_data):
+    def test_has_all_13_v2_subsections(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        for n in range(1, 15):
-            # Match "### 7.N <title>" — title varies but the prefix is fixed
-            assert re.search(rf"^### 7\.{n}\s", md, re.MULTILINE), f"Missing ### 7.{n} sub-section"
+        for heading, _hint, _tier in pf._V2_SUBSECTIONS:
+            assert f"### {heading}" in md, f"Missing ### {heading}"
+        assert "### 7.14 " not in md
 
-    def test_secret_management_marked_cross_cutting(self, minimal_yaml_data):
+    def test_crypto_secrets_live_in_79(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        assert "### 7.13 Secret Management (cross-cutting)" in md
+        assert "### 7.9 Cryptography Secrets and Data Protection" in md
 
-    def test_defense_in_depth_marked_cross_cutting(self, minimal_yaml_data):
+    def test_defense_in_depth_is_713(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        assert "### 7.14 Defense-in-Depth Assessment (cross-cutting)" in md
+        assert "### 7.13 Defense-in-Depth Summary" in md
 
-    def test_iam_subsection_includes_matched_control(self, minimal_yaml_data):
+    def test_identity_subsection_includes_matched_control(self, minimal_yaml_data):
         md = pf.gen_security_architecture(minimal_yaml_data)
-        # JWT auth control should land in 7.3 IAM
-        iam_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
-        assert iam_section is not None
-        assert "JWT auth" in iam_section.group(0)
+        identity_section = re.search(r"### 7\.2 .+?(?=### 7\.3 )", md, re.DOTALL)
+        assert identity_section is not None
+        assert "Password-Based Authentication" in identity_section.group(0)
 
-    def test_iam_section_has_per_method_sub_blocks(self, minimal_yaml_data):
-        """§7.3 IAM must include `#### 7.3.N <Name> Flow` sub-blocks per
-        contract auth_method_decomposition rule. Without these the
-        compose --strict pre-render gate hard-fails."""
+    def test_identity_section_has_subcontrol_block(self, minimal_yaml_data):
+        """§7.2 decomposes discovered authentication mechanisms into H4 blocks."""
         md = pf.gen_security_architecture(minimal_yaml_data)
-        iam_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
-        assert iam_section is not None
-        body = iam_section.group(0)
-        # At least one #### sub-block (one per IAM control row)
-        sub_blocks = re.findall(r"^#### 7\.3\.\d+\s+.+\s+Flow\s*$", body, re.MULTILINE)
-        assert len(sub_blocks) >= 1, (
-            f"§7.3 must contain at least one '#### 7.3.N <Name> Flow' sub-block; found: {sub_blocks!r}"
-        )
+        identity_section = re.search(r"### 7\.2 .+?(?=### 7\.3 )", md, re.DOTALL)
+        assert identity_section is not None
+        body = identity_section.group(0)
+        assert re.search(r"^#### 7\.2\.\d+\s+Password-Based Authentication\s*$", body, re.MULTILINE)
+        assert "**Security assessment**" in body
+        assert "**Relevant findings**" in body
 
-    def test_iam_section_contains_sequence_diagram(self, minimal_yaml_data):
-        """§7.3 IAM must include at least one ```mermaid sequenceDiagram block
-        per contract domain_required_patterns rule."""
-        md = pf.gen_security_architecture(minimal_yaml_data)
-        iam_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
-        assert iam_section is not None
-        body = iam_section.group(0)
-        assert "```mermaid" in body, "§7.3 missing required mermaid block"
-        assert "sequenceDiagram" in body, "§7.3 missing required sequenceDiagram"
-
-    def test_iam_sub_blocks_have_required_trailers(self, minimal_yaml_data):
-        """Per the auth_method_decomposition rule, each #### sub-block must
-        carry **Risk assessment:** and **Findings in this flow:** trailers."""
-        md = pf.gen_security_architecture(minimal_yaml_data)
-        iam_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
-        assert iam_section is not None
-        body = iam_section.group(0)
-        # Each sub-block needs both trailers
-        n_subblocks = len(re.findall(r"^#### 7\.3\.\d+", body, re.MULTILINE))
-        assert n_subblocks >= 1
-        n_risk = body.count("**Risk assessment:**")
-        n_findings = body.count("**Findings in this flow:**")
-        assert n_risk >= n_subblocks, (
-            f"Each of {n_subblocks} sub-blocks needs **Risk assessment:** trailer; found {n_risk}"
-        )
-        assert n_findings >= n_subblocks, (
-            f"Each of {n_subblocks} sub-blocks needs **Findings in this flow:** trailer; found {n_findings}"
-        )
-
-    def test_iam_with_no_controls_emits_placeholder_subblock(self):
-        """M3.1: when there are no IAM controls cataloged, §7.3 still emits
-        ONE placeholder ``#### 7.3.1 ... Flow`` block to satisfy the
-        sections-contract auth_method_decomposition rule. Without this,
-        compose_threat_model.py --strict would hard-fail and force the
-        Stage 2 (Composition) LLM to author the §7 fragment from scratch
-        (proximate cause of the 2026-04-26 7-min Phase-11 stall)."""
+    def test_empty_control_catalog_uses_not_applicable_stub(self):
+        """v2 does not fabricate legacy IAM flow blocks when no control/finding is routed."""
         md = pf.gen_security_architecture(
             {
                 "components": [],
                 "security_controls": [],
             }
         )
-        iam_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
-        assert iam_section is not None
-        body = iam_section.group(0)
-        # The "no controls cataloged" prose still appears in the table area.
-        assert "_No controls cataloged" in body
-        # AND a placeholder sub-block must be emitted for the contract gate.
-        assert re.search(r"^#### 7\.3\.1\s+.+\s+Flow$", body, re.MULTILINE), (
-            "Empty IAM section must still emit one placeholder sub-block "
-            "to satisfy the sections-contract auth_method_decomposition rule"
-        )
-        # And the placeholder block must contain a sequenceDiagram.
-        assert "sequenceDiagram" in body
-
-
-class TestGapSummary:
-    """Deterministic Gap-Summary block at top of §7.
-
-    Replaces the historical `<!-- GAP_SUMMARY_PLACEHOLDER -->` LLM slot —
-    these tests pin down ordering, grouping, and the regression guard
-    that the placeholder is gone.
-    """
-
-    @staticmethod
-    def _data():
-        return {
-            "components": [],
-            "meta": {},
-            "security_controls": [
-                # Highest impact: 4 threats (2x Critical, 2x High) = 14
-                {
-                    "domain": "Input Validation",
-                    "control": "Parameterised SQL",
-                    "effectiveness": "Missing",
-                    "linked_threats": ["T-001", "T-002", "T-017"],
-                },
-                {
-                    "domain": "input validation",
-                    "control": "NoSQL operator allowlist",
-                    "effectiveness": "Missing",
-                    "linked_threats": ["T-032"],
-                },
-                # Mid impact: 3 threats (2x Critical, 1x High) = 11
-                {
-                    "domain": "Secret Management",
-                    "control": "Externalise crypto secrets",
-                    "effectiveness": "Missing",
-                    "linked_threats": ["T-003", "T-013", "T-018"],
-                },
-                # Lower impact: 4 threats (2x High, 2x Medium) = 10
-                {
-                    "domain": "Output Encoding",
-                    "control": "DomSanitizer enforcement",
-                    "effectiveness": "Weak",
-                    "linked_threats": ["T-022", "T-023", "T-024", "T-025"],
-                },
-                # Excluded — Adequate effectiveness must not enter the summary
-                {"domain": "Logging", "control": "Structured logs", "effectiveness": "Adequate", "linked_threats": []},
-                # Excluded — Weak but no linked threats: cannot meaningfully
-                # populate the Linked Threats column
-                {
-                    "domain": "Configuration",
-                    "control": "Security headers",
-                    "effectiveness": "Weak",
-                    "linked_threats": [],
-                },
-            ],
-            "threats": [
-                {
-                    "id": "T-001",
-                    "risk": "Critical",
-                    "title": "SQLi auth bypass",
-                    "evidence": [{"file": "routes/login.ts", "line": 34}],
-                },
-                {
-                    "id": "T-002",
-                    "risk": "Critical",
-                    "title": "SQLi product search",
-                    "evidence": [{"file": "routes/search.ts", "line": 24}],
-                },
-                {"id": "T-017", "risk": "High", "title": "NoSQLi mass update"},
-                {"id": "T-032", "risk": "High", "title": "MarsDB $where"},
-                {
-                    "id": "T-003",
-                    "risk": "Critical",
-                    "title": "Hardcoded RSA key",
-                    "evidence": [{"file": "lib/insecurity.ts", "line": 23}],
-                },
-                {"id": "T-013", "risk": "Critical", "title": "JWT alg:none"},
-                {"id": "T-018", "risk": "High", "title": "JWT key disclosure"},
-                {"id": "T-022", "risk": "High", "title": "Stored XSS product"},
-                {"id": "T-023", "risk": "High", "title": "Reflected XSS search"},
-                {"id": "T-024", "risk": "Medium", "title": "Stored XSS last-IP"},
-                {"id": "T-025", "risk": "Medium", "title": "Stored XSS feedback"},
-            ],
-        }
-
-    def test_placeholder_is_gone(self):
-        """Regression guard: the LLM-authored GAP_SUMMARY_PLACEHOLDER must
-        not appear in the rendered scaffold any more — the table is now
-        generated deterministically."""
-        md = pf.gen_security_architecture(self._data())
-        assert "GAP_SUMMARY_PLACEHOLDER" not in md
-
-    def test_emits_three_rows_in_severity_order(self):
-        """Weak/missing controls are surfaced in §7.2 in stable source order."""
-        md = pf.gen_security_architecture(self._data())
-        risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
-        idx_input = risks.find("| Input Validation | Parameterised SQL |")
-        idx_nosql = risks.find("| input validation | NoSQL operator allowlist |")
-        idx_secret = risks.find("| Secret Management | Externalise crypto secrets |")
-        idx_output = risks.find("| Output Encoding | DomSanitizer enforcement |")
-        idx_config = risks.find("| Configuration | Security headers |")
-        assert -1 < idx_input < idx_nosql < idx_secret < idx_output < idx_config
-
-    def test_groups_same_domain_under_primary_control(self):
-        """§7.2 no longer groups domains; it preserves each weak/missing
-        catalog row so the later per-domain sections can carry the detail."""
-        md = pf.gen_security_architecture(self._data())
-        risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
-        assert "| Input Validation | Parameterised SQL | Missing |" in risks
-        assert "| input validation | NoSQL operator allowlist | Missing |" in risks
-        data_rows = [
-            ln for ln in risks.splitlines() if ln.startswith("| ") and " | " in ln and not ln.startswith("|---")
-        ]
-        assert len(data_rows) == 6  # header + five weak/missing rows
-
-    def test_threat_links_use_lowercase_anchor_and_label(self):
-        """§7.1 coverage summary carries the weak/missing domain inventory."""
-        md = pf.gen_security_architecture(self._data())
-        overview = md.split("### 7.1 Overview", 1)[1].split("### 7.2", 1)[0]
-        assert "🔶❌ **Weak or Missing (5):**" in overview
-        assert "Input Validation" in overview
-        assert "Secret Management" in overview
-
-    def test_threats_inside_cell_sorted_by_severity(self):
-        """Secret-management rows are rendered in the cross-cutting §7.13
-        controls table."""
-        md = pf.gen_security_architecture(self._data())
-        sec713 = md.split("### 7.13 Secret Management", 1)[1].split("### 7.14", 1)[0]
-        assert "| Externalise crypto secrets |" in sec713
-        assert "| _?_ | Missing |" in sec713
-
-    def test_evidence_cell_dedupes_and_caps(self):
-        """The deterministic scaffold keeps source evidence out of §7.1/§7.2;
-        source-level evidence belongs in §8 finding rows."""
-        md = pf.gen_security_architecture(self._data())
-        early = md.split("### 7.3", 1)[0]
-        assert "routes/login.ts" not in early
-        assert "routes/search.ts" not in early
-
-    def test_excludes_adequate_and_unlinked_controls(self):
-        """Adequate controls are excluded from §7.2; weak controls remain even
-        without linked_threats because §7.2 is a control-catalog view."""
-        md = pf.gen_security_architecture(self._data())
-        risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
-        assert "Logging" not in risks
-        assert "Configuration" in risks
-
-    def test_block_omitted_when_no_weak_controls(self):
-        """No weak/missing controls ⇒ the Gap-Summary block (intro line +
-        table) is suppressed entirely. The §7.1 header still appears."""
-        data = {
-            "components": [],
-            "meta": {},
-            "threats": [],
-            "security_controls": [
-                {"domain": "Logging", "control": "Logs", "effectiveness": "Adequate"},
-            ],
-        }
-        md = pf.gen_security_architecture(data)
-        assert "**Gap summary**" not in md
-        assert "### 7.1 Overview" in md
-
-    def test_block_omitted_when_weak_controls_have_no_threats(self):
-        """Weak controls with empty linked_threats are excluded — if every
-        weak control has no threats, the block is suppressed."""
-        data = {
-            "components": [],
-            "meta": {},
-            "threats": [],
-            "security_controls": [
-                {"domain": "Configuration", "control": "Headers", "effectiveness": "Weak", "linked_threats": []},
-            ],
-        }
-        md = pf.gen_security_architecture(data)
-        assert "**Gap summary**" not in md
-
-    def test_top_k_cap(self):
-        """§7.2 keeps the complete weak/missing control slice instead of
-        truncating it to a top-k gap summary."""
-        data = {
-            "components": [],
-            "meta": {},
-            "threats": [{"id": f"T-00{i}", "risk": "Critical", "title": f"t{i}"} for i in range(1, 6)],
-            "security_controls": [
-                {"domain": f"Dom{i}", "control": f"Ctl{i}", "effectiveness": "Missing", "linked_threats": [f"T-00{i}"]}
-                for i in range(1, 6)
-            ],
-        }
-        md = pf.gen_security_architecture(data)
-        risks = md.split("### 7.2 Key Architectural Risks", 1)[1].split("### 7.3", 1)[0]
-        assert sum(1 for ln in risks.splitlines() if re.match(r"\| Dom\d+ \|", ln)) == 5
+        identity_section = re.search(r"### 7\.2 .+?(?=### 7\.3 )", md, re.DOTALL)
+        assert identity_section is not None
+        body = identity_section.group(0)
+        assert "_Not applicable for this codebase" in body
+        assert "#### 7.2.1" not in body
 
 
 class TestOutOfScope:
@@ -1893,7 +1574,7 @@ class TestSection72ThreatHypothesesTable:
     def test_table_lives_inside_section_72(self):
         md = pf.gen_security_architecture(_data_with_hyps(_hyp()))
         # Anchor: between the 7.2 heading and the 7.3 heading
-        m72 = md.index("### 7.2 Key Architectural Risks")
+        m72 = md.index("### 7.2 Identity and Authentication Controls")
         m73 = md.index("### 7.3 ")
         block = md[m72:m73]
         assert "#### Threat Hypotheses Requiring Validation" in block

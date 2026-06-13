@@ -8610,12 +8610,10 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
             rs_enabled = bool(eval_condition(rs_condition, ctx.eval_context))
         except Exception:
             rs_enabled = True
-    # schema_v2 overlay — when the active skill-config
-    # carries `security_schema: v2`, prefer `section.schema_v2.required_subsections`
-    # over the legacy `section.required_subsections`. The yaml file keeps both
-    # surfaces; this is a runtime swap based on the resolved config.
-    _required_subs_v1 = section.get("required_subsections") or []
-    _required_subs = _required_subs_v1
+    # schema_v2 overlay — prefer `section.schema_v2.required_subsections`
+    # for §7. v2 is the only supported security-architecture layout.
+    _required_subs_base = section.get("required_subsections") or []
+    _required_subs = _required_subs_base
     if rs_enabled:
         _schema_v2 = False
         try:
@@ -11106,30 +11104,13 @@ def _read_skill_config(output_dir: Path) -> dict:
 
 
 def _resolve_security_schema(output_dir: Path) -> str:
-    """Resolve the active §7 schema (v1 vs v2).
+    """Return the active §7 schema.
 
-    Priority (matches resolve_config.py + qa_checks._apply_schema_v2_overlay):
-      1. APPSEC_SECURITY_SCHEMA env-var ("v1" or "v2") — explicit override
-      2. APPSEC_SCHEMA_V1=1 env-var — TEST-SUITE PIN only (ignored outside pytest)
-      3. .skill-config.json → security_schema (set by --schema-v1 in production)
-      4. default "v2" (since 2026-05)
+    The legacy v1 layout has been removed; v2 is the only supported
+    security-architecture contract. ``output_dir`` remains in the signature
+    because callers pass it as part of the render-context construction.
     """
-    import os as _os
-
-    forced = (_os.environ.get("APPSEC_SECURITY_SCHEMA") or "").strip().lower()
-    if forced in {"v1", "v2"}:
-        return forced
-    # APPSEC_SCHEMA_V1 is the test-suite pin only (gated to a running pytest via
-    # PYTEST_CURRENT_TEST); a stray env var in production can't force legacy v1.
-    if (
-        _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
-        and "PYTEST_CURRENT_TEST" in _os.environ
-    ):
-        return "v1"
-    cfg = _read_skill_config(output_dir).get("security_schema") or ""
-    cfg = cfg.strip().lower() if isinstance(cfg, str) else ""
-    if cfg in {"v1", "v2"}:
-        return cfg
+    _ = output_dir
     return "v2"
 
 
@@ -14304,12 +14285,7 @@ def render(
             ),
             "skip_attack_paths_authoring": bool(_read_skill_config(output_dir).get("skip_attack_paths_authoring")),
             "skip_qa": bool(_read_skill_config(output_dir).get("skip_qa")),
-            # 13-section schema_v2 — DEFAULT since 2026-05.
-            # Resolution order (matches resolve_config.py + qa_checks):
-            #   1. APPSEC_SECURITY_SCHEMA env-var ("v1" or "v2")
-            #   2. APPSEC_SCHEMA_V1=1 env-var (test-suite pin only — ignored outside pytest)
-            #   3. .skill-config.json → security_schema
-            #   4. default v2
+            # 13-section schema_v2 — the only supported §7 contract.
             "security_schema": _resolve_security_schema(output_dir),
         },
     )

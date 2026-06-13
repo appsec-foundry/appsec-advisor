@@ -228,7 +228,6 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("architect_review", "no_architect_review", "--architect-review and --no-architect-review cannot be used together."),
     ("quick",        "thorough",        "--quick and --thorough cannot be used together."),
     ("enrich_arch",  "no_enrich_arch",  "--enrich-arch and --no-enrich-arch cannot be used together."),
-    ("schema_v1",    "schema_v2",       "--schema-v1 and --schema-v2 cannot be used together."),
     ("abuse_cases",  "no_abuse_cases",  "--abuse-cases and --no-abuse-cases cannot be used together."),
 ]
 
@@ -1221,27 +1220,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Force LLM enrichment of the security-architecture.md "
                         "(§7) fragment at any depth (overrides the quick-depth "
                         "default-off).")
-    # v2 13-section §7 layout — DEFAULT since 2026-05.
-    # v2 restructures §7 around security-control categories and lists
-    # findings only where the affected control is described.
-    # See `data/sections-contract.yaml → schema_v2` for the full layout
-    # + finding routing map.
-    #
+    # v2 13-section §7 layout — the only supported layout.
     # `--schema-v2` is kept as a no-op alias so explicit declarations in
-    # CI scripts do not break; `--schema-v1` is the opt-out for legacy
-    # threat-models that should not be migrated.
+    # CI scripts do not break. `--schema-v1` is accepted by the parser only
+    # to return a clear removal error instead of "unrecognized argument".
     p.add_argument("--schema-v2", action="store_true",
                    dest="schema_v2",
                    help="Explicitly request the 13-section §7 security "
-                        "architecture layout. No-op since 2026-05 — v2 is the "
-                        "default. Kept for forward compatibility with CI "
-                        "scripts that declare schema preference.")
+                        "architecture layout. No-op because v2 is the only "
+                        "supported schema.")
     p.add_argument("--schema-v1", action="store_true",
                    dest="schema_v1",
-                   help="Opt out of the v2 13-section §7 layout and use "
-                        "the legacy 14-section layout. Recommended only "
-                        "when updating a threat-model that was authored "
-                        "against the v1 contract and is not yet migrated.")
+                   help="Removed legacy option. Schema v2 is the only "
+                        "supported §7 layout.")
     # Walkthroughs opt-out (2026-05). Stage 2 normally authors
     # `attack-walkthroughs.md` (sequence diagrams per Critical) — costs
     # ~1 min in quick depth, more in thorough. Skipping renders §3 with
@@ -1358,6 +1349,11 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     err = detect_conflicts(ns)
     if err:
         raise SystemExit(f"Error: {err}")
+    if getattr(ns, "schema_v1", False):
+        raise SystemExit(
+            "Error: --schema-v1 was removed. Schema v2 is the only supported "
+            "§7 security-architecture layout."
+        )
 
     # Depth shortcuts: --quick / --thorough are sugar for --assessment-depth.
     # Reject collision with an explicit --assessment-depth that disagrees;
@@ -1429,42 +1425,8 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     cfg.update(resolve_enrich_arch_fragments(
         ns, depth_info["assessment_depth"], ns.dry_run
     ))
-    # v2 13-section schema — DEFAULT since 2026-05.
-    # Resolution order:
-    #   1. `--schema-v1` → v1 (explicit opt-out — the ONLY production path to v1)
-    #   2. otherwise → v2 (default)
-    # `--schema-v2` and `APPSEC_SCHEMA_V2=1` are kept as explicit "yes,
-    # really v2" markers but are no-ops since v2 is already the default.
-    #
-    # v1 is the deprecated legacy 14-section §7 layout. The `APPSEC_SCHEMA_V1`
-    # env-var is retained ONLY as the test-suite pin (tests/conftest.py) and is
-    # gated to a running pytest via `PYTEST_CURRENT_TEST` (which pytest exports
-    # into the env, so it is inherited by subprocess-based tests too). In
-    # production a stray `APPSEC_SCHEMA_V1=1` left in a shell/profile/settings.json
-    # does NOTHING — v1 must be requested explicitly with `--schema-v1`.
-    import os as _os
-    _env_v1 = (
-        _os.environ.get("APPSEC_SCHEMA_V1", "").strip() in ("1", "true", "yes", "on")
-        and "PYTEST_CURRENT_TEST" in _os.environ
-    )
-    _explicit_v1 = bool(getattr(ns, "schema_v1", False)) or _env_v1
-    cfg["security_schema"] = "v1" if _explicit_v1 else "v2"
-    if _explicit_v1:
-        cfg["security_schema_label"] = (
-            "v1 (14-section legacy layout — DEPRECATED, opt-out via --schema-v1)"
-        )
-        # Deprecation guard: v1 in a real run is almost always a mistake. Make it
-        # loud on stderr; suppressed under pytest (the suite pins v1 by design).
-        if "PYTEST_CURRENT_TEST" not in _os.environ:
-            sys.stderr.write(
-                "WARNING: using the DEPRECATED legacy v1 §7 schema (14-section "
-                "layout). v2 is the default; drop --schema-v1 to use the current "
-                "13-section security-architecture layout.\n"
-            )
-    else:
-        cfg["security_schema_label"] = (
-            "v2 (13-section security architecture layout — default)"
-        )
+    cfg["security_schema"] = "v2"
+    cfg["security_schema_label"] = "v2 (13-section security architecture layout)"
     cfg.update(resolve_skip_attack_paths_authoring(
         depth_info["assessment_depth"]
     ))

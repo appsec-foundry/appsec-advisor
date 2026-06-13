@@ -1025,6 +1025,18 @@ class TestIntegrationScenarios:
         cfg = rc.resolve(["--with-requirements"], REPO_ROOT)
         assert cfg["check_requirements"] is True
 
+    def test_security_schema_is_v2_only(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = rc.resolve([], REPO_ROOT)
+        assert cfg["security_schema"] == "v2"
+        assert "13-section" in cfg["security_schema_label"]
+
+        explicit = rc.resolve(["--schema-v2"], REPO_ROOT)
+        assert explicit["security_schema"] == "v2"
+
+        with pytest.raises(SystemExit, match="--schema-v1 was removed"):
+            rc.resolve(["--schema-v1"], REPO_ROOT)
+
 
 # ---------------------------------------------------------------------------
 # Opus ceiling (--no-opus / APPSEC_DISABLE_OPUS / policy.disable_opus)
