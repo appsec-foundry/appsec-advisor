@@ -127,13 +127,15 @@ Before finishing a non-trivial change, run the relevant test subset. The command
 
 If the repository already has failing tests, capture the baseline and clearly distinguish pre-existing failures from new failures caused by the current change. Do not normalize or hide new failures. Do not treat baseline failures as acceptable evidence for new failures.
 
+Every new `scripts/` module ships with a matching `tests/test_*.py` in the **same commit** — cover the core logic and the failure paths, not every line (100% coverage is not the goal; pinned behavior is). Deterministic Python is the trust anchor of this pipeline, so an untested script is incomplete even when it touches no existing contract. Codecov uploads on CI but does not gate; this rule is enforced in review.
+
 ### 10. Reports speak engineer-to-engineer
 
 Generated reports (`threat-model.md`, `pentest-tasks.yaml`, exports) target technical, time-pressed engineers, architects, and security reviewers. Every LLM-authored field — verdict prose, architecture-assessment defects, STRIDE `scenario`/`mitigation_title`/`remediation`, and `.fragments/` prose — must be **specific, falsifiable, information-dense, scannable, and free of boilerplate**.
 
 Write in plain, understandable language. Necessary detail (file path, line number, config key, API call, library name) anchors the finding — keep it. Unnecessary detail (unexplained acronyms, framework-internal class chains, full version-tag noise, jargon that does not advance understanding of *what* the attacker does or *how* to fix it) buries it — cut it.
 
-The prose must read like a seasoned architect wrote it, not like LLM output. The recurring AI tells to design out: paragraphs that all open with the same stem (`The application <verb>s …`, `The system …`), trailing clauses that restate a control's textbook purpose (`with the intention that …`, `preventing X from being Y`), symmetric triplets (`X, Y, and Z`), and meta-narration (`the table below shows …`). Lead with the concrete thing — the route, file, library, or component — then stop. When a block carries two or more discrete weaknesses, a short bullet list beats one dense paragraph. Worked before/after pairs for these tells live in `agents/shared/prose-samples.md`; the §7 Security Architecture control narratives are the most prose-heavy surface and the most exposed to this drift.
+The prose must read like a seasoned architect wrote it, not like LLM output. Lead with the concrete thing — the route, file, library, or component — then stop. When a block carries two or more discrete weaknesses, a short bullet list beats one dense paragraph. The specific AI tells to design out (repeated sentence stems, trailing textbook-purpose clauses, symmetric triplets, meta-narration) and worked before/after pairs live in `agents/shared/prose-samples.md`; the §7 Security Architecture control narratives are the most prose-heavy surface and the most exposed to this drift.
 
 Report priority: help readers understand, verify, and act; do not maximize technical fullness for its own sake.
 
@@ -222,8 +224,8 @@ Frontmatter pin (always Sonnet — runtime model overrides in table below). Turn
 - `agents/appsec-actor-discoverer.md` — Sonnet, 15 max turns — Phase 2.7 (skipped in quick-mode); confirms static actor-library relevance and proposes repo-specific actors → `.actors-discovered.json`.
 - `agents/appsec-stride-analyzer.md` — Sonnet, 40 max turns — Phase 9; one instance per major component → `.stride-<component-id>.json`.
 - `agents/appsec-threat-merger.md` — Sonnet, 12 max turns — Post-Phase 9 fan-in; merge/keep/consolidate decisions on candidate duplicates from `merge_threats.py`. Does not perform STRIDE itself.
-- `agents/appsec-evidence-verifier.md` — Sonnet, 30 max turns — Between Phase 10 and 10b; samples findings, re-reads `evidence.file ±5`, and labels `verified` / `refuted` / `ambiguous` so refuted findings cannot elevate compound chains.
-- `agents/appsec-abuse-case-verifier.md` — Sonnet, 24 max turns — Phase 10c; one agent per abuse-case candidate (parallel fan-out). Verifies a single AC end-to-end against code, emitting per-step `confirmed` / `blocked` / `inconclusive` verdicts → `.abuse-case-verdict-<AC-ID>.json`. Writes a pre-seeded verdict file FIRST and overwrites it after EVERY resolved step (finding ids copied from the matcher) so a cut-off agent still leaves its best partial verdict. Dispatched single-pass with `sonnet`.
+- `agents/appsec-evidence-verifier.md` — Sonnet, 40 max turns — Between Phase 10 and 10b; samples findings (Critical→High→Medium order), re-reads `evidence.file ±5`, and labels `verified` / `refuted` / `ambiguous` so refuted findings cannot elevate compound chains. Pre-seeds the side-channel file and flushes `evidence_check` to `.threats-merged.json` every 5 resolved findings, so a turn-budget cut-off keeps the verdicts written so far instead of losing the whole batch.
+- `agents/appsec-abuse-case-verifier.md` — Sonnet, 28 max turns — Phase 10c; one agent per abuse-case candidate (parallel fan-out). Verifies a single AC end-to-end against code, emitting per-step `confirmed` / `blocked` / `inconclusive` verdicts → `.abuse-case-verdict-<AC-ID>.json`. Writes a pre-seeded verdict file FIRST, re-writes it as the FIRST action of every step (best current guess) and again the moment a step resolves (finding ids copied from the matcher) so a cut-off agent still leaves a reasoned partial verdict. Dispatched single-pass with `sonnet`.
 - `agents/appsec-triage-validator.md` — Sonnet, 20 max turns — Phase 10b; cross-component rating consistency, L/I outlier detection, and P1/P2 prioritisation checks → `.triage-flags.json`.
 - `agents/appsec-threat-renderer.md` — Sonnet, 80 max turns — Stage 2 (Phase 11); fresh-budget renderer that composes from validated fragments. Never re-runs analysis.
 - `agents/appsec-qa-reviewer.md` — Sonnet, 120 max turns — Stage 3; broken-link / cross-reference / placeholder / YAML-MD consistency checks; applies permitted soft fixes in-place and emits repair plans for structural fixes.
@@ -249,8 +251,6 @@ Frontmatter `model: sonnet` is the dispatch fallback; the orchestrator overrides
 | `appsec-threat-renderer`    | Sonnet | Stage 2 renderer with fresh budget. |
 | `appsec-qa-reviewer`        | Sonnet | Split internally into `qa_content` (always Sonnet — invariant reasoning) and `qa_routine` (Haiku at `sonnet-economy` quick/standard, Sonnet at thorough — mechanical link/anchor fixes). |
 | `appsec-architect-reviewer` | **Opus** | Stage 4 default. Override via `--architect-model sonnet` or `APPSEC_ARCHITECT_MODEL`. |
-
-Default (`standard` + `opus-cheap`): Haiku for context/recon/config, Sonnet for STRIDE/triage/evidence/rendering/QA/orchestration, Opus for the merger and thorough architect review. `sonnet-economy` also moves `qa_routine` to Haiku and the merger to Sonnet; `opus` lifts STRIDE/triage/merger to Opus.
 
 ### Phase map
 
@@ -292,7 +292,7 @@ When `quick` uses its default `sonnet-economy` tier, the orchestrator applies `s
 
 ### Prompt caching contract
 
-Phase-9 STRIDE dispatch prompts must preserve the Group A → B → C ordering described in "Non-obvious Design Decisions" above. Volatile JSON context paths (`PRIOR_FINDINGS_INDEX_PATH`, `KNOWN_THREATS_INDEX_PATH`, `CROSS_REPO_CONTEXT_PATH`, `PHASE_8B_VIOLATIONS_INDEX_PATH`) live in `.dispatch-context/` and MUST NOT be inlined in the prompt. Drift-guarded by `tests/test_dispatch_prompt_cache_order.py`.
+Phase-9 STRIDE dispatch prompts must preserve the Group A → B → C ordering described in "Non-obvious Design Decisions" above. The Group C volatile context paths live in `.dispatch-context/` and MUST NOT be inlined in the prompt. Drift-guarded by `tests/test_dispatch_prompt_cache_order.py`.
 
 ### Runtime artifact cleanup
 
@@ -343,6 +343,7 @@ Prefer small, consistent changes. Before changing behavior, identify affected co
 | Change | Also check |
 |---|---|
 | Agent or phase prompt | schema/output drift, permissions, model routing, prompt-injection exposure, stale phase/artifact names, Group A/B/C order, prose-style anchor |
+| New `scripts/` module | matching `tests/test_*.py` in the same commit (core logic + failure paths) |
 | Script command, tool use, or path access | `data/required-permissions.yaml`, `tests/test_check_permissions.py` |
 | Schema, fragment, or report structure | `docs/internal/contracts/schema-invariants.md`, contract, schema, producer, renderer, QA, tests |
 | Org-profile schema (`schemas/org-profile.schema.yaml`) or packaging scripts (`scripts/package_internal_plugin.py`, `scripts/smoke_test_package.py`, `scripts/validate_org_profile.py`) | Verify the [example org packaging repo](https://github.com/matthiasrohr/appsec-advisor-org-packaging-example) still builds cleanly — `make package` must pass against the updated upstream |

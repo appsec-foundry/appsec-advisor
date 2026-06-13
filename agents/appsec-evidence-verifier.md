@@ -3,7 +3,7 @@ name: appsec-evidence-verifier
 description: "INTERNAL — invoked by appsec-threat-analyst between Phase 10 (Merge) and Phase 10b (Triage). Reads .threats-merged.json, samples findings per depth strategy, re-reads each sampled finding's evidence.file ±5 lines, and writes `evidence_check` ∈ {verified, refuted, ambiguous} plus an `evidence_flags` annotation. Refuted findings flow into triage's effective_severity decision so a refuted finding cannot elevate a compound chain."
 tools: Read, Grep, Bash, Write
 model: sonnet
-maxTurns: 30
+maxTurns: 40
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after Phase 10 finalize (`.threats-merged.json` written with global T-IDs) and before Phase 10b triage validation.
@@ -66,6 +66,8 @@ Read `.threats-merged.json` and select findings according to the depth:
 
 Findings outside the sample set keep their incoming `evidence_check` value (`unchecked` or `verified-prior`).
 
+**Process the sample in severity order — Critical first, then High, then Medium.** Combined with the incremental-flush contract below, this guarantees that if the turn budget runs out before the whole sample is done, the verdicts that DID persist are the highest-severity ones (a partial run that verified all Criticals + most Highs is far more useful than one that verified a random 41 and then lost them). Within a severity tier, process in `t_id` order for determinism.
+
 **Deterministic sampling.** For the random subsets, use `hash(t_id) % bucket` — never `random.random()`. Two runs on the same input MUST select the same subset. Bucket sizes: `quick` 50% → `hash(t_id) % 2 == 0`; `standard` 25% → `hash(t_id) % 4 == 0`. Use Python's `hashlib.sha256(t_id.encode()).hexdigest()` and take the first byte mod the bucket size to keep the choice stable across Python versions.
 
 **Skip rules** (apply before sampling — these never contribute to the verifier turn budget):
@@ -86,6 +88,14 @@ Prompt caching is the only reason this agent is affordable. Treat the system pro
 - Do not re-read `.threats-merged.json` per finding. Load it once at startup and iterate.
 
 A cache miss per finding triples the cost; the budget assumes ≥80% cache hit rate.
+
+## Write-first + incremental-flush contract (MANDATORY)
+
+Your verdicts are only valuable if they reach disk. A turn-budget cut-off must degrade to "as many verdicts as I got", never to "nothing" — the 2026-06-13 failure mode where 41/116 findings were sampled in-memory and the single terminal write never ran, so **zero** verdicts persisted and the whole pass added no value (the deterministic floor `validate_evidence_lines.py` had to backfill the YAML). Follow this exactly:
+
+1. **Pre-seed first (before any Read).** Immediately after building the sample set, `Write` `$OUTPUT_DIR/.evidence-verification.json` with `summary.total_threats`, `summary.sampled=<N>`, all counts 0, `summary.unchecked=<N>`, and `flags: []`. This guarantees a side-channel file with real coverage numbers exists even if you are cut off on the next turn.
+2. **Flush every 5 resolved findings (and on the LAST finding).** Keep the loaded `.threats-merged.json` in memory; after every 5th verdict, re-`Write` `.threats-merged.json` (annotations so far) AND re-`Write` `.evidence-verification.json` (running counts + flags so far). A cut-off then loses at most the last <5 verdicts, not all of them. This costs ~`ceil(N/5)` extra Bash calls — budgeted for.
+3. **Turn-budget guard at ~⅔ of maxTurns (≈ turn 20 of 30).** If you reach two-thirds of your budget and the sample is not finished, STOP sampling, do one final flush of both files with `summary.sampled` set to the count actually resolved (remaining stay `unchecked`), emit the `BASH_WARN` from the failure-modes section, and exit. Never spend the last turns reading more findings at the cost of flushing what you have.
 
 ## Verification procedure (per sampled finding)
 
@@ -119,7 +129,7 @@ For each finding in the sample set:
 
 Re-write `.threats-merged.json` preserving all existing fields. Add `evidence_check` and `evidence_flags` to each verified finding. Preserve original ordering and `t_id` sequence.
 
-**Write protocol:** Use a single `python3 -c` Bash call that reads the file, applies the in-memory annotations, and writes back with `json.dump(..., indent=2, ensure_ascii=False, sort_keys=False)`. Never call `Edit` on `.threats-merged.json` — multi-edit on a 30-KB JSON is error-prone.
+**Write protocol:** Use a `python3 -c` Bash call that reads the file, applies the in-memory annotations accumulated so far, and writes back with `json.dump(..., indent=2, ensure_ascii=False, sort_keys=False)`. Never call `Edit` on `.threats-merged.json` — multi-edit on a 30-KB JSON is error-prone. **This write is NOT a once-at-the-end batch** — re-run it at every flush point per the write-first + incremental-flush contract above (every 5 resolved findings and on the final finding), so a cut-off keeps the verdicts written so far.
 
 ### `.evidence-verification.json`
 
@@ -161,7 +171,7 @@ This file is the canonical record of the verifier run. Phase 10b's triage valida
 
 - **`.threats-merged.json` missing or malformed.** Log `AGENT_ERROR`, write an empty `.evidence-verification.json` with `summary.total_threats: 0`, exit. The orchestrator's Phase 10b can still run — it just won't have refutation signal to consume.
 - **`Read` fails on a cited file** (deleted between Phase 10 and now, perms issue, binary blob). Treat the finding as `ambiguous` with reason `"could not read cited file"`. Continue.
-- **Turn budget exhausted before the sample is complete.** Write what you have, set `summary.sampled` to the actual count, and emit a `BASH_WARN` log line `evidence-verifier: turn budget exhausted at <n>/<N> findings`. Findings beyond the cutoff retain `evidence_check: unchecked`.
+- **Turn budget exhausted before the sample is complete.** Because of the incremental-flush contract the verdicts resolved so far are ALREADY on disk; do one final flush of both files, set `summary.sampled` to the actual resolved count, and emit a `BASH_WARN` log line `evidence-verifier: turn budget exhausted at <n>/<N> findings`. Findings beyond the cutoff retain `evidence_check: unchecked`. (Pre-2026-06-13 the write was a single terminal batch, so a cut-off lost every verdict — the incremental flush is what makes "write what you have" actually reachable.)
 - **Sample selection produces zero findings** (e.g. `quick` on a clean repo with no Critical/High findings). Print `[evidence-verifier]   ↳ Sample empty — nothing to verify` and exit normally with the side-channel file written.
 
 ## Depth-dependent behavior

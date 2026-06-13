@@ -183,6 +183,121 @@ class TestEvidenceDedup:
 
 
 # ---------------------------------------------------------------------------
+# Systemic config-scan consolidation (2026-06-13)
+# ---------------------------------------------------------------------------
+
+
+def _config_threat(check_id, file, line=1, title=None, risk="Medium"):
+    return {
+        "title": title or f"Some check — {file}",
+        "cwe": "CWE-732",
+        "stride": "Information Disclosure",
+        "risk": risk,
+        "likelihood": risk,
+        "impact": risk,
+        "evidence": {"file": file, "line": line},
+        "source": "config-scan",
+        "config_check_id": check_id,
+        "config_scan_ref": f"{check_id}-{file}-{line}",
+        "architectural_violation": False,
+    }
+
+
+class TestConsolidateConfigChecks:
+    def test_cross_file_repeats_collapse_to_one(self, mt):
+        members = [
+            _config_threat("IAC-010", f"{w}.yml", title=f"Workflow-level permissions block — {w}.yml")
+            for w in ("ci", "codeql", "release", "stale")
+        ]
+        result = mt._consolidate_config_checks(members)
+        assert len(result) == 1
+        s = result[0]
+        assert s["instance_count"] == 4
+        assert len(s["instances"]) == 4
+        assert sorted(s["affected_files"]) == ["ci.yml", "codeql.yml", "release.yml", "stale.yml"]
+        assert s["systemic"] is True
+        # title declassified — no per-file locator
+        assert "ci.yml" not in s["title"]
+        assert s["title"] == "Workflow-level permissions block"
+
+    def test_same_file_multi_line_repeats_collapse(self, mt):
+        # Multi-stage Dockerfile: same check, same file, different lines.
+        members = [
+            _config_threat("IAC-001", "Dockerfile", line=ln, title="Base image must be digest-pinned — Dockerfile")
+            for ln in (1, 12, 23, 40)
+        ]
+        result = mt._consolidate_config_checks(members)
+        assert len(result) == 1
+        s = result[0]
+        assert s["instance_count"] == 4
+        # one affected file, four distinct line instances preserved
+        assert s["affected_files"] == ["Dockerfile"]
+        assert [i["line"] for i in s["instances"]] == [1, 12, 23, 40]
+        assert s["title"] == "Base image must be digest-pinned"
+
+    def test_distinct_checks_stay_separate(self, mt):
+        members = [
+            _config_threat("IAC-001", "Dockerfile", line=1),
+            _config_threat("IAC-001", "Dockerfile", line=9),
+            _config_threat("IAC-015", "ci.yml"),
+            _config_threat("IAC-015", "release.yml"),
+        ]
+        result = mt._consolidate_config_checks(members)
+        # IAC-001 -> 1, IAC-015 -> 1
+        assert len(result) == 2
+        ids = {r["config_check_id"] for r in result}
+        assert ids == {"IAC-001", "IAC-015"}
+
+    def test_singletons_and_missing_id_pass_through_untouched(self, mt):
+        secret = _config_threat("", "lib/insecurity.ts", title="Hardcoded RSA Private Key")
+        secret.pop("config_check_id")  # secret-scan config finding with no check id
+        single = _config_threat("IAC-003", "Dockerfile", title="Missing HEALTHCHECK — Dockerfile")
+        stride = _threat(component_id="x")  # non-config threat
+        result = mt._consolidate_config_checks([secret, single, stride])
+        assert len(result) == 3
+        # none gained instances[]/systemic
+        assert all("instances" not in r for r in result)
+
+    def test_survivor_takes_highest_risk(self, mt):
+        members = [
+            _config_threat("IAC-010", "a.yml", risk="Medium"),
+            _config_threat("IAC-010", "b.yml", risk="High"),
+        ]
+        result = mt._consolidate_config_checks(members)
+        assert len(result) == 1
+        assert result[0]["risk"] == "High"
+
+    def test_non_config_source_never_consolidated(self, mt):
+        # A STRIDE finding that happens to carry a config_check_id-like field
+        # must NOT be touched (guard keys on source == 'config-scan').
+        a = _threat(component_id="x")
+        a["config_check_id"] = "IAC-999"
+        a["source"] = "stride"
+        b = _threat(component_id="y")
+        b["config_check_id"] = "IAC-999"
+        b["source"] = "stride"
+        result = mt._consolidate_config_checks([a, b])
+        assert len(result) == 2
+
+
+class TestDeclassifyConfigTitle:
+    def test_dash_file_locator_stripped(self, mt):
+        assert mt._declassify_config_title("Base image must be digest-pinned — Dockerfile") == "Base image must be digest-pinned"
+        assert mt._declassify_config_title("GITHUB_TOKEN scope minimization — ci.yml") == "GITHUB_TOKEN scope minimization"
+
+    def test_paren_file_locator_stripped(self, mt):
+        assert mt._declassify_config_title("Workflow-level permissions block (ci.yml)") == "Workflow-level permissions block"
+
+    def test_line_suffix_stripped(self, mt):
+        assert mt._declassify_config_title("No --unsafe-perm install flag — Dockerfile:5") == "No --unsafe-perm install flag"
+
+    def test_plain_dash_title_preserved(self, mt):
+        # A hyphenated word / non-file dash tail must survive.
+        assert mt._declassify_config_title("Defense-in-depth missing") == "Defense-in-depth missing"
+        assert mt._declassify_config_title("Cross-Site Scripting") == "Cross-Site Scripting"
+
+
+# ---------------------------------------------------------------------------
 # Scenario-prose local-ref remap (analyzer-local F-id -> global T-id)
 # ---------------------------------------------------------------------------
 

@@ -12682,6 +12682,33 @@ def _build_threat_card(
     loc_part = (f"`{ev_file}" + (f":{ev_line}" if ev_line else "") + "`") if ev_file else "—"
     meta_line = f"**Severity:** {sev_disp}  ·  **Component:** {comp_part}  ·  **Location:** {loc_part}"
 
+    # Instances — for a systemic finding consolidated from N per-file / per-stage
+    # hits of one config check (see merge_threats._consolidate_config_checks),
+    # surface every hit so the single card still names all affected locations.
+    # The Location meta-line above shows the representative hit; this line lists
+    # the full set (capped, with a "+N more" tail to keep the card compact).
+    instances_card = ""
+    _instances = t.get("instances") or []
+    if isinstance(_instances, list) and len(_instances) > 1:
+        _locs: list[str] = []
+        for _ins in _instances:
+            if not isinstance(_ins, dict):
+                continue
+            _f = (_ins.get("file") or "").strip()
+            if not _f:
+                continue
+            _ln = _ins.get("line")
+            _locs.append(f"`{_f}:{_ln}`" if isinstance(_ln, int) and _ln > 0 else f"`{_f}`")
+        # Deduplicate while preserving order (workflows differ by file; a
+        # multi-stage Dockerfile differs by line).
+        _seen: set = set()
+        _locs = [x for x in _locs if not (x in _seen or _seen.add(x))]
+        if _locs:
+            _cap = 8
+            _shown = _locs[:_cap]
+            _tail = f" … (+{len(_locs) - _cap} more)" if len(_locs) > _cap else ""
+            instances_card = f"**Instances ({len(_locs)}):** " + ", ".join(_shown) + _tail
+
     # Root cause — systemic control failure from the attack-class taxonomy
     # (findings of one class share it); fall back to explicit YAML root_cause.
     root_cause = ""
@@ -12762,6 +12789,8 @@ def _build_threat_card(
     # collapse adjacent lines into one paragraph. Blank lines render correctly
     # in GFM, Pandoc and weasyprint alike.
     fields = [meta_line]
+    if instances_card:
+        fields.append(instances_card)
     if issue_card:
         fields.append(issue_card)
     if root_card:

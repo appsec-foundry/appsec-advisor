@@ -3755,7 +3755,17 @@ def _emit_as_html_table(body_rows: list[str], spec) -> list[str]:
     headers, widths, styles, prose_cols = spec
     ncol = len(headers)
     html = ['<table style="table-layout:fixed;width:100%">']
-    html.append("<colgroup>" + "".join(f'<col style="width:{w}">' for w in widths) + "</colgroup>")
+    # Emit BOTH the inline `style` (honoured by VS Code markdown-it + WeasyPrint
+    # PDF) and the deprecated `width` attribute. GitHub's HTML sanitizer strips
+    # `style` on <table>/<col> but allowlists `width`, so without the attribute
+    # §5.1 and §5.2 fall back to content-driven auto-layout on GitHub and lose
+    # their identical column geometry (2026-06-13). `width` keeps the parity
+    # everywhere; renderers that honour `style` ignore the redundant attribute.
+    html.append(
+        "<colgroup>"
+        + "".join(f'<col width="{w}" style="width:{w}">' for w in widths)
+        + "</colgroup>"
+    )
     html.append("<thead><tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr></thead>")
     html.append("<tbody>")
     for row in body_rows:

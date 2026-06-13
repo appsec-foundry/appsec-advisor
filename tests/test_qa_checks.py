@@ -3110,7 +3110,7 @@ def test_attack_surface_tables_to_html_converts_and_pins_widths():
     assert count == 1
     assert '<table style="table-layout:fixed;width:100%">' in out
     # Shared colgroup pins identical widths.
-    assert "".join(f'<col style="width:{w}">' for w in qa._AS_COL_WIDTHS) in out
+    assert "".join(f'<col width="{w}" style="width:{w}">' for w in qa._AS_COL_WIDTHS) in out
     # Cell markdown is pre-rendered to HTML (markdown-it won't parse it inside <table>).
     assert '<a href="#f-007">F-007</a>' in out and "<code>/rest/products/search</code>" in out
     # Route cell carries overflow-wrap so long routes wrap inside the fixed column.
@@ -3132,7 +3132,7 @@ def test_attack_surface_tables_to_html_identical_columns_both_tables():
     out, count = qa._attack_surface_tables_to_html(two)
     assert count == 2
     # Both tables emit the SAME colgroup → identical column widths.
-    assert out.count("".join(f'<col style="width:{w}">' for w in qa._AS_COL_WIDTHS)) == 2
+    assert out.count("".join(f'<col width="{w}" style="width:{w}">' for w in qa._AS_COL_WIDTHS)) == 2
 
 
 def test_attack_surface_tables_to_html_leaves_other_tables_alone():
@@ -3153,7 +3153,7 @@ def test_asset_table_converts_with_nowrap_id_and_reflowed_description():
     out, count = qa._attack_surface_tables_to_html(f"## 4. Assets\n\n{_ASSET_GFM}\n")
     assert count == 1
     assert '<table style="table-layout:fixed;width:100%">' in out
-    assert "".join(f'<col style="width:{w}">' for w in qa._ASSET_COL_WIDTHS) in out
+    assert "".join(f'<col width="{w}" style="width:{w}">' for w in qa._ASSET_COL_WIDTHS) in out
     # A-001 ID cell is nowrap so the hyphen never breaks ("A-\n001").
     assert '<td style="white-space:nowrap">A-001</td>' in out
     # Description (prose col) has its soft-wrap <br/> stripped → reflows clean.

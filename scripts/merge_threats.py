@@ -720,6 +720,92 @@ def _evidence_identity_key(t: dict) -> tuple | None:
     return (f, ln, cwe)
 
 
+def _declassify_config_title(title: str) -> str:
+    """Strip a trailing per-instance file/line locator from a config-scan
+    title so the consolidated systemic finding reads as a class label.
+
+    `"Base image must be digest-pinned — Dockerfile"` → `"Base image must be
+    digest-pinned"`; `"GITHUB_TOKEN scope minimization — ci.yml"` → `"GITHUB_TOKEN
+    scope minimization"`; `"… permissions block (ci.yml)"` → `"… permissions
+    block"`. Conservative: the dash-locator is only stripped when the tail looks
+    like a filename (extension, path, line suffix, or Dockerfile), never on a
+    title that merely contains a dash."""
+    s = (title or "").strip()
+    s = re.sub(r"\s*\([^()]*\)\s*$", "", s)  # trailing "(ci.yml)" parenthetical
+    s = re.sub(
+        r"\s+[—–-]\s+(?:[\w./-]+\.\w+(?::\d+)?|Dockerfile\S*(?::\d+)?)\s*$",
+        "",
+        s,
+    )
+    return s.strip() or (title or "").strip()
+
+
+def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
+    """Collapse N config-scan findings sharing the same ``config_check_id`` into
+    ONE systemic finding, preserving every hit as an ``instances[]`` entry.
+
+    One mechanical IaC/CI check (e.g. IAC-001 "base image digest-pinned") fires
+    once per matching file — or once per FROM stage of a single multi-stage
+    Dockerfile. The coarse ``(CWE, STRIDE)`` candidate key bundles every config
+    finding into one un-mergeable bucket (all share CWE-732 / Information
+    Disclosure), and ``_auto_decision_for_group`` keys its fingerprints on
+    ``evidence.file`` + line, so N different files/lines never auto-merge. The
+    result was the 2026-06-13 juice-shop run shipping 74 config findings that
+    were really ~13 distinct checks.
+
+    This deterministic pass keys purely on ``config_check_id``: same id →
+    one survivor (highest-risk member) carrying ``instances[]`` (each
+    ``{file, line, snippet?}``), a derived ``affected_files[]`` summary,
+    ``instance_count``, and ``systemic: true``. The survivor title is
+    declassified (per-file locator stripped). Config findings WITHOUT a
+    ``config_check_id`` (e.g. secret-scan hits like a hardcoded API key) and
+    all non-config threats pass through untouched.
+
+    Runs in ``cmd_collect`` AFTER ``_dedupe_evidence`` and BEFORE
+    ``_group_candidates`` so the merger never sees the per-instance repeats.
+    Deterministic; no LLM."""
+    from collections import OrderedDict
+
+    buckets: "OrderedDict[str, list[dict]]" = OrderedDict()
+    out: list[dict] = []
+    for t in threats:
+        cid = t.get("config_check_id") if t.get("source") == "config-scan" else None
+        if cid:
+            buckets.setdefault(cid, []).append(t)
+        else:
+            out.append(t)
+
+    for cid, members in buckets.items():
+        if len(members) == 1:
+            out.append(members[0])
+            continue
+        # Highest-risk member is the survivor base (tie → first-seen, stable).
+        survivor = dict(sorted(members, key=lambda m: _risk_rank(m.get("risk")))[0])
+        instances: list[dict] = []
+        files: list[str] = []
+        for m in members:
+            ev = m.get("evidence") or {}
+            f = (ev.get("file") or "").strip()
+            inst: dict = {"file": f, "line": ev.get("line")}
+            sn = (ev.get("snippet") or ev.get("excerpt") or "").strip()
+            if sn:
+                inst["snippet"] = sn
+            instances.append(inst)
+            if f and f not in files:
+                files.append(f)
+        survivor["instances"] = instances
+        survivor["affected_files"] = sorted(files)
+        survivor["instance_count"] = len(instances)
+        survivor["systemic"] = True
+        survivor["title"] = _declassify_config_title(survivor.get("title", ""))
+        # Record the consolidated local_ids for traceability.
+        refs = [m.get("config_scan_ref") for m in members if m.get("config_scan_ref")]
+        if refs:
+            survivor["consolidated_refs"] = refs
+        out.append(survivor)
+    return out
+
+
 def _dedupe_evidence(threats: list[dict]) -> list[dict]:
     """Collapse threats sharing ``(file, line, CWE)`` — the same vulnerability
     seen by two analyzers that disagreed on STRIDE / component / title.
@@ -1180,6 +1266,12 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # (CWE,STRIDE) candidate grouping both miss. Runs here, before grouping, so
     # the merger / finalize path never has to reunite a STRIDE-split pair.
     deduped = _dedupe_evidence(deduped)
+    # Systemic config-scan consolidation (2026-06-13): collapse N hits of one
+    # IaC/CI check (same config_check_id, across many files or many stages of
+    # one Dockerfile) into a single finding whose instances[] lists every hit.
+    # Runs before grouping so the coarse (CWE, STRIDE) merger never faces the
+    # un-mergeable per-instance pile. See _consolidate_config_checks.
+    deduped = _consolidate_config_checks(deduped)
     all_candidates = _group_candidates(deduped)
     candidates, auto_decisions = _split_auto_decisions(all_candidates)
 
@@ -1295,11 +1387,21 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    c = sub.add_parser("collect", help="Flatten .stride-*.json, exact-dedup, group candidates.")
+    c = sub.add_parser(
+        "collect",
+        help="Flatten .stride-*.json, exact-dedup, group candidates.",
+        epilog="Takes ONLY --output-dir. Inputs (.stride-*.json, .config-scan-findings.json, "
+        ".source-auth-findings.json) are auto-discovered from it — there is no --stride-files flag.",
+    )
     c.add_argument("--output-dir", required=True, help="Directory containing .stride-*.json files.")
     c.set_defaults(func=cmd_collect)
 
-    f = sub.add_parser("finalize", help="Apply decisions, assign T-IDs, write .threats-merged.json.")
+    f = sub.add_parser(
+        "finalize",
+        help="Apply decisions, assign T-IDs, write .threats-merged.json.",
+        epilog="Takes ONLY --output-dir. Reads .merge-candidates.json (and optionally "
+        ".merge-decisions.json) from it — there is no --decisions flag.",
+    )
     f.add_argument(
         "--output-dir",
         required=True,

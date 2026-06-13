@@ -44,8 +44,8 @@ EXPECTED_MAX_TURNS = {
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
-    "appsec-evidence-verifier": 30,  # M2: Phase 10a evidence re-check
-    "appsec-abuse-case-verifier": 24,  # Phase 10c: one agent per abuse-case candidate (20→24 2026-06-12: complex IDOR/middleware-ordering traces hit the 20-turn ceiling mid-investigation, leaving the untouched pre-seed verdict)
+    "appsec-evidence-verifier": 40,  # Phase 10a evidence re-check (30→40 2026-06-13: per-finding incremental flush + Critical→High→Medium ordering need headroom to finish standard-depth samples; cut-off now degrades gracefully)
+    "appsec-abuse-case-verifier": 28,  # Phase 10c: one agent per abuse-case candidate (24→28 2026-06-13: complex IDOR/middleware-ordering traces still hit 24 mid-investigation; paired with write-before-investigate per-step contract)
     "appsec-fragment-fixer": 30,  # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE)
     "appsec-reviewer": 40,  # embeddable diff-scoped security reviewer (requirements or best-practices); skill/CLI/direct
     "appsec-eval-judge": 30,  # dev/test semantic-quality judge for the eval-threat-model skill (JUDGE/VERIFY modes)

@@ -586,7 +586,7 @@ When `WRAP_UP=1` (the flag exists), follow this wrap-up sequence — **do not** 
    ```
 2. **Take inventory** of what exists on disk: which `.stride-<id>.json` files are present (some may carry their own `partial:true`), whether `.threats-merged.json` exists, whether `.triage-flags.json` exists.
 3. **Skip remaining work**, but still produce a usable baseline:
-   - **Missing `.threats-merged.json`?** Run `scripts/merge_threats.py` inline (deterministic, ~1 turn) with whatever stride outputs are on disk — partial input is acceptable; the merger gracefully degrades.
+   - **Missing `.threats-merged.json`?** Run `scripts/merge_threats.py collect --output-dir "$OUTPUT_DIR"` then `scripts/merge_threats.py finalize --output-dir "$OUTPUT_DIR"` (deterministic, ~1 turn). Each subcommand takes ONLY `--output-dir` — the stride/config/source-auth inputs are auto-discovered from it; there is no `--stride-files` or `--decisions` flag. Partial input is acceptable; the merger gracefully degrades.
    - **Missing `.triage-flags.json`?** Skip Phase 10b entirely. The triage flags are advisory; their absence is captured in `meta.incomplete`.
 4. **Run Phase 11 Substeps 1–3** as defined in `phase-group-finalization.md`, **with three additional yaml fields under `meta:`**:
    ```yaml
