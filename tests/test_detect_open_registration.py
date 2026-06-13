@@ -8,12 +8,17 @@ admin-create-user false-positive guards.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from detect_open_registration import detect  # noqa: E402
+import detect_open_registration as D  # noqa: E402
+
+detect = D.detect
 
 
 def _route(path, method="POST", authn="unknown", authz="unknown", mgmt=False):
@@ -24,6 +29,14 @@ def _route(path, method="POST", authn="unknown", authz="unknown", mgmt=False):
         "authz_signal": authz,
         "management_surface": mgmt,
     }
+
+
+def _write_yaml(output_dir: Path, data) -> None:
+    (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _read_yaml(output_dir: Path):
+    return yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
 
 
 class TestAttackSurfacePrimary:
@@ -46,6 +59,11 @@ class TestAttackSurfacePrimary:
         ok, reason = detect(data)
         assert ok is False
         assert "pinned" in reason
+
+    def test_non_dict_attack_surface_entries_are_ignored(self):
+        ok, reason = detect({"attack_surface": ["not-an-entry"]})
+        assert ok is False
+        assert "no unauthenticated registration route" in reason
 
 
 class TestRouteInventoryFallback:
@@ -98,3 +116,49 @@ class TestFalsePositiveGuards:
         ok, reason = detect({"attack_surface": []}, [])
         assert ok is False
         assert "no unauthenticated registration route" in reason
+
+
+class TestMatcherEdges:
+    def test_empty_and_non_post_entries_do_not_match(self):
+        assert D._is_registration_entry("") is False
+        assert D._is_registration_entry("GET /register") is False
+        assert D._is_registration_entry("POST /users/create") is True
+
+
+class TestCli:
+    def test_usage_missing_yaml_parse_error_and_non_mapping_yaml(self, tmp_path, capsys):
+        assert D.main([]) == 2
+        assert "Usage:" in capsys.readouterr().err
+
+        assert D.main([str(tmp_path)]) == 1
+        assert "no yaml" in capsys.readouterr().err
+
+        (tmp_path / "threat-model.yaml").write_text("attack_surface: [\n", encoding="utf-8")
+        assert D.main([str(tmp_path)]) == 1
+        assert "parse failed" in capsys.readouterr().err
+
+        _write_yaml(tmp_path, ["not-a-mapping"])
+        assert D.main([str(tmp_path)]) == 1
+
+    def test_main_uses_route_inventory_and_repairs_non_dict_meta(self, tmp_path, capsys):
+        _write_yaml(tmp_path, {"meta": "not-a-dict", "attack_surface": []})
+        (tmp_path / ".route-inventory.json").write_text(
+            json.dumps({"routes": [_route("/api/Users", authn="middleware_present")]}),
+            encoding="utf-8",
+        )
+
+        assert D.main([str(tmp_path)]) == 0
+
+        data = _read_yaml(tmp_path)
+        assert data["meta"] == {"open_user_registration": True}
+        assert "open_user_registration=True" in capsys.readouterr().out
+
+    def test_main_ignores_unreadable_route_inventory(self, tmp_path, capsys):
+        _write_yaml(tmp_path, {"attack_surface": []})
+        (tmp_path / ".route-inventory.json").write_text("{not-json", encoding="utf-8")
+
+        assert D.main([str(tmp_path)]) == 0
+
+        data = _read_yaml(tmp_path)
+        assert data["meta"]["open_user_registration"] is False
+        assert "open_user_registration=False" in capsys.readouterr().out

@@ -111,6 +111,8 @@ def detect(yaml_data: dict, routes: list | None = None) -> tuple[bool, str]:
     curated attack-surface rows, so the heatmap actor-collapse never fired.
     """
     meta = yaml_data.get("meta") or {}
+    if not isinstance(meta, dict):
+        meta = {}
     pinned = meta.get("open_user_registration_pinned")
     if isinstance(pinned, bool):
         return pinned, f"pinned in meta (operator override = {pinned})"
