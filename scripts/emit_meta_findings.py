@@ -22,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -61,6 +62,19 @@ META_CATEGORIES: list[dict] = [
 ]
 
 
+_MF_ID_RE = re.compile(r"^MF-(\d{3,})$")
+
+
+def _next_counter_after_manual(manual: list[dict]) -> int:
+    highest = 0
+    for entry in manual:
+        mid = (entry.get("id") or "").strip()
+        match = _MF_ID_RE.fullmatch(mid)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
 def _emit_meta_findings(yaml_data: dict) -> list[dict]:
     """Compute the meta_findings[] list from the current threats[] population.
 
@@ -88,7 +102,7 @@ def _emit_meta_findings(yaml_data: dict) -> list[dict]:
     manual = [m for m in existing if isinstance(m, dict) and m.get("manual")]
 
     out: list[dict] = list(manual)
-    counter = len(manual) + 1
+    counter = _next_counter_after_manual(manual)
     for spec in META_CATEGORIES:
         src = spec["source_match"]
         tids = sorted(by_source.get(src, []))
@@ -134,7 +148,7 @@ def main(argv: list[str]) -> int:
     meta_findings = _emit_meta_findings(data)
     if meta_findings:
         data["meta_findings"] = meta_findings
-    elif "meta_findings" in data and not data["meta_findings"]:
+    else:
         # Drop empty list to keep the YAML clean.
         data.pop("meta_findings", None)
 

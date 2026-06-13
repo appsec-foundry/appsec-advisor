@@ -116,12 +116,16 @@ def _clear_prior_auto_mitigations(data: dict) -> None:
     if not isinstance(items, list):
         return
     surviving = [m for m in items if not (isinstance(m, dict) and m.get("auto_emitted") is True)]
-    # Also unlink dropped M-NNNs from threats[].mitigations[].
+    # Also unlink dropped M-NNNs from both the canonical threat-side field and
+    # the legacy alias some older runs may still carry.
     dropped_ids = {(m.get("id") or "").strip() for m in items if isinstance(m, dict) and m.get("auto_emitted") is True}
     if dropped_ids:
         for t in data.get("threats") or []:
-            if isinstance(t, dict) and isinstance(t.get("mitigations"), list):
-                t["mitigations"] = [mid for mid in t["mitigations"] if mid not in dropped_ids]
+            if not isinstance(t, dict):
+                continue
+            for field in ("mitigation_ids", "mitigations"):
+                if isinstance(t.get(field), list):
+                    t[field] = [mid for mid in t[field] if mid not in dropped_ids]
     data["mitigations"] = surviving
 
 
