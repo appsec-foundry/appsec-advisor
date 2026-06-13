@@ -45,6 +45,13 @@ def looks_like_full_schema_duplication(block: str) -> bool:
     """Return True iff a ```yaml``` fenced block appears to be a wholesale
     re-inline of the threat-model.yaml schema, as measured by presence of
     several distinctive top-level sections."""
+    # A changelog *entry* example is a YAML list item (`- version:`); the schema
+    # root is a mapping (meta/components/threats/…), never a list. Such an entry
+    # legitimately nests section-named keys (added.mitigations, added.threats,
+    # added.attack_surface, …) so it can hit the signal threshold below without
+    # being a schema dump. Exempt it — it is the canonical changelog example.
+    if re.match(r"\s*-\s*version\s*:", block):
+        return False
     # Distinctive section headers that the schema file defines
     signals = [
         r"^\s*schema_version\s*:",

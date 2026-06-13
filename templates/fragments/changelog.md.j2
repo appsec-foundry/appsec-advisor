@@ -6,7 +6,8 @@
     Data shape per entry (see schemas/threat-model.output.schema.yaml):
       version, date, mode, baseline_sha, current_sha
       changed_files, changed_lines ({insertions, deletions})
-      added:    { threats: [T-NNN,...], components: [C-NN,...], attack_surface: [E-NN,...] }
+      added:    { threats: [T-NNN,...], mitigations: [M-NNN,...],
+                  abuse_cases: [AC-NNN,...], components: [C-NN,...], attack_surface: [E-NN,...] }
       changed:  { threats: [T-NNN,...], notes_by_id:   { T-NNN: "..." } }
       resolved: { threats: [T-NNN,...], reason_by_id:  { T-NNN: "..." } }
       reanalyzed_components, carried_forward_components, note
@@ -31,6 +32,8 @@ _Append-only history of assessment runs. Most recent first._
 {%- set changed       = entry.changed or {} -%}
 {%- set resolved      = entry.resolved or {} -%}
 {%- set a_t           = added.threats or [] -%}
+{%- set a_m           = added.mitigations or [] -%}
+{%- set a_ac          = added.abuse_cases or [] -%}
 {%- set a_c           = added.components or [] -%}
 {%- set a_e           = added.attack_surface or [] -%}
 {%- set c_t           = changed.threats or [] -%}
@@ -39,6 +42,10 @@ _Append-only history of assessment runs. Most recent first._
 {%- set r_r           = resolved.reason_by_id or {} -%}
 {%- set a_t_shown     = a_t[:_max] -%}
 {%- set a_t_extra     = (a_t|length) - (a_t_shown|length) -%}
+{%- set a_m_shown     = a_m[:_max] -%}
+{%- set a_m_extra     = (a_m|length) - (a_m_shown|length) -%}
+{%- set a_ac_shown    = a_ac[:_max] -%}
+{%- set a_ac_extra    = (a_ac|length) - (a_ac_shown|length) -%}
 {%- set c_t_shown     = c_t[:_max] -%}
 {%- set c_t_extra     = (c_t|length) - (c_t_shown|length) -%}
 {%- set r_t_shown     = r_t[:_max] -%}
@@ -73,6 +80,12 @@ _Append-only history of assessment runs. Most recent first._
 {%- endif %}
 {%- if r_t %}
 - **Resolved:** {{ r_t|length }} {{ 'threat' if r_t|length == 1 else 'threats' }} ({% for tid in r_t_shown %}[{{ tid }}](#{{ tid|lower }}){% if tid in r_r %}: "{{ r_r[tid] }}"{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if r_t_extra > 0 %}, +{{ r_t_extra }} more{% endif %})
+{%- endif %}
+{%- if a_m %}
+- **New mitigations:** {{ a_m|length }} ({% for mid in a_m_shown %}[{{ mid }}](#{{ mid|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if a_m_extra > 0 %}, +{{ a_m_extra }} more{% endif %})
+{%- endif %}
+{%- if a_ac %}
+- **New abuse cases:** {{ a_ac|length }} ({% for ac in a_ac_shown %}[{{ ac }}](#{{ ac|lower }}){% if not loop.last %}, {% endif %}{% endfor %}{% if a_ac_extra > 0 %}, +{{ a_ac_extra }} more{% endif %})
 {%- endif %}
 {%- if a_c or a_e %}
 - **Architecture:**{% if a_c %} +{{ a_c|length }} {{ 'component' if a_c|length == 1 else 'components' }} ({{ a_c|join(', ') }}){% endif %}{% if a_c and a_e %},{% endif %}{% if a_e %} +{{ a_e|length }} {{ 'entry point' if a_e|length == 1 else 'entry points' }} ({{ a_e|join(', ') }}){% endif %}

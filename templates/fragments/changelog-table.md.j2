@@ -17,8 +17,11 @@
     Data shape per entry (see schemas/threat-model.output.schema.yaml):
       version, date, mode, baseline_sha, current_sha, delta_basis,
       threat_count, previous_date, previous_threat_count, fingerprints[]
+      mitigation_fingerprints[] (builder), abuse_case_fingerprints[] (patched
+        in late by render_abuse_cases.py — abuse cases postdate the builder)
       changed_files, changed_lines ({insertions, deletions})
-      added:    { threats: [T-NNN,...], components: [...], attack_surface: [...] }
+      added:    { threats: [T-NNN,...], mitigations: [M-NNN,...],
+                  abuse_cases: [AC-NNN,...], components: [...], attack_surface: [...] }
       changed:  { threats: [T-NNN,...] }
       resolved: { threats: [T-NNN,...], fingerprints: ["comp|cwe|title",...], reason_by_id: {...} }
       reanalyzed_components, carried_forward_components, note
@@ -101,7 +104,9 @@ _Append-only history of assessment runs. Most recent first._
 {%- if changelog -%}
 {%- set latest = changelog[0] -%}
 {%- set latest_run = changelog | length -%}
-{%- set la_t   = (latest.added.threats     if latest.added    else []) | default([]) -%}
+{%- set la_t   = (latest.added.threats      if latest.added   else []) | default([]) -%}
+{%- set la_m   = (latest.added.mitigations  if latest.added   else []) | default([]) -%}
+{%- set la_ac  = (latest.added.abuse_cases  if latest.added   else []) | default([]) -%}
 {%- set lc_t   = (latest.changed.threats   if latest.changed  else []) | default([]) -%}
 {%- set lr_t   = (latest.resolved.threats  if latest.resolved else []) | default([]) -%}
 {%- set lr_fp  = (latest.resolved.fingerprints if latest.resolved else []) | default([]) -%}
@@ -128,8 +133,14 @@ _Append-only history of assessment runs. Most recent first._
 {% elif lr_fp %}
 - **Resolved ({{ lr_fp|length }}):** {% for fp in lr_fp %}{%- set fpp = fp.split('|') %}{{ (fpp[2] if fpp|length > 2 else fp) | title }}{% if fpp|length > 1 and fpp[1] %} ({{ fpp[1] }}){% endif %}{{ "; " if not loop.last }}{% endfor %} _(identified by fingerprint — T-IDs are not stable across full runs)_
 {% endif -%}
-{% if not (la_t or lc_t or lr_t or lr_fp) %}
-_No threat-level changes since the previous run (v{{ latest_run - 1 }})._
+{% if la_m %}
+- **New mitigations ({{ la_m|length }}):** {% for mid in la_m %}[{{ mid }}](#{{ mid|lower }}){{ ", " if not loop.last }}{% endfor %}
+{% endif -%}
+{% if la_ac %}
+- **New abuse cases ({{ la_ac|length }}):** {% for ac in la_ac %}[{{ ac }}](#{{ ac|lower }}){{ ", " if not loop.last }}{% endfor %}
+{% endif -%}
+{% if not (la_t or lc_t or lr_t or lr_fp or la_m or la_ac) %}
+_No threat-, mitigation-, or abuse-case-level changes since the previous run (v{{ latest_run - 1 }})._
 {% endif -%}
 {%- endif -%}
 {%- endif -%}

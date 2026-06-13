@@ -1198,8 +1198,12 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
   reanalyzed_components: [<id>, ...]
   carried_forward_components: [<id>, ...]
   low_risk_skipped_components: [<id>, ...]
+  mitigation_fingerprints: [<title-fp>, ...]   # machine-derived; diff store for the NEXT run's added.mitigations
+  abuse_case_fingerprints: [<title-fp>, ...]    # patched in by render_abuse_cases.py (abuse cases postdate the builder)
   added:
     threats: [<T-ID>, ...]
+    mitigations: [<M-ID>, ...]                  # machine-derived: M-IDs whose title is new vs the prior entry
+    abuse_cases: [<AC-ID>, ...]                 # machine-derived (render_abuse_cases.py): viable cases new vs prior entry
     components: [<id>, ...]
     attack_surface: [<E-ID>, ...]
   changed:
@@ -1211,6 +1215,8 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
     reason_by_id:
       <T-ID>: "<reason>"
 ```
+
+> `added.mitigations` / `added.abuse_cases` and the two `*_fingerprints` stores are **not hand-authored** — `build_threat_model_yaml.py` derives the mitigation delta (and persists `mitigation_fingerprints`) and `render_abuse_cases.py` patches in the abuse-case delta after §9 is rendered. Identity is the location-stripped title (M-IDs and AC-IDs renumber across runs), diffed against the prior entry's stored fingerprints — the same mechanism threats use.
 
 **When `WRITE_MODE=full` AND `HAS_BASELINE=true`** (this is the main case for `--full` overwrites — it now produces a fully detailed changelog just like incremental, so the user can see exactly what changed):
 
@@ -1230,8 +1236,12 @@ Compose the new changelog entry in memory based on the mode and baseline presenc
   note: "full rebuild"                    # optional, see note guidance below
   reanalyzed_components: [<id>, ...]      # all current components
   carried_forward_components: []           # always empty for full
+  mitigation_fingerprints: [<title-fp>, ...]
+  abuse_case_fingerprints: [<title-fp>, ...]   # patched in by render_abuse_cases.py
   added:
     threats: [<T-ID>, ...]                 # T-IDs absent from baseline
+    mitigations: [<M-ID>, ...]             # M-IDs whose title is new vs the prior entry
+    abuse_cases: [<AC-ID>, ...]            # viable abuse cases new vs the prior entry
     components: [<id>, ...]
     attack_surface: [<E-ID>, ...]
   changed:

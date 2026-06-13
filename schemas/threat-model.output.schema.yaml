@@ -170,6 +170,16 @@ properties:
         low_risk_skipped_components:
           type: array
           items: { type: string }
+        # Per-run fingerprint stores enabling the self-contained delta a later
+        # run diffs against (see threats `fingerprints` above). `mitigation_*`
+        # is written by build_threat_model_yaml.py; `abuse_case_*` is patched in
+        # by render_abuse_cases.py (abuse cases are produced after the builder).
+        mitigation_fingerprints:
+          type: array
+          items: { type: string }
+        abuse_case_fingerprints:
+          type: array
+          items: { type: string }
         added:
           type: object
           additionalProperties: true
@@ -179,6 +189,16 @@ properties:
               items:
                 type: string
                 pattern: "^T-\\d{3,}$"
+            mitigations:
+              type: array
+              items:
+                type: string
+                pattern: "^M-\\d{3,}$"
+            abuse_cases:
+              type: array
+              items:
+                type: string
+                pattern: "^(AC-T|AC|ORG-AC|REPO-AC)-\\d{3,}$"
             components:
               type: array
               items: { type: string }

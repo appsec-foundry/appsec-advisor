@@ -478,6 +478,67 @@ def build_catalog_evaluation(output_dir: Path) -> list[dict]:
     return sorted(rows, key=lambda r: r["id"] or "")
 
 
+def _abuse_fp(m: dict) -> str:
+    """Stable cross-run identity for an abuse case: its lowercased title.
+    Mirrors the threat/mitigation fingerprint contract in
+    build_threat_model_yaml.py — AC-IDs of analysis-discovered cases can
+    renumber between runs, so the changelog diffs by title, persisted per
+    entry as `abuse_case_fingerprints[]`."""
+    return (m.get("title") or m.get("id") or "").strip().lower()
+
+
+def enrich_changelog_with_abuse_cases(output_dir: Path, models: list[dict]) -> None:
+    """Patch the latest `threat-model.yaml` changelog entry with the abuse cases
+    found this run (`added.abuse_cases`) plus this run's `abuse_case_fingerprints`.
+
+    Abuse cases (AC-NNN) are produced HERE, after `build_threat_model_yaml.py`
+    has already written the changelog entry — so the builder cannot record them.
+    This pass diffs the current viable cases against the PRIOR changelog entry's
+    stored fingerprints (the same self-contained-delta mechanism the builder uses
+    for threats and mitigations) and writes the result back into the yaml's
+    newest entry. Idempotent and non-fatal: any error leaves the changelog as the
+    builder wrote it (abuse cases simply won't appear in the delta)."""
+    tm_path = output_dir / "threat-model.yaml"
+    if not tm_path.exists():
+        return
+    try:
+        tm = yaml.safe_load(tm_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return
+    changelog = tm.get("changelog")
+    if not isinstance(changelog, list) or not changelog or not isinstance(changelog[0], dict):
+        return
+
+    cur = [(m.get("id"), _abuse_fp(m)) for m in models if m.get("id")]
+    cur_fps = [fp for _, fp in cur]
+    prior = changelog[1] if len(changelog) > 1 and isinstance(changelog[1], dict) else None
+    prior_fps = set((prior or {}).get("abuse_case_fingerprints") or [])
+    if prior is None:
+        added = [cid for cid, _ in cur]  # first run with abuse cases — all are new
+    elif not prior_fps:
+        added = []  # prior entry predates abuse-case fingerprints → no baseline
+    else:
+        added = sorted(cid for cid, fp in cur if fp not in prior_fps)
+
+    latest = changelog[0]
+    latest["abuse_case_fingerprints"] = cur_fps
+    added_block = latest.get("added")
+    if not isinstance(added_block, dict):
+        added_block = {}
+        latest["added"] = added_block
+    added_block["abuse_cases"] = added
+
+    # Re-dump with the SAME params build_threat_model_yaml.py uses, so the file
+    # stays byte-consistent with what the builder would have produced.
+    tmp = tm_path.with_name(tm_path.name + ".tmp")
+    tmp.write_text(
+        yaml.safe_dump(tm, sort_keys=False, allow_unicode=True, default_flow_style=False, width=120),
+        encoding="utf-8",
+    )
+    tmp.replace(tm_path)
+    sys.stderr.write(f"RENDER_ABUSE_CASES: changelog enriched — +{len(added)} abuse case(s) this run\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Render the §9 Abuse Cases fragment.")
     parser.add_argument("--output-dir", required=True)
@@ -517,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
     sys.stderr.write(
         f"RENDER_ABUSE_CASES: wrote {len(models)} viable + {len(catalog_rows)} not-applicable case(s) to {md_path}\n"
     )
+    enrich_changelog_with_abuse_cases(output_dir, models)
     return 0
 
 

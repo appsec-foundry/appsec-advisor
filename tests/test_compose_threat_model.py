@@ -1768,7 +1768,7 @@ def test_changelog_detail_block_reports_no_change_on_empty_iterative(tmp_path: P
     )
     rendered, _ = compose.render(CONTRACT, out)
     section = _extract_changelog_section(rendered)
-    assert "No threat-level changes since the previous run" in section
+    assert "No threat-, mitigation-, or abuse-case-level changes since the previous run" in section
 
 
 def test_changelog_table_code_column_combines_files_and_lines(tmp_path: Path) -> None:

@@ -263,3 +263,46 @@ def test_main_no_models_removes_stale_fragment(tmp_path: Path):
     rc = rac.main(["--output-dir", str(tmp_path)])
     assert rc == 0
     assert not (frag / "abuse-cases.md").exists()
+
+
+# ─── changelog enrichment with abuse cases (added 2026-06-13) ───────────────
+# Abuse cases (AC-T-NNN / AC-NNN / ORG-AC-NNN / REPO-AC-NNN) are produced by this script AFTER build_threat_model_yaml
+# wrote the changelog, so they cannot be recorded by the builder. enrich_*
+# patches the newest changelog entry with `added.abuse_cases` (diffed against
+# the prior entry's `abuse_case_fingerprints`) plus this run's fingerprints.
+
+
+def _write_tm(tmp_path: Path, changelog: list) -> Path:
+    p = tmp_path / "threat-model.yaml"
+    p.write_text(yaml.safe_dump({"changelog": changelog}, sort_keys=False), encoding="utf-8")
+    return p
+
+
+def test_enrich_changelog_first_run_all_added(tmp_path: Path):
+    _write_tm(tmp_path, [{"version": 1, "date": "2026-06-13", "mode": "full", "added": {"threats": []}}])
+    models = [{"id": "AC-T-001", "title": "Forge admin JWT"}, {"id": "AC-T-002", "title": "Exfiltrate user table"}]
+    rac.enrich_changelog_with_abuse_cases(tmp_path, models)
+    tm = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    e = tm["changelog"][0]
+    assert e["added"]["abuse_cases"] == ["AC-T-001", "AC-T-002"]
+    assert e["abuse_case_fingerprints"] == ["forge admin jwt", "exfiltrate user table"]
+
+
+def test_enrich_changelog_diffs_against_prior_entry(tmp_path: Path):
+    # changelog[1] = prior run (stored fps); changelog[0] = current (to enrich).
+    prior = {"version": 1, "date": "2026-06-12", "mode": "full", "abuse_case_fingerprints": ["forge admin jwt"]}
+    current = {"version": 1, "date": "2026-06-13", "mode": "incremental", "added": {"threats": ["T-009"]}}
+    _write_tm(tmp_path, [current, prior])
+    # AC-T-005 carries the prior title (id renumbered); AC-T-006 is genuinely new.
+    models = [{"id": "AC-T-005", "title": "Forge admin JWT"}, {"id": "AC-T-006", "title": "Chain SSRF to RCE"}]
+    rac.enrich_changelog_with_abuse_cases(tmp_path, models)
+    tm = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    e = tm["changelog"][0]
+    assert e["added"]["abuse_cases"] == ["AC-T-006"]
+    assert e["added"]["threats"] == ["T-009"]  # builder-written threats preserved
+
+
+def test_enrich_changelog_no_yaml_is_noop(tmp_path: Path):
+    # Missing threat-model.yaml must not raise (non-fatal contract).
+    rac.enrich_changelog_with_abuse_cases(tmp_path, [{"id": "AC-T-001", "title": "x"}])
+    assert not (tmp_path / "threat-model.yaml").exists()

@@ -166,6 +166,15 @@ def _fp_str(t: dict) -> str:
     return f"{comp}|{cwe}|{title}"
 
 
+def _mitigation_fp(m: dict) -> str:
+    """Stable cross-run identity for a mitigation: its location-stripped,
+    lowercased title. M-IDs are derived from threats and renumber every run
+    (merge_threats restarts numbering), so — exactly like threats are diffed by
+    `_fp_str` rather than T-ID — the changelog diffs mitigations by this title
+    fingerprint, persisted per entry as `mitigation_fingerprints[]`."""
+    return re.sub(r"\s*\([^()]*:\d+\)\s*$", "", (m.get("title") or "")).strip().lower()
+
+
 def _changelog_note(
     *,
     delta_basis: str,
@@ -1127,6 +1136,7 @@ def build_changelog(
     plugin_root: Path,
     current_sha: str | None = None,
     recon_info: dict | None = None,
+    mitigations: list[dict] | None = None,
 ) -> list[dict]:
     """Prepend a new entry to the prior changelog history (newest first).
 
@@ -1204,6 +1214,21 @@ def build_changelog(
         carried_components = []
         resolved_block = {"threats": [], "reason_by_id": {}}
 
+    # Mitigation-level delta (added 2026-06-13). Mirrors the threat fingerprint
+    # mechanism above: every entry stores its mitigation fingerprints (normalized
+    # titles) and a run diffs its current mitigations against the PRIOR entry's
+    # stored set. Independent of the threat `delta_basis` — a self-contained
+    # fingerprint diff that works uniformly across full/incremental runs.
+    cur_mits = [(m.get("id"), _mitigation_fp(m)) for m in (mitigations or []) if m.get("id")]
+    cur_mit_fps = [fp for _, fp in cur_mits]
+    prior_mit_fps = set((prior_entry or {}).get("mitigation_fingerprints") or [])
+    if prior_entry is None:
+        added_mitigations = [mid for mid, _ in cur_mits]  # first run — all are new
+    elif not prior_mit_fps:
+        added_mitigations = []  # legacy prior entry predates mitigation fps → no baseline
+    else:
+        added_mitigations = sorted(mid for mid, fp in cur_mits if fp not in prior_mit_fps)
+
     note = _changelog_note(
         delta_basis=delta_basis,
         prior_entry=prior_entry,
@@ -1230,6 +1255,7 @@ def build_changelog(
         # Delta bookkeeping (new 2026-06-13).
         "threat_count": cur_n,
         "fingerprints": cur_fps,
+        "mitigation_fingerprints": cur_mit_fps,
         "delta_basis": delta_basis,
         "previous_date": (prior_entry or {}).get("date"),
         "previous_threat_count": prior_n,
@@ -1237,8 +1263,12 @@ def build_changelog(
         "carried_forward_components": carried_components,
         "added": {
             "threats": added_threats,
+            "mitigations": added_mitigations,
             "components": sorted({c.get("id", "") for c in components if c.get("id")}),
             "attack_surface": [],
+            # `abuse_cases` is patched in late by render_abuse_cases.py — abuse
+            # cases are produced AFTER this builder runs and are not in the yaml
+            # at changelog-build time. See enrich_changelog_with_abuse_cases().
         },
         "changed": {"threats": []},
         "resolved": resolved_block,
@@ -1383,6 +1413,7 @@ def main() -> int:
         args.plugin_root,
         current_sha=(meta.get("git") or {}).get("commit_sha"),
         recon_info=recon_info,
+        mitigations=mitigations,
     )
 
     # Compose final document

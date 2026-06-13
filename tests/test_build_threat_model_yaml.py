@@ -645,6 +645,67 @@ def test_changelog_none_history_treated_as_empty(tmp_path):
     assert cl[0]["current_sha"] is None
 
 
+# ─── mitigation-level changelog delta (added 2026-06-13) ───────────────────
+# Newly-added mitigation IDs are recorded alongside threats. Identity is the
+# mitigation title (M-IDs renumber every run), persisted per entry as
+# `mitigation_fingerprints[]` and diffed against the prior entry's stored set —
+# the same self-contained mechanism threats use.
+
+_CL_MITS_1 = [{"id": "M-001", "title": "Use parameterized queries"}]
+
+
+def test_changelog_mitigation_first_run_all_added(tmp_path):
+    b = _load()
+    cl = b.build_changelog(
+        _CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", mitigations=_CL_MITS_1
+    )
+    e = cl[0]
+    assert e["added"]["mitigations"] == ["M-001"]
+    assert e["mitigation_fingerprints"] == ["use parameterized queries"]
+
+
+def test_changelog_mitigation_delta_only_new_title(tmp_path):
+    b = _load()
+    run1 = b.build_changelog(
+        _CL_CFG,
+        _CL_THREATS,
+        _CL_COMPS,
+        [],
+        None,
+        tmp_path,
+        current_sha="sha-1",
+        mitigations=[{"id": "M-001", "title": "Use parameterized queries (routes/search.ts:12)"}],
+    )
+    # Run 2: M-001 persists by TITLE even though its id renumbered to M-007;
+    # a genuinely-new mitigation (different title) is the only "added" one.
+    mits2 = [
+        {"id": "M-007", "title": "Use parameterized queries (routes/search.ts:44)"},  # same title → carried
+        {"id": "M-002", "title": "Enforce output encoding"},  # new title → added
+    ]
+    threats2 = [
+        {"id": "T-001", "component": "comp-a"},
+        {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"},
+    ]
+    run2 = b.build_changelog(
+        _CL_CFG, threats2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2", mitigations=mits2
+    )
+    assert run2[0]["added"]["mitigations"] == ["M-002"]
+
+
+def test_changelog_mitigation_legacy_prior_no_baseline(tmp_path):
+    b = _load()
+    # A prior entry that predates mitigation fingerprints → cannot diff, so we
+    # honestly report no added mitigations rather than marking all of them new.
+    legacy_prior = [
+        {"version": 1, "date": "2026-06-12", "mode": "full", "added": {"threats": ["T-001"]}}
+    ]
+    cl = b.build_changelog(
+        _CL_CFG, _CL_THREATS, _CL_COMPS, [], legacy_prior, tmp_path, current_sha="sha-2", mitigations=_CL_MITS_1
+    )
+    assert cl[0]["added"]["mitigations"] == []
+    assert cl[0]["mitigation_fingerprints"] == ["use parameterized queries"]
+
+
 # ─── Incremental depth-downgrade reconciliation (B1+B2) ────────────────────
 # reconcile_incremental_threats re-injects prior threats of RE-ANALYZED
 # components that a shallower re-scan dropped without an affirmative fix, and
