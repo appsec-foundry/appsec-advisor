@@ -5266,7 +5266,17 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         "top threats per component. The in-figure legend on the right explains the attack scenarios, "
         "severity dots and symbols."
     )
-    if getattr(ctx, "embed_figures", False):
+    # Embed inline when the CLI flag is set OR the skill persisted the choice in
+    # .skill-config.json — the latter lets `/create-threat-model --embed-figures`
+    # work through the renderer/recompose paths without threading a flag to each.
+    embed = bool(getattr(ctx, "embed_figures", False))
+    if not embed:
+        try:
+            _sc = json.loads((ctx.output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+            embed = bool(_sc.get("embed_figures"))
+        except (OSError, ValueError):
+            embed = False
+    if embed:
         # Inline as a base64 data URI → self-contained Markdown (renders in
         # VS Code / pandoc / PDF; NOT on GitHub, which strips data: URIs).
         b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")

@@ -615,6 +615,7 @@ Parse the user's arguments for the following flags:
 | `--pentest-target <url>` | `PENTEST_TARGET_URL=<url>` (base URL injected into meta.target) | (none) |
 | `--pdf` | `WRITE_PDF=true` (calls `scripts/export_pdf.py` after all stages — see PDF Export below) | `false` |
 | `--html` | `WRITE_HTML=true` (calls `scripts/export_html.py` after all stages — see HTML Export below) | `false` |
+| `--embed-figures` | `embed_figures=true` persisted to `.skill-config.json` by `resolve_config.py`; `compose_threat_model.py` reads it and inlines Figure 1 as a base64 `data:` URI in `threat-model.md` (figure1.svg still written). No flag threading needed — every compose call honours the config file. | `false` |
 | `--requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |

@@ -3746,3 +3746,21 @@ def test_render_figure1_svg_default_is_file_reference(tmp_path: Path) -> None:
     md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
     assert "](figure1.svg)" in md
     assert "data:image" not in md
+
+
+def test_render_figure1_svg_embed_via_skill_config(tmp_path: Path) -> None:
+    # `/create-threat-model --embed-figures` persists embed_figures to
+    # .skill-config.json; compose honours it without a CLI flag (renderer path).
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".skill-config.json").write_text('{"embed_figures": true}', encoding="utf-8")
+    md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)  # ctx.embed_figures defaults False
+    assert "](data:image/svg+xml;base64," in md
+
+
+def test_render_figure1_svg_skill_config_false_is_file_reference(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".skill-config.json").write_text('{"embed_figures": false}', encoding="utf-8")
+    md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    assert "](figure1.svg)" in md and "data:image" not in md

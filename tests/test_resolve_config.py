@@ -1165,3 +1165,16 @@ class TestFullOverExistingReason:
     def test_rebuild_reason_unchanged(self):
         v = rc._run_plan_verdict(self._cfg(mode="rebuild", mode_label="rebuild"), None, None, None)
         assert v["verdict"] == "REBUILD — wipe + full re-assessment"
+
+
+class TestEmbedFiguresFlag:
+    """`--embed-figures` must be accepted by the validator parser (the user hit
+    'unrecognized arguments' / internal-flag rejection) and default to False."""
+
+    def test_flag_is_accepted(self):
+        ns = rc.build_parser().parse_args(["--embed-figures"])
+        assert ns.embed_figures is True
+
+    def test_flag_defaults_false(self):
+        ns = rc.build_parser().parse_args([])
+        assert ns.embed_figures is False

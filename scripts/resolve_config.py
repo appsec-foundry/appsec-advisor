@@ -1311,6 +1311,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Skill-layer flag — exports threat-model.pdf after Stage 4.")
     p.add_argument("--html", action="store_true",
                    help="Skill-layer flag — exports threat-model.html after Stage 4.")
+    p.add_argument("--embed-figures", action="store_true",
+                   help="Embed Figure 1 inline in threat-model.md as a base64 data: URI "
+                        "(self-contained doc); figure1.svg is still written. NOTE: GitHub "
+                        "strips data: URIs, so the default file reference is best for GitHub.")
     p.add_argument("--max-resumes", type=int, default=None,
                    help="Skill-layer flag — cap on Stage 1 auto-resume dispatches.")
     p.add_argument("--clean-cache", action="store_true",
@@ -1385,6 +1389,10 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "qa_scan_repo":    ns.qa_scan_repo,
         "scan_manifest":   ns.scan_manifest,
         "no_confirm":      ns.no_confirm,
+        # Persisted to .skill-config.json so compose_threat_model.py honours it
+        # on EVERY invocation (renderer, recompose, fragment-fixer) without
+        # threading a CLI flag through each call site.
+        "embed_figures":   bool(ns.embed_figures),
     }
 
     cfg.update(resolve_write_yaml(ns))

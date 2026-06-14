@@ -26,6 +26,10 @@ OUTPUT
                                (mmdc optional for Mermaid pre-render)
                                See /appsec-advisor:export-threat-model --formats html
                                for the standalone form
+  --embed-figures              Embed Figure 1 inline in threat-model.md as a
+                               base64 data: URI (self-contained doc); figure1.svg
+                               is still written. GitHub strips data: URIs, so the
+                               default file reference is best for GitHub-hosted models.
   --verbose                    Append a Run Statistics section to the report
   --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
 
