@@ -3,29 +3,13 @@
 from __future__ import annotations
 
 import builtins
-import importlib.util
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+import requirements_state as rs
 
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "requirements_state.py"
-
-
-def _load():
-    if "requirements_state" in sys.modules:
-        return sys.modules["requirements_state"]
-    spec = importlib.util.spec_from_file_location("requirements_state", SCRIPT_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["requirements_state"] = mod
-    assert spec.loader is not None
-    spec.loader.exec_module(mod)
-    return mod
-
-
-rs = _load()
 
 _CATALOG = (
     b"generated: '2026-04-09T07:51:52Z'\n"

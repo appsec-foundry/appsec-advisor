@@ -15,7 +15,6 @@ remote branch.
 from __future__ import annotations
 
 import http.server
-import importlib.util
 import json
 import os
 import socketserver
@@ -25,19 +24,10 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
+import fetch_requirements as fr
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "fetch_requirements.py"
-
-
-def _load_fetch_requirements():
-    spec = importlib.util.spec_from_file_location("fetch_requirements", SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(mod)
-    return mod
-
-
-fr = _load_fetch_requirements()
 
 
 def _run(output_dir: Path, *extra: str) -> subprocess.CompletedProcess:

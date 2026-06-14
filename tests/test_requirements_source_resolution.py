@@ -2,27 +2,12 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 
+import resolve_requirements_source as rrs
+
 REPO_ROOT = Path(__file__).parent.parent
-SCRIPT_PATH = REPO_ROOT / "scripts" / "resolve_requirements_source.py"
-
-
-def _load_module():
-    if "resolve_requirements_source" in sys.modules:
-        return sys.modules["resolve_requirements_source"]
-    spec = importlib.util.spec_from_file_location("resolve_requirements_source", SCRIPT_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["resolve_requirements_source"] = mod
-    assert spec.loader is not None
-    spec.loader.exec_module(mod)
-    return mod
-
-
-rrs = _load_module()
 
 
 PROFILE_RS = {

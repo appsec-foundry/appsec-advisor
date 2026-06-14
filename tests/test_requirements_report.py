@@ -7,26 +7,16 @@ shared scripts/requirements_gate.py reads the full-repo audit verdict.
 from __future__ import annotations
 
 import builtins
-import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
 
+import requirements_report as rr
+
 REPO_ROOT = Path(__file__).parent.parent
 REPORT = REPO_ROOT / "scripts" / "requirements_report.py"
 GATE = REPO_ROOT / "scripts" / "requirements_gate.py"
-
-
-def _load():
-    spec = importlib.util.spec_from_file_location("requirements_report", REPORT)
-    mod = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(mod)
-    return mod
-
-
-rr = _load()
 
 
 def _verdict() -> dict:
