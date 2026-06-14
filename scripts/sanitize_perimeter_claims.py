@@ -79,7 +79,7 @@ def _sanitize_string(value: str) -> tuple[str, list[str]]:
                 cleaned_parts.pop()
         i += 1
 
-    cleaned = "".join(cleaned_parts).strip().rstrip(",;").strip()
+    cleaned = "".join(cleaned_parts).strip().strip(",;").strip()
 
     if removed and not cleaned:
         # Whole field was speculative — replace with the neutral marker so
