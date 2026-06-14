@@ -15,6 +15,7 @@ SCHEMA = json.loads((REPO_ROOT / "schemas" / "route-inventory.schema.json").read
 
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import route_inventory as ri  # noqa: E402
 
 
 def _run(repo_root: Path) -> dict:
@@ -111,6 +112,79 @@ def test_aspnet_minimal_apis(tmp_path: Path) -> None:
     assert ("GET", "/items") in methods_paths
     assert ("POST", "/items") in methods_paths
     assert "aspnet-minimal" in inv["coverage"]["frameworks_detected"]
+
+
+def test_javascript_framework_detection_and_nestjs_decorators() -> None:
+    fastify = ri._extract_javascript(Path("api.ts"), ["const fastify = require('fastify')();\n", "fastify.get('/fast', h);\n"])
+    koa = ri._extract_javascript(Path("api.ts"), ["import Router from 'koa-router';\n", "router.get('/koa', h);\n"])
+    hapi = ri._extract_javascript(Path("api.ts"), ["const hapi = require('@hapi/hapi');\n", "server.get('/hapi', h);\n"])
+    nest = ri._extract_javascript(
+        Path("controller.ts"),
+        [
+            "@Controller('/base')\n",
+            "export class C {\n",
+            "  @Get()\n",
+            "  list() {}\n",
+            "  @Post('/items')\n",
+            "  create() {}\n",
+            "}\n",
+        ],
+    )
+
+    assert fastify[0].framework == "fastify"
+    assert koa[0].framework == "koa"
+    assert hapi[0].framework == "hapi"
+    assert {(r.method, r.path, r.framework) for r in nest} == {
+        ("GET", "/", "nestjs"),
+        ("POST", "/items", "nestjs"),
+    }
+
+
+def test_python_django_and_default_route_methods() -> None:
+    flask = ri._extract_python(
+        Path("app.py"),
+        ["from flask import Flask\n", "@app.route('/default')\n", "def default(): pass\n"],
+    )
+    django = ri._extract_python(
+        Path("urls.py"),
+        [
+            "from django.urls import path\n",
+            "urlpatterns = [\n",
+            "  path('admin/', admin_view),\n",
+            "  re_path('', empty_view),\n",
+            "]\n",
+        ],
+    )
+
+    assert flask[0].method == "GET"
+    assert flask[0].path == "/default"
+    assert django[0].framework == "django"
+    assert django[0].method == "ANY"
+    assert django[0].path == "admin/"
+
+
+def test_java_jaxrs_path_and_http_method_lookahead() -> None:
+    routes = ri._extract_java(
+        Path("Api.java"),
+        [
+            "import javax.ws.rs.Path;\n",
+            '@Path("/orders")\n',
+            "@POST\n",
+            "public Response create() { return ok(); }\n",
+            '@Path("/status")\n',
+            "public Response status() { return ok(); }\n",
+        ],
+    )
+
+    by_path = {r.path: r for r in routes}
+    assert by_path["/orders"].framework == "jaxrs"
+    assert by_path["/orders"].method == "POST"
+    assert by_path["/status"].method == "ANY"
+
+
+def test_aspnet_map_methods_collapses_to_any() -> None:
+    routes = ri._extract_aspnet(Path("Program.cs"), ['app.MapMethods("/bulk", new[] { "GET", "POST" }, h);\n'])
+    assert routes[0].method == "ANY"
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +367,40 @@ def test_empty_repo_emits_empty_routes(tmp_path: Path) -> None:
     assert inv["coverage"]["route_count"] == 0
 
 
+def test_exclude_fallback_and_source_walker_filters(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(ri, "_scan_is_excluded", None)
+    assert ri._is_excluded("node_modules/pkg/index.js") is True
+    assert ri._is_excluded("src/app.ts") is False
+
+    def boom(_rel):
+        raise RuntimeError("bad scan-excludes")
+
+    monkeypatch.setattr(ri, "_scan_is_excluded", boom)
+    assert ri._is_excluded("vendor/lib/router.js") is True
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.ts").write_text("app.get('/x', h);\n", encoding="utf-8")
+    (tmp_path / "src" / "notes.txt").write_text("app.get('/ignored', h);\n", encoding="utf-8")
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "bundle.js").write_text("app.get('/ignored', h);\n", encoding="utf-8")
+
+    files = [p.relative_to(tmp_path).as_posix() for p in ri._walk_sources(tmp_path)]
+    assert files == ["src/app.ts"]
+
+
+def test_read_lines_and_extract_file_handle_empty_and_unsupported_files(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.ts"
+    assert ri._read_lines(missing) == []
+
+    empty = tmp_path / "empty.ts"
+    empty.write_text("", encoding="utf-8")
+    assert ri._extract_file(tmp_path, empty) == []
+
+    unsupported = tmp_path / "routes.txt"
+    unsupported.write_text("app.get('/ignored', h);\n", encoding="utf-8")
+    assert ri._extract_file(tmp_path, unsupported) == []
+
+
 def test_route_inventory_writes_to_output_dir(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src/app.ts").write_text("app.get('/x', h);")
@@ -307,6 +415,36 @@ def test_route_inventory_writes_to_output_dir(tmp_path: Path) -> None:
     assert target.is_file()
     data = json.loads(target.read_text())
     assert data["version"] == 1
+
+
+def test_route_inventory_missing_repo_returns_error(tmp_path: Path, capsys) -> None:
+    assert ri._main(["--repo-root", str(tmp_path / "missing"), "--stdout"]) == 1
+    assert "repo-root not found" in capsys.readouterr().err
+
+
+def test_build_inventory_tolerates_unreadable_source_and_dedupes_routes(tmp_path: Path, monkeypatch) -> None:
+    src = tmp_path / "app.ts"
+    src.write_text("app.get('/x', h);\n", encoding="utf-8")
+
+    def fake_walk(_repo_root):
+        return iter([src])
+
+    duplicate = ri.RouteCandidate(
+        method="GET",
+        path="/x",
+        framework="express",
+        handler_file="app.ts",
+        handler_line=1,
+    )
+
+    monkeypatch.setattr(ri, "_walk_sources", fake_walk)
+    monkeypatch.setattr(Path, "read_text", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("unreadable")))
+    monkeypatch.setattr(ri, "_extract_file", lambda *_args, **_kwargs: [duplicate, duplicate])
+
+    inv = ri.build_inventory(tmp_path)
+
+    assert inv["coverage"]["route_count"] == 1
+    assert inv["routes"][0]["path"] == "/x"
 
 
 # ---------------------------------------------------------------------------
