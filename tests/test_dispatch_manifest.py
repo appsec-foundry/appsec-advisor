@@ -669,3 +669,31 @@ def test_excluded_reason_is_depth_specific():
     _, rs = bm.select_stride_components(comps, "standard")
     rs_exc = {e["id"]: e["reason"] for e in rs["excluded"]}
     assert rs_exc == {"worker": "out-of-scope at depth=standard"}  # ci-cd now in-scope
+
+
+# ---------------------------------------------------------------------------
+# Console rendering of the selection (format_selection_console)
+# ---------------------------------------------------------------------------
+
+
+def test_format_selection_console_criteria_lists_analyzed_and_skipped():
+    comps = [
+        _c("backend-api", zones=["internet"]),
+        _c("worker", zones=["internal-network"]),  # out-of-scope at standard
+    ]
+    _, report = bm.select_stride_components(comps, "standard")
+    out = bm.format_selection_console(report)
+    assert "depth=standard, mode=criteria" in out
+    assert "ANALYZED (1):" in out
+    assert "backend-api — internet-exposed (internet)" in out
+    assert "SKIPPED (1):" in out
+    assert "worker — out-of-scope at depth=standard" in out
+
+
+def test_format_selection_console_passthrough_shape():
+    comps = [_c("a"), _c("b")]  # no zones → passthrough
+    _, report = bm.select_stride_components(comps, "standard")
+    out = bm.format_selection_console(report)
+    assert "mode=passthrough" in out
+    assert "ANALYZED (2): a, b" in out
+    assert "SKIPPED (0):" in out

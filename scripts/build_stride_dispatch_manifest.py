@@ -669,6 +669,41 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     }
 
 
+def format_selection_console(sel: dict) -> str:
+    """Render the STRIDE component selection as a human-readable console block:
+    which components are analyzed (and why) and which are skipped (and why).
+
+    Reads the already-persisted ``.stride-selection.json`` shape, so it handles
+    both ``mode=criteria`` (selected/excluded are reason-bearing dicts) and the
+    ``mode=passthrough`` fail-safe (selected is a flat id list, excluded empty).
+    """
+    mode = sel.get("mode", "?")
+    depth = sel.get("depth", "?")
+    selected = sel.get("selected", []) or []
+    excluded = sel.get("excluded", []) or []
+    lines = [f"STRIDE component selection (depth={depth}, mode={mode}):"]
+
+    if mode == "passthrough":
+        ids = [s if isinstance(s, str) else s.get("id", "?") for s in selected]
+        lines.append(f"  ANALYZED ({len(ids)}): " + (", ".join(ids) or "(none)"))
+        lines.append(
+            "  SKIPPED (0): per-component criteria unavailable — un-migrated "
+            "inventory (no deployment_zones); all components analyzed."
+        )
+        return "\n".join(lines)
+
+    lines.append(f"  ANALYZED ({len(selected)}):")
+    for c in selected:
+        reasons = "; ".join(c.get("reasons") or []) or "selected"
+        lines.append(f"    - {c.get('id', '?')} — {reasons}")
+    lines.append(f"  SKIPPED ({len(excluded)}):")
+    if not excluded:
+        lines.append("    (none)")
+    for c in excluded:
+        lines.append(f"    - {c.get('id', '?')} — {c.get('reason', 'excluded')}")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="build_stride_dispatch_manifest.py")
     ap.add_argument("output_dir", type=Path)
@@ -698,6 +733,7 @@ def main(argv: list[str] | None = None) -> int:
         f"OK: wrote {out} ({len(manifest['components'])} components, depth={ns.depth}, "
         f"selection={sel.get('mode', '?')})"
     )
+    print(format_selection_console(sel))
     if sel.get("lifted"):
         n_sel = len(sel.get("selected", []))
         n_drop = len([e for e in sel.get("excluded", []) if e.get("reason") == "ceiling-overflow"])
