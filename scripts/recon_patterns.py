@@ -865,7 +865,11 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
     seen: set[str] = set()
 
     def add_path(path: Path) -> None:
-        if not path.is_file():
+        try:
+            is_file = path.is_file()
+        except OSError:
+            return
+        if not is_file:
             return
         rel = str(path.relative_to(repo_root)).replace("\\", "/")
         if rel in seen or _is_excluded(rel):
