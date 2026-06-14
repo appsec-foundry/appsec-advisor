@@ -108,7 +108,14 @@ python3 scripts/validate_intermediate.py <file.json>  # intermediate file schema
 python3 scripts/mock-server.py [port]             # mock REST endpoints: context + requirements (default 4444)
 ./scripts/run-headless.sh --repo /path --output /out --yaml --sarif
 python3 scripts/harvest_requirements.py           # regenerate fallback requirements YAML
+python3 scripts/threat_fixture.py freeze --run /out --into tests/fixtures/golden/<name> --repo /path
+python3 scripts/threat_fixture.py replay --fixture tests/fixtures/golden/<name> --repo /path
 ```
+
+`threat_fixture.py` snapshots a completed run into a golden-master fixture and
+replays the deterministic tail (build-yaml → compose → SARIF + scanners) to
+detect the effect of code changes across repos without re-scanning. See
+[`docs/internal/runbooks/threat-fixture.md`](docs/internal/runbooks/threat-fixture.md).
 
 ## Repository layout
 
