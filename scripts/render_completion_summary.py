@@ -917,13 +917,6 @@ _PHASE_AGENT = {
 
 
 def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = False) -> list[str]:
-    if stats["assess_secs"] is None and not stats["phases"] and not stats["stage_rows"]:
-        # Nothing to render — skip the whole block rather than
-        # printing zeroes and placeholders.
-        return []
-    lines = [""]
-    lines.append(f"  -- Run Statistics {SECTION_RULE[:42]}")
-
     # Total duration header — net agent compute vs. end-to-end wall, with
     # machine standby/suspend explicitly isolated (run_timing.py). A run that
     # sat in standby otherwise reports a wall-clock dominated by sleep plus a
@@ -933,6 +926,15 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
     net_compute = timing.get("net_compute_secs") or 0
     wall = timing.get("wall_secs") or stats.get("wall_secs") or 0
     standby = timing.get("standby_secs") or 0
+
+    if stats["assess_secs"] is None and not stats["phases"] and not stats["stage_rows"] and not wall:
+        # Nothing to render — skip the whole block rather than printing zeroes
+        # and placeholders. A known wall-clock alone (`.stage-stats.jsonl`
+        # absent but `.scan-wall-seconds` written) is enough to keep the block:
+        # the end-to-end duration must still surface (regression 2026-06-14).
+        return []
+    lines = [""]
+    lines.append(f"  -- Run Statistics {SECTION_RULE[:42]}")
 
     # Legacy assess+qa+arch sum — fallback only for pre-stage-stats runs
     # (no .stage-stats.jsonl, so net_compute is 0).
@@ -970,29 +972,35 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
                 )
                 lines.append(f"     API + orchestr.  : {_fmt_duration(max(0, idle_total - standby))}")
 
-        if wall and wall > 0:
-            if standby > 0:
-                # Make explicit that the headline wall includes dead standby
-                # time, and surface the standby-corrected figure the estimator
-                # uses as the next-run basis.
-                # The standby-corrected "Net run" figure is verbose-only detail;
-                # the default keeps just the raw end-to-end wall (which still
-                # notes the standby it includes).
-                if verbose:
-                    net_wall = timing.get("net_wall_secs") or (wall - standby)
-                    lines.append(
-                        f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  "
-                        f"(standby excluded — basis for the next estimate)"
-                    )
+    # End-to-end wall-clock — surfaced whenever it is known, INDEPENDENT of
+    # whether per-stage agent compute is available. When `.stage-stats.jsonl`
+    # is absent (net == 0) this is the only duration figure, so it must not be
+    # gated behind the net-compute branch — doing so dropped the duration from
+    # the console summary entirely (regression 2026-06-14).
+    if wall and wall > 0:
+        if standby > 0:
+            # Make explicit that the headline wall includes dead standby
+            # time, and surface the standby-corrected figure the estimator
+            # uses as the next-run basis.
+            # The standby-corrected "Net run" figure is verbose-only detail;
+            # the default keeps just the raw end-to-end wall (which still
+            # notes the standby it includes).
+            if verbose:
+                net_wall = timing.get("net_wall_secs") or (wall - standby)
                 lines.append(
-                    f"  Total elapsed (wall): {_fmt_duration(wall)}  "
-                    f"(end-to-end, incl. {_fmt_duration(standby)} standby)"
+                    f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  "
+                    f"(standby excluded — basis for the next estimate)"
                 )
-            else:
-                lines.append(f"  Total elapsed (wall): {_fmt_duration(wall)}  (end-to-end, incl. orchestration)")
-    elif legacy_total:
-        # Pre-stage-stats run: no .stage-stats.jsonl. Fall back to the legacy
-        # assess+qa+arch sum so the block is not empty.
+            lines.append(
+                f"  Total elapsed (wall): {_fmt_duration(wall)}  "
+                f"(end-to-end, incl. {_fmt_duration(standby)} standby)"
+            )
+        else:
+            lines.append(f"  Total elapsed (wall): {_fmt_duration(wall)}  (end-to-end, incl. orchestration)")
+    elif not net and legacy_total:
+        # Pre-stage-stats run with no wall-clock: no `.stage-stats.jsonl` and no
+        # `.scan-wall-seconds`. Fall back to the legacy assess+qa+arch sum so
+        # the block is not empty.
         suffix = f"  ({' + '.join(legacy_parts)})" if legacy_parts else ""
         lines.append(f"  Total (legacy)      : {_fmt_duration(legacy_total)}{suffix}")
 
@@ -1376,6 +1384,13 @@ def _summary_duration(stats: dict) -> str:
     total = stats.get("total_secs_from_stages")
     if not total:
         total = sum(secs or 0 for secs in (stats.get("assess_secs"), stats.get("qa_secs"), stats.get("arch_secs")))
+    if not total:
+        # Last resort: the end-to-end wall-clock. When `.stage-stats.jsonl` is
+        # absent there is no per-stage compute to sum, but the wall-clock marker
+        # is still an honest "how long did it take" figure — far better than
+        # showing n/a (regression 2026-06-14).
+        timing = stats.get("timing") or {}
+        total = timing.get("wall_secs") or stats.get("wall_secs") or 0
     return _fmt_duration(total) if total else "n/a"
 
 

@@ -448,6 +448,31 @@ class TestTotalDurationFromStageStats:
         text = "\n".join(out)
         assert "Total elapsed (wall)" not in text
 
+    def test_render_shows_wall_clock_when_stage_stats_absent(self, tmp_path: Path):
+        """Regression 2026-06-14: when `.stage-stats.jsonl` is absent (net == 0)
+        but `.scan-wall-seconds` is written, the wall-clock duration MUST still
+        surface — previously the whole block was dropped, so the console summary
+        showed no duration at all."""
+        (tmp_path / ".scan-wall-seconds").write_text("3380", encoding="utf-8")  # 56m 20s
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        # No stage stats, no assess/qa/arch → net == 0.
+        assert not stats["total_secs_from_stages"]
+        assert stats["assess_secs"] is None
+        out = rcs.render_run_statistics(stats, None)
+        text = "\n".join(out)
+        assert "-- Run Statistics" in text
+        assert "Total elapsed (wall): 56m 20s" in text
+        # And the Run-block headline duration falls back to the wall-clock
+        # instead of "n/a".
+        assert rcs._summary_duration(stats) == "56m 20s"
+
+    def test_render_empty_when_no_timing_signal_at_all(self, tmp_path: Path):
+        """No stage stats AND no wall-clock → the block stays empty (no header,
+        no placeholder zeroes) and the headline duration is n/a."""
+        stats = rcs.extract_run_statistics(tmp_path, {"meta": {}})
+        assert rcs.render_run_statistics(stats, None) == []
+        assert rcs._summary_duration(stats) == "n/a"
+
     def test_render_default_hides_per_stage_breakdown(self, tmp_path: Path):
         """Default (non-verbose) Run Statistics shows only the timing headline —
         net compute / idle / wall — and omits the per-stage duration rows."""
