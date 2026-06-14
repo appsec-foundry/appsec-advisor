@@ -66,6 +66,12 @@ Thumbs.db
 .claude/hooks/
 .claude/skills/
 .claude/worktrees/
+# Empty read-only stubs the harness drops at session start (shadow the dirs above)
+.claude/agents
+.claude/hooks
+.claude/skills
+.vscode
+.gitmodules
 
 # Local Codex runtime state
 .agents/

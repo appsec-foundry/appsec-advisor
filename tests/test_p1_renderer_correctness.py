@@ -735,10 +735,18 @@ class TestComposeSmokeAllFourInvariants:
         # Assessment defect names (Markdown `**…**` renders to `<strong>`,
         # not `<b>`, so genuine markdown bold isn't here).
         allowed_header_bolds = {"Threat Actors", "Architecture Tiers", "Business Impact"}
+        # Figure 1 (2026-06-14 redesign) bolds the tier-band titles (prominent
+        # tiers — user request) and the legend section labels. These are NOT
+        # component IDs / actor labels (which must stay non-bold so the heatmap
+        # reads cleanly).
+        allowed_fig1_bolds = {"Legend", "Key", "Attacks - by actor", "Attacks — by actor"}
         # Component IDs and actor labels must NOT appear in `<b>` form.
-        # Extract just bolds that look like a component ID or actor name.
         for tok in bold_tokens:
-            assert tok in allowed_header_bolds or len(tok) > 30, f"unexpected bold token in diagrams: {tok!r}"
+            if tok in allowed_header_bolds or tok in allowed_fig1_bolds or len(tok) > 30:
+                continue
+            if "Tier" in tok:  # Figure-1 tier-band title (e.g. "Data Tier")
+                continue
+            raise AssertionError(f"unexpected bold token in diagrams: {tok!r}")
 
         # === Sanity — render produced no warnings other than the expected
         # soft-skip notices. The test fixture deliberately authors only the

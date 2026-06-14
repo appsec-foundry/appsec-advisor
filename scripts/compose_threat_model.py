@@ -5181,6 +5181,21 @@ _FIG1_TIER_LABEL = {
     "application": "Application Tier — Node / Express",
     "data": "Data Tier",
 }
+# Max component boxes drawn per tier (horizontal-width cap — see R2). A
+# flowchart tier is a single horizontal row, so beyond this the figure stretches
+# into an unreadable wide strip; the overflow collapses into the per-tier muted
+# note (named, with badges → traceability preserved). 6 keeps a typical
+# multi-service backend (juice-shop: 6 app boxes) fully drawn while bounding the
+# row width — uniform fixed-width boxes (below) are wider than content-sized
+# ones, so the cap is the primary lever that keeps a tier from scaling into a
+# wide strip.
+_FIG1_MAX_TIER_DRAW = 6
+# Uniform component-box footprint so every C-NN box is the SAME size regardless
+# of label length (user: "alle gleich groß"). Fixed width + height + flex
+# centering. The height fits the worst case (2-line wrapped name + badge) — the
+# box no longer carries a glyph chip, so a compact height never clips.
+_FIG1_COMP_BOX_W = "182px"
+_FIG1_COMP_BOX_H = "76px"
 # Figure-1-specific actor label overrides. Kept as an extension point but
 # intentionally empty: the repo-read actor renders as the canonical
 # posture-actor-labels label ("Internal Developer"), the same name used by
@@ -5303,7 +5318,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     # A component with no findings simply renders as a box with no badge and no
     # attack edge — it is part of the architecture, just not (yet) a threat host.
     comp_node: dict[str, str] = {}
-    comp_label: dict[str, str] = {}
+    comp_name_disp: dict[str, str] = {}
     comp_pure_name: dict[str, str] = {}
     comp_tier: dict[str, str] = {}
     comp_cnum: dict[str, str] = {}
@@ -5316,21 +5331,10 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         if tier not in _FIG1_TIER_ORDER:
             tier = "application"
         comp_node[cid] = _fig1_node_id("CMP", cid)
-        # Compact per-component weakness badge: Critical/High finding counts on
-        # a second line (e.g. "🔴 3 🟠 5"). Shows WHERE weaknesses concentrate
-        # alongside the attack-flow edges, without listing individual findings
-        # (2026-05-30 request — keep it short, omit zero counts and Med/Low).
-        _sev = comp_sev_count.get(cid) or {}
-        _badge = " ".join(
-            p
-            for p in (
-                f"🔴 {_sev['Critical']}" if _sev.get("Critical") else "",
-                f"🟠 {_sev['High']}" if _sev.get("High") else "",
-            )
-            if p
-        )
-        _name = f"C-{idx:02d} · {_fig1_label(c.get('name') or cid)}"
-        comp_label[cid] = f"{_name}<br/><i>{_badge}</i>" if _badge else _name
+        # Display name ("C-01 · Angular SPA"); the 🔴/🟠 finding-count badge is
+        # computed at emit time from comp_sev_count so the box can omit it cleanly
+        # when there is none (boxes are content-sized, no uniform footprint).
+        comp_name_disp[cid] = f"C-{idx:02d} · {_fig1_label(c.get('name') or cid)}"
         comp_pure_name[cid] = f"C-{idx:02d} {_fig1_label(c.get('name') or cid)}"
         comp_tier[cid] = tier
     if not comp_node:
@@ -5392,23 +5396,69 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     rep_client = _rep(client_comps)
     rep_data = _rep(data_comps)
 
-    # 2026-05-31 — collapse low-signal components. Drawing every component as a
-    # full box (the 2026-05-30 "show all components" request) became cluttered:
-    # components with only Medium/Low findings render with no Critical/High
-    # badge AND no attack/backbone edge, i.e. empty disconnected boxes that add
-    # noise without telling the reader anything. We now draw a component box
-    # only when it carries a Critical/High badge OR is its tier's representative
-    # (reps anchor the attack/propagation/backbone edges); the rest collapse
-    # into a single muted note node per tier. Edges to collapsed components are
-    # dropped so Mermaid never auto-creates a ghost box for an undeclared node.
     def _has_hi_badge(cid: str) -> bool:
         s = comp_sev_count.get(cid) or {}
         return bool(s.get("Critical") or s.get("High"))
 
-    _drawn: set[str] = {cid for cid in comp_node if _has_hi_badge(cid)}
+    # R1 — Complexity budget (size-independent legibility). This is the
+    # *Top-Threats* figure, not the full architecture inventory (that lives in
+    # §2). Drawing every Critical/High component made the figure scale its box +
+    # edge count with the model and become unreadable on large models (the
+    # accumulated "show all components" heuristic). Instead we draw ONLY the
+    # components that actually host a finding of one of the budgeted (top-N,
+    # glyph-bearing) attack classes — i.e. the hosts the figure is about — plus
+    # each tier's representative (reps anchor the backbone / propagation edges).
+    # Everything else collapses into one muted "also assessed" note per tier.
+    # Result: drawn-box count tracks the number of TOP THREATS, not the repo
+    # size, so the figure stays legible whether the model has 3 or 30 components.
+    budgeted_hosts: set[str] = set()
+    comp_attack_count: dict[str, int] = {}
+    for _ap in attack_paths[: len(glyph_seq)]:
+        _hit: set[str] = set()
+        for _f in _ap.get("findings") or []:
+            _c = fid_component.get((_f or "").upper())
+            if _c:
+                budgeted_hosts.add(_c)
+                _hit.add(_c)
+        for _c in _hit:
+            comp_attack_count[_c] = comp_attack_count.get(_c, 0) + 1
+    _drawn: set[str] = {cid for cid in comp_node if cid in budgeted_hosts}
     for _r in (rep_app, rep_client, rep_data):
         if _r:
             _drawn.add(_r)
+
+    # R2 — per-tier width cap (horizontal-scaling control). The complexity
+    # budget (R1) bounds the figure to top-threat hosts, but a genuinely complex
+    # app can still have many attacked components in ONE tier — and a flowchart
+    # tier is a single horizontal row, so >~7 boxes stretch the figure into an
+    # unreadable wide landscape strip. We therefore draw at most
+    # ``_FIG1_MAX_TIER_DRAW`` boxes per tier (the most-attacked / most-severe,
+    # ranked deterministically), and collapse the overflow into the per-tier
+    # muted note — which NAMES them (with their 🔴/🟠 badge), so traceability is
+    # preserved: the reader sees every attacked component, just not as a box in
+    # an unreadable row. The tier representative is never capped (it anchors the
+    # backbone/propagation edges); edges to a capped host fall back onto the
+    # tier rep via the existing T2 host-not-drawn path.
+    def _draw_rank(cid: str) -> tuple:
+        sev = comp_sev_count.get(cid) or {}
+        return (
+            comp_attack_count.get(cid, 0),
+            sev.get("Critical", 0),
+            sev.get("High", 0),
+            comp_threat_count.get(cid, 0),
+            -comp_order[cid],
+        )
+
+    _reps = {rep_client, rep_app, rep_data}
+    for _tier in _FIG1_TIER_ORDER:
+        _tier_drawn = [cid for cid in _drawn if comp_tier[cid] == _tier]
+        if len(_tier_drawn) <= _FIG1_MAX_TIER_DRAW:
+            continue
+        _keep = set(sorted(_tier_drawn, key=_draw_rank, reverse=True)[:_FIG1_MAX_TIER_DRAW])
+        _keep |= {r for r in _reps if r and comp_tier.get(r) == _tier}
+        for cid in _tier_drawn:
+            if cid not in _keep:
+                _drawn.discard(cid)
 
     def _target_tier(ap: dict, cls: dict) -> str:
         # Route by the IMPACT tier (the LLM's original target — where the attack
@@ -5448,6 +5498,11 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     prop_glyphs: dict[tuple[str, str], list[str]] = {}
     victim_present = False
     victim_props: list[tuple[str, str]] = []  # (client node, glyph) → dotted ··> Shop User
+    # Per-actor colour-coding (user: "die angriffe müssen klar einem akteur
+    # zuordbar sein"). Each malicious actor gets a colour used by its attack
+    # arrows + its legend entry, so any attack traces to its actor by colour.
+    # One attacker → one colour (juice-shop); more → distinct colours.
+    actor_order: list[str] = []  # malicious actor slugs in first-seen order
 
     def _add(bucket: dict[tuple[str, str], list[str]], src: str, dst: str, glyph: str) -> None:
         if src and dst and src != dst:
@@ -5465,6 +5520,8 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         if actor_slug == "victim-required":
             actor_slug = "internet-anon"
         actor_nid = _actor(actor_slug)
+        if actor_slug not in actor_order:
+            actor_order.append(actor_slug)
         tt = _target_tier(ap, cls)
         if tt in ("client", "victim"):
             victim_present = True
@@ -5517,21 +5574,44 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             if vsrc:
                 victim_props.append((vsrc, glyph))
 
+    # Canonical glyph order (positional) — used to sort glyphs on the box chips
+    # and on the victim node so the numbering reads ① ② ④ consistently.
+    _glyph_pos = {g: i for i, g in enumerate(glyph_seq)}
+
+    # Per-actor colour palette (deterministic by first-seen actor order). The
+    # first/most-common attacker keeps the canonical attack-red so a single-actor
+    # figure is unchanged; additional actors take distinct, accessible hues.
+    _ACTOR_PALETTE = ["#b71c1c", "#1d4ed8", "#7c3aed", "#b45309", "#0f766e"]
+    actor_color: dict[str, str] = {
+        slug: _ACTOR_PALETTE[i % len(_ACTOR_PALETTE)] for i, slug in enumerate(actor_order)
+    }
+
+    # Attack classes are now NAMED directly on their (solid) actor⇒component
+    # edges (e.g. "① Injection"), so the diagram is self-explanatory without a
+    # decoder legend and the boxes no longer carry a glyph chip (2026-06-14 user
+    # request — "selbsterklärend, ohne eine Tabelle zu öffnen"). The box stays a
+    # plain name + 🔴/🟠 finding-count badge.
+
     # Grey legitimate-flow backbone (tier-ordered; corroborated by
     # trust_boundaries). The legitimate user IS the Shop User when a
     # victim-targeting class is present (same persona), so the node is
     # labelled accordingly and described in the actor legend below.
     user_node = "EXT_SHOPUSER" if victim_present else "EXT_USER"
-    user_label = (
-        "fa:fa-user Shop User<br/><i>legitimate customer — XSS/CSRF target</i>"
-        if victim_present
-        else "fa:fa-user Legitimate User"
-    )
-    # Dotted propagation onto the victim: client component ··> Shop User. Same
-    # consequence-path styling as the data-tier propagation (the XSS lands on
-    # the user via the client tier — not a fresh attack the SPA launches).
-    for cnode, glyph in victim_props:
-        _add(prop_glyphs, cnode, user_node, glyph)
+    # Victim consequence is drawn as an explicit dotted edge from the client
+    # component the malicious content is served through ONTO the Shop User
+    # (2026-06-14 user request — "es fehlt ein Pfeil auf den Shop User der die
+    # Angriffe gegen ihn zeigt"). The edge carries the victim-targeting class
+    # name(s) so it reads on its own. It is emitted further below, once the
+    # client representative node id is known.
+    _victim_glyphs: list[str] = []
+    for _cnode, _g in victim_props:
+        if _g not in _victim_glyphs:
+            _victim_glyphs.append(_g)
+    _victim_glyphs.sort(key=lambda g: _glyph_pos.get(g, 99))
+    if victim_present:
+        user_label = "fa:fa-user Shop User<br/><i>legitimate customer · attack victim</i>"
+    else:
+        user_label = "fa:fa-user Legitimate User"
     # Only finding-bearing (drawn) components participate in the backbone; edges
     # to collapsed components are skipped (their node is never declared).
     _client_drawn = [cid for cid in client_comps if cid in _drawn]
@@ -5577,7 +5657,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         # subGraphTitleMargin: small breathing room above/below each tier title
         #   ("Application Tier — Node / Express" etc.) so the cluster heading is
         #   not clamped against the subgraph border (2026-06-02 user request).
-        '%%{init: {"flowchart": {"defaultRenderer": "elk", "nodeSpacing": 34, "rankSpacing": 52, "padding": 10, "subGraphTitleMargin": {"top": 6, "bottom": 6}}} }%%',
+        '%%{init: {"flowchart": {"defaultRenderer": "elk", "curve": "basis", "nodeSpacing": 55, "rankSpacing": 78, "padding": 16, "subGraphTitleMargin": {"top": 22, "bottom": 10}}} }%%',
         "flowchart TB",
     ]
     # External actors are grouped into their OWN band (a subgraph, like every
@@ -5596,7 +5676,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         cls = "actorgood" if role in ("victim", "legitimate", "user", "good") else "actorbad"
         actor_emit.append(f'        {nid}["{actor_label[slug]}"]:::{cls}')
     if actor_emit:
-        lines.append('    subgraph ZONE_ACTORS["External Actors"]')
+        lines.append('    subgraph ZONE_ACTORS["External Actors — Internet (untrusted)"]')
         lines.append("        direction LR")
         lines.extend(actor_emit)
         lines.append("    end")
@@ -5609,10 +5689,63 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         tier_hidden = [cid for cid in tier_cids if cid not in _drawn]
         if not tier_drawn and not tier_hidden:
             continue
+        # R6 — deterministic intra-tier ordering: declare the most-attacked
+        # components toward the CENTRE of the row (busiest in the middle, calmer
+        # boxes at the edges). ELK lays a layer out roughly in declaration order,
+        # so a center-out arrangement keeps the dominant attacker's edges short
+        # and bundled instead of fanning diagonally across the whole row. Pure
+        # function of (attack-class count, severity, stable order) → reproducible.
+        def _attack_rank(cid: str) -> tuple:
+            sev = comp_sev_count.get(cid) or {}
+            return (comp_attack_count.get(cid, 0), sev.get("Critical", 0), sev.get("High", 0), -comp_order[cid])
+        _ranked = sorted(tier_drawn, key=_attack_rank, reverse=True)
         sg = {"client": "CLIENT", "application": "APP", "data": "DATA"}[tier]
-        lines.append(f'    subgraph {sg}["{_fig1_label(_FIG1_TIER_LABEL[tier])}"]')
+        # center-out: highest rank in the middle, next ones alternating outward
+        # to the right then left, so the busiest box ends up centred. (A true
+        # multi-ROW grid is not reproducible here: every app box is one hop from
+        # the attacker, so ELK's layered ranking puts them all on one level and
+        # ignores nested row-subgraphs; forcing rows needs invisible vertical
+        # edges that produce long crossing diagonals — see the 2026-06-14 note.)
+        from collections import deque
+
+        _dq: deque[str] = deque()
+        for _i, _cid in enumerate(_ranked):
+            if _i % 2 == 0:
+                _dq.append(_cid)
+            else:
+                _dq.appendleft(_cid)
+        tier_drawn = list(_dq)
+
+        def _box_line(cid: str) -> str:
+            # Uniform-footprint box: fixed width + height + flex centering so all
+            # C-NN boxes share one size regardless of label length (user: "alle
+            # gleich groß"). The height fits the worst case (2-line wrapped name +
+            # badge); content always fits and flex-centres, so nothing overflows
+            # the border now that the box no longer carries a glyph chip.
+            _sev = comp_sev_count.get(cid) or {}
+            _badge = " ".join(
+                p
+                for p in (
+                    f"🔴 {_sev['Critical']}" if _sev.get("Critical") else "",
+                    f"🟠 {_sev['High']}" if _sev.get("High") else "",
+                )
+                if p
+            )
+            _badge_line = f"<br/><i>{_badge}</i>" if _badge else ""
+            _box = (
+                f"<div style='width:{_FIG1_COMP_BOX_W};height:{_FIG1_COMP_BOX_H};"
+                f"box-sizing:border-box;display:flex;flex-direction:column;"
+                f"justify-content:center;align-items:center;text-align:center;"
+                f"white-space:normal;overflow-wrap:break-word'>"
+                f"{comp_name_disp[cid]}{_badge_line}</div>"
+            )
+            return f'        {comp_node[cid]}["{_box}"]:::comp'
+
+        # Prominent tier band — BOLD title (the trailing blank line reserves room
+        # for the title so the first row sits below it, not under it).
+        lines.append(f'    subgraph {sg}["<b>{_fig1_label(_FIG1_TIER_LABEL[tier])}</b><br/>&nbsp;"]')
         for cid in tier_drawn:
-            lines.append(f'        {comp_node[cid]}["{comp_label[cid]}"]:::comp')
+            lines.append(_box_line(cid))
         # Collapse no-finding components into ONE muted note node (2026-05-31)
         # so the tier acknowledges them without a box each. Never edge-linked.
         if tier_hidden:
@@ -5622,8 +5755,29 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             # classDef carries a reduced font-size so the legend never
             # competes visually with the real component boxes. Stack with
             # <br/> when more than one so a long tier list stays narrow.
-            _names = "<br/>".join(comp_pure_name.get(cid, comp_cnum.get(cid, "C-??")) for cid in tier_hidden)
-            _note = f"Also assessed — no Critical/High finding:<br/>{_names}"
+            #
+            # Two kinds of hidden component land here: (a) ones carrying a
+            # Critical/High finding (either a budgeted top-threat host collapsed
+            # by the R2 width cap, or a High finding that simply did not make the
+            # top-N attack paths) and (b) genuinely low-signal ones with no
+            # Critical/High finding. They get DIFFERENT note lines so the reader
+            # is never told a Critical/High component "has no Critical/High
+            # finding". The Crit/High ones keep their 🔴/🟠 badge + a "see §8
+            # Register" pointer → full traceability without widening the row.
+            def _badge_for(cid: str) -> str:
+                s = comp_sev_count.get(cid) or {}
+                b = " ".join(p for p in (f"🔴 {s['Critical']}" if s.get("Critical") else "", f"🟠 {s['High']}" if s.get("High") else "") if p)
+                nm = comp_pure_name.get(cid, comp_cnum.get(cid, "C-??"))
+                return f"{nm} {b}".strip()
+
+            _withfinding = [cid for cid in tier_hidden if _has_hi_badge(cid)]
+            _clean = [cid for cid in tier_hidden if cid not in _withfinding]
+            _segs: list[str] = []
+            if _withfinding:
+                _segs.append("Also assessed — Critical/High finding in §8 Register:<br/>" + "<br/>".join(_badge_for(cid) for cid in _withfinding))
+            if _clean:
+                _segs.append("Also assessed — no Critical/High finding:<br/>" + "<br/>".join(comp_pure_name.get(cid, comp_cnum.get(cid, "C-??")) for cid in _clean))
+            _note = "<br/>".join(_segs)
             lines.append(f'        {sg}_OMITTED["{_fig1_label(_note)}"]:::compmuted')
         lines.append("    end")
     lines.append("")
@@ -5640,132 +5794,124 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         nm = c.get("short_label") or c.get("label") or (ap.get("class") or "attack")
         glyph_name[glyph_seq[i]] = _fig1_label(_posture_short_label(nm))
 
-    # Labelling rule (2026-06-05 user request — name-once per threat actor). A
-    # SOLID attack edge is a DIRECT attack: each threat ACTOR names a glyph the
-    # FIRST time one of its own attacks carries it ("① Injection"); every later
-    # edge FROM THE SAME ACTOR references that glyph by BARE number ("①"). Per
-    # actor, so every attacker's arrows read on their own without cross-checking
-    # another actor's edge — e.g. the Anonymous Internet Attacker's first arrow
-    # spells out "① Injection ⑥ XSS", its follow-up arrows just "①". A DOTTED
-    # edge is a FOLLOW-ON / propagation step (the XSS landing on the victim,
-    # injection reaching the DB) whose class was already named on the solid edge
-    # it continues — so it references by bare number. Only a glyph that reaches a
-    # dotted edge WITHOUT ever appearing on any solid edge (rare: a class with a
-    # data-tier-only finding and no direct host) is named there, so nothing is
-    # left unexplained. Solid edges are always emitted before dotted ones below,
-    # which is what lets the dotted edges safely go bare. The full glyph→name key
-    # is also emitted once as the legend line below.
-    #
-    # Name-once supersedes the former binary complexity guard: a glyph is named
-    # at most once per actor regardless of how many components that actor attacks,
-    # so a busy single-actor figure (juice-shop: one attacker, 7 components) stays
-    # self-describing AND uncluttered without any threshold toggle.
-    _named_by_actor: dict[str, set[str]] = {}
-    _named_anywhere: set[str] = set()
+    # Trust-boundary lookup (2026-06-14 user request — "trust boundaries
+    # einbauen"). Map each yaml trust_boundaries[] entry (from→to component, or
+    # "external") to the tier-pair it separates, so the grey backbone edge that
+    # crosses it can carry a 🛡 marker + the boundary's short name. Real data.
+    _node_to_tier = {comp_node[cid]: comp_tier[cid] for cid in comp_node}
 
-    def _solid_label(actor: str, glyphs: list[str]) -> str:
-        # Direct attack edge — this actor names each glyph on its first use, bare
-        # thereafter (per-actor name-once).
-        seen = _named_by_actor.setdefault(actor, set())
-        parts: list[str] = []
-        for g in glyphs:
-            if g in seen:
-                parts.append(g)
-            else:
-                seen.add(g)
-                _named_anywhere.add(g)
-                title = glyph_name.get(g, "")
-                parts.append(f"{g} {title}" if title else g)
-        return " ".join(parts)
+    def _tier_of(node: str) -> str:
+        return _node_to_tier.get(node, "external")
 
-    def _dotted_label(glyphs: list[str]) -> str:
-        # Follow-on / propagation edge — bare number when the glyph was already
-        # named on ANY solid attack edge (the reader has seen it); name it as a
-        # fallback for the rare class that only ever reaches a dotted edge.
-        parts: list[str] = []
-        for g in glyphs:
-            if g in _named_anywhere:
-                parts.append(g)
-            else:
-                _named_anywhere.add(g)
-                title = glyph_name.get(g, "")
-                parts.append(f"{g} {title}" if title else g)
-        return " ".join(parts)
+    _tb_name: dict[tuple[str, str], str] = {}
+    for _tb in ctx.yaml_data.get("trust_boundaries") or []:
+        if not isinstance(_tb, dict):
+            continue
+        _frm = (_tb.get("from") or "").strip()
+        _to = (_tb.get("to") or "").strip()
+        _ft = "external" if _frm in ("", "external") else comp_tier.get(_frm, "external")
+        _tt = "external" if _to in ("", "external") else comp_tier.get(_to, "application")
+        if _ft == _tt:
+            continue
+        _nm = _fig1_label((_tb.get("name") or _tb.get("id") or "").split("|")[0].strip())
+        if _nm:
+            _tb_name.setdefault((_ft, _tt), _nm)
+            _tb_name.setdefault((_tt, _ft), _nm)
+
+    # In-figure legend — a single light reference card. NOT wrapped in a
+    # subgraph (that added an empty title bar + a second border — the "unnötiger
+    # Rand oben" the user flagged). Because the attack classes are NAMED on the
+    # arrows, the legend only has to explain the line/colour key; it never makes
+    # the reader decode numbers (2026-06-14 user request — "Legende klar
+    # verständlich, nicht überladen; selbsterklärend").
+    def _actor_name(slug: str) -> str:
+        return _fig1_label(_FIG1_ACTOR_LABEL.get(slug) or (actor_labels.get(slug) or {}).get("label") or slug)
+
+    _leg: list[str] = ["<b>Legend</b>"]
+    # Line-style markers use em-dash (—) for a solid line and middle-dots (·) for
+    # a dotted line; both glyphs are in the DejaVu Sans export font, whereas the
+    # box-drawing chars (━ ┈ ─) are NOT and rendered as garbled "A==A==".
+    if len(actor_order) > 1:
+        # Several attackers → the line colour tells them apart; list the mapping.
+        for slug in actor_order:
+            col = actor_color.get(slug, "#b71c1c")
+            _leg.append(f"<span style='color:{col}'>&#8212;&#8212;</span> attack — {_actor_name(slug)}")
+    else:
+        _leg.append("<span style='color:#b71c1c'>&#8212;&#8212;</span> attack (solid, from attacker)")
+    _leg.append("<span style='color:#b71c1c'>&#183;&#183;&#183;&#183;</span> attack consequence (dotted)")
+    _leg.append("<span style='color:#6b7280'>&#8212;&#8212;</span> legitimate request flow")
+    if any(d.get("Critical") or d.get("High") for d in comp_sev_count.values()):
+        _leg.append("🔴 Critical · 🟠 High (finding count on box)")
+    _leg_html = "<div style='text-align:left;font-size:11px;line-height:1.6'>" + "<br/>".join(_leg) + "</div>"
+    lines.append(f'    LEG["{_leg_html}"]:::legend')
+
+    # actor mermaid-node-id → slug, to colour each attack edge by its actor.
+    _nid_slug = {nid: slug for slug, nid in actor_node.items()}
 
     edge_idx = 0
     benign_idx: list[int] = []
-    attack_idx: list[int] = []
+    attack_styles: list[tuple[int, str]] = []  # (edge index, per-actor colour)
     if benign_edges:
         lines.append("    %% legitimate request flow")
         for src, dst, lbl in benign_edges:
-            lines.append(f'    {src} -->|"{lbl.strip()}"| {dst}')
+            _b = _tb_name.get((_tier_of(src), _tier_of(dst)))
+            _lbl = f"{lbl.strip()}<br/><i>trust boundary: {_b}</i>" if _b else lbl.strip()
+            lines.append(f'    {src} -->|"{_lbl}"| {dst}')
             benign_idx.append(edge_idx)
             edge_idx += 1
+    def _edge_label(glyphs: list[str]) -> str:
+        # "① Injection<br/>② Auth Bypass" — glyph + class name, canonical order,
+        # one class per line. Self-explanatory: no legend lookup required.
+        _ord = sorted(glyphs, key=lambda g: _glyph_pos.get(g, 99))
+        return "<br/>".join(f"{g} {glyph_name.get(g, '')}".strip() for g in _ord)
+
     if attack_glyphs:
-        lines.append("    %% attacks (solid) — each originates at a threat actor; glyphs match Figure 2 / Top Threats")
+        # Attack edges are SOLID arrows COLOURED per attacking actor AND labelled
+        # directly with the attack class name(s) they carry, so the figure reads
+        # on its own — no glyph decoder needed. A component hit by several classes
+        # shows ONE arrow whose label stacks the names (P2: never parallel edges).
+        lines.append("    %% attacks (solid) — coloured per actor, labelled with the class name(s)")
         for (src, dst), glyphs in attack_glyphs.items():
-            lines.append(f'    {src} ==>|"{_solid_label(src, glyphs)}"| {dst}')
-            attack_idx.append(edge_idx)
+            lines.append(f'    {src} ==>|"{_edge_label(glyphs)}"| {dst}')
+            attack_styles.append((edge_idx, actor_color.get(_nid_slug.get(src, ""), "#b71c1c")))
             edge_idx += 1
     prop_idx: list[int] = []
     if prop_glyphs:
-        lines.append("    %% propagation (dotted) — how the attack reaches the data tier / victim")
+        lines.append("    %% propagation (dotted) — consequence onto the data tier")
         for (src, dst), glyphs in prop_glyphs.items():
-            lines.append(f'    {src} -.->|"{_dotted_label(glyphs)}"| {dst}')
+            lines.append(f'    {src} -.->|"{_edge_label(glyphs)}"| {dst}')
             prop_idx.append(edge_idx)
             edge_idx += 1
-
-    # ---- Layout balancing: center the narrow tiers under the wide app row ----
-    # ELK is a LAYERED layout that places each node at the barycenter (mean x)
-    # of its neighbours. The client tier (typically one SPA box) and the data
-    # tier (typically one DB box) each connect to only ONE application component
-    # — the app representative — so ELK inherits that rep's horizontal position
-    # and the narrow tier drifts to whichever side the rep landed on. With a
-    # wide app row the data tier rendered hard RIGHT (under the right-leaning
-    # SPA→API→DB spine) instead of as a centered BOTTOM band, and the client
-    # tier drifted top-right (2026-06-06 user request: "den data layer generell
-    # unten rendern statt rechts"). To pin them centrally we add INVISIBLE
-    # (`~~~`) forward edges from each narrow tier's rep to every OTHER drawn app
-    # component, so its barycenter becomes the mean x of the whole app row → the
-    # tier renders centered. The edges are FORWARD (client→app, app→data) so the
-    # tier ranking is unchanged, carry no glyph, and get no linkStyle entry — so
-    # Mermaid renders them as no line at all and the linkStyle index math above
-    # is untouched. Skipped when the app row has <2 drawn components (a single
-    # app box is already aligned with the narrow tiers, nothing to balance).
-    _app_drawn = [cid for cid in app_comps if cid in _drawn]
-    if len(_app_drawn) >= 2:
-        _balance: list[str] = []
-        # Data tier (bottom): rep_app already carries the real reads/writes edge
-        # into the data rep, so balance from every OTHER drawn app component.
-        if rep_data and rep_data in _drawn:
-            for cid in _app_drawn:
-                if cid != rep_app:
-                    _balance.append(f"    {comp_node[cid]} ~~~ {comp_node[rep_data]}")
-        # Client tier (top): client_rep already carries the real API-calls edge
-        # to rep_app, so balance it against every OTHER drawn app component.
-        if rep_client and rep_client in _drawn:
-            for cid in _app_drawn:
-                if cid != rep_app:
-                    _balance.append(f"    {comp_node[rep_client]} ~~~ {comp_node[cid]}")
-        if _balance:
-            lines.append(
-                "    %% invisible barycenter-balancing edges — center the client/data tiers "
-                "under the app row (no glyph, no linkStyle → rendered as no line)"
-            )
-            lines.extend(_balance)
+    if victim_props and benign_edges:
+        # Explicit consequence edge ONTO the Shop User (victim): the payload the
+        # attacker delivers through the client tier reaches the customer's
+        # browser (XSS/CSRF). Merged per source, labelled with the class name(s)
+        # so the "attack against the user" is shown as a real arrow, not buried in
+        # the node text (2026-06-14 user request).
+        _vmerge: dict[str, list[str]] = {}
+        for _vsrc, _g in victim_props:
+            _dst = _vmerge.setdefault(_vsrc, [])
+            if _g not in _dst:
+                _dst.append(_g)
+        lines.append("    %% consequence onto the victim (Shop User)")
+        for _vsrc, _gl in _vmerge.items():
+            lines.append(f'    {_vsrc} -.->|"{_edge_label(_gl)}"| {user_node}')
+            prop_idx.append(edge_idx)
+            edge_idx += 1
     lines.append("")
-    for tier, sg, stroke in (
-        ("client", "CLIENT", "#475569"),
-        ("application", "APP", "#b71c1c"),
-        ("data", "DATA", "#475569"),
-    ):
+    # Tier bands — all NEUTRAL slate (2026-06-14 user request: "rot nur für
+    # Angriffe und Angreifer verwenden"). The application tier kept a red band
+    # before, which collided with red = attack; now every tier reads as the same
+    # calm horizontal zone and the only red in the figure is the attacker node +
+    # its attack arrows. The app tier keeps a marginally thicker stroke for a
+    # subtle (non-colour) emphasis since it carries the most threats.
+    for tier, sg in (("client", "CLIENT"), ("application", "APP"), ("data", "DATA")):
         if any(comp_tier[cid] == tier for cid in comp_node):
-            width = "2px" if tier == "application" else "1.5px"
-            lines.append(f"    style {sg} fill:none,stroke:{stroke},stroke-width:{width},stroke-dasharray:5")
+            width = "2.25px" if tier == "application" else "1.5px"
+            lines.append(f"    style {sg} fill:#f1f5f9,stroke:#475569,stroke-width:{width}")
     if actor_emit:
-        # Same dashed-band styling as the (non-app) tiers, so the actor zone
-        # reads as one more layer in a uniform stack.
-        lines.append("    style ZONE_ACTORS fill:none,stroke:#94a3b8,stroke-width:1.5px,stroke-dasharray:5")
+        lines.append("    style ZONE_ACTORS fill:#f8fafc,stroke:#94a3b8,stroke-width:1.5px")
+    lines.append("    classDef legend fill:#fbfbfd,stroke:#e2e8f0,color:#334155,stroke-width:1px")
     lines.append("    classDef comp fill:#eef2f7,stroke:#334155,color:#0f172a,stroke-width:1.5px")
     # Muted style for the per-tier "components without findings (not drawn)" note.
     lines.append("    classDef compmuted fill:#f8fafc,stroke:#cbd5e1,color:#64748b,stroke-width:1px,font-size:9px")
@@ -5775,41 +5921,31 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     lines.append("    classDef actorgood fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px")
     if benign_idx:
         lines.append(f"    linkStyle {','.join(str(i) for i in benign_idx)} stroke:#6b7280,stroke-width:1.5px")
-    if attack_idx:
-        lines.append(f"    linkStyle {','.join(str(i) for i in attack_idx)} stroke:#b71c1c,stroke-width:2.5px")
+    # Attack edges — one linkStyle PER edge so each carries its attacking actor's
+    # colour (attribution by colour). Grouped by colour to keep the directive set
+    # small when several edges share an actor.
+    _by_color: dict[str, list[int]] = {}
+    for _i, _col in attack_styles:
+        _by_color.setdefault(_col, []).append(_i)
+    for _col, _idxs in _by_color.items():
+        lines.append(f"    linkStyle {','.join(str(i) for i in _idxs)} stroke:{_col},stroke-width:2.5px")
     if prop_idx:
-        # Dotted, slightly thinner red — the consequence path, visually
-        # subordinate to the solid attack edges but clearly part of the same flow.
+        # Dotted, thinner — the consequence path, subordinate to the attacks.
         lines.append(
             f"    linkStyle {','.join(str(i) for i in prop_idx)} stroke:#b71c1c,stroke-width:1.5px,stroke-dasharray:5"
         )
     lines.append("```")
 
+    # The legend lives inside the figure (a single light card, no subgraph box),
+    # so the diagram is self-explanatory — every attack arrow is named with its
+    # class, so no markdown decoder table is needed (2026-06-14 user request).
     intro = (
-        "Components grouped by architecture tier. **Grey** edges are the legitimate request "
-        "backbone; **solid red** are attacks (each from a threat actor); **dotted red** are the "
-        "consequence path onto the data tier or victim. Glyphs match Figure 2 and the Top Threats table."
+        "Components grouped by architecture tier (Client → Application → Data, top to bottom). "
+        "Each red arrow is an attack labelled with its class and coloured by the attacking actor; "
+        "dotted red arrows show where the attack propagates (data tier, victim). The 🔴/🟠 badge on "
+        "a box counts its Critical/High findings."
     )
-
-    # Compact one-line glyph legend UNDER the diagram. Edges now carry glyphs
-    # only (see _attack_label), so this single line is where each number is
-    # decoded — `① Injection · ② Auth Bypass · …`. One line replaces the former
-    # per-edge stacked names that stretched the figure vertically.
-    glyph_legend = " · ".join(f"{g} {glyph_name[g]}".strip() for g in glyph_seq if glyph_name.get(g))
     body = intro + "\n\n" + "\n".join(lines) + "\n"
-    if glyph_legend:
-        body += "\n_Threats: " + glyph_legend + "_\n"
-    # Per-component badge legend — explains the 🔴/🟠 circles on the component
-    # boxes (Critical / High finding counts). Only emitted when at least one
-    # component actually carries a badge, so a clean architecture stays unclutter
-    # ed. (User request: "in Figure 1 müssten die Farben erklärt werden — was ist
-    # roter/oranger Kreis".)
-    if any(d.get("Critical") or d.get("High") for d in comp_sev_count.values()):
-        body += (
-            "\n_Component badge: 🔴 = number of Critical findings on the component · "
-            "🟠 = number of High findings. Components with no Critical/High finding "
-            "carry no badge._\n"
-        )
     return body
 
 

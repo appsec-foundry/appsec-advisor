@@ -303,61 +303,39 @@ def test_top_threats_has_five_columns(tmp_path: Path) -> None:
     assert header in rendered, "Top Threats must use exactly the 5 canonical columns"
 
 
-def test_figure1_solid_edges_are_self_describing(tmp_path: Path) -> None:
-    """Figure 1 names each threat glyph ONCE PER ACTOR — on the first solid
-    attack edge from that actor that carries it (``① Injection ⑥ XSS``) — and
-    references it by BARE number on every later edge from the same actor and on
-    every FOLLOW-ON (dotted) propagation edge. So the diagram is self-describing
-    (no legend lookup needed) without re-printing a class name on every arrow.
-    Regression for the 2026-06-05 request: busy single-actor figures (juice-shop)
-    must stay named, not collapse to cryptic bare ``① ④``."""
+def test_figure1_attacks_are_labelled_arrows_with_clean_legend(tmp_path: Path) -> None:
+    """Figure 1 (2026-06-14 redesign): attack arrows are SOLID and labelled
+    directly with the class glyph+name ("① Injection"), so the figure is
+    self-explanatory without a decoder. Boxes no longer carry a glyph chip (the
+    classes are on the arrows); the 🔴/🟠 finding-count badge stays. The legend is
+    a single light card — NOT wrapped in a subgraph (which added a double border +
+    empty title bar). Tier bands are neutral slate (red is only attacks/actors)."""
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)
     m = re.search(r"```mermaid\nflowchart TB.+?```", rendered, re.DOTALL)
     if not m:
         return  # fixture produced no Figure 1 (no attack paths) → nothing to verify
     fig1 = m.group(0)
-    glyphs = "①②③④⑤⑥⑦"
-    # Capture (actor, label) per solid edge so we can assert the per-actor rule.
-    solid = re.findall(r'^\s*(\S+)\s+==>\|"([^"]*)"', fig1, re.MULTILINE)
-    dotted = re.findall(r'-\.->\|"([^"]*)"', fig1)
-    if not solid:
-        return
-
-    def _glyphs_in(lbl: str) -> list[str]:
-        return re.findall(rf"[{glyphs}]", lbl)
-
-    # Per actor: the FIRST solid edge carrying a glyph names it; later edges from
-    # the same actor reference it bare. Track which (actor, glyph) were named.
-    named: set[tuple[str, str]] = set()
-    for actor, lbl in solid:
-        for gly in _glyphs_in(lbl):
-            titled = bool(re.search(rf"{gly}\s+[A-Za-z]", lbl))
-            if (actor, gly) in named:
-                assert not titled, f"actor {actor} re-titles already-named glyph {gly}: {lbl!r}"
-            else:
-                assert titled, f"actor {actor} first use of glyph {gly} not named: {lbl!r}"
-                named.add((actor, gly))
-    # At least one glyph is named somewhere (sanity — not a fully-bare diagram).
-    assert any(re.search(rf"[{glyphs}]\s+[A-Za-z]", lbl) for _, lbl in solid), (
-        f"no named glyph on any solid attack edge: {solid}"
-    )
-    # Dotted edges reference by bare number — a glyph already named on any solid
-    # edge must NOT be re-titled on a dotted edge.
-    solid_named = {g for _, lbl in solid for g in _glyphs_in(lbl)}
-    for lbl in dotted:
-        for gly in _glyphs_in(lbl):
-            if gly in solid_named:
-                assert not re.search(rf"{gly}\s+[A-Za-z]", lbl), (
-                    f"dotted edge re-titles already-named glyph {gly}: {lbl!r}"
-                )
+    # Attack edges carry a mid-edge label that names the class (glyph present).
+    assert re.search(r'==>\|"[^"]*[①②③④⑤⑥⑦]', fig1), "attack edges must be labelled with the class glyph+name"
+    # No coloured glyph CHIP on the boxes any more (glyphs moved onto the arrows).
+    assert not re.search(r"<span style='color:#[0-9a-fA-F]{6}'>[①②③④⑤⑥⑦]</span>", fig1), "box glyph chip must be gone"
+    # The legend is a single card, not a subgraph, and is not overloaded.
+    assert "subgraph LEGEND" not in fig1, "legend must not be wrapped in a subgraph"
+    assert re.search(r'LEG\["[^"]*Legend', fig1), "in-figure legend card missing"
+    # The 🔴/🟠 finding-count badge stays on the boxes.
+    assert "🔴" in fig1 or "🟠" in fig1, "component finding-count badge must be preserved"
+    # Application tier must NOT be red (red is reserved for attacks/actors).
+    assert "fill:#fdeeee" not in fig1, "application tier must not use the old red band"
 
 
-def test_figure1_keeps_data_as_bottom_sink_with_balancing_edges(tmp_path: Path) -> None:
-    """Figure 1 is a vertical tier stack. When the app row has multiple
-    visible components, every non-representative app node gets an invisible
-    App→Data balancing edge so ELK keeps DATA centered underneath the app row
-    instead of drifting to the right."""
+def test_figure1_is_a_top_down_tier_stack_without_balancing_edges(tmp_path: Path) -> None:
+    """Figure 1 is a vertical tier stack (Client → Application → Data) and no
+    longer emits invisible ``~~~`` barycenter-balancing edges. Those edges were
+    a layout band-aid that, on victim-bearing models, pulled the client rep to
+    the centre of the app row and produced the long crossing diagonals the
+    rewrite removes. Tier ordering + the complexity budget keep DATA at the
+    bottom without them; ELK centres the narrow tiers on its own."""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     ctx = compose.RenderContext(
@@ -406,15 +384,127 @@ def test_figure1_keeps_data_as_bottom_sink_with_balancing_edges(tmp_path: Path) 
         },
     )
     fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
-    assert fig1.index('subgraph CLIENT["Client Tier') < fig1.index('subgraph APP["Application Tier')
-    assert fig1.index('subgraph APP["Application Tier') < fig1.index('subgraph DATA["Data Tier')
-    assert "CMP_WORKER ~~~ CMP_DB" in fig1
-    assert not re.search(r'==>\|"[^"]*"\| CMP_DB\b', fig1), fig1
+    assert fig1.index("subgraph CLIENT[") < fig1.index("subgraph APP[")
+    assert fig1.index("subgraph APP[") < fig1.index("subgraph DATA[")
+    # No invisible balancing edges BETWEEN COMPONENTS (the barycenter band-aid).
+    assert not re.search(r"CMP_\w+\s*~~~\s*CMP_\w+", fig1), "no component↔component balancing edges"
+    # No direct actor⇒data edge — data is reached via dotted propagation only.
+    assert not re.search(r"==> CMP_DB\b", fig1), fig1
+
+
+def test_figure1_complexity_budget_mutes_non_top_threat_components(tmp_path: Path) -> None:
+    """R1 — Figure 1 draws only components that host a finding of a budgeted
+    (top-N, glyph-bearing) attack class, plus tier reps. A Critical/High
+    component that no top attack class touches is collapsed into the muted
+    'Also assessed' note rather than drawn as a full box + edge, so the figure's
+    box/edge count tracks the number of TOP THREATS, not the repo size."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={
+            "components": [
+                {"id": "api", "name": "REST API", "tier": "application"},
+                {"id": "billing", "name": "Billing Service", "tier": "application"},
+                {"id": "db", "name": "Primary Database", "tier": "data"},
+            ],
+            "threats": [
+                {"id": "F-001", "title": "SQL Injection", "component": "api", "risk": "Critical"},
+                # billing has a High finding but it is NOT in any attack path.
+                {"id": "F-009", "title": "Weak billing check", "component": "billing", "risk": "High"},
+                {"id": "F-003", "title": "Weak data storage", "component": "db", "risk": "Medium"},
+            ],
+        },
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    md = compose._render_top_threats_architecture(
+        ctx,
+        {"attack_paths": [{"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-001"]}]},
+        {
+            "glyph_sequence": ["①"],
+            "classes": [{"id": "injection", "label": "Injection", "short_label": "Injection", "default_actor": "internet-anon", "default_target_tier": "data"}],
+        },
+    )
+    fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
+    assert "CMP_API[" in fig1  # top-threat host → drawn
+    assert "CMP_BILLING[" not in fig1, "non-top-threat High component must be muted, not drawn"
+    assert "Also assessed" in fig1 and "Billing Service" in fig1
+
+
+def test_figure1_caps_tier_width_for_complex_apps(tmp_path: Path) -> None:
+    """R2 — a flowchart tier is a single horizontal row, so a complex app with
+    many attacked components in one tier must NOT draw them all (it would
+    stretch the figure into an unreadable wide strip). At most
+    ``_FIG1_MAX_TIER_DRAW`` boxes are drawn per tier; the overflow collapses
+    into the muted note, which still NAMES the attacked components (traceability
+    preserved). Verifies box count is capped AND the note flags 'Also attacked'."""
+    comps = [{"id": f"svc{i}", "name": f"Service {i}", "tier": "application"} for i in range(1, 13)]
+    comps.append({"id": "db", "name": "Database", "tier": "data"})
+    threats = [{"id": f"F-{i:03d}", "title": f"weakness {i}", "component": f"svc{i}", "risk": "Critical"} for i in range(1, 13)]
+    threats.append({"id": "F-200", "title": "weak storage", "component": "db", "risk": "Medium"})
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(output_dir=out_dir, contract={}, yaml_data={"components": comps, "threats": threats}, triage={}, fragments_dir=out_dir / ".fragments")
+    # 6 classes, each hitting two distinct services → all 12 services are hosts.
+    classes = ["injection", "auth-bypass", "privilege-escalation", "remote-code-execution", "dos", "sensitive-data-exposure"]
+    aps = [{"class": c, "actor": "internet-anon", "target": "application", "findings": [f"F-{2 * i + 1:03d}", f"F-{2 * i + 2:03d}"]} for i, c in enumerate(classes)]
+    tax = {
+        "glyph_sequence": ["①", "②", "③", "④", "⑤", "⑥"],
+        "classes": [{"id": c, "label": c, "short_label": c, "default_actor": "internet-anon", "default_target_tier": "application"} for c in classes],
+    }
+    md = compose._render_top_threats_architecture(ctx, {"attack_paths": aps}, tax)
+    fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
+    drawn = re.findall(r"CMP_SVC\d+\[", fig1)
+    assert len(drawn) <= compose._FIG1_MAX_TIER_DRAW, f"app tier drew {len(drawn)} boxes, cap is {compose._FIG1_MAX_TIER_DRAW}"
+    # the width-capped Critical hosts are named in the muted note with a §8 pointer
+    assert "Critical/High finding in §8" in fig1, "capped Crit/High components must be named in the muted note"
+
+
+def test_figure1_victim_classes_draw_a_dotted_edge_to_the_shop_user(tmp_path: Path) -> None:
+    """Victim-targeting classes (XSS / CSRF) draw an explicit dotted consequence
+    edge ONTO the Shop User node, labelled with the targeting class ("① XSS"), so
+    the attack against the user is shown as a real arrow (2026-06-14 user
+    request). The node itself is just labelled as the attack victim — the class
+    is on the edge, not stuffed into the node text."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={
+            "components": [
+                {"id": "spa", "name": "SPA", "tier": "client"},
+                {"id": "api", "name": "API", "tier": "application"},
+            ],
+            "threats": [{"id": "F-001", "title": "Stored XSS", "component": "spa", "risk": "Critical"}],
+        },
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    md = compose._render_top_threats_architecture(
+        ctx,
+        {"attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-001"]}]},
+        {
+            "glyph_sequence": ["①"],
+            "classes": [{"id": "cross-site-scripting", "label": "Cross-Site Scripting", "short_label": "XSS", "default_actor": "victim-required", "default_target_tier": "client"}],
+        },
+    )
+    fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
+    # The Shop User node is present and labelled as the attack victim.
+    assert "EXT_SHOPUSER" in fig1, fig1
+    assert re.search(r'EXT_SHOPUSER\["[^"]*attack victim', fig1), fig1
+    # An explicit dotted consequence edge runs ONTO the Shop User, labelled with
+    # the victim-targeting class glyph (restored 2026-06-14).
+    assert re.search(r'-\.->\|"[^"]*①[^"]*"\|\s*EXT_SHOPUSER', fig1), fig1
+    # The class is on the EDGE, not stuffed into the node text.
+    assert "attack target:" not in fig1, "victim class must be on the edge, not the node"
 
 
 def test_figure1_victim_target_without_client_component_does_not_crash(tmp_path: Path) -> None:
-    """Victim-targeting classes can occur in thin API-only models. Figure 1
-    must still render a propagation edge instead of referencing an undefined
+    """Victim-targeting classes can occur in thin API-only models. Figure 1 must
+    still render (and mark the victim node) instead of referencing an undefined
     fallback variable."""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
@@ -460,7 +550,9 @@ def test_figure1_victim_target_without_client_component_does_not_crash(tmp_path:
         },
     )
     assert "```mermaid" in md
-    assert "-.->" in md
+    # Victim edge falls back to a non-client representative; the Shop User node
+    # still renders (no crash on the no-client-tier path).
+    assert "EXT_SHOPUSER" in md
 
 
 def test_top_threats_rows_self_anchor_the_path_glyph(tmp_path: Path) -> None:

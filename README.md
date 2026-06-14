@@ -301,33 +301,7 @@ What the org-profile buys you over the generic plugin:
 
 The diagram below shows the packaging and distribution flow using "Acme" as a placeholder for your organisation.
 
-```mermaid
-flowchart LR
-    A["appsec-advisor<br/><i>github.com</i>"]
-
-    subgraph ACME["  Acme  "]
-        direction LR
-        P["org-profile/\nrequirements · presets · cost limits"]
-        B["acme-appsec\ninternal SCM"]
-        D["portal / devcontainer\n/ bootstrap"]
-        DEV(["Developer at Acme"])
-        CMD["/acme-appsec:create-threat-model"]
-    end
-
-    A -->|"pin & package"| B
-    P -->|"bundle"| B
-    B -->|"publish"| D
-    D -->|"install"| DEV
-    DEV -->|"runs"| CMD
-
-    style ACME fill:#f0f4f8,stroke:#475569,stroke-width:1.5px,stroke-dasharray:5
-    style A fill:#ffffff,stroke:#334155,stroke-width:1.5px,color:#334155
-    style P fill:#eef2f7,stroke:#334155,color:#0f172a
-    style B fill:#eef2f7,stroke:#334155,color:#0f172a
-    style D fill:#eef2f7,stroke:#334155,color:#0f172a
-    style DEV fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20
-    style CMD fill:#f8fafc,stroke:#cbd5e1,color:#334155
-```
+![AppSec Advisor workflow](docs/images/orgpackaging.svg)
 
 - Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
 - Runnable CI starters: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · Local build: [Quick start](docs/internal-plugin-packaging.md#quick-start)
