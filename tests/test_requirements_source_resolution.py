@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -35,6 +36,34 @@ PROFILE_RS = {
 }
 EFFECTIVE = {"requirements_source": PROFILE_RS}
 LEGACY = {"requirements_source": {"enabled": False, "requirements_yaml_url": None}}
+
+
+def test_load_effective_missing_invalid_and_valid(tmp_path):
+    assert rrs._load_effective(None) is None
+    assert rrs._load_effective(tmp_path / "missing.json") is None
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{", encoding="utf-8")
+    assert rrs._load_effective(invalid) is None
+
+    valid = tmp_path / "effective.json"
+    valid.write_text(json.dumps({"requirements_source": {"requirements_yaml_url": "https://x/reqs.yaml"}}), encoding="utf-8")
+    assert rrs._load_effective(valid)["requirements_source"]["requirements_yaml_url"] == "https://x/reqs.yaml"
+
+
+def test_load_legacy_default_missing_invalid_and_valid(tmp_path):
+    assert rrs._load_legacy_default(tmp_path) == {}
+
+    cfg = tmp_path / "skills" / "audit-security-requirements"
+    cfg.mkdir(parents=True)
+    (cfg / "config.json").write_text("{", encoding="utf-8")
+    assert rrs._load_legacy_default(tmp_path) == {}
+
+    (cfg / "config.json").write_text(
+        json.dumps({"requirements_source": {"requirements_yaml_url": "https://legacy/reqs.yaml"}}),
+        encoding="utf-8",
+    )
+    assert rrs._load_legacy_default(tmp_path)["requirements_source"]["requirements_yaml_url"] == "https://legacy/reqs.yaml"
 
 
 def test_cli_url_wins():
@@ -90,10 +119,50 @@ def test_standalone_audit_respects_toggle():
     assert result["enabled"] is False
 
 
+def test_org_profile_defaults_and_verify_caller_are_enabled():
+    effective = {"requirements_source": {"requirements_yaml_url": "https://security.example.test/minimal.yaml"}}
+
+    result = rrs.resolve(None, False, "quick", "verify-requirements", effective, LEGACY)
+
+    assert result["source"] == "org-profile"
+    assert result["enabled"] is True
+    assert result["fail_mode"] == "cache_fallback"
+    assert result["cache"] is True
+
+
+def test_org_profile_cache_false_is_preserved():
+    effective = {"requirements_source": {**PROFILE_RS, "cache": False}}
+
+    result = rrs.resolve(None, False, "standard", "create-threat-model", effective, LEGACY)
+
+    assert result["source"] == "org-profile"
+    assert result["cache"] is False
+
+
 def test_legacy_fallback_when_no_profile_active():
     result = rrs.resolve(None, False, "standard", "create-threat-model", None, LEGACY)
     assert result["source"] == "legacy"
     assert result["enabled"] is False
+
+
+def test_legacy_url_source_is_enabled_by_default():
+    legacy = {"requirements_source": {"requirements_yaml_url": "https://legacy.example/reqs.yaml"}}
+
+    result = rrs.resolve(None, False, "standard", "create-threat-model", None, legacy)
+
+    assert result["source"] == "legacy"
+    assert result["enabled"] is True
+    assert result["url"] == "https://legacy.example/reqs.yaml"
+
+
+def test_legacy_terminal_fallback_can_enable_without_url():
+    legacy = {"requirements_source": {"enabled": True, "requirements_yaml_url": None}}
+
+    result = rrs.resolve(None, False, "standard", "create-threat-model", None, legacy)
+
+    assert result["source"] == "legacy"
+    assert result["enabled"] is True
+    assert result["url"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -187,3 +256,57 @@ def test_org_audit_disabled_false_when_enabled():
 def test_org_audit_disabled_not_set_for_threat_model_caller():
     result = rrs.resolve(None, False, "standard", "create-threat-model", DISABLED_EFFECTIVE, LEGACY)
     assert result["org_audit_disabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# CLI glue
+# ---------------------------------------------------------------------------
+
+
+def test_main_resolves_local_repo_catalog_and_prints_json(tmp_path, capsys):
+    (tmp_path / "requirements.yaml").write_text("categories: []\n", encoding="utf-8")
+    (tmp_path / ".org-profile-effective.json").write_text(json.dumps(EFFECTIVE), encoding="utf-8")
+
+    assert rrs.main(["--output-dir", str(tmp_path)]) == 0
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["source"] == "local"
+    assert out["surfaced"] is True
+    assert out["url"] == str(tmp_path / "requirements.yaml")
+
+
+def test_main_uses_demo_path_when_requested(tmp_path, capsys):
+    assert rrs.main(["--output-dir", str(tmp_path), "--demo", "--plugin-root", str(REPO_ROOT)]) == 0
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["source"] == "demo"
+    assert out["demo"] is True
+    assert out["url"].endswith("examples/appsec-requirements-example.yaml")
+
+
+def test_main_reads_remembered_sidecar_from_cache_path(tmp_path, capsys):
+    cache = tmp_path / "cache" / "requirements.yaml"
+    cache.parent.mkdir()
+    (cache.parent / "requirements.source.json").write_text(
+        json.dumps({"url": "https://remembered.example/reqs.yaml", "label": "Remembered"}),
+        encoding="utf-8",
+    )
+
+    assert (
+        rrs.main(
+            [
+                "--output-dir",
+                str(tmp_path),
+                "--caller",
+                "audit-security-requirements",
+                "--cache-path",
+                str(cache),
+            ]
+        )
+        == 0
+    )
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["source"] == "remembered"
+    assert out["enabled"] is True
+    assert out["label"] == "Remembered"
