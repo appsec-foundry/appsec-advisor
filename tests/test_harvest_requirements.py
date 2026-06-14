@@ -217,6 +217,181 @@ def test_run_legacy_sources_unknown_type_and_output_validation(monkeypatch, tmp_
     assert "schema warning" in capsys.readouterr().out
 
 
+# ---------------------------------------------------------------------------
+# Requirement / blueprint parser helpers
+# ---------------------------------------------------------------------------
+
+
+def test_text_helpers_intro_and_requirement_detection():
+    assert harvester.detect_priority("Teams SHOULD rotate signing keys") == "SHOULD"
+    assert harvester.detect_priority("No modal verb here") == "MUST"
+    assert harvester.clean_text("[SEC-AUTH-1] MUST validate sessions.") == "MUST validate sessions"
+    assert harvester.deduplicate_text("Use TLS. Use TLS. Pin certificates.") == "Use TLS. Pin certificates."
+    assert harvester.page_has_requirements('<span class="badge">ACME‑AUTH</span>') is True
+    assert harvester.page_has_requirements("plain documentation") is False
+
+    html = """
+    <main>
+      <p>This introduction explains the authentication baseline before controls are listed.</p>
+      <div>Container wrapper copy should not be duplicated.
+        <p>This nested paragraph is useful introductory context.</p>
+      </div>
+      <p>Another useful paragraph describes expected rollout and review ownership.</p>
+      <p>[SEC-AUTH-1] First requirement stops the intro collection.</p>
+    </main>
+    """
+
+    intro = harvester.parse_page_intro(html)
+
+    assert "authentication baseline" in intro
+    assert "Container wrapper copy" not in intro
+    assert "nested paragraph" in intro
+    assert "First requirement" not in intro
+
+
+def test_parse_page_intro_without_main_returns_empty():
+    assert harvester.parse_page_intro("<html></html>") == ""
+
+
+def test_parse_antora_requirements_and_badge_only_summary():
+    html = """
+    <html>
+      <body>
+        <h1>MUST API authentication</h1>
+        <div class="sect1">
+          <h2 id="session-control"><span class="must-label">MUST:</span> Session control</h2>
+          <div class="sectionbody">
+            <p><span class="badge">SEC_AUTH-2</span></p>
+            <p>Sessions must expire after inactivity.</p>
+            <details><p>Implementation detail should not be included.</p></details>
+          </div>
+        </div>
+        <div class="sect1">
+          <div class="sectionbody">
+            <p><span class="badge">SEC‑TOKEN</span></p>
+          </div>
+        </div>
+        <div class="sect1">
+          <h2>Summary</h2>
+          <div class="sectionbody"><p>Tokens must be stored in the approved vault.</p></div>
+        </div>
+      </body>
+    </html>
+    """
+
+    reqs = harvester.parse_requirements_from_page(html, "https://example.test/auth")
+    by_id = {r["id"]: r for r in reqs}
+
+    assert by_id["SEC-AUTH-2"]["priority"] == "MUST"
+    assert by_id["SEC-AUTH-2"]["url"].endswith("#session-control")
+    assert "Implementation detail" not in by_id["SEC-AUTH-2"]["text"]
+    assert by_id["SEC-TOKEN"]["text"] == "Tokens must be stored in the approved vault"
+
+
+def test_parse_requirements_fallback_strategies_and_sorting():
+    html = """
+    <main>
+      <p id="sec-auth-10">[SEC-AUTH-10] SHOULD expire remembered devices.</p>
+      <p id="sec-auth-2"></p><p>MAY allow emergency access with approval.</p>
+      <dl>
+        <dt>[SEC-AUTH-3]</dt>
+        <dd>MUST rotate session secrets.</dd>
+      </dl>
+      <section><p>[SEC-AUTH-4] MUST log privilege changes.</p></section>
+      <table>
+        <tr><th>ID</th><th>Text</th></tr>
+        <tr><td>[SEC-AUTH-5]</td><td>SHOULD pin identity-provider metadata.</td></tr>
+      </table>
+      <p>[ORG-CUSTOM] MAY document a custom control.</p>
+    </main>
+    """
+
+    reqs = harvester.parse_requirements_from_page(html, "https://example.test/auth")
+
+    assert [r["id"] for r in reqs] == [
+        "SEC-AUTH-2",
+        "SEC-AUTH-3",
+        "SEC-AUTH-4",
+        "SEC-AUTH-5",
+        "SEC-AUTH-10",
+        "ORG-CUSTOM",
+    ]
+    by_id = {r["id"]: r for r in reqs}
+    assert by_id["SEC-AUTH-2"]["text"] == "MAY allow emergency access with approval"
+    assert by_id["SEC-AUTH-3"]["priority"] == "MUST"
+    assert by_id["SEC-AUTH-5"]["priority"] == "SHOULD"
+    assert by_id["ORG-CUSTOM"]["priority"] == "MAY"
+
+
+def test_group_by_category_atomic_multi_and_full_context():
+    atomic = [{"id": "SEC-AUTH", "url": "u#sec-auth", "text": "Do auth", "priority": "MUST"}]
+    multi = [
+        {"id": "SEC-AUTH-2", "url": "u#2", "text": "B", "priority": "MUST"},
+        {"id": "SEC-AUTH-1", "url": "u#1", "text": "A", "priority": "SHOULD"},
+        {"id": "ORG-CUSTOM", "url": "u#custom", "text": "C", "priority": "MAY"},
+    ]
+
+    atomic_groups = harvester.group_by_category(atomic, "https://example.test/one", "One")
+    multi_groups = harvester.group_by_category(
+        multi,
+        "https://example.test/security-baseline",
+        "Baseline",
+        mode="full",
+        page_intro="This is a long page introduction explaining the context for the harvested controls.",
+    )
+
+    assert atomic_groups[0]["id"] == "SEC-AUTH"
+    by_cat = {cat["id"]: cat for cat in multi_groups}
+    assert [r["id"] for r in by_cat["SEC-AUTH"]["requirements"]] == ["SEC-AUTH-2", "SEC-AUTH-1"]
+    assert by_cat["SECURITY_BASELINE"]["requirements"][0]["id"] == "ORG-CUSTOM"
+    assert "context" in by_cat["SEC-AUTH"]
+
+
+def test_page_title_and_section_anchor_fallbacks():
+    assert harvester.page_title("<h1>Heading</h1><title>Title</title>", "fallback") == "Heading"
+    assert harvester.page_title("<title>Title</title>", "fallback") == "Title"
+    assert harvester.page_title("<html></html>", "fallback") == "fallback"
+    assert harvester.section_anchor("API & Auth: Rules!") == "api-auth-rules"
+
+
+def test_parse_blueprint_summary_and_flat_page_modes():
+    summary_html = """
+    <html>
+      <head><title>API Security</title><meta name="description" content="Secure APIs."></head>
+      <body>
+        <article>
+          <p>This paragraph is long enough to become the visible summary for the blueprint page.</p>
+          <h2 id="auth">Authentication</h2>
+          <p>Use central identity.</p>
+          <h3>Tokens</h3>
+          <p>Rotate tokens. Rotate tokens.</p>
+        </article>
+      </body>
+    </html>
+    """
+    flat_html = """
+    <html>
+      <head><meta name="description" content="Fallback summary."></head>
+      <body>
+        <main>
+          <p>This flat blueprint page has enough text to become a summary paragraph.</p>
+          <p>This second paragraph should be captured in the Overview section.</p>
+        </main>
+      </body>
+    </html>
+    """
+
+    summary = harvester.parse_blueprint_page(summary_html, "https://example.test/api", mode="summary")
+    flat = harvester.parse_blueprint_page(flat_html, "https://example.test/flat", mode="full", max_section_chars=80)
+
+    assert summary["title"] == "API Security"
+    assert summary["topics"] == ["auth", "tokens"]
+    assert "sections" not in summary
+    assert flat["title"] == "https://example.test/flat"
+    assert flat["sections"][0]["title"] == "Overview"
+    assert len(flat["sections"][0]["content"]) <= 80
+
+
 def test_blueprint_source_indexes_configured_crawl_url(monkeypatch):
     index_html = """
     <html>
