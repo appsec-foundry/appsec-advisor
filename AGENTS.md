@@ -349,6 +349,7 @@ Prefer small, consistent changes. Before changing behavior, identify affected co
 | Org-profile schema (`schemas/org-profile.schema.yaml`) or packaging scripts (`scripts/package_internal_plugin.py`, `scripts/smoke_test_package.py`, `scripts/validate_org_profile.py`) | Verify the [example org packaging repo](https://github.com/matthiasrohr/appsec-advisor-org-packaging-example) still builds cleanly — `make package` must pass against the updated upstream |
 | Template (`.j2`) | renderer cell-builder (`compose_threat_model.py`), the schema fields it consumes, `data/sections-contract.yaml` section registration, render/QA tests — never edit the template alone |
 | Cleanup or runtime state | `scripts/runtime_cleanup.py`, `docs/internal/contracts/cleanup-whitelist.md`, `docs/internal/contracts/audit-artifacts.md`, `tests/test_runtime_cleanup.py` |
+| Deterministic tail (`build_threat_model_yaml.py` / `compose_threat_model.py` / `export_sarif.py`) or a source scanner | regression-test the effect across repos by replaying a golden fixture — `scripts/threat_fixture.py` freeze/replay, runbook `docs/internal/runbooks/threat-fixture.md` |
 
 When uncertain, preserve the deterministic pipeline and make the LLM do less, not more.
 
