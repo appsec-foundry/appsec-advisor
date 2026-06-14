@@ -653,6 +653,7 @@ Parse the user's arguments for the following flags:
 | `--abuse-cases` | `skip_abuse_case_verification=false` — force the Stage 1c abuse-case verifier fan-out ON at any depth (overrides the quick-depth default-off). Conflicts with `--no-abuse-cases`. | on at standard/thorough; off at quick |
 | `--no-abuse-cases` | `skip_abuse_case_verification=true` — force the Stage 1c abuse-case verifier fan-out OFF at any depth (skips matcher + verifiers + chain fold even at standard/thorough; §9 renders the not-applicable catalog and no finding is chain-elevated). Conflicts with `--abuse-cases`. | on at standard/thorough; off at quick |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
+| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure1.svg` / `.pdf` / `.html`, figure reference rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,32}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
@@ -4191,7 +4192,24 @@ fi
 
 `scripts/runtime_cleanup.py` already lists `threat-model.html` in its NEVER-touch set, so this output survives subsequent cleanup the same way `threat-model.pdf` does.
 
-**Explicit success exit.** After the HTML block (or after the cleanup block when both `WRITE_PDF=false` and `WRITE_HTML=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
+### Slug stamping (only when `slug` is set)
+
+Runs **last** — after the PDF / HTML exports — so the stamped copy set includes every produced deliverable. When the resolved config carries a non-null `slug` (from `--slug [<value>]`), copy the canonical deliverables to a postfix-stamped, copy-ready set (`threat-model-<slug>.md` / `.yaml` / `.figure1.svg` / `.pdf` / `.html` / `.sarif.json`, whichever exist), with the Figure 1 reference inside the copied Markdown repointed at the stamped SVG. The canonical `threat-model.*` files are left untouched (the pipeline, gates, and incremental baseline depend on them). The slug was already resolved (random when bare `--slug`, explicit otherwise) by `resolve_config.py`, so the skill just reads it.
+
+**Non-fatal** — a copy failure must not fail the assessment; the canonical model is already complete.
+
+```bash
+SLUG=$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/.skill-config.json')).get('slug') or '')" 2>/dev/null)
+if [ -n "$SLUG" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/stamp_threat_model.py" \
+        --output-dir "$OUTPUT_DIR" --slug "$SLUG" \
+        2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+fi
+```
+
+`stamp_threat_model.py` is idempotent per slug (a re-run with the same slug overwrites its own stamped set, never the canonical files) and lists the created paths. `scripts/runtime_cleanup.py` treats `threat-model-*` stamped deliverables the same as the canonical ones (never touched).
+
+**Explicit success exit.** After the slug-stamping block (or after the cleanup block when both `WRITE_PDF=false` and `WRITE_HTML=false`) emit an unambiguous success exit so that no subsequent code path can accidentally run:
 
 ```bash
 exit 0

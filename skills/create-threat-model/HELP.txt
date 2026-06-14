@@ -27,11 +27,18 @@ OUTPUT
                                See /appsec-advisor:export-threat-model --formats html
                                for the standalone form
   --embed-figures              Embed Figure 1 inline in threat-model.md as a
-                               base64 data: URI (self-contained doc); figure1.svg
-                               is still written. GitHub strips data: URIs, so the
-                               default file reference is best for GitHub-hosted models.
+                               base64 data: URI (self-contained doc); the figure
+                               SVG (threat-model.figure1.svg) is still written.
+                               GitHub strips data: URIs, so the default file
+                               reference is best for GitHub-hosted models.
   --verbose                    Append a Run Statistics section to the report
   --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
+  --slug [<value>]             Also emit a copy-ready, postfix-stamped set
+                               (threat-model-<slug>.md / .yaml / .figure1.svg / …)
+                               so several models share one directory without
+                               overwriting. Bare --slug picks a random postfix;
+                               --slug <value> uses it (e.g. juice-shop-quick →
+                               threat-model-juice-shop-quick.md). Default: none.
 
 DEPTH & MODEL
   --assessment-depth <level>   quick | standard (default) | thorough

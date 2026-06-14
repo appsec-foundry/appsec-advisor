@@ -3748,6 +3748,30 @@ def test_render_figure1_svg_default_is_file_reference(tmp_path: Path) -> None:
     assert "data:image" not in md
 
 
+def test_figure_basename_for_md_derives_from_stem() -> None:
+    assert compose._figure_basename_for_md("threat-model.md") == "threat-model.figure1.svg"
+    assert (
+        compose._figure_basename_for_md("threat-model-juice-shop-quick.md")
+        == "threat-model-juice-shop-quick.figure1.svg"
+    )
+    assert compose._figure_basename_for_md("analysis-model.md") == "analysis-model.figure1.svg"
+
+
+def test_render_figure1_svg_custom_basename(tmp_path: Path) -> None:
+    # figure_basename drives both the written file and the image reference, so
+    # a stem-derived name (<md-stem>.figure1.svg) keeps several models from
+    # colliding in one directory.
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    ctx.figure_basename = "threat-model-juice-shop-quick.figure1.svg"
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert "](threat-model-juice-shop-quick.figure1.svg)" in md
+    assert "](figure1.svg)" not in md
+    assert (out / "threat-model-juice-shop-quick.figure1.svg").is_file()
+    assert not (out / "figure1.svg").exists()
+
+
 def test_render_figure1_svg_embed_via_skill_config(tmp_path: Path) -> None:
     # `/create-threat-model --embed-figures` persists embed_figures to
     # .skill-config.json; compose honours it without a CLI flag (renderer path).

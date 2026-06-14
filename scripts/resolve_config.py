@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -236,6 +237,12 @@ def detect_conflicts(ns: argparse.Namespace) -> Optional[str]:
     for a, b, msg in CONFLICT_PAIRS:
         if getattr(ns, a, False) and getattr(ns, b, False):
             return msg
+    slug = getattr(ns, "slug", None)
+    # "__auto__" is the bare-flag sentinel (random slug generated at resolve
+    # time) — only an explicit user value is validated for filename-safety.
+    if slug is not None and slug != "__auto__" and not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", slug):
+        return ("--slug must be 1-32 filename-safe characters "
+                "([A-Za-z0-9._-]); got: " + repr(slug))
     return None
 
 
@@ -1262,6 +1269,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--qa-scan-repo", action="store_true")
     # Scan manifest — log all scanned files to OUTPUT_DIR/.scan-manifest.txt
     p.add_argument("--scan-manifest", action="store_true")
+    # Optional model slug — when set, the run additionally emits a
+    # postfix-stamped, copy-ready deliverable set (threat-model-<slug>.md /
+    # .yaml / .figure1.svg / …) so several models can share one directory
+    # without overwriting each other. Default None = canonical names only.
+    p.add_argument("--slug", nargs="?", const="__auto__", default=None,
+                   help="Postfix for an additional copy-ready deliverable set "
+                        "(threat-model-<slug>.*). Bare --slug generates a "
+                        "random one; --slug <value> uses it. Default: none.")
     # Suppress interactive confirmation prompts (auto-accept current mode).
     p.add_argument("--no-confirm", "--yes", action="store_true",
                    dest="no_confirm",
@@ -1381,6 +1396,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "pentest_format":  ns.pentest_format,
         "pentest_target":  ns.pentest_target,
         "keep_runtime_files": ns.keep_runtime_files,
+        "slug":            (secrets.token_hex(2) if ns.slug == "__auto__" else ns.slug),
         "verbose":         ns.verbose,
         "tracing":         ns.tracing,
         "resume":          ns.resume,

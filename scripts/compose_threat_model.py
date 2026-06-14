@@ -208,6 +208,11 @@ class RenderContext:
     # figure1.svg. Default False = a plain relative-file reference (the only
     # form GitHub renders; data: URIs are stripped by GitHub's sanitiser).
     embed_figures: bool = False
+    # Basename of the Figure 1 SVG written next to the rendered Markdown and
+    # referenced from it. Derived from the output md stem (`<stem>.figure1.svg`)
+    # so several threat models can share one output directory without their
+    # figure files colliding. Defaults to the legacy `figure1.svg`.
+    figure_basename: str = "figure1.svg"
     severity_taxonomy: dict[str, dict[str, str]] = field(default_factory=dict)
     effectiveness_taxonomy: dict[str, dict[str, Any]] = field(default_factory=dict)
     category_taxonomy: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -5222,7 +5227,15 @@ def _fig1_label(text: str) -> str:
     return s.replace("&", "&amp;").replace('"', "'")
 
 
-_FIGURE1_SVG_NAME = "figure1.svg"
+def _figure_basename_for_md(md_name: str) -> str:
+    """Derive the Figure 1 SVG filename from the output Markdown name:
+    ``threat-model.md`` → ``threat-model.figure1.svg``,
+    ``threat-model-juice-shop-quick.md`` → ``threat-model-juice-shop-quick.figure1.svg``.
+
+    Tying the figure to the md stem lets several models share one output
+    directory without their figure files colliding.
+    """
+    return f"{Path(md_name).stem}.figure1.svg"
 
 
 def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
@@ -5260,7 +5273,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     if not (svg or "").strip():
         return ""
     # Always write the file (referenced by the published md / consumed by export).
-    (ctx.output_dir / _FIGURE1_SVG_NAME).write_text(svg, encoding="utf-8")
+    (ctx.output_dir / ctx.figure_basename).write_text(svg, encoding="utf-8")
     intro = (
         "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
         "top threats per component. The in-figure legend on the right explains the attack scenarios, "
@@ -5282,7 +5295,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
         src = f"data:image/svg+xml;base64,{b64}"
     else:
-        src = _FIGURE1_SVG_NAME
+        src = ctx.figure_basename
     return f"{intro}\n\n![Figure 1 - Architecture, Trust Boundaries and Threats]({src})"
 
 
@@ -14286,6 +14299,7 @@ def render(
     document: str = "full",
     emit_progress: bool = False,
     embed_figures: bool = False,
+    figure_basename: str = "figure1.svg",
 ) -> tuple[str, list[str]]:
     """Render threat-model.md (full) or analysis-model.md (architecture) from
     contract + yaml + fragments.
@@ -14481,6 +14495,7 @@ def render(
         triage=triage,
         fragments_dir=fragments_dir,
         embed_figures=embed_figures,
+        figure_basename=figure_basename,
         severity_taxonomy={
             k: {kk: str(vv) for kk, vv in v.items()} for k, v in (contract.get("severity_taxonomy") or {}).items()
         },
@@ -15496,6 +15511,12 @@ def _run_warned_signal(output_dir: Path) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
+    # Name the Figure 1 SVG after the output md stem (`<stem>.figure1.svg`) so
+    # several models can coexist in one output directory without their figure
+    # files colliding. Computed from the same default/--out logic used below.
+    _default_filename = "analysis-model.md" if args.document == "architecture" else "threat-model.md"
+    _out_name = (args.out or (args.output_dir / _default_filename)).name
+    _figure_basename = _figure_basename_for_md(_out_name)
     try:
         rendered, warnings = render(
             args.contract,
@@ -15505,6 +15526,7 @@ def main(argv: list[str] | None = None) -> int:
             document=args.document,
             emit_progress=not args.dry_run,  # CLI callers see live section progress
             embed_figures=args.embed_figures,
+            figure_basename=_figure_basename,
         )
     except FragmentError as e:
         attempt = _emit_pre_render_repair_plan(args.output_dir, e)
