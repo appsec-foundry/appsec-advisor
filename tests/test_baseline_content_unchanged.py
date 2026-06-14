@@ -19,8 +19,6 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
-
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 _spec = importlib.util.spec_from_file_location("baseline_state", SCRIPTS / "baseline_state.py")
 baseline_state = importlib.util.module_from_spec(_spec)
@@ -69,8 +67,8 @@ def _update(repo: Path, out: Path) -> None:
 
 def _check_changes(repo: Path, out: Path):
     """Return (exit_code, payload_dict). Captures stdout JSON."""
-    import io
     import contextlib
+    import io
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

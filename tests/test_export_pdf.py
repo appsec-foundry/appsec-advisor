@@ -719,3 +719,42 @@ class TestChromeResolution:
         with patch.object(ep, "find_chrome", return_value="/opt/chrome"):
             env = ep.mmdc_env()
         assert env["PUPPETEER_EXECUTABLE_PATH"] == "/user/set/chrome"
+
+
+# ---- stage_relative_images (Figure 1 SVG asset staging) --------------------
+def test_stage_relative_images_copies_local_svg(tmp_path: Path) -> None:
+    src = tmp_path / "doc"
+    src.mkdir()
+    (src / "figure1.svg").write_text("<svg/>")
+    work = tmp_path / "work"
+    work.mkdir()
+    md = "intro\n\n![Figure 1](figure1.svg)\n\nmore"
+    n = ep.stage_relative_images(md, src, work)
+    assert n == 1
+    assert (work / "figure1.svg").read_text() == "<svg/>"
+
+
+def test_stage_relative_images_skips_external_absolute_and_missing(tmp_path: Path) -> None:
+    src = tmp_path / "doc"
+    src.mkdir()
+    work = tmp_path / "work"
+    work.mkdir()
+    md = (
+        "![a](https://example.com/x.png) "
+        "![b](/etc/abs.png) "
+        "![c](data:image/png;base64,AAAA) "
+        "![d](missing.svg)"  # relative but not present on disk
+    )
+    assert ep.stage_relative_images(md, src, work) == 0
+    assert not any(work.iterdir())
+
+
+def test_stage_relative_images_does_not_overwrite_existing(tmp_path: Path) -> None:
+    src = tmp_path / "doc"
+    src.mkdir()
+    (src / "figure1.svg").write_text("NEW")
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "figure1.svg").write_text("KEEP")  # e.g. already produced by mermaid stage
+    assert ep.stage_relative_images("![x](figure1.svg)", src, work) == 0
+    assert (work / "figure1.svg").read_text() == "KEEP"

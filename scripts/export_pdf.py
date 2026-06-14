@@ -693,6 +693,32 @@ def pandoc_supports_embed_resources() -> bool:
     return (major, minor) >= (2, 19)
 
 
+_MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)>?")
+
+
+def stage_relative_images(md_text: str, src_dir: Path, work: Path) -> int:
+    """Copy relative image assets referenced by the Markdown (e.g. the
+    hand-built ``figure1.svg``) from the document's own directory into the temp
+    work dir, so pandoc — whose ``--resource-path`` points at the work dir —
+    can embed them. Mermaid PNGs already live in ``work``; this covers every
+    other relative ``![...](path)`` image. External/absolute refs are skipped.
+    Returns the number of assets staged.
+    """
+    staged = 0
+    for ref in {m.group(1).strip() for m in _MD_IMAGE_RE.finditer(md_text)}:
+        if re.match(r"^[a-z][a-z0-9+.-]*://", ref) or ref.startswith(("/", "data:", "#")):
+            continue
+        src, dst = src_dir / ref, work / ref
+        if src.is_file() and not dst.exists():
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                staged += 1
+            except OSError:
+                pass
+    return staged
+
+
 def md_to_html(md_path: Path, html_path: Path, css_path: Path, title: str) -> None:
     embed_flag = "--embed-resources" if pandoc_supports_embed_resources() else "--self-contained"
     cmd = [
@@ -769,6 +795,12 @@ def export_pdf(
         if use_mermaid and check_tool("mmdc"):
             md_text, rendered, failed = render_mermaid_blocks(md_text, work)
             sys.stderr.write(f"[export_pdf] mermaid: {rendered} rendered, {failed} failed\n")
+
+        # Stage relative image assets (e.g. figure1.svg) next to the work-dir md
+        # so pandoc's --resource-path={work} can embed them.
+        staged = stage_relative_images(md_text, input_md.parent, work)
+        if staged:
+            sys.stderr.write(f"[export_pdf] staged {staged} relative image asset(s)\n")
 
         pre_md = work / "pre.md"
         pre_md.write_text(md_text, encoding="utf-8")

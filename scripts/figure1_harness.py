@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import re
 import shutil
@@ -70,7 +69,7 @@ def _taxonomy(class_ids: list[str]) -> dict:
     return {"glyph_sequence": glyphs[: len(class_ids)], "classes": classes}
 
 
-def _ctx(tmp: Path, components: list[dict], threats: list[dict], meta: dict | None = None) -> "compose.RenderContext":
+def _ctx(tmp: Path, components: list[dict], threats: list[dict], meta: dict | None = None) -> compose.RenderContext:
     return compose.RenderContext(
         output_dir=tmp,
         contract={},

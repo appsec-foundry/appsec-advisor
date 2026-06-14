@@ -63,6 +63,10 @@ _LEGGAP = 46   # right lane: hosts the red "direct attack" arrow, then the legen
 _LEGW = 226
 _EXPOSED = "#c0392b"  # internet-exposed marker (red = attacker-reachable)
 _ACTOR_H = 94
+# Capped on-page display width (px). The viewBox keeps the true coordinate
+# space, so the figure renders as a compact OVERVIEW but stays vector-crisp and
+# is zoomable to full detail. Bigger models still grow in height, not width.
+_MAX_DISPLAY_W = 760
 
 
 def _esc(s: str) -> str:
@@ -175,6 +179,8 @@ def build_figure1_svg(
     meta = meta or (yaml_data.get("meta") or {})
     components = yaml_data.get("components") or []
     threats = yaml_data.get("threats") or []
+    if not components or not (attack_paths_data.get("attack_paths") or []):
+        return ""  # nothing to draw — caller falls back to the Mermaid builder
     cls_by_id = {c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)}
 
     # component bookkeeping
@@ -375,8 +381,8 @@ def build_figure1_svg(
                 c.text(tx, sub_y, "victim:", size=8.5, fill=_ATTACK, italic=True, anchor="start")
                 bxx = tx + 34
                 for d in victim_ids:
-                    c.circle(bxx, sub_y - 3, 6, fill="#fff", stroke=_ATTACK, sw=1.1)
-                    c.text(bxx, sub_y, str(d), size=8, fill=_ATTACK, weight="bold")
+                    c.circle(bxx, sub_y - 3, 6, fill=_ATTACK, stroke=_ATTACK, sw=1.1)
+                    c.text(bxx, sub_y, str(d), size=8, fill="#ffffff", weight="bold")
                     bxx += 15
             elif not show_sub:
                 c.text(tx, sub_y, "legitimate customer", size=8.5, fill=_MUTED, italic=True, anchor="start")
@@ -403,12 +409,12 @@ def build_figure1_svg(
             xx += u
 
     def id_circles(xc: float, yc: float, ids: list[int], gap: float = 27) -> None:
-        # Attack-scenario circles GREY on the boxes (all-red read too "unruhig",
-        # user) — red is kept only on the attacked actor (Shop User victim IDs).
+        # Attack-scenario circles: solid RED fill + WHITE number (user) — "attack
+        # = red" read clearly; the white digit keeps them legible.
         xx = xc - (len(ids) - 1) * gap / 2
         for d in ids:
-            c.circle(xx, yc, 8.5, fill="#ffffff", stroke=_ID_STROKE, sw=1.3)
-            c.text(xx, yc + 3.5, str(d), size=10.5, fill=_ID_TEXT, weight="bold")
+            c.circle(xx, yc, 8.5, fill=_ATTACK, stroke=_ATTACK, sw=1.3)
+            c.text(xx, yc + 3.5, str(d), size=10.5, fill="#ffffff", weight="bold")
             xx += gap
 
     def draw_box(cid: str, bx: float, by: float) -> None:
@@ -569,8 +575,8 @@ def build_figure1_svg(
             for d, name, a in scenarios:
                 if a != slug:
                     continue
-                c.circle(lx + 28, yy - 3.5, 8.5, fill="#fff", stroke=_ID_STROKE, sw=1.3)
-                c.text(lx + 28, yy - 0.3, str(d), size=9.5, fill=_ID_TEXT, weight="bold")
+                c.circle(lx + 28, yy - 3.5, 8.5, fill=_ATTACK, stroke=_ATTACK, sw=1.3)
+                c.text(lx + 28, yy - 0.3, str(d), size=9.5, fill="#ffffff", weight="bold")
                 c.text(lx + 44, yy, name, size=10.5, fill=_INK, anchor="start")
                 yy += _RH
 
@@ -581,19 +587,25 @@ def build_figure1_svg(
         c.text(lx + 38, y0 + _RH, "High", size=11, fill=_INK, anchor="start")
 
     def diag_rows(y0):
-        _globe(c, lx + 22, y0 - 3.5, 7, _EXPOSED)
-        c.text(lx + 40, y0, "internet-exposed entry point", size=10, fill=_INK, anchor="start")
-        c.line(lx + 12, y0 + _RH - 3.5, lx + 34, y0 + _RH - 3.5, stroke=_EXPOSED, sw=2, marker="arrowred")
-        c.text(lx + 40, y0 + _RH, "direct attack (Internet)", size=10, fill=_INK, anchor="start")
-        c.line(lx + 12, y0 + 2 * _RH - 3.5, lx + 34, y0 + 2 * _RH - 3.5, stroke=_BACKBONE, sw=2, marker="arrowgrey")
-        c.text(lx + 40, y0 + 2 * _RH, "legitimate request flow", size=10, fill=_INK, anchor="start")
-        c.circle(lx + 23, y0 + 3 * _RH - 3.5, 8.5, fill="#fff", stroke=_ID_STROKE, sw=1.3)
-        c.text(lx + 23, y0 + 3 * _RH - 0.3, "n", size=9.5, fill=_ID_TEXT, weight="bold", italic=True)
-        c.text(lx + 40, y0 + 3 * _RH, "attack scenario (see above)", size=10, fill=_INK, anchor="start")
+        # The internet-exposed / direct-attack rows are shown ONLY when the
+        # figure actually contains them (an honest legend explains just what's
+        # drawn); the request-flow + scenario-circle rows are always present.
+        r = 0
+        if exposed:
+            _globe(c, lx + 22, y0 - 3.5, 7, _EXPOSED)
+            c.text(lx + 40, y0, "internet-exposed entry point", size=10, fill=_INK, anchor="start")
+            c.line(lx + 12, y0 + _RH - 3.5, lx + 34, y0 + _RH - 3.5, stroke=_EXPOSED, sw=2, marker="arrowred")
+            c.text(lx + 40, y0 + _RH, "direct attack (Internet)", size=10, fill=_INK, anchor="start")
+            r = 2
+        c.line(lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5, stroke=_BACKBONE, sw=2, marker="arrowgrey")
+        c.text(lx + 40, y0 + r * _RH, "legitimate request flow", size=10, fill=_INK, anchor="start")
+        c.circle(lx + 23, y0 + (r + 1) * _RH - 3.5, 8.5, fill=_ATTACK, stroke=_ATTACK, sw=1.3)
+        c.text(lx + 23, y0 + (r + 1) * _RH - 0.3, "n", size=9.5, fill="#ffffff", weight="bold", italic=True)
+        c.text(lx + 40, y0 + (r + 1) * _RH, "attack scenario (see above)", size=10, fill=_INK, anchor="start")
 
     ly = panel("Attack Scenarios — by actor", ly, scen_rows, len(actor_order) + len(scenarios))
     ly = panel("Severity", ly, sev_rows, 2)
-    ly = panel("Diagram Legend", ly, diag_rows, 4)
+    ly = panel("Diagram Legend", ly, diag_rows, 4 if exposed else 2)
 
     total_w = lx + _LEGW + _PAD
     total_h = max(bands_bottom, ly) + _PAD
@@ -607,8 +619,13 @@ def build_figure1_svg(
         '</defs>'
     )
     body = "\n".join(c.el)
+    # Display size is capped to an OVERVIEW width (the viewBox keeps the full
+    # coordinate space, so the vector stays crisp and the reader can open/zoom
+    # figure1.svg for detail) — user: "nicht zu riesig, dient der Übersicht".
+    disp_w = min(total_w, _MAX_DISPLAY_W)
+    disp_h = total_h * disp_w / total_w
     return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{total_w:.0f}" height="{total_h:.0f}" '
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{disp_w:.0f}" height="{disp_h:.0f}" '
         f'viewBox="0 0 {total_w:.0f} {total_h:.0f}" font-family="{_FONT}">\n'
         f'<rect x="0" y="0" width="{total_w:.0f}" height="{total_h:.0f}" fill="#ffffff"/>\n'
         f'{defs}\n{body}\n</svg>\n'

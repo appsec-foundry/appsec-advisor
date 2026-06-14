@@ -18,7 +18,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import reclassify_components as rc  # noqa: E402
 
-
 _COMPONENTS = [
     {"id": "angular-spa", "paths": ["frontend/src/**"]},
     {"id": "express-backend", "paths": ["server.ts", "routes/**", "lib/**", "models/**"]},

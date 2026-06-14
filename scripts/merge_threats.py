@@ -766,7 +766,7 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     Deterministic; no LLM."""
     from collections import OrderedDict
 
-    buckets: "OrderedDict[str, list[dict]]" = OrderedDict()
+    buckets: OrderedDict[str, list[dict]] = OrderedDict()
     out: list[dict] = []
     for t in threats:
         cid = t.get("config_check_id") if t.get("source") == "config-scan" else None

@@ -3675,3 +3675,74 @@ def test_prose_linkifier_table_cells_use_emdash_form():
     out_prose = compose._linkify_bare_refs_in_prose(ctx, prose_md)
     assert "[F-014](#f-014) — " in out_tbl  # em-dash in the table cell
     assert "[F-014](#f-014) (" in out_prose  # parens in inline prose
+
+
+# ---- Figure 1 SVG integration (Phase 2) ------------------------------------
+def _fig1_ctx(out: Path) -> compose.RenderContext:
+    return compose.RenderContext(
+        output_dir=out,
+        contract={},
+        yaml_data={
+            "components": [
+                {"id": "spa", "name": "Angular SPA", "tier": "client"},
+                {"id": "api", "name": "Express API", "tier": "application"},
+                {"id": "db", "name": "Data Layer", "tier": "data"},
+            ],
+            "threats": [{"id": "F-001", "component": "api", "risk": "Critical"}],
+            "trust_boundaries": [{"from": "external", "to": "api", "name": "Public to API"}],
+            "meta": {},
+        },
+        triage={},
+        fragments_dir=out / ".fragments",
+    )
+
+
+_FIG1_APD = {"attack_paths": [{"class": "injection", "actor": "internet-anon",
+                               "target": "application", "findings": ["F-001"]}]}
+_FIG1_TAX = {"glyph_sequence": ["①"], "classes": [
+    {"id": "injection", "short_label": "Injection",
+     "default_actor": "internet-anon", "default_target_tier": "application"}]}
+
+
+def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    assert "](figure1.svg)" in md  # image reference, not a mermaid block
+    assert "```mermaid" not in md
+    svg = out / "figure1.svg"
+    assert svg.is_file() and svg.read_text(encoding="utf-8").startswith("<svg")
+
+
+def test_render_figure1_svg_empty_without_attack_paths(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    assert compose._render_figure1_svg(_fig1_ctx(out), {"attack_paths": []}, _FIG1_TAX) == ""
+    assert not (out / "figure1.svg").exists()
+
+
+def test_render_figure1_svg_empty_without_components(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    ctx.yaml_data["components"] = []
+    assert compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX) == ""
+
+
+def test_render_figure1_svg_embed_inline_data_uri(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    ctx.embed_figures = True
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert "](data:image/svg+xml;base64," in md  # inlined self-contained image
+    assert "figure1.svg)" not in md
+    assert (out / "figure1.svg").is_file()  # the file is still written
+
+
+def test_render_figure1_svg_default_is_file_reference(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
+    assert "](figure1.svg)" in md
+    assert "data:image" not in md

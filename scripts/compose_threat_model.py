@@ -50,6 +50,7 @@ Module map (coarse — line ranges drift; refresh via the section dividers below
 from __future__ import annotations
 
 import argparse
+import base64
 import functools
 import json
 import re
@@ -202,6 +203,11 @@ class RenderContext:
     yaml_data: dict[str, Any]
     triage: dict[str, Any]
     fragments_dir: Path
+    # When True, Figure 1 is ALSO embedded inline in the Markdown as a
+    # base64 data:image URI (self-contained md) in addition to writing
+    # figure1.svg. Default False = a plain relative-file reference (the only
+    # form GitHub renders; data: URIs are stripped by GitHub's sanitiser).
+    embed_figures: bool = False
     severity_taxonomy: dict[str, dict[str, str]] = field(default_factory=dict)
     effectiveness_taxonomy: dict[str, dict[str, Any]] = field(default_factory=dict)
     category_taxonomy: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -5216,6 +5222,60 @@ def _fig1_label(text: str) -> str:
     return s.replace("&", "&amp;").replace('"', "'")
 
 
+_FIGURE1_SVG_NAME = "figure1.svg"
+
+
+def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
+    """Build Figure 1 as a deterministic hand-built SVG (the PRIMARY renderer),
+    write it next to threat-model.md, and return the image-reference markdown.
+
+    Why SVG instead of the Mermaid builder below: Mermaid/ELK lays each tier out
+    as one horizontal row and scatters disconnected nodes, so the figure could
+    not wrap a busy tier into a grid and grew unboundedly wide. The SVG generator
+    computes the layout itself (top-N grid that grows in height, multi-actor band,
+    per-component internet-exposed markers, a straight direct-attack arrow). It
+    emits plain primitives (rect/line/circle/text) which GitHub, VS Code and
+    WeasyPrint all render natively — so the PDF export needs no Chrome for it.
+
+    ``attack_paths_data`` is already actor-collapsed by the caller (public-repo /
+    open-registration), so the SVG attribution matches Figure 2. Returns "" when
+    there is nothing to draw or the generator is unavailable — the caller then
+    falls back to the Mermaid builder and finally the LLM fragment.
+    """
+    components = ctx.yaml_data.get("components") or []
+    if not components or not (attack_paths_data.get("attack_paths") or []):
+        return ""
+    try:
+        from figure1_svg import build_figure1_svg
+    except Exception:  # noqa: BLE001 — missing module must never break the section
+        return ""
+    actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
+    svg = build_figure1_svg(
+        ctx.yaml_data,
+        attack_paths_data,
+        attack_taxonomy,
+        meta=ctx.yaml_data.get("meta") or {},
+        actor_labels=actor_labels,
+    )
+    if not (svg or "").strip():
+        return ""
+    # Always write the file (referenced by the published md / consumed by export).
+    (ctx.output_dir / _FIGURE1_SVG_NAME).write_text(svg, encoding="utf-8")
+    intro = (
+        "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
+        "top threats per component. The in-figure legend on the right explains the attack scenarios, "
+        "severity dots and symbols."
+    )
+    if getattr(ctx, "embed_figures", False):
+        # Inline as a base64 data URI → self-contained Markdown (renders in
+        # VS Code / pandoc / PDF; NOT on GitHub, which strips data: URIs).
+        b64 = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+        src = f"data:image/svg+xml;base64,{b64}"
+    else:
+        src = _FIGURE1_SVG_NAME
+    return f"{intro}\n\n![Figure 1 - Architecture, Trust Boundaries and Threats]({src})"
+
+
 def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
     """Deterministically build **Figure 1 — Architecture, Trust Boundaries &
     Threats** from ``threat-model.yaml`` + the *already-reconciled*
@@ -6454,11 +6514,20 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # diagrams that ignored the prescribed structure and emitted out-of-range
     # `linkStyle` indices that crash Mermaid (2026-05-30 regression). Best-effort:
     # a builder failure must never break the section (Figure 2 + table still render).
+    # PRIMARY: deterministic hand-built SVG (written next to threat-model.md).
     figure1_md = ""
     try:
-        figure1_md = _render_top_threats_architecture(ctx, attack_paths_data, attack_taxonomy).strip()
+        figure1_md = _render_figure1_svg(ctx, attack_paths_data, attack_taxonomy).strip()
     except Exception:  # noqa: BLE001 — Figure 1 is non-essential
         figure1_md = ""
+    # FALLBACK 1: the legacy deterministic Mermaid builder (kept for robustness
+    # if the SVG generator is unavailable or yields nothing).
+    if not figure1_md:
+        try:
+            figure1_md = _render_top_threats_architecture(ctx, attack_paths_data, attack_taxonomy).strip()
+        except Exception:  # noqa: BLE001 — Figure 1 is non-essential
+            figure1_md = ""
+    # FALLBACK 2: an LLM/operator-authored fragment.
     if not figure1_md:
         fig1_path = ctx.fragments_dir / "top-threats-architecture.md"
         try:
@@ -14206,6 +14275,7 @@ def render(
     strict: bool = True,
     document: str = "full",
     emit_progress: bool = False,
+    embed_figures: bool = False,
 ) -> tuple[str, list[str]]:
     """Render threat-model.md (full) or analysis-model.md (architecture) from
     contract + yaml + fragments.
@@ -14400,6 +14470,7 @@ def render(
         yaml_data=yaml_data,
         triage=triage,
         fragments_dir=fragments_dir,
+        embed_figures=embed_figures,
         severity_taxonomy={
             k: {kk: str(vv) for kk, vv in v.items()} for k, v in (contract.get("severity_taxonomy") or {}).items()
         },
@@ -15075,6 +15146,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     p.add_argument("--dry-run", action="store_true", help="Write to stdout, do not touch the filesystem.")
     p.add_argument(
+        "--embed-figures",
+        action="store_true",
+        help="Also embed Figure 1 inline in the Markdown as a base64 data:image URI "
+        "(self-contained doc). figure1.svg is still written. Note: GitHub strips "
+        "data: URIs, so the default file reference is best for GitHub-hosted models.",
+    )
+    p.add_argument(
         "--document",
         choices=["full", "architecture"],
         default="full",
@@ -15416,6 +15494,7 @@ def main(argv: list[str] | None = None) -> int:
             strict=not args.lenient,
             document=args.document,
             emit_progress=not args.dry_run,  # CLI callers see live section progress
+            embed_figures=args.embed_figures,
         )
     except FragmentError as e:
         attempt = _emit_pre_render_repair_plan(args.output_dir, e)

@@ -26,8 +26,10 @@ from secret_scan import scan_file as _scan_file_for_secrets
 # Always published when present
 TIER1 = ["threat-model.md", "threat-model.yaml"]
 
-# Published automatically when present (no flag needed)
-TIER2 = ["threat-model.sarif.json", "threat-model.pdf", ".architect-review.md"]
+# Published automatically when present (no flag needed). figure1.svg is the
+# hand-built Figure-1 image that threat-model.md references; without it the
+# published Markdown shows a broken image, so it travels with the document.
+TIER2 = ["threat-model.sarif.json", "threat-model.pdf", "figure1.svg", ".architect-review.md"]
 
 # Never published — get explicit "never publish" exceptions in .gitignore
 NEVER_PUBLISH = [

@@ -63,7 +63,6 @@ from pathlib import Path
 
 import yaml
 
-
 # Class-level remediation titles keyed on the addressed finding's CWE. Each is a
 # clear, general "what to do" — the per-finding specifics live in the block body.
 _GENERAL_TITLE_BY_CWE: dict[str, str] = {
