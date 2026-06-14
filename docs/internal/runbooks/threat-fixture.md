@@ -8,6 +8,69 @@ full (LLM) scan.
 It is a manual developer/test tool. It is **not** part of the scanned-repo
 pipeline and grants the skill no new permissions.
 
+## Workflow (end to end)
+
+The two scripts run in order: first produce a real run, then freeze it; replay
+comes later, after you change code.
+
+### Step 1 — produce a threat model (the one-time, LLM-backed run)
+
+Run the pipeline against the target repo **with `--keep-runtime-files`**. This
+is the critical flag: without it, `runtime_cleanup.py` strips the input sidecars
+on a successful run and `freeze` then has nothing to rebuild from.
+
+```bash
+./scripts/run-headless.sh \
+  --repo   /path/to/target-repo \
+  --output /tmp/run-<name> \
+  --sarif \
+  --assessment-depth standard \
+  --keep-runtime-files
+```
+
+Notes on parameters:
+
+- `--keep-runtime-files` — **required** (retains `.fragments/` + all sidecars).
+- `--assessment-depth quick|standard|thorough` — pick what you want the fixture
+  to represent; freeze captures whatever this run produced.
+- `--sarif` — yaml is always written; this also exercises the SARIF stage.
+- `--requirements` — include only if you want the Requirements-Compliance
+  section frozen too (the run then produces its fragment).
+- The run must **complete** (it must leave a `threat-model.yaml`).
+
+The source repo should be at a **pinned commit** (a submodule or a clean
+checkout) so the SHA recorded in `expected-meta.json` is meaningful.
+
+### Step 2 — freeze the run into a fixture
+
+```bash
+python3 scripts/threat_fixture.py freeze \
+  --run  /tmp/run-<name> \
+  --into tests/fixtures/golden/<name> \
+  --repo /path/to/target-repo        # enables scanner goldens + SHA pin
+  # --archive                         # optional: also write <name>.tgz
+```
+
+`freeze` rebuilds the deterministic tail itself and **fails loudly** if a
+required input was dropped, so the fixture can never be silently incomplete.
+Commit the unpacked `tests/fixtures/golden/<name>/` directory.
+
+### Step 3 — later, after changing code, replay
+
+```bash
+python3 scripts/threat_fixture.py replay \
+  --fixture tests/fixtures/golden/<name> \
+  --repo    /path/to/target-repo
+```
+
+Zero drift = your change had no effect on this repo's deterministic output. A
+printed diff = exactly the effect of your change. When the change is intentional
+and correct, re-run **Step 2** to bless the new golden (delete the old fixture
+dir first, since `freeze` refuses to overwrite).
+
+Steps 1–2 are done once per repo (and refreshed when the run itself changes);
+Step 3 is the fast inner loop and needs no LLM.
+
 ## Why a whole bundle, not just the report
 
 Regression-testing a code change needs two things, not one:
@@ -74,35 +137,17 @@ Fixture layout:
   MANIFEST.json        # sha256 of every file (integrity / drift guard)
 ```
 
-## Freeze
+## Command reference
 
-From the plugin root, after a completed run:
+`freeze` (Step 2) — `--run` must contain `threat-model.yaml`; `--repo` is
+**pinned by SHA**, not vendored (keep large repos as a submodule); `--archive`
+also writes a `.tgz`. `freeze` refuses to overwrite an existing `--into`.
 
-```bash
-python3 scripts/threat_fixture.py freeze \
-  --run  /path/to/output-dir \
-  --into tests/fixtures/golden/<name> \
-  --repo /path/to/scanned-repo        # optional: enables scanner goldens + SHA pin
-  # --archive                          # optional: also write <name>.tgz
-```
-
-The source run must be complete (it must contain `threat-model.yaml`). The
-`--repo` is **pinned by SHA**, not vendored — keep large repos as a submodule.
-`freeze` rebuilds the tail itself and fails loudly if a required input was
-dropped, so the fixture can never be silently incomplete.
-
-## Replay
-
-```bash
-python3 scripts/threat_fixture.py replay \
-  --fixture tests/fixtures/golden/<name> \
-  --stage all                          # or a comma list: yaml,md,sarif,scanner
-  --repo /path/to/scanned-repo         # override for the scanner stage
-```
-
-Exit `0` only when the manifest verifies **and** every selected stage shows no
-drift. Any diff is printed as a unified diff and exits non-zero. The scanner
-stage is skipped (not failed) when the source repo is unavailable.
+`replay` (Step 3) — `--stage all` or a comma list `yaml,md,sarif,scanner`;
+`--repo` overrides the source repo for the scanner stage. Exit `0` only when the
+manifest verifies **and** every selected stage shows no drift; any diff is
+printed as a unified diff and exits non-zero. The scanner stage is *skipped*
+(not failed) when the source repo is unavailable.
 
 ## In CI / pytest
 
