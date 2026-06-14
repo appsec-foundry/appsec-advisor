@@ -34,6 +34,47 @@ def _config_threat(tid: str, **extra) -> dict:
     return threat
 
 
+def test_load_iac_checks_missing_file_returns_empty(tmp_path: Path) -> None:
+    assert ecm._load_iac_checks(tmp_path) == {}
+
+
+def test_helpers_tolerate_noncanonical_yaml_shapes() -> None:
+    data = {
+        "mitigations": ["not-a-mapping", {"id": "M-007"}, {"id": "manual"}],
+        "threats": [
+            "not-a-mapping",
+            {"id": "T-001"},
+            {"id": "T-002", "mitigation_ids": []},
+            {"id": "T-003", "mitigation_ids": ["M-002", "M-009"]},
+        ],
+    }
+
+    assert ecm._scan_max_m_id(data) == 7
+    assert ecm._clear_prior_auto_mitigations({"mitigations": {"id": "M-001"}}) == set()
+
+    ecm._clear_stale_threat_refs(data, {"M-002"})
+
+    assert data["threats"][3]["mitigation_ids"] == ["M-009"]
+
+
+def test_synthesize_skips_malformed_threat_rows() -> None:
+    data = {
+        "threats": [
+            "not-a-mapping",
+            {"source": "config-scan"},
+            _config_threat("T-010", title="Unknown config issue", risk="Unexpected"),
+        ]
+    }
+    state = {"counter": 0}
+
+    cards = ecm._synthesize_fix_mitigations(data, state, {})
+
+    assert [card["id"] for card in cards] == ["M-001"]
+    assert cards[0]["priority"] == "P3"
+    assert data["threats"][2]["mitigation_ids"] == ["M-001"]
+    assert "mitigation_ids" not in data["threats"][1]
+
+
 def test_iac_check_id_uses_canonical_remediation_and_priority(tmp_path: Path, monkeypatch) -> None:
     _write_yaml(
         tmp_path,
