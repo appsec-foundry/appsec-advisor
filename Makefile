@@ -47,11 +47,13 @@ e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no 
 
 .PHONY: test
 test:  ## Run the standard pytest suite with coverage (no LLM)
-	@python3 -m pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing
+	@python3 -m pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing; \
+		status=$$?; rm -f .coverage.*; exit $$status
 
 .PHONY: coverage
 coverage:  ## Run the suite + write an HTML coverage report to htmlcov/index.html
-	@python3 -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing --cov-report=html
+	@python3 -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing --cov-report=html; \
+		status=$$?; rm -f .coverage.*; exit $$status
 	@echo "HTML report: htmlcov/index.html"
 
 .PHONY: lint
@@ -75,7 +77,8 @@ check:  ## Continuous gate: lint, format, config, drift, full test suite
 	@ruff format --check scripts/ tests/ hooks/
 	@python3 scripts/validate_config.py .
 	@python3 scripts/check_fragment_registry.py
-	@python3 -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing
+	@python3 -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing; \
+		status=$$?; rm -f .coverage.*; exit $$status
 
 .PHONY: release-check
 release-check:  ## Release-boundary gate: `check` + version/tag/changelog consistency
