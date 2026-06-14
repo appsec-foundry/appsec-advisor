@@ -92,7 +92,12 @@ def _resolve_evidence_file(repo_root: Path, file_token: str) -> Path | None:
     """Map an evidence.file token to an actual path. Returns None on miss."""
     if not file_token:
         return None
-    candidate = (repo_root / file_token).resolve()
+    root = repo_root.resolve()
+    candidate = (root / file_token).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
     if candidate.is_file():
         return candidate
     # Some Stage-1 emitters strip a leading directory. Try a basename
@@ -198,7 +203,7 @@ def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
 
 # States that the LLM verifier (or a prior deterministic run) may have set.
 # We never *lower* one of these; we only fill in `unchecked` or unset.
-_RESPECTED_PRIOR_STATES = {"verified", "refuted", "verified-prior"}
+_RESPECTED_PRIOR_STATES = {"verified", "refuted", "ambiguous", "verified-prior"}
 
 
 def validate_yaml(data: dict, repo_root: Path) -> tuple[dict, dict]:
