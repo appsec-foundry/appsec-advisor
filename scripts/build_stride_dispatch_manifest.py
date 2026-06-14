@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -154,6 +155,19 @@ def _is_cicd(c: dict) -> bool:
     return "ci-cd" in t or "cicd" in t or "pipeline" in t
 
 
+# Word-boundary matched — short tokens like "sse" must NOT match inside
+# unrelated words ("a-sse-t service", "cla-sse-s"). Substring matching (as the
+# pre-existing _is_auth/_is_cicd hints use) would spuriously mark a file-upload
+# / asset component as a realtime role and suppress the realtime injection.
+_REALTIME_RE = re.compile(
+    r"\b(socket\.?io|web-?socket|real-?time|socket|stomp|sse|pub-?sub)\b", re.I
+)
+
+
+def _is_realtime(c: dict) -> bool:
+    return bool(_REALTIME_RE.search(_component_text(c)))
+
+
 def _is_exposed(c: dict) -> bool:
     return bool(_zones(c) & EXPOSED_ZONES)
 
@@ -227,6 +241,234 @@ def _in_scope(c: dict, depth: str) -> bool:
         return True
     # Reachability zones present but none exposed/cicd → internal-only: thorough only.
     return depth == "thorough"
+
+
+# ---------------------------------------------------------------------------
+# Enumeration-completeness reconciliation.
+#
+# Phase-3 component enumeration is LLM-authored and occasionally FOLDS a
+# security-relevant deployable unit into a coarser parent (e.g. the auth
+# surface, the real-time channel, and the CI/CD pipeline collapsed into one
+# "backend" component) or drops it entirely. The deterministic selector can
+# only act on what is enumerated, so a folded unit becomes a silent
+# whole-component blind spot — never analyzed AND never surfaced as
+# out-of-scope. This pass restores ROLE completeness: when hard repo evidence
+# shows a security-relevant unit exists but no enumerated component carries
+# that role, inject a minimal component so the selector (and the §1 scope
+# rendering) can see it. Role-coverage, not path-coverage: an auth surface
+# folded inside a backend's routes/** still earns its own component (dedicated
+# STRIDE pass + the priority-0 auth floor that _is_auth would otherwise never
+# fire for a generically-named monolith).
+#
+# Idempotent: a unit whose role is already carried by an enumerated component
+# is never duplicated, so on a repo where Phase-3 already split it out (or on a
+# re-run over an already-augmented inventory) this is a no-op.
+# ---------------------------------------------------------------------------
+_CI_GLOBS = (
+    ".github/workflows/*.yml",
+    ".github/workflows/*.yaml",
+    ".gitlab-ci.yml",
+    "Jenkinsfile",
+    ".circleci/config.yml",
+    "azure-pipelines.yml",
+    "bitbucket-pipelines.yml",
+)
+_AUTH_FILE_RE = re.compile(
+    r"(login|logout|register|signup|auth|oauth|jwt|session|2fa|mfa|otp|"
+    r"reset.?password|forgot.?password|insecurity|identity|credential)",
+    re.I,
+)
+_AUTH_SCAN_DIRS = ("routes", "lib", "src", "controllers", "middleware", "app", "api")
+_SRC_SUFFIXES = (".ts", ".js", ".tsx", ".jsx", ".mjs", ".cjs", ".py", ".go", ".java", ".rb")
+
+
+def _guess_repo_root(output_dir: Path) -> Path:
+    """Best-effort repo root from the assessment output dir. Side-effect-free;
+    detectors guard on file existence, so a wrong guess simply yields no
+    injection (safe no-op)."""
+    cur = output_dir.resolve()
+    if cur.name == "security" and cur.parent.name == "docs":
+        return cur.parent.parent  # conventional <repo>/docs/security layout
+    for cand in (cur, *list(cur.parents)[:6]):
+        if (cand / ".git").exists() or (cand / "package.json").is_file():
+            return cand
+    return cur
+
+
+def _glob_files(repo_root: Path, patterns) -> list[str]:
+    hits: set[str] = set()
+    for pat in patterns:
+        try:
+            for p in repo_root.glob(pat):
+                if p.is_file():
+                    hits.add(p.relative_to(repo_root).as_posix())
+        except (OSError, ValueError):
+            continue
+    return sorted(hits)
+
+
+def _package_deps(repo_root: Path) -> dict:
+    pj = repo_root / "package.json"
+    if not pj.is_file():
+        return {}
+    try:
+        data = json.loads(pj.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    deps: dict = {}
+    for k in ("dependencies", "devDependencies", "optionalDependencies"):
+        d = data.get(k)
+        if isinstance(d, dict):
+            deps.update(d)
+    return deps
+
+
+def _detect_cicd(repo_root: Path) -> dict | None:
+    files = _glob_files(repo_root, _CI_GLOBS)
+    if not files:
+        return None
+    paths: list[str] = []
+    if any(f.startswith(".github/workflows/") for f in files):
+        paths.append(".github/workflows/**")
+    paths += [f for f in files if not f.startswith(".github/workflows/")]
+    sample = ", ".join(files[:4]) + (", …" if len(files) > 4 else "")
+    return {
+        "id": "ci-cd-pipeline",
+        "name": "CI/CD Pipeline",
+        "description": (
+            f"Continuous-integration / deployment workflows ({sample}). Build and "
+            "release automation holding repository, registry and deploy credentials, "
+            "with supply-chain reach into the produced artifact."
+        ),
+        "paths": paths or files,
+        "tier": "application",
+        "complexity": "simple",
+        "framework": None,
+        "deployment_zones": ["ci-cd-runtime", "build-pipeline"],
+        "handles_sensitive_data": True,
+        "origin": "reconciliation",
+    }
+
+
+def _detect_realtime(repo_root: Path) -> dict | None:
+    deps = _package_deps(repo_root)
+    # socket.io is the SERVER lib; socket.io-client is the browser side — a
+    # client-only dependency is not its own server component, so ignore it.
+    lib = next((d for d in ("socket.io", "ws", "@socket.io/admin-ui") if d in deps), None)
+    if not lib:
+        return None
+    # Precise paths: the source files that actually wire the realtime server,
+    # so the incremental dirty-set does not couple every lib/ change to it.
+    needle = "socket.io" if lib in ("socket.io", "@socket.io/admin-ui") else lib
+    sites: list[str] = []
+    for rel in ("server.ts", "server.js", "app.ts", "app.js"):
+        sites += _grep_paths(repo_root, rel, needle)
+    for d in ("lib", "src"):
+        sites += _grep_paths(repo_root, d, needle)
+    paths = sorted(set(sites))[:12] or ["server.ts", "app.ts"]
+    return {
+        "id": "realtime-channel",
+        "name": "Real-time WebSocket Channel",
+        "description": (
+            f"Server-side {lib} real-time channel pushing live events to connected "
+            "browsers. Internet-facing WebSocket surface with its own connection "
+            "auth/origin checks and message-handler trust boundary."
+        ),
+        "paths": paths,
+        "tier": "application",
+        "complexity": "simple",
+        "framework": lib,
+        "deployment_zones": ["internet", "dmz"],
+        "handles_sensitive_data": False,
+        "origin": "reconciliation",
+    }
+
+
+def _grep_paths(repo_root: Path, rel: str, needle: str, *, limit: int = 400) -> list[str]:
+    """Relative paths of source files under ``rel`` whose content mentions
+    ``needle``. Bounded scan; returns [] on any error or missing path."""
+    base = repo_root / rel
+    out: list[str] = []
+    try:
+        if base.is_file():
+            cands = [base]
+        elif base.is_dir():
+            cands = [p for p in base.rglob("*") if p.is_file() and p.suffix.lower() in _SRC_SUFFIXES][:limit]
+        else:
+            return []
+        for p in cands:
+            try:
+                if needle in p.read_text(encoding="utf-8", errors="ignore"):
+                    out.append(p.relative_to(repo_root).as_posix())
+            except OSError:
+                continue
+    except OSError:
+        return []
+    return out
+
+
+def _detect_auth(repo_root: Path) -> dict | None:
+    cands: set[str] = set()
+    for d in _AUTH_SCAN_DIRS:
+        base = repo_root / d
+        if not base.is_dir():
+            continue
+        try:
+            for p in base.rglob("*"):
+                if p.is_file() and p.suffix.lower() in _SRC_SUFFIXES and _AUTH_FILE_RE.search(p.stem):
+                    cands.add(p.relative_to(repo_root).as_posix())
+        except OSError:
+            continue
+    paths = sorted(cands)[:25]
+    if not paths:
+        return None
+    sample = ", ".join(paths[:4]) + (", …" if len(paths) > 4 else "")
+    return {
+        "id": "auth",
+        "name": "Authentication & Session Surface",
+        "description": (
+            f"Login, token/session issuance, password-reset and MFA handlers ({sample}). "
+            "The credential-bearing entry surface — the highest-value authentication "
+            "boundary in the system."
+        ),
+        "paths": paths,
+        "tier": "application",
+        "complexity": "moderate",
+        "framework": None,
+        "deployment_zones": ["internet", "dmz"],
+        "handles_sensitive_data": True,
+        "origin": "reconciliation",
+    }
+
+
+# (role-predicate, detector) pairs. A detected unit is injected only when NO
+# enumerated component already carries the role.
+_RECONCILE_DETECTORS = (
+    (_is_auth, _detect_auth),
+    (_is_cicd, _detect_cicd),
+    (_is_realtime, _detect_realtime),
+)
+
+
+def reconcile_inventory(components: list, repo_root: Path) -> tuple:
+    """Inject security-relevant deployable units that hard repo evidence shows
+    exist but Phase-3 did not enumerate as their own role-bearing component.
+
+    Returns ``(augmented_components, injected)``. Idempotent: a role already
+    carried by an enumerated (or already-injected) component is never added
+    twice. Injected components carry ``origin: "reconciliation"`` for audit.
+    """
+    existing = [c for c in components if isinstance(c, dict)]
+    augmented = list(existing)
+    injected: list[dict] = []
+    for role_pred, detect in _RECONCILE_DETECTORS:
+        if any(role_pred(c) for c in augmented):
+            continue  # role already covered — do not duplicate
+        cand = detect(repo_root)
+        if cand and not any(c.get("id") == cand.get("id") for c in augmented):
+            augmented.append(cand)
+            injected.append(cand)
+    return augmented, injected
 
 
 def select_stride_components(components: list, depth: str, ceiling: int | None = None) -> tuple:
@@ -304,6 +546,28 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     all_components = cj.get("components", cj) if isinstance(cj, dict) else cj
     if not isinstance(all_components, list):
         all_components = []
+
+    # Enumeration-completeness reconciliation: restore security-relevant units
+    # (auth / ci-cd / real-time) that Phase-3 folded into a coarser parent. The
+    # augmented inventory is persisted so it is the single source of truth for
+    # the selector here, the STRIDE fan-out, AND the downstream threat-model.yaml
+    # / heatmap / §1 scope (build_threat_model_yaml reads .components.json).
+    repo_root = _guess_repo_root(output_dir)
+    all_components, injected = reconcile_inventory(all_components, repo_root)
+    if injected:
+        payload = dict(cj) if isinstance(cj, dict) else {}
+        payload.setdefault("schema_version", 1)
+        payload["components"] = all_components
+        try:
+            (output_dir / ".components.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+        sys.stderr.write(
+            "RECONCILE: injected "
+            + ", ".join(c["id"] for c in injected)
+            + " — security-relevant unit(s) evidenced in repo but absent from "
+            "Phase-3 enumeration (role-folded). Now in scope.\n"
+        )
 
     components, selection_report = select_stride_components(all_components, depth, ceiling)
     # Persist the selection rationale so a run is auditable (which components were

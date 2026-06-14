@@ -411,3 +411,261 @@ def test_builder_carries_zones_and_crownjewel_through(tmp_path):
     # selection report written
     sel = json.loads((tmp_path / ".stride-selection.json").read_text())
     assert sel["mode"] == "criteria"
+
+
+# ---------------------------------------------------------------------------
+# Enumeration-completeness reconciliation (reconcile_inventory + detectors)
+# Restores security-relevant deployable units Phase-3 folded into a coarser
+# parent (the 8→5 component-count regression).
+# ---------------------------------------------------------------------------
+
+
+def _fake_repo(tmp_path: Path, *, cicd=True, socketio=True, auth=True) -> Path:
+    repo = tmp_path / "repo"
+    (repo / "routes").mkdir(parents=True)
+    (repo / "lib").mkdir(parents=True)
+    if cicd:
+        wf = repo / ".github" / "workflows"
+        wf.mkdir(parents=True)
+        (wf / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+        (wf / "release.yml").write_text("name: release\n", encoding="utf-8")
+    deps = {}
+    if socketio:
+        deps["socket.io"] = "^3.1.2"
+        (repo / "lib" / "startup.ts").write_text("import { Server } from 'socket.io'\n", encoding="utf-8")
+        (repo / "server.ts").write_text("const io = require('socket.io')\n", encoding="utf-8")
+        (repo / "lib" / "insecurity.ts").write_text("// jwt helpers, no realtime\n", encoding="utf-8")
+    (repo / "package.json").write_text(json.dumps({"dependencies": deps}), encoding="utf-8")
+    if auth:
+        (repo / "routes" / "login.ts").write_text("export function login(){}\n", encoding="utf-8")
+        (repo / "routes" / "resetPassword.ts").write_text("// reset password handler\n", encoding="utf-8")
+        if not socketio:
+            (repo / "lib" / "insecurity.ts").write_text("// jwt helpers\n", encoding="utf-8")
+    return repo
+
+
+def _backend_only():
+    # express-backend's DESCRIPTION mentions auth/uploads but its id/name do not —
+    # the exact juice-shop shape where _is_auth never fires on the monolith.
+    return [
+        {
+            "id": "express-backend",
+            "name": "Express Backend API",
+            "description": "monolith handling all endpoints, authentication, and uploads",
+            "paths": ["routes/**", "lib/**", "server.ts"],
+            "tier": "application",
+            "deployment_zones": ["internet", "dmz"],
+            "handles_sensitive_data": True,
+        },
+        {
+            "id": "angular-spa",
+            "name": "Angular SPA",
+            "description": "frontend",
+            "paths": ["frontend/**"],
+            "tier": "client",
+            "deployment_zones": ["client-device"],
+        },
+    ]
+
+
+def test_reconcile_injects_folded_security_units(tmp_path):
+    repo = _fake_repo(tmp_path)
+    augmented, injected = bm.reconcile_inventory(_backend_only(), repo)
+    assert {c["id"] for c in injected} == {"auth", "ci-cd-pipeline", "realtime-channel"}
+    for c in injected:
+        assert c["origin"] == "reconciliation"
+        # all schema-required fields present
+        assert c["id"] and c["name"] and c["description"] and c["paths"] and c["tier"]
+    assert len(augmented) == len(_backend_only()) + 3
+
+
+def test_reconcile_idempotent_when_role_present(tmp_path):
+    repo = _fake_repo(tmp_path)
+    comps = _backend_only() + [
+        {"id": "auth-service", "name": "Auth Service", "description": "login", "paths": ["auth/**"], "tier": "application"},
+        {"id": "pipeline", "name": "Build Pipeline", "description": "ci", "paths": [".github/**"], "tier": "application"},
+        {"id": "ws-gateway", "name": "WebSocket Gateway", "description": "rt", "paths": ["ws/**"], "tier": "application"},
+    ]
+    augmented, injected = bm.reconcile_inventory(comps, repo)
+    assert injected == []  # every role already carried by an enumerated component
+    # re-running over already-augmented inventory is also a no-op
+    _, injected2 = bm.reconcile_inventory(augmented, repo)
+    assert injected2 == []
+
+
+def test_reconcile_no_evidence_no_injection(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    _, injected = bm.reconcile_inventory(_backend_only(), empty)
+    assert injected == []
+
+
+def test_reconcile_partial_evidence_only_cicd(tmp_path):
+    repo = _fake_repo(tmp_path, socketio=False, auth=False)
+    _, injected = bm.reconcile_inventory(_backend_only(), repo)
+    assert {c["id"] for c in injected} == {"ci-cd-pipeline"}
+
+
+def test_reconciled_units_selected_at_standard(tmp_path):
+    repo = _fake_repo(tmp_path)
+    augmented, _ = bm.reconcile_inventory(_backend_only(), repo)
+    selected, report = bm.select_stride_components(augmented, "standard")
+    sel_ids = {c["id"] for c in selected}
+    assert {"auth", "ci-cd-pipeline", "realtime-channel"} <= sel_ids
+    assert report["excluded"] == []  # each earned a positive criterion
+
+
+def test_auth_gets_priority_zero_floor(tmp_path):
+    # The dead-_is_auth-floor fix: a folded monolith yields no auth role, but the
+    # injected auth component restores the priority-0 never-drop invariant.
+    repo = _fake_repo(tmp_path)
+    augmented, _ = bm.reconcile_inventory(_backend_only(), repo)
+    auth = next(c for c in augmented if c["id"] == "auth")
+    assert bm._is_auth(auth) is True
+    assert bm._priority(auth) == 0
+
+
+def test_realtime_paths_are_precise_not_broad(tmp_path):
+    repo = _fake_repo(tmp_path)
+    rt = bm._detect_realtime(repo)
+    assert rt is not None
+    assert "lib/startup.ts" in rt["paths"]
+    assert "server.ts" in rt["paths"]
+    assert "lib/insecurity.ts" not in rt["paths"]  # no socket.io reference
+    assert "lib/**" not in rt["paths"]
+
+
+def test_build_persists_augmented_inventory(tmp_path):
+    repo = _fake_repo(tmp_path)
+    od = repo / "docs" / "security"  # conventional layout so _guess_repo_root finds repo
+    od.mkdir(parents=True)
+    (od / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": _backend_only()}), encoding="utf-8"
+    )
+    manifest = bm.build(od, "standard", {}, PLUGIN_ROOT)
+    mids = {c["component_id"] for c in manifest["components"]}
+    assert {"auth", "ci-cd-pipeline", "realtime-channel"} <= mids
+    persisted = json.loads((od / ".components.json").read_text())
+    pids = {c["id"] for c in persisted["components"]}
+    assert {"auth", "ci-cd-pipeline", "realtime-channel"} <= pids
+    # injected components carry the audit marker on disk
+    assert any(c.get("origin") == "reconciliation" for c in persisted["components"])
+
+
+def test_is_realtime_no_substring_false_positive():
+    # "sse" must not match inside "asset service" (the file-upload component);
+    # else realtime injection is wrongly suppressed as already-covered.
+    fileup = {"id": "file-upload-service", "name": "File Upload and Static Asset Service", "description": "uploads"}
+    assert bm._is_realtime(fileup) is False
+    classes = {"id": "classes", "name": "Classroom Service", "description": "x"}
+    assert bm._is_realtime(classes) is False
+    # genuine realtime roles still match
+    for name in ("WebSocket Gateway", "Socket.IO Channel", "Realtime Hub", "SSE Stream"):
+        assert bm._is_realtime({"id": "x", "name": name, "description": ""}) is True
+
+
+def test_realtime_injected_when_upload_component_present(tmp_path):
+    # Regression for the juice-shop shape: a file-upload component must not
+    # absorb the realtime role and block injection.
+    repo = _fake_repo(tmp_path)
+    comps = _backend_only() + [
+        {"id": "file-upload-service", "name": "File Upload and Static Asset Service",
+         "description": "uploads", "paths": ["routes/fileUpload.ts"], "tier": "application",
+         "deployment_zones": ["internet", "dmz"], "handles_sensitive_data": True},
+    ]
+    _, injected = bm.reconcile_inventory(comps, repo)
+    assert "realtime-channel" in {c["id"] for c in injected}
+
+
+# ---------------------------------------------------------------------------
+# Selection-pipeline coverage hardening: the contract handoff + predicate
+# branches that the isolated unit/fixture tests do not exercise.
+# ---------------------------------------------------------------------------
+
+
+def test_selection_report_flows_into_scope_rendering():
+    """Contract integration: the REAL select_stride_components report →
+    build_component_selection → gen_system_overview. Catches reason-string
+    drift between the selector and the §1 Scope renderer that the isolated
+    tests (hand-built `cs` fixtures) cannot."""
+    import importlib.util as _ilu
+
+    def _load(name):
+        s = _ilu.spec_from_file_location(name, PLUGIN_ROOT / "scripts" / f"{name}.py")
+        m = _ilu.module_from_spec(s)
+        s.loader.exec_module(m)
+        return m
+
+    btm = _load("build_threat_model_yaml")
+    pf = _load("pregenerate_fragments")
+
+    comps = [
+        _c("express-backend", zones=["internet", "dmz"], sensitive=True, name="Express Backend"),
+        _c("angular-spa", zones=["client-device"], tier="client", name="Angular SPA"),
+        _c("user-store", zones=["internal-network"], tier="data", sensitive=True, name="User Store"),
+        _c("ci-cd", zones=["ci-cd-runtime"], name="CI/CD Pipeline"),
+        _c("internal-worker", zones=["internal-network"], name="Internal Worker"),
+    ]
+    selected, report = bm.select_stride_components(comps, "standard")
+    assert {c["id"] for c in selected} == {"express-backend", "angular-spa", "user-store", "ci-cd"}
+    assert {e["id"] for e in report["excluded"]} == {"internal-worker"}
+
+    # real selector report → §1 scope data model → rendered markdown
+    cs = btm.build_component_selection(report, comps)
+    assert cs is not None and cs["analyzed"] == 4 and cs["total"] == 5
+    out = pf.gen_system_overview({"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps})
+
+    assert "**4 of 5**" in out
+    assert "Internal Worker" in out  # out-of-scope component is named
+    assert "not individually analyzed" in out
+    # the selector's OWN reason strings survive the handoff into the criteria line
+    crit_line = next(line for line in out.splitlines() if "Selection criteria" in line)
+    assert "crown-jewel" in crit_line
+    assert "internet-exposed" in crit_line
+    assert "ci-cd" in crit_line
+
+
+def test_selection_reasons_cover_each_branch():
+    """Every _selection_reasons branch emits its documented string — the
+    contract the §1 scope 'Selection criteria' clause depends on."""
+    r = bm._selection_reasons
+    assert "auth (M3.4 mandatory)" in r(_c("a", zones=["internal-network"], name="Auth Service"), "standard")
+    assert "frontend attack surface (mandatory)" in r(_c("f", tier="client"), "standard")
+    assert "internet-exposed (internet)" in r(_c("b", zones=["internet"]), "standard")
+    assert "ci-cd / deployment (supply-chain boundary)" in r(_c("c", zones=["ci-cd-runtime"]), "standard")
+    assert "crown-jewel (credentials/PII/payment/secrets)" in r(_c("d", zones=["internal-network"], sensitive=True), "standard")
+    assert "transitively reachable (thorough)" in r(_c("w", zones=["internal-network"]), "thorough")
+    assert "exposure-unknown (fail-safe inclusion)" in r(_c("u", zones=["docker-container"]), "standard")
+    # ci-cd / crown-jewel are silent at quick (criteria not active) → no reason
+    assert r(_c("c", zones=["ci-cd-runtime"]), "quick") == []
+
+
+def test_mobile_device_zone_is_exposed_at_quick():
+    comps = [_c("mobile-api", zones=["mobile-device"])]
+    selected, _ = bm.select_stride_components(comps, "quick")  # quick = role-floor + exposed only
+    assert {c["id"] for c in selected} == {"mobile-api"}
+    assert bm._is_exposed(comps[0]) is True
+
+
+def test_priority_ladder_full_ordering():
+    assert bm._priority(_c("a", zones=["internal-network"], name="Auth")) == 0  # auth
+    assert bm._priority(_c("f", tier="client")) == 1  # frontend
+    assert bm._priority(_c("e", zones=["internet"])) == 2  # exposed
+    assert bm._priority(_c("c", zones=["internal-network"], sensitive=True)) == 3  # crown-jewel
+    assert bm._priority(_c("p", zones=["ci-cd-runtime"])) == 4  # ci-cd
+    assert bm._priority(_c("w", zones=["internal-network"])) == 5  # internal-only
+
+
+def test_excluded_reason_is_depth_specific():
+    comps = [
+        _c("backend", zones=["internet"]),
+        _c("ci-cd", zones=["ci-cd-runtime"]),
+        _c("worker", zones=["internal-network"]),
+    ]
+    _, rq = bm.select_stride_components(comps, "quick")
+    rq_exc = {e["id"]: e["reason"] for e in rq["excluded"]}
+    assert rq_exc["ci-cd"] == "out-of-scope at depth=quick"
+    assert rq_exc["worker"] == "out-of-scope at depth=quick"
+    _, rs = bm.select_stride_components(comps, "standard")
+    rs_exc = {e["id"]: e["reason"] for e in rs["excluded"]}
+    assert rs_exc == {"worker": "out-of-scope at depth=standard"}  # ci-cd now in-scope
