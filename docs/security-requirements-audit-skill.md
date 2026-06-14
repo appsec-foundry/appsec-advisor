@@ -1,14 +1,14 @@
 # Requirements Audit
 
-Grades a repository against a security requirements catalog. Requirement IDs follow whatever naming scheme your catalog defines (`SEC-*`, `SCG-*`, your own prefixes, or none in particular) — the repo does not need to tag its code with those IDs. Faster than a full threat model — fits PR gates, compliance dashboards, and audit preparation.
+Grades a repository against a security requirements catalog, reporting PASS / FAIL / PARTIAL per requirement with file/line evidence. Faster than a full threat model — fits PR gates, compliance dashboards, and audit preparation.
 
 → [Back to README](../README.md)
 
 ## Contents
 
 - [What it does](#what-it-does)
-- [Prerequisites](#prerequisites)
-- [Run](#run)
+- [Example](#example)
+- [Quick start](#quick-start)
 - [Where the catalog comes from](#where-the-catalog-comes-from)
 - [Source lifecycle: remember, refresh, inspect](#source-lifecycle-remember-refresh-inspect)
 - [Flags](#flags)
@@ -27,46 +27,81 @@ Walks every requirement in the loaded catalog and assigns one of:
 | **UNVERIFIABLE** | Static analysis cannot prove the requirement either way |
 | **NOT_APPLICABLE** | The requirement does not apply to this repo (e.g. XML hardening with no XML parsing); never gates |
 
-The console lists only the open requirements (`FAIL`, `PARTIAL`) — each with file/line evidence, a concrete risk, effort, and a catalog-anchored fix. The other statuses are counted in the summary block but not expanded. Saved Markdown reports add short before/after snippets where there is meaningful code evidence.
+The console lists only open requirements (`FAIL`, `PARTIAL`) with file/line evidence, risk, effort, and a catalog-anchored fix; the other statuses are counted only. Saved Markdown adds short before/after snippets where there is code evidence.
 
-## Prerequisites
+## Example
 
-A requirements catalog must be resolvable before the skill can grade the repository. You have several options (see [Where the catalog comes from](#where-the-catalog-comes-from)); the lowest-friction one is to point the config at a URL:
-
-```json
-// skills/audit-security-requirements/config.json
-{
-  "requirements_source": {
-    "requirements_yaml_url": "https://your-org.example.com/appsec-requirements.yaml"
-  }
-}
-```
-
-On a fresh machine with **no** configured source and an empty cache, the skill does not fail cryptically: it prints first-run guidance and offers to run against the bundled example catalog with `--demo`.
-
-## Run
+Console output of a `--demo` run against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) — a startup banner, the status tally, then one block per open requirement (trimmed here):
 
 ```text
-# Run with the resolved catalog (banner shows source, date, count, freshness)
-/appsec-advisor:audit-security-requirements
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ AppSec Requirements Audit
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Requirements Source
+  Catalog  : OWASP baseline  ⚠ DEMO — not your organization's requirements
+  Loaded   : packaged example examples/appsec-requirements-example.yaml
+  Count    : 64 requirements
 
-# Run standalone with a URL (also remembered for later --update / --status)
-/appsec-advisor:audit-security-requirements --requirements https://URL/appsec-requirements.yaml
+Results · OWASP Juice Shop · 64 requirements
 
-# Inspect what would be used — no audit, no fetch
-/appsec-advisor:audit-security-requirements --status
+  🔴 FAIL          28
+  🟡 PARTIAL        8
+  🟢 PASS           5
+  ⚪ UNVERIFIABLE  10
+  ➖ NOT_APPLICABLE 13
 
-# Try it immediately against the bundled example catalog (clearly stamped DEMO)
-/appsec-advisor:audit-security-requirements --demo
+Open Requirements
+🔴 failed · 🟡 partial — worst-first (FAIL before PARTIAL, MUST before SHOULD)
 
-# Use the bundled mock server to test locally before connecting a real catalog
-python3 scripts/mock-server.py
-/appsec-advisor:audit-security-requirements --requirements http://127.0.0.1:4444/requirements.yaml
+🔴 MUST · AC-001 — No Mutual API Authentication
+> All API-to-API calls MUST use mutual authentication (OAuth 2.0 client credentials, mTLS).
+Finding : self-signed RS256 JWT signed with a key hardcoded in lib/insecurity.ts:23
+Risk    : anyone with the embedded key mints valid tokens for any service call
+Evidence: lib/insecurity.ts:23, lib/insecurity.ts:56
+Fix     : use OAuth2 client-credentials or mTLS; stop signing with an in-source key.
+Effort  : L
+Links   : https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
+
+🟡 MUST · AC-003 — Rate Limiting Incomplete
+> Apply rate limiting to all externally reachable API endpoints.
+Finding : rateLimit covers a few endpoints (server.ts:343) but not /rest/user/login (server.ts:594)
+Risk    : credential brute-force and scraping on unthrottled routes
+Evidence: server.ts:594, server.ts:343
+Fix     : extend express-rate-limit to all externally reachable endpoints, including login.
+Effort  : S
+Links   : https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
+
+… 34 more open requirements …
+```
+
+→ [Full example report](../examples/requirements-auditor/appsec-requirements-report.md) ([JSON](../examples/requirements-auditor/appsec-requirements-report.json), [PDF](../examples/requirements-auditor/appsec-requirements-report.pdf)).
+
+## Quick start
+
+The audit grades the repo against a **requirements catalog** — your AppSec standard, expressed as YAML. Provide one, then run.
+
+**1. Provide a catalog** (pick one):
+
+| Where | How |
+|-------|-----|
+| Internal pages (Confluence, Antora, HTML) | Harvest to YAML with `scripts/harvest_requirements.py` → [docs/harvester.md](harvester.md) |
+| Reference baseline | Adapt `data/appsec-requirements-fallback.yaml` (63 OWASP-based requirements), serve over HTTP or a raw Git URL |
+| Local repo file | Drop `docs/security/requirements.yaml` into the repo |
+| Packaged org profile | Shipped with your org's plugin — picked up automatically, no flag |
+| URL | `requirements_yaml_url` in `skills/audit-security-requirements/config.json`, or `--requirements <url>` per run |
+| None yet | `--demo` grades against the bundled example catalog |
+
+**2. Run the audit** from the repo you want to grade:
+
+```text
+/appsec-advisor:audit-security-requirements           # resolved catalog
+/appsec-advisor:audit-security-requirements --demo    # bundled example, no setup
+/appsec-advisor:audit-security-requirements --status  # show the catalog that would be used, then exit
 ```
 
 ## Where the catalog comes from
 
-Every run prints a **startup banner** before any findings — which catalog is in effect, where it came from, when it was fetched, how many requirements, and whether it is still fresh. The source is resolved in this order (highest priority first):
+Every run opens with a **startup banner** naming the catalog in effect, its source, fetch date, count, and freshness. Sources resolve in priority order (highest first):
 
 | # | Source | Notes |
 |---|--------|-------|
@@ -77,51 +112,32 @@ Every run prints a **startup banner** before any findings — which catalog is i
 | 5 | Legacy config | `skills/audit-security-requirements/config.json` when it carries a URL. |
 | 6 | Remembered source | The URL the catalog was last fetched from, served from the plugin cache (`.cache/requirements.yaml` + `.cache/requirements.source.json`). |
 
-**Governance override:** if the org profile configures a source but sets
-`standalone_audit.enabled: false`, the audit is blocked **even when a local
-`docs/security/requirements.yaml` exists** — a committed file must not silently
-defeat org policy. Only an explicit `--requirements` or `--demo` overrides it.
-Otherwise the table applies as-is (local file beats the org source).
-
-Three ways to author the catalog itself: adapt the reference baseline (`data/appsec-requirements-fallback.yaml` — 63 requirements across 38 categories plus 9 blueprints) and serve it over HTTP or a raw Git URL; harvest internal pages with `scripts/harvest_requirements.py` ([`docs/harvester.md`](harvester.md)); or drop a `docs/security/requirements.yaml` straight into the repo.
+**Governance override:** if the org profile configures a source but sets `standalone_audit.enabled: false`, the audit is blocked even when a local `docs/security/requirements.yaml` exists — a committed file must not silently defeat org policy. Only an explicit `--requirements` or `--demo` overrides it. Otherwise the table applies as-is (local file beats the org source).
 
 ### Catalog format & validation
 
-All three authoring paths produce **one** shape — the canonical interchange
-format defined by [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml).
-Both skills (`audit-security-requirements` and `create-threat-model`) load the
-same file through the shared fetch gate and both accept `--requirements`, so a
-catalog that validates is consumable by either.
+Every catalog uses one shape — the canonical format in [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml). Both `audit-security-requirements` and `create-threat-model` load it through the shared fetch gate, so a catalog that validates works for either.
 
-Minimum contract: a YAML mapping with a `categories[]` array; each category has
-an `id`; each requirement has an `id`. Recommended per requirement: `text`
-(the grading basis), `priority` (`MUST` / `SHOULD` / `MAY`), and `url`.
-Requirement IDs use **your own naming scheme** — `SEC-*`, `SCG-*`, `REQ-*`,
-anything — and need **not** be tagged in the analyzed code.
+Minimum contract: a YAML mapping with a `categories[]` array, each category and each requirement carrying an `id`. Recommended per requirement: `text` (the grading basis), `priority` (`MUST` / `SHOULD` / `MAY`), and `url`. Requirement IDs use your own naming scheme (`SEC-*`, `SCG-*`, anything) and need not be tagged in the analyzed code.
 
-The fetch gate validates every loaded catalog against this schema: structural
-breakage (a 404 HTML page, a truncated file, a wrong-shaped document) **fails
-the run loudly** instead of silently grading as zero requirements, while
-content-quality issues (missing `text`/`priority`, zero requirements, duplicate
-IDs) are reported as warnings and the run proceeds. Validate a catalog yourself:
+The fetch gate validates every catalog against this schema: structural breakage (a 404 page, a truncated or wrong-shaped file) fails the run loudly rather than silently grading zero requirements; content-quality issues (missing `text`/`priority`, duplicate IDs) are warnings and the run proceeds. Validate one yourself:
 
 ```text
 python3 scripts/requirements_state.py --validate path/to/catalog.yaml [--strict]
 ```
 
-The harvester runs the same validation on its output, so a malformed crawl is
-caught at harvest time.
+The harvester runs the same validation on its output, so a malformed crawl is caught at harvest time.
 
 ## Source lifecycle: remember, refresh, inspect
 
-Once a configured or remembered source loads successfully, the skill **remembers the URL** (with a fetch timestamp and content hash) in `.cache/requirements.source.json` and refreshes the cached catalog. That memory drives the default freshness behaviour and the maintenance flags:
+Once a source loads successfully, the skill remembers its URL (with a fetch timestamp and content hash) in `.cache/requirements.source.json` and caches the catalog. Freshness is then handled automatically:
 
-- **Fresh cache is reused without a network round-trip.** A cache younger than **30 days** is served directly (fast, offline-friendly). The banner shows `Freshness: 🟢 fresh`.
-- **Stale cache triggers a refresh attempt.** A cache ≥ 30 days old (or `--update`) re-fetches from the remembered/configured source; if that source is unreachable, the run falls back to the cached copy and says so (`source unreachable this run — served the cached copy`).
-- **`--update`** forces a fresh re-fetch and cache refresh regardless of freshness.
-- **`--cache-only`** never touches the network — uses the cache, or errors if it is empty.
-- **`--status`** prints the banner (source, date, count, freshness) and exits without scanning or fetching.
-- **`--clear-requirements`** forgets the remembered source and deletes the cached catalog, then exits.
+| Cache age | Behaviour |
+|-----------|-----------|
+| < 30 days | Served directly, no network round-trip — banner shows `Freshness: 🟢 fresh` |
+| ≥ 30 days | Re-fetch attempted; if the source is unreachable, falls back to the cached copy and says so |
+
+Maintenance flags override this: `--update` (force re-fetch), `--cache-only` (never touch the network), `--status` (print the banner and exit), `--clear-requirements` (forget the source and delete the cache). See [Flags](#flags).
 
 ## Flags
 
@@ -146,23 +162,9 @@ All flags accepted by `/appsec-advisor:audit-security-requirements`. Each one ch
 
 ## Structured verdict & CI gate
 
-A plain console run stays light — it grades and prints, without writing files
-(`--md`/`--pdf` add the human report, authored from the grading). When you use
-**`--json`/`--save` or `--gate`**, the skill also writes a structured verdict to
-`docs/security/.requirements-audit.json` ([`schemas/requirements-audit.schema.json`](../schemas/requirements-audit.schema.json)):
-one `results[]` entry per graded requirement (status, priority, `in_scope`,
-evidence, finding, fix, the verbatim requirement text, blueprint and threat-model
-links). The summary counts are **recomputed deterministically** by
-`scripts/requirements_report.py` (the model authors the fields; the script owns
-the tally), so the Result block never drifts from a hand-count. `--json` simply
-copies this verdict to `appsec-requirements-report.json`.
+A plain console run writes nothing. `--md`/`--pdf` add the human report; `--json`/`--save` or `--gate` also write a structured verdict to `docs/security/.requirements-audit.json` ([`schemas/requirements-audit.schema.json`](../schemas/requirements-audit.schema.json)) — one `results[]` entry per requirement (status, priority, `in_scope`, evidence, finding, fix, verbatim text, blueprint and threat-model links). Summary counts are recomputed by `scripts/requirements_report.py` (the model authors the fields, the script owns the tally), so the Result block never drifts from a hand-count. `--json` copies the verdict to `appsec-requirements-report.json`.
 
-The pass/fail gate is decided by `scripts/requirements_gate.py` — the **same**
-deterministic gate the diff-scoped `verify-requirements` skill uses — reading
-the verdict's `results[]`, never the model's advisory flags. A requirement gates
-when `in_scope AND status==FAIL (or PARTIAL with --gate-on partial) AND priority
->= floor`. Advisory by default; `--gate` makes the run exit non-zero on a gating
-failure, so it drops into CI:
+The gate is decided by `scripts/requirements_gate.py` — the same deterministic gate `verify-requirements` uses — from the verdict's `results[]`, not the model's advisory flags. A requirement gates when `in_scope AND status==FAIL (or PARTIAL with --gate-on partial) AND priority >= floor`. Advisory by default; `--gate` exits non-zero on a gating failure, so it drops into CI:
 
 ```bash
 /appsec-advisor:audit-security-requirements --gate            # block on a failing MUST
