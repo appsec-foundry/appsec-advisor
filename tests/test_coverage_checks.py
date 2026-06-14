@@ -31,6 +31,11 @@ OWASP_YAML = PLUGIN_ROOT / "data" / "owasp-top10-cwes.yaml"
 SCRIPT = PLUGIN_ROOT / "scripts" / "coverage_checks.py"
 
 
+def _write_yaml(path: Path, data: dict) -> Path:
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
 # ---------------------------------------------------------------------------
 # OWASP mapping file integrity
 # ---------------------------------------------------------------------------
@@ -78,6 +83,43 @@ class TestOwaspMappingFile:
         data = yaml.safe_load(OWASP_YAML.read_text(encoding="utf-8"))
         a10 = next(c for c in data["categories"] if c["id"] == "A10:2021")
         assert 918 in a10["cwes"]
+
+
+class TestOwaspMappingLoading:
+    def test_plugin_data_file_prefers_env_override(self, tmp_path, monkeypatch):
+        override = _write_yaml(tmp_path / "owasp.yaml", {"version": 1, "categories": []})
+        monkeypatch.setenv("OWASP_TOP10_YAML", str(override))
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+
+        assert coverage_checks._plugin_data_file("OWASP_TOP10_YAML", OWASP_YAML, "owasp-top10-cwes.yaml") == override
+
+    def test_plugin_data_file_uses_plugin_root_data_file(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        plugin_mapping = _write_yaml(data_dir / "owasp-top10-cwes.yaml", {"version": 1, "categories": []})
+        monkeypatch.delenv("OWASP_TOP10_YAML", raising=False)
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+
+        assert (
+            coverage_checks._plugin_data_file("OWASP_TOP10_YAML", OWASP_YAML, "owasp-top10-cwes.yaml")
+            == plugin_mapping
+        )
+
+    def test_load_owasp_mapping_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="OWASP mapping file missing"):
+            coverage_checks._load_owasp_mapping(tmp_path / "missing.yaml")
+
+    def test_load_owasp_mapping_requires_categories(self, tmp_path):
+        mapping = _write_yaml(tmp_path / "owasp.yaml", {"version": 1})
+
+        with pytest.raises(ValueError, match="missing 'categories'"):
+            coverage_checks._load_owasp_mapping(mapping)
+
+    def test_load_owasp_mapping_rejects_unsupported_version(self, tmp_path):
+        mapping = _write_yaml(tmp_path / "owasp.yaml", {"version": 2, "categories": []})
+
+        with pytest.raises(ValueError, match="unsupported version"):
+            coverage_checks._load_owasp_mapping(mapping)
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +306,29 @@ class TestCrossRepoParsing:
         md = "# Context\n\n## Project Overview\n\nsome content only.\n"
         assert coverage_checks.parse_cross_repo_deps(md) == []
 
+    def test_non_table_row_has_no_cells(self):
+        assert coverage_checks._extract_row_cells("not | a | markdown table") == []
+
+    def test_malformed_header_and_dash_interface_rows(self):
+        md = textwrap.dedent("""
+            ## Cross-Repository Dependency Threat Models
+
+            | missing |
+            | Dependency | missing |
+            | dash-service | — | ✗ missing |
+        """).strip()
+
+        deps = coverage_checks.parse_cross_repo_deps(md)
+
+        assert deps == [
+            {
+                "name": "dash-service",
+                "interface": None,
+                "status": "missing",
+                "source": "declared",
+            }
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Cross-repo coverage check (the full round trip)
@@ -370,6 +435,11 @@ class TestRunAll:
         report = coverage_checks.run_all(tmp_path)
         assert report["threats_evaluated"] == 0
         assert report["owasp"]["missing_count"] == 10
+
+    def test_invalid_threats_file_is_treated_as_empty(self, tmp_path):
+        (tmp_path / ".threats-merged.json").write_text("{", encoding="utf-8")
+
+        assert coverage_checks._load_merged_threats(tmp_path) == []
 
 
 class TestCrossRepoRegister:
@@ -500,6 +570,20 @@ class TestCrossRepoRegister:
         )
         assert report["register_used"] is False
 
+    def test_falls_back_to_markdown_when_register_is_invalid_json(self, tmp_path):
+        (tmp_path / ".threat-modeling-context.md").write_text(CONTEXT_MD_SAMPLE)
+        register = tmp_path / ".cross-repo-register.json"
+        register.write_text("{", encoding="utf-8")
+
+        report = coverage_checks.check_cross_repo(
+            tmp_path / ".threat-modeling-context.md",
+            [],
+            register_path=register,
+        )
+
+        assert report["register_used"] is False
+        assert report["missing_tm_count"] == 3
+
     def test_run_all_uses_register_when_present(self, tmp_path):
         self._write_register(
             tmp_path,
@@ -566,3 +650,13 @@ class TestCLI:
             text=True,
         )
         assert r.returncode == 1
+
+    def test_cli_returns_1_when_owasp_mapping_is_invalid(self, tmp_path, monkeypatch, capsys):
+        mapping = _write_yaml(tmp_path / "owasp.yaml", {"version": 2, "categories": []})
+        monkeypatch.setenv("OWASP_TOP10_YAML", str(mapping))
+
+        rc = coverage_checks._main(["owasp", "--output-dir", str(tmp_path)])
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "unsupported version" in captured.err
