@@ -15,6 +15,7 @@ remote branch.
 from __future__ import annotations
 
 import http.server
+import importlib.util
 import json
 import os
 import socketserver
@@ -26,6 +27,17 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "fetch_requirements.py"
+
+
+def _load_fetch_requirements():
+    spec = importlib.util.spec_from_file_location("fetch_requirements", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+fr = _load_fetch_requirements()
 
 
 def _run(output_dir: Path, *extra: str) -> subprocess.CompletedProcess:
@@ -265,6 +277,22 @@ def test_clear_requirements_removes_cache_and_sidecar(tmp_path):
     assert not (cache.parent / "requirements.source.json").exists()
 
 
+def test_clear_requirements_noop_reports_nothing_to_clear(tmp_path, capsys):
+    rc = fr.main(["--output-dir", str(tmp_path), "--clear-requirements", "--cache-path", str(tmp_path / "none.yaml")])
+
+    assert rc == 0
+    assert "nothing to clear" in capsys.readouterr().out
+
+
+def test_emit_summary_ignores_write_errors(tmp_path, monkeypatch):
+    def fail_write_text(_self, *_args, **_kwargs):
+        raise OSError("cannot write")
+
+    monkeypatch.setattr(Path, "write_text", fail_write_text)
+
+    fr._emit_summary(tmp_path, {"status": "unavailable"})
+
+
 def test_fresh_cache_skips_network(tmp_path):
     """A fresh cache is used directly; the (different) source is not read."""
     source = tmp_path / "src.yaml"
@@ -303,6 +331,94 @@ def test_cache_fallback_fetch_writes_sidecar(tmp_path):
     assert sidecar["fetched_at"]
 
 
+def test_file_scheme_local_path_reads_ok(tmp_path):
+    reqs = tmp_path / "reqs.yaml"
+    reqs.write_text("categories:\n  - id: SEC-FILE\n", encoding="utf-8")
+
+    rc = fr.main(["--output-dir", str(tmp_path), "--requirements", f"file://{reqs}"])
+
+    assert rc == 0
+    assert "SEC-FILE" in (tmp_path / ".requirements.yaml").read_text(encoding="utf-8")
+
+
+def test_cache_only_invalid_cache_aborts(tmp_path):
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("<html>not a catalog</html>\n", encoding="utf-8")
+
+    assert fr.main(["--output-dir", str(tmp_path), "--cache-only", "--cache-path", str(cache)]) == 2
+
+
+def test_fresh_cache_invalid_catalog_aborts(tmp_path):
+    source = tmp_path / "src.yaml"
+    source.write_text("categories:\n  - id: SEC-SOURCE\n", encoding="utf-8")
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("<html>not a catalog</html>\n", encoding="utf-8")
+    _sidecar(cache, str(source), _iso_days_ago(1))
+    _write_org_profile(tmp_path, str(source))
+
+    assert fr.main(["--output-dir", str(tmp_path), "--require", "--cache-path", str(cache)]) == 2
+
+
+def test_stale_cache_used_after_source_failure_reports_age(tmp_path, capsys):
+    _write_org_profile(tmp_path, str(tmp_path / "missing.yaml"))
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("categories:\n  - id: SEC-STALE\n", encoding="utf-8")
+    _sidecar(cache, str(tmp_path / "missing.yaml"), _iso_days_ago(90))
+
+    rc = fr.main(["--output-dir", str(tmp_path), "--require", "--cache-path", str(cache)])
+
+    assert rc == 0
+    assert "SEC-STALE" in (tmp_path / ".requirements.yaml").read_text(encoding="utf-8")
+    assert "fetched 90d ago" in capsys.readouterr().err
+
+
+def test_invalid_stale_cache_after_source_failure_aborts(tmp_path):
+    _write_org_profile(tmp_path, str(tmp_path / "missing.yaml"))
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("<html>not a catalog</html>\n", encoding="utf-8")
+
+    assert fr.main(["--output-dir", str(tmp_path), "--require", "--update", "--cache-path", str(cache)]) == 2
+
+
+def test_fallback_baseline_used_when_no_source_or_cache(tmp_path):
+    baseline = tmp_path / "baseline.yaml"
+    baseline.write_text("categories:\n  - id: BASELINE\n", encoding="utf-8")
+
+    rc = fr.main(
+        [
+            "--output-dir",
+            str(tmp_path),
+            "--require",
+            "--cache-path",
+            str(tmp_path / "none.yaml"),
+            "--fallback-baseline",
+            str(baseline),
+        ]
+    )
+
+    assert rc == 0
+    assert "BASELINE" in (tmp_path / ".requirements.yaml").read_text(encoding="utf-8")
+
+
+def test_invalid_fallback_baseline_aborts(tmp_path):
+    baseline = tmp_path / "baseline.yaml"
+    baseline.write_text("<html>not a catalog</html>\n", encoding="utf-8")
+
+    rc = fr.main(
+        [
+            "--output-dir",
+            str(tmp_path),
+            "--require",
+            "--cache-path",
+            str(tmp_path / "none.yaml"),
+            "--fallback-baseline",
+            str(baseline),
+        ]
+    )
+
+    assert rc == 2
+
+
 # ---------------------------------------------------------------------------
 # catalog schema validation at the gate
 # ---------------------------------------------------------------------------
@@ -331,3 +447,11 @@ def test_valid_catalog_with_warnings_still_passes(tmp_path):
 def test_missing_output_dir_errors(tmp_path):
     r = _run(tmp_path / "does-not-exist")
     assert r.returncode == 3
+
+
+def test_main_requires_output_dir(monkeypatch, capsys):
+    monkeypatch.delenv("OUTPUT_DIR", raising=False)
+
+    assert fr.main([]) == 3
+
+    assert "--output-dir" in capsys.readouterr().err
