@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import json
 from pathlib import Path
@@ -248,6 +249,33 @@ def test_depth_params_in_sync_with_resolve_config(tmp_path):
             assert rc_mod.DEPTH_PARAMS[depth][cx] == turns, f"{depth}/{cx} drift"
 
 
+def test_depth_params_falls_back_when_resolve_config_import_fails(monkeypatch):
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "resolve_config":
+            raise RuntimeError("import failed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert bm._depth_params() == bm._FALLBACK_DEPTH_PARAMS
+
+
+def test_trust_boundary_summary_skips_non_mapping_rows():
+    boundaries = [
+        "not-a-boundary",
+        {
+            "id": "tb-1",
+            "from": "frontend",
+            "to": "backend-api",
+            "crossing_enforcement": "JWT",
+        },
+    ]
+
+    assert bm._trust_boundaries_for("backend-api", boundaries) == "tb-1: JWT"
+
+
 # ---------------------------------------------------------------------------
 # Criteria-derived component selection (select_stride_components)
 # ---------------------------------------------------------------------------
@@ -268,6 +296,10 @@ def test_select_passthrough_when_no_zones():
     selected, report = bm.select_stride_components(comps, "standard")
     assert {c["id"] for c in selected} == {"backend-api", "worker", "data-layer"}
     assert report["mode"] == "passthrough"
+
+
+def test_internal_only_is_false_for_exposure_unknown():
+    assert bm._is_internal_only(_c("mystery", zones=[])) is False
 
 
 def test_select_standard_includes_exposed_cicd_crownjewel_excludes_internal():
@@ -413,6 +445,69 @@ def test_builder_carries_zones_and_crownjewel_through(tmp_path):
     assert sel["mode"] == "criteria"
 
 
+def test_builder_normalizes_contextual_fields(tmp_path):
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    _c("api", name="API"),
+                    _c("worker", name="Worker"),
+                    _c("jobs", name="Jobs"),
+                    _c("ingest", name="Ingest"),
+                    _c("batch", name="Batch"),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = {
+        "api": {"controls": {"jwt": "partial", "csrf": "missing"}, "estimated_threat_count": "high"},
+        "worker": {"estimated_threat_count": "7"},
+        "jobs": {"estimated_threat_count": ["bad"]},
+        "ingest": {"estimated_threat_count": 5},
+        "batch": {"estimated_threat_count": "many"},
+    }
+
+    manifest = bm.build(tmp_path, "standard", ctx, PLUGIN_ROOT)
+
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    assert by_id["api"]["controls"] == "jwt: partial; csrf: missing"
+    assert by_id["api"]["estimated_threat_count"] == 12
+    assert by_id["worker"]["estimated_threat_count"] == 7
+    assert by_id["jobs"]["estimated_threat_count"] == 3
+    assert by_id["ingest"]["estimated_threat_count"] == 5
+    assert by_id["batch"]["estimated_threat_count"] == 3
+
+
+def test_builder_handles_non_list_components_payload(tmp_path):
+    (tmp_path / ".components.json").write_text(json.dumps({"components": "not-a-list"}), encoding="utf-8")
+
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+
+    assert manifest["components"] == []
+
+
+def test_builder_skips_malformed_selected_component_rows(tmp_path, monkeypatch):
+    (tmp_path / ".components.json").write_text(json.dumps({"components": []}), encoding="utf-8")
+
+    def fake_select(_components, _depth, _ceiling=None):
+        return (
+            [
+                "not-a-component",
+                {"name": "missing id"},
+                {"id": "ok", "name": "OK", "description": "d", "paths": ["ok/**"], "complexity": "simple"},
+            ],
+            {"mode": "criteria", "depth": "standard", "selected": [], "excluded": [], "lifted": False},
+        )
+
+    monkeypatch.setattr(bm, "select_stride_components", fake_select)
+
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+
+    assert [c["component_id"] for c in manifest["components"]] == ["ok"]
+
+
 # ---------------------------------------------------------------------------
 # Enumeration-completeness reconciliation (reconcile_inventory + detectors)
 # Restores security-relevant deployable units Phase-3 folded into a coarser
@@ -442,6 +537,74 @@ def _fake_repo(tmp_path: Path, *, cicd=True, socketio=True, auth=True) -> Path:
         if not socketio:
             (repo / "lib" / "insecurity.ts").write_text("// jwt helpers\n", encoding="utf-8")
     return repo
+
+
+def test_guess_repo_root_falls_back_to_output_dir(tmp_path, monkeypatch):
+    out = tmp_path / "standalone-output"
+    out.mkdir()
+    monkeypatch.setattr(Path, "exists", lambda _self: False)
+    monkeypatch.setattr(Path, "is_file", lambda _self: False)
+
+    assert bm._guess_repo_root(out) == out.resolve()
+
+
+def test_glob_files_skips_glob_errors(tmp_path, monkeypatch):
+    def fail_glob(_self, _pattern):
+        raise OSError("glob failed")
+
+    monkeypatch.setattr(Path, "glob", fail_glob)
+
+    assert bm._glob_files(tmp_path, ["*.yml"]) == []
+
+
+def test_package_deps_invalid_json_returns_empty(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "package.json").write_text("{", encoding="utf-8")
+
+    assert bm._package_deps(repo) == {}
+
+
+def test_grep_paths_skips_unreadable_candidate(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    target = repo / "server.ts"
+    target.write_text("socket.io", encoding="utf-8")
+
+    def fail_read_text(self, *args, **kwargs):
+        if self == target:
+            raise OSError("unreadable")
+        return original_read_text(self, *args, **kwargs)
+
+    original_read_text = Path.read_text
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    assert bm._grep_paths(repo, "server.ts", "socket.io") == []
+
+
+def test_grep_paths_returns_empty_when_walk_fails(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    source = repo / "src"
+    source.mkdir(parents=True)
+
+    def fail_rglob(_self, _pattern):
+        raise OSError("walk failed")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert bm._grep_paths(repo, "src", "socket.io") == []
+
+
+def test_detect_auth_skips_scan_dir_errors(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / "routes").mkdir(parents=True)
+
+    def fail_rglob(_self, _pattern):
+        raise OSError("scan failed")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    assert bm._detect_auth(repo) is None
 
 
 def _backend_only():
@@ -552,6 +715,35 @@ def test_build_persists_augmented_inventory(tmp_path):
     assert any(c.get("origin") == "reconciliation" for c in persisted["components"])
 
 
+def test_build_ignores_audit_write_failures(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [_c("api")]}),
+        encoding="utf-8",
+    )
+    injected = {
+        "id": "auth",
+        "name": "Authentication",
+        "description": "d",
+        "paths": ["routes/login.ts"],
+        "tier": "application",
+        "deployment_zones": ["internet"],
+    }
+
+    def fake_reconcile(components, _repo_root):
+        return components + [injected], [injected]
+
+    def fail_write_text(_self, *_args, **_kwargs):
+        raise OSError("cannot write")
+
+    monkeypatch.setattr(bm, "reconcile_inventory", fake_reconcile)
+    monkeypatch.setattr(Path, "write_text", fail_write_text)
+
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+
+    assert {c["component_id"] for c in manifest["components"]} == {"api", "auth"}
+    assert "RECONCILE: injected auth" in capsys.readouterr().err
+
+
 def test_is_realtime_no_substring_false_positive():
     # "sse" must not match inside "asset service" (the file-upload component);
     # else realtime injection is wrongly suppressed as already-covered.
@@ -623,6 +815,75 @@ def test_selection_report_flows_into_scope_rendering():
     assert "crown-jewel" in crit_line
     assert "internet-exposed" in crit_line
     assert "ci-cd" in crit_line
+
+
+def test_format_selection_console_renders_empty_skipped_set():
+    text = bm.format_selection_console(
+        {
+            "mode": "criteria",
+            "depth": "standard",
+            "selected": [{"id": "api", "reasons": ["internet-exposed (internet)"]}],
+            "excluded": [],
+        }
+    )
+
+    assert "SKIPPED (0):" in text
+    assert "(none)" in text
+
+
+def test_main_writes_manifest_and_prints_selection(tmp_path, capsys):
+    _seed_output_dir(tmp_path)
+
+    assert bm.main([str(tmp_path), "--depth", "standard", "--plugin-root", str(PLUGIN_ROOT)]) == 0
+
+    out = capsys.readouterr().out
+    assert (tmp_path / ".stride-dispatch-manifest.json").is_file()
+    assert "OK: wrote" in out
+    assert "STRIDE component selection" in out
+
+
+def test_main_returns_1_when_no_components(tmp_path, capsys):
+    (tmp_path / ".components.json").write_text(json.dumps({"components": []}), encoding="utf-8")
+
+    assert bm.main([str(tmp_path), "--depth", "standard"]) == 1
+
+    assert "no components found" in capsys.readouterr().err
+
+
+def test_main_reports_ceiling_lift_and_reads_analyst_context(tmp_path, capsys):
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    _c("api-a", zones=["internet"]),
+                    _c("api-b", zones=["internet"]),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = tmp_path / "analyst-context.json"
+    ctx.write_text(json.dumps({"api-a": {"interfaces": "REST /a"}}), encoding="utf-8")
+
+    rc = bm.main(
+        [
+            str(tmp_path),
+            "--depth",
+            "standard",
+            "--analyst-context",
+            str(ctx),
+            "--ceiling",
+            "1",
+        ]
+    )
+
+    out = capsys.readouterr().out
+    manifest = json.loads((tmp_path / ".stride-dispatch-manifest.json").read_text(encoding="utf-8"))
+    by_id = {c["component_id"]: c for c in manifest["components"]}
+    assert rc == 0
+    assert by_id["api-a"]["interfaces"] == "REST /a"
+    assert "EXPOSURE_CAP_LIFT" in out
 
 
 def test_selection_reasons_cover_each_branch():
