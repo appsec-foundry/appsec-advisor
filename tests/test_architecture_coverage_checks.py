@@ -14,6 +14,9 @@ ENGINE = REPO_ROOT / "scripts" / "architecture_coverage_checks.py"
 ROUTE_INV = REPO_ROOT / "scripts" / "route_inventory.py"
 SCHEMA = json.loads((REPO_ROOT / "schemas" / "architecture-coverage.schema.json").read_text())
 
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+import architecture_coverage_checks as acc  # noqa: E402
+
 ALL_RULE_IDS = {
     "ARCH-COOKIE-001",
     "ARCH-CORS-001",
@@ -53,6 +56,37 @@ def _verdict(out: dict, rule_id: str) -> dict:
     return matches[0]
 
 
+def _compiled_rule(**overrides) -> acc.CompiledRule:
+    base = {
+        "rule_id": "TEST-001",
+        "title": "Test rule",
+        "domain": "AuthN",
+        "control": "Test Control",
+        "output": "control_only",
+        "family": "hard",
+        "precondition_patterns": [],
+        "positive_patterns": [],
+        "cooccurrence_patterns": [],
+        "cooccurrence_window": 0,
+        "exculpatory_patterns": [],
+        "route_inventory_required": False,
+        "requires_management_surface": False,
+        "route_requires": {},
+        "forbidden_route_signals": {},
+        "inventory_pattern": {},
+        "threat_category_id": "TH-TEST",
+        "stride": "Spoofing",
+        "cwe": "CWE-287",
+        "hypothesis_id_prefix": "ARCH-HYP-TEST",
+        "severity_cap": "High",
+        "weak_or_missing_controls": ["Test Control"],
+        "architectural_theme": "",
+        "generic_threat_title": "",
+    }
+    base.update(overrides)
+    return acc.CompiledRule(**base)
+
+
 # ---------------------------------------------------------------------------
 # Contract: every rule must be evaluated
 # ---------------------------------------------------------------------------
@@ -70,6 +104,92 @@ def test_output_validates_against_schema(tmp_path: Path) -> None:
     )
     out = _run_engine(tmp_path)
     jsonschema.validate(out, SCHEMA)
+
+
+def test_io_helpers_exclude_vendor_override_and_load_json(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("APPSEC_ARCH_INCLUDE_VENDOR", raising=False)
+    assert acc._is_excluded("node_modules/pkg/index.js") is True
+
+    monkeypatch.setenv("APPSEC_ARCH_INCLUDE_VENDOR", "1")
+    assert acc._is_excluded("node_modules/pkg/index.js") is False
+    monkeypatch.delenv("APPSEC_ARCH_INCLUDE_VENDOR", raising=False)
+
+    def boom(_rel):
+        raise RuntimeError("bad scan-excludes")
+
+    monkeypatch.setattr(acc, "_scan_is_excluded", boom)
+    assert acc._is_excluded("vendor/lib/app.js") is True
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.ts").write_text("const x = 1;\n", encoding="utf-8")
+    (tmp_path / "src" / "notes.txt").write_text("ignored\n", encoding="utf-8")
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "bundle.js").write_text("ignored\n", encoding="utf-8")
+    assert [p.relative_to(tmp_path).as_posix() for p in acc._walk_sources(tmp_path)] == ["src/app.ts"]
+
+    assert acc._read_lines(tmp_path / "missing.ts") == []
+    assert acc._load_json_or_none(tmp_path / "missing.json") is None
+    bad = tmp_path / "bad.json"
+    bad.write_text("{bad", encoding="utf-8")
+    assert acc._load_json_or_none(bad) is None
+    good = tmp_path / "good.json"
+    good.write_text('{"ok": true}', encoding="utf-8")
+    assert acc._load_json_or_none(good) == {"ok": True}
+
+
+def test_plugin_data_file_and_rule_loading_errors(tmp_path: Path, monkeypatch) -> None:
+    override = tmp_path / "override.yaml"
+    monkeypatch.setenv("ARCH_COVERAGE_RULES_YAML", str(override))
+    assert acc._plugin_data_file("ARCH_COVERAGE_RULES_YAML", tmp_path / "default.yaml", "rules.yaml") == override
+    monkeypatch.delenv("ARCH_COVERAGE_RULES_YAML")
+
+    plugin = tmp_path / "plugin"
+    (plugin / "data").mkdir(parents=True)
+    plugin_rule = plugin / "data" / "architecture-coverage-rules.yaml"
+    plugin_rule.write_text("version: 1\nrules: []\n", encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin))
+    assert (
+        acc._plugin_data_file("ARCH_COVERAGE_RULES_YAML", tmp_path / "default.yaml", "architecture-coverage-rules.yaml")
+        == plugin_rule
+    )
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT")
+
+    missing = tmp_path / "missing.yaml"
+    try:
+        acc._load_rules(missing)
+    except FileNotFoundError as exc:
+        assert "not found" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("missing rules file was accepted")
+
+    bad_version = tmp_path / "bad-version.yaml"
+    bad_version.write_text("version: 2\nrules: []\n", encoding="utf-8")
+    try:
+        acc._load_rules(bad_version)
+    except ValueError as exc:
+        assert "unsupported version" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("unsupported rules file was accepted")
+
+
+def test_scan_file_truncates_hits_and_cooccurrence_window() -> None:
+    rule = _compiled_rule(
+        precondition_patterns=[acc.re.compile("PRE")],
+        positive_patterns=[acc.re.compile("POS")],
+        cooccurrence_patterns=[acc.re.compile("CO")],
+        exculpatory_patterns=[acc.re.compile("SAFE")],
+    )
+    hits = acc._scan_file_for_rule(
+        "app.ts",
+        ["PRE\n", "SAFE POS\n", "CO\n", "POS" + ("x" * 450) + "\n"],
+        rule,
+    )
+
+    assert hits.precondition[0][:2] == ("app.ts", 1)
+    assert hits.exculpatory[0][:2] == ("app.ts", 2)
+    assert len(hits.positive[-1][2]) == 400
+    assert acc._cooccurrence_satisfied(hits, 0) == hits.positive
+    assert [h[1] for h in acc._cooccurrence_satisfied(hits, 1)] == [4]
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +346,48 @@ def test_mgmt_no_inventory_not_applicable(tmp_path: Path) -> None:
     assert v["skip_reason"]
 
 
+def test_mgmt_rule_direct_branches() -> None:
+    rule = _compiled_rule(
+        rule_id="ARCH-MGMT-001",
+        route_requires={"authn_signal_in": ["absent"], "authz_signal_in": ["absent"]},
+        forbidden_route_signals={"authn_signal": ["middleware_present"]},
+    )
+
+    assert acc._evaluate_mgmt_rule(rule, {"routes": []})["skip_reason"] == "no management surface in route inventory"
+
+    protected = {
+        "routes": [
+            {
+                "management_surface": True,
+                "method": "GET",
+                "path": "/admin",
+                "authn_signal": "middleware_present",
+                "authz_signal": "absent",
+                "handler_file": "app.ts",
+                "handler_line": 7,
+            }
+        ]
+    }
+    assert acc._evaluate_mgmt_rule(rule, protected)["status"] == "present"
+
+    absent = {
+        "routes": [
+            {
+                "management_surface": True,
+                "method": "GET",
+                "path": "/admin",
+                "authn_signal": "absent",
+                "authz_signal": "absent",
+                "handler_file": "app.ts",
+                "handler_line": 7,
+            }
+        ]
+    }
+    verdict = acc._evaluate_mgmt_rule(rule, absent)
+    assert verdict["status"] == "weak"
+    assert "management surface GET /admin" in verdict["evidence"][0]["signal"]
+
+
 # ---------------------------------------------------------------------------
 # Hypothesis rules — no anti_pattern_candidates from these
 # ---------------------------------------------------------------------------
@@ -293,6 +455,34 @@ def test_authz_hypothesis_weak_when_sensitive_method_lacks_authz(tmp_path: Path)
     assert v["status"] == "weak"
 
 
+def test_authz_hyp_rule_direct_branches() -> None:
+    rule = _compiled_rule(rule_id="ARCH-AUTHZ-001", inventory_pattern={})
+    assert "sensitive_methods" in acc._evaluate_authz_hyp_rule(rule, {"routes": []})["skip_reason"]
+
+    rule = _compiled_rule(
+        rule_id="ARCH-AUTHZ-001",
+        inventory_pattern={"sensitive_methods": ["DELETE"], "require_authz_signal_in": ["unknown"], "min_routes": 2},
+    )
+    unauth = {"routes": [{"method": "DELETE", "path": "/items/:id", "authn_signal": "unknown", "authz_signal": "unknown"}]}
+    assert acc._evaluate_authz_hyp_rule(rule, unauth)["skip_reason"] == "no authenticated routes — precondition not met"
+
+    one_match = {
+        "routes": [
+            {
+                "method": "DELETE",
+                "path": "/items/:id",
+                "authn_signal": "middleware_present",
+                "authz_signal": "unknown",
+                "handler_file": "app.ts",
+                "handler_line": 3,
+            }
+        ]
+    }
+    verdict = acc._evaluate_authz_hyp_rule(rule, one_match)
+    assert verdict["status"] == "present"
+    assert verdict["evidence"] == []
+
+
 # ---------------------------------------------------------------------------
 # Hypothesis semantics — never confirmed, never CVSS, never Critical
 # ---------------------------------------------------------------------------
@@ -339,6 +529,47 @@ def test_writes_to_output_dir(tmp_path: Path) -> None:
     assert target.is_file()
     data = json.loads(target.read_text())
     assert data["version"] == 1
+
+
+def test_cli_missing_repo_and_output_without_stdout(tmp_path: Path, capsys) -> None:
+    assert acc._main(["--repo-root", str(tmp_path / "missing"), "--stdout"]) == 1
+    assert "repo-root not found" in capsys.readouterr().err
+
+    rules = tmp_path / "rules.yaml"
+    rules.write_text("version: 1\nrules: []\n", encoding="utf-8")
+    out = tmp_path / "out"
+    assert acc._main(["--repo-root", str(tmp_path), "--output-dir", str(out), "--rules-yaml", str(rules)]) == 0
+    captured = capsys.readouterr()
+    assert ".architecture-coverage.json" in captured.out
+    assert (out / ".architecture-coverage.json").is_file()
+
+
+def test_run_control_and_hypothesis_emits_linked_control(tmp_path: Path) -> None:
+    (tmp_path / "app.ts").write_text("POS\n", encoding="utf-8")
+    rules = {
+        "version": 1,
+        "hypothesis_rules": [
+            {
+                "rule_id": "TEST-HYP-001",
+                "id": "TEST-HYP-001",
+                "title": "Test hypothesis",
+                "domain": "AuthZ",
+                "control": "Object authorization",
+                "output": "control_and_hypothesis",
+                "threat_category_id": "TH-TEST",
+                "stride": "Elevation of Privilege",
+                "cwe": "CWE-639",
+                "hypothesis_id_prefix": "ARCH-HYP-T",
+                "weak_or_missing_controls": ["Object authorization"],
+                "positive_signals": {"any_pattern": ["POS"]},
+            }
+        ],
+    }
+
+    out = acc.run(tmp_path, None, rules)
+
+    assert out["threat_hypotheses"][0]["hypothesis_id"] == "ARCH-HYP-T-001"
+    assert out["control_assessments"][0]["hypothesis_ids"] == ["ARCH-HYP-T-001"]
 
 
 # ---------------------------------------------------------------------------
@@ -402,3 +633,77 @@ def test_inventory_flag_rules_not_applicable_without_inventory(tmp_path: Path) -
         v = _verdict(res, rid)
         assert v["applies"] is False
         assert v["status"] == "not_applicable"
+
+
+def test_inventory_flag_rule_direct_branches() -> None:
+    rule = _compiled_rule(inventory_pattern={})
+    assert "route_flag" in acc._evaluate_inventory_flag_rule(rule, {"routes": []})["skip_reason"]
+
+    rule = _compiled_rule(inventory_pattern={"route_flag": "missing_auth_suspect", "min_routes": 2})
+    inv = {
+        "routes": [
+            {
+                "missing_auth_suspect": True,
+                "method": "POST",
+                "path": "/admin",
+                "authn_signal": "unknown",
+                "authz_signal": "unknown",
+                "handler_file": "app.ts",
+                "handler_line": 5,
+            }
+        ]
+    }
+    assert acc._evaluate_inventory_flag_rule(rule, inv)["status"] == "present"
+
+
+def test_generic_hard_rule_precondition_exculpatory_and_anti_pattern_branches(tmp_path: Path) -> None:
+    pre_rule = _compiled_rule(precondition_patterns=[acc.re.compile("PRE")], positive_patterns=[acc.re.compile("POS")])
+    assert acc._evaluate_hard_rule(pre_rule, tmp_path, None)["skip_reason"] == "no precondition signal in repo"
+
+    (tmp_path / "app.ts").write_text("PRE\nSAFE\n", encoding="utf-8")
+    exculpatory_rule = _compiled_rule(
+        precondition_patterns=[acc.re.compile("PRE")],
+        positive_patterns=[acc.re.compile("POS")],
+        exculpatory_patterns=[acc.re.compile("SAFE")],
+    )
+    verdict = acc._evaluate_hard_rule(exculpatory_rule, tmp_path, None)
+    assert verdict["status"] == "present"
+    assert verdict["confidence"] == "medium"
+
+    (tmp_path / "app.ts").write_text("PRE\nSAFE\nPOS\n", encoding="utf-8")
+    anti_rule = _compiled_rule(
+        output="anti_pattern_candidate",
+        precondition_patterns=[acc.re.compile("PRE")],
+        positive_patterns=[acc.re.compile("POS")],
+        exculpatory_patterns=[acc.re.compile("SAFE")],
+    )
+    verdict = acc._evaluate_hard_rule(anti_rule, tmp_path, None)
+    assert verdict["status"] == "weak"
+    assert verdict["confidence"] == "medium"
+
+
+def test_generic_hypothesis_rule_precondition_exculpatory_and_positive_branches(tmp_path: Path) -> None:
+    pre_rule = _compiled_rule(family="hypothesis", precondition_patterns=[acc.re.compile("PRE")])
+    assert acc._evaluate_hypothesis_rule(pre_rule, tmp_path, None)["skip_reason"] == "no precondition signal in repo"
+
+    (tmp_path / "app.ts").write_text("PRE\nSAFE\n", encoding="utf-8")
+    exculpatory_rule = _compiled_rule(
+        family="hypothesis",
+        precondition_patterns=[acc.re.compile("PRE")],
+        positive_patterns=[acc.re.compile("POS")],
+        exculpatory_patterns=[acc.re.compile("SAFE")],
+    )
+    assert acc._evaluate_hypothesis_rule(exculpatory_rule, tmp_path, None)["status"] == "present"
+
+    (tmp_path / "app.ts").write_text("PRE\nSAFE\nPOS\n", encoding="utf-8")
+    verdict = acc._evaluate_hypothesis_rule(exculpatory_rule, tmp_path, None)
+    assert verdict["status"] == "partial"
+    assert verdict["confidence"] == "low"
+
+
+def test_decision_helpers_cover_unknown_statuses() -> None:
+    rule = _compiled_rule(output="anti_pattern_candidate")
+    assert acc._decision_for_hard(rule, {"applies": True, "status": "anti_pattern"}) == "emit_control_and_threat_candidate"
+    assert acc._decision_for_hard(rule, {"applies": True, "status": "other"}) == "no_action"
+    assert acc._decision_for_hypothesis(rule, {"applies": False, "status": "weak"}) == "no_action"
+    assert acc._decision_for_hypothesis(rule, {"applies": True, "status": "present"}) == "emit_control_only"
