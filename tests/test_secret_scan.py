@@ -323,3 +323,45 @@ def test_mask_text_idempotent(secret_scan):
     twice, applied2 = secret_scan.mask_text(once)
     assert twice == once
     assert applied2 == []
+
+
+def test_mask_text_empty_and_already_masked(secret_scan):
+    assert secret_scan.mask_text("") == ("", [])
+
+    sample = "password: MASKEDTOKEN"
+    masked, applied = secret_scan.mask_text(sample)
+    assert masked == sample
+    assert applied == []
+
+
+def test_mask_file_missing_returns_empty(secret_scan, tmp_path):
+    assert secret_scan.mask_file(tmp_path / "missing.md") == []
+
+
+def test_mask_file_writes_in_place(secret_scan, tmp_path):
+    p = tmp_path / "leak.md"
+    p.write_text("password: 'admin123'\n", encoding="utf-8")
+
+    applied = secret_scan.mask_file(p)
+
+    text = p.read_text(encoding="utf-8")
+    assert "generic_credential_assignment" in applied
+    assert "admin123" not in text
+    assert "**** (8 chars)" in text
+    assert secret_scan.scan_text(text) == []
+
+
+def test_main_mask_mode_masks_and_reports(secret_scan, tmp_path, capsys):
+    clean = tmp_path / "clean.md"
+    leak = tmp_path / "leak.md"
+    clean.write_text("password: **** (8 chars)\n", encoding="utf-8")
+    leak.write_text("AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8")
+
+    rc = secret_scan.main(["secret_scan.py", "--mask", str(clean), str(leak)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert str(leak) in out
+    assert "aws_access_key" in out
+    assert str(clean) not in out
+    assert secret_scan.scan_file(leak) == []
