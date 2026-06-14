@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import harvest_requirements as harvester
+import pytest
 import requests
 
 
@@ -144,6 +145,21 @@ def test_load_config_reads_json(tmp_path):
     assert harvester.load_config(path) == {"output": "requirements.yaml"}
 
 
+def test_indexing_mode_precedence_and_literal_wrapping():
+    cfg = {"defaults": {"requirements_mode": "full", "blueprints_mode": "summary"}}
+
+    assert harvester.resolve_indexing_mode(cfg, "requirement", "structured", "structured") == "structured"
+    assert harvester.resolve_indexing_mode(cfg, "requirement", None, "structured") == "full"
+    assert harvester.resolve_indexing_mode(cfg, "blueprint", None, "full") == "summary"
+    assert harvester.resolve_indexing_mode(cfg, "other", None, "structured") == "structured"
+    assert harvester.wrap_long("short", threshold=10) == "short"
+
+    long_value = harvester.wrap_long("x" * 20, threshold=10)
+
+    assert isinstance(long_value, harvester.LiteralStr)
+    assert "text: |" in harvester.yaml.dump({"text": long_value})
+
+
 def test_run_missing_config_and_empty_sources_return_1(tmp_path, capsys):
     assert harvester.run(_args(config=tmp_path / "missing.json")) == 1
     assert "Config not found" in capsys.readouterr().err
@@ -177,6 +193,13 @@ def test_run_filters_sources_and_dry_run(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Requirements: Req" in out
     assert "Blueprints: BP" not in out
+    assert "Dry run" in out
+
+    assert harvester.run(_args(config=config, dry_run=True, blueprint_only=True)) == 0
+
+    out = capsys.readouterr().out
+    assert "Requirements: Req" not in out
+    assert "Blueprints: BP" in out
     assert "Dry run" in out
 
 
@@ -217,6 +240,78 @@ def test_run_legacy_sources_unknown_type_and_output_validation(monkeypatch, tmp_
     assert "schema warning" in capsys.readouterr().out
 
 
+def test_run_skips_no_crawl_and_unknown_sources(monkeypatch, tmp_path, capsys):
+    config = _write_config(
+        tmp_path,
+        {
+            "sources": [
+                {"id": "missing-url", "type": "requirement", "title": "Missing URL"},
+                {"id": "mystery", "type": "other", "title": "Mystery", "crawl_url": "https://example.test/x"},
+            ]
+        },
+    )
+
+    monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
+
+    assert harvester.run(_args(config=config, dry_run=True)) == 0
+
+    captured = capsys.readouterr()
+    assert "Source 'missing-url': no crawl_url configured" in captured.out
+    assert "unknown type 'other'" in captured.err
+
+
+def test_run_failed_requirements_source_returns_2_after_write(monkeypatch, tmp_path):
+    output = tmp_path / "requirements.yaml"
+    config = _write_config(
+        tmp_path,
+        {"sources": [{"id": "req", "type": "requirement", "title": "Req", "crawl_url": "https://example.test/req"}]},
+    )
+
+    monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(harvester, "harvest_requirements_source", lambda *args, **kwargs: [])
+    monkeypatch.setattr(harvester.rstate, "validate_catalog", lambda _body: ([], []))
+
+    assert harvester.run(_args(config=config, output=output)) == 2
+
+    written = harvester.yaml.safe_load(output.read_text(encoding="utf-8"))
+    assert written["sources_meta"][0]["items_count"] == 0
+    assert written["categories"] == []
+
+
+def test_run_reference_url_and_schema_errors_return_2(monkeypatch, tmp_path, capsys):
+    output = tmp_path / "requirements.yaml"
+    config = _write_config(
+        tmp_path,
+        {
+            "sources": [
+                {
+                    "id": "req",
+                    "type": "requirement",
+                    "title": "Req",
+                    "crawl_url": "https://example.test/req",
+                    "reference_url": "https://example.test/reference",
+                }
+            ]
+        },
+    )
+
+    monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        harvester,
+        "harvest_requirements_source",
+        lambda *args, **kwargs: [{"id": "SEC", "requirements": [{"id": "SEC-1", "url": "u", "text": "t", "priority": "MUST"}]}],
+    )
+    monkeypatch.setattr(harvester.rstate, "validate_catalog", lambda _body: (["bad category"], ["warning only"]))
+
+    assert harvester.run(_args(config=config, output=output)) == 2
+
+    written = harvester.yaml.safe_load(output.read_text(encoding="utf-8"))
+    assert written["sources_meta"][0]["reference_url"] == "https://example.test/reference"
+    captured = capsys.readouterr()
+    assert "schema warning: warning only" in captured.out
+    assert "schema error: bad category" in captured.err
+
+
 # ---------------------------------------------------------------------------
 # Requirement / blueprint parser helpers
 # ---------------------------------------------------------------------------
@@ -227,6 +322,7 @@ def test_text_helpers_intro_and_requirement_detection():
     assert harvester.detect_priority("No modal verb here") == "MUST"
     assert harvester.clean_text("[SEC-AUTH-1] MUST validate sessions.") == "MUST validate sessions"
     assert harvester.deduplicate_text("Use TLS. Use TLS. Pin certificates.") == "Use TLS. Pin certificates."
+    assert harvester.deduplicate_text("Use TLS.\n\nPin certificates.") == "Use TLS. Pin certificates."
     assert harvester.page_has_requirements('<span class="badge">ACME‑AUTH</span>') is True
     assert harvester.page_has_requirements("plain documentation") is False
 
@@ -323,6 +419,49 @@ def test_parse_requirements_fallback_strategies_and_sorting():
     assert by_id["ORG-CUSTOM"]["priority"] == "MAY"
 
 
+def test_parse_requirements_tolerates_invalid_duplicate_and_empty_markup():
+    html = """
+    <html>
+      <body>
+        <h1>MUST Fallback Requirement Title</h1>
+        <div class="sect1">
+          <h2>Invalid</h2>
+          <div class="sectionbody"><p><span class="badge">INVALID</span></p></div>
+        </div>
+        <div class="sect1">
+          <h2 id="dup"><span class="must-label">REQUIRED:</span> Duplicate</h2>
+          <div class="sectionbody"><p><span class="badge">SEC-DUP-1</span></p></div>
+        </div>
+        <div class="sect1">
+          <h2>Duplicate again</h2>
+          <div class="sectionbody"><p><span class="badge">SEC-DUP-1</span></p></div>
+        </div>
+        <div class="sect1">
+          <h2 id="fallback">SEC-FALLBACK</h2>
+          <div class="sectionbody"><p><span class="badge">SEC-FALLBACK</span></p></div>
+        </div>
+        <dl>
+          <dt>No requirement here</dt>
+          <dt>[SEC-DUP-1]</dt><dd>Duplicate definition must not replace the badge result.</dd>
+        </dl>
+        <table>
+          <tr><td>[SEC-TABLE-1]</td></tr>
+          <tr><td>[SEC-DUP-1]</td><td>Duplicate table entry must not replace the badge result.</td></tr>
+        </table>
+      </body>
+    </html>
+    """
+
+    reqs = harvester.parse_requirements_from_page(html, "https://example.test/edge")
+    by_id = {r["id"]: r for r in reqs}
+
+    assert "INVALID" not in by_id
+    assert list(by_id).count("SEC-DUP-1") == 1
+    assert by_id["SEC-DUP-1"]["priority"] == "MUST"
+    assert by_id["SEC-DUP-1"]["url"].endswith("#dup")
+    assert by_id["SEC-FALLBACK"]["text"] == "Fallback Requirement Title"
+
+
 def test_group_by_category_atomic_multi_and_full_context():
     atomic = [{"id": "SEC-AUTH", "url": "u#sec-auth", "text": "Do auth", "priority": "MUST"}]
     multi = [
@@ -362,6 +501,7 @@ def test_parse_blueprint_summary_and_flat_page_modes():
         <article>
           <p>This paragraph is long enough to become the visible summary for the blueprint page.</p>
           <h2 id="auth">Authentication</h2>
+          <p>   </p>
           <p>Use central identity.</p>
           <h3>Tokens</h3>
           <p>Rotate tokens. Rotate tokens.</p>
@@ -382,14 +522,105 @@ def test_parse_blueprint_summary_and_flat_page_modes():
     """
 
     summary = harvester.parse_blueprint_page(summary_html, "https://example.test/api", mode="summary")
+    full = harvester.parse_blueprint_page(summary_html, "https://example.test/api", mode="full", max_section_chars=200)
     flat = harvester.parse_blueprint_page(flat_html, "https://example.test/flat", mode="full", max_section_chars=80)
 
     assert summary["title"] == "API Security"
     assert summary["topics"] == ["auth", "tokens"]
     assert "sections" not in summary
+    assert [section["title"] for section in full["sections"]] == ["Authentication", "Tokens"]
     assert flat["title"] == "https://example.test/flat"
     assert flat["sections"][0]["title"] == "Overview"
     assert len(flat["sections"][0]["content"]) <= 80
+
+
+def test_requirements_sources_without_crawl_url_warn(capsys):
+    assert harvester.harvest_requirements_source(
+        session=None,
+        cfg={},
+        source={"id": "req"},
+        verbose=False,
+    ) == []
+    assert harvester.harvest_blueprints_source(
+        session=None,
+        cfg={},
+        source={"id": "bp"},
+        verbose=False,
+    ) == []
+
+    err = capsys.readouterr().err
+    assert "Source 'req': no crawl_url" in err
+    assert "Source 'bp': no crawl_url" in err
+
+
+def test_requirements_source_includes_index_merges_sorts_and_reports(monkeypatch, capsys):
+    index_html = """
+    <html>
+      <body>
+        <main>
+          <h1>Auth Requirements</h1>
+          <p>This authentication baseline introduces the controls before listing them.</p>
+          <p>[SEC-AUTH-10] SHOULD review remembered devices.</p>
+          <p>[SEC-AUTH-1] MUST validate every session.</p>
+        </main>
+      </body>
+    </html>
+    """
+    child_html = """
+    <html>
+      <body>
+        <main>
+          <h1>Auth Follow-up</h1>
+          <p>[SEC-AUTH-3] MAY allow emergency access with approval.</p>
+          <p>[SEC-AUTH-2] MUST rotate signing keys.</p>
+        </main>
+      </body>
+    </html>
+    """
+    no_ids_html = "<main><p>General guidance without requirement identifiers.</p></main>"
+    matched_empty_html = "<main><p>[SEC-DROP-1] This page is intentionally not extracted.</p></main>"
+
+    def fake_crawl_index(_session, base_url, label, max_pages):
+        assert label == "app-reqs"
+        assert max_pages == 4
+        return [
+            (f"{base_url.rstrip('/')}/child", child_html),
+            (f"{base_url.rstrip('/')}/no-ids", no_ids_html),
+            (f"{base_url.rstrip('/')}/matched-empty", matched_empty_html),
+        ], (base_url, index_html)
+
+    real_parse = harvester.parse_requirements_from_page
+
+    def fake_parse_requirements(html, url):
+        if url.endswith("/matched-empty"):
+            return []
+        return real_parse(html, url)
+
+    monkeypatch.setattr(harvester, "crawl_index", fake_crawl_index)
+    monkeypatch.setattr(harvester, "parse_requirements_from_page", fake_parse_requirements)
+
+    categories = harvester.harvest_requirements_source(
+        session=None,
+        cfg={"defaults": {"requirements_mode": "full", "max_pages": 2}},
+        source={"id": "app-reqs", "crawl_url": "https://example.test/req", "max_pages": 4},
+        verbose=True,
+    )
+
+    by_id = {cat["id"]: cat for cat in categories}
+
+    assert [r["id"] for r in by_id["SEC-AUTH"]["requirements"]] == [
+        "SEC-AUTH-1",
+        "SEC-AUTH-2",
+        "SEC-AUTH-3",
+        "SEC-AUTH-10",
+    ]
+    assert by_id["SEC-AUTH"]["source_id"] == "app-reqs"
+    assert "authentication baseline" in by_id["SEC-AUTH"]["context"]
+    captured = capsys.readouterr()
+    assert "merged 2 more requirements" in captured.out
+    assert "[SKIP] No requirement-ID tokens found" in captured.out
+    assert "SEC-AUTH-10 [SHOULD]" in captured.out
+    assert "matched but no requirements extracted" in captured.err
 
 
 def test_blueprint_source_indexes_configured_crawl_url(monkeypatch):
@@ -460,6 +691,45 @@ def test_blueprint_source_deduplicates_index_page_from_discovered_links(monkeypa
     assert blueprints[0]["id"] == "BP-BLUEPRINTS"
 
 
+def test_blueprint_source_summary_and_verbose_full_modes(monkeypatch, capsys):
+    index_html = """
+    <html>
+      <body>
+        <main>
+          <h1>Runtime Blueprint</h1>
+          <p>This blueprint explains runtime hardening for deployed services.</p>
+          <h2 id="deploy">Deploy</h2>
+          <p>Require deployment approvals and immutable release artifacts.</p>
+        </main>
+      </body>
+    </html>
+    """
+
+    def fake_crawl_index(_session, base_url, _label, _max_pages):
+        return [], (base_url, index_html)
+
+    monkeypatch.setattr(harvester, "crawl_index", fake_crawl_index)
+
+    summary = harvester.harvest_blueprints_source(
+        session=None,
+        cfg={"defaults": {"blueprints_mode": "summary"}},
+        source={"id": "bp", "crawl_url": "https://example.test/blueprints/runtime"},
+        verbose=True,
+    )
+    full = harvester.harvest_blueprints_source(
+        session=None,
+        cfg={"defaults": {"blueprints_mode": "full", "section_max_chars": 100}},
+        source={"id": "bp", "crawl_url": "https://example.test/blueprints/runtime", "mode": "full"},
+        verbose=True,
+    )
+
+    assert "sections" not in summary[0]
+    assert full[0]["sections"][0]["title"] == "Deploy"
+    out = capsys.readouterr().out
+    assert "summary only" in out
+    assert "[Deploy]" in out
+
+
 # ---------------------------------------------------------------------------
 # Blueprint ↔ requirement cross-reference resolution
 # (resolve_references / add_references_to_blueprints) — the link that the §7b
@@ -517,3 +787,42 @@ def test_add_references_to_blueprints_annotates_only_matching_sections():
     assert secs[0]["references"] == [{"id": "SEC-AUTH-1", "url": "https://req.example/sec-auth-1"}]
     # A section with no resolvable ID is left untouched (no empty references key).
     assert "references" not in secs[1]
+
+
+def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_run(args):
+        seen["args"] = args
+        return 7
+
+    monkeypatch.setattr(harvester, "run", fake_run)
+    monkeypatch.setattr(
+        harvester.sys,
+        "argv",
+        [
+            "harvest_requirements.py",
+            "--config",
+            str(tmp_path / "config.json"),
+            "--output",
+            str(tmp_path / "out.yaml"),
+            "--token",
+            "tok",
+            "--dry-run",
+            "--verbose",
+            "--req-only",
+            "--blueprint-only",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        harvester.main()
+
+    assert exc.value.code == 7
+    assert seen["args"].config == str(tmp_path / "config.json")
+    assert seen["args"].output == str(tmp_path / "out.yaml")
+    assert seen["args"].token == "tok"
+    assert seen["args"].dry_run is True
+    assert seen["args"].verbose is True
+    assert seen["args"].req_only is True
+    assert seen["args"].blueprint_only is True
