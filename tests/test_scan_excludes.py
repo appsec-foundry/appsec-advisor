@@ -26,6 +26,27 @@ YAML_FILE = PLUGIN_ROOT / "data" / "scan-excludes.yaml"
 SCRIPT = PLUGIN_ROOT / "scripts" / "scan_excludes.py"
 
 
+def _minimal_excludes(**overrides):
+    data = {
+        "version": 1,
+        "directories": [],
+        "path_prefixes": [],
+        "file_patterns": [],
+        "always_include": {
+            "file_patterns": [],
+            "path_prefixes": [],
+        },
+        "opt_in": {},
+    }
+    data.update(overrides)
+    return data
+
+
+def _write_yaml(path: Path, data):
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return path
+
+
 @pytest.fixture(autouse=True)
 def _reset_cache():
     scan_excludes._reset_cache_for_tests()
@@ -79,6 +100,62 @@ class TestYamlShape:
         prefixes = data["always_include"]["path_prefixes"]
         assert "docs/adr/" in prefixes
         assert "docs/architecture/" in prefixes
+
+
+class TestYamlResolutionAndValidation:
+    def test_yaml_path_prefers_env_override(self, tmp_path, monkeypatch):
+        override = _write_yaml(tmp_path / "custom-scan-excludes.yaml", _minimal_excludes())
+        monkeypatch.setenv("SCAN_EXCLUDES_YAML", str(override))
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+
+        assert scan_excludes._yaml_path() == override
+
+    def test_yaml_path_uses_plugin_root_when_present(self, tmp_path, monkeypatch):
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        plugin_yaml = _write_yaml(data_dir / "scan-excludes.yaml", _minimal_excludes())
+        monkeypatch.delenv("SCAN_EXCLUDES_YAML", raising=False)
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
+
+        assert scan_excludes._yaml_path() == plugin_yaml
+
+    def test_loader_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="scan-excludes.yaml not found"):
+            scan_excludes.load_excludes(str(tmp_path / "missing.yaml"))
+
+    def test_loader_requires_mapping(self, tmp_path):
+        fixture = tmp_path / "scan-excludes.yaml"
+        fixture.write_text("- not\n- a mapping\n", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="expected top-level mapping"):
+            scan_excludes.load_excludes(str(fixture))
+
+    def test_loader_rejects_unsupported_version(self, tmp_path):
+        fixture = _write_yaml(tmp_path / "scan-excludes.yaml", {"version": 2})
+
+        with pytest.raises(ValueError, match="unsupported version"):
+            scan_excludes.load_excludes(str(fixture))
+
+    def test_loader_rejects_non_list_collections(self, tmp_path):
+        fixture = _write_yaml(
+            tmp_path / "scan-excludes.yaml",
+            _minimal_excludes(directories="node_modules"),
+        )
+
+        with pytest.raises(ValueError, match="'directories' must be a list"):
+            scan_excludes.load_excludes(str(fixture))
+
+    def test_loader_normalises_missing_optional_collections(self, tmp_path):
+        fixture = _write_yaml(tmp_path / "scan-excludes.yaml", {"version": 1})
+
+        data = scan_excludes.load_excludes(str(fixture))
+
+        assert data["directories"] == []
+        assert data["path_prefixes"] == []
+        assert data["file_patterns"] == []
+        assert data["always_include"]["file_patterns"] == []
+        assert data["always_include"]["path_prefixes"] == []
+        assert data["opt_in"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +287,16 @@ class TestWhitelistWins:
         Actions) and Cat 27 (privilege hardening) — always readable."""
         assert scan_excludes.is_always_included(".github/workflows/ci.yml")
         assert scan_excludes.is_always_included(".github/workflows/release.yaml")
+
+    def test_leading_dot_slash_is_normalised_for_prefix_matches(self):
+        excludes = _minimal_excludes(
+            always_include={
+                "file_patterns": [],
+                "path_prefixes": [".github/workflows/"],
+            }
+        )
+
+        assert scan_excludes.is_always_included("./.github/workflows/ci.yml", excludes)
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +542,18 @@ class TestOptInRelief:
     def test_unknown_opt_in_noop(self):
         assert scan_excludes.is_excluded("tests/test_auth.py", opt_ins=["NONEXISTENT_FLAG"])
 
+    def test_opt_in_file_pattern_relief(self):
+        excludes = _minimal_excludes(
+            file_patterns=["*.fixture"],
+            opt_in={
+                "SCAN_FIXTURES": {
+                    "file_patterns": ["*.fixture"],
+                }
+            },
+        )
+
+        assert not scan_excludes.is_excluded("fixtures/auth.fixture", opt_ins=["SCAN_FIXTURES"], excludes=excludes)
+
 
 # ---------------------------------------------------------------------------
 # glob_exclusion_string() — determinism and opt-in relief
@@ -485,6 +584,9 @@ class TestGlobString:
         s = scan_excludes.glob_exclusion_string(opt_ins=["SCAN_TEST_FILES"])
         for d in ("node_modules", "vendor", "examples"):
             assert d in s, f"opt-in should not remove {d}"
+
+    def test_empty_directory_list_returns_empty_glob(self):
+        assert scan_excludes.glob_exclusion_string(excludes=_minimal_excludes()) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -530,3 +632,13 @@ class TestCLI:
         )
         data = json.loads(r.stdout)
         assert data["version"] == 1
+
+    def test_cli_returns_2_for_invalid_config(self, tmp_path, monkeypatch, capsys):
+        fixture = _write_yaml(tmp_path / "scan-excludes.yaml", {"version": 2})
+        monkeypatch.setenv("SCAN_EXCLUDES_YAML", str(fixture))
+
+        rc = scan_excludes._cli(["dump"])
+
+        captured = capsys.readouterr()
+        assert rc == 2
+        assert "unsupported version" in captured.err
