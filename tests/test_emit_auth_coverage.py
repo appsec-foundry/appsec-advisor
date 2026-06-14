@@ -7,8 +7,11 @@ Critical findings) yet uncataloged, so §7.2 listed only Password + MFA.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -25,6 +28,14 @@ def _yaml(controls=None, threats=None):
 
 def _ctrl(name):
     return {"domain": "Identity and Authentication", "control": name, "effectiveness": "Weak"}
+
+
+def _write_yaml(output_dir: Path, data) -> None:
+    (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _read_yaml(output_dir: Path):
+    return yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
 
 
 class TestDetectionAndRating:
@@ -79,6 +90,36 @@ class TestDetectionAndRating:
         assert soc[0]["effectiveness"] == "Unsafe"
         assert soc[0]["linked_threats"] == ["T-003"]
 
+    def test_helper_edges_for_existing_route_repo_and_findings(self, tmp_path, monkeypatch):
+        assert eac._existing_covers(["not-a-control", _ctrl("Password login")], r"password") is True
+        assert eac._route_evidence(["not-a-route", {"method": "POST", "path": "/login"}], r"/login") == "POST /login"
+
+        node_modules = tmp_path / "node_modules" / "oauth"
+        node_modules.mkdir(parents=True)
+        (node_modules / "oauth.component.ts").write_text("ignored", encoding="utf-8")
+        src = tmp_path / "src" / "oauth"
+        src.mkdir(parents=True)
+        (src / "oauth.component.ts").write_text("used", encoding="utf-8")
+        assert eac._repo_evidence(tmp_path, ("**/*oauth*",)) == "src/oauth"
+
+        def boom_glob(_self, _pattern):
+            raise OSError("bad glob")
+
+        monkeypatch.setattr(Path, "glob", boom_glob)
+        assert eac._repo_evidence(tmp_path, ("**/*oauth*",)) is None
+
+        ids, worst = eac._linked_findings(
+            [
+                "not-a-threat",
+                {"id": "T-1", "title": "Password reset weak token", "risk": "Medium", "evidence": "not-a-dict"},
+                {"t_id": "T-2", "title": "Password reset takeover", "severity": "Low", "evidence": {"file": "reset.ts"}},
+            ],
+            r"reset",
+        )
+        assert ids == ["T-1", "T-2"]
+        assert worst == "medium"
+        assert eac._effectiveness_for("medium", True) == "Weak"
+
 
 class TestLifecycleAndOptional:
     def test_lifecycle_required_absent_under_password_is_missing(self):
@@ -122,22 +163,68 @@ class TestCoverageAndIdempotency:
         assert "Multi-Factor Authentication" not in names
 
     def test_apply_is_idempotent(self, tmp_path):
-        import yaml
-
         y = {
             "security_controls": [_ctrl("Password-Based Authentication")],
             "threats": [
                 {"id": "T-007", "title": "Mass Assignment", "risk": "Critical", "evidence": {"file": "server.ts"}}
             ],
         }
-        (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(y))
+        _write_yaml(tmp_path, y)
         inv = {"routes": [{"method": "POST", "path": "/api/Users"}]}
-        (tmp_path / ".route-inventory.json").write_text(__import__("json").dumps(inv))
+        (tmp_path / ".route-inventory.json").write_text(json.dumps(inv), encoding="utf-8")
 
         eac.apply(tmp_path, None)
-        first = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+        first = _read_yaml(tmp_path)
         n1 = sum(1 for c in first["security_controls"] if c.get("auto_source") == "auth-coverage")
         eac.apply(tmp_path, None)
-        second = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+        second = _read_yaml(tmp_path)
         n2 = sum(1 for c in second["security_controls"] if c.get("auto_source") == "auth-coverage")
         assert n1 == n2 and n1 >= 1  # re-run does not duplicate
+
+    def test_apply_error_paths_and_stale_auto_strip(self, tmp_path, capsys):
+        assert eac.apply(tmp_path, None) == 1
+        assert "no yaml" in capsys.readouterr().err
+
+        (tmp_path / "threat-model.yaml").write_text("security_controls: [\n", encoding="utf-8")
+        assert eac.apply(tmp_path, None) == 1
+        assert "parse failed" in capsys.readouterr().err
+
+        _write_yaml(tmp_path, ["not-a-mapping"])
+        assert eac.apply(tmp_path, None) == 1
+
+        _write_yaml(
+            tmp_path,
+            {
+                "security_controls": [
+                    _ctrl("Password-Based Authentication"),
+                    _ctrl("User Registration Flow"),
+                    _ctrl("Password Reset"),
+                    {
+                        "domain": "Identity and Authentication",
+                        "control": "Old auto",
+                        "auto_source": "auth-coverage",
+                    },
+                ],
+                "threats": [],
+            },
+        )
+        (tmp_path / ".route-inventory.json").write_text("{not-json", encoding="utf-8")
+        assert eac.apply(tmp_path, None) == 0
+        data = _read_yaml(tmp_path)
+        assert [c["control"] for c in data["security_controls"]] == [
+            "Password-Based Authentication",
+            "User Registration Flow",
+            "Password Reset",
+        ]
+        assert "already covered" in capsys.readouterr().out
+
+    def test_apply_handles_non_list_controls_and_main(self, tmp_path):
+        _write_yaml(tmp_path, {"security_controls": "not-a-list", "threats": []})
+        (tmp_path / ".route-inventory.json").write_text(
+            json.dumps({"routes": [{"method": "POST", "path": "/login"}]}),
+            encoding="utf-8",
+        )
+
+        assert eac.main([str(tmp_path), "--repo-root", str(tmp_path)]) == 0
+        data = _read_yaml(tmp_path)
+        assert any(c["control"] == "Password-Based Login" for c in data["security_controls"])
