@@ -6,6 +6,7 @@ shared scripts/requirements_gate.py reads the full-repo audit verdict.
 
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import json
 import subprocess
@@ -48,6 +49,42 @@ def _verdict() -> dict:
 def test_recompute_summary_counts():
     s = rr.recompute_summary(_verdict())
     assert s == {"total": 4, "pass": 1, "partial": 1, "fail": 1, "unverifiable": 0, "not_applicable": 1}
+
+
+def test_recompute_summary_skips_non_mapping_rows():
+    v = _verdict()
+    v["results"].append("not-a-result")
+
+    s = rr.recompute_summary(v)
+
+    assert s["total"] == 4
+
+
+def test_schema_errors_minimal_fallback_without_jsonschema(monkeypatch):
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "jsonschema":
+            raise ImportError
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert rr._schema_errors(["not-an-object"]) == ["top level is not an object"]
+    assert rr._schema_errors({"results": "not-a-list"}) == ["results: must be an array"]
+    assert rr._schema_errors({"results": [{}, "not-a-result"]}) == [
+        "results[0]: missing id",
+        "results[1]: missing id",
+    ]
+
+
+def test_schema_errors_reports_unreadable_schema(tmp_path, monkeypatch):
+    monkeypatch.setattr(rr, "SCHEMA_PATH", tmp_path / "missing.schema.json")
+
+    errors = rr._schema_errors(_verdict())
+
+    assert len(errors) == 1
+    assert errors[0].startswith("cannot read schema:")
 
 
 def test_schema_valid_verdict_passes(tmp_path):
@@ -98,6 +135,15 @@ def test_populated_wrong_summary_warns(tmp_path):
 def test_missing_verdict_errors(tmp_path):
     r = subprocess.run([sys.executable, str(REPORT), "--audit", str(tmp_path / "nope.json")], capture_output=True, text=True)
     assert r.returncode == 2
+
+
+def test_invalid_json_verdict_errors(tmp_path, capsys):
+    f = tmp_path / ".requirements-audit.json"
+    f.write_text("{", encoding="utf-8")
+
+    assert rr.main(["--audit", str(f)]) == 2
+
+    assert "could not read verdict" in capsys.readouterr().err
 
 
 # --- the shared gate reads the full-repo audit verdict ---------------------

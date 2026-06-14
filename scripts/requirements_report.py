@@ -65,9 +65,11 @@ def _schema_errors(data: dict) -> list[str]:
         errors: list[str] = []
         if not isinstance(data, dict):
             return ["top level is not an object"]
-        if not isinstance(data.get("results"), list):
+        results = data.get("results")
+        if not isinstance(results, list):
             errors.append("results: must be an array")
-        for i, r in enumerate(data.get("results", []) or []):
+            return errors
+        for i, r in enumerate(results or []):
             if not isinstance(r, dict) or not r.get("id"):
                 errors.append(f"results[{i}]: missing id")
         return errors
