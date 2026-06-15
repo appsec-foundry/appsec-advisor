@@ -1,3 +1,10 @@
+## Linked issue
+
+<!-- Where possible, please discuss your change in an issue first
+     (see CONTRIBUTING.md → "Submitting changes"). Link it here. -->
+
+Related to #
+
 ## What does this change?
 
 <!-- Briefly describe what you changed and why. -->

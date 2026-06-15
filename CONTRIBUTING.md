@@ -4,6 +4,28 @@ Development conventions for the appsec-advisor repository. The plugin is the rep
 
 Agent runtime behaviour — phases, output format, reliability features — is documented in [`CLAUDE.md`](CLAUDE.md), which Claude Code loads into the agent context at runtime.
 
+## Submitting changes
+
+Contributions are welcome! A quick heads-up first: this is a small project with
+a tightly coupled producer/schema/consumer/test contract (see `AGENTS.md`), so
+**where possible, please open an issue to discuss your idea before sending a
+pull request.** A short conversation up front saves you wasted effort and helps
+us land your change smoothly — it's a friendly request, not a hard gate.
+
+A good flow looks like:
+
+1. **Open an issue** (bug report or feature/change proposal) describing what you
+   want to change and why. For anything beyond a typo or obvious fix, it's worth
+   agreeing on the approach first.
+2. **Then open a PR** and link it to the issue. Keep the change surgical and
+   scoped to what you described.
+3. Run the targeted tests and `ruff` (below) before pushing, and fill in the PR
+   template.
+
+Maintainers are listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) and review
+all changes to `main`. Security issues follow a separate path — see
+[Reporting security issues](#reporting-security-issues).
+
 ## Commands
 
 ### Tests
