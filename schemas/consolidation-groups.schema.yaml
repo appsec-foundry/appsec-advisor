@@ -1,0 +1,61 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/consolidation-groups.schema.yaml
+title: Finding consolidation groups
+description: |
+  Declarative catalog `data/consolidation-groups.yaml`. Each group declares a
+  shared mechanism/object whose matching findings collapse into ONE systemic
+  finding carrying `instances[]`. Consumed by
+  `merge_threats._consolidate_by_group` during Phase 10 collect. A finding that
+  matches NO group stays a separate per-instance finding (the conservative
+  default — IDOR/XSS intentionally match nothing).
+
+type: object
+required: [groups]
+additionalProperties: false
+properties:
+  groups:
+    type: array
+    items:
+      type: object
+      required: [id, match_any]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: "^[a-z0-9-]+$"
+        title:
+          type: string
+        scope:
+          type: string
+          enum: [per-component, cross-component]
+        split_by:
+          type: array
+          items:
+            type: string
+        match_any:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            minProperties: 1
+            additionalProperties: false
+            properties:
+              cwe:
+                type: array
+                items:
+                  type: string
+                  pattern: "^CWE-[0-9]+$"
+              title_pattern:
+                type: string
+              file_glob:
+                type: array
+                items:
+                  type: string
+              source_check_id:
+                type: array
+                items:
+                  type: string
+              config_check_id:
+                type: array
+                items:
+                  type: string

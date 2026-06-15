@@ -2631,3 +2631,58 @@ class TestReconcileAttackPathMembership:
         before = _json.dumps(data, sort_keys=True)
         compose._reconcile_attack_path_membership(data, _attack_taxonomy(), threats, ctx)
         assert _json.dumps(data, sort_keys=True) == before
+
+
+# ---------------------------------------------------------------------------
+# Consolidated-finding instances card (per-instance severity dots)
+# ---------------------------------------------------------------------------
+
+
+class TestInstancesCard:
+    def _card(self, tmp_path, t):
+        ctx = _make_ctx(tmp_path)
+        return compose._build_threat_card(
+            t, t.get("risk", "High"), {}, {}, None, ctx, None, None
+        )
+
+    def _systemic_threat(self, instances):
+        return {
+            "id": "T-001",
+            "title": "Insecure JWT Verification",
+            "cwe": "CWE-347",
+            "risk": "Critical",
+            "component": "auth",
+            "stride": "Spoofing",
+            "systemic": True,
+            "instance_count": len(instances),
+            "evidence": {"file": instances[0]["file"], "line": instances[0]["line"]},
+            "instances": instances,
+        }
+
+    def test_lists_all_instances_with_count(self, tmp_path):
+        t = self._systemic_threat([
+            {"file": "lib/insecurity.ts", "line": 191, "severity": "Critical"},
+            {"file": "routes/chatbot.ts", "line": 248, "severity": "High"},
+        ])
+        card = self._card(tmp_path, t)
+        assert "Instances (2):" in card
+        assert "lib/insecurity.ts:191" in card
+        assert "routes/chatbot.ts:248" in card
+
+    def test_mixed_severity_shows_per_instance_dots(self, tmp_path):
+        t = self._systemic_threat([
+            {"file": "lib/insecurity.ts", "line": 191, "severity": "Critical"},
+            {"file": "routes/chatbot.ts", "line": 248, "severity": "High"},
+        ])
+        card = self._card(tmp_path, t)
+        assert "🔴 `lib/insecurity.ts:191`" in card
+        assert "🟠 `routes/chatbot.ts:248`" in card
+
+    def test_uniform_severity_no_dots(self, tmp_path):
+        t = self._systemic_threat([
+            {"file": "server.ts", "line": 310, "severity": "High"},
+            {"file": "server.ts", "line": 311, "severity": "High"},
+        ])
+        card = self._card(tmp_path, t)
+        assert "Instances (2):" in card
+        assert "🟠 `server.ts:310`" not in card  # uniform severity → plain locations

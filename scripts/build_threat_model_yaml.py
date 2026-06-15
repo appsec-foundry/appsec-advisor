@@ -175,6 +175,31 @@ def _mitigation_fp(m: dict) -> str:
     return re.sub(r"\s*\([^()]*:\d+\)\s*$", "", (m.get("title") or "")).strip().lower()
 
 
+def _instance_fingerprints(t: dict) -> list[str]:
+    """Per-instance cross-run identities for a threat: ``<finding-fp>|file:line``.
+    A consolidated systemic finding (with ``instances[]``) yields one fp per
+    instance, so the changelog can show "3 of 17 locations resolved" even while
+    the finding itself stays present. A non-consolidated finding yields exactly
+    one fp at its evidence location, so the instance-delta degrades cleanly to
+    the finding-delta for everything that was never grouped."""
+    base = _fp_str(t)
+    insts = t.get("instances")
+    if isinstance(insts, list) and insts:
+        return [
+            f"{base}|{(i.get('file') or '').strip()}:{i.get('line')}"
+            for i in insts
+            if isinstance(i, dict)
+        ]
+    # `evidence` is a dict at merge time but a LIST of {file,line} in the final
+    # yaml — tolerate both; use the first location as the finding's anchor.
+    ev = t.get("evidence")
+    if isinstance(ev, list):
+        ev = next((e for e in ev if isinstance(e, dict)), {})
+    elif not isinstance(ev, dict):
+        ev = {}
+    return [f"{base}|{(ev.get('file') or '').strip()}:{ev.get('line')}"]
+
+
 def _changelog_note(
     *,
     delta_basis: str,
@@ -667,6 +692,68 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
         m["priority"] = sev_to_pri.get(m["severity"], "P3")
 
     return sorted(by_mid.values(), key=lambda m: m["id"])
+
+
+def dedupe_mitigation_controls(
+    threats: list[dict], mitigations: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Collapse mitigations that express the SAME control (identical
+    ``_mitigation_fp`` — location-stripped, lowercased title) into one shared
+    M-ID, and remap every threat's ``mitigation_ids`` onto the survivor.
+
+    M-IDs are LLM-authored upstream and renumber every run, so two threats that
+    independently wrote the same control text get distinct M-IDs (the 19×
+    "Enforce object-level authorization" pile). This pass converges them: the
+    lowest-numbered M-ID per control survives, unions ``threat_ids``, and the
+    threats are rewritten so many separate findings (IDOR, XSS) point at ONE
+    shared mitigation instead of N identical copies. Findings are NOT merged —
+    only the mitigation list and the threat→mitigation links converge.
+
+    Returns (threats, deduped_mitigations); ``threats`` is mutated in place."""
+    risk_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
+    sev_to_pri = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4", "Informational": "P4"}
+
+    by_fp: dict[str, list[dict]] = {}
+    for m in mitigations:
+        by_fp.setdefault(_mitigation_fp(m), []).append(m)
+
+    remap: dict[str, str] = {}
+    survivors: list[dict] = []
+    for _fp, group in by_fp.items():
+        if len(group) == 1:
+            survivors.append(group[0])
+            continue
+        canonical = dict(min(group, key=lambda m: str(m.get("id") or "")))
+        merged_tids: list[str] = []
+        best_sev, best_rank = canonical.get("severity", "Medium"), 99
+        for m in group:
+            for tid in m.get("threat_ids") or []:
+                if tid not in merged_tids:
+                    merged_tids.append(tid)
+            rk = risk_order.get(m.get("severity"), 4)
+            if rk < best_rank:
+                best_rank, best_sev = rk, m.get("severity")
+            if m.get("id") != canonical.get("id"):
+                remap[m["id"]] = canonical["id"]
+        canonical["threat_ids"] = sorted(merged_tids)
+        canonical["severity"] = best_sev
+        canonical["priority"] = sev_to_pri.get(best_sev, "P3")
+        survivors.append(canonical)
+
+    if remap:
+        for t in threats:
+            mids = t.get("mitigation_ids")
+            if not mids:
+                continue
+            new: list[str] = []
+            for mid in mids:
+                rid = remap.get(mid, mid)
+                if rid not in new:
+                    new.append(rid)
+            t["mitigation_ids"] = new
+
+    survivors.sort(key=lambda m: str(m.get("id") or ""))
+    return threats, survivors
 
 
 # Sidecar's mitigation kind enum (process/architectural) is broader than
@@ -1229,6 +1316,25 @@ def build_changelog(
     else:
         added_mitigations = sorted(mid for mid, fp in cur_mits if fp not in prior_mit_fps)
 
+    # Instance-level delta (added 2026-06-15). Self-contained fingerprint diff,
+    # like the mitigation block above and independent of `delta_basis`: every
+    # entry stores its per-instance fingerprints and a run diffs them against the
+    # PRIOR entry's stored set. This keeps partial-progress visible after
+    # consolidation — fixing 3 of 17 locations of a systemic finding now shows up
+    # as 3 resolved instances even though the finding itself is unchanged.
+    cur_instance_fps = [fp for t in threats for fp in _instance_fingerprints(t)]
+    cur_instance_fp_set = set(cur_instance_fps)
+    prior_instance_fps = set((prior_entry or {}).get("instance_fingerprints") or [])
+    if prior_entry is None or not prior_instance_fps:
+        # First run, or a prior entry predating instance fps → the finding-level
+        # delta already covers it; stay quiet rather than emit a huge baseline.
+        added_instances: list[str] = []
+        resolved_instances: list[str] = []
+    else:
+        added_instances = sorted(cur_instance_fp_set - prior_instance_fps)
+        resolved_instances = sorted(prior_instance_fps - cur_instance_fp_set)
+    resolved_block["instances"] = resolved_instances
+
     note = _changelog_note(
         delta_basis=delta_basis,
         prior_entry=prior_entry,
@@ -1256,6 +1362,7 @@ def build_changelog(
         "threat_count": cur_n,
         "fingerprints": cur_fps,
         "mitigation_fingerprints": cur_mit_fps,
+        "instance_fingerprints": cur_instance_fps,
         "delta_basis": delta_basis,
         "previous_date": (prior_entry or {}).get("date"),
         "previous_threat_count": prior_n,
@@ -1264,6 +1371,7 @@ def build_changelog(
         "added": {
             "threats": added_threats,
             "mitigations": added_mitigations,
+            "instances": added_instances,
             "components": sorted({c.get("id", "") for c in components if c.get("id")}),
             "attack_surface": [],
             # `abuse_cases` is patched in late by render_abuse_cases.py — abuse
@@ -1376,6 +1484,12 @@ def main() -> int:
 
     mitigations = build_mitigations(threats)
     mitigations, mit_warnings = apply_mitigation_overrides(mitigations, sidecar_mo)
+    # Control-dedup (2026-06-15): collapse identical-control mitigations (same
+    # title fingerprint, distinct LLM-minted M-IDs) into one shared M-ID and
+    # remap threats' mitigation_ids. Runs LAST so it sees the final mitigation
+    # set (incl. override splits/additions) and converges the threat links
+    # before threat_ids/changelog derivation below.
+    threats, mitigations = dedupe_mitigation_controls(threats, mitigations)
     for w in mit_warnings:
         sys.stderr.write(f"  {w}\n")
 

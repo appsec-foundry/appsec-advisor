@@ -177,6 +177,12 @@ properties:
         mitigation_fingerprints:
           type: array
           items: { type: string }
+        # Per-instance fingerprints (`<finding-fp>|file:line`) enabling the
+        # instance-level delta — partial-progress visibility after a systemic
+        # finding consolidates N locations into one (see _instance_fingerprints).
+        instance_fingerprints:
+          type: array
+          items: { type: string }
         abuse_case_fingerprints:
           type: array
           items: { type: string }

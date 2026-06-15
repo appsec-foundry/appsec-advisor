@@ -806,6 +806,207 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Generalized consolidation (2026-06-15): collapse findings that are
+# manifestations of ONE shared mechanism/object into a single systemic finding,
+# driven by the declarative catalog data/consolidation-groups.yaml. This is the
+# CWE-/source-agnostic superset of _consolidate_config_checks: it groups across
+# STRIDE + scanner + config sources (e.g. JWT verification split over CWE-347/
+# 287/345 and over lib/insecurity.ts + route call-sites). A finding that matches
+# no group is left untouched (per_instance default) — IDOR/XSS stay distinct.
+# ---------------------------------------------------------------------------
+
+
+@functools.lru_cache(maxsize=1)
+def _load_consolidation_groups() -> tuple:
+    """Load + lightly validate data/consolidation-groups.yaml. Returns a tuple
+    of group dicts (tuple so the lru_cache result is hashable/immutable-ish).
+    Missing/unreadable catalog → empty tuple (consolidation becomes a no-op)."""
+    path = Path(__file__).resolve().parent.parent / "data" / "consolidation-groups.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return ()
+    groups = doc.get("groups") or []
+    out: list[dict] = []
+    for g in groups:
+        if isinstance(g, dict) and g.get("id") and isinstance(g.get("match_any"), list):
+            out.append(g)
+    return tuple(out)
+
+
+def _glob_match(path: str, pattern: str) -> bool:
+    """Glob match tolerant of a leading ``**/`` (fnmatch treats ``*`` as crossing
+    ``/`` already, but ``**/foo`` should also match a bare ``foo`` basename)."""
+    from fnmatch import fnmatch
+
+    p = (path or "").replace("\\", "/")
+    if pattern.startswith("**/"):
+        suf = pattern[3:]
+        return fnmatch(p, "*/" + suf) or fnmatch(p.rsplit("/", 1)[-1], suf) or fnmatch(p, suf)
+    return fnmatch(p, pattern)
+
+
+def _crit_matches(crit: dict, *, cwe: str, title: str, file_path: str, scid: str, ccid: str) -> bool:
+    """True iff EVERY recognized predicate present in ``crit`` holds. An entry
+    with no recognized predicate never matches (guards against an empty {} that
+    would otherwise swallow every finding)."""
+    seen = False
+    if "cwe" in crit:
+        seen = True
+        if cwe not in {str(c).upper() for c in (crit.get("cwe") or [])}:
+            return False
+    if "source_check_id" in crit:
+        seen = True
+        if scid not in (crit.get("source_check_id") or []):
+            return False
+    if "config_check_id" in crit:
+        seen = True
+        if ccid not in (crit.get("config_check_id") or []):
+            return False
+    if "title_pattern" in crit:
+        seen = True
+        try:
+            if not re.search(crit["title_pattern"], title or ""):
+                return False
+        except re.error:
+            return False
+    if "file_glob" in crit:
+        seen = True
+        if not any(_glob_match(file_path, gl) for gl in (crit.get("file_glob") or [])):
+            return False
+    return seen
+
+
+def _match_consolidation_group(t: dict, groups: tuple) -> dict | None:
+    """First group whose ``match_any`` has an entry matching this threat."""
+    cwe = (t.get("cwe") or "").strip().upper()
+    title = t.get("title") or ""
+    ev = t.get("evidence")
+    if isinstance(ev, list):
+        ev = next((e for e in ev if isinstance(e, dict)), {})
+    elif not isinstance(ev, dict):
+        ev = {}
+    file_path = ev.get("file") or ""
+    scid = t.get("source_check_id") or ""
+    ccid = t.get("config_check_id") or ""
+    for g in groups:
+        for crit in g.get("match_any") or []:
+            if isinstance(crit, dict) and _crit_matches(
+                crit, cwe=cwe, title=title, file_path=file_path, scid=scid, ccid=ccid
+            ):
+                return g
+    return None
+
+
+def _group_bucket_key(t: dict, g: dict) -> tuple:
+    """Bucket identity for a group member. cross-component groups merge across
+    components; per-component (default) keep components apart. ``split_by`` adds
+    arbitrary threat-field dimensions (the severity-zone / distinct-flow escape
+    hatch); an absent field is a no-op ('')."""
+    parts: list[str] = [g["id"]]
+    if g.get("scope") != "cross-component":
+        parts.append((t.get("component_id") or t.get("component") or "").strip().lower())
+    for dim in g.get("split_by") or []:
+        parts.append(str(t.get(dim) or ""))
+    return tuple(parts)
+
+
+def _instances_of(m: dict) -> list[dict]:
+    """Per-instance records for one member. If the member already carries
+    ``instances[]`` (e.g. a config-scan survivor), flatten those; otherwise
+    synthesize one from its evidence. Each instance carries its own severity +
+    provenance ref so instance-level delta / suppression stays possible."""
+    insts = m.get("instances")
+    if isinstance(insts, list) and insts:
+        out: list[dict] = []
+        for i in insts:
+            inst = dict(i) if isinstance(i, dict) else {}
+            inst.setdefault("severity", m.get("risk"))
+            out.append(inst)
+        return out
+    ev = m.get("evidence")
+    if isinstance(ev, list):
+        ev = next((e for e in ev if isinstance(e, dict)), {})
+    elif not isinstance(ev, dict):
+        ev = {}
+    inst = {"file": (ev.get("file") or "").strip(), "line": ev.get("line"), "severity": m.get("risk")}
+    sn = (ev.get("snippet") or ev.get("excerpt") or "").strip()
+    if sn:
+        inst["snippet"] = sn
+    ref = m.get("local_id") or m.get("source_scan_ref") or m.get("config_scan_ref")
+    if ref:
+        inst["local_id"] = ref
+    return [inst]
+
+
+def _consolidate_by_group(threats: list[dict]) -> list[dict]:
+    """Collapse findings sharing a consolidation-group bucket into ONE systemic
+    finding carrying ``instances[]`` / ``affected_files[]`` / ``instance_count``
+    / ``systemic`` / ``consolidation_group``. The survivor is the highest-risk
+    member (tie → first-seen) and unions every member's ``mitigation_ids`` (so a
+    consolidated finding legitimately carries MULTIPLE mitigations — finding↔
+    mitigation is 1:n). Non-matching threats pass through untouched.
+
+    Runs in ``cmd_collect`` AFTER ``_consolidate_config_checks`` (so config
+    survivors are folded in as instances) and BEFORE ``_group_candidates``.
+    Deterministic; no LLM."""
+    from collections import OrderedDict
+
+    groups = _load_consolidation_groups()
+    if not groups:
+        return list(threats)
+
+    passthrough: list[dict] = []
+    buckets: OrderedDict[tuple, list[dict]] = OrderedDict()
+    bucket_group: dict[tuple, dict] = {}
+    for t in threats:
+        g = _match_consolidation_group(t, groups)
+        if not g:
+            passthrough.append(t)
+            continue
+        bkey = _group_bucket_key(t, g)
+        buckets.setdefault(bkey, []).append(t)
+        bucket_group.setdefault(bkey, g)
+
+    out: list[dict] = list(passthrough)
+    for bkey, members in buckets.items():
+        if len(members) == 1:
+            out.append(members[0])  # lone match → not systemic, leave as-is
+            continue
+        g = bucket_group[bkey]
+        survivor = dict(sorted(members, key=lambda m: _risk_rank(m.get("risk")))[0])
+        instances: list[dict] = []
+        files: list[str] = []
+        mids: list[str] = []
+        refs: list[str] = []
+        for m in members:
+            for inst in _instances_of(m):
+                instances.append(inst)
+                f = (inst.get("file") or "").strip()
+                if f and f not in files:
+                    files.append(f)
+            for mid in m.get("mitigation_ids") or []:
+                if mid not in mids:
+                    mids.append(mid)
+            ref = m.get("local_id") or m.get("source_scan_ref") or m.get("config_scan_ref")
+            if ref and ref not in refs:
+                refs.append(ref)
+        survivor["instances"] = instances
+        survivor["affected_files"] = sorted(files)
+        survivor["instance_count"] = len(instances)
+        survivor["systemic"] = True
+        survivor["consolidation_group"] = g["id"]
+        if g.get("title"):
+            survivor["title"] = g["title"]
+        if mids:
+            survivor["mitigation_ids"] = mids
+        if refs:
+            survivor["consolidated_refs"] = refs
+        out.append(survivor)
+    return out
+
+
 def _dedupe_evidence(threats: list[dict]) -> list[dict]:
     """Collapse threats sharing ``(file, line, CWE)`` — the same vulnerability
     seen by two analyzers that disagreed on STRIDE / component / title.
@@ -1272,6 +1473,13 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # Runs before grouping so the coarse (CWE, STRIDE) merger never faces the
     # un-mergeable per-instance pile. See _consolidate_config_checks.
     deduped = _consolidate_config_checks(deduped)
+    # Generalized systemic consolidation (2026-06-15): collapse findings that
+    # are manifestations of one shared mechanism/object per the declarative
+    # data/consolidation-groups.yaml catalog (JWT verification, missing route
+    # auth, dependabot, websocket channel, …). Runs AFTER the config pass so its
+    # survivors fold in as instances, and BEFORE grouping so the LLM merger never
+    # sees the per-instance pile. Non-matching findings (IDOR, XSS) untouched.
+    deduped = _consolidate_by_group(deduped)
     all_candidates = _group_candidates(deduped)
     candidates, auto_decisions = _split_auto_decisions(all_candidates)
 

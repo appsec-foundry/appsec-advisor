@@ -1,0 +1,61 @@
+# consolidation-groups.yaml — declarative finding-consolidation catalog.
+#
+# Collapses N findings that are manifestations of ONE shared mechanism/object
+# (one JWT verifier, one route-registry, one dependabot.yml, one WebSocket
+# channel) into a single systemic finding carrying `instances[]`. The security
+# judgment "which code sites are the same object" lives HERE, not in a heuristic.
+#
+# A finding consolidates only if it matches a group below. No match → it stays a
+# separate finding (per_instance default). This is deliberately conservative:
+# IDOR (CWE-639) and XSS (CWE-79) match NOTHING here, so they remain distinct
+# findings — different resources / different sinks are different objects.
+#
+# Matching: a threat joins the FIRST group whose `match_any` has an entry where
+# ALL present predicates hold. Predicates (all optional, AND within one entry):
+#   cwe:              list of CWE-NNN; threat.cwe must be one of them
+#   title_pattern:    Python regex; must search-match threat.title
+#   file_glob:        list of globs; threat.evidence.file must match one
+#   source_check_id:  list; threat.source_check_id (scanner AUTHZ-NNN) must match
+#   config_check_id:  list; threat.config_check_id (config-scan) must match
+#
+# scope: per-component (default) buckets per component_id; cross-component merges
+#        across components (use for shared infra like a JWT helper).
+# split_by: extra threat-dict field names to add to the bucket key — the escape
+#        hatch for the severity-zone / distinct-flow exceptions (a field that is
+#        absent on the threat is a no-op).
+# title: the consolidated survivor's title (replaces per-file titles).
+
+groups:
+  - id: jwt-verification
+    title: "Insecure JWT Verification"
+    scope: cross-component          # the JWT helper is shared infra
+    match_any:
+      - cwe: [CWE-347, CWE-287, CWE-345]
+        title_pattern: '(?i)\b(jwt|algorithm|signature|verif\w*|decode)\b'
+      - source_check_id: [AUTHZ-005, AUTHZ-006, AUTHZ-007, AUTHZ-103, AUTHZ-201]
+
+  - id: missing-route-auth
+    title: "Sensitive Routes Registered Without Authentication Middleware"
+    scope: per-component
+    match_any:
+      - source_check_id: [AUTHZ-008]
+
+  - id: dependabot-ecosystems
+    title: "Dependabot Ecosystem Coverage Incomplete"
+    scope: per-component
+    match_any:
+      - title_pattern: '(?i)dependabot'
+        file_glob: ['**/dependabot.yml', '**/dependabot.yaml']
+
+  - id: npm-install-scripts
+    title: "Untrusted npm Install/Postinstall Scripts Enabled"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-506]
+
+  - id: unauth-websocket-channel
+    title: "Unauthenticated WebSocket Channel"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-306, CWE-862, CWE-284]
+        file_glob: ['**/registerWebsocketEvents.*', '**/* websocket*.*', '**/*socket*.*']

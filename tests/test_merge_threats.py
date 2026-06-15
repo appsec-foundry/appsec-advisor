@@ -680,3 +680,188 @@ class TestResolvedPriorUnion:
             {"reason": "no id"}, {"prior_id": "T-1", "reason": "ok"}]})]
         out = mt._collect_resolved_prior_findings(pairs)
         assert [r["prior_id"] for r in out] == ["T-1"]
+
+
+# ---------------------------------------------------------------------------
+# Generalized consolidation (_consolidate_by_group) — data/consolidation-groups.yaml
+# ---------------------------------------------------------------------------
+
+
+def _jwt(file_path, line, *, cwe="CWE-347", title="JWT verify call missing algorithms allowlist",
+         component_id="backend-api", risk="High", **extra):
+    t = _threat(cwe=cwe, title=title, stride="Spoofing", risk=risk,
+                evidence={"file": file_path, "line": line})
+    t["component_id"] = component_id
+    t.update(extra)
+    return t
+
+
+class TestConsolidateByGroup:
+    def test_jwt_verification_merges_cross_component_cross_cwe(self, mt):
+        members = [
+            _jwt("lib/insecurity.ts", 191, title="JWT Algorithm Confusion Missing algorithms Allowlist",
+                 risk="Critical", component_id="auth"),
+            _jwt("lib/insecurity.ts", 58, cwe="CWE-287",
+                 title="JWT Decode Without Signature Verification", component_id="auth"),
+            _jwt("lib/insecurity.ts", 58, cwe="CWE-345",
+                 title="JWT decode used without signature verification", component_id="auth"),
+            _jwt("routes/chatbot.ts", 248, component_id="backend-api"),
+            _jwt("routes/verify.ts", 117, component_id="backend-api"),
+        ]
+        out = mt._consolidate_by_group(members)
+        survivors = [t for t in out if t.get("consolidation_group") == "jwt-verification"]
+        assert len(survivors) == 1, "all JWT-verification hits collapse to ONE finding"
+        s = survivors[0]
+        assert s["systemic"] is True
+        assert s["title"] == "Insecure JWT Verification"
+        assert s["instance_count"] == 5
+        assert s["risk"] == "Critical"  # survivor = highest-risk member
+        assert "lib/insecurity.ts" in s["affected_files"]
+        assert "routes/chatbot.ts" in s["affected_files"]
+
+    def test_idor_never_consolidates(self, mt):
+        # CWE-639 matches no group → each resource stays its own finding.
+        idor = [
+            _threat(cwe="CWE-639", title="Broken authorization attacker-controlled owner ID",
+                    evidence={"file": "routes/address.ts", "line": 11}, component_id="backend-api"),
+            _threat(cwe="CWE-639", title="Broken authorization attacker-controlled owner ID",
+                    evidence={"file": "routes/wallet.ts", "line": 12}, component_id="backend-api"),
+        ]
+        out = mt._consolidate_by_group([dict(t) for t in idor])
+        assert len(out) == 2
+        assert not any(t.get("systemic") for t in out)
+
+    def test_missing_route_auth_groups_by_source_check_id(self, mt):
+        rows = [
+            _threat(cwe="CWE-862", title="Sensitive REST route registered without authentication middleware",
+                    evidence={"file": "server.ts", "line": ln}, component_id="backend-api",
+                    source_check_id="AUTHZ-008")
+            for ln in (310, 311, 407)
+        ]
+        out = mt._consolidate_by_group(rows)
+        survivors = [t for t in out if t.get("consolidation_group") == "missing-route-auth"]
+        assert len(survivors) == 1
+        assert survivors[0]["instance_count"] == 3
+
+    def test_unions_mitigation_ids_one_to_many(self, mt):
+        members = [
+            _jwt("lib/insecurity.ts", 191, risk="Critical", component_id="auth", mitigation_ids=["M-041"]),
+            _jwt("routes/chatbot.ts", 248, component_id="backend-api", mitigation_ids=["M-005", "M-041"]),
+        ]
+        out = mt._consolidate_by_group(members)
+        s = next(t for t in out if t.get("consolidation_group") == "jwt-verification")
+        assert s["mitigation_ids"] == ["M-041", "M-005"]  # union, order-stable, deduped
+
+    def test_lone_match_is_not_made_systemic(self, mt):
+        out = mt._consolidate_by_group([_jwt("routes/verify.ts", 117)])
+        assert len(out) == 1
+        assert not out[0].get("systemic")
+
+    def test_per_instance_severity_preserved(self, mt):
+        members = [
+            _jwt("lib/insecurity.ts", 191, risk="Critical", component_id="auth"),
+            _jwt("routes/chatbot.ts", 248, risk="High", component_id="backend-api"),
+        ]
+        out = mt._consolidate_by_group(members)
+        s = next(t for t in out if t.get("consolidation_group") == "jwt-verification")
+        sevs = {i.get("severity") for i in s["instances"]}
+        assert sevs == {"Critical", "High"}
+
+    def test_folds_in_existing_config_survivor_instances(self, mt):
+        # A config-scan survivor already carrying instances[] is flattened, not nested.
+        pre = _threat(cwe="CWE-506", title="npm install without --ignore-scripts",
+                      evidence={"file": "package.json", "line": 1}, component_id="ci-cd-pipeline")
+        pre["instances"] = [{"file": "package.json", "line": 1}, {"file": "package.json", "line": 88}]
+        pre["systemic"] = True
+        other = _threat(cwe="CWE-506", title="Postinstall hook",
+                        evidence={"file": "package.json", "line": 88}, component_id="ci-cd-pipeline")
+        out = mt._consolidate_by_group([pre, other])
+        s = next(t for t in out if t.get("consolidation_group") == "npm-install-scripts")
+        assert s["instance_count"] == 3  # 2 flattened + 1, NOT a nested instances list
+
+
+class TestConsolidationGroupMatching:
+    """Direct coverage of the catalog-matching predicates (the indirect group
+    tests above exercise them only via _consolidate_by_group)."""
+
+    def test_groups_load_from_catalog(self, mt):
+        groups = mt._load_consolidation_groups()
+        ids = {g["id"] for g in groups}
+        assert {"jwt-verification", "missing-route-auth", "dependabot-ecosystems",
+                "npm-install-scripts", "unauth-websocket-channel"} <= ids
+
+    def test_glob_match_double_star_prefix_and_basename(self, mt):
+        assert mt._glob_match("frontend/src/app/registerWebsocketEvents.ts", "**/registerWebsocketEvents.*")
+        assert mt._glob_match("registerWebsocketEvents.ts", "**/registerWebsocketEvents.*")
+        assert mt._glob_match(".github/dependabot.yml", "**/dependabot.yml")
+        assert not mt._glob_match("server.ts", "**/dependabot.yml")
+
+    def test_crit_empty_never_matches(self, mt):
+        # Guard: a crit with no recognized predicate must NOT swallow every finding.
+        assert mt._crit_matches({}, cwe="CWE-89", title="x", file_path="a.ts", scid="", ccid="") is False
+        assert mt._crit_matches({"unknown_key": 1}, cwe="CWE-89", title="x", file_path="a.ts", scid="", ccid="") is False
+
+    def test_crit_all_predicates_must_hold(self, mt):
+        crit = {"cwe": ["CWE-347"], "title_pattern": r"(?i)jwt"}
+        assert mt._crit_matches(crit, cwe="CWE-347", title="JWT verify", file_path="", scid="", ccid="")
+        assert not mt._crit_matches(crit, cwe="CWE-347", title="no match", file_path="", scid="", ccid="")  # title fails
+        assert not mt._crit_matches(crit, cwe="CWE-639", title="JWT verify", file_path="", scid="", ccid="")  # cwe fails
+
+    def test_match_handles_list_shaped_evidence(self, mt):
+        # Regression: evidence is a list in the final yaml; file_glob match must
+        # still read evidence[0].file instead of crashing.
+        t = {"cwe": "CWE-306", "title": "Unauthenticated WS",
+             "evidence": [{"file": "server/registerWebsocketEvents.ts", "line": 41}]}
+        g = mt._match_consolidation_group(t, mt._load_consolidation_groups())
+        assert g is not None and g["id"] == "unauth-websocket-channel"
+
+    def test_bucket_key_cross_vs_per_component(self, mt):
+        cross = {"id": "g", "scope": "cross-component"}
+        per = {"id": "g"}  # default per-component
+        a = {"component_id": "auth"}
+        b = {"component_id": "api"}
+        assert mt._group_bucket_key(a, cross) == mt._group_bucket_key(b, cross)   # merge across components
+        assert mt._group_bucket_key(a, per) != mt._group_bucket_key(b, per)       # kept apart
+
+    def test_dependabot_file_glob_group_consolidates(self, mt):
+        rows = [
+            _threat(cwe="CWE-1104", title="Dependabot npm ecosystem not configured",
+                    evidence={"file": ".github/dependabot.yml", "line": 1}, component_id="ci-cd-pipeline"),
+            _threat(cwe="CWE-1104", title="Dependabot docker ecosystem not configured",
+                    evidence={"file": ".github/dependabot.yml", "line": 2}, component_id="ci-cd-pipeline"),
+        ]
+        out = mt._consolidate_by_group(rows)
+        survivors = [t for t in out if t.get("consolidation_group") == "dependabot-ecosystems"]
+        assert len(survivors) == 1 and survivors[0]["instance_count"] == 2
+
+    def test_per_component_scope_keeps_components_separate(self, mt):
+        # Two components, each with 2 matching findings: per-component scope must
+        # produce TWO survivors (they must NOT cross-merge into one).
+        rows = [
+            _threat(cwe="CWE-862", title="Sensitive REST route registered without authentication middleware",
+                    evidence={"file": "server.ts", "line": ln}, component_id=comp, source_check_id="AUTHZ-008")
+            for comp in ("api-a", "api-b") for ln in (1, 2)
+        ]
+        out = mt._consolidate_by_group(rows)
+        survivors = [t for t in out if t.get("consolidation_group") == "missing-route-auth"]
+        assert len(survivors) == 2  # per-component → one survivor per component
+        assert {s["component_id"] for s in survivors} == {"api-a", "api-b"}
+        assert all(s["instance_count"] == 2 for s in survivors)
+
+
+class TestConsolidationCollectIntegration:
+    def test_collect_consolidates_authz008_into_one_finding(self, mt, tmp_path):
+        routes = [
+            _threat(cwe="CWE-862", title="Sensitive REST route registered without authentication middleware",
+                    stride="Elevation of Privilege", evidence={"file": "server.ts", "line": ln},
+                    source_check_id="AUTHZ-008")
+            for ln in (310, 311, 407)
+        ]
+        _write_stride(tmp_path, "backend-api", routes)
+        rc = mt.main(["collect", "--output-dir", str(tmp_path)])
+        assert rc == 0
+        cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
+        survivors = [t for t in cand["threats"] if t.get("consolidation_group") == "missing-route-auth"]
+        assert len(survivors) == 1
+        assert survivors[0]["instance_count"] == 3
+        assert survivors[0]["systemic"] is True

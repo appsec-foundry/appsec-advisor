@@ -12919,6 +12919,7 @@ def _build_threat_card(
     _instances = t.get("instances") or []
     if isinstance(_instances, list) and len(_instances) > 1:
         _locs: list[str] = []
+        _sevs: list[str] = []
         for _ins in _instances:
             if not isinstance(_ins, dict):
                 continue
@@ -12927,15 +12928,24 @@ def _build_threat_card(
                 continue
             _ln = _ins.get("line")
             _locs.append(f"`{_f}:{_ln}`" if isinstance(_ln, int) and _ln > 0 else f"`{_f}`")
+            _sevs.append((_ins.get("severity") or "").strip().lower())
         # Deduplicate while preserving order (workflows differ by file; a
-        # multi-stage Dockerfile differs by line).
+        # multi-stage Dockerfile differs by line). Keep each location's severity
+        # alongside it so a mixed-severity systemic finding can show per-instance
+        # dots (e.g. JWT: Critical algorithm-confusion + High decode-no-verify).
         _seen: set = set()
-        _locs = [x for x in _locs if not (x in _seen or _seen.add(x))]
-        if _locs:
+        _pairs = [(loc, sv) for loc, sv in zip(_locs, _sevs) if not (loc in _seen or _seen.add(loc))]
+        if _pairs:
+            _distinct_sevs = {sv for _, sv in _pairs if sv}
+            _mixed = len(_distinct_sevs) > 1
             _cap = 8
-            _shown = _locs[:_cap]
-            _tail = f" … (+{len(_locs) - _cap} more)" if len(_locs) > _cap else ""
-            instances_card = f"**Instances ({len(_locs)}):** " + ", ".join(_shown) + _tail
+            _shown_pairs = _pairs[:_cap]
+            _shown = [
+                (f"{_SEV_ICON_TBL.get(sv, '')} {loc}".strip() if _mixed and sv else loc)
+                for loc, sv in _shown_pairs
+            ]
+            _tail = f" … (+{len(_pairs) - _cap} more)" if len(_pairs) > _cap else ""
+            instances_card = f"**Instances ({len(_pairs)}):** " + ", ".join(_shown) + _tail
 
     # Root cause — systemic control failure from the attack-class taxonomy
     # (findings of one class share it); fall back to explicit YAML root_cause.

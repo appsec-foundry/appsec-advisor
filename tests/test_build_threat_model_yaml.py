@@ -844,4 +844,97 @@ def test_changelog_full_run_unchanged_without_recon(tmp_path):
     cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="s")
     assert cl[0]["carried_forward_components"] == []
     assert cl[0]["added"]["threats"] == ["T-001"]
-    assert cl[0]["resolved"] == {"threats": [], "reason_by_id": {}}
+    assert cl[0]["resolved"] == {"threats": [], "reason_by_id": {}, "instances": []}
+
+
+# ---------------------------------------------------------------------------
+# Mitigation control-dedup (Regel B)
+# ---------------------------------------------------------------------------
+
+
+def test_dedupe_mitigation_controls_collapses_identical_titles():
+    threats = [
+        {"id": "T-001", "mitigation_ids": ["M-004"]},
+        {"id": "T-002", "mitigation_ids": ["M-022"]},
+    ]
+    mits = [
+        {"id": "M-004", "title": "Enforce object-level (ownership) authorization",
+         "threat_ids": ["T-001"], "severity": "High", "priority": "P2"},
+        {"id": "M-022", "title": "Enforce object-level (ownership) authorization",
+         "threat_ids": ["T-002"], "severity": "Critical", "priority": "P1"},
+    ]
+    out_threats, out_mits = b.dedupe_mitigation_controls(threats, mits)
+    assert len(out_mits) == 1
+    surv = out_mits[0]
+    assert surv["id"] == "M-004"                      # lowest id survives
+    assert surv["threat_ids"] == ["T-001", "T-002"]   # unioned
+    assert surv["severity"] == "Critical"             # max across the group
+    assert surv["priority"] == "P1"
+    # Both findings now point at the shared mitigation (many findings → 1 control).
+    assert out_threats[0]["mitigation_ids"] == ["M-004"]
+    assert out_threats[1]["mitigation_ids"] == ["M-004"]
+
+
+def test_dedupe_mitigation_controls_keeps_distinct_controls():
+    threats = [{"id": "T-001", "mitigation_ids": ["M-001", "M-002"]}]
+    mits = [
+        {"id": "M-001", "title": "Enforce object-level authorization", "threat_ids": ["T-001"], "severity": "High"},
+        {"id": "M-002", "title": "Pin base image to a digest", "threat_ids": ["T-001"], "severity": "Low"},
+    ]
+    out_threats, out_mits = b.dedupe_mitigation_controls(threats, mits)
+    assert len(out_mits) == 2                          # different controls untouched
+    assert out_threats[0]["mitigation_ids"] == ["M-001", "M-002"]
+
+
+# ---------------------------------------------------------------------------
+# Instance-level delta (Regel C) — partial-progress visibility
+# ---------------------------------------------------------------------------
+
+
+def test_instance_fingerprints_one_per_instance():
+    t = {"component": "c", "cwe": "CWE-862", "title": "Sensitive routes",
+         "instances": [{"file": "server.ts", "line": 310}, {"file": "server.ts", "line": 311}]}
+    fps = b._instance_fingerprints(t)
+    assert len(fps) == 2
+    assert all(fp.startswith("c|CWE-862|sensitive routes|server.ts:") for fp in fps)
+
+
+def test_instance_fingerprints_degrades_to_evidence_for_non_systemic():
+    t = {"component": "c", "cwe": "CWE-89", "title": "SQLi", "evidence": {"file": "login.ts", "line": 5}}
+    assert b._instance_fingerprints(t) == ["c|CWE-89|sqli|login.ts:5"]
+
+
+def test_changelog_instance_delta_partial_resolution(tmp_path):
+    sysfind = {"id": "T-001", "component": "comp-a", "cwe": "CWE-862", "title": "Sensitive routes",
+               "instances": [{"file": "server.ts", "line": ln} for ln in (310, 311, 407)]}
+    run1 = b.build_changelog(_CL_CFG, [sysfind], _CL_COMPS, [], None, tmp_path, current_sha="s1")
+    assert len(run1[0]["instance_fingerprints"]) == 3
+    assert run1[0]["added"]["instances"] == []          # first run stays quiet
+
+    # run2: one location (407) fixed; the finding itself is unchanged.
+    sysfind2 = dict(sysfind, instances=[{"file": "server.ts", "line": ln} for ln in (310, 311)])
+    run2 = b.build_changelog(_CL_CFG, [sysfind2], _CL_COMPS, [], run1, tmp_path, current_sha="s2")
+    assert run2[0]["added"]["threats"] == []            # finding-level: nothing new/gone
+    assert run2[0]["resolved"]["fingerprints"] == []
+    resolved_inst = run2[0]["resolved"]["instances"]    # instance-level: 1 resolved
+    assert len(resolved_inst) == 1
+    assert "server.ts:407" in resolved_inst[0]
+
+
+def test_instance_fingerprints_tolerates_list_shaped_evidence():
+    # Regression: evidence is a LIST of {file,line} in the final yaml.
+    t = {"component": "c", "cwe": "CWE-922", "title": "Token in storage",
+         "evidence": [{"file": "oauth.ts", "line": 51}, {"file": "oauth.ts", "line": 52}]}
+    assert b._instance_fingerprints(t) == ["c|CWE-922|token in storage|oauth.ts:51"]
+
+
+def test_dedupe_mitigation_controls_dedupes_within_one_threat():
+    # A threat that references both duplicate M-IDs collapses to the survivor once.
+    threats = [{"id": "T-001", "mitigation_ids": ["M-004", "M-022"]}]
+    mits = [
+        {"id": "M-004", "title": "Enforce object-level authorization", "threat_ids": ["T-001"], "severity": "High"},
+        {"id": "M-022", "title": "Enforce object-level authorization", "threat_ids": ["T-001"], "severity": "High"},
+    ]
+    out_threats, out_mits = b.dedupe_mitigation_controls(threats, mits)
+    assert len(out_mits) == 1
+    assert out_threats[0]["mitigation_ids"] == ["M-004"]  # remapped AND de-duplicated within the threat
