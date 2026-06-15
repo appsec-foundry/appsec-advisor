@@ -331,4 +331,4 @@ Open work items currently shaping the next iterations of the plugin:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development conventions, the test suite, the targeted test checklist, and the manual end-to-end test.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to propose changes, development conventions, the test suite, the targeted test checklist, and the manual end-to-end test. Where possible, please open an issue to discuss your idea before sending a pull request.
