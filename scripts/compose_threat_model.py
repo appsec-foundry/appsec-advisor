@@ -1838,8 +1838,8 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
         return ""
     skip_walk = bool(ctx.eval_context.get("skip_attack_walkthroughs"))
     # The analyzed-component count is emergent (criteria-selected at quick depth:
-    # frontend + auth + internet-exposed only), so report the actual number of
-    # components that received a STRIDE pass rather than a hard-coded cap/total.
+    # frontend + auth + internet-exposed + exposure-unknown), so report the actual
+    # number of components that received a STRIDE pass rather than a hard-coded cap.
     components = ctx.yaml_data.get("components") or []
     meta = ctx.yaml_data.get("meta") or {}
     cs = meta.get("component_selection") if isinstance(meta.get("component_selection"), dict) else None
@@ -6062,12 +6062,22 @@ def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonom
         return ""
 
     present = [a for a in order if a in drives] + [a for a in drives if a not in order]
-    out = [
-        "**Threat actors.** The actors below drive the numbered attack paths in the "
-        "figures above; the Shop User is the *victim* of client-side attacks (XSS / CSRF), "
-        "not an attacker.",
-        "",
-    ]
+    # The victim-required (Shop User) actor is deliberately NOT drawn as a node
+    # in Figure 2 — that figure is forward-only (actor → tier → impact) and the
+    # victim's compromise is carried by the business-impact node instead (see
+    # _render_security_posture_at_a_glance). Only mention the Shop User victim in
+    # the legend when a victim-targeting path actually exists, and make the
+    # figure representation explicit so a reader does not look for a missing
+    # actor box.
+    has_victim = "victim-required" in drives
+    intro = "**Threat actors.** The actors below drive the numbered attack paths in the figures above."
+    if has_victim:
+        intro += (
+            " The **Shop User** is the *victim* of client-side attacks (XSS / CSRF), "
+            "not an attacker — in Figure 2 the compromise surfaces as the resulting "
+            "business-impact node rather than as a separate actor box."
+        )
+    out = [intro, ""]
     for a in present:
         meta = actor_meta.get(a) or {}
         name = _FIG1_ACTOR_LABEL.get(a) or meta.get("label") or a

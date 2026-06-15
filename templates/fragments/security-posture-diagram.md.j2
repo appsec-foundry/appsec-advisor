@@ -90,9 +90,10 @@ flowchart LR
     classDef tierApp    fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
     classDef tierData   fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:2px,font-size:12px
 
-    classDef actorAnon     fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px,font-size:12px
-    classDef actorShopUser fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:2px,font-size:12px
-    classDef impact        fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:12px
+{%- set _actor_classes = data.subgraph_actors.cards | map(attribute='severity_class') | list %}
+{% if 'actorAnon' in _actor_classes %}    classDef actorAnon     fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px,font-size:12px
+{% endif %}{% if 'actorShopUser' in _actor_classes %}    classDef actorShopUser fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:2px,font-size:12px
+{% endif %}    classDef impact        fill:#0f172a,stroke:#000,color:#fff,stroke-width:3px,font-size:12px
 
     classDef columnHeader  fill:none,stroke:none,color:#111,font-size:14px
 
