@@ -1152,3 +1152,99 @@ class TestDryRunAndMS:
 
     def test_extract_management_summary_absent(self):
         assert rcs._extract_management_summary("## Other\nbody") == ""
+
+
+# ---------------------------------------------------------------------------
+# Verdict echo on the console summary (default on; --quiet suppresses)
+# ---------------------------------------------------------------------------
+
+_VERDICT_MD = (
+    "# Threat Model\n\n"
+    "## Management Summary\n\n"
+    "### Verdict\n\n"
+    "🔴 Broad attack surface with no server-side authorization boundary.\n\n"
+    "**Risk distribution:** 🔴 Critical: 24 · **Total: 72**\n\n"
+    "<br/>\n\n"
+    '<blockquote style="border-left: 3px solid #dc2626;">\n\n'
+    "- **Admin takeover via forged JWT** — key committed at lib/insecurity.ts:23.\n\n"
+    "</blockquote>\n\n"
+    "Rotate the key before production.\n\n"
+    "### Security Posture & Top Threats\n\n"
+    "Not part of the verdict.\n"
+)
+
+
+class TestVerdictEcho:
+    def test_extract_verdict_strips_html_and_stops_at_next_heading(self):
+        v = rcs._extract_verdict(_VERDICT_MD)
+        assert "Broad attack surface" in v
+        assert "Admin takeover via forged JWT" in v
+        assert "Rotate the key before production." in v
+        # HTML stripped, and the next ### subsection is excluded
+        assert "<blockquote" not in v and "<br/>" not in v and "style=" not in v
+        assert "Not part of the verdict" not in v
+
+    def test_extract_verdict_absent(self):
+        assert rcs._extract_verdict("## Management Summary\n\nNo verdict here.\n") == ""
+
+    def test_render_verdict_default_on(self):
+        block = rcs.render_verdict(_VERDICT_MD, {})
+        joined = "\n".join(block)
+        assert "-- Verdict" in joined
+        assert "Broad attack surface" in joined
+
+    def test_render_verdict_quiet_suppresses(self):
+        assert rcs.render_verdict(_VERDICT_MD, {"quiet": True}) == []
+
+    def test_render_verdict_absent_section_omits_block(self):
+        assert rcs.render_verdict("# Threat Model\n\n## 1. Scope\nbody\n", {}) == []
+
+    def _output_dir_with_verdict(self, tmp_path: Path) -> Path:
+        (tmp_path / "threat-model.md").write_text(_VERDICT_MD)
+        (tmp_path / "threat-model.yaml").write_text(
+            "meta: {schema_version: 1}\nthreats: []\nmitigations: []\n"
+            "components: []\nsecurity_controls: []\n"
+        )
+        return tmp_path
+
+    def test_full_run_echoes_verdict_by_default(self, tmp_path: Path):
+        out = self._output_dir_with_verdict(tmp_path)
+        r = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out),
+             "--repo-root", str(out), "--mode", "full"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "-- Verdict" in r.stdout
+        assert "Broad attack surface" in r.stdout
+        assert "<blockquote" not in r.stdout
+
+    def test_full_run_quiet_is_compact(self, tmp_path: Path):
+        """--quiet: essentials only — keeps Repository/Run/Results/Outputs,
+        drops the verdict, next steps, run statistics, and log listing."""
+        out = self._output_dir_with_verdict(tmp_path)
+        full = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out),
+             "--repo-root", str(out), "--mode", "full"],
+            capture_output=True, text=True,
+        )
+        quiet = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out),
+             "--repo-root", str(out), "--mode", "full", "--quiet"],
+            capture_output=True, text=True,
+        )
+        assert full.returncode == 0 and quiet.returncode == 0
+        # essentials retained
+        assert "Assessment complete: Create Threat Model" in quiet.stdout
+        assert "Results" in quiet.stdout
+        assert "Outputs" in quiet.stdout
+        # verdict + verbose/narrative blocks dropped
+        assert "-- Verdict" not in quiet.stdout
+        assert "Broad attack surface" not in quiet.stdout
+        assert "Next Steps" not in quiet.stdout
+        assert "-- Run Statistics" not in quiet.stdout
+        assert "Logs" not in quiet.stdout
+        # quiet really is shorter than the default
+        assert len(quiet.stdout) < len(full.stdout)
+        # default (non-quiet) still shows the dropped blocks
+        assert "Next Steps" in full.stdout and "-- Verdict" in full.stdout

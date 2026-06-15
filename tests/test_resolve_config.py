@@ -676,6 +676,14 @@ class TestCLI:
         assert cfg["assessment_depth"] == "standard"
         assert cfg["reasoning_model"] == "opus-cheap"
         assert cfg["architect_review"] is False
+        assert cfg["quiet"] is False  # verdict echoed by default
+
+    def test_quiet_flag_flows_to_cfg(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--quiet")
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["quiet"] is True
 
     def test_config_summary_prints_human_readable(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

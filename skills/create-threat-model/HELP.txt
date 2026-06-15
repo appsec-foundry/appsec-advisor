@@ -32,6 +32,9 @@ OUTPUT
                                GitHub strips data: URIs, so the default file
                                reference is best for GitHub-hosted models.
   --verbose                    Append a Run Statistics section to the report
+  --quiet                      Compact console summary — only repository, run,
+                               results, outputs and warnings (omits the verdict,
+                               change summary, next steps, and run statistics)
   --scan-manifest              Write a list of every file scanned to .scan-manifest.txt
   --slug [<value>]             Also emit a copy-ready, postfix-stamped set
                                (threat-model-<slug>.md / .yaml / .figure1.svg / …)

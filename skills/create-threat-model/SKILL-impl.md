@@ -644,6 +644,7 @@ Parse the user's arguments for the following flags:
 | `--no-enrich-arch` | `ENRICH_ARCH_FRAGMENTS=false` — force deterministic architecture fragments at any depth. | depth-based |
 | `--enrich-arch` | `ENRICH_ARCH_FRAGMENTS=true` — force LLM-enriched architecture fragments at any depth. | depth-based |
 | `--verbose` | `VERBOSE_REPORT=true` — also writes a per-user marker file that flips `agent_logger.py` into stderr-mirroring mode for the duration of this run (see "Verbose Mode — Marker File Lifecycle" below) | `false` |
+| `--quiet` | `QUIET=true` — compact console completion summary (`render_completion_summary.py --quiet`): prints only Repository / Run / Results / Outputs plus any run-issue or security warnings, and omits the verdict, change summary, threat delta, next steps, run statistics, and log listing. | `false` (full summary + verdict) |
 | `--tracing` / `--no-tracing` | `TRACING=true` (default since M3.6) — writes a per-user marker file that activates per-agent token/turn/cost/wall-time tracking in `.appsec-trace.log`. At session end, `agent_logger.py` appends an ASSESSMENT_TRACE Markdown table to `.appsec-trace.log` (see "Tracing Mode — Marker File Lifecycle" below). Pass `--no-tracing` to disable. | `true` |
 | `--base <ref>` | `BASE_REF=<ref>` — git ref to diff HEAD against for incremental mode (default: `commit_sha` recorded in the prior `threat-model.yaml`). Used in MR/PR mode to target the base branch. | (baseline commit) |
 | `--pr-mode` | `PR_MODE=true` — produce a focused delta report limited to components affected by the `--base ... HEAD` diff. Implies `--incremental` and skips Stage 3 QA. | `false` |
@@ -822,6 +823,7 @@ if [ "${APPSEC_LIVE_PHASE:-0}" = "1" ] && [ "$PARALLEL_STRIDE" = "false" ]; then
   LIVE_PHASE=true
 fi
 DRY_RUN=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['dry_run']).lower())")
+QUIET=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('quiet',False)).lower())")
 OUTPUT_DIR=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin)['output_dir'])")
 REPO_ROOT=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(json.load(sys.stdin)['repo_root'])")
 # …etc. for ARCHITECT_REVIEW, WRITE_YAML, etc.
@@ -3962,10 +3964,13 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     $( [ "$ARCHITECT_REVIEW"   = "true"  ] && echo "--architect-review"   || echo "--no-architect-review" ) \
     $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \
     $( [ "$VERBOSE_REPORT"       = "true" ] && echo "--verbose" ) \
+    $( [ "$QUIET"                = "true" ] && echo "--quiet" ) \
     --patch-placeholders
 ```
 
 The `--patch-placeholders` flag rewrites `_pending_` markers in the MD's `## Appendix: Run Statistics` section with the extracted durations and models. Idempotent — a second invocation is a no-op.
+
+The `--quiet` flag (passed only when `QUIET=true`) switches to a compact summary: it keeps Repository / Run / Results / Outputs plus any run-issue or security warnings, and drops the verdict, change summary, threat delta, next steps, run statistics, and log listing. **Default** (no `--quiet`) echoes the report's `### Verdict` (posture statement, risk distribution, scope, and the worst-case attack scenarios) on the console right after the `Results` block, so the user sees the assessment's bottom line without opening `threat-model.md`. The verdict block is also omitted automatically when the report has no `### Verdict` section (e.g. a partial/failed render).
 
 The `--verbose` flag (passed only when `VERBOSE_REPORT=true`) expands the console `-- Run Statistics --` block. **Default** prints just the timing headline (`Net agent compute` / `Idle / standby` / `Total elapsed (wall)`); **verbose** adds the per-stage duration breakdown, the standby/suspend split, the agent roster, and the token/cost detail. This mirrors the MD `## Appendix: Run Statistics` section, which is likewise only appended when `VERBOSE_REPORT=true`.
 
@@ -3984,13 +3989,14 @@ scan-friendly summary in this fixed order:
 2. `Repository`
 3. `Run` — mode, scope, depth, duration, cost, QA, architect review
 4. `Results` — threats by severity, components, controls, mitigations
-5. `Change Summary` — rendered only when `threat-model.yaml` has a meaningful `changelog[0]` with deltas
-6. `Threat Delta` — top 3 new, resolved, and changed threats when available
-7. `Outputs` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
-8. Conditional health / run-issues / security notice blocks
-9. `Next Steps` — 1–5 conditional action lines
-10. `Run Statistics` — timing headline (net compute / idle / wall) always; per-stage durations (from `.stage-stats.jsonl`), agent roster, and tokens + cost only when `--verbose` is passed
-11. `Logs`
+5. `Verdict` — the report's `### Verdict` (posture, risk distribution, scope, worst-case scenarios); echoed by default, omitted under `--quiet` (compact mode) or when the report has no `### Verdict` section
+6. `Change Summary` — rendered only when `threat-model.yaml` has a meaningful `changelog[0]` with deltas
+7. `Threat Delta` — top 3 new, resolved, and changed threats when available
+8. `Outputs` — artifact paths (yaml conditional on `--write-yaml`; sarif conditional on file presence)
+9. Conditional health / run-issues / security notice blocks
+10. `Next Steps` — 1–5 conditional action lines
+11. `Run Statistics` — timing headline (net compute / idle / wall) always; per-stage durations (from `.stage-stats.jsonl`), agent roster, and tokens + cost only when `--verbose` is passed
+12. `Logs`
 
 The script's rendering logic (file-listing rules, Change Summary conditionals, Next Steps priority, placeholder patching) is covered by `tests/test_render_completion_summary.py`. If the contract needs to change, edit the script and its tests — never the skill layer.
 

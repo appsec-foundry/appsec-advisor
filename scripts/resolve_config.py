@@ -1170,6 +1170,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rerender",  action="store_true")
     p.add_argument("--keep-runtime-files", action="store_true")
     p.add_argument("--verbose",   action="store_true")
+    p.add_argument("--quiet",     action="store_true",
+                   help="Compact console summary — print only the essentials "
+                        "(repository, run, results, outputs, warnings); omit the "
+                        "verdict, change summary, next steps, and run statistics.")
     # Tracing default flipped to ON in M3.6 (was opt-in pre-M3.6). Per-agent
     # token / turn / cost / wall-time tracking writes to .appsec-trace.log
     # — small file (~10 KB / run), zero token cost, materially better
@@ -1398,6 +1402,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "keep_runtime_files": ns.keep_runtime_files,
         "slug":            (secrets.token_hex(2) if ns.slug == "__auto__" else ns.slug),
         "verbose":         ns.verbose,
+        "quiet":           ns.quiet,
         "tracing":         ns.tracing,
         "resume":          ns.resume,
         "pr_mode":         ns.pr_mode,
@@ -2549,6 +2554,7 @@ def _format_run_flags(cfg: dict) -> str:
     flags = []
     if cfg.get("dry_run"):            flags.append("dry-run")
     if cfg.get("verbose"):            flags.append("verbose")
+    if cfg.get("quiet"):              flags.append("quiet")
     if not cfg.get("tracing"):        flags.append("no-tracing")
     if cfg.get("scan_manifest"):      flags.append("scan-manifest")
     if cfg.get("keep_runtime_files"): flags.append("keep-runtime-files")

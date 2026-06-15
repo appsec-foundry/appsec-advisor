@@ -1486,6 +1486,20 @@ def render_summary(
     lines: list[str] = []
     lines.extend(render_run_overview(repo_root, output_dir, cfg, stats, cost, change))
     lines.extend(render_metrics(metrics, cfg))
+
+    if cfg.get("quiet"):
+        # Compact console mode (--quiet): print only the essentials plus any
+        # problem signals — Repository / Run / Results, run-issue + security
+        # warnings (when present), and Outputs. Omit the verdict, change
+        # summary / threat delta, composition health, next steps, run
+        # statistics, and the log listing; the full detail stays in the report.
+        run_issues = extract_run_issues(output_dir)
+        lines.extend(render_run_issues(run_issues, plugin_dev=cfg.get("plugin_dev", False)))
+        lines.extend(render_security_notice(output_dir))
+        lines.extend(render_files(output_dir, cfg))
+        return "\n".join(lines) + "\n"
+
+    lines.extend(render_verdict(md_text, cfg))
     if change:
         lines.extend(render_change_summary(change))
         lines.extend(render_threat_delta(change))
@@ -1548,18 +1562,59 @@ _MS_SLICE_RE = re.compile(
     re.DOTALL | re.MULTILINE,
 )
 
+# `### Verdict` is the first sub-section of `## Management Summary`. Slice it up
+# to the next `### `/`## ` heading (typically `### Security Posture & Top
+# Threats`) or end-of-document.
+_VERDICT_SLICE_RE = re.compile(
+    r"^###\s+Verdict\s*$\n(.+?)(?=\n#{2,3}\s+\S|\Z)",
+    re.DOTALL | re.MULTILINE,
+)
 
-def _extract_management_summary(md_text: str) -> str:
-    m = _MS_SLICE_RE.search(md_text)
-    if not m:
-        return ""
-    body = m.group(1)
-    # Strip HTML for plain-console readability.
+
+def _html_to_plain(body: str) -> str:
+    """Strip the report's inline HTML so the slice reads cleanly on a console."""
     body = re.sub(r"<blockquote[^>]*>", "", body)
     body = re.sub(r"</blockquote>", "", body)
     body = re.sub(r"<br\s*/?>", "\n", body)
     body = re.sub(r'\sstyle="[^"]*"', "", body)
     return body.strip()
+
+
+def _extract_management_summary(md_text: str) -> str:
+    m = _MS_SLICE_RE.search(md_text)
+    if not m:
+        return ""
+    return _html_to_plain(m.group(1))
+
+
+def _extract_verdict(md_text: str) -> str:
+    """Return the `### Verdict` sub-section as plain text (HTML stripped).
+
+    Empty string when the section is absent (e.g. a malformed or partial
+    report) — the caller then omits the console Verdict block entirely.
+    """
+    m = _VERDICT_SLICE_RE.search(md_text)
+    if not m:
+        return ""
+    return _html_to_plain(m.group(1))
+
+
+def render_verdict(md_text: str, cfg: dict) -> list[str]:
+    """Console `-- Verdict --` block: the report's headline verdict.
+
+    Shown by default so the user sees the assessment's bottom line without
+    opening `threat-model.md`. Suppressed when `cfg["quiet"]` is set
+    (the skill's `--quiet` flag).
+    """
+    if cfg.get("quiet"):
+        return []
+    verdict = _extract_verdict(md_text)
+    if not verdict:
+        return []
+    lines = ["", f"  -- Verdict {SECTION_RULE[:48]}", ""]
+    for ln in verdict.splitlines():
+        lines.append(f"  {ln}" if ln.strip() else "")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -1660,6 +1715,14 @@ def main(argv: list[str] | None = None) -> int:
         "detail to the Run Statistics block. Default shows only the timing headline.",
     )
     p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Compact console summary: print only the essentials — Repository, "
+        "Run, Results, Outputs, plus any run-issue / security warnings. "
+        "Omits the verdict, change summary, threat delta, next steps, run "
+        "statistics, and the log listing (all still available in the report).",
+    )
+    p.add_argument(
         "--no-print",
         dest="no_print",
         action="store_true",
@@ -1686,6 +1749,7 @@ def main(argv: list[str] | None = None) -> int:
         "architect_review": args.architect_review,
         "plugin_dev": args.plugin_dev,
         "verbose": args.verbose,
+        "quiet": args.quiet,
     }
 
     if args.mode == "dry-run":
