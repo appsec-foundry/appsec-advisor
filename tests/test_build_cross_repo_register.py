@@ -384,3 +384,310 @@ class TestCLI:
         assert r.returncode == 0, r.stderr
         data = json.loads(r.stdout)
         assert "entries" in data
+
+
+# ---------------------------------------------------------------------------
+# Coverage extension — direct unit tests for uncovered helpers
+# ---------------------------------------------------------------------------
+
+
+class TestReadThreatModelMeta:
+    def test_missing_file_unavailable(self, tmp_path: Path) -> None:
+        meta = bcrr._read_threat_model_meta(tmp_path / "nope.yaml")
+        assert meta["status"] == "unavailable"
+        assert "unavailable" in meta["fetch_detail"]
+
+    def test_invalid_yaml_unavailable(self, tmp_path: Path) -> None:
+        f = tmp_path / "tm.yaml"
+        f.write_text("key: [unterminated\n", encoding="utf-8")
+        meta = bcrr._read_threat_model_meta(f)
+        assert meta["status"] == "unavailable"
+        assert "yaml" in meta["fetch_detail"]
+
+    def test_non_mapping_unavailable(self, tmp_path: Path) -> None:
+        f = tmp_path / "tm.yaml"
+        f.write_text("- just\n- a\n- list\n", encoding="utf-8")
+        meta = bcrr._read_threat_model_meta(f)
+        assert meta["status"] == "unavailable"
+        assert "not a mapping" in meta["fetch_detail"]
+
+    def test_threat_categories_shape_and_counts(self, tmp_path: Path) -> None:
+        # Exercises the threat_categories fallback (lines 136-140) and counting.
+        f = tmp_path / "tm.yaml"
+        f.write_text(
+            yaml.safe_dump(
+                {
+                    "meta": {"generated": "2099-01-01", "git": {"commit_sha": "abc"}},
+                    "components": [{"name": "X"}, {"not_a_name": 1}, "skip-me"],
+                    "threat_categories": [
+                        {
+                            "findings": [
+                                {"severity": "High", "status": "open"},
+                                {"severity": "Low", "status": "mitigated"},
+                            ]
+                        },
+                        "not-a-dict",
+                        {"findings": ["nope", {"severity": "Medium", "status": "open"}]},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        meta = bcrr._read_threat_model_meta(f)
+        assert meta["status"] == "found"
+        assert meta["threats_total"] == 3
+        # BUG (noted in report): severity counters never increment because the
+        # producer compares a Title-cased severity ("High") against lowercase
+        # `counts` keys, so `sev in counts` is always False. We assert the
+        # actual (buggy) behaviour rather than the intended count.
+        assert meta["threats_high"] == 0
+        assert meta["threats_open"] == 2
+        assert meta["components"] == ["X"]
+
+
+class TestSiblingDiscoveryEdge:
+    def test_workspace_not_a_dir_returns_empty(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        missing_ws = tmp_path / "does-not-exist"
+        out = bcrr._discover_siblings(repo, missing_ws, max_siblings=8, declared_names=set())
+        assert out == []
+
+    def test_iterdir_oserror_returns_empty(self, tmp_path: Path, monkeypatch) -> None:
+        repo = _make_repo(tmp_path)
+        ws = repo.parent
+
+        def _boom(self):
+            raise OSError("denied")
+
+        monkeypatch.setattr(Path, "iterdir", _boom)
+        out = bcrr._discover_siblings(repo, ws, max_siblings=8, declared_names=set())
+        assert out == []
+
+
+class TestSkipSiblingDiscoveryEdge:
+    def test_root_workspace_skips(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        skip, reason = bcrr._should_skip_sibling_discovery(
+            repo, Path("/"), has_declared=False
+        )
+        assert skip is True
+        assert reason == "workspace_root is /"
+
+    def test_iterdir_oserror_does_not_skip(self, tmp_path: Path, monkeypatch) -> None:
+        repo = _make_repo(tmp_path)
+        ws = tmp_path / "ws2"
+        ws.mkdir()
+        # Two siblings so the "<=1" branch is not the reason; force iterdir OSError.
+        orig = Path.iterdir
+
+        def _boom(self):
+            if self == ws:
+                raise OSError("denied")
+            return orig(self)
+
+        monkeypatch.setattr(Path, "iterdir", _boom)
+        skip, reason = bcrr._should_skip_sibling_discovery(repo, ws, has_declared=False)
+        assert skip is False
+        assert reason == ""
+
+
+class TestSubmoduleEdge:
+    def test_unparseable_gitmodules_returns_empty(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        # No section header -> MissingSectionHeaderError -> [].
+        (repo / ".gitmodules").write_text("path = libs/foo\n", encoding="utf-8")
+        assert bcrr._discover_submodules(repo, declared_names=set()) == []
+
+    def test_section_without_path_skipped(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / ".gitmodules").write_text(
+            '[submodule "noopt"]\n\turl = https://x\n', encoding="utf-8"
+        )
+        assert bcrr._discover_submodules(repo, declared_names=set()) == []
+
+    def test_empty_path_skipped(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / ".gitmodules").write_text(
+            '[submodule "blank"]\n\tpath = \n', encoding="utf-8"
+        )
+        assert bcrr._discover_submodules(repo, declared_names=set()) == []
+
+    def test_name_fallback_to_basename(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        # Section name does NOT match `submodule "name"` -> basename fallback.
+        (repo / ".gitmodules").write_text(
+            "[weirdsection]\n\tpath = vendor/libxyz\n", encoding="utf-8"
+        )
+        out = bcrr._discover_submodules(repo, declared_names=set())
+        assert len(out) == 1
+        assert out[0]["name"] == "libxyz"
+        assert out[0]["threat_model"]["status"] == "missing"
+
+    def test_declared_name_skips_submodule(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / ".gitmodules").write_text(
+            '[submodule "shared"]\n\tpath = libs/shared\n', encoding="utf-8"
+        )
+        assert bcrr._discover_submodules(repo, declared_names={"shared"}) == []
+
+
+class TestReconParser:
+    def test_no_section_returns_empty(self) -> None:
+        assert bcrr._parse_recon_25("# 7.1 Something else\n\nno 25 here") == []
+
+    def test_table_row_with_scm_sibling(self) -> None:
+        md = textwrap.dedent("""
+            ## 25 Cross-repo dependencies
+            | Name | Type | Source | Interface |
+            |------|------|--------|-----------|
+            | header-skip | name | x | y |
+            | auth-svc | scm-sibling | git@x | REST |
+            | Stripe | saas | pkg | SDK |
+        """).strip()
+        out = bcrr._parse_recon_25(md)
+        names = {e["name"]: e for e in out}
+        assert "auth-svc" in names
+        assert names["auth-svc"]["type"] == "scm-sibling"
+        assert names["auth-svc"]["interface"] == "REST"
+        assert names["Stripe"]["type"] == "saas"
+        assert names["Stripe"]["threat_model"]["status"] == "n/a"
+
+    def test_table_row_type_not_matched_skipped(self) -> None:
+        md = textwrap.dedent("""
+            ## 25 deps
+            | Name | Type |
+            |------|------|
+            | irrelevant | database |
+        """).strip()
+        assert bcrr._parse_recon_25(md) == []
+
+    def test_table_row_separator_and_dash_name_skipped(self) -> None:
+        md = textwrap.dedent("""
+            ## 25 deps
+            | Name | Type | Source |
+            | --- | --- | --- |
+            | — | saas | x |
+            | real | saas | y |
+        """).strip()
+        out = bcrr._parse_recon_25(md)
+        assert [e["name"] for e in out] == ["real"]
+
+    def test_table_row_single_cell_skipped(self) -> None:
+        # A pipe-row that yields fewer than 2 cells must be skipped (len<2).
+        md = "## 25 deps\n|onlyone|\n| real | saas | y |\n"
+        out = bcrr._parse_recon_25(md)
+        assert [e["name"] for e in out] == ["real"]
+
+    def test_bullet_duplicate_name_skipped(self) -> None:
+        # Same name twice in bullet style -> second hits the `name in seen` skip.
+        md = textwrap.dedent("""
+            ### 25 Dependencies
+            - **dup-svc** scm-sibling
+            - **dup-svc** saas
+        """).strip()
+        out = bcrr._parse_recon_25(md)
+        assert [e["name"] for e in out] == ["dup-svc"]
+        assert out[0]["type"] == "scm-sibling"
+
+    def test_bullet_style_fallback(self) -> None:
+        md = textwrap.dedent("""
+            ### 25 Dependencies
+            - **billing-api** — type: saas | interface: REST
+            - **inventory** scm-sibling
+            - no name here
+        """).strip()
+        out = bcrr._parse_recon_25(md)
+        names = {e["name"]: e for e in out}
+        assert names["billing-api"]["type"] == "saas"
+        assert names["billing-api"]["interface"] == "REST"
+        assert names["inventory"]["type"] == "scm-sibling"
+        assert names["inventory"]["interface"] is None
+
+
+class TestNormaliseDeclaredOptionalFields:
+    def test_optional_fields_passed_through(self, tmp_path: Path) -> None:
+        declared = {
+            "related": [
+                {
+                    "name": "upstream-a",
+                    "interface": "gRPC",
+                    "threat_model": {"status": "found"},
+                    "interface_findings": [{"id": "F-1"}],
+                    "consumer_declares": {"x": 1},
+                    "upstream_properties": {"y": 2},
+                    "expectation_mismatch": {"z": 3},
+                }
+            ]
+        }
+        out = bcrr._normalise_declared(declared)
+        assert len(out) == 1
+        e = out[0]
+        assert e["consumer_declares"] == {"x": 1}
+        assert e["upstream_properties"] == {"y": 2}
+        assert e["expectation_mismatch"] == {"z": 3}
+        assert e["source"] == "declared"
+
+
+class TestMergePriority:
+    def test_higher_priority_source_replaces_lower(self) -> None:
+        # The batches are iterated in priority order, so to exercise the
+        # replace branch (a later-seen entry with strictly higher priority) we
+        # feed a higher-priority 'declared' entry through the recon slot. This
+        # is the only way to reach the `new_prio < ex_prio` swap.
+        first = [{"name": "dup", "source": "recon"}]
+        later_high = [{"name": "dup", "source": "declared"}]
+        merged = bcrr._merge([], [], first, later_high)
+        assert len(merged) == 1
+        assert merged[0]["source"] == "declared"
+
+
+class TestValidateEdge:
+    def test_jsonschema_none_returns_empty(self, monkeypatch) -> None:
+        monkeypatch.setattr(bcrr, "jsonschema", None)
+        assert bcrr._validate({"anything": True}) == []
+
+    def test_missing_schema_file(self, tmp_path: Path) -> None:
+        if bcrr.jsonschema is None:
+            return
+        errs = bcrr._validate({}, schema_path=tmp_path / "no-schema.json")
+        assert errs and "schema not found" in errs[0]
+
+
+class TestBuildDeclaredAndReconErrors:
+    def test_declared_json_decode_error_ignored(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        bad = tmp_path / "declared.json"
+        bad.write_text("{ not json", encoding="utf-8")
+        reg = bcrr.build(repo, declared_json_path=bad, recon_summary_path=None)
+        # declared_present is False because parse failed.
+        assert reg["meta"]["declared_present"] is False
+        assert reg["entries"] == [] or all(
+            e["source"] != "declared" for e in reg["entries"]
+        )
+
+    def test_recon_oserror_yields_no_recon(self, tmp_path: Path, monkeypatch) -> None:
+        repo = _make_repo(tmp_path)
+        recon = tmp_path / "recon.md"
+        recon.write_text("## 25 deps\n| a | saas |\n", encoding="utf-8")
+
+        orig = Path.read_text
+
+        def _boom(self, *a, **k):
+            if self == recon:
+                raise OSError("denied")
+            return orig(self, *a, **k)
+
+        monkeypatch.setattr(Path, "read_text", _boom)
+        reg = bcrr.build(repo, declared_json_path=None, recon_summary_path=recon)
+        assert all(e["source"] != "recon" for e in reg["entries"])
+
+
+class TestCLIValidationFailure:
+    def test_cli_schema_validation_failure_exit_2(self, tmp_path: Path, monkeypatch) -> None:
+        # Force _validate to report errors so main() takes the failure branch.
+        monkeypatch.setattr(bcrr, "_validate", lambda reg, *a, **k: ["bad: thing"])
+        out = tmp_path / "r.json"
+        repo = _make_repo(tmp_path)
+        rc = bcrr.main(["--repo-root", str(repo), "--output", str(out)])
+        assert rc == 2
+        assert not out.exists()

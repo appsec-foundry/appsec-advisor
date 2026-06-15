@@ -81,3 +81,91 @@ def test_bool_shorthand_false_treated_as_disabled(tmp_path):
     _write_effective(tmp_path, {"export-threat-model": False})
     rc, _ = cse.check("export-threat-model", tmp_path, False)
     assert rc == cse.EXIT_DISABLED_HARD
+
+
+# ---------------------------------------------------------------------------
+# _load_effective edge cases (lines 47, 53-54)
+# ---------------------------------------------------------------------------
+
+
+def test_load_effective_none_output_dir():
+    assert cse._load_effective(None) is None
+
+
+def test_load_effective_missing_file(tmp_path):
+    assert cse._load_effective(tmp_path) is None
+
+
+def test_load_effective_malformed_json(tmp_path):
+    (tmp_path / ".org-profile-effective.json").write_text("{ not valid json")
+    assert cse._load_effective(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# check() — toggle present but no explicit enabled key (line 65, 72)
+# ---------------------------------------------------------------------------
+
+
+def test_skill_toggle_absent_enabled_by_profile(tmp_path):
+    # active profile, skill_toggles present but does NOT list this skill
+    _write_effective(tmp_path, {"other-skill": {"enabled": False}})
+    rc, msg = cse.check("export-threat-model", tmp_path, False)
+    assert rc == cse.EXIT_ENABLED
+    assert "enabled by org profile" in msg
+
+
+def test_cfg_enabled_default_true_when_key_missing(tmp_path):
+    # cfg dict with no "enabled" key → defaults to True (enabled)
+    _write_effective(tmp_path, {"export-threat-model": {"reason": "n/a"}})
+    rc, _ = cse.check("export-threat-model", tmp_path, False)
+    assert rc == cse.EXIT_ENABLED
+
+
+def test_disabled_no_reason_uses_placeholder(tmp_path):
+    _write_effective(tmp_path, {"export-threat-model": {"enabled": False}})
+    rc, msg = cse.check("export-threat-model", tmp_path, False)
+    assert rc == cse.EXIT_DISABLED_HARD
+    assert "no reason provided" in msg
+
+
+# ---------------------------------------------------------------------------
+# main() / CLI dispatch (lines 84-107)
+# ---------------------------------------------------------------------------
+
+
+def test_main_enabled_prints_message(tmp_path, capsys):
+    rc = cse.main(["export-threat-model", "--output-dir", str(tmp_path)])
+    assert rc == cse.EXIT_ENABLED
+    out = capsys.readouterr().out
+    assert "no active org profile" in out
+
+
+def test_main_quiet_suppresses_output(tmp_path, capsys):
+    rc = cse.main(["export-threat-model", "--output-dir", str(tmp_path), "--quiet"])
+    assert rc == cse.EXIT_ENABLED
+    assert capsys.readouterr().out == ""
+
+
+def test_main_disabled_hard_exit_code(tmp_path):
+    _write_effective(tmp_path, {"export-threat-model": {"enabled": False, "reason": "central"}})
+    rc = cse.main(["export-threat-model", "--output-dir", str(tmp_path)])
+    assert rc == cse.EXIT_DISABLED_HARD
+
+
+def test_main_help_only_flag(tmp_path):
+    _write_effective(tmp_path, {"export-threat-model": {"enabled": False, "reason": "central"}})
+    rc = cse.main(["export-threat-model", "--output-dir", str(tmp_path), "--help-only"])
+    assert rc == cse.EXIT_DISABLED_HELP_OK
+
+
+def test_main_output_dir_from_env(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    rc = cse.main(["export-threat-model"])
+    assert rc == cse.EXIT_ENABLED
+    assert "no active org profile" in capsys.readouterr().out
+
+
+def test_main_no_output_dir_falls_through_enabled(tmp_path, monkeypatch):
+    monkeypatch.delenv("OUTPUT_DIR", raising=False)
+    rc = cse.main(["export-threat-model"])
+    assert rc == cse.EXIT_ENABLED

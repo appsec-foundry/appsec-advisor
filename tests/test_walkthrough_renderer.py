@@ -213,3 +213,250 @@ class TestStepSqlFormattingGate:
         assert "`SELECT from Users`" in out
         assert "extracts all emails" in out
         assert "`SELECT from Users extracts" not in out
+
+
+# ---------------------------------------------------------------------------
+# Coverage extension — small pure helpers + slot renderers.
+# ---------------------------------------------------------------------------
+
+
+class TestShortTitle:
+    def test_short_title_untouched_when_under_limit(self):
+        assert renderer._short_title("brief", 70) == "brief"
+
+    def test_short_title_truncates_with_ellipsis(self):
+        long = "word " * 40
+        out = renderer._short_title(long, 30)
+        assert out.endswith("…")
+        assert len(out) <= 30
+
+    def test_short_title_drops_unbalanced_paren_suffix(self):
+        # Truncation lands mid-paren → whole unbalanced suffix dropped.
+        title = "A finding title that is quite long indeed (lib/insecurity.ts:24)"
+        out = renderer._short_title(title, 50)
+        assert out.endswith("…")
+        # No unbalanced opening paren left in the truncated label.
+        assert out.count("(") <= out.count(")")
+
+
+class TestMermaidSafe:
+    def test_strips_hostile_chars(self):
+        out = renderer._mermaid_safe('a`b|c[d]e"f')
+        assert "`" not in out
+        assert "|" not in out
+        assert "[" not in out and "]" not in out
+        assert '"' not in out
+        assert out == "ab/c(d)e'f"
+
+    def test_empty(self):
+        assert renderer._mermaid_safe("") == ""
+
+
+class TestSentencesPerLine:
+    def test_returns_one_sentence_per_line(self):
+        out = renderer._sentences_per_line("First sentence. Second sentence.")
+        assert out == ["First sentence.", "Second sentence."]
+
+    def test_empty_paragraph(self):
+        assert renderer._sentences_per_line("") == []
+
+    def test_unsplittable_paragraph_returns_whole(self):
+        out = renderer._sentences_per_line("nopunct here")
+        assert out == ["nopunct here."]
+
+
+class TestExcerpt:
+    def test_none_evidence(self):
+        assert renderer._excerpt(None) == ""
+
+    def test_collapses_newlines(self):
+        out = renderer._excerpt({"excerpt": "line1\nline2\rline3"})
+        assert "\n" not in out and "\r" not in out
+        assert out == "line1 line2 line3"
+
+    def test_truncates_long(self):
+        out = renderer._excerpt({"excerpt": "x" * 300}, limit=20)
+        assert out.endswith("…")
+        assert len(out) <= 20
+
+
+class TestEndpointGuess:
+    def test_explicit_method_path(self):
+        assert renderer._endpoint_guess("attacker sends POST /api/Users now") == "POST /api/Users"
+
+    def test_keyword_hint_fallback(self):
+        out = renderer._endpoint_guess("a stored feedback comment is submitted")
+        assert "Stored" in out
+
+    def test_generic_fallback(self):
+        out = renderer._endpoint_guess("nothing recognizable here")
+        assert out == "Crafted HTTP request to the affected endpoint"
+
+    def test_empty_returns_fallback(self):
+        assert renderer._endpoint_guess("") == "Crafted HTTP request to the affected endpoint"
+
+
+class TestLoadTemplates:
+    def test_missing_dir_returns_empty(self, tmp_path):
+        assert renderer.load_templates(tmp_path / "nope") == {}
+
+    def test_loads_cwe_and_generic(self, tmp_path):
+        (tmp_path / "CWE-89.yaml").write_text("cwe: CWE-89\nsequence_diagram: x\n", encoding="utf-8")
+        (tmp_path / "_generic.yaml").write_text("foo: bar\n", encoding="utf-8")
+        (tmp_path / "broken.yaml").write_text(": : not valid yaml :\n", encoding="utf-8")
+        (tmp_path / "notdict.yaml").write_text("- justalist\n", encoding="utf-8")
+        out = renderer.load_templates(tmp_path)
+        assert "CWE-89" in out
+        assert "_generic" in out
+        # Broken / non-dict templates are skipped, not fatal.
+        assert "BROKEN" not in out
+        assert "NOTDICT" not in out
+
+    def test_key_from_stem_when_no_cwe_field(self, tmp_path):
+        (tmp_path / "CWE-22.yaml").write_text("sequence_diagram: x\n", encoding="utf-8")
+        out = renderer.load_templates(tmp_path)
+        assert "CWE-22" in out
+
+
+class TestTemplateFor:
+    def test_jwt_variant_selected(self):
+        templates = {"CWE-327": {"k": "base"}, "CWE-327-JWT": {"k": "jwt"}}
+        threat = {"title": "JWT algorithm confusion attack"}
+        assert renderer._template_for("CWE-327", templates, threat) == {"k": "jwt"}
+
+    def test_falls_back_to_generic(self):
+        templates = {"_generic": {"k": "g"}}
+        assert renderer._template_for("CWE-999", templates, {}) == {"k": "g"}
+
+    def test_jwt_variant_absent_uses_base(self):
+        templates = {"CWE-327": {"k": "base"}}
+        threat = {"title": "jwt confusion"}
+        assert renderer._template_for("CWE-327", templates, threat) == {"k": "base"}
+
+
+class TestIndexBuilders:
+    def test_mitigations_by_threat(self):
+        ydata = {"mitigations": [{"id": "M-1", "threat_ids": ["T-1", "T-2"]}, "notadict"]}
+        out = renderer._mitigations_by_threat(ydata)
+        assert out["T-1"][0]["id"] == "M-1"
+        assert "T-2" in out
+
+    def test_assets_by_threat(self):
+        ydata = {"assets": [{"id": "A-1", "linked_threats": ["T-1"]}, 42]}
+        out = renderer._assets_by_threat(ydata)
+        assert out["T-1"][0]["id"] == "A-1"
+
+    def test_attack_surface_by_path(self):
+        ydata = {"attack_surface": [{"entry_point": "/api/x", "auth_required": "JWT"}, {"no_ep": 1}]}
+        out = renderer._attack_surface_by_path(ydata)
+        assert "/api/x" in out
+
+    def test_peers_by_cwe(self):
+        out = renderer._peers_by_cwe([{"id": "T-1", "cwe": "CWE-89"}, {"id": "T-2", "cwe": "CWE-89"}])
+        assert out["CWE-89"] == ["T-1", "T-2"]
+
+
+class TestAttackerProfile:
+    def test_default_when_unknown_vektor(self):
+        out = renderer.render_attacker_profile({"vektor": "weird"}, {}, {})
+        assert out == renderer.ATTACKER_PROFILES["internet-user"]
+
+    def test_open_registration_suffix(self):
+        out = renderer.render_attacker_profile({"vektor": "internet-user"}, {"open_user_registration": True}, {})
+        assert renderer.OPEN_REG_SUFFIX.strip() in out
+
+    def test_template_override(self):
+        tmpl = {"attacker_profile_overrides": {"internet-anon": "OVERRIDDEN"}}
+        out = renderer.render_attacker_profile({"vektor": "internet-anon"}, {}, tmpl)
+        assert out == "OVERRIDDEN"
+
+
+class TestPrerequisites:
+    def test_substitutes_file(self):
+        out = renderer.render_prerequisites({"vektor": "internet-user"}, {}, "routes/login.ts")
+        assert any("routes/login.ts" in b for b in out)
+
+    def test_enriched_with_auth_policy(self):
+        surface = {"/login": {"auth_required": "session cookie"}}
+        out = renderer.render_prerequisites({"vektor": "internet-user"}, surface, "routes/login")
+        assert any("requires: session cookie" in b for b in out)
+
+
+class TestBusinessImpact:
+    def test_with_assets(self):
+        out = renderer.render_business_impact({"risk": "critical", "component": "api"}, ["A-1", "A-2"])
+        assert "Critical impact" in out
+        assert "`A-1`" in out
+        assert "`api`" in out
+
+    def test_default_severity_when_missing(self):
+        out = renderer.render_business_impact({}, [])
+        assert "High impact" in out
+
+
+class TestDetectionSignals:
+    def test_empty_when_no_template_signals(self):
+        assert renderer.render_detection_signals({}, {}) == []
+
+    def test_substitution(self):
+        tmpl = {"detection_signals": ["watch {component} at {file}:{line}"]}
+        threat = {"component": "api", "evidence": [{"file": "x.ts", "line": 9}]}
+        out = renderer.render_detection_signals(threat, tmpl)
+        assert out == ["watch api at x.ts:9"]
+
+
+class TestDefenseInDepth:
+    def test_no_mitigations_fallback(self):
+        bullets, pid = renderer.render_defense_in_depth({"id": "T-1"}, {})
+        assert pid == "mitigation"
+        assert any("not yet defined" in b for b in bullets)
+
+    def test_with_mitigations_and_priority(self):
+        idx = {"T-1": [{"id": "M-1", "title": "Fix it — lib/x.ts", "priority": "p1"}]}
+        bullets, pid = renderer.render_defense_in_depth({"id": "T-1"}, idx)
+        assert pid == "M-1"
+        assert "❶" in bullets[0]
+        assert "M-1" in bullets[0]
+        # Short-label rule: the ` — file` tail is dropped.
+        assert "lib/x.ts" not in bullets[0]
+
+    def test_mitigation_without_title(self):
+        idx = {"T-1": [{"id": "M-1"}]}
+        bullets, _ = renderer.render_defense_in_depth({"id": "T-1"}, idx)
+        assert "mitigation entry" in bullets[0]
+
+
+class TestCrossReferences:
+    def test_chain_and_siblings(self):
+        peers = {"CWE-89": ["T-1", "T-2", "T-3"]}
+        out = renderer.render_cross_references({"id": "T-1", "cwe": "CWE-89", "component": "db"}, {"T-1": [4, 5]}, peers)
+        assert any("Chain 4" in b for b in out)
+        assert any("Sibling findings" in b and "F-2" in b for b in out)
+        assert len(out) >= 3
+
+    def test_standalone_no_chain_no_siblings(self):
+        out = renderer.render_cross_references({"id": "T-9", "cwe": "CWE-79", "component": "ui"}, {}, {})
+        assert any("standalone walkthrough" in b for b in out)
+        assert any("none" in b for b in out)
+
+
+class TestGenAdapter:
+    def test_gen_attack_walkthroughs_returns_fragment(self):
+        ydata = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "title": "SQL injection",
+                    "risk": "critical",
+                    "cwe": "CWE-89",
+                    "vektor": "internet-anon",
+                    "scenario": "Attacker sends GET /search?q=' UNION SELECT * FROM Users.",
+                    "evidence": [{"file": "routes/search.ts", "line": 12}],
+                }
+            ]
+        }
+        out = renderer.gen_attack_walkthroughs(ydata)
+        assert out.startswith("## 3. Attack Walkthroughs")
+        assert "### 3.1" in out
+        assert "WALKTHROUGH_FILL" not in out
+        assert out.rstrip().endswith("<!-- generated:walkthrough_renderer -->")

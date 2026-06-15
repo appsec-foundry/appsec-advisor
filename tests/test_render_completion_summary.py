@@ -761,3 +761,394 @@ class TestPatchPlaceholders:
         rcs.patch_placeholders(tmp_path, stats)
         second = rcs.patch_placeholders(tmp_path, stats)
         assert second == 0
+
+    def test_no_md_file_returns_zero(self, tmp_path: Path):
+        stats = {"assess_secs": 1, "qa_secs": None, "arch_secs": None, "agents": {}, "phases": []}
+        assert rcs.patch_placeholders(tmp_path, stats) == 0
+
+
+# ===========================================================================
+# Coverage extension
+# ===========================================================================
+
+
+class TestLoaders:
+    def test_load_yaml_missing_file(self, tmp_path: Path):
+        assert rcs._load_yaml(tmp_path / "nope.yaml") == {}
+
+    def test_load_yaml_non_mapping(self, tmp_path: Path):
+        p = tmp_path / "x.yaml"
+        p.write_text("- a\n- b\n")
+        assert rcs._load_yaml(p) == {}
+
+    def test_load_text_missing(self, tmp_path: Path):
+        assert rcs._load_text(tmp_path / "nope.txt") == ""
+
+
+class TestRunStatisticsStageRows:
+    def test_stage_rows_and_total_from_jsonl(self, tmp_path: Path):
+        jsonl = tmp_path / ".stage-stats.jsonl"
+        jsonl.write_text(
+            '{"stage": 1, "variant": "", "name": "Assessment", "agent": "x:threat-analyst", '
+            '"model": "sonnet", "duration_ms": 120000}\n'
+            "\n"  # blank line skipped
+            "not json\n"  # decode error skipped
+            '{"stage": 2, "variant": "abuse-verification", "name": "Abuse", "agent": "merger", '
+            '"model": "opus", "duration_ms": 0}\n'
+        )
+        (tmp_path / ".agent-run.log").write_text("")
+        stats = rcs.extract_run_statistics(tmp_path, {})
+        assert stats["total_secs_from_stages"] == 120
+        assert len(stats["stage_rows"]) == 2
+
+    def test_wall_seconds_file(self, tmp_path: Path):
+        (tmp_path / ".scan-wall-seconds").write_text("450\n")
+        (tmp_path / ".agent-run.log").write_text("")
+        stats = rcs.extract_run_statistics(tmp_path, {})
+        assert stats["wall_secs"] == 450
+
+    def test_arch_duration(self, tmp_path: Path):
+        log = textwrap.dedent("""\
+            2026-04-22T10:00:00Z  [--------]  INFO  architect-reviewer  AGENT_START  begin
+            2026-04-22T10:03:00Z  [--------]  INFO  architect-reviewer  AGENT_COMPLETE  done
+        """)
+        (tmp_path / ".agent-run.log").write_text(log)
+        stats = rcs.extract_run_statistics(tmp_path, {})
+        assert stats["arch_secs"] == 180
+
+    def test_assessment_crash_fallback_to_last_phase(self, tmp_path: Path):
+        # No ASSESSMENT_END / no "completed in" → fall back to last PHASE_END.
+        log = textwrap.dedent("""\
+            2026-04-22T10:00:00Z  [--------]  INFO  threat-analyst  ASSESSMENT_START  go
+            2026-04-22T10:00:05Z  [--------]  INFO  threat-analyst  PHASE_START  [Phase 1/11] Context…
+            2026-04-22T10:04:00Z  [--------]  INFO  threat-analyst  PHASE_END  [Phase 1/11] done
+        """)
+        (tmp_path / ".agent-run.log").write_text(log)
+        stats = rcs.extract_run_statistics(tmp_path, {})
+        assert stats["assess_secs"] == 240
+
+
+class TestRenderRunStatistics:
+    def test_empty_block_when_nothing(self):
+        stats = {
+            "assess_secs": None, "qa_secs": None, "arch_secs": None,
+            "phases": [], "stage_rows": [], "agents": {},
+            "total_secs_from_stages": None, "wall_secs": None, "timing": {},
+        }
+        assert rcs.render_run_statistics(stats, None) == []
+
+    def test_net_and_wall_default(self):
+        stats = {
+            "assess_secs": None, "qa_secs": None, "arch_secs": None,
+            "phases": [], "stage_rows": [("1", "", "Assess", "ta", "sonnet", 100)],
+            "agents": {}, "total_secs_from_stages": 100, "wall_secs": 200,
+            "timing": {"net_compute_secs": 100, "wall_secs": 200, "standby_secs": 0},
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, None, verbose=False))
+        assert "Net agent compute" in out
+        assert "Idle / standby" in out
+        assert "Total elapsed (wall)" in out
+        # Default (non-verbose) stops at the timing headline — no per-stage rows.
+        assert "Stage 1" not in out
+
+    def test_verbose_stage_breakdown_and_agents(self):
+        stats = {
+            "assess_secs": None, "qa_secs": 60, "arch_secs": 90,
+            "phases": [],
+            "stage_rows": [("1", "", "Assessment", "threat-analyst", "sonnet-4-6", 100)],
+            "agents": {"threat-analyst": "sonnet-4-6", "qa-reviewer": "sonnet-4-6"},
+            "total_secs_from_stages": 100, "wall_secs": 250,
+            "timing": {"net_compute_secs": 100, "wall_secs": 250, "standby_secs": 0, "stages": []},
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
+        assert "Stage 1" in out
+        assert "QA Review" in out
+        assert "Architect Review" in out  # arch_secs present, stage 4 absent
+        assert "Agents" in out
+
+    def test_verbose_standby_detail(self):
+        stats = {
+            "assess_secs": None, "qa_secs": None, "arch_secs": None,
+            "phases": [], "stage_rows": [], "agents": {},
+            "total_secs_from_stages": 100, "wall_secs": 1000,
+            "timing": {"net_compute_secs": 100, "wall_secs": 1000, "standby_secs": 700,
+                       "net_wall_secs": 300, "stages": []},
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
+        assert "standby/suspend" in out
+        assert "Net run (wall−sleep)" in out
+        assert "standby" in out
+
+    def test_legacy_total_fallback(self):
+        stats = {
+            "assess_secs": 100, "qa_secs": 50, "arch_secs": 25,
+            "phases": [], "stage_rows": [], "agents": {},
+            "total_secs_from_stages": None, "wall_secs": None, "timing": {},
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, None, verbose=False))
+        assert "Total (legacy)" in out
+        assert "assessment" in out
+
+    def test_subscription_cost_and_tokens(self):
+        stats = {
+            "assess_secs": None, "qa_secs": None, "arch_secs": None,
+            "phases": [], "stage_rows": [], "agents": {},
+            "total_secs_from_stages": 10, "wall_secs": 10,
+            "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
+        }
+        cost = {
+            "totals": {"total_tokens": 1000, "in": 600, "out": 400, "cache_write": 5,
+                       "cache_read": 50, "cache_savings_pct": 80.0},
+            "billing": "subscription",
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, cost, verbose=True))
+        assert "Tokens" in out
+        assert "Cache savings" in out
+        assert "subscription" in out
+
+    def test_measured_cost_with_mix(self):
+        stats = {
+            "assess_secs": None, "qa_secs": None, "arch_secs": None,
+            "phases": [], "stage_rows": [], "agents": {},
+            "total_secs_from_stages": 10, "wall_secs": 10,
+            "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
+        }
+        cost = {
+            "totals": {"total_tokens": 100, "in": 60, "out": 40, "cache_savings_pct": 50.0, "cost": 1.23},
+            "billing": "api",
+            "mixed_model_costs": {"sonnet": {"cached": 0.5, "no_cache": 1.0}},
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, cost, verbose=True))
+        assert "Cost (measured)" in out
+        assert "sonnet" in out
+        assert "Billing" in out
+
+    def test_tokens_not_captured(self):
+        stats = {
+            "assess_secs": None, "qa_secs": None, "arch_secs": None,
+            "phases": [], "stage_rows": [], "agents": {},
+            "total_secs_from_stages": 10, "wall_secs": 10,
+            "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
+        }
+        cost = {"totals": {"total_tokens": 0, "cost": 0}, "billing": "api"}
+        out = "\n".join(rcs.render_run_statistics(stats, cost, verbose=True))
+        assert "not captured by Claude Code hooks" in out
+
+    def test_cost_none_unavailable_line(self):
+        stats = {
+            "assess_secs": None, "qa_secs": None, "arch_secs": None,
+            "phases": [], "stage_rows": [], "agents": {},
+            "total_secs_from_stages": 10, "wall_secs": 10,
+            "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
+        assert "verify_run_costs.py failed" in out
+
+
+class TestRenderFiles:
+    def test_all_optional_files(self, tmp_path: Path):
+        (tmp_path / "threat-model.sarif.json").write_text("{}")
+        (tmp_path / ".architect-review.md").write_text("x")
+        (tmp_path / "analysis-model.md").write_text("x")
+        cfg = {"write_yaml": True, "write_sarif": True, "architect_review": True}
+        out = "\n".join(rcs.render_files(tmp_path, cfg))
+        assert "YAML" in out and "SARIF" in out and "Architect" in out and "Analysis" in out
+
+    def test_no_yaml(self, tmp_path: Path):
+        out = "\n".join(rcs.render_files(tmp_path, {"write_yaml": False}))
+        assert "YAML" not in out
+
+
+class TestRunIssues:
+    def test_extract_missing(self, tmp_path: Path):
+        assert rcs.extract_run_issues(tmp_path) is None
+
+    def test_extract_clean_returns_none(self, tmp_path: Path):
+        (tmp_path / ".run-issues.json").write_text('{"schema_version": 1, "run_status": "clean", "issues": []}')
+        assert rcs.extract_run_issues(tmp_path) is None
+
+    def test_extract_wrong_schema(self, tmp_path: Path):
+        (tmp_path / ".run-issues.json").write_text('{"schema_version": 2}')
+        assert rcs.extract_run_issues(tmp_path) is None
+
+    def test_extract_with_issues(self, tmp_path: Path):
+        (tmp_path / ".run-issues.json").write_text(
+            '{"schema_version": 1, "run_status": "issues", '
+            '"summary": {"errors": 1}, "issues": [{"severity": "error", "title": "boom"}]}'
+        )
+        data = rcs.extract_run_issues(tmp_path)
+        assert data and data["issues"]
+
+    def test_render_plugin_dev_with_autofix(self):
+        data = {
+            "summary": {"errors": 2, "warnings": 1, "perf_anomalies": 1, "recovery_events": 1,
+                        "auto_applicable_fixes": 1},
+            "issues": [
+                {"severity": "error", "title": "x" * 90,
+                 "fix_recommendation": {"auto_applicable": True, "summary": "do the fix"}},
+                {"severity": "warning", "title": "warn",
+                 "fix_recommendation": {"auto_applicable": False, "category": "manual"}},
+                {"severity": "info", "title": "third"},
+            ],
+        }
+        out = "\n".join(rcs.render_run_issues(data, plugin_dev=True))
+        assert "Run Issues" in out
+        assert "Auto-fix available" in out
+        assert "Manual review" in out
+        assert "1 more" in out
+        assert "Auto-applicable" in out
+        assert "fix-run-issues" in out
+
+    def test_render_empty_when_no_issues(self):
+        assert rcs.render_run_issues({"issues": []}) == []
+        assert rcs.render_run_issues(None) == []
+
+
+class TestCompositionHealth:
+    def test_clean_returns_none(self, tmp_path: Path):
+        assert rcs.extract_composition_health(tmp_path) is None
+
+    def test_warned(self, tmp_path: Path):
+        (tmp_path / ".compose-stats.json").write_text(
+            '{"schema_version": 1, "warnings": [{"section": "§3", "detail": "y"}], '
+            '"section_retries": {"3": 2}}'
+        )
+        (tmp_path / ".inline-shortcut-retry-count").write_text("1")
+        health = rcs.extract_composition_health(tmp_path)
+        assert health and health["status"] == "warned"
+        out = "\n".join(rcs.render_composition_health(health))
+        assert "Composition Health" in out
+        assert "Section retries" in out
+        assert "Soft warning" in out
+        assert "Auto-retries" in out
+
+    def test_forward_incompatible_schema(self, tmp_path: Path):
+        (tmp_path / ".compose-stats.json").write_text('{"schema_version": 99}')
+        # No retries, no warnings → clean → None.
+        assert rcs.extract_composition_health(tmp_path) is None
+
+    def test_render_none(self):
+        assert rcs.render_composition_health(None) == []
+
+    def test_render_many_warnings_truncates(self):
+        health = {
+            "status": "warned", "warning_count": 3,
+            "warnings": [{"section": f"§{i}", "detail": "d" * 100} for i in range(3)],
+            "section_retries": {}, "auto_retries": 0,
+        }
+        out = "\n".join(rcs.render_composition_health(health))
+        assert "more in §Composition Notes" in out
+
+
+class TestRenderMisc:
+    def test_render_next_steps(self):
+        out = rcs.render_next_steps(["step a", "step b"])
+        assert out[1] == "Next Steps"
+        assert "1. step a" in out[2]
+
+    def test_render_next_steps_empty(self):
+        assert rcs.render_next_steps([]) == []
+
+    def test_render_log_files(self, tmp_path: Path):
+        (tmp_path / ".qa-status.json").write_text("{}")
+        out = "\n".join(rcs.render_log_files(tmp_path))
+        assert "Agent run" in out
+        assert "QA status" in out
+
+    def test_security_notice_ignored_file(self, tmp_path: Path, monkeypatch):
+        class R:
+            returncode = 0
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: R())
+        assert rcs.render_security_notice(tmp_path) == []
+
+    def test_security_notice_tracked_file(self, tmp_path: Path, monkeypatch):
+        class R:
+            returncode = 1
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: R())
+        out = "\n".join(rcs.render_security_notice(tmp_path))
+        assert "NOT git-ignored" in out
+
+    def test_security_notice_git_error(self, tmp_path: Path, monkeypatch):
+        def boom(*a, **k):
+            raise OSError("no git")
+        monkeypatch.setattr(rcs.subprocess, "run", boom)
+        assert rcs.render_security_notice(tmp_path) == []
+
+
+class TestSummaryHelpers:
+    def test_summary_duration_from_stages(self):
+        assert rcs._summary_duration({"total_secs_from_stages": 120}) == "2m 00s"
+
+    def test_summary_duration_legacy_sum(self):
+        assert rcs._summary_duration(
+            {"total_secs_from_stages": None, "assess_secs": 60, "qa_secs": 30, "arch_secs": None}
+        ) == "1m 30s"
+
+    def test_summary_duration_wall_fallback(self):
+        assert rcs._summary_duration(
+            {"total_secs_from_stages": None, "assess_secs": None, "qa_secs": None,
+             "arch_secs": None, "timing": {"wall_secs": 90}}
+        ) == "1m 30s"
+
+    def test_summary_duration_na(self):
+        assert rcs._summary_duration({}) == "n/a"
+
+    def test_summary_cost_variants(self):
+        assert rcs._summary_cost(None) == "unavailable"
+        assert rcs._summary_cost({"error": "x"}) == "unavailable"
+        assert rcs._summary_cost({"billing": "subscription", "totals": {}}) == "subscription"
+        assert rcs._summary_cost({"billing": "api", "totals": {"cost": 1.5}}) == "$1.50"
+        assert rcs._summary_cost({"billing": "api", "totals": {"cost": 0}}) == "not captured"
+
+    def test_summary_qa(self, tmp_path: Path):
+        assert rcs._summary_qa(tmp_path, {"skip_qa": True}) == "skipped"
+        assert rcs._summary_qa(tmp_path, {}) == "not recorded"
+        (tmp_path / ".qa-status.json").write_text('{"status": "passed_clean"}')
+        assert rcs._summary_qa(tmp_path, {}) == "passed clean"
+        (tmp_path / ".qa-status.json").write_text("not json")
+        assert rcs._summary_qa(tmp_path, {}) == "status unreadable"
+
+    def test_summary_architect(self, tmp_path: Path):
+        assert rcs._summary_architect(tmp_path, {}) == "skipped"
+        assert rcs._summary_architect(tmp_path, {"architect_review": True}) == "not recorded"
+        (tmp_path / ".architect-review.md").write_text("x")
+        assert rcs._summary_architect(tmp_path, {"architect_review": True}) == "completed"
+        (tmp_path / ".architect-status.json").write_text('{"status": "ok_clean"}')
+        assert rcs._summary_architect(tmp_path, {"architect_review": True}) == "ok clean"
+        (tmp_path / ".architect-status.json").write_text("bad")
+        assert rcs._summary_architect(tmp_path, {"architect_review": True}) == "status unreadable"
+
+
+class TestRunOverview:
+    def test_incremental_with_change(self, tmp_path: Path):
+        cfg = {"mode": "incremental", "assessment_depth": "thorough"}
+        stats = {"total_secs_from_stages": 60}
+        change = {"added_n": 1, "changed_n": 2, "resolved_n": 3}
+        out = "\n".join(rcs.render_run_overview(tmp_path, tmp_path, cfg, stats, None, change))
+        assert "incremental (delta: +1 / ~2 / -3)" in out
+        assert "security-relevant delta" in out
+
+    def test_rebuild_scope(self, tmp_path: Path):
+        out = "\n".join(
+            rcs.render_run_overview(tmp_path, tmp_path, {"mode": "rebuild"},
+                                    {"total_secs_from_stages": 1}, None, None)
+        )
+        assert "fresh full repository assessment" in out
+
+
+class TestDryRunAndMS:
+    def test_render_dry_run_with_ms(self, tmp_path: Path):
+        (tmp_path / "threat-model.yaml").write_text(
+            "components:\n- {name: a}\nthreats:\n- {risk: critical}\n"
+        )
+        (tmp_path / "threat-model.md").write_text(
+            "## Management Summary\nVerdict: bad <br/> details <blockquote>x</blockquote>\n\n## 1. Scope\nbody\n"
+        )
+        out = rcs.render_dry_run(tmp_path, tmp_path)
+        assert "Dry-Run" in out
+        assert "Verdict" in out
+        assert "<br/>" not in out
+        assert "No files were written" in out
+
+    def test_extract_management_summary_absent(self):
+        assert rcs._extract_management_summary("## Other\nbody") == ""

@@ -148,3 +148,174 @@ def test_fallback_table_matches_legacy_constants(monkeypatch):
     assert cfg["budgets"]["quick"]["9"] == 180
     assert cfg["budgets"]["standard"]["10b"] == 120
     assert cfg["defaults"]["heartbeat_stale_seconds"] == 300
+
+
+# ---------------------------------------------------------------------------
+# _yaml_path resolution — env var vs __file__ relative.
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_path_uses_plugin_root_env(monkeypatch):
+    pb = _load()
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/some/plugin")
+    p = pb._yaml_path()  # noqa: SLF001
+    assert p == Path("/some/plugin") / "data" / "phase-budgets.yaml"
+
+
+def test_yaml_path_falls_back_to_file_relative(monkeypatch):
+    pb = _load()
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    p = pb._yaml_path()  # noqa: SLF001
+    # Resolves relative to the script's parent.parent/data.
+    assert p.name == "phase-budgets.yaml"
+    assert p.parent.name == "data"
+
+
+# ---------------------------------------------------------------------------
+# _try_pyyaml branches.
+# ---------------------------------------------------------------------------
+
+
+def test_try_pyyaml_non_dict_returns_none():
+    pb = _load()
+    # A bare scalar / list is valid YAML but not a mapping → None.
+    assert pb._try_pyyaml("- a\n- b\n") is None  # noqa: SLF001
+    assert pb._try_pyyaml("just a string") is None  # noqa: SLF001
+
+
+def test_try_pyyaml_parses_mapping():
+    pb = _load()
+    out = pb._try_pyyaml("a: 1\nb: 2\n")  # noqa: SLF001
+    assert out == {"a": 1, "b": 2}
+
+
+def test_try_pyyaml_invalid_returns_none():
+    pb = _load()
+    # Malformed YAML triggers the except branch.
+    assert pb._try_pyyaml("a: [1, 2\n  bad") is None  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# _minimal_yaml_parse edge cases (comment-only lines, float coercion,
+# valueless keys, single-quote stripping).
+# ---------------------------------------------------------------------------
+
+
+def test_minimal_yaml_parse_float_and_comment_only_lines():
+    pb = _load()
+    text = """
+# pure comment line
+defaults:
+  stall_multiplier: 1.5
+  # nested comment
+  name: 'quoted'
+  novalue:   # a key with only a trailing comment becomes a scope
+"""
+    parsed = pb._minimal_yaml_parse(text)  # noqa: SLF001
+    assert parsed["defaults"]["stall_multiplier"] == 1.5
+    assert parsed["defaults"]["name"] == "quoted"
+    # `novalue:` followed by nothing → opens a (empty) nested scope.
+    assert parsed["defaults"]["novalue"] == {}
+
+
+def test_minimal_yaml_parse_line_with_no_colon_ignored():
+    pb = _load()
+    text = "defaults:\n  bareword\n  k: 1\n"
+    parsed = pb._minimal_yaml_parse(text)  # noqa: SLF001
+    assert parsed["defaults"]["k"] == 1
+    assert "bareword" not in parsed["defaults"]
+
+
+def test_minimal_yaml_parse_comment_strips_to_empty_skips():
+    pb = _load()
+    # A line that is whitespace + inline comment after a value-bearing key.
+    text = "defaults:\n  k: 5  # trailing\n  # full comment\n"
+    parsed = pb._minimal_yaml_parse(text)  # noqa: SLF001
+    assert parsed["defaults"]["k"] == 5
+
+
+# ---------------------------------------------------------------------------
+# _load fallback when parse yields no usable budgets/defaults.
+# ---------------------------------------------------------------------------
+
+
+def test_load_falls_back_when_pyyaml_and_minimal_both_fail(monkeypatch, tmp_path):
+    pb = _load()
+    bad = tmp_path / "phase-budgets.yaml"
+    bad.write_text("phase_budgets_seconds:\n  quick:\n    '9': 180\n")
+    monkeypatch.setattr(pb, "_yaml_path", lambda: bad)
+    # Force both parsers to fail so the `parsed = None` path runs.
+    monkeypatch.setattr(pb, "_try_pyyaml", lambda _t: None)
+
+    def _boom(_t):
+        raise RuntimeError("parser blew up")
+
+    monkeypatch.setattr(pb, "_minimal_yaml_parse", _boom)
+    pb.reset_cache()
+    cfg = pb._load()  # noqa: SLF001
+    # Both parsers failed → fall back to hard-coded budgets.
+    assert cfg["budgets"]["standard"]["9"] == 360
+
+
+def test_load_uses_fallback_when_budgets_not_a_dict(monkeypatch, tmp_path):
+    pb = _load()
+    f = tmp_path / "phase-budgets.yaml"
+    f.write_text("x")
+    monkeypatch.setattr(pb, "_yaml_path", lambda: f)
+    # parsed dict has wrong-typed budgets + non-dict defaults.
+    monkeypatch.setattr(pb, "_try_pyyaml", lambda _t: {"phase_budgets_seconds": [], "defaults": 7})
+    pb.reset_cache()
+    cfg = pb._load()  # noqa: SLF001
+    assert cfg["budgets"]["quick"]["9"] == 180  # fallback budgets
+    # Non-dict defaults replaced by {} then merged with fallback defaults.
+    assert cfg["defaults"]["heartbeat_stale_seconds"] == 300
+
+
+# ---------------------------------------------------------------------------
+# budgets_for_depth copy semantics.
+# ---------------------------------------------------------------------------
+
+
+def test_budgets_for_depth_returns_fresh_copy():
+    pb = _load()
+    a = pb.budgets_for_depth("standard")
+    a["9"] = -1
+    b = pb.budgets_for_depth("standard")
+    assert b["9"] != -1  # mutation did not leak into the cache
+
+
+# ---------------------------------------------------------------------------
+# CLI / main() — covers lines 250-279.
+# ---------------------------------------------------------------------------
+
+
+def test_main_no_args_prints_full_json(capsys):
+    pb = _load()
+    rc = pb.main(["phase_budgets.py"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    import json as _json
+
+    data = _json.loads(out)
+    assert "budgets" in data and "defaults" in data
+
+
+def test_main_phase_arg_prints_bare_threshold(capsys):
+    pb = _load()
+    rc = pb.main(["phase_budgets.py", "9", "--depth", "quick"])
+    assert rc == 0
+    out = capsys.readouterr().out.strip()
+    assert out == "270"  # 180 * 1.5
+
+
+def test_main_phase_arg_json_flag(capsys):
+    pb = _load()
+    rc = pb.main(["phase_budgets.py", "9", "--depth", "quick", "--multiplier", "1.0", "--json"])
+    assert rc == 0
+    import json as _json
+
+    data = _json.loads(capsys.readouterr().out)
+    assert data["phase"] == "9"
+    assert data["depth"] == "quick"
+    assert data["multiplier"] == 1.0
+    assert data["threshold_seconds"] == 180

@@ -2137,3 +2137,560 @@ def test_system_overview_no_selection_falls_back_to_plain_scope():
     comps = [{"id": "a", "name": "A"}]
     out = mod.gen_system_overview({"meta": {"project": {"name": "X"}}, "components": comps})
     assert "covers 1 component of X" in out
+
+
+# ---------------------------------------------------------------------------
+# Coverage campaign additions (2026-06-14)
+# Target the large uncovered blocks: legacy boundary-driven §2.4 mermaid,
+# filesystem ghost-nodes, layer tables (per-layer split), the v2 control
+# emitters (grouped / subcontrol / legacy), heading verdicts, and the
+# §7.2 auth-mechanism inventory.
+# ---------------------------------------------------------------------------
+
+
+class TestTechnologyArchitectureMermaidLegacy:
+    """`_technology_architecture_mermaid` boundary-driven path (only reached
+    when the contract has NO `diagram_compactness."2.4 ..."` opt-in). We
+    monkeypatch `_load_diagram_compactness` to {} so the legacy builder runs."""
+
+    @pytest.fixture(autouse=True)
+    def _no_compact(self, monkeypatch):
+        monkeypatch.setattr(pf, "_load_diagram_compactness", lambda: {})
+
+    def test_stub_when_no_boundaries(self):
+        out = pf._technology_architecture_mermaid({}, [], [])
+        # Falls back to the TB1/TB2/TB3 stub.
+        assert out == pf._technology_architecture_stub()
+        assert any("Public Internet" in l for l in out)
+
+    def test_boundary_subgraphs_and_cross_boundary_edge(self):
+        components = [
+            {"id": "spa", "name": "Angular SPA", "tier": "client"},
+            {"id": "api", "name": "Express API", "tier": "application"},
+            {"id": "db", "name": "SQLite", "tier": "data"},
+        ]
+        boundaries = [
+            {"id": "TB-INTERNET", "name": "Public Internet", "trust_level": "untrusted"},
+            {"id": "TB-APP", "name": "App Process", "trust_level": "trusted"},
+            {"id": "TB-DATA", "name": "Data Tier", "trust_level": "restricted"},
+        ]
+        yaml_data = {
+            "components": components,
+            "trust_boundaries": boundaries,
+            "data_flows": [
+                {"from": "spa", "to": "api", "protocol": "https", "auth_method": "JWT",
+                 "data_classification": "PII"},
+                {"from": "api", "to": "db", "protocol": "websocket"},
+            ],
+            "threats": [
+                {"id": "T-1", "component_id": "api", "risk": "critical"},
+                {"id": "T-2", "component_id": "api", "risk": "critical"},
+                {"id": "T-3", "component_id": "api", "risk": "critical"},
+                {"id": "T-4", "component_id": "db", "risk": "high"},
+                {"id": "T-5", "component_id": "db", "risk": "high"},
+            ],
+        }
+        out = pf._technology_architecture_mermaid(yaml_data, components, boundaries)
+        joined = "\n".join(out)
+        assert out[0] == "```mermaid"
+        assert "subgraph" in joined
+        # untrusted→trusted crossing uses the thick arrow
+        assert "==>|" in joined
+        # async (websocket) crossing between trusted/data uses the dashed arrow
+        assert "-.->|" in joined
+        # critical/warning classDefs emitted (api has 3 critical, db has 2 high)
+        assert "classDef critical" in joined
+        assert "class" in joined
+
+    def test_no_cross_boundary_flows_emits_comment(self):
+        components = [{"id": "api", "name": "API", "tier": "application"}]
+        boundaries = [{"id": "TB-APP", "name": "App", "trust_level": "trusted"}]
+        out = pf._technology_architecture_mermaid({"components": components, "trust_boundaries": boundaries}, components, boundaries)
+        assert any("No cross-boundary data flows" in l for l in out)
+
+    def test_filesystem_ghost_nodes_rendered(self):
+        components = [{"id": "api", "name": "API", "tier": "application"}]
+        boundaries = [
+            {"id": "TB-APP", "name": "App", "trust_level": "trusted"},
+            {"id": "TB-FS", "name": "Filesystem Storage", "trust_level": "restricted"},
+        ]
+        # Use a real fs-prefix so a ghost node is derived.
+        prefixes = pf._load_fs_route_prefixes()
+        yaml_data = {"components": components, "trust_boundaries": boundaries}
+        if prefixes:
+            ep = prefixes[0] + "/secret.bak"
+            yaml_data["attack_surface"] = {"unauthenticated": [{"endpoint": "GET " + ep}]}
+        out = pf._technology_architecture_mermaid(yaml_data, components, boundaries)
+        joined = "\n".join(out)
+        # filesystem subgraph present
+        assert "Filesystem Storage" in joined
+        if prefixes:
+            assert "see §5.1" in joined
+
+    def test_component_engine_annotation_and_name_dedup(self):
+        components = [
+            {"id": "db", "name": "Data Store", "tier": "data", "engine": "PostgreSQL"},
+            {"id": "db2", "name": "Redis cache", "tier": "data", "engine": "Redis"},
+        ]
+        boundaries = [{"id": "TB-DATA", "name": "Data Tier", "trust_level": "restricted"}]
+        out = pf._technology_architecture_mermaid({"components": components, "trust_boundaries": boundaries}, components, boundaries)
+        joined = "\n".join(out)
+        # engine not in name → appended on its own line
+        assert "PostgreSQL" in joined
+        # engine already in name (case-insensitive) → not duplicated
+        assert joined.count("Redis") == 1
+
+
+class TestFilesystemPathsPerBoundary:
+    def test_no_fs_boundary_returns_empty(self):
+        boundaries = [{"id": "TB-APP", "name": "App Process"}]
+        assert pf._filesystem_paths_per_boundary({}, boundaries) == {}
+
+    def test_no_matching_routes_returns_empty(self):
+        boundaries = [{"id": "TB-FS", "name": "Filesystem"}]
+        yaml_data = {"attack_surface": {"unauthenticated": [{"endpoint": "GET /api/users"}]}}
+        assert pf._filesystem_paths_per_boundary(yaml_data, boundaries) == {}
+
+    def test_matching_prefix_yields_stem(self):
+        prefixes = pf._load_fs_route_prefixes()
+        if not prefixes:
+            pytest.skip("no fs prefixes configured")
+        boundaries = [{"id": "TB-FS", "name": "Filesystem Storage"}]
+        ep = prefixes[0].rstrip("/") + "/dump.bak"
+        yaml_data = {"attack_surface": {"unauthenticated": [{"path": ep}]}}
+        result = pf._filesystem_paths_per_boundary(yaml_data, boundaries)
+        assert "TB-FS" in result
+        assert result["TB-FS"], "expected at least one stem"
+
+    def test_unauth_dict_with_entries_key(self):
+        prefixes = pf._load_fs_route_prefixes()
+        if not prefixes:
+            pytest.skip("no fs prefixes configured")
+        boundaries = [{"id": "TB-DISK", "name": "disk store"}]
+        ep = prefixes[0].rstrip("/") + "/x"
+        yaml_data = {"attack_surface": {"unauthenticated": {"entries": [{"route": ep}]}}}
+        result = pf._filesystem_paths_per_boundary(yaml_data, boundaries)
+        assert "TB-DISK" in result
+
+
+class TestLoadFsRoutePrefixes:
+    def test_returns_tuple_of_slash_prefixes(self):
+        prefixes = pf._load_fs_route_prefixes()
+        assert isinstance(prefixes, tuple)
+        for p in prefixes:
+            assert p.startswith("/")
+
+
+class TestRenderLayerTables:
+    """`_render_layer_tables` — consolidated (≤5 comps) and per-layer (>5)."""
+
+    def _comp(self, cid, tier, threat_ids=None):
+        return {"id": cid, "name": cid.upper(), "tier": tier, "threat_ids": threat_ids or []}
+
+    def test_consolidated_when_few_components(self):
+        comps = [self._comp("a", "client"), self._comp("b", "application")]
+        yaml_data = {"components": comps, "threats": []}
+        out = pf._render_layer_tables(yaml_data, comps)
+        joined = "\n".join(out)
+        # consolidated layout has the single 'Layer' header, not per-layer H4s
+        assert "| Component | Layer | Linked Threats | Risk |" in joined
+        assert "#### 2.4.1" not in joined
+
+    def test_per_layer_split_when_many_components(self):
+        comps = [
+            self._comp("c1", "client", ["T-1"]),
+            self._comp("c2", "client"),
+            self._comp("a1", "application", ["T-2"]),
+            self._comp("a2", "application"),
+            self._comp("d1", "data"),
+            self._comp("d2", "data"),
+        ]
+        threats = [
+            {"id": "T-1", "title": "Client XSS", "severity": "high", "cwe": "CWE-79"},
+            {"id": "T-2", "title": "Auth bypass", "severity": "critical", "cwe": "CWE-287"},
+        ]
+        yaml_data = {"components": comps, "threats": threats}
+        out = pf._render_layer_tables(yaml_data, comps)
+        joined = "\n".join(out)
+        assert "#### 2.4.1 Layer 1 Client" in joined
+        assert "#### 2.4.4 Layer 4 Data" in joined
+        # linked threats rendered with finding-label links + risk emoji
+        assert "🟠 High" in joined or "🔴 Critical" in joined
+
+    def test_forward_index_fallback_when_no_reverse_links(self):
+        # components carry no threat_ids; threats reference component via field.
+        comps = [self._comp("api", "application")]
+        threats = [{"id": "T-009", "title": "SQLi", "severity": "critical", "component": "api"}]
+        yaml_data = {"components": comps, "threats": threats}
+        out = pf._render_layer_tables(yaml_data, comps)
+        joined = "\n".join(out)
+        # T-009 normalises to the canonical visible F-009 label.
+        assert "F-009" in joined
+
+    def test_empty_layer_placeholder_in_split_view(self):
+        # 6 comps all in one tier → other layers render the placeholder row.
+        comps = [self._comp(f"a{i}", "application") for i in range(6)]
+        yaml_data = {"components": comps, "threats": []}
+        out = pf._render_layer_tables(yaml_data, comps)
+        joined = "\n".join(out)
+        assert "_no components in this layer_" in joined
+
+
+class TestControlVerdictForHeading:
+    def test_empty_when_no_control_no_threat(self):
+        assert pf._control_verdict_for_heading("7.2 X", {}, []) == ""
+
+    def test_status_and_severity_combined(self):
+        heading = "7.2 Identity and Authentication Controls"
+        threats_by_section = {heading: [{"severity": "critical"}, {"severity": "low"}]}
+        controls = [{"domain": "Identity and Authentication Controls", "effectiveness": "missing"}]
+        out = pf._control_verdict_for_heading(heading, threats_by_section, controls)
+        assert "Missing" in out
+        assert "🔴" in out and "Critical" in out
+
+    def test_threats_without_mapped_control_default_weak(self):
+        heading = "7.5 Data Controls"
+        threats_by_section = {heading: [{"risk": "high"}]}
+        out = pf._control_verdict_for_heading(heading, threats_by_section, [])
+        assert "Weak" in out
+        assert "🟠" in out and "High" in out
+
+    def test_status_only_when_no_threats(self):
+        heading = "7.9 Crypto"
+        controls = [{"domain": "Crypto", "effectiveness": "partial"}]
+        out = pf._control_verdict_for_heading(heading, {}, controls)
+        assert out == " — Partial"
+
+
+class TestV2StatusLine:
+    def test_unknown_effectiveness_full_placeholder(self):
+        line = pf._v2_status_line("", "")
+        assert line.startswith("**Status:**")
+        assert "NARRATIVE_PLACEHOLDER" in line
+
+    def test_known_with_note_is_deterministic(self):
+        line = pf._v2_status_line("unsafe", "defeated by alg:none")
+        assert line == "**Status:** 🔴 Unsafe — defeated by alg:none"
+
+    def test_known_without_note_has_clause_placeholder(self):
+        line = pf._v2_status_line("adequate")
+        assert "🟢 Adequate" in line
+        assert "NARRATIVE_PLACEHOLDER" in line
+
+
+class TestV2LifecycleBullets:
+    def test_bullets_carry_status_note_and_findings(self):
+        subs = [
+            {"title": "Login", "effectiveness": "unsafe", "status_note": "raw SQL. extra.",
+             "relevant_findings": ["T-001"]},
+            {"title": "Storage", "effectiveness": "weak"},
+        ]
+        out = pf._v2_lifecycle_bullets(subs, [], "7.2 Auth")
+        assert any(l.startswith("- **Login** — 🔴 Unsafe.") for l in out)
+        # note truncated to first clause + period
+        assert any("raw SQL." in l for l in out)
+        # finding link appended
+        assert any("[F-001](#f-001)" in l for l in out)
+        # missing note → placeholder
+        assert any("NARRATIVE_PLACEHOLDER" in l for l in out)
+
+
+class TestEmitV2GroupedControl:
+    def test_grouped_block_with_diagram_and_findings(self):
+        lines: list[str] = []
+        c = {
+            "control": "Password-Based Authentication",
+            "effectiveness": "unsafe",
+            "effectiveness_reason": "broken everywhere",
+            "implementation": "Login routes through one MD5 sink.",
+            "assessment": "Shared root cause in hashing.",
+            "sequence_diagram": "sequenceDiagram\n  A->>B: login",
+        }
+        subs = [
+            {"title": "Login", "effectiveness": "unsafe", "relevant_findings": ["T-001"]},
+            {"title": "Storage", "effectiveness": "unsafe", "relevant_findings": [{"id": "T-002"}]},
+        ]
+        pf._emit_v2_grouped_control(lines, c, subs, [], "7.2 Identity", section_id="7.2", idx=1)
+        joined = "\n".join(lines)
+        assert "#### 7.2.1 Token-Based" not in joined  # name is the family, not friendly-mapped here
+        assert "**Security assessment**" in joined
+        assert "**Relevant findings**" in joined
+        assert "```mermaid" in joined
+        assert "[F-001](#f-001)" in joined and "[F-002](#f-002)" in joined
+
+    def test_grouped_block_placeholders_when_minimal(self):
+        lines: list[str] = []
+        c = {"control": "Password-Based Authentication", "effectiveness": "missing"}
+        subs = [{"title": "Login", "effectiveness": "missing"}]
+        threats = [{"id": "T-005", "cwe": "CWE-287", "title": "bypass"}]
+        pf._emit_v2_grouped_control(lines, c, subs, threats, "7.2 Identity and Authentication Controls")
+        joined = "\n".join(lines)
+        # bare heading (no section_id/idx)
+        assert joined.startswith("#### ")
+        assert "NARRATIVE_PLACEHOLDER" in joined  # impl + assessment + diagram placeholders
+        # CWE-routed fallback finding link present
+        assert "[F-005](#f-005)" in joined
+
+    def test_grouped_block_no_findings_anywhere(self):
+        lines: list[str] = []
+        c = {"control": "Some Control", "effectiveness": "weak"}
+        subs = [{"title": "Stage", "effectiveness": "weak"}]
+        pf._emit_v2_grouped_control(lines, c, subs, [], "7.6 Misc")
+        joined = "\n".join(lines)
+        assert "No dedicated finding routed in this assessment." in joined
+
+
+class TestEmitV2SubcontrolBlock:
+    def test_full_block_all_fields(self):
+        lines: list[str] = []
+        sub = {
+            "title": "JWT authentication",
+            "effectiveness": "unsafe",
+            "status_note": "alg:none accepted",
+            "implementation": "Tokens verified with express-jwt.",
+            "sequence_diagram": "sequenceDiagram\n A->>B: token",
+            "assessment": "RS256 not pinned.",
+            "code_excerpt": "jwt.verify(t)",
+            "code_language": "ts",
+            "relevant_findings": [{"id": "T-001", "rationale": "alg confusion"}, "T-002"],
+        }
+        pf._emit_v2_subcontrol_block(lines, sub, [], "7.3 Session", section_id="7.3", idx=2)
+        joined = "\n".join(lines)
+        assert "#### 7.3.2 Token-Based Session Authentication (JWT)" in joined
+        assert '<a id="' in joined
+        assert "```mermaid" in joined
+        assert "```ts" in joined
+        assert "[F-001](#f-001) - alg confusion" in joined
+        assert "[F-002](#f-002)" in joined
+
+    def test_flow_type_diagram_placeholder(self):
+        lines: list[str] = []
+        sub = {"title": "Login", "type": "flow"}
+        pf._emit_v2_subcontrol_block(lines, sub, [], "7.2 Identity and Authentication Controls")
+        joined = "\n".join(lines)
+        assert joined.startswith("#### Login")
+        # missing impl/assessment + flow diagram placeholder
+        assert joined.count("NARRATIVE_PLACEHOLDER") >= 2
+
+    def test_string_relevant_findings_and_cwe_fallback(self):
+        lines: list[str] = []
+        sub = {"title": "Validation", "effectiveness": "weak", "relevant_findings": "T-007"}
+        pf._emit_v2_subcontrol_block(lines, sub, [], "7.6 Input")
+        joined = "\n".join(lines)
+        assert "[F-007](#f-007)" in joined
+
+    def test_no_findings_fallback_line(self):
+        lines: list[str] = []
+        sub = {"title": "X", "effectiveness": "adequate", "assessment": "ok"}
+        pf._emit_v2_subcontrol_block(lines, sub, [], "7.11 Logging")
+        joined = "\n".join(lines)
+        assert "No dedicated finding routed in this assessment." in joined
+
+
+class TestEmitV2SubcontrolLegacy:
+    def test_suppressed_missing_no_threats(self):
+        lines: list[str] = []
+        c = {"effectiveness": "missing"}
+        emitted = pf._emit_v2_subcontrol_legacy(lines, c, "CSRF Protection", [], "7.4 Authorization")
+        assert emitted is False
+        assert lines == []
+
+    def test_emitted_with_linked_threats(self):
+        lines: list[str] = []
+        c = {"effectiveness": "weak", "linked_threats": ["T-003"], "implementation": "Uses helmet."}
+        emitted = pf._emit_v2_subcontrol_legacy(lines, c, "Login", "irrelevant", "7.2 Identity",
+                                                 section_id="7.2", idx=1)
+        assert emitted is True
+        joined = "\n".join(lines)
+        assert "#### 7.2.1 Login" in joined
+        assert "Uses helmet." in joined
+        assert "[F-003](#f-003)" in joined
+        # flow-like name (login) → sequenceDiagram placeholder + code-excerpt placeholder
+        assert "sequenceDiagram" in joined
+
+    def test_emitted_missing_but_routed_finding(self):
+        lines: list[str] = []
+        c = {"effectiveness": "missing"}
+        threats = [{"id": "T-008", "cwe": "CWE-862", "title": "missing authz"}]
+        emitted = pf._emit_v2_subcontrol_legacy(lines, c, "Generic Control", threats, "7.4 Authorization Controls")
+        assert emitted is True
+        joined = "\n".join(lines)
+        assert "NARRATIVE_PLACEHOLDER" in joined  # impl + assessment placeholders
+
+
+class TestAuthMechanismInventory:
+    def test_empty_when_no_mechanism(self):
+        assert pf._build_auth_mechanism_inventory({"threats": [], "security_controls": []}) == []
+
+    def test_inventory_table_with_status_and_absent_note(self):
+        yaml_data = {
+            "security_controls": [
+                {"control": "Password Login", "domain": "Identity", "effectiveness": "weak"},
+            ],
+            "threats": [
+                {"id": "T-12", "title": "MD5 password hash", "cwe": "CWE-916", "risk": "high"},
+            ],
+            "meta": {"open_user_registration": True},
+        }
+        out = pf._build_auth_mechanism_inventory(yaml_data)
+        joined = "\n".join(out)
+        assert "Authentication mechanisms (at a glance)" in joined
+        assert "| Mechanism | Status | Assessed in | Findings |" in joined
+        assert "Password login" in joined
+        # registration present via meta flag
+        assert "User registration" in joined
+        # hashing present via threat keyword, badged by risk
+        assert "Password storage (hashing)" in joined
+        # mechanisms not detected listed in trailing note
+        assert "Also checked, not detected" in joined
+
+    def test_present_only_status_when_no_eff_no_risk(self):
+        yaml_data = {
+            "security_controls": [{"control": "OAuth adapter", "domain": "Identity", "effectiveness": ""}],
+            "threats": [],
+        }
+        out = pf._build_auth_mechanism_inventory(yaml_data)
+        joined = "\n".join(out)
+        assert "✅ Present" in joined
+
+
+class TestAuthMechFindingLink:
+    def test_none_when_no_number(self):
+        assert pf._auth_mech_finding_link({"id": "no-digits"}) is None
+
+    def test_link_with_title(self):
+        out = pf._auth_mech_finding_link({"id": "T-7", "title": "JWT forgery"})
+        assert out == "[F-007](#f-007) — JWT forgery"
+
+    def test_link_without_title(self):
+        out = pf._auth_mech_finding_link({"t_id": "T-3"})
+        assert out == "[F-003](#f-003)"
+
+
+class TestFriendlySubcontrolTitle:
+    def test_strips_trailing_parenthetical(self):
+        assert pf._friendly_subcontrol_title("X Control (express-jwt / lib)") == "X Control"
+
+    def test_maps_known_terse_name(self):
+        assert pf._friendly_subcontrol_title("Query Construction") == "Database Query Construction"
+
+    def test_empty_passthrough(self):
+        assert pf._friendly_subcontrol_title("") == ""
+
+
+class TestNormalizeSecurityControls:
+    def test_string_control_synthesized(self):
+        out = pf._normalize_security_controls(["input_validation"])
+        assert len(out) == 1
+        assert out[0]["_synthesized_from_string"] is True
+        assert out[0]["domain"] == "input_validation"
+
+    def test_dict_passthrough_and_blank_skipped(self):
+        out = pf._normalize_security_controls([{"domain": "X"}, "", None])
+        assert out == [{"domain": "X"}]
+
+
+class TestDeriveEnforcement:
+    def test_internet_boundary_tls(self):
+        assert pf._derive_enforcement({"name": "Public Internet"}) == "TLS"
+
+    def test_process_boundary(self):
+        assert pf._derive_enforcement({"name": "Express Process"}) == "Process isolation"
+
+    def test_data_boundary(self):
+        assert pf._derive_enforcement({"description": "sqlite database tier"}) == "ORM / driver-only access"
+
+    def test_filesystem_boundary(self):
+        assert pf._derive_enforcement({"name": "filesystem"}) == "OS file permissions"
+
+    def test_trust_level_fallback(self):
+        assert pf._derive_enforcement({"trust_level": "trusted"}) == "Network ACL / runtime"
+
+    def test_non_dict_returns_empty(self):
+        assert pf._derive_enforcement("nope") == ""
+
+
+class TestThreatCountsPerComponent:
+    def test_counts_critical_and_high(self):
+        yaml_data = {"threats": [
+            {"component_id": "a", "risk": "critical"},
+            {"component": "a", "severity": "high"},
+            {"component_id": "b", "risk": "low"},
+            {"risk": "critical"},  # no component → dropped
+        ]}
+        crit, high = pf._threat_counts_per_component(yaml_data)
+        assert crit == {"a": 1}
+        assert high == {"a": 1}
+
+
+class TestIsAsyncProtocol:
+    def test_websocket_is_async(self):
+        assert pf._is_async_protocol("WebSocket") is True
+
+    def test_https_is_sync(self):
+        assert pf._is_async_protocol("https") is False
+
+
+class TestV2GroupedAndSubcontrolViaGenerator:
+    """Drive gen_security_architecture_v2 through the subcontrols (non-grouped)
+    path so _emit_v2_subcontrol_block is exercised end-to-end."""
+
+    def test_subcontrols_emitted_as_peer_h4s(self):
+        data = {
+            "components": [],
+            "threats": [{"id": "T-1", "cwe": "CWE-89", "title": "SQLi"}],
+            "security_controls": [
+                {
+                    "domain": "Identity and Authentication Controls",
+                    "control": "Authentication",
+                    "effectiveness": "weak",
+                    "subcontrols": [
+                        {"title": "Login", "effectiveness": "weak", "implementation": "x",
+                         "relevant_findings": ["T-1"]},
+                        {"title": "Logout", "effectiveness": "adequate", "implementation": "y"},
+                    ],
+                },
+            ],
+        }
+        md = pf.gen_security_architecture_v2(data)
+        assert "#### 7.2.1" in md
+        assert "#### 7.2.2" in md
+
+    def test_quick_depth_skips_empty_sections(self):
+        data = {"components": [], "threats": [], "security_controls": []}
+        md = pf.gen_security_architecture_v2(data, depth="quick")
+        # still emits the chapter heading + overview
+        assert md.startswith("## 7. Security Architecture")
+
+
+class TestOverviewVerdictBranches:
+    """Exercise the §7.1 overview verdict/reason branches: partial, adequate,
+    weak-no-controls."""
+
+    def test_partial_verdict_row(self):
+        data = {"components": [], "threats": [], "security_controls": [
+            {"domain": "Identity and Authentication Controls", "control": "Login", "effectiveness": "partial"},
+        ]}
+        md = pf.gen_security_architecture_v2(data)
+        row = next(l for l in md.splitlines() if l.startswith("| [") and "Identity and Authentication" in l)
+        assert "🟡 Partial" in row
+        assert "leave gaps" in row
+
+    def test_adequate_verdict_row(self):
+        data = {"components": [], "threats": [], "security_controls": [
+            {"domain": "Identity and Authentication Controls", "control": "Login", "effectiveness": "adequate"},
+        ]}
+        md = pf.gen_security_architecture_v2(data)
+        row = next(l for l in md.splitlines() if l.startswith("| [") and "Identity and Authentication" in l)
+        assert "🟢 Adequate" in row
+        assert "no routed findings" in row
+
+    def test_weak_no_controls_routed_finding(self):
+        # A finding routes to §7.4 (CWE-862 authz) but no control catalogued there.
+        data = {"components": [], "threats": [{"id": "T-1", "cwe": "CWE-862", "title": "BOLA"}],
+                "security_controls": []}
+        md = pf.gen_security_architecture_v2(data)
+        rows = [l for l in md.splitlines() if l.startswith("| [")]
+        weak = [l for l in rows if "🟠 Weak" in l]
+        assert weak, "expected a weak-from-routed-finding row"
+        assert any("no compensating controls catalogued" in l for l in weak)

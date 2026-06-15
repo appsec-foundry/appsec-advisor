@@ -194,3 +194,276 @@ class TestCheckRepoVisibility:
         is_public, msg = ptm.check_repo_visibility(tmp_path)
         assert not is_public
         assert msg == ""
+
+    def test_gh_nonzero_returncode_silent(self, tmp_path, monkeypatch):
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="not a repo")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        is_public, msg = ptm.check_repo_visibility(tmp_path)
+        assert not is_public
+        assert msg == ""
+
+
+# ---------------------------------------------------------------------------
+# _git_root
+# ---------------------------------------------------------------------------
+
+
+class TestGitRoot:
+    def test_returns_toplevel_on_success(self, tmp_path, monkeypatch):
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, returncode=0, stdout="/repo/root\n", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert ptm._git_root(tmp_path) == Path("/repo/root")
+
+    def test_returns_none_on_nonzero(self, tmp_path, monkeypatch):
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, returncode=128, stdout="", stderr="not a git repo")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert ptm._git_root(tmp_path) is None
+
+    def test_returns_none_when_git_missing(self, tmp_path, monkeypatch):
+        def fake_run(cmd, **kwargs):
+            raise FileNotFoundError("git not found")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        assert ptm._git_root(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# _print_results
+# ---------------------------------------------------------------------------
+
+
+class TestPrintResults:
+    def _base(self):
+        return {
+            "blockers": [],
+            "warnings": [],
+            "files_to_publish": [],
+            "gitignore_patched": False,
+            "committed": False,
+            "commit_message": "",
+        }
+
+    def test_json_output(self, capsys):
+        results = self._base()
+        results["files_to_publish"] = ["/x/threat-model.md"]
+        ptm._print_results(results, as_json=True)
+        out = capsys.readouterr().out
+        import json
+
+        parsed = json.loads(out)
+        assert parsed["files_to_publish"] == ["/x/threat-model.md"]
+
+    def test_blockers_printed(self, capsys):
+        results = self._base()
+        results["blockers"] = ["secrets detected"]
+        ptm._print_results(results, as_json=False)
+        out = capsys.readouterr().out
+        assert "Publish blocked" in out
+        assert "secrets detected" in out
+
+    def test_warnings_and_files_and_patched(self, capsys):
+        results = self._base()
+        results["warnings"] = ["⚠ public repo"]
+        results["files_to_publish"] = ["/x/threat-model.md"]
+        results["gitignore_patched"] = True
+        ptm._print_results(results, as_json=False)
+        out = capsys.readouterr().out
+        assert "public repo" in out
+        assert "Files to publish" in out
+        assert ".gitignore updated" in out
+
+    def test_already_up_to_date_and_committed(self, capsys):
+        results = self._base()
+        results["gitignore_patched"] = False
+        results["committed"] = True
+        results["commit_message"] = "security: publish threat model v1.0\n\nbody"
+        ptm._print_results(results, as_json=False)
+        out = capsys.readouterr().out
+        assert "already up-to-date" in out
+        assert "Committed to git" in out
+        assert "security: publish threat model v1.0" in out
+
+
+# ---------------------------------------------------------------------------
+# main() — full CLI flow
+# ---------------------------------------------------------------------------
+
+
+class TestMain:
+    def _args(self, output_dir, repo_root, **flags):
+        import argparse
+
+        ns = argparse.Namespace(
+            output_dir=Path(output_dir),
+            repo_root=Path(repo_root),
+            check_only=flags.get("check_only", False),
+            commit=flags.get("commit", False),
+            json_out=flags.get("json_out", False),
+        )
+        return ns
+
+    def _patch_args(self, monkeypatch, ns):
+        monkeypatch.setattr(ptm.argparse.ArgumentParser, "parse_args", lambda self: ns)
+
+    def _write_yaml(self, output_dir):
+        import yaml  # type: ignore
+
+        data = {"meta": {"version": "1.0"}, "threats": [{"id": "T-001", "title": "X", "risk": "High"}]}
+        (output_dir / "threat-model.yaml").write_text(yaml.dump(data))
+
+    def test_missing_yaml_blocks(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        # only md present, no yaml
+        (out_dir / "threat-model.md").write_text("clean\n")
+        ns = self._args(out_dir, tmp_path, json_out=True)
+        self._patch_args(monkeypatch, ns)
+        rc = ptm.main()
+        assert rc == 1
+        parsed = __import__("json").loads(capsys.readouterr().out)
+        assert any("threat-model.yaml not found" in b for b in parsed["blockers"])
+
+    def test_missing_md_blocks(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._write_yaml(out_dir)
+        ns = self._args(out_dir, tmp_path, json_out=True)
+        self._patch_args(monkeypatch, ns)
+        rc = ptm.main()
+        assert rc == 1
+        parsed = __import__("json").loads(capsys.readouterr().out)
+        assert any("threat-model.md not found" in b for b in parsed["blockers"])
+
+    def test_secret_in_md_blocks(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._write_yaml(out_dir)
+        (out_dir / "threat-model.md").write_text("password=supersecret123\n")
+        ns = self._args(out_dir, tmp_path, json_out=True)
+        self._patch_args(monkeypatch, ns)
+        # avoid invoking real gh
+        monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (False, ""))
+        rc = ptm.main()
+        assert rc == 1
+        parsed = __import__("json").loads(capsys.readouterr().out)
+        assert any("secrets detected" in b for b in parsed["blockers"])
+
+    def test_check_only_returns_zero_and_lists_files(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._write_yaml(out_dir)
+        (out_dir / "threat-model.md").write_text("clean content\n")
+        (out_dir / "threat-model.sarif.json").write_text("{}")
+        ns = self._args(out_dir, tmp_path, check_only=True, json_out=True)
+        self._patch_args(monkeypatch, ns)
+        monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (False, ""))
+        rc = ptm.main()
+        assert rc == 0
+        parsed = __import__("json").loads(capsys.readouterr().out)
+        names = [Path(f).name for f in parsed["files_to_publish"]]
+        assert "threat-model.md" in names
+        assert "threat-model.yaml" in names
+        assert "threat-model.sarif.json" in names
+        # check-only must not patch
+        assert parsed["gitignore_patched"] is False
+
+    def test_warning_appended_for_public_repo(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._write_yaml(out_dir)
+        (out_dir / "threat-model.md").write_text("clean\n")
+        ns = self._args(out_dir, tmp_path, check_only=True, json_out=True)
+        self._patch_args(monkeypatch, ns)
+        monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (True, "⚠ PUBLIC repo"))
+        rc = ptm.main()
+        assert rc == 0
+        parsed = __import__("json").loads(capsys.readouterr().out)
+        assert any("PUBLIC" in w for w in parsed["warnings"])
+
+    def test_patches_gitignore_no_commit(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._write_yaml(out_dir)
+        (out_dir / "threat-model.md").write_text("clean\n")
+        (tmp_path / ".gitignore").write_text("docs/security/\n")
+        ns = self._args(out_dir, tmp_path, json_out=True)
+        self._patch_args(monkeypatch, ns)
+        monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (False, ""))
+        # force git_root resolution to fall back to repo_root
+        monkeypatch.setattr(ptm, "_git_root", lambda p: None)
+        rc = ptm.main()
+        assert rc == 0
+        parsed = __import__("json").loads(capsys.readouterr().out)
+        assert parsed["gitignore_patched"] is True
+        assert parsed["committed"] is False
+        assert "!docs/security/threat-model.md" in (tmp_path / ".gitignore").read_text()
+
+    def test_commit_success(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._write_yaml(out_dir)
+        (out_dir / "threat-model.md").write_text("clean\n")
+        (tmp_path / ".gitignore").write_text("docs/security/\n")
+        ns = self._args(out_dir, tmp_path, commit=True, json_out=True)
+        self._patch_args(monkeypatch, ns)
+        monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (False, ""))
+        monkeypatch.setattr(ptm, "_git_root", lambda p: None)
+
+        calls = []
+
+        def fake_run(cmd, cwd, check=True):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(ptm, "_run", fake_run)
+        rc = ptm.main()
+        assert rc == 0
+        parsed = __import__("json").loads(capsys.readouterr().out)
+        assert parsed["committed"] is True
+        assert parsed["commit_message"].startswith("security: publish threat model")
+        # git add + git commit were invoked
+        assert any(c[:2] == ["git", "add"] for c in calls)
+        assert any(c[:2] == ["git", "commit"] for c in calls)
+
+    def test_commit_failure_returns_3(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._write_yaml(out_dir)
+        (out_dir / "threat-model.md").write_text("clean\n")
+        (tmp_path / ".gitignore").write_text("docs/security/\n")
+        ns = self._args(out_dir, tmp_path, commit=True, json_out=True)
+        self._patch_args(monkeypatch, ns)
+        monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (False, ""))
+        monkeypatch.setattr(ptm, "_git_root", lambda p: None)
+
+        def fake_run(cmd, cwd, check=True):
+            if cmd[:2] == ["git", "commit"]:
+                raise subprocess.CalledProcessError(1, cmd, stderr="nothing to commit")
+            return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(ptm, "_run", fake_run)
+        rc = ptm.main()
+        assert rc == 3
+        parsed = __import__("json").loads(capsys.readouterr().out)
+        assert any("git commit failed" in b for b in parsed["blockers"])
+
+    def test_non_json_text_output_path(self, tmp_path, monkeypatch, capsys):
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        self._write_yaml(out_dir)
+        (out_dir / "threat-model.md").write_text("clean\n")
+        (tmp_path / ".gitignore").write_text("docs/security/\n")
+        ns = self._args(out_dir, tmp_path, json_out=False)
+        self._patch_args(monkeypatch, ns)
+        monkeypatch.setattr(ptm, "check_repo_visibility", lambda r: (False, ""))
+        monkeypatch.setattr(ptm, "_git_root", lambda p: None)
+        rc = ptm.main()
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Files to publish" in out

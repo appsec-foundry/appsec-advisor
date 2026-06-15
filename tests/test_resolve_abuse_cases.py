@@ -186,3 +186,105 @@ def test_default_library_file_is_self_consistent():
     cases, errors = rac.resolve_abuse_cases(None, None)
     assert errors == [], errors
     assert len(cases) == len(_LIBRARY_IDS)
+
+
+# ---------------------------------------------------------------------------
+# _load_case_file error paths
+# ---------------------------------------------------------------------------
+
+
+def test_load_case_file_unparseable_yaml(tmp_path: Path):
+    schema = rac._load_schema()
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("abuse_cases: [ : : :\n", encoding="utf-8")
+    cases, errors = rac._load_case_file(bad, schema)
+    assert cases == []
+    assert any("cannot parse" in e for e in errors)
+
+
+def test_load_case_file_non_mapping_top_level(tmp_path: Path):
+    schema = rac._load_schema()
+    bad = tmp_path / "list.yaml"
+    bad.write_text("- just\n- a\n- list\n", encoding="utf-8")
+    cases, errors = rac._load_case_file(bad, schema)
+    assert cases == []
+    assert any("top-level must be a mapping" in e for e in errors)
+
+
+def test_schema_errors_without_jsonschema(monkeypatch):
+    """When jsonschema is unavailable the validator degrades to a single
+    error line rather than crashing."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name == "jsonschema":
+            raise ImportError("no jsonschema")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    errors = rac._schema_errors({}, {}, "lbl")
+    assert errors == ["lbl: jsonschema not installed; cannot validate abuse cases"]
+
+
+# ---------------------------------------------------------------------------
+# main() CLI
+# ---------------------------------------------------------------------------
+
+
+def test_main_default_emits_json(capsys):
+    rc = rac.main([])
+    assert rc == 0
+    out = capsys.readouterr().out
+    import json as _json
+
+    data = _json.loads(out)
+    assert [c["id"] for c in data["abuse_cases"]] == _LIBRARY_IDS
+
+
+def test_main_list_ids(capsys):
+    rc = rac.main(["--list-ids"])
+    assert rc == 0
+    ids = capsys.readouterr().out.split()
+    assert ids == _LIBRARY_IDS
+
+
+def test_main_with_org_profile(tmp_path: Path, capsys):
+    profile_dir = _write_org(tmp_path, _VALID_CASE)
+    profile_path = profile_dir / "org-profile.yaml"
+    profile_path.write_text(
+        "abuse_cases:\n  inherit_defaults: false\n  add: abuse-cases/*.yaml\n",
+        encoding="utf-8",
+    )
+    rc = rac.main(["--org-profile", str(profile_path), "--list-ids"])
+    assert rc == 0
+    assert capsys.readouterr().out.split() == ["ORG-AC-001"]
+
+
+def test_main_with_repo_root(tmp_path: Path, capsys):
+    repo_root = _write_repo_local(tmp_path, _VALID_CASE)
+    rc = rac.main(["--repo-root", str(repo_root), "--list-ids"])
+    assert rc == 0
+    ids = capsys.readouterr().out.split()
+    assert "ORG-AC-001" in ids
+
+
+def test_main_errors_return_one(tmp_path: Path, capsys):
+    bad = _VALID_CASE.replace("requires: foothold", "requires: nonexistent_state")
+    profile_dir = _write_org(tmp_path, bad)
+    profile_path = profile_dir / "org-profile.yaml"
+    profile_path.write_text(
+        "abuse_cases:\n  inherit_defaults: false\n  add: abuse-cases/*.yaml\n",
+        encoding="utf-8",
+    )
+    rc = rac.main(["--org-profile", str(profile_path)])
+    assert rc == 1
+    assert "ERROR:" in capsys.readouterr().err
+
+
+def test_main_plugin_root_override(tmp_path: Path, capsys):
+    # Point plugin_root at an empty dir → no default library loaded.
+    rc = rac.main(["--plugin-root", str(tmp_path), "--list-ids"])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == ""

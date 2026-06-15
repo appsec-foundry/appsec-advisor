@@ -476,3 +476,388 @@ def test_if_deterministic_owner_folds_chains_without_env(tmp_path: Path) -> None
     f = next(t for t in after["threats"] if t["id"] == "F-1")
     assert f["effective_severity"] == "Critical"
     assert f["verified_chain_ids"] == ["AC-T-001"]
+
+
+# ===========================================================================
+# Coverage-campaign extension tests (2026-06-14)
+# Target the still-uncovered scoring helpers, the category/mitigation
+# branches of compute_ranking, and the bootstrap / dir-validation CLI paths.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Low-level finding accessors / ordinal helpers
+# ---------------------------------------------------------------------------
+
+
+def test_max_sev_picks_highest():
+    tcr = _tcr()
+    assert tcr._max_sev("Low", "Critical", "Medium") == "Critical"
+    assert tcr._max_sev() == "Low"
+
+
+def test_finding_cwe_from_cwes_list_of_dicts():
+    tcr = _tcr()
+    assert tcr._finding_cwe({"cwes": [{"id": "cwe-89"}]}) == "CWE-89"
+
+
+def test_finding_cwe_from_cwes_list_of_str():
+    tcr = _tcr()
+    assert tcr._finding_cwe({"cwes": ["cwe-79"]}) == "CWE-79"
+
+
+def test_finding_cwe_from_remediation_reference():
+    tcr = _tcr()
+    assert tcr._finding_cwe({"remediation": {"reference": "CWE-502"}}) == "CWE-502"
+
+
+def test_finding_cwe_empty_when_absent():
+    tcr = _tcr()
+    assert tcr._finding_cwe({}) == ""
+
+
+def test_finding_evidence_path_dict_and_list():
+    tcr = _tcr()
+    assert tcr._finding_evidence_path({"evidence": {"path": "a/b.ts"}}) == "a/b.ts"
+    assert tcr._finding_evidence_path({"evidence": [{"file": "c.ts"}]}) == "c.ts"
+    assert tcr._finding_evidence_path({"evidence": "nope"}) == ""
+
+
+def test_finding_cvss_variants():
+    tcr = _tcr()
+    assert tcr._finding_cvss({"cvss": {"score": 7.5}}) == 7.5
+    assert tcr._finding_cvss({"cvss": {"score": "bad"}}) == 0.0
+    assert tcr._finding_cvss({}) == 0.0
+
+
+def test_load_json_missing_returns_none(tmp_path: Path):
+    tcr = _tcr()
+    assert tcr._load_json(tmp_path / "nope.json") is None
+
+
+# ---------------------------------------------------------------------------
+# Breach distance — amplifier / deamplifier / route-guard branches
+# ---------------------------------------------------------------------------
+
+
+def test_breach_distance_amplifier_and_deamplifier():
+    tcr = _tcr()
+    patterns = {
+        "cwe_default_distance": {"CWE-89": 2},
+        "amplifiers": [{"name": "amp", "if_any_match": ["public exploit"], "distance_delta": 1}],
+    }
+    d, reason = tcr._compute_breach_distance(
+        {"cwe": "CWE-89", "scenario": "a public exploit exists"}, patterns
+    )
+    assert d == 1 and reason.startswith("amplifier:")
+
+    patterns2 = {
+        "cwe_default_distance": {"CWE-89": 1},
+        "deamplifiers": [{"name": "deamp", "if_any_match": ["requires admin"], "distance_delta": 1}],
+    }
+    d2, reason2 = tcr._compute_breach_distance(
+        {"cwe": "CWE-89", "scenario": "this requires admin first"}, patterns2
+    )
+    assert d2 == 2 and reason2.startswith("deamplifier:")
+
+
+def test_breach_distance_route_guard_unauth_and_auth():
+    tcr = _tcr()
+    patterns = {
+        "cwe_default_distance": {"CWE-89": 2},
+        "route_guard_indicators": {
+            "frameworks": {
+                "express": {
+                    "unauthenticated_route_hints": ["app.get('/public"],
+                    "authenticated_route_hints": ["requireauth"],
+                }
+            }
+        },
+    }
+    d_unauth, r_unauth = tcr._compute_breach_distance(
+        {"cwe": "CWE-89", "scenario": "app.get('/public') leaks data"}, patterns
+    )
+    assert d_unauth == 1 and r_unauth.startswith("unauth_hint:")
+
+
+# ---------------------------------------------------------------------------
+# Severity caps + ranking caps + critical-criteria never_individual
+# ---------------------------------------------------------------------------
+
+
+def test_apply_severity_caps_caps_when_over():
+    tcr = _tcr()
+    caps = {"severity_caps": {"CWE-209": {"max": "Medium"}}}
+    rank, reason = tcr._apply_severity_caps(tcr._sev_rank("Critical"), "CWE-209", caps)
+    assert rank == tcr._sev_rank("Medium")
+    assert reason.startswith("capped:")
+
+
+def test_apply_severity_caps_no_cap():
+    tcr = _tcr()
+    rank, reason = tcr._apply_severity_caps(tcr._sev_rank("High"), "CWE-89", {})
+    assert rank == tcr._sev_rank("High") and reason == ""
+
+
+def test_never_individual_critical_deescalates():
+    tcr = _tcr()
+    criteria = {
+        "always_critical_cwes": [],
+        "never_individual_critical": ["CWE-200"],
+        "max_severity_individual": "High",
+    }
+    # Critical, not a keystone, CWE in never-individual → drop to High.
+    rank, reason = tcr._apply_critical_criteria(
+        {"cwe": "CWE-200"}, tcr._sev_rank("Critical"), "none", criteria, 2
+    )
+    assert rank == tcr._sev_rank("High") and reason.startswith("never_individual:")
+
+
+def test_always_critical_failed_context_caps_critical_to_high():
+    tcr = _tcr()
+    criteria = {
+        "always_critical_cwes": [{"cwe": "CWE-915", "required": {"breach_distance_max": 1, "impact_min": "High"}}],
+        "never_individual_critical": [],
+    }
+    # Already Critical but context fails (breach distance 3) → cap to High.
+    rank, reason = tcr._apply_critical_criteria(
+        {"cwe": "CWE-915", "impact": "High"}, tcr._sev_rank("Critical"), "", criteria, 3
+    )
+    assert rank == tcr._sev_rank("High") and "always_crit_failed" in reason
+
+
+def test_is_ranking_capped():
+    tcr = _tcr()
+    caps = {"ranking_caps": {"CWE-209": {"max_rank_tier": 2}}}
+    assert tcr._is_ranking_capped("CWE-209", caps) is True
+    assert tcr._is_ranking_capped("CWE-89", caps) is False
+
+
+def test_cwe_top25_rank_dict_and_str():
+    tcr = _tcr()
+    tax = {"top25": [{"id": "CWE-79"}, "CWE-89"]}
+    assert tcr._cwe_top25_rank("CWE-79", tax) == 1
+    assert tcr._cwe_top25_rank("CWE-89", tax) == 2
+    assert tcr._cwe_top25_rank("CWE-1", tax) == 0
+
+
+def test_finding_score_applies_contributor_and_cap_penalty():
+    tcr = _tcr()
+    caps = {"ranking_caps": {"CWE-209": {"max_rank_tier": 2}}}
+    base = tcr._finding_score(
+        {"cwe": "CWE-89", "impact": "High", "likelihood": "High", "cvss": {"score": 5}},
+        "High", 1, None, {}, {},
+    )
+    capped = tcr._finding_score(
+        {"cwe": "CWE-209", "impact": "High", "likelihood": "High"},
+        "High", 1, "contributor", caps, {},
+    )
+    assert base > capped  # contributor -50 and ranking-cap -100 lower the score
+
+
+# ---------------------------------------------------------------------------
+# _category_score + _category_reasons (direct — avoids the top_finding_id bug)
+# ---------------------------------------------------------------------------
+
+
+def test_category_score_empty_members():
+    tcr = _tcr()
+    score, max_eff, min_bd = tcr._category_score({}, [], {}, {}, {}, {}, {})
+    assert (score, max_eff, min_bd) == (0, "Low", 3)
+
+
+def test_category_score_aggregates_members():
+    tcr = _tcr()
+    members = [
+        {"t_id": "T-1", "risk": "Critical", "impact": "High", "likelihood": "High", "cwe": "CWE-89"},
+        {"t_id": "T-2", "risk": "Low", "impact": "Low", "likelihood": "Low", "cwe": "CWE-209"},
+    ]
+    eff = {"T-1": "Critical", "T-2": "Low"}
+    bd = {"T-1": 1, "T-2": 3}
+    role = {}
+    caps = {"ranking_caps": {"CWE-209": {"max_rank_tier": 2}}}
+    tax = {"top25": [{"id": "CWE-89"}]}
+    score, max_eff, min_bd = tcr._category_score({}, members, eff, bd, role, caps, tax)
+    assert max_eff == "Critical"
+    assert min_bd == 1
+    assert score > 0
+
+
+def test_category_reasons_marks_internet_reachable_and_top25():
+    tcr = _tcr()
+    members = [{"t_id": "T-1", "risk": "Critical", "cwe": "CWE-89"}]
+    eff = {"T-1": "Critical"}
+    bd = {"T-1": 1}
+    tax = {"top25": [{"id": "CWE-89"}]}
+    reasons = tcr._category_reasons(members, eff, bd, {}, tax)
+    assert reasons
+    assert "internet-reachable" in reasons[0]
+    assert "Top-25" in reasons[0]
+
+
+# ---------------------------------------------------------------------------
+# _rank_mitigations
+# ---------------------------------------------------------------------------
+
+
+def test_rank_mitigations_orders_by_addressed_severity_then_effort():
+    tcr = _tcr()
+    eff = {"T-1": "Critical", "T-2": "Low"}
+    mits = [
+        {"m_id": "M-1", "addresses": ["T-2"], "effort": "Low"},
+        {"m_id": "M-2", "addresses": ["T-1"], "effort": "High"},
+        "not-a-dict",
+    ]
+    ranked = tcr._rank_mitigations(mits, eff)
+    assert [m["id"] for m in ranked] == ["M-2", "M-1"]
+    assert ranked[0]["rank"] == 1
+    assert "_max_eff_rank" not in ranked[0]
+
+
+def test_rank_mitigations_empty():
+    tcr = _tcr()
+    assert tcr._rank_mitigations([], {}) == []
+
+
+def test_rank_mitigations_non_list_addressed_coerced():
+    tcr = _tcr()
+    ranked = tcr._rank_mitigations([{"m_id": "M-1", "addresses": "T-1"}], {"T-1": "High"})
+    assert ranked[0]["addresses_findings"] == []  # non-list coerced to empty
+
+
+# ---------------------------------------------------------------------------
+# compute_ranking with categories (members unresolved) + chains + mitigations
+# ---------------------------------------------------------------------------
+
+
+def test_compute_ranking_with_unresolved_category_and_mitigations(tmp_path: Path):
+    """Category whose member ids don't resolve takes the `else None` branch for
+    top_finding_id — exercising the 6e loop without tripping the top_finding_id
+    KeyError bug (which requires resolvable members). Also covers 6g mitigation
+    ranking and the chains_ranked sort."""
+    tcr = _tcr()
+    threats = [
+        {"t_id": "T-1", "title": "SQLi", "risk": "Critical", "impact": "Critical", "likelihood": "High", "primary_cwe": "CWE-89"},
+        {"t_id": "T-2", "title": "Info leak", "risk": "Low", "impact": "Low", "likelihood": "Low", "primary_cwe": "CWE-209"},
+    ]
+    data = _minimal_yaml(threats)
+    data["threat_categories"] = [
+        {"id": "TH-1", "title": "Injection", "findings": ["DOES-NOT-EXIST"]},
+        "not-a-dict",
+    ]
+    data["mitigations"] = [
+        {"m_id": "M-1", "addresses": ["T-1"], "effort": "Low"},
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    ranking = tcr.compute_ranking(tmp_path)
+    cats = ranking["views"]["top_threats"]["categories_ranked"]
+    # category has no resolvable members → finding_count 0, top_finding_id None.
+    th1 = next((c for c in ranking["views"]["top_threats"]["categories_ranked"] if c["id"] == "TH-1"), None)
+    # TH-1 (Low effective severity) is filtered out of top_threats (>= High only).
+    assert th1 is None or th1["finding_count"] == 0
+    mits = ranking["views"]["prioritized_mitigations"]["mitigations_ranked"]
+    assert mits and mits[0]["id"] == "M-1"
+    assert isinstance(cats, list)
+
+
+def test_compute_ranking_finding_without_id_skipped(tmp_path: Path):
+    """A finding with no resolvable id is skipped across the 6a/6c/6f loops."""
+    tcr = _tcr()
+    threats = [
+        {"t_id": "T-1", "title": "x", "risk": "High", "primary_cwe": "CWE-89"},
+        {"title": "no id here", "risk": "High"},  # no t_id/id/finding_id
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+    ranking = tcr.compute_ranking(tmp_path)
+    ranked = ranking["views"]["top_findings"]["findings_ranked"]
+    assert [f["id"] for f in ranked] == ["T-1"]
+
+
+def test_compute_ranking_non_mapping_yaml_raises(tmp_path: Path):
+    tcr = _tcr()
+    (tmp_path / "threat-model.yaml").write_text("- just\n- a\n- list\n", encoding="utf-8")
+    import pytest
+
+    with pytest.raises(SystemExit):
+        tcr.compute_ranking(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# CLI: directory validation, bootstrap path, error exits
+# ---------------------------------------------------------------------------
+
+
+def test_cli_output_dir_not_a_directory(tmp_path: Path):
+    """output_dir pointing at a file → exit 1 (not a directory)."""
+    target = tmp_path / "afile"
+    target.write_text("x", encoding="utf-8")
+    res = _run(target, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+    assert res.returncode == 1
+    assert "not a directory" in res.stderr.lower()
+
+
+def test_cli_bootstrap_yaml_from_merged(tmp_path: Path):
+    """--bootstrap-yaml builds threat-model.yaml from .threats-merged.json when
+    the yaml is missing, then ranks it."""
+    merged = {
+        "threats": [
+            {"t_id": "T-1", "title": "SQLi", "risk": "Critical", "likelihood": "High",
+             "impact": "Critical", "stride": "Tampering", "scenario": "x", "component_id": "c"},
+        ]
+    }
+    (tmp_path / ".threats-merged.json").write_text(json.dumps(merged), encoding="utf-8")
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"}, ["--bootstrap-yaml"])
+    assert res.returncode == 0, res.stderr
+    assert "bootstrapped threat-model.yaml" in res.stdout
+    yaml_data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    assert yaml_data["meta"]["_bootstrap"] is True
+    assert yaml_data["threats"][0]["t_id"] == "T-1"
+
+
+def test_cli_bootstrap_yaml_missing_merged_errors(tmp_path: Path):
+    """--bootstrap-yaml with no .threats-merged.json → exit 1."""
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"}, ["--bootstrap-yaml"])
+    assert res.returncode == 1
+    assert ".threats-merged.json missing" in res.stderr
+
+
+def test_cli_missing_yaml_no_bootstrap_errors(tmp_path: Path):
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+    assert res.returncode == 1
+    assert "threat-model.yaml missing" in res.stderr
+
+
+def test_bootstrap_falls_back_stride_category(tmp_path: Path):
+    """_bootstrap_yaml_from_merged mirrors merge-normalization: stride falls back
+    to stride_category when stride is absent/empty."""
+    tcr = _tcr()
+    merged = {"threats": [{"id": "T-9", "stride_category": "Spoofing", "risk": "High"}]}
+    (tmp_path / ".threats-merged.json").write_text(json.dumps(merged), encoding="utf-8")
+    assert tcr._bootstrap_yaml_from_merged(tmp_path) is True
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    assert data["threats"][0]["stride"] == "Spoofing"
+    assert data["threats"][0]["t_id"] == "T-9"
+
+
+def test_bootstrap_malformed_merged_returns_false(tmp_path: Path):
+    tcr = _tcr()
+    (tmp_path / ".threats-merged.json").write_text("{bad json", encoding="utf-8")
+    assert tcr._bootstrap_yaml_from_merged(tmp_path) is False
+
+
+# ---------------------------------------------------------------------------
+# write_outputs — flags-file creation when absent
+# ---------------------------------------------------------------------------
+
+
+def test_write_outputs_creates_flags_when_absent(tmp_path: Path):
+    tcr = _tcr()
+    threats = [{"t_id": "T-1", "title": "x", "risk": "High", "primary_cwe": "CWE-89"}]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+    ranking = tcr.compute_ranking(tmp_path)
+    # No .triage-flags.json present → write_outputs must create a v2 stub.
+    assert not (tmp_path / ".triage-flags.json").is_file()
+    tcr.write_outputs(tmp_path, ranking)
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert flags["version"] == 2
+    assert flags["ranking"]["computed_by"].startswith("triage_compute_ranking.py")

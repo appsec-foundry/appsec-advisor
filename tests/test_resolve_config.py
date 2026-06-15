@@ -1178,3 +1178,644 @@ class TestEmbedFiguresFlag:
     def test_flag_defaults_false(self):
         ns = rc.build_parser().parse_args([])
         assert ns.embed_figures is False
+
+
+# ---------------------------------------------------------------------------
+# Render helpers — coverage of the run-plan / config-summary surface.
+# These are pure functions over a resolved cfg dict; we resolve a real cfg
+# once and override per-case so every required key is present.
+# ---------------------------------------------------------------------------
+
+
+def _base_cfg(**over):
+    cfg = rc.resolve([], REPO_ROOT)
+    cfg.update(over)
+    return cfg
+
+
+class TestRenderConfigurationSummary:
+    def test_basic_box_renders(self):
+        out = rc.render_configuration_summary(_base_cfg())
+        assert "Configuration resolved." in out
+        assert "Create Threat Model" in out
+        assert "Repository" in out
+        assert "Run Plan" in out
+
+    def test_incremental_scope_line(self):
+        out = rc.render_configuration_summary(
+            _base_cfg(incremental=True, scope=["auth", "api"])
+        )
+        assert "incremental delta" in out
+        assert "user focus: auth api" in out
+
+    def test_incremental_scope_no_focus(self):
+        out = rc.render_configuration_summary(
+            _base_cfg(incremental=True, scope=[])
+        )
+        assert "incremental delta from previous threat-model.yaml" in out
+
+    def test_full_repository_scope(self):
+        out = rc.render_configuration_summary(_base_cfg(scope=[]))
+        assert "full repository" in out
+
+    def test_active_options_outputs_and_extras(self):
+        out = rc.render_configuration_summary(
+            _base_cfg(
+                write_yaml=True,
+                write_sarif=True,
+                check_requirements=True,
+                requirements_label="OWASP ASVS",
+                architect_review=True,
+                architect_label="deep",
+            )
+        )
+        assert "Active Options" in out
+        assert "sarif" in out
+        assert "requirements" in out
+        assert "architect review" in out
+
+    def test_post_summary_note_for_incremental_mode(self):
+        out = rc.render_configuration_summary(_base_cfg(mode="incremental"))
+        assert "Run with --full periodically" in out
+
+    def test_post_summary_output_outside_repo(self):
+        out = rc.render_configuration_summary(_base_cfg(output_outside_repo=True))
+        assert "outside the repository" in out
+
+    def test_post_summary_repo_size_capped(self):
+        out = rc.render_configuration_summary(
+            _base_cfg(repo_size_capped=True, repo_size_source_files=99999)
+        )
+        assert "large repository" in out
+        assert "99999" in out
+
+
+class TestFormatDepthSummary:
+    def test_full_run_names_criteria_selection(self):
+        s = rc._format_depth_summary(_base_cfg(incremental=False))
+        assert "criteria-selected components" in s
+        assert "STRIDE turns" in s
+
+    def test_incremental_omits_component_count(self):
+        s = rc._format_depth_summary(_base_cfg(incremental=True))
+        assert "criteria-selected components" not in s
+
+
+class TestFormatPipelineSummary:
+    def test_full_pipeline(self):
+        s = rc._format_pipeline_summary(_base_cfg(incremental=False, skip_qa=False))
+        assert "recon -> architecture -> STRIDE" in s
+        assert "QA" in s
+
+    def test_incremental_pipeline_skip_qa(self):
+        s = rc._format_pipeline_summary(_base_cfg(incremental=True, skip_qa=True))
+        assert "change check" in s
+        assert "STRIDE delta" in s
+        assert "QA" not in s
+
+    def test_architect_review_appended(self):
+        s = rc._format_pipeline_summary(_base_cfg(architect_review=True))
+        assert "architect review" in s
+
+
+class TestFormatReasoningSummary:
+    def test_opus_disabled_ceiling(self):
+        s = rc._format_reasoning_summary(_base_cfg(opus_disabled=True))
+        assert "no-opus ceiling" in s
+
+    def test_auto_switched_large_repo(self):
+        s = rc._format_reasoning_summary(
+            _base_cfg(opus_disabled=False, reasoning_auto_switched=True)
+        )
+        assert "auto-switched for large repo" in s
+
+    def test_sonnet_economy_special(self):
+        s = rc._format_reasoning_summary(
+            _base_cfg(
+                opus_disabled=False,
+                reasoning_auto_switched=False,
+                reasoning_model="sonnet-economy",
+            )
+        )
+        assert "cheap phases Haiku" in s
+
+    def test_alias_normalised(self):
+        s = rc._format_reasoning_summary(
+            _base_cfg(
+                opus_disabled=False,
+                reasoning_auto_switched=False,
+                reasoning_model="haiku-economy",
+            )
+        )
+        # alias maps to sonnet-economy
+        assert "sonnet-economy" in s
+
+    def test_per_agent_models_shortened(self):
+        s = rc._format_reasoning_summary(
+            _base_cfg(
+                opus_disabled=False,
+                reasoning_auto_switched=False,
+                reasoning_model="opus-cheap",
+                stride_model="claude-sonnet-4-6",
+                triage_model="claude-sonnet-4-6",
+                merger_model="claude-opus-4-7",
+            )
+        )
+        assert "STRIDE Sonnet" in s
+        assert "merge Opus" in s
+
+
+class TestSummaryActiveOptions:
+    def test_skips_and_flags(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = rc._summary_active_options(
+            _base_cfg(
+                skip_qa=True,
+                skip_qa_label="skipped",
+                skip_attack_walkthroughs=True,
+                dry_run=True,
+                verbose=True,
+                tracing=False,
+                mode="incremental",
+            )
+        )
+        labels = {label for label, _ in rows}
+        assert "Skips" in labels
+        assert "Run flags" in labels
+
+    def test_parallel_stride_default_on_for_full(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(_base_cfg(mode="full")))
+        assert "parallel" in rows["STRIDE disp"]
+
+    def test_parallel_stride_optout(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_PARALLEL_STRIDE", "0")
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(_base_cfg(mode="full")))
+        assert "serial inline" in rows["STRIDE disp"]
+
+    def test_live_phase_active(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_PARALLEL_STRIDE", "0")
+        monkeypatch.setenv("APPSEC_LIVE_PHASE", "1")
+        rows = dict(rc._summary_active_options(_base_cfg(mode="incremental")))
+        assert "Live phase" in rows
+        assert "background dispatch" in rows["Live phase"]
+
+    def test_live_phase_inactive_under_parallel(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.setenv("APPSEC_LIVE_PHASE", "1")
+        rows = dict(rc._summary_active_options(_base_cfg(mode="full")))
+        assert "PARALLEL_STRIDE wins" in rows["Live phase"]
+
+    def test_limits_wall_time_hours_and_cost(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(
+            _base_cfg(max_wall_time_seconds=7800, max_cost_usd=12.5)
+        ))
+        assert "wall-time 2 h 10 min" in rows["Limits"]
+        assert "cost $12.50" in rows["Limits"]
+
+    def test_limits_wall_time_minutes_only(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(
+            _base_cfg(max_wall_time_seconds=1800, max_cost_usd=None)
+        ))
+        assert "wall-time 30 min" in rows["Limits"]
+
+    def test_stride_profile_non_full(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(
+            _base_cfg(stride_profile={"stride_profile_label": "web-only"})
+        ))
+        assert rows["STRIDE"] == "web-only"
+
+
+class TestFormatOrgProfileSummary:
+    def test_inactive_returns_empty(self):
+        assert rc._format_org_profile_summary(_base_cfg(org_profile={})) == ""
+
+    def test_active_with_preset_and_source(self):
+        s = rc._format_org_profile_summary(
+            _base_cfg(
+                org_profile={
+                    "active": True,
+                    "name": "Acme",
+                    "id": "acme-corp",
+                    "source": "url",
+                },
+                preset={"name": "strict"},
+            )
+        )
+        assert "Acme (acme-corp)" in s
+        assert "preset strict" in s
+        assert "source url" in s
+
+
+class TestFormatOutputsSummary:
+    def test_default_md_yaml_is_empty(self):
+        s = rc._format_outputs_summary(
+            _base_cfg(write_yaml=True, write_sarif=False, write_pentest_tasks=False)
+        )
+        assert s == ""
+
+    def test_no_yaml(self):
+        s = rc._format_outputs_summary(_base_cfg(write_yaml=False))
+        assert "no yaml" in s
+
+    def test_pentest_with_target(self):
+        s = rc._format_outputs_summary(
+            _base_cfg(
+                write_pentest_tasks=True,
+                pentest_format="burp",
+                pentest_target="https://x.test",
+            )
+        )
+        assert "pentest-tasks (burp, target: https://x.test)" in s
+
+    def test_pentest_without_target(self):
+        s = rc._format_outputs_summary(
+            _base_cfg(
+                write_pentest_tasks=True,
+                pentest_format=None,
+                pentest_target=None,
+            )
+        )
+        assert "pentest-tasks (generic)" in s
+
+
+class TestFormatOutputs:
+    def test_no_yaml_and_sarif_and_pentest_target(self):
+        s = rc._format_outputs(
+            _base_cfg(
+                write_yaml=False,
+                write_sarif=True,
+                write_pentest_tasks=True,
+                pentest_format="md",
+                pentest_target="t",
+            )
+        )
+        assert "-yaml (--no-yaml)" in s
+        assert "+ sarif" in s
+        assert "pentest-tasks (md, target: t)" in s
+
+    def test_pentest_no_target_default_format(self):
+        s = rc._format_outputs(
+            _base_cfg(
+                write_yaml=True,
+                write_sarif=False,
+                write_pentest_tasks=True,
+                pentest_format=None,
+                pentest_target=None,
+            )
+        )
+        assert "pentest-tasks (generic)" in s
+
+
+class TestFormatRunFlags:
+    def test_all_deviating_flags(self):
+        s = rc._format_run_flags(
+            _base_cfg(
+                dry_run=True,
+                verbose=True,
+                tracing=False,
+                scan_manifest=True,
+                keep_runtime_files=True,
+                pr_mode=True,
+                qa_scan_repo=True,
+            )
+        )
+        for token in ("dry-run", "verbose", "no-tracing", "scan-manifest",
+                      "keep-runtime-files", "pr-mode", "qa-scan-repo"):
+            assert token in s
+
+    def test_silent_defaults_empty(self):
+        s = rc._format_run_flags(
+            _base_cfg(
+                dry_run=False,
+                verbose=False,
+                tracing=True,
+                scan_manifest=False,
+                keep_runtime_files=False,
+                pr_mode=False,
+                qa_scan_repo=False,
+            )
+        )
+        assert s == ""
+
+
+class TestRunPlanVerdictIncremental:
+    def _icfg(self, **over):
+        base = _base_cfg(incremental=True, mode="incremental")
+        base.update(over)
+        return base
+
+    def test_unchanged_noop(self):
+        v = rc._run_plan_verdict(self._icfg(), {"status": "unchanged"}, None, None)
+        assert v["will_run"] is False
+        assert "NO-OP" in v["verdict"]
+
+    def test_noise_only(self):
+        pre = {"status": "noise_only", "noise_only_changes": ["a.md", "b.md"]}
+        v = rc._run_plan_verdict(self._icfg(), pre, None, None)
+        assert v["will_run"] is False
+        assert "NOISE-ONLY" in v["verdict"]
+        assert "2 non-security" in v["reason"]
+
+    def test_unchanged_plugin_drift(self):
+        pre = {
+            "status": "unchanged_plugin_drift",
+            "plugin_version": {
+                "baseline": "0.3.0",
+                "current": "0.4.0",
+                "tier": "minor",
+                "message": "drifted",
+            },
+        }
+        v = rc._run_plan_verdict(self._icfg(), pre, None, None)
+        assert v["will_run"] is False
+        assert "PLUGIN-DRIFT" in v["verdict"]
+        assert v["reason"] == "drifted"
+
+    def test_changed_noop_global_only(self):
+        pre = {"status": "changed"}
+        ds = {"decision": "noop_global_only"}
+        v = rc._run_plan_verdict(self._icfg(), pre, ds, None)
+        assert v["will_run"] is False
+        assert "NO-OP" in v["verdict"]
+
+    def test_changed_ambiguous_new_component(self):
+        pre = {"status": "changed"}
+        ds = {"decision": "ambiguous_potential_new_component"}
+        v = rc._run_plan_verdict(self._icfg(), pre, ds, None)
+        assert v["will_run"] is True
+        assert "AMBIGUOUS" in v["verdict"]
+
+    def test_changed_dirty_components(self):
+        pre = {"status": "changed",
+               "plugin_version": {"tier": "minor"}}
+        ds = {"decision": "dirty",
+              "dirty_component_ids": ["c1", "c2", "c3", "c4"]}
+        v = rc._run_plan_verdict(self._icfg(), pre, ds, None)
+        assert v["will_run"] is True
+        assert "4 component(s) dirty" in v["verdict"]
+        assert "consider --full" in v["verdict"]
+
+    def test_changed_dirty_unresolved_fallthrough(self):
+        pre = {"status": "changed"}
+        v = rc._run_plan_verdict(self._icfg(), pre, None, None)
+        assert v["will_run"] is True
+        assert "delta scope unresolved" in v["verdict"]
+
+    def test_no_precheck_default_fallthrough(self):
+        v = rc._run_plan_verdict(self._icfg(), None, None, None)
+        assert v["will_run"] is True
+        assert "full pipeline (default)" in v["verdict"]
+
+    def test_legacy_baseline_full(self):
+        cfg = _base_cfg(incremental=False, baseline_state="legacy")
+        v = rc._run_plan_verdict(cfg, None, None, None)
+        assert "bootstrap full run" in v["reason"]
+
+
+class TestPipelineString:
+    def test_full(self):
+        s = rc._pipeline_string(_base_cfg(skip_qa=False), full=True)
+        assert s.startswith("recon -> architecture -> STRIDE")
+        assert "QA" in s
+
+    def test_incremental_no_dirty(self):
+        s = rc._pipeline_string(_base_cfg(skip_qa=True), full=False)
+        assert "STRIDE delta" in s
+        assert "QA" not in s
+
+    def test_incremental_dirty_scope_truncation(self):
+        s = rc._pipeline_string(
+            _base_cfg(),
+            full=False,
+            dirty_components=["a", "b", "c", "d", "e"],
+        )
+        assert "STRIDE delta (a, b, c, +2)" in s
+
+    def test_architect_review_appended(self):
+        s = rc._pipeline_string(_base_cfg(architect_review=True), full=True)
+        assert s.endswith("architect review")
+
+
+class TestRunPlanNotes:
+    def test_will_run_incremental_notes(self):
+        verdict = {"will_run": True, "mode_line": "incremental — delta"}
+        notes = rc._run_plan_notes(verdict, _base_cfg(), None, None, None)
+        assert any("Ctrl-C" in n for n in notes)
+        assert any("Pass --full to widen" in n for n in notes)
+
+    def test_skipped_notes(self):
+        verdict = {"will_run": False, "mode_line": "incremental — fast-abort"}
+        notes = rc._run_plan_notes(verdict, _base_cfg(), None, None, None)
+        assert any("preserved as-is" in n for n in notes)
+
+    def test_major_plugin_drift_note(self):
+        verdict = {"will_run": True, "mode_line": "incremental"}
+        pre = {"plugin_version": {"tier": "major"}}
+        notes = rc._run_plan_notes(verdict, _base_cfg(), pre, None, None)
+        assert any("STRONGLY consider --full" in n for n in notes)
+
+    def test_minor_plugin_drift_note(self):
+        verdict = {"will_run": True, "mode_line": "incremental"}
+        pre = {"plugin_version": {"tier": "minor"}}
+        notes = rc._run_plan_notes(verdict, _base_cfg(), pre, None, None)
+        assert any("Consider --full" in n for n in notes)
+
+    def test_older_compatible_note(self):
+        verdict = {"will_run": True, "mode_line": "full"}
+        notes = rc._run_plan_notes(
+            verdict, _base_cfg(), None, None, "older-compatible"
+        )
+        assert any("Analysis schema drifted" in n for n in notes)
+
+    def test_repo_size_capped_note(self):
+        verdict = {"will_run": True, "mode_line": "full"}
+        cfg = _base_cfg(repo_size_capped=True, repo_size_source_files=12345)
+        notes = rc._run_plan_notes(verdict, cfg, None, None, None)
+        assert any("Large repo (12345" in n for n in notes)
+
+
+class TestRenderRunPlan:
+    def test_full_run_renders_configuration_section(self):
+        cfg = _base_cfg(incremental=False, baseline_state="empty")
+        out = rc.render_run_plan(cfg, None, None, None)
+        assert "Threat Model — Pre-flight" in out
+        assert "Configuration" in out
+        assert "Verdict" in out
+
+    def test_dirty_incremental_renders_files_and_why(self):
+        cfg = _base_cfg(incremental=True, mode="incremental")
+        pre = {
+            "status": "changed",
+            "security_relevant_change_count": 2,
+            "noise_only_changes": ["x.md"],
+            "excluded_pre_filter_count": 1,
+            "security_relevant_changes": ["src/auth.ts", "src/api.ts"],
+            "relevance_reasons": {"src/auth.ts": ["authn"], "src/api.ts": []},
+            "plugin_version": {},
+        }
+        ds = {
+            "decision": "dirty",
+            "dirty_component_ids": ["auth"],
+            "all_components_known": ["auth", "api", "ui"],
+        }
+        out = rc.render_run_plan(cfg, pre, ds, "older-compatible")
+        assert "Files" in out
+        assert "Why this run is going to launch" in out
+        assert "src/auth.ts" in out
+        assert "Components" in out
+        assert "carried forward" in out
+
+    def test_noop_renders_why_not(self):
+        cfg = _base_cfg(incremental=True, mode="incremental")
+        pre = {
+            "status": "noise_only",
+            "noise_only_changes": ["a.md"],
+            "security_relevant_changes": ["docs/readme.md"],
+            "relevance_reasons": {},
+            "security_relevant_change_count": 0,
+            "plugin_version": {},
+        }
+        out = rc.render_run_plan(cfg, pre, None, None)
+        assert "Why this run will NOT execute" in out
+
+    def test_plugin_drift_marker_and_schema_line(self):
+        cfg = _base_cfg(incremental=True, mode="incremental")
+        pre = {
+            "status": "changed",
+            "plugin_version": {
+                "baseline": "0.1.0",
+                "current": cfg["plugin_version"],
+                "tier": "major",
+            },
+        }
+        out = rc.render_run_plan(cfg, pre, None, "incompatible")
+        assert "DRIFT" in out
+        assert "analysis_version drift" in out
+
+    def test_ambiguous_unmapped_files_section(self):
+        cfg = _base_cfg(incremental=True, mode="incremental")
+        pre = {
+            "status": "changed",
+            "security_relevant_changes": ["new/thing.ts"],
+            "relevance_reasons": {},
+            "security_relevant_change_count": 1,
+            "plugin_version": {},
+        }
+        ds = {
+            "decision": "ambiguous_potential_new_component",
+            "unmapped_files": ["new/thing.ts"],
+            "all_components_known": ["a"],
+            "dirty_component_ids": [],
+        }
+        out = rc.render_run_plan(cfg, pre, ds, None)
+        assert "Unmapped (possible new component)" in out
+
+
+class TestRunPlanCLI:
+    def _run(self, *argv, **kw):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), *argv],
+            capture_output=True,
+            text=True,
+            **kw,
+        )
+
+    def test_run_plan_without_skill_config_uses_fresh_resolve(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--run-plan")
+        assert r.returncode == 0
+        assert "Threat Model — Pre-flight" in r.stdout
+
+    def test_run_plan_reads_skill_config_and_payloads(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        # First emit a real .skill-config.json into the output dir.
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        emit = self._run("--emit-file", "--output", str(out_dir))
+        assert emit.returncode == 0
+        sc = out_dir / ".skill-config.json"
+        assert sc.is_file()
+        # Flip the persisted cfg to incremental so the verdict engine refines
+        # via the pre-check / dirty-set payloads (a fresh first-run resolve is
+        # always full and would ignore them).
+        cfg = json.loads(sc.read_text())
+        cfg["incremental"] = True
+        cfg["mode"] = "incremental"
+        sc.write_text(json.dumps(cfg))
+
+        pre = out_dir / "pre.json"
+        pre.write_text(json.dumps({
+            "status": "changed",
+            "security_relevant_changes": ["src/a.ts"],
+            "relevance_reasons": {"src/a.ts": ["authn"]},
+            "security_relevant_change_count": 1,
+            "plugin_version": {},
+        }))
+        ds = out_dir / "ds.json"
+        ds.write_text(json.dumps({
+            "decision": "dirty",
+            "dirty_component_ids": ["comp-a"],
+            "all_components_known": ["comp-a", "comp-b"],
+        }))
+        r = self._run(
+            "--run-plan", "--output", str(out_dir),
+            "--pre-check-file", str(pre),
+            "--dirty-set-file", str(ds),
+            "--compat-label", "equal",
+        )
+        assert r.returncode == 0
+        assert "comp-a" in r.stdout
+        assert "1 component(s) dirty" in r.stdout
+
+    def test_run_plan_pre_check_via_stdin(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        emit = self._run("--emit-file", "--output", str(out_dir))
+        assert emit.returncode == 0
+        sc = out_dir / ".skill-config.json"
+        cfg = json.loads(sc.read_text())
+        cfg["incremental"] = True
+        cfg["mode"] = "incremental"
+        sc.write_text(json.dumps(cfg))
+
+        pre = json.dumps({
+            "status": "unchanged",
+            "plugin_version": {},
+        })
+        r = self._run(
+            "--run-plan", "--output", str(out_dir), "--pre-check-file", "-",
+            input=pre,
+        )
+        assert r.returncode == 0
+        assert "NO-OP" in r.stdout
+
+    def test_run_plan_malformed_payload_ignored(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        bad = tmp_path / "bad.json"
+        bad.write_text("{not json")
+        r = self._run("--run-plan", "--pre-check-file", str(bad))
+        assert r.returncode == 0
+        # malformed pre-check is swallowed → default fall-through verdict
+        assert "Threat Model — Pre-flight" in r.stdout
+
+    def test_emit_file_writes_org_profile_effective(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        out_dir = tmp_path / "o"
+        out_dir.mkdir()
+        r = self._run("--emit-file", "--output", str(out_dir))
+        assert r.returncode == 0
+        assert (out_dir / ".skill-config.json").is_file()
+        assert (out_dir / ".org-profile-effective.json").is_file()

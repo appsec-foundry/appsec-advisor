@@ -553,3 +553,284 @@ class TestRunIdleDetection:
         log = (out_dir / ".agent-run.log").read_text()
         assert log.count("RUN_IDLE") == 2
         assert log.count("RUN_RESUMED") == 1
+
+
+# ---------------------------------------------------------------------------
+# main() / argparse wiring + missing-output-dir guard (lines 479, 500-501,
+# 755-827).
+# ---------------------------------------------------------------------------
+
+
+class TestMainCli:
+    def test_missing_output_dir_returns_2(self, tmp_path, monkeypatch):
+        sw = _load()
+        monkeypatch.setattr(sw, "_refresh_heartbeat", lambda *_a, **_k: None)
+        rc = sw.watch(
+            output_dir=tmp_path / "does-not-exist",
+            plugin_root=REPO_ROOT,
+            heartbeat_interval=0,
+            stride_stale_seconds=1,
+            stride_canary_seconds=1,
+            component_timeout_seconds=1,
+            max_iterations=1,
+        )
+        assert rc == 2
+
+    def test_main_dispatches_to_watch_with_parsed_args(self, out_dir, monkeypatch):
+        sw = _load()
+        monkeypatch.setattr(sw, "_refresh_heartbeat", lambda *_a, **_k: None)
+        # max-iterations cap so the loop terminates without a real lock removal.
+        rc = sw.main(
+            [
+                "skill_watchdog.py",
+                str(out_dir),
+                "--plugin-root",
+                str(REPO_ROOT),
+                "--heartbeat-interval",
+                "0",
+                "--stride-stale-seconds",
+                "999",
+                "--stride-canary-seconds",
+                "999",
+                "--component-timeout-seconds",
+                "999",
+                "--substep2-idle-seconds",
+                "0",
+                "--run-idle-seconds",
+                "0",
+                "--max-iterations",
+                "1",
+            ]
+        )
+        assert rc == 0
+        assert (out_dir / ".agent-run.log").read_text().count("WATCHDOG_START") == 1
+
+    def test_main_missing_output_dir_returns_2(self, tmp_path, monkeypatch):
+        sw = _load()
+        monkeypatch.setattr(sw, "_refresh_heartbeat", lambda *_a, **_k: None)
+        rc = sw.main(["skill_watchdog.py", str(tmp_path / "ghost"), "--max-iterations", "1"])
+        assert rc == 2
+
+    def test_main_defaults_plugin_root_when_blank(self, out_dir, monkeypatch):
+        sw = _load()
+        monkeypatch.setattr(sw, "_refresh_heartbeat", lambda *_a, **_k: None)
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        # No --plugin-root and empty env → falls back to __file__-relative root.
+        rc = sw.main(
+            [
+                "skill_watchdog.py",
+                str(out_dir),
+                "--heartbeat-interval",
+                "0",
+                "--substep2-idle-seconds",
+                "0",
+                "--run-idle-seconds",
+                "0",
+                "--max-iterations",
+                "1",
+            ]
+        )
+        assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# _refresh_heartbeat — real sub-process invocation (lines 390-411) + the
+# exception-swallow contract.
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshHeartbeat:
+    def test_invokes_subprocess_run(self, tmp_path, monkeypatch):
+        sw = _load()
+        calls = {}
+
+        def _fake_run(cmd, **kwargs):
+            calls["cmd"] = cmd
+            calls["kwargs"] = kwargs
+
+            class R:
+                returncode = 0
+
+            return R()
+
+        import subprocess
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+        sw._refresh_heartbeat(REPO_ROOT, tmp_path / ".appsec-lock")
+        assert "acquire_lock.py" in " ".join(str(c) for c in calls["cmd"])
+        assert "--heartbeat" in calls["cmd"]
+        assert calls["kwargs"]["check"] is False
+
+    def test_swallows_subprocess_exception(self, tmp_path, monkeypatch):
+        sw = _load()
+
+        def _boom(*_a, **_k):
+            raise OSError("python3 not found")
+
+        import subprocess
+
+        monkeypatch.setattr(subprocess, "run", _boom)
+        # Must not raise.
+        sw._refresh_heartbeat(REPO_ROOT, tmp_path / ".appsec-lock")
+
+
+# ---------------------------------------------------------------------------
+# Helper-level coverage: error-swallow paths, scan, idle, stale, checkpoint.
+# ---------------------------------------------------------------------------
+
+
+class TestHelpers:
+    def test_log_swallows_write_error(self, tmp_path, monkeypatch):
+        sw = _load()
+
+        def _boom(*_a, **_k):
+            raise OSError("denied")
+
+        # mkdir raising triggers the broad except in _log.
+        monkeypatch.setattr(sw.Path, "mkdir", _boom)
+        sw._log(tmp_path, "INFO", "EV", "detail")  # must not raise
+
+    def test_log_error_loud_handles_corrupt_run_issues(self, out_dir, capsys):
+        sw = _load()
+        # Pre-existing .run-issues.json that is NOT a list → reset to [].
+        (out_dir / ".run-issues.json").write_text('{"not": "a list"}')
+        sw._log_error_loud(out_dir, "SUBSTEP2_IDLE", "stalled", "do x")
+        issues = json.loads((out_dir / ".run-issues.json").read_text())
+        assert isinstance(issues, list)
+        assert issues[-1]["type"] == "substep2_idle"
+        assert "⛔" in capsys.readouterr().err
+
+    def test_log_error_loud_handles_unparseable_run_issues(self, out_dir):
+        sw = _load()
+        (out_dir / ".run-issues.json").write_text("{broken json")
+        sw._log_error_loud(out_dir, "SUBSTEP2_IDLE", "stalled", "do x")
+        issues = json.loads((out_dir / ".run-issues.json").read_text())
+        assert isinstance(issues, list) and len(issues) == 1
+
+    def test_find_substep2_start_absent_log(self, tmp_path):
+        sw = _load()
+        assert sw._find_substep2_start(tmp_path) is None
+
+    def test_find_substep2_start_no_match(self, out_dir):
+        sw = _load()
+        (out_dir / ".agent-run.log").write_text("2026-05-25T10:00:00Z  [a]  INFO  x  NOPE  y\n")
+        assert sw._find_substep2_start(out_dir) is None
+
+    def test_substep2_completed_after_filewrite_marker(self, out_dir):
+        sw = _load()
+        started = "2026-05-25T10:00:00Z"
+        (out_dir / ".agent-run.log").write_text(
+            "2026-05-25T10:00:05Z  [a]  INFO  threat-analyst  FILE_WRITE   /x/threat-model.yaml\n"
+        )
+        assert sw._substep2_completed_after(out_dir, started) is True
+
+    def test_substep2_completed_after_no_signal(self, out_dir):
+        sw = _load()
+        (out_dir / ".agent-run.log").write_text("2026-05-25T10:00:05Z  [a]  INFO  x  STEP_START  y\n")
+        assert sw._substep2_completed_after(out_dir, "2026-05-25T10:00:00Z") is False
+
+    def test_substep2_completed_after_missing_log(self, tmp_path):
+        sw = _load()
+        # No log, no yaml on disk → False.
+        assert sw._substep2_completed_after(tmp_path, "2026-05-25T10:00:00Z") is False
+
+    def test_log_idle_seconds_missing_log(self, tmp_path):
+        sw = _load()
+        assert sw._log_idle_seconds(tmp_path, "2026-05-25T10:00:00Z") == 0.0
+
+    def test_log_idle_seconds_skips_pre_start_and_watchdog(self, out_dir):
+        sw = _load()
+        # One line before start (ignored), one watchdog line (ignored), one real.
+        old = (datetime.now(timezone.utc) - timedelta(seconds=600)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        (out_dir / ".agent-run.log").write_text(
+            "2020-01-01T00:00:00Z  [a]  INFO  threat-analyst  STEP_START  early\n"
+            f"{old}  [a]  INFO  skill-watchdog  WATCHDOG_START  self\n"
+            f"{old}  [a]  INFO  threat-analyst  STEP_START  real\n"
+        )
+        idle = sw._log_idle_seconds(out_dir, "2020-01-02T00:00:00Z")
+        assert 590 <= idle <= 620
+
+    def test_hook_log_idle_seconds_absent(self, tmp_path):
+        sw = _load()
+        assert sw._hook_log_idle_seconds(tmp_path) is None
+
+    def test_hook_log_idle_seconds_only_heartbeats_returns_none(self, out_dir):
+        sw = _load()
+        (out_dir / ".hook-events.log").write_text(
+            "2026-05-25T10:00:00Z  [--------]  INFO  HEARTBEAT  pid=1\n"
+        )
+        assert sw._hook_log_idle_seconds(out_dir) is None
+
+    def test_scan_stride_counts_bytes_and_progress(self, out_dir):
+        sw = _load()
+        (out_dir / ".stride-a.json").write_text('{"x":1}')
+        (out_dir / ".stride-b.json").write_text('{"y":2}')
+        (out_dir / ".progress" / "a.json").write_text("{}")
+        snap = sw._scan_stride(out_dir)
+        assert snap["stride_count"] == 2
+        assert snap["stride_bytes"] > 0
+        assert len(snap["progress_files"]) == 1
+
+    def test_component_idle_seconds_maps_mtime(self, out_dir):
+        sw = _load()
+        import os
+
+        pf = out_dir / ".progress" / "auth.json"
+        pf.write_text("{}")
+        old = time.time() - 120
+        os.utime(pf, (old, old))
+        out = sw._component_idle_seconds([pf])
+        assert out["auth"] >= 110
+
+    def test_is_past_stride_phase_missing_checkpoint(self, tmp_path):
+        sw = _load()
+        assert sw._is_past_stride_phase(tmp_path) is False
+
+    def test_is_past_stride_phase_phase9_false(self, out_dir):
+        sw = _load()
+        (out_dir / ".appsec-checkpoint").write_text("phase=9 status=active\n")
+        assert sw._is_past_stride_phase(out_dir) is False
+
+    def test_is_past_stride_phase_no_phase_token(self, out_dir):
+        sw = _load()
+        (out_dir / ".appsec-checkpoint").write_text("status=active\n")
+        assert sw._is_past_stride_phase(out_dir) is False
+
+    def test_is_past_stride_phase_phase11_true(self, out_dir):
+        sw = _load()
+        (out_dir / ".appsec-checkpoint").write_text("phase=11 status=writing\n")
+        assert sw._is_past_stride_phase(out_dir) is True
+
+    def test_bump_tick_swallows_oserror(self, tmp_path, monkeypatch):
+        sw = _load()
+
+        def _boom(*_a, **_k):
+            raise OSError("ro fs")
+
+        monkeypatch.setattr(sw.Path, "write_text", _boom)
+        sw._bump_tick(tmp_path, 3)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Stagnation (STRIDE_STALE) wiring — lines 585-597.
+# ---------------------------------------------------------------------------
+
+
+def test_stride_stale_fires_when_output_frozen(out_dir, silent_heartbeat):
+    """Phase 9 active, stride output present but unchanged across ticks for
+    >= stride_stale_seconds → STRIDE_STALE warning fires once."""
+    sw = silent_heartbeat
+    (out_dir / ".stride-auth.json").write_text(json.dumps({"threats": []}))
+    (out_dir / ".progress" / "auth.json").write_text(json.dumps({"component_id": "auth", "step": 3, "total": 9}))
+    # heartbeat_interval=10, threshold=10 → after one stagnant tick (10s) it fires.
+    sw.watch(
+        output_dir=out_dir,
+        plugin_root=REPO_ROOT,
+        heartbeat_interval=10,
+        stride_stale_seconds=10,
+        stride_canary_seconds=999,
+        component_timeout_seconds=999,
+        max_iterations=2,
+    )
+    log = (out_dir / ".agent-run.log").read_text()
+    assert "STRIDE_STALE" in log

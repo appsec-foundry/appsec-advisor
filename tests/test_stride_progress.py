@@ -130,3 +130,179 @@ def test_bridge_marks_completed_when_ready(tmp_path):
     assert data["step"] == 1
     assert data["step_total"] == 1
     assert data["status"] == "step_completed"
+
+
+# ---------------------------------------------------------------------------
+# Direct-import unit tests (precise coverage of helpers + edge branches).
+# ---------------------------------------------------------------------------
+
+import importlib.util  # noqa: E402
+import time  # noqa: E402
+
+_SPEC = importlib.util.spec_from_file_location("stride_progress", PLUGIN_SCRIPTS / "stride_progress.py")
+sp = importlib.util.module_from_spec(_SPEC)
+sys.modules["stride_progress"] = sp
+assert _SPEC.loader is not None
+_SPEC.loader.exec_module(sp)
+
+
+# --- _use_unicode / _markers --------------------------------------------------
+
+
+def test_use_unicode_true_when_tty_utf(monkeypatch):
+    class FakeStderr:
+        encoding = "UTF-8"
+
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(sp.sys, "stderr", FakeStderr())
+    assert sp._use_unicode() is True
+    marks = sp._markers()
+    assert marks["done"] == "✓"
+    assert marks["stale"] == "⧗"
+
+
+def test_use_unicode_false_on_non_utf_tty(monkeypatch):
+    class FakeStderr:
+        encoding = "ascii"
+
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(sp.sys, "stderr", FakeStderr())
+    assert sp._use_unicode() is False
+
+
+def test_use_unicode_swallows_exception(monkeypatch):
+    class Boom:
+        def isatty(self):
+            raise RuntimeError("no tty info")
+
+    monkeypatch.setattr(sp.sys, "stderr", Boom())
+    assert sp._use_unicode() is False
+
+
+# --- _load -------------------------------------------------------------------
+
+
+def test_load_returns_empty_on_bad_json(tmp_path):
+    bad = tmp_path / "x.json"
+    bad.write_text("{not json")
+    assert sp._load(bad) == {}
+
+
+def test_load_returns_empty_on_missing(tmp_path):
+    assert sp._load(tmp_path / "nope.json") == {}
+
+
+# --- _format_entry -----------------------------------------------------------
+
+
+def test_format_entry_step_total_with_label():
+    marks = {"done": "D", "stale": "S", "bullet": "-"}
+    out = sp._format_entry({"component_name": "Auth", "step": 4, "total": 9, "label": "Tampering"}, False, False, marks)
+    assert out == "Auth [4/9 Tampering]"
+
+
+def test_format_entry_step_total_stale_no_label():
+    marks = {"done": "D", "stale": "S", "bullet": "-"}
+    out = sp._format_entry({"component_id": "auth", "step": 2, "total": 9, "label": ""}, False, True, marks)
+    assert out == "auth [2/9] S"
+
+
+def test_format_entry_starting_when_no_step():
+    marks = {"done": "D", "stale": "S", "bullet": "-"}
+    out = sp._format_entry({"component_name": "Auth"}, False, False, marks)
+    assert out == "Auth [starting]"
+
+
+def test_format_entry_done():
+    marks = {"done": "D", "stale": "S", "bullet": "-"}
+    out = sp._format_entry({"component_name": "Auth"}, True, False, marks)
+    assert out == "Auth D"
+
+
+def test_format_entry_unknown_name():
+    marks = {"done": "D", "stale": "S", "bullet": "-"}
+    out = sp._format_entry({}, False, False, marks)
+    assert out == "? [starting]"
+
+
+# --- _read_last / _write_last error paths ------------------------------------
+
+
+def test_read_last_handles_corrupt_count(tmp_path):
+    d = tmp_path / ".progress"
+    d.mkdir()
+    (d / ".last-print").write_text("notanint\nbody line\n")
+    body, count = sp._read_last(d)
+    assert (body, count) == ("", 0)
+
+
+def test_write_last_swallows_oserror(monkeypatch, tmp_path):
+    # mkdir raises → OSError swallowed, no exception propagates.
+    def _boom(*_a, **_k):
+        raise OSError("denied")
+
+    monkeypatch.setattr(sp.Path, "mkdir", _boom)
+    sp._write_last(tmp_path / ".progress", "line", 0)  # must not raise
+
+
+def test_write_appsec_progress_swallows_oserror(monkeypatch, tmp_path):
+    def _boom(*_a, **_k):
+        raise OSError("denied")
+
+    monkeypatch.setattr(sp.Path, "mkdir", _boom)
+    sp._write_appsec_progress(tmp_path, 0, 2, [])  # must not raise
+
+
+# --- main(): usage / arg errors ----------------------------------------------
+
+
+def test_main_wrong_arg_count_returns_2(capsys):
+    assert sp.main(["stride_progress.py", "only-one"]) == 2
+    assert "usage" in capsys.readouterr().err
+
+
+def test_main_invalid_expected_returns_2(capsys):
+    assert sp.main(["stride_progress.py", "/tmp", "notanint"]) == 2
+    assert "invalid expected count" in capsys.readouterr().err
+
+
+def test_main_force_flag_stripped_and_emits(tmp_path):
+    _write_progress(tmp_path, "auth", "Auth Service", 3, 9, "Tampering")
+    rc = sp.main(["stride_progress.py", str(tmp_path), "2", "--force"])
+    assert rc == 1  # 0/2 ready
+
+
+def test_main_no_entries_prints_no_progress_line(tmp_path, capsys):
+    # No .progress dir and no .stride files → entries empty → "(no progress reported yet)".
+    rc = sp.main(["stride_progress.py", str(tmp_path), "1"])
+    assert rc == 1
+    assert "(no progress reported yet)" in capsys.readouterr().out
+
+
+def test_main_ready_without_progress_file_stale(tmp_path, capsys):
+    # A .stride-<id>.json exists but no matching .progress file, and the output
+    # file is old → "(no progress file — may be stale)" branch (lines 189-200).
+    f = tmp_path / ".stride-ghost.json"
+    f.write_text("{}")
+    old = time.time() - 1000
+    os.utime(f, (old, old))
+    rc = sp.main(["stride_progress.py", str(tmp_path), "1"])
+    assert rc == 0  # 1/1 ready
+    out = capsys.readouterr().out
+    assert "ghost" in out
+    assert "may be stale" in out
+
+
+def test_main_ready_without_progress_file_fresh(tmp_path, capsys):
+    # Same as above but fresh mtime → done marker without the stale suffix.
+    f = tmp_path / ".stride-fresh.json"
+    f.write_text("{}")
+    rc = sp.main(["stride_progress.py", str(tmp_path), "1"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "fresh" in out
+    assert "may be stale" not in out

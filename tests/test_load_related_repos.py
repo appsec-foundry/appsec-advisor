@@ -659,3 +659,440 @@ class TestCLI:
         assert data["meta"]["loader_version"] == 1
         assert data["meta"]["cap"] == 12
         assert data["meta"]["outdated_days"] == 90
+
+
+# ===========================================================================
+# Coverage extension
+# ===========================================================================
+
+
+class TestSchemaLoader:
+    def test_missing_schema_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            lrr._load_schema(tmp_path / "no-schema.yaml")
+
+    def test_non_mapping_schema_raises(self, tmp_path: Path) -> None:
+        p = tmp_path / "s.yaml"
+        p.write_text("- a\n- b\n", encoding="utf-8")
+        with pytest.raises(ValueError):
+            lrr._load_schema(p)
+
+    def test_default_schema_loads(self) -> None:
+        data = lrr._load_schema()
+        assert isinstance(data, dict)
+
+
+class TestFallbackValidate:
+    """Exercise the no-jsonschema structural fallback path directly."""
+
+    def test_non_mapping_payload(self, monkeypatch) -> None:
+        monkeypatch.setattr(lrr, "jsonschema", None)
+        assert lrr._validate(["x"], {}) == ["payload is not a mapping"]
+
+    def test_missing_related_key(self, monkeypatch) -> None:
+        monkeypatch.setattr(lrr, "jsonschema", None)
+        assert lrr._validate({}, {}) == ["missing required key 'related'"]
+
+    def test_related_not_list(self, monkeypatch) -> None:
+        monkeypatch.setattr(lrr, "jsonschema", None)
+        errs = lrr._validate({"related": "x"}, {})
+        assert any("non-empty list" in e for e in errs)
+
+    def test_too_many_entries(self, monkeypatch) -> None:
+        monkeypatch.setattr(lrr, "jsonschema", None)
+        entries = [{"name": str(i), "threat_model": "tm.yaml"} for i in range(17)]
+        errs = lrr._validate({"related": entries}, {})
+        assert any("max 16" in e for e in errs)
+
+    def test_entry_not_mapping_and_missing_fields(self, monkeypatch) -> None:
+        monkeypatch.setattr(lrr, "jsonschema", None)
+        errs = lrr._validate({"related": ["notadict", {"name": 5}]}, {})
+        assert any("not a mapping" in e for e in errs)
+        assert any("threat_model" in e for e in errs)
+
+    def test_valid_passes(self, monkeypatch) -> None:
+        monkeypatch.setattr(lrr, "jsonschema", None)
+        assert lrr._validate({"related": [{"name": "a", "threat_model": "tm.yaml"}]}, {}) == []
+
+
+class TestResolveAuthHeader:
+    def test_per_entry_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("MY_TOKEN", "secret")
+        assert lrr._resolve_auth_header("MY_TOKEN") == "secret"
+
+    def test_global_fallback(self, monkeypatch) -> None:
+        monkeypatch.delenv("MY_TOKEN", raising=False)
+        monkeypatch.setenv("RELATED_REPOS_AUTH_HEADER", "global")
+        assert lrr._resolve_auth_header("MY_TOKEN") == "global"
+
+    def test_none(self, monkeypatch) -> None:
+        monkeypatch.delenv("RELATED_REPOS_AUTH_HEADER", raising=False)
+        assert lrr._resolve_auth_header(None) is None
+
+
+class TestFetchUrl:
+    def test_disallowed_scheme(self) -> None:
+        content, status = lrr._fetch_url("ftp://host/x", 5)
+        assert content is None
+        assert "not allowed" in status
+
+    def test_guard_rejects(self, monkeypatch) -> None:
+        class Bad:
+            ok = False
+            reason = "blocked host"
+
+        monkeypatch.setattr(lrr, "validate_target_url", lambda url, strict=False: Bad())
+        content, status = lrr._fetch_url("http://evil/x", 5)
+        assert content is None
+        assert "url rejected" in status
+
+    def test_success_with_auth_header_name_value(self, monkeypatch) -> None:
+        class Good:
+            ok = True
+            reason = ""
+
+        monkeypatch.setattr(lrr, "validate_target_url", lambda url, strict=False: Good())
+        monkeypatch.setenv("RELATED_REPOS_AUTH_HEADER", "X-Token: abc")
+
+        captured = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"meta: {}\n"
+
+        class FakeOpener:
+            def open(self, req, timeout=None):
+                captured["headers"] = dict(req.header_items())
+                return FakeResp()
+
+        monkeypatch.setattr(lrr.urllib.request, "build_opener", lambda *a, **k: FakeOpener())
+        content, status = lrr._fetch_url("http://host/tm.yaml", 5)
+        assert status == "remote"
+        assert content == "meta: {}\n"
+
+    def test_url_error_returns_unavailable(self, monkeypatch) -> None:
+        class Good:
+            ok = True
+            reason = ""
+
+        monkeypatch.setattr(lrr, "validate_target_url", lambda url, strict=False: Good())
+
+        class FakeOpener:
+            def open(self, req, timeout=None):
+                raise lrr.urllib.error.URLError("boom")
+
+        monkeypatch.setattr(lrr.urllib.request, "build_opener", lambda *a, **k: FakeOpener())
+        content, status = lrr._fetch_url("http://host/tm.yaml", 5)
+        assert content is None
+        assert "unavailable" in status
+
+    def test_bare_auth_value_uses_authorization(self, monkeypatch) -> None:
+        class Good:
+            ok = True
+            reason = ""
+
+        monkeypatch.setattr(lrr, "validate_target_url", lambda url, strict=False: Good())
+        monkeypatch.setenv("RELATED_REPOS_AUTH_HEADER", "Bearer xyz")
+
+        seen = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b"x: 1\n"
+
+        class FakeOpener:
+            def open(self, req, timeout=None):
+                seen["auth"] = req.get_header("Authorization")
+                return FakeResp()
+
+        monkeypatch.setattr(lrr.urllib.request, "build_opener", lambda *a, **k: FakeOpener())
+        lrr._fetch_url("http://host/tm.yaml", 5)
+        assert seen["auth"] == "Bearer xyz"
+
+
+class TestRedirectHandler:
+    def test_rejected_redirect_raises(self, monkeypatch) -> None:
+        class Bad:
+            ok = False
+            reason = "blocked"
+
+        monkeypatch.setattr(lrr, "validate_target_url", lambda url, strict=False: Bad())
+        h = lrr._SameHostRedirectHandler(strict_urls=False, original_url="http://a/x")
+        with pytest.raises(lrr.urllib.error.HTTPError):
+            h.redirect_request(None, None, 301, "moved", {}, "http://b/y")
+
+    def test_cross_host_strips_auth(self, monkeypatch) -> None:
+        class Good:
+            ok = True
+            reason = ""
+
+        monkeypatch.setattr(lrr, "validate_target_url", lambda url, strict=False: Good())
+        monkeypatch.setattr(lrr, "same_host", lambda a, b: False)
+
+        removed = []
+
+        class FakeReq:
+            def remove_header(self, h):
+                removed.append(h)
+
+        monkeypatch.setattr(
+            lrr.urllib.request.HTTPRedirectHandler,
+            "redirect_request",
+            lambda self, req, fp, code, msg, headers, newurl: FakeReq(),
+        )
+        h = lrr._SameHostRedirectHandler(strict_urls=False, original_url="http://a/x")
+        h.redirect_request(None, None, 302, "found", {}, "http://b/y")
+        assert "Authorization" in removed
+        assert "Cookie" in removed
+
+
+class TestReadLocal:
+    def test_not_found(self, tmp_path: Path) -> None:
+        content, status = lrr._read_local(str(tmp_path / "nope.yaml"))
+        assert content is None
+        assert status == "not found"
+
+    def test_reads_existing(self, tmp_path: Path) -> None:
+        p = tmp_path / "tm.yaml"
+        p.write_text("a: 1\n", encoding="utf-8")
+        content, status = lrr._read_local(str(p))
+        assert content == "a: 1\n"
+        assert status == "local"
+
+
+class TestParseThreatModel:
+    def test_bad_yaml(self) -> None:
+        assert lrr._parse_threat_model(": : :") is None
+
+    def test_non_mapping(self) -> None:
+        assert lrr._parse_threat_model("- a\n- b") is None
+
+    def test_valid(self) -> None:
+        assert lrr._parse_threat_model("a: 1") == {"a": 1}
+
+
+class TestExtractThreats:
+    def test_v2_categories(self) -> None:
+        tm = {"threat_categories": [{"findings": [{"id": "T-1"}, "bad"]}, "x"]}
+        out = lrr._extract_threats(tm)
+        assert out == [{"id": "T-1"}]
+
+    def test_v1_flat(self) -> None:
+        tm = {"threats": [{"id": "T-1"}, "skip"]}
+        assert lrr._extract_threats(tm) == [{"id": "T-1"}]
+
+
+class TestIsOutdated:
+    NOW = _dt.datetime(2026, 6, 14, tzinfo=_dt.timezone.utc)
+
+    def test_none(self) -> None:
+        assert lrr._is_outdated(None, outdated_days=90, now=self.NOW) is False
+
+    def test_bad_format(self) -> None:
+        assert lrr._is_outdated("not-a-date", outdated_days=90, now=self.NOW) is False
+
+    def test_recent_not_outdated(self) -> None:
+        assert lrr._is_outdated("2026-06-01T00:00:00Z", outdated_days=90, now=self.NOW) is False
+
+    def test_old_is_outdated(self) -> None:
+        assert lrr._is_outdated("2025-01-01T00:00:00Z", outdated_days=90, now=self.NOW) is True
+
+    def test_naive_timestamp_gets_utc(self) -> None:
+        assert lrr._is_outdated("2025-01-01T00:00:00", outdated_days=90, now=self.NOW) is True
+
+
+class TestShapeFinding:
+    def test_evidence_dict(self) -> None:
+        out = lrr._shape_finding({"id": "T-1", "title": "x", "severity": "high",
+                                  "evidence": {"file": "a.ts"}})
+        assert out["evidence_file"] == "a.ts"
+        assert out["severity"] == "High"
+        assert out["status"] == "open"
+
+    def test_evidence_file_string(self) -> None:
+        out = lrr._shape_finding({"threat_id": "T-2", "summary": "s",
+                                  "stride_category": "Tampering", "evidence_file": "b.ts"})
+        assert out["id"] == "T-2"
+        assert out["title"] == "s"
+        assert out["stride"] == "Tampering"
+        assert out["evidence_file"] == "b.ts"
+
+
+class TestExtractUpstreamProperties:
+    NOW = _dt.datetime(2026, 6, 14, tzinfo=_dt.timezone.utc)
+
+    def test_no_interface(self) -> None:
+        assert lrr._extract_upstream_properties({}, interface=None, generated=None, now=self.NOW) is None
+
+    def test_blank_interface(self) -> None:
+        assert lrr._extract_upstream_properties({}, interface="   ", generated=None, now=self.NOW) is None
+
+    def test_no_attack_surface(self) -> None:
+        assert lrr._extract_upstream_properties(
+            {"attack_surface": "x"}, interface="POST /api", generated=None, now=self.NOW
+        ) is None
+
+    def test_no_match(self) -> None:
+        tm = {"attack_surface": [{"entry_point": "GET /other"}]}
+        assert lrr._extract_upstream_properties(
+            tm, interface="POST /api/pay", generated=None, now=self.NOW
+        ) is None
+
+    def test_full_match_with_controls(self) -> None:
+        tm = {
+            "attack_surface": [
+                {"entry_point": "POST /api/pay", "protocol": "REST", "auth_required": True,
+                 "notes": "JWT required"}
+            ],
+            "components": [{"name": "PayController", "paths": ["/api/pay"]}],
+            "security_controls": [{"domain": "auth", "control": "JWT", "effectiveness": "adequate"}],
+        }
+        out = lrr._extract_upstream_properties(
+            tm, interface="POST /api/pay", generated="2026-06-01T00:00:00Z", now=self.NOW
+        )
+        assert out["matched_entry_point"] == "POST /api/pay"
+        assert out["auth_required"] is True
+        assert out["handling_components"] == ["PayController"]
+        assert out["controls"][0]["control"] == "JWT"
+        assert out["staleness_days"] == 13
+        assert out["provenance"] == "upstream-asserted"
+
+    def test_bad_generated_staleness_none(self) -> None:
+        tm = {"attack_surface": [{"entry_point": "POST /api/pay"}]}
+        out = lrr._extract_upstream_properties(
+            tm, interface="POST /api/pay", generated="garbage", now=self.NOW
+        )
+        assert out["staleness_days"] is None
+
+
+class TestComputeExpectationMismatch:
+    def test_no_consumer_declares(self) -> None:
+        assert lrr._compute_expectation_mismatch(consumer_declares=None, upstream_properties=None) is None
+
+    def test_no_expectations(self) -> None:
+        assert lrr._compute_expectation_mismatch(
+            consumer_declares={"expected_auth": None, "expected_validation": None},
+            upstream_properties=None,
+        ) is None
+
+    def test_auth_mismatch(self) -> None:
+        out = lrr._compute_expectation_mismatch(
+            consumer_declares={"expected_auth": "mTLS", "expected_validation": None},
+            upstream_properties={"auth_required": False},
+        )
+        assert out and "mTLS" in out["auth"]
+
+    def test_auth_match_suppressed(self) -> None:
+        out = lrr._compute_expectation_mismatch(
+            consumer_declares={"expected_auth": "JWT", "expected_validation": None},
+            upstream_properties={"upstream_auth_signal": "JWT enforced"},
+        )
+        assert out is None
+
+    def test_validation_mismatch(self) -> None:
+        out = lrr._compute_expectation_mismatch(
+            consumer_declares={"expected_auth": None, "expected_validation": "schema check"},
+            upstream_properties={"controls": [{"domain": "logging", "control": "audit"}]},
+        )
+        assert out and "schema check" in out["validation"]
+
+
+class TestCountThreats:
+    def test_counts(self) -> None:
+        threats = [
+            {"severity": "critical", "status": "open"},
+            {"severity": "high", "status": "open"},
+            {"severity": "medium", "status": "closed"},
+            {"severity": "low", "status": "open"},
+        ]
+        counts = lrr._count_threats(threats)
+        assert counts["total"] == 4
+        assert counts["critical"] == 1
+        assert counts["high"] == 1
+        assert counts["medium"] == 1
+        assert counts["low"] == 1
+        assert counts["open"] == 3
+
+
+class TestLoadEndToEnd:
+    def test_local_tm_parse_error(self, tmp_path: Path) -> None:
+        tm = tmp_path / "tm.yaml"
+        tm.write_text(": : not valid :\n", encoding="utf-8")
+        _write_yaml(
+            tmp_path / "docs" / "related-repos.yaml",
+            {"related": [{"name": "dep", "threat_model": "tm.yaml"}]},
+        )
+        result = lrr.load(tmp_path)
+        rec = result["related"][0]
+        assert rec["threat_model"]["status"] == "unavailable"
+        assert "parse error" in rec["threat_model"]["fetch_detail"]
+
+    def test_local_tm_not_found(self, tmp_path: Path) -> None:
+        _write_yaml(
+            tmp_path / "docs" / "related-repos.yaml",
+            {"related": [{"name": "dep", "threat_model": "missing.yaml"}]},
+        )
+        result = lrr.load(tmp_path)
+        assert result["related"][0]["threat_model"]["status"] == "not found"
+
+    def test_full_local_tm_with_findings(self, tmp_path: Path) -> None:
+        tm = tmp_path / "tm.yaml"
+        _write_yaml(
+            tm,
+            _make_tm(
+                threats=[
+                    {"id": "T-1", "title": "x", "severity": "Critical", "status": "open",
+                     "component": "AuthController"},
+                    {"id": "T-2", "title": "y", "severity": "Low", "status": "open"},
+                ]
+            ),
+        )
+        _write_yaml(
+            tmp_path / "docs" / "related-repos.yaml",
+            {"related": [{"name": "dep", "threat_model": "tm.yaml"}]},
+        )
+        result = lrr.load(tmp_path)
+        rec = result["related"][0]
+        assert rec["threat_model"]["status"] in ("found", "outdated")
+        assert rec["interface_findings"]["included"] == 1  # only Critical kept
+
+    def test_top_level_not_mapping(self, tmp_path: Path) -> None:
+        p = tmp_path / "docs" / "related-repos.yaml"
+        p.parent.mkdir(parents=True)
+        p.write_text("- a\n- b\n", encoding="utf-8")
+        result = lrr.load(tmp_path)
+        assert any("not a mapping" in e for e in result["errors"])
+
+    def test_yaml_parse_error(self, tmp_path: Path) -> None:
+        p = tmp_path / "docs" / "related-repos.yaml"
+        p.parent.mkdir(parents=True)
+        p.write_text("a: : :\n", encoding="utf-8")
+        result = lrr.load(tmp_path)
+        assert any("parse error" in e for e in result["errors"])
+
+
+class TestResolveTmReference:
+    def test_url(self, tmp_path: Path) -> None:
+        kind, resolved = lrr._resolve_tm_reference("https://h/tm.yaml", tmp_path)
+        assert kind == "url"
+
+    def test_absolute(self, tmp_path: Path) -> None:
+        kind, resolved = lrr._resolve_tm_reference("/abs/tm.yaml", tmp_path)
+        assert kind == "absolute"
+
+    def test_relative(self, tmp_path: Path) -> None:
+        kind, resolved = lrr._resolve_tm_reference("docs/tm.yaml", tmp_path)
+        assert kind == "relative"
+        assert str(tmp_path) in resolved
