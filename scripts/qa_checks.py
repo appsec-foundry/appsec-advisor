@@ -4998,6 +4998,10 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
     flow_methods_require_diagram = bool(rule.get("flow_methods_require_diagram"))
     flow_method_tokens = rule.get("flow_method_tokens") or []
     flow_diagram_token = (rule.get("flow_diagram_token") or "sequenceDiagram").strip()
+    # Structural / meta §7.2 sub-headings that are deterministically emitted by
+    # the pregenerator and are intentionally NOT auth mechanisms (e.g. the
+    # "Threat Hypotheses Requiring Validation" table). Absent → no exemptions.
+    structural_heading_exemptions = rule.get("structural_heading_exemptions") or []
     hashes = "#" * heading_level
 
     try:
@@ -5045,6 +5049,7 @@ def check_auth_method_decomposition(md_path: Path, contract_path: Path = DEFAULT
             flow_methods_require_diagram=flow_methods_require_diagram,
             flow_method_tokens=flow_method_tokens,
             flow_diagram_token=flow_diagram_token,
+            structural_heading_exemptions=structural_heading_exemptions,
         )
         return _finalize_auth_report(report, enforcement)
 
@@ -5426,6 +5431,7 @@ def _run_auth_v2_structural_checks(
     flow_methods_require_diagram: bool = False,
     flow_method_tokens: list = None,
     flow_diagram_token: str = "sequenceDiagram",
+    structural_heading_exemptions: list = None,
 ) -> None:
     """v2 (§7.2 "… Authentication Controls") enforcement for
     ``auth_method_decomposition``.
@@ -5472,8 +5478,25 @@ def _run_auth_v2_structural_checks(
                 f"in contract ({err}) — fix data/sections-contract.yaml"
             )
 
+    # Normalize structural-heading exemptions to token sets once.
+    exempt_token_sets = []
+    for ex in structural_heading_exemptions or []:
+        if not isinstance(ex, str) or not ex.strip():
+            continue
+        toks = set(re.findall(r"[a-z0-9]+", ex.lower()))
+        if toks:
+            exempt_token_sets.append(toks)
+
     for heading in subsections:
         heading_norm = re.sub(r"^\d+(?:\.\d+)*\s+", "", heading).strip()
+        # Structural / meta sub-blocks (e.g. the pregenerator's "Threat
+        # Hypotheses Requiring Validation" table) are intentionally not auth
+        # mechanisms — skip them before mechanism validation so a
+        # deterministically-emitted §7.2 heading is never rejected.
+        if exempt_token_sets:
+            head_tokens = set(re.findall(r"[a-z0-9]+", heading_norm.lower()))
+            if any(ex.issubset(head_tokens) for ex in exempt_token_sets):
+                continue
         flagged = False
         for raw, forbid in compiled_forbidden:
             if forbid.search(heading) or forbid.search(heading_norm):

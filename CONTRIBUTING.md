@@ -12,6 +12,13 @@ a tightly coupled producer/schema/consumer/test contract (see `AGENTS.md`), so
 pull request.** A short conversation up front saves you wasted effort and helps
 us land your change smoothly — it's a friendly request, not a hard gate.
 
+<!-- TODO: not active yet — enable once feature-branch workflow is adopted
+**Branching:** never commit directly to `main`. Do all work on **feature
+branches** (`feat/<topic>` or `fix/<topic>`), then open a PR against `main`.
+`main` holds releases and is tagged (`v*`) to publish; CI runs on pushes and PRs
+to `main` (and `dev`).
+-->
+
 A good flow looks like:
 
 1. **Open an issue** (bug report or feature/change proposal) describing what you

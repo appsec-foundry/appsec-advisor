@@ -1118,6 +1118,14 @@ sections:
               - "oauth"
               - "oidc"
               - "openid"
+              # "Social Login" is the user-facing name for an OAuth/OIDC social
+              # provider mechanism. emit_auth_coverage.py writes the control as
+              # "Social Login (OAuth / OIDC)"; the renderer legitimately
+              # simplifies the §7.2 heading to "Social Login", dropping the
+              # parenthetical that carries the oauth/oidc token. Whitelist the
+              # plain form so the simplification does not trip the gate and
+              # force a fragment-fixer repair on every run.
+              - "social login"
               - "saml"
               - "sso"
               - "totp"
@@ -1181,6 +1189,18 @@ sections:
               - "(?i)^#?#?#?#?\\s*token\\s+(issuance|verification|validation|signing)\\s*$"
               - "(?i)\\b(bypass flow|forgery flow|hijack flow|attack flow|exploit flow)\\b"
               - "(?i)alg[:=]none"
+            # Structural / meta §7.2 sub-headings that are deterministically
+            # emitted by the pregenerator and are intentionally NOT
+            # authentication mechanisms — exempt them from the
+            # "not a recognized authentication mechanism" gate. Without this,
+            # pregenerate_fragments._render_threat_hypotheses_table emits
+            # "#### Threat Hypotheses Requiring Validation" (asserted present by
+            # tests) which the gate then rejected on every run, forcing a
+            # fragment-fixer repair iteration. Matched case-insensitively after
+            # the numeric "7.2.N" prefix is stripped, by normalized-token-subset
+            # (same tokeniser as method_whitelist).
+            structural_heading_exemptions:
+              - "threat hypotheses requiring validation"
             enforcement: "error"
         "all_control_sections":
           - rule: "control_subsection_coverage"

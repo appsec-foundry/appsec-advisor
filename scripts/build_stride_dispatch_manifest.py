@@ -277,6 +277,33 @@ _CI_GLOBS = (
     "azure-pipelines.yml",
     "bitbucket-pipelines.yml",
 )
+# Supply-chain / build-config file surface owned by the ci-cd-pipeline
+# component. These are the files the config/IaC scanner reports against and
+# that merge_threats binds to component_id="ci-cd-pipeline"; the component's
+# `paths` must glob them so those findings are not flagged as cross-component
+# drift. See _detect_cicd().
+_CICD_SUPPLYCHAIN_GLOBS = (
+    "Dockerfile",
+    "Dockerfile.*",
+    "*.Dockerfile",
+    "docker-compose*.yml",
+    "docker-compose*.yaml",
+    "compose*.yml",
+    "compose*.yaml",
+    ".dockerignore",
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    ".npmrc",
+    ".github/dependabot.yml",
+    ".github/dependabot.yaml",
+    ".github/renovate.json",
+    "renovate.json",
+    ".renovaterc",
+    ".renovaterc.json",
+)
 _AUTH_FILE_RE = re.compile(
     r"(login|logout|register|signup|auth|oauth|jwt|session|2fa|mfa|otp|"
     r"reset.?password|forgot.?password|insecurity|identity|credential)",
@@ -335,6 +362,21 @@ def _detect_cicd(repo_root: Path) -> dict | None:
     if any(f.startswith(".github/workflows/") for f in files):
         paths.append(".github/workflows/**")
     paths += [f for f in files if not f.startswith(".github/workflows/")]
+    # The config/IaC scanner (config-iac-checks.yaml) emits its findings against
+    # the build/supply-chain file surface — Dockerfile, container compose,
+    # package manifests + lockfiles, and Dependabot/Renovate config — and
+    # `merge_threats._config_finding_to_threat` hardcodes them to this
+    # ci-cd-pipeline component. Without these globs in the component's `paths`,
+    # every such finding tripped the `validate_intermediate` path-glob advisory
+    # (evidence file vs component globs) AND `reclassify_components` could not
+    # move it anywhere (no other component globs a root Dockerfile/package.json),
+    # so the advisory was emitted on every run with no way to self-heal. The
+    # ci-cd-pipeline component IS the supply-chain boundary, so these files
+    # legitimately belong to it — declare them as part of its scope. Patterns
+    # only (existence-independent); a glob matching nothing is a harmless no-op.
+    for g in _CICD_SUPPLYCHAIN_GLOBS:
+        if g not in paths:
+            paths.append(g)
     sample = ", ".join(files[:4]) + (", …" if len(files) > 4 else "")
     return {
         "id": "ci-cd-pipeline",
