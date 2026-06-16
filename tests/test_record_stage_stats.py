@@ -589,6 +589,65 @@ def test_rebuild_truncates_on_stage_1(tmp_path):
     assert records[0]["stage"] == 1  # stale stage-9 record gone
 
 
+def _acc(output_dir, **overrides):
+    argv = _argv(output_dir, **overrides)
+    argv.append("--accumulate")
+    return argv
+
+
+def test_accumulate_sums_into_single_stage_row(tmp_path):
+    """Multi-dispatch Stage 1 (Analyst-A + STRIDE + Analyst-B) sums into ONE row."""
+    # Analyst-A
+    rec.main(_acc(tmp_path, **{"--duration-ms": "1133683", "--tool-uses": "67", "--tokens": "157154"}))
+    # STRIDE fan-out (summed)
+    rec.main(_acc(tmp_path, **{"--duration-ms": "1376486", "--tool-uses": "136", "--tokens": "305977"}))
+    # Analyst-B
+    rec.main(_acc(tmp_path, **{"--duration-ms": "1001123", "--tool-uses": "64", "--tokens": "116992"}))
+    jsonl = tmp_path / ".stage-stats.jsonl"
+    records = [json.loads(l) for l in jsonl.read_text().splitlines() if l.strip()]
+    assert len(records) == 1, "all dispatches fold into a single stage-1 row"
+    r = records[0]
+    assert r["duration_ms"] == 1133683 + 1376486 + 1001123  # = 3511292
+    assert r["tool_uses"] == 67 + 136 + 64
+    assert r["tokens"] == 157154 + 305977 + 116992
+    assert r["recorded_dispatch_count"] == 3
+
+
+def test_accumulate_first_call_seeds_row(tmp_path):
+    """First --accumulate with no existing row behaves like a normal write."""
+    rc = rec.main(_acc(tmp_path, **{"--duration-ms": "500", "--tokens": "10", "--tool-uses": "2"}))
+    assert rc == 0
+    records = [json.loads(l) for l in (tmp_path / ".stage-stats.jsonl").read_text().splitlines() if l.strip()]
+    assert len(records) == 1
+    assert records[0]["duration_ms"] == 500
+    assert records[0]["recorded_dispatch_count"] == 1
+
+
+def test_accumulate_merges_wall_secs_observed_by_max(tmp_path):
+    """wall_secs_observed merges by max() so the widest window wins regardless of order."""
+    log = tmp_path / ".hook-events.log"
+    # threat-analyst events span the full Stage-1 window; stride a narrower one.
+    log.write_text(
+        "2026-06-16T05:00:00Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-threat-analyst  model=sonnet\n"
+        "2026-06-16T05:20:00Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer  model=sonnet\n"
+        "2026-06-16T05:24:00Z  [s]  INFO   AGENT_INVOKE  appsec-advisor:appsec-stride-analyzer  model=sonnet\n"
+        "2026-06-16T06:03:00Z  [s]  INFO   AGENT_INVOKE  appsec-advisor:appsec-threat-analyst  model=sonnet\n",
+        encoding="utf-8",
+    )
+    # STRIDE call first (narrow window ~240s), then analyst (full ~3780s).
+    rec.main(_acc(tmp_path, **{
+        "--duration-ms": "1000", "--subagent-type": "appsec-advisor:appsec-stride-analyzer",
+        "--since-iso": "2026-06-16T05:00:00Z",
+    }))
+    rec.main(_acc(tmp_path, **{
+        "--duration-ms": "2000", "--subagent-type": "appsec-advisor:appsec-threat-analyst",
+        "--since-iso": "2026-06-16T05:00:00Z",
+    }))
+    r = json.loads((tmp_path / ".stage-stats.jsonl").read_text().splitlines()[0])
+    assert r["wall_secs_observed"] == 3780  # widest window kept, not the 240s one
+    assert r["duration_ms"] == 3000
+
+
 def test_rebuild_unlink_oserror_warns_but_continues(tmp_path, monkeypatch, capsys):
     """If unlink fails the helper warns and still writes (line 288-289 except)."""
     jsonl = tmp_path / ".stage-stats.jsonl"

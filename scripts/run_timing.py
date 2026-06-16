@@ -18,11 +18,17 @@ The distinction the script makes:
     suspended process bills no API time.
   * ``wall``         — true end-to-end elapsed clock time (``.scan-wall-
     seconds``, written by the skill as ``now - .scan-start-epoch``).
-  * ``standby``      — per-stage ``wall_secs_observed - duration_ms`` gaps
-    that exceed ``STANDBY_GAP_THRESHOLD_S``. A gap that large between a
-    stage's first AGENT_SPAWN and last AGENT_COMPLETE is machine sleep or a
-    hang, not API latency (which is seconds-to-low-minutes). Isolated so it
-    can be excluded from the net figure and from the estimator's cache.
+  * ``standby``      — real dead-time gaps between consecutive timestamped
+    log events (``.hook-events.log`` / ``.agent-run.log``) that exceed
+    ``STANDBY_GAP_THRESHOLD_S``. Every unit of work emits a timestamped
+    line — including nested sub-agent activity — so a gap that large means
+    nothing ran (machine sleep / suspend / a hung dispatch), not API
+    latency. This replaces the lossy ``wall_secs_observed - duration_ms``
+    proxy, which also fired on a stage whose compute was merely
+    under-recorded across multiple dispatches (Analyst-A + N×STRIDE +
+    Analyst-B folded into one Stage-1 row). The proxy remains as a
+    fallback only when no event stream is available. Isolated so it can be
+    excluded from the net figure and from the estimator's cache.
   * ``other_idle``   — everything else (API waits, between-dispatch
     orchestration, preamble). Part of a normal run; kept in ``net_wall``.
 
@@ -35,7 +41,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # A per-stage wall-minus-compute gap above this is treated as standby/suspend
@@ -79,6 +87,82 @@ def _read_int_file(path: Path) -> int | None:
     return val if val > 0 else None
 
 
+HOOK_LOG_FILENAME = ".hook-events.log"
+AGENT_LOG_FILENAME = ".agent-run.log"
+# Leading ISO8601 UTC timestamp on every hook/agent log line.
+_LEADING_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\b")
+
+
+def _read_event_epochs(output_dir: Path) -> list[int]:
+    """Return sorted epoch-seconds of every timestamped log event.
+
+    Reads ``.hook-events.log`` (preferred — one line per tool call / agent
+    event, including nested sub-agent activity) and falls back to merging
+    ``.agent-run.log`` when present. Every meaningful unit of work the run
+    performed emits at least one timestamped line, so consecutive timestamps
+    are a direct, side-effect-free record of when the machine was actually
+    busy. A large gap between two adjacent events is genuine dead time
+    (machine standby / suspend / a hung dispatch) — unlike the lossy
+    ``wall_secs_observed - duration_ms`` proxy, which also fires on a stage
+    whose compute was simply under-recorded across multiple dispatches.
+    """
+    epochs: list[int] = []
+    for name in (HOOK_LOG_FILENAME, AGENT_LOG_FILENAME):
+        path = output_dir / name
+        if not path.is_file():
+            continue
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    m = _LEADING_TS_RE.match(line)
+                    if not m:
+                        continue
+                    try:
+                        dt = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ").replace(
+                            tzinfo=timezone.utc
+                        )
+                    except ValueError:
+                        continue
+                    epochs.append(int(dt.timestamp()))
+        except OSError:
+            continue
+    epochs.sort()
+    return epochs
+
+
+def _standby_from_event_gaps(
+    output_dir: Path,
+    gap_threshold_s: int,
+    window: tuple[int, int] | None = None,
+) -> int | None:
+    """Sum real dead-time gaps between consecutive log events.
+
+    Returns the total seconds spent in gaps larger than ``gap_threshold_s``,
+    or ``None`` when no usable event stream exists (so the caller can fall
+    back to the per-stage ``wall - compute`` heuristic). A run that streamed
+    events steadily — even while long sub-agents were working — yields 0,
+    which is the correct answer for "how long was the machine actually idle".
+
+    ``window`` is an optional ``(start_epoch, end_epoch)`` bound. Events
+    outside it are dropped before gap computation so post-run activity (e.g.
+    the operator inspecting artifacts after the completion summary) cannot be
+    miscounted as in-run standby. The run window is ``[scan-start-epoch,
+    scan-start-epoch + .scan-wall-seconds]``.
+    """
+    epochs = _read_event_epochs(output_dir)
+    if window is not None:
+        lo, hi = window
+        epochs = [e for e in epochs if lo <= e <= hi]
+    if len(epochs) < 2:
+        return None
+    standby = 0
+    for prev, cur in zip(epochs, epochs[1:]):
+        gap = cur - prev
+        if gap > gap_threshold_s:
+            standby += gap
+    return standby
+
+
 def compute_timing(output_dir: Path, gap_threshold_s: int = STANDBY_GAP_THRESHOLD_S) -> dict:
     """Return the net-vs-wall breakdown for a completed run.
 
@@ -95,9 +179,9 @@ def compute_timing(output_dir: Path, gap_threshold_s: int = STANDBY_GAP_THRESHOL
     records = _read_stage_records(output_dir)
 
     net_compute = 0
-    standby = 0
     nonstandby_stage_idle = 0
-    stage_wall_sum = 0
+    heuristic_standby = 0  # legacy wall−compute proxy, used only as fallback
+    stage_idles: list[tuple[int, dict]] = []  # (idle_secs, stage_dict) for attribution
     stages: list[dict] = []
 
     for rec in records:
@@ -109,31 +193,64 @@ def compute_timing(output_dir: Path, gap_threshold_s: int = STANDBY_GAP_THRESHOL
         wall_s = int(wall_obs) if isinstance(wall_obs, (int, float)) and wall_obs > 0 else None
 
         idle_s = None
-        is_standby = False
         if wall_s is not None:
-            stage_wall_sum += wall_s
             idle_s = max(0, wall_s - compute_s)
             if idle_s > gap_threshold_s:
-                is_standby = True
-                standby += idle_s
+                heuristic_standby += idle_s
             else:
                 nonstandby_stage_idle += idle_s
 
-        stages.append(
-            {
-                "stage": rec.get("stage"),
-                "variant": rec.get("variant") or "",
-                "name": rec.get("name") or "",
-                "agent": (rec.get("agent") or "—").split(":")[-1],
-                "model": rec.get("model") or "?",
-                "compute_secs": compute_s,
-                "wall_secs": wall_s,
-                "idle_secs": idle_s,
-                "is_standby": is_standby,
-            }
-        )
+        stage_dict = {
+            "stage": rec.get("stage"),
+            "variant": rec.get("variant") or "",
+            "name": rec.get("name") or "",
+            "agent": (rec.get("agent") or "—").split(":")[-1],
+            "model": rec.get("model") or "?",
+            "compute_secs": compute_s,
+            "wall_secs": wall_s,
+            "idle_secs": idle_s,
+            "is_standby": False,
+        }
+        stages.append(stage_dict)
+        if idle_s is not None:
+            stage_idles.append((idle_s, stage_dict))
 
+    # Authoritative standby signal: real dead-time gaps between consecutive
+    # timestamped log events. A multi-dispatch stage that under-records
+    # duration_ms (Analyst-A + N×STRIDE + Analyst-B all folded into one
+    # stage row) produces a large wall−compute idle that is NOT standby —
+    # the machine was busy, the compute was simply unrecorded. The event
+    # stream distinguishes the two: it only shows a gap when nothing ran.
+    # Bound the gap scan to the actual run window so post-run inspection
+    # (operator reading artifacts after the completion summary) is not
+    # miscounted as in-run standby.
     wall_secs = _read_int_file(output_dir / ".scan-wall-seconds")
+    scan_start = _read_int_file(output_dir / ".scan-start-epoch")
+    run_window: tuple[int, int] | None = None
+    if scan_start is not None and wall_secs is not None:
+        # +gap_threshold slack so a final event landing just past the frozen
+        # wall marker (summary render writes .scan-wall-seconds slightly early)
+        # is still counted, without admitting genuinely post-run activity.
+        run_window = (scan_start, scan_start + wall_secs + gap_threshold_s)
+    log_standby = _standby_from_event_gaps(output_dir, gap_threshold_s, run_window)
+    if log_standby is not None:
+        standby = log_standby
+        # Per-stage flag: only attribute standby to a stage when a real gap
+        # exists overall AND that stage's idle is itself over the threshold.
+        # When log_standby == 0 no stage is flagged, so an under-recorded
+        # compute can never masquerade as standby in the per-row breakdown.
+        if standby > 0:
+            for idle_s, sd in stage_idles:
+                if idle_s > gap_threshold_s:
+                    sd["is_standby"] = True
+    else:
+        # No event stream (e.g. logs cleaned) — fall back to the legacy
+        # wall−compute proxy so behaviour is unchanged on old artifacts.
+        standby = heuristic_standby
+        if standby > 0:
+            for idle_s, sd in stage_idles:
+                if idle_s > gap_threshold_s:
+                    sd["is_standby"] = True
 
     if wall_secs is not None:
         net_wall = max(net_compute, wall_secs - standby)

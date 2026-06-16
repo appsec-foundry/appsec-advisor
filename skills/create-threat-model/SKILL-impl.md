@@ -2174,9 +2174,15 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
 
 6. **Record Stage 1 stats (M3.3).** The Agent tool's return notification carries a `<usage>` block with `total_tokens`, `tool_uses`, and `duration_ms`. Extract those values from the notification text (visible in the chat) and call `scripts/record_stage_stats.py` so they end up in `threat-model.md`'s `### Per-Stage Breakdown` table. (In the `LIVE_PHASE=true` variant the same `<usage>` block arrives in the background agent's **completion notification** — identical fields, identical extraction.)
 
-   **`STAGE1_START_ISO` capture (multi-dispatch wall-time, 2026-05-23 juice-shop forensics).** Before dispatching the Stage 1 agent above, capture the dispatch-start timestamp into `STAGE1_START_ISO` (`STAGE1_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` immediately before the Agent tool call). This is the lower bound the recorder uses to derive `dispatch_count` + `wall_secs_observed` from `.hook-events.log` — without it the recorder cannot tell apart this stage's `AGENT_SPAWN` events from earlier-run residue in incremental mode. The variable is plumbed through to the recorder via `--since-iso` below. When `STAGE1_START_ISO` is empty (e.g. the capture line was skipped), pass nothing and the recorder degrades to the legacy single-dispatch field set (back-compat).
+   **`STAGE1_START_ISO` capture (multi-dispatch wall-time, 2026-05-23 juice-shop forensics).** Before dispatching the FIRST Stage 1 agent above (Analyst-A in the parallel-STRIDE path, or the single analyst otherwise), capture the dispatch-start timestamp into `STAGE1_START_ISO` (`STAGE1_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)` immediately before that Agent tool call). This is the lower bound the recorder uses to derive `dispatch_count` + `wall_secs_observed` from `.hook-events.log` — without it the recorder cannot tell apart this stage's `AGENT_SPAWN` events from earlier-run residue in incremental mode. The variable is plumbed through to the recorder via `--since-iso` below. When `STAGE1_START_ISO` is empty (e.g. the capture line was skipped), pass nothing and the recorder degrades to the legacy single-dispatch field set (back-compat).
+
+   **⚠ Multi-dispatch stages MUST accumulate (RC.standby-2026-06).** Stage 1 in the **parallel-STRIDE path is NOT a single dispatch** — it is Analyst-A + N×STRIDE analyzers + Analyst-B. If you record only the final dispatch's `duration_ms` (Analyst-B), `net_compute` under-reports by the entire Analyst-A + STRIDE compute, and `run_timing.py` then renders the unrecorded compute as a **bogus "standby" gap** (the 2026-06-16 juice-shop run reported "46m standby" for a run with ~0 real standby). To keep net compute honest, record **each** sub-dispatch with `--accumulate` so the single Stage-1 row sums all of them:
+
+   - **Serial / live-phase variant (single analyst):** one normal call (no `--accumulate`), exactly as the block below.
+   - **Parallel-STRIDE variant:** call the recorder **three times with `--accumulate`** as each group returns — (a) after Analyst-A returns (its `<usage>`, `--subagent-type appsec-advisor:appsec-threat-analyst`), (b) after the STRIDE fan-out returns (the **sum** of all N STRIDE `<usage>` blocks, `--subagent-type appsec-advisor:appsec-stride-analyzer`), (c) after Analyst-B returns (its `<usage>`, `--subagent-type appsec-advisor:appsec-threat-analyst`). All three pass `--stage 1` + `--since-iso "$STAGE1_START_ISO"`; the recorder sums `duration_ms`/`tool_uses`/`tokens` into one row and keeps the widest `wall_secs_observed`.
 
    ```bash
+   # Serial / live-phase variant — single dispatch, no --accumulate.
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
        --stage 1 \
        --name "Threat Analysis & Triage" \
@@ -2186,9 +2192,32 @@ By default Stage 1 runs as a **foreground** Agent call. The orchestrator's tool 
        --tool-uses <tool_uses_from_usage> \
        --tokens <total_tokens_from_usage> \
        ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst --since-iso "$STAGE1_START_ISO"}
+
+   # Parallel-STRIDE variant — one --accumulate call per group as it returns.
+   # (a) Analyst-A:
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+       --stage 1 --name "Threat Analysis & Triage" \
+       --agent appsec-advisor:appsec-threat-analyst --model "$STRIDE_MODEL" \
+       --accumulate \
+       --duration-ms <analyst_a_duration_ms> --tool-uses <analyst_a_tools> --tokens <analyst_a_tokens> \
+       ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst --since-iso "$STAGE1_START_ISO"}
+   # (b) STRIDE fan-out — pass the SUM of all N analyzers' <usage> values:
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+       --stage 1 --name "Threat Analysis & Triage" \
+       --agent appsec-advisor:appsec-threat-analyst --model "$STRIDE_MODEL" \
+       --accumulate \
+       --duration-ms <sum_stride_duration_ms> --tool-uses <sum_stride_tools> --tokens <sum_stride_tokens> \
+       ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-stride-analyzer --since-iso "$STAGE1_START_ISO"}
+   # (c) Analyst-B:
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+       --stage 1 --name "Threat Analysis & Triage" \
+       --agent appsec-advisor:appsec-threat-analyst --model "$STRIDE_MODEL" \
+       --accumulate \
+       --duration-ms <analyst_b_duration_ms> --tool-uses <analyst_b_tools> --tokens <analyst_b_tokens> \
+       ${STAGE1_START_ISO:+--subagent-type appsec-advisor:appsec-threat-analyst --since-iso "$STAGE1_START_ISO"}
    ```
 
-   The helper is idempotent — re-running it for the same `--stage` is a no-op. Failure of this helper must NOT block the run; if extraction fails, skip the call and continue to the precondition gate. The optional `--subagent-type` / `--since-iso` pair enriches the JSONL record with `dispatch_count` and `wall_secs_observed`; both are derived from `.hook-events.log` and are robust to multi-spawn auto-retry from the Re-Render / inline-shortcut loops below (`SKILL-impl.md` §"Re-Render Loop" + §"Auto-retry"). `duration_ms` continues to reflect only the final successful Agent return (API-billed); the new fields capture the full wall span including aborted spawns.
+   The helper is idempotent for a plain (non-accumulate) call — re-running it for the same `--stage` is a no-op. With `--accumulate` each call SUMS into the one Stage-1 row (and tracks `recorded_dispatch_count`). Failure of this helper must NOT block the run; if extraction fails, skip the call and continue to the precondition gate. The optional `--subagent-type` / `--since-iso` pair enriches the JSONL record with `dispatch_count` and `wall_secs_observed`; both are derived from `.hook-events.log` and are robust to multi-spawn auto-retry from the Re-Render / inline-shortcut loops below (`SKILL-impl.md` §"Re-Render Loop" + §"Auto-retry"). With accumulation `duration_ms` now reflects the **summed** API-billed compute across all Stage-1 dispatches; `wall_secs_observed` captures the full wall span.
 
 ### Phase-10b precondition gate (deterministic, skill-level)
 

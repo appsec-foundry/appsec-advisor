@@ -210,6 +210,51 @@ def _existing_stage_numbers(path: Path) -> set[int]:
     return {s for s, _ in _existing_stage_keys(path)}
 
 
+def _read_all_records(path: Path) -> list[dict]:
+    """Return every JSONL record (skipping malformed lines), order preserved."""
+    out: list[dict] = []
+    if not path.is_file():
+        return out
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict):
+                out.append(rec)
+    except OSError:
+        return out
+    return out
+
+
+def _merge_accumulate(existing: dict, incoming: dict) -> dict:
+    """Sum compute fields from ``incoming`` into ``existing`` (in place).
+
+    Additive: duration_ms / tool_uses / tokens are summed (correct semantics
+    for "net agent compute" — concurrent sub-agents bill additively even
+    though their wall-time overlaps). dispatch_count / wall_secs_observed are
+    merged by max() so the widest observed window wins regardless of which
+    sub-dispatch's derivation produced it. recorded_dispatch_count tracks how
+    many times the stage row was accumulated into.
+    """
+    for f in ("duration_ms", "tool_uses", "tokens"):
+        existing[f] = int(existing.get(f) or 0) + int(incoming.get(f) or 0)
+    for f in ("dispatch_count", "wall_secs_observed"):
+        if incoming.get(f) is not None:
+            existing[f] = max(int(existing.get(f) or 0), int(incoming.get(f) or 0))
+    existing["recorded_dispatch_count"] = int(existing.get("recorded_dispatch_count") or 1) + 1
+    existing["recorded_at"] = incoming.get("recorded_at") or existing.get("recorded_at")
+    # Carry forward a name/model only if the existing row lacks one.
+    for f in ("name", "agent", "model"):
+        if not existing.get(f) and incoming.get(f):
+            existing[f] = incoming[f]
+    return existing
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -243,6 +288,20 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="Append even when a record for this stage already exists. "
         "Default behaviour is idempotent: same --stage twice → no-op.",
+    )
+    parser.add_argument(
+        "--accumulate",
+        action="store_true",
+        help="Sum this dispatch's duration_ms / tool_uses / tokens INTO an "
+        "existing (stage, variant) record instead of no-oping. Use for a "
+        "multi-dispatch stage (e.g. parallel-STRIDE Stage 1 = Analyst-A + "
+        "N×STRIDE + Analyst-B) so net compute reflects ALL sub-agent work, "
+        "not just the final dispatch — without it the under-recorded compute "
+        "surfaces downstream as a bogus 'standby' gap (run_timing.py). When "
+        "no record exists yet this behaves like a normal first write. The "
+        "derived dispatch_count / wall_secs_observed fields are merged by "
+        "max() across calls so the widest observed window wins regardless "
+        "of call order.",
     )
     parser.add_argument(
         "--rebuild",
@@ -289,13 +348,13 @@ def main(argv: list[str]) -> int:
             sys.stderr.write(f"warn: could not unlink stale {jsonl}: {exc}\n")
 
     variant_key = (args.stage, args.variant or "")
-    if not args.allow_duplicates and variant_key in _existing_stage_keys(jsonl):
+    if not args.allow_duplicates and not args.accumulate and variant_key in _existing_stage_keys(jsonl):
         # Idempotent — return 0 without writing. Surface a hint to stderr
         # so re-runs are observable but never noisy on stdout.
         variant_hint = f" variant={args.variant!r}" if args.variant else ""
         sys.stderr.write(
             f"stage {args.stage}{variant_hint} already recorded in {jsonl} — "
-            f"skipping (use --allow-duplicates or --rebuild to override)\n"
+            f"skipping (use --allow-duplicates, --accumulate, or --rebuild to override)\n"
         )
         return 0
 
@@ -355,6 +414,46 @@ def main(argv: list[str]) -> int:
         )
         if derived is not None:
             record.update(derived)
+
+    # Accumulate path: read-modify-write merge into an existing (stage,
+    # variant) row instead of appending a second record. Used for a stage
+    # that dispatches multiple agents (e.g. parallel-STRIDE Stage 1) so the
+    # recorded compute is the SUM across all dispatches — keeping net compute
+    # honest and preventing the bogus standby gap in run_timing.py.
+    if args.accumulate:
+        all_records = _read_all_records(jsonl)
+        merged = False
+        for rec in all_records:
+            if (rec.get("stage"), rec.get("variant") or "") == variant_key:
+                _merge_accumulate(rec, record)
+                merged = True
+                break
+        if not merged:
+            # First dispatch of this stage — seed the row, tagging it so the
+            # field is present from call 1 onward.
+            record["recorded_dispatch_count"] = 1
+            all_records.append(record)
+        try:
+            tmp = jsonl.with_suffix(jsonl.suffix + ".tmp")
+            tmp.write_text(
+                "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in all_records),
+                encoding="utf-8",
+            )
+            os.replace(tmp, jsonl)
+        except OSError as exc:
+            sys.stderr.write(f"failed to rewrite {jsonl}: {exc}\n")
+            return 2
+        target = next(
+            (r for r in all_records if (r.get("stage"), r.get("variant") or "") == variant_key),
+            record,
+        )
+        print(
+            f"accumulated stage {args.stage}: +{args.duration_ms}ms "
+            f"→ {target.get('duration_ms')}ms · {target.get('tool_uses')} tools · "
+            f"{target.get('tokens')} tokens (dispatch {target.get('recorded_dispatch_count')})"
+        )
+        return 0
+
     try:
         with jsonl.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
