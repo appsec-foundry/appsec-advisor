@@ -303,6 +303,41 @@ The diagram below shows the packaging and distribution flow using "Acme" as a pl
 
 ![AppSec Advisor workflow](docs/images/orgpackaging.svg)
 
+The initializer guides you through the required organization-specific settings and creates a ready-to-use packaging repository.
+
+```console
+$ bash <(curl -fsSL https://raw.githubusercontent.com/matthiasrohr/appsec-advisor-org-packaging-template/main/scripts/init-org-repo.sh)
+
+appsec-advisor — org packaging repo setup
+────────────────────────────────────────────
+This script creates a ready-to-use packaging repo for appsec-advisor.
+You will need: git, python3 (3.10+), make
+
+Organization name (e.g. Acme Corp): ACME
+Organization id (short lowercase abbreviation, e.g. 'acme', 'hl' — used in plugin name) [a]: ac
+Plugin name (Claude Code command prefix) [ac-appsec]: ac-appsec
+Team owner (e.g. AppSec Team) [A AppSec Team]:
+Target directory [./ac-appsec-advisor]:
+Include demo content (example requirements + filled org profile)? [y/N]: N
+
+==> Cloning template from GitHub …
+Cloning into '/tmp/tmp.M4d7y2PdQl'...
+remote: Enumerating objects: 25, done.
+remote: Counting objects: 100% (25/25), done.
+remote: Compressing objects: 100% (19/19), done.
+remote: Total 25 (delta 0), reused 13 (delta 0), pack-reused 0 (from 0)
+Receiving objects: 100% (25/25), 15.80 KiB | 703.00 KiB/s, done.
+
+Done. Your packaging repo is ready at: ./ac-appsec-advisor
+
+Next steps:
+  1. Edit org-profile/org-profile.yaml — set requirements_yaml_url to your requirements catalog
+  2. Edit org-profile/context/organization.md — describe your org for analyses
+  3. Run: cd ./ac-appsec-advisor && make package
+  4. Load the plugin: claude --plugin-dir build/ac-appsec
+  5. Set up CI: make ci-github  or  make ci-gitlab
+```
+
 - Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
 - Runnable CI starters: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · Local build: [Quick start](docs/internal-plugin-packaging.md#quick-start)
 - Complete example packaging repo: [github.com/matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)
