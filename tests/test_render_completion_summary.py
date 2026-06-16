@@ -73,6 +73,27 @@ class TestExtractMetrics:
         assert m["control_status"]["partial"] == 1
         assert m["control_status"]["missing"] == 2
 
+    def test_controls_breakdown_includes_unsafe_and_reconciles(self):
+        # Regression (2026-06): the `unsafe` effectiveness bucket was omitted,
+        # so a control rated Unsafe counted toward controls_total but appeared
+        # in no sub-bucket and the breakdown did not sum to the total.
+        yaml_data = {
+            "security_controls": [
+                {"effectiveness": "Adequate"},
+                {"effectiveness": "Partial"},
+                {"effectiveness": "Weak"},
+                {"effectiveness": "Unsafe"},
+                {"effectiveness": "Unsafe"},
+                {"effectiveness": "Missing"},
+            ]
+        }
+        m = rcs.extract_metrics(yaml_data, "")
+        cs = m["control_status"]
+        assert cs["unsafe"] == 2
+        # Every cataloged control lands in exactly one bucket → sub-counts
+        # reconcile with the total.
+        assert sum(cs.values()) == m["controls_total"] == 6
+
     def test_components_count_from_yaml(self):
         yaml_data = {"components": [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}]}
         m = rcs.extract_metrics(yaml_data, "")

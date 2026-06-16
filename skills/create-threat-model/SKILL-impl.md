@@ -2318,6 +2318,15 @@ fi
 # Stage 2 rendering from an invalid YAML produces silently broken output
 # (empty §5 Attack Surface, empty §7 Operational Strengths, empty §9
 # Mitigation Register, empty §2.4 layer tables) — abort now, not after render.
+#
+# Recoverable-mitigations carve-out (2026-06-16): an empty `mitigations[]` is
+# NOT a hard failure when the ranked threats carry remediation content — the
+# auto-emitter pass below (emit_finding_fix_mitigations.py /
+# emit_config_scan_mitigations.py) deterministically backfills the register
+# BEFORE compose. validate_intermediate.py emits that case as an ADVISORY, so
+# the LLM-yaml-write's chronic `mitigation_ids: []` under-production no longer
+# blocks the run before its own deterministic fix runs. Only an empty register
+# with NO backfillable source (true Phase-3-8 loss) still hard-fails here.
 YAML_VALIDATE_OUTPUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
     threat_model_output "$OUTPUT_DIR/threat-model.yaml" 2>&1)
 YAML_VALIDATE_RC=$?

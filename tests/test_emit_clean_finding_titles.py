@@ -80,6 +80,27 @@ def test_fallback_uses_embedded_file_when_evidence_has_no_file():
     assert ecf.build_clean_title(t["title"], t) == "Open redirect — routes/redirect.ts:12"
 
 
+def test_source_auth_class_qualifier_name_keeps_class_only():
+    # Source-auth scanner check names arrive as "Class — qualifier clause" with
+    # their own em-dash; the title must carry only the weakness class.
+    t = _t("Broken authorization — attacker-controlled owner ID in resource query — routes/address.ts:11",
+           file="routes/address.ts", line=11)
+    assert ecf.build_clean_title(t["title"], t) == "Broken authorization — routes/address.ts:11"
+
+
+def test_over_length_title_capped_to_schema_limit():
+    # Regression (2026-06): verbose source-auth / config titles shipped >80
+    # chars and failed validate_intermediate. The emitter must enforce the cap.
+    raw = ("Broken authorization attacker controlled owner identifier in resource "
+           "query without ownership enforcement filter")
+    t = _t(raw, file="routes/payment.ts", line=70)
+    out = ecf.build_clean_title(t["title"], t)
+    assert len(out) <= 80
+    assert out.endswith("— routes/payment.ts:70")
+    # word-boundary truncation: no dangling separator / ellipsis
+    assert not out.split(" — ")[0].endswith(("-", "—", ":", ","))
+
+
 def test_missing_or_malformed_evidence_falls_back_to_weakness_only():
     assert ecf.build_clean_title("", {"evidence": "not-a-list"}) == ""
     assert ecf.build_clean_title("open redirect", {"evidence": [{"line": 12}]}) == "Open redirect"

@@ -139,7 +139,12 @@ def extract_metrics(yaml_data: dict, md_text: str) -> dict[str, Any]:
 
     # Controls — count status badges in yaml if present, otherwise scan md.
     controls = yaml_data.get("security_controls") or yaml_data.get("controls") or []
-    control_status = {"adequate": 0, "partial": 0, "weak": 0, "missing": 0}
+    # All five buckets of effectiveness_taxonomy (sections-contract.yaml) — the
+    # `unsafe` bucket was previously omitted, so a control rated Unsafe counted
+    # toward controls_total but appeared in no sub-bucket and the breakdown did
+    # not reconcile with the total (juice-shop 2026-06: 38 cataloged rendered as
+    # 3/7/2/23 = 35, dropping 3 Unsafe).
+    control_status = {"adequate": 0, "partial": 0, "weak": 0, "unsafe": 0, "missing": 0}
     for c in controls:
         eff = (c.get("effectiveness") or c.get("status") or "").strip().lower()
         if eff in control_status:
@@ -301,18 +306,12 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
     # the console — including an explicit "no new / no resolved" line when
     # nothing changed. Non-iterative full snapshots keep the old suppression.
     basis = e.get("delta_basis")
-    is_iterative = (
-        basis in ("incremental", "fingerprint")
-        or mode_val == "incremental"
-        or bool(baseline_val)
-    )
+    is_iterative = basis in ("incremental", "fingerprint") or mode_val == "incremental" or bool(baseline_val)
 
     # Resolved on a full fingerprint delta are carried as prior fingerprints
     # (T-IDs aren't stable across full runs), not as resolved.threats.
     resolved_fps = (e.get("resolved") or {}).get("fingerprints") or []
-    resolved_fp_labels = [
-        (fp.split("|")[2] or fp).strip() for fp in resolved_fps if isinstance(fp, str)
-    ]
+    resolved_fp_labels = [(fp.split("|")[2] or fp).strip() for fp in resolved_fps if isinstance(fp, str)]
 
     # Only render when the entry has delta data. First-run full assessments
     # produce a changelog[0] but with empty deltas — skip those, but never skip
@@ -656,9 +655,7 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         if m:
             am = _PHASE_AGENT_RE.search(line)
             emitter = am.group("agent") if am else ""
-            starts.setdefault(m.group(2), []).append(
-                (_iso_to_epoch(m.group(1)), m.group(3).strip(), emitter)
-            )
+            starts.setdefault(m.group(2), []).append((_iso_to_epoch(m.group(1)), m.group(3).strip(), emitter))
             continue
         m = _PHASE_END_RE.search(line)
         if m:
@@ -867,14 +864,16 @@ def render_metrics(metrics: dict, cfg: dict) -> list[str]:
     )
     lines.append(f"  Components : {metrics['n_components']} analyzed")
     cs = metrics["control_status"]
-    # RC.F — render all 4 effectiveness buckets per sections-contract.yaml
-    # `effectiveness_taxonomy`. Earlier this line silently dropped `weak`
-    # so the headline total did not match `{controls_total} cataloged`
-    # (the 2026-05 juice-shop run shipped 12 cataloged but rendered 0/3/6 = 9).
+    # RC.F — render all 5 effectiveness buckets per sections-contract.yaml
+    # `effectiveness_taxonomy` (adequate/partial/weak/unsafe/missing). Earlier
+    # this line dropped buckets (first `weak`, later `unsafe`) so the breakdown
+    # total did not reconcile with `{controls_total} cataloged` (2026-05: 12
+    # cataloged rendered 0/3/6=9; 2026-06 juice-shop: 38 cataloged rendered
+    # 3/7/2/23=35, dropping 3 Unsafe).
     lines.append(
         f"  Controls   : {metrics['controls_total']} cataloged | "
         f"{cs['adequate']} adequate | {cs['partial']} partial | "
-        f"{cs['weak']} weak | {cs['missing']} missing"
+        f"{cs['weak']} weak | {cs['unsafe']} unsafe | {cs['missing']} missing"
     )
     lines.append(f"  Mitigations: {metrics['mitigations_total']} linked")
     if cfg.get("check_requirements"):
@@ -967,8 +966,7 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
             # verbose-only. The default summary keeps a single Idle line.
             if verbose and standby > 0:
                 lines.append(
-                    f"     standby/suspend  : {_fmt_duration(standby)}  "
-                    f"(>10m gap — machine asleep or hung dispatch)"
+                    f"     standby/suspend  : {_fmt_duration(standby)}  (>10m gap — machine asleep or hung dispatch)"
                 )
                 lines.append(f"     API + orchestr.  : {_fmt_duration(max(0, idle_total - standby))}")
 
@@ -992,8 +990,7 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
                     f"(standby excluded — basis for the next estimate)"
                 )
             lines.append(
-                f"  Total elapsed (wall): {_fmt_duration(wall)}  "
-                f"(end-to-end, incl. {_fmt_duration(standby)} standby)"
+                f"  Total elapsed (wall): {_fmt_duration(wall)}  (end-to-end, incl. {_fmt_duration(standby)} standby)"
             )
         else:
             lines.append(f"  Total elapsed (wall): {_fmt_duration(wall)}  (end-to-end, incl. orchestration)")
@@ -1548,7 +1545,7 @@ def render_dry_run(output_dir: Path, repo_root: Path) -> str:
     lines.append(
         f"  Controls        : {metrics['controls_total']} cataloged "
         f"(adequate: {cs['adequate']}, partial: {cs['partial']}, "
-        f"weak: {cs['weak']}, missing: {cs['missing']})"
+        f"weak: {cs['weak']}, unsafe: {cs['unsafe']}, missing: {cs['missing']})"
     )
     lines.append("")
     lines.append("  Note: This is a preview. No files were written to the repository.")

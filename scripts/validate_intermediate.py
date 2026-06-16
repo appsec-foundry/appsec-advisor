@@ -783,7 +783,13 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     # the canonical signal that Stage 1 mis-classified a finding by attack
     # target rather than by control location.
     advisories.extend(_check_component_path_glob_consistency(data))
-    return len(errors) == 0, errors + advisories
+    # Advisory-prefixed entries that individual checks routed into `errors`
+    # (e.g. the recoverable empty-mitigations case) must NOT fail validity —
+    # main() already displays them as ADVISORY. Compute validity from the
+    # hard errors only, mirroring the advisory split at the CLI layer.
+    advisory_prefixes = ("[migrated] ", "[advisory] ")
+    hard_errors = [e for e in errors if not e.startswith(advisory_prefixes)]
+    return len(hard_errors) == 0, errors + advisories
 
 
 def _check_component_path_glob_consistency(data: dict) -> list[str]:
@@ -924,14 +930,49 @@ def _check_finding_id_contiguity(data: dict) -> list[str]:
     return advisories
 
 
+def _threat_is_backfillable(threat: dict) -> bool:
+    """True when the deterministic mitigation backfill (run by the skill's
+    auto-emitter pass BEFORE compose) would synthesize a mitigation card for
+    this threat. Mirrors the eligibility of emit_config_scan_mitigations.py
+    (config-scan source) and emit_finding_fix_mitigations.py (non-config-scan
+    threat carrying remediation content: a mitigation_title, remediation.steps,
+    or a remediation string). Keep in sync with those emitters."""
+    if not isinstance(threat, dict):
+        return False
+    if (threat.get("source") or "") == "config-scan":
+        return True  # emit_config_scan_mitigations synthesizes a fix card
+    if (threat.get("mitigation_title") or "").strip():
+        return True
+    rem = threat.get("remediation")
+    if isinstance(rem, dict):
+        steps = rem.get("steps")
+        if isinstance(steps, list) and any(str(s).strip() for s in steps):
+            return True
+    elif isinstance(rem, str) and rem.strip():
+        return True
+    return False
+
+
 def _check_mitigations_nonempty(data: dict) -> list[str]:
     """Enforce the mitigation synthesis invariant: when P1/P2/P3 threats exist,
-    `mitigations[]` MUST be non-empty.
+    `mitigations[]` MUST be non-empty — UNLESS the empty register is recoverable
+    by the deterministic backfill that always runs before compose.
 
     An empty register is the dominant symptom of Phase 11 failing to execute
     the mandatory mitigation synthesis step (phase-group-finalization.md §356).
     The compose renderer renders all four priority buckets as
     `_No P-N mitigations._` which makes the §9 section useless.
+
+    Root-cause note (2026-06-16): the LLM Phase-11 yaml-write routinely returns
+    ranked threats with `mitigation_ids: []` (build_mitigations then yields an
+    empty register), but those threats DO carry `remediation`/`mitigation_title`
+    content. The skill's auto-emitter pass (emit_finding_fix_mitigations.py +
+    emit_config_scan_mitigations.py) deterministically backfills the register
+    from that content BEFORE compose. So an empty register whose ranked threats
+    are all backfillable is RECOVERABLE — surfaced as an advisory, not a hard
+    failure. Only an empty register with NO backfillable source (true Phase-3-8
+    data loss) is a hard error. Returns an `[advisory]`-prefixed message for the
+    recoverable case so it is reported without failing validity.
     """
     errors: list[str] = []
     mitigations = data.get("mitigations") or []
@@ -942,13 +983,25 @@ def _check_mitigations_nonempty(data: dict) -> list[str]:
     ranked_threats = [
         t for t in threats if isinstance(t, dict) and _RISK_BAND.get(t.get("risk") or t.get("severity") or "", 99) <= 3
     ]
-    if ranked_threats:
+    if not ranked_threats:
+        return errors
+    if any(_threat_is_backfillable(t) for t in ranked_threats):
+        # Recoverable: the deterministic backfill will populate the register
+        # before compose. Advisory only — does not fail validation.
         errors.append(
-            "mitigations[] is empty but P1/P2/P3-ranked threats exist. "
-            "Phase 11 must synthesize at least one M-NNN entry per CWE cluster "
-            "(see phase-group-finalization.md §356 — Mitigation synthesis). "
-            "Fix: re-run Stage 2 or manually populate mitigations[] before compose."
+            "[advisory] mitigations[] is empty but ranked threats carry "
+            "remediation content — the deterministic backfill "
+            "(emit_finding_fix_mitigations.py / emit_config_scan_mitigations.py) "
+            "will populate the register before compose."
         )
+        return errors
+    errors.append(
+        "mitigations[] is empty but P1/P2/P3-ranked threats exist and none "
+        "carry remediation content the backfill can use. Phase 11 must "
+        "synthesize at least one M-NNN entry per CWE cluster (see "
+        "phase-group-finalization.md §356 — Mitigation synthesis). "
+        "Fix: re-run Stage 2 or manually populate mitigations[] before compose."
+    )
     return errors
 
 

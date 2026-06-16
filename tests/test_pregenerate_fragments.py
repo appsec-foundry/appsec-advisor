@@ -1242,6 +1242,29 @@ class TestSecurityArchitecture:
         assert "#### 7.3.1 JWT Session Issuance and Verification" in session_body
         assert "sequenceDiagram" in session_body
 
+    def test_section_73_with_non_flow_controls_still_gets_diagram(self):
+        """Regression (2026-06-16): §7.3 populated with storage/cookie/revocation
+        controls (non-flow-like names) took the per-subcontrol path whose diagram
+        is gated on flow-like naming, so no sequenceDiagram landed and
+        compose --strict failed the §7.3 domain_required_pattern. The
+        section-scoped guarantee must inject one regardless of control naming."""
+        md = pf.gen_security_architecture(
+            {
+                "components": [],
+                "security_controls": [
+                    {"domain": "7.3 Session and Token Controls", "control": "JWT storage",
+                     "effectiveness": "Unsafe", "cwe": "CWE-922"},
+                    {"domain": "7.3 Session and Token Controls", "control": "Token revocation",
+                     "effectiveness": "Missing", "cwe": "CWE-613"},
+                    {"domain": "7.3 Session and Token Controls", "control": "Cookie attributes",
+                     "effectiveness": "Weak", "cwe": "CWE-1004"},
+                ],
+            }
+        )
+        session_section = re.search(r"### 7\.3 .+?(?=### 7\.4 )", md, re.DOTALL)
+        assert session_section is not None
+        assert "sequenceDiagram" in session_section.group(0)
+
 
 class TestOutOfScope:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
@@ -1427,11 +1450,21 @@ class TestCli:
     def test_idempotent_skips_existing(self, output_dir):
         # First run writes all 7 (6 composer fragments + _chain-skeleton.md helper).
         _run_cli(str(output_dir))
-        # Second run should skip all
+        # Second non-force run skips every MECHANICAL fragment. The one
+        # exception is the still-UNFILLED security-architecture.md scaffold,
+        # which self-heals against the current yaml (stale-scaffold fix
+        # 2026-06-16) — so exactly one fragment regenerates and the rest skip.
         result = _run_cli(str(output_dir))
         assert result.returncode == 0
-        expected = f"skipped {len(pf.GENERATORS)}"
+        expected = f"skipped {len(pf.GENERATORS) - 1}"
         assert expected in result.stdout
+        # Once narrative-filled, security-architecture.md is preserved too →
+        # a subsequent non-force run skips ALL fragments.
+        frag = output_dir / ".fragments" / "security-architecture.md"
+        frag.write_text("### 7.2 Identity\nfilled, no placeholders\n")
+        result2 = _run_cli(str(output_dir))
+        assert result2.returncode == 0
+        assert f"skipped {len(pf.GENERATORS)}" in result2.stdout
 
     def test_force_overwrites(self, output_dir):
         _run_cli(str(output_dir))
@@ -1538,6 +1571,41 @@ class TestCli:
         result = _run_cli(str(output_dir), "--force", "--only", "system-overview.md")
         assert result.returncode == 0
         assert "MUTATED" not in target.read_text()
+
+    def test_unfilled_scaffold_regenerates_without_force(self, output_dir):
+        """Stale-scaffold self-heal (2026-06-16): a NON-force pregen of an
+        UNFILLED security-architecture.md scaffold must regenerate it from the
+        CURRENT yaml — otherwise a scaffold written early (Analyst-A, before
+        emit_auth_coverage backfills auth mechanisms) survives stale into Stage 2
+        and §7.2/§7.3 lose the new mechanisms' flow blocks. A narrative-FILLED
+        fragment is still preserved (separate test below)."""
+        frag = output_dir / ".fragments" / "security-architecture.md"
+        # 1. Early scaffold (no §7.2 auth-mechanism controls yet).
+        _run_cli(str(output_dir), "--only", "security-architecture.md")
+        assert "NARRATIVE_PLACEHOLDER" in frag.read_text()
+        assert "Password-Based Login" not in frag.read_text()
+        # 2. emit_auth_coverage-style backfill: add §7.2 mechanism control.
+        ydata = yaml.safe_load((output_dir / "threat-model.yaml").read_text())
+        ydata.setdefault("security_controls", []).append(
+            {"domain": "7.2 Identity and Authentication Controls",
+             "control": "Password-Based Login", "kind": "mechanism",
+             "effectiveness": "Unsafe", "cwe": "CWE-287"}
+        )
+        (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(ydata))
+        # 3. NON-force pregen → must regenerate and pick up the new mechanism.
+        result = _run_cli(str(output_dir), "--only", "security-architecture.md")
+        assert result.returncode == 0
+        assert "Password-Based Login" in frag.read_text()
+
+    def test_filled_scaffold_preserved_without_force(self, output_dir):
+        """The self-heal must NOT clobber a narrative-filled fragment on a
+        non-force pregen (no NARRATIVE_PLACEHOLDER markers → preserve)."""
+        frag = output_dir / ".fragments" / "security-architecture.md"
+        _run_cli(str(output_dir), "--only", "security-architecture.md")
+        frag.write_text("### 7.2 Identity\nFILLED-SENTINEL — no placeholders\n")
+        result = _run_cli(str(output_dir), "--only", "security-architecture.md")
+        assert result.returncode == 0
+        assert "FILLED-SENTINEL" in frag.read_text()
 
     def test_lock_step_with_check_inline_shortcut(self, output_dir):
         """Pre-gen + check_inline_shortcut: after pre-gen, the only

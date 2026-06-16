@@ -52,6 +52,7 @@ try:
         probe_runs,
         render_mermaid_blocks,
         rewrite_vscode_links,
+        stage_relative_images,
     )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
@@ -64,6 +65,7 @@ except ImportError:
         probe_runs,
         render_mermaid_blocks,
         rewrite_vscode_links,
+        stage_relative_images,
     )
 
 
@@ -137,6 +139,16 @@ def export_html(
         if use_mermaid and check_tool("mmdc"):
             md_text, rendered, failed = render_mermaid_blocks(md_text, work)
             sys.stderr.write(f"[export_html] mermaid: {rendered} rendered, {failed} failed\n")
+
+        # Stage relative image assets (e.g. the hand-built figure1.svg) from the
+        # document's own directory into the work dir, so pandoc — whose
+        # --resource-path points at the work dir (the temp pre.md's parent) —
+        # can embed them. Without this the standalone HTML export fails with
+        # "File threat-model.figure1.svg not found in resource path" (pandoc
+        # exit 99). export_pdf.py already does this; the HTML path omitted it.
+        staged = stage_relative_images(md_text, input_md.parent, work)
+        if staged:
+            sys.stderr.write(f"[export_html] staged {staged} relative image asset(s)\n")
 
         pre_md = work / "pre.md"
         pre_md.write_text(md_text, encoding="utf-8")

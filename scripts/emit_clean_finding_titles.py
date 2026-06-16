@@ -119,10 +119,37 @@ def clean_weakness(raw_title: str) -> str:
     return s
 
 
+# Schema ceiling for threats[].title (schemas/threat-model.output.schema.yaml).
+# emit_clean_finding_titles is the single point responsible for producing
+# schema-clean titles, so it MUST enforce this — otherwise a verbose source
+# (e.g. the source-auth scanner's "Class — qualifier clause" check names) ships
+# a >80-char title that fails validate_intermediate.
+_MAX_TITLE_LEN = 80
+
+
+def _truncate_to_words(text: str, budget: int) -> str:
+    """Trim ``text`` to at most ``budget`` chars on a word boundary, with no
+    trailing ellipsis or separator (keeps the schema title pattern happy)."""
+    text = text.strip()
+    if len(text) <= budget:
+        return text
+    cut = text[:budget]
+    # Back up to the last whitespace so we never split a word.
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.strip(" -—–:,.")
+
+
 def build_clean_title(raw_title: str, threat: dict) -> str:
     weakness = clean_weakness(raw_title)
     if not weakness:
         return (raw_title or "").strip()
+    # Source-auth / config check names arrive as "Weakness class — qualifying
+    # clause" (their own em-dash). The canonical title carries only the weakness
+    # CLASS; the qualifier is detail that belongs in the §8 card, not the title.
+    # clean_weakness has already stripped any trailing file token, so an em-dash
+    # remaining here is the check-name's internal "class — qualifier" separator.
+    weakness = re.split(r"\s+[—–-]\s+", weakness, maxsplit=1)[0].strip()
     # The authoritative locator is the evidence file:line (the title-embedded
     # token is often a truncated / basename-only echo). Compact it to a basename
     # when it is a deep path.
@@ -130,7 +157,18 @@ def build_clean_title(raw_title: str, threat: dict) -> str:
     if not loc:
         m = _FILE_TOKEN_RE.search(raw_title or "")
         loc = _basename_loc((m.group(1) + (m.group(2) or "")) if m else "")
-    return f"{weakness} — {loc}" if loc else weakness
+    # Hard length enforcement: a weakness class that is still too long (verbose
+    # check name with no em-dash to split on) is truncated on a word boundary so
+    # the rendered "<weakness> — <loc>" fits the schema's 80-char ceiling.
+    if loc:
+        budget = _MAX_TITLE_LEN - len(loc) - len(" — ")
+        if len(weakness) > budget:
+            weakness = _truncate_to_words(weakness, max(budget, 24))
+        title = f"{weakness} — {loc}"
+        if len(title) > _MAX_TITLE_LEN:  # loc alone is huge — last-resort guard
+            title = _truncate_to_words(title, _MAX_TITLE_LEN)
+        return title
+    return _truncate_to_words(weakness, _MAX_TITLE_LEN)
 
 
 def apply(data: dict) -> int:

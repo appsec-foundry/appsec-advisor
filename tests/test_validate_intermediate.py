@@ -697,9 +697,11 @@ def test_glob_consistency_no_evidence_files_tolerated():
 
 
 def test_mitigations_empty_with_ranked_threats():
+    # Unrecoverable: ranked threat carries NO remediation content the backfill
+    # could use → hard (non-advisory) error.
     data = {"mitigations": [], "threats": [{"risk": "High"}]}
     errs = vi._check_mitigations_nonempty(data)
-    assert any("mitigations[] is empty" in e for e in errs)
+    assert any("mitigations[] is empty" in e and not e.startswith("[advisory]") for e in errs)
 
 
 def test_mitigations_present_returns_empty():
@@ -708,6 +710,47 @@ def test_mitigations_present_returns_empty():
 
 def test_mitigations_empty_no_ranked_threats():
     assert vi._check_mitigations_nonempty({"mitigations": [], "threats": [{"risk": "Low"}]}) == []
+
+
+def test_mitigations_empty_recoverable_with_remediation_is_advisory():
+    # Regression (2026-06-16): empty register but ranked threats carry
+    # remediation content → the deterministic backfill will populate it before
+    # compose, so this is an ADVISORY, not a hard error.
+    data = {"mitigations": [], "threats": [{"risk": "Critical", "remediation": {"steps": ["Use bind params"]}}]}
+    errs = vi._check_mitigations_nonempty(data)
+    assert errs and all(e.startswith("[advisory]") for e in errs)
+
+
+def test_mitigations_empty_recoverable_config_scan_is_advisory():
+    # config-scan threats are backfilled by emit_config_scan_mitigations.
+    data = {"mitigations": [], "threats": [{"risk": "High", "source": "config-scan"}]}
+    errs = vi._check_mitigations_nonempty(data)
+    assert errs and all(e.startswith("[advisory]") for e in errs)
+
+
+def test_mitigations_empty_mitigation_title_only_is_advisory():
+    data = {"mitigations": [], "threats": [{"risk": "Critical", "mitigation_title": "Add ownership check"}]}
+    errs = vi._check_mitigations_nonempty(data)
+    assert errs and all(e.startswith("[advisory]") for e in errs)
+
+
+def test_validator_valid_when_empty_register_recoverable():
+    # Full validator: a schema-valid model with an empty register but
+    # remediation-bearing ranked threats must be is_valid=True (advisory only).
+    data = {
+        "meta": {"generated": "2026-06-16T00:00:00Z"},
+        "threats": [
+            {"id": "T-001", "title": "SQL Injection", "risk": "Critical",
+             "component": "api", "cwe": "CWE-89",
+             "remediation": {"steps": ["Use parameterized queries"]}},
+        ],
+        "mitigations": [],
+    }
+    ok, msgs = vi.validate_threat_model_output(data)
+    hard = [m for m in msgs if not m.startswith(("[advisory] ", "[migrated] "))]
+    # The empty-register check itself must not contribute a hard error.
+    assert not any("mitigations[] is empty" in m and not m.startswith("[advisory]") for m in hard)
+    assert any(m.startswith("[advisory]") and "mitigations[] is empty" in m for m in msgs)
 
 
 # --- _check_pt_id_sequence + validate_pentest_tasks ------------------------
