@@ -785,15 +785,26 @@ def resolve_paths(ns: argparse.Namespace, dry_run: bool) -> dict:
     if not repo_in.is_dir():
         raise SystemExit(f"Error: repository path does not exist: {repo_in}")
 
-    # Try to resolve the git root; fall back to the given path if not a repo.
-    try:
-        r = subprocess.run(
-            ["git", "-C", str(repo_in), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5,
-        )
-        repo_root = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout else repo_in
-    except (OSError, subprocess.SubprocessError):
+    if ns.repo:
+        # An explicit --repo names the scan target directly. Do NOT walk up to
+        # the enclosing git toplevel: when --repo points at a subdirectory nested
+        # inside a larger repo (e.g. a test fixture living inside this plugin's
+        # own git tree with no .git of its own), `git rev-parse --show-toplevel`
+        # would silently retarget the whole parent repo. Honour what the caller
+        # asked for.
         repo_root = repo_in
+    else:
+        # No --repo given: resolve the enclosing git root from the cwd so an
+        # invocation from a subdirectory still scans the whole repository.
+        # Fall back to the cwd if it is not inside a git repo.
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(repo_in), "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True, timeout=5,
+            )
+            repo_root = Path(r.stdout.strip()) if r.returncode == 0 and r.stdout else repo_in
+        except (OSError, subprocess.SubprocessError):
+            repo_root = repo_in
 
     if dry_run:
         import tempfile
