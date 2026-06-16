@@ -1656,7 +1656,7 @@ class TestSecurityPostureStructureRegexes:
 
     def _with_figure1(self, fig1_mermaid: str) -> str:
         figure1 = (
-            "**Figure 1 - Architecture, Trust Boundaries & Threats**\n\n"
+            "**Figure 1 - Architecture & Top Threats**\n\n"
             "```mermaid\n"
             f"{fig1_mermaid.rstrip()}\n"
             "```\n\n"

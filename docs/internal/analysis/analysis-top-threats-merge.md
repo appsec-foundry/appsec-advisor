@@ -127,7 +127,7 @@ Do it, but scope it as a **3→1 collapse under the existing diagram**, not "mer
 
 **Risk: 🔴 Critical ×4 · 🟠 High ×13 · 🟡 Medium ×6 · 🟢 Low ×3.**
 
-### Figure 1 — Architecture, Trust Boundaries & Threats
+### Figure 1 — Architecture & Top Threats
 
 Components grouped by trust boundary. Red edges are attacker-controlled data flows; each is labelled with the threat (①–⑦) that rides it. *(This is the content of the optional `.fragments/top-threats-architecture.md` fragment the generator inlines as Figure 1; glyphs follow the 7-class taxonomy order.)*
 

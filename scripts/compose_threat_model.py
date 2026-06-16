@@ -5296,12 +5296,12 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         src = f"data:image/svg+xml;base64,{b64}"
     else:
         src = ctx.figure_basename
-    return f"{intro}\n\n![Figure 1 - Architecture, Trust Boundaries and Threats]({src})"
+    return f"{intro}\n\n![Figure 1 - Architecture & Top Threats]({src})"
 
 
 def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
-    """Deterministically build **Figure 1 — Architecture, Trust Boundaries &
-    Threats** from ``threat-model.yaml`` + the *already-reconciled*
+    """Deterministically build **Figure 1 — Architecture & Top Threats**
+    from ``threat-model.yaml`` + the *already-reconciled*
     ``attack_paths_data``.
 
     Layout: a ``flowchart TB`` with an actor band on top, then one subgraph
@@ -6587,7 +6587,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
 
     parts: list[str] = ["### Security Posture & Top Threats", ""]
     if figure1_md:
-        parts += ["**Figure 1 — Architecture, Trust Boundaries & Threats**", "", figure1_md, ""]
+        parts += ["**Figure 1 — Architecture & Top Threats**", "", figure1_md, ""]
     parts += [
         "**Figure 2 — Risk Flow: Actor → Tier → Impact**",
         "",

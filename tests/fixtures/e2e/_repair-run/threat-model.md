@@ -104,7 +104,7 @@ No single patch closes the exposure; the codebase requires parameterised queries
 
 ### Security Posture & Top Threats
 
-**Figure 1 - Architecture, Trust Boundaries & Threats**
+**Figure 1 - Architecture & Top Threats**
 
 Components grouped by trust boundary (architecture tier). Grey edges are the legitimate request backbone. **Solid red** edges are attacker-controlled attacks - each originates at a threat actor and lands on the component it directly reaches. **Dotted red** edges are the consequence path: how that attack propagates through the application tier onto the data tier or the victim. Each red edge carries the threat glyph(s) - the same numbering as Figure 2 and the Top Threats table below.
 
