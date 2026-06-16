@@ -30,7 +30,8 @@ def test_preflight_pandoc_missing(monkeypatch):
 
 def test_preflight_pandoc_present_but_broken(monkeypatch):
     monkeypatch.setattr(
-        export_html, "check_tool",
+        export_html,
+        "check_tool",
         lambda name: "/usr/bin/pandoc" if name == "pandoc" else None,
     )
     monkeypatch.setattr(export_html, "probe_runs", lambda name: (False, "boom"))
@@ -44,7 +45,8 @@ def test_preflight_pandoc_present_but_broken(monkeypatch):
 
 def test_preflight_pandoc_ok_mmdc_missing_optional(monkeypatch):
     monkeypatch.setattr(
-        export_html, "check_tool",
+        export_html,
+        "check_tool",
         lambda name: "/usr/bin/pandoc" if name == "pandoc" else None,
     )
     monkeypatch.setattr(export_html, "probe_runs", lambda name: (True, "2.x"))
@@ -57,7 +59,8 @@ def test_preflight_pandoc_ok_mmdc_missing_optional(monkeypatch):
 
 def test_preflight_mmdc_missing_required_fails(monkeypatch):
     monkeypatch.setattr(
-        export_html, "check_tool",
+        export_html,
+        "check_tool",
         lambda name: "/usr/bin/pandoc" if name == "pandoc" else None,
     )
     monkeypatch.setattr(export_html, "probe_runs", lambda name: (True, "2.x"))
@@ -69,7 +72,8 @@ def test_preflight_mmdc_missing_required_fails(monkeypatch):
 
 def test_preflight_mmdc_present_require_render_ok(monkeypatch):
     monkeypatch.setattr(
-        export_html, "check_tool",
+        export_html,
+        "check_tool",
         lambda name: "/usr/bin/pandoc" if name == "pandoc" else "/usr/bin/mmdc",
     )
     monkeypatch.setattr(export_html, "probe_runs", lambda name: (True, "2.x"))
@@ -83,7 +87,8 @@ def test_preflight_mmdc_present_require_render_ok(monkeypatch):
 
 def test_preflight_mmdc_present_require_render_bad(monkeypatch):
     monkeypatch.setattr(
-        export_html, "check_tool",
+        export_html,
+        "check_tool",
         lambda name: "/usr/bin/pandoc" if name == "pandoc" else "/usr/bin/mmdc",
     )
     monkeypatch.setattr(export_html, "probe_runs", lambda name: (True, "2.x"))
@@ -97,7 +102,8 @@ def test_preflight_mmdc_present_require_render_bad(monkeypatch):
 
 def test_preflight_mmdc_present_not_required(monkeypatch):
     monkeypatch.setattr(
-        export_html, "check_tool",
+        export_html,
+        "check_tool",
         lambda name: "/usr/bin/pandoc" if name == "pandoc" else "/usr/bin/mmdc",
     )
     monkeypatch.setattr(export_html, "probe_runs", lambda name: (True, "2.x"))
@@ -143,7 +149,8 @@ def test_export_html_with_mermaid(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(export_html, "check_tool", lambda name: "/usr/bin/mmdc")
 
-    def _render(md_text, work):
+    def _render(md_text, work, fmt="png"):
+        assert fmt == "svg"  # HTML path must request SVG, not the PDF PNG
         return (md_text, 1, 0)
 
     monkeypatch.setattr(export_html, "render_mermaid_blocks", _render)
@@ -168,26 +175,20 @@ def test_export_html_with_mermaid(tmp_path, monkeypatch, capsys):
 
 
 def test_main_preflight_abort(monkeypatch):
-    monkeypatch.setattr(
-        export_html, "preflight", lambda require_mermaid: (False, ["  [miss] pandoc"])
-    )
+    monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (False, ["  [miss] pandoc"]))
     rc = export_html.main(["--check-only"])
     assert rc == 1
 
 
 def test_main_check_only_ok(monkeypatch, capsys):
-    monkeypatch.setattr(
-        export_html, "preflight", lambda require_mermaid: (True, ["  [ok] pandoc"])
-    )
+    monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (True, ["  [ok] pandoc"]))
     rc = export_html.main(["--check-only"])
     assert rc == 0
     assert "check-only" in capsys.readouterr().err
 
 
 def test_main_input_not_found(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        export_html, "preflight", lambda require_mermaid: (True, [])
-    )
+    monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (True, []))
     rc = export_html.main(["--input", str(tmp_path / "nope.md")])
     assert rc == 2
 
@@ -195,9 +196,7 @@ def test_main_input_not_found(monkeypatch, tmp_path):
 def test_main_css_missing(monkeypatch, tmp_path):
     inp = tmp_path / "tm.md"
     inp.write_text("# t\n", encoding="utf-8")
-    monkeypatch.setattr(
-        export_html, "preflight", lambda require_mermaid: (True, [])
-    )
+    monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (True, []))
     # Point __file__-derived css lookup at a dir with no assets/print.css
     monkeypatch.setattr(export_html, "__file__", str(tmp_path / "export_html.py"))
     rc = export_html.main(["--input", str(inp), "--output", str(tmp_path / "o.html")])
@@ -208,9 +207,7 @@ def test_main_conversion_runtime_error(monkeypatch, tmp_path):
     inp = tmp_path / "tm.md"
     inp.write_text("# t\n", encoding="utf-8")
     out = tmp_path / "o.html"
-    monkeypatch.setattr(
-        export_html, "preflight", lambda require_mermaid: (True, [])
-    )
+    monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (True, []))
 
     def _boom(**kwargs):
         raise RuntimeError("pandoc exploded")
@@ -224,15 +221,11 @@ def test_main_success_end_to_end(monkeypatch, tmp_path, capsys):
     inp = tmp_path / "tm.md"
     inp.write_text("# t\n\nbody\n", encoding="utf-8")
     out = tmp_path / "sub" / "o.html"  # parent dir must be created
-    monkeypatch.setattr(
-        export_html, "preflight", lambda require_mermaid: (True, [])
-    )
+    monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (True, []))
     monkeypatch.setattr(export_html, "check_tool", lambda name: None)
     monkeypatch.setattr(export_html, "md_to_html", _stub_md_to_html)
 
-    rc = export_html.main(
-        ["--input", str(inp), "--output", str(out), "--no-mermaid"]
-    )
+    rc = export_html.main(["--input", str(inp), "--output", str(out), "--no-mermaid"])
     assert rc == 0
     assert out.is_file()
     assert "wrote" in capsys.readouterr().err
@@ -241,9 +234,7 @@ def test_main_success_end_to_end(monkeypatch, tmp_path, capsys):
 def test_main_default_output_derives_from_input(monkeypatch, tmp_path):
     inp = tmp_path / "tm.md"
     inp.write_text("# t\n", encoding="utf-8")
-    monkeypatch.setattr(
-        export_html, "preflight", lambda require_mermaid: (True, [])
-    )
+    monkeypatch.setattr(export_html, "preflight", lambda require_mermaid: (True, []))
     monkeypatch.setattr(export_html, "check_tool", lambda name: None)
     monkeypatch.setattr(export_html, "md_to_html", _stub_md_to_html)
 

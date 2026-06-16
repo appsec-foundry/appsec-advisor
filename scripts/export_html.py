@@ -137,7 +137,11 @@ def export_html(
         work = Path(tmp)
 
         if use_mermaid and check_tool("mmdc"):
-            md_text, rendered, failed = render_mermaid_blocks(md_text, work)
+            # SVG, not PNG: HTML is rendered by a browser (no WeasyPrint), which
+            # handles mermaid SVG faithfully, and the embedded vector asset is a
+            # fraction of the 2× PNG's size. The shared PDF renderer defaults to
+            # PNG for WeasyPrint's sake — this path opts into SVG explicitly.
+            md_text, rendered, failed = render_mermaid_blocks(md_text, work, fmt="svg")
             sys.stderr.write(f"[export_html] mermaid: {rendered} rendered, {failed} failed\n")
 
         # Stage relative image assets (e.g. the hand-built figure1.svg) from the

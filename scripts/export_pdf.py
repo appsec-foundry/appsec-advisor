@@ -295,26 +295,61 @@ MMDC_FAIL_FAST_THRESHOLD = 3
 MMDC_PARALLEL_WORKERS = 4
 
 
-def _render_one_mermaid(n: int, source: str, work_dir: Path) -> tuple[bool, str, str]:
-    """Render block *n* via mmdc. Returns (ok, replacement_md, error_line)."""
+def _mermaid_scale() -> int:
+    """Puppeteer deviceScaleFactor for PNG rendering.
+
+    mmdc parses ``--scale`` with ``parseInt``, so only integers take effect
+    (1.5 silently truncates to 1). 2× keeps diagrams crisp when WeasyPrint
+    scales them to page width; `_optimize_png` reclaims most of the byte cost
+    without touching sharpness. Set ``APPSEC_MERMAID_SCALE=1`` for a smaller
+    (softer) PDF.
+    """
+    try:
+        return max(1, int(os.environ.get("APPSEC_MERMAID_SCALE", "2")))
+    except ValueError:
+        return 2
+
+
+def _optimize_png(path: Path) -> None:
+    """Best-effort shrink of a rendered PNG, in place.
+
+    pngquant (palette quant, ~50-70% smaller, visually near-lossless) if on
+    PATH, else oxipng (lossless). Both optional — a missing tool or a failed
+    run is non-fatal and leaves the original PNG untouched. Only used on the
+    PDF path; the HTML path renders SVG and never reaches here.
+    """
+    candidates = (
+        ["pngquant", "--force", "--skip-if-larger", "--output", str(path), str(path)],
+        ["oxipng", "-q", "-o", "2", str(path)],
+    )
+    for cmd in candidates:
+        if shutil.which(cmd[0]):
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                pass
+            return
+
+
+def _render_one_mermaid(
+    n: int, source: str, work_dir: Path, fmt: str = "png"
+) -> tuple[bool, str, str]:
+    """Render block *n* via mmdc. Returns (ok, replacement_md, error_line).
+
+    ``fmt`` is ``"png"`` (PDF path — WeasyPrint drops subgraph-nested SVG nodes,
+    so it needs a bitmap) or ``"svg"`` (HTML path — browsers render mermaid SVG
+    faithfully and the vector asset is ~10-20× smaller than the 2× PNG).
+    """
     mmd_path = work_dir / f"diagram-{n}.mmd"
-    png_path = work_dir / f"diagram-{n}.png"
+    out_path = work_dir / f"diagram-{n}.{fmt}"
     mmd_path.write_text(source, encoding="utf-8")
+    cmd = ["mmdc", "-i", str(mmd_path), "-o", str(out_path)]
+    if fmt == "png":
+        cmd += ["-s", str(_mermaid_scale())]
+    cmd += ["-b", "white", "-q", *mmdc_render_args()]
     try:
         subprocess.run(
-            [
-                "mmdc",
-                "-i",
-                str(mmd_path),
-                "-o",
-                str(png_path),
-                "-s",
-                "2",
-                "-b",
-                "white",
-                "-q",
-                *mmdc_render_args(),
-            ],
+            cmd,
             check=True,
             capture_output=True,
             timeout=60,
@@ -326,16 +361,25 @@ def _render_one_mermaid(n: int, source: str, work_dir: Path) -> tuple[bool, str,
             stderr = stderr.decode("utf-8", errors="replace")
         error_line = stderr.strip().splitlines()[-1] if stderr.strip() else str(exc)
         return False, "", error_line
-    return True, f"\n![Diagram {n}]({png_path.name})\n", ""
+    if fmt == "png":
+        _optimize_png(out_path)
+    return True, f"\n![Diagram {n}]({out_path.name})\n", ""
 
 
-def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
-    """Replace each ```mermaid block with an <img> tag pointing at a PNG.
+def render_mermaid_blocks(
+    md_text: str, work_dir: Path, fmt: str = "png"
+) -> tuple[str, int, int]:
+    """Replace each ```mermaid block with an <img> tag pointing at a diagram.
 
-    PNG (not SVG): mmdc rasterises via headless Chrome, which renders every
-    mermaid construct faithfully; WeasyPrint then just embeds the bitmap.
-    Embedding the SVG instead makes WeasyPrint drop subgraph-nested nodes and
-    edges (see `_MMDC_MERMAID_CONFIG`). Rendered at 2× scale for print sharpness.
+    ``fmt="png"`` (PDF default): mmdc rasterises via headless Chrome, which
+    renders every mermaid construct faithfully; WeasyPrint then just embeds the
+    bitmap. Embedding the SVG instead makes WeasyPrint drop subgraph-nested
+    nodes and edges (see `_MMDC_MERMAID_CONFIG`). Rendered at `_mermaid_scale()`
+    (2×) for print sharpness, then shrunk by `_optimize_png`.
+
+    ``fmt="svg"`` (HTML path): browsers render mermaid SVG faithfully — the
+    WeasyPrint limitation does not apply — and the vector asset embeds far
+    smaller than the 2× PNG, so the standalone HTML stays a fraction of the size.
 
     Returns (rewritten_md, rendered_count, failed_count).
 
@@ -371,7 +415,7 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
     next_idx = 0
     bailed = False
     while next_idx < len(matches):
-        ok, repl, error_line = _render_one_mermaid(next_idx + 1, matches[next_idx].group(1), work_dir)
+        ok, repl, error_line = _render_one_mermaid(next_idx + 1, matches[next_idx].group(1), work_dir, fmt)
         if ok:
             replacements[next_idx] = repl
             rendered += 1
@@ -395,7 +439,7 @@ def render_mermaid_blocks(md_text: str, work_dir: Path) -> tuple[str, int, int]:
         from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(max_workers=min(MMDC_PARALLEL_WORKERS, len(remaining))) as pool:
-            futures = {i: pool.submit(_render_one_mermaid, i + 1, matches[i].group(1), work_dir) for i in remaining}
+            futures = {i: pool.submit(_render_one_mermaid, i + 1, matches[i].group(1), work_dir, fmt) for i in remaining}
         for i in remaining:
             ok, repl, error_line = futures[i].result()
             if ok:

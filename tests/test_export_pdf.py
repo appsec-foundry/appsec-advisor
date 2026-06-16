@@ -208,6 +208,57 @@ class TestRenderMermaid:
         # Replacements stay aligned with their position: Diagram 3 precedes Diagram 5.
         assert rewritten.index("![Diagram 3]") < rewritten.index("![Diagram 5]")
 
+    def test_svg_path_omits_scale_and_emits_svg(self, tmp_path):
+        """HTML path (fmt='svg'): renders diagram-N.svg with no -s scale flag
+        (SVG is vector) and skips PNG optimisation."""
+        md = self._md_with_blocks(1)
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            out = Path(cmd[cmd.index("-o") + 1])
+            seen["cmd"] = cmd
+            seen["out"] = out.name
+            out.write_text("<svg/>")
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            rewritten, ok, fail = ep.render_mermaid_blocks(md, tmp_path, fmt="svg")
+        assert ok == 1 and fail == 0
+        assert seen["out"] == "diagram-1.svg"
+        assert "-s" not in seen["cmd"]
+        assert "![Diagram 1](diagram-1.svg)" in rewritten
+
+    def test_png_path_includes_scale_and_optimizes(self, tmp_path, monkeypatch):
+        """PDF path (default fmt='png'): passes -s <scale> and runs the PNG
+        optimiser when one is on PATH."""
+        monkeypatch.delenv("APPSEC_MERMAID_SCALE", raising=False)
+        md = self._md_with_blocks(1)
+        cmds = []
+
+        def fake_run(cmd, **kw):
+            cmds.append(cmd)
+            if cmd[0] == "mmdc":
+                Path(cmd[cmd.index("-o") + 1]).write_text("PNGDATA")
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+        # Pretend pngquant exists so the optimiser fires.
+        monkeypatch.setattr(ep.shutil, "which", lambda name: "/usr/bin/pngquant" if name == "pngquant" else None)
+        with patch("subprocess.run", side_effect=fake_run):
+            rewritten, ok, fail = ep.render_mermaid_blocks(md, tmp_path)
+        assert ok == 1 and fail == 0
+        assert "![Diagram 1](diagram-1.png)" in rewritten
+        mmdc_cmd = cmds[0]
+        assert mmdc_cmd[mmdc_cmd.index("-s") + 1] == "2"
+        assert any(c[0] == "pngquant" for c in cmds)  # optimiser ran
+
+    def test_mermaid_scale_env_override(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_MERMAID_SCALE", "1")
+        assert ep._mermaid_scale() == 1
+        monkeypatch.setenv("APPSEC_MERMAID_SCALE", "bogus")
+        assert ep._mermaid_scale() == 2  # invalid → default
+        monkeypatch.delenv("APPSEC_MERMAID_SCALE", raising=False)
+        assert ep._mermaid_scale() == 2
+
 
 # ---------------------------------------------------------------------------
 # rewrite_vscode_links()
