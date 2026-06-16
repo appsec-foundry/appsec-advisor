@@ -472,3 +472,183 @@ def test_dispatch_derivation_with_only_scan_events_now_yields_wall(tmp_path):
     assert record["dispatch_count"] == 1
     # 06:46:14 → 06:55:22 = 548 seconds
     assert record["wall_secs_observed"] == 548
+
+
+# ---------------------------------------------------------------------------
+# Coverage extensions: error/edge branches not exercised above.
+# ---------------------------------------------------------------------------
+
+
+def test_derive_dispatch_oserror_returns_none(tmp_path, monkeypatch):
+    """An OSError while reading the log → None (lines 164-165)."""
+    log = tmp_path / ".hook-events.log"
+    log.write_text(_MULTI_DISPATCH_LOG, encoding="utf-8")
+
+    def boom_open(*_a, **_k):
+        raise OSError("read fail")
+
+    monkeypatch.setattr(Path, "open", boom_open)
+    assert (
+        rec._derive_dispatch_stats(log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z") is None
+    )
+
+
+def test_derive_dispatch_bad_timestamp_returns_none(tmp_path, monkeypatch):
+    """A ValueError parsing the timestamp → None (lines 171-172).
+
+    Patch strptime to raise so the well-formed log still reaches the parse
+    block but fails there.
+    """
+    log = tmp_path / ".hook-events.log"
+    log.write_text(_MULTI_DISPATCH_LOG, encoding="utf-8")
+
+    real_strptime = rec.datetime.strptime
+
+    class _DT(rec.datetime):  # type: ignore[misc,valid-type]
+        @classmethod
+        def strptime(cls, *a, **k):
+            raise ValueError("bad ts")
+
+    monkeypatch.setattr(rec, "datetime", _DT)
+    assert (
+        rec._derive_dispatch_stats(log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z") is None
+    )
+    # sanity: real strptime still parses (not globally broken)
+    assert real_strptime("2026-05-23T17:32:13Z", "%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_derive_dispatch_skips_nonmatching_lines(tmp_path):
+    """Lines that don't match either regex are skipped (line 148 continue)."""
+    log = tmp_path / ".hook-events.log"
+    log.write_text(
+        "garbage line that matches nothing\n"
+        "another non-event line\n" + _MULTI_DISPATCH_LOG,
+        encoding="utf-8",
+    )
+    out = rec._derive_dispatch_stats(
+        log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z"
+    )
+    assert out is not None
+    assert out["dispatch_count"] == 1
+
+
+def test_existing_stage_keys_skips_blank_and_malformed(tmp_path):
+    """Blank lines (line 194) and JSONDecodeError lines (197-198) are skipped."""
+    jsonl = tmp_path / ".stage-stats.jsonl"
+    jsonl.write_text(
+        '\n'  # blank
+        '   \n'  # whitespace-only blank
+        '{ not json\n'  # malformed → JSONDecodeError
+        '{"stage": 5}\n'  # valid int stage
+        '{"stage": "x"}\n',  # stage not int → not added
+        encoding="utf-8",
+    )
+    keys = rec._existing_stage_keys(jsonl)
+    assert keys == {(5, "")}
+
+
+def test_existing_stage_keys_oserror_returns_partial(tmp_path, monkeypatch):
+    """OSError during read_text → returns the (empty) accumulator (lines 203-204)."""
+    jsonl = tmp_path / ".stage-stats.jsonl"
+    jsonl.write_text('{"stage": 1}\n', encoding="utf-8")
+
+    def boom_read(*_a, **_k):
+        raise OSError("read fail")
+
+    monkeypatch.setattr(Path, "read_text", boom_read)
+    assert rec._existing_stage_keys(jsonl) == set()
+
+
+def test_existing_stage_numbers_alias(tmp_path):
+    """Back-compat alias _existing_stage_numbers returns just the stage ints (line 210)."""
+    jsonl = tmp_path / ".stage-stats.jsonl"
+    jsonl.write_text('{"stage": 1}\n{"stage": 2, "variant": "repair"}\n', encoding="utf-8")
+    assert rec._existing_stage_numbers(jsonl) == {1, 2}
+
+
+def test_output_dir_not_a_directory_returns_2(tmp_path, capsys):
+    """output_dir points at a file → exit 2 (lines 279-280)."""
+    afile = tmp_path / "afile"
+    afile.write_text("x")
+    argv = _argv(afile)  # positional output_dir is a file, not dir
+    rc = rec.main(argv)
+    assert rc == 2
+    assert "not a directory" in capsys.readouterr().err
+
+
+def test_rebuild_truncates_on_stage_1(tmp_path):
+    """--rebuild + --stage 1 unlinks the existing jsonl before appending (286-289)."""
+    jsonl = tmp_path / ".stage-stats.jsonl"
+    jsonl.write_text('{"stage": 9, "stale": true}\n', encoding="utf-8")
+    argv = _argv(tmp_path, **{"--stage": "1"})
+    argv.append("--rebuild")
+    rc = rec.main(argv)
+    assert rc == 0
+    records = [json.loads(l) for l in jsonl.read_text().splitlines() if l.strip()]
+    assert len(records) == 1
+    assert records[0]["stage"] == 1  # stale stage-9 record gone
+
+
+def test_rebuild_unlink_oserror_warns_but_continues(tmp_path, monkeypatch, capsys):
+    """If unlink fails the helper warns and still writes (line 288-289 except)."""
+    jsonl = tmp_path / ".stage-stats.jsonl"
+    jsonl.write_text('{"stage": 9}\n', encoding="utf-8")
+
+    real_unlink = Path.unlink
+
+    def boom_unlink(self, *a, **k):
+        if self.name == ".stage-stats.jsonl":
+            raise OSError("cannot unlink")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", boom_unlink)
+    argv = _argv(tmp_path, **{"--stage": "1"})
+    argv.append("--rebuild")
+    rc = rec.main(argv)
+    assert rc == 0
+    assert "could not unlink" in capsys.readouterr().err
+
+
+def test_append_oserror_returns_2(tmp_path, monkeypatch, capsys):
+    """An OSError opening the jsonl for append → exit 2 (lines 361-363)."""
+
+    real_open = Path.open
+
+    def boom_open(self, *a, **k):
+        if self.name == ".stage-stats.jsonl" and a and "a" in str(a[0]):
+            raise OSError("disk full")
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(Path, "open", boom_open)
+    rc = rec.main(_argv(tmp_path))
+    assert rc == 2
+    assert "failed to append" in capsys.readouterr().err
+
+
+def test_script_main_entrypoint(tmp_path):
+    """Run the module as __main__ via subprocess to cover line 370."""
+    import subprocess as _sp
+
+    out = _sp.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            str(tmp_path),
+            "--stage",
+            "1",
+            "--name",
+            "x",
+            "--agent",
+            "y",
+            "--duration-ms",
+            "1",
+            "--tool-uses",
+            "1",
+            "--tokens",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0
+    assert (tmp_path / ".stage-stats.jsonl").is_file()

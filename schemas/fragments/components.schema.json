@@ -58,7 +58,7 @@
           "deployment_zones": {
             "type": "array",
             "default": [],
-            "description": "Network/trust placement of this component. Values come from the canonical access-zone vocabulary in data/actors/default-library.yaml (e.g. internet, dmz, client-device, mobile-device, internal-network, peer-service, prod-env, prod-write-db, ci-cd-runtime, build-pipeline, deployment-pipeline). Phase-3-authored: the analyst maps the recon component_hints[].deployment_zones (from .recon-signals.json) onto its own finalized component set, resolving the recon↔analyst ID mismatch by judgment. Consumed by the deterministic STRIDE-component selection predicate (manifest builder) to derive exposure — NOT a hard-coded count. Empty/absent = treat as exposure-unknown (fail-safe toward inclusion at standard+).",
+            "description": "Network/trust placement of this component. Values come from the canonical access-zone vocabulary in data/actors/default-library.yaml (e.g. internet, dmz, client-device, mobile-device, internal-network, peer-service, prod-env, prod-write-db, ci-cd-runtime, build-pipeline, deployment-pipeline). Phase-3-authored: the analyst maps the recon component_hints[].deployment_zones (from .recon-signals.json) onto its own finalized component set, resolving the recon↔analyst ID mismatch by judgment. Consumed by the deterministic STRIDE-component selection predicate (manifest builder) to derive exposure — NOT a hard-coded count. Empty/absent (or only runtime-only tags like docker-container) = treat as exposure-unknown (fail-safe toward inclusion at every depth, including quick).",
             "items": {"type": "string", "minLength": 1}
           },
           "handles_sensitive_data": {

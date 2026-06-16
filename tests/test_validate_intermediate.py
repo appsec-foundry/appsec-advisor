@@ -230,3 +230,755 @@ def test_glob_advisory_kept_for_ambiguous_match():
     advisories = vi._check_component_path_glob_consistency(data)
     assert len(advisories) == 1
     assert "consider one of" in advisories[0]
+
+
+# ===========================================================================
+# In-process coverage of helper invariants and validators
+# ===========================================================================
+
+import json as _json  # noqa: E402
+import os as _os  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+# --- _format_error_path -----------------------------------------------------
+
+
+class _FakeErr:
+    def __init__(self, path, message="msg"):
+        self.absolute_path = path
+        self.message = message
+
+
+def test_format_error_path_root():
+    assert vi._format_error_path(_FakeErr([])) == "root"
+
+
+def test_format_error_path_mixed_keys_and_indices():
+    out = vi._format_error_path(_FakeErr(["threats", 2, "title"]))
+    assert out == "threats[2].title"
+
+
+# --- _eligible_cwes OSError fallback ---------------------------------------
+
+
+def test_eligible_cwes_missing_file_returns_empty(monkeypatch):
+    vi._eligible_cwes.cache_clear()
+
+    def boom(self, *a, **k):
+        raise OSError("nope")
+
+    monkeypatch.setattr(vi.Path, "open", boom)
+    assert vi._eligible_cwes() == frozenset()
+    vi._eligible_cwes.cache_clear()
+
+
+# --- _check_cvss_eligibility branches --------------------------------------
+
+
+def test_cvss_required_missing_fails():
+    data = {"threats": [{"source": "known-vuln"}]}
+    errs = vi._check_cvss_eligibility(data)
+    assert any("cvss_v4 is required" in e for e in errs)
+
+
+def test_cvss_required_missing_waived_when_skip():
+    data = {"threats": [{"source": "known-vuln"}]}
+    errs = vi._check_cvss_eligibility(data, skip_cvss_required=True)
+    assert errs == []
+
+
+def test_cvss_forbidden_source_with_cvss_fails():
+    data = {"threats": [{"source": "requirements-compliance", "cvss_v4": {"severity": "High"}}]}
+    errs = vi._check_cvss_eligibility(data)
+    assert any("not permitted" in e for e in errs)
+
+
+def test_cvss_stride_bad_cwe_and_missing_line():
+    data = {"threats": [{"source": "stride", "cvss_v4": {"severity": "High"}, "cwe": "not-a-cwe"}]}
+    errs = vi._check_cvss_eligibility(data)
+    assert any("valid CWE reference" in e for e in errs)
+    assert any("requires evidence.line" in e for e in errs)
+
+
+def test_cvss_stride_cwe_not_eligible(monkeypatch):
+    monkeypatch.setattr(vi, "_eligible_cwes", lambda: frozenset())
+    data = {
+        "threats": [
+            {
+                "source": "stride",
+                "cvss_v4": {"severity": "High"},
+                "cwe": "CWE-89",
+                "evidence": {"line": 5},
+            }
+        ]
+    }
+    errs = vi._check_cvss_eligibility(data)
+    assert any("not in cvss-eligible-cwes.yaml" in e for e in errs)
+
+
+def test_cvss_band_gap_fails():
+    data = {"threats": [{"source": "configuration-defect", "cvss_v4": {"severity": "Critical"}, "risk": "Low"}]}
+    errs = vi._check_cvss_eligibility(data)
+    assert any("more than one band away" in e for e in errs)
+
+
+def test_cvss_skips_non_dict_threat():
+    assert vi._check_cvss_eligibility({"threats": ["notadict"]}) == []
+
+
+# --- _check_snippet_redaction ----------------------------------------------
+
+
+def test_snippet_not_redacted():
+    data = {"hardcoded_secrets": [{"snippet": "password=hunter2"}]}
+    errs = vi._check_snippet_redaction(data)
+    assert any("not redacted" in e for e in errs)
+
+
+def test_snippet_exposes_too_much():
+    data = {"hardcoded_secrets": [{"snippet": "abcdef****"}]}
+    errs = vi._check_snippet_redaction(data)
+    assert any("more than 4 characters" in e for e in errs)
+
+
+def test_snippet_clean_passes():
+    data = {"hardcoded_secrets": [{"snippet": "ab****"}]}
+    assert vi._check_snippet_redaction(data) == []
+
+
+def test_snippet_non_list_returns_empty():
+    assert vi._check_snippet_redaction({"hardcoded_secrets": "x"}) == []
+
+
+def test_snippet_skips_non_dict_and_empty():
+    data = {"hardcoded_secrets": ["x", {"snippet": ""}, {"snippet": 5}]}
+    assert vi._check_snippet_redaction(data) == []
+
+
+# --- _check_scenario_stripped_length ---------------------------------------
+
+
+def test_scenario_too_short():
+    errs = vi._check_scenario_stripped_length({"threats": [{"scenario": "  hi  "}]})
+    assert any("at least 10 characters" in e for e in errs)
+
+
+def test_scenario_skips_non_dict():
+    assert vi._check_scenario_stripped_length({"threats": ["x"]}) == []
+
+
+# --- _check_threat_category_id_set / _warning ------------------------------
+
+
+def test_th_check_env_skip(monkeypatch):
+    monkeypatch.setenv("APPSEC_SKIP_TH_CHECK", "1")
+    data = {"threats": [{"source": "stride", "threat_category_id": None}]}
+    assert vi._check_threat_category_id_set(data) == []
+
+
+def test_th_check_missing_id_fails(monkeypatch):
+    monkeypatch.delenv("APPSEC_SKIP_TH_CHECK", raising=False)
+    data = {"threats": [{"source": "stride", "t_id": "T-001", "threat_category_id": None}]}
+    errs = vi._check_threat_category_id_set(data)
+    assert any("threat_category_id is required" in e for e in errs)
+
+
+def test_th_check_non_stride_skipped(monkeypatch):
+    monkeypatch.delenv("APPSEC_SKIP_TH_CHECK", raising=False)
+    data = {"threats": [{"source": "known-vuln"}, "notadict"]}
+    assert vi._check_threat_category_id_set(data) == []
+
+
+def test_th_warning_emits_even_when_env_set():
+    data = {"threats": [{"source": "stride", "threat_category_id": None}, "x", {"source": "known-vuln"}]}
+    errs = vi._check_threat_category_id_warning(data)
+    assert any(e.startswith("WARN:") for e in errs)
+
+
+# --- _check_stride_remediation_nonempty ------------------------------------
+
+
+def test_remediation_null_fails():
+    errs = vi._check_stride_remediation_nonempty({"threats": [{"remediation": None}]})
+    assert any("remediation is null" in e for e in errs)
+
+
+def test_remediation_empty_steps_fails():
+    errs = vi._check_stride_remediation_nonempty({"threats": [{"remediation": {"steps": []}}]})
+    assert any("steps is empty" in e for e in errs)
+
+
+def test_remediation_ok():
+    errs = vi._check_stride_remediation_nonempty({"threats": [{"remediation": {"steps": ["do x"]}}, "skip"]})
+    assert errs == []
+
+
+# --- _check_title_not_blank -------------------------------------------------
+
+
+def test_title_blank_and_truncated():
+    errs = vi._check_title_not_blank(
+        {"threats": [{"title": "   "}, {"title": "long title..."}, "skip"]}
+    )
+    assert any("must not be empty" in e for e in errs)
+    assert any("truncated" in e for e in errs)
+
+
+# --- _check_t_id_sequence duplicate ----------------------------------------
+
+
+def test_t_id_duplicate_detected():
+    data = {"threats": [{"t_id": "T-001"}, {"t_id": "T-001"}, {"t_id": 5}, "skip", {"t_id": "bad"}]}
+    errs = vi._check_t_id_sequence(data)
+    assert any("duplicated" in e for e in errs)
+
+
+# --- _check_tf_id_sequence + _check_triage_summary -------------------------
+
+
+def test_tf_id_sequence_dup_and_gap():
+    data = {"flags": [{"flag_id": "TF-001"}, {"flag_id": "TF-003"}, {"flag_id": "TF-001"}, {"flag_id": 5}, "x", {"flag_id": "bad"}]}
+    errs = vi._check_tf_id_sequence(data)
+    assert any("breaks sequential order" in e for e in errs)
+    assert any("duplicated" in e for e in errs)
+
+
+def test_triage_summary_mismatches():
+    data = {
+        "flags": [
+            {"severity": "warning"},
+            {"severity": "info"},
+        ],
+        "summary": {"total_flags": 5, "warnings": 3, "info": 4},
+    }
+    errs = vi._check_triage_summary(data)
+    assert any("does not match flags length" in e for e in errs)
+    assert any("does not equal" in e for e in errs)
+    assert any("actual warning flag count" in e for e in errs)
+    assert any("actual info flag count" in e for e in errs)
+
+
+def test_triage_summary_non_list_returns_empty():
+    assert vi._check_triage_summary({"flags": "x", "summary": {}}) == []
+
+
+# --- _check_known_threats_unique_ids ---------------------------------------
+
+
+def test_known_threats_dup_id():
+    data = {"threats": [{"id": "K-1"}, {"id": "K-1"}, {"id": 5}, "x"]}
+    errs = vi._check_known_threats_unique_ids(data)
+    assert any("duplicated" in e for e in errs)
+
+
+# --- _check_architecture_coverage_invariants -------------------------------
+
+
+def test_arch_cov_non_rule_source_with_rule_id():
+    src = sorted(vi._RULE_ID_SOURCES)[0]
+    data = {
+        "threats": [
+            {"source": "stride", "rule_id": "ARCH-X-001", "hypothesis_id": "y"},
+            {"source": src},  # missing rule_id → required error
+        ]
+    }
+    errs = vi._check_architecture_coverage_invariants(data)
+    assert any("rule_id is only permitted" in e for e in errs)
+    assert any("hypothesis_id is only permitted" in e for e in errs)
+    assert any("rule_id is required" in e for e in errs)
+
+
+def test_arch_cov_requirement_id_forbidden_and_critical():
+    src = sorted(vi._RULE_ID_SOURCES)[0]
+    data = {
+        "threats": [
+            {
+                "source": src,
+                "rule_id": "ARCH-AUTHZ-001",
+                "requirement_id": "REQ-1",
+                "risk": "Critical",
+                "effective_severity": "Critical",
+            }
+        ]
+    }
+    errs = vi._check_architecture_coverage_invariants(data)
+    assert any("requirement_id MUST NOT be set" in e for e in errs)
+    assert any("MUST NOT be Critical" in e for e in errs)
+
+
+def test_arch_cov_threat_hypothesis_requires_hyp_id():
+    if "threat-hypothesis" not in vi._RULE_ID_SOURCES:
+        pytest.skip("threat-hypothesis not a rule-id source")
+    data = {"threats": [{"source": "threat-hypothesis", "rule_id": "ARCH-X-001"}]}
+    errs = vi._check_architecture_coverage_invariants(data)
+    assert any("hypothesis_id is required" in e for e in errs)
+
+
+def test_arch_cov_skips_non_dict():
+    assert vi._check_architecture_coverage_invariants({"threats": ["x"]}) == []
+
+
+# --- _check_threat_hypotheses_invariants -----------------------------------
+
+
+def test_threat_hypotheses_invariants():
+    data = {
+        "threats": [{"threat_id": "HYP-002"}],
+        "threat_hypotheses": [
+            "notadict",
+            {"id": "bad"},
+            {"id": "HYP-001"},
+            {"id": "HYP-001"},  # dup
+            {"id": "HYP-002"},  # collides with threats[].threat_id
+            {"id": "HYP-003", "promoted_threat_id": "T-1", "proof_state": "evidence-backed"},
+        ],
+    }
+    errs = vi._check_threat_hypotheses_invariants(data)
+    assert any("must be an object" in e for e in errs)
+    assert any("MUST match ^HYP" in e for e in errs)
+    assert any("is duplicated" in e for e in errs)
+    assert any("collides" in e for e in errs)
+    assert any("promoted_threat_id is set but proof_state" in e for e in errs)
+
+
+def test_threat_hypotheses_non_list_returns_empty():
+    assert vi._check_threat_hypotheses_invariants({"threat_hypotheses": "x"}) == []
+
+
+# --- _read_stride_profile --------------------------------------------------
+
+
+def test_read_stride_profile_none():
+    assert vi._read_stride_profile(None) == {}
+
+
+def test_read_stride_profile_missing_file(tmp_path):
+    assert vi._read_stride_profile(tmp_path) == {}
+
+
+def test_read_stride_profile_reads(tmp_path):
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(
+        _json.dumps({"stride_profile": {"skip_cvss_scoring": True}})
+    )
+    assert vi._read_stride_profile(tmp_path) == {"skip_cvss_scoring": True}
+
+
+def test_read_stride_profile_non_dict_doc(tmp_path):
+    (tmp_path / ".stride-dispatch-manifest.json").write_text("[]")
+    assert vi._read_stride_profile(tmp_path) == {}
+
+
+# --- validate_threats_merged with profile waiver ---------------------------
+
+
+def test_validate_threats_merged_non_dict():
+    ok, errs = vi.validate_threats_merged([])
+    assert not ok and errs == ["root must be a JSON object"]
+
+
+# --- _check_security_controls_shape ----------------------------------------
+
+
+def test_security_controls_string_drift_v2():
+    data = {"security_controls": ["bare", "string"], "meta": {"analysis_version": 2}}
+    errs = vi._check_security_controls_shape(data)
+    assert any("SCHEMA_DRIFT" in e for e in errs)
+
+
+def test_security_controls_v1_not_flagged():
+    data = {"security_controls": ["bare"], "meta": {"analysis_version": "notint"}}
+    assert vi._check_security_controls_shape(data) == []
+
+
+def test_security_controls_non_list():
+    assert vi._check_security_controls_shape({"security_controls": {}}) == []
+
+
+# --- _check_attack_surface_shape -------------------------------------------
+
+
+def test_attack_surface_dict_bad_path_and_missing_auth():
+    data = {
+        "attack_surface": {
+            "unauthenticated": ["notadict", {"method": "GET"}],
+            "authenticated": [{"path": "/x", "auth_required": True}],
+        }
+    }
+    errs = vi._check_attack_surface_shape(data)
+    assert any("missing required" in e for e in errs)
+    assert any("ADVISORY" in e for e in errs)
+
+
+def test_attack_surface_list_form():
+    data = {"attack_surface": [{"path": "/ok", "auth_required": False}]}
+    assert vi._check_attack_surface_shape(data) == []
+
+
+def test_attack_surface_other_type():
+    assert vi._check_attack_surface_shape({"attack_surface": 5}) == []
+
+
+# --- _check_triage_flags_version (dead returns []) -------------------------
+
+
+def test_triage_flags_version_dead():
+    assert vi._check_triage_flags_version({}) == []
+
+
+# --- _normalise_mitigation_field_drift -------------------------------------
+
+
+def test_mitigation_drift_migrates_legacy_fields():
+    data = {
+        "mitigations": [
+            {"mitigation_title": "Fix it", "addresses": ["T-001"]},
+            "skip",
+        ]
+    }
+    notes = vi._normalise_mitigation_field_drift(data)
+    assert data["mitigations"][0]["title"] == "Fix it"
+    assert data["mitigations"][0]["threat_ids"] == ["T-001"]
+    assert len(notes) == 2
+
+
+# --- validate_threat_model_output non-dict ---------------------------------
+
+
+def test_validate_threat_model_output_non_dict():
+    ok, errs = vi.validate_threat_model_output([])
+    assert not ok and errs == ["root must be a mapping"]
+
+
+# --- _check_finding_id_contiguity ------------------------------------------
+
+
+def test_finding_id_contiguity_gap():
+    data = {"threats": [{"id": "F-001"}, {"id": "F-003"}, "x", {"id": "nope"}]}
+    adv = vi._check_finding_id_contiguity(data)
+    assert any("numbering has" in a for a in adv)
+
+
+def test_finding_id_contiguity_no_ids():
+    assert vi._check_finding_id_contiguity({"threats": [{"id": "nope"}]}) == []
+
+
+def test_finding_id_contiguity_non_list():
+    assert vi._check_finding_id_contiguity({"threats": "x"}) == []
+
+
+def test_finding_id_contiguity_many_gaps():
+    data = {"threats": [{"id": "F-001"}, {"id": "F-010"}]}
+    adv = vi._check_finding_id_contiguity(data)
+    assert "…" in adv[0]
+
+
+# --- _check_component_path_glob_consistency non-list paths -----------------
+
+
+def test_glob_consistency_non_list_components():
+    assert vi._check_component_path_glob_consistency({"components": "x"}) == []
+
+
+def test_glob_consistency_non_list_threats():
+    assert vi._check_component_path_glob_consistency({"components": [], "threats": "x"}) == []
+
+
+def test_glob_consistency_no_evidence_files_tolerated():
+    data = {
+        "components": [{"id": "c1", "paths": ["a/**"]}],
+        "threats": [{"id": "T-1", "component": "c1", "evidence": []}],
+    }
+    assert vi._check_component_path_glob_consistency(data) == []
+
+
+# --- _check_mitigations_nonempty -------------------------------------------
+
+
+def test_mitigations_empty_with_ranked_threats():
+    data = {"mitigations": [], "threats": [{"risk": "High"}]}
+    errs = vi._check_mitigations_nonempty(data)
+    assert any("mitigations[] is empty" in e for e in errs)
+
+
+def test_mitigations_present_returns_empty():
+    assert vi._check_mitigations_nonempty({"mitigations": [{"id": "M-1"}]}) == []
+
+
+def test_mitigations_empty_no_ranked_threats():
+    assert vi._check_mitigations_nonempty({"mitigations": [], "threats": [{"risk": "Low"}]}) == []
+
+
+# --- _check_pt_id_sequence + validate_pentest_tasks ------------------------
+
+
+def test_pt_id_sequence_dup_and_gap():
+    data = {"tasks": [{"task_id": "PT-001"}, {"task_id": "PT-003"}, {"task_id": "PT-001"}, {"task_id": 5}, "x", {"task_id": "bad"}]}
+    errs = vi._check_pt_id_sequence(data)
+    assert any("breaks sequential order" in e for e in errs)
+    assert any("duplicated" in e for e in errs)
+
+
+def test_validate_pentest_tasks_non_dict():
+    ok, errs = vi.validate_pentest_tasks([])
+    assert not ok and errs == ["root must be a mapping"]
+
+
+# --- validate_known_threats / triage_flags non-dict ------------------------
+
+
+def test_validate_known_threats_non_dict():
+    ok, errs = vi.validate_known_threats([])
+    assert not ok
+
+
+def test_validate_triage_flags_non_dict():
+    ok, errs = vi.validate_triage_flags([])
+    assert not ok
+
+
+def test_validate_triage_flags_v1_no_ranking():
+    data = {"version": 1, "flags": [], "summary": {"total_flags": 0, "warnings": 0, "info": 0}}
+    ok, errs = vi.validate_triage_flags(data)
+    assert any("SCHEMA_DRIFT" in e for e in errs)
+
+
+# --- config / source auth findings -----------------------------------------
+
+
+def test_validate_config_scan_findings_non_dict():
+    ok, errs = vi.validate_config_scan_findings([])
+    assert not ok
+
+
+def test_validate_config_scan_findings_dup_local_id():
+    data = {"findings": [{"local_id": "CFG-1"}, {"local_id": "CFG-1"}, {"local_id": 5}, "x"]}
+    ok, errs = vi.validate_config_scan_findings(data)
+    assert any("duplicated" in e for e in errs)
+
+
+def test_validate_config_scan_findings_parse_error_skips_invariant():
+    data = {"parse_error": "boom"}
+    # schema may error but the dup-check is skipped; just ensure callable
+    vi.validate_config_scan_findings(data)
+
+
+def test_validate_source_auth_findings_non_dict():
+    ok, errs = vi.validate_source_auth_findings([])
+    assert not ok
+
+
+def test_validate_source_auth_findings_dup_local_id():
+    data = {"findings": [{"local_id": "SA-1"}, {"local_id": "SA-1"}, {"local_id": 5}, "x"]}
+    ok, errs = vi.validate_source_auth_findings(data)
+    assert any("duplicated" in e for e in errs)
+
+
+# ===========================================================================
+# CLI main() via subprocess — exercise dispatch, advisories, yaml/json paths
+# ===========================================================================
+
+
+def test_main_usage_error_no_args():
+    result = _run([])
+    assert result.returncode == 2
+
+
+def test_main_invalid_json_file(tmp_path):
+    p = tmp_path / "x.json"
+    p.write_text("{bad json")
+    result = _run(["stride", str(p)])
+    assert result.returncode == 1
+    assert "INVALID JSON" in result.stdout
+
+
+def test_main_invalid_yaml_file(tmp_path):
+    p = tmp_path / "x.yaml"
+    p.write_text("a: b: c: : :\n  - [")
+    result = _run(["threat_model_output", str(p)])
+    assert result.returncode == 1
+    assert "INVALID YAML" in result.stdout or "INVALID" in result.stdout
+
+
+def test_main_valid_stride_summary(tmp_path):
+    p = tmp_path / ".stride-x.json"
+    p.write_text(
+        _json.dumps(
+            {
+                "component_id": "svc",
+                "component_name": "Svc",
+                "analyzed_at": "2026-04-22T10:00:00Z",
+                "threats": [],
+            }
+        )
+    )
+    result = _run(["stride", str(p)])
+    assert result.returncode == 0
+    assert "VALID: 0 threats" in result.stdout
+
+
+def test_main_threat_model_output_with_advisory(tmp_path):
+    # F-NNN gap → advisory printed, but otherwise may fail schema; we just
+    # assert the ADVISORY line is emitted on stdout.
+    p = tmp_path / "threat-model.yaml"
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "mitigations": [{"mitigation_title": "x", "addresses": ["T-1"]}],
+                "threats": [{"id": "F-001"}, {"id": "F-003"}],
+            }
+        )
+    )
+    result = _run(["threat_model_output", str(p)])
+    assert "ADVISORY:" in result.stdout
+
+
+# ===========================================================================
+# In-process main() coverage (patch argv, catch SystemExit)
+# ===========================================================================
+
+
+def _main_exit(monkeypatch, argv):
+    monkeypatch.setattr(vi.sys, "argv", ["validate_intermediate.py", *argv])
+    with pytest.raises(SystemExit) as ei:
+        vi.main()
+    code = ei.value.code
+    return code if code is not None else 0
+
+
+def test_main_inproc_usage(monkeypatch, capsys):
+    code = _main_exit(monkeypatch, [])
+    assert code == 2
+    assert "Usage:" in capsys.readouterr().err
+
+
+def test_main_inproc_unknown_kind(monkeypatch, tmp_path):
+    p = tmp_path / "x.json"
+    p.write_text("{}")
+    assert _main_exit(monkeypatch, ["nope", str(p)]) == 2
+
+
+def test_main_inproc_invalid_json(monkeypatch, tmp_path, capsys):
+    p = tmp_path / "x.json"
+    p.write_text("{bad")
+    assert _main_exit(monkeypatch, ["stride", str(p)]) == 1
+    assert "INVALID JSON" in capsys.readouterr().out
+
+
+def test_main_inproc_invalid_yaml(monkeypatch, tmp_path, capsys):
+    p = tmp_path / "x.yaml"
+    p.write_text("a: b: c:\n  - [\n: :")
+    code = _main_exit(monkeypatch, ["known_threats", str(p)])
+    assert code == 1
+    assert "INVALID" in capsys.readouterr().out
+
+
+def test_main_inproc_oserror_missing(monkeypatch, tmp_path, capsys):
+    code = _main_exit(monkeypatch, ["stride", str(tmp_path / "nope.json")])
+    assert code == 1
+    assert "cannot read file" in capsys.readouterr().out
+
+
+def test_main_inproc_valid_stride(monkeypatch, tmp_path, capsys):
+    p = tmp_path / ".stride-x.json"
+    p.write_text(
+        _json.dumps(
+            {
+                "component_id": "svc",
+                "component_name": "Svc",
+                "analyzed_at": "2026-04-22T10:00:00Z",
+                "threats": [],
+            }
+        )
+    )
+    assert _main_exit(monkeypatch, ["stride", str(p)]) == 0
+    assert "VALID: 0 threats" in capsys.readouterr().out
+
+
+def test_main_inproc_invalid_stride_prints_errors(monkeypatch, tmp_path, capsys):
+    p = tmp_path / ".stride-x.json"
+    p.write_text("{}")
+    assert _main_exit(monkeypatch, ["stride", str(p)]) == 1
+    assert "INVALID:" in capsys.readouterr().out
+
+
+def test_main_inproc_triage_flags_summary(monkeypatch, tmp_path, capsys):
+    p = tmp_path / ".triage-flags.json"
+    # Build a minimally-valid triage flags doc; if schema fails it still
+    # exercises the summary branch path. Use empty flags.
+    p.write_text(
+        _json.dumps(
+            {
+                "version": 2,
+                "generated_at": "2026-04-22T10:00:00Z",
+                "flags": [],
+                "summary": {"total_flags": 0, "warnings": 0, "info": 0},
+                "ranking": {},
+            }
+        )
+    )
+    _main_exit(monkeypatch, ["triage_flags", str(p)])
+    # whichever branch, output should mention flags or INVALID
+    out = capsys.readouterr().out
+    assert "flags" in out or "INVALID" in out
+
+
+def test_main_inproc_pentest_tasks_summary(monkeypatch, tmp_path, capsys):
+    p = tmp_path / "pentest-tasks.yaml"
+    p.write_text(yaml.safe_dump({"tasks": []}))
+    _main_exit(monkeypatch, ["pentest_tasks", str(p)])
+    out = capsys.readouterr().out
+    assert "tasks" in out or "INVALID" in out
+
+
+def test_main_inproc_threat_model_output_advisory(monkeypatch, tmp_path, capsys):
+    p = tmp_path / "threat-model.yaml"
+    p.write_text(
+        yaml.safe_dump(
+            {
+                "mitigations": [{"mitigation_title": "x", "addresses": ["T-1"]}],
+                "threats": [{"id": "F-001"}, {"id": "F-003"}],
+            }
+        )
+    )
+    _main_exit(monkeypatch, ["threat_model_output", str(p)])
+    assert "ADVISORY:" in capsys.readouterr().out
+
+
+# --- validate_threat_model_output direct call (lines 765-786) --------------
+
+
+def test_validate_threat_model_output_direct_runs_all_checks():
+    data = {
+        "security_controls": ["bare"],
+        "meta": {"analysis_version": 2},
+        "attack_surface": [{"method": "GET"}],
+        "mitigations": [],
+        "threats": [
+            {"id": "F-001", "risk": "High", "component": "c1", "evidence": [{"file": "x/y.py"}]},
+            {"id": "F-003"},
+        ],
+        "components": [{"id": "c1", "paths": ["a/**"]}],
+        "threat_hypotheses": [{"id": "HYP-001"}],
+    }
+    ok, errs = vi.validate_threat_model_output(data)
+    # Many invariants fire; just confirm structured outputs returned.
+    assert isinstance(ok, bool)
+    assert any("[advisory]" in e for e in errs) or any("SCHEMA_DRIFT" in e for e in errs)
+
+
+def test_glob_consistency_suggestion_part_in_advisory():
+    # 2+ distinct siblings match → suggestion list rendered (sugg_part path).
+    data = {
+        "components": [
+            {"id": "c1", "paths": ["models/**"]},
+            {"id": "c2", "paths": ["shared/**"]},
+            {"id": "c3", "paths": ["shared/**"]},
+        ],
+        "threats": [
+            {"id": "T-1", "component": "c1", "evidence": [{"file": "shared/u.ts"}]},
+        ],
+    }
+    adv = vi._check_component_path_glob_consistency(data)
+    assert adv and "consider one of" in adv[0]

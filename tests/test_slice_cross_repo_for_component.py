@@ -174,3 +174,74 @@ class TestCLI:
         assert r.returncode == 0, r.stderr
         data = json.loads(out.read_text(encoding="utf-8"))
         assert len(data) == 1
+
+
+class TestAdditiveFields:
+    """consumer_declares / upstream_properties / expectation_mismatch are
+    forwarded onto the slice only when present on the register entry."""
+
+    def test_additive_fields_forwarded(self) -> None:
+        entry = _declared("svc", interface="REST")
+        entry["consumer_declares"] = {"expects": "tls"}
+        entry["upstream_properties"] = {"tls": True}
+        entry["expectation_mismatch"] = {"detail": "no mtls"}
+        reg = _register(entry)
+        sliced = slicer.slice_for_component(reg, component_name="svc consumer")
+        assert sliced[0]["consumer_declares"] == {"expects": "tls"}
+        assert sliced[0]["upstream_properties"] == {"tls": True}
+        assert sliced[0]["expectation_mismatch"] == {"detail": "no mtls"}
+
+    def test_additive_fields_absent_when_not_present(self) -> None:
+        reg = _register(_declared("svc"))
+        sliced = slicer.slice_for_component(reg, component_name="svc")
+        assert "consumer_declares" not in sliced[0]
+        assert "upstream_properties" not in sliced[0]
+        assert "expectation_mismatch" not in sliced[0]
+
+
+class TestMainInProcess:
+    """Drive main() in-process so error/stdout branches are covered."""
+
+    def _argv(self, **kw) -> list[str]:
+        argv = [
+            "--register",
+            kw["register"],
+            "--component-id",
+            "c1",
+            "--component-name",
+            kw.get("name", "svc consumer"),
+            "--output",
+            kw["output"],
+        ]
+        return argv
+
+    def test_main_stdout_dash(self, tmp_path: Path, capsys) -> None:
+        reg_path = tmp_path / "register.json"
+        reg_path.write_text(json.dumps(_register(_declared("svc"))))
+        rc = slicer.main(self._argv(register=str(reg_path), output="-"))
+        assert rc == 0
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert data[0]["name"] == "svc"
+
+    def test_main_malformed_register_returns_2(self, tmp_path: Path, capsys) -> None:
+        reg_path = tmp_path / "register.json"
+        reg_path.write_text("{ not valid json")
+        out = tmp_path / "slice.json"
+        rc = slicer.main(self._argv(register=str(reg_path), output=str(out)))
+        assert rc == 2
+        assert "slice_cross_repo_for_component" in capsys.readouterr().err
+
+    def test_main_missing_register_empty_slice(self, tmp_path: Path) -> None:
+        out = tmp_path / "slice.json"
+        rc = slicer.main(self._argv(register=str(tmp_path / "nope.json"), output=str(out)))
+        assert rc == 0
+        assert json.loads(out.read_text(encoding="utf-8")) == []
+
+    def test_main_writes_file(self, tmp_path: Path) -> None:
+        reg_path = tmp_path / "register.json"
+        reg_path.write_text(json.dumps(_register(_declared("svc"))))
+        out = tmp_path / "slice.json"
+        rc = slicer.main(self._argv(register=str(reg_path), output=str(out)))
+        assert rc == 0
+        assert len(json.loads(out.read_text(encoding="utf-8"))) == 1

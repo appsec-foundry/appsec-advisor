@@ -75,3 +75,60 @@ def test_iter_escaping_symlinks_handles_broken_link(tmp_path):
     os.symlink(tmp_path.parent / "does-not-exist", link)
     findings = list(guard.iter_escaping_symlinks(tmp_path))
     assert any(f.path == link and f.kind == "broken" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# is_within_repo: resolve() raising (lines 35-36)
+# ---------------------------------------------------------------------------
+
+
+def test_is_within_repo_false_when_resolve_raises(tmp_path, monkeypatch):
+    def _boom(self, *a, **kw):
+        raise RuntimeError("symlink loop")
+
+    monkeypatch.setattr(Path, "resolve", _boom)
+    assert guard.is_within_repo(tmp_path / "x", tmp_path) is False
+
+
+# ---------------------------------------------------------------------------
+# is_safe_to_read: missing path (line 54) + OSError guard (lines 60-61)
+# ---------------------------------------------------------------------------
+
+
+def test_is_safe_to_read_false_for_missing_path(tmp_path):
+    assert guard.is_safe_to_read(tmp_path / "nope.txt", tmp_path) is False
+
+
+def test_is_safe_to_read_false_when_exists_raises(tmp_path, monkeypatch):
+    target = tmp_path / "real.txt"
+    target.write_text("ok", encoding="utf-8")
+
+    def _boom(self):
+        raise OSError("stat boom")
+
+    monkeypatch.setattr(Path, "exists", _boom)
+    assert guard.is_safe_to_read(target, tmp_path) is False
+
+
+# ---------------------------------------------------------------------------
+# iter_escaping_symlinks: file symlink whose resolve() raises (lines 95-97)
+# ---------------------------------------------------------------------------
+
+
+def test_iter_escaping_symlinks_file_resolve_raises_is_broken(tmp_path, monkeypatch):
+    # A self-referential symlink loop makes Path.resolve(strict=False) raise
+    # RuntimeError on some platforms; force it deterministically so the
+    # broken-via-exception branch (lines 95-97) is exercised.
+    link = tmp_path / "loop"
+    os.symlink(tmp_path.parent / "target", link)
+
+    real_resolve = Path.resolve
+
+    def maybe_boom(self, *a, **kw):
+        if self == link:
+            raise OSError("ELOOP")
+        return real_resolve(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "resolve", maybe_boom)
+    findings = list(guard.iter_escaping_symlinks(tmp_path))
+    assert any(f.path == link and f.kind == "broken" for f in findings)

@@ -125,6 +125,75 @@ def test_exception_on_fresh_write_leaves_no_file(tmp_path: Path, monkeypatch):
     assert leftovers == [], leftovers
 
 
+def test_unlink_failure_in_cleanup_is_swallowed(tmp_path: Path, monkeypatch):
+    """If os.replace fails AND tmpfile unlink fails, the original error still raises
+    (the OSError from unlink is suppressed — lines 67-68)."""
+    target = tmp_path / "data.json"
+
+    def failing_replace(src, dst):
+        raise RuntimeError("replace boom")
+
+    def failing_unlink(self, *a, **kw):
+        raise OSError("unlink boom")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+
+    with pytest.raises(RuntimeError, match="replace boom"):
+        atomic_io.atomic_write_json(target, {"x": 1})
+
+
+def test_fsync_dir_open_failure_is_silent(tmp_path: Path, monkeypatch):
+    """If os.open of the directory raises OSError, _fsync_dir returns early and
+    the write still succeeds (lines 101-102)."""
+    target = tmp_path / "note.txt"
+    real_open = os.open
+
+    def maybe_failing_open(path, flags, *a, **kw):
+        if os.O_RDONLY == flags and Path(path) == tmp_path:
+            raise OSError("cannot open dir")
+        return real_open(path, flags, *a, **kw)
+
+    monkeypatch.setattr(os, "open", maybe_failing_open)
+    atomic_io.atomic_write_text(target, "ok")
+    assert target.read_text() == "ok"
+
+
+def test_fsync_dir_fsync_and_close_failures_silent(tmp_path: Path, monkeypatch):
+    """os.fsync raising on the dir fd and os.close raising are both swallowed
+    (lines 105-109 and 113-114); the write still succeeds."""
+    target = tmp_path / "note.txt"
+    real_fsync = os.fsync
+    real_close = os.close
+    dir_fd_holder = {}
+
+    real_open = os.open
+
+    def tracking_open(path, flags, *a, **kw):
+        fd = real_open(path, flags, *a, **kw)
+        if Path(path) == tmp_path and flags == os.O_RDONLY:
+            dir_fd_holder["fd"] = fd
+        return fd
+
+    def maybe_failing_fsync(fd):
+        if fd == dir_fd_holder.get("fd"):
+            raise OSError("dir fsync unsupported")
+        return real_fsync(fd)
+
+    def maybe_failing_close(fd):
+        if fd == dir_fd_holder.get("fd"):
+            real_close(fd)  # actually close it so we don't leak
+            raise OSError("close boom")
+        return real_close(fd)
+
+    monkeypatch.setattr(os, "open", tracking_open)
+    monkeypatch.setattr(os, "fsync", maybe_failing_fsync)
+    monkeypatch.setattr(os, "close", maybe_failing_close)
+
+    atomic_io.atomic_write_text(target, "durable")
+    assert target.read_text() == "durable"
+
+
 def test_atomic_write_json_accepts_dataclass_via_default_str(tmp_path: Path):
     """default=str in json.dumps lets us serialise Path/datetime-like values."""
     from pathlib import Path as _P

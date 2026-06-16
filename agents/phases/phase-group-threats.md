@@ -130,8 +130,8 @@ When `INCREMENTAL=false`, skip this whole decision tree and select components as
 
 **The criteria the deterministic selector applies** (depth selects which predicates are active):
 - **Role-floor (every depth):** auth/identity and the frontend SPA are ALWAYS analyzed (encodes the two invariants below).
-- **quick:** role-floor + any component whose `deployment_zones[]` is internet-exposed (`internet`/`dmz`/`client-device`/`mobile-device`).
-- **standard:** quick + CI/CD & deployment components + crown-jewel datastores (`handles_sensitive_data:true`) + any exposure-unknown component (fail-safe inclusion). Internal-only components are excluded.
+- **quick:** role-floor + internet-exposed components (`internet`/`dmz`/`client-device`/`mobile-device`) + any **exposure-unknown** component — one with no reachability zone, i.e. an empty `deployment_zones[]` or only runtime-only tags like `docker-container`/`k8s`/`lambda` (fail-safe inclusion: reachability that cannot be proven internal is treated as potentially exposed, at every depth including quick — runtime-only tagging is the common case in containerised repos, and a missed exposed component is a whole-component blind spot).
+- **standard:** quick + CI/CD & deployment components + crown-jewel datastores (`handles_sensitive_data:true`). Proven-internal components (a reachability zone present, none of them exposed) are excluded.
 - **thorough:** standard + all remaining transitively-reachable (internal-only) components.
 - An optional operational `--ceiling` (merge/turn-budget safety valve) may drop the lowest-priority components if the inventory is pathologically large — but auth/frontend/exposed are NEVER dropped (the ceiling lifts and logs `EXPOSURE_CAP_LIFT`). It is a safety net, not the selector.
 

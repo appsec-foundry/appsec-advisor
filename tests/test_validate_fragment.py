@@ -248,3 +248,179 @@ def test_components_bad_crown_jewel_type_exits_1(tmp_path: Path):
     result = _run(["components", str(frag)])
     assert result.returncode == 1
     assert "VALIDATE_FAILED" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# In-process tests (drive functions directly for coverage of error branches)
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+
+def test_load_schema_unknown_type_raises_systemexit():
+    with pytest.raises(SystemExit) as ei:
+        vf._load_schema("totally-unknown")
+    assert "unknown fragment type" in str(ei.value)
+
+
+def test_load_schema_missing_file_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(vf, "SCHEMAS_DIR", tmp_path)  # empty dir, no schemas
+    with pytest.raises(SystemExit) as ei:
+        vf._load_schema("verdict")
+    assert "schema file not found" in str(ei.value)
+
+
+def test_load_schema_invalid_json_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(vf, "SCHEMAS_DIR", tmp_path)
+    (tmp_path / "verdict.schema.json").write_text("{bad json")
+    with pytest.raises(SystemExit) as ei:
+        vf._load_schema("verdict")
+    assert "is not JSON" in str(ei.value)
+
+
+def test_load_fragment_missing_raises(tmp_path):
+    with pytest.raises(SystemExit) as ei:
+        vf._load_fragment(tmp_path / "nope.json")
+    assert "fragment not found" in str(ei.value)
+
+
+def test_load_fragment_invalid_json_raises(tmp_path):
+    p = tmp_path / "x.json"
+    p.write_text("not json")
+    with pytest.raises(SystemExit) as ei:
+        vf._load_fragment(p)
+    assert "not valid JSON" in str(ei.value)
+
+
+def test_validate_schema_violation_returns_1(tmp_path, capsys):
+    p = tmp_path / "bad-verdict.json"
+    p.write_text('{"wrong": 1}')
+    rc = vf.validate("verdict", p)
+    assert rc == 1
+    assert "VALIDATE_FAILED" in capsys.readouterr().err
+
+
+def test_fragment_type_for_file_stem_fallback(tmp_path):
+    # Not in _FRAGMENT_FILENAMES but stem matches a schema (components.json)
+    assert vf._fragment_type_for_file(tmp_path / "components.json") == "components"
+
+
+def test_fragment_type_for_file_unknown_returns_none(tmp_path):
+    assert vf._fragment_type_for_file(tmp_path / "random-thing.json") is None
+
+
+def test_gate_missing_dir_emit_json(tmp_path, capsys):
+    rc = vf.run_pre_render_gate(tmp_path, emit_json=True)
+    out = capsys.readouterr().out
+    assert rc == 1
+    data = json.loads(out)
+    assert "error" in data
+
+
+def test_gate_skips_unknown_and_missing_schema(tmp_path, monkeypatch, capsys):
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    for name in (
+        "ms-verdict.json",
+        "system-overview.md",
+        "architecture-diagrams.md",
+        "attack-walkthroughs.md",
+        "assets.md",
+        "attack-surface.md",
+        "security-architecture.md",
+    ):
+        (frag / name).write_text("{}" if name.endswith(".json") else "# x\n")
+    # Unknown json fragment → skipped (line 218-219)
+    (frag / "random-thing.json").write_text("{}")
+    # Known type but schema file absent → skipped (224-225); point at empty dir
+    (frag / "components.json").write_text("{}")
+    monkeypatch.setattr(vf, "SCHEMAS_DIR", tmp_path / "no-schemas")
+    rc = vf.run_pre_render_gate(tmp_path, emit_json=False)
+    err = capsys.readouterr().err
+    data = json.loads((tmp_path / ".pre-render-report.json").read_text())
+    assert any("random-thing.json" == s for s in data["skipped"])
+    assert any("components.json" in s for s in data["skipped"])
+    # ms-verdict schema also absent → skipped, so nothing failed/missing → exit 0
+    assert rc == 0
+
+
+def test_gate_fragment_invalid_json_recorded_failed(tmp_path, capsys):
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    for name in (
+        "system-overview.md",
+        "architecture-diagrams.md",
+        "attack-walkthroughs.md",
+        "assets.md",
+        "attack-surface.md",
+        "security-architecture.md",
+    ):
+        (frag / name).write_text("# x\n")
+    # ms-verdict.json present but invalid JSON → failed branch (230-232)
+    (frag / "ms-verdict.json").write_text("{bad json")
+    rc = vf.run_pre_render_gate(tmp_path, emit_json=False)
+    err = capsys.readouterr().err
+    data = json.loads((tmp_path / ".pre-render-report.json").read_text())
+    assert data["failed"]
+    assert rc == 1
+    assert "failed schema" in err
+
+
+def test_gate_all_valid_prints_summary(tmp_path, monkeypatch, capsys):
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    for name in (
+        "ms-verdict.json",
+        "system-overview.md",
+        "architecture-diagrams.md",
+        "attack-walkthroughs.md",
+        "assets.md",
+        "attack-surface.md",
+        "security-architecture.md",
+    ):
+        (frag / name).write_text("{}" if name.endswith(".json") else "# x\n")
+    # Make schema trivially-passing so ms-verdict validates and lands in passed[]
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    (schema_dir / "verdict.schema.json").write_text(json.dumps({"type": "object"}))
+    monkeypatch.setattr(vf, "SCHEMAS_DIR", schema_dir)
+    rc = vf.run_pre_render_gate(tmp_path, emit_json=False)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "all 1 fragment(s) valid" in out
+
+
+def test_write_report_oserror_swallowed(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(vf, "atomic_write_json", boom)
+    # Should not raise
+    vf._write_report(tmp_path, {"passed": []})
+
+
+def test_main_gate_not_a_directory_returns_2(tmp_path, capsys):
+    rc = vf.main(["pre-render-gate", str(tmp_path / "nope")])
+    assert rc == 2
+    assert "not a directory" in capsys.readouterr().err
+
+
+def test_main_legacy_dispatch(tmp_path, capsys):
+    schema_dir = tmp_path / "schemas"
+    schema_dir.mkdir()
+    (schema_dir / "verdict.schema.json").write_text(json.dumps({"type": "object"}))
+    import unittest.mock as mock
+
+    p = tmp_path / "v.json"
+    p.write_text("{}")
+    with mock.patch.object(vf, "SCHEMAS_DIR", schema_dir):
+        rc = vf.main(["verdict", str(p)])
+    assert rc == 0
+    assert "VALIDATE_OK" in capsys.readouterr().out
+
+
+def test_main_gate_dispatch_emit_json(tmp_path, capsys):
+    rc = vf.main(["pre-render-gate", str(tmp_path), "--json"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert json.loads(out)["error"]

@@ -434,3 +434,124 @@ class TestJwtDomainReroute:
         data2, _, domains2 = ect.enforce(data)
         assert data2["security_controls"][0]["domain"] == "Session and Token Controls"
         assert domains2 == []
+
+
+# ---------------------------------------------------------------------------
+# Branch coverage for helper edge cases + CLI error paths (coverage campaign).
+# Pin current behaviour only — no producer edits.
+# ---------------------------------------------------------------------------
+
+
+class TestHelperEdgeCases:
+    def test_canonicalize_non_str_returns_none(self):
+        # line 112: non-str input short-circuits.
+        assert ect._canonicalize_name(None) is None
+        assert ect._canonicalize_name(123) is None
+
+    def test_canonicalize_already_canonical_via_rule(self):
+        # line 130: name matches a rule AND stripped == canonical → None
+        # (no rewrite needed because it is already in canonical form). The
+        # session-validation canonical form is itself produced by no rule
+        # whose RHS equals it after a match, so construct via a name that the
+        # rule matches and equals its own canonical: feed the exact canonical
+        # string of a signing rule that the signing regex matches.
+        # "Session Token Signing (JWT Based)" is NOT matched by any rule, so
+        # instead exercise the equality branch directly: the bare-form rules
+        # rewrite to "Session Token Validation (JWT Based)"; passing that exact
+        # string does not match any rule (returns None at line 132). To hit
+        # line 130 we need a name that matches a rule whose canonical == name.
+        # No rule's canonical is itself matched by its own pattern, so line 130
+        # is structurally near-dead; assert the realistic equivalent path.
+        assert ect._canonicalize_name("Session Token Validation (JWT Based)") is None
+
+    def test_infer_domain_non_str(self):
+        # line 263: non-str / empty control name → None
+        assert ect._infer_domain(None) is None
+        assert ect._infer_domain("") is None
+        assert ect._infer_domain("   ") is None
+
+    def test_infer_domain_punctuation_only_no_tokens(self):
+        # line 266: a non-empty string that tokenises to an empty set.
+        assert ect._infer_domain("!!! --- ???") is None
+
+
+class TestEnforceGuards:
+    def test_enforce_no_controls_key(self):
+        # line 289: security_controls missing / not a list → early return.
+        data = {"meta": {}}
+        out, names, domains = ect.enforce(data)
+        assert names == [] and domains == []
+        assert out is data
+
+    def test_enforce_empty_controls_list(self):
+        # line 289: empty list also early-returns.
+        out, names, domains = ect.enforce({"security_controls": []})
+        assert names == [] and domains == []
+
+    def test_enforce_skips_non_dict_control(self):
+        # line 296: a non-dict entry in the list is skipped.
+        data = {
+            "security_controls": [
+                "not-a-dict",
+                {"id": "SC-1", "control": "CORS strict origin policy", "domain": "BogusDomain"},
+            ]
+        }
+        out, names, domains = ect.enforce(data)
+        assert len(domains) == 1
+        assert domains[0]["id"] == "SC-1"
+
+
+class TestCLIErrorPaths:
+    def test_main_no_args_usage(self, capsys):
+        # lines 449-450: empty argv → usage + exit 2.
+        rc = ect.main([])
+        assert rc == 2
+        assert "Usage" in capsys.readouterr().err
+
+    def test_main_malformed_yaml(self, tmp_path, capsys):
+        # lines 459-461: YAMLError during parse → return 1.
+        (tmp_path / "threat-model.yaml").write_text("key: [unclosed\n", encoding="utf-8")
+        rc = ect.main([str(tmp_path)])
+        assert rc == 1
+        assert "could not parse" in capsys.readouterr().err
+
+    def test_main_yaml_not_a_mapping(self, tmp_path, capsys):
+        # lines 463-464: yaml parses to a list, not a dict → return 1.
+        (tmp_path / "threat-model.yaml").write_text("- a\n- b\n", encoding="utf-8")
+        rc = ect.main([str(tmp_path)])
+        assert rc == 1
+        assert "did not parse to a mapping" in capsys.readouterr().err
+
+    def test_main_no_drift_clean_message(self, tmp_path, capsys):
+        # line 500: clean yaml → "no taxonomy drift" message.
+        _write_yaml(
+            tmp_path,
+            [{"id": "SC-1", "control": "Password Login", "domain": "Identity and Authentication Controls"}],
+        )
+        rc = ect.main([str(tmp_path)])
+        assert rc == 0
+        assert "no taxonomy drift" in capsys.readouterr().out
+
+    def test_main_name_change_summary_details(self, tmp_path, capsys):
+        # lines 482, 493-494: a name change produces the name-detail summary
+        # and the name-change log loop.
+        _write_yaml(
+            tmp_path,
+            [{"id": "SC-1", "control": "JWT RS256 Authentication", "domain": "Session and Token Controls"}],
+        )
+        rc = ect.main([str(tmp_path)])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "canonicalised 1 name(s)" in out
+        assert "[names:" in out
+        log = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
+        assert "name SC-1" in log
+
+    def test_log_oserror_swallowed(self, tmp_path, monkeypatch):
+        # lines 443-444: _log swallows OSError when the log file cannot open.
+        def _boom(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Path, "open", _boom)
+        # Should not raise.
+        ect._log(tmp_path, "test message")

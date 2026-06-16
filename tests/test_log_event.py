@@ -187,3 +187,104 @@ class TestCliBehaviour:
         res = _run([str(out), "step-start", "[Phase 11] [4/7] Writing fragments…"], tmp_path)
         assert res.returncode == 0
         assert res.stderr.strip(), "stderr mirror must fire even without verbose"
+
+
+# ---------------------------------------------------------------------------
+# In-process unit tests for branch/error coverage (no subprocess overhead)
+# ---------------------------------------------------------------------------
+
+
+class TestElapsedClamp:
+    def test_future_phase_epoch_clamps_to_zero(self, tmp_path: Path):
+        # .phase-epoch in the future -> negative elapsed clamped to 0 (line 91).
+        (tmp_path / ".phase-epoch").write_text(str(int(time.time()) + 500))
+        assert log_event._elapsed_str(tmp_path) == "+0m00s"
+
+    def test_invalid_phase_epoch_returns_none(self, tmp_path: Path):
+        (tmp_path / ".phase-epoch").write_text("not-a-number")
+        assert log_event._phase_epoch(tmp_path) is None
+        assert log_event._elapsed_str(tmp_path) == ""
+
+
+class TestMirrorLineHeadOnly:
+    def test_head_only_no_clean_detail(self):
+        # phase present but detail collapses to empty -> head-only branch (126).
+        line = log_event._mirror_line("phase-start", "[Phase 3/11]", elapsed="1m00s")
+        assert "Phase 3/11" in line
+        assert "·" not in line  # no " · clean" suffix
+        assert "(1m00s)" in line
+
+    def test_clean_only_no_head(self):
+        # no phase/step/elapsed -> glyph + clean only (line 127).
+        line = log_event._mirror_line("info", "raw detail", elapsed="")
+        assert line.strip().endswith("raw detail")
+
+
+class TestProgressPayloadStatuses:
+    def test_phase_end_status(self):
+        p = log_event._progress_payload("phase-end", "PHASE_END", "[Phase 3/11] done", "a")
+        assert p["status"] == "phase_completed"
+
+    def test_step_end_status(self):
+        p = log_event._progress_payload("step-end", "STEP_END", "[Phase 3] [4/7] done", "a")
+        assert p["status"] == "step_completed"
+
+
+class TestWriteErrorBranches:
+    def test_append_log_oserror_swallowed(self, tmp_path: Path, monkeypatch):
+        # open() raises OSError -> best-effort pass (lines 140-141).
+        def boom(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr("builtins.open", boom)
+        # Must not raise.
+        log_event._append_log(tmp_path, "STEP_START", "x", "agent")
+
+    def test_append_log_hook_mirror_oserror_swallowed(self, tmp_path: Path, monkeypatch):
+        # First open (agent-run.log) succeeds, second (hook log) raises (150-151).
+        real_open = open
+        calls = {"n": 0}
+
+        def flaky(path, *a, **k):
+            calls["n"] += 1
+            if str(path).endswith(".hook-events.log"):
+                raise OSError("nope")
+            return real_open(path, *a, **k)
+
+        monkeypatch.setattr("builtins.open", flaky)
+        log_event._append_log(tmp_path, "PHASE_START", "[Phase 1/2] go", "agent")
+        # agent-run.log still written.
+        assert (tmp_path / ".agent-run.log").exists()
+
+    def test_write_progress_oserror_swallowed(self, tmp_path: Path, monkeypatch):
+        def boom(*a, **k):
+            raise OSError("ro fs")
+
+        monkeypatch.setattr(Path, "write_text", boom)
+        log_event._write_progress(tmp_path, {"event": "X"})  # no raise
+
+
+class TestMainArgErrors:
+    def test_agent_flag_missing_value(self, capsys):
+        rc = log_event.main(["log_event.py", "--agent"])
+        assert rc == 2
+        assert "--agent requires a value" in capsys.readouterr().err
+
+    def test_too_few_args(self, capsys):
+        rc = log_event.main(["log_event.py", "outdir", "phase-start"])
+        assert rc == 2
+        assert "usage:" in capsys.readouterr().err
+
+    def test_info_requires_event_and_detail(self, capsys, tmp_path):
+        rc = log_event.main(["log_event.py", str(tmp_path), "info", "ONLY_EVENT"])
+        assert rc == 2
+        assert "`info` requires" in capsys.readouterr().err
+
+    def test_stderr_write_oserror_swallowed(self, tmp_path, monkeypatch):
+        # main reaches stderr.write which raises OSError -> swallowed (239-240).
+        def boom(*a, **k):
+            raise OSError("broken pipe")
+
+        monkeypatch.setattr(sys.stderr, "write", boom)
+        rc = log_event.main(["log_event.py", str(tmp_path), "phase-start", "[Phase 1/2] go"])
+        assert rc == 0

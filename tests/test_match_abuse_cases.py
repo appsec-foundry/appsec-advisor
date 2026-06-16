@@ -245,3 +245,258 @@ def test_list_inconclusive_no_verdicts_file_is_empty(tmp_path: Path, capsys):
     rc = mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
     assert rc == 0
     assert capsys.readouterr().out.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# load_findings — shape handling
+# ---------------------------------------------------------------------------
+
+
+def test_load_findings_top_level_list(tmp_path: Path):
+    p = tmp_path / "merged.json"
+    p.write_text(json.dumps([_finding("T-001", "sqli")]))
+    out = mac.load_findings(p)
+    assert isinstance(out, list) and out[0]["t_id"] == "T-001"
+
+
+def test_load_findings_dict_findings_key(tmp_path: Path):
+    p = tmp_path / "merged.json"
+    p.write_text(json.dumps({"findings": [_finding("T-002", "xss")]}))
+    out = mac.load_findings(p)
+    assert out[0]["t_id"] == "T-002"
+
+
+def test_load_findings_unexpected_scalar_is_empty(tmp_path: Path):
+    p = tmp_path / "merged.json"
+    p.write_text(json.dumps("not-a-list-or-dict"))
+    assert mac.load_findings(p) == []
+
+
+# ---------------------------------------------------------------------------
+# _load_signals — accepted shapes
+# ---------------------------------------------------------------------------
+
+
+def test_load_signals_none_path():
+    assert mac._load_signals(None) is None
+
+
+def test_load_signals_signals_list(tmp_path: Path):
+    p = tmp_path / "sig.json"
+    p.write_text(json.dumps({"signals": ["a", "b"]}))
+    assert mac._load_signals(str(p)) == {"a", "b"}
+
+
+def test_load_signals_truthy_dict(tmp_path: Path):
+    p = tmp_path / "sig.json"
+    p.write_text(json.dumps({"a": True, "b": False, "c": 1}))
+    assert mac._load_signals(str(p)) == {"a", "c"}
+
+
+def test_load_signals_bare_list(tmp_path: Path):
+    p = tmp_path / "sig.json"
+    p.write_text(json.dumps(["x", "y"]))
+    assert mac._load_signals(str(p)) == {"x", "y"}
+
+
+def test_load_signals_scalar_returns_none(tmp_path: Path):
+    p = tmp_path / "sig.json"
+    p.write_text(json.dumps(42))
+    assert mac._load_signals(str(p)) is None
+
+
+# ---------------------------------------------------------------------------
+# finalize_verdict — chain folding
+# ---------------------------------------------------------------------------
+
+
+def _cm(steps):
+    """case_match with the given step_matches rows."""
+    return {"step_matches": steps}
+
+
+def test_finalize_no_required_steps_is_not_applicable():
+    cm = _cm([{"step": 1, "required": False}])
+    assert mac.finalize_verdict(cm, []) == "not_applicable"
+
+
+def test_finalize_all_blocked_is_mitigated():
+    cm = _cm([{"step": 1, "required": True}, {"step": 2, "required": True}])
+    sv = [{"step": 1, "verdict": "blocked"}, {"step": 2, "verdict": "blocked"}]
+    assert mac.finalize_verdict(cm, sv) == "mitigated"
+
+
+def test_finalize_any_inconclusive_is_inconclusive():
+    cm = _cm([{"step": 1, "required": True}, {"step": 2, "required": True}])
+    sv = [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "inconclusive"}]
+    assert mac.finalize_verdict(cm, sv) == "inconclusive"
+
+
+def test_finalize_all_confirmed_no_controls_is_fully_viable():
+    cm = _cm([{"step": 1, "required": True}])
+    sv = [{"step": 1, "verdict": "confirmed"}]
+    assert mac.finalize_verdict(cm, sv) == "fully_viable"
+
+
+def test_finalize_all_confirmed_with_control_is_partially_blocked():
+    cm = _cm([{"step": 1, "required": True, "controls_found": ["x"]}])
+    sv = [{"step": 1, "verdict": "confirmed"}]
+    assert mac.finalize_verdict(cm, sv) == "partially_blocked"
+
+
+def test_finalize_control_from_verdict_marks_partially_blocked():
+    cm = _cm([{"step": 1, "required": True}])
+    sv = [{"step": 1, "verdict": "confirmed", "controls_found": ["wf"]}]
+    assert mac.finalize_verdict(cm, sv) == "partially_blocked"
+
+
+def test_finalize_non_required_step_control_counts():
+    cm = _cm(
+        [
+            {"step": 1, "required": True},
+            {"step": 2, "required": False, "controls_found": ["x"]},
+        ]
+    )
+    sv = [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "confirmed"}]
+    assert mac.finalize_verdict(cm, sv) == "partially_blocked"
+
+
+def test_finalize_mixed_confirmed_blocked_is_partially_blocked():
+    cm = _cm([{"step": 1, "required": True}, {"step": 2, "required": True}])
+    sv = [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "blocked"}]
+    assert mac.finalize_verdict(cm, sv) == "partially_blocked"
+
+
+def test_finalize_missing_verdict_defaults_inconclusive():
+    cm = _cm([{"step": 1, "required": True}])
+    # no step_verdict provided → defaults to inconclusive
+    assert mac.finalize_verdict(cm, []) == "inconclusive"
+
+
+# ---------------------------------------------------------------------------
+# cmd_match — org-profile + resolver-error paths
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_match_with_org_profile(tmp_path: Path, capsys):
+    findings = {"threats": [_finding("T-001", "sqli")]}
+    (tmp_path / ".threats-merged.json").write_text(json.dumps(findings))
+    # An empty/minimal org-profile yaml — resolver tolerates an empty profile
+    # and still loads the shipped mandatory catalog.
+    prof = tmp_path / "org-profile.yaml"
+    prof.write_text("name: acme\n")
+    rc = mac.main(["match", "--output-dir", str(tmp_path), "--org-profile", str(prof)])
+    assert rc == 0
+    assert (tmp_path / ".abuse-case-matches.json").is_file()
+
+
+def test_cmd_match_resolver_errors_returns_1(tmp_path: Path, monkeypatch, capsys):
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": []}))
+
+    def fake_rac():
+        class M:
+            def resolve_abuse_cases(self, *a, **k):
+                return [], ["boom-error"]
+
+        return M()
+
+    monkeypatch.setattr(mac, "_rac", fake_rac)
+    rc = mac.main(["match", "--output-dir", str(tmp_path)])
+    assert rc == 1
+    assert "boom-error" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# cmd_list_candidates — missing file
+# ---------------------------------------------------------------------------
+
+
+def test_list_candidates_no_matches_file(tmp_path: Path, capsys):
+    rc = mac.main(["list-candidates", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# cmd_list_inconclusive — malformed json branches
+# ---------------------------------------------------------------------------
+
+
+def test_list_inconclusive_malformed_verdicts_json(tmp_path: Path, capsys):
+    (tmp_path / ".abuse-case-verdicts.json").write_text("{ not json")
+    rc = mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == ""
+
+
+def test_list_inconclusive_malformed_matches_json(tmp_path: Path, capsys):
+    _write_verdicts(tmp_path, [("AC-T-002", "inconclusive")])
+    (tmp_path / ".abuse-case-matches.json").write_text("{ not json")
+    rc = mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    # malformed matches → candidates set empty → no candidate gate, lists all
+    assert capsys.readouterr().out.split() == ["AC-T-002"]
+
+
+def test_list_inconclusive_verdicts_as_bare_list(tmp_path: Path, capsys):
+    # verdicts file is a bare list (not a {"verdicts": [...]} dict)
+    (tmp_path / ".abuse-case-verdicts.json").write_text(
+        json.dumps([{"abuse_case_id": "AC-T-007", "chain_verdict": "inconclusive"}])
+    )
+    rc = mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert capsys.readouterr().out.split() == ["AC-T-007"]
+
+
+# ---------------------------------------------------------------------------
+# cmd_finalize — folds step verdicts into chain verdicts on disk
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_finalize_writes_chain_verdicts(tmp_path: Path):
+    matches = {
+        "schema_version": 1,
+        "matches": [
+            {
+                "abuse_case_id": "AC-T-001",
+                "step_matches": [{"step": 1, "required": True}],
+            }
+        ],
+    }
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches))
+    verdicts = {
+        "schema_version": 1,
+        "verdicts": [
+            {"abuse_case_id": "AC-T-001", "step_verdicts": [{"step": 1, "verdict": "confirmed"}]}
+        ],
+    }
+    (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts))
+    rc = mac.main(["finalize", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    out = json.loads((tmp_path / ".abuse-case-verdicts.json").read_text())
+    assert out["verdicts"][0]["chain_verdict"] == "fully_viable"
+
+
+def test_cmd_finalize_explicit_paths_and_bare_list(tmp_path: Path):
+    mp = tmp_path / "m.json"
+    vp = tmp_path / "v.json"
+    mp.write_text(
+        json.dumps({"matches": [{"abuse_case_id": "AC-T-002", "step_matches": [{"step": 1, "required": True}]}]})
+    )
+    # verdicts as a bare list
+    vp.write_text(json.dumps([{"abuse_case_id": "AC-T-002", "step_verdicts": [{"step": 1, "verdict": "blocked"}]}]))
+    rc = mac.main(["finalize", "--matches", str(mp), "--verdicts", str(vp)])
+    assert rc == 0
+    out = json.loads(vp.read_text())
+    assert out["verdicts"][0]["chain_verdict"] == "mitigated"
+
+
+def test_cmd_finalize_unknown_case_uses_empty_step_matches(tmp_path: Path):
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps({"matches": []}))
+    (tmp_path / ".abuse-case-verdicts.json").write_text(
+        json.dumps({"verdicts": [{"abuse_case_id": "AC-T-099", "step_verdicts": []}]})
+    )
+    rc = mac.main(["finalize", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    out = json.loads((tmp_path / ".abuse-case-verdicts.json").read_text())
+    assert out["verdicts"][0]["chain_verdict"] == "not_applicable"

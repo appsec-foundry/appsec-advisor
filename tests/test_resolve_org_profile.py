@@ -276,3 +276,114 @@ def test_policy_disable_opus_true(isolated_root, tmp_path):
     assert errors == []
     assert effective["org_profile"]["active"] is True
     assert effective["defaults"]["disable_opus"] is True
+
+
+# ---------------------------------------------------------------------------
+# Coverage: config-pointer edge cases, preset discovery, flatten, manifest, CLI
+# ---------------------------------------------------------------------------
+
+
+def test_config_pointer_malformed_json(isolated_root):
+    (isolated_root / "config.json").write_text("{not valid json")
+    path, default_preset, enabled = rop._config_pointer(isolated_root)
+    assert (path, default_preset, enabled) == (None, None, False)
+
+
+def test_config_pointer_missing_file(tmp_path):
+    assert rop._config_pointer(tmp_path / "no-plugin") == (None, None, False)
+
+
+def test_config_pointer_disabled_block(isolated_root):
+    (isolated_root / "config.json").write_text(
+        json.dumps({"organization_profile": {"enabled": False, "path": "x"}})
+    )
+    assert rop._config_pointer(isolated_root) == (None, None, False)
+
+
+def test_discover_active_preset_cli_wins():
+    assert rop.discover_active_preset({"default_preset": "d"}, "cli-preset", env={}) == "cli-preset"
+
+
+def test_discover_active_preset_env_wins():
+    assert (
+        rop.discover_active_preset({"default_preset": "d"}, None, env={"APPSEC_ADVISOR_PRESET": "envp"})
+        == "envp"
+    )
+
+
+def test_discover_active_preset_falls_back_to_default():
+    assert rop.discover_active_preset({"default_preset": "d"}, None, env={}) == "d"
+
+
+def test_discover_active_preset_default_uses_os_environ(monkeypatch):
+    monkeypatch.delenv("APPSEC_ADVISOR_PRESET", raising=False)
+    assert rop.discover_active_preset({"default_preset": "d"}, None) == "d"
+
+
+def test_flatten_preset_unknown_name_errors():
+    defaults, errors = rop.flatten_preset({"presets": {}}, "ghost", None)
+    assert defaults == {}
+    assert any("ghost" in e for e in errors)
+
+
+def test_flatten_preset_profile_default_repo_path(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    profile = {
+        "presets": {
+            "p": {
+                "base_mode": "standard",
+                "target": {"repo": "profile_default", "repo_path": str(repo)},
+            }
+        }
+    }
+    defaults, errors = rop.flatten_preset(profile, "p", None)
+    assert errors == []
+    assert defaults["repo_root"] == str(repo.resolve())
+
+
+def test_build_context_manifest_missing_file(tmp_path):
+    profile = {"llm_context": {"documents": [{"id": "x", "path": "context/missing.md"}]}}
+    manifest = rop.build_context_manifest(profile, tmp_path)
+    assert manifest[0]["loaded"] is False
+    assert manifest[0]["sha256"] is None
+    assert manifest[0]["reason"]
+
+
+def test_resolve_profile_path_not_found(isolated_root, tmp_path):
+    missing = tmp_path / "no-such.yaml"
+    effective, errors = rop.resolve(str(missing), None, False, None, isolated_root, env={})
+    assert effective["org_profile"]["active"] is False
+    assert any("not found" in e for e in errors)
+
+
+def test_resolve_validation_errors_bubble_up(isolated_root, tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("api_version: appsec-advisor.org-profile/v9\n")
+    effective, errors = rop.resolve(str(bad), None, False, None, isolated_root, env={})
+    assert effective["org_profile"]["active"] is False
+    assert errors
+
+
+def test_main_emits_json_to_stdout(isolated_root, capsys):
+    rc = rop.main(["--org-profile", str(FIXTURE_PATH), "--plugin-root", str(isolated_root)])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["org_profile"]["active"] is True
+
+
+def test_main_error_path_returns_one(isolated_root, tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("api_version: appsec-advisor.org-profile/v9\n")
+    rc = rop.main(["--org-profile", str(bad), "--plugin-root", str(isolated_root)])
+    assert rc == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_module_runs_as_script(isolated_root):
+    res = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--org-profile", str(FIXTURE_PATH), "--plugin-root", str(isolated_root)],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0

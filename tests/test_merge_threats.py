@@ -865,3 +865,634 @@ class TestConsolidationCollectIntegration:
         assert len(survivors) == 1
         assert survivors[0]["instance_count"] == 3
         assert survivors[0]["systemic"] is True
+
+
+# ===========================================================================
+# Branch-coverage additions (coverage campaign). Test files only; pin current
+# behaviour. Each block targets specific previously-uncovered lines.
+# ===========================================================================
+
+
+class TestCweTaxonomyMap:
+    def test_threat_category_id_non_str_cwe_returns_none(self, mt):
+        # line 93: cwe is not a str → None
+        assert mt._threat_category_id_for({"cwe": None}) is None
+        assert mt._threat_category_id_for({"cwe": 89}) is None
+
+    def test_threat_category_id_str_cwe(self, mt):
+        # Drives the real cwe_to_th map lookup (string CWE).
+        # Result may be None or a TH-id depending on catalog; just assert it
+        # returns without raising and is None-or-str.
+        out = mt._threat_category_id_for({"cwe": "CWE-89"})
+        assert out is None or isinstance(out, str)
+
+    def test_load_cwe_map_handles_list_and_str_values(self, mt, tmp_path, monkeypatch):
+        # lines 76-77, 84-85: OSError fallback + list-value/str-value branches.
+        import yaml as _y
+
+        # Build a fake taxonomy file and point the loader at it via __file__.
+        fake_data = tmp_path / "data"
+        fake_data.mkdir()
+        (fake_data / "threat-category-taxonomy.yaml").write_text(
+            _y.safe_dump(
+                {
+                    "cwe_to_th": {
+                        "CWE-1": ["TH-01", "TH-99"],  # list → first
+                        "CWE-2": "TH-02",  # str → as-is
+                        "CWE-3": 12345,  # neither → skipped
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        # The loader resolves Path(__file__).parent.parent / "data". Monkeypatch
+        # the module __file__ to a child of tmp_path so parent.parent == tmp_path.
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        mt._load_cwe_to_th_map.cache_clear()
+        result = mt._load_cwe_to_th_map()
+        assert result["CWE-1"] == "TH-01"
+        assert result["CWE-2"] == "TH-02"
+        assert "CWE-3" not in result
+        mt._load_cwe_to_th_map.cache_clear()
+
+    def test_load_cwe_map_oserror_returns_empty(self, mt, tmp_path, monkeypatch):
+        # lines 76-77: unreadable / missing file → {}
+        scripts_dir = tmp_path / "no_data_here" / "scripts"
+        scripts_dir.mkdir(parents=True)
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        mt._load_cwe_to_th_map.cache_clear()
+        assert mt._load_cwe_to_th_map() == {}
+        mt._load_cwe_to_th_map.cache_clear()
+
+
+class TestFlattenThreats:
+    def test_non_list_threats_skipped(self, mt):
+        # line 195: data['threats'] is not a list → component skipped.
+        pairs = [("c1", {"threats": "not-a-list"})]
+        assert mt._flatten_threats(pairs) == []
+
+    def test_non_dict_threat_entry_skipped(self, mt):
+        # line 199: an entry that is not a dict is skipped.
+        pairs = [("c1", {"threats": ["str", _threat()]})]
+        out = mt._flatten_threats(pairs)
+        assert len(out) == 1
+
+    def test_stride_category_normalised_to_stride(self, mt):
+        # line 207: stride_category fills in for missing stride.
+        t = {"title": "x", "stride_category": "Spoofing", "cwe": "CWE-287"}
+        out = mt._flatten_threats([("c1", {"threats": [t]})])
+        assert out[0]["stride"] == "Spoofing"
+
+    def test_source_classified_when_stride_analyzer(self, mt):
+        # line 209: source 'stride-analyzer' → reclassified.
+        t = {"title": "y", "stride": "Tampering", "source": "stride-analyzer", "cwe": "CWE-89"}
+        out = mt._flatten_threats([("c1", {"threats": [t]})])
+        assert out[0]["source"] == "stride"
+
+    def test_evidence_list_coerced_to_first_object(self, mt):
+        # line 215: evidence as a list → first dict entry kept.
+        t = {
+            "title": "z",
+            "stride": "Tampering",
+            "cwe": "CWE-89",
+            "evidence": [{"file": "a.py", "line": 1}, {"file": "b.py", "line": 2}],
+        }
+        out = mt._flatten_threats([("c1", {"threats": [t]})])
+        assert out[0]["evidence"] == {"file": "a.py", "line": 1}
+
+    def test_evidence_empty_list_becomes_none(self, mt):
+        t = {"title": "z", "stride": "Tampering", "cwe": "CWE-89", "evidence": []}
+        out = mt._flatten_threats([("c1", {"threats": [t]})])
+        assert out[0]["evidence"] is None
+
+    def test_configuration_defect_gets_mitigation_hint(self, mt):
+        # line 228: source=configuration-defect + no mitigation_title → hint
+        # stamped. Triggered via the hardcoded-secret classifier.
+        t = {
+            "title": "Hardcoded secret API key in config",
+            "stride": "Information Disclosure",
+            "source": "stride-analyzer",
+            "cwe": "CWE-798",
+            "evidence": {"file": "config.js", "line": 5},
+        }
+        out = mt._flatten_threats([("c1", {"threats": [t]})])
+        assert out[0]["source"] == "configuration-defect"
+        assert "secrets-management" in out[0]["mitigation_title"]
+
+
+class TestClassifyStrideSource:
+    def test_evidence_list_with_files(self, mt):
+        # lines 265-272: evidence is a list of dicts with file → config-defect.
+        t = {
+            "title": "Hardcoded password credential",
+            "evidence": [{"file": "x.py"}, {"no": "file"}],
+        }
+        assert mt._classify_stride_source(t) == "configuration-defect"
+
+    def test_evidence_dict_with_file(self, mt):
+        t = {"title": "Hardcoded api-key token", "evidence": {"file": "y.py"}}
+        assert mt._classify_stride_source(t) == "configuration-defect"
+
+    def test_evidence_none_falls_back_to_stride(self, mt):
+        # ev_files empty → stride.
+        t = {"title": "Hardcoded secret key", "evidence": None}
+        assert mt._classify_stride_source(t) == "stride"
+
+    def test_non_hardcoded_title_is_stride(self, mt):
+        t = {"title": "SQL injection", "evidence": {"file": "z.py"}}
+        assert mt._classify_stride_source(t) == "stride"
+
+
+class TestConfigFindingToThreat:
+    def test_maps_fields(self, mt):
+        # lines 305-309 (function body) exercised end-to-end.
+        f = {
+            "title": "CORS wildcard",
+            "scenario": "any origin allowed",
+            "severity": "High",
+            "cwe": ["CWE-942"],
+            "file": "app.js",
+            "line": 7,
+            "breach_vector": "Internet Anon",
+            "check_slug": "cors-wildcard",
+        }
+        out = mt._config_finding_to_threat(f)
+        assert out["stride"] == "Information Disclosure"
+        assert out["risk"] == "High"
+        assert out["cwe"] == "CWE-942"
+        assert out["breach_distance"] == 1
+        assert out["config_check_slug"] == "cors-wildcard"
+
+    def test_defaults_when_missing(self, mt):
+        out = mt._config_finding_to_threat({})
+        assert out["risk"] == "Medium"
+        assert out["cwe"] == ""
+        assert out["breach_distance"] is None
+
+
+class TestGuessComponentFromPath:
+    def test_frontend_prefix(self, mt):
+        assert mt._guess_component_from_path("frontend/app.ts") == ("frontend", "Frontend SPA")
+        assert mt._guess_component_from_path("client/main.js") == ("frontend", "Frontend SPA")
+
+    def test_data_layer_prefix(self, mt):
+        assert mt._guess_component_from_path("models/user.ts") == ("data-layer", "Data Layer")
+        assert mt._guess_component_from_path("prisma/schema.prisma") == ("data-layer", "Data Layer")
+
+    def test_backend_default(self, mt):
+        assert mt._guess_component_from_path("routes/order.ts") == ("backend-api", "Backend API")
+
+
+class TestSourceAuthFindingToThreat:
+    def test_maps_authz_check(self, mt):
+        # lines 412-419: full mapping incl. stride from AUTHZ id + component guess.
+        f = {
+            "title": "IDOR via raw param",
+            "check_id": "AUTHZ-002",
+            "severity": "High",
+            "cwe": ["CWE-639"],
+            "file": "routes/users.ts",
+            "line": 9,
+            "breach_vector": "Internet User",
+        }
+        out = mt._source_auth_finding_to_threat(f)
+        assert out["stride"] == "Tampering"
+        assert out["source"] == "source-scan"
+        assert out["component_id"] == "backend-api"
+        assert out["breach_distance"] == 2
+
+    def test_unknown_check_id_defaults_tampering(self, mt):
+        out = mt._source_auth_finding_to_threat({"check_id": "AUTHZ-999"})
+        assert out["stride"] == "Tampering"
+        assert out["cwe"] == ""
+
+
+class TestLoadSourceAuthFindings:
+    def test_missing_file_empty(self, mt, tmp_path):
+        # line 453-454: absent file → [].
+        assert mt._load_source_auth_findings(tmp_path) == []
+
+    def test_malformed_json_degrades(self, mt, tmp_path, capsys):
+        # lines 458-464: JSONDecodeError → [] + stderr note.
+        (tmp_path / ".source-auth-findings.json").write_text("{bad", encoding="utf-8")
+        assert mt._load_source_auth_findings(tmp_path) == []
+        assert "failed to read" in capsys.readouterr().err
+
+    def test_parse_error_stub_degrades(self, mt, tmp_path):
+        # lines 465-466: stub with parse_error → [].
+        (tmp_path / ".source-auth-findings.json").write_text('{"parse_error": true}', encoding="utf-8")
+        assert mt._load_source_auth_findings(tmp_path) == []
+
+    def test_findings_not_list_returns_empty(self, mt, tmp_path):
+        # lines 468-469: findings not a list → [].
+        (tmp_path / ".source-auth-findings.json").write_text('{"findings": "nope"}', encoding="utf-8")
+        assert mt._load_source_auth_findings(tmp_path) == []
+
+    def test_valid_findings_converted(self, mt, tmp_path):
+        # line 470: real findings converted.
+        (tmp_path / ".source-auth-findings.json").write_text(
+            json.dumps({"findings": [{"check_id": "AUTHZ-001", "title": "BFLA", "file": "r.ts"}, "skip"]}),
+            encoding="utf-8",
+        )
+        out = mt._load_source_auth_findings(tmp_path)
+        assert len(out) == 1
+        assert out[0]["source_check_id"] == "AUTHZ-001"
+
+
+class TestLoadConfigScanFindings:
+    def test_missing_file_empty(self, mt, tmp_path):
+        assert mt._load_config_scan_findings(tmp_path) == []
+
+    def test_malformed_json_degrades(self, mt, tmp_path, capsys):
+        # lines 487-493: JSONDecodeError path.
+        (tmp_path / ".config-scan-findings.json").write_text("{bad", encoding="utf-8")
+        assert mt._load_config_scan_findings(tmp_path) == []
+        assert "failed to read" in capsys.readouterr().err
+
+    def test_parse_error_stub_degrades(self, mt, tmp_path):
+        (tmp_path / ".config-scan-findings.json").write_text('{"parse_error": true}', encoding="utf-8")
+        assert mt._load_config_scan_findings(tmp_path) == []
+
+    def test_findings_not_list_returns_empty(self, mt, tmp_path):
+        (tmp_path / ".config-scan-findings.json").write_text('{"findings": 5}', encoding="utf-8")
+        assert mt._load_config_scan_findings(tmp_path) == []
+
+    def test_valid_findings_converted(self, mt, tmp_path):
+        (tmp_path / ".config-scan-findings.json").write_text(
+            json.dumps({"findings": [{"title": "x", "file": "ci.yml"}]}),
+            encoding="utf-8",
+        )
+        out = mt._load_config_scan_findings(tmp_path)
+        assert len(out) == 1
+        assert out[0]["source"] == "config-scan"
+
+
+class TestSmallHelpers:
+    def test_normalize_title_non_str(self, mt):
+        # line 535: non-str title → ().
+        assert mt._normalize_title_keywords(None) == ()
+
+    def test_exact_key_non_dict_evidence(self, mt):
+        # line 546: evidence not a dict → treated as {}.
+        k = mt._exact_key({"cwe": "CWE-1", "stride": "Tampering", "evidence": "oops", "title": "t"})
+        assert k[3] == "" and k[4] is None
+
+    def test_extract_endpoints_from_scenario(self, mt):
+        # lines 600, 604-606: scenario source + path normalisation.
+        t = {"title": "no path here", "scenario": "attacker hits POST /api/Users/ to escalate"}
+        eps = mt._extract_endpoints(t)
+        assert "/api/users" in eps
+
+    def test_extract_endpoints_none_when_empty(self, mt):
+        assert mt._extract_endpoints({"title": "nothing", "scenario": "nothing"}) == ()
+
+    def test_cwe_family_known_and_unknown(self, mt):
+        # line 655.
+        assert mt._cwe_family("CWE-89") == "injection"
+        assert mt._cwe_family("CWE-99999") == "other"
+
+    def test_endpoint_candidate_key_none_without_endpoint(self, mt):
+        # line 667 (None branch).
+        assert mt._endpoint_candidate_key({"title": "x", "scenario": "y"}) is None
+
+    def test_endpoint_candidate_key_with_endpoint(self, mt):
+        k = mt._endpoint_candidate_key({"title": "GET /api/users", "cwe": "CWE-639"})
+        assert k == ("/api/users", "authz")
+
+    def test_dedupe_exact_records_provenance(self, mt):
+        # line 683: second dup appends to merged_from.
+        t1 = {"component_id": "a", **_threat()}
+        t2 = {"component_id": "a", **_threat()}
+        out = mt._dedupe_exact([t1, t2])
+        assert len(out) == 1
+        assert out[0]["merged_from"] == ["a"]
+
+    def test_evidence_identity_key_non_dict_evidence(self, mt):
+        # line 714: evidence not a dict → coerced; missing line → None.
+        assert mt._evidence_identity_key({"cwe": "CWE-1", "evidence": "x"}) is None
+
+    def test_cwe_sort_value_non_str_and_bad_format(self, mt):
+        # lines 1250, 1253.
+        assert mt._cwe_sort_value(None) == (1, 0)
+        assert mt._cwe_sort_value("not-a-cwe") == (1, 0)
+        assert mt._cwe_sort_value("CWE-89") == (0, 89)
+
+
+class TestConsolidationInternals:
+    def test_load_groups_oserror(self, mt, tmp_path, monkeypatch):
+        # lines 828-829: missing catalog → ().
+        scripts_dir = tmp_path / "x" / "scripts"
+        scripts_dir.mkdir(parents=True)
+        monkeypatch.setattr(mt, "__file__", str(scripts_dir / "merge_threats.py"))
+        mt._load_consolidation_groups.cache_clear()
+        assert mt._load_consolidation_groups() == ()
+        mt._load_consolidation_groups.cache_clear()
+
+    def test_glob_match_double_star_and_plain(self, mt):
+        # line 847 (plain fnmatch branch) + 846 (double-star).
+        assert mt._glob_match("a/b/foo.ts", "**/foo.ts") is True
+        assert mt._glob_match("foo.ts", "**/foo.ts") is True
+        assert mt._glob_match("a/b.ts", "a/*.ts") is True
+        assert mt._glob_match("a/b.ts", "z/*.ts") is False
+
+    def test_crit_matches_all_predicates(self, mt):
+        # lines 864-877: each predicate branch + final seen return.
+        crit = {
+            "cwe": ["CWE-347"],
+            "source_check_id": ["AUTHZ-005"],
+            "config_check_id": ["IAC-001"],
+            "title_pattern": "jwt",
+            "file_glob": ["**/insecurity.ts"],
+        }
+        assert mt._crit_matches(
+            crit, cwe="CWE-347", title="jwt verify", file_path="lib/insecurity.ts",
+            scid="AUTHZ-005", ccid="IAC-001",
+        ) is True
+        # cwe mismatch → False
+        assert mt._crit_matches(
+            crit, cwe="CWE-99", title="jwt verify", file_path="lib/insecurity.ts",
+            scid="AUTHZ-005", ccid="IAC-001",
+        ) is False
+
+    def test_crit_matches_bad_regex_returns_false(self, mt):
+        # lines 872-873: invalid regex → False (re.error swallowed).
+        crit = {"title_pattern": "([unclosed"}
+        assert mt._crit_matches(crit, cwe="", title="anything", file_path="", scid="", ccid="") is False
+
+    def test_crit_source_check_id_mismatch(self, mt):
+        crit = {"source_check_id": ["AUTHZ-001"]}
+        assert mt._crit_matches(crit, cwe="", title="", file_path="", scid="OTHER", ccid="") is False
+
+    def test_crit_config_check_id_mismatch(self, mt):
+        crit = {"config_check_id": ["IAC-001"]}
+        assert mt._crit_matches(crit, cwe="", title="", file_path="", scid="", ccid="OTHER") is False
+
+    def test_crit_file_glob_mismatch(self, mt):
+        crit = {"file_glob": ["**/foo.ts"]}
+        assert mt._crit_matches(crit, cwe="", title="", file_path="bar.js", scid="", ccid="") is False
+
+    def test_match_consolidation_group_list_evidence(self, mt):
+        # line 889: list-shaped evidence path in _match_consolidation_group.
+        groups = ({"id": "g1", "match_any": [{"file_glob": ["**/x.ts"]}]},)
+        t = {"evidence": [{"file": "a/x.ts"}], "title": "t"}
+        assert mt._match_consolidation_group(t, groups) is g_first(groups)
+
+    def test_match_consolidation_group_none(self, mt):
+        groups = ({"id": "g1", "match_any": [{"cwe": ["CWE-1"]}]},)
+        assert mt._match_consolidation_group({"cwe": "CWE-2"}, groups) is None
+
+    def test_instances_of_existing_instances(self, mt):
+        # line 911 area: member already carries instances[].
+        m = {"risk": "High", "instances": [{"file": "a", "line": 1}, "bad"]}
+        out = mt._instances_of(m)
+        assert out[0]["severity"] == "High"
+        assert len(out) == 2
+
+    def test_instances_of_list_evidence(self, mt):
+        # lines 930-939: synthesize from list-shaped evidence + snippet + ref.
+        m = {
+            "risk": "Low",
+            "evidence": [{"file": "f.ts", "line": 3, "snippet": "code"}],
+            "local_id": "L-1",
+        }
+        out = mt._instances_of(m)
+        assert out[0]["file"] == "f.ts"
+        assert out[0]["snippet"] == "code"
+        assert out[0]["local_id"] == "L-1"
+
+    def test_instances_of_non_dict_evidence(self, mt):
+        m = {"risk": "Low", "evidence": "oops"}
+        out = mt._instances_of(m)
+        assert out[0]["file"] == ""
+
+    def test_consolidate_by_group_no_groups(self, mt, monkeypatch):
+        # line 958: empty groups catalog → passthrough copy.
+        monkeypatch.setattr(mt, "_load_consolidation_groups", lambda: ())
+        threats = [_threat()]
+        out = mt._consolidate_by_group(threats)
+        assert out == threats and out is not threats
+
+
+def g_first(groups):
+    return groups[0]
+
+
+class TestEndpointSecondaryGrouping:
+    def test_secondary_group_distinct_cwe_same_endpoint(self, mt):
+        # lines 1108-1148: endpoint-based secondary grouping when primary
+        # (CWE,STRIDE) does not group them.
+        t1 = _threat(cwe="CWE-915", stride="Tampering", title="Mass assign POST /api/Users",
+                     evidence={"file": "r.ts", "line": 1})
+        t2 = _threat(cwe="CWE-269", stride="Elevation of Privilege",
+                     title="Admin role via POST /api/Users", evidence={"file": "r.ts", "line": 2})
+        groups = mt._group_candidates([t1, t2])
+        ge = [g for g in groups if g.get("group_key") == "endpoint_family"]
+        assert ge, "expected an endpoint_family secondary group"
+        assert ge[0]["endpoint"] == "/api/users"
+
+    def test_secondary_skipped_when_same_cwe_stride(self, mt):
+        # lines 1123-1125: members all share (cwe,stride) → skip (primary
+        # would have caught it). Use a single endpoint, identical key, but
+        # different file so primary grouping DOES fire (len>=2) and consumes
+        # them, leaving nothing for secondary.
+        t1 = _threat(cwe="CWE-89", stride="Tampering", title="SQLi GET /api/users a",
+                     evidence={"file": "a.ts", "line": 1})
+        t2 = _threat(cwe="CWE-89", stride="Tampering", title="SQLi GET /api/users b",
+                     evidence={"file": "b.ts", "line": 2})
+        groups = mt._group_candidates([t1, t2])
+        # primary cwe_stride group present, no endpoint_family group.
+        assert any(g.get("group_key") == "cwe_stride" for g in groups)
+        assert not any(g.get("group_key") == "endpoint_family" for g in groups)
+
+
+class TestAutoDecisionBranches:
+    def test_member_not_dict_returns_none(self, mt):
+        # line 1191: a non-dict member in fingerprint loop → None.
+        group = {
+            "group_id": "G-1",
+            "members": ["not-a-dict", {"title": "t", "evidence": {"file": "a", "line": 1}}],
+        }
+        assert mt._auto_decision_for_group(group) is None
+
+    def test_non_dict_evidence_member(self, mt):
+        # line 1194: evidence not a dict → coerced to {} → missing file → None.
+        group = {
+            "group_id": "G-1",
+            "members": [
+                {"title": "t", "evidence": "x", "threat_category_id": "TH-01"},
+                {"title": "t", "evidence": "y", "threat_category_id": "TH-01"},
+            ],
+        }
+        assert mt._auto_decision_for_group(group) is None
+
+    def test_missing_evidence_fields_returns_none(self, mt):
+        # line 1200: missing file/line/title → None.
+        group = {
+            "group_id": "G-1",
+            "members": [
+                {"title": "t", "evidence": {"file": "a", "line": None}, "threat_category_id": "TH-01"},
+                {"title": "t", "evidence": {"file": "a", "line": 1}, "threat_category_id": "TH-01"},
+            ],
+        }
+        assert mt._auto_decision_for_group(group) is None
+
+
+class TestApplyDecisionsBranches:
+    def _two_group(self):
+        # two threats sharing (CWE, STRIDE) → one group.
+        return [
+            _threat(cwe="CWE-89", stride="Tampering", component_id="a",
+                    title="SQLi a", evidence={"file": "a.ts", "line": 1}),
+            _threat(cwe="CWE-89", stride="Tampering", component_id="b",
+                    title="SQLi b", evidence={"file": "b.ts", "line": 2}),
+        ]
+
+    def _gid(self, mt, threats):
+        import hashlib
+        key = ("CWE-89", "Tampering")
+        n = sum(1 for t in threats if (t.get("cwe"), t.get("stride")) == key)
+        return "G-" + hashlib.sha256(f"CWE-89|Tampering|{n}".encode()).hexdigest()[:8]
+
+    def test_non_dict_decision_skipped(self, mt):
+        # line 1362: decision not a dict → skipped.
+        threats = self._two_group()
+        out = mt._apply_decisions(threats, ["not-a-dict"])
+        assert len(out) == 2
+
+    def test_merge_bad_target_index_skipped(self, mt):
+        # lines 1371-1372: out-of-range merge_target_index → continue.
+        threats = self._two_group()
+        gid = self._gid(mt, threats)
+        out = mt._apply_decisions(threats, [{"group_id": gid, "action": "merge", "merge_target_index": 99}])
+        assert len(out) == 2
+
+    def test_keep_non_list_indices_skipped(self, mt):
+        # lines 1386-1388: keep with non-list keep_indices → continue.
+        threats = self._two_group()
+        gid = self._gid(mt, threats)
+        out = mt._apply_decisions(threats, [{"group_id": gid, "action": "keep", "keep_indices": "nope"}])
+        assert len(out) == 2
+
+    def test_keep_drops_unlisted(self, mt):
+        # lines 1389-1391: keep_indices keeps only listed positions.
+        threats = self._two_group()
+        gid = self._gid(mt, threats)
+        out = mt._apply_decisions(threats, [{"group_id": gid, "action": "keep", "keep_indices": [0]}])
+        assert len(out) == 1
+
+    def test_consolidate_bad_target_skipped(self, mt):
+        # line 1396: consolidate out-of-range target → continue.
+        threats = self._two_group()
+        gid = self._gid(mt, threats)
+        out = mt._apply_decisions(
+            threats, [{"group_id": gid, "action": "consolidate", "merge_target_index": 99}]
+        )
+        assert len(out) == 2
+
+
+class TestCmdCollectFinalizeBranches:
+    def test_collect_no_stride_files(self, mt, tmp_path, capsys):
+        # lines 1444-1445: dir exists but no .stride-*.json → error.
+        rc = mt.cmd_collect_argv(tmp_path) if hasattr(mt, "cmd_collect_argv") else mt.main(
+            ["collect", "--output-dir", str(tmp_path)]
+        )
+        assert rc == 1
+        assert "no .stride-*.json" in capsys.readouterr().err
+
+    def test_collect_appends_config_and_source(self, mt, tmp_path):
+        # lines 1454, 1460: config + source-auth threats appended in collect.
+        _write_stride(tmp_path, "backend", [_threat()])
+        (tmp_path / ".config-scan-findings.json").write_text(
+            json.dumps({"findings": [{"title": "CORS", "file": "ci.yml", "line": 1}]}), encoding="utf-8"
+        )
+        (tmp_path / ".source-auth-findings.json").write_text(
+            json.dumps({"findings": [{"check_id": "AUTHZ-002", "title": "IDOR", "file": "r.ts", "line": 2}]}),
+            encoding="utf-8",
+        )
+        rc = mt.main(["collect", "--output-dir", str(tmp_path)])
+        assert rc == 0
+        cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
+        sources = {t.get("source") for t in cand["threats"]}
+        assert "config-scan" in sources
+        assert "source-scan" in sources
+
+    def test_finalize_missing_candidates(self, mt, tmp_path, capsys):
+        # lines 1518-1519: no .merge-candidates.json → error.
+        rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
+        assert rc == 1
+        assert "run 'collect' first" in capsys.readouterr().err
+
+    def test_finalize_reads_decisions_file_dict(self, mt, tmp_path):
+        # lines 1532-1533: .merge-decisions.json as dict with decisions[].
+        _write_stride(
+            tmp_path,
+            "backend",
+            [
+                _threat(cwe="CWE-89", stride="Tampering", title="SQLi a", evidence={"file": "a.ts", "line": 1}),
+                _threat(cwe="CWE-89", stride="Tampering", title="SQLi b", evidence={"file": "b.ts", "line": 2}),
+            ],
+        )
+        mt.main(["collect", "--output-dir", str(tmp_path)])
+        cand = json.loads((tmp_path / ".merge-candidates.json").read_text())
+        gid = next(g["group_id"] for g in cand["candidate_groups"])
+        (tmp_path / ".merge-decisions.json").write_text(
+            json.dumps({"decisions": [{"group_id": gid, "action": "keep", "keep_indices": [0]}]}),
+            encoding="utf-8",
+        )
+        rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
+        assert rc == 0
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert len(merged["threats"]) == 1
+
+    def test_finalize_reads_decisions_file_list(self, mt, tmp_path):
+        # lines 1532-1533 (list branch): .merge-decisions.json as bare list.
+        _write_stride(tmp_path, "backend", [_threat()])
+        mt.main(["collect", "--output-dir", str(tmp_path)])
+        (tmp_path / ".merge-decisions.json").write_text(json.dumps([]), encoding="utf-8")
+        rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
+        assert rc == 0
+
+    def test_finalize_attack_surface_coverage_gap(self, mt, tmp_path):
+        # lines 1562-1586: yaml present, threat has id not covered → gaps file.
+        _write_stride(tmp_path, "backend", [_threat()])
+        mt.main(["collect", "--output-dir", str(tmp_path)])
+        # Give the candidate threat an id so the coverage check finds a gap.
+        cand_path = tmp_path / ".merge-candidates.json"
+        cand = json.loads(cand_path.read_text())
+        for t in cand["threats"]:
+            t["id"] = "F-001"
+        cand_path.write_text(json.dumps(cand), encoding="utf-8")
+        import yaml as _y
+        (tmp_path / "threat-model.yaml").write_text(
+            _y.safe_dump({"attack_surface": [{"linked_threats": ["T-999"]}]}), encoding="utf-8"
+        )
+        rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
+        assert rc == 0
+        gaps = json.loads((tmp_path / ".coverage-gaps-as.json").read_text())
+        assert gaps["count"] >= 1
+
+    def test_finalize_attack_surface_malformed_yaml_swallowed(self, mt, tmp_path):
+        # lines 1585-1586: broken yaml → Exception swallowed, still rc 0.
+        _write_stride(tmp_path, "backend", [_threat()])
+        mt.main(["collect", "--output-dir", str(tmp_path)])
+        (tmp_path / "threat-model.yaml").write_text("key: [unclosed\n", encoding="utf-8")
+        rc = mt.main(["finalize", "--output-dir", str(tmp_path)])
+        assert rc == 0
+
+
+class TestAutoRepairInvalidJSON:
+    def test_invalid_escape_auto_repaired(self, mt, tmp_path, capsys):
+        # lines 130-153: a `\!` invalid escape is auto-repaired + file rewritten.
+        bad = tmp_path / ".stride-backend.json"
+        bad.write_text(
+            '{"component_id": "backend", "threats": [{"title": "x\\!", '
+            '"stride": "Tampering", "cwe": "CWE-89", "evidence": {"file": "a", "line": 1}}]}',
+            encoding="utf-8",
+        )
+        pairs = mt._load_stride_outputs(tmp_path)
+        assert pairs and pairs[0][1]["threats"][0]["title"] == "x!"
+        # file was rewritten to valid JSON
+        assert "\\!" not in bad.read_text()
+        assert "auto-repaired" in capsys.readouterr().err

@@ -131,3 +131,102 @@ def test_missing_file_is_silent_rc0(capsys):
 
 def test_bad_usage_returns_2():
     assert run_summary.main(["run_summary.py", "bogus", "x"]) == 2
+
+
+# --- edge / error branches -------------------------------------------------
+
+
+def test_load_yaml_none_returns_none(monkeypatch, tmp_path):
+    # When PyYAML is unavailable, _load returns None (line 31).
+    p = tmp_path / "x.yaml"
+    p.write_text("categories: []\n", encoding="utf-8")
+    monkeypatch.setattr(run_summary, "yaml", None)
+    assert run_summary._load(str(p)) is None
+
+
+def test_load_malformed_yaml_returns_none(tmp_path):
+    # Unparseable YAML -> YAMLError caught -> None (lines 36-37).
+    p = tmp_path / "bad.yaml"
+    p.write_text("key: : : [unbalanced\n", encoding="utf-8")
+    assert run_summary._load(str(p)) is None
+
+
+def test_load_oserror_returns_none(tmp_path):
+    # open() raising OSError (directory path) -> None (lines 36-37).
+    assert run_summary._load(str(tmp_path)) is None
+
+
+def test_requirements_non_dict_yaml_silent(tmp_path, capsys):
+    # _load returns None for a non-dict top-level -> _summarize early 0 (line 43).
+    p = tmp_path / "list.yaml"
+    p.write_text("- a\n- b\n", encoding="utf-8")
+    assert run_summary.main(["run_summary.py", "requirements", str(p)]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_requirements_long_name_truncated(tmp_path, capsys):
+    long_title = "X" * 200
+    path = _write(
+        tmp_path,
+        {
+            "sources_meta": [{"title": long_title}],
+            "categories": [{"requirements": [{"id": "W1"}]}],
+            "blueprints": [],
+        },
+    )
+    run_summary.main(["run_summary.py", "requirements", path])
+    out = capsys.readouterr().out
+    assert "…" in out
+    # 77 chars + ellipsis, no full 200-char title.
+    assert long_title not in out
+
+
+def test_severity_returns_empty_when_absent():
+    assert run_summary._severity({"id": "T", "title": "no sev"}) == ""
+
+
+def test_findings_non_dict_yaml_silent(tmp_path, capsys):
+    p = tmp_path / "list.yaml"
+    p.write_text("- a\n", encoding="utf-8")
+    assert run_summary.main(["run_summary.py", "findings", str(p)]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_findings_skips_non_dict_threat(tmp_path, capsys):
+    # A non-dict entry in threats is skipped (line 84).
+    p = tmp_path / "f.yaml"
+    p.write_text(
+        "threats:\n"
+        "  - just-a-string\n"
+        "  - {id: T-1, title: real, effective_severity: Critical}\n",
+        encoding="utf-8",
+    )
+    run_summary.main(["run_summary.py", "findings", str(p)])
+    out = capsys.readouterr().out
+    assert "Critical: 1, High: 0" in out
+    assert "T-1" in out
+
+
+def test_findings_long_title_truncated(tmp_path, capsys):
+    long_title = "Y" * 200
+    path = _write(
+        tmp_path,
+        {"threats": [{"id": "T-1", "title": long_title, "effective_severity": "Critical"}]},
+    )
+    run_summary.main(["run_summary.py", "findings", path])
+    out = capsys.readouterr().out
+    assert "…" in out
+    assert long_title not in out
+
+
+def test_main_module_entrypoint(tmp_path):
+    # Execute the module as __main__ to cover line 115.
+    import subprocess
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "run_summary.py"
+    r = subprocess.run(
+        [sys.executable, str(script), "findings", "/no/such.yaml"],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0

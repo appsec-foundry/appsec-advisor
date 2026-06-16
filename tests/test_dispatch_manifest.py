@@ -324,15 +324,18 @@ def test_select_thorough_includes_internal_only():
     assert {c["id"] for c in selected} == {"backend-api", "internal-worker"}
 
 
-def test_select_quick_is_role_floor_plus_exposed_only():
+def test_select_quick_is_role_floor_plus_exposed_plus_exposure_unknown():
     comps = [
         _c("frontend-spa", zones=["client-device"], tier="client"),  # role-floor
         _c("backend-api", zones=["internet"]),  # exposed
-        _c("ci-cd", zones=["ci-cd-runtime"]),  # NOT at quick
-        _c("user-store", zones=["prod-write-db"], tier="data", sensitive=True),  # NOT at quick
+        _c("mystery", zones=[]),  # exposure-unknown → fail-safe at EVERY depth
+        _c("ci-cd", zones=["ci-cd-runtime"]),  # proven non-exposed reachability → NOT at quick
+        _c("user-store", zones=["prod-write-db"], tier="data", sensitive=True),  # proven-internal → NOT at quick
     ]
     selected, _ = bm.select_stride_components(comps, "quick")
-    assert {c["id"] for c in selected} == {"frontend-spa", "backend-api"}
+    # Quick = role-floor + directly-exposed + exposure-unknown; only PROVEN-internal
+    # (ci-cd / crown-jewel with a reachability zone) is deferred to standard+.
+    assert {c["id"] for c in selected} == {"frontend-spa", "backend-api", "mystery"}
 
 
 def test_select_auth_and_frontend_always_kept_even_without_exposed_zone():
@@ -349,17 +352,19 @@ def test_select_auth_and_frontend_always_kept_even_without_exposed_zone():
         assert "plain-internal" not in ids, depth
 
 
-def test_select_exposure_unknown_failsafe_included_at_standard():
-    """A migrated set with one un-tagged component → fail-safe inclusion at standard+."""
+def test_select_exposure_unknown_failsafe_included_at_every_depth():
+    """A migrated set with one un-tagged component → fail-safe inclusion at EVERY
+    depth, including quick. Exposure-unknown means the component could be an
+    internet-facing door; the asymmetry of error costs (a missed exposed
+    component is a whole-component blind spot) makes conservative inclusion the
+    correct default even in the fast path. Only proven-internal is deferred."""
     comps = [
         _c("backend-api", zones=["internet"]),
         _c("mystery", zones=[]),  # zones present elsewhere → migrated; this one unknown
     ]
-    selected, _ = bm.select_stride_components(comps, "standard")
-    assert "mystery" in {c["id"] for c in selected}
-    # but excluded at quick (quick stays minimal)
-    selected_q, _ = bm.select_stride_components(comps, "quick")
-    assert "mystery" not in {c["id"] for c in selected_q}
+    for depth in ("quick", "standard", "thorough"):
+        selected, _ = bm.select_stride_components(comps, depth)
+        assert "mystery" in {c["id"] for c in selected}, depth
 
 
 def test_select_runtime_only_zone_is_exposure_unknown_not_internal():
@@ -382,9 +387,14 @@ def test_select_runtime_only_zone_is_exposure_unknown_not_internal():
     assert "internal-worker" not in ids, "a genuine internal-network component is still excluded"
     reasons = {s["id"]: s["reasons"] for s in report["selected"]}
     assert "exposure-unknown (fail-safe inclusion)" in reasons["b2b-api"]
-    # Still minimal at quick (fail-safe is standard+ only).
-    selected_q, _ = bm.select_stride_components(comps, "quick")
-    assert "b2b-api" not in {c["id"] for c in selected_q}
+    # Runtime-only tagging is the COMMON outcome in containerised repos, so the
+    # b2b-api RCE class must also be caught in quick; only proven-internal is out.
+    selected_q, report_q = bm.select_stride_components(comps, "quick")
+    ids_q = {c["id"] for c in selected_q}
+    assert "b2b-api" in ids_q, "runtime-only / exposure-unknown must be in scope at quick too"
+    assert "internal-worker" not in ids_q, "a genuine internal-network component is still excluded at quick"
+    reasons_q = {s["id"]: s["reasons"] for s in report_q["selected"]}
+    assert "exposure-unknown (fail-safe inclusion)" in reasons_q["b2b-api"]
 
 
 def test_select_ceiling_sheds_only_internal_never_earned():

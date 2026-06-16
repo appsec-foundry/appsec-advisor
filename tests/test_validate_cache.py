@@ -174,3 +174,112 @@ def test_cli_exit_0_when_corrupt_but_quarantined(tmp_path: Path, capsys):
 def test_cli_missing_output_dir_exit_0(tmp_path: Path, capsys):
     exit_code = validate_cache.main([str(tmp_path / "does-not-exist")])
     assert exit_code == 0
+
+
+# ---------------------------------------------------------------------------
+# Unreadable-file branches (_check_json / _check_text OSError)
+# ---------------------------------------------------------------------------
+
+
+def test_check_json_unreadable_returns_error(tmp_path: Path, monkeypatch):
+    p = tmp_path / "x.json"
+    p.write_text("{}")
+
+    def boom(*a, **k):
+        raise OSError("denied")
+
+    monkeypatch.setattr(validate_cache.Path, "read_text", boom)
+    err = validate_cache._check_json(p)
+    assert err is not None and "unreadable" in err
+
+
+def test_check_text_unreadable_returns_error(tmp_path: Path, monkeypatch):
+    p = tmp_path / "x.md"
+    p.write_text("hi")
+
+    def boom(*a, **k):
+        raise OSError("denied")
+
+    monkeypatch.setattr(validate_cache.Path, "stat", boom)
+    err = validate_cache._check_text(p)
+    assert err is not None and "unreadable" in err
+
+
+# ---------------------------------------------------------------------------
+# _quarantine relative_to fallback + OSError move failure
+# ---------------------------------------------------------------------------
+
+
+def test_quarantine_relative_to_fallback(tmp_path: Path):
+    # target outside output_dir → ValueError path → rel = Path(name)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{bad")
+    out = tmp_path / "out"
+    out.mkdir()
+    qdir = out / ".quarantine" / "ts"
+    dest = validate_cache._quarantine(outside, out, qdir)
+    assert dest.name == "outside.json"
+    assert dest.exists()
+
+
+def test_quarantine_move_failure_recorded(tmp_path: Path, monkeypatch):
+    _seed_fragments(tmp_path)
+    (tmp_path / ".threats-merged.json").write_text("{bad")
+
+    def boom(*a, **k):
+        raise OSError("move failed")
+
+    monkeypatch.setattr(validate_cache.shutil, "move", boom)
+    rep = validate_cache.run(tmp_path, quarantine=True)
+    assert len(rep["corrupt"]) == 1
+    assert rep["corrupt"][0]["quarantine_error"] == "move failed"
+
+
+# ---------------------------------------------------------------------------
+# Text renderer + JSON CLI output
+# ---------------------------------------------------------------------------
+
+
+def test_render_all_clean_with_files(tmp_path: Path, capsys):
+    _seed_fragments(tmp_path)
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"a": 1}))
+    rc = validate_cache.main([str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "parse cleanly" in out
+
+
+def test_render_quarantine_failure_line(tmp_path: Path, monkeypatch):
+    _seed_fragments(tmp_path)
+    (tmp_path / ".threats-merged.json").write_text("{bad")
+    monkeypatch.setattr(validate_cache.shutil, "move", lambda *a, **k: (_ for _ in ()).throw(OSError("nope")))
+    rep = validate_cache.run(tmp_path, quarantine=True)
+    text = validate_cache._render_text(rep, quarantine=True)
+    assert "quarantine failed" in text
+
+
+def test_render_corrupt_without_quarantine(tmp_path: Path):
+    _seed_fragments(tmp_path)
+    (tmp_path / ".threats-merged.json").write_text("{bad")
+    rep = validate_cache.run(tmp_path, quarantine=False)
+    text = validate_cache._render_text(rep, quarantine=False)
+    assert "re-run with --quarantine" in text
+    assert "healthy, left in place" in text
+
+
+def test_cli_json_output_for_existing_dir(tmp_path: Path, capsys):
+    _seed_fragments(tmp_path)
+    (tmp_path / ".threats-merged.json").write_text("{bad")
+    rc = validate_cache.main([str(tmp_path), "--json"])
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert rc == 1
+    assert payload["corrupt"]
+
+
+def test_cli_json_output_for_missing_dir(tmp_path: Path, capsys):
+    rc = validate_cache.main([str(tmp_path / "nope"), "--json"])
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert rc == 0
+    assert payload["checked_count"] == 0

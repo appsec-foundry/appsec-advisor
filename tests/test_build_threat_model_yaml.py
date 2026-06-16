@@ -938,3 +938,485 @@ def test_dedupe_mitigation_controls_dedupes_within_one_threat():
     out_threats, out_mits = b.dedupe_mitigation_controls(threats, mits)
     assert len(out_mits) == 1
     assert out_threats[0]["mitigation_ids"] == ["M-004"]  # remapped AND de-duplicated within the threat
+
+
+# ===========================================================================
+# Coverage extensions (2026-06-15): end-to-end main() against the committed
+# _last-run fixture, plus targeted helper/error branches.
+# ===========================================================================
+import os  # noqa: E402
+import shutil  # noqa: E402
+
+import pytest  # noqa: E402
+
+_LAST_RUN = ROOT / "tests" / "fixtures" / "e2e" / "_last-run"
+_REPAIR_RUN = ROOT / "tests" / "fixtures" / "e2e" / "_repair-run"
+_LAST_RUN_REQ = ROOT / "tests" / "fixtures" / "e2e" / "_last-run-req"
+
+
+def _copy_run(src: Path, tmp_path: Path) -> Path:
+    dest = tmp_path / "run"
+    shutil.copytree(src, dest)
+    return dest
+
+
+def _run_main(monkeypatch, argv):
+    monkeypatch.setattr(sys, "argv", ["build_threat_model_yaml.py", *argv])
+    return b.main()
+
+
+def test_main_dry_run_last_run_fixture(tmp_path, monkeypatch, capsys):
+    """End-to-end dry-run against the real --quick --requirements run dir."""
+    run = _copy_run(_LAST_RUN, tmp_path)
+    rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT), "--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    doc = yaml.safe_load(out)
+    assert "meta" in doc and "threats" in doc and "mitigations" in doc
+    # dry-run must NOT have rewritten the yaml on disk via atomic_write
+    # (the fixture's own yaml is still present, but main only printed).
+    assert isinstance(doc["threats"], list)
+
+
+def test_main_writes_and_schema_validates(tmp_path, monkeypatch, capsys):
+    """Full write path: atomic_write + schema-validate subprocess (rc 0).
+
+    The validator subprocess is mocked to return success so it does not spawn
+    a child `python3 -m coverage` that would clobber the parent's parallel
+    .coverage SQLite file (observed: 'no such table: tracer').
+    """
+    run = _copy_run(_LAST_RUN, tmp_path)
+
+    class _OkProc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    real_run = b.subprocess.run
+
+    def fake_run(cmd, *a, **k):
+        if any("validate_intermediate.py" in str(c) for c in cmd):
+            return _OkProc()
+        return real_run(cmd, *a, **k)
+
+    monkeypatch.setattr(b.subprocess, "run", fake_run)
+    rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT)])
+    assert rc == 0
+    out_yaml = run / "threat-model.yaml"
+    assert out_yaml.is_file()
+    doc = yaml.safe_load(out_yaml.read_text())
+    assert doc["meta"]
+    err = capsys.readouterr().err
+    assert "built deterministically" in err
+
+
+def test_main_repair_run_fixture(tmp_path, monkeypatch):
+    """Second committed fixture variant exercises a different input mix."""
+    if not _REPAIR_RUN.is_dir():
+        pytest.skip("repair-run fixture absent")
+    run = _copy_run(_REPAIR_RUN, tmp_path)
+    rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT), "--dry-run"])
+    assert rc == 0
+
+
+def test_main_requirements_run_fixture(tmp_path, monkeypatch):
+    if not _LAST_RUN_REQ.is_dir():
+        pytest.skip("requirements-run fixture absent")
+    run = _copy_run(_LAST_RUN_REQ, tmp_path)
+    rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT), "--dry-run"])
+    assert rc == 0
+
+
+def test_main_output_dir_missing_returns_2(tmp_path, monkeypatch, capsys):
+    rc = _run_main(monkeypatch, [str(tmp_path / "nope"), "--plugin-root", str(ROOT)])
+    assert rc == 2
+    assert "output_dir does not exist" in capsys.readouterr().err
+
+
+def test_main_schema_validation_failure_returns_5(tmp_path, monkeypatch, capsys):
+    """A validator that always fails → main returns 5."""
+    run = _copy_run(_LAST_RUN, tmp_path)
+
+    class _FakeProc:
+        returncode = 1
+        stdout = "schema boom stdout"
+        stderr = "schema boom stderr"
+
+    real_run = b.subprocess.run
+
+    def fake_run(cmd, *a, **k):
+        # Only intercept the validate_intermediate.py invocation.
+        if any("validate_intermediate.py" in str(c) for c in cmd):
+            return _FakeProc()
+        return real_run(cmd, *a, **k)
+
+    monkeypatch.setattr(b.subprocess, "run", fake_run)
+    rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT)])
+    assert rc == 5
+    assert "schema validation failed" in capsys.readouterr().err
+
+
+def test_main_skips_validation_when_validator_absent(tmp_path, monkeypatch, capsys):
+    """No validate_intermediate.py under plugin-root → write succeeds, no validation."""
+    run = _copy_run(_LAST_RUN, tmp_path)
+    # Point plugin-root at an empty dir lacking scripts/validate_intermediate.py.
+    fake_plugin = tmp_path / "empty_plugin"
+    fake_plugin.mkdir()
+    rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(fake_plugin)])
+    assert rc == 0
+    assert (run / "threat-model.yaml").is_file()
+
+
+# --- helper / error branches -------------------------------------------------
+
+
+def test_load_json_required_missing_exits_3(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        b._load_json(tmp_path / "absent.json", required=True)
+    assert exc.value.code == 3
+
+
+def test_load_json_optional_missing_returns_none(tmp_path):
+    assert b._load_json(tmp_path / "absent.json") is None
+
+
+def test_load_json_malformed_exits_1(tmp_path):
+    p = tmp_path / "bad.json"
+    p.write_text("{ not json")
+    with pytest.raises(SystemExit) as exc:
+        b._load_json(p)
+    assert exc.value.code == 1
+
+
+def test_load_yaml_missing_and_malformed(tmp_path, capsys):
+    assert b._load_yaml(tmp_path / "absent.yaml") is None
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("key: [unclosed\n")
+    assert b._load_yaml(bad) is None
+    assert "malformed YAML" in capsys.readouterr().err
+
+
+def test_git_returns_none_on_nonrepo(tmp_path):
+    # A non-git dir → git returns non-zero → None.
+    assert b._git(["rev-parse", "HEAD"], tmp_path) is None
+
+
+def test_git_handles_missing_binary(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise FileNotFoundError("no git")
+
+    monkeypatch.setattr(b.subprocess, "run", boom)
+    assert b._git(["rev-parse", "HEAD"], tmp_path) is None
+
+
+def test_read_recon_project_variants(tmp_path):
+    assert b._read_recon_project(tmp_path / "absent.md") is None
+    p = tmp_path / ".recon-summary.md"
+    p.write_text("# Recon\n\n**Project**:  My App  \n\nmore text\n")
+    assert b._read_recon_project(p) == "My App"
+    p.write_text("# Recon\n\nno project line here\n")
+    assert b._read_recon_project(p) is None
+
+
+def test_plugin_version_variants(tmp_path):
+    # missing plugin.json
+    assert b._plugin_version(tmp_path) == ("unknown", 1)
+    # valid
+    pj_dir = tmp_path / ".claude-plugin"
+    pj_dir.mkdir()
+    (pj_dir / "plugin.json").write_text(json.dumps({"version": "0.4.0", "analysis_version": 2}))
+    assert b._plugin_version(tmp_path) == ("0.4.0", 2)
+    # malformed JSON → fallback
+    (pj_dir / "plugin.json").write_text("{ bad")
+    assert b._plugin_version(tmp_path) == ("unknown", 1)
+
+
+def test_carry_forward_hit_and_miss(capsys):
+    assert b._carry_forward({"components": [{"id": "c1"}]}, "components", ".components.json") == [{"id": "c1"}]
+    with pytest.raises(SystemExit) as exc:
+        b._carry_forward(None, "components", ".components.json")
+    assert exc.value.code == 4
+    assert "neither .components.json" in capsys.readouterr().err
+
+
+def test_load_last_run_depth_variants(tmp_path):
+    assert b._load_last_run_depth(tmp_path) is None  # no baseline.json
+    cache = tmp_path / ".appsec-cache"
+    cache.mkdir()
+    bp = cache / "baseline.json"
+    bp.write_text(json.dumps({"last_run_depth": "thorough"}))
+    assert b._load_last_run_depth(tmp_path) == "thorough"
+    bp.write_text("{ malformed")
+    assert b._load_last_run_depth(tmp_path) is None
+
+
+def test_reanalyzed_component_ids_variants(tmp_path):
+    # no baseline → None
+    assert b._reanalyzed_component_ids(tmp_path) is None
+    cache = tmp_path / ".appsec-cache"
+    cache.mkdir()
+    bp = cache / "baseline.json"
+    # malformed baseline → None
+    bp.write_text("{ bad")
+    assert b._reanalyzed_component_ids(tmp_path) is None
+    # baseline with a stride file whose hash differs → changed set
+    import hashlib as _h
+
+    sfile = tmp_path / ".stride-comp-a.json"
+    sfile.write_text('{"new": true}')
+    bp.write_text(
+        json.dumps({"stride_files": {"comp-a": {"sha256": "sha256:deadbeef"}, "comp-gone": {"sha256": "sha256:x"}}})
+    )
+    changed = b._reanalyzed_component_ids(tmp_path)
+    assert changed == {"comp-a"}  # comp-gone has no on-disk stride file → skipped
+    # matching hash → not changed
+    real = "sha256:" + _h.sha256(sfile.read_bytes()).hexdigest()
+    bp.write_text(json.dumps({"stride_files": {"comp-a": {"sha256": real}}}))
+    assert b._reanalyzed_component_ids(tmp_path) == set()
+
+
+# --- build_threats branches --------------------------------------------------
+
+
+def test_build_threats_skips_info_stubs_and_missing_id():
+    merged = {
+        "threats": [
+            {"t_id": "T-001", "title": "SQL Injection — routes/x.ts:1", "component_id": "c1",
+             "likelihood": "High", "risk": "High", "cwe": "CWE-89", "evidence": {"file": "x.ts", "line": 1}},
+            # info-stub via likelihood
+            {"t_id": "T-002", "title": "note", "likelihood": "info"},
+            # info-stub via risk
+            {"t_id": "T-003", "title": "note", "risk": "info"},
+            # missing id entirely
+            {"title": "orphan note", "likelihood": "High"},
+            # evidence None → []
+            {"t_id": "T-004", "title": "XSS — routes/y.ts:2", "component_id": "c1",
+             "likelihood": "Medium", "risk": "Medium", "evidence": None,
+             "affected_parameter": "x" * 60},
+        ]
+    }
+    threats, warnings = b.build_threats(merged)
+    ids = [t["id"] for t in threats]
+    assert ids == ["T-001", "T-004"]
+    # object evidence wrapped to list
+    assert threats[0]["evidence"] == [{"file": "x.ts", "line": 1}]
+    # None evidence → empty list
+    assert threats[1]["evidence"] == []
+    # long affected_parameter clamped to <=40 with ellipsis
+    assert len(threats[1]["affected_parameter"]) <= 40
+    assert threats[1]["affected_parameter"].endswith("…")
+    assert any("observation-stub" in w for w in warnings)
+
+
+def test_build_mitigations_bumps_severity_to_max():
+    threats = [
+        {"id": "T-001", "risk": "Medium", "mitigation_ids": ["M-001"], "mitigation_title": "Fix it"},
+        {"id": "T-002", "risk": "Critical", "mitigation_ids": ["M-001"]},
+    ]
+    mits = b.build_mitigations(threats)
+    assert len(mits) == 1
+    assert mits[0]["severity"] == "Critical"  # bumped from Medium to Critical
+    assert mits[0]["priority"] == "P1"
+    assert sorted(mits[0]["threat_ids"]) == ["T-001", "T-002"]
+
+
+# --- apply_mitigation_overrides branches -------------------------------------
+
+
+def test_apply_mitigation_overrides_none_sidecar_passthrough():
+    base = [{"id": "M-001", "title": "x", "threat_ids": ["T-001"]}]
+    out, warnings = b.apply_mitigation_overrides(base, None)
+    assert out == base and warnings == []
+
+
+def test_apply_mitigation_overrides_split_and_unknown_source():
+    base = [{"id": "M-001", "title": "Auth", "threat_ids": ["T-001"], "remediation": {"effort": "Low"}}]
+    sidecar = {
+        "splits": [
+            {"source_mid": "M-001", "into": [
+                {"id_suffix": "a", "title": "Part A", "threat_ids": ["T-001"]},
+                {"id_suffix": "b", "title": "Part B"},
+            ]},
+            {"source_mid": "M-999", "into": []},  # unknown source → warning
+        ]
+    }
+    out, warnings = b.apply_mitigation_overrides(base, sidecar)
+    ids = {m["id"] for m in out}
+    assert ids == {"M-001a", "M-001b"}
+    assert any("not in baseline" in w for w in warnings)
+
+
+def test_apply_mitigation_overrides_addition_collision_subset_and_new():
+    base = [
+        {"id": "M-001", "title": "Base one", "threat_ids": ["T-001", "T-002"]},
+    ]
+    sidecar = {
+        "additions": [
+            # Rule 1: ID collision → overlay authored fields
+            {"id": "M-001", "title": "Authored title", "description": "why", "reference": "http://x",
+             "priority": "P1", "effort": "High", "kind": "detect"},
+            # Rule 2: threat_ids subset of M-001 → merge onto it
+            {"id": "M-050", "title": "Subset fix", "threat_ids": ["T-001"]},
+            # New: genuinely new threat set → appended
+            {"id": "M-060", "title": "New fix", "threat_ids": ["T-999"], "severity": "High",
+             "description": "d", "reference": "r", "remediation": {"effort": "Low"}, "kind": "fix"},
+        ]
+    }
+    out, warnings = b.apply_mitigation_overrides(base, sidecar)
+    by_id = {m["id"]: m for m in out}
+    # Both the ID-collision addition AND the subset addition overlay onto M-001;
+    # the later subset addition's authored title wins (current behavior).
+    assert by_id["M-001"]["title"] == "Subset fix"
+    assert by_id["M-001"]["description"] == "why"
+    assert by_id["M-001"]["priority"] == "P1"
+    assert "M-050" not in by_id  # merged onto M-001, not added
+    assert "M-060" in by_id
+    assert by_id["M-060"]["severity"] == "High"
+    assert by_id["M-060"]["priority"] == "P2"  # derived from High
+    assert any("merged onto baseline" in w for w in warnings)
+    assert any("true additions" in w for w in warnings)
+
+
+# --- build_meta_findings branches --------------------------------------------
+
+
+def test_build_meta_findings_no_sidecar_carries_prior():
+    prior = {"meta_findings": [{"id": "MF-001", "title": "kept"}]}
+    assert b.build_meta_findings(prior, [None, {"findings": []}]) == [{"id": "MF-001", "title": "kept"}]
+
+
+def test_build_meta_findings_no_sidecar_no_prior_returns_empty():
+    assert b.build_meta_findings(None, [None]) == []
+
+
+def test_build_meta_findings_allocates_ids_after_manual_prior():
+    prior = {"meta_findings": [
+        {"id": "MF-005", "title": "manual one", "manual": True},
+        {"id": "MF-002", "title": "auto, dropped", "manual": False},
+    ]}
+    sidecars = [{"findings": [
+        {"control": "Dependabot", "category": "Patch", "source": "sca", "derived_from": ["T-001", "bad"]},
+        # duplicate key (same source/title/category) → deduped
+        {"control": "Dependabot", "category": "Patch", "source": "sca"},
+    ]}]
+    out = b.build_meta_findings(prior, sidecars)
+    # manual prior kept, auto prior dropped, one new finding (dup removed)
+    ids = [m["id"] for m in out]
+    assert "MF-005" in ids
+    assert len([m for m in out if m.get("source") == "sca"]) == 1
+    new = [m for m in out if m.get("source") == "sca"][0]
+    # id continues after max manual id (MF-005) → MF-006
+    assert new["id"] == "MF-006"
+    # derived_from filtered to valid T-ids only
+    assert new["derived_from"] == ["T-001"]
+
+
+def test_build_meta_findings_skips_non_dict_sidecar_and_findings():
+    sidecars = ["notdict", {"findings": "notalist"}, {"findings": [{"control": "X", "source": "s"}]}]
+    out = b.build_meta_findings(None, sidecars)
+    assert len(out) == 1
+    assert out[0]["id"] == "MF-001"
+
+
+# --- build_tier_root_causes branches -----------------------------------------
+
+
+def test_build_tier_root_causes_sidecar_wins():
+    sidecar = {"tier_root_causes": {"edge": ["bullet one", ""], "server": [], "data": ["d1"]}}
+    out = b.build_tier_root_causes([], [], sidecar)
+    assert out == {"edge": ["bullet one"], "data": ["d1"]}
+
+
+def test_build_tier_root_causes_fallback_title_frequency():
+    components = [
+        {"id": "c1", "tier": "client"},
+        {"id": "c2", "tier": "application"},
+        {"id": "c3", "tier": "unknown-tier-passthrough"},
+    ]
+    threats = [
+        {"component": "c1", "title": "XSS in edge"},
+        {"component": "c1", "title": "XSS in edge"},
+        {"component": "c2", "title": "SQLi in server"},
+        {"component": "missing", "title": "no tier"},  # no tier → skipped
+    ]
+    out = b.build_tier_root_causes(threats, components, None)
+    assert out["edge"] == ["XSS in edge"]
+    assert out["server"] == ["SQLi in server"]
+
+
+# --- build_attack_surface overrides ------------------------------------------
+
+
+def test_build_attack_surface_curations_and_additions():
+    routes = {
+        "routes": [
+            {"route_id": "r1", "method": "GET", "path": "/a", "authn_signal": "middleware_present",
+             "handler_file": "a.ts", "handler_line": 3, "management_surface": True},
+            {"route_id": "r2", "method": "POST", "path": "/b", "authn_signal": "unknown"},
+            {"route_id": "r3", "method": "GET", "path": "/c", "authn_signal": "absent"},
+        ]
+    }
+    sidecar = {
+        "curations": {
+            "exclude_route_ids": ["r3"],
+            "rationale_by_id": {"r1": "admin only"},
+        },
+        "additions": [
+            # collision on existing entry_point → merge authoritative fields
+            {"entry_point": "POST /b", "auth_required": True, "notes": "verified guarded",
+             "linked_threats": ["T-001"]},
+            # no entry_point → skipped
+            {"notes": "orphan"},
+            # genuine new entry
+            {"entry_point": "PUT /d", "protocol": "HTTP", "auth_required": False},
+        ],
+    }
+    out, warnings = b.build_attack_surface(routes, sidecar)
+    eps = {e["entry_point"] for e in out}
+    assert "GET /c" not in eps  # excluded
+    assert "PUT /d" in eps  # added
+    by_ep = {e["entry_point"]: e for e in out}
+    # GET /a got rationale note + management surface + handler note
+    assert by_ep["GET /a"]["notes"] == "admin only"
+    assert by_ep["GET /a"]["auth_required"] is True
+    # POST /b collision merged authoritative auth + notes
+    assert by_ep["POST /b"]["auth_required"] is True
+    assert by_ep["POST /b"]["notes"] == "verified guarded"
+    assert by_ep["POST /b"]["linked_threats"] == ["T-001"]
+    assert any("exclude" in w for w in warnings)
+    assert any("rationale" in w for w in warnings)
+
+
+def test_build_attack_surface_include_filter():
+    routes = {"routes": [
+        {"route_id": "r1", "method": "GET", "path": "/a", "authn_signal": "absent"},
+        {"route_id": "r2", "method": "GET", "path": "/b", "authn_signal": "absent"},
+    ]}
+    sidecar = {"curations": {"include_route_ids": ["r1"]}}
+    out, warnings = b.build_attack_surface(routes, sidecar)
+    eps = {e["entry_point"] for e in out}
+    # include allowlist may be augmented by class-coverage guard; r1 must remain.
+    assert "GET /a" in eps
+    assert any("include" in w for w in warnings)
+
+
+def test_build_attack_surface_sidecar_only_when_no_routes():
+    sidecar = {"additions": [{"entry_point": "GET /only", "protocol": "HTTP"}]}
+    out, _ = b.build_attack_surface(None, sidecar)
+    assert any(e["entry_point"] == "GET /only" for e in out)
+
+
+# --- _index_resolved_prior ---------------------------------------------------
+
+
+def test_index_resolved_prior_keys_by_id_and_fingerprint():
+    merged = {"resolved_prior_findings": [
+        {"prior_id": "T-009", "reason": "fixed in PR", "component_id": "c1", "cwe": "CWE-89", "title": "SQLi"},
+        {"component_id": "c2", "cwe": "CWE-79", "title": "XSS"},  # no prior_id, no reason
+        "not-a-dict",  # skipped
+    ]}
+    idx = b._index_resolved_prior(merged)
+    assert idx["T-009"] == "fixed in PR"
+    # fingerprint key present for the second (default reason)
+    fp = b._threat_fingerprint({"component": "c2", "cwe": "CWE-79", "title": "XSS"})
+    assert idx[fp] == "fix confirmed by re-scan"

@@ -216,7 +216,7 @@ def _selection_reasons(c: dict, depth: str) -> list:
         reasons.append("crown-jewel (credentials/PII/payment/secrets)")
     if depth == "thorough" and not reasons:
         reasons.append("transitively reachable (thorough)")
-    if not _reachability_zones(c) and not _is_auth(c) and not _is_frontend(c) and depth != "quick":
+    if not _reachability_zones(c) and not _is_auth(c) and not _is_frontend(c):
         reasons.append("exposure-unknown (fail-safe inclusion)")
     return reasons
 
@@ -227,17 +227,23 @@ def _in_scope(c: dict, depth: str) -> bool:
         return True
     if _is_exposed(c):
         return True
+    if not _reachability_zones(c):
+        # Exposure-unknown (no zones, or runtime-only zones like docker-container
+        # that carry no reachability signal): fail-safe toward inclusion at EVERY
+        # depth, including quick. A component whose reachability cannot be proven
+        # internal could be an internet-facing door — the 2026-06-12 b2b-api RCE,
+        # tagged only `docker-container`, is the canonical case, and runtime-only
+        # tagging is the COMMON outcome in containerised/serverless repos, not an
+        # edge case. Skipping it in quick would recreate the silent whole-component
+        # blind spot. Only PROVEN-internal components (a reachability zone present,
+        # none of them exposed) are dropped from the fast path below.
+        return True
     if depth == "quick":
-        # Quick = role-floor + directly internet-exposed only.
+        # Quick = role-floor + directly-exposed + exposure-unknown (handled above).
+        # Proven-internal / ci-cd / crown-jewel are deferred to standard+.
         return False
     # standard + thorough
     if _is_cicd(c) or _is_crown_jewel(c):
-        return True
-    if not _reachability_zones(c):
-        # Exposure-unknown (no zones, or runtime-only zones like docker-container
-        # that carry no reachability signal): fail-safe toward inclusion at
-        # standard+ (do not let a mis-tagged/untagged component silently become a
-        # whole-component blind spot).
         return True
     # Reachability zones present but none exposed/cicd → internal-only: thorough only.
     return depth == "thorough"

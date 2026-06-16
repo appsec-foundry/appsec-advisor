@@ -517,6 +517,163 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 
 
+class TestComponentDurations:
+    """M5 per-component-duration secondary source (lines 360-380, 583)."""
+
+    def _make_cache(self, out_dir: Path, **kwargs) -> Path:
+        cache_dir = out_dir / ".appsec-cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path = cache_dir / "baseline.json"
+        path.write_text(json.dumps(kwargs))
+        return path
+
+    def test_component_durations_used_when_no_total_cache(self, tmp_path: Path):
+        """No last_run_seconds but component_durations present → that source."""
+        out = tmp_path / "out"
+        out.mkdir()
+        self._make_cache(
+            out,
+            component_durations={"api": 160, "web": 120, "worker": 90},
+        )
+        result = est._component_durations_estimate(out, "standard", 5)
+        assert result is not None
+        breakdown, source = result
+        assert source == "component_durations"
+        # phase9 = max(160) + 30 = 190s; phase_other = 720s standard.
+        assert breakdown["stage1"] == (190 + 720) / 60.0
+        assert breakdown["stage1c"] == 5.0
+        assert breakdown["stage2"] == 8.0
+        assert breakdown["total"] > breakdown["stage1"]
+
+    def test_component_durations_via_main(self, tmp_path: Path, capsys, monkeypatch):
+        out = tmp_path / "out"
+        out.mkdir()
+        self._make_cache(out, component_durations={"api": 100})
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        rc = est.main(
+            [
+                "estimate_duration.py",
+                "--depth",
+                "standard",
+                "--mode",
+                "full",
+                "--output-dir",
+                str(out),
+                "--repo-root",
+                str(repo),
+            ]
+        )
+        assert rc == 0
+        result = json.loads(capsys.readouterr().out)
+        assert result["source"] == "component_durations"
+
+    def test_no_cache_returns_none(self, tmp_path: Path):
+        out = tmp_path / "out"
+        out.mkdir()
+        assert est._component_durations_estimate(out, "standard", 5) is None
+
+    def test_empty_durations_returns_none(self, tmp_path: Path):
+        out = tmp_path / "out"
+        out.mkdir()
+        self._make_cache(out, component_durations={})
+        assert est._component_durations_estimate(out, "standard", 5) is None
+
+    def test_non_dict_durations_returns_none(self, tmp_path: Path):
+        out = tmp_path / "out"
+        out.mkdir()
+        self._make_cache(out, component_durations=[1, 2, 3])
+        assert est._component_durations_estimate(out, "standard", 5) is None
+
+
+class TestLowLevelHelpers:
+    def test_last_run_seconds_not_numeric_returns_none(self, tmp_path: Path):
+        """Line 310: last_run_seconds is a string → reject."""
+        out = tmp_path / "out"
+        cache_dir = out / ".appsec-cache"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "baseline.json").write_text(
+            json.dumps({"last_run_seconds": "oops", "last_run_mode": "full", "last_run_depth": "standard"})
+        )
+        assert est._last_run_cache(out, "full", "standard", 50.0) is None
+
+    def test_last_run_seconds_zero_returns_none(self, tmp_path: Path):
+        out = tmp_path / "out"
+        cache_dir = out / ".appsec-cache"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "baseline.json").write_text(json.dumps({"last_run_seconds": 0}))
+        assert est._last_run_cache(out, "full", "standard", 50.0) is None
+
+    def test_resume_json_checkpoint_dict(self, tmp_path: Path):
+        """Line 402: .appsec-checkpoint parses as JSON dict with phase."""
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".appsec-checkpoint").write_text(json.dumps({"phase": 9, "status": "in_progress"}))
+        result = est._resume_remaining(out, "standard")
+        assert result is not None
+        breakdown, source = result
+        assert source == "resume_checkpoint"
+        assert breakdown["stage1"] >= 15
+
+    def test_resume_json_checkpoint_bad_phase_type(self, tmp_path: Path):
+        """Lines 412-418: JSON dict whose phase is non-int → TypeError path → None."""
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".appsec-checkpoint").write_text(json.dumps({"phase": "abc"}))
+        assert est._resume_remaining(out, "standard") is None
+
+    def test_resume_phase_out_of_range(self, tmp_path: Path):
+        """Line 419-420: phase > 11 → None."""
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".appsec-checkpoint").write_text("phase=99 status=x\n")
+        assert est._resume_remaining(out, "standard") is None
+
+    def test_resume_text_checkpoint_no_phase_token(self, tmp_path: Path):
+        """Text checkpoint lacking a phase= token → None (phase_n stays None)."""
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".appsec-checkpoint").write_text("status=in_progress only\n")
+        assert est._resume_remaining(out, "standard") is None
+
+    def test_resume_no_checkpoint_file(self, tmp_path: Path):
+        out = tmp_path / "out"
+        out.mkdir()
+        assert est._resume_remaining(out, "standard") is None
+
+    def test_incremental_zero_change_count_returns_none(self):
+        """Line 443-444: sec_change_count <= 0 → None."""
+        assert est._incremental_dirty_set("standard", 0, 5) is None
+        assert est._incremental_dirty_set("standard", 3, 0) is None
+
+    def test_count_repo_files_find_fallback_on_non_git(self, tmp_path: Path, monkeypatch):
+        """Lines 238-240 / 274-277: git fails → find fallback path runs."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "a.py").touch()
+        (repo / "b.py").touch()
+
+        real_run = subprocess.run
+
+        def fake_run(cmd, *a, **k):
+            if cmd and cmd[0] == "git":
+                raise FileNotFoundError("no git")
+            return real_run(cmd, *a, **k)
+
+        monkeypatch.setattr(est.subprocess, "run", fake_run)
+        n = est._count_repo_files(repo)
+        assert n >= 2
+
+    def test_count_repo_files_all_fail_returns_zero(self, tmp_path: Path, monkeypatch):
+        """Both git and find raise → returns 0."""
+
+        def boom(*a, **k):
+            raise OSError("blocked")
+
+        monkeypatch.setattr(est.subprocess, "run", boom)
+        assert est._count_repo_files(tmp_path) == 0
+
+
 class TestOutputSchema:
     def test_all_required_keys_present(self, tmp_path: Path):
         repo = tmp_path / "repo"

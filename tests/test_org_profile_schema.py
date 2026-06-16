@@ -8,6 +8,7 @@ fixtures by hand.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -185,3 +186,158 @@ def test_abuse_cases_absent_skips_resolution(acme_profile):
     # No abuse_cases block → no abuse-case resolution errors leak in.
     errors = vop.validate(acme_profile, FIXTURE_DIR)
     assert not any("abuse_cases" in e for e in errors), errors
+
+
+# ---------------------------------------------------------------------------
+# Coverage: unit-level branches for the semantic helpers + CLI paths
+# ---------------------------------------------------------------------------
+
+
+def test_schema_errors_missing_jsonschema(monkeypatch):
+    """When jsonschema is unimportable, _schema_errors returns the install hint."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *a, **k):
+        if name == "jsonschema":
+            raise ImportError("no jsonschema")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    out = vop._schema_errors({}, {})
+    assert out == ["jsonschema package not installed; cannot validate profile schema"]
+
+
+def test_check_abuse_cases_resolver_load_failure(acme_profile, monkeypatch):
+    """If the abuse-case resolver module cannot be loaded, surface the error."""
+    acme_profile["abuse_cases"] = {"inherit_defaults": True}
+
+    def boom():
+        raise ImportError("cannot import resolver")
+
+    monkeypatch.setattr(vop, "_rac_module", boom)
+    errors = vop._check_abuse_cases(acme_profile, FIXTURE_DIR)
+    assert errors and "cannot load resolver" in errors[0]
+
+
+def test_resolve_under_empty_path():
+    path, err = vop._resolve_under(FIXTURE_DIR, "")
+    assert path is None
+    assert err == "path is empty"
+
+
+def test_resolve_under_symlink_traversal(tmp_path):
+    profile_dir = tmp_path / "profile"
+    (profile_dir / "sub").mkdir(parents=True)
+    # symlink a directory inside the profile dir, pointing elsewhere-but-still-inside
+    real = profile_dir / "real"
+    real.mkdir()
+    (real / "note.md").write_text("hi")
+    link = profile_dir / "linkdir"
+    link.symlink_to(real)
+    path, err = vop._resolve_under(profile_dir, "linkdir/note.md")
+    assert path is None
+    assert "symlink" in err
+
+
+def test_check_llm_context_duplicate_doc_id(acme_profile):
+    docs = acme_profile["llm_context"]["documents"]
+    docs.append({"id": docs[0]["id"], "path": "context/sso.md", "purpose": "dup"})
+    errors = vop._check_llm_context_paths(acme_profile, FIXTURE_DIR)
+    assert any("duplicate document id" in e for e in errors), errors
+
+
+def test_check_requirements_url_bad_scheme(acme_profile):
+    acme_profile["requirements"]["source"]["requirements_yaml_url"] = "ftp://example.test/x.yaml"
+    errors = vop._check_requirements_url(acme_profile)
+    assert any("scheme" in e and "ftp" in e for e in errors), errors
+
+
+def test_parse_version_non_numeric_and_empty_chunks():
+    # leading empty chunk (".5") skips; "1.x" stops at the non-numeric chunk.
+    assert vop._parse_version(".5") == (5,)
+    assert vop._parse_version("1.x.3") == (1,)
+    assert vop._parse_version("abc") == (0,)
+
+
+def test_check_compatibility_empty_spec_ok():
+    assert vop._check_compatibility({"compatibility": {"core": ""}}, "1.0.0") == []
+    assert vop._check_compatibility({}, "1.0.0") == []
+
+
+def test_check_compatibility_unparseable_token():
+    errors = vop._check_compatibility({"compatibility": {"core": "~=1.0"}}, "1.0.0")
+    assert errors and "not understood" in errors[0]
+
+
+def test_read_plugin_version_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(vop, "PLUGIN_ROOT", tmp_path)
+    assert vop._read_plugin_version() == "0.0.0"
+
+
+def test_read_plugin_version_bad_json(monkeypatch, tmp_path):
+    meta_dir = tmp_path / ".claude-plugin"
+    meta_dir.mkdir()
+    (meta_dir / "plugin.json").write_text("{not json")
+    monkeypatch.setattr(vop, "PLUGIN_ROOT", tmp_path)
+    assert vop._read_plugin_version() == "0.0.0"
+
+
+def test_read_plugin_version_ok(monkeypatch, tmp_path):
+    meta_dir = tmp_path / ".claude-plugin"
+    meta_dir.mkdir()
+    (meta_dir / "plugin.json").write_text('{"version": "9.9.9"}')
+    monkeypatch.setattr(vop, "PLUGIN_ROOT", tmp_path)
+    assert vop._read_plugin_version() == "9.9.9"
+
+
+def test_validate_schema_file_missing(monkeypatch, acme_profile, tmp_path):
+    missing = tmp_path / "no-schema.yaml"
+    monkeypatch.setattr(vop, "SCHEMA_PATH", missing)
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors and errors[0].startswith("schema file missing")
+
+
+def test_main_file_not_found(tmp_path, capsys):
+    rc = vop.main([str(tmp_path / "nope.yaml")])
+    assert rc == 2
+    assert "file not found" in capsys.readouterr().err
+
+
+def test_main_yaml_parse_error(tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("key: [unterminated\n")
+    rc = vop.main([str(bad)])
+    assert rc == 2
+    assert "failed to parse YAML" in capsys.readouterr().err
+
+
+def test_main_json_output_valid(capsys):
+    rc = vop.main([str(FIXTURE_PATH), "--plugin-version", "0.4.0-beta", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["valid"] is True
+    assert payload["errors"] == []
+
+
+def test_main_json_output_invalid(tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("api_version: wrong\n")
+    rc = vop.main([str(bad), "--json"])
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["valid"] is False
+    assert payload["errors"]
+
+
+def test_module_runs_as_script():
+    import subprocess
+
+    res = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), str(FIXTURE_PATH), "--plugin-version", "0.4.0-beta"],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0
+    assert "VALID" in res.stdout

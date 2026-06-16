@@ -321,3 +321,151 @@ def test_format_detail_includes_key_fields():
     assert "stride-analyzer" in out
     assert "36/40" in out
     assert "90%" in out
+
+
+# ---------------------------------------------------------------------------
+# Additional branch coverage
+# ---------------------------------------------------------------------------
+
+
+def test_get_max_turns_empty_name_default():
+    # Empty agent name short-circuits to DEFAULT (line 66).
+    assert bw.get_max_turns("") == bw.DEFAULT_MAX_TURNS
+
+
+def test_get_max_turns_oserror_reading_md(env, monkeypatch):
+    # OSError while reading the agent file -> continue, fall back to default
+    # (lines 93-94).
+    root = env[1]
+    (root / "agents" / "appsec-oserr.md").write_text(
+        "---\nmaxTurns: 5\n---\n", encoding="utf-8"
+    )
+    real_read = Path.read_text
+    target = root / "agents" / "appsec-oserr.md"
+
+    def boom(self, *a, **k):
+        if self == target:
+            raise OSError("read boom")
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", boom)
+    assert bw.get_max_turns("appsec-oserr") == bw.DEFAULT_MAX_TURNS
+
+
+def test_max_turns_zero_returns_none(env, monkeypatch):
+    # max_turns <= 0 short-circuits tally (line 192).
+    output_dir, _ = env
+    monkeypatch.setattr(bw, "get_max_turns", lambda _name: 0)
+    assert bw.tally_and_check("sid12345", "appsec-test-agent", str(output_dir)) is None
+
+
+def test_write_state_swallows_replace_failure(env, monkeypatch):
+    # os.replace failing inside _write_state must not raise (lines 126-134).
+    output_dir, _ = env
+
+    def boom(*_a, **_k):
+        raise OSError("replace boom")
+
+    monkeypatch.setattr(bw.os, "replace", boom)
+    # Should not raise.
+    bw._write_state(str(output_dir), {"x": 1})
+    # State not persisted because write failed.
+    assert not (output_dir / bw.STATE_FILENAME).exists()
+
+
+def test_write_state_unlink_failure_also_swallowed(env, monkeypatch):
+    # Both os.replace AND os.unlink fail — the unlink OSError is swallowed,
+    # then the outer OSError handler swallows the re-raised replace error.
+    output_dir, _ = env
+
+    def boom_replace(*_a, **_k):
+        raise OSError("replace boom")
+
+    def boom_unlink(*_a, **_k):
+        raise OSError("unlink boom")
+
+    monkeypatch.setattr(bw.os, "replace", boom_replace)
+    monkeypatch.setattr(bw.os, "unlink", boom_unlink)
+    bw._write_state(str(output_dir), {"x": 1})  # must not raise
+
+
+def test_write_flag_handles_corrupt_existing(env):
+    # Existing flag file with bad JSON -> existing reset to [] (lines 152-153),
+    # and a non-list JSON -> [] (lines 150-151).
+    output_dir, _ = env
+    flag = output_dir / bw.WARN_FLAG_FILENAME
+    flag.write_text("not json{[", encoding="utf-8")
+    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, {"sid": "s1", "agent": "a"})
+    data = json.loads(flag.read_text())
+    assert data == [{"sid": "s1", "agent": "a"}]
+
+
+def test_write_flag_non_list_existing_reset(env):
+    output_dir, _ = env
+    flag = output_dir / bw.WARN_FLAG_FILENAME
+    flag.write_text('{"sid": "old"}', encoding="utf-8")  # dict, not list
+    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, {"sid": "s2", "agent": "a"})
+    data = json.loads(flag.read_text())
+    assert data == [{"sid": "s2", "agent": "a"}]
+
+
+def test_write_flag_swallows_write_oserror(env, monkeypatch):
+    # path.write_text raising OSError must be swallowed (lines 162-163).
+    output_dir, _ = env
+
+    real_write = Path.write_text
+    flag = output_dir / bw.WARN_FLAG_FILENAME
+
+    def boom(self, *a, **k):
+        if self == flag:
+            raise OSError("write boom")
+        return real_write(self, *a, **k)
+
+    monkeypatch.setattr(Path, "write_text", boom)
+    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, {"sid": "s", "agent": "a"})
+
+
+def test_reset_session_swallows_read_state_exception(env, monkeypatch):
+    # An exception in _read_state during reset is swallowed (lines 282-283).
+    output_dir, _ = env
+
+    def boom(*_a, **_k):
+        raise RuntimeError("read boom")
+
+    monkeypatch.setattr(bw, "_read_state", boom)
+    bw.reset_session("sid_aaaa", str(output_dir))  # must not raise
+
+
+def test_reset_session_handles_corrupt_flag_file(env):
+    # Corrupt + non-list flag content during reset -> treated as [] (lines 294-296).
+    output_dir, _ = env
+    flag = output_dir / bw.CRITICAL_FLAG_FILENAME
+    flag.write_text("not json{[", encoding="utf-8")
+    bw.reset_session("sid_aaaa", str(output_dir))
+    # No remaining entries -> file unlinked.
+    assert not flag.exists()
+
+
+def test_reset_session_non_list_flag_unlinked(env):
+    output_dir, _ = env
+    flag = output_dir / bw.CRITICAL_FLAG_FILENAME
+    flag.write_text('{"sid": "x"}', encoding="utf-8")  # dict, not list
+    bw.reset_session("sid_aaaa", str(output_dir))
+    assert not flag.exists()
+
+
+def test_reset_session_unlink_oserror_swallowed(env, monkeypatch):
+    # path.unlink raising OSError during reset is swallowed (lines 303-304).
+    output_dir, _ = env
+    flag = output_dir / bw.CRITICAL_FLAG_FILENAME
+    flag.write_text("[]", encoding="utf-8")  # empty list -> triggers unlink
+
+    real_unlink = Path.unlink
+
+    def boom(self, *a, **k):
+        if self == flag:
+            raise OSError("unlink boom")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", boom)
+    bw.reset_session("sid_aaaa", str(output_dir))  # must not raise

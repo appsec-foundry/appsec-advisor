@@ -328,3 +328,239 @@ def test_phase_falls_back_to_checkpoint(tmp_path: Path):
     (lp.parent / ".appsec-checkpoint").write_text("phase=10b step=2 status=running")
     acquire_lock._do_heartbeat(lp, phase="skill")
     assert "phase=10b" in _hook_log(tmp_path).read_text()
+
+
+# ---------------------------------------------------------------------------
+# _pid_alive branches
+# ---------------------------------------------------------------------------
+
+
+def test_pid_alive_nonpositive_is_false():
+    assert acquire_lock._pid_alive(0) is False
+    assert acquire_lock._pid_alive(-1) is False
+
+
+def test_pid_alive_permission_error_is_true(monkeypatch):
+    def boom(_pid, _sig):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(acquire_lock.os, "kill", boom)
+    assert acquire_lock._pid_alive(12345) is True
+
+
+def test_pid_alive_oserror_is_false(monkeypatch):
+    def boom(_pid, _sig):
+        raise OSError("generic")
+
+    monkeypatch.setattr(acquire_lock.os, "kill", boom)
+    assert acquire_lock._pid_alive(12345) is False
+
+
+def test_pid_alive_live_pid_is_true():
+    assert acquire_lock._pid_alive(os.getpid()) is True
+
+
+# ---------------------------------------------------------------------------
+# _ensure_dirs reset-progress branch + _parse_lock edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_dirs_resets_existing_progress(tmp_path: Path):
+    out = tmp_path / "docs" / "security"
+    progress = out / ".progress"
+    progress.mkdir(parents=True)
+    (progress / "stale.json").write_text("{}")
+    acquire_lock._ensure_dirs(out, reset_progress=True)
+    assert progress.is_dir()
+    assert not (progress / "stale.json").exists(), "stale progress wiped on reset"
+    assert (out / ".appsec-cache").is_dir()
+    assert (out / ".fragments").is_dir()
+
+
+def test_parse_lock_oserror_returns_none_none(tmp_path: Path):
+    # Reading a directory as a file raises OSError → (None, None).
+    state = acquire_lock._parse_lock(tmp_path)
+    assert state == (None, None)
+
+
+def test_parse_lock_empty_file_returns_none_none(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    lp.write_text("   \n\n")  # only blank lines
+    assert acquire_lock._parse_lock(lp) == (None, None)
+
+
+def test_parse_lock_malformed_heartbeat_kept_none(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    lp.write_text("4321\nnot-a-ts\n")
+    pid, hb = acquire_lock._parse_lock(lp)
+    assert pid == 4321
+    assert hb is None
+
+
+# ---------------------------------------------------------------------------
+# _read_phase_from_checkpoint — skill-config depth + OSError paths
+# ---------------------------------------------------------------------------
+
+
+def test_read_phase_reads_depth_from_skill_config(tmp_path: Path):
+    out = _lock_path(tmp_path).parent
+    (out / ".appsec-checkpoint").write_text("phase=9 status=running")
+    (out / ".skill-config.json").write_text('{"assessment_depth": "thorough"}')
+    phase, depth = acquire_lock._read_phase_from_checkpoint(out)
+    assert phase == "9"
+    assert depth == "thorough"
+
+
+def test_read_phase_skill_config_bad_json_swallowed(tmp_path: Path):
+    out = _lock_path(tmp_path).parent
+    out.mkdir(parents=True, exist_ok=True)
+    (out / ".skill-config.json").write_text("{not json")
+    phase, depth = acquire_lock._read_phase_from_checkpoint(out)
+    assert phase is None
+    assert depth is None
+
+
+# ---------------------------------------------------------------------------
+# _current_phase_label — line without PHASE_START is skipped
+# ---------------------------------------------------------------------------
+
+
+def test_current_phase_label_skips_non_phase_start_lines(tmp_path: Path):
+    out = _lock_path(tmp_path).parent
+    out.mkdir(parents=True, exist_ok=True)
+    # Newer (non-PHASE_START) lines come AFTER the PHASE_START line; the
+    # reversed scan must skip them (line 240) before finding the phase.
+    (out / ".agent-run.log").write_text(
+        _phase_start("4", "11", "Modeling") + "\n"
+        + "some unrelated INFO line\n"
+        + "another HEARTBEAT line\n"
+    )
+    assert acquire_lock._current_phase_label(out) == "4/11"
+
+
+def test_read_phase_checkpoint_oserror_swallowed(tmp_path: Path, monkeypatch):
+    out = _lock_path(tmp_path).parent
+    out.mkdir(parents=True, exist_ok=True)
+    cp = out / ".appsec-checkpoint"
+    cp.write_text("phase=9")
+
+    real_read = Path.read_text
+
+    def boom(self, *a, **k):
+        if self == cp:
+            raise OSError("read boom")
+        return real_read(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", boom)
+    phase, depth = acquire_lock._read_phase_from_checkpoint(out)
+    assert phase is None
+    assert depth is None
+
+
+# ---------------------------------------------------------------------------
+# _classify_lock — stat failure path
+# ---------------------------------------------------------------------------
+
+
+def test_classify_lock_stat_failure_is_malformed(tmp_path: Path, monkeypatch):
+    lp = _lock_path(tmp_path)
+    lp.write_text("1234\n")
+
+    real_exists = Path.exists
+    real_stat = Path.stat
+
+    def fake_exists(self, *a, **k):
+        if self == lp:
+            return True
+        return real_exists(self, *a, **k)
+
+    def fake_stat(self, *a, **k):
+        if self == lp:
+            raise OSError("stat boom")
+        return real_stat(self, *a, **k)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    state, info = acquire_lock._classify_lock(lp)
+    assert state == "malformed"
+    assert info.get("reason") == "stat failed"
+
+
+def test_v1_dead_pid_classifies_dead(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    lp.write_text("99999999\n")  # v1 lock, definitely-dead PID
+    state, _ = acquire_lock._classify_lock(lp)
+    assert state == "dead"
+
+
+# ---------------------------------------------------------------------------
+# main() — usage error, reset-dirs, and stale-reap message branches
+# ---------------------------------------------------------------------------
+
+
+def test_main_usage_error_returns_2(tmp_path: Path, capsys):
+    # No positional lock path → usage error (exit 2).
+    rc = acquire_lock.main(["acquire_lock.py", "--heartbeat"])
+    assert rc == 2
+    assert "usage:" in capsys.readouterr().err
+
+
+def test_main_reset_dirs(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    rc = acquire_lock.main(["acquire_lock.py", str(lp), "--reset-dirs"])
+    assert rc == 0
+    assert "DIRS_RESET" in capsys.readouterr().out
+    assert (lp.parent / ".progress").is_dir()
+
+
+def test_main_reaps_dead_pid_lock(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    lp.write_text("99999999\n")  # v1 dead PID
+    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "dead PID" in err
+    assert "LOCK_ACQUIRED" not in err  # success line goes to stdout
+
+
+def test_main_reaps_stale_mtime_lock(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    lp.write_text(f"{os.getpid()}\n")  # v1 live PID
+    old = time.time() - 4000
+    os.utime(lp, (old, old))
+    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    assert rc == 0
+    assert "mtime" in capsys.readouterr().err
+
+
+def test_main_reaps_malformed_lock(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    lp.write_text("garbage no pid here")
+    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    assert rc == 0
+    out = capsys.readouterr()
+    assert "malformed" in out.err
+    assert "LOCK_ACQUIRED" in out.out
+
+
+def test_main_reaps_hung_lock_message(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, os.getpid(), int(time.time()) - 600)
+    rc = acquire_lock.main(["acquire_lock.py", str(lp)])
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "heartbeat" in err
+    assert "reaped" in err
+
+
+def test_module_entrypoint_runs(tmp_path: Path):
+    import subprocess
+
+    lp = _lock_path(tmp_path)
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), str(lp)],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0
+    assert "LOCK_ACQUIRED" in r.stdout

@@ -159,3 +159,126 @@ def test_cli_stdout_format(tmp_path: Path):
     )
     parsed = json.loads(out.stdout.strip())
     assert parsed == ["A-001", "A-002", "A-003"]
+
+
+# ---------------------------------------------------------------------------
+# Coverage extensions: lock timeout, _parse_counter edge cases, unlock error,
+# and the main() CLI error branches.
+# ---------------------------------------------------------------------------
+import errno  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+def test_parse_counter_int_below_fallback():
+    # int path with value < fallback → clamped up to fallback.
+    assert reserve_ids._parse_counter(0, fallback=1) == 1
+    assert reserve_ids._parse_counter(7, fallback=1) == 7
+
+
+def test_parse_counter_non_numeric_string_returns_fallback():
+    # str path where int() raises ValueError → fallback (lines 107-109).
+    assert reserve_ids._parse_counter("not-a-number", fallback=4) == 4
+    assert reserve_ids._parse_counter("M-xyz", fallback=2) == 2
+
+
+def test_parse_counter_unknown_type_returns_fallback():
+    # raw is neither None/int/str (e.g. a list) → trailing fallback return.
+    assert reserve_ids._parse_counter(["nope"], fallback=3) == 3
+
+
+def test_acquire_lock_timeout(monkeypatch, tmp_path: Path):
+    """When flock always raises BlockingIOError past the deadline → TimeoutError (line 89)."""
+
+    def always_block(_fd, _flags):
+        raise BlockingIOError()
+
+    monkeypatch.setattr(reserve_ids.fcntl, "flock", always_block)
+    # Shrink timeout so the test is fast.
+    monkeypatch.setattr(reserve_ids, "_LOCK_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(reserve_ids, "_LOCK_RETRY_INTERVAL", 0.0)
+    with pytest.raises(TimeoutError):
+        reserve_ids._acquire_exclusive_lock(0)
+
+
+def test_acquire_lock_timeout_via_reserve(monkeypatch, tmp_path: Path):
+    """reserve() should surface the TimeoutError from the lock helper."""
+    monkeypatch.setattr(reserve_ids, "_LOCK_TIMEOUT_SECONDS", 0.0)
+    monkeypatch.setattr(reserve_ids, "_LOCK_RETRY_INTERVAL", 0.0)
+
+    def always_block(_fd, _flags):
+        # Only block the LOCK_EX|LOCK_NB acquisition, allow LOCK_UN.
+        if _flags & reserve_ids.fcntl.LOCK_UN:
+            return
+        raise BlockingIOError()
+
+    monkeypatch.setattr(reserve_ids.fcntl, "flock", always_block)
+    with pytest.raises(TimeoutError):
+        reserve_ids.reserve(tmp_path, "mitigation", 1)
+
+
+def test_unlock_error_non_ebadf_reraises(monkeypatch, tmp_path: Path):
+    """A non-EBADF OSError during the finally LOCK_UN must propagate (lines 167-169)."""
+    real_flock = reserve_ids.fcntl.flock
+
+    def flock_fail_on_unlock(fd, flags):
+        if flags & reserve_ids.fcntl.LOCK_UN:
+            raise OSError(errno.EIO, "boom")
+        return real_flock(fd, flags)
+
+    monkeypatch.setattr(reserve_ids.fcntl, "flock", flock_fail_on_unlock)
+    with pytest.raises(OSError) as exc:
+        reserve_ids.reserve(tmp_path, "mitigation", 1)
+    assert exc.value.errno == errno.EIO
+
+
+def test_unlock_ebadf_swallowed(monkeypatch, tmp_path: Path):
+    """An EBADF OSError on LOCK_UN is swallowed (the if-branch guard)."""
+    real_flock = reserve_ids.fcntl.flock
+
+    def flock_ebadf_on_unlock(fd, flags):
+        if flags & reserve_ids.fcntl.LOCK_UN:
+            raise OSError(errno.EBADF, "already closed")
+        return real_flock(fd, flags)
+
+    monkeypatch.setattr(reserve_ids.fcntl, "flock", flock_ebadf_on_unlock)
+    # Should NOT raise.
+    assert reserve_ids.reserve(tmp_path, "mitigation", 1) == ["M-001"]
+
+
+def _run_main(monkeypatch, argv):
+    monkeypatch.setattr(sys, "argv", ["reserve_ids.py", *argv])
+    return reserve_ids.main()
+
+
+def test_main_output_dir_missing_returns_2(monkeypatch, tmp_path, capsys):
+    missing = tmp_path / "nope"
+    rc = _run_main(monkeypatch, ["mitigation", "--output-dir", str(missing)])
+    assert rc == 2
+    assert "output_dir does not exist" in capsys.readouterr().err
+
+
+def test_main_success_prints_json(monkeypatch, tmp_path, capsys):
+    rc = _run_main(monkeypatch, ["mitigation", "--count", "2", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out.strip()) == ["M-001", "M-002"]
+
+
+def test_main_timeout_returns_1(monkeypatch, tmp_path, capsys):
+    def raise_timeout(*_a, **_k):
+        raise TimeoutError("locked")
+
+    monkeypatch.setattr(reserve_ids, "reserve", raise_timeout)
+    rc = _run_main(monkeypatch, ["mitigation", "--output-dir", str(tmp_path)])
+    assert rc == 1
+    assert "FATAL" in capsys.readouterr().err
+
+
+def test_main_runtime_error_returns_1(monkeypatch, tmp_path, capsys):
+    def raise_runtime(*_a, **_k):
+        raise RuntimeError("malformed JSON")
+
+    monkeypatch.setattr(reserve_ids, "reserve", raise_runtime)
+    rc = _run_main(monkeypatch, ["mitigation", "--output-dir", str(tmp_path)])
+    assert rc == 1
+    assert "malformed JSON" in capsys.readouterr().err

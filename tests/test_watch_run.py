@@ -304,3 +304,170 @@ def test_main_output_dir_from_env(tmp_path, monkeypatch):
     # which is evaluated at parser construction inside main -> picks up env.
     rc = wr.main(["prog"])
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# watch — read-loop body + stall detection
+#
+# The read-and-relay block (lines ~245-259) is effectively dead in production
+# because `fh.tell()` inside `for raw in fh` raises OSError on a real text-mode
+# file (swallowed by the surrounding `except OSError`). To exercise the *body*
+# of that loop (pinning what it WOULD emit if reachable) we substitute a
+# StringIO file object via Path.open — StringIO.tell() works during iteration.
+# This does not modify the producer; it only drives the existing code lines.
+# ---------------------------------------------------------------------------
+def test_watch_read_loop_relays_events(tmp_path, monkeypatch, capsys):
+    import io
+
+    out = tmp_path / "out"
+    out.mkdir()
+    log = out / ".hook-events.log"
+    # Initial content -> initial pos snapshot points at end-of-file.
+    log.write_text("seed\n")
+
+    log_lines = (
+        "2026-06-14T10:00:00Z  [sid12345]  INFO  PHASE_START  Phase 1\n"
+        "\n"  # blank line -> skipped (line 250-251)
+        "2026-06-14T10:00:05Z  [sid12345]  INFO  ERROR  boom\n"
+        "2026-06-14T10:00:06Z  [sid12345]  INFO  THINKING  ignored-non-relay\n"
+        + ("x" * 250)  # > 200 chars, no relay event -> not emitted
+        + "\n"
+    )
+
+    real_open = type(log).open
+
+    def fake_open(self, *a, **k):
+        if self == log:
+            sio = io.StringIO(log_lines)
+            return sio
+        return real_open(self, *a, **k)
+
+    # Stat must report size > pos so the read branch is taken. pos starts at the
+    # seed size (5). Report a larger size for the log file.
+    real_stat = type(log).stat
+
+    class FakeStat:
+        def __init__(self, real, size):
+            self._real = real
+            self.st_size = size
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    # Initial pos snapshot must be 0 so the loop's reported size (10_000) is
+    # strictly greater and the read branch runs. The initial-pos computation
+    # makes two stat() calls on the log (is_file + .stat); report 0 for those,
+    # then 10_000 once the loop body starts statting.
+    stat_calls = {"n": 0}
+
+    def fake_stat(self, *a, **k):
+        r = real_stat(self, *a, **k)
+        if self == log:
+            stat_calls["n"] += 1
+            return FakeStat(r, 0 if stat_calls["n"] <= 2 else 10_000)
+        return r
+
+    monkeypatch.setattr(type(log), "open", fake_open)
+    monkeypatch.setattr(type(log), "stat", fake_stat)
+    _bounded_time(monkeypatch, [0, 1000])
+
+    rc = wr.watch(out, "standard", 1.5, once=True, poll_seconds=5.0)
+    assert rc == 0
+    o = capsys.readouterr().out
+    # PHASE_START is a relay event; ERROR is forwarded via the "ERROR" rule.
+    assert "PHASE_START  Phase 1" in o
+    assert "ERROR  boom" in o
+    # Non-relay THINKING line is NOT relayed.
+    assert "ignored-non-relay" not in o
+    assert "WATCH_END" in o
+    # events counted: PHASE_START + ERROR = 2
+    assert "events=2" in o
+
+
+def test_watch_emits_stall_when_gap_exceeds_threshold(tmp_path, monkeypatch, capsys):
+    import io
+
+    out = tmp_path / "out"
+    out.mkdir()
+    log = out / ".hook-events.log"
+    log.write_text("seed\n")
+    (out / ".appsec-checkpoint").write_text("phase=1 status=running\n")
+
+    # One relayed event; ts=1781431200 (2026-06-14T10:00:00Z). We make the
+    # mocked clock run far ahead of it so the now-vs-last gap exceeds the
+    # phase-1 standard threshold (240s * 1.5).
+    log_lines = "2026-06-14T10:00:00Z  [sid12345]  INFO  PHASE_START  old event\n"
+    event_ts = 1781431200
+
+    real_open = type(log).open
+
+    def fake_open(self, *a, **k):
+        if self == log:
+            return io.StringIO(log_lines)
+        return real_open(self, *a, **k)
+
+    real_stat = type(log).stat
+
+    class FakeStat:
+        def __init__(self, real, size):
+            self._real = real
+            self.st_size = size
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    # Initial pos snapshot must be 0 so the loop's reported size (10_000) is
+    # strictly greater and the read branch runs. The initial-pos computation
+    # makes two stat() calls on the log (is_file + .stat); report 0 for those,
+    # then 10_000 once the loop body starts statting.
+    stat_calls = {"n": 0}
+
+    def fake_stat(self, *a, **k):
+        r = real_stat(self, *a, **k)
+        if self == log:
+            stat_calls["n"] += 1
+            return FakeStat(r, 0 if stat_calls["n"] <= 2 else 10_000)
+        return r
+
+    monkeypatch.setattr(type(log), "open", fake_open)
+    monkeypatch.setattr(type(log), "stat", fake_stat)
+    # Clock starts well past the event ts so gap >> threshold. poll_seconds=5,
+    # so deadline = first_tick + 5. The third read (first_tick+10) crosses it.
+    base = event_ts + 100_000
+    _bounded_time(monkeypatch, [base, base, base + 10])
+
+    rc = wr.watch(out, "standard", 1.5, once=True, poll_seconds=5.0)
+    assert rc == 0
+    o = capsys.readouterr().out
+    assert "STALL" in o
+    assert "phase=1" in o
+    assert "WATCH_END" in o
+    assert "stalls=1" in o
+
+
+def test_watch_once_sleeps_then_reaches_deadline(tmp_path, monkeypatch, capsys):
+    # Force a second loop pass so the trailing time.sleep(poll_seconds) (line
+    # 295) runs before the deadline is finally crossed.
+    out = tmp_path / "out"
+    out.mkdir()
+    # Ticks: deadline calc=0 -> deadline=0+5. First deadline check (call 2)=1
+    # (< 5) -> sleep + loop. Second deadline check (call 3)=1000 (>=5) -> return.
+    _bounded_time(monkeypatch, [0, 1, 1000])
+    rc = wr.watch(out, "standard", 1.5, once=True, poll_seconds=5.0)
+    assert rc == 0
+    assert "WATCH_END" in capsys.readouterr().out
+
+
+def test_watch_module_entrypoint_print_budgets():
+    import subprocess
+    import sys as _sys
+    from pathlib import Path as _P
+
+    script = _P(__file__).resolve().parents[1] / "scripts" / "watch_run.py"
+    r = subprocess.run(
+        [_sys.executable, str(script), "--print-budgets"],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0
+    assert "_meta" in r.stdout

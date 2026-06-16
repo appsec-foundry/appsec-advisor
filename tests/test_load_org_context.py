@@ -124,3 +124,91 @@ def test_emit_file_writes_threat_modeling_context(tmp_path):
     assert (out / ".threat-modeling-context.md").exists()
     manifest = json.loads((out / ".org-context-manifest.json").read_text())
     assert any(d["loaded"] for d in manifest["documents"])
+
+
+# ---------------------------------------------------------------------------
+# Coverage: _safe_resolve branches, frontmatter parse error, io-error, CLI
+# ---------------------------------------------------------------------------
+
+
+def test_safe_resolve_absolute_rejected(tmp_path):
+    resolved, err = loc._safe_resolve(tmp_path, "/etc/passwd")
+    assert resolved is None
+    assert err == "absolute paths are not allowed"
+
+
+def test_safe_resolve_outside_profile_dir(tmp_path):
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+    resolved, err = loc._safe_resolve(profile_dir, "../escape.md")
+    assert resolved is None
+    assert err == "outside profile directory"
+
+
+def test_safe_resolve_disallowed_extension(tmp_path):
+    profile_dir = tmp_path / "profile"
+    (profile_dir / "context").mkdir(parents=True)
+    (profile_dir / "context" / "note.txt").write_text("hi")
+    resolved, err = loc._safe_resolve(profile_dir, "context/note.txt")
+    assert resolved is None
+    assert "disallowed extension" in err
+
+
+def test_strip_frontmatter_parse_error_returns_empty_dict():
+    text = "---\nkey: [unterminated\n---\nbody here\n"
+    body, fm = loc.strip_frontmatter(text)
+    assert body == "body here\n"
+    assert fm == {}
+
+
+def test_strip_frontmatter_absent_returns_none():
+    body, fm = loc.strip_frontmatter("# no frontmatter\n")
+    assert fm is None
+    assert body == "# no frontmatter\n"
+
+
+def test_load_document_io_error(tmp_path, monkeypatch):
+    profile_dir = tmp_path / "profile"
+    (profile_dir / "context").mkdir(parents=True)
+    md = profile_dir / "context" / "doc.md"
+    md.write_text("# ok")
+
+    real_read = Path.read_bytes
+
+    def boom(self):
+        if self == md.resolve():
+            raise OSError("boom read")
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", boom)
+    record = loc._load_document(profile_dir, {"id": "d", "path": "context/doc.md"})
+    assert record["loaded"] is False
+    assert "io-error" in record["reason"]
+
+
+def test_main_profile_not_found(tmp_path, capsys):
+    rc = loc.main(["--profile", str(tmp_path / "nope.yaml")])
+    assert rc == 2
+    assert "profile not found" in capsys.readouterr().err
+
+
+def test_main_returns_one_on_hard_error(tmp_path, capsys):
+    staged = tmp_path / "profile"
+    shutil.copytree(FIXTURE_DIR, staged)
+    (staged / "context" / "sso.md").write_text("# Heading\n\nAKIA1234567890ABCDEF\n")
+    profile = staged / "org-profile.yaml"
+    rc = loc.main(["--profile", str(profile), "--document-ids", "sso"])
+    assert rc == 1
+    assert "secret-detected" in capsys.readouterr().err
+
+
+def test_module_runs_as_script():
+    import subprocess
+
+    res = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "--profile", str(FIXTURE_PATH)],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0
+    assert "untrusted reference data" in res.stdout

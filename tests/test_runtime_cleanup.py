@@ -484,3 +484,174 @@ class TestSkillMdFlag:
         assert "post-architect" in skill_text, (
             "SKILL.md must invoke runtime_cleanup.py with --stage post-architect when ARCHITECT_REVIEW=true"
         )
+
+
+# ---------------------------------------------------------------------------
+# Helper-level branch coverage: status/repair-plan parsing and log/error paths.
+# ---------------------------------------------------------------------------
+
+
+class TestStatusHelpers:
+    def test_status_missing_counts_as_pass(self, tmp_path):
+        assert rc._status_file_is_pass(tmp_path / "nope.json") is True
+
+    def test_status_bad_json_is_not_pass(self, tmp_path):
+        p = tmp_path / ".qa-status.json"
+        p.write_text("{broken", encoding="utf-8")
+        assert rc._status_file_is_pass(p) is False
+
+    @pytest.mark.parametrize("status", ["pass", "ok", "clean", "PASS"])
+    def test_status_pass_synonyms(self, tmp_path, status):
+        p = tmp_path / ".qa-status.json"
+        p.write_text(json.dumps({"status": status}), encoding="utf-8")
+        assert rc._status_file_is_pass(p) is True
+
+    def test_status_fail_value(self, tmp_path):
+        p = tmp_path / ".qa-status.json"
+        p.write_text(json.dumps({"status": "fail"}), encoding="utf-8")
+        assert rc._status_file_is_pass(p) is False
+
+    def test_repair_plan_missing_is_empty(self, tmp_path):
+        assert rc._repair_plan_is_empty(tmp_path / "nope.json") is True
+
+    def test_repair_plan_bad_json_not_empty(self, tmp_path):
+        p = tmp_path / ".qa-repair-plan.json"
+        p.write_text("{broken", encoding="utf-8")
+        assert rc._repair_plan_is_empty(p) is False
+
+    def test_repair_plan_nonzero_count(self, tmp_path):
+        p = tmp_path / ".qa-repair-plan.json"
+        p.write_text(json.dumps({"issue_count": 3}), encoding="utf-8")
+        assert rc._repair_plan_is_empty(p) is False
+
+    def test_has_agent_error_missing_log(self, tmp_path):
+        assert rc._has_agent_error(tmp_path / "no.log") is False
+
+    def test_has_agent_error_long_tail(self, tmp_path):
+        log = tmp_path / ".agent-run.log"
+        # >100 lines, AGENT_ERROR in the tail
+        lines = [f"line {i}\n" for i in range(150)] + ["AGENT_ERROR boom\n"]
+        log.write_text("".join(lines), encoding="utf-8")
+        assert rc._has_agent_error(log) is True
+
+    def test_has_agent_error_old_error_beyond_tail(self, tmp_path):
+        log = tmp_path / ".agent-run.log"
+        lines = ["AGENT_ERROR old\n"] + [f"line {i}\n" for i in range(200)]
+        log.write_text("".join(lines), encoding="utf-8")
+        # Error is only in the first line, far outside the 100-line tail.
+        assert rc._has_agent_error(log) is False
+
+
+# ---------------------------------------------------------------------------
+# run_cleanup edge branches: not-a-dir skip, QA-not-clean preserve, unlink
+# OSError, directory removal, and log-write OSError tolerance.
+# ---------------------------------------------------------------------------
+
+
+class TestRunCleanupEdges:
+    def test_output_dir_not_a_directory_skips(self, tmp_path):
+        missing = tmp_path / "ghost"
+        report = rc.run_cleanup(missing, stage="all", keep_runtime_files=False, force=False)
+        assert report["skipped"] is True
+        assert "not a directory" in report["skip_reason"]
+
+    def test_post_qa_preserves_when_qa_not_clean(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        _write_json(out / ".qa-status.json", {"status": "fail"})
+        _write_json(out / ".qa-repair-plan.json", {"issue_count": 2})
+        report = rc.run_cleanup(out, stage="post-qa", keep_runtime_files=False, force=False)
+        assert report["skipped"] is False
+        assert any("QA not clean" in note for note in report["preserved"])
+        assert (out / ".qa-status.json").exists()
+
+    def test_directory_removed_and_not_present(self, tmp_path):
+        out = _completed_output_dir(tmp_path)
+        prog = out / ".progress"
+        prog.mkdir()
+        (prog / "x.json").write_text("{}", encoding="utf-8")
+        report = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=False, force=False)
+        assert ".progress/" in report["removed"]
+        assert not prog.exists()
+        # A dir from the whitelist that wasn't present is reported not_present.
+        assert ".taxonomy-slices/" in report["not_present"]
+
+    def test_file_unlink_oserror_preserved(self, tmp_path, monkeypatch):
+        out = _completed_output_dir(tmp_path)
+        (out / ".merge-candidates.json").write_text("{}", encoding="utf-8")
+
+        real_unlink = Path.unlink
+
+        def boom(self, *a, **k):
+            if self.name == ".merge-candidates.json":
+                raise OSError("permission denied")
+            return real_unlink(self, *a, **k)
+
+        monkeypatch.setattr(Path, "unlink", boom)
+        report = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=False, force=False)
+        assert any(".merge-candidates.json" in note for note in report["preserved"])
+
+    def test_dir_rmtree_oserror_preserved(self, tmp_path, monkeypatch):
+        out = _completed_output_dir(tmp_path)
+        (out / ".progress").mkdir()
+
+        def boom(path, *a, **k):
+            raise OSError("busy")
+
+        monkeypatch.setattr(rc.shutil, "rmtree", boom)
+        report = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=False, force=False)
+        assert any(".progress/" in note for note in report["preserved"])
+
+    def test_log_write_oserror_is_nonfatal(self, tmp_path, monkeypatch):
+        out = _completed_output_dir(tmp_path)
+        (out / ".merge-candidates.json").write_text("{}", encoding="utf-8")
+
+        def boom(self, *a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Path, "open", boom)
+        # Must not raise despite log write failing.
+        report = rc.run_cleanup(out, stage="pre-qa", keep_runtime_files=False, force=False)
+        assert report["skipped"] is False
+
+
+# ---------------------------------------------------------------------------
+# main() in-process: arg parsing, not-a-dir exit code 2, text report branches.
+# ---------------------------------------------------------------------------
+
+
+class TestMainInProcess:
+    def test_main_not_a_directory_returns_2(self, tmp_path, capsys):
+        rc_code = rc.main([str(tmp_path / "ghost")])
+        assert rc_code == 2
+        assert "not a directory" in capsys.readouterr().err
+
+    def test_main_text_report_lists_removed(self, tmp_path, capsys):
+        out = _completed_output_dir(tmp_path)
+        (out / ".merge-candidates.json").write_text("{}", encoding="utf-8")
+        code = rc.main([str(out), "--stage", "pre-qa"])
+        assert code == 0
+        printed = capsys.readouterr().out
+        assert "runtime-cleanup: stage=pre-qa" in printed
+        assert "removed   .merge-candidates.json" in printed
+
+    def test_main_text_report_skipped(self, tmp_path, capsys):
+        out = _completed_output_dir(tmp_path)
+        code = rc.main([str(out), "--stage", "pre-qa", "--keep-runtime-files"])
+        assert code == 1
+        assert "skipped" in capsys.readouterr().out
+
+    def test_main_json_report(self, tmp_path, capsys):
+        out = _completed_output_dir(tmp_path)
+        code = rc.main([str(out), "--stage", "pre-qa", "--json"])
+        assert code == 0
+        report = json.loads(capsys.readouterr().out)
+        assert report["stage"] == "pre-qa"
+
+    def test_main_preserved_note_printed(self, tmp_path, capsys):
+        out = _completed_output_dir(tmp_path)
+        _write_json(out / ".architect-status.json", {"status": "fail"})
+        _write_json(out / ".architect-repair-plan.json", {"issue_count": 1})
+        code = rc.main([str(out), "--stage", "post-architect"])
+        assert code == 0
+        printed = capsys.readouterr().out
+        assert "preserved" in printed

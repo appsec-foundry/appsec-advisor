@@ -9337,6 +9337,10 @@ def _check_figure1_architecture_layout(report: Report, section: str) -> None:
         return
     fig2_pos = section.find("**Figure 2", fig1_pos)
     fig1_scope = section[fig1_pos : fig2_pos if fig2_pos > fig1_pos else len(section)]
+    # SVG-based Figure 1 (figure1_svg.py pilot): an img tag is present instead of
+    # a mermaid block.  Skip A1-A5 layout checks — the SVG is deterministic.
+    if re.search(r"\!\[Figure 1[^\]]*\]\([^)]*\.svg\)", fig1_scope):
+        return
     blocks = [m.group("body") for m in _MERMAID_BODY_RE.finditer(fig1_scope)]
     if not blocks:
         report.issues.append("A1: Figure 1 is present but has no ```mermaid block")

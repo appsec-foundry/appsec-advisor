@@ -322,3 +322,400 @@ class TestExtractGateEvents:
         data = agg.aggregate(tmp_path, "quick")
         assert data["run_status"] == "issues"
         assert any(i["category"] == "contract_gate_drift" for i in data["issues"])
+
+
+# ---------------------------------------------------------------------------
+# Coverage extension: parsers, helpers, extractors, CLI
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402
+
+import pytest  # noqa: E402
+
+
+def _hline(ts: str, event: str, detail: str, source: str = "post-tool") -> str:
+    """Canonical hook-events.log line (5-field-ish, same regex)."""
+    return f"{ts}  [--------]  WARN   {source}  {event}   {detail}"
+
+
+class TestParseHelpers:
+    def test_parse_iso_valid(self):
+        assert agg._parse_iso("2026-04-26T17:55:00Z") is not None
+
+    def test_parse_iso_invalid_returns_none(self):
+        assert agg._parse_iso("nonsense") is None
+
+    def test_parse_event_line_non_matching(self):
+        assert agg._parse_event_line("garbage line no fields") is None
+
+    def test_read_log_missing_file(self, tmp_path):
+        assert agg._read_log(tmp_path / "nope.log") == []
+
+    def test_read_log_reads_lines(self, tmp_path):
+        p = tmp_path / "x.log"
+        p.write_text("a\nb\n", encoding="utf-8")
+        assert agg._read_log(p) == [(1, "a"), (2, "b")]
+
+    def test_read_log_oserror_returns_empty(self, tmp_path, monkeypatch):
+        p = tmp_path / "x.log"
+        p.write_text("a\n", encoding="utf-8")
+
+        def _boom(*a, **k):
+            raise OSError("io error")
+
+        monkeypatch.setattr(Path, "open", _boom)
+        assert agg._read_log(p) == []
+
+    def test_clip_short_and_long(self):
+        assert agg._clip("hi", 80) == "hi"
+        clipped = agg._clip("x" * 100, 10)
+        assert clipped.endswith("…") and len(clipped) == 10
+
+    def test_clip_none(self):
+        assert agg._clip(None, 5) == ""  # type: ignore[arg-type]
+
+    def test_fmt_dur_sub_minute(self):
+        assert agg._fmt_dur(45) == "45s"
+
+    def test_fmt_dur_minutes(self):
+        assert agg._fmt_dur(125) == "2m 05s"
+
+    def test_now_iso_z_format(self):
+        assert agg._now_iso_z().endswith("Z")
+
+
+class TestPhaseDurationsTsNone:
+    def test_phase_start_with_bad_ts_skipped(self):
+        # Structurally valid PHASE_START line whose timestamp won't parse:
+        # _parse_iso returns None -> START not recorded (line 365 branch).
+        log = [
+            (1, "garbage unparseable line"),  # hits `if not ev: continue`
+            (2, "notatime  [--------]  INFO   src  PHASE_START   [Phase 1/11] X"),
+            (3, _line("2026-04-26T18:00:10Z", "PHASE_END", "[Phase 1/11] X")),
+        ]
+        # No usable START -> no pairs.
+        assert agg._extract_phase_durations(log) == []
+
+
+class TestScopeUnparseableTail:
+    def test_unparseable_line_kept(self):
+        # A parseable recent line establishes latest_ts; an unparseable
+        # continuation line is kept (lines 308-309 branch).
+        log = [
+            (1, _line("2026-04-26T17:55:00Z", "PHASE_START", "[Phase 1/11] X")),
+            (2, "   continuation payload with no fields"),
+        ]
+        scoped = agg._scope_to_current_run(log)
+        assert (2, "   continuation payload with no fields") in scoped
+
+    def test_line_with_unparseable_ts_field_dropped_when_old(self):
+        # parseable structure but ts cannot be parsed -> _parse_iso None.
+        good = _line("2026-04-26T18:00:00Z", "PHASE_START", "[Phase 1/11] X")
+        badts = "notatimestamp  [--------]  INFO   src  EVENT   detail"
+        scoped = agg._scope_to_current_run([(1, good), (2, badts)])
+        # bad-ts line is structurally parseable but ts None -> kept (>= cutoff path)
+        assert any(r[0] == 2 for r in scoped)
+
+
+class TestCountRepoFiles:
+    def test_git_ls_files_path(self, tmp_path, monkeypatch):
+        import subprocess
+
+        class _R:
+            returncode = 0
+            stdout = "a.py\nb.js\n\n"
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R())
+        assert agg._count_repo_files(tmp_path) == 2
+
+    def test_fallback_walk_on_git_failure(self, tmp_path, monkeypatch):
+        import subprocess
+
+        def _boom(*a, **k):
+            raise FileNotFoundError("no git")
+
+        monkeypatch.setattr(subprocess, "run", _boom)
+        (tmp_path / "a.py").write_text("x", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("x", encoding="utf-8")  # excluded ext
+        assert agg._count_repo_files(tmp_path) == 1
+
+
+class TestRunUsedEconomyModel:
+    def test_economy_config(self, tmp_path):
+        (tmp_path / ".skill-config.json").write_text(
+            _json.dumps({"reasoning_model": "sonnet-economy"}), encoding="utf-8"
+        )
+        assert agg._run_used_economy_model(tmp_path) is True
+
+    def test_missing_config(self, tmp_path):
+        assert agg._run_used_economy_model(tmp_path) is False
+
+    def test_malformed_config(self, tmp_path):
+        (tmp_path / ".skill-config.json").write_text("{bad json", encoding="utf-8")
+        assert agg._run_used_economy_model(tmp_path) is False
+
+
+class TestExtractErrors:
+    def test_tool_error_and_max_turns(self):
+        hook = [(1, _hline("2026-04-26T18:00:00Z", "TOOL_ERROR", "boom failed"))]
+        agent = [(2, _line("2026-04-26T18:00:01Z", "MAX_TURNS", "agent exhausted"))]
+        issues = agg._extract_errors(hook, agent)
+        cats = {i["category"] for i in issues}
+        assert cats == {"tool_error", "max_turns_subagent"}
+        assert all(i["severity"] == "error" for i in issues)
+
+    def test_unparseable_lines_ignored(self):
+        assert agg._extract_errors([(1, "junk")], [(1, "junk")]) == []
+
+
+class TestExtractBudgetEvents:
+    def test_wrap_up_and_budget_critical(self):
+        agent = [
+            (1, _line("2026-04-26T18:00:00Z", "WRAP_UP_TRIGGERED", "renderer wound down")),
+            (2, _line("2026-04-26T18:00:01Z", "BUDGET_CRITICAL", "90% turns")),
+        ]
+        issues = agg._extract_budget_events(agent)
+        cats = {i["category"] for i in issues}
+        assert cats == {"wrap_up_triggered", "budget_critical"}
+        assert all(i["severity"] == "warning" for i in issues)
+
+    def test_irrelevant_event_skipped(self):
+        assert agg._extract_budget_events([(1, _line("2026-04-26T18:00:00Z", "PHASE_START", "x"))]) == []
+
+
+class TestExtractWarnings:
+    def test_bash_warn_flagged(self):
+        hook = [(1, _hline("2026-04-26T18:00:00Z", "BASH_WARN", "error: something"))]
+        issues = agg._extract_warnings(hook)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "bash_warn"
+
+    def test_other_event_ignored(self):
+        assert agg._extract_warnings([(1, _hline("2026-04-26T18:00:00Z", "OTHER", "x"))]) == []
+
+
+class TestPerfAnomaliesCeilingAndHysteresis:
+    def _pd(self, phase, dur, label="Lbl"):
+        return {
+            "phase": phase,
+            "label": label,
+            "duration_seconds": dur,
+            "start_line": 1,
+            "start_ts": "t0",
+            "end_ts": "t1",
+            "end_inferred": False,
+        }
+
+    def test_hard_ceiling_phase_1_category(self):
+        issues = agg._extract_perf_anomalies([self._pd("1", 2000)], "standard")
+        assert issues and issues[0]["category"] == "stage1_excessive_duration"
+        assert issues[0]["severity"] == "error"
+
+    def test_hard_ceiling_other_phase_category(self):
+        issues = agg._extract_perf_anomalies([self._pd("9", 2000)], "standard")
+        assert issues[0]["category"] == "perf_anomaly_phase"
+
+    def test_micro_overshoot_skipped(self):
+        # standard phase 2 budget = 180; 190s is <1.20x and <30s slack -> skip
+        issues = agg._extract_perf_anomalies([self._pd("2", 190)], "standard")
+        assert issues == []
+
+    def test_genuine_overshoot_flagged_warning(self):
+        # 180 * 1.5 = 270 -> >=1.2x and >=30s slack
+        issues = agg._extract_perf_anomalies([self._pd("2", 270)], "standard")
+        assert issues and issues[0]["severity"] == "warning"
+        assert "multiplier" in issues[0]["evidence"]
+
+    def test_unknown_depth_falls_back_to_standard(self):
+        issues = agg._extract_perf_anomalies([self._pd("2", 270)], "bogusdepth")
+        assert issues and issues[0]["severity"] == "warning"
+
+    def test_file_count_scales_budget(self):
+        # large repo widens budget so the same dur is no longer over
+        issues = agg._extract_perf_anomalies([self._pd("2", 270)], "standard", file_count=5000)
+        assert issues == []
+
+
+class TestSessionStopCostParse:
+    def test_non_numeric_out_field_fails_regex_and_is_skipped(self):
+        # _SESSION_STOP_RE out= only matches [\d,]+, so a non-numeric out=
+        # value makes the whole regex fail -> the line is skipped.
+        # (Pins current behavior; the int() ValueError guard is unreachable.)
+        line = (
+            "2026-04-26T18:00:00Z  [--------]  INFO   orchestrator  SESSION_STOP   "
+            "stop_reason=unknown in=1,000 out=abc cost=$0.05"
+        )
+        assert agg._extract_session_stop_anomalies([(1, line)]) == []
+
+    def test_no_session_stop_match_skipped(self):
+        line = _line("2026-04-26T18:00:00Z", "SESSION_STOP", "no structured fields here")
+        assert agg._extract_session_stop_anomalies([(1, line)]) == []
+
+    def test_non_session_stop_event_skipped(self):
+        assert agg._extract_session_stop_anomalies([(1, _line("2026-04-26T18:00:00Z", "PHASE_END", "[Phase 1/11] x"))]) == []
+
+
+class TestExtractRecoveryEvents:
+    def test_inline_retry_counter(self, tmp_path):
+        (tmp_path / ".inline-shortcut-retry-count").write_text("2", encoding="utf-8")
+        issues = agg._extract_recovery_events(tmp_path)
+        assert any(i["category"] == "auto_retry_fired" for i in issues)
+
+    def test_inline_retry_zero_ignored(self, tmp_path):
+        (tmp_path / ".inline-shortcut-retry-count").write_text("0", encoding="utf-8")
+        assert agg._extract_recovery_events(tmp_path) == []
+
+    def test_inline_retry_malformed(self, tmp_path):
+        (tmp_path / ".inline-shortcut-retry-count").write_text("not-int", encoding="utf-8")
+        assert agg._extract_recovery_events(tmp_path) == []
+
+    def test_compose_section_retries(self, tmp_path):
+        (tmp_path / ".compose-stats.json").write_text(
+            _json.dumps({"section_retries": {"7": 2, "8": 1}}), encoding="utf-8"
+        )
+        issues = agg._extract_recovery_events(tmp_path)
+        cats = [i for i in issues if i["category"] == "compose_retries_section"]
+        # only sid '7' (n>1) flagged
+        assert len(cats) == 1 and cats[0]["evidence"]["section"] == "7"
+
+    def test_compose_stats_malformed(self, tmp_path):
+        (tmp_path / ".compose-stats.json").write_text("{bad", encoding="utf-8")
+        assert agg._extract_recovery_events(tmp_path) == []
+
+    def test_compose_stats_non_dict(self, tmp_path):
+        (tmp_path / ".compose-stats.json").write_text("[]", encoding="utf-8")
+        assert agg._extract_recovery_events(tmp_path) == []
+
+
+class TestExtractAbuseCaseOutcomes:
+    def test_missing_file_returns_empty(self, tmp_path):
+        assert agg._extract_abuse_case_outcomes(tmp_path) == []
+
+    def test_malformed_json(self, tmp_path):
+        (tmp_path / ".abuse-case-verdicts.json").write_text("{bad", encoding="utf-8")
+        assert agg._extract_abuse_case_outcomes(tmp_path) == []
+
+    def test_inconclusive_chain_flagged(self, tmp_path):
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            _json.dumps(
+                {
+                    "verdicts": [
+                        {
+                            "abuse_case_id": "AC-001",
+                            "title": "Token replay",
+                            "step_verdicts": [
+                                {"verdict": "confirmed"},
+                                {"verdict": "inconclusive"},
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        issues = agg._extract_abuse_case_outcomes(tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "abuse_case_inconclusive"
+        assert issues[0]["evidence"]["inconclusive_steps"] == 1
+
+    def test_blocked_step_closes_chain(self, tmp_path):
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            _json.dumps(
+                {
+                    "verdicts": [
+                        {
+                            "abuse_case_id": "AC-002",
+                            "step_verdicts": [
+                                {"verdict": "inconclusive"},
+                                {"verdict": "blocked"},
+                            ],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert agg._extract_abuse_case_outcomes(tmp_path) == []
+
+    def test_non_dict_verdict_entries_skipped(self, tmp_path):
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            _json.dumps({"verdicts": ["bad", {"step_verdicts": [{"verdict": "inconclusive"}]}]}),
+            encoding="utf-8",
+        )
+        issues = agg._extract_abuse_case_outcomes(tmp_path)
+        assert len(issues) == 1
+
+
+class TestGateEventsExtraBranches:
+    def test_qa_plan_malformed_json(self, tmp_path):
+        (tmp_path / ".qa-repair-plan.json").write_text("{bad", encoding="utf-8")
+        # malformed -> plan {} -> no status -> no issue from branch 1
+        assert agg._extract_gate_events(tmp_path) == []
+
+    def test_qa_status_malformed_json(self, tmp_path):
+        (tmp_path / ".qa-status.json").write_text("{bad", encoding="utf-8")
+        assert agg._extract_gate_events(tmp_path) == []
+
+    def test_qa_status_pass_no_issue(self, tmp_path):
+        (tmp_path / ".qa-status.json").write_text('{"status":"pass"}', encoding="utf-8")
+        assert agg._extract_gate_events(tmp_path) == []
+
+
+class TestAggregateInference:
+    def test_repo_root_from_env(self, tmp_path, monkeypatch):
+        out = tmp_path / "docs" / "security"
+        out.mkdir(parents=True)
+        monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+        data = agg.aggregate(out, "quick")
+        assert data["run_status"] == "clean"
+        assert data["assessment_depth"] == "quick"
+
+    def test_clean_run_structure(self, tmp_path):
+        data = agg.aggregate(tmp_path, "standard")
+        assert data["schema_version"] == agg.SCHEMA_VERSION
+        assert data["summary"]["errors"] == 0
+
+
+class TestMainCLI:
+    def test_output_dir_not_directory(self, tmp_path, capsys):
+        rc = agg.main([str(tmp_path / "nope")])
+        assert rc == 1
+        assert "not a directory" in capsys.readouterr().err
+
+    def test_no_recommend_writes_file(self, tmp_path, capsys):
+        rc = agg.main([str(tmp_path), "--depth", "quick", "--no-recommend"])
+        assert rc == 0
+        out = _json.loads((tmp_path / ".run-issues.json").read_text(encoding="utf-8"))
+        assert out["run_status"] == "clean"
+        assert "run-issues:" in capsys.readouterr().out
+
+    def test_recommend_enrichment_attempted(self, tmp_path, monkeypatch, capsys):
+        # Force the import to fail so we hit the except branch (warning).
+        monkeypatch.setitem(sys.modules, "recommend_fixes", None)
+        rc = agg.main([str(tmp_path), "--depth", "standard"])
+        # Either enrichment ran or warning printed — both return 0 & write file.
+        assert rc == 0
+        assert (tmp_path / ".run-issues.json").is_file()
+
+    def test_enrichment_runs_when_available(self, tmp_path):
+        # Default path (no --no-recommend) imports recommend_fixes and calls
+        # enrich_with_recommendations (line 1003). recommend_fixes imports
+        # cleanly in this repo, so enrichment runs on a clean run dir.
+        rc = agg.main([str(tmp_path), "--depth", "quick"])
+        assert rc == 0
+        out = _json.loads((tmp_path / ".run-issues.json").read_text(encoding="utf-8"))
+        assert out["run_status"] == "clean"
+
+    def test_write_failure_returns_1(self, tmp_path, monkeypatch, capsys):
+        # Make write_text raise OSError to hit the error branch.
+        orig = Path.write_text
+
+        def _fail(self, *a, **k):
+            if self.name == ".run-issues.json":
+                raise OSError("disk full")
+            return orig(self, *a, **k)
+
+        monkeypatch.setattr(Path, "write_text", _fail)
+        rc = agg.main([str(tmp_path), "--no-recommend"])
+        assert rc == 1
+        assert "cannot write" in capsys.readouterr().err
