@@ -685,6 +685,21 @@ if [ -f "$LOG_FILE" ]; then
     ASSESSMENT_DURATION=$(grep "ASSESSMENT_SUMMARY" "$LOG_FILE" | tail -1 | sed -n 's/.*duration=\([^ ]*\).*/\1/p')
 fi
 
+# Artifact gate: `claude -p` can exit 0 after a *graceful* stop that produced no
+# report — e.g. a broken-Bash environment aborts every script, so the agent
+# diagnoses and stops cleanly. Without this check we'd print "completed
+# successfully" and downstream consumers (the e2e driver) would run assertions
+# against an empty output dir. A create-threat-model run that yields neither
+# threat-model.md nor threat-model.yaml is a failure, not a success.
+# (--dry-run previews scope without writing a report, so it is exempt.)
+if [ "$EXIT_CODE" -eq 0 ] && [ "$SKILL" = "create-threat-model" ] \
+   && ! printf '%s' "$SKILL_FLAGS" | grep -q -- '--dry-run'; then
+    if [ ! -s "$RESULT_DIR/threat-model.md" ] && [ ! -s "$RESULT_DIR/threat-model.yaml" ]; then
+        err "Pipeline exited 0 but produced no threat-model.md/.yaml in $RESULT_DIR — treating as failure."
+        EXIT_CODE=1
+    fi
+fi
+
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     ok "Assessment completed successfully."

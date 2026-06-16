@@ -671,10 +671,7 @@ def test_toc_closure_flags_emdash_heading_single_hyphen_link(tmp_path):
 def test_toc_closure_clean_heading_with_emdash_tail_stripped_resolves(tmp_path):
     # The fix: a class-only heading (no em-dash) slugs identically under both
     # the generator and the renderer, so the composer link resolves.
-    md = (
-        "### 3.7 Insecure Direct Object Reference\n\n"
-        "[3.7](#37-insecure-direct-object-reference)\n"
-    )
+    md = "### 3.7 Insecure Direct Object Reference\n\n[3.7](#37-insecure-direct-object-reference)\n"
     p = _md(tmp_path, md)
     r = qa.check_toc_closure(p)
     assert not r.issues

@@ -993,6 +993,19 @@ class TestCLI:
         cfg = json.loads(r.stdout)
         assert cfg["repo_root"] == str(tmp_path)
 
+    def test_repo_flag_honours_explicit_subdir_not_git_root(self, tmp_path, monkeypatch):
+        # An explicit --repo pointing at a subdir nested inside a larger git repo
+        # (no .git of its own) must resolve to the subdir itself, NOT walk up to
+        # the enclosing git toplevel. Regression: the e2e fixture nested in the
+        # plugin's own tree was silently retargeting the whole parent repo.
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        sub = tmp_path / "nested" / "fixture"
+        sub.mkdir(parents=True)
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--repo", str(sub))
+        cfg = json.loads(r.stdout)
+        assert cfg["repo_root"] == str(sub)
+
 
 # ---------------------------------------------------------------------------
 # Regression scenarios observed in production runs

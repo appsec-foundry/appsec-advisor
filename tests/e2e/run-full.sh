@@ -142,6 +142,18 @@ if [ "$RUN_STATUS" -ne 0 ]; then
     exit 1
 fi
 
+# Defence-in-depth artifact gate: run-headless.sh now fails non-zero on empty
+# output, but the driver owns the "1 = pipeline failed" contract, so assert the
+# core artifacts exist independently rather than running ~25 assertions against
+# an empty dir (which reports as confusing assertion failures, not a clear
+# pipeline failure).
+if [ ! -s "$OUTPUT_DIR/threat-model.md" ] || [ ! -s "$OUTPUT_DIR/threat-model.yaml" ]; then
+    echo ""
+    echo "PIPELINE PRODUCED NO REPORT — threat-model.md/.yaml missing or empty." >&2
+    echo "Artifacts (for debugging): $OUTPUT_DIR" >&2
+    exit 1
+fi
+
 # ── Stage 1b: HTML export (best-effort; needs pandoc) ────────────────────────
 # PDF is produced in-pipeline via --pdf. A --html flag exists too, but here we
 # drive export_html.py directly to keep this deterministic (no LLM tokens).

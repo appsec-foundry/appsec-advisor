@@ -331,9 +331,7 @@ def _optimize_png(path: Path) -> None:
             return
 
 
-def _render_one_mermaid(
-    n: int, source: str, work_dir: Path, fmt: str = "png"
-) -> tuple[bool, str, str]:
+def _render_one_mermaid(n: int, source: str, work_dir: Path, fmt: str = "png") -> tuple[bool, str, str]:
     """Render block *n* via mmdc. Returns (ok, replacement_md, error_line).
 
     ``fmt`` is ``"png"`` (PDF path — WeasyPrint drops subgraph-nested SVG nodes,
@@ -366,9 +364,7 @@ def _render_one_mermaid(
     return True, f"\n![Diagram {n}]({out_path.name})\n", ""
 
 
-def render_mermaid_blocks(
-    md_text: str, work_dir: Path, fmt: str = "png"
-) -> tuple[str, int, int]:
+def render_mermaid_blocks(md_text: str, work_dir: Path, fmt: str = "png") -> tuple[str, int, int]:
     """Replace each ```mermaid block with an <img> tag pointing at a diagram.
 
     ``fmt="png"`` (PDF default): mmdc rasterises via headless Chrome, which
@@ -439,7 +435,9 @@ def render_mermaid_blocks(
         from concurrent.futures import ThreadPoolExecutor
 
         with ThreadPoolExecutor(max_workers=min(MMDC_PARALLEL_WORKERS, len(remaining))) as pool:
-            futures = {i: pool.submit(_render_one_mermaid, i + 1, matches[i].group(1), work_dir, fmt) for i in remaining}
+            futures = {
+                i: pool.submit(_render_one_mermaid, i + 1, matches[i].group(1), work_dir, fmt) for i in remaining
+            }
         for i in remaining:
             ok, repl, error_line = futures[i].result()
             if ok:
