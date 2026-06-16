@@ -32,7 +32,9 @@ def _git(repo: Path, *args: str) -> None:
 def _head(repo: Path) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout.strip()
 
 
@@ -55,14 +57,13 @@ def _make_repo(tmp_path: Path) -> tuple[Path, Path]:
 
 def _write_baseline_yaml(out: Path, sha: str) -> None:
     (out / "threat-model.yaml").write_text(
-        f"meta:\n  git:\n    commit_sha: {sha}\n", encoding="utf-8",
+        f"meta:\n  git:\n    commit_sha: {sha}\n",
+        encoding="utf-8",
     )
 
 
 def _update(repo: Path, out: Path) -> None:
-    baseline_state.cmd_update(
-        argparse.Namespace(output_dir=str(out), repo_root=str(repo), mode="full")
-    )
+    baseline_state.cmd_update(argparse.Namespace(output_dir=str(out), repo_root=str(repo), mode="full"))
 
 
 def _check_changes(repo: Path, out: Path):

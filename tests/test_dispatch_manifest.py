@@ -655,9 +655,27 @@ def test_reconcile_injects_folded_security_units(tmp_path):
 def test_reconcile_idempotent_when_role_present(tmp_path):
     repo = _fake_repo(tmp_path)
     comps = _backend_only() + [
-        {"id": "auth-service", "name": "Auth Service", "description": "login", "paths": ["auth/**"], "tier": "application"},
-        {"id": "pipeline", "name": "Build Pipeline", "description": "ci", "paths": [".github/**"], "tier": "application"},
-        {"id": "ws-gateway", "name": "WebSocket Gateway", "description": "rt", "paths": ["ws/**"], "tier": "application"},
+        {
+            "id": "auth-service",
+            "name": "Auth Service",
+            "description": "login",
+            "paths": ["auth/**"],
+            "tier": "application",
+        },
+        {
+            "id": "pipeline",
+            "name": "Build Pipeline",
+            "description": "ci",
+            "paths": [".github/**"],
+            "tier": "application",
+        },
+        {
+            "id": "ws-gateway",
+            "name": "WebSocket Gateway",
+            "description": "rt",
+            "paths": ["ws/**"],
+            "tier": "application",
+        },
     ]
     augmented, injected = bm.reconcile_inventory(comps, repo)
     assert injected == []  # every role already carried by an enumerated component
@@ -771,9 +789,15 @@ def test_realtime_injected_when_upload_component_present(tmp_path):
     # absorb the realtime role and block injection.
     repo = _fake_repo(tmp_path)
     comps = _backend_only() + [
-        {"id": "file-upload-service", "name": "File Upload and Static Asset Service",
-         "description": "uploads", "paths": ["routes/fileUpload.ts"], "tier": "application",
-         "deployment_zones": ["internet", "dmz"], "handles_sensitive_data": True},
+        {
+            "id": "file-upload-service",
+            "name": "File Upload and Static Asset Service",
+            "description": "uploads",
+            "paths": ["routes/fileUpload.ts"],
+            "tier": "application",
+            "deployment_zones": ["internet", "dmz"],
+            "handles_sensitive_data": True,
+        },
     ]
     _, injected = bm.reconcile_inventory(comps, repo)
     assert "realtime-channel" in {c["id"] for c in injected}
@@ -815,7 +839,9 @@ def test_selection_report_flows_into_scope_rendering():
     # real selector report → §1 scope data model → rendered markdown
     cs = btm.build_component_selection(report, comps)
     assert cs is not None and cs["analyzed"] == 4 and cs["total"] == 5
-    out = pf.gen_system_overview({"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps})
+    out = pf.gen_system_overview(
+        {"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps}
+    )
 
     assert "**4 of 5**" in out
     assert "Internal Worker" in out  # out-of-scope component is named
@@ -904,7 +930,9 @@ def test_selection_reasons_cover_each_branch():
     assert "frontend attack surface (mandatory)" in r(_c("f", tier="client"), "standard")
     assert "internet-exposed (internet)" in r(_c("b", zones=["internet"]), "standard")
     assert "ci-cd / deployment (supply-chain boundary)" in r(_c("c", zones=["ci-cd-runtime"]), "standard")
-    assert "crown-jewel (credentials/PII/payment/secrets)" in r(_c("d", zones=["internal-network"], sensitive=True), "standard")
+    assert "crown-jewel (credentials/PII/payment/secrets)" in r(
+        _c("d", zones=["internal-network"], sensitive=True), "standard"
+    )
     assert "transitively reachable (thorough)" in r(_c("w", zones=["internal-network"]), "thorough")
     assert "exposure-unknown (fail-safe inclusion)" in r(_c("u", zones=["docker-container"]), "standard")
     # ci-cd / crown-jewel are silent at quick (criteria not active) → no reason

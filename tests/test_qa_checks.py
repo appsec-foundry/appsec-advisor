@@ -2376,10 +2376,7 @@ class TestCrossReferenceLabellingInvariant:
         idempotency guard.
         """
         clean = tmp_path / "clean.md"
-        clean.write_text(
-            '<td>🔴 <a href="#f-001">F-001</a> — SQL Injection '
-            "(<code>routes/login.ts:34</code>)</td>\n"
-        )
+        clean.write_text('<td>🔴 <a href="#f-001">F-001</a> — SQL Injection (<code>routes/login.ts:34</code>)</td>\n')
         rep_clean = qa.check_html_nested_finding_link(clean)
         assert rep_clean.ok == 1 and not rep_clean.issues
 
@@ -2402,7 +2399,7 @@ class TestCrossReferenceLabellingInvariant:
         md = self._write_pair(
             tmp_path,
             '<td>🔴 <a href="#f-001">F-001</a> — SQL Injection in login endpoint '
-            '(<code>routes/login.ts:34</code>)<br/>'
+            "(<code>routes/login.ts:34</code>)<br/>"
             '🔴 <a href="#f-002">F-002</a> — Hardcoded RSA private key in source</td>\n',
         )
         _, new_text = qa.linkify_anchors(md)
@@ -3012,9 +3009,7 @@ def _write_yaml(path: Path, body: str) -> None:
 def test_linkify_anchors_no_double_when_title_after_span(tmp_path: Path):
     _write_yaml(
         tmp_path,
-        "threats:\n"
-        "  - id: T-006\n"
-        "    title: SQL Injection via Raw Query String Interpolation (routes/login.ts:34)\n",
+        "threats:\n  - id: T-006\n    title: SQL Injection via Raw Query String Interpolation (routes/login.ts:34)\n",
     )
     # Real composer output: link wrapped in the span, title AFTER `</span>`,
     # separator is a HYPHEN (compose normalises em-dash→hyphen before persist).
@@ -3046,9 +3041,9 @@ def test_linkify_anchors_labels_bare_mitigation_outside_span(tmp_path: Path):
     _report, out = qa.linkify_anchors(md)
     # Title appended AFTER the close tag — the nowrap span still wraps only the
     # marker + id, so the title is free to wrap on normal spaces.
-    assert '[M-006](#m-006)</span> — Replace raw sequelize.query()' in out, out
+    assert "[M-006](#m-006)</span> — Replace raw sequelize.query()" in out, out
     # And NOT before it (the span must not swallow the title).
-    assert 'sequelize.query() with a parameterised query</span>' not in out, out
+    assert "sequelize.query() with a parameterised query</span>" not in out, out
 
 
 def test_linkify_anchors_fix_span_label_is_idempotent(tmp_path: Path):
@@ -3114,7 +3109,7 @@ def test_attack_surface_tables_to_html_converts_and_pins_widths():
     # Cell markdown is pre-rendered to HTML (markdown-it won't parse it inside <table>).
     assert '<a href="#f-007">F-007</a>' in out and "<code>/rest/products/search</code>" in out
     # Route cell carries overflow-wrap so long routes wrap inside the fixed column.
-    assert 'overflow-wrap:anywhere' in out
+    assert "overflow-wrap:anywhere" in out
     # Surrounding markdown (heading, footer) is untouched.
     assert "### 5.1 Unauthenticated" in out and "_footer._" in out
     # No GFM pipe rows survive for the converted table.
@@ -3184,9 +3179,7 @@ def test_operational_strengths_table_converts_keeping_structural_breaks():
     # Italic description rendered to <em> (markdown-it won't parse `_..._` inside
     # a raw <table>), and the STRUCTURAL <br/> (description + each implementation)
     # preserved.
-    assert (
-        "<em>Build-time and runtime hardening.</em><br/>Automated SCA scanning<br/>Container Security" in out
-    ), out
+    assert "<em>Build-time and runtime hardening.</em><br/>Automated SCA scanning<br/>Container Security" in out, out
     # Strength cell bold rendered too.
     assert "<strong>Container Hardening</strong>" in out
 

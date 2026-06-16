@@ -99,15 +99,7 @@ def test_parse_package_json_empty(tmp_path: Path):
 
 def test_parse_requirements_txt(tmp_path: Path):
     p = tmp_path / "requirements.txt"
-    p.write_text(
-        "flask==2.0.1  # web\n"
-        "requests>=2.20\n"
-        "\n"
-        "# a comment\n"
-        "-e .\n"
-        "unpinned\n"
-        "bad line with spaces only ok\n"
-    )
+    p.write_text("flask==2.0.1  # web\nrequests>=2.20\n\n# a comment\n-e .\nunpinned\nbad line with spaces only ok\n")
     deps = M.parse_manifest(p, tmp_path)
     by_name = {d.package: d for d in deps}
     assert by_name["flask"].version == "==2.0.1"
@@ -162,13 +154,7 @@ def test_parse_pyproject_toml_pep621_list(tmp_path: Path):
 def test_parse_pipfile(tmp_path: Path):
     p = tmp_path / "Pipfile"
     p.write_text(
-        "[packages]\n"
-        'requests = "*"\n'
-        'flask = ">=1.0"\n'
-        "[dev-packages]\n"
-        'pytest = "*"\n'
-        "[scripts]\n"
-        'test = "pytest"\n'
+        '[packages]\nrequests = "*"\nflask = ">=1.0"\n[dev-packages]\npytest = "*"\n[scripts]\ntest = "pytest"\n'
     )
     deps = M.parse_manifest(p, tmp_path)
     names = {d.package for d in deps}
@@ -292,12 +278,7 @@ def test_parse_build_gradle(tmp_path: Path):
 
 def test_parse_gemfile(tmp_path: Path):
     p = tmp_path / "Gemfile"
-    p.write_text(
-        "source 'https://rubygems.org'\n"
-        "# comment\n"
-        "gem 'rails', '7.0.0'\n"
-        "gem \"puma\"\n"
-    )
+    p.write_text("source 'https://rubygems.org'\n# comment\ngem 'rails', '7.0.0'\ngem \"puma\"\n")
     deps = M.parse_manifest(p, tmp_path)
     by_name = {d.package: d for d in deps}
     assert by_name["rails"].version == "7.0.0"
@@ -363,7 +344,7 @@ def test_parse_csproj(tmp_path: Path):
     p = tmp_path / "App.csproj"
     p.write_text(
         "<Project>\n"
-        '  <ItemGroup>\n'
+        "  <ItemGroup>\n"
         '    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />\n'
         '    <PackageReference Include="Serilog" />\n'
         "  </ItemGroup>\n"

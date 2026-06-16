@@ -238,9 +238,7 @@ class TestFindAssessmentStart:
     def test_from_agent_log(self, tmp_path):
         crt = _load()
         agent_log = tmp_path / ".agent-run.log"
-        agent_log.write_text(
-            "2026-05-01T09:59:00Z  [abc]  INFO  threat-analyst  ASSESSMENT_START  go\n"
-        )
+        agent_log.write_text("2026-05-01T09:59:00Z  [abc]  INFO  threat-analyst  ASSESSMENT_START  go\n")
         hook_log = tmp_path / ".hook-events.log"
         ts = crt.find_assessment_start(hook_log, agent_log)
         assert ts == "2026-05-01T09:59:00Z"

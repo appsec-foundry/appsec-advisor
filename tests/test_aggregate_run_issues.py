@@ -318,7 +318,9 @@ class TestExtractGateEvents:
     def test_aggregate_surfaces_drift_instead_of_clean(self, tmp_path):
         """End-to-end: a completed run that left an unresolved repair plan must
         NOT be reported as run_status=clean (the 2026-06-12 regression)."""
-        (tmp_path / ".qa-repair-plan.json").write_text('{"status":"fail","issue_count":1,"actions":[]}', encoding="utf-8")
+        (tmp_path / ".qa-repair-plan.json").write_text(
+            '{"status":"fail","issue_count":1,"actions":[]}', encoding="utf-8"
+        )
         data = agg.aggregate(tmp_path, "quick")
         assert data["run_status"] == "issues"
         assert any(i["category"] == "contract_gate_drift" for i in data["issues"])
@@ -329,8 +331,6 @@ class TestExtractGateEvents:
 # ---------------------------------------------------------------------------
 
 import json as _json  # noqa: E402
-
-import pytest  # noqa: E402
 
 
 def _hline(ts: str, event: str, detail: str, source: str = "post-tool") -> str:
@@ -552,7 +552,10 @@ class TestSessionStopCostParse:
         assert agg._extract_session_stop_anomalies([(1, line)]) == []
 
     def test_non_session_stop_event_skipped(self):
-        assert agg._extract_session_stop_anomalies([(1, _line("2026-04-26T18:00:00Z", "PHASE_END", "[Phase 1/11] x"))]) == []
+        assert (
+            agg._extract_session_stop_anomalies([(1, _line("2026-04-26T18:00:00Z", "PHASE_END", "[Phase 1/11] x"))])
+            == []
+        )
 
 
 class TestExtractRecoveryEvents:

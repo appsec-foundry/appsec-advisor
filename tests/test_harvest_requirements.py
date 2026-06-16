@@ -184,7 +184,9 @@ def test_run_filters_sources_and_dry_run(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         harvester,
         "harvest_requirements_source",
-        lambda *args, **kwargs: [{"id": "SEC", "requirements": [{"id": "SEC-1", "url": "u", "text": "t", "priority": "MUST"}]}],
+        lambda *args, **kwargs: [
+            {"id": "SEC", "requirements": [{"id": "SEC-1", "url": "u", "text": "t", "priority": "MUST"}]}
+        ],
     )
     monkeypatch.setattr(harvester, "harvest_blueprints_source", lambda *args, **kwargs: [{"id": "BP-X"}])
 
@@ -211,7 +213,10 @@ def test_run_legacy_sources_unknown_type_and_output_validation(monkeypatch, tmp_
             "description": "Harvested",
             "url": "https://catalog.example.test",
             "output": "ignored.yaml",
-            "crawl": {"requirements_base_url": "https://example.test/req", "blueprints_base_url": "https://example.test/bp"},
+            "crawl": {
+                "requirements_base_url": "https://example.test/req",
+                "blueprints_base_url": "https://example.test/bp",
+            },
             "requirements_overrides": [{"id": "extra-req", "url": "https://example.test/extra"}],
             "blueprints_overrides": [{"id": "extra-bp", "url": "https://example.test/extra-bp"}],
             "sources": [],
@@ -222,7 +227,9 @@ def test_run_legacy_sources_unknown_type_and_output_validation(monkeypatch, tmp_
     monkeypatch.setattr(
         harvester,
         "harvest_requirements_source",
-        lambda *args, **kwargs: [{"id": "SEC", "requirements": [{"id": "SEC-1", "url": "u", "text": "t", "priority": "MUST"}]}],
+        lambda *args, **kwargs: [
+            {"id": "SEC", "requirements": [{"id": "SEC-1", "url": "u", "text": "t", "priority": "MUST"}]}
+        ],
     )
     monkeypatch.setattr(
         harvester,
@@ -299,7 +306,9 @@ def test_run_reference_url_and_schema_errors_return_2(monkeypatch, tmp_path, cap
     monkeypatch.setattr(
         harvester,
         "harvest_requirements_source",
-        lambda *args, **kwargs: [{"id": "SEC", "requirements": [{"id": "SEC-1", "url": "u", "text": "t", "priority": "MUST"}]}],
+        lambda *args, **kwargs: [
+            {"id": "SEC", "requirements": [{"id": "SEC-1", "url": "u", "text": "t", "priority": "MUST"}]}
+        ],
     )
     monkeypatch.setattr(harvester.rstate, "validate_catalog", lambda _body: (["bad category"], ["warning only"]))
 
@@ -535,18 +544,24 @@ def test_parse_blueprint_summary_and_flat_page_modes():
 
 
 def test_requirements_sources_without_crawl_url_warn(capsys):
-    assert harvester.harvest_requirements_source(
-        session=None,
-        cfg={},
-        source={"id": "req"},
-        verbose=False,
-    ) == []
-    assert harvester.harvest_blueprints_source(
-        session=None,
-        cfg={},
-        source={"id": "bp"},
-        verbose=False,
-    ) == []
+    assert (
+        harvester.harvest_requirements_source(
+            session=None,
+            cfg={},
+            source={"id": "req"},
+            verbose=False,
+        )
+        == []
+    )
+    assert (
+        harvester.harvest_blueprints_source(
+            session=None,
+            cfg={},
+            source={"id": "bp"},
+            verbose=False,
+        )
+        == []
+    )
 
     err = capsys.readouterr().err
     assert "Source 'req': no crawl_url" in err

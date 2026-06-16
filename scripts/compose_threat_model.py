@@ -4479,7 +4479,7 @@ def _paragraphize_issue_card(issue_card: str, *, min_chars: int = 300, per_para:
     prefix = "**Issue:** "
     if not issue_card or not issue_card.startswith(prefix):
         return issue_card
-    body = issue_card[len(prefix):].strip()
+    body = issue_card[len(prefix) :].strip()
     if len(body) <= min_chars:
         return issue_card
     sents = _safe_sentence_split(body)
@@ -5665,9 +5665,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     # first/most-common attacker keeps the canonical attack-red so a single-actor
     # figure is unchanged; additional actors take distinct, accessible hues.
     _ACTOR_PALETTE = ["#b71c1c", "#1d4ed8", "#7c3aed", "#b45309", "#0f766e"]
-    actor_color: dict[str, str] = {
-        slug: _ACTOR_PALETTE[i % len(_ACTOR_PALETTE)] for i, slug in enumerate(actor_order)
-    }
+    actor_color: dict[str, str] = {slug: _ACTOR_PALETTE[i % len(_ACTOR_PALETTE)] for i, slug in enumerate(actor_order)}
 
     # Attack classes are now NAMED directly on their (solid) actor⇒component
     # edges (e.g. "① Injection"), so the diagram is self-explanatory without a
@@ -5772,6 +5770,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         tier_hidden = [cid for cid in tier_cids if cid not in _drawn]
         if not tier_drawn and not tier_hidden:
             continue
+
         # R6 — deterministic intra-tier ordering: declare the most-attacked
         # components toward the CENTRE of the row (busiest in the middle, calmer
         # boxes at the edges). ELK lays a layer out roughly in declaration order,
@@ -5781,6 +5780,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         def _attack_rank(cid: str) -> tuple:
             sev = comp_sev_count.get(cid) or {}
             return (comp_attack_count.get(cid, 0), sev.get("Critical", 0), sev.get("High", 0), -comp_order[cid])
+
         _ranked = sorted(tier_drawn, key=_attack_rank, reverse=True)
         sg = {"client": "CLIENT", "application": "APP", "data": "DATA"}[tier]
         # center-out: highest rank in the middle, next ones alternating outward
@@ -5849,7 +5849,14 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             # Register" pointer → full traceability without widening the row.
             def _badge_for(cid: str) -> str:
                 s = comp_sev_count.get(cid) or {}
-                b = " ".join(p for p in (f"🔴 {s['Critical']}" if s.get("Critical") else "", f"🟠 {s['High']}" if s.get("High") else "") if p)
+                b = " ".join(
+                    p
+                    for p in (
+                        f"🔴 {s['Critical']}" if s.get("Critical") else "",
+                        f"🟠 {s['High']}" if s.get("High") else "",
+                    )
+                    if p
+                )
                 nm = comp_pure_name.get(cid, comp_cnum.get(cid, "C-??"))
                 return f"{nm} {b}".strip()
 
@@ -5857,9 +5864,15 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             _clean = [cid for cid in tier_hidden if cid not in _withfinding]
             _segs: list[str] = []
             if _withfinding:
-                _segs.append("Also assessed — Critical/High finding in §8 Register:<br/>" + "<br/>".join(_badge_for(cid) for cid in _withfinding))
+                _segs.append(
+                    "Also assessed — Critical/High finding in §8 Register:<br/>"
+                    + "<br/>".join(_badge_for(cid) for cid in _withfinding)
+                )
             if _clean:
-                _segs.append("Also assessed — no Critical/High finding:<br/>" + "<br/>".join(comp_pure_name.get(cid, comp_cnum.get(cid, "C-??")) for cid in _clean))
+                _segs.append(
+                    "Also assessed — no Critical/High finding:<br/>"
+                    + "<br/>".join(comp_pure_name.get(cid, comp_cnum.get(cid, "C-??")) for cid in _clean)
+                )
             _note = "<br/>".join(_segs)
             lines.append(f'        {sg}_OMITTED["{_fig1_label(_note)}"]:::compmuted')
         lines.append("    end")
@@ -5942,6 +5955,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             lines.append(f'    {src} -->|"{_lbl}"| {dst}')
             benign_idx.append(edge_idx)
             edge_idx += 1
+
     def _edge_label(glyphs: list[str]) -> str:
         # "① Injection<br/>② Auth Bypass" — glyph + class name, canonical order,
         # one class per line. Self-explanatory: no legend lookup required.
@@ -7401,8 +7415,7 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     # (qa_checks has no section-anchor target validation to catch it).
     section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
     sec7_clause = (
-        "See [§7 Security Architecture](#7-security-architecture) for the full "
-        "per-control assessment and "
+        "See [§7 Security Architecture](#7-security-architecture) for the full per-control assessment and "
         if section7_present
         else "See "
     )
@@ -12287,8 +12300,16 @@ _CODE_SPAN_MASK_RE = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
 # Contents strips the backticks entirely.
 _LOCATOR_TOKEN_RE = re.compile(r"^[A-Za-z0-9_@][\w./\\@-]*(?::\d+(?:-\d+)?)?$")
 _NOEXT_CODE_FILES = {
-    "dockerfile", "makefile", "jenkinsfile", "procfile", "gemfile",
-    "rakefile", "vagrantfile", "brewfile", "gulpfile", "gruntfile",
+    "dockerfile",
+    "makefile",
+    "jenkinsfile",
+    "procfile",
+    "gemfile",
+    "rakefile",
+    "vagrantfile",
+    "brewfile",
+    "gulpfile",
+    "gruntfile",
 }
 
 
@@ -12310,7 +12331,7 @@ def _codify_label_locator(label: str) -> str:
     )
     if not looks_like_code:
         return label
-    return f"{label[: m.start()]}(`{inner}`){label[m.end():]}"
+    return f"{label[: m.start()]}(`{inner}`){label[m.end() :]}"
 
 
 def _strip_label_code(label: str) -> str:
@@ -12969,8 +12990,7 @@ def _build_threat_card(
             _cap = 8
             _shown_pairs = _pairs[:_cap]
             _shown = [
-                (f"{_SEV_ICON_TBL.get(sv, '')} {loc}".strip() if _mixed and sv else loc)
-                for loc, sv in _shown_pairs
+                (f"{_SEV_ICON_TBL.get(sv, '')} {loc}".strip() if _mixed and sv else loc) for loc, sv in _shown_pairs
             ]
             _tail = f" … (+{len(_pairs) - _cap} more)" if len(_pairs) > _cap else ""
             instances_card = f"**Instances ({len(_pairs)}):** " + ", ".join(_shown) + _tail

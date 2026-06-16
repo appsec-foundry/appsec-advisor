@@ -756,9 +756,7 @@ class TestHelpers:
 
     def test_hook_log_idle_seconds_only_heartbeats_returns_none(self, out_dir):
         sw = _load()
-        (out_dir / ".hook-events.log").write_text(
-            "2026-05-25T10:00:00Z  [--------]  INFO  HEARTBEAT  pid=1\n"
-        )
+        (out_dir / ".hook-events.log").write_text("2026-05-25T10:00:00Z  [--------]  INFO  HEARTBEAT  pid=1\n")
         assert sw._hook_log_idle_seconds(out_dir) is None
 
     def test_scan_stride_counts_bytes_and_progress(self, out_dir):

@@ -196,9 +196,7 @@ def test_findings_skips_non_dict_threat(tmp_path, capsys):
     # A non-dict entry in threats is skipped (line 84).
     p = tmp_path / "f.yaml"
     p.write_text(
-        "threats:\n"
-        "  - just-a-string\n"
-        "  - {id: T-1, title: real, effective_severity: Critical}\n",
+        "threats:\n  - just-a-string\n  - {id: T-1, title: real, effective_severity: Critical}\n",
         encoding="utf-8",
     )
     run_summary.main(["run_summary.py", "findings", str(p)])

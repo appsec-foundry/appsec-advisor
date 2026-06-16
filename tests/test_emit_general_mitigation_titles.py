@@ -42,7 +42,11 @@ def _read_yaml(output_dir: Path) -> dict:
 
 def test_cwe_maps_to_general_title():
     d = _data(
-        {"id": "M-011", "title": "Replace raw SQL string interpolation with parameterized Sequelize ORM queries in login handler", "threat_ids": ["T-009"]},
+        {
+            "id": "M-011",
+            "title": "Replace raw SQL string interpolation with parameterized Sequelize ORM queries in login handler",
+            "threat_ids": ["T-009"],
+        },
         threats=[{"id": "T-009", "cwe": "CWE-89", "remediation": {"steps": ["x"]}}],
     )
     assert egm.apply(d) == 1
@@ -51,7 +55,12 @@ def test_cwe_maps_to_general_title():
 
 def test_explicit_cwe_fields_win_over_threat_lookup():
     d = _data(
-        {"id": "M-011", "title": "Replace raw SQL string interpolation", "prevents_cwes": ["89"], "threat_ids": ["T-009"]},
+        {
+            "id": "M-011",
+            "title": "Replace raw SQL string interpolation",
+            "prevents_cwes": ["89"],
+            "threat_ids": ["T-009"],
+        },
         threats=[{"id": "T-009", "cwe": "CWE-601"}],
     )
     assert egm.apply(d) == 1
@@ -69,8 +78,16 @@ def test_addresses_can_resolve_cwe_from_threat_id_alias():
 
 def test_cwe347_disambiguates_jwt_vs_signing():
     d = _data(
-        {"id": "M-003", "title": "Pin algorithms allowlist in all expressJwt and jwt.verify calls to RS256", "threat_ids": ["T-001"]},
-        {"id": "M-028", "title": "Add cosign signing step to release workflow; or use actions/attest-build-provenance", "threat_ids": ["T-028"]},
+        {
+            "id": "M-003",
+            "title": "Pin algorithms allowlist in all expressJwt and jwt.verify calls to RS256",
+            "threat_ids": ["T-001"],
+        },
+        {
+            "id": "M-028",
+            "title": "Add cosign signing step to release workflow; or use actions/attest-build-provenance",
+            "threat_ids": ["T-028"],
+        },
         threats=[{"id": "T-001", "cwe": "CWE-347"}, {"id": "T-028", "cwe": "CWE-347"}],
     )
     egm.apply(d)
@@ -81,8 +98,16 @@ def test_cwe347_disambiguates_jwt_vs_signing():
 
 def test_cwe400_disambiguates_eventloop_vs_parser():
     d = _data(
-        {"id": "M-023", "title": "Add per-client rate limiting and move VM execution off the main event loop via worker threads", "threat_ids": ["T-023"]},
-        {"id": "M-025", "title": "Replace yaml.load() with a safe YAML schema that limits alias/anchor expansion", "threat_ids": ["T-025"]},
+        {
+            "id": "M-023",
+            "title": "Add per-client rate limiting and move VM execution off the main event loop via worker threads",
+            "threat_ids": ["T-023"],
+        },
+        {
+            "id": "M-025",
+            "title": "Replace yaml.load() with a safe YAML schema that limits alias/anchor expansion",
+            "threat_ids": ["T-025"],
+        },
         threats=[{"id": "T-023", "cwe": "CWE-400"}, {"id": "T-025", "cwe": "CWE-400"}],
     )
     egm.apply(d)

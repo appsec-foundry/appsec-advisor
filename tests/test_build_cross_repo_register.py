@@ -467,9 +467,7 @@ class TestSiblingDiscoveryEdge:
 class TestSkipSiblingDiscoveryEdge:
     def test_root_workspace_skips(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
-        skip, reason = bcrr._should_skip_sibling_discovery(
-            repo, Path("/"), has_declared=False
-        )
+        skip, reason = bcrr._should_skip_sibling_discovery(repo, Path("/"), has_declared=False)
         assert skip is True
         assert reason == "workspace_root is /"
 
@@ -500,24 +498,18 @@ class TestSubmoduleEdge:
 
     def test_section_without_path_skipped(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
-        (repo / ".gitmodules").write_text(
-            '[submodule "noopt"]\n\turl = https://x\n', encoding="utf-8"
-        )
+        (repo / ".gitmodules").write_text('[submodule "noopt"]\n\turl = https://x\n', encoding="utf-8")
         assert bcrr._discover_submodules(repo, declared_names=set()) == []
 
     def test_empty_path_skipped(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
-        (repo / ".gitmodules").write_text(
-            '[submodule "blank"]\n\tpath = \n', encoding="utf-8"
-        )
+        (repo / ".gitmodules").write_text('[submodule "blank"]\n\tpath = \n', encoding="utf-8")
         assert bcrr._discover_submodules(repo, declared_names=set()) == []
 
     def test_name_fallback_to_basename(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         # Section name does NOT match `submodule "name"` -> basename fallback.
-        (repo / ".gitmodules").write_text(
-            "[weirdsection]\n\tpath = vendor/libxyz\n", encoding="utf-8"
-        )
+        (repo / ".gitmodules").write_text("[weirdsection]\n\tpath = vendor/libxyz\n", encoding="utf-8")
         out = bcrr._discover_submodules(repo, declared_names=set())
         assert len(out) == 1
         assert out[0]["name"] == "libxyz"
@@ -525,9 +517,7 @@ class TestSubmoduleEdge:
 
     def test_declared_name_skips_submodule(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
-        (repo / ".gitmodules").write_text(
-            '[submodule "shared"]\n\tpath = libs/shared\n', encoding="utf-8"
-        )
+        (repo / ".gitmodules").write_text('[submodule "shared"]\n\tpath = libs/shared\n', encoding="utf-8")
         assert bcrr._discover_submodules(repo, declared_names={"shared"}) == []
 
 
@@ -661,9 +651,7 @@ class TestBuildDeclaredAndReconErrors:
         reg = bcrr.build(repo, declared_json_path=bad, recon_summary_path=None)
         # declared_present is False because parse failed.
         assert reg["meta"]["declared_present"] is False
-        assert reg["entries"] == [] or all(
-            e["source"] != "declared" for e in reg["entries"]
-        )
+        assert reg["entries"] == [] or all(e["source"] != "declared" for e in reg["entries"])
 
     def test_recon_oserror_yields_no_recon(self, tmp_path: Path, monkeypatch) -> None:
         repo = _make_repo(tmp_path)

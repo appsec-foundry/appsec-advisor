@@ -241,9 +241,7 @@ class TestShortenTitleForXref:
         assert out == "SQL Injection in file routes/login.ts"
 
     def test_compact_parens(self):
-        out = compose._shorten_title_for_xref(
-            "SQL Injection (routes/login.ts)", compact=True
-        )
+        out = compose._shorten_title_for_xref("SQL Injection (routes/login.ts)", compact=True)
         assert out == "SQL Injection (routes/login.ts)"
 
     def test_directory_path_in_form(self):
@@ -256,9 +254,7 @@ class TestShortenTitleForXref:
         assert out == "CSRF in file server.ts"
 
     def test_bare_weakness(self):
-        assert compose._shorten_title_for_xref("Cross-Site Request Forgery") == (
-            "Cross-Site Request Forgery"
-        )
+        assert compose._shorten_title_for_xref("Cross-Site Request Forgery") == ("Cross-Site Request Forgery")
 
 
 class TestStripEmbeddedEvidenceFile:
@@ -267,9 +263,7 @@ class TestStripEmbeddedEvidenceFile:
 
     def test_strips_matching_file(self):
         t = {"evidence": [{"file": "routes/login.ts"}]}
-        out = compose._strip_embedded_evidence_file(
-            "SQL injection routes/login.ts", t
-        )
+        out = compose._strip_embedded_evidence_file("SQL injection routes/login.ts", t)
         assert out == "SQL injection"
 
     def test_keeps_plain_word(self):
@@ -328,9 +322,7 @@ class TestIndexShortTitle:
 
 class TestSeverityByFindingNum:
     def test_maps_numbers(self):
-        out = compose._severity_by_finding_num(
-            [{"id": "F-001", "risk": "High"}, {"t_id": "T-002", "severity": "Low"}]
-        )
+        out = compose._severity_by_finding_num([{"id": "F-001", "risk": "High"}, {"t_id": "T-002", "severity": "Low"}])
         assert out[1] == "high"
         assert out[2] == "low"
 
@@ -492,9 +484,7 @@ class TestAttackTreeNodeLabel:
         assert compose._attack_tree_node_label({"label": "Goal", "class": "goal"}) == "Goal"
 
     def test_leaf_id_plus_title(self):
-        out = compose._attack_tree_node_label(
-            {"label": "T-001 — SQL injection login bypass", "class": "leaf"}
-        )
+        out = compose._attack_tree_node_label({"label": "T-001 — SQL injection login bypass", "class": "leaf"})
         assert out.startswith("F-001 — ")
 
     def test_leaf_id_only(self):
@@ -502,23 +492,17 @@ class TestAttackTreeNodeLabel:
         assert out == "F-002"
 
     def test_leaf_long_title_truncated(self):
-        out = compose._attack_tree_node_label(
-            {"label": "F-003 — " + "x" * 80, "class": "leaf"}
-        )
+        out = compose._attack_tree_node_label({"label": "F-003 — " + "x" * 80, "class": "leaf"})
         assert out.endswith("…")
 
 
 class TestAttackTreeEdgeLine:
     def test_or_node_label(self):
-        line = compose._attack_tree_edge_line(
-            {"from": "A", "to": "B"}, {"B": {"class": "or_node"}}
-        )
+        line = compose._attack_tree_edge_line({"from": "A", "to": "B"}, {"B": {"class": "or_node"}})
         assert '|"OR"|' in line
 
     def test_authored_label_fallback(self):
-        line = compose._attack_tree_edge_line(
-            {"from": "A", "to": "B", "label": "custom"}, {"B": {}}
-        )
+        line = compose._attack_tree_edge_line({"from": "A", "to": "B", "label": "custom"}, {"B": {}})
         assert '|"custom"|' in line
 
     def test_no_label(self):
@@ -1182,10 +1166,7 @@ class TestKnownRequirementIds_v2:
 
     def test_parses_file(self, tmp_path):
         (tmp_path / ".requirements.yaml").write_text(
-            "categories:\n"
-            "  - requirements:\n"
-            "      - id: SEC-1\n"
-            "        url: http://x/sec1\n"
+            "categories:\n  - requirements:\n      - id: SEC-1\n        url: http://x/sec1\n"
         )
         out = compose._known_requirement_ids(ctx=_make_ctx(tmp_path))
         assert out.get("SEC-1") == "http://x/sec1"
@@ -1454,9 +1435,7 @@ class TestBuildActorCards:
             "order": ["internet-anon"],
             "actors": {"internet-anon": {"label": "Anon", "default_subtitle": "x"}},
         }
-        cards = compose._build_actor_cards(
-            _simple_attack_paths(), labels, open_user_registration=True
-        )
+        cards = compose._build_actor_cards(_simple_attack_paths(), labels, open_user_registration=True)
         assert "registration is one POST away" in cards[0]["subtitle"]
 
     def test_victim_labels_from_taxonomy(self):
@@ -1464,9 +1443,7 @@ class TestBuildActorCards:
             "order": ["victim-required"],
             "actors": {"victim-required": {"label": "User", "default_subtitle": "x"}},
         }
-        cards = compose._build_actor_cards(
-            _simple_attack_paths(), labels, taxonomy=_simple_taxonomy()
-        )
+        cards = compose._build_actor_cards(_simple_attack_paths(), labels, taxonomy=_simple_taxonomy())
         assert "XSS" in cards[0]["subtitle"]
 
 
@@ -1514,9 +1491,7 @@ class TestBuildConsequenceArrows:
             {"key": "client", "node_id": "BROWSER"},
             {"key": "application", "node_id": "SERVER"},
         ]
-        out = compose._build_consequence_arrows(
-            _simple_attack_paths(), impact_cards, tier_cards
-        )
+        out = compose._build_consequence_arrows(_simple_attack_paths(), impact_cards, tier_cards)
         assert {(e["src"], e["dst"]) for e in out} == {
             ("SERVER", "DB"),
             ("BROWSER", "ATO"),
@@ -1654,9 +1629,7 @@ class TestTruncateWithEllipsis:
         assert compose._truncate_with_ellipsis("hi", 10) == "hi"
 
     def test_word_boundary(self):
-        out = compose._truncate_with_ellipsis(
-            "the quick brown fox jumped over the lazy dog", 25
-        )
+        out = compose._truncate_with_ellipsis("the quick brown fox jumped over the lazy dog", 25)
         assert out.endswith("…")
         assert "  " not in out
 
@@ -1715,9 +1688,7 @@ class TestReadComposeStats:
         assert compose._read_compose_stats(tmp_path) is None
 
     def test_wrong_schema(self, tmp_path):
-        (tmp_path / ".compose-stats.json").write_text(
-            _json.dumps({"schema_version": 999}), encoding="utf-8"
-        )
+        (tmp_path / ".compose-stats.json").write_text(_json.dumps({"schema_version": 999}), encoding="utf-8")
         assert compose._read_compose_stats(tmp_path) is None
 
     def test_valid(self, tmp_path):
@@ -1757,18 +1728,14 @@ class TestComposeWarnedSignal:
 
     def test_warning_count(self, tmp_path):
         (tmp_path / ".compose-stats.json").write_text(
-            _json.dumps(
-                {"schema_version": compose.COMPOSE_STATS_SCHEMA_VERSION, "warning_count": 2}
-            ),
+            _json.dumps({"schema_version": compose.COMPOSE_STATS_SCHEMA_VERSION, "warning_count": 2}),
             encoding="utf-8",
         )
         assert compose._compose_warned_signal(tmp_path) is True
 
     def test_bad_status(self, tmp_path):
         (tmp_path / ".compose-stats.json").write_text(
-            _json.dumps(
-                {"schema_version": compose.COMPOSE_STATS_SCHEMA_VERSION, "compose_status": "critical"}
-            ),
+            _json.dumps({"schema_version": compose.COMPOSE_STATS_SCHEMA_VERSION, "compose_status": "critical"}),
             encoding="utf-8",
         )
         assert compose._compose_warned_signal(tmp_path) is True
@@ -1783,15 +1750,11 @@ class TestReadRunIssues:
         assert compose._read_run_issues(tmp_path) is None
 
     def test_wrong_schema(self, tmp_path):
-        (tmp_path / ".run-issues.json").write_text(
-            _json.dumps({"schema_version": 2}), encoding="utf-8"
-        )
+        (tmp_path / ".run-issues.json").write_text(_json.dumps({"schema_version": 2}), encoding="utf-8")
         assert compose._read_run_issues(tmp_path) is None
 
     def test_valid(self, tmp_path):
-        (tmp_path / ".run-issues.json").write_text(
-            _json.dumps({"schema_version": 1, "issues": []}), encoding="utf-8"
-        )
+        (tmp_path / ".run-issues.json").write_text(_json.dumps({"schema_version": 1, "issues": []}), encoding="utf-8")
         assert isinstance(compose._read_run_issues(tmp_path), dict)
 
 
@@ -1826,9 +1789,7 @@ class TestVerdictSeverityFromFragment:
         assert compose._verdict_severity_from_fragment(tmp_path) == "yellow"
 
     def test_value(self, tmp_path):
-        (tmp_path / "ms-verdict.json").write_text(
-            _json.dumps({"severity": "red"}), encoding="utf-8"
-        )
+        (tmp_path / "ms-verdict.json").write_text(_json.dumps({"severity": "red"}), encoding="utf-8")
         assert compose._verdict_severity_from_fragment(tmp_path) == "red"
 
 
@@ -1869,9 +1830,7 @@ class TestRenderTitle:
         assert out.startswith("# Threat Model — Acme")
 
     def test_override(self, tmp_path):
-        ctx = _mk_ctx(
-            tmp_path, contract={"document": {}}, yaml_data={"project": {"name": "X"}}
-        )
+        ctx = _mk_ctx(tmp_path, contract={"document": {}}, yaml_data={"project": {"name": "X"}})
         out = compose._render_title(ctx, title_template_override="Custom {{ project.name }}")
         assert out.startswith("# Custom X")
 
@@ -1937,7 +1896,13 @@ class TestDeriveControlMitigates:
         # Pick a domain present in the curated map and a matching threat.
         ctrl = {"domain": "injection", "control": "input validation sanitization"}
         threats = [
-            {"id": "T-1", "cwe": "CWE-89", "risk": "Critical", "title": "SQL injection", "scenario": "validation bypass"},
+            {
+                "id": "T-1",
+                "cwe": "CWE-89",
+                "risk": "Critical",
+                "title": "SQL injection",
+                "scenario": "validation bypass",
+            },
         ]
         out = compose._derive_control_mitigates(ctrl, threats)
         assert isinstance(out, list)
@@ -2000,18 +1965,20 @@ class TestComputeTopFindingsRows:
 
     def test_ranking_view_path(self, tmp_path):
         threats = [
-            {"id": "T-001", "title": "SQLi", "component_id": "C-01", "risk": "Critical", "cwe": "CWE-89",
-             "mitigations": ["M-001"]},
+            {
+                "id": "T-001",
+                "title": "SQLi",
+                "component_id": "C-01",
+                "risk": "Critical",
+                "cwe": "CWE-89",
+                "mitigations": ["M-001"],
+            },
         ]
         components = [{"id": "C-01", "name": "API"}]
         mitigations = [{"id": "M-001", "title": "Use params", "priority": "p1", "kind": "fix"}]
         triage = {
             "ranking": {
-                "views": {
-                    "top_findings": {
-                        "findings_ranked": [{"id": "T-001", "effective_severity": "critical"}]
-                    }
-                }
+                "views": {"top_findings": {"findings_ranked": [{"id": "T-001", "effective_severity": "critical"}]}}
             }
         }
         ctx = _mk_ctx(
@@ -2101,7 +2068,11 @@ class TestRenderRunIssues:
                             "category": "api_stall",
                             "title": "Stalled",
                             "severity": "error",
-                            "evidence": {"log_file": ".agent-run.log", "log_line": 12, "timestamp_iso": "2026-05-17T05:00:00Z"},
+                            "evidence": {
+                                "log_file": ".agent-run.log",
+                                "log_line": 12,
+                                "timestamp_iso": "2026-05-17T05:00:00Z",
+                            },
                             "fix_recommendation": {
                                 "category": "retry",
                                 "confidence": "high",
@@ -2165,13 +2136,16 @@ class TestRenderIdentifiedActors:
             yaml_data={
                 "threats": [
                     {"component": "API", "actor_ids": ["ACT-01"]},
-                    {"_status": "dormant", "id": "T-009", "title": "Dormant one", "_provenance": {"created_by_actor": "ACT-X"}},
+                    {
+                        "_status": "dormant",
+                        "id": "T-009",
+                        "title": "Dormant one",
+                        "_provenance": {"created_by_actor": "ACT-X"},
+                    },
                 ]
             },
         )
-        (ctx.output_dir / ".actors-resolved.json").write_text(
-            _json.dumps(resolved), encoding="utf-8"
-        )
+        (ctx.output_dir / ".actors-resolved.json").write_text(_json.dumps(resolved), encoding="utf-8")
         out = compose._render_identified_actors(ctx, None, {})
         assert "1.5 Identified Actors" in out
         assert "ACT-01" in out
@@ -2182,9 +2156,7 @@ class TestRenderIdentifiedActors:
 
     def test_quick_mode_notice(self, tmp_path):
         ctx = _mk_ctx(tmp_path)
-        (ctx.output_dir / ".actors-resolved.json").write_text(
-            _json.dumps({"resolved_actors": []}), encoding="utf-8"
-        )
+        (ctx.output_dir / ".actors-resolved.json").write_text(_json.dumps({"resolved_actors": []}), encoding="utf-8")
         (ctx.output_dir / ".discovery-skipped.json").write_text("{}", encoding="utf-8")
         out = compose._render_identified_actors(ctx, None, {})
         assert "static actor library only" in out
@@ -2315,10 +2287,7 @@ class TestKnownRequirementIds:
     def test_loaded(self, tmp_path):
         ctx = _mk_ctx(tmp_path)
         (ctx.output_dir / ".requirements.yaml").write_text(
-            "categories:\n"
-            "  - requirements:\n"
-            "      - id: SEC-AUTH-1\n"
-            "        url: https://example/sec-auth-1\n",
+            "categories:\n  - requirements:\n      - id: SEC-AUTH-1\n        url: https://example/sec-auth-1\n",
             encoding="utf-8",
         )
         m = compose._known_requirement_ids(ctx)
@@ -2384,9 +2353,7 @@ class TestBuildRequirementsMappingRows:
                         "mitigations": ["M-001"],
                     }
                 ],
-                "mitigations": [
-                    {"id": "M-002", "fulfills_requirements": ["SEC-AUTH-1"]}
-                ],
+                "mitigations": [{"id": "M-002", "fulfills_requirements": ["SEC-AUTH-1"]}],
             },
         )
         (ctx.output_dir / ".requirements.yaml").write_text(_req_yaml(), encoding="utf-8")
@@ -2466,11 +2433,7 @@ class TestRenderRequirementsComplianceMs:
     def test_from_yaml(self, tmp_path):
         ctx = _mk_ctx(
             tmp_path,
-            yaml_data={
-                "threats": [
-                    {"id": "T-001", "risk": "Critical", "violated_requirements": ["SEC-AUTH-1"]}
-                ]
-            },
+            yaml_data={"threats": [{"id": "T-001", "risk": "Critical", "violated_requirements": ["SEC-AUTH-1"]}]},
         )
         (ctx.output_dir / ".requirements.yaml").write_text(_req_yaml(), encoding="utf-8")
         out = compose._render_requirements_compliance_ms(ctx)
@@ -2482,8 +2445,7 @@ class TestRenderRequirementsComplianceMs:
         ctx = _mk_ctx(tmp_path, yaml_data={"threats": []})
         frag = ctx.output_dir / ".fragments" / "requirements-compliance.md"
         frag.write_text(
-            "Assessed from the [OWASP ASVS](https://asvs) baseline.\n"
-            "**Summary:** 3 PASS / 1 FAIL\n",
+            "Assessed from the [OWASP ASVS](https://asvs) baseline.\n**Summary:** 3 PASS / 1 FAIL\n",
             encoding="utf-8",
         )
         out = compose._render_requirements_compliance_ms(ctx)
@@ -2541,9 +2503,7 @@ class TestRequirementsStatusMap:
         (ctx.output_dir / ".requirements.yaml").write_text(_req_yaml(), encoding="utf-8")
         frag = ctx.output_dir / ".fragments" / "requirements-compliance.md"
         frag.write_text(
-            "| Requirement | Status | Evidence |\n"
-            "|---|---|---|\n"
-            "| `SEC-AUTH-1` | FAIL | F-001 |\n",
+            "| Requirement | Status | Evidence |\n|---|---|---|\n| `SEC-AUTH-1` | FAIL | F-001 |\n",
             encoding="utf-8",
         )
         m = compose._requirements_status_map(ctx)
@@ -2593,9 +2553,7 @@ class TestClassifyFindingClass:
         assert compose._classify_finding_class({"cwe": "CWE-89"}, _attack_taxonomy()) == "injection"
 
     def test_cwe_in_text(self):
-        out = compose._classify_finding_class(
-            {"scenario": "exploitable via CWE-352 token reuse"}, _attack_taxonomy()
-        )
+        out = compose._classify_finding_class({"scenario": "exploitable via CWE-352 token reuse"}, _attack_taxonomy())
         assert out == "csrf"
 
     def test_no_cwe(self):
@@ -2641,9 +2599,7 @@ class TestReconcileAttackPathMembership:
 class TestInstancesCard:
     def _card(self, tmp_path, t):
         ctx = _make_ctx(tmp_path)
-        return compose._build_threat_card(
-            t, t.get("risk", "High"), {}, {}, None, ctx, None, None
-        )
+        return compose._build_threat_card(t, t.get("risk", "High"), {}, {}, None, ctx, None, None)
 
     def _systemic_threat(self, instances):
         return {
@@ -2660,29 +2616,35 @@ class TestInstancesCard:
         }
 
     def test_lists_all_instances_with_count(self, tmp_path):
-        t = self._systemic_threat([
-            {"file": "lib/insecurity.ts", "line": 191, "severity": "Critical"},
-            {"file": "routes/chatbot.ts", "line": 248, "severity": "High"},
-        ])
+        t = self._systemic_threat(
+            [
+                {"file": "lib/insecurity.ts", "line": 191, "severity": "Critical"},
+                {"file": "routes/chatbot.ts", "line": 248, "severity": "High"},
+            ]
+        )
         card = self._card(tmp_path, t)
         assert "Instances (2):" in card
         assert "lib/insecurity.ts:191" in card
         assert "routes/chatbot.ts:248" in card
 
     def test_mixed_severity_shows_per_instance_dots(self, tmp_path):
-        t = self._systemic_threat([
-            {"file": "lib/insecurity.ts", "line": 191, "severity": "Critical"},
-            {"file": "routes/chatbot.ts", "line": 248, "severity": "High"},
-        ])
+        t = self._systemic_threat(
+            [
+                {"file": "lib/insecurity.ts", "line": 191, "severity": "Critical"},
+                {"file": "routes/chatbot.ts", "line": 248, "severity": "High"},
+            ]
+        )
         card = self._card(tmp_path, t)
         assert "🔴 `lib/insecurity.ts:191`" in card
         assert "🟠 `routes/chatbot.ts:248`" in card
 
     def test_uniform_severity_no_dots(self, tmp_path):
-        t = self._systemic_threat([
-            {"file": "server.ts", "line": 310, "severity": "High"},
-            {"file": "server.ts", "line": 311, "severity": "High"},
-        ])
+        t = self._systemic_threat(
+            [
+                {"file": "server.ts", "line": 310, "severity": "High"},
+                {"file": "server.ts", "line": 311, "severity": "High"},
+            ]
+        )
         card = self._card(tmp_path, t)
         assert "Instances (2):" in card
         assert "🟠 `server.ts:310`" not in card  # uniform severity → plain locations

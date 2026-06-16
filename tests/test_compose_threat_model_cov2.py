@@ -210,11 +210,7 @@ class TestReadEvidenceSnippet:
 
 class TestMaskSecrets:
     def test_rsa_private_key_block(self):
-        md = (
-            "-----BEGIN RSA PRIVATE KEY-----\n"
-            "MIIBOgIBAAJBAK...\nmoredata\n"
-            "-----END RSA PRIVATE KEY-----"
-        )
+        md = "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK...\nmoredata\n-----END RSA PRIVATE KEY-----"
         masked, applied = compose._mask_secrets(md)
         assert "key bytes masked" in masked or "REDACTED" in masked
         assert "rsa_privkey" in applied
@@ -419,9 +415,7 @@ class TestMain:
     def test_custom_out_path(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
         custom = tmp_path / "nested" / "custom.md"
-        rc = compose.main(
-            ["--contract", str(CONTRACT), "--output-dir", str(out), "--out", str(custom)]
-        )
+        rc = compose.main(["--contract", str(CONTRACT), "--output-dir", str(out), "--out", str(custom)])
         assert rc == 0
         assert custom.is_file()
 
@@ -446,9 +440,7 @@ class TestMain:
 
     def test_architecture_document(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
-        rc = compose.main(
-            ["--contract", str(CONTRACT), "--output-dir", str(out), "--document", "architecture"]
-        )
+        rc = compose.main(["--contract", str(CONTRACT), "--output-dir", str(out), "--document", "architecture"])
         assert rc == 0
         assert (out / "analysis-model.md").is_file()
 
@@ -458,8 +450,7 @@ class TestMain:
         verbatim-inlined abuse-cases fragment)."""
         out = _prepare_output_dir(tmp_path)
         (out / ".fragments" / "abuse-cases.md").write_text(
-            "## 9. Abuse Cases\n\n"
-            "An attacker exploits [T-001](#t-001) then pivots via [F-002](#f-002).\n"
+            "## 9. Abuse Cases\n\nAn attacker exploits [T-001](#t-001) then pivots via [F-002](#f-002).\n"
         )
         rc = compose.main(["--contract", str(CONTRACT), "--output-dir", str(out)])
         assert rc == 0
@@ -471,9 +462,7 @@ class TestMain:
         """A `[T-999](#t-999)` link with no matching threat is left unmodified
         by the bridge pass-1 rewrite (id-based lookup misses)."""
         out = _prepare_output_dir(tmp_path)
-        (out / ".fragments" / "abuse-cases.md").write_text(
-            "## 9. Abuse Cases\n\nUnknown reference [T-999](#t-999).\n"
-        )
+        (out / ".fragments" / "abuse-cases.md").write_text("## 9. Abuse Cases\n\nUnknown reference [T-999](#t-999).\n")
         rc = compose.main(["--contract", str(CONTRACT), "--output-dir", str(out)])
         assert rc == 0
         rendered = (out / "threat-model.md").read_text()
@@ -690,9 +679,7 @@ class TestRenderAppendixRunStatistics:
             "run_statistics": {
                 "tokens": {"input": 100, "output": 50, "total": 150},
                 "cost": {"billing": "$1.23", "cache_savings_pct": 30},
-                "agents": [
-                    {"name": "threat-analyst", "model": "sonnet", "role": "orchestrator", "phases": "1-11"}
-                ],
+                "agents": [{"name": "threat-analyst", "model": "sonnet", "role": "orchestrator", "phases": "1-11"}],
             },
         }
         ctx = _bare_ctx(tmp_path, {"meta": meta})
@@ -713,11 +700,7 @@ class TestRenderAppendixRunStatistics:
         assert "2m 05s" in out
 
     def test_orchestrator_model_from_agents(self, tmp_path):
-        meta = {
-            "run_statistics": {
-                "agents": [{"name": "x", "model": "opus-model", "role": "Orchestrator"}]
-            }
-        }
+        meta = {"run_statistics": {"agents": [{"name": "x", "model": "opus-model", "role": "Orchestrator"}]}}
         ctx = _bare_ctx(tmp_path, {"meta": meta})
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert "opus-model" in out
@@ -778,9 +761,7 @@ class TestScrapePhaseDurations:
         assert "5m" in rows[0]["duration"]
 
     def test_bare_end_without_start_skipped(self, tmp_path):
-        (tmp_path / ".agent-run.log").write_text(
-            "2026-05-17T05:05:00Z PHASE_END [Phase 3/11] ✓ no matching start\n"
-        )
+        (tmp_path / ".agent-run.log").write_text("2026-05-17T05:05:00Z PHASE_END [Phase 3/11] ✓ no matching start\n")
         assert compose._scrape_phase_durations(tmp_path) == []
 
 
@@ -862,9 +843,7 @@ class TestRenderMitigationRegisterBranches:
             }
         )
         # M-003: pre-fenced code_example shape (rendered verbatim)
-        data["mitigations"][2].update(
-            {"how_code": "```ts\nsanitize(input);\n```", "how_code_lang": "ts"}
-        )
+        data["mitigations"][2].update({"how_code": "```ts\nsanitize(input);\n```", "how_code_lang": "ts"})
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
         assert "**How:**" in rendered
@@ -874,8 +853,8 @@ class TestRenderMitigationRegisterBranches:
         out = _prepare_output_dir(tmp_path)
         data = _load_fixture_yaml(out)
         # Give the two addressed threats distinct snippet-eligible CWEs.
-        data["threats"][0]["cwe"] = "CWE-89"   # T-001
-        data["threats"][1]["cwe"] = "CWE-79"   # T-002
+        data["threats"][0]["cwe"] = "CWE-89"  # T-001
+        data["threats"][1]["cwe"] = "CWE-79"  # T-002
         # M-001 addresses T-001 + T-002, no how_code/code_example, but has
         # verification → has_actionable True → auto-derive CWEs + extra snippets.
         data["mitigations"][0].update(
@@ -919,9 +898,7 @@ class TestRenderThreatCardEvidenceSnippet:
         # Create a repo with a real source file for the snippet reader.
         repo = tmp_path / "repo"
         (repo / "routes").mkdir(parents=True)
-        (repo / "routes" / "login.ts").write_text(
-            "line1\nline2\nconst q = 'SELECT ' + email;\nline4\nline5\n"
-        )
+        (repo / "routes" / "login.ts").write_text("line1\nline2\nconst q = 'SELECT ' + email;\nline4\nline5\n")
         (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo)}))
         data = _load_fixture_yaml(out)
         # Make T-001 carry evidence + a snippet-eligible CWE (89) and explicit
@@ -1007,9 +984,7 @@ def _attack_tree_fragment(n_leaves: int) -> dict:
     for i in range(n_leaves):
         lid = f"L_T{i:03d}"
         cap = "OR_A" if i % 2 == 0 else "OR_B"
-        nodes.append(
-            {"id": lid, "label": f"T-{i:03d} finding", "class": "leaf", "finding_ref": f"T-{i:03d}"}
-        )
+        nodes.append({"id": lid, "label": f"T-{i:03d} finding", "class": "leaf", "finding_ref": f"T-{i:03d}"})
         edges.append({"from": lid, "to": cap, "label": "OR"})
     return {"root_goal": "Full takeover", "mermaid": {"orientation": "TD", "nodes": nodes, "edges": edges}}
 
@@ -1109,11 +1084,7 @@ class TestRenderIdentifiedActorsExtra:
         )
         (tmp_path / ".actors-discovered.json").write_text(
             json.dumps(
-                {
-                    "inputs_questioned": [
-                        {"id": "ACT-9", "reason": "no plausible reach", "recommendation": "disable"}
-                    ]
-                }
+                {"inputs_questioned": [{"id": "ACT-9", "reason": "no plausible reach", "recommendation": "disable"}]}
             )
         )
         ctx = self._ctx(tmp_path)
@@ -1208,9 +1179,7 @@ class TestRenderWithAttackPathsFragment:
 class TestRenderCriticalAttackTreeViaPipeline:
     def test_attack_tree_section_rendered(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
-        (out / ".fragments" / "ms-critical-attack-tree.json").write_text(
-            json.dumps(_attack_tree_fragment(4))
-        )
+        (out / ".fragments" / "ms-critical-attack-tree.json").write_text(json.dumps(_attack_tree_fragment(4)))
         rendered, warnings = compose.render(CONTRACT, out)
         # The graph block should be present (non-soft-skip path).
         assert "graph LR" in rendered
@@ -1264,8 +1233,7 @@ class TestRenderRunStatisticsViaPipeline:
             '{"stage": 1, "name": "Recon", "agent": "r", "model": "s", "duration_ms": 1000, "tool_uses": 1, "tokens": 10}\n'
         )
         (out / ".agent-run.log").write_text(
-            "2026-05-17T05:00:00Z PHASE_START [Phase 1/11] Recon\n"
-            "2026-05-17T05:02:00Z PHASE_END [Phase 1/11] ✓ Recon\n"
+            "2026-05-17T05:00:00Z PHASE_START [Phase 1/11] Recon\n2026-05-17T05:02:00Z PHASE_END [Phase 1/11] ✓ Recon\n"
         )
         rendered, _ = compose.render(CONTRACT, out)
         assert "Run Statistics" in rendered
@@ -1302,9 +1270,7 @@ class TestRenderAbuseChainAndBoundaries:
     def test_trust_boundaries_figure1(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
         data = _load_fixture_yaml(out)
-        data["trust_boundaries"] = [
-            {"id": "TB-1", "from": "C-01", "to": "C-02", "name": "API to Auth"}
-        ]
+        data["trust_boundaries"] = [{"id": "TB-1", "from": "C-01", "to": "C-02", "name": "API to Auth"}]
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
         # render completes with trust-boundary data present

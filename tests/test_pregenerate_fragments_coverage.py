@@ -361,9 +361,7 @@ class TestMainInProcess:
         text = frag.read_text(encoding="utf-8").replace("NARRATIVE_PLACEHOLDER", "filled")
         frag.write_text(text, encoding="utf-8")
         capsys.readouterr()
-        rc = pf.main(
-            [str(rich_dir), "--force", "--allow-narrative-loss", "--only", "security-architecture.md"]
-        )
+        rc = pf.main([str(rich_dir), "--force", "--allow-narrative-loss", "--only", "security-architecture.md"])
         assert rc == 0
 
     def test_force_security_arch_still_with_placeholders_overwrites(self, rich_dir):
@@ -467,9 +465,7 @@ class TestHelperBranches:
         assert pf._attack_surface_method({}) == "?"
 
     def test_attack_surface_notes_combines(self):
-        out = pf._attack_surface_notes(
-            {"notes": "see (T-001)", "linked_threats": ["T-001"]}
-        )
+        out = pf._attack_surface_notes({"notes": "see (T-001)", "linked_threats": ["T-001"]})
         assert "F-001" in out
 
     def test_attack_surface_notes_non_dict(self):

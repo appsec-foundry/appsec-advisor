@@ -187,9 +187,7 @@ class TestMain:
         _commit(repo, "a.txt", "one\n", "init")
         _commit(repo, "b.txt", "two\n", "add b")
         out = tmp_path / "out"
-        rc = bvd.main(
-            ["--repo-root", str(repo), "--output-dir", str(out), "--base", "HEAD~1"]
-        )
+        rc = bvd.main(["--repo-root", str(repo), "--output-dir", str(out), "--base", "HEAD~1"])
         assert rc == 0
         payload = json.loads((out / ".verify-diff.json").read_text())
         assert payload["version"] == 1
@@ -219,9 +217,7 @@ class TestMain:
         _commit(repo, "a.txt", "one\n", "init")
         out = tmp_path / "out"
         # diff HEAD...HEAD == empty
-        rc = bvd.main(
-            ["--repo-root", str(repo), "--output-dir", str(out), "--base", "HEAD"]
-        )
+        rc = bvd.main(["--repo-root", str(repo), "--output-dir", str(out), "--base", "HEAD"])
         assert rc == 0
         assert capsys.readouterr().out.strip() == "0"
 
@@ -240,9 +236,7 @@ class TestMain:
             return real_git(r, *args)
 
         monkeypatch.setattr(bvd, "_git", _fake)
-        rc = bvd.main(
-            ["--repo-root", str(repo), "--output-dir", str(out), "--base", "HEAD~1"]
-        )
+        rc = bvd.main(["--repo-root", str(repo), "--output-dir", str(out), "--base", "HEAD~1"])
         assert rc == 2
 
     def test_not_a_git_repo_via_rev_parse_fallback(self, tmp_path: Path, monkeypatch) -> None:

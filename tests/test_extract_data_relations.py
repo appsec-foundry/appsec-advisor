@@ -80,11 +80,7 @@ class TestCollectRawQueries:
     def test_finds_raw_query_with_line_and_snippet(self, tmp_path):
         f = tmp_path / "routes" / "login.ts"
         f.parent.mkdir()
-        f.write_text(
-            "function a() {\n"
-            "  return sequelize.query('SELECT * FROM Users WHERE name=' + n)\n"
-            "}\n"
-        )
+        f.write_text("function a() {\n  return sequelize.query('SELECT * FROM Users WHERE name=' + n)\n}\n")
         out = edr.collect_raw_queries(tmp_path, [f])
         assert len(out) == 1
         assert out[0]["file"] == "routes/login.ts"
@@ -114,9 +110,7 @@ class TestCollectAssociations:
     def test_populates_associations(self, tmp_path):
         f = tmp_path / "user.ts"
         f.write_text(
-            "User.hasMany(models.Address)\n"
-            "User.belongsTo(Basket)\n"
-            "User.hasOne(User)\n"  # self-ref ignored
+            "User.hasMany(models.Address)\nUser.belongsTo(Basket)\nUser.hasOne(User)\n"  # self-ref ignored
         )
         models = {"User": edr.ModelInfo(name="User", model_file="user.ts")}
         edr.collect_associations(tmp_path, [f], models)
@@ -144,9 +138,7 @@ class TestLinkRoutes:
         routes.mkdir()
         rf = routes / "basket.ts"
         rf.write_text(
-            "import {Basket} from '../models/basket'\n"
-            "Basket.findAll()\n"
-            "sequelize.query('SELECT * FROM Basket')\n"
+            "import {Basket} from '../models/basket'\nBasket.findAll()\nsequelize.query('SELECT * FROM Basket')\n"
         )
         models = {"Basket": edr.ModelInfo(name="Basket", model_file="models/basket.ts")}
         raw = [{"file": "routes/basket.ts", "line": 3, "snippet": "sequelize.query('SELECT * FROM Basket')"}]
@@ -229,19 +221,13 @@ class TestMain:
         models = tmp_path / "models"
         models.mkdir()
         (models / "user.ts").write_text(
-            "import {Model} from 'sequelize'\n"
-            "export class User extends Model {}\n"
-            "User.hasMany(Basket)\n"
+            "import {Model} from 'sequelize'\nexport class User extends Model {}\nUser.hasMany(Basket)\n"
         )
-        (models / "basket.ts").write_text(
-            "import {Model} from 'sequelize'\n"
-            "export class Basket extends Model {}\n"
-        )
+        (models / "basket.ts").write_text("import {Model} from 'sequelize'\nexport class Basket extends Model {}\n")
         routes = tmp_path / "routes"
         routes.mkdir()
         (routes / "basket.ts").write_text(
-            "import {Basket} from '../models/basket'\n"
-            "sequelize.query('SELECT * FROM Basket WHERE id=' + id)\n"
+            "import {Basket} from '../models/basket'\nsequelize.query('SELECT * FROM Basket WHERE id=' + id)\n"
         )
         out = tmp_path / "out.json"
         rc = edr.main([str(tmp_path), "--output", str(out)])

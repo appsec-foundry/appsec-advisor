@@ -915,15 +915,15 @@ class TestIsOutdated:
 
 class TestShapeFinding:
     def test_evidence_dict(self) -> None:
-        out = lrr._shape_finding({"id": "T-1", "title": "x", "severity": "high",
-                                  "evidence": {"file": "a.ts"}})
+        out = lrr._shape_finding({"id": "T-1", "title": "x", "severity": "high", "evidence": {"file": "a.ts"}})
         assert out["evidence_file"] == "a.ts"
         assert out["severity"] == "High"
         assert out["status"] == "open"
 
     def test_evidence_file_string(self) -> None:
-        out = lrr._shape_finding({"threat_id": "T-2", "summary": "s",
-                                  "stride_category": "Tampering", "evidence_file": "b.ts"})
+        out = lrr._shape_finding(
+            {"threat_id": "T-2", "summary": "s", "stride_category": "Tampering", "evidence_file": "b.ts"}
+        )
         assert out["id"] == "T-2"
         assert out["title"] == "s"
         assert out["stride"] == "Tampering"
@@ -940,21 +940,21 @@ class TestExtractUpstreamProperties:
         assert lrr._extract_upstream_properties({}, interface="   ", generated=None, now=self.NOW) is None
 
     def test_no_attack_surface(self) -> None:
-        assert lrr._extract_upstream_properties(
-            {"attack_surface": "x"}, interface="POST /api", generated=None, now=self.NOW
-        ) is None
+        assert (
+            lrr._extract_upstream_properties(
+                {"attack_surface": "x"}, interface="POST /api", generated=None, now=self.NOW
+            )
+            is None
+        )
 
     def test_no_match(self) -> None:
         tm = {"attack_surface": [{"entry_point": "GET /other"}]}
-        assert lrr._extract_upstream_properties(
-            tm, interface="POST /api/pay", generated=None, now=self.NOW
-        ) is None
+        assert lrr._extract_upstream_properties(tm, interface="POST /api/pay", generated=None, now=self.NOW) is None
 
     def test_full_match_with_controls(self) -> None:
         tm = {
             "attack_surface": [
-                {"entry_point": "POST /api/pay", "protocol": "REST", "auth_required": True,
-                 "notes": "JWT required"}
+                {"entry_point": "POST /api/pay", "protocol": "REST", "auth_required": True, "notes": "JWT required"}
             ],
             "components": [{"name": "PayController", "paths": ["/api/pay"]}],
             "security_controls": [{"domain": "auth", "control": "JWT", "effectiveness": "adequate"}],
@@ -971,9 +971,7 @@ class TestExtractUpstreamProperties:
 
     def test_bad_generated_staleness_none(self) -> None:
         tm = {"attack_surface": [{"entry_point": "POST /api/pay"}]}
-        out = lrr._extract_upstream_properties(
-            tm, interface="POST /api/pay", generated="garbage", now=self.NOW
-        )
+        out = lrr._extract_upstream_properties(tm, interface="POST /api/pay", generated="garbage", now=self.NOW)
         assert out["staleness_days"] is None
 
 
@@ -982,10 +980,13 @@ class TestComputeExpectationMismatch:
         assert lrr._compute_expectation_mismatch(consumer_declares=None, upstream_properties=None) is None
 
     def test_no_expectations(self) -> None:
-        assert lrr._compute_expectation_mismatch(
-            consumer_declares={"expected_auth": None, "expected_validation": None},
-            upstream_properties=None,
-        ) is None
+        assert (
+            lrr._compute_expectation_mismatch(
+                consumer_declares={"expected_auth": None, "expected_validation": None},
+                upstream_properties=None,
+            )
+            is None
+        )
 
     def test_auth_mismatch(self) -> None:
         out = lrr._compute_expectation_mismatch(
@@ -1053,8 +1054,13 @@ class TestLoadEndToEnd:
             tm,
             _make_tm(
                 threats=[
-                    {"id": "T-1", "title": "x", "severity": "Critical", "status": "open",
-                     "component": "AuthController"},
+                    {
+                        "id": "T-1",
+                        "title": "x",
+                        "severity": "Critical",
+                        "status": "open",
+                        "component": "AuthController",
+                    },
                     {"id": "T-2", "title": "y", "severity": "Low", "status": "open"},
                 ]
             ),

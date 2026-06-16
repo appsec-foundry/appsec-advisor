@@ -69,9 +69,7 @@ def test_heading_rename_empty_new_name_raises():
 
 
 def test_validate_plan_non_dict_action():
-    errs = acr._validate_plan(
-        {"schema_version": acr.SCHEMA_VERSION, "actions": ["not-a-dict"]}
-    )
+    errs = acr._validate_plan({"schema_version": acr.SCHEMA_VERSION, "actions": ["not-a-dict"]})
     assert any("actions[0] is not an object" in e for e in errs)
 
 
@@ -137,9 +135,7 @@ def test_apply_plan_operation_not_dict(tmp_path: Path, capsys):
     _frag(out, "f.md", "hello")
     plan = {
         "schema_version": acr.SCHEMA_VERSION,
-        "actions": [
-            {"check": "c", "type": "t", "fragment": ".fragments/f.md", "operation": "flat"}
-        ],
+        "actions": [{"check": "c", "type": "t", "fragment": ".fragments/f.md", "operation": "flat"}],
     }
     report = acr.apply_plan(plan, out)
     assert report["exit_code"] == 1
@@ -211,9 +207,7 @@ def test_main_bad_plan_json(tmp_path: Path, capsys):
 
 def test_main_plan_validation_fails(tmp_path: Path, capsys):
     out = _out_dir(tmp_path)
-    (out / acr.PLAN_FILENAME).write_text(
-        json.dumps({"schema_version": 999, "actions": "nope"}), encoding="utf-8"
-    )
+    (out / acr.PLAN_FILENAME).write_text(json.dumps({"schema_version": 999, "actions": "nope"}), encoding="utf-8")
     rc = acr.main([str(out)])
     assert rc == 3
     assert "failed validation" in capsys.readouterr().err

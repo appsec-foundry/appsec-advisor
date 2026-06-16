@@ -188,9 +188,7 @@ def _seed_data_dir(root: Path) -> Path:
             }
         )
     )
-    (d / "cwe-taxonomy.yaml").write_text(
-        yaml.dump({"cwes": {"CWE-89": {}, "CWE-zzz": {}, "CWE-79": {}}})
-    )
+    (d / "cwe-taxonomy.yaml").write_text(yaml.dump({"cwes": {"CWE-89": {}, "CWE-zzz": {}, "CWE-79": {}}}))
     (d / "architectural-controls.yaml").write_text(yaml.dump({"controls": [1, 2]}))
     (d / "compound-chain-patterns.yaml").write_text(
         yaml.dump({"chain_patterns": [{"th_ids": ["TH-01"]}, {"th_ids": ["TH-99"]}]})

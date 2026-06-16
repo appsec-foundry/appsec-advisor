@@ -546,18 +546,14 @@ def test_breach_distance_amplifier_and_deamplifier():
         "cwe_default_distance": {"CWE-89": 2},
         "amplifiers": [{"name": "amp", "if_any_match": ["public exploit"], "distance_delta": 1}],
     }
-    d, reason = tcr._compute_breach_distance(
-        {"cwe": "CWE-89", "scenario": "a public exploit exists"}, patterns
-    )
+    d, reason = tcr._compute_breach_distance({"cwe": "CWE-89", "scenario": "a public exploit exists"}, patterns)
     assert d == 1 and reason.startswith("amplifier:")
 
     patterns2 = {
         "cwe_default_distance": {"CWE-89": 1},
         "deamplifiers": [{"name": "deamp", "if_any_match": ["requires admin"], "distance_delta": 1}],
     }
-    d2, reason2 = tcr._compute_breach_distance(
-        {"cwe": "CWE-89", "scenario": "this requires admin first"}, patterns2
-    )
+    d2, reason2 = tcr._compute_breach_distance({"cwe": "CWE-89", "scenario": "this requires admin first"}, patterns2)
     assert d2 == 2 and reason2.startswith("deamplifier:")
 
 
@@ -607,9 +603,7 @@ def test_never_individual_critical_deescalates():
         "max_severity_individual": "High",
     }
     # Critical, not a keystone, CWE in never-individual → drop to High.
-    rank, reason = tcr._apply_critical_criteria(
-        {"cwe": "CWE-200"}, tcr._sev_rank("Critical"), "none", criteria, 2
-    )
+    rank, reason = tcr._apply_critical_criteria({"cwe": "CWE-200"}, tcr._sev_rank("Critical"), "none", criteria, 2)
     assert rank == tcr._sev_rank("High") and reason.startswith("never_individual:")
 
 
@@ -646,11 +640,19 @@ def test_finding_score_applies_contributor_and_cap_penalty():
     caps = {"ranking_caps": {"CWE-209": {"max_rank_tier": 2}}}
     base = tcr._finding_score(
         {"cwe": "CWE-89", "impact": "High", "likelihood": "High", "cvss": {"score": 5}},
-        "High", 1, None, {}, {},
+        "High",
+        1,
+        None,
+        {},
+        {},
     )
     capped = tcr._finding_score(
         {"cwe": "CWE-209", "impact": "High", "likelihood": "High"},
-        "High", 1, "contributor", caps, {},
+        "High",
+        1,
+        "contributor",
+        caps,
+        {},
     )
     assert base > capped  # contributor -50 and ranking-cap -100 lower the score
 
@@ -737,8 +739,22 @@ def test_compute_ranking_with_unresolved_category_and_mitigations(tmp_path: Path
     ranking and the chains_ranked sort."""
     tcr = _tcr()
     threats = [
-        {"t_id": "T-1", "title": "SQLi", "risk": "Critical", "impact": "Critical", "likelihood": "High", "primary_cwe": "CWE-89"},
-        {"t_id": "T-2", "title": "Info leak", "risk": "Low", "impact": "Low", "likelihood": "Low", "primary_cwe": "CWE-209"},
+        {
+            "t_id": "T-1",
+            "title": "SQLi",
+            "risk": "Critical",
+            "impact": "Critical",
+            "likelihood": "High",
+            "primary_cwe": "CWE-89",
+        },
+        {
+            "t_id": "T-2",
+            "title": "Info leak",
+            "risk": "Low",
+            "impact": "Low",
+            "likelihood": "Low",
+            "primary_cwe": "CWE-209",
+        },
     ]
     data = _minimal_yaml(threats)
     data["threat_categories"] = [
@@ -801,8 +817,16 @@ def test_cli_bootstrap_yaml_from_merged(tmp_path: Path):
     the yaml is missing, then ranks it."""
     merged = {
         "threats": [
-            {"t_id": "T-1", "title": "SQLi", "risk": "Critical", "likelihood": "High",
-             "impact": "Critical", "stride": "Tampering", "scenario": "x", "component_id": "c"},
+            {
+                "t_id": "T-1",
+                "title": "SQLi",
+                "risk": "Critical",
+                "likelihood": "High",
+                "impact": "Critical",
+                "stride": "Tampering",
+                "scenario": "x",
+                "component_id": "c",
+            },
         ]
     }
     (tmp_path / ".threats-merged.json").write_text(json.dumps(merged), encoding="utf-8")

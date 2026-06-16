@@ -159,9 +159,7 @@ def _is_cicd(c: dict) -> bool:
 # unrelated words ("a-sse-t service", "cla-sse-s"). Substring matching (as the
 # pre-existing _is_auth/_is_cicd hints use) would spuriously mark a file-upload
 # / asset component as a realtime role and suppress the realtime injection.
-_REALTIME_RE = re.compile(
-    r"\b(socket\.?io|web-?socket|real-?time|socket|stomp|sse|pub-?sub)\b", re.I
-)
+_REALTIME_RE = re.compile(r"\b(socket\.?io|web-?socket|real-?time|socket|stomp|sse|pub-?sub)\b", re.I)
 
 
 def _is_realtime(c: dict) -> bool:

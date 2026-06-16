@@ -32,7 +32,9 @@ def test_load_effective_missing_invalid_and_valid(tmp_path):
     assert rrs._load_effective(invalid) is None
 
     valid = tmp_path / "effective.json"
-    valid.write_text(json.dumps({"requirements_source": {"requirements_yaml_url": "https://x/reqs.yaml"}}), encoding="utf-8")
+    valid.write_text(
+        json.dumps({"requirements_source": {"requirements_yaml_url": "https://x/reqs.yaml"}}), encoding="utf-8"
+    )
     assert rrs._load_effective(valid)["requirements_source"]["requirements_yaml_url"] == "https://x/reqs.yaml"
 
 
@@ -48,7 +50,9 @@ def test_load_legacy_default_missing_invalid_and_valid(tmp_path):
         json.dumps({"requirements_source": {"requirements_yaml_url": "https://legacy/reqs.yaml"}}),
         encoding="utf-8",
     )
-    assert rrs._load_legacy_default(tmp_path)["requirements_source"]["requirements_yaml_url"] == "https://legacy/reqs.yaml"
+    assert (
+        rrs._load_legacy_default(tmp_path)["requirements_source"]["requirements_yaml_url"] == "https://legacy/reqs.yaml"
+    )
 
 
 def test_cli_url_wins():
@@ -165,7 +169,13 @@ def test_demo_wins_over_profile():
 
 def test_local_repo_file_beats_org_profile():
     result = rrs.resolve(
-        None, False, None, "audit-security-requirements", EFFECTIVE, LEGACY, local_path="/repo/docs/security/requirements.yaml"
+        None,
+        False,
+        None,
+        "audit-security-requirements",
+        EFFECTIVE,
+        LEGACY,
+        local_path="/repo/docs/security/requirements.yaml",
     )
     assert result["source"] == "local"
     assert result["surfaced"] is True
@@ -175,17 +185,21 @@ def test_local_repo_file_beats_org_profile():
 
 def test_cli_still_beats_local_and_demo():
     result = rrs.resolve(
-        "https://cli/y.yaml", False, None, "audit-security-requirements", EFFECTIVE, LEGACY,
-        demo_path="/p/ex.yaml", local_path="/repo/requirements.yaml",
+        "https://cli/y.yaml",
+        False,
+        None,
+        "audit-security-requirements",
+        EFFECTIVE,
+        LEGACY,
+        demo_path="/p/ex.yaml",
+        local_path="/repo/requirements.yaml",
     )
     assert result["source"] == "cli"
 
 
 def test_remembered_used_when_nothing_else_and_audit():
     remembered = {"url": "https://security.example/x", "label": "ASR"}
-    result = rrs.resolve(
-        None, False, None, "audit-security-requirements", None, LEGACY, remembered=remembered
-    )
+    result = rrs.resolve(None, False, None, "audit-security-requirements", None, LEGACY, remembered=remembered)
     assert result["source"] == "remembered"
     assert result["url"] == "https://security.example/x"
     assert result["enabled"] is True
@@ -219,7 +233,12 @@ def test_org_audit_disabled_survives_local_override():
     """A local repo catalog wins the source, but the governance signal persists
     so the skill can still block per the org policy."""
     result = rrs.resolve(
-        None, False, None, "audit-security-requirements", DISABLED_EFFECTIVE, LEGACY,
+        None,
+        False,
+        None,
+        "audit-security-requirements",
+        DISABLED_EFFECTIVE,
+        LEGACY,
         local_path="/repo/docs/security/requirements.yaml",
     )
     assert result["source"] == "local"
@@ -229,7 +248,9 @@ def test_org_audit_disabled_survives_local_override():
 def test_org_audit_disabled_bypassed_by_cli_and_demo():
     cli = rrs.resolve("https://cli/y.yaml", False, None, "audit-security-requirements", DISABLED_EFFECTIVE, LEGACY)
     assert cli["source"] == "cli" and cli["org_audit_disabled"] is True
-    demo = rrs.resolve(None, False, None, "audit-security-requirements", DISABLED_EFFECTIVE, LEGACY, demo_path="/p/ex.yaml")
+    demo = rrs.resolve(
+        None, False, None, "audit-security-requirements", DISABLED_EFFECTIVE, LEGACY, demo_path="/p/ex.yaml"
+    )
     assert demo["source"] == "demo" and demo["org_audit_disabled"] is True
 
 

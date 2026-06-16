@@ -270,9 +270,7 @@ class TestUsageFromTranscript:
 
     def test_nested_usage_under_content(self, al, tmp_path):
         t = tmp_path / "t2.jsonl"
-        t.write_text(
-            json.dumps({"message": {"content": {"usage": {"input_tokens": 7, "output_tokens": 3}}}}) + "\n"
-        )
+        t.write_text(json.dumps({"message": {"content": {"usage": {"input_tokens": 7, "output_tokens": 3}}}}) + "\n")
         out = al._usage_from_transcript(str(t))
         assert out["input_tokens"] == 7
 
@@ -600,9 +598,7 @@ class TestHandleStop:
         t.write_text(
             json.dumps({"message": {"role": "assistant", "usage": {"input_tokens": 999, "output_tokens": 11}}}) + "\n"
         )
-        al.handle_stop(
-            {"stop_reason": "end_turn", "transcript_path": str(t)}, "sid12345", "SubagentStop"
-        )
+        al.handle_stop({"stop_reason": "end_turn", "transcript_path": str(t)}, "sid12345", "SubagentStop")
         log = self._read_log(tmp_path)
         assert "in=999" in log and "out=11" in log
 
@@ -674,9 +670,7 @@ class TestAssessmentSummaryInternals:
         assert "idle≈" in log
 
     def test_yaml_threat_counting(self, al, tmp_path):
-        (tmp_path / ".hook-events.log").write_text(
-            "2026-06-14T10:00:00Z  [sidyaml1]  INFO   SCAN_START  repo=/r\n"
-        )
+        (tmp_path / ".hook-events.log").write_text("2026-06-14T10:00:00Z  [sidyaml1]  INFO   SCAN_START  repo=/r\n")
         (tmp_path / "threat-model.yaml").write_text(
             "threats:\n"
             "  - id: T-001\n    severity: Critical\n"
@@ -690,9 +684,7 @@ class TestAssessmentSummaryInternals:
         assert "High=2" in log
 
     def test_ghost_summary_suppressed_by_owner_sid(self, al, tmp_path):
-        (tmp_path / ".hook-events.log").write_text(
-            "2026-06-14T10:00:00Z  [owner123]  INFO   SCAN_START  repo=/r\n"
-        )
+        (tmp_path / ".hook-events.log").write_text("2026-06-14T10:00:00Z  [owner123]  INFO   SCAN_START  repo=/r\n")
         (tmp_path / ".assessment-owner-sid").write_text("owner123")
         # Different sid -> must bail without writing a summary
         al._write_assessment_summary("ghost999")
@@ -764,9 +756,7 @@ class TestTracingPaths:
         t.write_text(
             json.dumps({"message": {"role": "assistant", "usage": {"input_tokens": 100, "output_tokens": 5}}}) + "\n"
         )
-        al_trace.handle_stop(
-            {"stop_reason": "end_turn", "transcript_path": str(t)}, "trace2ab", "SubagentStop"
-        )
+        al_trace.handle_stop({"stop_reason": "end_turn", "transcript_path": str(t)}, "trace2ab", "SubagentStop")
         trace = (tmp_path / ".appsec-trace.log").read_text()
         assert "AGENT_COMPLETE" in trace
         assert "turns=1" in trace
@@ -777,9 +767,7 @@ class TestTracingPaths:
 # ---------------------------------------------------------------------------
 class TestPhaseSmear:
     def test_batched_zero_phases_smeared(self, al, tmp_path):
-        (tmp_path / ".hook-events.log").write_text(
-            "2026-06-14T10:00:00Z  [sidsmear1]  INFO   SCAN_START  repo=/r\n"
-        )
+        (tmp_path / ".hook-events.log").write_text("2026-06-14T10:00:00Z  [sidsmear1]  INFO   SCAN_START  repo=/r\n")
         # Phases 5 and 6 start+end on the same second (batched -> 0s each),
         # Phase 7 starts 30s later providing the downstream anchor for the smear.
         (tmp_path / ".agent-run.log").write_text(

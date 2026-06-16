@@ -123,7 +123,9 @@ def test_populated_wrong_summary_warns(tmp_path):
 
 
 def test_missing_verdict_errors(tmp_path):
-    r = subprocess.run([sys.executable, str(REPORT), "--audit", str(tmp_path / "nope.json")], capture_output=True, text=True)
+    r = subprocess.run(
+        [sys.executable, str(REPORT), "--audit", str(tmp_path / "nope.json")], capture_output=True, text=True
+    )
     assert r.returncode == 2
 
 
@@ -160,6 +162,7 @@ def test_gate_partial_does_not_block_below_floor(tmp_path):
     f.write_text(json.dumps(v), encoding="utf-8")
     r = subprocess.run(
         [sys.executable, str(GATE), "--verdict", str(f), "--gate", "--gate-on", "partial"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0

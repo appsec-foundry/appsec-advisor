@@ -8,6 +8,7 @@ multi-actor handling, the adaptive band title, per-component internet-exposed
 markers + the straight direct-attack arrow, the victim marking, single-component
 bars, the actor-description gating, determinism, and SVG well-formedness.
 """
+
 from __future__ import annotations
 
 import sys
@@ -42,11 +43,15 @@ def _model(*, app=2, attackers=("internet-anon",), exposed=(), xss=False, threat
     classes, paths = [], []
     for i, actor in enumerate(attackers):
         cid = f"cls{i}"
-        classes.append({"id": cid, "short_label": f"Attack{i}", "default_actor": actor, "default_target_tier": "application"})
+        classes.append(
+            {"id": cid, "short_label": f"Attack{i}", "default_actor": actor, "default_target_tier": "application"}
+        )
         hosts = [f"app{j}" for j in range(min(app, i + 1))] or (["app0"] if app else [])
         paths.append({"class": cid, "actor": actor, "target": "application", "findings": [cf[h][0] for h in hosts]})
     if xss:
-        classes.append({"id": "xss", "short_label": "XSS", "default_actor": "victim-required", "default_target_tier": "client"})
+        classes.append(
+            {"id": "xss", "short_label": "XSS", "default_actor": "victim-required", "default_target_tier": "client"}
+        )
         paths.append({"class": "xss", "actor": "victim-required", "target": "client", "findings": [cf["spa"][0]]})
 
     yaml_data = {
@@ -163,8 +168,8 @@ def test_out_of_scope_rendered_inside_each_tier():
     # their respective tier bands (dashed boxes), with a SINGLE shared legend
     # explanation rather than a caption repeated in every band.
     svg = _build(app=2, meta=_excl("db", "app0"))
-    assert "Data Layer" in svg   # excluded data comp named in the data band
-    assert "Service 0" in svg    # excluded app comp named in the application band
+    assert "Data Layer" in svg  # excluded data comp named in the data band
+    assert "Service 0" in svg  # excluded app comp named in the application band
     assert svg.count(_OOS_LEGEND) == 1  # one legend entry, not one caption per band
     assert "Out of scope — enumerated" not in svg
     ET.fromstring(svg)
@@ -196,8 +201,12 @@ def _rects(svg):
         a = el.attrib
         out.append(
             (
-                float(a["x"]), float(a["y"]), float(a["width"]), float(a["height"]),
-                a.get("fill", ""), a.get("stroke-dasharray", ""),
+                float(a["x"]),
+                float(a["y"]),
+                float(a["width"]),
+                float(a["height"]),
+                a.get("fill", ""),
+                a.get("stroke-dasharray", ""),
             )
         )
     return out
@@ -239,16 +248,19 @@ def test_display_width_capped_but_viewbox_full():
 
 # ---- multi-actor ------------------------------------------------------------
 def test_multiple_attacker_cards():
-    svg = _build(attackers=("internet-anon", "supply-chain"),
-                 actor_labels={"internet-anon": {"label": "Anon Attacker"},
-                               "supply-chain": {"label": "Supply-Chain Attacker"}})
+    svg = _build(
+        attackers=("internet-anon", "supply-chain"),
+        actor_labels={"internet-anon": {"label": "Anon Attacker"}, "supply-chain": {"label": "Supply-Chain Attacker"}},
+    )
     assert "Anon Attacker" in svg
     assert "Supply-Chain Attacker" in svg
 
 
 def test_actor_description_shown_for_few_actors():
-    svg = _build(attackers=("internet-anon",),
-                 actor_labels={"internet-anon": {"label": "Anon", "default_subtitle": "no privilege needed"}})
+    svg = _build(
+        attackers=("internet-anon",),
+        actor_labels={"internet-anon": {"label": "Anon", "default_subtitle": "no privilege needed"}},
+    )
     assert "no privilege needed" in svg  # subtitle shown with ≤2 attackers
 
 
@@ -267,16 +279,18 @@ def test_title_internet_only():
 
 
 def test_title_mixed_when_internal_actor_present():
-    svg = _build(attackers=("internet-anon", "malicious-insider"),
-                 actor_labels={"internet-anon": {"label": "Anon"}, "malicious-insider": {"label": "Insider"}})
+    svg = _build(
+        attackers=("internet-anon", "malicious-insider"),
+        actor_labels={"internet-anon": {"label": "Anon"}, "malicious-insider": {"label": "Insider"}},
+    )
     assert "Threat Actors" in svg and "Internal" in svg
 
 
 # ---- exposed marker + direct-attack arrow -----------------------------------
 def test_internet_exposed_marker_and_direct_attack_arrow():
     svg = _build(app=2, exposed=("app0",))
-    assert "direct attack" in svg            # the red arrow label
-    assert "arrowred" in svg                 # the red arrowhead marker is used
+    assert "direct attack" in svg  # the red arrow label
+    assert "arrowred" in svg  # the red arrowhead marker is used
     assert "internet-exposed entry point" in svg  # legend entry
 
 
@@ -289,8 +303,8 @@ def test_direct_attack_arrow_is_prominent():
     # The attack path is the most important element — it must read at a glance:
     # bold uppercase callout + the large fixed-size red arrowhead marker.
     svg = _build(app=2, exposed=("app0",))
-    assert "DIRECT ATTACK" in svg          # bold uppercase vertical callout
-    assert "arrowred-lg" in svg            # large fixed arrowhead used for the arrow
+    assert "DIRECT ATTACK" in svg  # bold uppercase vertical callout
+    assert "arrowred-lg" in svg  # large fixed arrowhead used for the arrow
     # and the prominence is gone when nothing is internet-exposed
     assert "DIRECT ATTACK" not in _build(app=2, exposed=())
 

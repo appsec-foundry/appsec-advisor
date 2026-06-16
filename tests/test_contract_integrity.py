@@ -305,4 +305,3 @@ def test_v2_section76_has_validation_approach_first(contract):
     rule = next(r for r in rules[key] if r.get("rule") == "validation_approach_first")
     assert rule.get("enforcement") == "error"
     assert rule.get("approach_heading_patterns"), "no approach_heading_patterns declared"
-

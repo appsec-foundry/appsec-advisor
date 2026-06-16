@@ -329,11 +329,12 @@ def _signal_present(text: str, signals: tuple[str, ...]) -> bool:
             idx = text.find(sig, start)
             if idx == -1:
                 break
-            window = text[max(0, idx - 16):idx]
+            window = text[max(0, idx - 16) : idx]
             if not any(neg in window for neg in _VERDICT_NEGATORS):
                 return True
             start = idx + 1
     return False
+
 
 _RISK_DIST_RE = re.compile(
     # Match either "Risk Distribution:", "**Risk Distribution**:" or

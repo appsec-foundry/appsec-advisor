@@ -543,6 +543,7 @@ class TestSecurityArchitectureCWEMapping:
         sec_7_12 = self._h3_section(md, "7.12", "7.13")
         assert "F-300" not in sec_7_12, "F-300 has nothing to do with real-time controls"
 
+
 class TestSystemContextDiagram:
     """§2.1 mermaid is now derived from yaml actors / surface / threats."""
 
@@ -808,6 +809,7 @@ class TestTechnologyArchitectureDiagram:
         assert 'subgraph APP["Application Tier"]' in sec_2_4
         assert 'subgraph DATA["Data Tier"]' in sec_2_4
         assert "TB1" not in sec_2_4
+
 
 # ---------------------------------------------------------------------------
 # D1.5 — refined diagram enrichments (C/D/E/F/G/J/L/A/B)
@@ -1252,12 +1254,24 @@ class TestSecurityArchitecture:
             {
                 "components": [],
                 "security_controls": [
-                    {"domain": "7.3 Session and Token Controls", "control": "JWT storage",
-                     "effectiveness": "Unsafe", "cwe": "CWE-922"},
-                    {"domain": "7.3 Session and Token Controls", "control": "Token revocation",
-                     "effectiveness": "Missing", "cwe": "CWE-613"},
-                    {"domain": "7.3 Session and Token Controls", "control": "Cookie attributes",
-                     "effectiveness": "Weak", "cwe": "CWE-1004"},
+                    {
+                        "domain": "7.3 Session and Token Controls",
+                        "control": "JWT storage",
+                        "effectiveness": "Unsafe",
+                        "cwe": "CWE-922",
+                    },
+                    {
+                        "domain": "7.3 Session and Token Controls",
+                        "control": "Token revocation",
+                        "effectiveness": "Missing",
+                        "cwe": "CWE-613",
+                    },
+                    {
+                        "domain": "7.3 Session and Token Controls",
+                        "control": "Cookie attributes",
+                        "effectiveness": "Weak",
+                        "cwe": "CWE-1004",
+                    },
                 ],
             }
         )
@@ -1587,9 +1601,13 @@ class TestCli:
         # 2. emit_auth_coverage-style backfill: add §7.2 mechanism control.
         ydata = yaml.safe_load((output_dir / "threat-model.yaml").read_text())
         ydata.setdefault("security_controls", []).append(
-            {"domain": "7.2 Identity and Authentication Controls",
-             "control": "Password-Based Login", "kind": "mechanism",
-             "effectiveness": "Unsafe", "cwe": "CWE-287"}
+            {
+                "domain": "7.2 Identity and Authentication Controls",
+                "control": "Password-Based Login",
+                "kind": "mechanism",
+                "effectiveness": "Unsafe",
+                "cwe": "CWE-287",
+            }
         )
         (output_dir / "threat-model.yaml").write_text(yaml.safe_dump(ydata))
         # 3. NON-force pregen → must regenerate and pick up the new mechanism.
@@ -2270,8 +2288,7 @@ class TestTechnologyArchitectureMermaidLegacy:
             "components": components,
             "trust_boundaries": boundaries,
             "data_flows": [
-                {"from": "spa", "to": "api", "protocol": "https", "auth_method": "JWT",
-                 "data_classification": "PII"},
+                {"from": "spa", "to": "api", "protocol": "https", "auth_method": "JWT", "data_classification": "PII"},
                 {"from": "api", "to": "db", "protocol": "websocket"},
             ],
             "threats": [
@@ -2297,7 +2314,9 @@ class TestTechnologyArchitectureMermaidLegacy:
     def test_no_cross_boundary_flows_emits_comment(self):
         components = [{"id": "api", "name": "API", "tier": "application"}]
         boundaries = [{"id": "TB-APP", "name": "App", "trust_level": "trusted"}]
-        out = pf._technology_architecture_mermaid({"components": components, "trust_boundaries": boundaries}, components, boundaries)
+        out = pf._technology_architecture_mermaid(
+            {"components": components, "trust_boundaries": boundaries}, components, boundaries
+        )
         assert any("No cross-boundary data flows" in l for l in out)
 
     def test_filesystem_ghost_nodes_rendered(self):
@@ -2325,7 +2344,9 @@ class TestTechnologyArchitectureMermaidLegacy:
             {"id": "db2", "name": "Redis cache", "tier": "data", "engine": "Redis"},
         ]
         boundaries = [{"id": "TB-DATA", "name": "Data Tier", "trust_level": "restricted"}]
-        out = pf._technology_architecture_mermaid({"components": components, "trust_boundaries": boundaries}, components, boundaries)
+        out = pf._technology_architecture_mermaid(
+            {"components": components, "trust_boundaries": boundaries}, components, boundaries
+        )
         joined = "\n".join(out)
         # engine not in name → appended on its own line
         assert "PostgreSQL" in joined
@@ -2473,8 +2494,12 @@ class TestV2StatusLine:
 class TestV2LifecycleBullets:
     def test_bullets_carry_status_note_and_findings(self):
         subs = [
-            {"title": "Login", "effectiveness": "unsafe", "status_note": "raw SQL. extra.",
-             "relevant_findings": ["T-001"]},
+            {
+                "title": "Login",
+                "effectiveness": "unsafe",
+                "status_note": "raw SQL. extra.",
+                "relevant_findings": ["T-001"],
+            },
             {"title": "Storage", "effectiveness": "weak"},
         ]
         out = pf._v2_lifecycle_bullets(subs, [], "7.2 Auth")
@@ -2590,8 +2615,9 @@ class TestEmitV2SubcontrolLegacy:
     def test_emitted_with_linked_threats(self):
         lines: list[str] = []
         c = {"effectiveness": "weak", "linked_threats": ["T-003"], "implementation": "Uses helmet."}
-        emitted = pf._emit_v2_subcontrol_legacy(lines, c, "Login", "irrelevant", "7.2 Identity",
-                                                 section_id="7.2", idx=1)
+        emitted = pf._emit_v2_subcontrol_legacy(
+            lines, c, "Login", "irrelevant", "7.2 Identity", section_id="7.2", idx=1
+        )
         assert emitted is True
         joined = "\n".join(lines)
         assert "#### 7.2.1 Login" in joined
@@ -2704,12 +2730,14 @@ class TestDeriveEnforcement:
 
 class TestThreatCountsPerComponent:
     def test_counts_critical_and_high(self):
-        yaml_data = {"threats": [
-            {"component_id": "a", "risk": "critical"},
-            {"component": "a", "severity": "high"},
-            {"component_id": "b", "risk": "low"},
-            {"risk": "critical"},  # no component → dropped
-        ]}
+        yaml_data = {
+            "threats": [
+                {"component_id": "a", "risk": "critical"},
+                {"component": "a", "severity": "high"},
+                {"component_id": "b", "risk": "low"},
+                {"risk": "critical"},  # no component → dropped
+            ]
+        }
         crit, high = pf._threat_counts_per_component(yaml_data)
         assert crit == {"a": 1}
         assert high == {"a": 1}
@@ -2737,8 +2765,12 @@ class TestV2GroupedAndSubcontrolViaGenerator:
                     "control": "Authentication",
                     "effectiveness": "weak",
                     "subcontrols": [
-                        {"title": "Login", "effectiveness": "weak", "implementation": "x",
-                         "relevant_findings": ["T-1"]},
+                        {
+                            "title": "Login",
+                            "effectiveness": "weak",
+                            "implementation": "x",
+                            "relevant_findings": ["T-1"],
+                        },
                         {"title": "Logout", "effectiveness": "adequate", "implementation": "y"},
                     ],
                 },
@@ -2760,18 +2792,26 @@ class TestOverviewVerdictBranches:
     weak-no-controls."""
 
     def test_partial_verdict_row(self):
-        data = {"components": [], "threats": [], "security_controls": [
-            {"domain": "Identity and Authentication Controls", "control": "Login", "effectiveness": "partial"},
-        ]}
+        data = {
+            "components": [],
+            "threats": [],
+            "security_controls": [
+                {"domain": "Identity and Authentication Controls", "control": "Login", "effectiveness": "partial"},
+            ],
+        }
         md = pf.gen_security_architecture_v2(data)
         row = next(l for l in md.splitlines() if l.startswith("| [") and "Identity and Authentication" in l)
         assert "🟡 Partial" in row
         assert "leave gaps" in row
 
     def test_adequate_verdict_row(self):
-        data = {"components": [], "threats": [], "security_controls": [
-            {"domain": "Identity and Authentication Controls", "control": "Login", "effectiveness": "adequate"},
-        ]}
+        data = {
+            "components": [],
+            "threats": [],
+            "security_controls": [
+                {"domain": "Identity and Authentication Controls", "control": "Login", "effectiveness": "adequate"},
+            ],
+        }
         md = pf.gen_security_architecture_v2(data)
         row = next(l for l in md.splitlines() if l.startswith("| [") and "Identity and Authentication" in l)
         assert "🟢 Adequate" in row
@@ -2779,8 +2819,11 @@ class TestOverviewVerdictBranches:
 
     def test_weak_no_controls_routed_finding(self):
         # A finding routes to §7.4 (CWE-862 authz) but no control catalogued there.
-        data = {"components": [], "threats": [{"id": "T-1", "cwe": "CWE-862", "title": "BOLA"}],
-                "security_controls": []}
+        data = {
+            "components": [],
+            "threats": [{"id": "T-1", "cwe": "CWE-862", "title": "BOLA"}],
+            "security_controls": [],
+        }
         md = pf.gen_security_architecture_v2(data)
         rows = [l for l in md.splitlines() if l.startswith("| [")]
         weak = [l for l in rows if "🟠 Weak" in l]

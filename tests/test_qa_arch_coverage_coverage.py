@@ -16,7 +16,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import qa_arch_coverage as qa  # noqa: E402
 
-
 # ---------- non-dict skip branches (73, 92, 103, 128, 169, 195) ----------
 
 
@@ -110,9 +109,7 @@ def test_main_fail_human_print_loop(tmp_path, capsys):
         json.dumps(
             {
                 "version": 1,
-                "rules_evaluated": [
-                    {"rule_id": "ARCH-CORS-001", "applies": True, "status": "missing"}
-                ],
+                "rules_evaluated": [{"rule_id": "ARCH-CORS-001", "applies": True, "status": "missing"}],
             }
         ),
         encoding="utf-8",

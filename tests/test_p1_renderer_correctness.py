@@ -479,10 +479,20 @@ class TestTotalDurationFromStageStats:
         self._write_jsonl(
             tmp_path,
             [
-                {"stage": 1, "duration_ms": 1620_000, "name": "Threat Analysis & Triage",
-                 "agent": "appsec-advisor:appsec-threat-analyst", "model": "sonnet"},
-                {"stage": 2, "duration_ms": 300_000, "name": "Report Rendering",
-                 "agent": "appsec-advisor:appsec-threat-renderer", "model": "sonnet"},
+                {
+                    "stage": 1,
+                    "duration_ms": 1620_000,
+                    "name": "Threat Analysis & Triage",
+                    "agent": "appsec-advisor:appsec-threat-analyst",
+                    "model": "sonnet",
+                },
+                {
+                    "stage": 2,
+                    "duration_ms": 300_000,
+                    "name": "Report Rendering",
+                    "agent": "appsec-advisor:appsec-threat-renderer",
+                    "model": "sonnet",
+                },
             ],
         )
         (tmp_path / ".scan-wall-seconds").write_text("3420", encoding="utf-8")  # 57m
@@ -503,10 +513,20 @@ class TestTotalDurationFromStageStats:
         self._write_jsonl(
             tmp_path,
             [
-                {"stage": 1, "duration_ms": 1620_000, "name": "Threat Analysis & Triage",
-                 "agent": "appsec-advisor:appsec-threat-analyst", "model": "sonnet"},
-                {"stage": 2, "duration_ms": 300_000, "name": "Report Rendering",
-                 "agent": "appsec-advisor:appsec-threat-renderer", "model": "sonnet"},
+                {
+                    "stage": 1,
+                    "duration_ms": 1620_000,
+                    "name": "Threat Analysis & Triage",
+                    "agent": "appsec-advisor:appsec-threat-analyst",
+                    "model": "sonnet",
+                },
+                {
+                    "stage": 2,
+                    "duration_ms": 300_000,
+                    "name": "Report Rendering",
+                    "agent": "appsec-advisor:appsec-threat-renderer",
+                    "model": "sonnet",
+                },
             ],
         )
         (tmp_path / ".scan-wall-seconds").write_text("3420", encoding="utf-8")

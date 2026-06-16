@@ -97,10 +97,7 @@ def test_check_links_dedups_same_key(tmp_path: Path):
 def test_check_xrefs_clean(tmp_path: Path):
     md = _md(
         tmp_path,
-        "## 8. Findings Register\n"
-        "| T-001 | a |\n"
-        "### M-001 Fix it\n"
-        "Reference T-001 and M-001 in prose.\n",
+        "## 8. Findings Register\n| T-001 | a |\n### M-001 Fix it\nReference T-001 and M-001 in prose.\n",
     )
     report = qa.check_xrefs(md)
     assert not report.issues
@@ -234,10 +231,7 @@ def test_linkify_anchors_bare_refs(tmp_path: Path):
 def test_linkify_anchors_skips_toc(tmp_path: Path):
     md = _md(
         tmp_path,
-        "## Table of Contents\n"
-        "- [3.2 T-001 — Foo](#slug)\n"
-        "## 1. Body\n"
-        "T-001 here gets linkified.\n",
+        "## Table of Contents\n- [3.2 T-001 — Foo](#slug)\n## 1. Body\nT-001 here gets linkified.\n",
     )
     _, new_text = qa.linkify_anchors(md)
     toc_line = [l for l in new_text.splitlines() if "Table of Contents" not in l and "3.2 T-001" in l][0]
@@ -248,8 +242,7 @@ def test_linkify_anchors_skips_toc(tmp_path: Path):
 def test_linkify_anchors_with_label_index(tmp_path: Path):
     md = _md(
         tmp_path,
-        "## 11. Notes\n"
-        "Discussion of T-001 in prose.\n",
+        "## 11. Notes\nDiscussion of T-001 in prose.\n",
     )
     (tmp_path / "threat-model.yaml").write_text(
         "threats:\n  - t_id: T-001\n    title: Cool Threat\n",
@@ -265,8 +258,7 @@ def test_linkify_anchors_all_id_classes_in_prose(tmp_path: Path):
         "## 11. Notes\nMentions M-001 and F-002 and TH-03 in plain prose.\n",
     )
     (tmp_path / "threat-model.yaml").write_text(
-        "threats:\n  - t_id: T-002\n    title: FThreat\n"
-        "mitigations:\n  - m_id: M-001\n    title: MFix\n",
+        "threats:\n  - t_id: T-002\n    title: FThreat\nmitigations:\n  - m_id: M-001\n    title: MFix\n",
         encoding="utf-8",
     )
     _, new_text = qa.linkify_anchors(md)
@@ -349,8 +341,7 @@ def test_strengths_clean_arch_row(tmp_path: Path):
 def test_strengths_html_table_flagged(tmp_path: Path):
     md = _md(
         tmp_path,
-        "### Operational Strengths\n"
-        "<table><tr><td>HSTS</td><td>enabled</td></tr></table>\n",
+        "### Operational Strengths\n<table><tr><td>HSTS</td><td>enabled</td></tr></table>\n",
     )
     report = qa.check_strengths_row_quality(md)
     assert any("tactical baseline" in i for i in report.issues)
@@ -430,10 +421,7 @@ def test_invariants_phase_burst_flagged(tmp_path: Path):
     ts = "2026-06-14T10:00:00"
     # Same timestamp, phases 3,4,5,8 -> outside legal {4,5,6,7} and >3 distinct.
     log.write_text(
-        "\n".join(
-            f"{ts} PHASE_START [Phase {p}/11]" for p in (3, 4, 5, 8)
-        )
-        + "\n",
+        "\n".join(f"{ts} PHASE_START [Phase {p}/11]" for p in (3, 4, 5, 8)) + "\n",
         encoding="utf-8",
     )
     report = qa.check_invariants(md)
@@ -540,24 +528,16 @@ def test_ms_structure_missing_subsection(tmp_path: Path):
 
 def test_ms_structure_critical_attack_tree_required(tmp_path: Path):
     # 2 criticals via risk distribution, no Critical Attack Tree section.
-    src = (
-        "**Risk Distribution:** Critical: 2 · High: 1 · Medium: 0 · Low: 0 · **Total: 3**\n\n"
-        + _GOOD_MS
-    )
+    src = "**Risk Distribution:** Critical: 2 · High: 1 · Medium: 0 · Low: 0 · **Total: 3**\n\n" + _GOOD_MS
     md = _md(tmp_path, src)
     report, _ = qa.check_ms_structure(md)
     assert any("Critical Attack Tree" in i for i in report.issues)
 
 
 def test_ms_structure_skip_walkthroughs_suppresses_tree(tmp_path: Path):
-    src = (
-        "**Risk Distribution:** Critical: 2 · High: 1 · Medium: 0 · Low: 0 · **Total: 3**\n\n"
-        + _GOOD_MS
-    )
+    src = "**Risk Distribution:** Critical: 2 · High: 1 · Medium: 0 · Low: 0 · **Total: 3**\n\n" + _GOOD_MS
     md = _md(tmp_path, src)
-    (tmp_path / ".skill-config.json").write_text(
-        '{"SKIP_ATTACK_WALKTHROUGHS": true}', encoding="utf-8"
-    )
+    (tmp_path / ".skill-config.json").write_text('{"SKIP_ATTACK_WALKTHROUGHS": true}', encoding="utf-8")
     report, _ = qa.check_ms_structure(md)
     assert not any("Critical Attack Tree" in i for i in report.issues)
 
@@ -574,26 +554,20 @@ def test_resolve_flags_defaults_standard(tmp_path: Path):
 
 
 def test_resolve_flags_quick_from_config(tmp_path: Path):
-    (tmp_path / ".skill-config.json").write_text(
-        '{"assessment_depth": "quick"}', encoding="utf-8"
-    )
+    (tmp_path / ".skill-config.json").write_text('{"assessment_depth": "quick"}', encoding="utf-8")
     flags = qa._resolve_contract_run_flags(tmp_path)
     assert flags["is_quick_depth"] is True
     assert flags["skip_attack_walkthroughs"] is True
 
 
 def test_resolve_flags_reads_yaml_depth(tmp_path: Path):
-    (tmp_path / "threat-model.yaml").write_text(
-        "meta:\n  assessment_depth: thorough\n", encoding="utf-8"
-    )
+    (tmp_path / "threat-model.yaml").write_text("meta:\n  assessment_depth: thorough\n", encoding="utf-8")
     flags = qa._resolve_contract_run_flags(tmp_path)
     assert flags["depth"] == "thorough"
 
 
 def test_resolve_flags_check_requirements_flag(tmp_path: Path):
-    (tmp_path / ".skill-config.json").write_text(
-        '{"check_requirements": true, "verbose": true}', encoding="utf-8"
-    )
+    (tmp_path / ".skill-config.json").write_text('{"check_requirements": true, "verbose": true}', encoding="utf-8")
     flags = qa._resolve_contract_run_flags(tmp_path)
     assert flags["check_requirements"] is True
     assert flags["verbose_report"] is True
@@ -901,9 +875,7 @@ def test_req_violated_coverage_flags_missing_annotation(tmp_path: Path):
         '| <a id="t-001"></a>T-001 | comp | cat | scenario text no annotation |\n',
     )
     (tmp_path / ".threats-merged.json").write_text(
-        json.dumps(
-            {"threats": [{"t_id": "T-001", "source": "requirements-compliance"}]}
-        ),
+        json.dumps({"threats": [{"t_id": "T-001", "source": "requirements-compliance"}]}),
         encoding="utf-8",
     )
     report = qa.Report("x")
@@ -917,9 +889,7 @@ def test_req_violated_coverage_ok_when_annotated(tmp_path: Path):
         '| <a id="t-001"></a>T-001 | comp | cat | Violated: [R-1](http://x) here |\n',
     )
     (tmp_path / ".threats-merged.json").write_text(
-        json.dumps(
-            {"threats": [{"t_id": "T-001", "source": "requirements-compliance"}]}
-        ),
+        json.dumps({"threats": [{"t_id": "T-001", "source": "requirements-compliance"}]}),
         encoding="utf-8",
     )
     report = qa.Report("x")
@@ -1042,13 +1012,7 @@ def test_evidence_integrity_clean(tmp_path: Path):
     code = tmp_path / "app.py"
     code.write_text("line1\nimport secrets\nline3\n", encoding="utf-8")
     (tmp_path / ".threats-merged.json").write_text(
-        json.dumps(
-            {
-                "threats": [
-                    {"t_id": "T-001", "evidence": {"file": "app.py", "line": 2}}
-                ]
-            }
-        ),
+        json.dumps({"threats": [{"t_id": "T-001", "evidence": {"file": "app.py", "line": 2}}]}),
         encoding="utf-8",
     )
     report = qa.check_evidence_integrity(tmp_path, tmp_path)
@@ -1058,9 +1022,7 @@ def test_evidence_integrity_clean(tmp_path: Path):
 
 def test_evidence_integrity_missing_file(tmp_path: Path):
     (tmp_path / ".threats-merged.json").write_text(
-        json.dumps(
-            {"threats": [{"t_id": "T-001", "evidence": {"file": "ghost.py", "line": 1}}]}
-        ),
+        json.dumps({"threats": [{"t_id": "T-001", "evidence": {"file": "ghost.py", "line": 1}}]}),
         encoding="utf-8",
     )
     report = qa.check_evidence_integrity(tmp_path, tmp_path)
@@ -1071,9 +1033,7 @@ def test_evidence_integrity_line_out_of_range(tmp_path: Path):
     code = tmp_path / "small.py"
     code.write_text("only one line\n", encoding="utf-8")
     (tmp_path / ".threats-merged.json").write_text(
-        json.dumps(
-            {"threats": [{"t_id": "T-002", "evidence": {"file": "small.py", "line": 99}}]}
-        ),
+        json.dumps({"threats": [{"t_id": "T-002", "evidence": {"file": "small.py", "line": 99}}]}),
         encoding="utf-8",
     )
     report = qa.check_evidence_integrity(tmp_path, tmp_path)
@@ -1084,9 +1044,7 @@ def test_evidence_integrity_suspicious_line(tmp_path: Path):
     code = tmp_path / "c.py"
     code.write_text("# a comment line\n", encoding="utf-8")
     (tmp_path / ".threats-merged.json").write_text(
-        json.dumps(
-            {"threats": [{"t_id": "T-003", "evidence": {"file": "c.py", "line": 1}}]}
-        ),
+        json.dumps({"threats": [{"t_id": "T-003", "evidence": {"file": "c.py", "line": 1}}]}),
         encoding="utf-8",
     )
     report = qa.check_evidence_integrity(tmp_path, tmp_path)
@@ -1136,9 +1094,7 @@ def test_evidence_integrity_absence_grep_unresolved_warns(tmp_path: Path):
                     {
                         "t_id": "T-005",
                         "evidence": {"file": "auth.py", "line": 1},
-                        "controls_absent_evidence": [
-                            {"pattern": "(bad", "search_paths": ["."], "hit_count": 0}
-                        ],
+                        "controls_absent_evidence": [{"pattern": "(bad", "search_paths": ["."], "hit_count": 0}],
                     }
                 ]
             }

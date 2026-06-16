@@ -115,9 +115,13 @@ def test_aspnet_minimal_apis(tmp_path: Path) -> None:
 
 
 def test_javascript_framework_detection_and_nestjs_decorators() -> None:
-    fastify = ri._extract_javascript(Path("api.ts"), ["const fastify = require('fastify')();\n", "fastify.get('/fast', h);\n"])
+    fastify = ri._extract_javascript(
+        Path("api.ts"), ["const fastify = require('fastify')();\n", "fastify.get('/fast', h);\n"]
+    )
     koa = ri._extract_javascript(Path("api.ts"), ["import Router from 'koa-router';\n", "router.get('/koa', h);\n"])
-    hapi = ri._extract_javascript(Path("api.ts"), ["const hapi = require('@hapi/hapi');\n", "server.get('/hapi', h);\n"])
+    hapi = ri._extract_javascript(
+        Path("api.ts"), ["const hapi = require('@hapi/hapi');\n", "server.get('/hapi', h);\n"]
+    )
     nest = ri._extract_javascript(
         Path("controller.ts"),
         [

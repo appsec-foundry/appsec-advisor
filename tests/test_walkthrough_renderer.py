@@ -429,7 +429,9 @@ class TestDefenseInDepth:
 class TestCrossReferences:
     def test_chain_and_siblings(self):
         peers = {"CWE-89": ["T-1", "T-2", "T-3"]}
-        out = renderer.render_cross_references({"id": "T-1", "cwe": "CWE-89", "component": "db"}, {"T-1": [4, 5]}, peers)
+        out = renderer.render_cross_references(
+            {"id": "T-1", "cwe": "CWE-89", "component": "db"}, {"T-1": [4, 5]}, peers
+        )
         assert any("Chain 4" in b for b in out)
         assert any("Sibling findings" in b and "F-2" in b for b in out)
         assert len(out) >= 3
@@ -460,3 +462,39 @@ class TestGenAdapter:
         assert "### 3.1" in out
         assert "WALKTHROUGH_FILL" not in out
         assert out.rstrip().endswith("<!-- generated:walkthrough_renderer -->")
+
+    def test_heading_drops_emdash_file_line_tail(self):
+        # The ` — file:line` tail must NOT appear in the §3 heading — it made
+        # the GitHub heading anchor diverge from the composer link target and
+        # broke every §3 ToC link. The concrete location still lives on the
+        # **Source:** line.
+        ydata = {
+            "threats": [
+                {
+                    "id": "T-001",
+                    "title": "Insecure Direct Object Reference — routes/address.ts:11",
+                    "risk": "critical",
+                    "cwe": "CWE-639",
+                    "vektor": "internet-anon",
+                    "scenario": "Attacker swaps the :id path param to read another user's record.",
+                    "evidence": [{"file": "routes/address.ts", "line": 11}],
+                }
+            ]
+        }
+        out = renderer.gen_attack_walkthroughs(ydata)
+        assert "### 3.1 Insecure Direct Object Reference\n" in out
+        # The em-dash tail is gone from the heading line specifically.
+        heading_line = next(ln for ln in out.splitlines() if ln.startswith("### 3.1"))
+        assert "—" not in heading_line
+        assert "address.ts:11" not in heading_line
+        # …but the concrete location is still carried on the Source line.
+        assert "routes/address.ts:11" in out
+
+
+def test_weakness_class_strips_tail():
+    assert (
+        renderer._weakness_class("Insecure Direct Object Reference — routes/address.ts:11")
+        == "Insecure Direct Object Reference"
+    )
+    # No tail → unchanged (e.g. a consolidated systemic title).
+    assert renderer._weakness_class("Insecure Direct Object Reference") == "Insecure Direct Object Reference"

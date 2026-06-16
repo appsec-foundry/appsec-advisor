@@ -1,4 +1,5 @@
 """Tests for scripts/stamp_threat_model.py — postfix-stamped copy-ready sets."""
+
 import re
 import subprocess
 import sys
@@ -8,17 +9,13 @@ SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "stamp_threat_mode
 
 
 def _seed_model(d: Path) -> None:
-    (d / "threat-model.md").write_text(
-        "# Threat Model\n\n![Figure 1](threat-model.figure1.svg)\n", encoding="utf-8"
-    )
+    (d / "threat-model.md").write_text("# Threat Model\n\n![Figure 1](threat-model.figure1.svg)\n", encoding="utf-8")
     (d / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
     (d / "threat-model.figure1.svg").write_text("<svg/>\n", encoding="utf-8")
 
 
 def _run(*args: str):
-    return subprocess.run(
-        [sys.executable, str(SCRIPT), *args], capture_output=True, text=True
-    )
+    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True)
 
 
 def test_explicit_slug_stamps_set_and_rewrites_figure_ref(tmp_path):

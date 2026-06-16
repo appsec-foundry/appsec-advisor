@@ -400,9 +400,7 @@ class TestRelatedReposLoading:
 
     def test_related_repos_filters_non_dict_entries(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path, "svc", threats=[_t("T-1", "Critical")])
-        (repo / "docs" / "related-repos.yaml").write_text(
-            yaml.safe_dump({"related": [{"name": "x"}, "bad"]})
-        )
+        (repo / "docs" / "related-repos.yaml").write_text(yaml.safe_dump({"related": [{"name": "x"}, "bad"]}))
         assert ats._load_related_repos(repo) == [{"name": "x"}]
 
 
@@ -485,8 +483,9 @@ class TestSharedMitigationsBranches:
                 }
             )
         )
-        b = _make_repo(tmp_path, "b", threats=[_t("T-2", "High", cwe="CWE-1")],
-                       mitigations=[{"title": "N", "cwes": ["CWE-1"]}])
+        b = _make_repo(
+            tmp_path, "b", threats=[_t("T-2", "High", cwe="CWE-1")], mitigations=[{"title": "N", "cwes": ["CWE-1"]}]
+        )
         summary = ats.aggregate([a, b], min_severity="medium", open_only=False)
         assert any(m["cwe"] == "CWE-1" for m in summary["shared_mitigations"])
 

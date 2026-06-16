@@ -144,7 +144,9 @@ def test_gh_dep_pr_count_handles_missing_cli_failures_and_valid_json(monkeypatch
     assert any("merged:>=2026-01-01" in arg for arg in cmd)
     assert kwargs["cwd"] == str(repo)
 
-    monkeypatch.setattr(dep.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="{bad json"))
+    monkeypatch.setattr(
+        dep.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="{bad json")
+    )
     assert dep._gh_dep_pr_count(repo, 30) is None
 
     monkeypatch.setattr(dep.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="[]"))

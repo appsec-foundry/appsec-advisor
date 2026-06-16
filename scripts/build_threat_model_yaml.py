@@ -185,11 +185,7 @@ def _instance_fingerprints(t: dict) -> list[str]:
     base = _fp_str(t)
     insts = t.get("instances")
     if isinstance(insts, list) and insts:
-        return [
-            f"{base}|{(i.get('file') or '').strip()}:{i.get('line')}"
-            for i in insts
-            if isinstance(i, dict)
-        ]
+        return [f"{base}|{(i.get('file') or '').strip()}:{i.get('line')}" for i in insts if isinstance(i, dict)]
     # `evidence` is a dict at merge time but a LIST of {file,line} in the final
     # yaml — tolerate both; use the first location as the finding's anchor.
     ev = t.get("evidence")
@@ -286,16 +282,14 @@ def _index_resolved_prior(merged: dict) -> dict[str, str]:
     """Map every analyzer-affirmed fix to a reason, keyed by BOTH the prior id
     and the threat fingerprint, so the reconciler can match either way."""
     out: dict[str, str] = {}
-    for r in (merged.get("resolved_prior_findings") or []):
+    for r in merged.get("resolved_prior_findings") or []:
         if not isinstance(r, dict):
             continue
         reason = (r.get("reason") or "").strip() or "fix confirmed by re-scan"
         pid = r.get("prior_id")
         if pid:
             out[pid] = reason
-        fp = _threat_fingerprint(
-            {"component": r.get("component_id"), "cwe": r.get("cwe"), "title": r.get("title")}
-        )
+        fp = _threat_fingerprint({"component": r.get("component_id"), "cwe": r.get("cwe"), "title": r.get("title")})
         out[fp] = reason
     return out
 
@@ -337,7 +331,7 @@ def reconcile_incremental_threats(
     resolved_reason_by_id: dict[str, str] = {}
     carried_ids: list[str] = []
 
-    for pt in (prior_yaml.get("threats") or []):
+    for pt in prior_yaml.get("threats") or []:
         comp = pt.get("component") or pt.get("component_id") or ""
         if comp not in reanalyzed:
             continue  # carried-forward component → threats already intact
@@ -694,9 +688,7 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
     return sorted(by_mid.values(), key=lambda m: m["id"])
 
 
-def dedupe_mitigation_controls(
-    threats: list[dict], mitigations: list[dict]
-) -> tuple[list[dict], list[dict]]:
+def dedupe_mitigation_controls(threats: list[dict], mitigations: list[dict]) -> tuple[list[dict], list[dict]]:
     """Collapse mitigations that express the SAME control (identical
     ``_mitigation_fp`` — location-stripped, lowercased title) into one shared
     M-ID, and remap every threat's ``mitigation_ids`` onto the survivor.

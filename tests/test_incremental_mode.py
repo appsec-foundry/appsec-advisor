@@ -1539,6 +1539,7 @@ def _init_git_repo(path: Path) -> None:
 
 def _load_baseline_state_module():
     import importlib.util
+
     if "baseline_state" in sys.modules:
         return sys.modules["baseline_state"]
     spec = importlib.util.spec_from_file_location("baseline_state", BASELINE_STATE_PY)
@@ -1570,21 +1571,23 @@ class TestReconReuseCleanTree:
     @pytest.fixture
     def outdir(self, tmp_path: Path, gitrepo: Path) -> Path:
         head = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=gitrepo,
-            capture_output=True, text=True, check=True,
+            ["git", "rev-parse", "HEAD"],
+            cwd=gitrepo,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         d = tmp_path / "out"
         d.mkdir()
-        (d / "threat-model.yaml").write_text(
-            f"meta:\n  git:\n    commit_sha: '{head}'\nthreats: []\n"
-        )
+        (d / "threat-model.yaml").write_text(f"meta:\n  git:\n    commit_sha: '{head}'\nthreats: []\n")
         # Seed the fingerprint cache from the clean committed state.
         _run_bs("update", "--output-dir", str(d), "--repo-root", str(gitrepo), "--mode", "full")
         return d
 
     def test_clean_tree_allows_skip(self, gitrepo, outdir):
-        r = _run_bs("check-fingerprint", "--output-dir", str(outdir),
-                    "--repo-root", str(gitrepo), "--require-clean-tree")
+        r = _run_bs(
+            "check-fingerprint", "--output-dir", str(outdir), "--repo-root", str(gitrepo), "--require-clean-tree"
+        )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "unchanged" in r.stdout
 
@@ -1592,8 +1595,9 @@ class TestReconReuseCleanTree:
         # Brand-new, never-git-added source file — git diff is blind to it, but
         # ls-files --others catches it. Manifest fingerprint is still unchanged.
         (gitrepo / "routes_admin.py").write_text("def admin(): ...\n")
-        r = _run_bs("check-fingerprint", "--output-dir", str(outdir),
-                    "--repo-root", str(gitrepo), "--require-clean-tree")
+        r = _run_bs(
+            "check-fingerprint", "--output-dir", str(outdir), "--repo-root", str(gitrepo), "--require-clean-tree"
+        )
         assert r.returncode == 1, r.stdout + r.stderr
         assert "not clean" in r.stdout
 
@@ -1601,8 +1605,9 @@ class TestReconReuseCleanTree:
         # Edit a non-manifest source file: fingerprint unchanged, but the working
         # tree is dirty → require-clean-tree must run recon.
         (gitrepo / "app.py").write_text("def handler(): return 'pwned'\n")
-        r = _run_bs("check-fingerprint", "--output-dir", str(outdir),
-                    "--repo-root", str(gitrepo), "--require-clean-tree")
+        r = _run_bs(
+            "check-fingerprint", "--output-dir", str(outdir), "--repo-root", str(gitrepo), "--require-clean-tree"
+        )
         assert r.returncode == 1, r.stdout + r.stderr
         assert "not clean" in r.stdout
 
@@ -1612,8 +1617,7 @@ class TestReconReuseCleanTree:
         # edit must still report "unchanged" — regression guard for the
         # incremental path's behavior.
         (gitrepo / "app.py").write_text("def handler(): return 'changed'\n")
-        r = _run_bs("check-fingerprint", "--output-dir", str(outdir),
-                    "--repo-root", str(gitrepo))
+        r = _run_bs("check-fingerprint", "--output-dir", str(outdir), "--repo-root", str(gitrepo))
         assert r.returncode == 0, r.stdout + r.stderr
         assert "unchanged" in r.stdout
 
@@ -1624,12 +1628,9 @@ class TestReconReuseCleanTree:
         (repo / "package.json").write_text('{"name":"x","version":"1.0.0"}')
         d = tmp_path / "out"
         d.mkdir()
-        (d / "threat-model.yaml").write_text(
-            "meta:\n  git:\n    commit_sha: abc1234\nthreats: []\n"
-        )
+        (d / "threat-model.yaml").write_text("meta:\n  git:\n    commit_sha: abc1234\nthreats: []\n")
         _run_bs("update", "--output-dir", str(d), "--repo-root", str(repo), "--mode", "full")
-        r = _run_bs("check-fingerprint", "--output-dir", str(d),
-                    "--repo-root", str(repo), "--require-clean-tree")
+        r = _run_bs("check-fingerprint", "--output-dir", str(d), "--repo-root", str(repo), "--require-clean-tree")
         assert r.returncode == 1, r.stdout + r.stderr
         assert "not git-provable" in r.stderr
 
@@ -1642,38 +1643,44 @@ class TestSecurityCriticalClassifier:
 
     bs = _load_baseline_state_module()
 
-    @pytest.mark.parametrize("path", [
-        # A — security primitives
-        "src/auth/login.py",
-        "lib/crypto/cipher.go",
-        "app/middleware/session.ts",
-        "internal/validation/sanitize.rs",
-        "config/cors.yaml",
-        "services/authz/rbac.java",
-        "src/security/jwt_token.py",
-        # B — trust-boundary & I/O surface (routes / interfaces / schemas)
-        "src/api/routes/users.py",
-        "internal/controllers/order_controller.go",
-        "schema/graphql/user.graphql",
-        "api/openapi.yaml",
-        "src/serializers/payment.rb",
-        "src/handlers/webhook.ts",
-        "proto/order.proto",
-        # C — architecture, layers & data model
-        "src/models/user.py",
-        "db/migrations/0007_add_orders.sql",
-        "src/adapters/payment_gateway.ts",
-        "internal/repository/order_dao.java",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            # A — security primitives
+            "src/auth/login.py",
+            "lib/crypto/cipher.go",
+            "app/middleware/session.ts",
+            "internal/validation/sanitize.rs",
+            "config/cors.yaml",
+            "services/authz/rbac.java",
+            "src/security/jwt_token.py",
+            # B — trust-boundary & I/O surface (routes / interfaces / schemas)
+            "src/api/routes/users.py",
+            "internal/controllers/order_controller.go",
+            "schema/graphql/user.graphql",
+            "api/openapi.yaml",
+            "src/serializers/payment.rb",
+            "src/handlers/webhook.ts",
+            "proto/order.proto",
+            # C — architecture, layers & data model
+            "src/models/user.py",
+            "db/migrations/0007_add_orders.sql",
+            "src/adapters/payment_gateway.ts",
+            "internal/repository/order_dao.java",
+        ],
+    )
     def test_critical_paths_flagged(self, path):
         assert self.bs._classify_security_critical([path]) == [path]
 
-    @pytest.mark.parametrize("path", [
-        "src/products/catalog.py",
-        "web/styles/theme.css",
-        "docs/onboarding-guide.md",
-        "i18n/translations/de.json",
-    ])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "src/products/catalog.py",
+            "web/styles/theme.css",
+            "docs/onboarding-guide.md",
+            "i18n/translations/de.json",
+        ],
+    )
     def test_non_critical_paths_not_flagged(self, path):
         assert self.bs._classify_security_critical([path]) == []
 

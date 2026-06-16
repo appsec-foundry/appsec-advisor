@@ -11,6 +11,7 @@ Usage:
     python3 stamp_threat_model.py --output-dir docs/security [--slug a3f9]
                                   [--dest /path/to/collection]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,7 +35,7 @@ _BASENAMES = [
 def _stamped_name(basename: str, slug: str) -> str:
     """`threat-model.figure1.svg` → `threat-model-<slug>.figure1.svg`."""
     prefix = "threat-model"
-    rest = basename[len(prefix):]  # ".figure1.svg", ".md", …
+    rest = basename[len(prefix) :]  # ".figure1.svg", ".md", …
     return f"{prefix}-{slug}{rest}"
 
 

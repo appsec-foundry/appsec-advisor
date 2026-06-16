@@ -653,8 +653,7 @@ def test_extract_h3_section_body_bad_heading():
 
 def test_too_many_chain_blocks(tmp_path):
     blocks = "\n\n".join(
-        f"```mermaid\ngraph LR\n  A{i}[\"x T-001\"] --> B{i}[\"y\"]\n  classDef risk fill:#f00\n```"
-        for i in range(3)
+        f'```mermaid\ngraph LR\n  A{i}["x T-001"] --> B{i}["y"]\n  classDef risk fill:#f00\n```' for i in range(3)
     )
     md = _md(
         tmp_path,

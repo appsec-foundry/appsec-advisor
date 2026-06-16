@@ -136,6 +136,4 @@ def test_main_json_output_includes_extra_paths_and_returns_2(monkeypatch, tmp_pa
     payload = json.loads(capsys.readouterr().out)
     assert payload["checked_files"] == ["threat-model.md", "sidecar.txt"]
     assert payload["hit_count"] == 1
-    assert payload["by_file"] == {
-        "sidecar.txt": [{"pattern": "jwt", "snippet": "eyJ.header.payload", "line": 11}]
-    }
+    assert payload["by_file"] == {"sidecar.txt": [{"pattern": "jwt", "snippet": "eyJ.header.payload", "line": 11}]}

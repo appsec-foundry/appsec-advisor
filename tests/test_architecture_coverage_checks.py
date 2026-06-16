@@ -463,7 +463,9 @@ def test_authz_hyp_rule_direct_branches() -> None:
         rule_id="ARCH-AUTHZ-001",
         inventory_pattern={"sensitive_methods": ["DELETE"], "require_authz_signal_in": ["unknown"], "min_routes": 2},
     )
-    unauth = {"routes": [{"method": "DELETE", "path": "/items/:id", "authn_signal": "unknown", "authz_signal": "unknown"}]}
+    unauth = {
+        "routes": [{"method": "DELETE", "path": "/items/:id", "authn_signal": "unknown", "authz_signal": "unknown"}]
+    }
     assert acc._evaluate_authz_hyp_rule(rule, unauth)["skip_reason"] == "no authenticated routes — precondition not met"
 
     one_match = {
@@ -703,7 +705,9 @@ def test_generic_hypothesis_rule_precondition_exculpatory_and_positive_branches(
 
 def test_decision_helpers_cover_unknown_statuses() -> None:
     rule = _compiled_rule(output="anti_pattern_candidate")
-    assert acc._decision_for_hard(rule, {"applies": True, "status": "anti_pattern"}) == "emit_control_and_threat_candidate"
+    assert (
+        acc._decision_for_hard(rule, {"applies": True, "status": "anti_pattern"}) == "emit_control_and_threat_candidate"
+    )
     assert acc._decision_for_hard(rule, {"applies": True, "status": "other"}) == "no_action"
     assert acc._decision_for_hypothesis(rule, {"applies": False, "status": "weak"}) == "no_action"
     assert acc._decision_for_hypothesis(rule, {"applies": True, "status": "present"}) == "emit_control_only"

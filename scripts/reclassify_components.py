@@ -128,6 +128,7 @@ def _most_specific_candidate(
     the dangling §8 anchor AND is the semantically correct owner. Ties break
     toward `primary_id`, then lexicographically for run-to-run determinism.
     """
+
     def _best_spec(cid: str) -> int:
         best = -1
         for g in raw_glob_index.get(cid, []):
@@ -201,9 +202,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
     # placeholder component has to be resolved against an evidence file that
     # multiple components' globs match (see `_most_specific_candidate`).
     raw_glob_index = {
-        (c.get("id") or "").strip(): [
-            g.strip() for g in (c.get("paths") or []) if isinstance(g, str) and g.strip()
-        ]
+        (c.get("id") or "").strip(): [g.strip() for g in (c.get("paths") or []) if isinstance(g, str) and g.strip()]
         for c in components
         if isinstance(c, dict) and (c.get("id") or "").strip()
     }
@@ -253,9 +252,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
             #     component glob) → fall back to the primary application
             #     component so the link resolves to a real `#c-NN` anchor.
             if candidate_hits:
-                new_cid = _most_specific_candidate(
-                    files, candidate_hits.keys(), raw_glob_index, primary_id
-                )
+                new_cid = _most_specific_candidate(files, candidate_hits.keys(), raw_glob_index, primary_id)
                 token = f"phantom_component_resolved_from_{current}"
             elif primary_id != current:
                 new_cid = primary_id
@@ -302,11 +299,7 @@ def unresolved_phantoms(data: dict) -> list[tuple[str, str]]:
     set"; this surfaces violations instead of letting them ship silently.
     """
     components = data.get("components") or []
-    known = {
-        (c.get("id") or "").strip()
-        for c in components
-        if isinstance(c, dict) and (c.get("id") or "").strip()
-    }
+    known = {(c.get("id") or "").strip() for c in components if isinstance(c, dict) and (c.get("id") or "").strip()}
     if not known:
         return []
     out: list[tuple[str, str]] = []

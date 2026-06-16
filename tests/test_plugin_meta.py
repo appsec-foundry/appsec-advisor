@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 import plugin_meta as pm
-
+import pytest
 
 # --- _find_plugin_json / load_meta -----------------------------------------
 

@@ -901,9 +901,7 @@ class TestSec7QualityBar:
         body = colon + "\n" + "\n".join(f"### 7.{n} S{n}\n\np\n" for n in range(3, 14))
         _write_text(out_dir / "threat-model.md", _sec7_doc(body))
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
-        assert not any(f["kind"] == "sec7_v2_h4_labels" for f in r["findings"]), [
-            f["kind"] for f in r["findings"]
-        ]
+        assert not any(f["kind"] == "sec7_v2_h4_labels" for f in r["findings"]), [f["kind"] for f in r["findings"]]
 
     def test_legacy_flow_flagged(self, out_dir):
         body = (

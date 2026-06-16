@@ -13,6 +13,7 @@ real defect:
 Skips cleanly when mmdc + a launchable Chrome are not present (most CI), since
 the metric needs a real SVG render.
 """
+
 from __future__ import annotations
 
 import sys

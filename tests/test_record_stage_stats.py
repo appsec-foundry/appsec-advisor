@@ -488,9 +488,7 @@ def test_derive_dispatch_oserror_returns_none(tmp_path, monkeypatch):
         raise OSError("read fail")
 
     monkeypatch.setattr(Path, "open", boom_open)
-    assert (
-        rec._derive_dispatch_stats(log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z") is None
-    )
+    assert rec._derive_dispatch_stats(log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z") is None
 
 
 def test_derive_dispatch_bad_timestamp_returns_none(tmp_path, monkeypatch):
@@ -510,9 +508,7 @@ def test_derive_dispatch_bad_timestamp_returns_none(tmp_path, monkeypatch):
             raise ValueError("bad ts")
 
     monkeypatch.setattr(rec, "datetime", _DT)
-    assert (
-        rec._derive_dispatch_stats(log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z") is None
-    )
+    assert rec._derive_dispatch_stats(log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z") is None
     # sanity: real strptime still parses (not globally broken)
     assert real_strptime("2026-05-23T17:32:13Z", "%Y-%m-%dT%H:%M:%SZ")
 
@@ -521,13 +517,10 @@ def test_derive_dispatch_skips_nonmatching_lines(tmp_path):
     """Lines that don't match either regex are skipped (line 148 continue)."""
     log = tmp_path / ".hook-events.log"
     log.write_text(
-        "garbage line that matches nothing\n"
-        "another non-event line\n" + _MULTI_DISPATCH_LOG,
+        "garbage line that matches nothing\nanother non-event line\n" + _MULTI_DISPATCH_LOG,
         encoding="utf-8",
     )
-    out = rec._derive_dispatch_stats(
-        log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z"
-    )
+    out = rec._derive_dispatch_stats(log, "appsec-advisor:appsec-threat-analyst", "2026-05-23T17:00:00Z")
     assert out is not None
     assert out["dispatch_count"] == 1
 
@@ -536,9 +529,9 @@ def test_existing_stage_keys_skips_blank_and_malformed(tmp_path):
     """Blank lines (line 194) and JSONDecodeError lines (197-198) are skipped."""
     jsonl = tmp_path / ".stage-stats.jsonl"
     jsonl.write_text(
-        '\n'  # blank
-        '   \n'  # whitespace-only blank
-        '{ not json\n'  # malformed → JSONDecodeError
+        "\n"  # blank
+        "   \n"  # whitespace-only blank
+        "{ not json\n"  # malformed → JSONDecodeError
         '{"stage": 5}\n'  # valid int stage
         '{"stage": "x"}\n',  # stage not int → not added
         encoding="utf-8",
@@ -635,14 +628,26 @@ def test_accumulate_merges_wall_secs_observed_by_max(tmp_path):
         encoding="utf-8",
     )
     # STRIDE call first (narrow window ~240s), then analyst (full ~3780s).
-    rec.main(_acc(tmp_path, **{
-        "--duration-ms": "1000", "--subagent-type": "appsec-advisor:appsec-stride-analyzer",
-        "--since-iso": "2026-06-16T05:00:00Z",
-    }))
-    rec.main(_acc(tmp_path, **{
-        "--duration-ms": "2000", "--subagent-type": "appsec-advisor:appsec-threat-analyst",
-        "--since-iso": "2026-06-16T05:00:00Z",
-    }))
+    rec.main(
+        _acc(
+            tmp_path,
+            **{
+                "--duration-ms": "1000",
+                "--subagent-type": "appsec-advisor:appsec-stride-analyzer",
+                "--since-iso": "2026-06-16T05:00:00Z",
+            },
+        )
+    )
+    rec.main(
+        _acc(
+            tmp_path,
+            **{
+                "--duration-ms": "2000",
+                "--subagent-type": "appsec-advisor:appsec-threat-analyst",
+                "--since-iso": "2026-06-16T05:00:00Z",
+            },
+        )
+    )
     r = json.loads((tmp_path / ".stage-stats.jsonl").read_text().splitlines()[0])
     assert r["wall_secs_observed"] == 3780  # widest window kept, not the 240s one
     assert r["duration_ms"] == 3000

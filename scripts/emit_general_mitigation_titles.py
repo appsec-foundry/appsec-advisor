@@ -115,22 +115,22 @@ _GENERAL_TITLE_BY_CWE: dict[str, str] = {
 # original title) → title. Checked before the plain CWE map.
 _DISAMBIGUATE: dict[str, list[tuple[str, str]]] = {
     "CWE-347": [
-        (r"cosign|provenance|attest|sigstore|release|image|artifact|workflow|supply",
-         "Sign and verify release artifacts"),
-        (r"jwt|token|alg|expressjwt|rs256|hs256|decode|verify",
-         "Enforce JWT signature and algorithm verification"),
+        (
+            r"cosign|provenance|attest|sigstore|release|image|artifact|workflow|supply",
+            "Sign and verify release artifacts",
+        ),
+        (r"jwt|token|alg|expressjwt|rs256|hs256|decode|verify", "Enforce JWT signature and algorithm verification"),
     ],
     "CWE-400": [
-        (r"yaml|alias|anchor|xml|entity|bomb|zip|decompress|billion",
-         "Bound parser and decompression resource limits"),
-        (r"event loop|worker|cpu|vm\b|runincontext|thread|timeout|synchronous",
-         "Offload CPU-bound work and bound execution time"),
+        (r"yaml|alias|anchor|xml|entity|bomb|zip|decompress|billion", "Bound parser and decompression resource limits"),
+        (
+            r"event loop|worker|cpu|vm\b|runincontext|thread|timeout|synchronous",
+            "Offload CPU-bound work and bound execution time",
+        ),
     ],
     "CWE-770": [
-        (r"yaml|alias|anchor|xml|entity|bomb|zip|decompress",
-         "Bound parser and decompression resource limits"),
-        (r"rate|login|auth|lockout|captcha",
-         "Rate-limit and lock out repeated authentication attempts"),
+        (r"yaml|alias|anchor|xml|entity|bomb|zip|decompress", "Bound parser and decompression resource limits"),
+        (r"rate|login|auth|lockout|captcha", "Rate-limit and lock out repeated authentication attempts"),
     ],
 }
 
@@ -141,7 +141,7 @@ def _first_cwe(m: dict, threats_by_id: dict) -> str:
     for c in explicit:
         if c:
             return _norm_cwe(c)
-    for ref in (m.get("threat_ids") or m.get("addresses") or []):
+    for ref in m.get("threat_ids") or m.get("addresses") or []:
         t = threats_by_id.get((ref or "").strip().upper()) or {}
         c = (t.get("cwe") or "").strip()
         if c:
@@ -191,7 +191,7 @@ def _addressed_threats_have_detail(m: dict, threats_by_id: dict) -> bool:
     the §10 block already renders actionable detail beyond the title."""
     if (m.get("how") or "").strip() or m.get("how_code") or m.get("steps") or m.get("code_example"):
         return True
-    for ref in (m.get("threat_ids") or m.get("addresses") or []):
+    for ref in m.get("threat_ids") or m.get("addresses") or []:
         t = threats_by_id.get((ref or "").strip().upper()) or {}
         rem = t.get("remediation")
         if isinstance(rem, dict) and (rem.get("steps") or rem.get("code_example") or rem.get("summary")):

@@ -144,13 +144,18 @@ class TestEnforceNoDrift:
         assert count == 0
 
     def test_unmatched_threat_skipped(self, output_dir):
-        _write(output_dir, {"threats": [{"id": "T-999", "stride": "S"}]}, {"threats": [{"t_id": "T-001", "stride": "T"}]})
+        _write(
+            output_dir, {"threats": [{"id": "T-999", "stride": "S"}]}, {"threats": [{"t_id": "T-001", "stride": "T"}]}
+        )
         count, _ = eyi.enforce(output_dir, report_only=False)
         assert count == 0
 
     def test_non_dict_threat_skipped(self, output_dir):
-        _write(output_dir, {"threats": ["junk", {"id": "T-001", "stride": "S"}]},
-               {"threats": [{"t_id": "T-001", "stride": "S"}]})
+        _write(
+            output_dir,
+            {"threats": ["junk", {"id": "T-001", "stride": "S"}]},
+            {"threats": [{"t_id": "T-001", "stride": "S"}]},
+        )
         count, _ = eyi.enforce(output_dir, report_only=False)
         assert count == 0
 
@@ -188,8 +193,7 @@ class TestEnforceRepair:
     def test_evidence_drift_dict_to_list(self, output_dir):
         # yaml lost evidence rows that merged carries
         y = {"id": "T-001", "stride": "S", "evidence": {"file": "a.js", "line": 1}}
-        m = {"t_id": "T-001", "stride": "S",
-             "evidence": [{"file": "a.js", "line": 1}, {"file": "b.js", "line": 2}]}
+        m = {"t_id": "T-001", "stride": "S", "evidence": [{"file": "a.js", "line": 1}, {"file": "b.js", "line": 2}]}
         _write(output_dir, {"threats": [y]}, {"threats": [m]})
         count, drifts = eyi.enforce(output_dir, report_only=False)
         assert count == 1
@@ -202,8 +206,7 @@ class TestEnforceRepair:
     def test_evidence_drift_list_to_list_appends(self, output_dir):
         # yaml evidence is already a list missing one merged row -> append branch
         y = {"id": "T-001", "stride": "S", "evidence": [{"file": "a.js", "line": 1}]}
-        m = {"t_id": "T-001", "stride": "S",
-             "evidence": [{"file": "a.js", "line": 1}, {"file": "b.js", "line": 2}]}
+        m = {"t_id": "T-001", "stride": "S", "evidence": [{"file": "a.js", "line": 1}, {"file": "b.js", "line": 2}]}
         _write(output_dir, {"threats": [y]}, {"threats": [m]})
         count, _ = eyi.enforce(output_dir, report_only=False)
         assert count == 1
@@ -222,8 +225,7 @@ class TestEnforceRepair:
 
     def test_evidence_extra_in_yaml_not_flagged(self, output_dir):
         # yaml has MORE evidence than merged -> no drift (allowed enrichment)
-        y = {"id": "T-001", "stride": "S",
-             "evidence": [{"file": "a.js", "line": 1}, {"file": "extra.js", "line": 9}]}
+        y = {"id": "T-001", "stride": "S", "evidence": [{"file": "a.js", "line": 1}, {"file": "extra.js", "line": 9}]}
         m = {"t_id": "T-001", "stride": "S", "evidence": [{"file": "a.js", "line": 1}]}
         _write(output_dir, {"threats": [y]}, {"threats": [m]})
         count, _ = eyi.enforce(output_dir, report_only=False)

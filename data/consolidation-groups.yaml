@@ -7,8 +7,12 @@
 #
 # A finding consolidates only if it matches a group below. No match → it stays a
 # separate finding (per_instance default). This is deliberately conservative:
-# IDOR (CWE-639) and XSS (CWE-79) match NOTHING here, so they remain distinct
-# findings — different resources / different sinks are different objects.
+# XSS (CWE-79) matches NOTHING here, so XSS sinks remain distinct findings —
+# different sinks are different objects. IDOR (CWE-639) is consolidated
+# cross-component (see the idor-object-authz group): broken object-level
+# authorization is ONE systemic control gap, and listing every vulnerable route
+# as a separate Critical buried the signal under ~17 near-identical findings.
+# Each route is preserved as an `instances[]` entry on the single survivor.
 #
 # Matching: a threat joins the FIRST group whose `match_any` has an entry where
 # ALL present predicates hold. Predicates (all optional, AND within one entry):
@@ -59,3 +63,9 @@ groups:
     match_any:
       - cwe: [CWE-306, CWE-862, CWE-284]
         file_glob: ['**/registerWebsocketEvents.*', '**/* websocket*.*', '**/*socket*.*']
+
+  - id: idor-object-authz
+    title: "Insecure Direct Object Reference"
+    scope: cross-component          # broken object-level authz is one control gap
+    match_any:
+      - cwe: [CWE-639]

@@ -424,7 +424,15 @@ def test_figure1_complexity_budget_mutes_non_top_threat_components(tmp_path: Pat
         {"attack_paths": [{"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-001"]}]},
         {
             "glyph_sequence": ["①"],
-            "classes": [{"id": "injection", "label": "Injection", "short_label": "Injection", "default_actor": "internet-anon", "default_target_tier": "data"}],
+            "classes": [
+                {
+                    "id": "injection",
+                    "label": "Injection",
+                    "short_label": "Injection",
+                    "default_actor": "internet-anon",
+                    "default_target_tier": "data",
+                }
+            ],
         },
     )
     fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
@@ -442,22 +450,56 @@ def test_figure1_caps_tier_width_for_complex_apps(tmp_path: Path) -> None:
     preserved). Verifies box count is capped AND the note flags 'Also attacked'."""
     comps = [{"id": f"svc{i}", "name": f"Service {i}", "tier": "application"} for i in range(1, 13)]
     comps.append({"id": "db", "name": "Database", "tier": "data"})
-    threats = [{"id": f"F-{i:03d}", "title": f"weakness {i}", "component": f"svc{i}", "risk": "Critical"} for i in range(1, 13)]
+    threats = [
+        {"id": f"F-{i:03d}", "title": f"weakness {i}", "component": f"svc{i}", "risk": "Critical"} for i in range(1, 13)
+    ]
     threats.append({"id": "F-200", "title": "weak storage", "component": "db", "risk": "Medium"})
     out_dir = tmp_path / "out"
     out_dir.mkdir()
-    ctx = compose.RenderContext(output_dir=out_dir, contract={}, yaml_data={"components": comps, "threats": threats}, triage={}, fragments_dir=out_dir / ".fragments")
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={"components": comps, "threats": threats},
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
     # 6 classes, each hitting two distinct services → all 12 services are hosts.
-    classes = ["injection", "auth-bypass", "privilege-escalation", "remote-code-execution", "dos", "sensitive-data-exposure"]
-    aps = [{"class": c, "actor": "internet-anon", "target": "application", "findings": [f"F-{2 * i + 1:03d}", f"F-{2 * i + 2:03d}"]} for i, c in enumerate(classes)]
+    classes = [
+        "injection",
+        "auth-bypass",
+        "privilege-escalation",
+        "remote-code-execution",
+        "dos",
+        "sensitive-data-exposure",
+    ]
+    aps = [
+        {
+            "class": c,
+            "actor": "internet-anon",
+            "target": "application",
+            "findings": [f"F-{2 * i + 1:03d}", f"F-{2 * i + 2:03d}"],
+        }
+        for i, c in enumerate(classes)
+    ]
     tax = {
         "glyph_sequence": ["①", "②", "③", "④", "⑤", "⑥"],
-        "classes": [{"id": c, "label": c, "short_label": c, "default_actor": "internet-anon", "default_target_tier": "application"} for c in classes],
+        "classes": [
+            {
+                "id": c,
+                "label": c,
+                "short_label": c,
+                "default_actor": "internet-anon",
+                "default_target_tier": "application",
+            }
+            for c in classes
+        ],
     }
     md = compose._render_top_threats_architecture(ctx, {"attack_paths": aps}, tax)
     fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
     drawn = re.findall(r"CMP_SVC\d+\[", fig1)
-    assert len(drawn) <= compose._FIG1_MAX_TIER_DRAW, f"app tier drew {len(drawn)} boxes, cap is {compose._FIG1_MAX_TIER_DRAW}"
+    assert len(drawn) <= compose._FIG1_MAX_TIER_DRAW, (
+        f"app tier drew {len(drawn)} boxes, cap is {compose._FIG1_MAX_TIER_DRAW}"
+    )
     # the width-capped Critical hosts are named in the muted note with a §8 pointer
     assert "Critical/High finding in §8" in fig1, "capped Crit/High components must be named in the muted note"
 
@@ -477,8 +519,11 @@ def test_components_table_scope_column_marks_out_of_scope(tmp_path: Path) -> Non
         }
     }
     ctx = compose.RenderContext(
-        output_dir=out_dir, contract={}, yaml_data={"components": comps, "threats": [], "meta": meta},
-        triage={}, fragments_dir=out_dir / ".fragments",
+        output_dir=out_dir,
+        contract={},
+        yaml_data={"components": comps, "threats": [], "meta": meta},
+        triage={},
+        fragments_dir=out_dir / ".fragments",
     )
     out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
     assert "| ID | Name | Type | Key Paths | Linked Threats | Scope |" in out
@@ -496,8 +541,11 @@ def test_components_table_no_scope_column_without_selection(tmp_path: Path) -> N
     out_dir.mkdir()
     comps = [{"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]}]
     ctx = compose.RenderContext(
-        output_dir=out_dir, contract={}, yaml_data={"components": comps, "threats": []},
-        triage={}, fragments_dir=out_dir / ".fragments",
+        output_dir=out_dir,
+        contract={},
+        yaml_data={"components": comps, "threats": []},
+        triage={},
+        fragments_dir=out_dir / ".fragments",
     )
     out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
     assert "| ID | Name | Type | Key Paths | Linked Threats |" in out
@@ -527,10 +575,22 @@ def test_figure1_victim_classes_draw_a_dotted_edge_to_the_shop_user(tmp_path: Pa
     )
     md = compose._render_top_threats_architecture(
         ctx,
-        {"attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-001"]}]},
+        {
+            "attack_paths": [
+                {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-001"]}
+            ]
+        },
         {
             "glyph_sequence": ["①"],
-            "classes": [{"id": "cross-site-scripting", "label": "Cross-Site Scripting", "short_label": "XSS", "default_actor": "victim-required", "default_target_tier": "client"}],
+            "classes": [
+                {
+                    "id": "cross-site-scripting",
+                    "label": "Cross-Site Scripting",
+                    "short_label": "XSS",
+                    "default_actor": "victim-required",
+                    "default_target_tier": "client",
+                }
+            ],
         },
     )
     fig1 = md.split("```mermaid", 1)[1].split("```", 1)[0]
@@ -3555,8 +3615,12 @@ def test_quick_banner_discloses_carried_unverified_threats(tmp_path: Path) -> No
         ],
     }
     ctx = compose.RenderContext(
-        output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={},
-        fragments_dir=tmp_path, eval_context={"is_quick_depth": True},
+        output_dir=tmp_path,
+        contract={},
+        yaml_data=yaml_data,
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"is_quick_depth": True},
     )
     out = compose._render_quick_mode_notice(ctx, compose._build_jinja_env(ctx), {})
     assert "2 prior findings carried forward" in out
@@ -3564,11 +3628,14 @@ def test_quick_banner_discloses_carried_unverified_threats(tmp_path: Path) -> No
 
 
 def test_quick_banner_no_disclosure_when_no_carried_threats(tmp_path: Path) -> None:
-    yaml_data = {"components": [], "threats": [
-        {"id": "T-001", "component": "api", "evidence_check": "unchecked"}]}
+    yaml_data = {"components": [], "threats": [{"id": "T-001", "component": "api", "evidence_check": "unchecked"}]}
     ctx = compose.RenderContext(
-        output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={},
-        fragments_dir=tmp_path, eval_context={"is_quick_depth": True},
+        output_dir=tmp_path,
+        contract={},
+        yaml_data=yaml_data,
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"is_quick_depth": True},
     )
     out = compose._render_quick_mode_notice(ctx, compose._build_jinja_env(ctx), {})
     assert "carried forward" not in out
@@ -3630,8 +3697,10 @@ def test_index_short_title_keeps_backticks_balanced():
     span — an odd backtick bled M-017's title into M-018..M-025 as one giant
     code span (the catastrophic 2026-06-12 break)."""
     f = compose._index_short_title
-    t = ("Replace `.decode(token)` with `.verify(token, key, { algorithms: [...] })` "
-         "and gate authorization on the verified payload only.")
+    t = (
+        "Replace `.decode(token)` with `.verify(token, key, { algorithms: [...] })` "
+        "and gate authorization on the verified payload only."
+    )
     out = f(t)
     assert out.count("`") % 2 == 0, out
     assert out.endswith("…")
@@ -3684,9 +3753,9 @@ def test_attack_class_taxonomy_uses_us_english():
 
 def test_paragraphize_issue_card_splits_long_narrative():
     f = compose._paragraphize_issue_card
-    long = ("**Issue:** " + " ".join(
+    long = "**Issue:** " + " ".join(
         f"Sentence number {i} describes a distinct security beat in detail here." for i in range(1, 7)
-    ))
+    )
     out = f(long)
     assert out.count("\n\n") >= 2  # multiple paragraphs
     assert out.startswith("**Issue:** ")
@@ -3703,13 +3772,21 @@ def test_prose_linkifier_table_cells_use_emdash_form():
     parens short form. Genuine inline prose keeps the parens form."""
     yaml_data = {
         "threats": [
-            {"id": "T-014", "title": "Server-Side Template Injection — routes/userProfile.ts:62",
-             "risk": "Critical", "cwe": "CWE-94",
-             "evidence": {"file": "routes/userProfile.ts", "line": 62}},
+            {
+                "id": "T-014",
+                "title": "Server-Side Template Injection — routes/userProfile.ts:62",
+                "risk": "Critical",
+                "cwe": "CWE-94",
+                "evidence": {"file": "routes/userProfile.ts", "line": 62},
+            },
         ],
     }
     ctx = compose.RenderContext(
-        output_dir=Path("."), contract={}, yaml_data=yaml_data, triage={}, fragments_dir=Path("."),
+        output_dir=Path("."),
+        contract={},
+        yaml_data=yaml_data,
+        triage={},
+        fragments_dir=Path("."),
     )
     table_md = "| GET | `/profile` | Critical | [F-014](#f-014) |"
     prose_md = "The attacker exploits [F-014](#f-014) directly."
@@ -3739,11 +3816,20 @@ def _fig1_ctx(out: Path) -> compose.RenderContext:
     )
 
 
-_FIG1_APD = {"attack_paths": [{"class": "injection", "actor": "internet-anon",
-                               "target": "application", "findings": ["F-001"]}]}
-_FIG1_TAX = {"glyph_sequence": ["①"], "classes": [
-    {"id": "injection", "short_label": "Injection",
-     "default_actor": "internet-anon", "default_target_tier": "application"}]}
+_FIG1_APD = {
+    "attack_paths": [{"class": "injection", "actor": "internet-anon", "target": "application", "findings": ["F-001"]}]
+}
+_FIG1_TAX = {
+    "glyph_sequence": ["①"],
+    "classes": [
+        {
+            "id": "injection",
+            "short_label": "Injection",
+            "default_actor": "internet-anon",
+            "default_target_tier": "application",
+        }
+    ],
+}
 
 
 def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:

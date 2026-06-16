@@ -282,14 +282,25 @@ class TestConsolidateConfigChecks:
 
 class TestDeclassifyConfigTitle:
     def test_dash_file_locator_stripped(self, mt):
-        assert mt._declassify_config_title("Base image must be digest-pinned — Dockerfile") == "Base image must be digest-pinned"
-        assert mt._declassify_config_title("GITHUB_TOKEN scope minimization — ci.yml") == "GITHUB_TOKEN scope minimization"
+        assert (
+            mt._declassify_config_title("Base image must be digest-pinned — Dockerfile")
+            == "Base image must be digest-pinned"
+        )
+        assert (
+            mt._declassify_config_title("GITHUB_TOKEN scope minimization — ci.yml") == "GITHUB_TOKEN scope minimization"
+        )
 
     def test_paren_file_locator_stripped(self, mt):
-        assert mt._declassify_config_title("Workflow-level permissions block (ci.yml)") == "Workflow-level permissions block"
+        assert (
+            mt._declassify_config_title("Workflow-level permissions block (ci.yml)")
+            == "Workflow-level permissions block"
+        )
 
     def test_line_suffix_stripped(self, mt):
-        assert mt._declassify_config_title("No --unsafe-perm install flag — Dockerfile:5") == "No --unsafe-perm install flag"
+        assert (
+            mt._declassify_config_title("No --unsafe-perm install flag — Dockerfile:5")
+            == "No --unsafe-perm install flag"
+        )
 
     def test_plain_dash_title_preserved(self, mt):
         # A hyphenated word / non-file dash tail must survive.
@@ -665,19 +676,20 @@ class TestResolvedPriorUnion:
     def test_union_stamps_component_id(self, mt):
         pairs = [
             ("auth", {"resolved_prior_findings": [{"prior_id": "T-007", "reason": "fixed"}]}),
-            ("api", {"resolved_prior_findings": [
-                {"prior_id": "T-009", "reason": "patched", "component_id": "explicit"}]}),
+            (
+                "api",
+                {"resolved_prior_findings": [{"prior_id": "T-009", "reason": "patched", "component_id": "explicit"}]},
+            ),
             ("empty", {"threats": []}),
         ]
         out = mt._collect_resolved_prior_findings(pairs)
         assert {r["prior_id"] for r in out} == {"T-007", "T-009"}
         by_id = {r["prior_id"]: r for r in out}
-        assert by_id["T-007"]["component_id"] == "auth"        # stamped from pair
-        assert by_id["T-009"]["component_id"] == "explicit"    # caller value preserved
+        assert by_id["T-007"]["component_id"] == "auth"  # stamped from pair
+        assert by_id["T-009"]["component_id"] == "explicit"  # caller value preserved
 
     def test_skips_entries_without_prior_id(self, mt):
-        pairs = [("auth", {"resolved_prior_findings": [
-            {"reason": "no id"}, {"prior_id": "T-1", "reason": "ok"}]})]
+        pairs = [("auth", {"resolved_prior_findings": [{"reason": "no id"}, {"prior_id": "T-1", "reason": "ok"}]})]
         out = mt._collect_resolved_prior_findings(pairs)
         assert [r["prior_id"] for r in out] == ["T-1"]
 
@@ -687,10 +699,17 @@ class TestResolvedPriorUnion:
 # ---------------------------------------------------------------------------
 
 
-def _jwt(file_path, line, *, cwe="CWE-347", title="JWT verify call missing algorithms allowlist",
-         component_id="backend-api", risk="High", **extra):
-    t = _threat(cwe=cwe, title=title, stride="Spoofing", risk=risk,
-                evidence={"file": file_path, "line": line})
+def _jwt(
+    file_path,
+    line,
+    *,
+    cwe="CWE-347",
+    title="JWT verify call missing algorithms allowlist",
+    component_id="backend-api",
+    risk="High",
+    **extra,
+):
+    t = _threat(cwe=cwe, title=title, stride="Spoofing", risk=risk, evidence={"file": file_path, "line": line})
     t["component_id"] = component_id
     t.update(extra)
     return t
@@ -699,12 +718,27 @@ def _jwt(file_path, line, *, cwe="CWE-347", title="JWT verify call missing algor
 class TestConsolidateByGroup:
     def test_jwt_verification_merges_cross_component_cross_cwe(self, mt):
         members = [
-            _jwt("lib/insecurity.ts", 191, title="JWT Algorithm Confusion Missing algorithms Allowlist",
-                 risk="Critical", component_id="auth"),
-            _jwt("lib/insecurity.ts", 58, cwe="CWE-287",
-                 title="JWT Decode Without Signature Verification", component_id="auth"),
-            _jwt("lib/insecurity.ts", 58, cwe="CWE-345",
-                 title="JWT decode used without signature verification", component_id="auth"),
+            _jwt(
+                "lib/insecurity.ts",
+                191,
+                title="JWT Algorithm Confusion Missing algorithms Allowlist",
+                risk="Critical",
+                component_id="auth",
+            ),
+            _jwt(
+                "lib/insecurity.ts",
+                58,
+                cwe="CWE-287",
+                title="JWT Decode Without Signature Verification",
+                component_id="auth",
+            ),
+            _jwt(
+                "lib/insecurity.ts",
+                58,
+                cwe="CWE-345",
+                title="JWT decode used without signature verification",
+                component_id="auth",
+            ),
             _jwt("routes/chatbot.ts", 248, component_id="backend-api"),
             _jwt("routes/verify.ts", 117, component_id="backend-api"),
         ]
@@ -719,23 +753,45 @@ class TestConsolidateByGroup:
         assert "lib/insecurity.ts" in s["affected_files"]
         assert "routes/chatbot.ts" in s["affected_files"]
 
-    def test_idor_never_consolidates(self, mt):
-        # CWE-639 matches no group → each resource stays its own finding.
+    def test_idor_consolidates_cross_component(self, mt):
+        # CWE-639 joins the idor-object-authz group (cross-component): broken
+        # object-level authz is ONE systemic control gap. Each route survives
+        # as an instance, not as a separate Critical. (Reversed 2026-06 from
+        # the earlier per-instance rule once ~17 near-identical IDOR findings
+        # buried the signal.) XSS (CWE-79) still stays separate.
         idor = [
-            _threat(cwe="CWE-639", title="Broken authorization attacker-controlled owner ID",
-                    evidence={"file": "routes/address.ts", "line": 11}, component_id="backend-api"),
-            _threat(cwe="CWE-639", title="Broken authorization attacker-controlled owner ID",
-                    evidence={"file": "routes/wallet.ts", "line": 12}, component_id="backend-api"),
+            _threat(
+                cwe="CWE-639",
+                title="Broken authorization attacker-controlled owner ID",
+                evidence={"file": "routes/address.ts", "line": 11},
+                component_id="backend-api",
+            ),
+            _threat(
+                cwe="CWE-639",
+                title="Broken authorization attacker-controlled owner ID",
+                evidence={"file": "routes/wallet.ts", "line": 12},
+                component_id="frontend-spa",
+            ),
         ]
         out = mt._consolidate_by_group([dict(t) for t in idor])
-        assert len(out) == 2
-        assert not any(t.get("systemic") for t in out)
+        survivors = [t for t in out if t.get("consolidation_group") == "idor-object-authz"]
+        assert len(survivors) == 1
+        s = survivors[0]
+        assert s["systemic"] is True
+        assert s["title"] == "Insecure Direct Object Reference"
+        assert s["instance_count"] == 2
+        assert "routes/address.ts" in s["affected_files"]
+        assert "routes/wallet.ts" in s["affected_files"]
 
     def test_missing_route_auth_groups_by_source_check_id(self, mt):
         rows = [
-            _threat(cwe="CWE-862", title="Sensitive REST route registered without authentication middleware",
-                    evidence={"file": "server.ts", "line": ln}, component_id="backend-api",
-                    source_check_id="AUTHZ-008")
+            _threat(
+                cwe="CWE-862",
+                title="Sensitive REST route registered without authentication middleware",
+                evidence={"file": "server.ts", "line": ln},
+                component_id="backend-api",
+                source_check_id="AUTHZ-008",
+            )
             for ln in (310, 311, 407)
         ]
         out = mt._consolidate_by_group(rows)
@@ -769,12 +825,20 @@ class TestConsolidateByGroup:
 
     def test_folds_in_existing_config_survivor_instances(self, mt):
         # A config-scan survivor already carrying instances[] is flattened, not nested.
-        pre = _threat(cwe="CWE-506", title="npm install without --ignore-scripts",
-                      evidence={"file": "package.json", "line": 1}, component_id="ci-cd-pipeline")
+        pre = _threat(
+            cwe="CWE-506",
+            title="npm install without --ignore-scripts",
+            evidence={"file": "package.json", "line": 1},
+            component_id="ci-cd-pipeline",
+        )
         pre["instances"] = [{"file": "package.json", "line": 1}, {"file": "package.json", "line": 88}]
         pre["systemic"] = True
-        other = _threat(cwe="CWE-506", title="Postinstall hook",
-                        evidence={"file": "package.json", "line": 88}, component_id="ci-cd-pipeline")
+        other = _threat(
+            cwe="CWE-506",
+            title="Postinstall hook",
+            evidence={"file": "package.json", "line": 88},
+            component_id="ci-cd-pipeline",
+        )
         out = mt._consolidate_by_group([pre, other])
         s = next(t for t in out if t.get("consolidation_group") == "npm-install-scripts")
         assert s["instance_count"] == 3  # 2 flattened + 1, NOT a nested instances list
@@ -787,8 +851,13 @@ class TestConsolidationGroupMatching:
     def test_groups_load_from_catalog(self, mt):
         groups = mt._load_consolidation_groups()
         ids = {g["id"] for g in groups}
-        assert {"jwt-verification", "missing-route-auth", "dependabot-ecosystems",
-                "npm-install-scripts", "unauth-websocket-channel"} <= ids
+        assert {
+            "jwt-verification",
+            "missing-route-auth",
+            "dependabot-ecosystems",
+            "npm-install-scripts",
+            "unauth-websocket-channel",
+        } <= ids
 
     def test_glob_match_double_star_prefix_and_basename(self, mt):
         assert mt._glob_match("frontend/src/app/registerWebsocketEvents.ts", "**/registerWebsocketEvents.*")
@@ -799,19 +868,28 @@ class TestConsolidationGroupMatching:
     def test_crit_empty_never_matches(self, mt):
         # Guard: a crit with no recognized predicate must NOT swallow every finding.
         assert mt._crit_matches({}, cwe="CWE-89", title="x", file_path="a.ts", scid="", ccid="") is False
-        assert mt._crit_matches({"unknown_key": 1}, cwe="CWE-89", title="x", file_path="a.ts", scid="", ccid="") is False
+        assert (
+            mt._crit_matches({"unknown_key": 1}, cwe="CWE-89", title="x", file_path="a.ts", scid="", ccid="") is False
+        )
 
     def test_crit_all_predicates_must_hold(self, mt):
         crit = {"cwe": ["CWE-347"], "title_pattern": r"(?i)jwt"}
         assert mt._crit_matches(crit, cwe="CWE-347", title="JWT verify", file_path="", scid="", ccid="")
-        assert not mt._crit_matches(crit, cwe="CWE-347", title="no match", file_path="", scid="", ccid="")  # title fails
-        assert not mt._crit_matches(crit, cwe="CWE-639", title="JWT verify", file_path="", scid="", ccid="")  # cwe fails
+        assert not mt._crit_matches(
+            crit, cwe="CWE-347", title="no match", file_path="", scid="", ccid=""
+        )  # title fails
+        assert not mt._crit_matches(
+            crit, cwe="CWE-639", title="JWT verify", file_path="", scid="", ccid=""
+        )  # cwe fails
 
     def test_match_handles_list_shaped_evidence(self, mt):
         # Regression: evidence is a list in the final yaml; file_glob match must
         # still read evidence[0].file instead of crashing.
-        t = {"cwe": "CWE-306", "title": "Unauthenticated WS",
-             "evidence": [{"file": "server/registerWebsocketEvents.ts", "line": 41}]}
+        t = {
+            "cwe": "CWE-306",
+            "title": "Unauthenticated WS",
+            "evidence": [{"file": "server/registerWebsocketEvents.ts", "line": 41}],
+        }
         g = mt._match_consolidation_group(t, mt._load_consolidation_groups())
         assert g is not None and g["id"] == "unauth-websocket-channel"
 
@@ -820,15 +898,23 @@ class TestConsolidationGroupMatching:
         per = {"id": "g"}  # default per-component
         a = {"component_id": "auth"}
         b = {"component_id": "api"}
-        assert mt._group_bucket_key(a, cross) == mt._group_bucket_key(b, cross)   # merge across components
-        assert mt._group_bucket_key(a, per) != mt._group_bucket_key(b, per)       # kept apart
+        assert mt._group_bucket_key(a, cross) == mt._group_bucket_key(b, cross)  # merge across components
+        assert mt._group_bucket_key(a, per) != mt._group_bucket_key(b, per)  # kept apart
 
     def test_dependabot_file_glob_group_consolidates(self, mt):
         rows = [
-            _threat(cwe="CWE-1104", title="Dependabot npm ecosystem not configured",
-                    evidence={"file": ".github/dependabot.yml", "line": 1}, component_id="ci-cd-pipeline"),
-            _threat(cwe="CWE-1104", title="Dependabot docker ecosystem not configured",
-                    evidence={"file": ".github/dependabot.yml", "line": 2}, component_id="ci-cd-pipeline"),
+            _threat(
+                cwe="CWE-1104",
+                title="Dependabot npm ecosystem not configured",
+                evidence={"file": ".github/dependabot.yml", "line": 1},
+                component_id="ci-cd-pipeline",
+            ),
+            _threat(
+                cwe="CWE-1104",
+                title="Dependabot docker ecosystem not configured",
+                evidence={"file": ".github/dependabot.yml", "line": 2},
+                component_id="ci-cd-pipeline",
+            ),
         ]
         out = mt._consolidate_by_group(rows)
         survivors = [t for t in out if t.get("consolidation_group") == "dependabot-ecosystems"]
@@ -838,9 +924,15 @@ class TestConsolidationGroupMatching:
         # Two components, each with 2 matching findings: per-component scope must
         # produce TWO survivors (they must NOT cross-merge into one).
         rows = [
-            _threat(cwe="CWE-862", title="Sensitive REST route registered without authentication middleware",
-                    evidence={"file": "server.ts", "line": ln}, component_id=comp, source_check_id="AUTHZ-008")
-            for comp in ("api-a", "api-b") for ln in (1, 2)
+            _threat(
+                cwe="CWE-862",
+                title="Sensitive REST route registered without authentication middleware",
+                evidence={"file": "server.ts", "line": ln},
+                component_id=comp,
+                source_check_id="AUTHZ-008",
+            )
+            for comp in ("api-a", "api-b")
+            for ln in (1, 2)
         ]
         out = mt._consolidate_by_group(rows)
         survivors = [t for t in out if t.get("consolidation_group") == "missing-route-auth"]
@@ -852,9 +944,13 @@ class TestConsolidationGroupMatching:
 class TestConsolidationCollectIntegration:
     def test_collect_consolidates_authz008_into_one_finding(self, mt, tmp_path):
         routes = [
-            _threat(cwe="CWE-862", title="Sensitive REST route registered without authentication middleware",
-                    stride="Elevation of Privilege", evidence={"file": "server.ts", "line": ln},
-                    source_check_id="AUTHZ-008")
+            _threat(
+                cwe="CWE-862",
+                title="Sensitive REST route registered without authentication middleware",
+                stride="Elevation of Privilege",
+                evidence={"file": "server.ts", "line": ln},
+                source_check_id="AUTHZ-008",
+            )
             for ln in (310, 311, 407)
         ]
         _write_stride(tmp_path, "backend-api", routes)
@@ -1206,15 +1302,29 @@ class TestConsolidationInternals:
             "title_pattern": "jwt",
             "file_glob": ["**/insecurity.ts"],
         }
-        assert mt._crit_matches(
-            crit, cwe="CWE-347", title="jwt verify", file_path="lib/insecurity.ts",
-            scid="AUTHZ-005", ccid="IAC-001",
-        ) is True
+        assert (
+            mt._crit_matches(
+                crit,
+                cwe="CWE-347",
+                title="jwt verify",
+                file_path="lib/insecurity.ts",
+                scid="AUTHZ-005",
+                ccid="IAC-001",
+            )
+            is True
+        )
         # cwe mismatch → False
-        assert mt._crit_matches(
-            crit, cwe="CWE-99", title="jwt verify", file_path="lib/insecurity.ts",
-            scid="AUTHZ-005", ccid="IAC-001",
-        ) is False
+        assert (
+            mt._crit_matches(
+                crit,
+                cwe="CWE-99",
+                title="jwt verify",
+                file_path="lib/insecurity.ts",
+                scid="AUTHZ-005",
+                ccid="IAC-001",
+            )
+            is False
+        )
 
     def test_crit_matches_bad_regex_returns_false(self, mt):
         # lines 872-873: invalid regex → False (re.error swallowed).
@@ -1283,10 +1393,15 @@ class TestEndpointSecondaryGrouping:
     def test_secondary_group_distinct_cwe_same_endpoint(self, mt):
         # lines 1108-1148: endpoint-based secondary grouping when primary
         # (CWE,STRIDE) does not group them.
-        t1 = _threat(cwe="CWE-915", stride="Tampering", title="Mass assign POST /api/Users",
-                     evidence={"file": "r.ts", "line": 1})
-        t2 = _threat(cwe="CWE-269", stride="Elevation of Privilege",
-                     title="Admin role via POST /api/Users", evidence={"file": "r.ts", "line": 2})
+        t1 = _threat(
+            cwe="CWE-915", stride="Tampering", title="Mass assign POST /api/Users", evidence={"file": "r.ts", "line": 1}
+        )
+        t2 = _threat(
+            cwe="CWE-269",
+            stride="Elevation of Privilege",
+            title="Admin role via POST /api/Users",
+            evidence={"file": "r.ts", "line": 2},
+        )
         groups = mt._group_candidates([t1, t2])
         ge = [g for g in groups if g.get("group_key") == "endpoint_family"]
         assert ge, "expected an endpoint_family secondary group"
@@ -1297,10 +1412,12 @@ class TestEndpointSecondaryGrouping:
         # would have caught it). Use a single endpoint, identical key, but
         # different file so primary grouping DOES fire (len>=2) and consumes
         # them, leaving nothing for secondary.
-        t1 = _threat(cwe="CWE-89", stride="Tampering", title="SQLi GET /api/users a",
-                     evidence={"file": "a.ts", "line": 1})
-        t2 = _threat(cwe="CWE-89", stride="Tampering", title="SQLi GET /api/users b",
-                     evidence={"file": "b.ts", "line": 2})
+        t1 = _threat(
+            cwe="CWE-89", stride="Tampering", title="SQLi GET /api/users a", evidence={"file": "a.ts", "line": 1}
+        )
+        t2 = _threat(
+            cwe="CWE-89", stride="Tampering", title="SQLi GET /api/users b", evidence={"file": "b.ts", "line": 2}
+        )
         groups = mt._group_candidates([t1, t2])
         # primary cwe_stride group present, no endpoint_family group.
         assert any(g.get("group_key") == "cwe_stride" for g in groups)
@@ -1343,14 +1460,17 @@ class TestApplyDecisionsBranches:
     def _two_group(self):
         # two threats sharing (CWE, STRIDE) → one group.
         return [
-            _threat(cwe="CWE-89", stride="Tampering", component_id="a",
-                    title="SQLi a", evidence={"file": "a.ts", "line": 1}),
-            _threat(cwe="CWE-89", stride="Tampering", component_id="b",
-                    title="SQLi b", evidence={"file": "b.ts", "line": 2}),
+            _threat(
+                cwe="CWE-89", stride="Tampering", component_id="a", title="SQLi a", evidence={"file": "a.ts", "line": 1}
+            ),
+            _threat(
+                cwe="CWE-89", stride="Tampering", component_id="b", title="SQLi b", evidence={"file": "b.ts", "line": 2}
+            ),
         ]
 
     def _gid(self, mt, threats):
         import hashlib
+
         key = ("CWE-89", "Tampering")
         n = sum(1 for t in threats if (t.get("cwe"), t.get("stride")) == key)
         return "G-" + hashlib.sha256(f"CWE-89|Tampering|{n}".encode()).hexdigest()[:8]
@@ -1386,17 +1506,17 @@ class TestApplyDecisionsBranches:
         # line 1396: consolidate out-of-range target → continue.
         threats = self._two_group()
         gid = self._gid(mt, threats)
-        out = mt._apply_decisions(
-            threats, [{"group_id": gid, "action": "consolidate", "merge_target_index": 99}]
-        )
+        out = mt._apply_decisions(threats, [{"group_id": gid, "action": "consolidate", "merge_target_index": 99}])
         assert len(out) == 2
 
 
 class TestCmdCollectFinalizeBranches:
     def test_collect_no_stride_files(self, mt, tmp_path, capsys):
         # lines 1444-1445: dir exists but no .stride-*.json → error.
-        rc = mt.cmd_collect_argv(tmp_path) if hasattr(mt, "cmd_collect_argv") else mt.main(
-            ["collect", "--output-dir", str(tmp_path)]
+        rc = (
+            mt.cmd_collect_argv(tmp_path)
+            if hasattr(mt, "cmd_collect_argv")
+            else mt.main(["collect", "--output-dir", str(tmp_path)])
         )
         assert rc == 1
         assert "no .stride-*.json" in capsys.readouterr().err
@@ -1465,6 +1585,7 @@ class TestCmdCollectFinalizeBranches:
             t["id"] = "F-001"
         cand_path.write_text(json.dumps(cand), encoding="utf-8")
         import yaml as _y
+
         (tmp_path / "threat-model.yaml").write_text(
             _y.safe_dump({"attack_surface": [{"linked_threats": ["T-999"]}]}), encoding="utf-8"
         )

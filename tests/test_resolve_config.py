@@ -557,8 +557,13 @@ class TestResolveIncrementalMode:
         self._yaml_with_depth(tmp_path, "quick")
         ns = rc.build_parser().parse_args(["--assessment-depth", "thorough"])
         out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False)
-        cfg = {"mode": "full", "incremental": False, "baseline_state": "structured",
-               "mode_label": out["mode_label"], "depth_upgrade_reason": out["depth_upgrade_reason"]}
+        cfg = {
+            "mode": "full",
+            "incremental": False,
+            "baseline_state": "structured",
+            "mode_label": out["mode_label"],
+            "depth_upgrade_reason": out["depth_upgrade_reason"],
+        }
         v = rc._run_plan_verdict(cfg, None, None, None)
         assert v["verdict"] == "RUN — full assessment (existing model)"
         assert "incremental cannot deepen" in v["reason"]
@@ -574,9 +579,7 @@ class TestResolveIncrementalMode:
     def test_requirements_added_off_to_on_forces_full(self, tmp_path):
         self._yaml_with_req(tmp_path, False)
         ns = rc.build_parser().parse_args([])
-        out = rc.resolve_incremental_mode(
-            ns, tmp_path, dry_run=False, cur_check_requirements=True
-        )
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False, cur_check_requirements=True)
         assert out["mode"] == "full"
         assert out["incremental"] is False
         assert "requirements added" in out["mode_label"]
@@ -588,9 +591,7 @@ class TestResolveIncrementalMode:
         self._yaml_with_req(tmp_path, True)
         ns = rc.build_parser().parse_args([])
         with pytest.raises(SystemExit) as exc:
-            rc.resolve_incremental_mode(
-                ns, tmp_path, dry_run=False, cur_check_requirements=False
-            )
+            rc.resolve_incremental_mode(ns, tmp_path, dry_run=False, cur_check_requirements=False)
         msg = str(exc.value)
         assert "requirements disabled" in msg
         assert "--full" in msg
@@ -598,28 +599,20 @@ class TestResolveIncrementalMode:
     def test_requirements_unchanged_on_stays_incremental(self, tmp_path):
         self._yaml_with_req(tmp_path, True)
         ns = rc.build_parser().parse_args([])
-        out = rc.resolve_incremental_mode(
-            ns, tmp_path, dry_run=False, cur_check_requirements=True
-        )
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False, cur_check_requirements=True)
         assert out["mode"] == "incremental"
 
     def test_requirements_unchanged_off_stays_incremental(self, tmp_path):
         self._yaml_with_req(tmp_path, False)
         ns = rc.build_parser().parse_args([])
-        out = rc.resolve_incremental_mode(
-            ns, tmp_path, dry_run=False, cur_check_requirements=False
-        )
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False, cur_check_requirements=False)
         assert out["mode"] == "incremental"
 
     def test_requirements_baseline_without_field_stays_incremental(self, tmp_path):
         # Pre-feature baseline (no meta.check_requirements) → unknown → no gate.
-        (tmp_path / "threat-model.yaml").write_text(
-            "meta:\n  schema_version: 1\nthreats: []\n"
-        )
+        (tmp_path / "threat-model.yaml").write_text("meta:\n  schema_version: 1\nthreats: []\n")
         ns = rc.build_parser().parse_args([])
-        out = rc.resolve_incremental_mode(
-            ns, tmp_path, dry_run=False, cur_check_requirements=False
-        )
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False, cur_check_requirements=False)
         assert out["mode"] == "incremental"
 
     def test_requirements_cur_unknown_skips_gate(self, tmp_path):
@@ -634,20 +627,20 @@ class TestResolveIncrementalMode:
         # same honor-the-explicit-flag contract as the depth-increase override.
         self._yaml_with_req(tmp_path, True)
         ns = rc.build_parser().parse_args(["--incremental"])
-        out = rc.resolve_incremental_mode(
-            ns, tmp_path, dry_run=False, cur_check_requirements=False
-        )
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False, cur_check_requirements=False)
         assert out["mode"] == "incremental"
 
     def test_requirements_added_reason_flows_into_run_plan_verdict(self, tmp_path):
         self._yaml_with_req(tmp_path, False)
         ns = rc.build_parser().parse_args([])
-        out = rc.resolve_incremental_mode(
-            ns, tmp_path, dry_run=False, cur_check_requirements=True
-        )
-        cfg = {"mode": "full", "incremental": False, "baseline_state": "structured",
-               "mode_label": out["mode_label"],
-               "mode_upgraded_reason": out["mode_upgraded_reason"]}
+        out = rc.resolve_incremental_mode(ns, tmp_path, dry_run=False, cur_check_requirements=True)
+        cfg = {
+            "mode": "full",
+            "incremental": False,
+            "baseline_state": "structured",
+            "mode_label": out["mode_label"],
+            "mode_upgraded_reason": out["mode_upgraded_reason"],
+        }
         v = rc._run_plan_verdict(cfg, None, None, None)
         assert v["verdict"] == "RUN — full assessment (existing model)"
         assert "incremental cannot add requirement coverage" in v["reason"]
@@ -1210,16 +1203,12 @@ class TestRenderConfigurationSummary:
         assert "Run Plan" in out
 
     def test_incremental_scope_line(self):
-        out = rc.render_configuration_summary(
-            _base_cfg(incremental=True, scope=["auth", "api"])
-        )
+        out = rc.render_configuration_summary(_base_cfg(incremental=True, scope=["auth", "api"]))
         assert "incremental delta" in out
         assert "user focus: auth api" in out
 
     def test_incremental_scope_no_focus(self):
-        out = rc.render_configuration_summary(
-            _base_cfg(incremental=True, scope=[])
-        )
+        out = rc.render_configuration_summary(_base_cfg(incremental=True, scope=[]))
         assert "incremental delta from previous threat-model.yaml" in out
 
     def test_full_repository_scope(self):
@@ -1251,9 +1240,7 @@ class TestRenderConfigurationSummary:
         assert "outside the repository" in out
 
     def test_post_summary_repo_size_capped(self):
-        out = rc.render_configuration_summary(
-            _base_cfg(repo_size_capped=True, repo_size_source_files=99999)
-        )
+        out = rc.render_configuration_summary(_base_cfg(repo_size_capped=True, repo_size_source_files=99999))
         assert "large repository" in out
         assert "99999" in out
 
@@ -1292,9 +1279,7 @@ class TestFormatReasoningSummary:
         assert "no-opus ceiling" in s
 
     def test_auto_switched_large_repo(self):
-        s = rc._format_reasoning_summary(
-            _base_cfg(opus_disabled=False, reasoning_auto_switched=True)
-        )
+        s = rc._format_reasoning_summary(_base_cfg(opus_disabled=False, reasoning_auto_switched=True))
         assert "auto-switched for large repo" in s
 
     def test_sonnet_economy_special(self):
@@ -1380,26 +1365,20 @@ class TestSummaryActiveOptions:
     def test_limits_wall_time_hours_and_cost(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(
-            _base_cfg(max_wall_time_seconds=7800, max_cost_usd=12.5)
-        ))
+        rows = dict(rc._summary_active_options(_base_cfg(max_wall_time_seconds=7800, max_cost_usd=12.5)))
         assert "wall-time 2 h 10 min" in rows["Limits"]
         assert "cost $12.50" in rows["Limits"]
 
     def test_limits_wall_time_minutes_only(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(
-            _base_cfg(max_wall_time_seconds=1800, max_cost_usd=None)
-        ))
+        rows = dict(rc._summary_active_options(_base_cfg(max_wall_time_seconds=1800, max_cost_usd=None)))
         assert "wall-time 30 min" in rows["Limits"]
 
     def test_stride_profile_non_full(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(
-            _base_cfg(stride_profile={"stride_profile_label": "web-only"})
-        ))
+        rows = dict(rc._summary_active_options(_base_cfg(stride_profile={"stride_profile_label": "web-only"})))
         assert rows["STRIDE"] == "web-only"
 
 
@@ -1426,9 +1405,7 @@ class TestFormatOrgProfileSummary:
 
 class TestFormatOutputsSummary:
     def test_default_md_yaml_is_empty(self):
-        s = rc._format_outputs_summary(
-            _base_cfg(write_yaml=True, write_sarif=False, write_pentest_tasks=False)
-        )
+        s = rc._format_outputs_summary(_base_cfg(write_yaml=True, write_sarif=False, write_pentest_tasks=False))
         assert s == ""
 
     def test_no_yaml(self):
@@ -1497,8 +1474,15 @@ class TestFormatRunFlags:
                 qa_scan_repo=True,
             )
         )
-        for token in ("dry-run", "verbose", "no-tracing", "scan-manifest",
-                      "keep-runtime-files", "pr-mode", "qa-scan-repo"):
+        for token in (
+            "dry-run",
+            "verbose",
+            "no-tracing",
+            "scan-manifest",
+            "keep-runtime-files",
+            "pr-mode",
+            "qa-scan-repo",
+        ):
             assert token in s
 
     def test_silent_defaults_empty(self):
@@ -1564,10 +1548,8 @@ class TestRunPlanVerdictIncremental:
         assert "AMBIGUOUS" in v["verdict"]
 
     def test_changed_dirty_components(self):
-        pre = {"status": "changed",
-               "plugin_version": {"tier": "minor"}}
-        ds = {"decision": "dirty",
-              "dirty_component_ids": ["c1", "c2", "c3", "c4"]}
+        pre = {"status": "changed", "plugin_version": {"tier": "minor"}}
+        ds = {"decision": "dirty", "dirty_component_ids": ["c1", "c2", "c3", "c4"]}
         v = rc._run_plan_verdict(self._icfg(), pre, ds, None)
         assert v["will_run"] is True
         assert "4 component(s) dirty" in v["verdict"]
@@ -1640,9 +1622,7 @@ class TestRunPlanNotes:
 
     def test_older_compatible_note(self):
         verdict = {"will_run": True, "mode_line": "full"}
-        notes = rc._run_plan_notes(
-            verdict, _base_cfg(), None, None, "older-compatible"
-        )
+        notes = rc._run_plan_notes(verdict, _base_cfg(), None, None, "older-compatible")
         assert any("Analysis schema drifted" in n for n in notes)
 
     def test_repo_size_capped_note(self):
@@ -1738,9 +1718,7 @@ class TestRunPlanCLI:
             **kw,
         )
 
-    def test_run_plan_without_skill_config_uses_fresh_resolve(
-        self, tmp_path, monkeypatch
-    ):
+    def test_run_plan_without_skill_config_uses_fresh_resolve(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--run-plan")
         assert r.returncode == 0
@@ -1764,24 +1742,37 @@ class TestRunPlanCLI:
         sc.write_text(json.dumps(cfg))
 
         pre = out_dir / "pre.json"
-        pre.write_text(json.dumps({
-            "status": "changed",
-            "security_relevant_changes": ["src/a.ts"],
-            "relevance_reasons": {"src/a.ts": ["authn"]},
-            "security_relevant_change_count": 1,
-            "plugin_version": {},
-        }))
+        pre.write_text(
+            json.dumps(
+                {
+                    "status": "changed",
+                    "security_relevant_changes": ["src/a.ts"],
+                    "relevance_reasons": {"src/a.ts": ["authn"]},
+                    "security_relevant_change_count": 1,
+                    "plugin_version": {},
+                }
+            )
+        )
         ds = out_dir / "ds.json"
-        ds.write_text(json.dumps({
-            "decision": "dirty",
-            "dirty_component_ids": ["comp-a"],
-            "all_components_known": ["comp-a", "comp-b"],
-        }))
+        ds.write_text(
+            json.dumps(
+                {
+                    "decision": "dirty",
+                    "dirty_component_ids": ["comp-a"],
+                    "all_components_known": ["comp-a", "comp-b"],
+                }
+            )
+        )
         r = self._run(
-            "--run-plan", "--output", str(out_dir),
-            "--pre-check-file", str(pre),
-            "--dirty-set-file", str(ds),
-            "--compat-label", "equal",
+            "--run-plan",
+            "--output",
+            str(out_dir),
+            "--pre-check-file",
+            str(pre),
+            "--dirty-set-file",
+            str(ds),
+            "--compat-label",
+            "equal",
         )
         assert r.returncode == 0
         assert "comp-a" in r.stdout
@@ -1799,12 +1790,18 @@ class TestRunPlanCLI:
         cfg["mode"] = "incremental"
         sc.write_text(json.dumps(cfg))
 
-        pre = json.dumps({
-            "status": "unchanged",
-            "plugin_version": {},
-        })
+        pre = json.dumps(
+            {
+                "status": "unchanged",
+                "plugin_version": {},
+            }
+        )
         r = self._run(
-            "--run-plan", "--output", str(out_dir), "--pre-check-file", "-",
+            "--run-plan",
+            "--output",
+            str(out_dir),
+            "--pre-check-file",
+            "-",
             input=pre,
         )
         assert r.returncode == 0

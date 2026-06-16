@@ -102,10 +102,7 @@ def test_related_repos_parse_error_and_ignored_entries(tmp_path):
     assert findings[0]["kind"] == "related-repos-parse-error"
 
     related.write_text(
-        "related:\n"
-        "  - local-string\n"
-        "  - name: no threat model\n"
-        "  - name: local\n    threat_model: docs/local.md\n",
+        "related:\n  - local-string\n  - name: no threat model\n  - name: local\n    threat_model: docs/local.md\n",
         encoding="utf-8",
     )
     assert pre._scan_related_repos(tmp_path, strict_urls=False) == []

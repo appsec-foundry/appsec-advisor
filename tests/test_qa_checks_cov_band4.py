@@ -115,13 +115,7 @@ def test_iter_fig1_edges():
 
 
 def test_extract_subgraph_block_and_count_cards():
-    mermaid = (
-        'subgraph ACTORS[" "]\n'
-        "    direction TB\n"
-        '    HDR_A["head"]\n'
-        '    A1(["actor"])\n'
-        "    end\n"
-    )
+    mermaid = 'subgraph ACTORS[" "]\n    direction TB\n    HDR_A["head"]\n    A1(["actor"])\n    end\n'
     block = qa._extract_subgraph_block(mermaid, "ACTORS")
     assert "HDR_A" in block
     assert qa._count_cards(block) == 2
@@ -403,10 +397,7 @@ def test_chain_tid_overlap_ok(tmp_path):
         encoding="utf-8",
     )
     content = (
-        "### 3.1 Attack Chain Overview\n\n"
-        "```mermaid\ngraph LR\n"
-        'N1["Hardcoded private key T-001"] --> N2["next"]\n'
-        "```\n"
+        '### 3.1 Attack Chain Overview\n\n```mermaid\ngraph LR\nN1["Hardcoded private key T-001"] --> N2["next"]\n```\n'
     )
     f = _md(tmp_path, content)
     rep = qa.check_chain_tid_consistency(f, tmp_path)
@@ -571,7 +562,7 @@ def test_figure1_layout_no_figure(tmp_path):
 def test_check_heatmap_undeclared_nodes():
     rep = qa.Report("x")
     mermaid = "flowchart LR\nA ==>|x| SERVER\n"
-    qa._check_heatmap_undeclared_nodes(rep, mermaid, tiers_block="    BROWSER[\"b\"]\n")
+    qa._check_heatmap_undeclared_nodes(rep, mermaid, tiers_block='    BROWSER["b"]\n')
     assert any("SERVER" in i for i in rep.issues)
 
 
@@ -581,11 +572,7 @@ def test_check_heatmap_undeclared_nodes():
 
 
 def test_check_cell_format_stacks(tmp_path):
-    md = (
-        "# Title\n\n"
-        "| ID | Findings |\n| --- | --- |\n"
-        "| row | [F-001](#f-001), [F-002](#f-002) |\n"
-    )
+    md = "# Title\n\n| ID | Findings |\n| --- | --- |\n| row | [F-001](#f-001), [F-002](#f-002) |\n"
     f = _md(tmp_path, md)
     rep, new_text = qa.check_cell_format(f)
     assert "<br/>" in new_text
@@ -942,10 +929,7 @@ def test_run_auth_matching_missing_diagram_and_trailer():
 
 def test_run_auth_matching_trailer_extraneous_tid():
     rep = qa.Report("x")
-    body = (
-        "```mermaid\nsequenceDiagram\nA->>B: x\n```\n\n"
-        "**Linked Threats:** [T-099](#t-099)\n\n"
-    )
+    body = "```mermaid\nsequenceDiagram\nA->>B: x\n```\n\n**Linked Threats:** [T-099](#t-099)\n\n"
     subs = {"OAuth Login Flow": body}
     qa._run_auth_matching_checks(
         report=rep,
@@ -963,10 +947,7 @@ def test_run_auth_matching_trailer_extraneous_tid():
 
 def test_run_auth_matching_exact_style_clean():
     rep = qa.Report("x")
-    body = (
-        "```mermaid\nsequenceDiagram\nA->>B: x\n```\n\n"
-        "**Linked Threats:** [T-001](#t-001)\n\n"
-    )
+    body = "```mermaid\nsequenceDiagram\nA->>B: x\n```\n\n**Linked Threats:** [T-001](#t-001)\n\n"
     subs = {"OAuth Login": body}
     qa._run_auth_matching_checks(
         report=rep,
@@ -983,10 +964,7 @@ def test_run_auth_matching_exact_style_clean():
 
 def test_run_auth_matching_subsection_without_row():
     rep = qa.Report("x")
-    body = (
-        "```mermaid\nsequenceDiagram\nA->>B: x\n```\n\n"
-        "**Linked Threats:** none\n\n"
-    )
+    body = "```mermaid\nsequenceDiagram\nA->>B: x\n```\n\n**Linked Threats:** none\n\n"
     subs = {"Orphan Flow Subsection": body}
     qa._run_auth_matching_checks(
         report=rep,
@@ -1008,7 +986,7 @@ def test_run_auth_matching_subsection_without_row():
 
 def test_yaml_md_asset_linked_threats_mismatch(tmp_path):
     md = (
-        '# Title\n\n'
+        "# Title\n\n"
         '| <a id="f-001"></a>F-001 | x |\n\n'
         "## 4. Assets\n\n"
         "| Name | ID | Class | Linked Threats |\n"

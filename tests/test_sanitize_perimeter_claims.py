@@ -37,10 +37,7 @@ def test_sanitize_string_replaces_whole_field_with_neutral_marker() -> None:
 
 def test_sanitize_string_preserves_positive_and_existing_neutral_text() -> None:
     positive = "Terraform configures AWS WAF rules and API Gateway authorizers."
-    existing = (
-        "TLS is enforced; no firewall; "
-        "deployment-time perimeter controls out of scope for source-tree review"
-    )
+    existing = "TLS is enforced; no firewall; deployment-time perimeter controls out of scope for source-tree review"
 
     assert sanitizer._sanitize_string(positive) == (positive, [])
 
@@ -170,9 +167,7 @@ def test_main_scrubs_yaml_writes_summary_and_is_idempotent(tmp_path: Path, capsy
         yaml_path,
         sanitizer.yaml.safe_dump(
             {
-                "trust_boundaries": [
-                    {"id": "TB-1", "enforcement": "No WAF, JWT validation at the app boundary"}
-                ],
+                "trust_boundaries": [{"id": "TB-1", "enforcement": "No WAF, JWT validation at the app boundary"}],
                 "security_controls": [
                     {
                         "id": "SC-1",
@@ -190,8 +185,7 @@ def test_main_scrubs_yaml_writes_summary_and_is_idempotent(tmp_path: Path, capsy
     first_out = capsys.readouterr().out
     written = _load_yaml(yaml_path)
     assert written["trust_boundaries"][0]["enforcement"] == (
-        "JWT validation at the app boundary; "
-        "deployment-time perimeter controls out of scope for source-tree review"
+        "JWT validation at the app boundary; deployment-time perimeter controls out of scope for source-tree review"
     )
     assert written["security_controls"][0]["notes"] == (
         "TLS configured; deployment-time perimeter controls out of scope for source-tree review"

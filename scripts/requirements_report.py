@@ -114,11 +114,16 @@ def main(argv: list[str] | None = None) -> int:
         if args.write:
             path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
-    stats_line = " ".join(f"{k}={summary[k]}" for k in ("total", "pass", "partial", "fail", "unverifiable", "not_applicable"))
+    stats_line = " ".join(
+        f"{k}={summary[k]}" for k in ("total", "pass", "partial", "fail", "unverifiable", "not_applicable")
+    )
     print(stats_line)
     if not args.quiet:
         if miscounted:
-            print("requirements-report: note — stored summary disagreed with results[]; recomputed value is authoritative.", file=sys.stderr)
+            print(
+                "requirements-report: note — stored summary disagreed with results[]; recomputed value is authoritative.",
+                file=sys.stderr,
+            )
         open_n = summary["fail"] + summary["partial"]
         print(
             f"requirements-report: {summary['total']} graded · {open_n} open "

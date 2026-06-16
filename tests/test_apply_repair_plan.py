@@ -64,8 +64,7 @@ def test_apply_plan_applies_supported_actions_and_leaves_unsupported_for_agent(t
     md_path = out / "threat-model.md"
     _write(
         md_path,
-        "- [Walkthrough [§3.9](#39-f-008-xss)](#39-f-008-xss)\n"
-        "- [Clean](#clean)\n",
+        "- [Walkthrough [§3.9](#39-f-008-xss)](#39-f-008-xss)\n- [Clean](#clean)\n",
     )
 
     report = arp.apply_plan(

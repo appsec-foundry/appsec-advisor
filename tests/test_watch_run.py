@@ -287,7 +287,9 @@ def test_main_dispatches_to_watch(tmp_path, monkeypatch):
         return 7
 
     monkeypatch.setattr(wr, "watch", fake_watch)
-    rc = wr.main(["prog", str(out), "--depth", "thorough", "--stall-multiplier", "2.0", "--once", "--poll-seconds", "1"])
+    rc = wr.main(
+        ["prog", str(out), "--depth", "thorough", "--stall-multiplier", "2.0", "--once", "--poll-seconds", "1"]
+    )
     assert rc == 7
     assert captured["depth"] == "thorough"
     assert captured["stall_multiplier"] == 2.0

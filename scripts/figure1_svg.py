@@ -35,10 +35,10 @@ _TIER_TITLE = {
 # crown-jewel data). RED IS NEVER A TIER colour — it means "attacker" only (the
 # attacker card), so the legitimate Shop User no longer sits in a red band.
 _TIER_COLOR = {
-    "actors": ("#eef1f5", "#5b6b7f"),       # neutral slate — external / untrusted
-    "client": ("#eaf2fb", "#2f6fb3"),       # blue   — browser, semi-trusted
+    "actors": ("#eef1f5", "#5b6b7f"),  # neutral slate — external / untrusted
+    "client": ("#eaf2fb", "#2f6fb3"),  # blue   — browser, semi-trusted
     "application": ("#e9f6ef", "#2e8b57"),  # green  — our trusted server core
-    "data": ("#f2ecf9", "#6f42a1"),         # purple — most sensitive (data)
+    "data": ("#f2ecf9", "#6f42a1"),  # purple — most sensitive (data)
 }
 _CRIT = "#d64545"
 _HIGH = "#e8943a"
@@ -51,20 +51,22 @@ _MUTED = "#6b7280"
 
 # ---- geometry --------------------------------------------------------------
 _PAD = 18
-_LG = 150            # left gutter (tier icon + number + title)
-_IPAD = 14           # inner padding: gap between the boxes and the band edges
-_BW, _BH = 168, 90   # component box (compact; name + severity + attack-IDs)
-_GX, _GY = 18, 18    # grid gaps (box-to-box)
-_MAXC = 4            # max columns before wrapping into a new row
-_CAP = 6             # top-N components drawn per tier; the rest → "+N also assessed"
-_OOS_INLINE_MAX = 3  # ≤ this many out-of-scope components per tier → individual dimmed boxes; more → one collapsed count box
-_OOS_BOX_H = 30      # height of a dimmed out-of-scope box drawn inside a tier band
-_OOS_GAP = 10        # gap above the out-of-scope box row inside a tier band
-                     # (the dashed style is explained once in the Diagram Legend,
-                     #  so no repeated per-band caption is drawn)
+_LG = 150  # left gutter (tier icon + number + title)
+_IPAD = 14  # inner padding: gap between the boxes and the band edges
+_BW, _BH = 168, 90  # component box (compact; name + severity + attack-IDs)
+_GX, _GY = 18, 18  # grid gaps (box-to-box)
+_MAXC = 4  # max columns before wrapping into a new row
+_CAP = 6  # top-N components drawn per tier; the rest → "+N also assessed"
+_OOS_INLINE_MAX = (
+    3  # ≤ this many out-of-scope components per tier → individual dimmed boxes; more → one collapsed count box
+)
+_OOS_BOX_H = 30  # height of a dimmed out-of-scope box drawn inside a tier band
+_OOS_GAP = 10  # gap above the out-of-scope box row inside a tier band
+# (the dashed style is explained once in the Diagram Legend,
+#  so no repeated per-band caption is drawn)
 _BANDPAD = 20
 _BANDGAP = 34  # room for the flow arrow + its label between bands
-_LEGGAP = 46   # right lane: hosts the red "direct attack" arrow, then the legend
+_LEGGAP = 46  # right lane: hosts the red "direct attack" arrow, then the legend
 _LEGW = 226
 _EXPOSED = "#c0392b"  # internet-exposed marker (red = attacker-reachable)
 _ACTOR_H = 94
@@ -148,17 +150,25 @@ def _icon(c: _Canvas, kind: str, cx: float, cy: float, col: str) -> None:
             c.rect(cx - 12, cy + dy, 24, 6, stroke=col, sw=1.4, rx=1)
             c.circle(cx + 8, cy + dy + 3, 1.1, fill=col)
     elif kind == "data":  # database cylinder
-        c.el.append(f'<ellipse cx="{cx}" cy="{cy - 7}" rx="11" ry="3.4" fill="none" stroke="{col}" stroke-width="1.5"/>')
+        c.el.append(
+            f'<ellipse cx="{cx}" cy="{cy - 7}" rx="11" ry="3.4" fill="none" stroke="{col}" stroke-width="1.5"/>'
+        )
         c.line(cx - 11, cy - 7, cx - 11, cy + 7, stroke=col, sw=1.5)
         c.line(cx + 11, cy - 7, cx + 11, cy + 7, stroke=col, sw=1.5)
-        c.el.append(f'<path d="M {cx-11} {cy+7} A 11 3.4 0 0 0 {cx+11} {cy+7}" fill="none" stroke="{col}" stroke-width="1.5"/>')
-        c.el.append(f'<path d="M {cx-11} {cy} A 11 3.4 0 0 0 {cx+11} {cy}" fill="none" stroke="{col}" stroke-width="1.1"/>')
+        c.el.append(
+            f'<path d="M {cx - 11} {cy + 7} A 11 3.4 0 0 0 {cx + 11} {cy + 7}" fill="none" stroke="{col}" stroke-width="1.5"/>'
+        )
+        c.el.append(
+            f'<path d="M {cx - 11} {cy} A 11 3.4 0 0 0 {cx + 11} {cy}" fill="none" stroke="{col}" stroke-width="1.1"/>'
+        )
 
 
 def _globe(c: _Canvas, cx: float, cy: float, r: float, col: str) -> None:
     """Small 'internet-exposed' globe marker for a component box corner."""
     c.circle(cx, cy, r, fill="#fff", stroke=col, sw=1.3)
-    c.el.append(f'<ellipse cx="{cx:.1f}" cy="{cy:.1f}" rx="{r*0.46:.1f}" ry="{r:.1f}" fill="none" stroke="{col}" stroke-width="0.9"/>')
+    c.el.append(
+        f'<ellipse cx="{cx:.1f}" cy="{cy:.1f}" rx="{r * 0.46:.1f}" ry="{r:.1f}" fill="none" stroke="{col}" stroke-width="0.9"/>'
+    )
     c.line(cx - r, cy, cx + r, cy, stroke=col, sw=0.9)
     c.line(cx, cy - r, cx, cy + r, stroke=col, sw=0.9)
 
@@ -178,8 +188,11 @@ def _grid(n: int) -> tuple[int, list[int]]:
 
 
 def build_figure1_svg(
-    yaml_data: dict, attack_paths_data: dict, attack_taxonomy: dict,
-    meta: dict | None = None, actor_labels: dict | None = None,
+    yaml_data: dict,
+    attack_paths_data: dict,
+    attack_taxonomy: dict,
+    meta: dict | None = None,
+    actor_labels: dict | None = None,
 ) -> str:
     meta = meta or (yaml_data.get("meta") or {})
     components = yaml_data.get("components") or []
@@ -198,8 +211,7 @@ def build_figure1_svg(
         tier = (c.get("tier") or "application").strip().lower()
         if tier not in ("client", "application", "data"):
             tier = "application"
-        comp[cid] = {"cnum": f"C-{i:02d}", "name": c.get("name") or cid, "tier": tier,
-                     "crit": 0, "high": 0, "ids": []}
+        comp[cid] = {"cnum": f"C-{i:02d}", "name": c.get("name") or cid, "tier": tier, "crit": 0, "high": 0, "ids": []}
         order.append(cid)
     for t in threats:
         cid = (t.get("component") or "").strip()
@@ -245,7 +257,7 @@ def build_figure1_svg(
     # (they are already bounded upstream); the legend wraps over several rows.
     # victim-required folds into the anonymous attacker (it DELIVERS the payload;
     # the victim is the Shop User, shown separately).
-    scenarios = []   # (digit, name, actor_slug)
+    scenarios = []  # (digit, name, actor_slug)
     victim_ids = []
     actor_order = []  # distinct attacker slugs, first-seen
     for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
@@ -258,7 +270,11 @@ def build_figure1_svg(
             actor = "internet-anon"
         if actor not in actor_order:
             actor_order.append(actor)
-        tgt = (ap.get("_llm_target") or ap.get("target") or cl.get("default_target_tier") or "application").strip().lower()
+        tgt = (
+            (ap.get("_llm_target") or ap.get("target") or cl.get("default_target_tier") or "application")
+            .strip()
+            .lower()
+        )
         ttier = "client" if tgt in ("client", "victim") else "application"
         hosts = []
         for f in ap.get("findings") or []:
@@ -277,7 +293,12 @@ def build_figure1_svg(
     # a globe symbol (explained in the legend), not as a whole-tier tag.
     exposed = set()
     for tb in yaml_data.get("trust_boundaries") or []:
-        if isinstance(tb, dict) and (tb.get("from") or "").strip().lower() in ("", "external", "internet", "public-internet"):
+        if isinstance(tb, dict) and (tb.get("from") or "").strip().lower() in (
+            "",
+            "external",
+            "internet",
+            "public-internet",
+        ):
             to = (tb.get("to") or "").strip()
             if to in comp:
                 exposed.add(to)
@@ -311,7 +332,9 @@ def build_figure1_svg(
     }
     # busiest first within a tier (so the grid puts heavy boxes early)
     for tk in by_tier:
-        by_tier[tk].sort(key=lambda cid: (-len(comp[cid]["ids"]), -comp[cid]["crit"], -comp[cid]["high"], order.index(cid)))
+        by_tier[tk].sort(
+            key=lambda cid: (-len(comp[cid]["ids"]), -comp[cid]["crit"], -comp[cid]["high"], order.index(cid))
+        )
 
     # Top-N budget — this is a TOP-THREATS overview, not the full inventory. Draw
     # at most _CAP components per tier (the most-attacked/severe, already sorted
@@ -332,13 +355,15 @@ def build_figure1_svg(
 
     c = _Canvas()
     band_left = _PAD
-    cx0 = _PAD + _LG + _IPAD            # content-area left x (inset from the gutter)
-    band_w = _LG + _IPAD + cw + _IPAD   # +inner padding on both sides of the content
+    cx0 = _PAD + _LG + _IPAD  # content-area left x (inset from the gutter)
+    band_w = _LG + _IPAD + cw + _IPAD  # +inner padding on both sides of the content
     box_pos: dict[str, tuple[float, float, float, float]] = {}  # cid -> (cx, top, bottom, left)
     y = _PAD
     bands: list[tuple[str, float, float]] = []  # (tier, y_top, height)
 
-    def band_title(tier: str, ytop: float, h: float, num: int, bw: float | None = None, title: str | None = None) -> None:
+    def band_title(
+        tier: str, ytop: float, h: float, num: int, bw: float | None = None, title: str | None = None
+    ) -> None:
         bg, accent = _TIER_COLOR[tier]
         c.rect(band_left, ytop, bw or band_w, h, fill=bg, stroke=accent, sw=1.6, rx=10)
         _icon(c, tier, band_left + 26, ytop + 24, accent)
@@ -419,8 +444,7 @@ def build_figure1_svg(
             box_pos["__shopuser__"] = (bx + w / 2, by, by + h, bx)
 
     for j, (kind, slug, label) in enumerate(cards):
-        draw_actor_card(kind, slug, label, cx0 + j * (card_w + cgap),
-                        y + _BANDPAD, card_w, card_h)
+        draw_actor_card(kind, slug, label, cx0 + j * (card_w + cgap), y + _BANDPAD, card_w, card_h)
     bands.append(("actors", y, ah))
     y += ah + _BANDGAP
 
@@ -499,7 +523,7 @@ def build_figure1_svg(
         h = hidden[tier]
         if not h:
             return
-        parts = [f'{comp[cid]["cnum"]} {comp[cid]["name"]}' for cid in h]
+        parts = [f"{comp[cid]['cnum']} {comp[cid]['name']}" for cid in h]
         txt = f"+{len(h)} also assessed (lower priority): " + ", ".join(parts)
         wl = _wrap(txt, cw, 9)
         disp = wl[0] + ("…" if len(wl) > 1 else "")
@@ -527,23 +551,34 @@ def build_figure1_svg(
             for cid in oosc:
                 cm = comp[cid]
                 c.rect(bx, by, bw, _OOS_BOX_H, fill="#ffffff", stroke="#b8bfca", sw=1.5, rx=9, dash="4 3")
-                title = f'{cm["cnum"]} · {cm["name"]}'
+                title = f"{cm['cnum']} · {cm['name']}"
                 # Auto-shrink to keep the title on ONE line (the box is compact —
                 # one component-title line, no metric footer), so a long name like
                 # "Data Persistence Layer" is not truncated to "Data Persistenc…".
                 size = next((s for s in (10.5, 9.5, 8.5) if len(_wrap(title, bw - 16, s)) == 1), 8.5)
                 wl = _wrap(title, bw - 16, size)
                 if wl:
-                    c.text(bx + bw / 2, by + _OOS_BOX_H / 2 + 3.7, wl[0] + ("…" if len(wl) > 1 else ""),
-                           size=size, fill=_MUTED, weight="bold")
+                    c.text(
+                        bx + bw / 2,
+                        by + _OOS_BOX_H / 2 + 3.7,
+                        wl[0] + ("…" if len(wl) > 1 else ""),
+                        size=size,
+                        fill=_MUTED,
+                        weight="bold",
+                    )
                 bx += bw + _GX
         else:
             bw = min(2 * _BW + _GX, cw)
             bx = cx0 + (cw - bw) / 2
             c.rect(bx, by, bw, _OOS_BOX_H, fill="#ffffff", stroke="#b8bfca", sw=1.5, rx=9, dash="4 3")
-            c.text(bx + bw / 2, by + _OOS_BOX_H / 2 + 3.7,
-                   f"{len(oosc)} components out of scope (not analyzed) — see §11 Out of Scope",
-                   size=10.5, fill=_MUTED, weight="bold")
+            c.text(
+                bx + bw / 2,
+                by + _OOS_BOX_H / 2 + 3.7,
+                f"{len(oosc)} components out of scope (not analyzed) — see §11 Out of Scope",
+                size=10.5,
+                fill=_MUTED,
+                weight="bold",
+            )
 
     _TORDER = {"client": 0, "application": 1, "data": 2}
     top_exp = min((_TORDER[t] for t in exposed_tiers), default=99)
@@ -627,8 +662,7 @@ def build_figure1_svg(
         yf, yt = yt0 + h0, yt1
         c.line(bxc, yf + 1, bxc, yt - 1, stroke=_BACKBONE, sw=1.8, marker="arrowgrey")
         if i < len(flow_labels):
-            c.text(bxc + 12, (yf + yt) / 2 + 3.5, flow_labels[i], size=10.5, fill=_MUTED,
-                   anchor="start", weight="bold")
+            c.text(bxc + 12, (yf + yt) / 2 + 3.5, flow_labels[i], size=10.5, fill=_MUTED, anchor="start", weight="bold")
 
     # ---- direct attack onto the internet-exposed tier(s) — STRAIGHT down ----
     # The attacker hits the exposed tier DIRECTLY, bypassing the client tier. The
@@ -721,8 +755,7 @@ def build_figure1_svg(
             sw_w, sw_h = 24.0, 14.0
             sy = y0 + (r + 2) * _RH - 3.5 - sw_h / 2
             c.rect(lx + 12, sy, sw_w, sw_h, fill="#ffffff", stroke="#b8bfca", sw=1.5, rx=4, dash="4 3")
-            c.text(lx + 44, y0 + (r + 2) * _RH, "out of scope (not analyzed)",
-                   size=10, fill=_INK, anchor="start")
+            c.text(lx + 44, y0 + (r + 2) * _RH, "out of scope (not analyzed)", size=10, fill=_INK, anchor="start")
 
     has_oos = any(oos_by_tier.values())
     diag_n_rows = (4 if exposed else 2) + (1 if has_oos else 0)
@@ -734,7 +767,7 @@ def build_figure1_svg(
     total_h = max(bands_bottom, ly) + _PAD
 
     defs = (
-        '<defs>'
+        "<defs>"
         '<marker id="arrowgrey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
         f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{_BACKBONE}"/></marker>'
         '<marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
@@ -745,7 +778,7 @@ def build_figure1_svg(
         # important element of the figure; its arrowhead must read at a glance.
         '<marker id="arrowred-lg" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="14" markerHeight="14" markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
         f'<path d="M 0 0 L 12 6 L 0 12 z" fill="{_ATTACK}"/></marker>'
-        '</defs>'
+        "</defs>"
     )
     body = "\n".join(c.el)
     # Display size is capped to an OVERVIEW width (the viewBox keeps the full
@@ -757,7 +790,7 @@ def build_figure1_svg(
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{disp_w:.0f}" height="{disp_h:.0f}" '
         f'viewBox="0 0 {total_w:.0f} {total_h:.0f}" font-family="{_FONT}">\n'
         f'<rect x="0" y="0" width="{total_w:.0f}" height="{total_h:.0f}" fill="#ffffff"/>\n'
-        f'{defs}\n{body}\n</svg>\n'
+        f"{defs}\n{body}\n</svg>\n"
     )
 
 

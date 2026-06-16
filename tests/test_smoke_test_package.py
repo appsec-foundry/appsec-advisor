@@ -333,13 +333,7 @@ def test_check_surface_manifest_removed_hook_still_registered(tmp_path):
     hooks.parent.mkdir(parents=True, exist_ok=True)
     hooks.write_text(
         json.dumps(
-            {
-                "hooks": {
-                    "UserPromptSubmit": [
-                        {"hooks": [{"command": "python3 /a/scripts/security_steering.py"}]}
-                    ]
-                }
-            }
+            {"hooks": {"UserPromptSubmit": [{"hooks": [{"command": "python3 /a/scripts/security_steering.py"}]}]}}
         )
     )
     manifest = tmp_path / ".claude-plugin" / "package-surface.json"

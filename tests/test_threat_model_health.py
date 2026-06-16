@@ -23,9 +23,7 @@ class _FakeProc:
 
 
 def test_run_baseline_parses_json(monkeypatch):
-    monkeypatch.setattr(
-        tmh.subprocess, "run", lambda *a, **k: _FakeProc(1, '{"a": 1}')
-    )
+    monkeypatch.setattr(tmh.subprocess, "run", lambda *a, **k: _FakeProc(1, '{"a": 1}'))
     exit_code, payload = tmh._run_baseline(["check-changes"])
     assert exit_code == 1
     assert payload == {"a": 1}
@@ -39,9 +37,7 @@ def test_run_baseline_empty_stdout(monkeypatch):
 
 
 def test_run_baseline_bad_json(monkeypatch):
-    monkeypatch.setattr(
-        tmh.subprocess, "run", lambda *a, **k: _FakeProc(2, "not json{")
-    )
+    monkeypatch.setattr(tmh.subprocess, "run", lambda *a, **k: _FakeProc(2, "not json{"))
     exit_code, payload = tmh._run_baseline(["x"])
     assert exit_code == 2
     assert payload == {}
@@ -264,9 +260,7 @@ def test_scan_artifacts_oserror(output_dir, monkeypatch):
 
 
 def test_collect_active_short_circuits(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        tmh, "_classify_run", lambda od: {"state": "active", "reasons": ["lock held"]}
-    )
+    monkeypatch.setattr(tmh, "_classify_run", lambda od: {"state": "active", "reasons": ["lock held"]})
     out = tmh.collect(tmp_path, tmp_path)
     assert out["active_run"]["state"] == "active"
     assert "freshness" not in out
@@ -512,9 +506,7 @@ def test_main_direct_json(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(tmh, "_classify_run", lambda od: {"state": "clean"})
     monkeypatch.setattr(tmh, "_run_baseline", lambda args: (0, {}))
     (tmp_path / "threat-model.yaml").write_text("meta: {}")
-    code = tmh.main(
-        ["--repo-root", str(tmp_path), "--output-dir", str(tmp_path), "--json"]
-    )
+    code = tmh.main(["--repo-root", str(tmp_path), "--output-dir", str(tmp_path), "--json"])
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["exit_code"] == 0

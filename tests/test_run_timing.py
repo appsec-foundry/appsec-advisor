@@ -24,9 +24,7 @@ rt = _load()
 
 
 def _write(out: Path, records: list[dict], wall: int | None = None) -> None:
-    (out / ".stage-stats.jsonl").write_text(
-        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
-    )
+    (out / ".stage-stats.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     if wall is not None:
         (out / ".scan-wall-seconds").write_text(str(wall), encoding="utf-8")
 
@@ -209,9 +207,7 @@ class TestEventGapStandby:
         from datetime import datetime, timezone
 
         base_iso = "2026-06-16T05:00:00Z"
-        base_epoch = int(
-            datetime.strptime(base_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
-        )
+        base_epoch = int(datetime.strptime(base_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
         _write(tmp_path, [{"stage": 1, "duration_ms": 800_000, "wall_secs_observed": 950}], wall=1000)
         (tmp_path / ".scan-start-epoch").write_text(str(base_epoch), encoding="utf-8")
         # In-run events stream 0..900 (no gap); a lone post-run event at +2500

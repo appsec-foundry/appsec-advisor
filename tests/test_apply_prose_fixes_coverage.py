@@ -95,10 +95,7 @@ def test_label_as_code_unwrap_keeps_non_allowlisted():
 
 
 def test_controls_covered_section_with_no_subsections_left_alone():
-    text = (
-        "### 7.1 Identity\n"
-        "**Controls covered:** [Old](#old)\n"
-    )
+    text = "### 7.1 Identity\n**Controls covered:** [Old](#old)\n"
     out, n = prose._rewrite_controls_covered_anchors(text)
     # No #### subsections in the section -> sections[sec] empty -> skipped.
     assert n == 0
@@ -109,13 +106,7 @@ def test_controls_covered_section_with_no_subsections_left_alone():
 
 
 def test_controls_covered_bullet_anchor_rename_refreshed():
-    text = (
-        "### 7.2 Access\n"
-        "#### Role checks\n"
-        "Body.\n"
-        "**Controls covered:**\n"
-        "- [Stale label](#stale-anchor)\n"
-    )
+    text = "### 7.2 Access\n#### Role checks\nBody.\n**Controls covered:**\n- [Stale label](#stale-anchor)\n"
     out, n = prose._rewrite_controls_covered_anchors(text)
     assert "- [Role checks](#role-checks)" in out
     assert n >= 1
@@ -172,18 +163,14 @@ def test_normalize_title_path_tail_no_path_tail_unchanged():
 
 
 def test_collapse_consecutive_anchors_joins_run():
-    text = (
-        '<a id="a"></a>\n'
-        '<a id="b"></a>\n'
-        "## Heading\n"
-    )
+    text = '<a id="a"></a>\n<a id="b"></a>\n## Heading\n'
     out, n = prose._collapse_consecutive_anchors(text)
     assert '<a id="a"></a><a id="b"></a>' in out
     assert n == 1
 
 
 def test_collapse_consecutive_anchors_skips_fences():
-    text = "```\n<a id=\"x\"></a>\n<a id=\"y\"></a>\n```\n"
+    text = '```\n<a id="x"></a>\n<a id="y"></a>\n```\n'
     out, n = prose._collapse_consecutive_anchors(text)
     assert out == text
     assert n == 0
@@ -193,12 +180,7 @@ def test_collapse_consecutive_anchors_skips_fences():
 
 
 def test_apply_fixes_blockquote_block_left_untouched():
-    text = (
-        "<blockquote>\n"
-        "Path server.ts:12 inside blockquote stays bare\n"
-        "</blockquote>\n"
-        "Outside server.ts:12 prose\n"
-    )
+    text = "<blockquote>\nPath server.ts:12 inside blockquote stays bare\n</blockquote>\nOutside server.ts:12 prose\n"
     out, _ = prose.apply_fixes(text)
     # Inside-blockquote path NOT backticked; outside prose IS.
     assert "Path server.ts:12 inside blockquote stays bare" in out

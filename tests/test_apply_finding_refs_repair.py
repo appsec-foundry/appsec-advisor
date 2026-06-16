@@ -76,7 +76,12 @@ def test_apply_plan_filters_actions_scores_and_rewrites_atomically(tmp_path: Pat
                 "remap_score": 0.0,
                 "defect": "phantom_f_id",
             },
-            {"fragment": str(tmp_path / ".fragments" / "security.md"), "line": 1, "bad_f_id": "F-010", "suggested_f_id": "F-011"},
+            {
+                "fragment": str(tmp_path / ".fragments" / "security.md"),
+                "line": 1,
+                "bad_f_id": "F-010",
+                "suggested_f_id": "F-011",
+            },
             {"fragment": str(md), "line": 1, "bad_f_id": "F-012", "suggested_f_id": "T-012", "remap_score": 0.9},
             {"fragment": str(md), "line": 1, "bad_f_id": "F-013", "suggested_f_id": "F-013", "remap_score": 0.9},
             {"fragment": str(md), "line": 1, "bad_f_id": "F-014", "remap_score": 0.9},
@@ -85,14 +90,18 @@ def test_apply_plan_filters_actions_scores_and_rewrites_atomically(tmp_path: Pat
 
     assert repair.apply_plan(md, plan, min_score=0.2, dry_run=False) == 0
 
-    assert md.read_text(encoding="utf-8") == "\n".join(
-        [
-            "[F-002](#f-002) — SQL injection",
-            "[F-003](#f-003) — low score skip",
-            "[F-004](#f-004) — no match target",
-            "[F-007](#f-007) — phantom remap",
-        ]
-    ) + "\n"
+    assert (
+        md.read_text(encoding="utf-8")
+        == "\n".join(
+            [
+                "[F-002](#f-002) — SQL injection",
+                "[F-003](#f-003) — low score skip",
+                "[F-004](#f-004) — no match target",
+                "[F-007](#f-007) — phantom remap",
+            ]
+        )
+        + "\n"
+    )
     err = capsys.readouterr().err
     assert "applied 2 remap(s)" in err
     assert "skipped 2 low-score" in err

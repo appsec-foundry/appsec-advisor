@@ -388,9 +388,7 @@ class TestValidatePluginRoot:
 
 class TestValidateYamlAgainstSchema:
     def test_data_file_not_found(self, validate_config, tmp_path: Path):
-        errors = validate_config._validate_yaml_against_schema(
-            tmp_path / "data.yaml", tmp_path / "schema.yaml"
-        )
+        errors = validate_config._validate_yaml_against_schema(tmp_path / "data.yaml", tmp_path / "schema.yaml")
         assert any("file not found" in e for e in errors)
 
     def test_schema_file_not_found(self, validate_config, tmp_path: Path):
@@ -404,11 +402,7 @@ class TestValidateYamlAgainstSchema:
         schema = tmp_path / "schema.yaml"
         data.write_text("name: hi\ncount: 3\n", encoding="utf-8")
         schema.write_text(
-            "type: object\n"
-            "properties:\n"
-            "  name: {type: string}\n"
-            "  count: {type: integer}\n"
-            "required: [name, count]\n",
+            "type: object\nproperties:\n  name: {type: string}\n  count: {type: integer}\nrequired: [name, count]\n",
             encoding="utf-8",
         )
         assert validate_config._validate_yaml_against_schema(data, schema) == []
@@ -419,10 +413,7 @@ class TestValidateYamlAgainstSchema:
         # count should be integer, give a string
         data.write_text("name: hi\ncount: not-a-number\n", encoding="utf-8")
         schema.write_text(
-            "type: object\n"
-            "properties:\n"
-            "  count: {type: integer}\n"
-            "required: [count]\n",
+            "type: object\nproperties:\n  count: {type: integer}\nrequired: [count]\n",
             encoding="utf-8",
         )
         errors = validate_config._validate_yaml_against_schema(data, schema)
@@ -479,8 +470,6 @@ class TestMainCli:
         (tmp_path / "config.json").write_text(
             '{"external_context": {"enabled": false, "rest_url": null}}', encoding="utf-8"
         )
-        result = run_plugin_script(
-            "validate_config.py", env={"CLAUDE_PLUGIN_ROOT": str(tmp_path)}, check=False
-        )
+        result = run_plugin_script("validate_config.py", env={"CLAUDE_PLUGIN_ROOT": str(tmp_path)}, check=False)
         assert result.returncode == 0
         assert "VALID:" in result.stdout

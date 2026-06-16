@@ -29,9 +29,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "compose_threat_model.py"
 RENDERER_DOC = REPO_ROOT / "agents" / "appsec-threat-renderer.md"
-POSTURE_SCHEMA = (
-    REPO_ROOT / "schemas" / "fragments" / "security-posture-attack-paths.schema.json"
-)
+POSTURE_SCHEMA = REPO_ROOT / "schemas" / "fragments" / "security-posture-attack-paths.schema.json"
 
 
 def _load_compose():
@@ -81,9 +79,7 @@ class TestAntiPatternComponentNormalization:
                         {
                             "name": "Secrets hardcoded in source",
                             "description": "RSA private key committed in lib/insecurity.ts.",
-                            "findings": [
-                                {"ref": "F-005", "label": "Hardcoded RSA private key"}
-                            ],
+                            "findings": [{"ref": "F-005", "label": "Hardcoded RSA private key"}],
                             "affected_components": affected,
                         }
                     ]
@@ -107,17 +103,13 @@ class TestAntiPatternComponentNormalization:
         data = json.loads(path.read_text())
         assert data["anti_patterns"][0]["affected_components"] == ["C-01", "C-03"]
         # The whole point: the normalized fragment now validates.
-        compose._validate_fragment(
-            "architectural_anti_patterns", data, "anti-patterns.schema.json"
-        )
+        compose._validate_fragment("architectural_anti_patterns", data, "anti-patterns.schema.json")
 
     def test_already_canonical_refs_untouched(self, tmp_path):
         ctx = _make_ctx(tmp_path, self.COMPONENTS)
         path = self._write_fragment(ctx, ["C-02"])
         compose._normalize_anti_pattern_component_refs(ctx)
-        assert json.loads(path.read_text())["anti_patterns"][0][
-            "affected_components"
-        ] == ["C-02"]
+        assert json.loads(path.read_text())["anti_patterns"][0]["affected_components"] == ["C-02"]
 
     def test_idempotent(self, tmp_path):
         ctx = _make_ctx(tmp_path, self.COMPONENTS)
@@ -134,9 +126,7 @@ class TestAntiPatternComponentNormalization:
 
     def test_dict_form_id_normalized(self, tmp_path):
         ctx = _make_ctx(tmp_path, self.COMPONENTS)
-        path = self._write_fragment(
-            ctx, [{"id": "backend-api", "name": "Express API"}]
-        )
+        path = self._write_fragment(ctx, [{"id": "backend-api", "name": "Express API"}])
         compose._normalize_anti_pattern_component_refs(ctx)
         ref = json.loads(path.read_text())["anti_patterns"][0]["affected_components"][0]
         assert ref == {"id": "C-02", "name": "Express API"}
@@ -151,7 +141,7 @@ def _posture_doc_section() -> str:
     text = RENDERER_DOC.read_text(encoding="utf-8")
     marker = "### `security-posture-attack-paths.json` authoring contract"
     start = text.index(marker)
-    rest = text[start + len(marker):]
+    rest = text[start + len(marker) :]
     nxt = rest.index("\n### ")
     return rest[:nxt]
 

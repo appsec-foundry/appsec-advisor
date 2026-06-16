@@ -686,9 +686,7 @@ def test_changelog_mitigation_delta_only_new_title(tmp_path):
         {"id": "T-001", "component": "comp-a"},
         {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"},
     ]
-    run2 = b.build_changelog(
-        _CL_CFG, threats2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2", mitigations=mits2
-    )
+    run2 = b.build_changelog(_CL_CFG, threats2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2", mitigations=mits2)
     assert run2[0]["added"]["mitigations"] == ["M-002"]
 
 
@@ -696,9 +694,7 @@ def test_changelog_mitigation_legacy_prior_no_baseline(tmp_path):
     b = _load()
     # A prior entry that predates mitigation fingerprints → cannot diff, so we
     # honestly report no added mitigations rather than marking all of them new.
-    legacy_prior = [
-        {"version": 1, "date": "2026-06-12", "mode": "full", "added": {"threats": ["T-001"]}}
-    ]
+    legacy_prior = [{"version": 1, "date": "2026-06-12", "mode": "full", "added": {"threats": ["T-001"]}}]
     cl = b.build_changelog(
         _CL_CFG, _CL_THREATS, _CL_COMPS, [], legacy_prior, tmp_path, current_sha="sha-2", mitigations=_CL_MITS_1
     )
@@ -728,21 +724,30 @@ def _setup_incremental(tmp_path, *, prior_depth, stride):
     for cid, (baseline_bytes, current_bytes) in stride.items():
         sf[cid] = {"sha256": "sha256:" + _hashlib.sha256(baseline_bytes).hexdigest()}
         (tmp_path / f".stride-{cid}.json").write_bytes(current_bytes)
-    (cache / "baseline.json").write_text(
-        json.dumps({"last_run_depth": prior_depth, "stride_files": sf})
-    )
+    (cache / "baseline.json").write_text(json.dumps({"last_run_depth": prior_depth, "stride_files": sf}))
 
 
 def _prior_threat(tid, comp, cwe, title):
-    return {"id": tid, "component": comp, "cwe": cwe, "title": title,
-            "risk": "High", "likelihood": "Medium", "impact": "High"}
+    return {
+        "id": tid,
+        "component": comp,
+        "cwe": cwe,
+        "title": title,
+        "risk": "High",
+        "likelihood": "Medium",
+        "impact": "High",
+    }
 
 
 def test_reanalyzed_component_ids_detects_sha_mismatch(tmp_path):
-    _setup_incremental(tmp_path, prior_depth="thorough", stride={
-        "auth": (b'{"a":1}', b'{"a":2}'),    # changed -> re-analyzed
-        "api": (b'{"b":1}', b'{"b":1}'),      # unchanged -> carried-forward
-    })
+    _setup_incremental(
+        tmp_path,
+        prior_depth="thorough",
+        stride={
+            "auth": (b'{"a":1}', b'{"a":2}'),  # changed -> re-analyzed
+            "api": (b'{"b":1}', b'{"b":1}'),  # unchanged -> carried-forward
+        },
+    )
     assert b._reanalyzed_component_ids(tmp_path) == {"auth"}
 
 
@@ -754,8 +759,7 @@ def test_reconcile_carries_dropped_prior_threat_at_shallower_depth(tmp_path):
     _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
     prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
     new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi (db.ts:3)"}]
-    out, recon = b.reconcile_incremental_threats(
-        new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
+    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
     carried = [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
     assert len(carried) == 1
     assert carried[0]["title"] == "Weak auth (login.ts:10)"
@@ -770,8 +774,7 @@ def test_reconcile_resolves_when_analyzer_affirms_fix(tmp_path):
     _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
     prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
     resolved_prior = {"T-007": "MFA enforced at login.ts:10"}
-    out, recon = b.reconcile_incremental_threats(
-        [], prior, [{"id": "auth"}], tmp_path, "quick", resolved_prior)
+    out, recon = b.reconcile_incremental_threats([], prior, [{"id": "auth"}], tmp_path, "quick", resolved_prior)
     assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
     assert recon["resolved_reason_by_id"] == {"T-007": "MFA enforced at login.ts:10"}
 
@@ -779,8 +782,7 @@ def test_reconcile_resolves_when_analyzer_affirms_fix(tmp_path):
 def test_reconcile_no_carry_at_equal_depth(tmp_path):
     _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
     prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
-    out, recon = b.reconcile_incremental_threats(
-        [], prior, [{"id": "auth"}], tmp_path, "quick", {})
+    out, recon = b.reconcile_incremental_threats([], prior, [{"id": "auth"}], tmp_path, "quick", {})
     assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
     # equal depth → recorded as resolved, not silently dropped
     assert recon["resolved_reason_by_id"]["T-007"].startswith("not reproduced")
@@ -790,9 +792,8 @@ def test_reconcile_skips_carried_forward_component(tmp_path):
     # api unchanged → carried-forward → its prior threats must NOT be touched
     _setup_incremental(tmp_path, prior_depth="thorough", stride={"api": (b"same", b"same")})
     prior = {"threats": [_prior_threat("T-007", "api", "CWE-89", "SQLi (q.ts:9)")]}
-    out, recon = b.reconcile_incremental_threats(
-        [], prior, [{"id": "api"}], tmp_path, "quick", {})
-    assert out == []                       # nothing injected
+    out, recon = b.reconcile_incremental_threats([], prior, [{"id": "api"}], tmp_path, "quick", {})
+    assert out == []  # nothing injected
     assert recon["resolved_reason_by_id"] == {}
     assert recon["carried_forward_ids"] == ["api"]
 
@@ -801,11 +802,9 @@ def test_reconcile_no_double_count_when_reemitted(tmp_path):
     _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
     prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
     # analyzer re-emitted the same finding (same fingerprint) under a fresh id
-    new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-287",
-                    "title": "Weak auth (login.ts:10)"}]
-    out, recon = b.reconcile_incremental_threats(
-        new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
-    assert len(out) == 1                    # no re-injection
+    new_threats = [{"id": "T-001", "component": "auth", "cwe": "CWE-287", "title": "Weak auth (login.ts:10)"}]
+    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
+    assert len(out) == 1  # no re-injection
     assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
 
 
@@ -813,7 +812,8 @@ def test_reconcile_noop_on_full_run(tmp_path):
     # no baseline.json → full/first run → no-op, recon_info None
     prior = {"threats": [_prior_threat("T-007", "auth", "CWE-287", "Weak auth (login.ts:10)")]}
     out, recon = b.reconcile_incremental_threats(
-        [{"id": "T-001", "component": "auth"}], prior, [{"id": "auth"}], tmp_path, "quick", {})
+        [{"id": "T-001", "component": "auth"}], prior, [{"id": "auth"}], tmp_path, "quick", {}
+    )
     assert recon is None
     assert len(out) == 1
 
@@ -829,8 +829,13 @@ def test_changelog_incremental_buckets_populated(tmp_path):
     cl = b.build_changelog(
         {"mode": "incremental", "assessment_depth": "quick"},
         [{"id": "T-001", "component": "auth"}, {"id": "T-002", "component": "auth"}],
-        [{"id": "auth"}, {"id": "api"}], [], None, tmp_path,
-        current_sha="sha-x", recon_info=recon)
+        [{"id": "auth"}, {"id": "api"}],
+        [],
+        None,
+        tmp_path,
+        current_sha="sha-x",
+        recon_info=recon,
+    )
     e = cl[0]
     assert e["reanalyzed_components"] == ["auth"]
     assert e["carried_forward_components"] == ["api"]
@@ -858,17 +863,27 @@ def test_dedupe_mitigation_controls_collapses_identical_titles():
         {"id": "T-002", "mitigation_ids": ["M-022"]},
     ]
     mits = [
-        {"id": "M-004", "title": "Enforce object-level (ownership) authorization",
-         "threat_ids": ["T-001"], "severity": "High", "priority": "P2"},
-        {"id": "M-022", "title": "Enforce object-level (ownership) authorization",
-         "threat_ids": ["T-002"], "severity": "Critical", "priority": "P1"},
+        {
+            "id": "M-004",
+            "title": "Enforce object-level (ownership) authorization",
+            "threat_ids": ["T-001"],
+            "severity": "High",
+            "priority": "P2",
+        },
+        {
+            "id": "M-022",
+            "title": "Enforce object-level (ownership) authorization",
+            "threat_ids": ["T-002"],
+            "severity": "Critical",
+            "priority": "P1",
+        },
     ]
     out_threats, out_mits = b.dedupe_mitigation_controls(threats, mits)
     assert len(out_mits) == 1
     surv = out_mits[0]
-    assert surv["id"] == "M-004"                      # lowest id survives
-    assert surv["threat_ids"] == ["T-001", "T-002"]   # unioned
-    assert surv["severity"] == "Critical"             # max across the group
+    assert surv["id"] == "M-004"  # lowest id survives
+    assert surv["threat_ids"] == ["T-001", "T-002"]  # unioned
+    assert surv["severity"] == "Critical"  # max across the group
     assert surv["priority"] == "P1"
     # Both findings now point at the shared mitigation (many findings → 1 control).
     assert out_threats[0]["mitigation_ids"] == ["M-004"]
@@ -882,7 +897,7 @@ def test_dedupe_mitigation_controls_keeps_distinct_controls():
         {"id": "M-002", "title": "Pin base image to a digest", "threat_ids": ["T-001"], "severity": "Low"},
     ]
     out_threats, out_mits = b.dedupe_mitigation_controls(threats, mits)
-    assert len(out_mits) == 2                          # different controls untouched
+    assert len(out_mits) == 2  # different controls untouched
     assert out_threats[0]["mitigation_ids"] == ["M-001", "M-002"]
 
 
@@ -892,8 +907,12 @@ def test_dedupe_mitigation_controls_keeps_distinct_controls():
 
 
 def test_instance_fingerprints_one_per_instance():
-    t = {"component": "c", "cwe": "CWE-862", "title": "Sensitive routes",
-         "instances": [{"file": "server.ts", "line": 310}, {"file": "server.ts", "line": 311}]}
+    t = {
+        "component": "c",
+        "cwe": "CWE-862",
+        "title": "Sensitive routes",
+        "instances": [{"file": "server.ts", "line": 310}, {"file": "server.ts", "line": 311}],
+    }
     fps = b._instance_fingerprints(t)
     assert len(fps) == 2
     assert all(fp.startswith("c|CWE-862|sensitive routes|server.ts:") for fp in fps)
@@ -905,26 +924,35 @@ def test_instance_fingerprints_degrades_to_evidence_for_non_systemic():
 
 
 def test_changelog_instance_delta_partial_resolution(tmp_path):
-    sysfind = {"id": "T-001", "component": "comp-a", "cwe": "CWE-862", "title": "Sensitive routes",
-               "instances": [{"file": "server.ts", "line": ln} for ln in (310, 311, 407)]}
+    sysfind = {
+        "id": "T-001",
+        "component": "comp-a",
+        "cwe": "CWE-862",
+        "title": "Sensitive routes",
+        "instances": [{"file": "server.ts", "line": ln} for ln in (310, 311, 407)],
+    }
     run1 = b.build_changelog(_CL_CFG, [sysfind], _CL_COMPS, [], None, tmp_path, current_sha="s1")
     assert len(run1[0]["instance_fingerprints"]) == 3
-    assert run1[0]["added"]["instances"] == []          # first run stays quiet
+    assert run1[0]["added"]["instances"] == []  # first run stays quiet
 
     # run2: one location (407) fixed; the finding itself is unchanged.
     sysfind2 = dict(sysfind, instances=[{"file": "server.ts", "line": ln} for ln in (310, 311)])
     run2 = b.build_changelog(_CL_CFG, [sysfind2], _CL_COMPS, [], run1, tmp_path, current_sha="s2")
-    assert run2[0]["added"]["threats"] == []            # finding-level: nothing new/gone
+    assert run2[0]["added"]["threats"] == []  # finding-level: nothing new/gone
     assert run2[0]["resolved"]["fingerprints"] == []
-    resolved_inst = run2[0]["resolved"]["instances"]    # instance-level: 1 resolved
+    resolved_inst = run2[0]["resolved"]["instances"]  # instance-level: 1 resolved
     assert len(resolved_inst) == 1
     assert "server.ts:407" in resolved_inst[0]
 
 
 def test_instance_fingerprints_tolerates_list_shaped_evidence():
     # Regression: evidence is a LIST of {file,line} in the final yaml.
-    t = {"component": "c", "cwe": "CWE-922", "title": "Token in storage",
-         "evidence": [{"file": "oauth.ts", "line": 51}, {"file": "oauth.ts", "line": 52}]}
+    t = {
+        "component": "c",
+        "cwe": "CWE-922",
+        "title": "Token in storage",
+        "evidence": [{"file": "oauth.ts", "line": 51}, {"file": "oauth.ts", "line": 52}],
+    }
     assert b._instance_fingerprints(t) == ["c|CWE-922|token in storage|oauth.ts:51"]
 
 
@@ -944,7 +972,6 @@ def test_dedupe_mitigation_controls_dedupes_within_one_threat():
 # Coverage extensions (2026-06-15): end-to-end main() against the committed
 # _last-run fixture, plus targeted helper/error branches.
 # ===========================================================================
-import os  # noqa: E402
 import shutil  # noqa: E402
 
 import pytest  # noqa: E402
@@ -952,6 +979,14 @@ import pytest  # noqa: E402
 _LAST_RUN = ROOT / "tests" / "fixtures" / "e2e" / "_last-run"
 _REPAIR_RUN = ROOT / "tests" / "fixtures" / "e2e" / "_repair-run"
 _LAST_RUN_REQ = ROOT / "tests" / "fixtures" / "e2e" / "_last-run-req"
+
+# `_last-run` is a git-ignored local run dir (regenerate via `make e2e-full`).
+# Skip the tests that consume it when it is absent so a fresh checkout / CI
+# stays green; the `_repair-run` / `_last-run-req` variants below already guard.
+_requires_last_run = pytest.mark.skipif(
+    not (_LAST_RUN / "threat-model.yaml").is_file(),
+    reason="_last-run fixture absent (git-ignored; regenerate via `make e2e-full`)",
+)
 
 
 def _copy_run(src: Path, tmp_path: Path) -> Path:
@@ -965,6 +1000,7 @@ def _run_main(monkeypatch, argv):
     return b.main()
 
 
+@_requires_last_run
 def test_main_dry_run_last_run_fixture(tmp_path, monkeypatch, capsys):
     """End-to-end dry-run against the real --quick --requirements run dir."""
     run = _copy_run(_LAST_RUN, tmp_path)
@@ -978,6 +1014,7 @@ def test_main_dry_run_last_run_fixture(tmp_path, monkeypatch, capsys):
     assert isinstance(doc["threats"], list)
 
 
+@_requires_last_run
 def test_main_writes_and_schema_validates(tmp_path, monkeypatch, capsys):
     """Full write path: atomic_write + schema-validate subprocess (rc 0).
 
@@ -1033,6 +1070,7 @@ def test_main_output_dir_missing_returns_2(tmp_path, monkeypatch, capsys):
     assert "output_dir does not exist" in capsys.readouterr().err
 
 
+@_requires_last_run
 def test_main_schema_validation_failure_returns_5(tmp_path, monkeypatch, capsys):
     """A validator that always fails → main returns 5."""
     run = _copy_run(_LAST_RUN, tmp_path)
@@ -1056,6 +1094,7 @@ def test_main_schema_validation_failure_returns_5(tmp_path, monkeypatch, capsys)
     assert "schema validation failed" in capsys.readouterr().err
 
 
+@_requires_last_run
 def test_main_skips_validation_when_validator_absent(tmp_path, monkeypatch, capsys):
     """No validate_intermediate.py under plugin-root → write succeeds, no validation."""
     run = _copy_run(_LAST_RUN, tmp_path)
@@ -1181,8 +1220,15 @@ def test_reanalyzed_component_ids_variants(tmp_path):
 def test_build_threats_skips_info_stubs_and_missing_id():
     merged = {
         "threats": [
-            {"t_id": "T-001", "title": "SQL Injection — routes/x.ts:1", "component_id": "c1",
-             "likelihood": "High", "risk": "High", "cwe": "CWE-89", "evidence": {"file": "x.ts", "line": 1}},
+            {
+                "t_id": "T-001",
+                "title": "SQL Injection — routes/x.ts:1",
+                "component_id": "c1",
+                "likelihood": "High",
+                "risk": "High",
+                "cwe": "CWE-89",
+                "evidence": {"file": "x.ts", "line": 1},
+            },
             # info-stub via likelihood
             {"t_id": "T-002", "title": "note", "likelihood": "info"},
             # info-stub via risk
@@ -1190,9 +1236,15 @@ def test_build_threats_skips_info_stubs_and_missing_id():
             # missing id entirely
             {"title": "orphan note", "likelihood": "High"},
             # evidence None → []
-            {"t_id": "T-004", "title": "XSS — routes/y.ts:2", "component_id": "c1",
-             "likelihood": "Medium", "risk": "Medium", "evidence": None,
-             "affected_parameter": "x" * 60},
+            {
+                "t_id": "T-004",
+                "title": "XSS — routes/y.ts:2",
+                "component_id": "c1",
+                "likelihood": "Medium",
+                "risk": "Medium",
+                "evidence": None,
+                "affected_parameter": "x" * 60,
+            },
         ]
     }
     threats, warnings = b.build_threats(merged)
@@ -1233,10 +1285,13 @@ def test_apply_mitigation_overrides_split_and_unknown_source():
     base = [{"id": "M-001", "title": "Auth", "threat_ids": ["T-001"], "remediation": {"effort": "Low"}}]
     sidecar = {
         "splits": [
-            {"source_mid": "M-001", "into": [
-                {"id_suffix": "a", "title": "Part A", "threat_ids": ["T-001"]},
-                {"id_suffix": "b", "title": "Part B"},
-            ]},
+            {
+                "source_mid": "M-001",
+                "into": [
+                    {"id_suffix": "a", "title": "Part A", "threat_ids": ["T-001"]},
+                    {"id_suffix": "b", "title": "Part B"},
+                ],
+            },
             {"source_mid": "M-999", "into": []},  # unknown source → warning
         ]
     }
@@ -1253,13 +1308,28 @@ def test_apply_mitigation_overrides_addition_collision_subset_and_new():
     sidecar = {
         "additions": [
             # Rule 1: ID collision → overlay authored fields
-            {"id": "M-001", "title": "Authored title", "description": "why", "reference": "http://x",
-             "priority": "P1", "effort": "High", "kind": "detect"},
+            {
+                "id": "M-001",
+                "title": "Authored title",
+                "description": "why",
+                "reference": "http://x",
+                "priority": "P1",
+                "effort": "High",
+                "kind": "detect",
+            },
             # Rule 2: threat_ids subset of M-001 → merge onto it
             {"id": "M-050", "title": "Subset fix", "threat_ids": ["T-001"]},
             # New: genuinely new threat set → appended
-            {"id": "M-060", "title": "New fix", "threat_ids": ["T-999"], "severity": "High",
-             "description": "d", "reference": "r", "remediation": {"effort": "Low"}, "kind": "fix"},
+            {
+                "id": "M-060",
+                "title": "New fix",
+                "threat_ids": ["T-999"],
+                "severity": "High",
+                "description": "d",
+                "reference": "r",
+                "remediation": {"effort": "Low"},
+                "kind": "fix",
+            },
         ]
     }
     out, warnings = b.apply_mitigation_overrides(base, sidecar)
@@ -1290,15 +1360,21 @@ def test_build_meta_findings_no_sidecar_no_prior_returns_empty():
 
 
 def test_build_meta_findings_allocates_ids_after_manual_prior():
-    prior = {"meta_findings": [
-        {"id": "MF-005", "title": "manual one", "manual": True},
-        {"id": "MF-002", "title": "auto, dropped", "manual": False},
-    ]}
-    sidecars = [{"findings": [
-        {"control": "Dependabot", "category": "Patch", "source": "sca", "derived_from": ["T-001", "bad"]},
-        # duplicate key (same source/title/category) → deduped
-        {"control": "Dependabot", "category": "Patch", "source": "sca"},
-    ]}]
+    prior = {
+        "meta_findings": [
+            {"id": "MF-005", "title": "manual one", "manual": True},
+            {"id": "MF-002", "title": "auto, dropped", "manual": False},
+        ]
+    }
+    sidecars = [
+        {
+            "findings": [
+                {"control": "Dependabot", "category": "Patch", "source": "sca", "derived_from": ["T-001", "bad"]},
+                # duplicate key (same source/title/category) → deduped
+                {"control": "Dependabot", "category": "Patch", "source": "sca"},
+            ]
+        }
+    ]
     out = b.build_meta_findings(prior, sidecars)
     # manual prior kept, auto prior dropped, one new finding (dup removed)
     ids = [m["id"] for m in out]
@@ -1350,8 +1426,15 @@ def test_build_tier_root_causes_fallback_title_frequency():
 def test_build_attack_surface_curations_and_additions():
     routes = {
         "routes": [
-            {"route_id": "r1", "method": "GET", "path": "/a", "authn_signal": "middleware_present",
-             "handler_file": "a.ts", "handler_line": 3, "management_surface": True},
+            {
+                "route_id": "r1",
+                "method": "GET",
+                "path": "/a",
+                "authn_signal": "middleware_present",
+                "handler_file": "a.ts",
+                "handler_line": 3,
+                "management_surface": True,
+            },
             {"route_id": "r2", "method": "POST", "path": "/b", "authn_signal": "unknown"},
             {"route_id": "r3", "method": "GET", "path": "/c", "authn_signal": "absent"},
         ]
@@ -1363,8 +1446,7 @@ def test_build_attack_surface_curations_and_additions():
         },
         "additions": [
             # collision on existing entry_point → merge authoritative fields
-            {"entry_point": "POST /b", "auth_required": True, "notes": "verified guarded",
-             "linked_threats": ["T-001"]},
+            {"entry_point": "POST /b", "auth_required": True, "notes": "verified guarded", "linked_threats": ["T-001"]},
             # no entry_point → skipped
             {"notes": "orphan"},
             # genuine new entry
@@ -1388,10 +1470,12 @@ def test_build_attack_surface_curations_and_additions():
 
 
 def test_build_attack_surface_include_filter():
-    routes = {"routes": [
-        {"route_id": "r1", "method": "GET", "path": "/a", "authn_signal": "absent"},
-        {"route_id": "r2", "method": "GET", "path": "/b", "authn_signal": "absent"},
-    ]}
+    routes = {
+        "routes": [
+            {"route_id": "r1", "method": "GET", "path": "/a", "authn_signal": "absent"},
+            {"route_id": "r2", "method": "GET", "path": "/b", "authn_signal": "absent"},
+        ]
+    }
     sidecar = {"curations": {"include_route_ids": ["r1"]}}
     out, warnings = b.build_attack_surface(routes, sidecar)
     eps = {e["entry_point"] for e in out}
@@ -1410,11 +1494,13 @@ def test_build_attack_surface_sidecar_only_when_no_routes():
 
 
 def test_index_resolved_prior_keys_by_id_and_fingerprint():
-    merged = {"resolved_prior_findings": [
-        {"prior_id": "T-009", "reason": "fixed in PR", "component_id": "c1", "cwe": "CWE-89", "title": "SQLi"},
-        {"component_id": "c2", "cwe": "CWE-79", "title": "XSS"},  # no prior_id, no reason
-        "not-a-dict",  # skipped
-    ]}
+    merged = {
+        "resolved_prior_findings": [
+            {"prior_id": "T-009", "reason": "fixed in PR", "component_id": "c1", "cwe": "CWE-89", "title": "SQLi"},
+            {"component_id": "c2", "cwe": "CWE-79", "title": "XSS"},  # no prior_id, no reason
+            "not-a-dict",  # skipped
+        ]
+    }
     idx = b._index_resolved_prior(merged)
     assert idx["T-009"] == "fixed in PR"
     # fingerprint key present for the second (default reason)

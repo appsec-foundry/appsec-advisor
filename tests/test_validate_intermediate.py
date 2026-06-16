@@ -237,10 +237,8 @@ def test_glob_advisory_kept_for_ambiguous_match():
 # ===========================================================================
 
 import json as _json  # noqa: E402
-import os as _os  # noqa: E402
 
 import pytest  # noqa: E402
-
 
 # --- _format_error_path -----------------------------------------------------
 
@@ -419,9 +417,7 @@ def test_remediation_ok():
 
 
 def test_title_blank_and_truncated():
-    errs = vi._check_title_not_blank(
-        {"threats": [{"title": "   "}, {"title": "long title..."}, "skip"]}
-    )
+    errs = vi._check_title_not_blank({"threats": [{"title": "   "}, {"title": "long title..."}, "skip"]})
     assert any("must not be empty" in e for e in errs)
     assert any("truncated" in e for e in errs)
 
@@ -439,7 +435,16 @@ def test_t_id_duplicate_detected():
 
 
 def test_tf_id_sequence_dup_and_gap():
-    data = {"flags": [{"flag_id": "TF-001"}, {"flag_id": "TF-003"}, {"flag_id": "TF-001"}, {"flag_id": 5}, "x", {"flag_id": "bad"}]}
+    data = {
+        "flags": [
+            {"flag_id": "TF-001"},
+            {"flag_id": "TF-003"},
+            {"flag_id": "TF-001"},
+            {"flag_id": 5},
+            "x",
+            {"flag_id": "bad"},
+        ]
+    }
     errs = vi._check_tf_id_sequence(data)
     assert any("breaks sequential order" in e for e in errs)
     assert any("duplicated" in e for e in errs)
@@ -740,9 +745,14 @@ def test_validator_valid_when_empty_register_recoverable():
     data = {
         "meta": {"generated": "2026-06-16T00:00:00Z"},
         "threats": [
-            {"id": "T-001", "title": "SQL Injection", "risk": "Critical",
-             "component": "api", "cwe": "CWE-89",
-             "remediation": {"steps": ["Use parameterized queries"]}},
+            {
+                "id": "T-001",
+                "title": "SQL Injection",
+                "risk": "Critical",
+                "component": "api",
+                "cwe": "CWE-89",
+                "remediation": {"steps": ["Use parameterized queries"]},
+            },
         ],
         "mitigations": [],
     }
@@ -757,7 +767,16 @@ def test_validator_valid_when_empty_register_recoverable():
 
 
 def test_pt_id_sequence_dup_and_gap():
-    data = {"tasks": [{"task_id": "PT-001"}, {"task_id": "PT-003"}, {"task_id": "PT-001"}, {"task_id": 5}, "x", {"task_id": "bad"}]}
+    data = {
+        "tasks": [
+            {"task_id": "PT-001"},
+            {"task_id": "PT-003"},
+            {"task_id": "PT-001"},
+            {"task_id": 5},
+            "x",
+            {"task_id": "bad"},
+        ]
+    }
     errs = vi._check_pt_id_sequence(data)
     assert any("breaks sequential order" in e for e in errs)
     assert any("duplicated" in e for e in errs)

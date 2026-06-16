@@ -190,9 +190,7 @@ def test_compute_fingerprint_includes_repo_and_enterprise(plugin_lib: Path, tmp_
     _write_yaml(repo / ".appsec" / "actors.yaml", {"actors": []})
     profile = tmp_path / "profile"
     _write_yaml(profile / "actors" / "x.yaml", {"actors": []})
-    fp = resolve_actors._compute_actors_inputs_fingerprint(
-        str(plugin_lib), str(profile), "actors/*.yaml", str(repo)
-    )
+    fp = resolve_actors._compute_actors_inputs_fingerprint(str(plugin_lib), str(profile), "actors/*.yaml", str(repo))
     assert len(fp) == 64
 
 

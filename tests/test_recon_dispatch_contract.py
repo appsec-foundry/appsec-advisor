@@ -42,8 +42,7 @@ class TestReconForegroundDispatch:
         )
         # All three recon agents must be dispatched concurrently in the foreground.
         assert text.count("concurrent foreground") >= 3, (
-            "expected the context/recon/config dispatch bullets to be marked "
-            "concurrent foreground"
+            "expected the context/recon/config dispatch bullets to be marked concurrent foreground"
         )
 
     def test_recon_section_explains_no_background(self):
@@ -80,8 +79,7 @@ class TestReconModelBanner:
         for agent in (CTX_AGENT, RECON_AGENT):
             text = agent.read_text(encoding="utf-8")
             assert "runs on `sonnet`. Use that as `MODEL_ID`" not in text, (
-                f"{agent.name} still hardcodes MODEL_ID=sonnet — banner will lie "
-                f"under sonnet-economy haiku routing"
+                f"{agent.name} still hardcodes MODEL_ID=sonnet — banner will lie under sonnet-economy haiku routing"
             )
             assert "passed via the Agent-tool `model` parameter" in text, (
                 f"{agent.name} must read its model from the dispatch parameter"

@@ -152,10 +152,13 @@ class TestEnrich:
 
     def test_prune_irrelevant_and_flag(self):
         data = {
-            "assets": [{
-                "id": "tokens", "name": "session tokens",
-                "linked_threats": ["T-IRREL"],
-            }],
+            "assets": [
+                {
+                    "id": "tokens",
+                    "name": "session tokens",
+                    "linked_threats": ["T-IRREL"],
+                }
+            ],
             "threats": [
                 {"id": "T-IRREL", "cwe": "CWE-999", "title": "yaml bomb upload"},
             ],
@@ -177,10 +180,13 @@ class TestEnrich:
 
     def test_preserves_prior_ordering(self):
         data = {
-            "assets": [{
-                "id": "tokens", "name": "session tokens",
-                "linked_threats": ["T-B", "T-A"],
-            }],
+            "assets": [
+                {
+                    "id": "tokens",
+                    "name": "session tokens",
+                    "linked_threats": ["T-B", "T-A"],
+                }
+            ],
             "threats": [
                 {"id": "T-A", "cwe": "CWE-79", "title": "a"},
                 {"id": "T-B", "cwe": "CWE-352", "title": "b"},
@@ -193,11 +199,14 @@ class TestEnrich:
     def test_manual_pin_preserved(self):
         # T-MANUAL has no signal but is pinned manually -> kept
         data = {
-            "assets": [{
-                "id": "tokens", "name": "session tokens",
-                "linked_threats": ["T-MANUAL"],
-                "linked_threats_manual": ["T-MANUAL"],
-            }],
+            "assets": [
+                {
+                    "id": "tokens",
+                    "name": "session tokens",
+                    "linked_threats": ["T-MANUAL"],
+                    "linked_threats_manual": ["T-MANUAL"],
+                }
+            ],
             "threats": [{"id": "T-MANUAL", "cwe": "CWE-999", "title": "zzz"}],
         }
         out, summary = eal.enrich(data)

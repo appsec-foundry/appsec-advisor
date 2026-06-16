@@ -337,9 +337,7 @@ def test_get_max_turns_oserror_reading_md(env, monkeypatch):
     # OSError while reading the agent file -> continue, fall back to default
     # (lines 93-94).
     root = env[1]
-    (root / "agents" / "appsec-oserr.md").write_text(
-        "---\nmaxTurns: 5\n---\n", encoding="utf-8"
-    )
+    (root / "agents" / "appsec-oserr.md").write_text("---\nmaxTurns: 5\n---\n", encoding="utf-8")
     real_read = Path.read_text
     target = root / "agents" / "appsec-oserr.md"
 

@@ -135,7 +135,9 @@ class TestParsing:
 
     def test_parse_assessment_tokens_with_fresh(self, tmp_path):
         log = tmp_path / "h.log"
-        log.write_text(assessment_tokens("2026-01-01T00:00:00Z", "aaa", inp=5000, out=100, cw=200, cr=300, cost=0.9, fresh=400))
+        log.write_text(
+            assessment_tokens("2026-01-01T00:00:00Z", "aaa", inp=5000, out=100, cw=200, cr=300, cost=0.9, fresh=400)
+        )
         entries = vrc.parse_assessment_tokens(log)
         assert len(entries) == 1
         e = entries[0]
@@ -157,10 +159,7 @@ class TestRunWindow:
     def test_basic_start_end(self, tmp_path):
         agent = tmp_path / "a.log"
         hook = tmp_path / "h.log"
-        agent.write_text(
-            "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n"
-            "2026-01-01T00:30:00Z INFO ASSESSMENT_END\n"
-        )
+        agent.write_text("2026-01-01T00:00:00Z INFO ASSESSMENT_START\n2026-01-01T00:30:00Z INFO ASSESSMENT_END\n")
         hook.write_text("")
         start, end = vrc.find_run_window(agent, hook)
         assert start == "2026-01-01T00:00:00Z"
@@ -212,10 +211,7 @@ class TestRunWindow:
 class TestDuration:
     def test_run_duration(self, tmp_path):
         agent = tmp_path / "a.log"
-        agent.write_text(
-            "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n"
-            "2026-01-01T00:40:00Z INFO ASSESSMENT_END\n"
-        )
+        agent.write_text("2026-01-01T00:00:00Z INFO ASSESSMENT_START\n2026-01-01T00:40:00Z INFO ASSESSMENT_END\n")
         assert vrc._run_duration_seconds(agent, None, None) == 2400
 
     def test_run_duration_missing_file(self, tmp_path):
@@ -228,10 +224,7 @@ class TestDuration:
 
     def test_run_duration_end_before_start(self, tmp_path):
         agent = tmp_path / "a.log"
-        agent.write_text(
-            "2026-01-01T00:40:00Z INFO ASSESSMENT_START\n"
-            "2026-01-01T00:10:00Z INFO AGENT_END\n"
-        )
+        agent.write_text("2026-01-01T00:40:00Z INFO ASSESSMENT_START\n2026-01-01T00:10:00Z INFO AGENT_END\n")
         assert vrc._run_duration_seconds(agent, None, None) is None
 
 
@@ -302,12 +295,12 @@ class TestModels:
 
     def test_detect_agent_models(self, tmp_path):
         (tmp_path / "threat-model.yaml").write_text(
-            'meta:\n'
+            "meta:\n"
             '  model: "claude-sonnet-4-6"\n'
-            '  agent_models:\n'
+            "  agent_models:\n"
             '    stride-analyzer: "claude-opus-4-6"\n'
             '    qa-reviewer: "sonnet"\n'
-            '  other: x\n'
+            "  other: x\n"
         )
         models = vrc._detect_agent_models(tmp_path)
         assert models["stride-analyzer"] == "opus-4-6"
@@ -323,8 +316,13 @@ class TestAggregate:
     def _result(self, sid, agents, in_=100, cost=1.0):
         delta = vrc.TokenSnapshot(in_tokens=in_, out_tokens=10, cache_write=5, cache_read=5, cost=cost)
         return vrc.SessionResult(
-            session_id=sid, agents=agents, before_boundary=vrc.TokenSnapshot(),
-            final_in_window=vrc.TokenSnapshot(), delta=delta, computed_cost=cost, cross_check="OK",
+            session_id=sid,
+            agents=agents,
+            before_boundary=vrc.TokenSnapshot(),
+            final_in_window=vrc.TokenSnapshot(),
+            delta=delta,
+            computed_cost=cost,
+            cross_check="OK",
         )
 
     def test_primary_agent(self):
@@ -410,8 +408,12 @@ class TestSubagentEstimate:
         # at_cost high so multiplier_estimate < at_cost -> confidence "signal"
         hook.write_text(assessment_tokens("2026-01-01T00:10:00Z", "5a1", inp=100, out=10, cw=5, cr=5, cost=50.0))
         est = vrc.build_subagent_estimate(
-            hook, "2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z",
-            host_session_cost=2.0, pricing=SONNET, output_dir=tmp_path,
+            hook,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:30:00Z",
+            host_session_cost=2.0,
+            pricing=SONNET,
+            output_dir=tmp_path,
         )
         assert est["assessment_tokens_cost"] == 50.0
         # effective_base = max(host, at_cost) = 50; multiplier 4.7 -> estimate 235 >= at_cost
@@ -424,8 +426,12 @@ class TestSubagentEstimate:
         # at_cost just above host but multiplier estimate higher
         hook.write_text(assessment_tokens("2026-01-01T00:10:00Z", "5a1", inp=100, out=10, cw=5, cr=5, cost=2.5))
         est = vrc.build_subagent_estimate(
-            hook, "2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z",
-            host_session_cost=2.0, pricing=SONNET, output_dir=tmp_path,
+            hook,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:30:00Z",
+            host_session_cost=2.0,
+            pricing=SONNET,
+            output_dir=tmp_path,
         )
         # 2.5 > 2.0 host, multiplier = max(2.5,2.0)*4.7 = 11.75 >= 2.5
         assert est["confidence"] == "heuristic"
@@ -435,8 +441,12 @@ class TestSubagentEstimate:
         hook = tmp_path / "h.log"
         hook.write_text(assessment_tokens("2026-01-01T00:10:00Z", "5a1", inp=100, out=10, cw=5, cr=5, cost=1.0))
         est = vrc.build_subagent_estimate(
-            hook, "2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z",
-            host_session_cost=5.0, pricing=SONNET, output_dir=tmp_path,
+            hook,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:30:00Z",
+            host_session_cost=5.0,
+            pricing=SONNET,
+            output_dir=tmp_path,
         )
         # at_cost(1.0) <= host(5.0), not None -> heuristic fallback branch
         assert est["confidence"] == "heuristic"
@@ -446,13 +456,14 @@ class TestSubagentEstimate:
         hook = tmp_path / "h.log"
         hook.write_text("")
         agent = tmp_path / ".agent-run.log"
-        agent.write_text(
-            "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n"
-            "2026-01-01T00:40:00Z INFO ASSESSMENT_END\n"
-        )
+        agent.write_text("2026-01-01T00:00:00Z INFO ASSESSMENT_START\n2026-01-01T00:40:00Z INFO ASSESSMENT_END\n")
         est = vrc.build_subagent_estimate(
-            hook, "2026-01-01T00:00:00Z", "2026-01-01T00:43:00Z",
-            host_session_cost=0.05, pricing=SONNET, output_dir=tmp_path,
+            hook,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:43:00Z",
+            host_session_cost=0.05,
+            pricing=SONNET,
+            output_dir=tmp_path,
         )
         assert est["data_incomplete"] is True
         assert est["confidence"] == "duration-floor"
@@ -463,18 +474,19 @@ class TestSubagentEstimate:
         hook = tmp_path / "h.log"
         hook.write_text("")
         agent = tmp_path / ".agent-run.log"
-        agent.write_text(
-            "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n"
-            "2026-01-01T00:40:00Z INFO ASSESSMENT_END\n"
-        )
+        agent.write_text("2026-01-01T00:00:00Z INFO ASSESSMENT_START\n2026-01-01T00:40:00Z INFO ASSESSMENT_END\n")
         cache = tmp_path / ".appsec-cache"
         cache.mkdir()
         (cache / vrc._CALIBRATION_FILE).write_text(
             json.dumps({"standard-sonnet_per_minute": {"average": 0.5, "n": 2, "samples": [0.5, 0.5]}})
         )
         est = vrc.build_subagent_estimate(
-            hook, "2026-01-01T00:00:00Z", "2026-01-01T00:43:00Z",
-            host_session_cost=0.05, pricing=SONNET, output_dir=tmp_path,
+            hook,
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:43:00Z",
+            host_session_cost=0.05,
+            pricing=SONNET,
+            output_dir=tmp_path,
         )
         assert est["duration_floor_cost"] == pytest.approx(40 * 0.5, abs=0.01)
         assert "calibrated per-minute" in est["multiplier_source"]
@@ -532,8 +544,13 @@ class TestVerifyRunCosts:
             session_stop("2026-01-01T00:05:00Z", "5a1", in_=2000, out=200, cw=4000, cr=6000, cost=1.0),
             # final values picked so calc_cost roughly matches cost delta
             session_stop(
-                "2026-01-01T00:20:00Z", "5a1",
-                in_=2_000_000, out=200_000, cw=4_000_000, cr=6_000_000, cost=cost_final,
+                "2026-01-01T00:20:00Z",
+                "5a1",
+                in_=2_000_000,
+                out=200_000,
+                cw=4_000_000,
+                cr=6_000_000,
+                cost=cost_final,
             ),
         ]
         agent = [
@@ -583,10 +600,7 @@ class TestVerifyRunCosts:
     def test_mixed_model_costs(self, tmp_path):
         self._good_run(tmp_path, cost_final=10.0)
         (tmp_path / "threat-model.yaml").write_text(
-            'meta:\n'
-            '  model: "claude-sonnet-4-6"\n'
-            '  agent_models:\n'
-            '    stride-analyzer: "claude-opus-4-6"\n'
+            'meta:\n  model: "claude-sonnet-4-6"\n  agent_models:\n    stride-analyzer: "claude-opus-4-6"\n'
         )
         res = vrc.verify_run_costs(tmp_path)
         assert res["mixed_model_costs"] is not None
@@ -596,10 +610,7 @@ class TestVerifyRunCosts:
     def test_verbose_prints(self, tmp_path, capsys):
         self._good_run(tmp_path, cost_final=26.78)
         (tmp_path / "threat-model.yaml").write_text(
-            'meta:\n'
-            '  model: "claude-sonnet-4-6"\n'
-            '  agent_models:\n'
-            '    stride-analyzer: "claude-opus-4-6"\n'
+            'meta:\n  model: "claude-sonnet-4-6"\n  agent_models:\n    stride-analyzer: "claude-opus-4-6"\n'
         )
         res = vrc.verify_run_costs(tmp_path, verbose=True)
         err = capsys.readouterr().err
@@ -619,27 +630,48 @@ class TestPrintVerbose:
             "pricing_model": "sonnet-4-6",
             "sessions": [
                 {
-                    "session_id": "5a1", "agents": ["a", "b"],
+                    "session_id": "5a1",
+                    "agents": ["a", "b"],
                     "before_boundary": {"in": 1, "out": 2, "cache_write": 3, "cache_read": 4, "cost": 0.1},
                     "final_in_window": {"in": 10, "out": 20, "cache_write": 30, "cache_read": 40, "cost": 1.0},
                     "delta": {"in": 9, "out": 18, "cache_write": 27, "cache_read": 36, "cost": 0.9},
-                    "computed_cost": 0.9, "cross_check": "OK",
+                    "computed_cost": 0.9,
+                    "cross_check": "OK",
                 }
             ],
             "totals": {
-                "in": 9, "out": 18, "cache_write": 27, "cache_read": 36, "total_tokens": 90,
-                "cost": 0.9, "cross_check": "OK", "no_cache_cost": 1.0, "cache_savings_pct": 10.0,
+                "in": 9,
+                "out": 18,
+                "cache_write": 27,
+                "cache_read": 36,
+                "total_tokens": 90,
+                "cost": 0.9,
+                "cross_check": "OK",
+                "no_cache_cost": 1.0,
+                "cache_savings_pct": 10.0,
             },
             "per_agent": [
-                {"agent": "a", "sessions": 1, "total_tokens": 90, "cost": 0.9, "pct_of_total": 100.0, "ambiguous_sessions": 1}
+                {
+                    "agent": "a",
+                    "sessions": 1,
+                    "total_tokens": 90,
+                    "cost": 0.9,
+                    "pct_of_total": 100.0,
+                    "ambiguous_sessions": 1,
+                }
             ],
             "mixed_model_costs": {
                 "opus-4-6": {"cached": 1.0, "no_cache": 2.0, "pricing": vrc.PRICING_MODELS["opus-4-6"]}
             },
             "agent_models": {"threat-analyst": "sonnet-4-6"},
             "subagent_estimate": {
-                "assessment_tokens_cost": 5.0, "multiplier_estimate": 4.0, "multiplier_key": "standard-sonnet",
-                "multiplier": 4.7, "best_estimate": 5.0, "confidence": "signal", "note": "ok",
+                "assessment_tokens_cost": 5.0,
+                "multiplier_estimate": 4.0,
+                "multiplier_key": "standard-sonnet",
+                "multiplier": 4.7,
+                "best_estimate": 5.0,
+                "confidence": "signal",
+                "note": "ok",
             },
             "billing": "api",
             "warnings": ["something"],
@@ -661,14 +693,16 @@ class TestCLI:
             session_stop("2025-12-31T23:00:00Z", "5a1", in_=1000, out=100, cw=2000, cr=3000, cost=0.5)
             + agent_spawn("2026-01-01T00:01:00Z", "5a1", "appsec-threat-analyst")
             + session_stop(
-                "2026-01-01T00:20:00Z", "5a1",
-                in_=2_000_000, out=200_000, cw=4_000_000, cr=6_000_000, cost=26.78,
+                "2026-01-01T00:20:00Z",
+                "5a1",
+                in_=2_000_000,
+                out=200_000,
+                cw=4_000_000,
+                cr=6_000_000,
+                cost=26.78,
             )
         )
-        agent = (
-            "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n"
-            "2026-01-01T00:30:00Z INFO ASSESSMENT_END\n"
-        )
+        agent = "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n2026-01-01T00:30:00Z INFO ASSESSMENT_END\n"
         (d / ".hook-events.log").write_text(hook)
         (d / ".agent-run.log").write_text(agent)
 
@@ -717,13 +751,8 @@ class TestCLI:
 
     def test_cli_actual_cost_incomplete_path(self, run_plugin_script, tmp_path):
         # tiny host cost + long duration -> data_incomplete -> per-minute calibration
-        hook = session_stop(
-            "2026-01-01T00:05:00Z", "5a1", in_=100, out=10, cw=100, cr=100, cost=0.02
-        )
-        agent = (
-            "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n"
-            "2026-01-01T00:40:00Z INFO ASSESSMENT_END\n"
-        )
+        hook = session_stop("2026-01-01T00:05:00Z", "5a1", in_=100, out=10, cw=100, cr=100, cost=0.02)
+        agent = "2026-01-01T00:00:00Z INFO ASSESSMENT_START\n2026-01-01T00:40:00Z INFO ASSESSMENT_END\n"
         (tmp_path / ".hook-events.log").write_text(hook)
         (tmp_path / ".agent-run.log").write_text(agent)
         r = run_plugin_script("verify_run_costs.py", str(tmp_path), "--actual-cost", "20.0", check=False)

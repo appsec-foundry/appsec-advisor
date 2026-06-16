@@ -92,7 +92,10 @@ class TestModeDetectionBranches:
         plugin.mkdir()
         (plugin / "config.json").write_text(json.dumps({"logging": {"verbose": True}}))
         al = _load(
-            monkeypatch, tmp_path, env={"CLAUDE_PLUGIN_ROOT": str(plugin), "APPSEC_VERBOSE": None}, name="al_verbose_cfg"
+            monkeypatch,
+            tmp_path,
+            env={"CLAUDE_PLUGIN_ROOT": str(plugin), "APPSEC_VERBOSE": None},
+            name="al_verbose_cfg",
         )
         assert al._is_verbose() is True
 
@@ -317,9 +320,7 @@ class TestHandleStopBranches:
         assert "status=aborted" in cp.read_text()
 
     def test_stop_sentinel_claimed_runs_summary_once(self, al, tmp_path):
-        (tmp_path / ".hook-events.log").write_text(
-            "2026-06-14T10:00:00Z  [sidone12]  INFO   SCAN_START  repo=/r\n"
-        )
+        (tmp_path / ".hook-events.log").write_text("2026-06-14T10:00:00Z  [sidone12]  INFO   SCAN_START  repo=/r\n")
         al.handle_stop({"stop_reason": "end_turn"}, "sidone12", "Stop")
         assert (tmp_path / ".assessment-summary-emitted").exists()
         # Second Stop with same sentinel present -> FileExistsError branch, no crash.
@@ -392,13 +393,9 @@ class TestPostToolAgentBranches:
         # Force a budget crossing so the WARN event is written (lines 2130-2131).
         import budget_watchdog
 
-        monkeypatch.setattr(
-            budget_watchdog, "tally_and_check", lambda *a, **k: {"event": "BUDGET_WARN", "agent": "x"}
-        )
+        monkeypatch.setattr(budget_watchdog, "tally_and_check", lambda *a, **k: {"event": "BUDGET_WARN", "agent": "x"})
         monkeypatch.setattr(budget_watchdog, "format_detail", lambda c: "detail")
-        al.handle_post_tool_use(
-            {"tool_name": "Read", "tool_input": {"file_path": "/f"}, "tool_response": "ok"}, "sid"
-        )
+        al.handle_post_tool_use({"tool_name": "Read", "tool_input": {"file_path": "/f"}, "tool_response": "ok"}, "sid")
         assert "BUDGET_WARN" in self._log(al)
 
 
@@ -579,9 +576,7 @@ class TestAssessmentSummaryExtra:
             "2026-06-14T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START   mode=dry-run\n"
         )
         # No yaml -> md heuristic fallback. Emoji-badge table rows.
-        (tmp_path / "threat-model.md").write_text(
-            "| 🔴 Critical | T-001 | foo |\n| 🟠 High | T-002 | bar |\n"
-        )
+        (tmp_path / "threat-model.md").write_text("| 🔴 Critical | T-001 | foo |\n| 🟠 High | T-002 | bar |\n")
         al._write_assessment_summary("siddry12")
         log = (tmp_path / ".hook-events.log").read_text()
         assert "mode=dry-run" in log
@@ -591,9 +586,7 @@ class TestAssessmentSummaryExtra:
         assert "ASSESSMENT_FILES" in log
 
     def test_owner_read_exception_continues(self, al, tmp_path, monkeypatch):
-        (tmp_path / ".hook-events.log").write_text(
-            "2026-06-14T10:00:00Z  [sidown12]  INFO   SCAN_START  repo=/r\n"
-        )
+        (tmp_path / ".hook-events.log").write_text("2026-06-14T10:00:00Z  [sidown12]  INFO   SCAN_START  repo=/r\n")
         owner = tmp_path / ".assessment-owner-sid"
         owner.write_text("sidown12")
         # Make reading the owner file raise -> except branch (lines 869-870),

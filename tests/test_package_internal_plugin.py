@@ -11,10 +11,8 @@ from __future__ import annotations
 import json
 import tarfile
 
-import pytest
-
 import package_internal_plugin as pkg
-
+import pytest
 
 # ---------------------------------------------------------------------------
 # Validation helpers
@@ -84,9 +82,7 @@ def _make_source(root):
         json.dumps(
             {
                 "hooks": {
-                    "PreToolUse": [
-                        {"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"}]}
-                    ],
+                    "PreToolUse": [{"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/agent_logger.py"}]}],
                     "UserPromptSubmit": [
                         {"hooks": [{"command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/security_steering.py"}]}
                     ],
@@ -369,9 +365,7 @@ def test_resolve_keep_exclude_subset():
 
 def test_resolve_keep_required_missing():
     with pytest.raises(SystemExit):
-        pkg._resolve_keep_set(
-            {"include": ["other"]}, AVAIL, "skills", required={"create-threat-model"}
-        )
+        pkg._resolve_keep_set({"include": ["other"]}, AVAIL, "skills", required={"create-threat-model"})
 
 
 def test_resolve_keep_required_present():
@@ -435,7 +429,10 @@ def test_available_hook_ids_skips_malformed(tmp_path):
             {
                 "hooks": {
                     "E1": "not-a-list",
-                    "E2": ["not-a-dict", {"hooks": ["x", {"command": 1}, {"command": "python /x/scripts/agent_logger.py"}]}],
+                    "E2": [
+                        "not-a-dict",
+                        {"hooks": ["x", {"command": 1}, {"command": "python /x/scripts/agent_logger.py"}]},
+                    ],
                 }
             }
         ),
@@ -685,7 +682,7 @@ def test_main_skip_validation_and_archive(tmp_path, capsys):
     assert code == 0
     out = capsys.readouterr().out
     assert "Build tree ready" in out
-    build = (tmp_path / "build" / "acme")
+    build = tmp_path / "build" / "acme"
     # plugin patched, namespace rewritten, manifest written
     data = json.loads((build / ".claude-plugin" / "plugin.json").read_text())
     assert data["name"] == "acme"

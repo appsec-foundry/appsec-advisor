@@ -20,6 +20,7 @@ Usage:
 
 Writes a JSON report to stdout and, with --png, one PNG + one .mmd per fixture.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -117,43 +118,73 @@ def fixtures(tmp: Path) -> dict:
             {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-001", "F-010"]},
             {"class": "auth-bypass", "actor": "repo-read", "target": "application", "findings": ["F-050", "F-051"]},
             {"class": "privilege-escalation", "actor": "internet-anon", "target": "application", "findings": ["F-002"]},
-            {"class": "remote-code-execution", "actor": "internet-anon", "target": "application", "findings": ["F-030", "F-040"]},
+            {
+                "class": "remote-code-execution",
+                "actor": "internet-anon",
+                "target": "application",
+                "findings": ["F-030", "F-040"],
+            },
             {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-020"]},
-            {"class": "sensitive-data-exposure", "actor": "repo-read", "target": "data", "findings": ["F-003", "F-070"]},
+            {
+                "class": "sensitive-data-exposure",
+                "actor": "repo-read",
+                "target": "data",
+                "findings": ["F-003", "F-070"],
+            },
         ]
     }
-    F["single-actor-wide"] = (_ctx(tmp, comps, threats, {"public_source_repo": True, "open_user_registration": True}), ap, _taxonomy([a["class"] for a in ap["attack_paths"]]))
+    F["single-actor-wide"] = (
+        _ctx(tmp, comps, threats, {"public_source_repo": True, "open_user_registration": True}),
+        ap,
+        _taxonomy([a["class"] for a in ap["attack_paths"]]),
+    )
 
     # 1b. same model WITHOUT public-repo collapse → 3 distinct actors.
-    F["multi-actor-wide"] = (_ctx(tmp, comps, threats, {"open_user_registration": True}), ap, _taxonomy([a["class"] for a in ap["attack_paths"]]))
+    F["multi-actor-wide"] = (
+        _ctx(tmp, comps, threats, {"open_user_registration": True}),
+        ap,
+        _taxonomy([a["class"] for a in ap["attack_paths"]]),
+    )
 
     # 2. victim present, small model (XSS + CSRF both).
     comps2 = [_comp("spa", "SPA", "client"), _comp("api", "API", "application"), _comp("db", "DB", "data")]
     threats2 = [_thr("F-001", "spa", "Critical"), _thr("F-002", "api", "Critical"), _thr("F-003", "db")]
-    ap2 = {"attack_paths": [
-        {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-001"]},
-        {"class": "csrf", "actor": "victim-required", "target": "victim", "findings": ["F-001"]},
-        {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-002"]},
-    ]}
+    ap2 = {
+        "attack_paths": [
+            {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-001"]},
+            {"class": "csrf", "actor": "victim-required", "target": "victim", "findings": ["F-001"]},
+            {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-002"]},
+        ]
+    }
     F["victim-xss-csrf"] = (_ctx(tmp, comps2, threats2), ap2, _taxonomy(["cross-site-scripting", "csrf", "injection"]))
 
     # 3. victim absent (data-only targets).
-    ap3 = {"attack_paths": [
-        {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-002"]},
-        {"class": "sensitive-data-exposure", "actor": "internet-anon", "target": "data", "findings": ["F-003"]},
-    ]}
+    ap3 = {
+        "attack_paths": [
+            {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-002"]},
+            {"class": "sensitive-data-exposure", "actor": "internet-anon", "target": "data", "findings": ["F-003"]},
+        ]
+    }
     F["data-only"] = (_ctx(tmp, comps2, threats2), ap3, _taxonomy(["injection", "sensitive-data-exposure"]))
 
     # 4. single component, single class.
     comps4 = [_comp("api", "Monolith", "application")]
     threats4 = [_thr("F-001", "api", "Critical")]
-    ap4 = {"attack_paths": [{"class": "injection", "actor": "internet-anon", "target": "application", "findings": ["F-001"]}]}
+    ap4 = {
+        "attack_paths": [
+            {"class": "injection", "actor": "internet-anon", "target": "application", "findings": ["F-001"]}
+        ]
+    }
     F["single-component"] = (_ctx(tmp, comps4, threats4), ap4, _taxonomy(["injection"]))
 
     # 5. API-only, victim-targeting (no client tier) — thin model edge case.
     comps5 = [_comp("api", "REST API", "application"), _comp("db", "DB", "data")]
     threats5 = [_thr("F-001", "api", "High")]
-    ap5 = {"attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-001"]}]}
+    ap5 = {
+        "attack_paths": [
+            {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-001"]}
+        ]
+    }
     F["api-only-victim"] = (_ctx(tmp, comps5, threats5), ap5, _taxonomy(["cross-site-scripting"]))
 
     # 6. large stress: 14 components, 7 classes, mixed actors.
@@ -164,17 +195,33 @@ def fixtures(tmp: Path) -> dict:
     big_threats = []
     for i in range(1, 11):
         big_threats.append(_thr(f"F-1{i:02d}", f"svc{i}", "Critical" if i % 3 == 0 else "High"))
-    big_threats += [_thr("F-201", "spa", "Critical"), _thr("F-202", "spa2"), _thr("F-203", "db"), _thr("F-204", "cache")]
-    big_ap = {"attack_paths": [
-        {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-101"]},
-        {"class": "auth-bypass", "actor": "internet-anon", "target": "application", "findings": ["F-102"]},
-        {"class": "privilege-escalation", "actor": "internet-anon", "target": "application", "findings": ["F-103"]},
-        {"class": "remote-code-execution", "actor": "internet-anon", "target": "application", "findings": ["F-104", "F-105"]},
-        {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-201"]},
-        {"class": "sensitive-data-exposure", "actor": "repo-read", "target": "data", "findings": ["F-203"]},
-        {"class": "dos", "actor": "internet-anon", "target": "application", "findings": ["F-106", "F-107"]},
-    ]}
-    F["large-stress"] = (_ctx(tmp, big_comps, big_threats, {"public_source_repo": True}), big_ap, _taxonomy([a["class"] for a in big_ap["attack_paths"]]))
+    big_threats += [
+        _thr("F-201", "spa", "Critical"),
+        _thr("F-202", "spa2"),
+        _thr("F-203", "db"),
+        _thr("F-204", "cache"),
+    ]
+    big_ap = {
+        "attack_paths": [
+            {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-101"]},
+            {"class": "auth-bypass", "actor": "internet-anon", "target": "application", "findings": ["F-102"]},
+            {"class": "privilege-escalation", "actor": "internet-anon", "target": "application", "findings": ["F-103"]},
+            {
+                "class": "remote-code-execution",
+                "actor": "internet-anon",
+                "target": "application",
+                "findings": ["F-104", "F-105"],
+            },
+            {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-201"]},
+            {"class": "sensitive-data-exposure", "actor": "repo-read", "target": "data", "findings": ["F-203"]},
+            {"class": "dos", "actor": "internet-anon", "target": "application", "findings": ["F-106", "F-107"]},
+        ]
+    }
+    F["large-stress"] = (
+        _ctx(tmp, big_comps, big_threats, {"public_source_repo": True}),
+        big_ap,
+        _taxonomy([a["class"] for a in big_ap["attack_paths"]]),
+    )
 
     # 7. complex app: MANY app components that are ALL genuine top-threat hosts,
     #    so the complexity budget canNOT collapse them — this is the worst case
@@ -188,16 +235,37 @@ def fixtures(tmp: Path) -> dict:
         cthreats.append(_thr(f"F-3{i:02d}".replace("F-3", "F-4"), f"a{i}", "Critical" if i % 2 else "High"))
     cthreats += [_thr("F-501", "db", "High"), _thr("F-502", "warehouse")]
     # 7 classes, findings spread so all 11 app services + spa are hosts.
-    cap = {"attack_paths": [
-        {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-401", "F-402"]},
-        {"class": "auth-bypass", "actor": "internet-anon", "target": "application", "findings": ["F-403", "F-404"]},
-        {"class": "privilege-escalation", "actor": "internet-anon", "target": "application", "findings": ["F-405", "F-406"]},
-        {"class": "remote-code-execution", "actor": "internet-anon", "target": "application", "findings": ["F-407", "F-408"]},
-        {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-301"]},
-        {"class": "sensitive-data-exposure", "actor": "repo-read", "target": "data", "findings": ["F-409", "F-501"]},
-        {"class": "dos", "actor": "internet-anon", "target": "application", "findings": ["F-410", "F-411"]},
-    ]}
-    F["complex-app"] = (_ctx(tmp, cax, cthreats, {"open_user_registration": True}), cap, _taxonomy([a["class"] for a in cap["attack_paths"]]))
+    cap = {
+        "attack_paths": [
+            {"class": "injection", "actor": "internet-anon", "target": "data", "findings": ["F-401", "F-402"]},
+            {"class": "auth-bypass", "actor": "internet-anon", "target": "application", "findings": ["F-403", "F-404"]},
+            {
+                "class": "privilege-escalation",
+                "actor": "internet-anon",
+                "target": "application",
+                "findings": ["F-405", "F-406"],
+            },
+            {
+                "class": "remote-code-execution",
+                "actor": "internet-anon",
+                "target": "application",
+                "findings": ["F-407", "F-408"],
+            },
+            {"class": "cross-site-scripting", "actor": "victim-required", "target": "victim", "findings": ["F-301"]},
+            {
+                "class": "sensitive-data-exposure",
+                "actor": "repo-read",
+                "target": "data",
+                "findings": ["F-409", "F-501"],
+            },
+            {"class": "dos", "actor": "internet-anon", "target": "application", "findings": ["F-410", "F-411"]},
+        ]
+    }
+    F["complex-app"] = (
+        _ctx(tmp, cax, cthreats, {"open_user_registration": True}),
+        cap,
+        _taxonomy([a["class"] for a in cap["attack_paths"]]),
+    )
 
     return F
 
@@ -253,6 +321,7 @@ def _flatten_path(d: str) -> list[tuple[float, float]]:
 def _seg_intersect(p1, p2, p3, p4) -> bool:
     def ccw(a, b, c):
         return (c[1] - a[1]) * (b[0] - a[0]) - (b[1] - a[1]) * (c[0] - a[0])
+
     d1 = ccw(p3, p4, p1)
     d2 = ccw(p3, p4, p2)
     d3 = ccw(p1, p2, p3)
@@ -302,6 +371,7 @@ def _pt_in_box(p, box, pad: float = 4.0) -> bool:
 
 def _decode_points(b64: str) -> list[tuple[float, float]]:
     import base64
+
     try:
         arr = json.loads(base64.b64decode(b64))
         return [(float(p["x"]), float(p["y"])) for p in arr]
@@ -320,7 +390,7 @@ def _split_endpoints(data_id: str, node_ids: set[str]) -> tuple[str | None, str 
         if s == a:  # degenerate
             return a, None
         if s.startswith(a + "_"):
-            b = s[len(a) + 1:]
+            b = s[len(a) + 1 :]
             if b in node_ids:
                 return a, b
     return None, None
@@ -341,7 +411,7 @@ def _extract_geometry(svg: str):
     ):
         nid = m.group(1)
         tx, ty = float(m.group(2)), float(m.group(3))
-        tail = svg[m.end(): m.end() + 1500]
+        tail = svg[m.end() : m.end() + 1500]
         rm = re.search(r'<rect[^>]*class="basic label-container"[^>]*>', tail) or re.search(r"<rect[^>]*>", tail)
         if not rm:
             continue
@@ -465,7 +535,14 @@ def _pptr_args() -> list[str]:
     if _PPTR_CFG:
         return _PPTR_CFG
     cfg = {
-        "args": ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--disable-crash-reporter", "--no-first-run", "--disable-extensions"],
+        "args": [
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--disable-crash-reporter",
+            "--no-first-run",
+            "--disable-extensions",
+        ],
     }
     chrome = _find_chrome()
     if chrome:
@@ -502,6 +579,7 @@ def _real_fixture(real_dir: Path, tmp: Path):
     """Load an actual OUTPUT_DIR (threat-model.yaml + attack-paths fragment) as
     the authoritative regression model — the real juice-shop layout to beat."""
     import yaml as _yaml
+
     yml = _yaml.safe_load((real_dir / "threat-model.yaml").read_text(encoding="utf-8"))
     ctx = compose.RenderContext(
         output_dir=real_dir,
@@ -570,7 +648,17 @@ def run(real: str | None = None, png: str | None = None, only: str | None = None
                 outdir = Path(png)
                 outdir.mkdir(parents=True, exist_ok=True)
                 (outdir / f"{name}.mmd").write_text(mmd, encoding="utf-8")
-                cmd = ["mmdc", "-i", str(tmp / f"{name}.mmd"), "-o", str(outdir / f"{name}.png"), "-b", "white", "-s", "2"] + _pptr_args()
+                cmd = [
+                    "mmdc",
+                    "-i",
+                    str(tmp / f"{name}.mmd"),
+                    "-o",
+                    str(outdir / f"{name}.png"),
+                    "-b",
+                    "white",
+                    "-s",
+                    "2",
+                ] + _pptr_args()
                 subprocess.run(cmd, capture_output=True, timeout=180, check=False, env=_mmdc_env())
     return report
 

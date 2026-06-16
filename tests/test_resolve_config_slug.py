@@ -6,6 +6,7 @@ output directory. Bare ``--slug`` generates a random postfix; ``--slug
 <value>`` uses an explicit filename-safe value; omitting it leaves ``slug`` as
 ``None`` (canonical names only).
 """
+
 from __future__ import annotations
 
 import json

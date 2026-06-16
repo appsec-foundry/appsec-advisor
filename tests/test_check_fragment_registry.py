@@ -18,7 +18,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import check_fragment_registry as cfr  # noqa: E402
 
-
 # ---------- _extract_dict_literal ----------------------------------------
 
 

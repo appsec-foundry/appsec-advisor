@@ -165,9 +165,7 @@ class TestValidate:
         # .components.json has an extra component absent from the manifest →
         # non-fatal warning, manifest still valid.
         (tmp_path / ".components.json").write_text(
-            json.dumps(
-                {"components": [{"id": "express-backend"}, {"id": "angular-spa"}]}
-            ),
+            json.dumps({"components": [{"id": "express-backend"}, {"id": "angular-spa"}]}),
             encoding="utf-8",
         )
         mp = _write_manifest(tmp_path, _minimal_manifest())
@@ -177,9 +175,7 @@ class TestValidate:
 
     def test_components_json_as_bare_list(self, vdm, tmp_path):
         # .components.json can be a bare list (not a dict wrapper).
-        (tmp_path / ".components.json").write_text(
-            json.dumps([{"id": "express-backend"}]), encoding="utf-8"
-        )
+        (tmp_path / ".components.json").write_text(json.dumps([{"id": "express-backend"}]), encoding="utf-8")
         mp = _write_manifest(tmp_path, _minimal_manifest())
         ok, errors, warnings = vdm.validate(mp, tmp_path)
         assert ok is True

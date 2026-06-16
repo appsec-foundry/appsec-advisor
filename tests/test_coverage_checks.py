@@ -101,8 +101,7 @@ class TestOwaspMappingLoading:
         monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(tmp_path))
 
         assert (
-            coverage_checks._plugin_data_file("OWASP_TOP10_YAML", OWASP_YAML, "owasp-top10-cwes.yaml")
-            == plugin_mapping
+            coverage_checks._plugin_data_file("OWASP_TOP10_YAML", OWASP_YAML, "owasp-top10-cwes.yaml") == plugin_mapping
         )
 
     def test_load_owasp_mapping_missing_file_raises(self, tmp_path):

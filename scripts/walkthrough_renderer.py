@@ -198,6 +198,24 @@ def _short_title(title: str, limit: int = 70) -> str:
     return truncated + "…"
 
 
+def _weakness_class(title: str) -> str:
+    """The weakness-class portion of a finding title.
+
+    Finding titles follow the contract ``<weakness class> — <file[:line]>``
+    (em-dash separator). §3 walkthrough headings show only the class; the
+    concrete ``file:line`` is carried on the **Source:** line just below.
+
+    Keeping the ``— file:line`` tail OUT of the heading also keeps the
+    heading's GitHub anchor free of the em-dash. GitHub slugifies ` — ` to a
+    DOUBLE hyphen (``…object-reference--routesaddressts11``) while the
+    composer's link target collapses it to a single (`…-routesaddressts11`):
+    that mismatch broke every §3 ToC link (2026-06 user report). A clean
+    class-only heading slugifies identically across GitHub, VS Code, and
+    pandoc, so the anchor is renderer-stable.
+    """
+    return re.split(r"\s+—\s+", (title or "").strip(), maxsplit=1)[0].strip()
+
+
 def _mermaid_safe(label: str) -> str:
     """Strip Mermaid-hostile characters from a node label.
 
@@ -955,8 +973,10 @@ def _render_walkthrough_block(
     # into the heading inflates the line to 70+ chars and trips
     # qa_checks.py:check_heading_hygiene. The previous behaviour
     # (`### 3.X {tid} — {title}` with `_short_title(title, 90)`) violated
-    # both rules.
-    heading = f"### 3.{walkthrough_index} {_short_title(title, 60)}"
+    # both rules. The `— file:line` tail is dropped too (see _weakness_class):
+    # it carries no info the **Source:** line lacks and its em-dash made the
+    # GitHub heading anchor diverge from the composer's link target.
+    heading = f"### 3.{walkthrough_index} {_short_title(_weakness_class(title), 60)}"
 
     lines: list[str] = []
     lines.append(heading)

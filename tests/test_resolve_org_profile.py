@@ -294,9 +294,7 @@ def test_config_pointer_missing_file(tmp_path):
 
 
 def test_config_pointer_disabled_block(isolated_root):
-    (isolated_root / "config.json").write_text(
-        json.dumps({"organization_profile": {"enabled": False, "path": "x"}})
-    )
+    (isolated_root / "config.json").write_text(json.dumps({"organization_profile": {"enabled": False, "path": "x"}}))
     assert rop._config_pointer(isolated_root) == (None, None, False)
 
 
@@ -305,10 +303,7 @@ def test_discover_active_preset_cli_wins():
 
 
 def test_discover_active_preset_env_wins():
-    assert (
-        rop.discover_active_preset({"default_preset": "d"}, None, env={"APPSEC_ADVISOR_PRESET": "envp"})
-        == "envp"
-    )
+    assert rop.discover_active_preset({"default_preset": "d"}, None, env={"APPSEC_ADVISOR_PRESET": "envp"}) == "envp"
 
 
 def test_discover_active_preset_falls_back_to_default():

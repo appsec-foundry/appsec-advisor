@@ -251,9 +251,7 @@ class TestOrgProfileStatus:
         assert res == {"active": False, "configured": False}
 
     def test_inactive_effective_falls_through(self, appsec_status, tmp_path, monkeypatch):
-        (tmp_path / ".org-profile-effective.json").write_text(
-            json.dumps({"org_profile": {"active": False}})
-        )
+        (tmp_path / ".org-profile-effective.json").write_text(json.dumps({"org_profile": {"active": False}}))
         root = tmp_path / "root"
         root.mkdir()
         (root / "config.json").write_text(json.dumps({"organization_profile": {"enabled": False}}))
@@ -448,9 +446,7 @@ class TestFastPathPreview:
 
     def test_exit_zero_no_dirty_refine(self, appsec_status, tmp_path, monkeypatch):
         (tmp_path / "threat-model.yaml").write_text("x: 1")
-        monkeypatch.setattr(
-            appsec_status, "_run_helper", lambda *a: (0, json.dumps({"baseline_sha": "abc"}), "")
-        )
+        monkeypatch.setattr(appsec_status, "_run_helper", lambda *a: (0, json.dumps({"baseline_sha": "abc"}), ""))
         res = appsec_status._fast_path_preview(tmp_path, tmp_path)
         assert res["exit"] == 0
         assert "dirty_set" not in res
@@ -718,9 +714,7 @@ def _seed_live(tmp_path: Path) -> None:
     )
     pdir = tmp_path / ".progress"
     pdir.mkdir()
-    (pdir / "auth.json").write_text(
-        json.dumps({"component_name": "Auth", "step": 4, "total": 9, "label": "running"})
-    )
+    (pdir / "auth.json").write_text(json.dumps({"component_name": "Auth", "step": 4, "total": 9, "label": "running"}))
     adir = tmp_path / ".active-tool-calls"
     adir.mkdir()
     (adir / "toolu.json").write_text(

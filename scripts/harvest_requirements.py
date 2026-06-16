@@ -1103,7 +1103,10 @@ def run(args: argparse.Namespace) -> int:
     if cat_errors:
         for e in cat_errors[:6]:
             print(f"  ✗ schema error: {e}", file=sys.stderr)
-        print("✗ Harvested catalog failed schema validation (see schemas/requirements-catalog.schema.yaml).", file=sys.stderr)
+        print(
+            "✗ Harvested catalog failed schema validation (see schemas/requirements-catalog.schema.yaml).",
+            file=sys.stderr,
+        )
         return 2
 
     return 0 if failed == 0 else 2

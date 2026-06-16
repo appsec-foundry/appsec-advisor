@@ -118,9 +118,7 @@ def _read_event_epochs(output_dir: Path) -> list[int]:
                     if not m:
                         continue
                     try:
-                        dt = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ").replace(
-                            tzinfo=timezone.utc
-                        )
+                        dt = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
                     except ValueError:
                         continue
                     epochs.append(int(dt.timestamp()))

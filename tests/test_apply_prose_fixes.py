@@ -454,8 +454,7 @@ def test_title_tail_bare_filename_gets_backticked():
     """A bare filename:line in a finding link-title tail (`[F-017](#f-017) — …
     last-login-ip.component.html:10`) was left unformatted because the `file`
     pass did not penetrate the title-tail mask. It now does."""
-    line = ("| x | [F-017](#f-017) — Stored XSS via DomSanitizer in "
-            "last-login-ip.component.html:10 |")
+    line = "| x | [F-017](#f-017) — Stored XSS via DomSanitizer in last-login-ip.component.html:10 |"
     out, n = prose._wrap_line(line)
     assert "`last-login-ip.component.html:10`" in out
 

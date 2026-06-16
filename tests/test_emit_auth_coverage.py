@@ -112,7 +112,12 @@ class TestDetectionAndRating:
             [
                 "not-a-threat",
                 {"id": "T-1", "title": "Password reset weak token", "risk": "Medium", "evidence": "not-a-dict"},
-                {"t_id": "T-2", "title": "Password reset takeover", "severity": "Low", "evidence": {"file": "reset.ts"}},
+                {
+                    "t_id": "T-2",
+                    "title": "Password reset takeover",
+                    "severity": "Low",
+                    "evidence": {"file": "reset.ts"},
+                },
             ],
             r"reset",
         )

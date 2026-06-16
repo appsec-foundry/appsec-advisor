@@ -193,9 +193,7 @@ def test_cmd_update_writes_baseline_and_carries_forward(tmp_path: Path):
     (out / "threat-model.yaml").write_text("threats:\n  - id: T-007\nmitigations:\n  - id: M-003\n")
     cache_dir = out / ".appsec-cache"
     cache_dir.mkdir()
-    (cache_dir / "baseline.json").write_text(
-        json.dumps({"last_run_seconds": 99, "component_durations": {"c": 1}})
-    )
+    (cache_dir / "baseline.json").write_text(json.dumps({"last_run_seconds": 99, "component_durations": {"c": 1}}))
     rc = bs.cmd_update(_ns(output_dir=str(out), repo_root=str(repo), mode="incremental", manifest_hashes=None))
     assert rc == 0
     data = json.loads((cache_dir / "baseline.json").read_text())
@@ -681,9 +679,7 @@ def test_check_compat_runs(tmp_path: Path, capsys):
 
 def test_check_changes_missing_output_dir(tmp_path: Path, capsys):
     repo = _make_git_repo(tmp_path)
-    rc = bs.cmd_check_changes(
-        _ns(output_dir=str(tmp_path / "nope"), repo_root=str(repo), base_ref=None)
-    )
+    rc = bs.cmd_check_changes(_ns(output_dir=str(tmp_path / "nope"), repo_root=str(repo), base_ref=None))
     assert rc == 3
     assert "output_dir missing" in capsys.readouterr().out
 
@@ -772,14 +768,7 @@ def test_parse_components_from_yaml_regex_fallback(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     y = tmp_path / "threat-model.yaml"
-    y.write_text(
-        "components:\n"
-        "- id: comp-a\n"
-        "  type: service\n"
-        "  paths:\n"
-        "    - src/a/foo.py\n"
-        "    - src/a/bar.py\n"
-    )
+    y.write_text("components:\n- id: comp-a\n  type: service\n  paths:\n    - src/a/foo.py\n    - src/a/bar.py\n")
     comps = bs._parse_components_from_yaml(y)
     by_id = {c["id"]: c for c in comps}
     assert "comp-a" in by_id
@@ -817,9 +806,7 @@ def _dirty_ns(out: Path, files=None, no_stdin=True):
 def test_dirty_set_dirty(tmp_path: Path, capsys):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "threat-model.yaml").write_text(
-        "components:\n  - id: api\n    paths:\n      - src/api/**\n"
-    )
+    (out / "threat-model.yaml").write_text("components:\n  - id: api\n    paths:\n      - src/api/**\n")
     rc = bs.cmd_dirty_set(_dirty_ns(out, files=["src/api/routes.py"]))
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
@@ -830,9 +817,7 @@ def test_dirty_set_dirty(tmp_path: Path, capsys):
 def test_dirty_set_noop_global(tmp_path: Path, capsys):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "threat-model.yaml").write_text(
-        "components:\n  - id: api\n    paths:\n      - src/api/**\n"
-    )
+    (out / "threat-model.yaml").write_text("components:\n  - id: api\n    paths:\n      - src/api/**\n")
     rc = bs.cmd_dirty_set(_dirty_ns(out, files=["package.json"]))
     payload = json.loads(capsys.readouterr().out)
     assert rc == 2
@@ -842,9 +827,7 @@ def test_dirty_set_noop_global(tmp_path: Path, capsys):
 def test_dirty_set_ambiguous(tmp_path: Path, capsys):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "threat-model.yaml").write_text(
-        "components:\n  - id: api\n    paths:\n      - src/api/**\n"
-    )
+    (out / "threat-model.yaml").write_text("components:\n  - id: api\n    paths:\n      - src/api/**\n")
     rc = bs.cmd_dirty_set(_dirty_ns(out, files=["src/brandnew/widget.py"]))
     payload = json.loads(capsys.readouterr().out)
     assert rc == 3
@@ -866,9 +849,7 @@ def test_dirty_set_reads_stdin(tmp_path: Path, capsys, monkeypatch):
 
     out = tmp_path / "out"
     out.mkdir()
-    (out / "threat-model.yaml").write_text(
-        "components:\n  - id: api\n    paths:\n      - src/api/**\n"
-    )
+    (out / "threat-model.yaml").write_text("components:\n  - id: api\n    paths:\n      - src/api/**\n")
 
     class _Stdin(io.StringIO):
         def isatty(self):
@@ -936,9 +917,7 @@ def test_filter_diff_paths_helper_import_error(tmp_path: Path, monkeypatch):
 def test_dirty_set_normalises_dot_slash(tmp_path: Path, capsys):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "threat-model.yaml").write_text(
-        "components:\n  - id: api\n    paths:\n      - src/api/**\n"
-    )
+    (out / "threat-model.yaml").write_text("components:\n  - id: api\n    paths:\n      - src/api/**\n")
     rc = bs.cmd_dirty_set(_dirty_ns(out, files=["./src/api/x.py"]))
     assert rc == 0
     json.loads(capsys.readouterr().out)
@@ -1029,9 +1008,7 @@ def test_last_run_info_bad_cache(tmp_path: Path, capsys):
 def test_last_run_info_plugin_version_from_yaml(tmp_path: Path, capsys):
     out = tmp_path / "out"
     out.mkdir()
-    (out / "threat-model.yaml").write_text(
-        "meta:\n  plugin_version: '2.2'\n  git:\n    commit_sha: 'abc1234'\n"
-    )
+    (out / "threat-model.yaml").write_text("meta:\n  plugin_version: '2.2'\n  git:\n    commit_sha: 'abc1234'\n")
     rc = bs.cmd_last_run_info(_ns(output_dir=str(out)))
     payload = json.loads(capsys.readouterr().out)
     assert payload["plugin_version"] == "2.2"

@@ -1424,7 +1424,7 @@ def _collect_resolved_prior_findings(pairs: list[tuple[str, dict]]) -> list[dict
     can match the dropped prior threat by component + fingerprint."""
     out: list[dict] = []
     for cid, data in pairs:
-        for r in (data.get("resolved_prior_findings") or []):
+        for r in data.get("resolved_prior_findings") or []:
             if not isinstance(r, dict) or not r.get("prior_id"):
                 continue
             entry = dict(r)

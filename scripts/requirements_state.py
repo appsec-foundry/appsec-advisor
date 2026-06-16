@@ -273,7 +273,9 @@ def _structural_errors_without_jsonschema(doc: object) -> list[str]:
     return errors
 
 
-def validate_catalog(body: bytes, schema_path: Path | None = None, max_item_warnings: int = 10) -> tuple[list[str], list[str]]:
+def validate_catalog(
+    body: bytes, schema_path: Path | None = None, max_item_warnings: int = 10
+) -> tuple[list[str], list[str]]:
     """Validate a requirements catalog body.
 
     Returns ``(errors, warnings)``:

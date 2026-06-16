@@ -136,8 +136,17 @@ def test_step1_empty_cwe_ignored():
 
 def test_step1_title_pattern_consistency_standard():
     threats = [
-        _threat(t_id="T-001", cwe="CWE-1", stride="Spoofing", title="Auth bypass on login", risk="Critical", component_id="A"),
-        _threat(t_id="T-002", cwe="CWE-2", stride="Spoofing", title="Auth bypass on login", risk="Low", component_id="B"),
+        _threat(
+            t_id="T-001",
+            cwe="CWE-1",
+            stride="Spoofing",
+            title="Auth bypass on login",
+            risk="Critical",
+            component_id="A",
+        ),
+        _threat(
+            t_id="T-002", cwe="CWE-2", stride="Spoofing", title="Auth bypass on login", risk="Low", component_id="B"
+        ),
     ]
     flags = tvr._step1_cross_component_consistency(threats, "standard")
     # CWEs differ so no cwe-group flag; title+stride match drives the second branch.
@@ -174,9 +183,7 @@ def test_step2_must_be_high_no_flag_when_high():
 
 
 def test_step2_known_vuln_eop_min_high():
-    threats = [
-        _threat(source="known-vuln", stride="Elevation of Privilege", risk="Low", cwe="CWE-1", evidence={})
-    ]
+    threats = [_threat(source="known-vuln", stride="Elevation of Privilege", risk="Low", cwe="CWE-1", evidence={})]
     flags = tvr._step2_severity_plausibility(threats, "standard")
     assert any("known-vuln threat with Elevation of Privilege" in f["message"] for f in flags)
 
@@ -398,7 +405,14 @@ def test_main_writes_flags_file(monkeypatch, tmp_path):
 
 def test_main_merges_existing_flags_and_continues_ids(monkeypatch, tmp_path):
     (tmp_path / ".threats-merged.json").write_text(
-        json.dumps({"threats": [_threat(cwe="CWE-89", risk="Critical"), _threat(t_id="T-002", cwe="CWE-89", risk="Low", component_id="B")]}),
+        json.dumps(
+            {
+                "threats": [
+                    _threat(cwe="CWE-89", risk="Critical"),
+                    _threat(t_id="T-002", cwe="CWE-89", risk="Low", component_id="B"),
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     existing = {

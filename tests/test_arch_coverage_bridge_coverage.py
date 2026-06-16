@@ -6,7 +6,6 @@ Pins current behavior (test-files-only campaign). No producer edits.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -18,7 +17,6 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "arch_coverage_to_threats.py"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import arch_coverage_to_threats as bridge  # noqa: E402
-
 
 # --- helper edge branches --------------------------------------------------
 
@@ -216,9 +214,7 @@ def test_cli_emit_writes_file(tmp_path: Path, capsys):
 
 def test_cli_merge_into_target_missing(tmp_path: Path, capsys):
     cov = _write_cov(tmp_path)
-    rc = bridge._main(
-        ["merge-into", "--input", str(cov), "--threats-merged", str(tmp_path / "absent.json")]
-    )
+    rc = bridge._main(["merge-into", "--input", str(cov), "--threats-merged", str(tmp_path / "absent.json")])
     assert rc == 1
     assert "threats-merged not found" in capsys.readouterr().err
 
@@ -251,9 +247,7 @@ def test_cli_persist_with_merged(tmp_path: Path, capsys):
     yaml_path = tmp_path / "tm.yaml"
     merged = tmp_path / "merged.json"
     merged.write_text(
-        json.dumps(
-            {"threats": [{"source": "threat-hypothesis", "hypothesis_id": "H-1", "t_id": "T-007"}]}
-        ),
+        json.dumps({"threats": [{"source": "threat-hypothesis", "hypothesis_id": "H-1", "t_id": "T-007"}]}),
         encoding="utf-8",
     )
     rc = bridge._main(
@@ -309,9 +303,7 @@ def test_cli_persist_runtime_error(tmp_path: Path, monkeypatch, capsys):
         raise RuntimeError("PyYAML required")
 
     monkeypatch.setattr(bridge, "persist_hypotheses", boom)
-    rc = bridge._main(
-        ["persist-hypotheses", "--input", str(cov_path), "--threat-model", str(tmp_path / "tm.yaml")]
-    )
+    rc = bridge._main(["persist-hypotheses", "--input", str(cov_path), "--threat-model", str(tmp_path / "tm.yaml")])
     assert rc == 1
     assert "PyYAML required" in capsys.readouterr().err
 

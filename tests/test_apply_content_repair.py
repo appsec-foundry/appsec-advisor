@@ -543,9 +543,7 @@ def test_op_handlers_match_schema_op_consts():
     vice-versa — otherwise apply_content_repair silently rejects a valid plan or
     accepts an op the schema forbids. qa-content-repair-plan.schema.json was
     validated by no test until this audit."""
-    schema = json.loads(
-        (REPO_ROOT / "schemas" / "qa-content-repair-plan.schema.json").read_text()
-    )
+    schema = json.loads((REPO_ROOT / "schemas" / "qa-content-repair-plan.schema.json").read_text())
     declared: set[str] = set()
 
     def walk(node):

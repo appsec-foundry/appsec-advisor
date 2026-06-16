@@ -431,9 +431,7 @@ def test_current_phase_label_skips_non_phase_start_lines(tmp_path: Path):
     # Newer (non-PHASE_START) lines come AFTER the PHASE_START line; the
     # reversed scan must skip them (line 240) before finding the phase.
     (out / ".agent-run.log").write_text(
-        _phase_start("4", "11", "Modeling") + "\n"
-        + "some unrelated INFO line\n"
-        + "another HEARTBEAT line\n"
+        _phase_start("4", "11", "Modeling") + "\n" + "some unrelated INFO line\n" + "another HEARTBEAT line\n"
     )
     assert acquire_lock._current_phase_label(out) == "4/11"
 

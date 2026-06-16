@@ -73,9 +73,7 @@ def test_read_project_manifest_prefers_package_json(tmp_path: Path):
 
 
 def test_read_project_manifest_pyproject_fallback_with_readme_desc(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text(
-        "[project]\nname = \"py\"\nversion = \"2.0\"\n"
-    )
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "py"\nversion = "2.0"\n')
     (tmp_path / "README.md").write_text("# Title\n\nA short description.\n")
     data = R.read_project_manifest(ctx_for(tmp_path))
     assert data["name"] == "py"
@@ -87,9 +85,7 @@ def test_read_project_manifest_pyproject_fallback_with_readme_desc(tmp_path: Pat
 
 
 def test_read_project_manifest_cargo(tmp_path: Path):
-    (tmp_path / "Cargo.toml").write_text(
-        "[package]\nname = \"rustcrate\"\nversion = \"0.1.0\"\n"
-    )
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "rustcrate"\nversion = "0.1.0"\n')
     data = R.read_project_manifest(ctx_for(tmp_path))
     assert data["name"] == "rustcrate"
     assert data["runtime"] == "Rust (Cargo)"
@@ -117,9 +113,7 @@ def test_read_project_manifest_pom(tmp_path: Path):
 
 
 def test_read_project_manifest_gradle(tmp_path: Path):
-    (tmp_path / "build.gradle").write_text(
-        "version = '3.0'\ngroup = 'com.acme'\n"
-    )
+    (tmp_path / "build.gradle").write_text("version = '3.0'\ngroup = 'com.acme'\n")
     (tmp_path / "settings.gradle").write_text("rootProject.name = 'gr'\n")
     data = R.read_project_manifest(ctx_for(tmp_path))
     assert data["name"] == "gr"
@@ -169,10 +163,7 @@ def test_read_pyproject_full_pep621(tmp_path: Path):
 
 def test_read_pyproject_string_author_and_license_file(tmp_path: Path):
     (tmp_path / "pyproject.toml").write_text(
-        "[project]\n"
-        'name = "p"\n'
-        'authors = ["Just A String"]\n'
-        'license = {file = "LICENSE"}\n'
+        '[project]\nname = "p"\nauthors = ["Just A String"]\nlicense = {file = "LICENSE"}\n'
     )
     data = R._read_pyproject_toml(ctx_for(tmp_path))
     assert data["author"] == "Just A String"
@@ -180,9 +171,7 @@ def test_read_pyproject_string_author_and_license_file(tmp_path: Path):
 
 
 def test_read_pyproject_poetry_block(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text(
-        "[tool.poetry]\nname = \"poet\"\nversion = \"0.1\"\n"
-    )
+    (tmp_path / "pyproject.toml").write_text('[tool.poetry]\nname = "poet"\nversion = "0.1"\n')
     data = R._read_pyproject_toml(ctx_for(tmp_path))
     assert data["name"] == "poet"
 
@@ -220,7 +209,7 @@ def test_read_cargo_full(tmp_path: Path):
 
 
 def test_read_cargo_no_package(tmp_path: Path):
-    (tmp_path / "Cargo.toml").write_text("[dependencies]\nserde = \"1\"\n")
+    (tmp_path / "Cargo.toml").write_text('[dependencies]\nserde = "1"\n')
     assert R._read_cargo_toml(ctx_for(tmp_path)) == {}
 
 
@@ -288,9 +277,9 @@ def test_read_pom_malformed(tmp_path: Path):
 
 def test_read_gradle_kts_with_java_and_spring(tmp_path: Path):
     (tmp_path / "build.gradle.kts").write_text(
-        "version = \"1.0\"\n"
-        "group = \"com.x\"\n"
-        "description = \"grtxt\"\n"
+        'version = "1.0"\n'
+        'group = "com.x"\n'
+        'description = "grtxt"\n'
         "sourceCompatibility = '11'\n"
         'id("org.springframework.boot") version "3.0.0"\n'
         "dependencies {\n"
@@ -310,10 +299,7 @@ def test_read_gradle_kts_with_java_and_spring(tmp_path: Path):
 
 
 def test_read_gradle_archives_base_name_fallback(tmp_path: Path):
-    (tmp_path / "build.gradle").write_text(
-        "archivesBaseName = 'abn'\n"
-        "JavaVersion.VERSION_1_8\n"
-    )
+    (tmp_path / "build.gradle").write_text("archivesBaseName = 'abn'\nJavaVersion.VERSION_1_8\n")
     data = R._read_gradle(ctx_for(tmp_path))
     assert data["name"] == "abn"
     assert "Java 1.8" in data["runtime"]
@@ -329,21 +315,14 @@ def test_read_gradle_none(tmp_path: Path):
 
 
 def test_readme_description_strips_markdown(tmp_path: Path):
-    (tmp_path / "README.md").write_text(
-        "# Title\n\n"
-        "A **bold** project using [link](http://x) and `code` here.\n"
-    )
+    (tmp_path / "README.md").write_text("# Title\n\nA **bold** project using [link](http://x) and `code` here.\n")
     desc = R.read_readme_description(ctx_for(tmp_path))
     assert desc == "A bold project using link and code here."
 
 
 def test_readme_description_skips_badges_and_frontmatter(tmp_path: Path):
     (tmp_path / "README.md").write_text(
-        "---\ntitle: x\n---\n"
-        "# Heading\n\n"
-        "![badge](url)\n"
-        "> quote\n"
-        "The real description line.\n"
+        "---\ntitle: x\n---\n# Heading\n\n![badge](url)\n> quote\nThe real description line.\n"
     )
     desc = R.read_readme_description(ctx_for(tmp_path))
     assert desc == "The real description line."
@@ -436,9 +415,7 @@ def test_derive_homepage_none():
 
 
 def test_readme_tags_frontmatter_list(tmp_path: Path):
-    (tmp_path / "README.md").write_text(
-        "---\ntags:\n  - alpha\n  - beta\n---\n# T\n"
-    )
+    (tmp_path / "README.md").write_text("---\ntags:\n  - alpha\n  - beta\n---\n# T\n")
     assert R.read_readme_tags(ctx_for(tmp_path)) == ["alpha", "beta"]
 
 
@@ -467,10 +444,7 @@ def test_readme_tags_none(tmp_path: Path):
 def test_extract_repo_url_variants():
     assert R.extract_repo_url(None) is None
     assert R.extract_repo_url("https://github.com/x/y") == "https://github.com/x/y"
-    assert (
-        R.extract_repo_url({"type": "git", "url": "git+https://github.com/x/y.git"})
-        == "https://github.com/x/y"
-    )
+    assert R.extract_repo_url({"type": "git", "url": "git+https://github.com/x/y.git"}) == "https://github.com/x/y"
     assert R.extract_repo_url({"type": "git"}) is None
 
 

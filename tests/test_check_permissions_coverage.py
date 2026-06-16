@@ -22,7 +22,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import check_permissions as cp  # noqa: E402
 
-
 # ---------- _validate_against_schema -------------------------------------
 
 
@@ -254,9 +253,9 @@ def test_main_help(capsys):
 
 def test_main_update_json(tmp_path, monkeypatch, capsys):
     """--update --json output branch (line 461)."""
-    monkeypatch.setattr(cp, "load_required", lambda *a, **k: [
-        {"entry": "Bash(zzz:*)", "reason": "r", "category": "exec"}
-    ])
+    monkeypatch.setattr(
+        cp, "load_required", lambda *a, **k: [{"entry": "Bash(zzz:*)", "reason": "r", "category": "exec"}]
+    )
     monkeypatch.setattr(cp, "effective_allow", lambda root: {"user": [], "project": [], "local": []})
     rc = cp.main(["--repo-root", str(tmp_path), "--update", "--json", "--scope", "local"])
     assert rc == 0
@@ -266,9 +265,9 @@ def test_main_update_json(tmp_path, monkeypatch, capsys):
 
 
 def test_main_update_human(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(cp, "load_required", lambda *a, **k: [
-        {"entry": "Bash(zzz:*)", "reason": "r", "category": "exec"}
-    ])
+    monkeypatch.setattr(
+        cp, "load_required", lambda *a, **k: [{"entry": "Bash(zzz:*)", "reason": "r", "category": "exec"}]
+    )
     monkeypatch.setattr(cp, "effective_allow", lambda root: {"user": [], "project": [], "local": []})
     rc = cp.main(["--repo-root", str(tmp_path), "--update"])
     assert rc == 0

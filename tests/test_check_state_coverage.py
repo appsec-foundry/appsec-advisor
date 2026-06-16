@@ -192,9 +192,7 @@ def test_resolve_threshold_skill_config_non_string_depth(tmp_path: Path):
 
 
 def test_classify_needs_stage2(tmp_path: Path):
-    (tmp_path / ".appsec-checkpoint").write_text(
-        "phase=10b status=completed need_render=true\n"
-    )
+    (tmp_path / ".appsec-checkpoint").write_text("phase=10b status=completed need_render=true\n")
     rep = cs.classify(tmp_path)
     assert rep["needs_stage2"] is True
     # completed checkpoint without lock and no started/aborted -> residue orphaned
@@ -202,9 +200,7 @@ def test_classify_needs_stage2(tmp_path: Path):
 
 
 def test_classify_needs_stage2_false_when_md_present(tmp_path: Path):
-    (tmp_path / ".appsec-checkpoint").write_text(
-        "phase=10b status=completed need_render=true\n"
-    )
+    (tmp_path / ".appsec-checkpoint").write_text("phase=10b status=completed need_render=true\n")
     (tmp_path / "threat-model.md").write_text("# done\n")
     rep = cs.classify(tmp_path)
     assert rep["needs_stage2"] is False
@@ -358,9 +354,7 @@ def test_main_resume_guard_text_marker(tmp_path: Path, capsys):
 
 
 def test_main_clean_json_includes_needs_stage2(tmp_path: Path, capsys):
-    (tmp_path / ".appsec-checkpoint").write_text(
-        "phase=10b status=completed need_render=true\n"
-    )
+    (tmp_path / ".appsec-checkpoint").write_text("phase=10b status=completed need_render=true\n")
     code = cs.main([str(tmp_path), "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert payload["report"]["needs_stage2"] is True

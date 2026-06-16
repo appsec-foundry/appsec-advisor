@@ -287,7 +287,7 @@ class TestMinimalParserFallback:
             "version: 1  # a comment\n"
             "canonical_components:\n"
             "  foo:\n"
-            "    display_name: \"Foo Service\"\n"
+            '    display_name: "Foo Service"\n'
             "    aliases:\n"
             "      - foo-alt\n"
             "      - 'foo-other'\n"

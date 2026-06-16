@@ -144,12 +144,7 @@ class TestClassifyTiers:
         assert r["max_turns"] == 31
 
     def test_complex_by_sinks(self):
-        text = (
-            "## 7.8 Sinks\n"
-            "backend-api eval\n"
-            "backend-api exec\n"
-            "backend-api system\n"
-        )
+        text = "## 7.8 Sinks\nbackend-api eval\nbackend-api exec\nbackend-api system\n"
         r = cc.classify("backend-api", text, interfaces=4, depth="standard")
         assert r["complexity"] == "complex"
 
@@ -203,26 +198,20 @@ class TestMain:
             "## 7.8 Sinks\nbackend-api eval\nbackend-api exec\nbackend-api spawn\n",
             encoding="utf-8",
         )
-        rc = cc.main(
-            ["backend-api", "--interfaces", "4", "--recon-summary", str(recon)]
-        )
+        rc = cc.main(["backend-api", "--interfaces", "4", "--recon-summary", str(recon)])
         assert rc == 0
         out = json.loads(capsys.readouterr().out)
         assert out["complexity"] == "complex"
 
     def test_main_missing_recon_file_ignored(self, tmp_path, capsys):
         missing = tmp_path / "nope.md"
-        rc = cc.main(
-            ["misc", "--interfaces", "1", "--recon-summary", str(missing)]
-        )
+        rc = cc.main(["misc", "--interfaces", "1", "--recon-summary", str(missing)])
         assert rc == 0
         out = json.loads(capsys.readouterr().out)
         assert out["complexity"] == "trivial"
 
     def test_main_canonical_id_override(self, capsys):
-        rc = cc.main(
-            ["whatever", "--interfaces", "1", "--canonical-id", "auth-identity"]
-        )
+        rc = cc.main(["whatever", "--interfaces", "1", "--canonical-id", "auth-identity"])
         assert rc == 0
         out = json.loads(capsys.readouterr().out)
         assert out["complexity"] == "complex"
@@ -235,9 +224,7 @@ class TestMain:
 
 
 def test_run_via_subprocess(run_plugin_script):
-    proc = run_plugin_script(
-        "classify_component.py", "backend-api", "--interfaces", "5", check=True
-    )
+    proc = run_plugin_script("classify_component.py", "backend-api", "--interfaces", "5", check=True)
     out = json.loads(proc.stdout)
     assert out["complexity"] == "moderate"
     assert out["max_turns"] == 22

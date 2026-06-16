@@ -852,17 +852,28 @@ class TestRunStatisticsStageRows:
 class TestRenderRunStatistics:
     def test_empty_block_when_nothing(self):
         stats = {
-            "assess_secs": None, "qa_secs": None, "arch_secs": None,
-            "phases": [], "stage_rows": [], "agents": {},
-            "total_secs_from_stages": None, "wall_secs": None, "timing": {},
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": None,
+            "wall_secs": None,
+            "timing": {},
         }
         assert rcs.render_run_statistics(stats, None) == []
 
     def test_net_and_wall_default(self):
         stats = {
-            "assess_secs": None, "qa_secs": None, "arch_secs": None,
-            "phases": [], "stage_rows": [("1", "", "Assess", "ta", "sonnet", 100)],
-            "agents": {}, "total_secs_from_stages": 100, "wall_secs": 200,
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [("1", "", "Assess", "ta", "sonnet", 100)],
+            "agents": {},
+            "total_secs_from_stages": 100,
+            "wall_secs": 200,
             "timing": {"net_compute_secs": 100, "wall_secs": 200, "standby_secs": 0},
         }
         out = "\n".join(rcs.render_run_statistics(stats, None, verbose=False))
@@ -874,11 +885,14 @@ class TestRenderRunStatistics:
 
     def test_verbose_stage_breakdown_and_agents(self):
         stats = {
-            "assess_secs": None, "qa_secs": 60, "arch_secs": 90,
+            "assess_secs": None,
+            "qa_secs": 60,
+            "arch_secs": 90,
             "phases": [],
             "stage_rows": [("1", "", "Assessment", "threat-analyst", "sonnet-4-6", 100)],
             "agents": {"threat-analyst": "sonnet-4-6", "qa-reviewer": "sonnet-4-6"},
-            "total_secs_from_stages": 100, "wall_secs": 250,
+            "total_secs_from_stages": 100,
+            "wall_secs": 250,
             "timing": {"net_compute_secs": 100, "wall_secs": 250, "standby_secs": 0, "stages": []},
         }
         out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
@@ -889,11 +903,21 @@ class TestRenderRunStatistics:
 
     def test_verbose_standby_detail(self):
         stats = {
-            "assess_secs": None, "qa_secs": None, "arch_secs": None,
-            "phases": [], "stage_rows": [], "agents": {},
-            "total_secs_from_stages": 100, "wall_secs": 1000,
-            "timing": {"net_compute_secs": 100, "wall_secs": 1000, "standby_secs": 700,
-                       "net_wall_secs": 300, "stages": []},
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": 100,
+            "wall_secs": 1000,
+            "timing": {
+                "net_compute_secs": 100,
+                "wall_secs": 1000,
+                "standby_secs": 700,
+                "net_wall_secs": 300,
+                "stages": [],
+            },
         }
         out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
         assert "standby/suspend" in out
@@ -902,9 +926,15 @@ class TestRenderRunStatistics:
 
     def test_legacy_total_fallback(self):
         stats = {
-            "assess_secs": 100, "qa_secs": 50, "arch_secs": 25,
-            "phases": [], "stage_rows": [], "agents": {},
-            "total_secs_from_stages": None, "wall_secs": None, "timing": {},
+            "assess_secs": 100,
+            "qa_secs": 50,
+            "arch_secs": 25,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": None,
+            "wall_secs": None,
+            "timing": {},
         }
         out = "\n".join(rcs.render_run_statistics(stats, None, verbose=False))
         assert "Total (legacy)" in out
@@ -912,14 +942,25 @@ class TestRenderRunStatistics:
 
     def test_subscription_cost_and_tokens(self):
         stats = {
-            "assess_secs": None, "qa_secs": None, "arch_secs": None,
-            "phases": [], "stage_rows": [], "agents": {},
-            "total_secs_from_stages": 10, "wall_secs": 10,
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": 10,
+            "wall_secs": 10,
             "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
         }
         cost = {
-            "totals": {"total_tokens": 1000, "in": 600, "out": 400, "cache_write": 5,
-                       "cache_read": 50, "cache_savings_pct": 80.0},
+            "totals": {
+                "total_tokens": 1000,
+                "in": 600,
+                "out": 400,
+                "cache_write": 5,
+                "cache_read": 50,
+                "cache_savings_pct": 80.0,
+            },
             "billing": "subscription",
         }
         out = "\n".join(rcs.render_run_statistics(stats, cost, verbose=True))
@@ -929,9 +970,14 @@ class TestRenderRunStatistics:
 
     def test_measured_cost_with_mix(self):
         stats = {
-            "assess_secs": None, "qa_secs": None, "arch_secs": None,
-            "phases": [], "stage_rows": [], "agents": {},
-            "total_secs_from_stages": 10, "wall_secs": 10,
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": 10,
+            "wall_secs": 10,
             "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
         }
         cost = {
@@ -946,9 +992,14 @@ class TestRenderRunStatistics:
 
     def test_tokens_not_captured(self):
         stats = {
-            "assess_secs": None, "qa_secs": None, "arch_secs": None,
-            "phases": [], "stage_rows": [], "agents": {},
-            "total_secs_from_stages": 10, "wall_secs": 10,
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": 10,
+            "wall_secs": 10,
             "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
         }
         cost = {"totals": {"total_tokens": 0, "cost": 0}, "billing": "api"}
@@ -957,9 +1008,14 @@ class TestRenderRunStatistics:
 
     def test_cost_none_unavailable_line(self):
         stats = {
-            "assess_secs": None, "qa_secs": None, "arch_secs": None,
-            "phases": [], "stage_rows": [], "agents": {},
-            "total_secs_from_stages": 10, "wall_secs": 10,
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": 10,
+            "wall_secs": 10,
             "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
         }
         out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
@@ -1002,13 +1058,24 @@ class TestRunIssues:
 
     def test_render_plugin_dev_with_autofix(self):
         data = {
-            "summary": {"errors": 2, "warnings": 1, "perf_anomalies": 1, "recovery_events": 1,
-                        "auto_applicable_fixes": 1},
+            "summary": {
+                "errors": 2,
+                "warnings": 1,
+                "perf_anomalies": 1,
+                "recovery_events": 1,
+                "auto_applicable_fixes": 1,
+            },
             "issues": [
-                {"severity": "error", "title": "x" * 90,
-                 "fix_recommendation": {"auto_applicable": True, "summary": "do the fix"}},
-                {"severity": "warning", "title": "warn",
-                 "fix_recommendation": {"auto_applicable": False, "category": "manual"}},
+                {
+                    "severity": "error",
+                    "title": "x" * 90,
+                    "fix_recommendation": {"auto_applicable": True, "summary": "do the fix"},
+                },
+                {
+                    "severity": "warning",
+                    "title": "warn",
+                    "fix_recommendation": {"auto_applicable": False, "category": "manual"},
+                },
                 {"severity": "info", "title": "third"},
             ],
         }
@@ -1031,8 +1098,7 @@ class TestCompositionHealth:
 
     def test_warned(self, tmp_path: Path):
         (tmp_path / ".compose-stats.json").write_text(
-            '{"schema_version": 1, "warnings": [{"section": "§3", "detail": "y"}], '
-            '"section_retries": {"3": 2}}'
+            '{"schema_version": 1, "warnings": [{"section": "§3", "detail": "y"}], "section_retries": {"3": 2}}'
         )
         (tmp_path / ".inline-shortcut-retry-count").write_text("1")
         health = rcs.extract_composition_health(tmp_path)
@@ -1053,9 +1119,11 @@ class TestCompositionHealth:
 
     def test_render_many_warnings_truncates(self):
         health = {
-            "status": "warned", "warning_count": 3,
+            "status": "warned",
+            "warning_count": 3,
             "warnings": [{"section": f"§{i}", "detail": "d" * 100} for i in range(3)],
-            "section_retries": {}, "auto_retries": 0,
+            "section_retries": {},
+            "auto_retries": 0,
         }
         out = "\n".join(rcs.render_composition_health(health))
         assert "more in §Composition Notes" in out
@@ -1079,12 +1147,14 @@ class TestRenderMisc:
     def test_security_notice_ignored_file(self, tmp_path: Path, monkeypatch):
         class R:
             returncode = 0
+
         monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: R())
         assert rcs.render_security_notice(tmp_path) == []
 
     def test_security_notice_tracked_file(self, tmp_path: Path, monkeypatch):
         class R:
             returncode = 1
+
         monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: R())
         out = "\n".join(rcs.render_security_notice(tmp_path))
         assert "NOT git-ignored" in out
@@ -1092,6 +1162,7 @@ class TestRenderMisc:
     def test_security_notice_git_error(self, tmp_path: Path, monkeypatch):
         def boom(*a, **k):
             raise OSError("no git")
+
         monkeypatch.setattr(rcs.subprocess, "run", boom)
         assert rcs.render_security_notice(tmp_path) == []
 
@@ -1101,15 +1172,24 @@ class TestSummaryHelpers:
         assert rcs._summary_duration({"total_secs_from_stages": 120}) == "2m 00s"
 
     def test_summary_duration_legacy_sum(self):
-        assert rcs._summary_duration(
-            {"total_secs_from_stages": None, "assess_secs": 60, "qa_secs": 30, "arch_secs": None}
-        ) == "1m 30s"
+        assert (
+            rcs._summary_duration({"total_secs_from_stages": None, "assess_secs": 60, "qa_secs": 30, "arch_secs": None})
+            == "1m 30s"
+        )
 
     def test_summary_duration_wall_fallback(self):
-        assert rcs._summary_duration(
-            {"total_secs_from_stages": None, "assess_secs": None, "qa_secs": None,
-             "arch_secs": None, "timing": {"wall_secs": 90}}
-        ) == "1m 30s"
+        assert (
+            rcs._summary_duration(
+                {
+                    "total_secs_from_stages": None,
+                    "assess_secs": None,
+                    "qa_secs": None,
+                    "arch_secs": None,
+                    "timing": {"wall_secs": 90},
+                }
+            )
+            == "1m 30s"
+        )
 
     def test_summary_duration_na(self):
         assert rcs._summary_duration({}) == "n/a"
@@ -1151,17 +1231,14 @@ class TestRunOverview:
 
     def test_rebuild_scope(self, tmp_path: Path):
         out = "\n".join(
-            rcs.render_run_overview(tmp_path, tmp_path, {"mode": "rebuild"},
-                                    {"total_secs_from_stages": 1}, None, None)
+            rcs.render_run_overview(tmp_path, tmp_path, {"mode": "rebuild"}, {"total_secs_from_stages": 1}, None, None)
         )
         assert "fresh full repository assessment" in out
 
 
 class TestDryRunAndMS:
     def test_render_dry_run_with_ms(self, tmp_path: Path):
-        (tmp_path / "threat-model.yaml").write_text(
-            "components:\n- {name: a}\nthreats:\n- {risk: critical}\n"
-        )
+        (tmp_path / "threat-model.yaml").write_text("components:\n- {name: a}\nthreats:\n- {risk: critical}\n")
         (tmp_path / "threat-model.md").write_text(
             "## Management Summary\nVerdict: bad <br/> details <blockquote>x</blockquote>\n\n## 1. Scope\nbody\n"
         )
@@ -1223,17 +1300,16 @@ class TestVerdictEcho:
     def _output_dir_with_verdict(self, tmp_path: Path) -> Path:
         (tmp_path / "threat-model.md").write_text(_VERDICT_MD)
         (tmp_path / "threat-model.yaml").write_text(
-            "meta: {schema_version: 1}\nthreats: []\nmitigations: []\n"
-            "components: []\nsecurity_controls: []\n"
+            "meta: {schema_version: 1}\nthreats: []\nmitigations: []\ncomponents: []\nsecurity_controls: []\n"
         )
         return tmp_path
 
     def test_full_run_echoes_verdict_by_default(self, tmp_path: Path):
         out = self._output_dir_with_verdict(tmp_path)
         r = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out),
-             "--repo-root", str(out), "--mode", "full"],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out), "--repo-root", str(out), "--mode", "full"],
+            capture_output=True,
+            text=True,
         )
         assert r.returncode == 0
         assert "-- Verdict" in r.stdout
@@ -1245,14 +1321,24 @@ class TestVerdictEcho:
         drops the verdict, next steps, run statistics, and log listing."""
         out = self._output_dir_with_verdict(tmp_path)
         full = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out),
-             "--repo-root", str(out), "--mode", "full"],
-            capture_output=True, text=True,
+            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out), "--repo-root", str(out), "--mode", "full"],
+            capture_output=True,
+            text=True,
         )
         quiet = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out),
-             "--repo-root", str(out), "--mode", "full", "--quiet"],
-            capture_output=True, text=True,
+            [
+                sys.executable,
+                str(SCRIPT_PATH),
+                "--output-dir",
+                str(out),
+                "--repo-root",
+                str(out),
+                "--mode",
+                "full",
+                "--quiet",
+            ],
+            capture_output=True,
+            text=True,
         )
         assert full.returncode == 0 and quiet.returncode == 0
         # essentials retained

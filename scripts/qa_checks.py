@@ -599,6 +599,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # Deferred import mirrors the `_manifest_readers` idiom; compose only
     # imports qa_checks function-locally, so there is no import cycle.
     from compose_threat_model import _codify_label_locator
+
     # Merge the TH-NN label index parsed from the rendered MD itself —
     # TH-NN titles live in §8 / §7.2 declarations, not in the yaml.
     # Same {ID: (label, anchor)} shape so the suffix logic below stays
@@ -1371,10 +1372,7 @@ def _resolve_contract_run_flags(output_dir: Path) -> dict:
     if not depth:
         depth = str(cfg.get("assessment_depth") or "standard").strip().lower()
     is_quick = depth == "quick"
-    skip_walkthroughs = (
-        bool(cfg.get("skip_attack_walkthroughs") or cfg.get("SKIP_ATTACK_WALKTHROUGHS"))
-        or is_quick
-    )
+    skip_walkthroughs = bool(cfg.get("skip_attack_walkthroughs") or cfg.get("SKIP_ATTACK_WALKTHROUGHS")) or is_quick
     return {
         "depth": depth,
         "is_quick_depth": is_quick,
@@ -3366,8 +3364,7 @@ def check_html_nested_finding_link(md_path: Path) -> Report:
             hits += 1
             if hits <= 8:
                 report.issues.append(
-                    "markdown ID link nested inside HTML anchor text "
-                    f"(render corruption): {m.group(0)[:100]}"
+                    f"markdown ID link nested inside HTML anchor text (render corruption): {m.group(0)[:100]}"
                 )
     if hits > 8:
         report.issues.append(f"... and {hits - 8} more nested-link occurrence(s)")
@@ -3761,11 +3758,7 @@ def _emit_as_html_table(body_rows: list[str], spec) -> list[str]:
     # §5.1 and §5.2 fall back to content-driven auto-layout on GitHub and lose
     # their identical column geometry (2026-06-13). `width` keeps the parity
     # everywhere; renderers that honour `style` ignore the redundant attribute.
-    html.append(
-        "<colgroup>"
-        + "".join(f'<col width="{w}" style="width:{w}">' for w in widths)
-        + "</colgroup>"
-    )
+    html.append("<colgroup>" + "".join(f'<col width="{w}" style="width:{w}">' for w in widths) + "</colgroup>")
     html.append("<thead><tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr></thead>")
     html.append("<tbody>")
     for row in body_rows:
@@ -4151,19 +4144,28 @@ def check_heading_hygiene(md_path: Path) -> Report:
 # ---------------------------------------------------------------------------
 
 
-from _slug import github_slug as _github_slug  # noqa: E402  (R8 — single source of truth)
+from _slug import github_render_slug as _github_render_slug  # noqa: E402  (R8 — single source of truth)
 
 
 def check_toc_closure(md_path: Path) -> Report:
-    """Every `[..](#xyz)` link must resolve to something inside the doc."""
+    """Every `[..](#xyz)` link must resolve to something inside the doc.
+
+    Heading anchors are computed with ``github_render_slug`` — the slug
+    github.com ACTUALLY renders — NOT ``github_slug`` (the link-target
+    generator). Using the generator on both sides made the check tautological:
+    a ``[label](#single-hyphen)`` link whose heading github.com renders as
+    ``#double--hyphen`` (any heading carrying ` — `, ` & `, ` / `) passed
+    despite being broken in the published document. That blind spot shipped 30
+    dead §3 ToC anchors in the 2026-06 run.
+    """
     report = Report(check="toc_closure")
     raw = md_path.read_text(encoding="utf-8")
     text = _strip_code_fences(raw)
 
-    # Build the anchor universe.
+    # Build the anchor universe — heading anchors as github.com renders them.
     heading_slugs: set[str] = set()
     for m in _HEADING_RE.finditer(text):
-        heading_slugs.add(_github_slug(m.group("text")))
+        heading_slugs.add(_github_render_slug(m.group("text")))
     a_ids: set[str] = set(re.findall(r'<a\s+id="([^"]+)"', text))
     anchors = heading_slugs | a_ids
     anchors_lower = {a.lower() for a in anchors}

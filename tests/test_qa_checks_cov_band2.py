@@ -114,10 +114,7 @@ def test_narrative_placeholders_many_truncated(tmp_path):
 
 
 def test_walk_h4_blocks_boundaries():
-    section = (
-        "## 7. X\n\n### 7.1 A\n\n#### First\nbody1\n\n"
-        "#### Second\nbody2\n\n### 7.2 B\ntail\n"
-    )
+    section = "## 7. X\n\n### 7.1 A\n\n#### First\nbody1\n\n#### Second\nbody2\n\n### 7.2 B\ntail\n"
     blocks = qa._walk_h4_blocks(section)
     titles = [b[0] for b in blocks]
     assert titles == ["First", "Second"]
@@ -148,11 +145,7 @@ def test_h4_positive_intro_no_section(tmp_path):
 
 
 def test_h4_positive_intro_clean(tmp_path):
-    body = (
-        "### 7.2 Auth\n\n#### Login\n"
-        "**Status:** 🟢 Safe — fine\n\n"
-        f"{_LONG_INTRO}\n\n**Security assessment**\n\nok\n"
-    )
+    body = f"### 7.2 Auth\n\n#### Login\n**Status:** 🟢 Safe — fine\n\n{_LONG_INTRO}\n\n**Security assessment**\n\nok\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_h4_positive_intro(p)
     assert r.ok == 1, r.issues
@@ -248,10 +241,7 @@ def test_fence_intro_no_section(tmp_path):
 
 
 def test_fence_intro_clean(tmp_path):
-    body = (
-        "### 7.2 Auth\n\nThe vulnerable code shows:\n\n"
-        "```ts\nconst x = 1;\n```\n"
-    )
+    body = "### 7.2 Auth\n\nThe vulnerable code shows:\n\n```ts\nconst x = 1;\n```\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_fence_intro_sentence(p)
     assert r.ok == 1, r.issues
@@ -306,10 +296,7 @@ def test_finding_link_dup_clean(tmp_path):
 
 
 def test_finding_link_dup_detected(tmp_path):
-    body = (
-        "### 7.2 A\n\n"
-        "- [F-009](#f-009) — Persistent XSS Flaw — Persistent XSS Flaw\n"
-    )
+    body = "### 7.2 A\n\n- [F-009](#f-009) — Persistent XSS Flaw — Persistent XSS Flaw\n"
     p = _md(tmp_path, _wrap_sec7(body))
     r = qa.check_section7_finding_link_duplicate(p)
     assert r.ok == 0
@@ -384,9 +371,7 @@ def test_finding_ref_semantic_no_yaml(tmp_path):
 
 def test_finding_ref_semantic_drift_warns(tmp_path):
     (tmp_path / "threat-model.yaml").write_text(
-        "threats:\n"
-        "  - t_id: T-001\n"
-        "    title: 'SQL Injection in search query handler component'\n",
+        "threats:\n  - t_id: T-001\n    title: 'SQL Injection in search query handler component'\n",
         encoding="utf-8",
     )
     body = (
@@ -441,12 +426,7 @@ def test_annotate_id_refs_idempotent_and_skips_code(tmp_path):
 def test_annotate_id_refs_priority_from_threat_sev(tmp_path):
     # Mitigation has no explicit priority; derive from linked threat severity.
     (tmp_path / "threat-model.yaml").write_text(
-        "threats:\n"
-        "  - t_id: T-003\n"
-        "    severity: medium\n"
-        "mitigations:\n"
-        "  - m_id: M-003\n"
-        "    threat_ids: [T-003]\n",
+        "threats:\n  - t_id: T-003\n    severity: medium\nmitigations:\n  - m_id: M-003\n    threat_ids: [T-003]\n",
         encoding="utf-8",
     )
     p = _md(tmp_path, "[M-003](#m-003)\n")
@@ -460,9 +440,7 @@ def test_annotate_id_refs_priority_from_threat_sev(tmp_path):
 
 
 def test_render_inline_md_to_html_all_tokens():
-    out = qa._render_inline_md_to_html(
-        "plain `code` [lbl](#a) **bold** _ital_ *star* <br/> <tag>"
-    )
+    out = qa._render_inline_md_to_html("plain `code` [lbl](#a) **bold** _ital_ *star* <br/> <tag>")
     assert "<code>code</code>" in out
     assert '<a href="#a">lbl</a>' in out
     assert "<strong>bold</strong>" in out
@@ -533,12 +511,7 @@ def test_cmd_autofix_returns_zero(tmp_path, capsys):
 
 
 def test_cmd_autofix_converts_as_table(tmp_path, capsys):
-    md = (
-        "# T\n\n"
-        "| Method | Route | Risk | Notes |\n"
-        "| --- | --- | --- | --- |\n"
-        "| GET | /a | High | note |\n"
-    )
+    md = "# T\n\n| Method | Route | Risk | Notes |\n| --- | --- | --- | --- |\n| GET | /a | High | note |\n"
     p = _md(tmp_path, md)
     rc = qa.cmd_autofix(p, tmp_path)
     assert rc == 0
@@ -551,12 +524,7 @@ def test_cmd_autofix_converts_as_table(tmp_path, capsys):
 
 
 def test_cmd_all_clean_returns_zero(tmp_path, capsys):
-    md = (
-        "# Threat Model\n\n"
-        "## 7. Security Architecture\n\n"
-        "### 7.1 Overview\n\nAll good.\n\n"
-        "## 8. Findings\n\nnothing\n"
-    )
+    md = "# Threat Model\n\n## 7. Security Architecture\n\n### 7.1 Overview\n\nAll good.\n\n## 8. Findings\n\nnothing\n"
     p = _md(tmp_path, md)
     rc = qa.cmd_all(p, tmp_path)
     assert rc in (0, 1)
@@ -686,23 +654,46 @@ def test_toc_closure_many_broken_truncated(tmp_path):
     assert any("more unresolved" in i for i in r.issues)
 
 
+def test_toc_closure_flags_emdash_heading_single_hyphen_link(tmp_path):
+    # Regression for the 2026-06 §3 ToC breakage: a link target built with the
+    # single-hyphen generator slug must be flagged when github.com renders the
+    # ` — ` heading anchor as a DOUBLE hyphen. The check was previously blind
+    # to this because it slugged the heading with the same generator.
+    md = (
+        "### 3.7 Insecure Direct Object Reference — routes/address.ts:11\n\n"
+        "[3.7](#37-insecure-direct-object-reference-routesaddressts11)\n"
+    )
+    p = _md(tmp_path, md)
+    r = qa.check_toc_closure(p)
+    assert any("unresolved" in i for i in r.issues)
+
+
+def test_toc_closure_clean_heading_with_emdash_tail_stripped_resolves(tmp_path):
+    # The fix: a class-only heading (no em-dash) slugs identically under both
+    # the generator and the renderer, so the composer link resolves.
+    md = (
+        "### 3.7 Insecure Direct Object Reference\n\n"
+        "[3.7](#37-insecure-direct-object-reference)\n"
+    )
+    p = _md(tmp_path, md)
+    r = qa.check_toc_closure(p)
+    assert not r.issues
+
+
 # ---------------------------------------------------------------------------
 # check_mermaid_syntax + autofix helpers
 # ---------------------------------------------------------------------------
 
 
 def test_mermaid_clean_sequence(tmp_path):
-    md = (
-        "## 3. Attack Walkthroughs\n\n"
-        "```mermaid\nsequenceDiagram\n  A->>B: hello\n```\n"
-    )
+    md = "## 3. Attack Walkthroughs\n\n```mermaid\nsequenceDiagram\n  A->>B: hello\n```\n"
     p = _md(tmp_path, md)
     r = qa.check_mermaid_syntax(p)
     assert not [i for i in r.issues if "unbalanced" in i or "literal" in i]
 
 
 def test_mermaid_unbalanced_quote(tmp_path):
-    md = "```mermaid\nsequenceDiagram\n  A->>B: say \"hi\n```\n"
+    md = '```mermaid\nsequenceDiagram\n  A->>B: say "hi\n```\n'
     p = _md(tmp_path, md)
     r = qa.check_mermaid_syntax(p)
     assert any("unbalanced double-quote" in i for i in r.issues)
@@ -716,10 +707,7 @@ def test_mermaid_literal_semicolon(tmp_path):
 
 
 def test_mermaid_end_then_else(tmp_path):
-    md = (
-        "```mermaid\nsequenceDiagram\n"
-        "  alt A\n  A->>B: x\n  end\n  else B\n  A->>B: y\n  end\n```\n"
-    )
+    md = "```mermaid\nsequenceDiagram\n  alt A\n  A->>B: x\n  end\n  else B\n  A->>B: y\n  end\n```\n"
     p = _md(tmp_path, md)
     r = qa.check_mermaid_syntax(p)
     assert any("outside any 'alt'" in i for i in r.issues)
@@ -879,12 +867,7 @@ def test_infobox_missing_required(tmp_path):
 
 
 def test_infobox_sparse(tmp_path):
-    md = (
-        "> | **Project** | demo |\n"
-        "> | **Repository** | r |\n"
-        "> | **License** | MIT |\n"
-        "\nbody\n"
-    )
+    md = "> | **Project** | demo |\n> | **Repository** | r |\n> | **License** | MIT |\n\nbody\n"
     p = _md(tmp_path, md)
     r = qa.check_infobox_completeness(p)
     assert any("sparse" in i for i in r.issues)
@@ -1323,11 +1306,7 @@ def test_cmd_autofix_annotates_refs(tmp_path, capsys):
 
 
 def test_cmd_all_strips_heading_attr_and_runs(tmp_path, capsys):
-    md = (
-        "# Title {#anchor x=y}\n\n"
-        "## 7. Security Architecture\n\n### 7.1 O\n\nok\n\n"
-        "## 8. X\n\ny\n"
-    )
+    md = "# Title {#anchor x=y}\n\n## 7. Security Architecture\n\n### 7.1 O\n\nok\n\n## 8. X\n\ny\n"
     p = _md(tmp_path, md)
     rc = qa.cmd_all(p, tmp_path)
     assert rc in (0, 1)

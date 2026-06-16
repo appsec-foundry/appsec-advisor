@@ -180,17 +180,13 @@ def test_auto_retry_fired(tmp_path):
 
 
 def test_compose_retries_section(tmp_path):
-    rec = rf._recommend_compose_retries_section(
-        {"evidence": {"section": "7", "attempts": 2}}, tmp_path
-    )
+    rec = rf._recommend_compose_retries_section({"evidence": {"section": "7", "attempts": 2}}, tmp_path)
     assert rec["category"] == "no_fix"
     assert "§7 required 2/3" in rec["summary"]
 
 
 def test_contract_gate_drift_with_items(tmp_path):
-    rec = rf._recommend_contract_gate_drift(
-        {"evidence": {"items": ["§3", "§7"]}}, tmp_path
-    )
+    rec = rf._recommend_contract_gate_drift({"evidence": {"items": ["§3", "§7"]}}, tmp_path)
     assert rec["category"] == "investigate"
     assert "§3, §7" in rec["rationale"]
 
@@ -213,9 +209,7 @@ def test_qa_status_not_pass(tmp_path):
 
 
 def test_default(tmp_path):
-    rec = rf._recommend_default(
-        {"category": "weird", "evidence": {"log_file": "x.log"}}, tmp_path
-    )
+    rec = rf._recommend_default({"category": "weird", "evidence": {"log_file": "x.log"}}, tmp_path)
     assert rec["category"] == "investigate"
     assert "'weird'" in rec["summary"]
     assert rec["actions"][0]["target"] == "x.log"

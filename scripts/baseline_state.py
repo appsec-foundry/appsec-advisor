@@ -761,19 +761,80 @@ def _classify_changed_files_relevance(
 # signal lost): "service", "module", "domain", "core", "lib", "util", "app".
 _SECURITY_CRITICAL_SUBSTRINGS = (
     # A — security primitives
-    "auth", "login", "logout", "session", "token", "jwt", "oauth", "saml", "sso",
-    "crypto", "cipher", "encrypt", "decrypt", "secret", "vault", "credential",
-    "password", "passwd", "kms", "keystore", "csrf", "cors", "csp", "rbac", "acl",
-    "permission", "authoriz", "guard", "ratelimit", "rate-limit", "rate_limit",
-    "valid", "sanitiz", "escape",
+    "auth",
+    "login",
+    "logout",
+    "session",
+    "token",
+    "jwt",
+    "oauth",
+    "saml",
+    "sso",
+    "crypto",
+    "cipher",
+    "encrypt",
+    "decrypt",
+    "secret",
+    "vault",
+    "credential",
+    "password",
+    "passwd",
+    "kms",
+    "keystore",
+    "csrf",
+    "cors",
+    "csp",
+    "rbac",
+    "acl",
+    "permission",
+    "authoriz",
+    "guard",
+    "ratelimit",
+    "rate-limit",
+    "rate_limit",
+    "valid",
+    "sanitiz",
+    "escape",
     # B — trust-boundary & I/O surface (routes, interfaces, request/response)
-    "route", "router", "endpoint", "controller", "handler", "resolver", "webhook",
-    "graphql", "grpc", "proto", "openapi", "swagger", "api", "rest", "rpc",
-    "serializ", "deserializ", "marshal", "schema", "dto", "payload",
-    "upload", "download", "ingest", "webhooks",
+    "route",
+    "router",
+    "endpoint",
+    "controller",
+    "handler",
+    "resolver",
+    "webhook",
+    "graphql",
+    "grpc",
+    "proto",
+    "openapi",
+    "swagger",
+    "api",
+    "rest",
+    "rpc",
+    "serializ",
+    "deserializ",
+    "marshal",
+    "schema",
+    "dto",
+    "payload",
+    "upload",
+    "download",
+    "ingest",
+    "webhooks",
     # C — architecture, layers & data model
-    "middleware", "interceptor", "gateway", "adapter", "provider", "migration",
-    "entity", "entities", "model", "repository", "dao", "orm", "layer",
+    "middleware",
+    "interceptor",
+    "gateway",
+    "adapter",
+    "provider",
+    "migration",
+    "entity",
+    "entities",
+    "model",
+    "repository",
+    "dao",
+    "orm",
+    "layer",
 )
 
 
@@ -981,12 +1042,8 @@ def cmd_check_changes(args: argparse.Namespace) -> int:
     # invocation. Uses content hashes recorded at the last generation (recon
     # fingerprint + working-tree snapshot); see _build_baseline_content_hashes.
     baseline_content_hashes = _build_baseline_content_hashes(cache_path)
-    committed, committed_unchanged = _split_unchanged_vs_baseline(
-        repo_root, committed, baseline_content_hashes
-    )
-    working, working_unchanged = _split_unchanged_vs_baseline(
-        repo_root, working, baseline_content_hashes
-    )
+    committed, committed_unchanged = _split_unchanged_vs_baseline(repo_root, committed, baseline_content_hashes)
+    working, working_unchanged = _split_unchanged_vs_baseline(repo_root, working, baseline_content_hashes)
     content_unchanged = list(dict.fromkeys(committed_unchanged + working_unchanged))
 
     # Recon fingerprint

@@ -72,9 +72,7 @@ class TestComponentMaxSeverity:
         assert counts["low"] == 1
 
     def test_high_when_no_critical(self):
-        key, counts = compose._component_max_severity(
-            "api", {"api": [{"risk": "high"}, {"risk": "medium"}]}
-        )
+        key, counts = compose._component_max_severity("api", {"api": [{"risk": "high"}, {"risk": "medium"}]})
         assert key == "high"
 
 
@@ -246,13 +244,7 @@ class TestRenderIdentifiedActorsExtra:
     def test_discovery_file_malformed_swallowed(self, tmp_path):
         ctx = _mk_ctx(tmp_path, yaml_data={"threats": []})
         (ctx.output_dir / ".actors-resolved.json").write_text(
-            _json.dumps(
-                {
-                    "resolved_actors": [
-                        {"id": "ACT-01", "label": "U", "_provenance": {"active": True}}
-                    ]
-                }
-            ),
+            _json.dumps({"resolved_actors": [{"id": "ACT-01", "label": "U", "_provenance": {"active": True}}]}),
             encoding="utf-8",
         )
         (ctx.output_dir / ".actors-discovered.json").write_text("{bad", encoding="utf-8")
@@ -267,13 +259,7 @@ class TestRenderIdentifiedActorsExtra:
 # ---------------------------------------------------------------------------
 
 
-_REQ_YAML = (
-    "categories:\n"
-    "  - name: Auth\n"
-    "    requirements:\n"
-    "      - id: SEC-AUTH-1\n"
-    "        url: https://ex/1\n"
-)
+_REQ_YAML = "categories:\n  - name: Auth\n    requirements:\n      - id: SEC-AUTH-1\n        url: https://ex/1\n"
 
 
 class TestOperationalStrengthsLegacyPath:
@@ -311,9 +297,7 @@ class TestOperationalStrengthsLegacyPath:
                 {"id": "T-001", "title": "Brute force login", "risk": "high"},
             ],
         }
-        ctx, env = self._ctx_env(
-            tmp_path, contract=contract, yaml_data=yaml_data
-        )
+        ctx, env = self._ctx_env(tmp_path, contract=contract, yaml_data=yaml_data)
         ctx.eval_context["verdict_severity"] = "red"
         out = compose._render_operational_strengths(ctx, env, {})
         # Gap derived from the "only" qualifier in the implementation string.
@@ -362,19 +346,13 @@ class TestRequirementsMappingEvidencePath:
                         "mitigation_ids": ["M-009"],
                     },
                 ],
-                "mitigations": [
-                    {"id": "M-002", "fulfills_requirements": ["SEC-AUTH-1"]}
-                ],
+                "mitigations": [{"id": "M-002", "fulfills_requirements": ["SEC-AUTH-1"]}],
             },
         )
         (ctx.output_dir / ".requirements.yaml").write_text(_REQ_YAML, encoding="utf-8")
         # Compliance fragment table citing F-002 for SEC-AUTH-1 -> evidence edge
         # overrides the threat-derived finding row (7864-7882 path).
-        frag = (
-            "| Requirement | Status | Evidence |\n"
-            "| --- | --- | --- |\n"
-            "| SEC-AUTH-1 | FAIL | F-002 |\n"
-        )
+        frag = "| Requirement | Status | Evidence |\n| --- | --- | --- |\n| SEC-AUTH-1 | FAIL | F-002 |\n"
         (ctx.fragments_dir / "requirements-compliance.md").write_text(frag, encoding="utf-8")
         rows = compose._build_requirements_mapping_rows(ctx)
         assert rows
@@ -422,16 +400,12 @@ class TestEscapeDotTldIdentifiers:
 class TestInjectSecurityArchitectureLinks:
     def test_none_marker_replaced(self, tmp_path):
         ctx = _mk_ctx(tmp_path)
-        out = compose._inject_security_architecture_links(
-            ctx, "**Linked threats:** (none)\n"
-        )
+        out = compose._inject_security_architecture_links(ctx, "**Linked threats:** (none)\n")
         assert "None identified." in out
 
     def test_single_ref_linkified(self, tmp_path):
         ctx = _mk_ctx(tmp_path, yaml_data={"threats": [{"id": "T-001", "title": "X"}]})
-        out = compose._inject_security_architecture_links(
-            ctx, "**Linked threats:** T-001\n"
-        )
+        out = compose._inject_security_architecture_links(ctx, "**Linked threats:** T-001\n")
         assert "#" in out  # linkified anchor present
         assert "- [" not in out  # single ref → no bullet list
 
@@ -440,9 +414,7 @@ class TestInjectSecurityArchitectureLinks:
             tmp_path,
             yaml_data={"threats": [{"id": "T-001", "title": "A"}, {"id": "T-002", "title": "B"}]},
         )
-        out = compose._inject_security_architecture_links(
-            ctx, "**Linked threats:** T-001, T-002\n"
-        )
+        out = compose._inject_security_architecture_links(ctx, "**Linked threats:** T-001, T-002\n")
         assert "- [" in out  # bullet list form
 
     def test_no_ids_line_unchanged(self, tmp_path):
@@ -668,9 +640,7 @@ class TestLoadAttackPathsFragmentSuccess:
                 }
             ],
         }
-        (ctx.fragments_dir / "security-posture-attack-paths.json").write_text(
-            _json.dumps(frag), encoding="utf-8"
-        )
+        (ctx.fragments_dir / "security-posture-attack-paths.json").write_text(_json.dumps(frag), encoding="utf-8")
         taxonomy = compose._load_attack_class_taxonomy()
         out = compose._load_attack_paths_fragment(ctx, taxonomy, [])
         # Returned the LLM fragment (not the derived fallback): preserves
@@ -681,9 +651,7 @@ class TestLoadAttackPathsFragmentSuccess:
 
     def test_malformed_json_falls_back(self, tmp_path):
         ctx = _mk_ctx(tmp_path)
-        (ctx.fragments_dir / "security-posture-attack-paths.json").write_text(
-            "{bad", encoding="utf-8"
-        )
+        (ctx.fragments_dir / "security-posture-attack-paths.json").write_text("{bad", encoding="utf-8")
         taxonomy = compose._load_attack_class_taxonomy()
         out = compose._load_attack_paths_fragment(ctx, taxonomy, [])
         # Fallback is a dict with attack_paths key.
@@ -694,9 +662,7 @@ class TestLoadAttackPathsFragmentSuccess:
         ctx = _mk_ctx(tmp_path)
         # attack_paths present but items miss required fields -> schema fail.
         frag = {"schema_version": 1, "actors": ["internet-anon"], "attack_paths": [{"foo": "bar"}]}
-        (ctx.fragments_dir / "security-posture-attack-paths.json").write_text(
-            _json.dumps(frag), encoding="utf-8"
-        )
+        (ctx.fragments_dir / "security-posture-attack-paths.json").write_text(_json.dumps(frag), encoding="utf-8")
         taxonomy = compose._load_attack_class_taxonomy()
         out = compose._load_attack_paths_fragment(ctx, taxonomy, [])
         assert isinstance(out, dict)

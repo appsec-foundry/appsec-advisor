@@ -41,14 +41,16 @@ def _read_yaml(output_dir: Path) -> dict:
 
 
 def test_strips_via_mechanism_and_param():
-    t = _t("Server-Side Template Injection via eval (routes/userProfile.ts:62)",
-           file="routes/userProfile.ts", line=62)
+    t = _t("Server-Side Template Injection via eval (routes/userProfile.ts:62)", file="routes/userProfile.ts", line=62)
     assert ecf.build_clean_title(t["title"], t) == "Server-Side Template Injection — routes/userProfile.ts:62"
 
 
 def test_strips_embedded_file_and_bypass_phrasing():
-    t = _t("Stored XSS via DomSanitizer.trust HTML bypass in last-login-ip.component.html:10",
-           file="frontend/src/app/last-login-ip/last-login-ip.component.html", line=10)
+    t = _t(
+        "Stored XSS via DomSanitizer.trust HTML bypass in last-login-ip.component.html:10",
+        file="frontend/src/app/last-login-ip/last-login-ip.component.html",
+        line=10,
+    )
     assert ecf.build_clean_title(t["title"], t) == "Stored XSS — last-login-ip.component.html:10"
 
 
@@ -65,8 +67,11 @@ def test_acronym_casing_fix():
 
 
 def test_evidence_file_wins_over_truncated_title():
-    t = _t("SSRF via Unvalidated URL in Profile Image Upload routes/profileImageUrlUpload.t…",
-           file="routes/profileImageUrlUpload.ts", line=24)
+    t = _t(
+        "SSRF via Unvalidated URL in Profile Image Upload routes/profileImageUrlUpload.t…",
+        file="routes/profileImageUrlUpload.ts",
+        line=24,
+    )
     assert ecf.build_clean_title(t["title"], t) == "SSRF — routes/profileImageUrlUpload.ts:24"
 
 
@@ -83,16 +88,21 @@ def test_fallback_uses_embedded_file_when_evidence_has_no_file():
 def test_source_auth_class_qualifier_name_keeps_class_only():
     # Source-auth scanner check names arrive as "Class — qualifier clause" with
     # their own em-dash; the title must carry only the weakness class.
-    t = _t("Broken authorization — attacker-controlled owner ID in resource query — routes/address.ts:11",
-           file="routes/address.ts", line=11)
+    t = _t(
+        "Broken authorization — attacker-controlled owner ID in resource query — routes/address.ts:11",
+        file="routes/address.ts",
+        line=11,
+    )
     assert ecf.build_clean_title(t["title"], t) == "Broken authorization — routes/address.ts:11"
 
 
 def test_over_length_title_capped_to_schema_limit():
     # Regression (2026-06): verbose source-auth / config titles shipped >80
     # chars and failed validate_intermediate. The emitter must enforce the cap.
-    raw = ("Broken authorization attacker controlled owner identifier in resource "
-           "query without ownership enforcement filter")
+    raw = (
+        "Broken authorization attacker controlled owner identifier in resource "
+        "query without ownership enforcement filter"
+    )
     t = _t(raw, file="routes/payment.ts", line=70)
     out = ecf.build_clean_title(t["title"], t)
     assert len(out) <= 80
@@ -124,7 +134,11 @@ def test_idempotent():
 def test_main_writes_cleaned_yaml(tmp_path, capsys):
     _write_yaml(
         tmp_path,
-        {"threats": [_t("SQL Injection via string concatenation (routes/login.ts:34)", file="routes/login.ts", line=34)]},
+        {
+            "threats": [
+                _t("SQL Injection via string concatenation (routes/login.ts:34)", file="routes/login.ts", line=34)
+            ]
+        },
     )
 
     assert ecf.main([str(tmp_path)]) == 0

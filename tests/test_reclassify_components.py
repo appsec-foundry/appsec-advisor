@@ -37,19 +37,13 @@ def _run(threats):
 def test_phantom_ambiguous_resolves_to_most_specific_glob():
     # routes/memory.ts is matched by express-backend (routes/**) AND
     # file-upload-service (exact routes/memory.ts). The exact path wins.
-    _out, by, changes = _run(
-        [{"id": "T-002", "component": "backend-api", "evidence": {"file": "routes/memory.ts"}}]
-    )
+    _out, by, changes = _run([{"id": "T-002", "component": "backend-api", "evidence": {"file": "routes/memory.ts"}}])
     assert by["T-002"] == "file-upload-service"
-    assert ("T-002", "backend-api", "file-upload-service") in [
-        (c["id"], c["from"], c["to"]) for c in changes
-    ]
+    assert ("T-002", "backend-api", "file-upload-service") in [(c["id"], c["from"], c["to"]) for c in changes]
 
 
 def test_phantom_single_match_resolves_cleanly():
-    _out, by, _ = _run(
-        [{"id": "T-001", "component": "backend-api", "evidence": {"file": "lib/insecurity.ts"}}]
-    )
+    _out, by, _ = _run([{"id": "T-001", "component": "backend-api", "evidence": {"file": "lib/insecurity.ts"}}])
     assert by["T-001"] == "express-backend"
 
 
@@ -186,9 +180,7 @@ def test_reclassify_threats_not_list():
 
 
 def test_reclassify_threat_already_correct_no_change():
-    _out, by, changes = _run(
-        [{"id": "T-010", "component": "express-backend", "evidence": {"file": "routes/x.ts"}}]
-    )
+    _out, by, changes = _run([{"id": "T-010", "component": "express-backend", "evidence": {"file": "routes/x.ts"}}])
     assert by["T-010"] == "express-backend"
     assert changes == []
 
@@ -207,9 +199,7 @@ def test_reclassify_syncs_threat_ids_lists():
     ]
     data = {
         "components": components,
-        "threats": [
-            {"id": "T-020", "component": "phantom-api", "evidence": {"file": "routes/x.ts"}}
-        ],
+        "threats": [{"id": "T-020", "component": "phantom-api", "evidence": {"file": "routes/x.ts"}}],
     }
     out, changes = rc.reclassify(data)
     assert changes
@@ -250,9 +240,7 @@ def test_sync_threats_merged_uses_t_id(tmp_path):
         ]
     }
     (tmp_path / ".threats-merged.json").write_text(json.dumps(merged), encoding="utf-8")
-    n = rc._sync_threats_merged(
-        tmp_path, [{"id": "T-002", "from": "backend-api", "to": "file-upload-service"}]
-    )
+    n = rc._sync_threats_merged(tmp_path, [{"id": "T-002", "from": "backend-api", "to": "file-upload-service"}])
     assert n == 1
     updated = json.loads((tmp_path / ".threats-merged.json").read_text())
     assert updated["threats"][0]["component_id"] == "file-upload-service"
@@ -321,9 +309,7 @@ def test_main_yaml_not_mapping(tmp_path, capsys):
 def test_main_no_changes(tmp_path, capsys):
     data = {
         "components": [dict(c) for c in _COMPONENTS],
-        "threats": [
-            {"id": "T-001", "component": "express-backend", "evidence": {"file": "routes/x.ts"}}
-        ],
+        "threats": [{"id": "T-001", "component": "express-backend", "evidence": {"file": "routes/x.ts"}}],
     }
     _write_yaml(tmp_path / "threat-model.yaml", data)
     assert rc.main([str(tmp_path)]) == 0
@@ -333,9 +319,7 @@ def test_main_no_changes(tmp_path, capsys):
 def test_main_reassigns_and_writes(tmp_path, capsys):
     data = {
         "components": [dict(c) for c in _COMPONENTS],
-        "threats": [
-            {"id": "T-002", "component": "backend-api", "evidence": {"file": "routes/memory.ts"}}
-        ],
+        "threats": [{"id": "T-002", "component": "backend-api", "evidence": {"file": "routes/memory.ts"}}],
     }
     _write_yaml(tmp_path / "threat-model.yaml", data)
     merged = {"threats": [{"id": "F-1", "t_id": "T-002", "component_id": "backend-api"}]}
@@ -356,8 +340,7 @@ def test_main_reassigns_many_truncates_details(tmp_path, capsys):
     # >8 changes triggers the "(+N more)" branch.
     comps = [dict(c) for c in _COMPONENTS]
     threats = [
-        {"id": f"T-{i:03d}", "component": "backend-api", "evidence": {"file": "lib/insecurity.ts"}}
-        for i in range(10)
+        {"id": f"T-{i:03d}", "component": "backend-api", "evidence": {"file": "lib/insecurity.ts"}} for i in range(10)
     ]
     data = {"components": comps, "threats": threats}
     _write_yaml(tmp_path / "threat-model.yaml", data)
@@ -390,9 +373,7 @@ def test_main_cli_subprocess(run_plugin_script, tmp_path):
 
     data = {
         "components": [dict(c) for c in _COMPONENTS],
-        "threats": [
-            {"id": "T-001", "component": "express-backend", "evidence": {"file": "routes/x.ts"}}
-        ],
+        "threats": [{"id": "T-001", "component": "express-backend", "evidence": {"file": "routes/x.ts"}}],
     }
     (tmp_path / "threat-model.yaml").write_text(_yaml.safe_dump(data), encoding="utf-8")
     result = run_plugin_script("reclassify_components.py", str(tmp_path), check=False)

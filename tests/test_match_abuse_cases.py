@@ -466,9 +466,7 @@ def test_cmd_finalize_writes_chain_verdicts(tmp_path: Path):
     (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches))
     verdicts = {
         "schema_version": 1,
-        "verdicts": [
-            {"abuse_case_id": "AC-T-001", "step_verdicts": [{"step": 1, "verdict": "confirmed"}]}
-        ],
+        "verdicts": [{"abuse_case_id": "AC-T-001", "step_verdicts": [{"step": 1, "verdict": "confirmed"}]}],
     }
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts))
     rc = mac.main(["finalize", "--output-dir", str(tmp_path)])
