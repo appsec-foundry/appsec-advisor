@@ -83,6 +83,9 @@ filterwarnings = [
 
 [tool.coverage.run]
 source = ["scripts"]
+# Keep the data file (and its parallel `.coverage.<host>.<pid>.<rand>` shards)
+# out of the plugin root — coverage.py creates the parent dir as needed.
+data_file = ".coverage-data/.coverage"
 # pytest-cov 7 delegates subprocess measurement to coverage.py. Several tests
 # execute scripts via subprocess to match hook/CLI behavior; patching here makes
 # those child interpreters contribute to the same coverage run.

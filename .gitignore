@@ -102,6 +102,7 @@ __pycache__/
 .mypy_cache/
 .coverage
 .coverage.*
+.coverage-data/
 coverage.xml
 htmlcov/
 build/
