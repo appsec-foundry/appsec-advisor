@@ -330,12 +330,6 @@ Receiving objects: 100% (25/25), 15.80 KiB | 703.00 KiB/s, done.
 
 Done. Your packaging repo is ready at: ./ac-appsec-advisor
 
-Next steps:
-  1. Edit org-profile/org-profile.yaml — set requirements_yaml_url to your requirements catalog
-  2. Edit org-profile/context/organization.md — describe your org for analyses
-  3. Run: cd ./ac-appsec-advisor && make package
-  4. Load the plugin: claude --plugin-dir build/ac-appsec
-  5. Set up CI: make ci-github  or  make ci-gitlab
 ```
 
 - Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
