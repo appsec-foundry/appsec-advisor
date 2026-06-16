@@ -103,11 +103,11 @@ No compensating control - rate limiting, WAF, or server-side authorization layer
 
 ### Security Posture & Top Threats
 
-**Figure 1 - Architecture, Trust Boundaries & Threats**
+**Figure 1 - Architecture & Top Threats**
 
 Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the top threats per component. The in-figure legend on the right explains the attack scenarios, severity dots and symbols.
 
-![Figure 1 - Architecture, Trust Boundaries and Threats](threat-model-juice-shop-quick.figure1.svg)
+![Figure 1 - Architecture & Top Threats](threat-model-juice-shop-quick.figure1.svg)
 
 **Figure 2 - Risk Flow: Actor → Tier → Impact**
 

@@ -127,7 +127,7 @@ The defects below are structural - each spans multiple findings and requires a d
 
 ### Security Posture & Top Threats
 
-**Figure 1 - Architecture, Trust Boundaries & Threats**
+**Figure 1 - Architecture & Top Threats**
 
 Components grouped by architecture tier. **Grey** edges are the legitimate request backbone; **solid red** are attacks (each from a threat actor); **dotted red** are the consequence path onto the data tier or victim. Glyphs match Figure 2 and the Top Threats table.
 
