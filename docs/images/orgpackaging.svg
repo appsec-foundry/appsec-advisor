@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 600" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 575" width="100%" height="100%">
   <defs>
     <style>
       .global-text {
@@ -13,7 +13,8 @@
       .node-sub { font-size: 12px; fill: #475569; }
       .node-code-icon { font-family: "Courier New", Courier, monospace; font-weight: 700; font-size: 32px; }
       
-      .label-edge { font-size: 12px; font-weight: 600; fill: #334155; }
+      /* Auf ein leuchtendes Blau geändert für optimale Lesbarkeit auf Schwarz & Weiß */
+      .label-edge { font-size: 12px; font-weight: 600; fill: #3b82f6; }
       
       .stroke-blue { stroke: #2563eb; stroke-width: 2; }
       .stroke-green { stroke: #16a34a; stroke-width: 2; }
@@ -33,14 +34,14 @@
     </marker>
   </defs>
 
-  <rect x="240" y="40" width="1230" height="535" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="8 6" rx="12" />
+  <rect x="240" y="40" width="1230" height="530" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="8 6" rx="12" />
   <rect x="805" y="25" width="100" height="30" fill="#2563eb" rx="6" />
   <text x="855" y="45" class="global-text title-main" text-anchor="middle">Acme</text>
 
-  <rect x="260" y="70" width="550" height="490" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" rx="8" />
+  <rect x="260" y="70" width="550" height="485" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1" rx="8" />
   <text x="535" y="100" class="global-text title-pane-blue" text-anchor="middle">Packaging &amp; Distribution</text>
 
-  <rect x="830" y="70" width="620" height="490" fill="#f0fdf4" stroke="#dcfce7" stroke-width="1" rx="8" />
+  <rect x="830" y="70" width="620" height="485" fill="#f0fdf4" stroke="#dcfce7" stroke-width="1" rx="8" />
   <text x="1140" y="100" class="global-text title-pane-green" text-anchor="middle">Usage &amp; Threat Modeling</text>
 
 
@@ -48,7 +49,7 @@
   <text x="226" y="344" class="global-text label-edge" text-anchor="middle">pin &amp; package</text>
 
   <line x1="380" y1="250" x2="380" y2="282" class="stroke-blue" stroke-dasharray="5 4" marker-end="url(#arr-blue)" />
-  <text x="395" y="265" class="global-text label-edge" fill="#2563eb" text-anchor="start">bundle</text>
+  <text x="395" y="265" class="global-text label-edge" text-anchor="start">bundle</text>
 
   <line x1="480" y1="362" x2="582" y2="362" class="stroke-dark" marker-end="url(#arr-dark)" />
   <text x="531" y="344" class="global-text label-edge" text-anchor="middle">publish</text>
