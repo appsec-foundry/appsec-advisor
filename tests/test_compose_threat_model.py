@@ -462,6 +462,48 @@ def test_figure1_caps_tier_width_for_complex_apps(tmp_path: Path) -> None:
     assert "Critical/High finding in §8" in fig1, "capped Crit/High components must be named in the muted note"
 
 
+def test_components_table_scope_column_marks_out_of_scope(tmp_path: Path) -> None:
+    """§2.3 gains a Scope column when meta.component_selection excluded some
+    components — each row marked Analyzed / Out of scope for completeness."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    comps = [
+        {"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]},
+        {"id": "worker", "name": "Worker", "tier": "application", "paths": ["src/worker"]},
+    ]
+    meta = {
+        "component_selection": {
+            "excluded": [{"id": "worker", "name": "Worker", "reason": "out-of-scope at depth=quick"}]
+        }
+    }
+    ctx = compose.RenderContext(
+        output_dir=out_dir, contract={}, yaml_data={"components": comps, "threats": [], "meta": meta},
+        triage={}, fragments_dir=out_dir / ".fragments",
+    )
+    out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
+    assert "| ID | Name | Type | Key Paths | Linked Threats | Scope |" in out
+    rows = [ln for ln in out.splitlines() if ln.startswith("|") and ("API" in ln or "Worker" in ln)]
+    worker_row = next(ln for ln in rows if "Worker" in ln)
+    api_row = next(ln for ln in rows if "API" in ln and "Worker" not in ln)
+    assert api_row.rstrip().endswith("Analyzed |")
+    assert worker_row.rstrip().endswith("Out of scope |")
+
+
+def test_components_table_no_scope_column_without_selection(tmp_path: Path) -> None:
+    """Legacy / passthrough runs (no component_selection) keep the original
+    column layout — no Scope column."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    comps = [{"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]}]
+    ctx = compose.RenderContext(
+        output_dir=out_dir, contract={}, yaml_data={"components": comps, "threats": []},
+        triage={}, fragments_dir=out_dir / ".fragments",
+    )
+    out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
+    assert "| ID | Name | Type | Key Paths | Linked Threats |" in out
+    assert "Scope |" not in out
+
+
 def test_figure1_victim_classes_draw_a_dotted_edge_to_the_shop_user(tmp_path: Path) -> None:
     """Victim-targeting classes (XSS / CSRF) draw an explicit dotted consequence
     edge ONTO the Shop User node, labelled with the targeting class ("① XSS"), so

@@ -2937,6 +2937,40 @@ def gen_out_of_scope(yaml_data: dict) -> str:
         lines.append(f"- {item}")
     lines.append("")
 
+    # Components enumerated in the architecture inventory but NOT given a
+    # dedicated STRIDE pass at this assessment depth — listed for completeness
+    # so the reader knows which components were deliberately not analyzed (and
+    # why), sourced deterministically from meta.component_selection.excluded
+    # (.stride-selection.json), not LLM prose.
+    component_selection = meta.get("component_selection")
+    excluded_components = (
+        component_selection.get("excluded") or [] if isinstance(component_selection, dict) else []
+    )
+    if excluded_components:
+        analyzed = component_selection.get("analyzed")
+        total = component_selection.get("total")
+        lines.append("### Components Not Individually Analyzed")
+        lines.append("")
+        intro = (
+            "These components were enumerated in the architecture inventory but did not "
+            "receive a dedicated STRIDE pass at this assessment depth"
+        )
+        if isinstance(analyzed, int) and isinstance(total, int):
+            intro += f" ({analyzed} of {total} components analyzed)"
+        intro += ". Re-run at a deeper depth to analyze them individually."
+        lines.append(intro)
+        lines.append("")
+        lines.append("| ID | Component | Reason not analyzed |")
+        lines.append("|----|-----------|---------------------|")
+        for e in excluded_components:
+            if not isinstance(e, dict):
+                continue
+            cid = str(e.get("id") or "—").strip()
+            name = str(e.get("name") or cid).strip()
+            reason = " ".join(str(e.get("reason") or "not selected at this depth").split()).replace("|", "\\|")
+            lines.append(f"| {cid} | {name} | {reason} |")
+        lines.append("")
+
     if accepted_risks:
         lines.append("### Accepted Risks (Team-Provided)")
         lines.append("")

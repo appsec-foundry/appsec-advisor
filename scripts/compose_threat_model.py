@@ -9116,17 +9116,32 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     # to show, so legacy yamls render with the original 5-column layout
     # and don't inherit a redundant em-dash column.
     has_runtime = any(isinstance(c, dict) and (c.get("runtime") or "").strip() for c in components)
+    # Scope column — only when a criteria-based selection actually excluded some
+    # components (meta.component_selection.excluded). Marks each row Analyzed vs
+    # Out of scope so the reader can see which components received a STRIDE pass.
+    # Absent in passthrough/legacy runs → original column layout is preserved.
+    cs = (ctx.yaml_data.get("meta") or {}).get("component_selection")
+    excluded_ids = set()
+    if isinstance(cs, dict):
+        excluded_ids = {
+            (e.get("id") or "").strip()
+            for e in (cs.get("excluded") or [])
+            if isinstance(e, dict) and (e.get("id") or "").strip()
+        }
+    show_scope = bool(excluded_ids)
+    scope_hdr = " Scope |" if show_scope else ""
+    scope_sep = "-------|" if show_scope else ""
     if has_runtime:
         table_lines = [
             "",
-            "| ID | Name | Type | Runtime | Key Paths | Linked Threats |",
-            "|----|------|------|---------|-----------|----------------|",
+            "| ID | Name | Type | Runtime | Key Paths | Linked Threats |" + scope_hdr,
+            "|----|------|------|---------|-----------|----------------|" + scope_sep,
         ]
     else:
         table_lines = [
             "",
-            "| ID | Name | Type | Key Paths | Linked Threats |",
-            "|----|------|------|-----------|----------------|",
+            "| ID | Name | Type | Key Paths | Linked Threats |" + scope_hdr,
+            "|----|------|------|-----------|----------------|" + scope_sep,
         ]
     for idx, c in enumerate(components, start=1):
         raw = (c.get("id") or "").strip()
@@ -9192,9 +9207,12 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         # (user report 2026-06-12). The empty `<a id>` anchors are unaffected.
         id_cell = f'{"".join(anchors)}<span style="white-space:nowrap">{canonical}</span>'
         if has_runtime:
-            table_lines.append(f"| {id_cell} | {name} | {kind} | {runtime} | {paths_cell} | {th_cell} |")
+            row = f"| {id_cell} | {name} | {kind} | {runtime} | {paths_cell} | {th_cell} |"
         else:
-            table_lines.append(f"| {id_cell} | {name} | {kind} | {paths_cell} | {th_cell} |")
+            row = f"| {id_cell} | {name} | {kind} | {paths_cell} | {th_cell} |"
+        if show_scope:
+            row += " Out of scope |" if raw in excluded_ids else " Analyzed |"
+        table_lines.append(row)
     table_lines.append("")
     insertion = "\n".join(table_lines)
     # Replace the section body (between `### 2.3 …` and the next `### `) with

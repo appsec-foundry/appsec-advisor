@@ -1290,6 +1290,30 @@ class TestOutOfScope:
         # Generic out-of-scope still rendered above the accepted risks block.
         assert md.index("DNS infra") < md.index("### Accepted Risks")
 
+    def test_no_components_subsection_without_selection(self, minimal_yaml_data):
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "Components Not Individually Analyzed" not in md
+
+    def test_renders_excluded_components_subsection(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["component_selection"] = {
+            "analyzed": 2,
+            "total": 3,
+            "excluded": [
+                {"id": "worker", "name": "Background Worker", "reason": "out-of-scope at depth=quick"},
+            ],
+        }
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "### Components Not Individually Analyzed" in md
+        assert "2 of 3 components analyzed" in md
+        assert "| worker | Background Worker | out-of-scope at depth=quick |" in md
+
+    def test_excluded_components_reason_pipe_escaped(self, minimal_yaml_data):
+        minimal_yaml_data["meta"]["component_selection"] = {
+            "excluded": [{"id": "w", "name": "W", "reason": "a | b"}],
+        }
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "a \\| b" in md
+
     def test_accepted_risks_collapses_multiline_justification(self, minimal_yaml_data):
         minimal_yaml_data["meta"]["accepted_risks"] = [
             {

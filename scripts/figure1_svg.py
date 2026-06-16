@@ -57,6 +57,11 @@ _BW, _BH = 168, 90   # component box (compact; name + severity + attack-IDs)
 _GX, _GY = 18, 18    # grid gaps (box-to-box)
 _MAXC = 4            # max columns before wrapping into a new row
 _CAP = 6             # top-N components drawn per tier; the rest → "+N also assessed"
+_OOS_INLINE_MAX = 3  # ≤ this many out-of-scope components per tier → individual dimmed boxes; more → one collapsed count box
+_OOS_BOX_H = 30      # height of a dimmed out-of-scope box drawn inside a tier band
+_OOS_GAP = 10        # gap above the out-of-scope box row inside a tier band
+                     # (the dashed style is explained once in the Diagram Legend,
+                     #  so no repeated per-band caption is drawn)
 _BANDPAD = 20
 _BANDGAP = 34  # room for the flow arrow + its label between bands
 _LEGGAP = 46   # right lane: hosts the red "direct attack" arrow, then the legend
@@ -278,7 +283,32 @@ def build_figure1_svg(
                 exposed.add(to)
     exposed_tiers = {comp[cid]["tier"] for cid in exposed}
 
-    by_tier = {tk: [cid for cid in order if comp[cid]["tier"] == tk] for tk in ("client", "application", "data")}
+    # Components enumerated but NOT given a STRIDE pass at this depth
+    # (meta.component_selection.excluded). Pull them OUT of the assessed tier
+    # grid so they neither draw as plain boxes nor fold into "+N also assessed"
+    # (which means "assessed, lower priority" — the opposite of out-of-scope).
+    # They are shown in a distinct dashed strip below the tiers for completeness.
+    _cs = meta.get("component_selection") if isinstance(meta.get("component_selection"), dict) else {}
+    oos_ids = {
+        (e.get("id") or "").strip()
+        for e in (_cs.get("excluded") or [])
+        if isinstance(e, dict) and (e.get("id") or "").strip()
+    }
+    # Place each out-of-scope component INSIDE its own tier band (as a dimmed,
+    # dashed box) so the reader sees it in the layer it belongs to — not
+    # stranded in a separate strip divorced from its tier (the old layout was
+    # confusing: an empty "Data Tier" band with C-03 Data Persistence floating
+    # below it). `tier` is always coerced to one of the three rendered tiers
+    # above, so every excluded component lands in a band; nothing is dropped.
+    oos_by_tier = {
+        tk: [cid for cid in order if cid in oos_ids and cid in comp and comp[cid]["tier"] == tk]
+        for tk in ("client", "application", "data")
+    }
+
+    by_tier = {
+        tk: [cid for cid in order if comp[cid]["tier"] == tk and cid not in oos_ids]
+        for tk in ("client", "application", "data")
+    }
     # busiest first within a tier (so the grid puts heavy boxes early)
     for tk in by_tier:
         by_tier[tk].sort(key=lambda cid: (-len(comp[cid]["ids"]), -comp[cid]["crit"], -comp[cid]["high"], order.index(cid)))
@@ -475,13 +505,70 @@ def build_figure1_svg(
         disp = wl[0] + ("…" if len(wl) > 1 else "")
         c.text(cx0, ytop + bh - 9, disp, size=9, fill=_MUTED, italic=True, anchor="start")
 
+    def draw_tier_oos(oosc: list[str], oy: float) -> None:
+        """Draw a tier's out-of-scope components as dimmed dashed boxes INSIDE
+        the tier band, beneath any analyzed boxes. ``oy`` is the top y of the
+        sub-row. Few (≤ _OOS_INLINE_MAX) → one box per component; many → a
+        single collapsed count box pointing at §11. Muted + dashed so they read
+        as 'present but not analyzed' — the dashed style is explained once in
+        the Diagram Legend, so no per-band caption is repeated here.
+        """
+        # Visually align with the analyzed component boxes: same box width
+        # (_BW), same corner radius (rx=9), same centred bold title at top —
+        # only the COLOUR LANGUAGE differs (grey title + grey dashed border vs.
+        # accent solid border) to read as 'present but not analyzed'. Same
+        # compact height (_OOS_BOX_H), so no extra vertical space is used.
+        by = oy + _OOS_GAP
+        if len(oosc) <= _OOS_INLINE_MAX:
+            n = len(oosc)
+            bw = _BW
+            roww = n * bw + (n - 1) * _GX
+            bx = cx0 + (cw - roww) / 2  # centre the row, like the analyzed grid rows
+            for cid in oosc:
+                cm = comp[cid]
+                c.rect(bx, by, bw, _OOS_BOX_H, fill="#ffffff", stroke="#b8bfca", sw=1.5, rx=9, dash="4 3")
+                title = f'{cm["cnum"]} · {cm["name"]}'
+                # Auto-shrink to keep the title on ONE line (the box is compact —
+                # one component-title line, no metric footer), so a long name like
+                # "Data Persistence Layer" is not truncated to "Data Persistenc…".
+                size = next((s for s in (10.5, 9.5, 8.5) if len(_wrap(title, bw - 16, s)) == 1), 8.5)
+                wl = _wrap(title, bw - 16, size)
+                if wl:
+                    c.text(bx + bw / 2, by + _OOS_BOX_H / 2 + 3.7, wl[0] + ("…" if len(wl) > 1 else ""),
+                           size=size, fill=_MUTED, weight="bold")
+                bx += bw + _GX
+        else:
+            bw = min(2 * _BW + _GX, cw)
+            bx = cx0 + (cw - bw) / 2
+            c.rect(bx, by, bw, _OOS_BOX_H, fill="#ffffff", stroke="#b8bfca", sw=1.5, rx=9, dash="4 3")
+            c.text(bx + bw / 2, by + _OOS_BOX_H / 2 + 3.7,
+                   f"{len(oosc)} components out of scope (not analyzed) — see §11 Out of Scope",
+                   size=10.5, fill=_MUTED, weight="bold")
+
     _TORDER = {"client": 0, "application": 1, "data": 2}
     top_exp = min((_TORDER[t] for t in exposed_tiers), default=99)
 
     for num, tier in ((2, "client"), (3, "application"), (4, "data")):
         cids = drawn[tier]
+        oosc = oos_by_tier[tier]
         note_h = 16 if hidden[tier] else 0
-        if len(cids) == 1:  # single-component tier → bar
+        # OOS sub-row reserved inside the band when this tier has excluded comps.
+        oos_h = (_OOS_GAP + _OOS_BOX_H) if oosc else 0
+        ncids = len(cids)
+
+        # Analyzed-content height for this tier (0 when every comp was excluded).
+        if ncids == 0:
+            analyzed_h = 0.0
+        elif ncids == 1:
+            analyzed_h = 66.0  # single-component bar
+        else:
+            rows, sizes = tier_grid[tier]
+            analyzed_h = rows * _BH + (rows - 1) * _GY
+        gap_ao = 12 if (analyzed_h > 0 and oos_h > 0) else 0
+
+        if ncids == 1 and not oosc:
+            # single-component tier → bar (narrow band for the attack arrow only
+            # when there is no OOS row that would need the full width).
             barh = 66
             bh = _BANDPAD * 2 + barh + note_h
             barw = 0.52 * cw
@@ -497,19 +584,32 @@ def build_figure1_svg(
             bands.append((tier, y, bh))
             y += bh + _BANDGAP
             continue
-        rows, sizes = tier_grid[tier]
-        gh = rows * _BH + (rows - 1) * _GY
-        bh = _BANDPAD * 2 + gh + note_h
+
+        # Grid path (also covers ncids==0 and the "has OOS" cases). Full-width
+        # band so the OOS sub-row always fits.
+        if ncids == 0:
+            bh = _BANDPAD * 2 + (oos_h or 40) + note_h
+        else:
+            bh = _BANDPAD * 2 + analyzed_h + gap_ao + oos_h + note_h
         band_title(tier, y, bh, num)
-        k = 0
         yy = y + _BANDPAD
-        for rsize in sizes:
-            roww = rsize * _BW + (rsize - 1) * _GX
-            sx0 = cx0 + (cw - roww) / 2
-            for j in range(rsize):
-                draw_box(cids[k], sx0 + j * (_BW + _GX), yy)
-                k += 1
-            yy += _BH + _GY
+        if ncids == 1:
+            # single comp but the tier also has OOS → draw the bar full-width-
+            # centred above the OOS row (skip the arrow-narrowing).
+            barw = 0.52 * cw
+            draw_bar(cids[0], cx0 + (cw - barw) / 2, yy, barw, 66)
+        elif ncids > 1:
+            rows, sizes = tier_grid[tier]
+            k = 0
+            for rsize in sizes:
+                roww = rsize * _BW + (rsize - 1) * _GX
+                sx0 = cx0 + (cw - roww) / 2
+                for j in range(rsize):
+                    draw_box(cids[k], sx0 + j * (_BW + _GX), yy)
+                    k += 1
+                yy += _BH + _GY
+        if oosc:
+            draw_tier_oos(oosc, y + _BANDPAD + analyzed_h + gap_ao)
         also_note(tier, y, bh)
         bands.append((tier, y, bh))
         y += bh + _BANDGAP
@@ -536,17 +636,30 @@ def build_figure1_svg(
     # clear right channel (no elbow — the elbow looked "abgehackt", user) with a
     # down arrowhead into each exposed tier.
     if exposed_tiers:
-        rx = band_left + band_w - 15
+        rx = band_left + band_w - 16
         a_bottom = bands[0][1] + bands[0][2]
         # land ON the top of the (topmost) internet-exposed tier — the green box —
         # not down in its middle (user).
         target_top = min(yt for t, yt, h in bands if t in exposed_tiers)
-        c.line(rx, a_bottom + 2, rx, target_top - 6, stroke=_EXPOSED, sw=2.6, marker="arrowred")
-        lblx, lbly = rx - 10, (a_bottom + target_top) / 2
+        # Bold attack arrow: thicker stroke + large fixed arrowhead so it clearly
+        # dominates the thin grey legitimate-flow arrow. (No filled background
+        # lane — the weight + arrowhead + callout carry the emphasis; a red
+        # corridor read as a stray highlight block.)
+        c.line(rx, a_bottom + 2, rx, target_top - 8, stroke=_EXPOSED, sw=3.8, marker="arrowred-lg")
+        # Vertical callout — uppercase, bold, with a soft white halo so it stays
+        # legible over the corridor and any box edge it passes.
+        lblx, lbly = rx - 12, (a_bottom + target_top) / 2
+        label = "DIRECT ATTACK"
+        halo_w, halo_h = len(label) * 6.4, 15.0  # rotated → halo_w is the vertical extent
         c.el.append(
-            f'<text x="{lblx:.1f}" y="{lbly:.1f}" font-family="{_FONT}" font-size="9" '
-            f'font-weight="bold" fill="{_EXPOSED}" text-anchor="middle" '
-            f'transform="rotate(90 {lblx:.1f} {lbly:.1f})">direct attack</text>'
+            f'<rect x="{lblx - halo_w / 2:.1f}" y="{lbly - halo_h / 2:.1f}" '
+            f'width="{halo_w:.1f}" height="{halo_h:.1f}" rx="4" fill="#ffffff" opacity="0.78" '
+            f'transform="rotate(90 {lblx:.1f} {lbly:.1f})"/>'
+        )
+        c.el.append(
+            f'<text x="{lblx:.1f}" y="{lbly + 3.2:.1f}" font-family="{_FONT}" font-size="10.5" '
+            f'font-weight="bold" letter-spacing="0.5" fill="{_EXPOSED}" text-anchor="middle" '
+            f'transform="rotate(90 {lblx:.1f} {lbly:.1f})">{label}</text>'
         )
 
     # ---- legend rail ----
@@ -602,10 +715,20 @@ def build_figure1_svg(
         c.circle(lx + 23, y0 + (r + 1) * _RH - 3.5, 8.5, fill=_ATTACK, stroke=_ATTACK, sw=1.3)
         c.text(lx + 23, y0 + (r + 1) * _RH - 0.3, "n", size=9.5, fill="#ffffff", weight="bold", italic=True)
         c.text(lx + 40, y0 + (r + 1) * _RH, "attack scenario (see above)", size=10, fill=_INK, anchor="start")
+        if has_oos:
+            # Explain the dashed boxes drawn inside the tier bands ONCE here,
+            # instead of repeating a caption in every band.
+            sw_w, sw_h = 24.0, 14.0
+            sy = y0 + (r + 2) * _RH - 3.5 - sw_h / 2
+            c.rect(lx + 12, sy, sw_w, sw_h, fill="#ffffff", stroke="#b8bfca", sw=1.5, rx=4, dash="4 3")
+            c.text(lx + 44, y0 + (r + 2) * _RH, "out of scope (not analyzed)",
+                   size=10, fill=_INK, anchor="start")
 
+    has_oos = any(oos_by_tier.values())
+    diag_n_rows = (4 if exposed else 2) + (1 if has_oos else 0)
     ly = panel("Attack Scenarios — by actor", ly, scen_rows, len(actor_order) + len(scenarios))
     ly = panel("Severity", ly, sev_rows, 2)
-    ly = panel("Diagram Legend", ly, diag_rows, 4 if exposed else 2)
+    ly = panel("Diagram Legend", ly, diag_rows, diag_n_rows)
 
     total_w = lx + _LEGW + _PAD
     total_h = max(bands_bottom, ly) + _PAD
@@ -616,6 +739,12 @@ def build_figure1_svg(
         f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{_BACKBONE}"/></marker>'
         '<marker id="arrowred" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">'
         f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{_ATTACK}"/></marker>'
+        # Large, fixed-size red arrowhead for the primary direct-attack arrow —
+        # markerUnits=userSpaceOnUse so it is a prominent fixed size, not tied to
+        # (and shrunk with) the stroke width. The attack path is the single most
+        # important element of the figure; its arrowhead must read at a glance.
+        '<marker id="arrowred-lg" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="14" markerHeight="14" markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
+        f'<path d="M 0 0 L 12 6 L 0 12 z" fill="{_ATTACK}"/></marker>'
         '</defs>'
     )
     body = "\n".join(c.el)

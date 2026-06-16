@@ -114,6 +114,108 @@ def test_raising_cap_draws_more_no_note(monkeypatch):
     assert "also assessed" not in svg
 
 
+# ---- out-of-scope strip -----------------------------------------------------
+def _excl(*ids):
+    return {"component_selection": {"excluded": [{"id": i} for i in ids], "analyzed": 0, "total": 0}}
+
+
+def test_out_of_scope_strip_absent_without_selection():
+    # No component_selection → no strip (legacy / passthrough runs unchanged).
+    svg = _build(app=2)
+    assert "Out of scope — enumerated" not in svg
+
+
+# The dashed-box meaning is explained ONCE in the Diagram Legend, not repeated
+# as a caption in every tier band.
+_OOS_LEGEND = "out of scope (not analyzed)"
+
+
+def test_out_of_scope_strip_inline_for_few():
+    # ≤ _OOS_INLINE_MAX excluded → individual dimmed boxes, no collapsed count.
+    svg = _build(app=3, meta=_excl("app2"))
+    assert _OOS_LEGEND in svg  # explained once in the legend
+    assert "Service 2" in svg  # the excluded component is named in its tier band
+    assert "components out of scope (not analyzed)" not in svg  # not collapsed
+    assert "Out of scope — enumerated" not in svg  # no per-band caption
+    ET.fromstring(svg)  # still well-formed
+
+
+def test_out_of_scope_strip_collapses_for_many():
+    # > _OOS_INLINE_MAX excluded → one collapsed count box, names not drawn.
+    svg = _build(app=6, meta=_excl("app0", "app1", "app2", "app3", "app4"))
+    assert "5 components out of scope (not analyzed) — see §11 Out of Scope" in svg
+    # an excluded component is pulled out of the tier grid entirely (not drawn)
+    assert "Service 0" not in svg
+    # the one analyzed app component is still drawn (C-07 = app5, the non-excluded)
+    assert "C-07" in svg
+    ET.fromstring(svg)
+
+
+def test_out_of_scope_excluded_not_in_also_assessed_note():
+    # Excluded components must not be folded into "+N also assessed" (that note
+    # means "assessed, lower priority" — the opposite of out-of-scope).
+    svg = _build(app=3, meta=_excl("app0", "app1"))
+    assert "also assessed" not in svg  # only 1 app component left → no overflow note
+
+
+def test_out_of_scope_rendered_inside_each_tier():
+    # db (data) + app0 (application) excluded → the excluded comps render inside
+    # their respective tier bands (dashed boxes), with a SINGLE shared legend
+    # explanation rather than a caption repeated in every band.
+    svg = _build(app=2, meta=_excl("db", "app0"))
+    assert "Data Layer" in svg   # excluded data comp named in the data band
+    assert "Service 0" in svg    # excluded app comp named in the application band
+    assert svg.count(_OOS_LEGEND) == 1  # one legend entry, not one caption per band
+    assert "Out of scope — enumerated" not in svg
+    ET.fromstring(svg)
+
+
+def test_out_of_scope_legend_absent_without_exclusions():
+    # No exclusions → no legend entry (an honest legend explains only what's drawn).
+    svg = _build(app=2)
+    assert _OOS_LEGEND not in svg
+
+
+def test_out_of_scope_empty_tier_renders_title_and_box():
+    # The only data component is excluded → the Data Tier band must still draw
+    # its title AND show the excluded comp inside it (the old layout left an
+    # empty Data Tier band with the comp stranded in a strip below).
+    svg = _build(app=2, meta=_excl("db"))
+    assert "Data Tier" in svg
+    assert "Data Layer" in svg
+    assert _OOS_LEGEND in svg  # explained in the legend
+    ET.fromstring(svg)
+
+
+def _rects(svg):
+    """Return [(x, y, w, h, fill, dash)] for every <rect> (namespace-agnostic)."""
+    out = []
+    for el in ET.fromstring(svg).iter():
+        if el.tag.rsplit("}", 1)[-1] != "rect":
+            continue
+        a = el.attrib
+        out.append(
+            (
+                float(a["x"]), float(a["y"]), float(a["width"]), float(a["height"]),
+                a.get("fill", ""), a.get("stroke-dasharray", ""),
+            )
+        )
+    return out
+
+
+def test_out_of_scope_box_geometrically_inside_its_tier_band():
+    # The crux of the fix: the dashed OOS box must sit WITHIN the purple data
+    # band rectangle, not below it.
+    svg = _build(app=2, meta=_excl("db"))
+    rects = _rects(svg)
+    band = next(r for r in rects if r[4] == "#f2ecf9")  # data tier band fill
+    oos = next(r for r in rects if r[4] == "#ffffff" and r[5] == "4 3")  # dashed OOS box
+    band_y, band_h = band[1], band[3]
+    oos_y, oos_h = oos[1], oos[3]
+    assert band_y <= oos_y, "OOS box starts below the data band top"
+    assert oos_y + oos_h <= band_y + band_h, "OOS box overflows the data band bottom"
+
+
 def _viewbox_w(svg):
     return float(ET.fromstring(svg).attrib["viewBox"].split()[2])
 
@@ -181,6 +283,16 @@ def test_internet_exposed_marker_and_direct_attack_arrow():
 def test_no_exposed_no_direct_attack_arrow():
     svg = _build(app=2, exposed=())
     assert "direct attack" not in svg
+
+
+def test_direct_attack_arrow_is_prominent():
+    # The attack path is the most important element — it must read at a glance:
+    # bold uppercase callout + the large fixed-size red arrowhead marker.
+    svg = _build(app=2, exposed=("app0",))
+    assert "DIRECT ATTACK" in svg          # bold uppercase vertical callout
+    assert "arrowred-lg" in svg            # large fixed arrowhead used for the arrow
+    # and the prominence is gone when nothing is internet-exposed
+    assert "DIRECT ATTACK" not in _build(app=2, exposed=())
 
 
 # ---- victim -----------------------------------------------------------------
