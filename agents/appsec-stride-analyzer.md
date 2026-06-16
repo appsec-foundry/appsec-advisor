@@ -153,6 +153,8 @@ When `RELEVANT_ACTORS_INDEX_PATH = none`: set `COMPONENT_ACTORS = []`. Proceed w
 
 Default to `moderate` when `ESTIMATED_THREAT_COUNT` is not passed.
 
+**Write-first NOW (before Step 2).** Before reading any source files, perform the pre-seed write described in `## Write-first guarantee` below: `Write` `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json` with `"partial": true`, all six categories in `skipped_categories`, and `"threats": []`. This must happen here — at the Step-1/Step-2 boundary — so a cut-off during the (sometimes long) source-reading phase still leaves a valid file.
+
 ## Step 2 — Read relevant source files
 
 **Print:** `[stride | <COMPONENT_NAME>] ▶ Step 2/4 — Reading source files…`
@@ -208,14 +210,14 @@ Print each file: `[stride | <COMPONENT_NAME>]   ↳ Reading <filepath>…`
 
 ## Write-first guarantee (mandatory) — never lose the component
 
-**Before you begin STRIDE enumeration (Step 3), `Write` an initial valid `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`** containing the required top-level fields (`component_id`, `component_name`, `analyzed_at`, `threats`) plus:
+**As the FIRST write action of this dispatch — at the end of Step 1, BEFORE you read any source files in Step 2 — `Write` an initial valid `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`** containing the required top-level fields (`component_id`, `component_name`, `analyzed_at`, `threats`) plus:
 - `"partial": true`
 - `"skipped_categories": ["Spoofing","Tampering","Repudiation","Information Disclosure","Denial of Service","Elevation of Privilege"]`
-- `"threats": [ … ]` — any threats already obvious from the Step-2 source reads, or `[]` if none yet.
+- `"threats": []` — empty at this point; Step 2 (source reading) has not run yet.
 
-Then, **as each STRIDE category completes in Step 3, OVERWRITE the same file** with the accumulated threats and remove that category from `skipped_categories`. On the final Step-4 write, set `"partial": false` and `"skipped_categories": []`.
+Then re-write the file as you go: after Step 2 add any threats already obvious from the source reads, and **as each STRIDE category completes in Step 3, OVERWRITE the same file** with the accumulated threats and remove that category from `skipped_categories`. On the final Step-4 write, set `"partial": false` and `"skipped_categories": []`.
 
-This guarantees a valid `.stride-<COMPONENT_ID>.json` exists from the start of the budget-heavy enumeration, so a turn-budget cut-off mid-analysis degrades to a **partial-but-valid** file instead of a **missing** one. The historic failure mode: a budget-cut analyzer wrote `.progress/<id>.json` but never `.stride-<id>.json` (it intended to write "after this category" and ran out of turns first), so the skill saw a missing file and had to re-dispatch the whole component — burning more budget than the partial file would have cost (juice-shop 2026-06: file-upload-service lost its entire output this way). This mirrors the **write-first** contract the `appsec-abuse-case-verifier` already follows. The reactive `## Budget-critical wrap-up` below is the secondary guard; this proactive early write is the primary one — do **not** rely on the budget-critical flag firing in time.
+This guarantees a valid `.stride-<COMPONENT_ID>.json` exists from the very start of the dispatch — **including throughout the Step-2 source-reading phase**, which is itself budget-heavy on large components — so a turn-budget cut-off at ANY point degrades to a **partial-but-valid** file instead of a **missing** one. Two historic failure modes this prevents: (a) a budget-cut analyzer wrote `.progress/<id>.json` but never `.stride-<id>.json` because it intended to write "after this category" and ran out of turns first (juice-shop 2026-06: file-upload-service); (b) a component cut off **mid-Step-2 (Reading source files)** — before any pre-seed under the old "write before Step 3" rule — left no file at all and forced a full re-dispatch (juice-shop 2026-06-16: data-layer). Pre-seeding before Step 2 closes both. This mirrors the **write-first** contract the `appsec-abuse-case-verifier` already follows (it pre-seeds before any investigation). The reactive `## Budget-critical wrap-up` below is the secondary guard; this proactive early write is the primary one — do **not** rely on the budget-critical flag firing in time.
 
 ## Step 3 — Enumerate threats (STRIDE)
 

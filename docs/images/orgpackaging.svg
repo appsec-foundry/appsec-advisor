@@ -13,7 +13,7 @@
       .node-sub { font-size: 12px; fill: #475569; }
       .node-code-icon { font-family: "Courier New", Courier, monospace; font-weight: 700; font-size: 32px; }
       
-      /* Auf ein leuchtendes Blau geändert für optimale Lesbarkeit auf Schwarz & Weiß */
+      /* Auf ein leuchtendes Blau geandert fuer optimale Lesbarkeit auf Schwarz und Weiss */
       .label-edge { font-size: 12px; font-weight: 600; fill: #3b82f6; }
       
       .stroke-blue { stroke: #2563eb; stroke-width: 2; }
@@ -49,7 +49,7 @@
   <text x="226" y="344" class="global-text label-edge" text-anchor="middle">pin &amp; package</text>
 
   <line x1="380" y1="250" x2="380" y2="282" class="stroke-blue" stroke-dasharray="5 4" marker-end="url(#arr-blue)" />
-  <text x="395" y="265" class="global-text label-edge" text-anchor="start">bundle</text>
+  <text x="395" y="265" class="global-text label-edge" fill="#2563eb" text-anchor="start">bundle</text>
 
   <line x1="480" y1="362" x2="582" y2="362" class="stroke-dark" marker-end="url(#arr-dark)" />
   <text x="531" y="344" class="global-text label-edge" text-anchor="middle">publish</text>

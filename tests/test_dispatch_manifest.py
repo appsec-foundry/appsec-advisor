@@ -691,6 +691,51 @@ def test_reconcile_no_evidence_no_injection(tmp_path):
     assert injected == []
 
 
+def test_detect_cicd_paths_cover_config_scan_surface(tmp_path):
+    # Regression (2026-06-16): config-scan findings are bound to
+    # component_id="ci-cd-pipeline" (merge_threats), but the component's paths
+    # only globbed .github/workflows/**, so Dockerfile / package*.json /
+    # dependabot evidence tripped the validate_intermediate path-glob advisory
+    # with no component to reclassify to. The ci-cd-pipeline component (the
+    # supply-chain boundary) must glob the full config-scan file surface.
+    repo = _fake_repo(tmp_path)
+    (repo / "Dockerfile").write_text("FROM node:18\n", encoding="utf-8")
+    comp = bm._detect_cicd(repo)
+    assert comp is not None
+    paths = comp["paths"]
+    # The actual files the config/IaC scanner reports against:
+    for needed in ("Dockerfile", "package.json", "package-lock.json", ".github/dependabot.yml"):
+        assert needed in paths, f"{needed!r} missing from ci-cd-pipeline paths: {paths}"
+    # Detected workflow files are still represented.
+    assert ".github/workflows/**" in paths
+
+
+def test_detect_cicd_config_scan_evidence_matches_globs(tmp_path):
+    # Verify the broadened globs actually MATCH the config-scan evidence files
+    # under the same fnmatch+prefix semantics validate_intermediate uses, so the
+    # cross-component advisory no longer fires for these findings.
+    import fnmatch
+
+    repo = _fake_repo(tmp_path)
+    comp = bm._detect_cicd(repo)
+    globs = comp["paths"]
+
+    def _matches(f: str) -> bool:
+        return any(
+            fnmatch.fnmatch(f, g) or f.startswith(g.rstrip("*").rstrip("/"))
+            for g in globs
+        )
+
+    for evidence_file in (
+        "Dockerfile",
+        "package.json",
+        "package-lock.json",
+        ".github/dependabot.yml",
+        ".github/workflows/ci.yml",
+    ):
+        assert _matches(evidence_file), f"{evidence_file!r} not matched by {globs}"
+
+
 def test_reconcile_partial_evidence_only_cicd(tmp_path):
     repo = _fake_repo(tmp_path, socketio=False, auth=False)
     _, injected = bm.reconcile_inventory(_backend_only(), repo)

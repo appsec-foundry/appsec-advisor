@@ -679,6 +679,110 @@ def test_auth_nonflow_method_exempt_from_diagram(monkeypatch, tmp_path: Path):
     assert not any("sequenceDiagram" in issue for issue in report.issues)
 
 
+def test_auth_social_login_heading_is_whitelisted(monkeypatch, tmp_path: Path):
+    """Regression (2026-06-16): emit_auth_coverage writes the control
+    'Social Login (OAuth / OIDC)'; the renderer simplifies the §7.2 heading to
+    'Social Login', which token-mismatches oauth/oidc and tripped the
+    'not a recognized authentication mechanism' gate, forcing a fragment-fixer
+    repair every run. 'social login' is now in method_whitelist."""
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [Social Login](#social-login).
+
+            #### 7.2.6 Social Login
+
+            The app federates login via Google OAuth.
+
+            ```mermaid
+            sequenceDiagram
+                User->>App: authorization code
+            ```
+
+            **Security assessment**
+
+            Redirect URI not validated.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+        """),
+    )
+
+    report = qa.check_auth_method_decomposition(md)
+
+    assert not any(
+        "Social Login" in issue and "not a recognized authentication mechanism" in issue
+        for issue in report.issues
+    ), report.issues
+
+
+def test_auth_threat_hypotheses_heading_exempt(monkeypatch, tmp_path: Path):
+    """Regression (2026-06-16): pregenerate_fragments deterministically emits
+    '#### Threat Hypotheses Requiring Validation' inside §7.2 (asserted present
+    by test_pregenerate_fragments), but the auth-method gate rejected it as a
+    non-mechanism — a deterministic self-contradiction that forced a repair
+    iteration. It is now a contract-declared structural_heading_exemption.
+
+    A bogus heading is included as a negative control to prove the gate still
+    runs and the exemption is specific, not a blanket pass."""
+    qa._PrePass.reset()
+    md = _write_minimal_model(
+        tmp_path,
+        textwrap.dedent("""\
+            ## 7. Security Architecture
+
+            ### 7.2 Identity and Authentication Controls
+
+            **Controls covered:** [Password-Based Login](#password-based-login).
+
+            #### 7.2.1 Password-Based Login
+
+            ```mermaid
+            sequenceDiagram
+                User->>App: credentials
+            ```
+
+            **Security assessment**
+
+            Password login exists.
+
+            **Relevant findings**
+
+            - No dedicated finding routed in this assessment.
+
+            #### Threat Hypotheses Requiring Validation
+
+            | ID | Hypothesis | Control Gap | Evidence | Validation |
+            |---|---|---|---|---|
+            | HYP-001 | SQLi exposure | Parameterized Queries | `routes/login.ts:34` | Probe /login |
+
+            #### 7.2.9 Banana Pudding
+
+            Not an auth mechanism at all.
+        """),
+    )
+
+    report = qa.check_auth_method_decomposition(md)
+
+    # The exempt structural heading must NOT be flagged as a non-mechanism.
+    assert not any(
+        "Threat Hypotheses" in issue and "not a recognized authentication mechanism" in issue
+        for issue in report.issues
+    ), report.issues
+    # Negative control: a genuinely bogus heading IS still flagged — proves the
+    # gate is live and the exemption is specific.
+    assert any(
+        "Banana Pudding" in issue and "not a recognized authentication mechanism" in issue
+        for issue in report.issues
+    ), report.issues
+
+
 def test_validation_approach_first_rejects_specific_first(monkeypatch, tmp_path: Path):
     qa._PrePass.reset()
     md = _write_minimal_model(
