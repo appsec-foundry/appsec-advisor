@@ -75,6 +75,26 @@ class TestStandbyIsolation:
         t = rt.compute_timing(tmp_path)
         assert t["standby_secs"] == 0
 
+    def test_net_wall_never_exceeds_wall_under_parallel_inflation(self, tmp_path: Path):
+        # net_compute is the SUM of per-stage duration_ms; parallel Stage-1
+        # dispatches make it EXCEED the measured wall. net_wall must still be
+        # clamped to the real wall (regression for the former max(net_compute,…)
+        # floor that pinned net_wall above elapsed clock — juice-shop 98m vs 83m).
+        _write(
+            tmp_path,
+            [
+                {"stage": 1, "duration_ms": 4_311_000, "wall_secs_observed": 2110},
+                {"stage": 1, "duration_ms": 562_000},
+                {"stage": 2, "duration_ms": 500_000},
+            ],
+            wall=4999,
+        )
+        t = rt.compute_timing(tmp_path)
+        assert t["net_compute_secs"] == 5373  # > wall (parallel inflation)
+        assert t["standby_secs"] == 0
+        assert t["net_wall_secs"] == 4999  # clamped to wall, NOT net_compute
+        assert t["net_wall_secs"] <= t["wall_secs"]
+
 
 class TestWallFallback:
     def test_missing_wall_marker_uses_stage_walls(self, tmp_path: Path):

@@ -698,6 +698,30 @@ class TestRenderAppendixRunStatistics:
         ctx = _bare_ctx(tmp_path, {"meta": meta})
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert "2m 05s" in out
+        # Sole wall source → wall row present, no separate compute row.
+        assert "| Wall clock (active) | 2m 05s |" in out
+        assert "Agent compute" not in out
+
+    def test_wall_and_compute_shown_separately(self, tmp_path):
+        # net_compute (Σ parallel dispatches) exceeds the measured wall. The
+        # appendix must show wall and compute as DISTINCT rows and must not
+        # label the inflated compute sum as "Total analysis duration"
+        # (regression: that conflation made the duration estimator look wrong).
+        (tmp_path / ".stage-stats.jsonl").write_text(
+            '{"stage": 1, "name": "Threat Analysis", "agent": "ns:analyst", "model": "sonnet", '
+            '"duration_ms": 4311000, "wall_secs_observed": 2110, "tool_uses": 1, "tokens": 1}\n'
+            '{"stage": 1, "name": "Abuse", "agent": "ns:abuse", "model": "sonnet", '
+            '"duration_ms": 562000, "tool_uses": 1, "tokens": 1}\n'
+            '{"stage": 2, "name": "Render", "agent": "ns:render", "model": "sonnet", '
+            '"duration_ms": 1011000, "tool_uses": 1, "tokens": 1}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / ".scan-wall-seconds").write_text("4999", encoding="utf-8")
+        ctx = _bare_ctx(tmp_path, {"meta": {}})
+        out = compose._render_appendix_run_statistics(ctx, None, {})
+        assert "| Wall clock (active) | 83m 19s |" in out
+        assert "| Agent compute (Σ parallel dispatches) | 98m 04s |" in out
+        assert "| Total analysis duration |" not in out
 
     def test_orchestrator_model_from_agents(self, tmp_path):
         meta = {"run_statistics": {"agents": [{"name": "x", "model": "opus-model", "role": "Orchestrator"}]}}

@@ -11182,13 +11182,36 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     out_dir = meta.get("output_dir") or skill_cfg.get("output_dir") or "—"
     # M3.3 — derive total duration from per-stage stats when meta lacks it.
     stage_rows = _read_stage_stats(ctx.output_dir)
-    duration = meta.get("analysis_duration_seconds")
-    if not duration and stage_rows:
-        # Sum stage duration_ms; round to seconds.
+
+    # Two DISTINCT quantities — never conflate them into one "duration":
+    #   * wall clock    = real elapsed the user waited (net of machine standby)
+    #   * agent compute = Σ per-stage duration_ms, which folds PARALLEL Stage-1
+    #     dispatches serially and therefore OVERSTATES wall (juice-shop: ~98m
+    #     compute vs ~83m wall). Labelling that sum "Total analysis duration"
+    #     made the duration estimator look broken when it was actually correct.
+    compute_secs: int | None = None
+    if stage_rows:
         ms_sum = sum(r.get("duration_ms", 0) for r in stage_rows)
         if ms_sum:
-            duration = ms_sum // 1000
-    dur_fmt = f"{int(duration) // 60}m {int(duration) % 60:02d}s" if duration else "—"
+            compute_secs = ms_sum // 1000
+    # Authoritative wall comes from run_timing (single source of truth, shared
+    # with the completion summary): net_wall = wall − standby, now clamped ≤ wall.
+    wall_secs: int | None = None
+    try:
+        from run_timing import compute_timing  # sibling helper
+
+        _t = compute_timing(ctx.output_dir)
+        wall_secs = _t.get("net_wall_secs") or None
+        if not compute_secs:
+            compute_secs = _t.get("net_compute_secs") or None
+    except Exception:
+        pass
+    # Fallback wall: the analyst's measured ELAPSED (Phase 1–11 wall).
+    if not wall_secs:
+        wall_secs = meta.get("analysis_duration_seconds") or None
+
+    def _dur(s: int | None) -> str:
+        return f"{int(s) // 60}m {int(s) % 60:02d}s" if s else "—"
 
     lines: list[str] = ["## Appendix: Run Statistics", ""]
 
@@ -11204,7 +11227,15 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     lines.append(f"| Orchestrator model | {orch_model} |")
     lines.append(f"| Repository | {repo} |")
     lines.append(f"| Output directory | {out_dir} |")
-    lines.append(f"| Total analysis duration | {dur_fmt} |")
+    # Show wall and compute separately. When only one is known, emit just that
+    # one; when both equal (degenerate single-dispatch runs) the rows still read
+    # correctly. Never present the inflated compute sum as elapsed duration.
+    if wall_secs:
+        lines.append(f"| Wall clock (active) | {_dur(wall_secs)} |")
+    if compute_secs:
+        lines.append(f"| Agent compute (Σ parallel dispatches) | {_dur(compute_secs)} |")
+    if not wall_secs and not compute_secs:
+        lines.append("| Total analysis duration | — |")
     lines.append("")
 
     # --- Per-Stage Breakdown (M3.3) ----------------------------------------

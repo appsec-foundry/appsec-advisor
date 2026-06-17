@@ -251,7 +251,17 @@ def compute_timing(output_dir: Path, gap_threshold_s: int = STANDBY_GAP_THRESHOL
                     sd["is_standby"] = True
 
     if wall_secs is not None:
-        net_wall = max(net_compute, wall_secs - standby)
+        # net_wall = the wall the run WOULD have taken without machine standby.
+        # It can never exceed the measured wall, so clamp to [0, wall_secs].
+        # The former `max(net_compute, wall_secs - standby)` floor backfired:
+        # net_compute is the SUM of per-stage duration_ms, which folds PARALLEL
+        # Stage-1 dispatches (Analyst-A + N×STRIDE + Analyst-B) serially and so
+        # routinely EXCEEDS true wall — pinning net_wall above the actual elapsed
+        # clock (an impossible "net wall", e.g. 98m net_wall vs 83m measured wall
+        # on juice-shop). The event-gap standby signal is already bounded to the
+        # run window and conservative (any logged event breaks a gap), so the
+        # net_compute floor is both unsound and unnecessary.
+        net_wall = max(0, wall_secs - standby)
         # Idle the user actually sat through on a normal run = everything that
         # is not compute and not standby (API waits + between-stage orchestration).
         other_idle = max(0, wall_secs - net_compute - standby)
