@@ -206,3 +206,49 @@ def test_main_updates_yaml_and_prints_stats(tmp_path: Path, capsys) -> None:
     assert [t["evidence_check"] for t in written["threats"]] == ["verified", "refuted", "verified"]
     assert written["threats"][1]["evidence_flags"] == ["file_missing"]
     assert "sampled=2 verified=1 refuted=1 ambiguous=0 skipped(prior)=1" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Inference / coverage-gap provenance gate — must NOT auto-verify off a
+# structurally-valid-but-attached evidence anchor (the T-065 case).
+# ---------------------------------------------------------------------------
+
+
+def test_inferred_source_caps_at_ambiguous_not_verified(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "data" / "static" / "challenges.yml", "\n" * 1380 + "  key: value\n")
+    t = _threat("coverage-gap-finding", {"file": "data/static/challenges.yml", "line": 1381})
+    t["source"] = "coverage-gap"
+    data = {"threats": [t]}
+    vel.validate_yaml(data, repo)
+    assert data["threats"][0]["evidence_check"] == "ambiguous"
+    assert "evidence_anchor_unverified" in data["threats"][0]["evidence_flags"]
+
+
+def test_tier_reclassified_flag_caps_at_ambiguous(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _write(repo / "data" / "static" / "challenges.yml", "\n" * 1380 + "  key: value\n")
+    data = {
+        "threats": [
+            _threat(
+                "T-065",
+                {"file": "data/static/challenges.yml", "line": 1381},
+                flags=["tier_reclassified_from_data"],
+            )
+        ]
+    }
+    vel.validate_yaml(data, repo)
+    assert data["threats"][0]["evidence_check"] == "ambiguous"
+    assert "evidence_anchor_unverified" in data["threats"][0]["evidence_flags"]
+
+
+def test_code_source_on_same_line_still_verifies(tmp_path: Path) -> None:
+    # Negative control: a non-inferred (stride) finding on the SAME real line
+    # still verifies — proving the gate is provenance-scoped, not blanket.
+    repo = tmp_path / "repo"
+    _write(repo / "data" / "static" / "challenges.yml", "\n" * 1380 + "  key: value\n")
+    t = _threat("T-001", {"file": "data/static/challenges.yml", "line": 1381})
+    t["source"] = "stride"
+    data = {"threats": [t]}
+    vel.validate_yaml(data, repo)
+    assert data["threats"][0]["evidence_check"] == "verified"

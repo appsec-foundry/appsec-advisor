@@ -4614,6 +4614,42 @@ def _apply_mermaid_autofixes(md_text: str) -> tuple[str, list[str]]:
                 patched_lines.append(line)
             new_body = "\n".join(patched_lines)
 
+        # Rule D — replace literal ';' in sequenceDiagram message AND note
+        # payloads (and alt/else labels). Mermaid tokenises ';' as a statement
+        # terminator, so `git clone; read lib/insecurity.ts:23` is parsed as
+        # two statements and the diagram fails to render. Mirrors detector
+        # rules (2b) and (3b) in check_mermaid_syntax. We rewrite ';' (with any
+        # surrounding spaces) to ' — '. Idempotent: the patched form has no ';'
+        # left in payloads. Payload-only via split(":", 1), so the arrow head /
+        # `note over X:` prefix is untouched.
+        if diagram_type == "sequenceDiagram":
+            patched_lines = []
+            for line in new_body.splitlines():
+                stripped_l = line.strip()
+                low = stripped_l.lower()
+                is_message = bool(re.match(r"^\s*\w+\s*(-+>>?|--?>>?|->|-->>?)", stripped_l))
+                is_note = low.startswith(("note ", "note over", "note left", "note right"))
+                is_alt = bool(re.match(r"^\s*(?:alt|else)\s+\S", stripped_l))
+                if (is_message or is_note) and ":" in line:
+                    head, payload = line.split(":", 1)
+                    if ";" in payload:
+                        new_payload = re.sub(r"\s*;\s*", " — ", payload)
+                        patched_lines.append(f"{head}:{new_payload}")
+                        fixes.append(
+                            f"mermaid auto-fix (seqdiagram_semicolon): replaced "
+                            f"literal ';' in payload `{stripped_l[:60]}`"
+                        )
+                        continue
+                elif is_alt and ";" in line:
+                    patched_lines.append(re.sub(r"\s*;\s*", " — ", line))
+                    fixes.append(
+                        f"mermaid auto-fix (seqdiagram_alt_semicolon): replaced "
+                        f"literal ';' in alt/else label `{stripped_l[:60]}`"
+                    )
+                    continue
+                patched_lines.append(line)
+            new_body = "\n".join(patched_lines)
+
         # Rule B — drop the unbalanced `(` suffix from flowchart / graph
         # node labels. The truncated path fragment is replaced with a
         # single `…` so the label remains readable but the parser sees

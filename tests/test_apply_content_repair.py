@@ -186,6 +186,32 @@ class TestOpReplaceString:
         with pytest.raises(acr.ApplyError, match="ambiguous"):
             acr._op_replace_string(text, {"find": "X", "replace": "Y"})
 
+    def test_whitespace_mismatch_fuzzy_hits(self):
+        # Fragment has a <br/> + collapsed spaces where the plan's `find`
+        # used single literal spaces — exact match fails, fuzzy match wins.
+        # This is the §7.1 crypto-row scenario (rendered MD vs fragment source).
+        text = "| [Crypto](#79-x)<br/>  row anchor |"
+        out = acr._op_replace_string(
+            text,
+            {"find": "[Crypto](#79-x) row anchor", "replace": "[7.9 Crypto](#79-y) row anchor"},
+        )
+        assert out == "| [7.9 Crypto](#79-y) row anchor |"
+
+    def test_fuzzy_match_is_idempotent_on_rerun(self):
+        text = "Crypto<br/> row #a"
+        once = acr._op_replace_string(
+            text, {"find": "Crypto row #a", "replace": "Crypto row #b"}
+        )
+        assert once == "Crypto row #b"
+        # Re-running the same action no longer matches (fix already applied).
+        with pytest.raises(acr.ApplyError, match="needle not found"):
+            acr._op_replace_string(once, {"find": "Crypto row #a", "replace": "Crypto row #b"})
+
+    def test_fuzzy_ambiguous_raises(self):
+        text = "X<br/>Y and X  Y"
+        with pytest.raises(acr.ApplyError, match="ambiguous"):
+            acr._op_replace_string(text, {"find": "X Y", "replace": "Z"})
+
 
 # ---------------------------------------------------------------------------
 # _op_append_after / _op_insert_before

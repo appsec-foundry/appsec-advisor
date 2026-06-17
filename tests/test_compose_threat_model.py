@@ -2051,11 +2051,27 @@ def test_missing_yaml_raises(tmp_path: Path) -> None:
 
 def test_markdown_fragment_must_start_with_correct_heading(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
-    # Corrupt system-overview.md: wrong heading level.
+    # Corrupt system-overview.md: wrong heading level — first line IS a heading,
+    # so this is a real authoring mixup and must still hard-fail (not restored).
     (out / ".fragments" / "system-overview.md").write_text("### 1. System Overview\n\nwrong level\n")
     with pytest.raises(compose.FragmentError) as exc:
         compose.render(CONTRACT, out)
     assert "system_overview" in str(exc.value)
+
+
+def test_dropped_h2_replaced_by_prose_is_autorestored(tmp_path: Path) -> None:
+    # The observed secarch-renderer defect: the canonical `## 1. System Overview`
+    # H2 is dropped and replaced by the intro paragraph. The composer restores
+    # the canonical heading deterministically (heading_autorestored warning)
+    # instead of hard-failing the whole run.
+    out = _prepare_output_dir(tmp_path)
+    (out / ".fragments" / "system-overview.md").write_text(
+        "This application is a deliberately vulnerable training app with several "
+        "components.\n\nMore body text describing the system in detail.\n"
+    )
+    rendered, warnings = compose.render(CONTRACT, out)
+    assert "## 1. System Overview" in rendered
+    assert any("heading_autorestored" in w for w in warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -3119,6 +3135,29 @@ def test_section7_number_and_bulletize() -> None:
     assert "7.4.1.1" not in out2
     assert "7.4.1 7.4.1" not in out2
     assert "- [7.4.1 Route auth](#route-auth)" in out2
+
+
+def test_section7_unnumbered_opener_before_authored_number_no_duplicate() -> None:
+    # The exact §7.6 bug: normalize injects an UN-numbered "Validation Approach"
+    # opener AHEAD of the fragment's already-numbered "7.6.1 Input Validation…".
+    # Pass 2 must strip the stale number and re-assign sequentially so the two
+    # H4s do not both render as 7.6.1.
+    md = (
+        "## 7. Security Architecture\n\n"
+        "### 7.6 Input Boundary Validation Controls\n\n"
+        "#### Validation Approach\n\nbody\n\n"
+        "#### 7.6.1 Input Validation and Sanitization\n\nbody\n\n"
+        "#### 7.6.2 Server-Side Code Evaluation\n\nbody\n\n"
+        "## 8. Findings Register\n"
+    )
+    out = compose._section7_number_and_bulletize(md)
+    assert "#### 7.6.1 Validation Approach" in out
+    assert "#### 7.6.2 Input Validation and Sanitization" in out
+    assert "#### 7.6.3 Server-Side Code Evaluation" in out
+    assert out.count("#### 7.6.1 ") == 1  # no duplicate number
+    # Idempotent.
+    out2 = compose._section7_number_and_bulletize(out)
+    assert out2 == out
 
 
 def test_section7_overview_links_get_section_number() -> None:

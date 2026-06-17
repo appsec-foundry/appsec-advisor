@@ -697,10 +697,14 @@ def test_mermaid_unbalanced_quote(tmp_path):
 
 
 def test_mermaid_literal_semicolon(tmp_path):
+    # Rule D now auto-repairs the literal ';' before the detector runs, so the
+    # issue is drained into r.fixes and the file is rewritten clean.
     md = "```mermaid\nsequenceDiagram\n  A->>B: SELECT 1; DROP TABLE t\n```\n"
     p = _md(tmp_path, md)
     r = qa.check_mermaid_syntax(p)
-    assert any("literal ';'" in i for i in r.issues)
+    assert any("seqdiagram_semicolon" in f for f in r.fixes)
+    assert not any("literal ';'" in i for i in r.issues)
+    assert ";" not in p.read_text().split("```mermaid", 1)[1].split("```", 1)[0]
 
 
 def test_mermaid_end_then_else(tmp_path):
@@ -736,6 +740,7 @@ def test_mermaid_alt_label_convention(tmp_path):
 
 
 def test_mermaid_alt_label_semicolon(tmp_path):
+    # Rule D auto-repairs the literal ';' in the alt label before detection.
     md = (
         "## 3. Attack Walkthroughs\n\n"
         "```mermaid\nsequenceDiagram\n"
@@ -743,7 +748,8 @@ def test_mermaid_alt_label_semicolon(tmp_path):
     )
     p = _md(tmp_path, md)
     r = qa.check_mermaid_syntax(p)
-    assert any("alt/else label" in i for i in r.issues)
+    assert any("seqdiagram_alt_semicolon" in f for f in r.fixes)
+    assert not any("alt/else label" in i for i in r.issues)
 
 
 def test_mermaid_linkstyle_missing_index(tmp_path):
@@ -795,6 +801,28 @@ def test_apply_mermaid_autofix_flowchart_balance():
     new, fixes = qa._apply_mermaid_autofixes(md)
     assert fixes
     assert "flowchart_label_balance" in fixes[0]
+
+
+def test_apply_mermaid_autofix_message_semicolon():
+    md = "```mermaid\nsequenceDiagram\n  Attacker->>Repo: git clone; read lib/insecurity.ts:23\n```\n"
+    new, fixes = qa._apply_mermaid_autofixes(md)
+    assert any("seqdiagram_semicolon" in f for f in fixes)
+    assert ";" not in new
+    assert "git clone — read" in new
+
+
+def test_apply_mermaid_autofix_note_semicolon():
+    md = "```mermaid\nsequenceDiagram\n  note over API: Key from store, not source; old tokens invalid\n```\n"
+    new, fixes = qa._apply_mermaid_autofixes(md)
+    assert any("seqdiagram_semicolon" in f for f in fixes)
+    assert ";" not in new
+
+
+def test_apply_mermaid_autofix_semicolon_idempotent():
+    md = "```mermaid\nsequenceDiagram\n  A->>B: x; y\n```\n"
+    once, _ = qa._apply_mermaid_autofixes(md)
+    twice, fixes2 = qa._apply_mermaid_autofixes(once)
+    assert twice == once and fixes2 == []
 
 
 def test_apply_mermaid_autofix_noop():

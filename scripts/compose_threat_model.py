@@ -8837,10 +8837,32 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
     expected = (section.get("heading") or "").strip()
     first_nonblank = next((ln.strip() for ln in md.splitlines() if ln.strip()), "")
     if expected and first_nonblank != expected:
-        raise FragmentError(
-            section_id,
-            f"fragment must begin with '{expected}'; first heading is '{first_nonblank}'",
-        )
+        # Deterministic recovery: the LLM renderer occasionally drops or
+        # mislabels ONLY the leading `## N. Title` H2 (e.g. replaces it with
+        # the intro paragraph) while the body below is structurally intact.
+        # Prepend the canonical contract heading rather than hard-failing the
+        # whole run on a one-line, recoverable defect. A genuinely empty /
+        # garbage fragment still fails the empty-body guard here, and a
+        # cross-contaminated fragment (first line is a DIFFERENT section's
+        # numbered H2) still hard-fails — that is a real authoring mixup.
+        body_has_substance = len(md.strip()) >= 40 and "\n" in md.strip()
+        # Only restore when the dropped heading was replaced by PROSE (the
+        # observed defect: the LLM substituted the intro paragraph for the H2).
+        # If the first line is itself a heading — a wrong level (`### 7.`) or a
+        # different section's H2 (cross-contamination) — keep the hard fail:
+        # that is a real authoring mixup, not a recoverable dropped heading.
+        first_is_heading = first_nonblank.startswith("#")
+        if body_has_substance and not first_is_heading:
+            md = f"{expected}\n\n{md.lstrip()}"
+            ctx.warnings.append(
+                f"{section_id}: heading_autorestored — fragment first line "
+                f"{first_nonblank!r} prefixed with canonical {expected!r}"
+            )
+        else:
+            raise FragmentError(
+                section_id,
+                f"fragment must begin with '{expected}'; first heading is '{first_nonblank}'",
+            )
 
     # `required_patterns` may carry a `required_patterns_condition` gate
     # (e.g. `"not skip_attack_walkthroughs"`). When the condition resolves
@@ -9387,10 +9409,15 @@ def _section7_number_and_bulletize(md: str) -> str:
             if m4 and cur_section:
                 name = m4.group(1).strip()
                 h4_n += 1
-                if _already_num_re.match(name):
-                    result.append(line)
-                else:
-                    result.append(f"#### {cur_section}.{h4_n} {name}")
+                # Strip any existing N.N(.N) prefix and re-assign the number
+                # sequentially so an injected un-numbered opener (normalize's
+                # "#### Validation Approach" inserted ahead of an already-
+                # numbered authored "#### 7.6.1 Input Validation…") cannot
+                # collide into a DUPLICATE 7.6.1. Pass 2 is the single
+                # authority for §7.X.N numbers. Still idempotent: a second
+                # pass strips "7.6.1" then re-emits "7.6.1".
+                name = re.sub(r"^\d+(?:\.\d+)+\s+", "", name)
+                result.append(f"#### {cur_section}.{h4_n} {name}")
                 continue
             mc = re.match(r"^(\s*)\*\*Controls covered:\*\*\s*(.+?)\s*$", line)
             if mc and cur_section:

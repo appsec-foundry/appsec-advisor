@@ -245,6 +245,30 @@ def test_already_canonical_heading_untouched():
     assert not any("heading_canonicalized" in c for c in changes)
 
 
+def test_canon_compare_strips_trailing_controls():
+    # 7.9 is the only v2 §7 title that does not itself end in "Controls"; the
+    # strip lets a drifted "…Protection Controls" canonical-match the contract.
+    assert nrm._canon_compare(
+        "7.9 Cryptography Secrets and Data Protection Controls"
+    ) == nrm._canon_compare("7.9 Cryptography Secrets and Data Protection")
+    # A title that legitimately ends in "Controls" still compares equal to
+    # itself (both sides strip), so no distinct titles collapse together.
+    assert nrm._canon_compare(
+        "7.5 Query Construction and Data Access Controls"
+    ) == nrm._canon_compare("7.5 Query Construction and Data Access Controls")
+
+
+def test_trailing_controls_suffix_canonicalized_on_79():
+    # The secarch LLM renderer sometimes re-adds a trailing "Controls" to 7.9
+    # (the one v2 §7 title without it). Must be rewritten back to the contract
+    # title instead of hard-failing the §7.9 required_subsection gate.
+    md = "### 7.9 Cryptography Secrets and Data Protection Controls\nBody text.\n"
+    out, changes = nrm.normalize_text(md)
+    assert "### 7.9 Cryptography Secrets and Data Protection\n" in out
+    assert "Data Protection Controls" not in out
+    assert any("heading_canonicalized" in c for c in changes)
+
+
 def test_non_matching_heading_not_renamed():
     # A genuinely different §7.9 title (not just punctuation) must be left as-is.
     md = "### 7.9 Completely Different Title\nBody.\n"

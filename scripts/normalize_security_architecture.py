@@ -312,9 +312,21 @@ def _ensure_flow_diagrams(md: str, rules_map: dict, changes: list[str]) -> str:
 # --------------------------------------------------------------------------- #
 def _canon_compare(s: str) -> str:
     """Punctuation-insensitive heading key: drop commas, collapse whitespace,
-    lowercase. So `Cryptography, Secrets and Data Protection` and
-    `Cryptography Secrets and Data Protection` compare equal."""
-    return re.sub(r"\s+", " ", s.replace(",", "")).strip().lower()
+    lowercase, and drop a trailing standalone ``controls`` word.
+
+    So `Cryptography, Secrets and Data Protection` and
+    `Cryptography Secrets and Data Protection` compare equal — AND an
+    LLM-re-authored `7.9 Cryptography Secrets and Data Protection Controls`
+    canonical-matches the contract title `7.9 Cryptography Secrets and Data
+    Protection` (7.9 is the only v2 §7 title that does not itself end in
+    "Controls"). Without the trailing-`controls` strip, that drift survives
+    `_canonicalize_section_headings` uncorrected and hard-fails the §7.9
+    `required_subsection` check at compose time. The strip is symmetric
+    (applied to both the authored heading and the contract `want`), so the
+    sections whose canonical title *does* end in "Controls" still match each
+    other and no two distinct contract titles collapse to the same key."""
+    k = re.sub(r"\s+", " ", s.replace(",", "")).strip().lower()
+    return re.sub(r"\s+controls$", "", k)
 
 
 def _canonicalize_section_headings(md: str, required_subsections: list, changes: list[str]) -> str:

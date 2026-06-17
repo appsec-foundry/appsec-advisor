@@ -68,17 +68,51 @@ class ApplyError(Exception):
     """
 
 
+def _norm_ws(s: str) -> str:
+    """Collapse ``<br/>`` → space, then any whitespace run → single space.
+
+    Used by the ``replace_string`` fuzzy fallback so a ``find`` string the QA
+    reviewer reconstructed from the *rendered* Markdown (which differs from the
+    fragment source by ``<br/>`` placement / collapsed spacing) still locates
+    its span instead of silently no-op'ing.
+    """
+    s = re.sub(r"<br\s*/?>", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def _op_replace_string(text: str, op: dict) -> str:
     find = op["find"]
     count = text.count(find)
-    if count == 0:
-        raise ApplyError(f"replace_string: needle not found (find={find!r:.80})")
+    if count == 1:
+        return text.replace(find, op["replace"], 1)
     if count > 1:
         raise ApplyError(
             f"replace_string: needle is ambiguous (found {count}× — "
             f"refine `find` to a unique substring; find={find!r:.80})"
         )
-    return text.replace(find, op["replace"], 1)
+    # count == 0 → whitespace/<br/>-normalized fallback. The QA reviewer
+    # frequently authors `find` from the rendered MD line, which differs from
+    # the fragment source by <br/> placement and collapsed spacing; a verbatim
+    # str.count then misses and the (valid) fix was silently dropped.
+    needle_n = _norm_ws(find)
+    if not needle_n:
+        raise ApplyError(f"replace_string: needle not found (find={find!r:.80})")
+    parts = [re.escape(tok) for tok in needle_n.split(" ")]
+    fuzzy = re.compile(r"(?:\s|<br\s*/?>)+".join(parts))
+    hits = fuzzy.findall(text)
+    if len(hits) == 0:
+        raise ApplyError(f"replace_string: needle not found (find={find!r:.80})")
+    if len(hits) > 1:
+        raise ApplyError(
+            f"replace_string: fuzzy needle is ambiguous (found {len(hits)}× — "
+            f"refine `find`; find={find!r:.80})"
+        )
+    print(
+        f"[content-repair] ~ replace_string fuzzy-matched "
+        f"(whitespace/<br/> normalized) find={find!r:.80}",
+        file=sys.stderr,
+    )
+    return fuzzy.sub(lambda _m: op["replace"], text, count=1)
 
 
 def _op_append_after(text: str, op: dict) -> str:

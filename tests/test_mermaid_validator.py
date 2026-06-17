@@ -56,11 +56,13 @@ def _run_check(tmp_path: Path, md_body: str):
 
 
 def test_layer_a_catches_semicolon_in_sequence_payload(tmp_path: Path):
-    """Semicolons derail the sequenceDiagram parser — Layer A must flag them
-    without needing Node."""
+    """Semicolons derail the sequenceDiagram parser — the autofix (Rule D) now
+    repairs them before detection, so the issue is drained into report.fixes
+    and the rewritten file no longer carries the ';'."""
     md = "# t\n\n```mermaid\nsequenceDiagram\n    A->>B: SELECT * FROM x; DROP\n```\n"
     report = _run_check(tmp_path, md)
-    assert any("literal ';'" in i for i in report.issues), report.issues
+    assert any("seqdiagram_semicolon" in f for f in report.fixes), report.fixes
+    assert not any("literal ';'" in i for i in report.issues), report.issues
 
 
 def test_layer_a_catches_unbalanced_quote(tmp_path: Path):

@@ -33,6 +33,11 @@ from pathlib import Path
 
 import yaml
 
+# Local shared modules — single source of truth for inference/coverage-gap
+# source-string enums.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _shared_sources import ARCH_ALL_SOURCES  # noqa: E402
+
 # A "comment-only" line is one whose stripped form starts with a recognised
 # comment marker AND nothing else of substance follows. We deliberately do
 # NOT flag lines that *contain* a trailing `// …` after real code — the
@@ -135,6 +140,25 @@ def _evidence_entries(threat: dict) -> list[dict]:
     return []
 
 
+# Provenance markers meaning "the evidence anchor was attached by inference,
+# not derived from a code-level finding." Such a threat must never auto-verify
+# off a structurally-valid-but-irrelevant line (the T-065 cleartext-transport
+# case: anchor pointed at a real challenges.yml data line → counted as code).
+_INFERRED_EVIDENCE_FLAGS = {"tier_reclassified_from_data"}
+
+
+def _is_inferred(threat: dict) -> bool:
+    """True when the threat's evidence anchor is inferred / coverage-gap
+    provenance rather than code-derived."""
+    if (threat.get("source") or "").strip() in ARCH_ALL_SOURCES:
+        return True
+    flags = threat.get("evidence_flags") or []
+    return any(
+        f in _INFERRED_EVIDENCE_FLAGS or f.startswith("tier_reclassified_from_")
+        for f in flags
+    )
+
+
 def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
     """Return (final_check, flags) for a single threat."""
     flags: list[str] = []
@@ -197,6 +221,15 @@ def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:
     if comment_only > 0:
         flags.append("some_comment_lines")
     if code_hits > 0:
+        if _is_inferred(threat):
+            # Inferred / coverage-gap provenance: the evidence anchor was
+            # attached, not code-derived, so a structurally-valid line is not
+            # proof. Cap at ambiguous and flag for reviewer refinement rather
+            # than auto-"verified". (A genuine LLM verifier verdict already
+            # short-circuited in validate_yaml via _RESPECTED_PRIOR_STATES, so
+            # this never overrides a real verification.)
+            flags.append("evidence_anchor_unverified")
+            return "ambiguous", flags
         return "verified", flags
     return "ambiguous", flags or ["evidence_unverifiable"]
 
