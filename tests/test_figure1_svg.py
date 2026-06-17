@@ -294,19 +294,59 @@ def test_internet_exposed_marker_and_direct_attack_arrow():
     assert "internet-exposed entry point" in svg  # legend entry
 
 
-def test_no_exposed_no_direct_attack_arrow():
+def test_direct_attack_arrow_present_for_direct_path():
+    # Arrows are derived from attack_paths, NOT from trust-boundary exposure: a
+    # path whose actor reaches the tier itself (internet-anon → application)
+    # draws a solid direct-attack arrow with the large red arrowhead and a
+    # "direct attack" legend row — even when nothing is marked internet-exposed.
     svg = _build(app=2, exposed=())
-    assert "direct attack" not in svg
+    assert "arrowred-lg" in svg
+    assert ">direct attack<" in svg  # legend row (exact text node)
 
 
-def test_direct_attack_arrow_is_prominent():
-    # The attack path is the most important element — it must read at a glance:
-    # bold uppercase callout + the large fixed-size red arrowhead marker.
-    svg = _build(app=2, exposed=("app0",))
-    assert "DIRECT ATTACK" in svg  # bold uppercase vertical callout
-    assert "arrowred-lg" in svg  # large fixed arrowhead used for the arrow
-    # and the prominence is gone when nothing is internet-exposed
-    assert "DIRECT ATTACK" not in _build(app=2, exposed=())
+def test_victim_required_only_draws_indirect_not_direct():
+    # When the ONLY attack path is victim-required (DOM XSS → client), the figure
+    # draws an INDIRECT (dashed) arrow into the client tier and a matching legend
+    # row — and NO solid direct-attack arrow / "direct attack" row.
+    # ("indirect attack (via victim)" contains the substring "direct attack", so
+    #  the direct check matches the exact text node `>direct attack<`.)
+    svg = _build(app=0, attackers=(), xss=True)
+    assert "indirect attack (via victim)" in svg
+    assert ">direct attack<" not in svg
+
+
+def test_data_targeted_injection_draws_no_direct_data_arrow():
+    # `target: data` names the compromised ASSET, not a directly-attacked tier.
+    # A SQL/NoSQL injection ENTERS at the application endpoint and the data tier
+    # (not internet-exposed) is reached THROUGH the app — so it gets a direct
+    # arrow on application ONLY, never on the data tier.
+    y, apd, tax = _model(app=2, attackers=("internet-anon",), exposed=("app0",))
+    app_fid = next(t["id"] for t in y["threats"] if t["component"] == "app0")
+    tax["classes"].append(
+        {"id": "sqli", "short_label": "SQLi", "default_actor": "internet-anon", "default_target_tier": "data"}
+    )
+    apd["attack_paths"].append(
+        {"class": "sqli", "actor": "internet-anon", "target": "data", "findings": [app_fid]}
+    )
+    svg = F.build_figure1_svg(y, apd, tax)
+    # Exactly ONE direct branch (application); the data tier gets no 4.0 line.
+    assert svg.count('stroke-width="4.0"') == 1
+
+
+def test_data_arrow_only_when_data_component_exposed_and_hit():
+    # A data-tier arrow appears ONLY when a DATA component is internet-exposed
+    # AND hosts the attack's findings (a genuinely directly-reachable data tier).
+    y, apd, tax = _model(app=1, attackers=("internet-anon",), exposed=("app0", "db"))
+    db_fid = next(t["id"] for t in y["threats"] if t["component"] == "db")
+    tax["classes"].append(
+        {"id": "dbx", "short_label": "DBX", "default_actor": "internet-anon", "default_target_tier": "data"}
+    )
+    apd["attack_paths"].append(
+        {"class": "dbx", "actor": "internet-anon", "target": "data", "findings": [db_fid]}
+    )
+    svg = F.build_figure1_svg(y, apd, tax)
+    # Two direct branches (application + the exposed data component).
+    assert svg.count('stroke-width="4.0"') >= 2
 
 
 # ---- victim -----------------------------------------------------------------

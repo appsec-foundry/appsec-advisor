@@ -138,8 +138,9 @@ class TestVictimTargetingArrowDirection:
             "attack_paths": [{"class": "cross-site-scripting", "actor": "victim-required", "target": "victim"}]
         }
         arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        # Edge 1 — injection attacker → client tier (grouped, label dropped).
-        assert arrows == [{"src": "ANON", "glyph": "①", "label": "", "dst": "BROWSER"}]
+        # Edge 1 — attacker → client tier (grouped, label dropped). Victim-
+        # targeting, so it is flagged INDIRECT (rendered dashed, not solid).
+        assert arrows == [{"src": "ANON", "glyph": "①", "label": "", "dst": "BROWSER", "indirect": True}]
         # Edge 2 — relay client tier → victim, sharing the glyph.
         assert relays == [{"src": "BROWSER", "glyph": "①", "label": "XSS", "dst": "SHOPUSER"}]
 
@@ -173,7 +174,7 @@ class TestDirectAttackArrowsGrouped:
     def test_injection_emits_single_grouped_arrow_anon_to_application(self):
         attack_paths = {"attack_paths": [{"class": "injection", "actor": "internet-anon", "target": "application"}]}
         arrows, relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
-        assert arrows == [{"src": "ANON", "glyph": "①", "label": "", "dst": "SERVER"}]
+        assert arrows == [{"src": "ANON", "glyph": "①", "label": "", "dst": "SERVER", "indirect": False}]
         assert relays == []
 
     def test_rce_emits_single_grouped_arrow_anon_to_application(self):
@@ -183,6 +184,30 @@ class TestDirectAttackArrowsGrouped:
         arrows, _relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), _tiers())
         assert len(arrows) == 1
         assert arrows[0]["src"] == "ANON"
+        assert arrows[0]["dst"] == "SERVER"
+
+    def test_target_data_routes_to_data_node(self):
+        # The DATA tier node IS reachable: a path whose (reconciled) target is
+        # `data` — e.g. a directly internet-exposed data store — routes to DATA.
+        tiers = _tiers() + [{"key": "data", "node_id": "DATA", "name": "Data Tier"}]
+        attack_paths = {"attack_paths": [{"class": "injection", "actor": "internet-anon", "target": "data"}]}
+        arrows, _relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), tiers)
+        assert arrows[0]["dst"] == "DATA"
+        assert arrows[0]["indirect"] is False
+
+    def test_reconciled_target_used_not_llm_asset(self):
+        # A SQL/NoSQL injection names `data` as the compromised ASSET but ENTERS
+        # at the application; the reconciliation pass rewrites its `target` to
+        # `application`. The heatmap must use that ENTRY tier (SERVER), NOT the
+        # `_llm_target` asset — the data layer is reached through the app, so it
+        # gets no direct attacker arrow.
+        tiers = _tiers() + [{"key": "data", "node_id": "DATA", "name": "Data Tier"}]
+        attack_paths = {
+            "attack_paths": [
+                {"class": "injection", "actor": "internet-anon", "target": "application", "_llm_target": "data"}
+            ]
+        }
+        arrows, _relays = compose._build_attack_arrows(attack_paths, _taxonomy(), _actors(), tiers)
         assert arrows[0]["dst"] == "SERVER"
 
     def test_same_actor_same_tier_classes_collapse_to_one_arrow(self):

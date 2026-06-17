@@ -62,15 +62,22 @@ flowchart LR
     {{ e.src }} --- {{ e.dst }}
 {%- endfor %}
 
-    %% Attack arrows
+    %% Attack arrows — solid ==> for DIRECT attacks, dashed -.-> for INDIRECT
+    %% (victim-required, e.g. DOM/stored XSS). Both stay in the red attack
+    %% linkStyle; the dashed syntax marks the indirect ones.
 {%- for a in data.attack_arrows %}
+{%- if a.indirect %}
+    {{ a.src }} -.->|" {{ a.glyph }} {{ a.label }} "| {{ a.dst }}
+{%- else %}
     {{ a.src }} ==>|" {{ a.glyph }} {{ a.label }} "| {{ a.dst }}
+{%- endif %}
 {%- endfor %}
 {%- if data.relay_arrows %}
 
-    %% Relay arrows (client tier → victim; delivery half of victim-targeting paths)
+    %% Relay arrows (client tier → victim; delivery half of victim-targeting
+    %% paths) — dashed, as the victim's browser executes the planted payload.
 {%- for r in data.relay_arrows %}
-    {{ r.src }} ==>|" {{ r.glyph }} {{ r.label }} "| {{ r.dst }}
+    {{ r.src }} -.->|" {{ r.glyph }} {{ r.label }} "| {{ r.dst }}
 {%- endfor %}
 {%- endif %}
 
@@ -99,6 +106,7 @@ flowchart LR
 
 {% if data.linkstyle_alignment %}    linkStyle {{ data.linkstyle_alignment | join(',') }}     stroke:transparent,stroke-width:0px
 {% endif %}{% if data.linkstyle_attacks %}    linkStyle {{ data.linkstyle_attacks | join(',') }}     stroke:#b71c1c,stroke-width:3px
+{% endif %}{% if data.linkstyle_attacks_indirect %}    linkStyle {{ data.linkstyle_attacks_indirect | join(',') }}     stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6
 {% endif %}{% if data.linkstyle_consequences %}    linkStyle {{ data.linkstyle_consequences | join(',') }}     stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4
 {% endif %}
 ```

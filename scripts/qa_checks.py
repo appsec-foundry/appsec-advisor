@@ -9252,10 +9252,12 @@ def check_security_posture_structure(md_path: Path) -> Report:
             "without it the column headers may drift to different Y positions"
         )
 
-    # E2: attack arrows (==>) with numbered glyph labels in declaration order.
-    # Mermaid label syntax permits both bare (`|① label|`) and quoted
-    # (`|" ① label "|`) forms — the template emits the quoted form for visual
-    # spacing, so the optional `"?` and surrounding `\s*` allow either.
+    # E2: attack arrows with numbered glyph labels in declaration order. DIRECT
+    # attacks are solid (`==>`); INDIRECT (victim-required, e.g. DOM XSS) are
+    # dashed (`-.->`) — BOTH carry a glyph label and BOTH count here, otherwise
+    # an indirect attack's glyph would go missing from the diagram↔table
+    # invariant (T2/G3). Mermaid label syntax permits both bare (`|① label|`)
+    # and quoted (`|" ① label "|`) forms; the template emits the quoted form.
     # Relay arrows (victim-targeting second leg, under "%% Relay arrows" comment)
     # share the same glyphs as their parent attack arrows — exclude them from E2.
     in_relay = False
@@ -9265,7 +9267,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
             in_relay = True
         elif re.search(r"%%\s*(Consequence|Attack)", ln):
             in_relay = False
-        if not in_relay and "==>" in ln and re.search(r"[①②③④⑤⑥⑦]", ln):
+        if not in_relay and ("==>" in ln or "-.->" in ln) and re.search(r"[①②③④⑤⑥⑦]", ln):
             attack_lines.append(ln)
     if not (1 <= len(attack_lines) <= 7):
         report.issues.append(f"E2: expected 1–7 attack arrows with ①–⑦ labels, found {len(attack_lines)}")
@@ -9291,8 +9293,14 @@ def check_security_posture_structure(md_path: Path) -> Report:
             f"E2/G2: attack-arrow glyphs must be the contiguous run ① ② … without gaps — got {ordered!r}"
         )
 
-    # E3: consequence arrows (-.->).
-    cons_lines = [ln for ln in mermaid.splitlines() if "-.->" in ln]
+    # E3: consequence arrows (-.->). Exclude glyph-carrying dashed edges — those
+    # are INDIRECT attack arrows (counted in E2 above), not tier→impact
+    # consequence edges (which never carry a ①–⑦ glyph label).
+    cons_lines = [
+        ln
+        for ln in mermaid.splitlines()
+        if "-.->" in ln and not re.search(r"[①②③④⑤⑥⑦]", ln)
+    ]
     if not (1 <= len(cons_lines) <= 6):
         report.issues.append(f"E3: expected 1–6 consequence arrows (-.->), found {len(cons_lines)}")
 

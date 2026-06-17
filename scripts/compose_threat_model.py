@@ -5041,6 +5041,14 @@ def _build_attack_arrows(
         if not cls:
             continue
         short = cls.get("short_label") or cls.get("label") or ap.get("class")
+        # Use the taxonomy-reconciled `target` (the directly-attacked ENTRY
+        # tier), NOT the LLM `_llm_target` ASSET. A SQL/NoSQL injection names
+        # `data` as the compromised asset but ENTERS at the application endpoint
+        # — the data layer (no network listener) is reached THROUGH the app, so
+        # the arrow lands on SERVER, not a direct attacker arrow into DATA. The
+        # data compromise surfaces via the consequence/impact edges instead.
+        # (Mirrors Figure 1, which classifies a data-targeted path as a direct
+        # application attack unless a data component is itself internet-exposed.)
         target = (ap.get("target") or "application").lower()
         actor_slug = (ap.get("actor") or "internet-anon").lower()
         glyph = glyph_seq[idx]
@@ -5053,7 +5061,10 @@ def _build_attack_arrows(
         if is_victim_targeting:
             client_tier = tier_node_by_key.get("client") or "BROWSER"
             victim = actor_node_by_slug.get("victim-required") or "SHOPUSER"
-            # Primary attack arrow: attacker → client tier (injection path).
+            # Primary attack arrow: attacker → client tier. This is INDIRECT —
+            # the attacker plants a payload the victim's browser later executes
+            # (DOM/stored XSS, CSRF). Rendered as a dashed red edge so it is not
+            # mislabelled a direct attack against the SPA.
             if attacker_for_injection and attacker_for_injection != victim:
                 arrows.append(
                     {
@@ -5061,6 +5072,7 @@ def _build_attack_arrows(
                         "glyph": glyph,
                         "label": short,
                         "dst": client_tier,
+                        "indirect": True,
                     }
                 )
             # Relay arrow: client tier → victim actor (delivery path).
@@ -5082,27 +5094,30 @@ def _build_attack_arrows(
                     "glyph": glyph,
                     "label": short,
                     "dst": dst,
+                    "indirect": False,
                 }
             )
 
-    # Collapse the per-class arrows into ONE grouped arrow per (src, dst),
-    # carrying that actor's glyphs as a bare, space-joined run (e.g. "① ② ③")
-    # with no per-class text label. The class names live in the §-narrative
-    # bullets and the intro range, keeping the Figure-2 heatmap edges compact.
+    # Collapse the per-class arrows into ONE grouped arrow per (src, dst,
+    # indirect), carrying that actor's glyphs as a bare, space-joined run
+    # (e.g. "① ② ③") with no per-class text label. The class names live in the
+    # §-narrative bullets and the intro range, keeping the heatmap edges compact.
+    # `indirect` is part of the key so a victim-targeting (dashed) edge never
+    # merges with a direct (solid) edge that happens to share src+dst.
     glyph_rank = {g: i for i, g in enumerate(glyph_seq)}
-    grouped: dict[tuple[str, str], list[str]] = {}
-    order: list[tuple[str, str]] = []
+    grouped: dict[tuple[str, str, bool], list[str]] = {}
+    order: list[tuple[str, str, bool]] = []
     for a in arrows:
-        key = (a["src"], a["dst"])
+        key = (a["src"], a["dst"], bool(a.get("indirect")))
         if key not in grouped:
             grouped[key] = []
             order.append(key)
         grouped[key].append(a["glyph"])
     grouped_arrows = []
-    for src, dst in order:
-        glyphs = sorted(grouped[(src, dst)], key=lambda g: glyph_rank.get(g, 99))
+    for src, dst, indirect in order:
+        glyphs = sorted(grouped[(src, dst, indirect)], key=lambda g: glyph_rank.get(g, 99))
         stacked = " ".join(glyphs)
-        grouped_arrows.append({"src": src, "dst": dst, "glyph": stacked, "label": ""})
+        grouped_arrows.append({"src": src, "dst": dst, "glyph": stacked, "label": "", "indirect": indirect})
     # Relay (delivery) arrows keep their class short_label so the client→victim
     # delivery hop stays named (the grouped attack arrow it continues is bare).
     return grouped_arrows, relay_arrows
@@ -6257,8 +6272,16 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     n_relay = len(relay_arrows)
     n_conq = len(consequence_arrows)
     linkstyle_alignment = list(range(0, n_align))
-    # Attacks + relays share the same red styling (both carry numbered glyphs).
-    linkstyle_attacks = list(range(n_align, n_align + n_atk + n_relay))
+    # Split the attack edges by directness. A single linkStyle without
+    # `stroke-dasharray` would flatten the `-.->` indirect syntax back to a
+    # SOLID line (mermaid's linkStyle wins over the edge-type dotting), erasing
+    # the direct/indirect distinction. Direct attacks stay 3px solid red;
+    # INDIRECT (victim-required, e.g. DOM XSS) attacks — and the relay/delivery
+    # hops — render dashed red. Edge index = n_align + position-in-attack_arrows.
+    linkstyle_attacks = [n_align + j for j, a in enumerate(attack_arrows) if not a.get("indirect")]
+    linkstyle_attacks_indirect = [n_align + j for j, a in enumerate(attack_arrows) if a.get("indirect")] + list(
+        range(n_align + n_atk, n_align + n_atk + n_relay)
+    )
     linkstyle_consequences = list(range(n_align + n_atk + n_relay, n_align + n_atk + n_relay + n_conq))
 
     # Intro paragraph — one sentence + severity-emoji legend with an
@@ -6310,6 +6333,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "consequence_arrows": consequence_arrows,
         "linkstyle_alignment": linkstyle_alignment,
         "linkstyle_attacks": linkstyle_attacks,
+        "linkstyle_attacks_indirect": linkstyle_attacks_indirect,
         "linkstyle_consequences": linkstyle_consequences,
     }
 

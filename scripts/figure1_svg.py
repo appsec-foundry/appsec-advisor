@@ -66,7 +66,7 @@ _OOS_GAP = 10  # gap above the out-of-scope box row inside a tier band
 #  so no repeated per-band caption is drawn)
 _BANDPAD = 20
 _BANDGAP = 34  # room for the flow arrow + its label between bands
-_LEGGAP = 46  # right lane: hosts the red "direct attack" arrow, then the legend
+_LEGGAP = 70  # right lane: hosts the red attack corridor (2 lanes), then the legend
 _LEGW = 226
 _EXPOSED = "#c0392b"  # internet-exposed marker (red = attacker-reachable)
 _ACTOR_H = 94
@@ -260,37 +260,24 @@ def build_figure1_svg(
     scenarios = []  # (digit, name, actor_slug)
     victim_ids = []
     actor_order = []  # distinct attacker slugs, first-seen
-    for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
-        digit = idx + 1
-        slug = (ap.get("class") or "").strip()
-        cl = cls_by_id.get(slug) or {}
-        name = cl.get("short_label") or cl.get("label") or slug or "attack"
-        actor = (ap.get("actor") or cl.get("default_actor") or "internet-anon").strip()
-        if actor in ("victim-required", ""):
-            actor = "internet-anon"
-        if actor not in actor_order:
-            actor_order.append(actor)
-        tgt = (
-            (ap.get("_llm_target") or ap.get("target") or cl.get("default_target_tier") or "application")
-            .strip()
-            .lower()
-        )
-        ttier = "client" if tgt in ("client", "victim") else "application"
-        hosts = []
-        for f in ap.get("findings") or []:
-            cid = fid_comp.get((f or "").upper())
-            if cid in comp and comp[cid]["tier"] == ttier and cid not in hosts:
-                hosts.append(cid)
-        for cid in hosts:
-            if digit not in comp[cid]["ids"]:
-                comp[cid]["ids"].append(digit)
-        if tgt in ("client", "victim"):
-            victim_ids.append(digit)
-        scenarios.append((digit, name, actor))
-
+    # Per-target-tier attack summary that DRIVES THE ARROWS (independent of the
+    # per-component badges below). For each attacked tier we record whether a
+    # DIRECT path (an actor that reaches the tier itself) and/or an INDIRECT
+    # path (victim-required — e.g. DOM XSS, where the attacker plants a payload
+    # the victim's browser later executes) targets it. This is what lets the
+    # figure draw a solid arrow into application/data and a DASHED arrow into
+    # the client tier, instead of the old single exposure-derived arrow that
+    # mislabelled a victim-required client attack as "direct".
+    tier_attacks = {
+        "client": {"direct": False, "indirect": False},
+        "application": {"direct": False, "indirect": False},
+        "data": {"direct": False, "indirect": False},
+    }
     # Internet-exposed components: a trust boundary whose SOURCE is the outside
-    # world makes its target component a direct entry point — marked per-box with
-    # a globe symbol (explained in the legend), not as a whole-tier tag.
+    # world makes its target component a directly-reachable entry point. A tier
+    # is DIRECTLY attackable only if one of its components is exposed; a tier
+    # behind the app (e.g. the data layer — SQLite/MarsDB has no network
+    # listener) is reached THROUGH the app, never by a direct attacker arrow.
     exposed = set()
     for tb in yaml_data.get("trust_boundaries") or []:
         if isinstance(tb, dict) and (tb.get("from") or "").strip().lower() in (
@@ -303,6 +290,54 @@ def build_figure1_svg(
             if to in comp:
                 exposed.add(to)
     exposed_tiers = {comp[cid]["tier"] for cid in exposed}
+    for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
+        digit = idx + 1
+        slug = (ap.get("class") or "").strip()
+        cl = cls_by_id.get(slug) or {}
+        name = cl.get("short_label") or cl.get("label") or slug or "attack"
+        raw_actor = (ap.get("actor") or cl.get("default_actor") or "internet-anon").strip()
+        actor = raw_actor
+        if actor in ("victim-required", ""):
+            actor = "internet-anon"
+        if actor not in actor_order:
+            actor_order.append(actor)
+        tgt = (
+            (ap.get("_llm_target") or ap.get("target") or cl.get("default_target_tier") or "application")
+            .strip()
+            .lower()
+        )
+        ttier = "client" if tgt in ("client", "victim") else "application"
+        # Arrow classification is PATH-level (not per-finding): a victim-required
+        # path is INDIRECT (dashed → the client tier, where the payload executes
+        # in the victim's browser). Otherwise the path is DIRECT and its arrow
+        # lands on the directly-attacked ENTRY tier. The `target` names the
+        # compromised ASSET → it maps to the entry tier, EXCEPT a data-tier asset
+        # behind the app (not internet-exposed): a SQL/NoSQL injection ENTERS at
+        # the application endpoint and reaches the data THROUGH it, so it is a
+        # direct APPLICATION attack — never a direct arrow on the data layer
+        # (which has no network listener). A data component that is itself
+        # internet-exposed keeps its own direct arrow.
+        if raw_actor == "victim-required" or tgt == "victim":
+            tier_attacks["client"]["indirect"] = True
+        else:
+            atier = {"client": "client", "data": "data"}.get(tgt, "application")
+            if atier == "data" and "data" not in exposed_tiers:
+                atier = "application"
+            tier_attacks[atier]["direct"] = True
+        hosts = []
+        for f in ap.get("findings") or []:
+            cid = fid_comp.get((f or "").upper())
+            if cid in comp and comp[cid]["tier"] == ttier and cid not in hosts:
+                hosts.append(cid)
+        for cid in hosts:
+            if digit not in comp[cid]["ids"]:
+                comp[cid]["ids"].append(digit)
+        if tgt in ("client", "victim"):
+            victim_ids.append(digit)
+        scenarios.append((digit, name, actor))
+
+    # (`exposed` / `exposed_tiers` are computed above, before the scenario loop,
+    # because the per-tier direct/indirect classification depends on them.)
 
     # Components enumerated but NOT given a STRIDE pass at this depth
     # (meta.component_selection.excluded). Pull them OUT of the assessed tier
@@ -443,8 +478,21 @@ def build_figure1_svg(
                 c.text(tx, sub_y, "legitimate customer", size=8.5, fill=_MUTED, italic=True, anchor="start")
             box_pos["__shopuser__"] = (bx + w / 2, by, by + h, bx)
 
+    # Capture the attacker-card bounding box so the attack arrows can VISIBLY
+    # originate from the attacker zone (user: "die Pfeile gehen nicht eindeutig
+    # von den Akteuren aus"). `atk_x0/atk_x1` bracket the red cards; `atk_bottom`
+    # is their lower edge; `atk_cx` is the zone centre.
+    atk_x0 = atk_x1 = None
     for j, (kind, slug, label) in enumerate(cards):
-        draw_actor_card(kind, slug, label, cx0 + j * (card_w + cgap), y + _BANDPAD, card_w, card_h)
+        _cardx = cx0 + j * (card_w + cgap)
+        draw_actor_card(kind, slug, label, _cardx, y + _BANDPAD, card_w, card_h)
+        if kind == "bad":
+            atk_x0 = _cardx if atk_x0 is None else min(atk_x0, _cardx)
+            atk_x1 = (_cardx + card_w) if atk_x1 is None else max(atk_x1, _cardx + card_w)
+    if atk_x0 is None:  # no attacker cards (degenerate) — fall back to content span
+        atk_x0, atk_x1 = cx0, cx0 + cw
+    atk_bottom = y + _BANDPAD + card_h
+    atk_cx = (atk_x0 + atk_x1) / 2
     bands.append(("actors", y, ah))
     y += ah + _BANDGAP
 
@@ -580,9 +628,6 @@ def build_figure1_svg(
                 weight="bold",
             )
 
-    _TORDER = {"client": 0, "application": 1, "data": 2}
-    top_exp = min((_TORDER[t] for t in exposed_tiers), default=99)
-
     for num, tier in ((2, "client"), (3, "application"), (4, "data")):
         cids = drawn[tier]
         oosc = oos_by_tier[tier]
@@ -602,18 +647,14 @@ def build_figure1_svg(
         gap_ao = 12 if (analyzed_h > 0 and oos_h > 0) else 0
 
         if ncids == 1 and not oosc:
-            # single-component tier → bar (narrow band for the attack arrow only
-            # when there is no OOS row that would need the full width).
+            # single-component tier → centred bar. Full-width band: the attack
+            # arrows now run OUTSIDE the bands (right channel), so no per-band
+            # narrowing is needed to clear them.
             barh = 66
             bh = _BANDPAD * 2 + barh + note_h
             barw = 0.52 * cw
             bx0 = cx0 + (cw - barw) / 2  # bar centred so the grey flow stays centred
-            if _TORDER[tier] < top_exp:
-                # the red attack arrow passes this tier → narrow the BAND so the
-                # arrow runs in clear space to its right, not over the band (user).
-                band_title(tier, y, bh, num, bw=(bx0 + barw + _IPAD) - band_left)
-            else:
-                band_title(tier, y, bh, num)  # full-width band (e.g. data tier)
+            band_title(tier, y, bh, num)
             draw_bar(cids[0], bx0, y + _BANDPAD, barw, barh)
             also_note(tier, y, bh)
             bands.append((tier, y, bh))
@@ -664,37 +705,78 @@ def build_figure1_svg(
         if i < len(flow_labels):
             c.text(bxc + 12, (yf + yt) / 2 + 3.5, flow_labels[i], size=10.5, fill=_MUTED, anchor="start", weight="bold")
 
-    # ---- direct attack onto the internet-exposed tier(s) — STRAIGHT down ----
-    # The attacker hits the exposed tier DIRECTLY, bypassing the client tier. The
-    # client bar is narrow, so this runs as ONE straight vertical line down the
-    # clear right channel (no elbow — the elbow looked "abgehackt", user) with a
-    # down arrowhead into each exposed tier.
-    if exposed_tiers:
-        rx = band_left + band_w - 16
-        a_bottom = bands[0][1] + bands[0][2]
-        # land ON the top of the (topmost) internet-exposed tier — the green box —
-        # not down in its middle (user).
-        target_top = min(yt for t, yt, h in bands if t in exposed_tiers)
-        # Bold attack arrow: thicker stroke + large fixed arrowhead so it clearly
-        # dominates the thin grey legitimate-flow arrow. (No filled background
-        # lane — the weight + arrowhead + callout carry the emphasis; a red
-        # corridor read as a stray highlight block.)
-        c.line(rx, a_bottom + 2, rx, target_top - 8, stroke=_EXPOSED, sw=3.8, marker="arrowred-lg")
-        # Vertical callout — uppercase, bold, with a soft white halo so it stays
-        # legible over the corridor and any box edge it passes.
-        lblx, lbly = rx - 12, (a_bottom + target_top) / 2
-        label = "DIRECT ATTACK"
-        halo_w, halo_h = len(label) * 6.4, 15.0  # rotated → halo_w is the vertical extent
+    # ---- attack vectors — emanate from the ATTACKER ZONE (both attackers) -----
+    # These are the central vectors of the figure, so they READ as primary. They
+    # originate from a red MANIFOLD under the attacker cards (the whole attacker
+    # zone — NOT one specific actor) and run as clean, rounded, orthogonal routes
+    # into the right corridor in TWO parallel lanes: an OUTER solid lane (DIRECT
+    # attacks → application/data) and an INNER dashed lane (the INDIRECT, victim-
+    # required attack → client, e.g. DOM XSS). Rounded corners + caps + soft
+    # arrowheads so the vectors look deliberate, not like a stray edge fan.
+    direct = [(t, yt, h) for (t, yt, h) in bands if t in tier_attacks and tier_attacks[t]["direct"]]
+    indirect = [
+        (t, yt, h)
+        for (t, yt, h) in bands
+        if t in tier_attacks and tier_attacks[t]["indirect"] and not tier_attacks[t]["direct"]
+    ]
+
+    def _rounded_orth(pts, sw, dash=None, marker=None, r=9.0):
+        """Emit an orthogonal poly-line through pts with rounded corners + caps."""
+        d = [f"M {pts[0][0]:.1f} {pts[0][1]:.1f}"]
+        for i in range(1, len(pts) - 1):
+            p0, p1, p2 = pts[i - 1], pts[i], pts[i + 1]
+
+            def _pull(a, b):
+                dx, dy = b[0] - a[0], b[1] - a[1]
+                ln = math.hypot(dx, dy) or 1.0
+                rr = min(r, ln / 2)
+                return (b[0] - dx / ln * rr, b[1] - dy / ln * rr)
+
+            e, s = _pull(p0, p1), _pull(p2, p1)
+            d.append(f"L {e[0]:.1f} {e[1]:.1f}")
+            d.append(f"Q {p1[0]:.1f} {p1[1]:.1f} {s[0]:.1f} {s[1]:.1f}")
+        d.append(f"L {pts[-1][0]:.1f} {pts[-1][1]:.1f}")
+        da = f' stroke-dasharray="{dash}"' if dash else ""
+        mk = f' marker-end="url(#{marker})"' if marker else ""
         c.el.append(
-            f'<rect x="{lblx - halo_w / 2:.1f}" y="{lbly - halo_h / 2:.1f}" '
-            f'width="{halo_w:.1f}" height="{halo_h:.1f}" rx="4" fill="#ffffff" opacity="0.78" '
-            f'transform="rotate(90 {lblx:.1f} {lbly:.1f})"/>'
+            f'<path d="{" ".join(d)}" fill="none" stroke="{_EXPOSED}" stroke-width="{sw}" '
+            f'stroke-linecap="round" stroke-linejoin="round"{da}{mk}/>'
         )
-        c.el.append(
-            f'<text x="{lblx:.1f}" y="{lbly + 3.2:.1f}" font-family="{_FONT}" font-size="10.5" '
-            f'font-weight="bold" letter-spacing="0.5" fill="{_EXPOSED}" text-anchor="middle" '
-            f'transform="rotate(90 {lblx:.1f} {lbly:.1f})">{label}</text>'
-        )
+
+    if direct or indirect:
+        a_bottom = bands[0][1] + bands[0][2]  # actors band bottom
+        land_x = band_left + band_w - 12  # arrowheads land just inside the tier band
+        # ONE clear origin between the attacker cards (the attacker zone — both
+        # attackers, not a concrete actor): a ringed node so the arrow ORIGIN is
+        # unmistakable. From it a SINGLE rounded manifold runs into the corridor;
+        # the solid drop (direct → app/data) and the dashed drop (indirect →
+        # client) hang off that one feeder, so there is no double "underline".
+        mx = atk_cx
+        feed_y = a_bottom + 16  # the single feeder runs here, in the band gap
+        lane_dash = band_left + band_w + 8  # inner drop → client (indirect)
+        lane_solid = band_left + band_w + 26  # outer drop → app/data (direct)
+        if direct:
+            ys = [yt + h / 2 for _t, yt, h in direct]
+            _rounded_orth([(mx, atk_bottom), (mx, feed_y), (lane_solid, feed_y), (lane_solid, max(ys))], sw=3.4)
+            for _t, yt, h in direct:
+                cy = yt + h / 2
+                _rounded_orth([(lane_solid, cy), (land_x, cy)], sw=4.0, marker="arrowred-rd")
+        for j, (_t, yt, h) in enumerate(indirect):
+            cy = yt + h / 2
+            if direct:
+                # A solid feeder already runs from the origin → the dashed drop
+                # just taps it at the inner lane (no second horizontal).
+                pts = [(lane_dash, feed_y), (lane_dash, cy), (land_x, cy)]
+            elif j == 0:
+                # No direct attack → the FIRST dashed vector carries the manifold
+                # from the origin itself (so it is never detached).
+                pts = [(mx, atk_bottom), (mx, feed_y), (lane_dash, feed_y), (lane_dash, cy), (land_x, cy)]
+            else:
+                pts = [(lane_dash, feed_y), (lane_dash, cy), (land_x, cy)]
+            _rounded_orth(pts, sw=2.6, dash="7 5", marker="arrowred-rd")
+        # Prominent origin node — drawn last so it sits on top of the feeder.
+        c.circle(mx, atk_bottom, 7.5, fill="#ffffff", stroke=_EXPOSED, sw=2.2)
+        c.circle(mx, atk_bottom, 3.0, fill=_EXPOSED, stroke=_EXPOSED, sw=1)
 
     # ---- legend rail ----
     lx = band_left + band_w + _LEGGAP
@@ -734,31 +816,51 @@ def build_figure1_svg(
         c.text(lx + 38, y0 + _RH, "High", size=11, fill=_INK, anchor="start")
 
     def diag_rows(y0):
-        # The internet-exposed / direct-attack rows are shown ONLY when the
-        # figure actually contains them (an honest legend explains just what's
-        # drawn); the request-flow + scenario-circle rows are always present.
+        # Honest legend — each row is shown ONLY when the figure actually
+        # contains that element. Rows accumulate top-down via `r`. The
+        # direct/indirect attack rows mirror the solid/dashed arrows drawn into
+        # the tiers.
         r = 0
         if exposed:
-            _globe(c, lx + 22, y0 - 3.5, 7, _EXPOSED)
-            c.text(lx + 40, y0, "internet-exposed entry point", size=10, fill=_INK, anchor="start")
-            c.line(lx + 12, y0 + _RH - 3.5, lx + 34, y0 + _RH - 3.5, stroke=_EXPOSED, sw=2, marker="arrowred")
-            c.text(lx + 40, y0 + _RH, "direct attack (Internet)", size=10, fill=_INK, anchor="start")
-            r = 2
+            _globe(c, lx + 22, y0 + r * _RH - 3.5, 7, _EXPOSED)
+            c.text(lx + 40, y0 + r * _RH, "internet-exposed entry point", size=10, fill=_INK, anchor="start")
+            r += 1
+        if has_direct:
+            c.line(lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5, stroke=_EXPOSED, sw=2.6, marker="arrowred")
+            c.text(lx + 40, y0 + r * _RH, "direct attack", size=10, fill=_INK, anchor="start")
+            r += 1
+        if has_indirect:
+            c.line(
+                lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5,
+                stroke=_EXPOSED, sw=2.2, dash="6 3", marker="arrowred",
+            )
+            c.text(lx + 40, y0 + r * _RH, "indirect attack (via victim)", size=10, fill=_INK, anchor="start")
+            r += 1
         c.line(lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5, stroke=_BACKBONE, sw=2, marker="arrowgrey")
         c.text(lx + 40, y0 + r * _RH, "legitimate request flow", size=10, fill=_INK, anchor="start")
-        c.circle(lx + 23, y0 + (r + 1) * _RH - 3.5, 8.5, fill=_ATTACK, stroke=_ATTACK, sw=1.3)
-        c.text(lx + 23, y0 + (r + 1) * _RH - 0.3, "n", size=9.5, fill="#ffffff", weight="bold", italic=True)
-        c.text(lx + 40, y0 + (r + 1) * _RH, "attack scenario (see above)", size=10, fill=_INK, anchor="start")
+        r += 1
+        c.circle(lx + 23, y0 + r * _RH - 3.5, 8.5, fill=_ATTACK, stroke=_ATTACK, sw=1.3)
+        c.text(lx + 23, y0 + r * _RH - 0.3, "n", size=9.5, fill="#ffffff", weight="bold", italic=True)
+        c.text(lx + 40, y0 + r * _RH, "attack scenario (see above)", size=10, fill=_INK, anchor="start")
+        r += 1
         if has_oos:
             # Explain the dashed boxes drawn inside the tier bands ONCE here,
             # instead of repeating a caption in every band.
             sw_w, sw_h = 24.0, 14.0
-            sy = y0 + (r + 2) * _RH - 3.5 - sw_h / 2
+            sy = y0 + r * _RH - 3.5 - sw_h / 2
             c.rect(lx + 12, sy, sw_w, sw_h, fill="#ffffff", stroke="#b8bfca", sw=1.5, rx=4, dash="4 3")
-            c.text(lx + 44, y0 + (r + 2) * _RH, "out of scope (not analyzed)", size=10, fill=_INK, anchor="start")
+            c.text(lx + 44, y0 + r * _RH, "out of scope (not analyzed)", size=10, fill=_INK, anchor="start")
 
     has_oos = any(oos_by_tier.values())
-    diag_n_rows = (4 if exposed else 2) + (1 if has_oos else 0)
+    has_direct = any(v["direct"] for v in tier_attacks.values())
+    has_indirect = any(v["indirect"] for v in tier_attacks.values())
+    diag_n_rows = (
+        (1 if exposed else 0)
+        + (1 if has_direct else 0)
+        + (1 if has_indirect else 0)
+        + 2
+        + (1 if has_oos else 0)
+    )
     ly = panel("Attack Scenarios — by actor", ly, scen_rows, len(actor_order) + len(scenarios))
     ly = panel("Severity", ly, sev_rows, 2)
     ly = panel("Diagram Legend", ly, diag_rows, diag_n_rows)
@@ -778,6 +880,11 @@ def build_figure1_svg(
         # important element of the figure; its arrowhead must read at a glance.
         '<marker id="arrowred-lg" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="14" markerHeight="14" markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
         f'<path d="M 0 0 L 12 6 L 0 12 z" fill="{_ATTACK}"/></marker>'
+        # Soft/rounded attack arrowhead — a filled triangle with rounded joins so
+        # the central attack vectors read as deliberate rounded arrows, not sharp
+        # angular ticks (user request).
+        '<marker id="arrowred-rd" viewBox="-1 -1 15 15" refX="10.5" refY="6" markerWidth="15" markerHeight="15" markerUnits="userSpaceOnUse" orient="auto-start-reverse">'
+        f'<path d="M 1 1 L 12.5 6 L 1 11 Z" fill="{_ATTACK}" stroke="{_ATTACK}" stroke-width="1.6" stroke-linejoin="round"/></marker>'
         "</defs>"
     )
     body = "\n".join(c.el)
