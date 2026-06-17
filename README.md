@@ -130,7 +130,7 @@ An assessment produces a report covering architecture observations, trust bounda
 
 **Example:** A thorough-mode run against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) produces 38 findings across 8 components (8 Critical, 23 High, 6 Medium) including architecture diagrams, abuse-case chains, and a full mitigation register. → [Read the full example report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 
-![Threat Model Juice Shop Standard](./examples/threat-modeler/threat-model-juice-shop-standard.figure1.svg)
+![Threat Model Juice Shop Standard](./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
 
 **→ Full reference: [docs/threat-modeler.md](docs/threat-modeler.md)**
 

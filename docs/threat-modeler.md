@@ -59,7 +59,7 @@ The report shows the architecture diagram, trust boundaries, STRIDE findings, ev
 
 Example security posture diagram from the report:
 
-![Threat Model Juice Shop Standard](../examples/threat-modeler/threat-model-juice-shop-standard.figure1.svg)
+![Threat Model Juice Shop Standard](../examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
 
 ## What it checks
 
