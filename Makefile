@@ -61,6 +61,19 @@ lint:  ## Ruff check + format check
 	@ruff check scripts/ tests/ hooks/
 	@ruff format --check scripts/ tests/ hooks/
 
+.PHONY: fix
+fix:  ## Auto-repair the mechanical gate failures (ruff lint + format), then list what still needs a human
+	@echo ">> ruff check --fix (safe lint fixes)"; ruff check --fix scripts/ tests/ hooks/ || true
+	@echo ">> ruff format"; ruff format scripts/ tests/ hooks/
+	@echo ""
+	@echo "Auto-repair done. Stages 3-6 are NOT auto-fixable by design (fix the producer, not the symptom):"
+	@echo "  - validate_config.py        -> correct the offending config field"
+	@echo "  - check_fragment_registry   -> align the registry maps (docs/internal/runbooks/adding-a-section.md)"
+	@echo "  - pytest / coverage         -> separate pre-existing from new failures; add tests, don't lower the floor"
+	@echo "  - check_release_meta.py     -> reconcile pyproject version / git tag / CHANGELOG heading"
+	@echo ""
+	@echo "Re-run 'make check' (or 'make release-check') to see what remains."
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Release gates
 #

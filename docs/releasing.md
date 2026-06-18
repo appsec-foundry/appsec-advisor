@@ -52,7 +52,8 @@ make release-check   # ruff, format, config, fragment-registry drift, full pytes
 make e2e-full        # live LLM pipeline against the bundled fixture (~10–15 min, ~30–50% of a Pro 5h window)
 ```
 
-Fix anything either gate reports before continuing.
+Fix anything either gate reports before continuing — see
+[Troubleshooting the gate](#troubleshooting-the-gate).
 
 Optional, depending on what you changed:
 
@@ -123,6 +124,36 @@ and `0.4.0-beta` count as equal — but a real mismatch still fails.
   yet) — that failure is the intended signal that the tree isn't a release.
 - **`make release-all`** — convenience target: `release-check` then `e2e-full`,
   stopping if the gate fails. The full pre-release test sequence in one command.
+
+### Troubleshooting the gate
+
+`make release-check` runs six stages in order and stops at the **first** failure.
+Read the error, identify the stage, then fix it. The first two stages are
+mechanical and auto-repairable; the rest are semantic and must be fixed by hand —
+**fix the producer, never relax the schema, hand-patch output, or weaken a test
+to make the gate pass.**
+
+| # | Stage | Symptom | Fix |
+|---|-------|---------|-----|
+| 1 | `ruff check` | `file:line` + rule code (e.g. `F401`) | `make fix` (runs `ruff check --fix`), or fix manually. Don't silence with `# noqa` unless justified. |
+| 2 | `ruff format --check` | `Would reformat: …` | `make fix` (runs `ruff format`). Never hand-format `resolve_config.py` — it's intentionally excluded (doc-invariant in `test_incremental_mode.py`). |
+| 3 | `validate_config.py` | config/YAML schema error | Correct the offending field. Fix the producer, don't loosen the schema. |
+| 4 | `check_fragment_registry.py` | registry maps out of sync | Align all registry maps — see [`adding-a-section.md`](internal/runbooks/adding-a-section.md) and `schema-invariants.md §4f`. |
+| 5 | `pytest` + coverage | failing tests or coverage below floor | Separate pre-existing failures from new ones. Run a single file with `pytest tests/test_x.py -v --tb=short`. Add tests for new code; don't lower the floor. |
+| 6 | `check_release_meta.py` | version/tag/changelog mismatch | **Expected on an ordinary dev commit** — it's the signal the tree isn't a release. For a real release, reconcile the three [version formats](#version-formats). To check only code health without a version bump, run `make check` instead. |
+
+**Auto-repair:** `make fix` handles stages 1–2 (`ruff check --fix` + `ruff
+format`) and then prints what stages 3–6 still need from you. It deliberately
+does **not** touch the semantic stages.
+
+`make fix` is a repair step, **not a replacement** for the gate — it only covers
+2 of the 6 stages and proves nothing about the rest. Always end on a green
+`make release-check`:
+
+```bash
+make fix             # repair lint + format automatically
+make release-check   # re-check; fix any remaining stage 3–6 failure by hand
+```
 
 ### What CI does
 
