@@ -11,6 +11,7 @@
 - [What it checks](#what-it-checks)
 - [Usage examples](#usage-examples)
 - [Assessment depth & cost control](#assessment-depth--cost-control)
+- [Repo-local context](#repo-local-context)
 - [Cross-repo context](#cross-repo-context)
 - [Architecture](#architecture)
 - [Workflow commands](#workflow-commands)
@@ -179,6 +180,41 @@ Example:
 > Cost limits only apply when using an `ANTHROPIC_API_KEY`. When running on a standard Claude subscription, there is no per-token API billing, so cost limits are ignored. Time limits remain active in both modes.
 
 For very large repositories, the advisor automatically switches to an optimized scanning strategy to avoid context window overflows.
+
+## Repo-local context
+
+Two optional files let the owning team feed the threat model directly. Commit them to the scanned repository; the scan reads both at the start of every run. Neither is required, and both are read as the team's input — useful as context, but never enough on their own to suppress a finding the code evidence supports.
+
+### Business context — `docs/business-context.md`
+
+Free-form Markdown, read verbatim (up to 200 lines). Use it to state what the code can't show: which flows are revenue-critical, what regulatory drivers apply, where the crown-jewel data lives, and which failure scenarios would hurt most. The analysis uses it to weight severity and priority — the same SQL injection reads differently on a marketing page than on a payment path once that context is on the table.
+
+### Known threats — `docs/known-threats.yaml`
+
+A list of threats the team already knows about: prior pentest findings, accepted risks, or issues you want every run to re-check. The file is schema-validated up front, so a malformed entry stops the run early instead of being dropped silently.
+
+```yaml
+threats:
+  - id: PT-2025-001
+    title: Stored XSS in product reviews
+    stride: Tampering
+    component: web-frontend
+    severity: High
+    status: open
+    description: Review body rendered without sanitization.
+    evidence: src/reviews/render.ts:42
+```
+
+Each entry's `status` decides what the scan does with it:
+
+| `status` | What the scan does |
+|---|---|
+| `open` | Re-reads the cited evidence and includes the threat if it still holds |
+| `mitigated` | Verifies the mitigation is actually present in the code |
+| `accepted` | Records it under accepted risks, without re-checking |
+| `false-positive` | Skips it entirely |
+
+Optional fields per entry: `evidence` (`file:line`), `pentest_ref`, `accepted_risk`, `mitigation_ref`.
 
 ## Cross-repo context
 

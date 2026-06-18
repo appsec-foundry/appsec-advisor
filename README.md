@@ -112,7 +112,7 @@ Open Claude Code in the repository you want to analyze and run:
 
 The threat modeler analyzes the current Git repository and writes output to `docs/security/`. Reports are git-ignored because they may contain vulnerability details.
 
-For assessment depth, cost controls, focused scans, actor configuration, and cross-repo context, see [docs/threat-modeler.md](docs/threat-modeler.md).
+For assessment depth, cost controls, focused scans, actor configuration, and repo-local and cross-repo context, see [docs/threat-modeler.md](docs/threat-modeler.md).
 
 ### 4. Optional: Publish the threat model
 
@@ -134,7 +134,7 @@ An assessment produces a report covering architecture observations, trust bounda
 
 **→ Full reference: [docs/threat-modeler.md](docs/threat-modeler.md)**
 
-Covers: output formats, what the recon pass checks, all usage examples, assessment depth and cost control, cross-repo context, pipeline architecture, and workflow commands (publish, export, health checks, run recovery).
+Covers: output formats, what the recon pass checks, all usage examples, assessment depth and cost control, repo-local context (business context, known threats), cross-repo context, pipeline architecture, and workflow commands (publish, export, health checks, run recovery).
 
 ## Requirements Audit
 
@@ -275,15 +275,18 @@ Done. Your packaging repo is ready at: ./ac-appsec-advisor
 
 Open work items currently shaping the next iterations of the plugin:
 
-- **Stronger threat focus.** The current report mixes architectural observations, compliance signals, and STRIDE findings, which dilutes the threat narrative. Upcoming iterations will sharpen the focus on attacker-goal-driven threat chains, exploitability ranking, and a cleaner separation between threats, weaknesses, and architectural risks.
+- **Stronger threat focus.** Reports still blend architectural observations, compliance signals, and STRIDE findings. Upcoming iterations sharpen the threat narrative with a cleaner split between threats, weaknesses, and architectural risks.
 
-- **Richer external context.** The pipeline is anchored almost entirely in the repository itself; structured external context is limited to `docs/related-repos.yaml` and the optional requirements catalog. Additional context sources (architecture decision records, runtime and deployment topology, incident history, prior pentest findings) are planned so the analysis can reason beyond the code alone.
+- **Richer context input.** The pipeline is anchored almost entirely in the repo itself. The goal is to let product teams feed more context into the assessment — today this is limited to `docs/business-context.md`, `docs/known-threats.yaml`, and `docs/related-repos.yaml`.
 
-- **Shared agent state (bulletin channel).** STRIDE pods, merger, and triage today exchange information only through formal artifacts, so cross-component patterns and coverage gaps that one pod observes do not reliably reach the next stage. A sparse, append-only bulletin file (`.agent-bulletin.jsonl`) is planned as an advisory hint channel between agents. Design draft: [`sharedstate.md`](sharedstate.md).
+- **Scaling to component-heavy repos.** STRIDE merge and the per-agent turn budget run serially and strain past ~8–10 components. The run analyses them all and logs the overrun rather than dropping exposed components — correct, but slow and costly. Parallelising the merge is the open fix.
 
-- **Ingest existing threat models (*under consideration*).** Detect a pre-existing threat model in the target repo (e.g. an OWASP Threat Dragon `threat-model.json`) and optionally use it as non-authoritative *input*: its architecture/scope as context, its findings reconciled (never merged) in a dedicated, verified section. This is only being weighed, not committed. Goal and reservations: [`proposal-external-threat-model-ingestion.md`](docs/internal/analysis/proposal-external-threat-model-ingestion.md).
+- **Multi-repo scans.** Per-repo scanning fits monorepos but is limited when an app spans several repos (APIs, IaC, …). Today only partially covered via `docs/related-repos.yaml`.
 
-- **Scaling to component-heavy repositories.** Component selection follows the attack surface, but STRIDE merge and the per-agent turn budget run serially and strain past about 8 to 10 components. Rather than drop exposed components to stay under that limit, the run analyses them all and logs that it overran. This is correct, but slow and costly on large repos. Parallelising the merge step is the open fix.
+- **Shared agent state.** Let STRIDE pods, merge, and triage exchange advisory hints via an append-only bulletin instead of only formal artifacts. → [`sharedstate.md`](sharedstate.md)
+
+- **Ingest existing threat models (idea).** Detect an existing model (e.g. Threat Dragon `threat-model.json`) and use it as non-authoritative context.
+
 
 ## Related projects
 
