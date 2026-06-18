@@ -145,6 +145,24 @@ def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool
     return bool(re.search(r"[A-Za-z]{2,}\s+$", before))
 
 
+def _is_identifier_suffix_keyword(text: str, start: int, op_start: int) -> bool:
+    """A credential keyword that is the trailing segment of a SCREAMING-KEBAB
+    identifier — e.g. ``SEC-USER-AUTH: Authenticate users…`` in a requirements
+    table — is an ID label, not a ``password = <literal>`` assignment.
+
+    The 2026-06-18 e2e run masked the requirement-title word "Authenticate"
+    because ``-AUTH:`` matched the ``auth`` keyword and the value (a capitalised
+    English word) escaped both the code-reference and prose-word guards. Guard:
+    the keyword is immediately preceded by a hyphen AND carries an uppercase
+    letter. Real config keys are lowercase (``client-secret``, ``api_key``,
+    ``x-auth``), so a genuine ``client-secret: <literal>`` stays flagged.
+    """
+    if start == 0 or text[start - 1] != "-":
+        return False
+    keyword = text[start:op_start]
+    return any(c.isupper() for c in keyword)
+
+
 @dataclass(frozen=True)
 class SecretHit:
     pattern: str
@@ -200,6 +218,10 @@ def scan_text(text: str) -> list[SecretHit]:
                 # Credential keyword used mid-sentence in prose (e.g.
                 # "Rotate the secret: existing rows…") — not an assignment.
                 if _is_prose_credential_false_positive(value, groups.get("op"), bool(groups.get("q")), text, m.start()):
+                    continue
+                # Screaming-kebab identifier suffix (requirement IDs like
+                # SEC-USER-AUTH:) — an ID label, not a credential assignment.
+                if "op" in groups and _is_identifier_suffix_keyword(text, m.start(), m.start("op")):
                     continue
             snippet = matched[:80].replace("\n", " ")
             hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start())))
@@ -262,6 +284,10 @@ def mask_text(text: str) -> tuple[str, list[str]]:
                 # Mirror the detector's prose guard so masking never corrupts a
                 # remediation sentence like "Rotate the secret: existing rows…".
                 if _is_prose_credential_false_positive(value, groups.get("op"), bool(groups.get("q")), text, m.start()):
+                    return m.group(0)
+                # Mirror the detector's identifier-suffix guard so masking never
+                # corrupts a requirements row like "SEC-USER-AUTH: Authenticate…".
+                if "op" in groups and _is_identifier_suffix_keyword(text, m.start(), m.start("op")):
                     return m.group(0)
             applied.append(_pat.name)
             return _mask_match(_pat, m)

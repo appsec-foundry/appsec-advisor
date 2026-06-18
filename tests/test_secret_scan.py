@@ -166,6 +166,43 @@ def test_prose_guard_does_not_swallow_real_assignments(secret_scan, raw):
     )
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # 2026-06-18 e2e regression: a requirements-compliance row whose ID ends
+        # in a credential keyword (-AUTH) followed by a Capitalised title word.
+        "| SEC-USER-AUTH: Authenticate users via standard mechanisms | FAIL |",
+        "SEC-API-TOKEN: Issue scoped tokens to callers",
+        "- REQ-USER-SECRET: Store rotation evidence per tenant",
+    ],
+)
+def test_requirement_id_keyword_not_flagged(secret_scan, raw):
+    """A credential keyword that is the trailing segment of a SCREAMING-KEBAB
+    identifier (requirement ID) is an ID label, not `keyword = <literal>` — the
+    detector and masker must leave the title word intact."""
+    hits = [h for h in secret_scan.scan_text(raw) if h.pattern == "generic_credential_assignment"]
+    assert hits == [], f"requirement-ID keyword should not flag: {raw!r}, got {hits}"
+    masked, applied = secret_scan.mask_text(raw)
+    assert masked == raw and applied == [], (masked, applied)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "client-secret: hunter2longerval",  # lowercase kebab config key → flags
+        "x-auth: somecredvalue123",  # lowercase header-style key → flags
+        "API_KEY: skabcdefghij12345",  # uppercase but NOT hyphen-preceded → flags
+    ],
+)
+def test_identifier_suffix_guard_does_not_swallow_real_keys(secret_scan, raw):
+    """The identifier-suffix guard only skips an UPPERCASE keyword preceded by a
+    hyphen. A lowercase hyphen-kebab config key, or an uppercase key that is not
+    a hyphen suffix, must still flag."""
+    assert any(h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)), (
+        f"expected a loose-pattern hit for {raw!r}"
+    )
+
+
 def test_prose_credential_keyword_not_masked(secret_scan):
     """mask_text mirrors the detector — it must not corrupt a remediation
     sentence by redacting an English word."""

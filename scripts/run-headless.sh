@@ -700,6 +700,26 @@ if [ "$EXIT_CODE" -eq 0 ] && [ "$SKILL" = "create-threat-model" ] \
     fi
 fi
 
+# ── SARIF canonical-name backstop ──────────────────────────────────
+# SARIF is deterministic from threat-model.yaml (scripts/export_sarif.py), but
+# the LLM finalization that invokes it can write the artefact under a
+# non-canonical name (observed 2026-06-18: threat-model.sarif, missing the
+# .json suffix) or skip it. Every downstream consumer — CI upload,
+# publish_threat_model.py, the e2e asserts — pins threat-model.sarif.json. When
+# --sarif was requested and the canonical file is absent, regenerate it from
+# the yaml so the artefact name can never depend on LLM behaviour.
+if [ "$SKILL" = "create-threat-model" ] && [ "$EXIT_CODE" -eq 0 ] \
+   && printf '%s' "$SKILL_FLAGS" | grep -q -- '--sarif' \
+   && [ -s "$RESULT_DIR/threat-model.yaml" ] \
+   && [ ! -f "$RESULT_DIR/threat-model.sarif.json" ]; then
+    if python3 "$SCRIPT_DIR/export_sarif.py" \
+            --threat-model "$RESULT_DIR/threat-model.yaml" \
+            --output "$RESULT_DIR/threat-model.sarif.json" >/dev/null 2>&1; then
+        rm -f "$RESULT_DIR/threat-model.sarif"
+        info "SARIF backstop wrote $RESULT_DIR/threat-model.sarif.json from yaml"
+    fi
+fi
+
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
     ok "Assessment completed successfully."

@@ -49,12 +49,17 @@ cp -r "$SEED" "$OUTPUT_DIR"
 rm -f "$OUTPUT_DIR/.appsec-lock" "$OUTPUT_DIR/.qa-repair-plan.json" "$OUTPUT_DIR/.qa-status.json"
 
 # 2. Corrupt §7.2 — turn a canonical mechanism heading into a FORBIDDEN primitive.
+#    Match the §7.2.2 heading by NUMBER, not by its (drift-prone) wording: the
+#    seed is a real run output whose mechanism title changes across regenerations
+#    (e.g. "MFA / TOTP" → "Multi-Factor Authentication (TOTP)"). Replacing the
+#    whole heading line with the forbidden "Login Rate Limiting" primitive still
+#    trips the auth_method_decomposition rule regardless of the original wording.
 FRAG="$OUTPUT_DIR/.fragments/security-architecture.md"
-if grep -q '^#### 7\.2\.2 MFA / TOTP' "$FRAG"; then
-    sed -i 's|^#### 7\.2\.2 MFA / TOTP|#### 7.2.2 Login Rate Limiting|' "$FRAG"
+if grep -qE '^#### 7\.2\.2 ' "$FRAG"; then
+    sed -i -E 's|^#### 7\.2\.2 .*|#### 7.2.2 Login Rate Limiting|' "$FRAG"
     echo "→ corrupted §7.2.2 heading → 'Login Rate Limiting' (forbidden primitive)"
 else
-    echo "ERROR: expected '#### 7.2.2 MFA / TOTP' heading not found in seed fragment" >&2
+    echo "ERROR: expected a '#### 7.2.2 ...' heading not found in seed fragment" >&2
     exit 3
 fi
 
