@@ -60,7 +60,7 @@ ignore = [
     "UP007",  # non-pep604-annotation-union — Optional[X] is fine on py310
     "UP031",  # printf-string-formatting — one logging string
     "UP035",  # deprecated-import — typing.* re-exports still allowed
-    "UP038",  # non-pep604-isinstance — tuple-of-types still valid
+    "UP045",  # non-pep604-optional — Optional[X] is fine on py310
 ]
 
 [tool.ruff.lint.per-file-ignores]

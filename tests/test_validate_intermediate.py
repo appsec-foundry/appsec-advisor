@@ -589,9 +589,7 @@ def test_read_stride_profile_string_label_in_manifest(tmp_path):
 
 
 def test_read_stride_profile_string_label_full_carries_no_waiver(tmp_path):
-    (tmp_path / ".stride-dispatch-manifest.json").write_text(
-        _json.dumps({"stride_profile": "full"})
-    )
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(_json.dumps({"stride_profile": "full"}))
     assert vi._read_stride_profile(tmp_path) == {}
 
 
@@ -601,9 +599,7 @@ def test_read_stride_profile_prefers_skill_config_dict(tmp_path):
     (tmp_path / ".skill-config.json").write_text(
         _json.dumps({"stride_profile": {"skip_cvss_scoring": True, "stride_profile_label": "quick"}})
     )
-    (tmp_path / ".stride-dispatch-manifest.json").write_text(
-        _json.dumps({"stride_profile": "full"})
-    )
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(_json.dumps({"stride_profile": "full"}))
     assert vi._read_stride_profile(tmp_path) == {
         "skip_cvss_scoring": True,
         "stride_profile_label": "quick",

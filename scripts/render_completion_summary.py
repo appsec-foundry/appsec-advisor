@@ -328,8 +328,8 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
     reasons_by_id = (e.get("resolved") or {}).get("reason_by_id") or {}
     threats_by_id = _threat_index(yaml_data)
 
-    changed_fmt = lambda i: (f"{i} ({notes_by_id[i]})" if i in notes_by_id else i)
-    resolved_fmt = lambda i: (f"{i} ({reasons_by_id[i]})" if i in reasons_by_id else i)
+    changed_fmt = lambda i: f"{i} ({notes_by_id[i]})" if i in notes_by_id else i
+    resolved_fmt = lambda i: f"{i} ({reasons_by_id[i]})" if i in reasons_by_id else i
 
     added_entries, added_more = _format_threat_delta_entries(added_ids, threats_by_id)
     changed_entries, changed_more = _format_threat_delta_entries(changed_ids, threats_by_id, notes_by_id)

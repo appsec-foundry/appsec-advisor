@@ -2779,9 +2779,11 @@ def _reconcile_attack_path_membership(data: dict, taxonomy: dict, threats: list[
     combined = list(data.get("attack_paths") or []) + appended
     data["attack_paths"] = sorted(
         combined,
-        key=lambda ap: taxonomy_order.index((ap.get("class") or "").strip())
-        if (ap.get("class") or "").strip() in taxonomy_order
-        else 999,
+        key=lambda ap: (
+            taxonomy_order.index((ap.get("class") or "").strip())
+            if (ap.get("class") or "").strip() in taxonomy_order
+            else 999
+        ),
     )
 
     try:
@@ -13911,7 +13913,7 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             if (_sev_to_prio.get((m.get("priority") or "").strip().lower()) or (m.get("priority") or "").strip())
             == prio
         ]
-        bucket.sort(key=lambda m: (m.get("m_id") or m.get("id") or ""))
+        bucket.sort(key=lambda m: m.get("m_id") or m.get("id") or "")
         sub_label = {"P1": "P1 — Immediate", "P2": "P2 — This Sprint", "P3": "P3 — Next Quarter", "P4": "P4 — Backlog"}[
             prio
         ]

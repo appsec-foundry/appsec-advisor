@@ -5,6 +5,9 @@
 
 .DEFAULT_GOAL := help
 
+# Use .venv if present, otherwise fall back to system python3
+PYTHON ?= $(if $(wildcard .venv/bin/python3),.venv/bin/python3,python3)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Manual E2E full-run
 #
@@ -39,7 +42,7 @@ e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no 
 	@APPSEC_E2E_FULL=1 \
 	 APPSEC_E2E_OUTPUT_DIR="$(PWD)/tests/fixtures/e2e/_last-run" \
 	 APPSEC_E2E_DEPTH=quick \
-	 python3 -m pytest tests/test_full_run_e2e.py -v --tb=short
+	 $(PYTHON) -m pytest tests/test_full_run_e2e.py -v --tb=short
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fast unit tests (the per-PR safety net — runs in CI too)
@@ -47,12 +50,12 @@ e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no 
 
 .PHONY: test
 test:  ## Run the standard pytest suite with coverage (no LLM)
-	@python3 -m pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing; \
+	@$(PYTHON) -m pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing; \
 		status=$$?; rm -rf .coverage-data; exit $$status
 
 .PHONY: coverage
 coverage:  ## Run the suite + write an HTML coverage report to htmlcov/index.html
-	@python3 -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing --cov-report=html; \
+	@$(PYTHON) -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing --cov-report=html; \
 		status=$$?; rm -rf .coverage-data; exit $$status
 	@echo "HTML report: htmlcov/index.html"
 
@@ -90,7 +93,7 @@ check:  ## Continuous gate: lint, format, config, drift, full test suite
 	@ruff format --check scripts/ tests/ hooks/
 	@python3 scripts/validate_config.py .
 	@python3 scripts/check_fragment_registry.py
-	@python3 -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing; \
+	@$(PYTHON) -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing; \
 		status=$$?; rm -rf .coverage-data; exit $$status
 
 .PHONY: release-check

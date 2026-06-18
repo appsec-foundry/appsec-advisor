@@ -166,7 +166,7 @@ _TRIAGE_NEG: list[tuple[str, Callable[[dict], None], list | None]] = [
     ("summary-total-flags-mismatch", _mutate(lambda d: d["summary"].__setitem__("total_flags", 99)), ["total_flags"]),
     (
         "summary-warnings-info-sum-mismatch",
-        _mutate(lambda d: (d["summary"].update({"warnings": 2, "info": 2, "total_flags": 2}))),
+        _mutate(lambda d: d["summary"].update({"warnings": 2, "info": 2, "total_flags": 2})),
         None,
     ),
     ("invalid-type-enum", _mutate(lambda d: d["flags"][0].__setitem__("type", "not-a-real-type")), None),

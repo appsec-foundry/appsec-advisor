@@ -509,12 +509,12 @@ def _skill_description(build: Path, skill: str) -> str:
     for line in skill_md.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line.startswith("description:"):
-            desc = line[len("description:"):].strip()
+            desc = line[len("description:") :].strip()
             # Truncate at first sentence boundary for readability
             for sep in (". ", ".\n"):
                 idx = desc.find(sep)
                 if idx != -1:
-                    desc = desc[:idx + 1]
+                    desc = desc[: idx + 1]
                     break
             return desc
     return ""
@@ -598,7 +598,7 @@ def _build_readme(build: Path, name: str, surface_manifest: dict, upstream_url: 
         for line in org_profile_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line.startswith("name:"):
-                org_name = line[len("name:"):].strip()
+                org_name = line[len("name:") :].strip()
                 break
 
     skills = surface_manifest.get("skills", {}).get("included", [])
@@ -675,7 +675,9 @@ claude --plugin-dir /path/to/build/{name}
     return readme
 
 
-def write_readme(build: Path, name: str, surface_manifest: dict, upstream_url: str | None, readme_path: Path | None = None) -> None:
+def write_readme(
+    build: Path, name: str, surface_manifest: dict, upstream_url: str | None, readme_path: Path | None = None
+) -> None:
     content = _build_readme(build, name, surface_manifest, upstream_url)
     target = readme_path if readme_path else (build / "README.md")
     target.write_text(content, encoding="utf-8")
@@ -693,7 +695,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--upstream-url", default=None, help="upstream plugin repository URL recorded in package-surface.json"
     )
-    parser.add_argument("--readme", default=None, help="write generated README.md to this path (default: inside build tree)")
+    parser.add_argument(
+        "--readme", default=None, help="write generated README.md to this path (default: inside build tree)"
+    )
     parser.add_argument(
         "--skip-validation",
         action="store_true",

@@ -33,19 +33,36 @@ Maintainers are listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) and review
 all changes to `main`. Security issues follow a separate path — see
 [Reporting security issues](#reporting-security-issues).
 
+## Dev environment setup
+
+On Debian/Ubuntu the system Python is externally managed — install tools into isolated environments rather than system-wide.
+
+**ruff** (linter/formatter):
+```bash
+pipx install ruff      # needs: sudo apt install pipx
+```
+
+**Test dependencies** — create a project venv once, then `make` picks it up automatically:
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r tests/requirements-test.txt
+```
+
+The `Makefile` detects `.venv/bin/python3` and uses it automatically, so plain `make test` / `make release-check` work without any extra prefix after this.
+
 ## Commands
 
 ### Tests
 
 ```bash
-pytest tests/                              # all tests
+make test                                  # standard suite with coverage
+pytest tests/                              # all tests (uses active venv/PATH python)
 pytest tests/test_agent_definitions.py     # agent frontmatter validation
 pytest tests/test_security_steering.py     # steering hook logic
 pytest tests/test_sarif_validation.py      # SARIF v2.1.0 compliance
-pytest tests/ -v --cov                     # with coverage
 ```
 
-Test dependencies: `tests/requirements-test.txt` (pytest, pytest-cov, pyyaml).
+Test dependencies: `tests/requirements-test.txt` (pytest, pytest-cov, pyyaml, jsonschema, jinja2).
 
 #### Manual full-run (end-to-end) test
 
