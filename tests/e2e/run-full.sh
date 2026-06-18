@@ -198,6 +198,12 @@ if [ "$ASSERT_STATUS" -eq 0 ]; then
 else
     echo "  RESULT: FAIL  (pipeline OK but assertions failed)"
     echo "  Artifacts: $OUTPUT_DIR"
+    echo ""
+    echo "  Next: triage with Claude —"
+    echo "    claude \"e2e-full failed. Read the pytest output above and the"
+    echo "    artifacts in $OUTPUT_DIR, identify which assertions failed, then"
+    echo "    root-cause against the PRODUCER, not the test (AGENTS.md §12 — fix"
+    echo "    the producer, never relax the assertion to make it pass).\""
     echo "─────────────────────────────────────────────────────────────────────"
     exit 2
 fi
