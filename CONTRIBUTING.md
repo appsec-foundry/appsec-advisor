@@ -39,8 +39,11 @@ On Debian/Ubuntu the system Python is externally managed — install tools into 
 
 **ruff** (linter/formatter):
 ```bash
-pipx install ruff      # needs: sudo apt install pipx
+pipx install 'ruff>=0.11.13,<0.13'   # needs: sudo apt install pipx
 ```
+The version is pinned so the lint gate behaves identically across machines —
+unpinned ruff drifts rules on and off between versions (e.g. UP038 is enforced
+in <0.12 but deprecated in >=0.12).
 
 **Test dependencies** — create a project venv once, then `make` picks it up automatically:
 ```bash

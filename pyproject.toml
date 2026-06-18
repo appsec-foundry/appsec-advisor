@@ -60,6 +60,9 @@ ignore = [
     "UP007",  # non-pep604-annotation-union — Optional[X] is fine on py310
     "UP031",  # printf-string-formatting — one logging string
     "UP035",  # deprecated-import — typing.* re-exports still allowed
+    "UP038",  # non-pep604-isinstance — deprecated by ruff itself (0.12+); the
+              # `X | Y` form is slower at runtime than the tuple. Ignored so the
+              # gate agrees across ruff versions (older ruff still flags it).
     "UP045",  # non-pep604-optional — Optional[X] is fine on py310
 ]
 
