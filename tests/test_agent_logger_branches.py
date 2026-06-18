@@ -24,6 +24,11 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "agent_logger.py"
 
 def _load(monkeypatch, tmp_path, *, env=None, name="agent_logger"):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    # Isolate tracing detection from host state: a stale APPSEC_TRACING env or a
+    # leftover ${TMPDIR}/.appsec-tracing-<uid> marker from a real --tracing run
+    # would otherwise flip _TRACING on and break the not-tracing assertions.
+    monkeypatch.delenv("APPSEC_TRACING", raising=False)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     for k, v in (env or {}).items():
         if v is None:
             monkeypatch.delenv(k, raising=False)
