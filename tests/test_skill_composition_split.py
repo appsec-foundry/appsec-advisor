@@ -18,6 +18,7 @@ that is covered by the end-to-end run against juice-shop.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,20 @@ def test_phase10b_precondition_gate_documented(skill_impl_text):
     assert ".threats-merged.json" in skill_impl_text
     assert ".triage-flags.json" in skill_impl_text
     assert "threat-model.yaml" in skill_impl_text
+
+
+def test_deterministic_phase10b_ranking_wired_at_skill_level(skill_impl_text):
+    """The deterministic Phase-10b Step 6 ranking must run at skill level with
+    --force (env vars do not reach skill/agent Bash, so the in-agent
+    APPSEC_TRIAGE_DETERMINISTIC gate never flips and the LLM fallback emits a
+    v1 .triage-flags.json with no ranking block). Regression guard for the
+    2026-06-18 e2e failure."""
+    assert "Deterministic Phase-10b ranking (skill-level)" in skill_impl_text
+    # The skill-level invocation must use --force to bypass the env feature flag.
+    assert re.search(
+        r"triage_compute_ranking\.py[^\n]*\n[^\n]*--force",
+        skill_impl_text,
+    ), "skill-level triage_compute_ranking.py must be invoked with --force"
 
 
 # ---------------------------------------------------------------------------

@@ -562,15 +562,35 @@ def _check_threat_hypotheses_invariants(data: dict) -> list[str]:
 
 
 def _read_stride_profile(output_dir: Path | None) -> dict:
-    """Return stride_profile from .stride-dispatch-manifest.json, or {}."""
+    """Return the resolved stride_profile as a dict, or {}.
+
+    The authoritative source is ``.skill-config.json`` (written by
+    ``resolve_config.resolve_stride_profile`` — always the full
+    ``QUICK_STRIDE_PROFILE``-shaped dict with ``skip_cvss_scoring``). The
+    ``.stride-dispatch-manifest.json`` is a fallback, but its ``stride_profile``
+    is analyst-authored (``_stride_profile`` in ``.stride-analyst-context.json``)
+    and may be a bare label *string* like ``"quick (depth-reduced via
+    sonnet-economy)"`` rather than the dict — normalize so callers can read
+    flags like ``skip_cvss_scoring`` without crashing on ``str.get``.
+    """
     if output_dir is None:
         return {}
-    manifest_path = output_dir / ".stride-dispatch-manifest.json"
-    try:
-        doc = json.loads(manifest_path.read_text(encoding="utf-8"))
-        return doc.get("stride_profile") or {} if isinstance(doc, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    for fname in (".skill-config.json", ".stride-dispatch-manifest.json"):
+        try:
+            doc = json.loads((output_dir / fname).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        profile = doc.get("stride_profile")
+        if isinstance(profile, dict):
+            return profile
+        # A bare label string only ever names the depth-reduced quick profile,
+        # which skips CVSS scoring (QUICK_STRIDE_PROFILE flag E). "full" and
+        # the empty/absent case carry no waivers.
+        if isinstance(profile, str) and profile and profile != "full":
+            return {"stride_profile_label": profile, "skip_cvss_scoring": True}
+    return {}
 
 
 def validate_threats_merged(data: Any, output_dir: Path | None = None) -> tuple[bool, list[str]]:

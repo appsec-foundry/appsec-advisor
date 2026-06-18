@@ -575,6 +575,41 @@ def test_read_stride_profile_non_dict_doc(tmp_path):
     assert vi._read_stride_profile(tmp_path) == {}
 
 
+def test_read_stride_profile_string_label_in_manifest(tmp_path):
+    # The manifest's stride_profile is analyst-authored and may be a bare
+    # label string rather than the dict — it must not crash str.get and must
+    # infer the CVSS waiver that the quick depth-reduced profile carries.
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(
+        _json.dumps({"stride_profile": "quick (depth-reduced via sonnet-economy)"})
+    )
+    assert vi._read_stride_profile(tmp_path) == {
+        "stride_profile_label": "quick (depth-reduced via sonnet-economy)",
+        "skip_cvss_scoring": True,
+    }
+
+
+def test_read_stride_profile_string_label_full_carries_no_waiver(tmp_path):
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(
+        _json.dumps({"stride_profile": "full"})
+    )
+    assert vi._read_stride_profile(tmp_path) == {}
+
+
+def test_read_stride_profile_prefers_skill_config_dict(tmp_path):
+    # .skill-config.json is the authoritative resolved-config source and wins
+    # over the analyst-authored manifest label.
+    (tmp_path / ".skill-config.json").write_text(
+        _json.dumps({"stride_profile": {"skip_cvss_scoring": True, "stride_profile_label": "quick"}})
+    )
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(
+        _json.dumps({"stride_profile": "full"})
+    )
+    assert vi._read_stride_profile(tmp_path) == {
+        "skip_cvss_scoring": True,
+        "stride_profile_label": "quick",
+    }
+
+
 # --- validate_threats_merged with profile waiver ---------------------------
 
 

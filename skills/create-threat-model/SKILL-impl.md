@@ -2420,6 +2420,20 @@ This gate complements the SKILL-level fast-abort (exit codes 0/2 from `baseline_
 
 `mtime+size` is sufficient — Stage 1 always rewrites the YAML via atomic `os.replace` when it produces real output, which updates both fields. A meta-only sed-patch (e.g. `meta.generated` timestamp bump) does the same, so an unchanged tuple is a strong signal of "Stage 1 returned without writing anything new". When in doubt the gate stays closed and the run proceeds normally.
 
+### Deterministic Phase-10b ranking (skill-level)
+
+**This guarantees the `.triage-flags.json` v2 ranking block in every run.** Phase-10b Step 6 (`scripts/triage_compute_ranking.py`) computes `effective_severity`, `breach_distance`, `chain_role` and the multi-view `ranking` block deterministically — the LLM is not needed and, when it runs Step 6, "consistently mis-emits the ranking schema" (the file stays `version: 1` with no `ranking` block). The script is gated on `APPSEC_TRIAGE_DETERMINISTIC=1` **in its own environment**, but — exactly like the abuse-fold note below — env vars do not reach skill/agent Bash, so the analyst's Phase 10b silently takes the LLM fallback on every default run and the deterministic path is dead. Run it here with `--force` (the documented env-bypass) so the v2 ranking + yaml augmentation land independent of agent behaviour. This is the same "an LLM-prompt instruction is unreliable under turn pressure → the skill owns the deterministic step" decision as the STRIDE-dispatch / route-inventory / source-auth pre-passes.
+
+**Placement contract.** Runs **AFTER the Stage-2 no-op gate** (it rewrites the yaml + `.triage-flags.json`, which would break incremental no-op detection) and **AFTER `enforce_yaml_invariants`** (so breach-distance reads a cwe-canonical yaml). It is the bootstrap run that sets `ranking.computed_by`, which in turn **activates the Stage-1c abuse-fold below** (`--if-deterministic-owner`, previously a no-op because `computed_by` was never written). Idempotent and best-effort: a failure falls back to the pre-script `.triage-flags.json` rather than aborting after 25+ min of Stage 1.
+
+```bash
+# Deterministic Phase-10b Step 6 — see "Deterministic Phase-10b ranking" above.
+if [ "$DRY_RUN" = "false" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_compute_ranking.py" "$OUTPUT_DIR" \
+      --force 2>&1 | tail -5 || true
+fi
+```
+
 ### Auto-emitter pass — Meta-Findings + Review-Mitigations (M-RCA-2026-05)
 
 Runs **after** the Stage-2 no-op gate has decided to proceed AND **before** the Stage-2 fragment pre-generator. Two deterministic Python helpers append derived content to `threat-model.yaml` so the Stage-2 renderer agent sees an enriched canonical YAML on its first read:
@@ -3184,7 +3198,7 @@ Pass the following variables to the agent prompt:
 - `PLUGIN_VERSION=<semver>` (from `plugin_meta.py get plugin_version`)
 - `ANALYSIS_VERSION=<int>` (from `plugin_meta.py get analysis_version`)
 - `COMPAT_LABEL=<equal|older-compatible|incompatible|legacy|unknown>` (only when `INCREMENTAL=true`; set by the Plugin Version Compatibility Gate — the orchestrator uses this to decide whether to render the baseline-older callout in the report header and to set `meta.recommend_full_rerun` in yaml)
-- `APPSEC_TRIAGE_DETERMINISTIC=1` (M3.1 — when set, Phase 10b Step 6 invokes `scripts/triage_compute_ranking.py` instead of running an LLM agent. Default: enabled. Override with `APPSEC_TRIAGE_DETERMINISTIC=0` to fall back to LLM Step 6 for debugging or when the deterministic implementation is suspected of producing bad rankings; the run will still complete but Phase 10b will take ~6 min instead of ~2 s.)
+- `APPSEC_TRIAGE_DETERMINISTIC=1` (M3.1 — gates the deterministic Phase-10b Step 6 *inside the agent's* environment. **Note:** env vars do not reach skill/agent Bash, so this never actually flips the agent's path — which is why the skill now runs `triage_compute_ranking.py --force` directly at skill level after Stage 1 (see "Deterministic Phase-10b ranking (skill-level)" above). That `--force` call is unconditional and env-independent, so the v2 ranking lands on every run regardless of this variable. The variable is retained only for the agent's legacy in-dispatch fast-path and for `triage_compute_ranking.py` standalone debugging.)
 
 ## Incremental Mode
 

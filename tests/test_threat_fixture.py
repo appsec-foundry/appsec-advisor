@@ -238,7 +238,10 @@ def test_expected_meta_pins_repo_and_scanners(frozen):
     assert meta["fixture_version"] == 1
     assert meta["repo"] is not None
     assert meta["repo"]["commit_sha"]  # some sha string
-    assert meta["scanners"] == {".route-inventory.json": "route_inventory.py"}
+    assert meta["scanners"] == {
+        ".route-inventory.json": "route_inventory.py",
+        ".source-auth-findings.json": "source_auth_scanner.py",
+    }
     assert meta["plugin_version"]
 
 
