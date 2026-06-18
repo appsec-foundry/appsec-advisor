@@ -275,6 +275,10 @@ Done. Your packaging repo is ready at: ./ac-appsec-advisor
 
 Open work items currently shaping the next iterations of the plugin:
 
+- **Validation against real-world applications.** The plugin is being tested across a growing set of applications — different stacks, architectures, and deployment patterns — to harden prompt behaviour, improve output consistency, and surface edge cases that synthetic fixtures don't cover.
+
+- **Graduating experimental skills to supported status.** The developer tools currently marked *experimental* (`verify-requirements`, `appsec-reviewer`, `appsec-reviewer-cli`, Security Coach hook) are being hardened and will move to supported, production-ready status.
+
 - **Stronger threat focus.** Reports still blend architectural observations, compliance signals, and STRIDE findings. Upcoming iterations sharpen the threat narrative with a cleaner split between threats, weaknesses, and architectural risks.
 
 - **Richer context input.** The pipeline is anchored almost entirely in the repo itself. The goal is to let product teams feed more context into the assessment — today this is limited to `docs/business-context.md`, `docs/known-threats.yaml`, and `docs/related-repos.yaml`.
