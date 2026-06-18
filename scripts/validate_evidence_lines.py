@@ -153,10 +153,7 @@ def _is_inferred(threat: dict) -> bool:
     if (threat.get("source") or "").strip() in ARCH_ALL_SOURCES:
         return True
     flags = threat.get("evidence_flags") or []
-    return any(
-        f in _INFERRED_EVIDENCE_FLAGS or f.startswith("tier_reclassified_from_")
-        for f in flags
-    )
+    return any(f in _INFERRED_EVIDENCE_FLAGS or f.startswith("tier_reclassified_from_") for f in flags)
 
 
 def _validate_one(threat: dict, repo_root: Path) -> tuple[str, list[str]]:

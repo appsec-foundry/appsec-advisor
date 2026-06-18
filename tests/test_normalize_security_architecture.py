@@ -248,14 +248,14 @@ def test_already_canonical_heading_untouched():
 def test_canon_compare_strips_trailing_controls():
     # 7.9 is the only v2 §7 title that does not itself end in "Controls"; the
     # strip lets a drifted "…Protection Controls" canonical-match the contract.
-    assert nrm._canon_compare(
-        "7.9 Cryptography Secrets and Data Protection Controls"
-    ) == nrm._canon_compare("7.9 Cryptography Secrets and Data Protection")
+    assert nrm._canon_compare("7.9 Cryptography Secrets and Data Protection Controls") == nrm._canon_compare(
+        "7.9 Cryptography Secrets and Data Protection"
+    )
     # A title that legitimately ends in "Controls" still compares equal to
     # itself (both sides strip), so no distinct titles collapse together.
-    assert nrm._canon_compare(
+    assert nrm._canon_compare("7.5 Query Construction and Data Access Controls") == nrm._canon_compare(
         "7.5 Query Construction and Data Access Controls"
-    ) == nrm._canon_compare("7.5 Query Construction and Data Access Controls")
+    )
 
 
 def test_trailing_controls_suffix_canonicalized_on_79():

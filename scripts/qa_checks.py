@@ -9296,11 +9296,7 @@ def check_security_posture_structure(md_path: Path) -> Report:
     # E3: consequence arrows (-.->). Exclude glyph-carrying dashed edges — those
     # are INDIRECT attack arrows (counted in E2 above), not tier→impact
     # consequence edges (which never carry a ①–⑦ glyph label).
-    cons_lines = [
-        ln
-        for ln in mermaid.splitlines()
-        if "-.->" in ln and not re.search(r"[①②③④⑤⑥⑦]", ln)
-    ]
+    cons_lines = [ln for ln in mermaid.splitlines() if "-.->" in ln and not re.search(r"[①②③④⑤⑥⑦]", ln)]
     if not (1 <= len(cons_lines) <= 6):
         report.issues.append(f"E3: expected 1–6 consequence arrows (-.->), found {len(cons_lines)}")
 

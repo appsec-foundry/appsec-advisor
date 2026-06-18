@@ -721,10 +721,7 @@ def test_detect_cicd_config_scan_evidence_matches_globs(tmp_path):
     globs = comp["paths"]
 
     def _matches(f: str) -> bool:
-        return any(
-            fnmatch.fnmatch(f, g) or f.startswith(g.rstrip("*").rstrip("/"))
-            for g in globs
-        )
+        return any(fnmatch.fnmatch(f, g) or f.startswith(g.rstrip("*").rstrip("/")) for g in globs)
 
     for evidence_file in (
         "Dockerfile",

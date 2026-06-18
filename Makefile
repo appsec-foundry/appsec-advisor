@@ -85,6 +85,11 @@ release-check:  ## Release-boundary gate: `check` + version/tag/changelog consis
 	@$(MAKE) --no-print-directory check
 	@python3 scripts/check_release_meta.py
 
+.PHONY: release-all
+release-all:  ## Full pre-release sequence: release-check then a live e2e-full (quick)
+	@$(MAKE) --no-print-directory release-check
+	@$(MAKE) --no-print-directory e2e-full
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Help
 # ─────────────────────────────────────────────────────────────────────────────

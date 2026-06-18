@@ -717,8 +717,7 @@ def test_auth_social_login_heading_is_whitelisted(monkeypatch, tmp_path: Path):
     report = qa.check_auth_method_decomposition(md)
 
     assert not any(
-        "Social Login" in issue and "not a recognized authentication mechanism" in issue
-        for issue in report.issues
+        "Social Login" in issue and "not a recognized authentication mechanism" in issue for issue in report.issues
     ), report.issues
 
 
@@ -772,14 +771,12 @@ def test_auth_threat_hypotheses_heading_exempt(monkeypatch, tmp_path: Path):
 
     # The exempt structural heading must NOT be flagged as a non-mechanism.
     assert not any(
-        "Threat Hypotheses" in issue and "not a recognized authentication mechanism" in issue
-        for issue in report.issues
+        "Threat Hypotheses" in issue and "not a recognized authentication mechanism" in issue for issue in report.issues
     ), report.issues
     # Negative control: a genuinely bogus heading IS still flagged — proves the
     # gate is live and the exemption is specific.
     assert any(
-        "Banana Pudding" in issue and "not a recognized authentication mechanism" in issue
-        for issue in report.issues
+        "Banana Pudding" in issue and "not a recognized authentication mechanism" in issue for issue in report.issues
     ), report.issues
 
 

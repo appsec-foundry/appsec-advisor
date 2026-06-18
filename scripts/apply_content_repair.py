@@ -104,12 +104,10 @@ def _op_replace_string(text: str, op: dict) -> str:
         raise ApplyError(f"replace_string: needle not found (find={find!r:.80})")
     if len(hits) > 1:
         raise ApplyError(
-            f"replace_string: fuzzy needle is ambiguous (found {len(hits)}× — "
-            f"refine `find`; find={find!r:.80})"
+            f"replace_string: fuzzy needle is ambiguous (found {len(hits)}× — refine `find`; find={find!r:.80})"
         )
     print(
-        f"[content-repair] ~ replace_string fuzzy-matched "
-        f"(whitespace/<br/> normalized) find={find!r:.80}",
+        f"[content-repair] ~ replace_string fuzzy-matched (whitespace/<br/> normalized) find={find!r:.80}",
         file=sys.stderr,
     )
     return fuzzy.sub(lambda _m: op["replace"], text, count=1)

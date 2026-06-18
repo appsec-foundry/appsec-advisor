@@ -199,9 +199,7 @@ class TestOpReplaceString:
 
     def test_fuzzy_match_is_idempotent_on_rerun(self):
         text = "Crypto<br/> row #a"
-        once = acr._op_replace_string(
-            text, {"find": "Crypto row #a", "replace": "Crypto row #b"}
-        )
+        once = acr._op_replace_string(text, {"find": "Crypto row #a", "replace": "Crypto row #b"})
         assert once == "Crypto row #b"
         # Re-running the same action no longer matches (fix already applied).
         with pytest.raises(acr.ApplyError, match="needle not found"):

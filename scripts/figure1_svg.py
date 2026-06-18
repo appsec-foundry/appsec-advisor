@@ -831,8 +831,14 @@ def build_figure1_svg(
             r += 1
         if has_indirect:
             c.line(
-                lx + 12, y0 + r * _RH - 3.5, lx + 34, y0 + r * _RH - 3.5,
-                stroke=_EXPOSED, sw=2.2, dash="6 3", marker="arrowred",
+                lx + 12,
+                y0 + r * _RH - 3.5,
+                lx + 34,
+                y0 + r * _RH - 3.5,
+                stroke=_EXPOSED,
+                sw=2.2,
+                dash="6 3",
+                marker="arrowred",
             )
             c.text(lx + 40, y0 + r * _RH, "indirect attack (via victim)", size=10, fill=_INK, anchor="start")
             r += 1
@@ -855,11 +861,7 @@ def build_figure1_svg(
     has_direct = any(v["direct"] for v in tier_attacks.values())
     has_indirect = any(v["indirect"] for v in tier_attacks.values())
     diag_n_rows = (
-        (1 if exposed else 0)
-        + (1 if has_direct else 0)
-        + (1 if has_indirect else 0)
-        + 2
-        + (1 if has_oos else 0)
+        (1 if exposed else 0) + (1 if has_direct else 0) + (1 if has_indirect else 0) + 2 + (1 if has_oos else 0)
     )
     ly = panel("Attack Scenarios — by actor", ly, scen_rows, len(actor_order) + len(scenarios))
     ly = panel("Severity", ly, sev_rows, 2)

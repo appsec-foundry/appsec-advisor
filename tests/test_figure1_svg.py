@@ -325,9 +325,7 @@ def test_data_targeted_injection_draws_no_direct_data_arrow():
     tax["classes"].append(
         {"id": "sqli", "short_label": "SQLi", "default_actor": "internet-anon", "default_target_tier": "data"}
     )
-    apd["attack_paths"].append(
-        {"class": "sqli", "actor": "internet-anon", "target": "data", "findings": [app_fid]}
-    )
+    apd["attack_paths"].append({"class": "sqli", "actor": "internet-anon", "target": "data", "findings": [app_fid]})
     svg = F.build_figure1_svg(y, apd, tax)
     # Exactly ONE direct branch (application); the data tier gets no 4.0 line.
     assert svg.count('stroke-width="4.0"') == 1
@@ -341,9 +339,7 @@ def test_data_arrow_only_when_data_component_exposed_and_hit():
     tax["classes"].append(
         {"id": "dbx", "short_label": "DBX", "default_actor": "internet-anon", "default_target_tier": "data"}
     )
-    apd["attack_paths"].append(
-        {"class": "dbx", "actor": "internet-anon", "target": "data", "findings": [db_fid]}
-    )
+    apd["attack_paths"].append({"class": "dbx", "actor": "internet-anon", "target": "data", "findings": [db_fid]})
     svg = F.build_figure1_svg(y, apd, tax)
     # Two direct branches (application + the exposed data component).
     assert svg.count('stroke-width="4.0"') >= 2
