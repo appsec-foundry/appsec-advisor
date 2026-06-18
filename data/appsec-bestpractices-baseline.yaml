@@ -12,6 +12,64 @@ description: >-
   coach, and check consume it unchanged.
 url: https://owasp.org/www-project-cheat-sheets/
 categories:
+  - id: SEC-CORE
+    title: Core Security Requirements
+    url: https://owasp.org/www-project-top-ten/
+    requirements:
+      - id: SEC-SQL
+        priority: MUST
+        text: >-
+          Use parameterized statements or ORM-level query builders for all
+          database access. Never construct queries by string-concatenating
+          user-controlled input.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+      - id: SEC-IV
+        priority: MUST
+        text: >-
+          Validate all input data against an explicit specification (type,
+          length, range, allowed values) at every trust boundary. Reject or
+          strip anything that does not conform.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+      - id: SEC-TLS
+        priority: MUST
+        text: >-
+          Use TLS for all data in transit. Require TLS 1.2+ and valid
+          certificates; do not disable certificate verification.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
+      - id: SEC-ANTI-CSRF
+        priority: MUST
+        text: >-
+          Protect state-changing endpoints against Cross-Site Request Forgery
+          using synchronizer tokens, SameSite cookies, or an equivalent
+          framework-provided mechanism.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+      - id: SEC-CSP
+        priority: SHOULD
+        text: >-
+          Set a Content-Security-Policy header on HTML responses that
+          restricts script and resource origins to prevent XSS impact.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
+      - id: SEC-CORS
+        priority: MUST
+        text: >-
+          Configure CORS with an explicit allow-list of trusted origins. Do
+          not use wildcard origins for authenticated endpoints and do not
+          reflect arbitrary Origin values.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Origin_Resource_Sharing_Cheat_Sheet.html
+      - id: SEC-SECRETS
+        priority: MUST
+        text: >-
+          Never hard-code secrets, credentials, or API keys in source code or
+          configuration committed to version control. Load them from
+          environment variables or a secret manager.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+      - id: SEC-API-AUTH
+        priority: MUST
+        text: >-
+          Authenticate and authorize every API request. Do not rely on
+          obscurity, client-side tokens, or implicit trust between services
+          without explicit credential verification.
+        url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
   - id: BP-AUTH
     title: Authentication & Session Management
     url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html

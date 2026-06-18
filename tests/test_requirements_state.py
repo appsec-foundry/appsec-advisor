@@ -357,7 +357,6 @@ def test_cli_validate_missing_invalid_strict_and_valid(tmp_path, capsys):
     "rel",
     [
         "examples/appsec-requirements-example.yaml",
-        "data/appsec-requirements-fallback.yaml",
         "data/appsec-bestpractices-baseline.yaml",
     ],
 )

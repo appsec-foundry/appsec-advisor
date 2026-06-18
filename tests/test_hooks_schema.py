@@ -189,7 +189,7 @@ class TestSteeringKeywordsJson:
 
         root = Path(__file__).parent.parent / "data"
         known: set[str] = set()
-        for fname in ("appsec-requirements-fallback.yaml", "appsec-bestpractices-baseline.yaml"):
+        for fname in ("appsec-bestpractices-baseline.yaml",):
             data = yaml.safe_load((root / fname).read_text(encoding="utf-8")) or {}
             for cat in data.get("categories") or []:
                 for req in cat.get("requirements") or []:

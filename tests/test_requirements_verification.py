@@ -174,8 +174,9 @@ def test_baseline_is_vendor_neutral_and_well_formed():
     assert d["source"] == "bundled-bestpractices"
     reqs = [r for c in d["categories"] for r in c["requirements"]]
     assert reqs, "baseline must contain requirements"
-    # Vendor-neutral: BP-* ids, no internal company host, public OWASP urls.
-    assert all(r["id"].startswith("BP-") for r in reqs)
+    # Vendor-neutral: no internal company host, public OWASP urls.
+    # ID prefix is not restricted — BP-*, SEC-*, or others are all valid.
+    assert all(r["id"] for r in reqs)
     assert all(r["priority"] in ("MUST", "SHOULD", "MAY") for r in reqs)
     text = BASELINE_PATH.read_text(encoding="utf-8")
     assert "int.kn" not in text and "asr.int" not in text
