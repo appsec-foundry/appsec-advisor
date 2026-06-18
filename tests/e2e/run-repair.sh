@@ -7,13 +7,22 @@
 # Loop / the fragment-fixer NEVER run in the normal E2E. And a clean render
 # triggers no repair anyway. This variant GUARANTEES a repair by:
 #   1. Seeding a known-good, full (standard-depth) output as the baseline.
-#   2. Corrupting §7.2 — the analyst-authored `security-architecture.md` fragment
-#      (the renderer never regenerates it, so the corruption survives recompose).
-#   3. Running headless with `--rerender` (and QA on): the skill skips Stage 1
-#      and the incremental no-op gate, re-renders Stage 2 from the existing
-#      fragments (the renderer never regenerates §7.2, so the corruption stands),
-#      then runs the Stage-3 QA gate → build_repair_plan flags §7.2 → Re-Render
-#      Loop dispatches `appsec-advisor:appsec-fragment-fixer` → recompose → clean.
+#   2. Corrupting §7.2 — the analyst-authored `security-architecture.md` fragment.
+#   3. Running headless with `--rerender --no-enrich-arch` (and QA on): the skill
+#      skips Stage 1 and the incremental no-op gate, re-renders Stage 2 from the
+#      existing fragments, then runs the Stage-3 QA gate → build_repair_plan flags
+#      §7.2 → Re-Render Loop dispatches `appsec-advisor:appsec-fragment-fixer` →
+#      recompose → clean.
+#
+#   `--no-enrich-arch` is LOAD-BEARING. At standard depth ENRICH_ARCH_FRAGMENTS
+#   defaults ON, so the `secarch` renderer RE-AUTHORS `security-architecture.md`
+#   (agents/appsec-threat-renderer.md:128 — it touches §7 "only when
+#   ENRICH_ARCH_FRAGMENTS=true") and silently rewrites the corrupted §7.2.2
+#   heading back to the canonical mechanism BEFORE Stage-3 QA sees it — so no auth
+#   violation is detected and the fixer never fires (the failure this variant is
+#   meant to catch). Disabling enrichment makes the renderer leave the corrupted
+#   fragment untouched, so the violation reaches QA and the real Re-Render Loop /
+#   fragment-fixer is exercised.
 #
 # Then asserts the real loop fired the fixer and converged to contract-clean.
 #
@@ -69,8 +78,10 @@ rm -f "$OUTPUT_DIR/.appsec-checkpoint"
 # 4. Run the real skill headless, WITH QA (no --no-qa), via --rerender:
 #    skips Stage 1 + the incremental no-op, re-renders Stage 2 from the existing
 #    (corrupted) fragments, then runs Stage 3 QA + the Re-Render Loop.
+#    --no-enrich-arch stops the secarch renderer from re-authoring §7 (which would
+#    pre-heal the corruption before QA — see header).
 echo ""
-echo "[1/2] running create-threat-model --rerender (QA ON) ..."
+echo "[1/2] running create-threat-model --rerender --no-enrich-arch (QA ON) ..."
 START_TS=$(date +%s)
 RUN_STATUS=0
 "$PLUGIN_ROOT/scripts/run-headless.sh" \
@@ -78,6 +89,7 @@ RUN_STATUS=0
     --output "$OUTPUT_DIR" \
     --assessment-depth standard \
     --rerender \
+    --no-enrich-arch \
     --keep-runtime-files \
     --max-duration "$MAXDUR" \
     || RUN_STATUS=$?

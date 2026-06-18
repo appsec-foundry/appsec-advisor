@@ -220,7 +220,7 @@ while [ $# -gt 0 ]; do
         --full)
             FULL_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
-        --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--rerender)
+        --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--rerender|--enrich-arch|--no-enrich-arch)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --incremental)
             INCREMENTAL_REQUESTED=1
@@ -755,15 +755,18 @@ fi
 
 # ── Post-scan unmasked-secret check ────────────────────────────────
 # Runs scripts/postscan_secret_check.py over the rendered report and
-# headline intermediates. Catches the case where the agent forgot to
-# redact a secret in prose (validate_intermediate.py only catches the
-# structured `hardcoded_secrets[].snippet` field). Always-on so the
-# trusted-mode default also gets the protection; fails the run when a
-# real secret value lands in a published artefact.
+# headline intermediates. The rendered report + yaml are already masked
+# deterministically upstream, but the LLM-authored intermediates
+# (.recon-summary.md etc.) were only masked if the agent remembered to —
+# so `--mask` runs the deterministic mask_file twin over every candidate
+# first, neutralising any kept secret value (e.g. a `-----BEGIN PRIVATE
+# KEY-----` marker the agent left in a "masked" table cell). The scan then
+# verifies and only fails if masking could not neutralise something.
+# Always-on so the trusted-mode default also gets the protection.
 if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
     POSTSCAN_SCRIPT="$PLUGIN_DIR/scripts/postscan_secret_check.py"
     if [ -f "$POSTSCAN_SCRIPT" ]; then
-        if ! python3 "$POSTSCAN_SCRIPT" --output-dir "$OUTPUT_PATH"; then
+        if ! python3 "$POSTSCAN_SCRIPT" --output-dir "$OUTPUT_PATH" --mask; then
             err "post-scan secret check failed — see stderr above"
             EXIT_CODE=21
         fi

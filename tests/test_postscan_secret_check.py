@@ -53,6 +53,7 @@ def test_run_aggregates_hits_by_relative_file_and_counts_checked_files(monkeypat
     assert report == {
         "output_dir": str(out),
         "checked_files": ["threat-model.md", "threat-model.yaml", "extra.json"],
+        "masked_files": {},
         "hit_count": 3,
         "by_file": {
             "threat-model.md": [{"pattern": "aws_access_key", "snippet": "AKIAABCDEFGHIJKLMNOP", "line": 4}],
@@ -137,3 +138,43 @@ def test_main_json_output_includes_extra_paths_and_returns_2(monkeypatch, tmp_pa
     assert payload["checked_files"] == ["threat-model.md", "sidecar.txt"]
     assert payload["hit_count"] == 1
     assert payload["by_file"] == {"sidecar.txt": [{"pattern": "jwt", "snippet": "eyJ.header.payload", "line": 11}]}
+
+
+def test_mask_neutralises_pem_marker_in_recon_summary_then_passes(tmp_path: Path, capsys) -> None:
+    """The exact e2e-full-repair failure: a recon-summary table cell keeps the
+    `-----BEGIN RSA PRIVATE KEY-----` marker (body truncated), which the detector
+    flags unconditionally. `--mask` must deterministically neutralise it on disk
+    so the always-on gate passes without depending on LLM authoring discipline."""
+    out = tmp_path / "out"
+    out.mkdir()
+    recon = out / ".recon-summary.md"
+    leaky = (
+        "| RSA private key | lib/insecurity.ts:23 | "
+        "`-----BEGIN RSA PRIVATE KEY-----\\r\\nMIICXAIBAAKBgQDNwqL...` (1024-bit, **** chars) |\n"
+    )
+    _write(recon, leaky)
+
+    # Without --mask the real detector flags the marker (the failure).
+    assert postscan.run(out)["hit_count"] >= 1
+
+    rc = postscan.main(["--output-dir", str(out), "--mask"])
+
+    assert rc == 0
+    masked_text = recon.read_text(encoding="utf-8")
+    assert "BEGIN RSA PRIVATE KEY" not in masked_text
+    assert "[PEM PRIVATE KEY — REDACTED]" in masked_text
+    # The finding's location context is preserved — only the secret value dies.
+    assert "lib/insecurity.ts:23" in masked_text
+    err = capsys.readouterr().err
+    assert "masked .recon-summary.md" in err
+
+
+def test_mask_is_noop_on_already_clean_files(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    _write(out / "threat-model.md", "no secrets here")
+
+    report = postscan.run(out, mask=True)
+
+    assert report["hit_count"] == 0
+    assert report["masked_files"] == {}
