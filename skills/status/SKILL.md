@@ -1,6 +1,6 @@
 ---
 name: status
-description: Read-only overview of the AppSec plugin — version, available capsules, last-run identity, configuration sources, and a fast-path preview that predicts whether the next incremental run would short-circuit. Does not analyze or modify anything.
+description: Read-only overview of the AppSec plugin — version, available features, last-run identity, and configuration sources. Does not analyze or modify anything.
 ---
 
 You are printing a status overview for the AppSec plugin. This skill is **read-only** — do not analyze the repository, do not write files, do not dispatch sub-agents.

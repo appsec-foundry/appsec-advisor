@@ -402,6 +402,7 @@ def write_surface_manifest(
     }
     if upstream_url:
         manifest["upstream_url"] = upstream_url
+        manifest["based_on"] = upstream_url.removesuffix(".git")
     manifest_path = build / SURFACE_MANIFEST
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -490,6 +491,196 @@ def remove_stale_archive(name: str, version: str, dist_dir: Path) -> None:
             path.unlink()
 
 
+HOOK_DESCRIPTIONS = {
+    "agent-logger": "Logs all tool calls and agent actions for audit and debugging.",
+    "security-coach": "Intercepts tool calls and provides real-time security guidance.",
+}
+
+# Skills with their own detailed section in the README
+MAIN_SKILLS = ["create-threat-model", "audit-security-requirements", "verify-requirements"]
+# Skills grouped into a single utility section
+UTILITY_SKILLS = ["threat-model-health", "check-permissions", "status", "fix-run-issues", "clean-run-state"]
+
+
+def _skill_description(build: Path, skill: str) -> str:
+    skill_md = build / "skills" / skill / "SKILL.md"
+    if not skill_md.exists():
+        return ""
+    for line in skill_md.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("description:"):
+            desc = line[len("description:"):].strip()
+            # Truncate at first sentence boundary for readability
+            for sep in (". ", ".\n"):
+                idx = desc.find(sep)
+                if idx != -1:
+                    desc = desc[:idx + 1]
+                    break
+            return desc
+    return ""
+
+
+def _skill_section(name: str, org_name: str, skill: str, build: Path) -> str:
+    if skill == "create-threat-model":
+        return f"""
+## `/{name}:create-threat-model`
+
+STRIDE-based architectural threat assessment. Produces `docs/security/threat-model.md`
+in your repo, checked against {org_name} security requirements.
+
+**Depth:**
+
+| Flag | Description |
+|---|---|
+| _(none)_ | Standard — full STRIDE analysis with QA review |
+| `--quick` | Faster, lighter analysis; skips QA and attack walkthroughs |
+| `--thorough` | Deepest analysis; adds architect review and extended walkthroughs |
+
+**Common options:**
+
+| Flag | Description |
+|---|---|
+| `--requirements` | Check findings against {org_name} security requirements |
+| `--no-requirements` | Skip requirements check for this run |
+| `--incremental` | Re-analyze only components changed since last run |
+| `--resume` | Continue from the last saved checkpoint after an interruption |
+| `--repo <path>` | Analyze a different repository instead of the current one |
+| `--output <path>` | Write results to a custom output directory |
+| `--sarif` | Also write `threat-model.sarif.json` for CI/tooling integration |
+| `--pr-mode` | Focused delta report for a pull/merge request (implies `--incremental`) |
+| `--rebuild` | Wipe all prior output and start completely fresh |
+| `--dry-run` | Run the full pipeline but write nothing to the repo |
+
+**Examples:**
+
+```text
+/{name}:create-threat-model
+/{name}:create-threat-model --quick
+/{name}:create-threat-model --thorough --requirements
+/{name}:create-threat-model --incremental --sarif
+/{name}:create-threat-model --repo ../other-service
+/{name}:create-threat-model --help
+```
+"""
+    if skill == "audit-security-requirements":
+        return f"""
+## `/{name}:audit-security-requirements`
+
+Audits the entire codebase against {org_name} security requirements and verifies
+whether each tagged requirement (e.g. `[SEC-AUTH-001]`) is implemented.
+Prints color-coded status with evidence. Optionally saves results as JSON or Markdown.
+
+```text
+/{name}:audit-security-requirements
+/{name}:audit-security-requirements --output json
+```
+"""
+    if skill == "verify-requirements":
+        return f"""
+## `/{name}:verify-requirements`
+
+Checks your recent code changes (current diff) against {org_name} security requirements.
+Lighter than a full audit — scoped to what you just changed.
+Use `--gate` to turn it into a CI/merge gate that fails on violations.
+
+```text
+/{name}:verify-requirements
+/{name}:verify-requirements --gate
+```
+"""
+    return ""
+
+
+def _build_readme(build: Path, name: str, surface_manifest: dict, upstream_url: str | None) -> str:
+    org_profile_path = build / "org-profile" / "org-profile.yaml"
+    org_name = name  # fallback
+    if org_profile_path.exists():
+        for line in org_profile_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("name:"):
+                org_name = line[len("name:"):].strip()
+                break
+
+    skills = surface_manifest.get("skills", {}).get("included", [])
+    hooks = surface_manifest.get("hooks", {}).get("included", [])
+
+    # Main skill sections
+    main_sections = ""
+    for skill in MAIN_SKILLS:
+        if skill in skills:
+            main_sections += _skill_section(name, org_name, skill, build)
+
+    # Utility skills table
+    utility_rows = ""
+    for skill in UTILITY_SKILLS:
+        if skill in skills:
+            desc = _skill_description(build, skill)
+            utility_rows += f"| `/{name}:{skill}` | {desc} |\n"
+    # Any skills not in either category
+    known = set(MAIN_SKILLS + UTILITY_SKILLS)
+    for skill in sorted(skills):
+        if skill not in known:
+            desc = _skill_description(build, skill)
+            utility_rows += f"| `/{name}:{skill}` | {desc} |\n"
+
+    utility_section = ""
+    if utility_rows:
+        utility_section = f"""
+## Utility Commands
+
+| Command | Description |
+|---|---|
+{utility_rows}"""
+
+    hooks_section = ""
+    if hooks:
+        hook_rows = ""
+        for hook in sorted(hooks):
+            desc = HOOK_DESCRIPTIONS.get(hook, "")
+            hook_rows += f"| `{hook}` | {desc} |\n"
+        hooks_section = f"""
+## Active Hooks
+
+| Hook | Description |
+|---|---|
+{hook_rows}"""
+
+    upstream_line = ""
+    if upstream_url:
+        display_url = upstream_url.removesuffix(".git")
+        upstream_line = f"\n- [appsec-advisor]({display_url})"
+
+    based_on_line = ""
+    if upstream_url:
+        display_url = upstream_url.removesuffix(".git")
+        based_on_line = f"\nBased on [appsec-advisor]({display_url})."
+
+    readme = f"""# {name} — {org_name} AppSec Plugin for Claude Code
+
+Internal Claude Code security plugin for {org_name}.
+Runs automated threat models and security audits directly in your IDE,
+with {org_name} security standards and requirements already baked in.{based_on_line}
+
+## Getting Started
+
+Load the plugin in any repo:
+
+```bash
+claude --plugin-dir /path/to/build/{name}
+```
+{main_sections}{utility_section}{hooks_section}
+## Reference
+{upstream_line}
+"""
+    return readme
+
+
+def write_readme(build: Path, name: str, surface_manifest: dict, upstream_url: str | None, readme_path: Path | None = None) -> None:
+    content = _build_readme(build, name, surface_manifest, upstream_url)
+    target = readme_path if readme_path else (build / "README.md")
+    target.write_text(content, encoding="utf-8")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and validate an internal appsec-advisor plugin package.")
     parser.add_argument("--source", default=".", help="upstream appsec-advisor checkout")
@@ -502,6 +693,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--upstream-url", default=None, help="upstream plugin repository URL recorded in package-surface.json"
     )
+    parser.add_argument("--readme", default=None, help="write generated README.md to this path (default: inside build tree)")
     parser.add_argument(
         "--skip-validation",
         action="store_true",
@@ -539,6 +731,9 @@ def main(argv: list[str] | None = None) -> int:
     patch_plugin_json(build, args.name, args.version, args.description)
     patch_config(build)
     apply_package_surface_policy(build, package_policy, package_policy_path, args.upstream_url)
+    surface_manifest = json.loads((build / SURFACE_MANIFEST).read_text(encoding="utf-8"))
+    readme_path = Path(args.readme) if args.readme else None
+    write_readme(build, args.name, surface_manifest, args.upstream_url, readme_path)
     rewrite_namespace(build, args.name)
     check_namespace_leaks(build)
 

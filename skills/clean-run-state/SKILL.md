@@ -1,6 +1,6 @@
 ---
 name: clean-run-state
-description: Explicitly remove stale run-state files (.appsec-lock, .appsec-checkpoint, .phase-epoch, .session-agent-map) left behind by a crashed or abruptly terminated threat-model assessment. Refuses to clean when an active run is still holding the lock. Use when the Claude Code UI shows the threat-modeling skill as "scanning" forever after a session crash.
+description: Remove stale run-state files left behind by a crashed or abruptly terminated threat-model assessment. Refuses to clean when an active run is still holding the lock. Use when the Claude Code UI shows the threat-modeling skill as "scanning" forever after a session crash.
 ---
 
 You are cleaning orphaned assessment run-state. This skill is **not** a

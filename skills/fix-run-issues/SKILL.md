@@ -1,6 +1,6 @@
 ---
 name: fix-run-issues
-description: Identify and apply fixes for issues recorded in $OUTPUT_DIR/.run-issues.json by the previous create-threat-model run. Auto-applies safe well-bounded fixes (agent-frontmatter maxTurns bumps, etc.) with confirmation; prints manual-review guidance for everything else. Persists an audit trail in .run-issues-fixes.json so applied fixes are inspectable and reversible.
+description: Identify and apply fixes for issues recorded by the previous create-threat-model run. Auto-applies safe fixes with confirmation; prints manual-review guidance for everything else.
 ---
 
 You are the **fix-run-issues** skill. Your job is to read
