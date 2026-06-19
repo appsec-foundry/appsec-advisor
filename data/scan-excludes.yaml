@@ -21,16 +21,31 @@ version: 1
 directories:
   # Package managers / build outputs
   - node_modules
+  - bower_components   # legacy Bower vendored deps (recon already hard-excludes)
+  - jspm_packages      # legacy JSPM vendored deps
   - vendor
   - dist
   - build
+  - _build             # Elixir / Sphinx / dune build output
   - target
   - out
+  - .output            # Nuxt 3 build output
   - bin                # .NET / Go binaries; generic compile output dir
   - obj                # .NET intermediate output
   - coverage
+  - htmlcov            # Python coverage HTML report
+  - .nyc_output        # JS Istanbul / nyc coverage data
+  - playwright-report  # Playwright HTML report output
+  - test-results       # Playwright / generic test-run output
+  - allure-results     # Allure raw test results
+  - allure-report      # Allure generated HTML report
   - .next
   - .nuxt
+  - .angular           # Angular 13+ build cache
+  - .svelte-kit        # SvelteKit generated output
+  - .turbo             # Turborepo cache
+  - .parcel-cache      # Parcel bundler cache
+  - .serverless        # Serverless Framework build artefacts
   - __pycache__
 
   # Python virtualenvs and caches
@@ -45,8 +60,30 @@ directories:
   # Java / Gradle / Kotlin build caches
   - .gradle
 
-  # iOS / CocoaPods
+  # JS package-manager / framework caches
+  - .yarn              # Yarn 2+ (Berry) PnP cache — can be very large
+
+  # iOS / CocoaPods / macOS build
   - Pods
+  - DerivedData        # Xcode build output
+  - Carthage           # Carthage vendored frameworks
+
+  # Mobile / cross-platform build caches
+  - .expo              # Expo / React Native build cache
+  - .dart_tool         # Dart / Flutter generated
+  - .pub-cache         # Dart pub package cache
+  - elm-stuff          # Elm vendored deps + build cache
+
+  # IaC tool caches (the directories themselves are generated; k8s/, terraform/
+  # source dirs are whitelisted in always_include below)
+  - .terraform         # Terraform provider plugin cache (large binaries)
+  - .terragrunt-cache  # Terragrunt generated module cache
+
+  # C / C++ build trees
+  - CMakeFiles         # CMake intermediate build artefacts
+
+  # Editor local-history (duplicate file snapshots, no live source)
+  - .history
 
   # VCS / IDE
   - .git
@@ -209,35 +246,108 @@ file_patterns:
   - "*.ico"
   - "*.webp"
   - "*.avif"
+  - "*.bmp"
+  - "*.tiff"
+  - "*.tif"
+  - "*.psd"
   - "*.woff"
   - "*.woff2"
   - "*.ttf"
+  - "*.otf"
   - "*.eot"
   - "*.mp3"
   - "*.mp4"
+  - "*.webm"
+  - "*.mov"
+  - "*.avi"
+  - "*.wav"
+  - "*.ogg"
+  - "*.flac"
 
-  # Test files (pre-existing)
+  # Documents (no application logic)
+  - "*.pdf"
+
+  # Packaged / installable binaries (compiled artefacts, never source)
+  - "*.whl"              # Python wheel
+  - "*.egg"
+  - "*.nupkg"            # NuGet package
+  - "*.apk"              # Android
+  - "*.aab"
+  - "*.ipa"              # iOS
+  - "*.dmg"              # macOS image
+  - "*.deb"
+  - "*.rpm"
+  - "*.node"             # native Node addon
+  - "*.pdb"              # debug symbols
+
+  # Test files. JS/TS use the .test./.spec. dot convention; Go/Python/Ruby/
+  # Java/Kotlin/C#/PHP use suffix or PascalCase conventions and frequently
+  # COLOCATE tests next to source — so the test-directory excludes miss them.
+  # SCAN_TEST_FILES opt-in re-includes every pattern here.
   - "*.test.js"
   - "*.test.ts"
   - "*.test.jsx"
   - "*.test.tsx"
-  - "*.test.go"
-  - "*.test.py"
   - "*.spec.js"
   - "*.spec.ts"
-  - "*.spec.rb"
-  - "*.spec.py"
+  - "*.spec.jsx"
+  - "*.spec.tsx"
+  - "*_test.go"            # Go convention (was wrongly "*.test.go" — matched nothing)
+  - "test_*.py"           # pytest / unittest
+  - "*_test.py"           # pytest / unittest
+  - "conftest.py"         # pytest fixtures / config
+  - "*_spec.rb"           # RSpec (was wrongly "*.spec.rb" — matched nothing)
+  - "*_test.rb"           # minitest
+  - "*Test.java"          # JUnit
+  - "*Tests.java"
+  - "*IT.java"            # integration tests (Failsafe)
+  - "*Test.kt"            # Kotlin (JUnit)
+  - "*Tests.kt"
+  - "*Test.cs"            # xUnit / NUnit / MSTest
+  - "*Tests.cs"
+  - "*Test.php"           # PHPUnit
   - "*.snap"
+
+  # Coverage / test report output files (generated; no source).
+  - "lcov.info"
+  - "*.lcov"
+  - "coverage.xml"        # Cobertura/pytest-cov XML
+  - "cobertura.xml"
+  - "clover.xml"          # PHPUnit/Clover
+
+  # Lockfiles — exact dependency pins. Bodies carry no signal beyond the
+  # manifest (recon Step 2 reads only existence). Dependency CHANGES are still
+  # caught by the recon fingerprint (baseline_state.MANIFEST_NAMES), which does
+  # NOT consult is_excluded — so excluding the body is regression-free and also
+  # stops false incremental triggers from substrings inside the lockfile.
+  # `*.lock` covers yarn.lock, Cargo.lock, Gemfile.lock, poetry.lock,
+  # Pipfile.lock, composer.lock, mix.lock, uv.lock, pubspec.lock, flake.lock.
+  - "*.lock"
+  - "package-lock.json"
+  - "npm-shrinkwrap.json"
+  - "pnpm-lock.yaml"
+  - "packages.lock.json"  # .NET
+  - "gradle.lockfile"     # Gradle (not a *.lock basename)
 
   # Type declarations — no runtime behavior
   - "*.d.ts"
 
-  # Auto-generated
+  # Auto-generated. The authoritative SOURCE (.proto / schema) is whitelisted
+  # in always_include; these are mechanical codegen outputs with no logic.
   - "*.pb.go"
   - "*.pb.js"
+  - "*.pb.cc"             # C++ protobuf
+  - "*.pb.h"
+  - "*_pb2.py"            # Python protobuf
+  - "*_pb2_grpc.py"       # Python gRPC stubs
   - "*.generated.ts"
   - "*.generated.js"
   - "*.generated.go"
+  - "*.generated.cs"
+  - "*.g.cs"              # C# source-generator output
+  - "*.designer.cs"       # C# designer (WinForms/WPF) generated
+  - "*.g.dart"            # Dart build_runner codegen
+  - "*.freezed.dart"      # Dart freezed codegen
 
   # Story / fixture / mock files
   - "*.stories.js"
@@ -395,6 +505,21 @@ opt_in:
       - "*.spec.js"
       - "*.spec.ts"
       - "*.d.ts"
+      # Colocated test conventions (mirror the file_patterns excludes above)
+      - "*_test.go"
+      - "test_*.py"
+      - "*_test.py"
+      - "conftest.py"
+      - "*_spec.rb"
+      - "*_test.rb"
+      - "*Test.java"
+      - "*Tests.java"
+      - "*IT.java"
+      - "*Test.kt"
+      - "*Tests.kt"
+      - "*Test.cs"
+      - "*Tests.cs"
+      - "*Test.php"
 
   # New (Sprint 1 Item E.3) — QA reviewer Check 2 Pass 2c.
   # Not a scan directory override; documented here so the flag surface is

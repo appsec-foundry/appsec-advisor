@@ -183,6 +183,34 @@ class TestIsExcluded:
             "src/types/api.d.ts",
             "src/generated/protocol.pb.go",
             "components/Button.stories.tsx",
+            # Colocated tests (non-JS naming conventions)
+            "services/user_test.go",
+            "app/auth/test_login.py",
+            "app/auth/login_test.py",
+            "lib/order_spec.rb",
+            "src/Auth/LoginTests.cs",
+            "src/api/UserControllerTest.java",
+            # Lockfiles (body has no signal beyond manifest)
+            "package-lock.json",
+            "frontend/yarn.lock",
+            "services/api/Cargo.lock",
+            "gradle.lockfile",
+            # Generated code
+            "proto/user_pb2.py",
+            "lib/models/user.freezed.dart",
+            "Forms/MainForm.designer.cs",
+            # Generated coverage / report output
+            ".nyc_output/out.json",
+            "lcov.info",
+            "coverage.xml",
+            # Documents / packaged binaries
+            "docs/manual.pdf",
+            "build/app-release.apk",
+            "dist/pkg.whl",
+            # IaC / build caches
+            ".terraform/providers/registry.tf",
+            "services/.yarn/cache/lodash.zip",
+            "playwright-report/index.html",
         ],
     )
     def test_excluded_paths(self, path):
@@ -200,6 +228,15 @@ class TestIsExcluded:
             ".github/workflows/ci.yml",
             "migrations/001_create_users.sql",
             "api/schema.graphql",
+            # Substring-trap guards — these contain test/cache/dist/lock as a
+            # SUBSTRING but are real source. Exact-segment matching must NOT
+            # exclude them (a substring-based filter would be a quality bug).
+            "src/cache/redis_client.ts",          # app caching layer (cache poisoning surface)
+            "services/attestation/verify.go",      # SLSA/supply-chain attestation
+            "app/distribution/router.py",          # "dist" substring
+            "src/contest/leaderboard.ts",          # "test" substring
+            "lib/blocklist/loader.go",             # "lock" substring
+            "internal/latest/handler.go",          # "test" substring
         ],
     )
     def test_included_paths(self, path):
@@ -538,6 +575,32 @@ class TestOptInRelief:
 
     def test_fixtures_dir_included_with_opt_in(self):
         assert not scan_excludes.is_excluded("src/fixtures/mock-tokens.json", opt_ins=["SCAN_TEST_FILES"])
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "services/user_test.go",
+            "app/auth/test_login.py",
+            "lib/order_spec.rb",
+            "src/Auth/LoginTests.cs",
+        ],
+    )
+    def test_colocated_test_excluded_by_default(self, path):
+        assert scan_excludes.is_excluded(path), f"{path} should be excluded by default"
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "services/user_test.go",
+            "app/auth/test_login.py",
+            "lib/order_spec.rb",
+            "src/Auth/LoginTests.cs",
+        ],
+    )
+    def test_colocated_test_re_included_with_opt_in(self, path):
+        assert not scan_excludes.is_excluded(path, opt_ins=["SCAN_TEST_FILES"]), (
+            f"{path} must be re-included when SCAN_TEST_FILES is enabled"
+        )
 
     def test_unknown_opt_in_noop(self):
         assert scan_excludes.is_excluded("tests/test_auth.py", opt_ins=["NONEXISTENT_FLAG"])
