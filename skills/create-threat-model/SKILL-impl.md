@@ -1204,6 +1204,7 @@ Notes
   • `plugin tier=minor` → `"Consider --full — minor plugin bumps usually ship analysis improvements that only affect newly-scanned code in incremental."`
   • `compat=older-compatible` → `"Analysis schema drifted (baseline analysis_version older but compatible) — full rebuild applies new categories to ALL findings."`
   • `cfg.repo_size_capped=True` → `"STRIDE component count capped at <N> (would have been 5) due to large repo (<S> source files)."`
+  • orchestrating model is Opus-class (the model running THIS skill — you know your own model) → `"Orchestrating on Opus — this mechanical driver layer (gates/dispatch/context) costs ~5× a Sonnet session for no analysis-quality gain (sub-agents are auto-routed regardless). For routine runs, /clear then /model sonnet and re-run."` Emit this note ONCE per run, advisory only — never block, never prompt; suppress it when the orchestrating model is Sonnet/Haiku-class.
 
 The rendered summary goes verbatim into the response text — no
 ``` code fence around it. Section headers (`Target`, `Plugin`, `Decision`, ...)

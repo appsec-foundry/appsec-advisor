@@ -313,6 +313,8 @@ Open work items currently shaping the next iterations of the plugin:
 
 - **Shared agent state.** Let STRIDE pods, merge, and triage exchange advisory hints via an append-only bulletin instead of only formal artifacts. → [`sharedstate.md`](sharedstate.md)
 
+- **Slimming the orchestration skill.** `create-threat-model/SKILL-impl.md` has grown large. Shrink it incrementally — extract inline Bash into tested scripts, deduplicate blocks, move rationale into script docstrings — lowering orchestration cost (less context per turn). Golden-run-verified, behaviour byte-identical.
+
 - **Ingest existing threat models (idea).** Detect an existing model (e.g. Threat Dragon `threat-model.json`) and use it as non-authoritative context.
 
 

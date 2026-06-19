@@ -159,6 +159,8 @@ Within a run, *which* components receive a full STRIDE pass is derived from crit
 
 > [!NOTE]
 > Benchmark numbers come from a single Node.js/Express reference app (OWASP Juice Shop) and vary substantially with repository size, language/framework mix, model routing, and cache effects. Treat the figures as ballpark orientation, not as predictions for your repo. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
+>
+> The figures above also include the **orchestration layer**, which runs in your interactive session's model (see the tip below). The standard Juice Shop run above costs ~$47 from an Opus session — but ~$20 of that is just Opus orchestration; from a Sonnet session the same run is ~$30 (the analysis sub-agents are auto-routed to Sonnet/Haiku either way, so only the orchestration share shrinks).
 
 ### Budget guardrails
 
@@ -180,6 +182,9 @@ Example:
 > Cost limits only apply when using an `ANTHROPIC_API_KEY`. When running on a standard Claude subscription, there is no per-token API billing, so cost limits are ignored. Time limits remain active in both modes.
 
 For very large repositories, the advisor automatically switches to an optimized scanning strategy to avoid context window overflows.
+
+> [!TIP]
+> **The session model only changes the orchestration layer** — the analysis sub-agents are auto-routed by depth/repo size either way. Sonnet is enough to drive the pipeline (it is a deterministic playbook), so for routine and incremental runs start from a Sonnet session (`/model sonnet`, `/clear` first); Opus orchestration costs ~5× more and only buys higher reliability on long, branchy runs (first runs, large repos, recovery paths) — insurance against a mis-orchestrated run, not better analysis.
 
 ## Repo-local context
 

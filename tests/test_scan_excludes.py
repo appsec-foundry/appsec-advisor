@@ -254,12 +254,12 @@ class TestIsExcluded:
             # Substring-trap guards — these contain test/cache/dist/lock as a
             # SUBSTRING but are real source. Exact-segment matching must NOT
             # exclude them (a substring-based filter would be a quality bug).
-            "src/cache/redis_client.ts",          # app caching layer (cache poisoning surface)
-            "services/attestation/verify.go",      # SLSA/supply-chain attestation
-            "app/distribution/router.py",          # "dist" substring
-            "src/contest/leaderboard.ts",          # "test" substring
-            "lib/blocklist/loader.go",             # "lock" substring
-            "internal/latest/handler.go",          # "test" substring
+            "src/cache/redis_client.ts",  # app caching layer (cache poisoning surface)
+            "services/attestation/verify.go",  # SLSA/supply-chain attestation
+            "app/distribution/router.py",  # "dist" substring
+            "src/contest/leaderboard.ts",  # "test" substring
+            "lib/blocklist/loader.go",  # "lock" substring
+            "internal/latest/handler.go",  # "test" substring
             # Segment/basename false-positive guards — real source, not
             # vendored output or test data.
             "src/external/payment_gateway.ts",
