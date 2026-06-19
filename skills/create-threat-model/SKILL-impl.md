@@ -4034,6 +4034,33 @@ silently drops the deterministic per-stage statistics and timing the script
 computed. If you want to add a one-line pointer (e.g. "Start at the Management
 Summary"), append it *after* the verbatim block, never in place of it.
 
+**Emit it as response TEXT, never only inside a Bash tool result.** The Claude
+Code UI folds Bash/tool output into a collapsed `+N lines (ctrl+o to expand)`
+widget, so a completion summary that lives **only** in the `render_completion_summary.py`
+Bash result is effectively invisible to the user. Whether you compute it inline
+or via Bash, you MUST reproduce the summary as plain response text in your final
+turn — that is the only channel the harness reliably shows.
+
+**Mandatory short console recap (always — the one sanctioned hand-authored
+block).** Regardless of whether the full verbatim block above is shown, the
+final assistant turn MUST end with a compact recap (≤8 lines, plain response
+text, outside any code fence) so the user always gets the at-a-glance result in
+the console. This is the explicit exception to the "do not compose your own
+Summary" rule above. It MUST contain, in this order:
+  - **Dauer / Duration** — the **wall-clock** elapsed time (from `.scan-wall-seconds`,
+    i.e. the `Total elapsed (wall)` line), NOT the inflated `Net agent compute`
+    stage-sum (which double-counts parallel STRIDE/abuse fan-outs). This is the
+    analysis duration the user asked for; if both are worth showing, lead with
+    wall-clock and label the stage-sum as such.
+  - **Verdict** — one-line posture (e.g. `🔴 not production-ready`).
+  - **Threats** — total plus per-severity counts (Critical / High / Medium / Low)
+    and the component count.
+  - **Deliverables** — the artifact paths actually written (`threat-model.md` /
+    `.yaml`, plus `.pdf` / `.html` / `.sarif.json` / slug set when present).
+Keep it short — it is the at-a-glance line the user reads, the way prior runs
+always closed. Do not drop the recap even on dry-run / `--quiet` / partial-render
+paths (shorten it instead).
+
 **What the script produces (format contract):** the output is an unboxed,
 scan-friendly summary in this fixed order:
 
