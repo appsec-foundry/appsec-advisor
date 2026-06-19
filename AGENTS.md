@@ -351,6 +351,7 @@ Prefer small, consistent changes. Before changing behavior, identify affected co
 | Template (`.j2`) | renderer cell-builder (`compose_threat_model.py`), the schema fields it consumes, `data/sections-contract.yaml` section registration, render/QA tests — never edit the template alone |
 | Cleanup or runtime state | `scripts/runtime_cleanup.py`, `docs/internal/contracts/cleanup-whitelist.md`, `docs/internal/contracts/audit-artifacts.md`, `tests/test_runtime_cleanup.py` |
 | Deterministic tail (`build_threat_model_yaml.py` / `compose_threat_model.py` / `export_sarif.py`) or a source scanner | regression-test the effect across repos by replaying a golden fixture — `scripts/threat_fixture.py` freeze/replay, runbook `docs/internal/runbooks/threat-fixture.md` |
+| A new run artifact, log event, or sidecar that could carry findings | `scripts/diagnostic_bundle.py` — the anonymised user→maintainer error bundle must stay finding-free: copies only scrubbed logs + metadata-only inventory, never artifact contents. Add new finding-bearing files to `SENSITIVE_CONTENT` / keep them content-excluded; `tests/test_diagnostic_bundle.py` pins no-leak. |
 
 When uncertain, preserve the deterministic pipeline and make the LLM do less, not more.
 

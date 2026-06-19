@@ -159,12 +159,23 @@ python3 scripts/mock-server.py [port]             # mock REST endpoints: context
 python3 scripts/harvest_requirements.py           # regenerate fallback requirements YAML
 python3 scripts/threat_fixture.py freeze --run /out --into tests/fixtures/golden/<name> --repo /path
 python3 scripts/threat_fixture.py replay --fixture tests/fixtures/golden/<name> --repo /path
+python3 scripts/diagnostic_bundle.py collect --run /out --into . --repo-root /path  # user → maintainer
+python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz          # maintainer triage
 ```
 
 `threat_fixture.py` snapshots a completed run into a golden-master fixture and
 replays the deterministic tail (build-yaml → compose → SARIF + scanners) to
 detect the effect of code changes across repos without re-scanning. See
 [`docs/internal/runbooks/threat-fixture.md`](docs/internal/runbooks/threat-fixture.md).
+
+`diagnostic_bundle.py` builds an **anonymised** `.tgz` a user can send the
+maintainer to triage a pipeline error. It contains only tool/plugin versions,
+run shape (phases reached, stage timings, aggregate count histograms), a
+metadata-only file inventory (name/size/sha — never contents), and the run logs
+with paths/quoted-strings/secrets scrubbed. It never includes the threat-model
+results, finding evidence, component names, or any source. (Contrast
+`threat_fixture.py`, which captures a full replayable fixture for your own or
+consented repos.) `make diagnostic-bundle RUN=/out` / `make inspect-bundle BUNDLE=…`.
 
 ## Repository layout
 

@@ -107,6 +107,24 @@ release-all:  ## Full pre-release sequence: release-check then a live e2e-full (
 	@$(MAKE) --no-print-directory e2e-full
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Diagnostic bundle — anonymised user→maintainer error report
+#
+# Build a finding-free .tgz from a failed run's OUTPUT_DIR (versions, run shape,
+# metadata-only inventory, scrubbed logs) and inspect one on the analysis side.
+# Never contains threat-model results, evidence, or source. See CONTRIBUTING.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+.PHONY: diagnostic-bundle
+diagnostic-bundle:  ## Build an anonymised diagnostic .tgz from a run: make diagnostic-bundle RUN=<repo>/docs/security [REPO_ROOT=<repo>] [INTO=.]
+	@test -n "$(RUN)" || { echo "ERROR: set RUN=<run OUTPUT_DIR>, e.g. make diagnostic-bundle RUN=<repo>/docs/security"; exit 2; }
+	@$(PYTHON) scripts/diagnostic_bundle.py collect --run "$(RUN)" --into "$(or $(INTO),.)" $(if $(REPO_ROOT),--repo-root "$(REPO_ROOT)",)
+
+.PHONY: inspect-bundle
+inspect-bundle:  ## Print a triage summary of a diagnostic bundle: make inspect-bundle BUNDLE=appsec-diag-<id>.tgz
+	@test -n "$(BUNDLE)" || { echo "ERROR: set BUNDLE=<path to .tgz or unpacked dir>"; exit 2; }
+	@$(PYTHON) scripts/diagnostic_bundle.py inspect --bundle "$(BUNDLE)"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Help
 # ─────────────────────────────────────────────────────────────────────────────
 

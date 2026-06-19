@@ -179,6 +179,19 @@ The tools below serve a different purpose: they are developer-facing helpers tha
 
 Full guide: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage.md) · Requirements catalog setup: [`docs/harvester.md`](docs/harvester.md) · Security Coach: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
+### Reporting a pipeline error
+
+If a run fails, build an **anonymised** diagnostic bundle to send the maintainer:
+
+```bash
+make diagnostic-bundle RUN=<repo>/docs/security    # → appsec-diag-<id>.tgz
+```
+
+The bundle contains only tool/plugin versions, run shape (phases reached, stage
+timings, aggregate counts), a metadata-only file inventory, and scrubbed logs.
+It **never** includes the threat-model results, findings, evidence, or any
+source — verify before sending with `make inspect-bundle BUNDLE=appsec-diag-<id>.tgz`.
+
 ## CI integration
 
 `scripts/run-headless.sh` runs `appsec-advisor` non-interactively in the CI/CD
