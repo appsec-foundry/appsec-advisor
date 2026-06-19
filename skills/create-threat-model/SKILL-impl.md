@@ -62,7 +62,7 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 ┌──────────────────────────────────▼──────────────────────────────────┐
 │  Stage 1 — Threat Analysis & Triage                                 │
 │  Agent: appsec-threat-analyst (Sonnet, maxTurns=120)                │
-│  Env  : STAGE1_PHASE_LIMIT=10b                                      │
+│  Env  : STAGE1_PHASE_LIMIT=8 (serial: 10b)                          │
 │  Out  : .recon-summary.md, .stride-*.json, .threats-merged.json,    │
 │         .triage-flags.json, threat-model.yaml, checkpoint=10b       │
 └──────────────────────────────────┬──────────────────────────────────┘
