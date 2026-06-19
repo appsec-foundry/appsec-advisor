@@ -30,7 +30,6 @@ directories:
   - target
   - out
   - .output            # Nuxt 3 build output
-  - bin                # .NET / Go binaries; generic compile output dir
   - obj                # .NET intermediate output
   - coverage
   - htmlcov            # Python coverage HTML report
@@ -52,16 +51,22 @@ directories:
   - .venv
   - venv
   - .tox
+  - .nox
   - .pytest_cache
   - .mypy_cache
   - .ruff_cache
   - .pyre
+  - .hypothesis
+  - .ipynb_checkpoints
 
   # Java / Gradle / Kotlin build caches
   - .gradle
 
   # JS package-manager / framework caches
   - .yarn              # Yarn 2+ (Berry) PnP cache — can be very large
+  - .npm               # npm cache
+  - .pnpm-store        # pnpm global/local store
+  - .vite              # Vite cache
 
   # iOS / CocoaPods / macOS build
   - Pods
@@ -74,13 +79,19 @@ directories:
   - .pub-cache         # Dart pub package cache
   - elm-stuff          # Elm vendored deps + build cache
 
-  # IaC tool caches (the directories themselves are generated; k8s/, terraform/
-  # source dirs are whitelisted in always_include below)
+  # IaC tool caches. Source IaC directories such as k8s/, helm/, terraform/,
+  # and ansible/ are not excluded, but generated provider/build caches are.
   - .terraform         # Terraform provider plugin cache (large binaries)
   - .terragrunt-cache  # Terragrunt generated module cache
+  - .aws-sam           # AWS SAM build output
+  - cdk.out            # AWS CDK synth output
+  - .sst               # SST build/runtime cache
 
   # C / C++ build trees
   - CMakeFiles         # CMake intermediate build artefacts
+  - bazel-bin
+  - bazel-out
+  - bazel-testlogs
 
   # Editor local-history (duplicate file snapshots, no live source)
   - .history
@@ -102,6 +113,10 @@ directories:
   - playwright
   - benchmarks
   - benches
+  - fixtures
+  - __fixtures__
+  - testdata
+  - mocks
 
   # Demo / example code. Framework snippets, intentionally vulnerable demos,
   # and pre-baked secrets here produce false positives in Cat 12 / Cat 28.
@@ -124,21 +139,20 @@ directories:
 
   # Third-party / vendored dependencies beyond vendor/
   - third_party
-  - external
-  - deps
 
   # Runtime artifacts
   - .cache
   - .appsec-cache   # plugin's own cache — avoid self-reference scan
-  - logs
   - tmp
 
   # Generated docs sites (build output of Hugo/Jekyll/Antora/Sphinx etc.)
   - apidocs
   - typedoc
   - jsdoc
-  - site
   - _site
+  - .docusaurus
+  - .vercel
+  - .netlify
 
   # Training-challenge support artefacts (deliberately-vulnerable apps such
   # as CTF / OWASP training projects). Contains intentional false positives
@@ -152,15 +166,16 @@ directories:
 path_prefixes:
   - docs/security/               # plugin output — never re-analyze own output
   - docs/images/                 # diagram/screenshot assets
+  - docs/site/                   # generated docs site output
   - .github/ISSUE_TEMPLATE/
+  - .github/ISSUE_TEMPLATE.md
   - .github/PULL_REQUEST_TEMPLATE/
+  - .github/PULL_REQUEST_TEMPLATE.md
+  - .github/pull_request_template.md
   - data/static/codefixes/       # coding-challenge fix snippets (training apps)
                                  # (intentional exploits / answers — high false-positive rate)
   - data/static/i18n/            # i18n message catalogs — no application logic
-  - data/chatbot/                # chatbot training corpus — no application logic
   - frontend/src/assets/i18n/    # Angular i18n bundles — no application logic
-  - frontend/src/assets/private/ # static private assets (cert/key files ARE covered
-                                 # by the always_include *.pem / *.key patterns above)
 
 # ---------------------------------------------------------------------------
 # File patterns excluded regardless of directory (matched by basename).
@@ -178,34 +193,76 @@ file_patterns:
   # and well-known library basenames that are never application source.
   # Does NOT cover lib/ as a directory to avoid excluding app code like
   # lib/insecurity.ts — use directory-level excludes for that only when safe.
-  - "jquery*.js"
-  - "jquery*.css"
-  - "bootstrap*.js"
-  - "bootstrap*.css"
-  - "lodash*.js"
-  - "moment*.js"
-  - "underscore*.js"
-  - "backbone*.js"
-  - "angular*.js"           # AngularJS (legacy) vendored copies
-  - "react*.js"             # vendored React copies outside node_modules
-  - "vue*.js"
-  - "three*.js"
-  - "d3*.js"
-  - "chart*.js"
-  - "highcharts*.js"
-  - "datatables*.js"
-  - "select2*.js"
-  - "tinymce*.js"
-  - "ckeditor*.js"
-  - "ace*.js"               # Ace editor
-  - "codemirror*.js"
-  - "socket.io*.js"
-
-  # Angular compiler / framework generated outputs that may land outside dist/
-  - "polyfills.js"
-  - "runtime.js"
-  - "main.js"               # Angular entry-point build artefact
-  - "styles.js"             # Angular styles chunk
+  - "jquery.js"
+  - "jquery-*.js"
+  - "jquery.*.js"
+  - "jquery.css"
+  - "jquery-*.css"
+  - "jquery.*.css"
+  - "bootstrap.js"
+  - "bootstrap-*.js"
+  - "bootstrap.*.js"
+  - "bootstrap.css"
+  - "bootstrap-*.css"
+  - "bootstrap.*.css"
+  - "lodash.js"
+  - "lodash-*.js"
+  - "lodash.*.js"
+  - "moment.js"
+  - "moment-*.js"
+  - "moment.*.js"
+  - "underscore.js"
+  - "underscore-*.js"
+  - "underscore.*.js"
+  - "backbone.js"
+  - "backbone-*.js"
+  - "backbone.*.js"
+  - "angular.js"            # AngularJS (legacy) vendored copies
+  - "angular-*.js"
+  - "angular.*.js"
+  - "react.js"              # vendored React copies outside node_modules
+  - "react-*.js"
+  - "react.*.js"
+  - "react-dom.js"
+  - "react-dom-*.js"
+  - "react-dom.*.js"
+  - "vue.js"
+  - "vue-*.js"
+  - "vue.*.js"
+  - "three.js"
+  - "three-*.js"
+  - "three.*.js"
+  - "d3.js"
+  - "d3-*.js"
+  - "d3.*.js"
+  - "chart.js"
+  - "Chart.js"
+  - "chart-*.js"
+  - "chart.*.js"
+  - "highcharts.js"
+  - "highcharts-*.js"
+  - "highcharts.*.js"
+  - "datatables.js"
+  - "datatables-*.js"
+  - "datatables.*.js"
+  - "select2.js"
+  - "select2-*.js"
+  - "select2.*.js"
+  - "tinymce.js"
+  - "tinymce-*.js"
+  - "tinymce.*.js"
+  - "ckeditor.js"
+  - "ckeditor-*.js"
+  - "ckeditor.*.js"
+  - "ace.js"                # Ace editor
+  - "ace-*.js"
+  - "ace.*.js"
+  - "codemirror.js"
+  - "codemirror-*.js"
+  - "codemirror.*.js"
+  - "socket.io.js"
+  - "socket.io-*.js"
+  - "socket.io.*.js"
 
   # Binary / compiled
   - "*.class"
@@ -263,6 +320,7 @@ file_patterns:
   - "*.wav"
   - "*.ogg"
   - "*.flac"
+  - "*.log"
 
   # Documents (no application logic)
   - "*.pdf"
@@ -336,10 +394,16 @@ file_patterns:
   # in always_include; these are mechanical codegen outputs with no logic.
   - "*.pb.go"
   - "*.pb.js"
+  - "*.pb.ts"
+  - "*.pb.java"
+  - "*.pb.kt"
+  - "*.pb.rb"
   - "*.pb.cc"             # C++ protobuf
   - "*.pb.h"
   - "*_pb2.py"            # Python protobuf
   - "*_pb2_grpc.py"       # Python gRPC stubs
+  - "*_pb.ts"
+  - "*_pb.js"
   - "*.generated.ts"
   - "*.generated.js"
   - "*.generated.go"
@@ -357,15 +421,19 @@ file_patterns:
   - "*.stories.mdx"
   - "*.fixture.js"
   - "*.fixture.ts"
+  - "*.fixture.jsx"
+  - "*.fixture.tsx"
   - "*.mock.js"
   - "*.mock.ts"
+  - "*.mock.jsx"
+  - "*.mock.tsx"
 
 # ---------------------------------------------------------------------------
 # Always-include overrides — these WIN over every other rule.
 #
 # Three categories survive exclusion:
 #   1. Source documentation and machine-readable contracts (AsciiDoc, ADRs,
-#      arc42, OpenAPI/proto/GraphQL schemas) — attack-surface signals.
+#      OpenAPI/proto/GraphQL schemas) — attack-surface signals.
 #   2. Manifests, Dockerfiles, env files — security-relevant metadata that
 #      can legitimately appear inside otherwise-excluded directories (a
 #      Dockerfile inside examples/, a package.json inside third_party/).
@@ -393,6 +461,8 @@ always_include:
     - "swagger.json"
     - "*.proto"
     - "schema.graphql"
+    - "*.graphql"
+    - "*.gql"
     - "*.graphqls"
     - "*.thrift"
 
@@ -410,6 +480,14 @@ always_include:
     - "composer.json"
     - "Gemfile"
     - "mix.exs"
+    - ".npmrc"
+    - ".yarnrc"
+    - ".yarnrc.yml"
+    - "pnpm-workspace.yaml"
+    - "bunfig.toml"
+    - ".pypirc"
+    - "pip.conf"
+    - "uv.toml"
 
     # --- Container / orchestration definitions ---
     - "Dockerfile"
@@ -420,9 +498,9 @@ always_include:
     - "docker-compose.yaml"
     - "compose.yml"
     - "compose.yaml"
+    - ".dockerignore"
 
     # --- CI / CD pipeline descriptors (Cat 14, 27 supply-chain surface) ---
-    # GitHub Actions lives at path_prefix .github/workflows/ below.
     - ".gitlab-ci.yml"
     - ".gitlab-ci.yaml"
     - "Jenkinsfile"
@@ -436,6 +514,9 @@ always_include:
     - ".woodpecker.yml"
     - ".woodpecker.yaml"
     - "cloudbuild.yaml"          # Google Cloud Build
+    - "action.yml"
+    - "action.yaml"
+    - "CODEOWNERS"
 
     # --- Dependency / update tooling ---
     - "renovate.json"
@@ -461,24 +542,10 @@ always_include:
   path_prefixes:
     - docs/adr/
     - docs/decisions/
-    - docs/architecture/
-    - docs/architecture/decisions/
-    - arc42/
 
-    # CI / CD pipeline directories (Cat 14, 27 attack surface).
-    - .github/workflows/
-    - .github/actions/           # reusable composite actions
-    - .circleci/
-    - .buildkite/
-    - .gitea/workflows/
-    - .forgejo/workflows/
-
-    # Kubernetes / IaC (separate from Dockerfile whitelist above).
-    - k8s/
-    - kubernetes/
-    - helm/
-    - terraform/
-    - ansible/
+    # Dependency update config (Cat 14, 27 supply-chain surface).
+    - .github/dependabot.yml
+    - .github/dependabot.yaml
 
 # ---------------------------------------------------------------------------
 # Opt-in scan targets — excluded by default, included when the given env
@@ -499,11 +566,21 @@ opt_in:
       - fixtures
       - __fixtures__
       - testdata
+      - mocks
+      - e2e
+      - cypress
+      - playwright
+      - benchmarks
+      - benches
     file_patterns:
       - "*.test.js"
       - "*.test.ts"
+      - "*.test.jsx"
+      - "*.test.tsx"
       - "*.spec.js"
       - "*.spec.ts"
+      - "*.spec.jsx"
+      - "*.spec.tsx"
       - "*.d.ts"
       # Colocated test conventions (mirror the file_patterns excludes above)
       - "*_test.go"
@@ -520,6 +597,14 @@ opt_in:
       - "*Test.cs"
       - "*Tests.cs"
       - "*Test.php"
+      - "*.fixture.js"
+      - "*.fixture.ts"
+      - "*.fixture.jsx"
+      - "*.fixture.tsx"
+      - "*.mock.js"
+      - "*.mock.ts"
+      - "*.mock.jsx"
+      - "*.mock.tsx"
 
   # New (Sprint 1 Item E.3) — QA reviewer Check 2 Pass 2c.
   # Not a scan directory override; documented here so the flag surface is

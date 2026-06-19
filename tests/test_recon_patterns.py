@@ -84,6 +84,14 @@ class TestHardExcludes:
         assert rp._is_excluded("node_modules/foo/package.json")
         assert rp._is_excluded("scripts/node_modules/whatwg-url/package.json")
 
+    def test_composite_action_descriptor_survives_build_named_action_dir(self):
+        """A local GitHub composite action can legitimately live under
+        .github/actions/build/action.yml. The "build" segment is source context
+        here, not a generated build-output directory."""
+        assert not rp._is_excluded(".github/actions/build/action.yml")
+        assert not rp._is_excluded(".github/actions/build/action.yaml")
+        assert rp._is_excluded(".github/actions/build/node_modules/dep/index.js")
+
     def test_scan_exclude_errors_fall_back_to_builtin_dirs(self, monkeypatch):
         class BrokenExcludes:
             @staticmethod

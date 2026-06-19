@@ -99,7 +99,8 @@ class TestYamlShape:
         data = scan_excludes.load_excludes()
         prefixes = data["always_include"]["path_prefixes"]
         assert "docs/adr/" in prefixes
-        assert "docs/architecture/" in prefixes
+        assert "docs/decisions/" in prefixes
+        assert "docs/architecture/" not in prefixes
 
 
 class TestYamlResolutionAndValidation:
@@ -172,16 +173,26 @@ class TestIsExcluded:
             "examples/demo.ts",
             "tests/test_auth.py",
             "e2e/login.spec.ts",
+            "cypress/e2e/login.spec.ts",
+            "src/fixtures/mock-tokens.json",
+            "src/__fixtures__/user.json",
+            "testdata/auth.json",
+            "mocks/payment.ts",
             "storybook/Button.stories.tsx",
             ".cache/foo",
             "logs/server.log",
+            ".github/pull_request_template.md",
             "docs/security/threat-model.md",
             "docs/images/diagram.png",
+            "docs/architecture/diagram.png",
+            "docs/site/index.html",
             ".github/ISSUE_TEMPLATE/bug.md",
             "third_party/vendored-lib/main.py",
             "src/foo.min.js",
             "src/types/api.d.ts",
             "src/generated/protocol.pb.go",
+            "src/generated/protocol.pb.ts",
+            "src/generated/protocol_pb.ts",
             "components/Button.stories.tsx",
             # Colocated tests (non-JS naming conventions)
             "services/user_test.go",
@@ -209,7 +220,14 @@ class TestIsExcluded:
             "dist/pkg.whl",
             # IaC / build caches
             ".terraform/providers/registry.tf",
+            "terraform/.terraform/providers/aws.zip",
+            ".aws-sam/build/template.yaml",
+            "cdk.out/tree.json",
             "services/.yarn/cache/lodash.zip",
+            ".pnpm-store/v3/files/foo",
+            ".vite/deps/react.js",
+            ".nox/py310/tmp.py",
+            ".hypothesis/examples/foo",
             "playwright-report/index.html",
         ],
     )
@@ -228,6 +246,11 @@ class TestIsExcluded:
             ".github/workflows/ci.yml",
             "migrations/001_create_users.sql",
             "api/schema.graphql",
+            "api/schema.gql",
+            ".github/dependabot.yml",
+            ".npmrc",
+            ".yarnrc.yml",
+            "CODEOWNERS",
             # Substring-trap guards — these contain test/cache/dist/lock as a
             # SUBSTRING but are real source. Exact-segment matching must NOT
             # exclude them (a substring-based filter would be a quality bug).
@@ -237,6 +260,22 @@ class TestIsExcluded:
             "src/contest/leaderboard.ts",          # "test" substring
             "lib/blocklist/loader.go",             # "lock" substring
             "internal/latest/handler.go",          # "test" substring
+            # Segment/basename false-positive guards — real source, not
+            # vendored output or test data.
+            "src/external/payment_gateway.ts",
+            "external/auth_service/src/main.go",
+            "src/deps/auth.ts",
+            "deps/payment/client.py",
+            "bin/server.ts",
+            "src/logs/audit_logger.py",
+            "logs/audit_logger.py",
+            "site/app.py",
+            "site/server.ts",
+            "src/reactive-widget.js",
+            "src/chartSigner.js",
+            "src/bootstrapAuth.js",
+            "src/main.js",
+            "src/runtime.js",
         ],
     )
     def test_included_paths(self, path):
@@ -319,11 +358,12 @@ class TestWhitelistWins:
 
     # ---- CI workflows ----
 
-    def test_github_workflows_are_whitelisted(self):
+    def test_github_workflows_are_included(self):
         """CI workflow files are the primary signal for Cat 14 (unpinned
         Actions) and Cat 27 (privilege hardening) — always readable."""
-        assert scan_excludes.is_always_included(".github/workflows/ci.yml")
-        assert scan_excludes.is_always_included(".github/workflows/release.yaml")
+        assert not scan_excludes.is_excluded(".github/workflows/ci.yml")
+        assert not scan_excludes.is_excluded(".github/workflows/release.yaml")
+        assert scan_excludes.is_excluded(".github/workflows/screenshot.png")
 
     def test_leading_dot_slash_is_normalised_for_prefix_matches(self):
         excludes = _minimal_excludes(
@@ -351,11 +391,11 @@ class TestCICoverage:
     @pytest.mark.parametrize(
         "path",
         [
-            # GitHub Actions (path_prefix)
+            # GitHub Actions
             ".github/workflows/ci.yml",
             ".github/workflows/release.yaml",
             ".github/actions/reusable/action.yml",
-            # Other providers (file_patterns + path_prefix)
+            # Other providers
             ".gitlab-ci.yml",
             ".gitlab-ci.yaml",
             "Jenkinsfile",
@@ -388,11 +428,7 @@ class TestCICoverage:
             "ansible/playbook.yml",
         ],
     )
-    def test_ci_file_is_whitelisted(self, path):
-        assert scan_excludes.is_always_included(path), (
-            f"CI file {path} must be in always_include — supply-chain "
-            f"analysis needs every provider's pipeline descriptor"
-        )
+    def test_ci_file_is_included(self, path):
         assert not scan_excludes.is_excluded(path)
 
     @pytest.mark.parametrize(
@@ -405,10 +441,7 @@ class TestCICoverage:
     )
     def test_ci_file_survives_excluded_parent(self, path):
         """CI files inside otherwise-excluded directories must still be
-        readable when the filename itself is whitelisted. Note: path-prefix
-        whitelists (.github/workflows/, .circleci/) are not re-homeable —
-        a fixture at tests/fixtures/.github/workflows/fixture.yml is
-        legitimately treated as test content, not a live CI config."""
+        readable when the filename itself is whitelisted."""
         assert not scan_excludes.is_excluded(path), f"{path} must survive exclusion — CI file whitelist wins"
 
 
@@ -583,6 +616,12 @@ class TestOptInRelief:
             "app/auth/test_login.py",
             "lib/order_spec.rb",
             "src/Auth/LoginTests.cs",
+            "components/Button.test.tsx",
+            "components/Button.spec.tsx",
+            "e2e/login.spec.tsx",
+            "src/fixtures/mock-tokens.json",
+            "testdata/auth.json",
+            "mocks/payment.ts",
         ],
     )
     def test_colocated_test_excluded_by_default(self, path):
@@ -595,6 +634,12 @@ class TestOptInRelief:
             "app/auth/test_login.py",
             "lib/order_spec.rb",
             "src/Auth/LoginTests.cs",
+            "components/Button.test.tsx",
+            "components/Button.spec.tsx",
+            "e2e/login.spec.tsx",
+            "src/fixtures/mock-tokens.json",
+            "testdata/auth.json",
+            "mocks/payment.ts",
         ],
     )
     def test_colocated_test_re_included_with_opt_in(self, path):

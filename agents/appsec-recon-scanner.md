@@ -177,7 +177,7 @@ echo "EXCLUDE_GLOB=$EXCLUDE_GLOB"
 
 **Every Grep call in Step 3 MUST use `glob: "$EXCLUDE_GLOB"`** (substitute the string captured above). The script emits a deterministic, sorted `!{dir1,dir2,...}/**` string covering all excluded directories. File-basename patterns and path-prefix exclusions (e.g. `docs/security/`, `*.min.js`, `*.stories.tsx`) are handled by `is_excluded()` when `security_relevance_filter.py` classifies individual files in incremental mode — **they do not need to be repeated in the glob**.
 
-**Whitelist override — already baked into the data file.** Files matching `always_include` (e.g. `*.adoc`, `*.proto`, `openapi.yaml`, `docs/adr/**`, `arc42/**`) are NEVER excluded, even if they live under a path that would otherwise match. This preserves ADRs, AsciiDoc source docs, and API contracts as first-class inputs for Phase 1 context resolution.
+**Whitelist override — already baked into the data file.** Files matching `always_include` (e.g. `*.adoc`, `*.proto`, `*.graphql`, `*.gql`, `openapi.yaml`, `docs/adr/**`) are NEVER excluded, even if they live under a path that would otherwise match. This preserves ADRs, AsciiDoc source docs, and API contracts as first-class inputs for Phase 1 context resolution.
 
 **Opt-in override:** When the orchestrator passes `SCAN_TEST_FILES=true` (set via `config.json → scanning.include_test_files: true`), invoke the script with the `SCAN_TEST_FILES` argument — see the commented alternative in the Bash block above. This relaxes the exclusion for test directories and test-file patterns.
 

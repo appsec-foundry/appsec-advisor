@@ -195,7 +195,22 @@ def _has_hard_excluded_segment(rel_path: str) -> bool:
     return False
 
 
+def _is_github_composite_action_descriptor(rel_path: str) -> bool:
+    parts = PurePosixPath(rel_path.replace("\\", "/")).parts
+    return (
+        len(parts) >= 4
+        and parts[0] == ".github"
+        and parts[1] == "actions"
+        and parts[-1] in {"action.yml", "action.yaml"}
+    )
+
+
 def _is_excluded(rel_path: str) -> bool:
+    # Composite action descriptors are CI/CD source. A valid action directory
+    # can be named "build", which would otherwise trip the generic build-cache
+    # hard exclude before the shared whitelist can preserve action.yml.
+    if _is_github_composite_action_descriptor(rel_path):
+        return False
     # Hard exclusion wins over every whitelist — dep trees must not leak
     # into the recon results regardless of filename.
     if _has_hard_excluded_segment(rel_path):

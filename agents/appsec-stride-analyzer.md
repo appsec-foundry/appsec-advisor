@@ -189,7 +189,7 @@ EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob)
 
 The glob is produced from `data/scan-excludes.yaml` (managed by `scripts/scan_excludes.py`). Covers excluded directories only — file-basename and path-prefix exclusions are enforced by `is_excluded()` and the whitelist rules in the YAML.
 
-**Whitelist (always-included)** files that survive exclusion: `*.adoc`, `*.asciidoc`, `*.proto`, `openapi.{yaml,json}`, `schema.graphql`, anything under `docs/adr/`, `docs/decisions/`, `docs/architecture/`, `arc42/`.
+**Whitelist (always-included)** files that survive exclusion: `*.adoc`, `*.asciidoc`, `*.proto`, `*.graphql`, `*.gql`, `openapi.{yaml,json}`, `schema.graphql`, anything under `docs/adr/` and `docs/decisions/`.
 
 Never read lock files, minified/bundled files, compiled binaries, image/media files, or test/spec files — handled by the centralised exclusion set.
 

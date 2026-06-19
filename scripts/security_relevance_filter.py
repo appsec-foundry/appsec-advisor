@@ -304,7 +304,18 @@ def _is_dockerfile(name: str) -> bool:
 
 def _is_iac_file(rel_path: str, name: str, suffix: str) -> bool:
     iac_suffixes = {".tf", ".tfvars"}
-    iac_dir_hints = ("k8s/", "kubernetes/", "helm/", "terraform/", "ansible/", ".github/workflows/")
+    iac_dir_hints = (
+        "k8s/",
+        "kubernetes/",
+        "helm/",
+        "terraform/",
+        "ansible/",
+        ".github/workflows/",
+        ".circleci/",
+        ".buildkite/",
+        ".gitea/workflows/",
+        ".forgejo/workflows/",
+    )
     return (
         suffix in iac_suffixes
         or name in {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
