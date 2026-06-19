@@ -1,0 +1,1 @@
+{"tool_use_id": "toolu_014nA9apgA3f6rLaYunaEyF3", "session_id": "040ee51b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1781713185, "input_summary": "ls /home/mrohr/juice-shop/models/ && echo \"---\" && ls /home/mrohr/juice-shop/data/ && echo \"---\" && ls /home/mrohr/juice-shop/lib/ | grep -i mongo && echo \"---\"\u2026"}

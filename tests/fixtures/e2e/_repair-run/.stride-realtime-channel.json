@@ -1,0 +1,242 @@
+{
+  "component_id": "realtime-channel",
+  "component_name": "Real-time WebSocket Channel",
+  "started_at": "2026-06-17T16:19:34Z",
+  "analyzed_at": "2026-06-17T16:20:45Z",
+  "partial": false,
+  "skipped_categories": [],
+  "compliance_scope_applied": [],
+  "resolved_prior_findings": [],
+  "threats": [
+    {
+      "local_id": "realtime-channel-001",
+      "threat_category_id": "TH-01",
+      "additional_categories": [],
+      "stride": "Spoofing",
+      "cwe": "CWE-306",
+      "title": "Missing Authentication on WebSocket Connection (lib/startup/registerWebsocketEvents.ts:24)",
+      "affected_parameter": "socket connection",
+      "scenario": "Any internet-facing client can open a Socket.IO connection to ws://host:3000/socket.io/ without presenting any credential. The `io.on('connection', ...)` handler at line 24 applies no authentication middleware, JWT check, or session validation before processing the socket. An unauthenticated attacker can connect and (1) receive all pending `challenge solved` notifications buffered in-memory, (2) send `notification received` messages to delete others' notifications, and (3) trigger challenge-verification handlers. The Socket.IO CORS option at line 20 (`origin: 'http://localhost:4200'`) only governs XHR polling CORS headers; native WebSocket upgrades bypass this restriction entirely in browsers that support the WS protocol directly.",
+      "evidence_summary": "`io.on('connection', (socket: any) => { ... })` at line 24 executes all message handlers with no preceding authentication check or middleware.",
+      "impact_description": "Any external actor gains full access to real-time server state and all message handlers, indistinguishable from an authenticated session.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Socket.IO CORS option restricts `Access-Control-Allow-Origin` to localhost:4200 for XHR polling; no equivalent guard exists for native WebSocket upgrade connections.",
+      "mitigation_title": "Add authentication middleware to Socket.IO connection handler in registerWebsocketEvents.ts",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Implement a Socket.IO `io.use()` middleware that reads the JWT from the `auth` handshake parameter or `Authorization` header: `io.use((socket, next) => { const token = socket.handshake.auth.token; verify(token, secret, (err, decoded) => { if (err) return next(new Error('Unauthorized')); socket.data.user = decoded; next(); }); })`.",
+          "Reject unauthenticated connections before the `connection` event fires; ensure the client sends the Bearer token in the Socket.IO handshake `auth` object: `io('ws://host:3000', { auth: { token: localStorage.getItem('token') } })`.",
+          "Scope per-message handlers (`notification received`, `verifyLocalXssChallenge`, etc.) to check `socket.data.user` before processing, ensuring session identity is available for all handler logic."
+        ],
+        "code_example": "// In registerWebsocketEvents.ts\nio.use((socket: any, next: any) => {\n  const token = socket.handshake.auth?.token\n  if (!token) return next(new Error('Authentication required'))\n  try {\n    socket.data.user = security.verify(token)\n    next()\n  } catch {\n    next(new Error('Invalid token'))\n  }\n})",
+        "reference": "CWE-306"
+      },
+      "evidence": {
+        "file": "lib/startup/registerWebsocketEvents.ts",
+        "line": 24
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "io\\.use\\|socket\\.handshake\\.auth\\|authenticate",
+          "search_paths": ["lib/startup/registerWebsocketEvents.ts"],
+          "hit_count": 0,
+          "searched_at": "2026-06-17T16:20:00Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "realtime-channel-002",
+      "threat_category_id": "TH-06",
+      "additional_categories": ["TH-01"],
+      "stride": "Tampering",
+      "cwe": "CWE-284",
+      "title": "Unauthenticated Mutation of Shared Notification State (lib/startup/registerWebsocketEvents.ts:34)",
+      "affected_parameter": "data (flag value in notification received event)",
+      "scenario": "The `notification received` socket event handler at line 34-38 accepts a `data` value from any connected client and uses it to find and splice entries from the global in-memory `notifications` array: `const i = notifications.findIndex(({ flag }) => flag === data); if (i > -1) { notifications.splice(i, 1); }`. No authentication check precedes this write. An unauthenticated attacker who knows (or guesses) any flag string can delete that notification from the server's in-memory queue, causing legitimate users who connect afterward to never receive that challenge notification. Because the `notifications` array is module-level shared state, deletion affects all future connections.",
+      "evidence_summary": "`notifications.splice(i, 1)` at line 37 is reachable by any unauthenticated WebSocket client by sending a `notification received` event containing any flag value.",
+      "impact_description": "An attacker can silently purge challenge notifications from the server queue, denying them to all subsequent connecting users without any authentication requirement.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None — no authentication, no rate limit, no ownership check on the notification being deleted.",
+      "mitigation_title": "Require authenticated socket identity before processing notification received events in registerWebsocketEvents.ts",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "After adding the `io.use()` authentication middleware (see realtime-channel-001), validate that `socket.data.user` owns or is entitled to dismiss the notification referenced by `data` before calling `notifications.splice()`.",
+          "Scope notification dismissal to per-user notification tracking rather than a shared global array — store notifications keyed by userId so one user's dismissal cannot affect another's queue."
+        ],
+        "code_example": null,
+        "reference": "CWE-284"
+      },
+      "evidence": {
+        "file": "lib/startup/registerWebsocketEvents.ts",
+        "line": 34
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "realtime-channel-003",
+      "threat_category_id": "TH-05",
+      "additional_categories": ["TH-08"],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-862",
+      "title": "Unauthenticated Challenge Solve Bypass via WebSocket Handlers (lib/startup/registerWebsocketEvents.ts:41)",
+      "affected_parameter": "data (verifyLocalXssChallenge / verifySvgInjectionChallenge / verifyCloseNotificationsChallenge events)",
+      "scenario": "Three socket event handlers — `verifyLocalXssChallenge` (line 41), `verifySvgInjectionChallenge` (line 46), and `verifyCloseNotificationsChallenge` (line 50) — accept attacker-controlled data and directly invoke `challengeUtils.solveIf()`, which writes `challenge.solved = true` to the database. An unauthenticated attacker can: (1) send `{event: 'verifyLocalXssChallenge', data: '<iframe src=\"javascript:alert(`xss`)\">' }` to mark the XSS challenge solved without executing XSS in a browser; (2) send a path string matching the SVG injection regex to solve that challenge; (3) send `[1, 2]` (a two-element array) to solve the close-notifications challenge. In all cases `challengeUtils.solve()` persists the result to the database, bypassing the intended in-browser verification flow.",
+      "evidence_summary": "`challengeUtils.solveIf(challenges.localXssChallenge, () => utils.contains(data, ...))` at line 42 is callable by any unauthenticated socket client by sending the known payload string.",
+      "impact_description": "An unauthenticated attacker gains full credit for multiple CTF challenges without performing the required security exercises, undermining the integrity of the application's challenge system.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None — no authentication on connection or on the individual handler invocations.",
+      "mitigation_title": "Gate challenge-verification socket handlers behind authenticated socket sessions in registerWebsocketEvents.ts",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Implement connection-level authentication via `io.use()` middleware (see realtime-channel-001) so challenge verification handlers are only reachable by authenticated users.",
+          "Within each verification handler, additionally bind the solve action to the authenticated `socket.data.user.id` so only the user whose session performed the browser-side action receives credit.",
+          "Consider server-side verification of the actual user action context (e.g., checking that the XSS payload was reflected in a real HTTP response to the user's session) rather than accepting the payload string over WebSocket as proof of exploitation."
+        ],
+        "code_example": null,
+        "reference": "CWE-862"
+      },
+      "evidence": {
+        "file": "lib/startup/registerWebsocketEvents.ts",
+        "line": 41
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "realtime-channel-004",
+      "threat_category_id": "TH-09",
+      "additional_categories": [],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-668",
+      "title": "Unauthenticated CTF Flag Broadcast on WebSocket Connect (lib/startup/registerWebsocketEvents.ts:30)",
+      "affected_parameter": "notifications array (flag field)",
+      "scenario": "When any client connects to the WebSocket, the handler at lines 30-32 iterates all pending entries in the `notifications` array and emits each as a `challenge solved` event. The notification object (built in challengeUtils.ts:58-66) includes the `flag` field — the CTF flag value computed by `utils.ctfFlag(challenge.name)`. An unauthenticated attacker opens a WebSocket connection and immediately receives all pending challenge flags, including flags from other users' solved challenges that haven't been acknowledged yet. No authentication, no scoping to the connecting user's identity.",
+      "evidence_summary": "`notifications.forEach((notification) => { socket.emit('challenge solved', notification) })` at line 30-31 unconditionally replays all pending notifications — including `flag` values — to every connecting socket regardless of identity.",
+      "impact_description": "An attacker obtains CTF flag values for challenges they have not solved, defeating the purpose of the Juice Shop challenge system.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "Notification description is HTML-sanitized (challengeUtils.ts:61) before inclusion, but the flag field itself is not gated or redacted.",
+      "mitigation_title": "Scope challenge solved notification broadcast to the authenticated owning user's socket in challengeUtils.ts and registerWebsocketEvents.ts",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "After adding socket authentication (realtime-channel-001), store each notification with the `userId` of the solver and only emit `challenge solved` events to sockets associated with that user via `io.to(socketId).emit(...)` rather than the global broadcast `io.emit()`.",
+          "In `registerWebsocketEvents.ts` line 30-31, filter the notifications replay to only entries whose `userId` matches `socket.data.user.id` to prevent cross-user flag leakage on connection.",
+          "Alternatively, if CTF flags should be globally visible (e.g., shared challenge board), remove the `flag` field from broadcast payloads and serve it only through an authenticated REST endpoint."
+        ],
+        "code_example": null,
+        "reference": "CWE-668"
+      },
+      "evidence": {
+        "file": "lib/startup/registerWebsocketEvents.ts",
+        "line": 30
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "realtime-channel-005",
+      "threat_category_id": "TH-14",
+      "additional_categories": [],
+      "stride": "Denial of Service",
+      "cwe": "CWE-400",
+      "title": "Unbounded WebSocket Connection Acceptance Without Rate Limiting (lib/startup/registerWebsocketEvents.ts:19)",
+      "affected_parameter": "WebSocket connection endpoint (port 3000)",
+      "scenario": "The Socket.IO server created at line 19-20 accepts connections from any client with no connection rate limiting, no per-IP limit, and no maximum concurrent connection count. An attacker can open thousands of simultaneous WebSocket connections from a single host or distributed botnet. Each connection triggers the notification replay loop (lines 30-32), consuming CPU and memory proportional to the notifications array size. Socket.IO maintains per-connection state (socket object, event listener registrations) that accumulates unbounded. Combined with the absence of authentication, this attack requires no credentials.",
+      "evidence_summary": "`new Server(server, { cors: { origin: 'http://localhost:4200' } })` at line 20 creates the Socket.IO server with no `maxHttpBufferSize`, no connection limit, and no rate-limiting option configured.",
+      "impact_description": "An attacker exhausts server file descriptors, memory, and CPU, causing a denial of service for all legitimate WebSocket and HTTP users.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None identified — no connection limit, no rate limiting middleware.",
+      "mitigation_title": "Enforce connection rate limits and maximum concurrent WebSocket connections in registerWebsocketEvents.ts",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Configure Socket.IO `maxHttpBufferSize` option to cap incoming message size (e.g., `new Server(server, { maxHttpBufferSize: 1e4 })` for 10KB) to limit per-message memory consumption.",
+          "Implement a per-IP connection rate limiter using `socket.handshake.address` in the `io.use()` middleware: track connection counts per IP in a Map or Redis and reject if over threshold (e.g., 10 connections/IP).",
+          "Set a maximum message rate per socket using a token-bucket limiter on incoming events to prevent event flooding on existing connections.",
+          "Consider wrapping the Socket.IO endpoint behind the same Express rate-limiting middleware used for HTTP routes (e.g., `express-rate-limit` applied to `/socket.io/`)."
+        ],
+        "code_example": "const io = new Server(server, {\n  cors: { origin: 'http://localhost:4200' },\n  maxHttpBufferSize: 1e5  // 100KB max per message\n})\n\nconst connCounts = new Map<string, number>()\nio.use((socket: any, next: any) => {\n  const ip = socket.handshake.address\n  const count = (connCounts.get(ip) ?? 0) + 1\n  if (count > 10) return next(new Error('Too many connections'))\n  connCounts.set(ip, count)\n  socket.on('disconnect', () => connCounts.set(ip, (connCounts.get(ip) ?? 1) - 1))\n  next()\n})",
+        "reference": "CWE-400"
+      },
+      "evidence": {
+        "file": "lib/startup/registerWebsocketEvents.ts",
+        "line": 20
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "rateLimit\\|throttle\\|maxHttpBufferSize\\|connectionLimit",
+          "search_paths": ["lib/startup/registerWebsocketEvents.ts"],
+          "hit_count": 0,
+          "searched_at": "2026-06-17T16:20:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "realtime-channel-006",
+      "threat_category_id": "TH-14",
+      "additional_categories": [],
+      "stride": "Denial of Service",
+      "cwe": "CWE-1333",
+      "title": "ReDoS via Unanchored Regex on Attacker-Controlled WebSocket Data (lib/startup/registerWebsocketEvents.ts:47)",
+      "affected_parameter": "data (verifySvgInjectionChallenge event)",
+      "scenario": "The `verifySvgInjectionChallenge` handler at line 46-47 calls `data?.match(/.*\\.\\.\\/\\.\\.\\/\\.\\.[\\ w/-]*?\\/redirect\\?to=https?:\\/\\/placecats\\.com\\/(g\\/)?[\\d]+\\/[\\d]+.*/)` where `data` is fully attacker-controlled. The regex has unanchored `.*` at both ends and a lazy `[\\ w/-]*?` in the middle. Node.js uses a backtracking regex engine. An attacker can send a crafted string such as `'../../../' + 'a/'.repeat(50000)` that causes catastrophic backtracking — the engine repeatedly tries combinations of the lazy quantifier against the fixed suffix `/redirect?to=...` that never appears. This blocks the JavaScript event loop thread for the duration of the match, causing all Socket.IO events to stall.",
+      "evidence_summary": "`data?.match(/.*\\.\\.\\/\\.\\.\\/\\.\\.[\\ w/-]*?\\/redirect\\?to=.../)`  at line 47 applies an unanchored backtracking regex to an attacker-supplied string with no length or content pre-check.",
+      "impact_description": "A single crafted WebSocket message can block the Node.js event loop for seconds to minutes, causing a denial of service for all active connections.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "controls_in_place": "None — no input length limit, no pre-validation before the regex match.",
+      "mitigation_title": "Pre-validate and length-cap data before regex match in verifySvgInjectionChallenge handler",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add a length check before the regex: `if (typeof data !== 'string' || data.length > 500) return;` to reject oversized or non-string inputs.",
+          "Rewrite the regex to be anchored and non-backtracking: replace the leading `.*` with `^[^]*?` and reduce ambiguity in the middle quantifier, or use a non-backtracking approach by splitting on known delimiters first.",
+          "Consider using the Node.js `vm.runInNewContext()` with a timeout, or the `re2` package (a linear-time RE2 engine for Node), for any regex applied to untrusted input."
+        ],
+        "code_example": "socket.on('verifySvgInjectionChallenge', (data: any) => {\n  if (typeof data !== 'string' || data.length > 500) return  // ReDoS guard\n  challengeUtils.solveIf(challenges.svgInjectionChallenge, () => {\n    return data.match(/.*\\.\\.\\/\\.\\.\\/\\.\\.[\\ w/-]*?\\/redirect\\?to=https?:\\/\\/placecats\\.com\\/(g\\/)?[\\d]+\\/[\\d]+.*/) &&\n      security.isRedirectAllowed(data)\n  })\n})",
+        "reference": "CWE-1333"
+      },
+      "evidence": {
+        "file": "lib/startup/registerWebsocketEvents.ts",
+        "line": 47
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    }
+  ]
+}

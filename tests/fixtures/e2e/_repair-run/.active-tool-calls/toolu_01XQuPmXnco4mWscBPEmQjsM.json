@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_01XQuPmXnco4mWscBPEmQjsM", "session_id": "5f22d34b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1780512505, "input_summary": "CLAUDE_PLUGIN_ROOT=/home/mrohr/appsec-advisor && OUTPUT_DIR=/home/mrohr/juice-shop/docs/security && cat \"$OUTPUT_DIR/.merge-candidates.json\" | python3 -c \"impor\u2026"}

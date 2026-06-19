@@ -3,185 +3,157 @@
   "security_controls": [
     {
       "domain": "Identity and Authentication",
-      "control": "Password hashing",
+      "control": "Password-Based Authentication",
       "effectiveness": "Unsafe",
-      "evidence": "lib/insecurity.ts:43 uses crypto.createHash('md5') \u2014 trivially reversible",
-      "verdict_reason": "MD5 is broken for password storage; no salt; bcrypt/argon2 required"
+      "evidence": "routes/login.ts:34 \u2014 raw SQL with string interpolation; lib/insecurity.ts:43 \u2014 MD5 hash with no salt",
+      "notes": "Two compounding failures: (1) the login query is injectable via email field, bypassing the password check entirely; (2) when the query does evaluate, the stored hash is unsalted MD5 which is trivially reversible via rainbow tables. No bcrypt, argon2, or scrypt."
     },
     {
       "domain": "Identity and Authentication",
-      "control": "JWT signing key management",
+      "control": "JWT Token Issuance and Verification",
       "effectiveness": "Unsafe",
-      "evidence": "lib/insecurity.ts:26-28 \u2014 RSA private key hardcoded as string literal",
-      "verdict_reason": "Hardcoded key enables offline JWT forgery for any user; key compromise is permanent"
+      "evidence": "lib/insecurity.ts:23 (hardcoded RSA private key), lib/insecurity.ts:54 (express-jwt@0.1.3 no algorithms allowlist), lib/insecurity.ts:56 (1024-bit RSA key)",
+      "notes": "Three compounding failures: (1) private key committed to public source repository; (2) express-jwt@0.1.3 has no algorithms parameter, enabling alg:none bypass; (3) 1024-bit key is below NIST minimum of 2048-bit."
     },
     {
       "domain": "Identity and Authentication",
-      "control": "Login rate limiting",
-      "effectiveness": "Missing",
-      "evidence": "server.ts \u2014 rate limiting only on /rest/user/reset-password and 2FA endpoints; /rest/user/login unprotected",
-      "verdict_reason": "Brute-force of login endpoint unrestricted"
-    },
-    {
-      "domain": "Identity and Authentication",
-      "control": "2FA support",
+      "control": "TOTP / 2FA",
       "effectiveness": "Partial",
-      "evidence": "routes/2fa.ts \u2014 TOTP available but optional",
-      "verdict_reason": "2FA available but not enforced; totpSecret stored in plaintext in DB"
+      "evidence": "routes/2fa.ts \u2014 TOTP implementation present",
+      "notes": "TOTP is implemented and enforced when enabled for a user account, but it is optional and the underlying JWT forgery bypass makes 2FA irrelevant for attacker-minted tokens."
+    },
+    {
+      "domain": "Identity and Authentication",
+      "control": "OAuth / Social Login",
+      "effectiveness": "Partial",
+      "evidence": "Referenced in challenge data and Angular OAuth service; standard library flow",
+      "notes": "OAuth2 social login is present for Google accounts but relies on the same JWT infrastructure with the compromised private key."
+    },
+    {
+      "domain": "Identity and Authentication",
+      "control": "Anonymous Access Controls",
+      "effectiveness": "Weak",
+      "evidence": "server.ts \u2014 21 endpoints with missing_auth_suspect=true including admin endpoints",
+      "notes": "21 endpoints that should require authentication do not. Includes /rest/admin/application-configuration, /rest/user/data-export, and file upload endpoints."
     },
     {
       "domain": "Session and Token Controls",
-      "control": "JWT token storage",
+      "control": "JWT Session Lifecycle",
       "effectiveness": "Unsafe",
-      "evidence": "frontend/src/app/login/login.component.ts:101 \u2014 localStorage.setItem('token',...)",
-      "verdict_reason": "localStorage is XSS-accessible; HttpOnly cookie preferred"
+      "evidence": "lib/insecurity.ts:72 (in-memory tokenMap), lib/insecurity.ts:56 (6h expiry), lib/insecurity.ts:23 (hardcoded key)",
+      "notes": "Tokens are stored in localStorage (XSS-accessible). Server-side session is an in-memory map with no persistence or logout mechanism. The 6-hour expiry is the only session bound, but forged tokens can carry arbitrary expiry."
     },
     {
       "domain": "Session and Token Controls",
-      "control": "JWT algorithm validation",
-      "effectiveness": "Unsafe",
-      "evidence": "routes/verify.ts:83 \u2014 express-jwt@0.1.3 vulnerable to alg:none bypass",
-      "verdict_reason": "express-jwt@0.1.3 does not enforce algorithm; alg:none bypass possible"
-    },
-    {
-      "domain": "Authorization Controls",
-      "control": "Server-side admin authorization",
-      "effectiveness": "Unsafe",
-      "evidence": "frontend/src/app/app.guard.ts \u2014 AdminGuard is client-side only; no server enforcement for admin routes",
-      "verdict_reason": "Admin panel accessible by bypassing client-side Angular guard"
-    },
-    {
-      "domain": "Authorization Controls",
-      "control": "Product modification authorization",
-      "effectiveness": "Unsafe",
-      "evidence": "server.ts:369 \u2014 app.put('/api/Products/:id'...) intentionally commented out",
-      "verdict_reason": "Any user can modify any product price/description unauthenticated"
-    },
-    {
-      "domain": "Authorization Controls",
-      "control": "CSRF protection",
+      "control": "CSRF Protection",
       "effectiveness": "Missing",
-      "evidence": "server.ts \u2014 no csurf or CSRF token middleware found",
-      "verdict_reason": "All state-changing endpoints vulnerable to CSRF from any origin"
+      "evidence": "No CSRF middleware found in server.ts; no SameSite cookie attribute set",
+      "notes": "No CSRF token or SameSite cookie protection. The app uses Authorization header JWT (not cookies) for most endpoints so the practical CSRF risk is reduced, but the cookie-based endpoints (profile) remain vulnerable."
     },
     {
-      "domain": "Query Construction and Data Access",
-      "control": "SQL parameterization",
-      "effectiveness": "Unsafe",
-      "evidence": "routes/search.ts:23, routes/login.ts:37 \u2014 raw string interpolation in Sequelize queries",
-      "verdict_reason": "Direct SQLi exploitable on login and search endpoints without authentication"
+      "domain": "Authorization Controls",
+      "control": "Role-Based Access Control",
+      "effectiveness": "Weak",
+      "evidence": "lib/insecurity.ts:54 (isAuthorized middleware); 18 routes with missing_authz_suspect; routes/address.ts IDOR pattern",
+      "notes": "JWT carries role claim (admin/customer) and isAuthorized() verifies token presence, but object-level authorization (IDOR) is missing across address, order, basket, payment, wallet, and memory endpoints. Any authenticated user can access any other user's objects."
     },
     {
-      "domain": "Query Construction and Data Access",
-      "control": "NoSQL query parameterization",
+      "domain": "Query Construction and Data Access Controls",
+      "control": "SQL Query Parameterization",
       "effectiveness": "Unsafe",
-      "evidence": "routes/showProductReviews.ts:35 \u2014 $where clause with unparameterized input",
-      "verdict_reason": "MongoDB-style operator injection and sleep-based DoS possible"
+      "evidence": "routes/login.ts:34 \u2014 string interpolation; routes/search.ts:23 \u2014 LIKE injection; models use Sequelize ORM but raw() bypassed",
+      "notes": "Two confirmed raw SQL injection points. The ORM is available and used for most queries, but the security-critical paths (login, search) bypass it with raw string interpolation."
     },
     {
-      "domain": "Input Boundary Validation",
-      "control": "Server-side input validation",
-      "effectiveness": "Unsafe",
-      "evidence": "Multiple routes accept unsanitized input; b2bOrder.ts:22 evaluates user-supplied data",
-      "verdict_reason": "No centralized input validation; eval() on user input enables RCE"
+      "domain": "Input Boundary Validation Controls",
+      "control": "Input Validation and Sanitization",
+      "effectiveness": "Weak",
+      "evidence": "sanitize-html@1.4.2 (outdated), no global validation middleware, routes/userProfile.ts:62 (eval on input)",
+      "notes": "Sanitization is inconsistent and point-in-time. sanitize-html@1.4.2 has known bypass CVEs. No global input schema validation middleware (joi/zod/express-validator absent). eval() on user input in userProfile.ts is a direct code injection vector."
     },
     {
-      "domain": "Output Encoding and Rendering",
-      "control": "XSS output encoding",
+      "domain": "Output Encoding and Rendering Controls",
+      "control": "XSS Prevention",
       "effectiveness": "Unsafe",
-      "evidence": "administration.component.ts:60,78 \u2014 bypassSecurityTrustHtml() on user-controlled data",
-      "verdict_reason": "Angular XSS protection deliberately bypassed in admin panel and feedback display"
+      "evidence": "server.ts:187 (XSS filter commented out); routes/userProfile.ts:88 (user-controlled CSP header); Angular template rendering (partial protection)",
+      "notes": "Helmet's xssFilter is intentionally disabled. User-supplied profile image URL is injected into a Content-Security-Policy response header without sanitization, enabling stored XSS via CSP header injection. Angular provides some client-side protection but server-side is absent."
     },
     {
       "domain": "Browser and Cross-Origin Controls",
-      "control": "CORS policy",
-      "effectiveness": "Unsafe",
-      "evidence": "server.ts:181-182 \u2014 app.use(cors()) with no origin restriction",
-      "verdict_reason": "Wildcard CORS allows any origin to make credentialed requests"
+      "control": "CORS Policy",
+      "effectiveness": "Weak",
+      "evidence": "server.ts:181-182 \u2014 app.options('*', cors()) + app.use(cors()) with no origin allowlist",
+      "notes": "Wildcard CORS allows any origin to make credentialed cross-origin requests. Combined with the missing CSRF protection, this enables CSRF-equivalent attacks from any web page."
     },
     {
       "domain": "Browser and Cross-Origin Controls",
       "control": "Content Security Policy",
       "effectiveness": "Missing",
-      "evidence": "server.ts \u2014 helmet.contentSecurityPolicy() not configured; profile page uses unsafe-eval",
-      "verdict_reason": "No CSP header; XSS can load external scripts freely"
+      "evidence": "helmet.contentSecurityPolicy not called in server.ts; only per-response dynamic CSP in userProfile.ts",
+      "notes": "No application-wide CSP is set. The per-user CSP header in userProfile.ts is user-controlled and intentionally injectable (challenge design). No nonce-based script execution protection."
     },
     {
       "domain": "Cryptography Secrets and Data Protection",
-      "control": "Secret management",
+      "control": "Secrets Management",
       "effectiveness": "Unsafe",
-      "evidence": "lib/insecurity.ts:26-44 \u2014 RSA private key and HMAC secret hardcoded as string literals",
-      "verdict_reason": "Production-equivalent secrets embedded in source code permanently compromised"
+      "evidence": "lib/insecurity.ts:23 (RSA private key), lib/insecurity.ts:44 (HMAC key), server.ts:289 (cookie secret), routes/login.ts:61-66 (hardcoded credentials)",
+      "notes": "Four distinct secrets hardcoded in source: RSA private key, HMAC key, cookie parser secret, and multiple user plaintext credentials. All are committed to a public repository. No secrets management system (Vault, AWS Secrets Manager, environment variables) is used."
     },
     {
       "domain": "Cryptography Secrets and Data Protection",
-      "control": "Data encryption at rest",
+      "control": "Password Hashing Algorithm",
+      "effectiveness": "Unsafe",
+      "evidence": "lib/insecurity.ts:43 \u2014 crypto.createHash('md5').update(data).digest('hex')",
+      "notes": "MD5 with no salt is used for all password hashing. MD5 is collision-prone, has no cost factor, and precomputed rainbow tables can reverse most common passwords in milliseconds."
+    },
+    {
+      "domain": "File Parser and Outbound Request Controls",
+      "control": "XML Processing (XXE Prevention)",
+      "effectiveness": "Unsafe",
+      "evidence": "routes/fileUpload.ts:83 \u2014 libxmljs2.parseXml(data, { noent: true })",
+      "notes": "External entity resolution is explicitly enabled (noent: true). This allows XXE attacks that can read arbitrary files from the container filesystem, perform SSRF to internal network addresses, or cause denial of service."
+    },
+    {
+      "domain": "File Parser and Outbound Request Controls",
+      "control": "SSRF Prevention",
       "effectiveness": "Missing",
-      "evidence": "models/user.ts \u2014 password field uses MD5, no encryption for card numbers or PII",
-      "verdict_reason": "Sensitive fields (card numbers, addresses, TOTP secrets) stored in plaintext"
+      "evidence": "routes/profileImageUrlUpload.ts:24 \u2014 fetch(req.body.imageUrl) with no allowlist",
+      "notes": "The profile image URL endpoint fetches arbitrary URLs provided by the user without any allowlist, blocklist, or DNS rebinding protection. Enables SSRF to internal network resources and metadata endpoints."
     },
     {
-      "domain": "File Parser and Outbound Request Controls",
-      "control": "XML parser hardening",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "control": "Dependency Management",
       "effectiveness": "Unsafe",
-      "evidence": "routes/fileUpload.ts:45 \u2014 libxmljs2.parseXml with noent:true enables external entity processing",
-      "verdict_reason": "XXE via uploaded XML files can read local files (/etc/passwd) and cause DoS"
+      "evidence": ".npmrc sets package-lock=false; express-jwt@0.1.3 and jsonwebtoken@0.4.0 are critically outdated; no Dependabot",
+      "notes": "No lockfile and no automated dependency update tooling. Two critically outdated packages with known CVEs are pinned at ancient versions. npm install --unsafe-perm in Dockerfile runs postinstall scripts as root during build."
     },
     {
-      "domain": "File Parser and Outbound Request Controls",
-      "control": "ZIP upload path validation",
-      "effectiveness": "Unsafe",
-      "evidence": "routes/fileUpload.ts:36-52 \u2014 path.resolve check insufficient; directory traversal possible",
-      "verdict_reason": "Crafted ZIP entries can write files outside the intended uploads directory"
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "control": "Container Security",
+      "effectiveness": "Partial",
+      "evidence": "Dockerfile \u2014 distroless image, UID 65532; CFG-001 (unpinned tags), CFG-004 (--unsafe-perm)",
+      "notes": "Runtime posture is good (distroless, non-root). Build-time posture is weak: base images are tag-pinned without digest, enabling supply-chain attacks via image mutation. npm install --unsafe-perm allows malicious postinstall scripts to run as root during build."
     },
     {
-      "domain": "File Parser and Outbound Request Controls",
-      "control": "SSRF prevention",
-      "effectiveness": "Missing",
-      "evidence": "routes/profileImageUrlUpload.ts \u2014 fetches arbitrary URLs from user-supplied input",
-      "verdict_reason": "SSRF allows scanning internal network and accessing metadata services"
-    },
-    {
-      "domain": "Operations Runtime and Supply Chain",
-      "control": "Dependency security",
-      "effectiveness": "Unsafe",
-      "evidence": ".dependabot/config.yml \u2014 express-jwt@0.1.3, sanitize-html@1.4.2, unzipper@0.9.15 explicitly pinned as vulnerable",
-      "verdict_reason": "Three vulnerable dependencies intentionally pinned; supply chain risk known and accepted by design"
-    },
-    {
-      "domain": "Operations Runtime and Supply Chain",
-      "control": "Container image pinning",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "control": "CI/CD Pipeline Security",
       "effectiveness": "Weak",
-      "evidence": "Dockerfile:1,23 \u2014 base images use tags not digest-pinned; distroless final image has no tag",
-      "verdict_reason": "Image substitution attack possible; CI may build with different image versions"
+      "evidence": ".github/workflows/ci.yml (no permissions block), CodeQL SAST present but action refs unpinned",
+      "notes": "GitHub Actions workflows lack permissions restrictions (inherits write-all GITHUB_TOKEN). Action refs use mutable tags rather than SHA pinning. CodeQL SAST scanning is present and provides meaningful value. No release signing or SBOM provenance attestation in CI."
     },
     {
-      "domain": "Operations Runtime and Supply Chain",
-      "control": "CI/CD security scanning",
+      "domain": "Operations Runtime and Supply Chain Controls",
+      "control": "Audit Logging",
       "effectiveness": "Partial",
-      "evidence": ".github/workflows/codeql-analysis.yml, zap_scan.yml \u2014 CodeQL and ZAP scans active",
-      "verdict_reason": "CodeQL (security-extended) and weekly ZAP scan present; some GitHub Actions unpinned"
+      "evidence": "server.ts:338 \u2014 morgan combined format to access log file",
+      "notes": "HTTP access logging via morgan covers all requests. No structured security event log (authentication failures, authorization denials, admin actions). No log integrity protection. Logs served via unauthenticated logfileServer endpoint with path traversal risk."
     },
     {
-      "domain": "Operations Runtime and Supply Chain",
-      "control": "Sensitive file exposure",
-      "effectiveness": "Unsafe",
-      "evidence": "server.ts:270-282 \u2014 /ftp, /encryptionkeys, /support/logs all have directory listing enabled",
-      "verdict_reason": "Confidential documents, JWT keys, and access logs publicly accessible"
-    },
-    {
-      "domain": "Real-time and Not Applicable",
-      "control": "WebSocket security",
+      "domain": "Real-time and Not Applicable Controls",
+      "control": "WebSocket Security (Socket.IO)",
       "effectiveness": "Partial",
-      "evidence": "lib/startup/registerWebsocketEvents.ts \u2014 Socket.io with CORS origin: localhost:4200 only",
-      "verdict_reason": "CORS origin restriction on WebSocket; no authentication required to connect"
-    },
-    {
-      "domain": "Real-time and Not Applicable",
-      "control": "Rate limiting (general)",
-      "effectiveness": "Partial",
-      "evidence": "server.ts \u2014 rate limiting on password reset and 2FA only; login and API endpoints unprotected",
-      "verdict_reason": "Rate limiting coverage too narrow; most attack-relevant endpoints unprotected"
+      "evidence": "lib/startup/registerWebsocketEvents.ts; socket.io@3.1.2",
+      "notes": "Socket.IO is used for real-time chat. The connection upgrade is authenticated by the same JWT middleware but individual socket event handlers do not re-validate the token on each message, creating a time-of-check/time-of-use gap if a token is revoked."
     },
     {
       "domain": "Operations Runtime and Supply Chain Controls",

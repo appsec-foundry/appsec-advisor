@@ -1,0 +1,134 @@
+{
+  "cross_repo": {
+    "check": "cross-repo-boundary",
+    "context_file_present": true,
+    "covered_boundaries": [],
+    "missing_tm_count": 0,
+    "register_used": false,
+    "total_deps": 0,
+    "uncovered_boundaries": []
+  },
+  "gap_count": 0,
+  "owasp": {
+    "check": "owasp-top10",
+    "covered": [
+      {
+        "covered_by_cwes": [
+          22,
+          200,
+          538,
+          548,
+          639,
+          668,
+          862,
+          922
+        ],
+        "default_risk": "High",
+        "id": "A01:2021",
+        "name": "Broken Access Control",
+        "stride": "Elevation of Privilege"
+      },
+      {
+        "covered_by_cwes": [
+          321,
+          347,
+          916
+        ],
+        "default_risk": "High",
+        "id": "A02:2021",
+        "name": "Cryptographic Failures",
+        "stride": "Information Disclosure"
+      },
+      {
+        "covered_by_cwes": [
+          79,
+          89,
+          94
+        ],
+        "default_risk": "Critical",
+        "id": "A03:2021",
+        "name": "Injection",
+        "stride": "Tampering"
+      },
+      {
+        "covered_by_cwes": [
+          209,
+          256,
+          269,
+          312,
+          522,
+          598
+        ],
+        "default_risk": "Medium",
+        "id": "A04:2021",
+        "name": "Insecure Design",
+        "stride": "Tampering"
+      },
+      {
+        "covered_by_cwes": [
+          611
+        ],
+        "default_risk": "Medium",
+        "id": "A05:2021",
+        "name": "Security Misconfiguration",
+        "stride": "Tampering"
+      },
+      {
+        "covered_by_cwes": [
+          1104
+        ],
+        "default_risk": "High",
+        "id": "A06:2021",
+        "name": "Vulnerable and Outdated Components",
+        "stride": "Tampering"
+      },
+      {
+        "covered_by_cwes": [
+          290,
+          306,
+          307,
+          640,
+          798
+        ],
+        "default_risk": "High",
+        "id": "A07:2021",
+        "name": "Identification and Authentication Failures",
+        "stride": "Spoofing"
+      },
+      {
+        "covered_by_cwes": [
+          829,
+          915
+        ],
+        "default_risk": "High",
+        "id": "A08:2021",
+        "name": "Software and Data Integrity Failures",
+        "stride": "Tampering"
+      },
+      {
+        "covered_by_cwes": [
+          778
+        ],
+        "default_risk": "Medium",
+        "id": "A09:2021",
+        "name": "Security Logging and Monitoring Failures",
+        "stride": "Repudiation"
+      },
+      {
+        "covered_by_cwes": [
+          918
+        ],
+        "default_risk": "High",
+        "id": "A10:2021",
+        "name": "Server-Side Request Forgery",
+        "stride": "Tampering"
+      }
+    ],
+    "covered_count": 10,
+    "missing": [],
+    "missing_count": 0,
+    "total_categories": 10
+  },
+  "threats_evaluated": 64,
+  "version": 1
+}

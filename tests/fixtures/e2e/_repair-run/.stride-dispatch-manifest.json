@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-17T16:17:26Z",
+  "stride_profile": {
+    "stride_profile_label": "full"
+  },
+  "components": [
+    {
+      "component_id": "angular-spa",
+      "component_name": "Angular SPA Frontend",
+      "component_description": "Angular-based single-page application served from frontend/dist/frontend/. Handles all user-facing UI, stores JWT tokens in localStorage, and communicates with the Express backend via REST and Socket.IO. Contains intentional client-side vulnerabilities including DOM XSS, insecure localStorage token storage, and prototype pollution.",
+      "component_paths": [
+        "frontend/src/**",
+        "frontend/dist/**",
+        "frontend/*.ts",
+        "frontend/*.json"
+      ],
+      "component_complexity": "moderate",
+      "max_turns": 28,
+      "trust_boundaries": "Browser / Angular SPA Boundary",
+      "taxonomy_slice_dir": "/home/mrohr/juice-shop/docs/security/.taxonomy-slices/angular-spa",
+      "deployment_zones": [
+        "browser"
+      ],
+      "handles_sensitive_data": true,
+      "index_paths": {
+        "prior_findings": "/home/mrohr/juice-shop/docs/security/.dispatch-context/angular-spa/prior-findings.json",
+        "known_threats": "/home/mrohr/juice-shop/docs/security/.dispatch-context/angular-spa/known-threats.json",
+        "cross_repo": "/home/mrohr/juice-shop/docs/security/.dispatch-context/angular-spa/cross-repo.json",
+        "requirements_violations": "/home/mrohr/juice-shop/docs/security/.dispatch-context/angular-spa/requirements-violations.json",
+        "relevant_actors": "none"
+      },
+      "interfaces": [
+        "HTTPS REST API calls to /rest/* and /api/* endpoints",
+        "WSS Socket.IO connection for real-time chat",
+        "localStorage for JWT token and basket ID storage",
+        "Angular routing (client-side navigation, guard-based access control)",
+        "DOM manipulation (template binding, innerHTML equivalent patterns)"
+      ],
+      "controls": [
+        "Angular template binding (auto-escaping in templates)",
+        "sanitize-html@1.4.2 (outdated, used in some Angular service calls)",
+        "No CSP header (helmet.contentSecurityPolicy not configured globally)",
+        "Helmet XSS filter commented out (server.ts:187)"
+      ],
+      "known_vulns": [
+        "JWT stored in localStorage \u2014 accessible to any XSS payload",
+        "sanitize-html@1.4.2 \u2014 outdated, XSS bypass CVEs exist",
+        "Angular Universal SSR not used \u2014 client-side only, full XSS exposure",
+        "Socket.IO client 3.1.2 \u2014 outdated (current 4.x)"
+      ],
+      "estimated_threat_count": 8
+    },
+    {
+      "component_id": "express-backend",
+      "component_name": "Express.js REST API Backend",
+      "component_description": "Node.js 24 / Express 4.22.1 monolith serving REST APIs, static files, and challenge logic. Contains intentional vulnerabilities including SQL injection (login, search), JWT signing with hardcoded RSA private key (lib/insecurity.ts), eval() SSTI (userProfile.ts), SSRF (profileImageUrlUpload.ts), and 21 endpoints missing authentication middleware.",
+      "component_paths": [
+        "routes/**",
+        "server.ts",
+        "lib/**",
+        "app.ts",
+        "build/**"
+      ],
+      "component_complexity": "complex",
+      "max_turns": 35,
+      "trust_boundaries": "Public Internet / Browser Boundary | Application / Data Layer Boundary | Application / File System Boundary | Container / Host Boundary",
+      "taxonomy_slice_dir": "/home/mrohr/juice-shop/docs/security/.taxonomy-slices/express-backend",
+      "deployment_zones": [
+        "container"
+      ],
+      "handles_sensitive_data": true,
+      "index_paths": {
+        "prior_findings": "/home/mrohr/juice-shop/docs/security/.dispatch-context/express-backend/prior-findings.json",
+        "known_threats": "/home/mrohr/juice-shop/docs/security/.dispatch-context/express-backend/known-threats.json",
+        "cross_repo": "/home/mrohr/juice-shop/docs/security/.dispatch-context/express-backend/cross-repo.json",
+        "requirements_violations": "/home/mrohr/juice-shop/docs/security/.dispatch-context/express-backend/requirements-violations.json",
+        "relevant_actors": "none"
+      },
+      "interfaces": [
+        "HTTP/HTTPS REST API on port 3000 (112 routes)",
+        "WebSocket upgrade (Socket.IO) on same port",
+        "Static file serving (Angular SPA, /ftp/, /encryptionkeys/)",
+        "Prometheus /metrics endpoint",
+        "B2B API /b2b/v2/orders (JWT protected)",
+        "Admin endpoints /rest/admin/* (unauthenticated)",
+        "Password reset flow /rest/user/reset-password",
+        "OAuth2 redirect handler"
+      ],
+      "controls": [
+        "express-jwt@0.1.3 isAuthorized() middleware \u2014 applied on subset of routes",
+        "cors() \u2014 wildcard, no origin restriction",
+        "helmet.noSniff() + helmet.frameguard() \u2014 partial",
+        "express-rate-limit \u2014 only on /rest/user/reset-password and 3 other endpoints",
+        "morgan combined-format logging",
+        "sanitize-filename for uploaded filenames",
+        "cookieParser with hardcoded secret 'kekse'"
+      ],
+      "known_secrets": [
+        "RSA private key hardcoded at lib/insecurity.ts:23 \u2014 1024-bit PKCS1 \u2014 **** (permanently compromised, in public repo)",
+        "HMAC key at lib/insecurity.ts:44 \u2014 **** (26 chars)",
+        "Cookie secret at server.ts:289 \u2014 **** (5 chars)",
+        "Support user credential at routes/login.ts:61 \u2014 **** (31 chars)",
+        "Multiple user credentials at routes/login.ts:60-66"
+      ],
+      "known_vulns": [
+        "SQL injection at routes/login.ts:34 \u2014 raw string interpolation in SELECT",
+        "SQL injection at routes/search.ts:23 \u2014 LIKE clause with criteria from req.query.q",
+        "eval(code) SSTI at routes/userProfile.ts:62 \u2014 executes arbitrary JS in Node.js context",
+        "SSRF at routes/profileImageUrlUpload.ts:24 \u2014 fetch(req.body.imageUrl) no allowlist",
+        "21 endpoints missing authentication (missing_auth_suspect=true)",
+        "18 endpoints missing authorization (IDOR patterns)",
+        "express-jwt@0.1.3 \u2014 no algorithms allowlist, alg:none bypass enabled",
+        "jsonwebtoken@0.4.0 \u2014 critically outdated, CVE-2022-23529",
+        "MD5 password hashing at lib/insecurity.ts:43 \u2014 no salt",
+        "1024-bit RSA key (below NIST 2048-bit minimum)",
+        "In-memory session map \u2014 no server-side logout",
+        "Admin configuration endpoints unauthenticated",
+        "Metrics endpoint unauthenticated \u2014 app topology disclosure"
+      ],
+      "estimated_threat_count": 22
+    },
+    {
+      "component_id": "file-upload-service",
+      "component_name": "File Upload & Processing Service",
+      "component_description": "Express route handlers responsible for file ingestion and processing: multer-based multipart upload (fileUpload.ts), profile image upload from URL (profileImageUrlUpload.ts), profile image from file (profileImageFileUpload.ts). Contains XXE via libxmljs2 with noent:true, SSRF via unchecked URL fetch, and path traversal via logfileServer/keyServer/quarantineServer.",
+      "component_paths": [
+        "routes/fileUpload.ts",
+        "routes/profileImageUrlUpload.ts",
+        "routes/profileImageFileUpload.ts",
+        "routes/logfileServer.ts",
+        "routes/keyServer.ts",
+        "routes/quarantineServer.ts",
+        "ftp/**",
+        "encryptionkeys/**",
+        "uploads/**"
+      ],
+      "component_complexity": "moderate",
+      "max_turns": 28,
+      "trust_boundaries": "Application / File System Boundary",
+      "taxonomy_slice_dir": "/home/mrohr/juice-shop/docs/security/.taxonomy-slices/file-upload-service",
+      "deployment_zones": [
+        "container"
+      ],
+      "handles_sensitive_data": true,
+      "index_paths": {
+        "prior_findings": "/home/mrohr/juice-shop/docs/security/.dispatch-context/file-upload-service/prior-findings.json",
+        "known_threats": "/home/mrohr/juice-shop/docs/security/.dispatch-context/file-upload-service/known-threats.json",
+        "cross_repo": "/home/mrohr/juice-shop/docs/security/.dispatch-context/file-upload-service/cross-repo.json",
+        "requirements_violations": "/home/mrohr/juice-shop/docs/security/.dispatch-context/file-upload-service/requirements-violations.json",
+        "relevant_actors": "none"
+      },
+      "interfaces": [
+        "POST /file-upload \u2014 multipart file upload (missing auth)",
+        "POST /profile/image/file \u2014 profile image file upload (missing auth)",
+        "POST /profile/image/url \u2014 profile image URL upload SSRF (missing auth)",
+        "GET /encryptionkeys/:file \u2014 key server (public access)",
+        "GET /ftp/:file and GET /ftp/ \u2014 file server with directory listing",
+        "GET /logs/:file \u2014 log file server (user-controlled filename)",
+        "GET /ftp/quarantine/:file \u2014 quarantine file server"
+      ],
+      "controls": [
+        "sanitize-filename@1.6.3 for filename sanitization",
+        "multer@1.4.5-lts.1 for multipart parsing",
+        "keyServer: checks for '/' in filename to prevent path traversal (partial)",
+        "File extension allowlist for profile images (jpg/jpeg/png/svg/gif)"
+      ],
+      "known_vulns": [
+        "XXE at routes/fileUpload.ts:83 \u2014 libxmljs2 parseXml with noent:true (external entity resolution)",
+        "SSRF at routes/profileImageUrlUpload.ts:24 \u2014 fetch(url) with no URL allowlist",
+        "Path traversal at routes/logfileServer.ts:14 \u2014 path.resolve('logs/', file) with user-controlled file",
+        "Path traversal at routes/quarantineServer.ts:14 \u2014 path.resolve('ftp/quarantine/', file)",
+        "Public key exposure at routes/keyServer.ts \u2014 serves jwt.pub (RSA public key) and premium.key without auth",
+        "Directory listing at /ftp/ via serve-index \u2014 exposes file listing",
+        "File type validation by extension only \u2014 MIME type mismatch attacks possible",
+        "POST /file-upload missing authentication \u2014 anyone can upload"
+      ],
+      "estimated_threat_count": 12
+    },
+    {
+      "component_id": "b2b-api",
+      "component_name": "B2B Order Processing API",
+      "component_description": "Machine-to-machine API endpoint at POST /b2b/v2/orders protected by JWT bearer auth. Processes JSON order payloads via notevil sandbox (routes/b2bOrder.ts:23) with vm.runInContext \u2014 susceptible to sandbox escape RCE. Accepts arbitrary JavaScript expressions as orderLinesData.",
+      "component_paths": [
+        "routes/b2bOrder.ts",
+        "routes/checkKeys.ts"
+      ],
+      "component_complexity": "simple",
+      "max_turns": 20,
+      "trust_boundaries": "B2B API JWT Boundary",
+      "taxonomy_slice_dir": "/home/mrohr/juice-shop/docs/security/.taxonomy-slices/b2b-api",
+      "deployment_zones": [
+        "container"
+      ],
+      "handles_sensitive_data": true,
+      "index_paths": {
+        "prior_findings": "/home/mrohr/juice-shop/docs/security/.dispatch-context/b2b-api/prior-findings.json",
+        "known_threats": "/home/mrohr/juice-shop/docs/security/.dispatch-context/b2b-api/known-threats.json",
+        "cross_repo": "/home/mrohr/juice-shop/docs/security/.dispatch-context/b2b-api/cross-repo.json",
+        "requirements_violations": "/home/mrohr/juice-shop/docs/security/.dispatch-context/b2b-api/requirements-violations.json",
+        "relevant_actors": "none"
+      },
+      "interfaces": [
+        "POST /b2b/v2/orders \u2014 JWT bearer required at server.ts:423",
+        "Accepts JSON body with orderLinesData field containing JavaScript expressions",
+        "vm.runInContext() with notevil sandbox for evaluating order expressions",
+        "Sequelize ORM for order data persistence"
+      ],
+      "controls": [
+        "JWT bearer token required (isAuthorized() middleware at server.ts:423)",
+        "notevil library as 'safe eval' (CVE-prone, sandbox escape known)",
+        "vm module timeout: 2000ms",
+        "RSA RS256 JWT verification (but private key is hardcoded and public)"
+      ],
+      "known_secrets": [
+        "RSA private key enables forging valid B2B JWT tokens \u2014 see express-backend context"
+      ],
+      "known_vulns": [
+        "RCE via vm.runInContext sandbox escape at routes/b2bOrder.ts:23 \u2014 notevil is not RCE-safe",
+        "JWT bearer required but private key committed to source \u2014 authentication bypassed trivially",
+        "Prototype pollution via orderLinesData input may escape notevil sandbox",
+        "YAML injection possible if orderLinesData contains YAML-like structures",
+        "No rate limiting on B2B order endpoint",
+        "Sandbox timeout only 2000ms \u2014 DoS via slow operations within notevil budget"
+      ],
+      "estimated_threat_count": 8
+    },
+    {
+      "component_id": "data-layer",
+      "component_name": "Data Layer (SQLite + MarsDB)",
+      "component_description": "Persistence layer composed of SQLite 3 via Sequelize 6.37.3 ORM for relational user/product/order data, MarsDB 0.6.11 for in-memory NoSQL storage (chatbot/memories), and local filesystem for uploaded files, encryption keys, and FTP downloads. SQL injection paths exist at the Sequelize raw-query level (login, search). The encryption keys directory (encryptionkeys/) is served publicly.",
+      "component_paths": [
+        "models/**",
+        "data/**",
+        "config/**",
+        "lib/mongodb.ts",
+        "ftp/**",
+        "encryptionkeys/**"
+      ],
+      "component_complexity": "moderate",
+      "max_turns": 28,
+      "trust_boundaries": "Application / Data Layer Boundary",
+      "taxonomy_slice_dir": "/home/mrohr/juice-shop/docs/security/.taxonomy-slices/data-layer",
+      "deployment_zones": [
+        "container"
+      ],
+      "handles_sensitive_data": true,
+      "index_paths": {
+        "prior_findings": "/home/mrohr/juice-shop/docs/security/.dispatch-context/data-layer/prior-findings.json",
+        "known_threats": "/home/mrohr/juice-shop/docs/security/.dispatch-context/data-layer/known-threats.json",
+        "cross_repo": "/home/mrohr/juice-shop/docs/security/.dispatch-context/data-layer/cross-repo.json",
+        "requirements_violations": "/home/mrohr/juice-shop/docs/security/.dispatch-context/data-layer/requirements-violations.json",
+        "relevant_actors": "none"
+      },
+      "interfaces": [
+        "Sequelize 6.37.3 ORM interface \u2014 models/user.ts, models/product.ts, etc.",
+        "Raw sequelize.query() calls bypassing ORM in security-critical paths",
+        "MarsDB 0.6.11 in-memory NoSQL API for chatbot/memories",
+        "SQLite file-based storage (juice-shop.db or in-memory for tests)",
+        "Filesystem read/write for uploads/, ftp/, encryptionkeys/, logs/",
+        "serve-index directory listing for /ftp/",
+        "jwt.pub RSA public key served at /encryptionkeys/jwt.pub"
+      ],
+      "controls": [
+        "Sequelize ORM parameterization (for non-raw queries)",
+        "SQLite database \u2014 single file, no network, no auth",
+        "UID 65532 container user (filesystem access boundary)",
+        "chgrp/chmod applied to ftp/, frontend/dist/, logs/, data/, i18n/ in Dockerfile"
+      ],
+      "known_secrets": [
+        "RSA private key NOT stored in database but jwt.pub is served publicly",
+        "SQLite Users table contains all user hashed passwords (MD5, no salt)"
+      ],
+      "known_vulns": [
+        "SQL injection sink at raw sequelize.query() in routes/login.ts and routes/search.ts",
+        "NoSQL injection potential in MarsDB queries if user input passes unvalidated",
+        "No database-level access control \u2014 single SQLite file with full read/write by app process",
+        "User passwords stored as unsalted MD5 hashes \u2014 rainbow table attack trivial",
+        "Encryption keys directory served publicly \u2014 jwt.pub enables offline JWT analysis",
+        "No at-rest encryption for SQLite database containing user PII and credentials",
+        "GDPR/data minimization concerns \u2014 data-export endpoint missing auth"
+      ],
+      "estimated_threat_count": 10
+    },
+    {
+      "component_id": "auth",
+      "component_name": "Authentication & Session Surface",
+      "component_description": "Login, token/session issuance, password-reset and MFA handlers (lib/insecurity.ts, lib/startup/registerWebsocketEvents.ts, routes/2fa.ts, routes/authenticatedUsers.ts, \u2026). The credential-bearing entry surface \u2014 the highest-value authentication boundary in the system.",
+      "component_paths": [
+        "lib/insecurity.ts",
+        "lib/startup/registerWebsocketEvents.ts",
+        "routes/2fa.ts",
+        "routes/authenticatedUsers.ts",
+        "routes/login.ts",
+        "routes/resetPassword.ts",
+        "routes/saveLoginIp.ts"
+      ],
+      "component_complexity": "moderate",
+      "max_turns": 28,
+      "trust_boundaries": "No trust boundary directly tied to this component.",
+      "taxonomy_slice_dir": "/home/mrohr/appsec-advisor/data",
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "handles_sensitive_data": true,
+      "index_paths": {
+        "prior_findings": "none",
+        "known_threats": "none",
+        "cross_repo": "none",
+        "requirements_violations": "none",
+        "relevant_actors": "none"
+      }
+    },
+    {
+      "component_id": "ci-cd-pipeline",
+      "component_name": "CI/CD Pipeline",
+      "component_description": "Continuous-integration / deployment workflows (.github/workflows/ci.yml, .github/workflows/codeql-analysis.yml, .github/workflows/frontend-bundle-analysis.yml, .github/workflows/lint-fixer.yml, \u2026). Build and release automation holding repository, registry and deploy credentials, with supply-chain reach into the produced artifact.",
+      "component_paths": [
+        ".github/workflows/**",
+        ".gitlab-ci.yml",
+        "Dockerfile",
+        "Dockerfile.*",
+        "*.Dockerfile",
+        "docker-compose*.yml",
+        "docker-compose*.yaml",
+        "compose*.yml",
+        "compose*.yaml",
+        ".dockerignore",
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        ".npmrc",
+        ".github/dependabot.yml",
+        ".github/dependabot.yaml",
+        ".github/renovate.json",
+        "renovate.json",
+        ".renovaterc",
+        ".renovaterc.json"
+      ],
+      "component_complexity": "simple",
+      "max_turns": 20,
+      "trust_boundaries": "No trust boundary directly tied to this component.",
+      "taxonomy_slice_dir": "/home/mrohr/appsec-advisor/data",
+      "deployment_zones": [
+        "ci-cd-runtime",
+        "build-pipeline"
+      ],
+      "handles_sensitive_data": true,
+      "index_paths": {
+        "prior_findings": "none",
+        "known_threats": "none",
+        "cross_repo": "none",
+        "requirements_violations": "none",
+        "relevant_actors": "none"
+      }
+    },
+    {
+      "component_id": "realtime-channel",
+      "component_name": "Real-time WebSocket Channel",
+      "component_description": "Server-side socket.io real-time channel pushing live events to connected browsers. Internet-facing WebSocket surface with its own connection auth/origin checks and message-handler trust boundary.",
+      "component_paths": [
+        "lib/challengeUtils.ts",
+        "lib/startup/registerWebsocketEvents.ts"
+      ],
+      "component_complexity": "simple",
+      "max_turns": 20,
+      "trust_boundaries": "No trust boundary directly tied to this component.",
+      "taxonomy_slice_dir": "/home/mrohr/appsec-advisor/data",
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "handles_sensitive_data": false,
+      "index_paths": {
+        "prior_findings": "none",
+        "known_threats": "none",
+        "cross_repo": "none",
+        "requirements_violations": "none",
+        "relevant_actors": "none"
+      }
+    }
+  ]
+}

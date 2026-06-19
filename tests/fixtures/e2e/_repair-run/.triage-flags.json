@@ -1,218 +1,19 @@
 {
   "version": 2,
-  "generated_at": "2026-06-03T18:52:49Z",
+  "generated_at": "2026-06-17T16:35:18Z",
   "flags": [
     {
-      "type": "consistency",
+      "type": "priority",
       "severity": "warning",
       "threat_ids": [
+        "T-004",
         "T-008",
-        "T-042"
-      ],
-      "message": "C has a 2-level severity difference across components: ci-cd-pipeline (Critical) vs ci-cd-pipeline (Medium) without architectural_violation.",
-      "suggested_action": "Review whether the context difference justifies the severity gap, or set architectural_violation:true on the higher-severity instance.",
-      "flag_id": "TF-001",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "consistency",
-      "severity": "warning",
-      "threat_ids": [
-        "T-008",
-        "T-043"
-      ],
-      "message": "C has a 2-level severity difference across components: ci-cd-pipeline (Critical) vs ci-cd-pipeline (Medium) without architectural_violation.",
-      "suggested_action": "Review whether the context difference justifies the severity gap, or set architectural_violation:true on the higher-severity instance.",
-      "flag_id": "TF-002",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "consistency",
-      "severity": "warning",
-      "threat_ids": [
-        "T-008",
-        "T-044"
-      ],
-      "message": "C has a 2-level severity difference across components: ci-cd-pipeline (Critical) vs ci-cd-pipeline (Medium) without architectural_violation.",
-      "suggested_action": "Review whether the context difference justifies the severity gap, or set architectural_violation:true on the higher-severity instance.",
-      "flag_id": "TF-003",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "consistency",
-      "severity": "warning",
-      "threat_ids": [
-        "T-008",
-        "T-045"
-      ],
-      "message": "C has a 2-level severity difference across components: ci-cd-pipeline (Critical) vs ci-cd-pipeline (Medium) without architectural_violation.",
-      "suggested_action": "Review whether the context difference justifies the severity gap, or set architectural_violation:true on the higher-severity instance.",
-      "flag_id": "TF-004",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-001"
-      ],
-      "message": "Field validation failed for T-001: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-005",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-002"
-      ],
-      "message": "Field validation failed for T-002: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-006",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-003"
-      ],
-      "message": "Field validation failed for T-003: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-007",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-004"
-      ],
-      "message": "Field validation failed for T-004: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-008",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-005"
-      ],
-      "message": "Field validation failed for T-005: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-009",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-006"
-      ],
-      "message": "Field validation failed for T-006: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-010",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-007"
-      ],
-      "message": "Field validation failed for T-007: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-011",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-008"
-      ],
-      "message": "Field validation failed for T-008: cwe missing or does not match CWE-NNN pattern; source 'config-scan' is not a valid source type.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-012",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-009"
-      ],
-      "message": "Field validation failed for T-009: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-013",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-010"
-      ],
-      "message": "Field validation failed for T-010: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-014",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-011"
-      ],
-      "message": "Field validation failed for T-011: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-015",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
+        "T-011",
         "T-012"
       ],
-      "message": "Field validation failed for T-012: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-016",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-013"
-      ],
-      "message": "Field validation failed for T-013: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-017",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-014"
-      ],
-      "message": "Field validation failed for T-014: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-018",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-015"
-      ],
-      "message": "Field validation failed for T-015: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-019",
+      "message": "RCE/injection Critical threats are not the highest-ranked items. These should typically be P1.",
+      "suggested_action": "Review sort order — RCE/injection Criticals should lead the register.",
+      "flag_id": "TF-001",
       "source": "triage-pre-flight"
     },
     {
@@ -221,20 +22,9 @@
       "threat_ids": [
         "T-016"
       ],
-      "message": "Field validation failed for T-016: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-020",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-017"
-      ],
-      "message": "Field validation failed for T-017: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-021",
+      "message": "T-016: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-002",
       "source": "triage-pre-flight"
     },
     {
@@ -243,9 +33,9 @@
       "threat_ids": [
         "T-018"
       ],
-      "message": "Field validation failed for T-018: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-022",
+      "message": "T-018: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-003",
       "source": "triage-pre-flight"
     },
     {
@@ -254,20 +44,9 @@
       "threat_ids": [
         "T-019"
       ],
-      "message": "Field validation failed for T-019: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-023",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-020"
-      ],
-      "message": "Field validation failed for T-020: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-024",
+      "message": "T-019: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-004",
       "source": "triage-pre-flight"
     },
     {
@@ -276,9 +55,9 @@
       "threat_ids": [
         "T-021"
       ],
-      "message": "Field validation failed for T-021: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-025",
+      "message": "T-021: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-005",
       "source": "triage-pre-flight"
     },
     {
@@ -287,31 +66,9 @@
       "threat_ids": [
         "T-022"
       ],
-      "message": "Field validation failed for T-022: cwe missing or does not match CWE-NNN pattern; source 'config-scan' is not a valid source type.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-026",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-023"
-      ],
-      "message": "Field validation failed for T-023: cwe missing or does not match CWE-NNN pattern; source 'config-scan' is not a valid source type.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-027",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-024"
-      ],
-      "message": "Field validation failed for T-024: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-028",
+      "message": "T-022: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-006",
       "source": "triage-pre-flight"
     },
     {
@@ -320,31 +77,9 @@
       "threat_ids": [
         "T-025"
       ],
-      "message": "Field validation failed for T-025: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-029",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-026"
-      ],
-      "message": "Field validation failed for T-026: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-030",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-027"
-      ],
-      "message": "Field validation failed for T-027: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-031",
+      "message": "T-025: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-007",
       "source": "triage-pre-flight"
     },
     {
@@ -353,9 +88,9 @@
       "threat_ids": [
         "T-028"
       ],
-      "message": "Field validation failed for T-028: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-032",
+      "message": "T-028: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-008",
       "source": "triage-pre-flight"
     },
     {
@@ -364,20 +99,9 @@
       "threat_ids": [
         "T-029"
       ],
-      "message": "Field validation failed for T-029: evidence.file missing or evidence is not an object.",
+      "message": "Field validation failed for T-029: source 'config-scan' is not a valid source type.",
       "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-033",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-030"
-      ],
-      "message": "Field validation failed for T-030: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-034",
+      "flag_id": "TF-009",
       "source": "triage-pre-flight"
     },
     {
@@ -386,9 +110,9 @@
       "threat_ids": [
         "T-031"
       ],
-      "message": "Field validation failed for T-031: evidence.file missing or evidence is not an object.",
+      "message": "Field validation failed for T-031: source 'config-scan' is not a valid source type.",
       "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-035",
+      "flag_id": "TF-010",
       "source": "triage-pre-flight"
     },
     {
@@ -397,9 +121,9 @@
       "threat_ids": [
         "T-032"
       ],
-      "message": "Field validation failed for T-032: evidence.file missing or evidence is not an object.",
+      "message": "Field validation failed for T-032: source 'config-scan' is not a valid source type.",
       "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-036",
+      "flag_id": "TF-011",
       "source": "triage-pre-flight"
     },
     {
@@ -408,9 +132,9 @@
       "threat_ids": [
         "T-033"
       ],
-      "message": "Field validation failed for T-033: evidence.file missing or evidence is not an object.",
+      "message": "Field validation failed for T-033: source 'config-scan' is not a valid source type.",
       "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-037",
+      "flag_id": "TF-012",
       "source": "triage-pre-flight"
     },
     {
@@ -419,9 +143,9 @@
       "threat_ids": [
         "T-034"
       ],
-      "message": "Field validation failed for T-034: evidence.file missing or evidence is not an object.",
+      "message": "Field validation failed for T-034: source 'config-scan' is not a valid source type.",
       "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-038",
+      "flag_id": "TF-013",
       "source": "triage-pre-flight"
     },
     {
@@ -430,9 +154,9 @@
       "threat_ids": [
         "T-035"
       ],
-      "message": "Field validation failed for T-035: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-039",
+      "message": "T-035: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-014",
       "source": "triage-pre-flight"
     },
     {
@@ -441,20 +165,9 @@
       "threat_ids": [
         "T-036"
       ],
-      "message": "Field validation failed for T-036: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-040",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-037"
-      ],
-      "message": "Field validation failed for T-037: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-041",
+      "message": "T-036: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-015",
       "source": "triage-pre-flight"
     },
     {
@@ -463,9 +176,9 @@
       "threat_ids": [
         "T-038"
       ],
-      "message": "Field validation failed for T-038: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-042",
+      "message": "T-038: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-016",
       "source": "triage-pre-flight"
     },
     {
@@ -474,9 +187,9 @@
       "threat_ids": [
         "T-039"
       ],
-      "message": "Field validation failed for T-039: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-043",
+      "message": "T-039: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-017",
       "source": "triage-pre-flight"
     },
     {
@@ -485,9 +198,9 @@
       "threat_ids": [
         "T-040"
       ],
-      "message": "Field validation failed for T-040: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-044",
+      "message": "T-040: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-018",
       "source": "triage-pre-flight"
     },
     {
@@ -496,31 +209,9 @@
       "threat_ids": [
         "T-041"
       ],
-      "message": "Field validation failed for T-041: evidence.file missing or evidence is not an object.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-045",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-042"
-      ],
-      "message": "Field validation failed for T-042: cwe missing or does not match CWE-NNN pattern; source 'config-scan' is not a valid source type.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-046",
-      "source": "triage-pre-flight"
-    },
-    {
-      "type": "completeness",
-      "severity": "warning",
-      "threat_ids": [
-        "T-043"
-      ],
-      "message": "Field validation failed for T-043: cwe missing or does not match CWE-NNN pattern; source 'config-scan' is not a valid source type.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-047",
+      "message": "T-041: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-019",
       "source": "triage-pre-flight"
     },
     {
@@ -529,9 +220,9 @@
       "threat_ids": [
         "T-044"
       ],
-      "message": "Field validation failed for T-044: cwe missing or does not match CWE-NNN pattern; source 'config-scan' is not a valid source type.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-048",
+      "message": "T-044: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-020",
       "source": "triage-pre-flight"
     },
     {
@@ -540,33 +231,77 @@
       "threat_ids": [
         "T-045"
       ],
-      "message": "Field validation failed for T-045: cwe missing or does not match CWE-NNN pattern; source 'config-scan' is not a valid source type.",
-      "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-049",
+      "message": "T-045: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-021",
       "source": "triage-pre-flight"
     },
     {
       "type": "completeness",
       "severity": "warning",
       "threat_ids": [
-        "T-046"
+        "T-051"
       ],
-      "message": "Field validation failed for T-046: risk 'info' is not valid (expected Critical/High/Medium/Low); likelihood 'info' is not valid; impact 'info' is not valid; cwe missing or does not match CWE-NNN pattern; source 'config-scan' is not a valid source type.",
+      "message": "T-051: risk=High does not match Likelihood×Impact matrix (High×High → expected Critical). No architectural_violation flag set.",
+      "suggested_action": "Adjust risk to match the matrix, or set architectural_violation:true to document the intentional escalation.",
+      "flag_id": "TF-022",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-059"
+      ],
+      "message": "Field validation failed for T-059: source 'config-scan' is not a valid source type.",
       "suggested_action": "Fix the listed field issues before finalization.",
-      "flag_id": "TF-050",
+      "flag_id": "TF-023",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-060"
+      ],
+      "message": "Field validation failed for T-060: source 'config-scan' is not a valid source type.",
+      "suggested_action": "Fix the listed field issues before finalization.",
+      "flag_id": "TF-024",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-061"
+      ],
+      "message": "Field validation failed for T-061: source 'config-scan' is not a valid source type.",
+      "suggested_action": "Fix the listed field issues before finalization.",
+      "flag_id": "TF-025",
+      "source": "triage-pre-flight"
+    },
+    {
+      "type": "completeness",
+      "severity": "warning",
+      "threat_ids": [
+        "T-064"
+      ],
+      "message": "Field validation failed for T-064: source 'config-scan' is not a valid source type.",
+      "suggested_action": "Fix the listed field issues before finalization.",
+      "flag_id": "TF-026",
       "source": "triage-pre-flight"
     }
   ],
   "summary": {
-    "total_flags": 50,
-    "warnings": 50,
+    "total_flags": 26,
+    "warnings": 26,
     "info": 0,
-    "threats_reviewed": 46,
-    "pre_flight_flags": 50
+    "threats_reviewed": 65,
+    "pre_flight_flags": 26
   },
   "ranking": {
     "method": "impact-weighted-v2",
-    "ranked_at": "2026-06-03T19:01:35Z",
+    "ranked_at": "2026-06-17T16:46:00Z",
     "computed_by": "triage_compute_ranking.py (deterministic)",
     "views": {
       "top_threats": {
@@ -581,12 +316,12 @@
         "findings_ranked": [
           {
             "rank": 1,
-            "id": "T-001",
+            "id": "T-004",
             "effective_severity": "Critical",
             "raw_severity": "Critical",
             "chain_role": "keystone",
             "breach_distance": 1,
-            "score": 618,
+            "score": 615,
             "compound_chain_ids": [
               "CC-03"
             ],
@@ -594,55 +329,59 @@
           },
           {
             "rank": 2,
-            "id": "T-005",
+            "id": "T-006",
             "effective_severity": "Critical",
             "raw_severity": "Critical",
             "chain_role": "keystone",
             "breach_distance": 1,
-            "score": 618,
-            "compound_chain_ids": [
-              "CC-03"
-            ],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 3,
-            "id": "T-004",
-            "effective_severity": "Critical",
-            "raw_severity": "Critical",
-            "chain_role": "keystone",
-            "breach_distance": 2,
-            "score": 603,
+            "score": 615,
             "compound_chain_ids": [
               "CC-02"
             ],
             "verified_chain_ids": []
           },
           {
-            "rank": 4,
-            "id": "T-010",
+            "rank": 3,
+            "id": "T-008",
             "effective_severity": "Critical",
             "raw_severity": "Critical",
-            "chain_role": "none",
-            "breach_distance": 2,
-            "score": 603,
-            "compound_chain_ids": [],
+            "chain_role": "keystone",
+            "breach_distance": 1,
+            "score": 615,
+            "compound_chain_ids": [
+              "CC-03"
+            ],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 4,
+            "id": "T-009",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "keystone",
+            "breach_distance": 1,
+            "score": 615,
+            "compound_chain_ids": [
+              "CC-06"
+            ],
             "verified_chain_ids": []
           },
           {
             "rank": 5,
-            "id": "T-011",
+            "id": "T-013",
             "effective_severity": "Critical",
             "raw_severity": "Critical",
-            "chain_role": "none",
-            "breach_distance": 2,
-            "score": 603,
-            "compound_chain_ids": [],
+            "chain_role": "keystone",
+            "breach_distance": 1,
+            "score": 615,
+            "compound_chain_ids": [
+              "CC-06"
+            ],
             "verified_chain_ids": []
           },
           {
             "rank": 6,
-            "id": "T-012",
+            "id": "T-007",
             "effective_severity": "Critical",
             "raw_severity": "Critical",
             "chain_role": "none",
@@ -653,37 +392,119 @@
           },
           {
             "rank": 7,
-            "id": "T-002",
+            "id": "T-010",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 600,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 8,
+            "id": "T-011",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 600,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 9,
+            "id": "T-012",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 600,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 10,
+            "id": "T-014",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 600,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 11,
+            "id": "T-003",
             "effective_severity": "Critical",
             "raw_severity": "Critical",
             "chain_role": "keystone",
             "breach_distance": 3,
-            "score": 588,
+            "score": 585,
             "compound_chain_ids": [
               "CC-02"
             ],
             "verified_chain_ids": [
               "AC-T-003",
-              "AC-T-005",
+              "AC-T-004",
               "AC-T-005"
             ]
           },
           {
-            "rank": 8,
-            "id": "T-033",
+            "rank": 12,
+            "id": "T-005",
+            "effective_severity": "Critical",
+            "raw_severity": "Critical",
+            "chain_role": "keystone",
+            "breach_distance": 3,
+            "score": 585,
+            "compound_chain_ids": [
+              "CC-02"
+            ],
+            "verified_chain_ids": [
+              "AC-T-003",
+              "AC-T-005"
+            ]
+          },
+          {
+            "rank": 13,
+            "id": "T-018",
+            "effective_severity": "Critical",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 575,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 14,
+            "id": "T-019",
+            "effective_severity": "Critical",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 575,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 15,
+            "id": "T-028",
             "effective_severity": "Critical",
             "raw_severity": "High",
             "chain_role": "keystone",
             "breach_distance": 1,
-            "score": 578,
+            "score": 575,
             "compound_chain_ids": [
-              "CC-06"
+              "CC-02"
             ],
             "verified_chain_ids": []
           },
           {
-            "rank": 9,
-            "id": "T-013",
+            "rank": 16,
+            "id": "T-051",
             "effective_severity": "Critical",
             "raw_severity": "High",
             "chain_role": "keystone",
@@ -695,20 +516,63 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 10,
-            "id": "T-017",
+            "rank": 17,
+            "id": "T-053",
+            "effective_severity": "Critical",
+            "raw_severity": "Medium",
+            "chain_role": "keystone",
+            "breach_distance": 2,
+            "score": 566,
+            "compound_chain_ids": [
+              "CC-01"
+            ],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 18,
+            "id": "T-020",
+            "effective_severity": "Critical",
+            "raw_severity": "High",
+            "chain_role": "keystone",
+            "breach_distance": 2,
+            "score": 563,
+            "compound_chain_ids": [
+              "CC-01"
+            ],
+            "verified_chain_ids": [
+              "AC-T-001"
+            ]
+          },
+          {
+            "rank": 19,
+            "id": "T-001",
             "effective_severity": "Critical",
             "raw_severity": "High",
             "chain_role": "keystone",
             "breach_distance": 2,
             "score": 560,
             "compound_chain_ids": [
-              "CC-03"
+              "CC-01"
+            ],
+            "verified_chain_ids": [
+              "AC-T-001"
+            ]
+          },
+          {
+            "rank": 20,
+            "id": "T-021",
+            "effective_severity": "Critical",
+            "raw_severity": "High",
+            "chain_role": "keystone",
+            "breach_distance": 2,
+            "score": 560,
+            "compound_chain_ids": [
+              "CC-01"
             ],
             "verified_chain_ids": []
           },
           {
-            "rank": 11,
+            "rank": 21,
             "id": "T-025",
             "effective_severity": "Critical",
             "raw_severity": "High",
@@ -721,47 +585,34 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 12,
-            "id": "T-037",
+            "rank": 22,
+            "id": "T-059",
+            "effective_severity": "Critical",
+            "raw_severity": "Medium",
+            "chain_role": "keystone",
+            "breach_distance": 1,
+            "score": 538,
+            "compound_chain_ids": [
+              "CC-02"
+            ],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 23,
+            "id": "T-048",
             "effective_severity": "Critical",
             "raw_severity": "High",
             "chain_role": "keystone",
-            "breach_distance": 2,
-            "score": 560,
-            "compound_chain_ids": [
-              "CC-01"
-            ],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 13,
-            "id": "T-003",
-            "effective_severity": "Critical",
-            "raw_severity": "Critical",
-            "chain_role": "contributor",
-            "breach_distance": 2,
-            "score": 553,
-            "compound_chain_ids": [
-              "CC-03"
-            ],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 14,
-            "id": "T-009",
-            "effective_severity": "Critical",
-            "raw_severity": "Critical",
-            "chain_role": "contributor",
-            "breach_distance": 3,
+            "breach_distance": 1,
             "score": 535,
             "compound_chain_ids": [
-              "CC-03"
+              "CC-02"
             ],
             "verified_chain_ids": []
           },
           {
-            "rank": 15,
-            "id": "T-019",
+            "rank": 24,
+            "id": "T-052",
             "effective_severity": "Critical",
             "raw_severity": "High",
             "chain_role": "keystone",
@@ -773,68 +624,31 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 16,
-            "id": "T-018",
+            "rank": 25,
+            "id": "T-030",
             "effective_severity": "Critical",
             "raw_severity": "High",
             "chain_role": "keystone",
             "breach_distance": 2,
             "score": 520,
             "compound_chain_ids": [
-              "CC-01"
-            ],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 17,
-            "id": "T-014",
-            "effective_severity": "Critical",
-            "raw_severity": "High",
-            "chain_role": "keystone",
-            "breach_distance": 3,
-            "score": 505,
-            "compound_chain_ids": [
               "CC-02"
             ],
             "verified_chain_ids": []
           },
           {
-            "rank": 18,
-            "id": "T-007",
-            "effective_severity": "Critical",
-            "raw_severity": "Critical",
-            "chain_role": "contributor",
-            "breach_distance": 3,
-            "score": 498,
-            "compound_chain_ids": [
-              "CC-03"
-            ],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 19,
-            "id": "T-006",
-            "effective_severity": "Critical",
-            "raw_severity": "Critical",
-            "chain_role": "none",
-            "breach_distance": 1,
-            "score": 478,
-            "compound_chain_ids": [],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 20,
+            "rank": 26,
             "id": "T-024",
             "effective_severity": "High",
             "raw_severity": "High",
             "chain_role": "none",
-            "breach_distance": 2,
-            "score": 453,
+            "breach_distance": 3,
+            "score": 441,
             "compound_chain_ids": [],
             "verified_chain_ids": []
           },
           {
-            "rank": 21,
+            "rank": 27,
             "id": "T-016",
             "effective_severity": "High",
             "raw_severity": "High",
@@ -845,8 +659,8 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 22,
-            "id": "T-026",
+            "rank": 28,
+            "id": "T-035",
             "effective_severity": "High",
             "raw_severity": "High",
             "chain_role": "none",
@@ -856,8 +670,8 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 23,
-            "id": "T-030",
+            "rank": 29,
+            "id": "T-039",
             "effective_severity": "High",
             "raw_severity": "High",
             "chain_role": "none",
@@ -867,7 +681,51 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 24,
+            "rank": 30,
+            "id": "T-040",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 31,
+            "id": "T-041",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 32,
+            "id": "T-044",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 33,
+            "id": "T-045",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 1,
+            "score": 425,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 34,
             "id": "T-027",
             "effective_severity": "High",
             "raw_severity": "High",
@@ -878,40 +736,84 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 25,
+            "rank": 35,
+            "id": "T-046",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 413,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 36,
+            "id": "T-047",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 413,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 37,
+            "id": "T-049",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 413,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 38,
+            "id": "T-050",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 413,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 39,
+            "id": "T-065",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 2,
+            "score": 413,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 40,
             "id": "T-029",
             "effective_severity": "High",
             "raw_severity": "High",
             "chain_role": "none",
             "breach_distance": 2,
-            "score": 413,
+            "score": 410,
             "compound_chain_ids": [],
             "verified_chain_ids": []
           },
           {
-            "rank": 26,
+            "rank": 41,
             "id": "T-031",
             "effective_severity": "High",
             "raw_severity": "High",
             "chain_role": "none",
             "breach_distance": 2,
-            "score": 413,
+            "score": 410,
             "compound_chain_ids": [],
             "verified_chain_ids": []
           },
           {
-            "rank": 27,
-            "id": "T-032",
-            "effective_severity": "High",
-            "raw_severity": "High",
-            "chain_role": "none",
-            "breach_distance": 2,
-            "score": 413,
-            "compound_chain_ids": [],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 28,
+            "rank": 42,
             "id": "T-036",
             "effective_severity": "High",
             "raw_severity": "High",
@@ -922,7 +824,51 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 29,
+            "rank": 43,
+            "id": "T-017",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 398,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 44,
+            "id": "T-023",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 398,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 45,
+            "id": "T-032",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 395,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 46,
+            "id": "T-033",
+            "effective_severity": "High",
+            "raw_severity": "High",
+            "chain_role": "none",
+            "breach_distance": 3,
+            "score": 395,
+            "compound_chain_ids": [],
+            "verified_chain_ids": []
+          },
+          {
+            "rank": 47,
             "id": "T-034",
             "effective_severity": "High",
             "raw_severity": "High",
@@ -933,8 +879,8 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 30,
-            "id": "T-015",
+            "rank": 48,
+            "id": "T-043",
             "effective_severity": "High",
             "raw_severity": "High",
             "chain_role": "none",
@@ -944,96 +890,26 @@
             "verified_chain_ids": []
           },
           {
-            "rank": 31,
-            "id": "T-020",
-            "effective_severity": "High",
-            "raw_severity": "High",
-            "chain_role": "none",
-            "breach_distance": 1,
-            "score": 385,
-            "compound_chain_ids": [],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 32,
-            "id": "T-035",
+            "rank": 49,
+            "id": "T-022",
             "effective_severity": "High",
             "raw_severity": "High",
             "chain_role": "contributor",
             "breach_distance": 1,
             "score": 375,
             "compound_chain_ids": [
-              "CC-01"
+              "CC-03"
             ],
             "verified_chain_ids": []
           },
           {
-            "rank": 33,
-            "id": "T-028",
+            "rank": 50,
+            "id": "T-042",
             "effective_severity": "High",
             "raw_severity": "High",
-            "chain_role": "contributor",
+            "chain_role": "none",
             "breach_distance": 2,
-            "score": 360,
-            "compound_chain_ids": [
-              "CC-01"
-            ],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 34,
-            "id": "T-038",
-            "effective_severity": "High",
-            "raw_severity": "High",
-            "chain_role": "contributor",
-            "breach_distance": 2,
-            "score": 360,
-            "compound_chain_ids": [],
-            "verified_chain_ids": [
-              "AC-T-003"
-            ]
-          },
-          {
-            "rank": 35,
-            "id": "T-021",
-            "effective_severity": "High",
-            "raw_severity": "High",
-            "chain_role": "none",
-            "breach_distance": 1,
-            "score": 325,
-            "compound_chain_ids": [],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 36,
-            "id": "T-039",
-            "effective_severity": "Medium",
-            "raw_severity": "Medium",
-            "chain_role": "none",
-            "breach_distance": 1,
-            "score": 238,
-            "compound_chain_ids": [],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 37,
-            "id": "T-041",
-            "effective_severity": "Medium",
-            "raw_severity": "Medium",
-            "chain_role": "none",
-            "breach_distance": 1,
-            "score": 238,
-            "compound_chain_ids": [],
-            "verified_chain_ids": []
-          },
-          {
-            "rank": 38,
-            "id": "T-040",
-            "effective_severity": "Medium",
-            "raw_severity": "Medium",
-            "chain_role": "none",
-            "breach_distance": 3,
-            "score": 108,
+            "score": 370,
             "compound_chain_ids": [],
             "verified_chain_ids": []
           }
@@ -1043,263 +919,459 @@
         "sort_key": "addressed_severity_desc_then_effort_asc",
         "mitigations_ranked": [
           {
-            "id": "M-001",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 1
-          },
-          {
             "id": "M-002",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 2
+            "effort": "Low",
+            "score": 0,
+            "rank": 1
           },
           {
             "id": "M-003",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 3
+            "effort": "Low",
+            "score": 0,
+            "rank": 2
           },
           {
             "id": "M-004",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 4
+            "effort": "Low",
+            "score": 0,
+            "rank": 3
           },
           {
             "id": "M-005",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 5
+            "effort": "Low",
+            "score": 0,
+            "rank": 4
           },
           {
             "id": "M-006",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 6
+            "effort": "Low",
+            "score": 0,
+            "rank": 5
           },
           {
             "id": "M-007",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 7
+            "effort": "Low",
+            "score": 0,
+            "rank": 6
           },
           {
             "id": "M-008",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 8
+            "effort": "Low",
+            "score": 0,
+            "rank": 7
           },
           {
             "id": "M-009",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 9
+            "effort": "Low",
+            "score": 0,
+            "rank": 8
           },
           {
             "id": "M-010",
             "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 10
-          },
-          {
-            "id": "M-011",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 11
-          },
-          {
-            "id": "M-012",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 12
-          },
-          {
-            "id": "M-013",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 13
+            "effort": "Low",
+            "score": 0,
+            "rank": 9
           },
           {
             "id": "M-014",
             "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 10
+          },
+          {
+            "id": "M-018",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 11
+          },
+          {
+            "id": "M-019",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 12
+          },
+          {
+            "id": "M-020",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 13
+          },
+          {
+            "id": "M-022",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 14
+          },
+          {
+            "id": "M-023",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 15
+          },
+          {
+            "id": "M-024",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 16
+          },
+          {
+            "id": "M-026",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 17
+          },
+          {
+            "id": "M-027",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 18
+          },
+          {
+            "id": "M-028",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 19
+          },
+          {
+            "id": "M-030",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 20
+          },
+          {
+            "id": "M-031",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 21
+          },
+          {
+            "id": "M-034",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 22
+          },
+          {
+            "id": "M-035",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 23
+          },
+          {
+            "id": "M-038",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 24
+          },
+          {
+            "id": "M-039",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 25
+          },
+          {
+            "id": "M-042",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 26
+          },
+          {
+            "id": "M-043",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 27
+          },
+          {
+            "id": "M-044",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 28
+          },
+          {
+            "id": "M-045",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 29
+          },
+          {
+            "id": "M-046",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 30
+          },
+          {
+            "id": "M-048",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 31
+          },
+          {
+            "id": "M-049",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 32
+          },
+          {
+            "id": "M-050",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 33
+          },
+          {
+            "id": "M-051",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 34
+          },
+          {
+            "id": "M-055",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 35
+          },
+          {
+            "id": "M-057",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 36
+          },
+          {
+            "id": "M-058",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 37
+          },
+          {
+            "id": "M-060",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 38
+          },
+          {
+            "id": "M-062",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 39
+          },
+          {
+            "id": "M-063",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 40
+          },
+          {
+            "id": "M-064",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 41
+          },
+          {
+            "id": "M-065",
+            "addresses_findings": [],
+            "effort": "Low",
+            "score": 0,
+            "rank": 42
+          },
+          {
+            "id": "M-001",
+            "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 14
+            "rank": 43
           },
           {
             "id": "M-015",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 15
+            "rank": 44
           },
           {
             "id": "M-016",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 16
+            "rank": 45
           },
           {
             "id": "M-017",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 17
-          },
-          {
-            "id": "M-018",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 18
-          },
-          {
-            "id": "M-019",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 19
-          },
-          {
-            "id": "M-020",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 20
+            "rank": 46
           },
           {
             "id": "M-021",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 21
-          },
-          {
-            "id": "M-022",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 22
-          },
-          {
-            "id": "M-023",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 23
-          },
-          {
-            "id": "M-024",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 24
+            "rank": 47
           },
           {
             "id": "M-025",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 25
-          },
-          {
-            "id": "M-027",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 26
-          },
-          {
-            "id": "M-028",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 27
+            "rank": 48
           },
           {
             "id": "M-029",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 28
-          },
-          {
-            "id": "M-030",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 29
-          },
-          {
-            "id": "M-031",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 30
+            "rank": 49
           },
           {
             "id": "M-032",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 31
+            "rank": 50
           },
           {
             "id": "M-033",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 32
-          },
-          {
-            "id": "M-034",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 33
-          },
-          {
-            "id": "M-035",
-            "addresses_findings": [],
-            "effort": "Medium",
-            "score": -10,
-            "rank": 34
+            "rank": 51
           },
           {
             "id": "M-036",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 35
+            "rank": 52
           },
           {
             "id": "M-037",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 36
+            "rank": 53
           },
           {
-            "id": "M-038",
+            "id": "M-040",
             "addresses_findings": [],
             "effort": "Medium",
             "score": -10,
-            "rank": 37
+            "rank": 54
+          },
+          {
+            "id": "M-041",
+            "addresses_findings": [],
+            "effort": "Medium",
+            "score": -10,
+            "rank": 55
+          },
+          {
+            "id": "M-047",
+            "addresses_findings": [],
+            "effort": "Medium",
+            "score": -10,
+            "rank": 56
+          },
+          {
+            "id": "M-052",
+            "addresses_findings": [],
+            "effort": "Medium",
+            "score": -10,
+            "rank": 57
+          },
+          {
+            "id": "M-053",
+            "addresses_findings": [],
+            "effort": "Medium",
+            "score": -10,
+            "rank": 58
+          },
+          {
+            "id": "M-054",
+            "addresses_findings": [],
+            "effort": "Medium",
+            "score": -10,
+            "rank": 59
+          },
+          {
+            "id": "M-056",
+            "addresses_findings": [],
+            "effort": "Medium",
+            "score": -10,
+            "rank": 60
+          },
+          {
+            "id": "M-059",
+            "addresses_findings": [],
+            "effort": "Medium",
+            "score": -10,
+            "rank": 61
+          },
+          {
+            "id": "M-061",
+            "addresses_findings": [],
+            "effort": "Medium",
+            "score": -10,
+            "rank": 62
+          },
+          {
+            "id": "M-011",
+            "addresses_findings": [],
+            "effort": "High",
+            "score": -20,
+            "rank": 63
+          },
+          {
+            "id": "M-012",
+            "addresses_findings": [],
+            "effort": "High",
+            "score": -20,
+            "rank": 64
+          },
+          {
+            "id": "M-013",
+            "addresses_findings": [],
+            "effort": "High",
+            "score": -20,
+            "rank": 65
           }
         ]
       },
@@ -1307,32 +1379,31 @@
         "sort_key": "severity_desc_then_member_count_desc",
         "chains_ranked": [
           {
-            "id": "CC-03",
-            "name": "SQL Injection → Credential Dump → Offline Hash Cracking",
+            "id": "CC-02",
+            "name": "Hardcoded Crypto Key → Offline Token Forgery",
             "severity": "Critical",
-            "severity_justification": "The keystone is the SQL injection itself — it is directly exploitable against an unauthenticated endpoint and yields immediate DB dump. The weak password hashing (CWE-916) converts the dump into plaintext credentials in minutes on commodity hardware. The SQLi alone is already Critical; the hashing weakness is a severity amplifier that reduces time-to-impact from hours-of-offline-work to minutes.",
+            "severity_justification": "The keystone is the presence of the RSA private key in public source — this alone enables JWT forgery for any claim. The signature-verification bypass (alg:none) is a redundant attack path: with the hardcoded key the attacker does not need alg:none, and vice versa. Both are keystones because either alone realises the chain.",
             "breach_distance": 1,
             "keystones": [
-              "T-001",
-              "T-005",
-              "T-017",
-              "T-025"
-            ],
-            "contributors": [
               "T-003",
-              "T-007",
-              "T-009"
+              "T-005",
+              "T-006",
+              "T-028",
+              "T-030",
+              "T-048",
+              "T-059"
             ],
+            "contributors": [],
             "members": [
-              "T-001",
               "T-003",
               "T-005",
-              "T-007",
-              "T-009",
-              "T-017",
-              "T-025"
+              "T-006",
+              "T-028",
+              "T-030",
+              "T-048",
+              "T-059"
             ],
-            "narrative": "**Keystone:** Unauthenticated SQL injection ({{SQLI_MEMBERS}}) dumps the\nuser credential table in a single request.\n\n**Contributor:** Weak password hashing ({{HASH_MEMBERS}}) reduces brute\nforce to minutes on commodity GPUs. Without the hashing weakness the\nchain still succeeds (SQLi alone is Critical) but recovery of plaintext\npasswords takes longer. Fixing only the hashing does NOT close the chain."
+            "narrative": "**Keystone (either realises the chain alone):** The signing key baked\ninto `{{KEY_FILE}}` ({{KEY_MEMBERS}}) is recoverable by any attacker\nreading the repository. The signature-verification path ({{VERIFY_MEMBERS}})\naccepts `alg:none`, a second independent bypass. Either keystone alone\nyields JWT forgery for any identity, including admin."
           },
           {
             "id": "CC-01",
@@ -1341,39 +1412,44 @@
             "severity_justification": "A stored XSS payload (keystone) CAN exfiltrate the session token in a single request — the attack is one-step, requires no additional attacker privilege, and affects every user who views the infected content. This is distinct from the contributors (missing CSP, PII in localStorage) which amplify the damage but do not individually realise it.",
             "breach_distance": 2,
             "keystones": [
-              "T-018",
-              "T-037"
+              "T-020",
+              "T-021",
+              "T-053"
             ],
             "contributors": [
-              "T-028",
-              "T-035"
+              "T-001",
+              "T-002"
             ],
             "members": [
-              "T-018",
-              "T-028",
-              "T-035",
-              "T-037"
+              "T-001",
+              "T-002",
+              "T-020",
+              "T-021",
+              "T-053"
             ],
             "narrative": "**Keystone:** Stored/reflected XSS payloads ({{XSS_MEMBERS}}) inject\nattacker-controlled script into a rendered page. A single payload is\nsufficient to execute arbitrary JavaScript in every visitor's browser.\n\n**Contributors (amplifiers, not individually Critical):** The JWT is\nstored in `localStorage` ({{STORAGE_MEMBERS}}) — the XSS payload can read\nand exfiltrate it with no CSP to block the outbound request\n({{CSP_MEMBERS}}). Fixing any ONE of the three layers reduces the chain's\nseverity; fixing all three closes it."
           },
           {
-            "id": "CC-02",
-            "name": "Hardcoded Crypto Key → Offline Token Forgery",
+            "id": "CC-03",
+            "name": "SQL Injection → Credential Dump → Offline Hash Cracking",
             "severity": "Critical",
-            "severity_justification": "The keystone is the presence of the RSA private key in public source — this alone enables JWT forgery for any claim. The signature-verification bypass (alg:none) is a redundant attack path: with the hardcoded key the attacker does not need alg:none, and vice versa. Both are keystones because either alone realises the chain.",
+            "severity_justification": "The keystone is the SQL injection itself — it is directly exploitable against an unauthenticated endpoint and yields immediate DB dump. The weak password hashing (CWE-916) converts the dump into plaintext credentials in minutes on commodity hardware. The SQLi alone is already Critical; the hashing weakness is a severity amplifier that reduces time-to-impact from hours-of-offline-work to minutes.",
             "breach_distance": 1,
             "keystones": [
-              "T-002",
               "T-004",
-              "T-014"
+              "T-008",
+              "T-025"
             ],
-            "contributors": [],
+            "contributors": [
+              "T-022"
+            ],
             "members": [
-              "T-002",
               "T-004",
-              "T-014"
+              "T-008",
+              "T-022",
+              "T-025"
             ],
-            "narrative": "**Keystone (either realises the chain alone):** The signing key baked\ninto `{{KEY_FILE}}` ({{KEY_MEMBERS}}) is recoverable by any attacker\nreading the repository. The signature-verification path ({{VERIFY_MEMBERS}})\naccepts `alg:none`, a second independent bypass. Either keystone alone\nyields JWT forgery for any identity, including admin."
+            "narrative": "**Keystone:** Unauthenticated SQL injection ({{SQLI_MEMBERS}}) dumps the\nuser credential table in a single request.\n\n**Contributor:** Weak password hashing ({{HASH_MEMBERS}}) reduces brute\nforce to minutes on commodity GPUs. Without the hashing weakness the\nchain still succeeds (SQLi alone is Critical) but recovery of plaintext\npasswords takes longer. Fixing only the hashing does NOT close the chain."
           },
           {
             "id": "CC-06",
@@ -1382,15 +1458,17 @@
             "severity_justification": "Mass assignment alone creates a privilege-escalation vector (user can self-assign privileged fields). When combined with missing admin-role enforcement on subsequent endpoints, the escalation becomes full admin takeover via one POST to /api/Users. Both findings are keystones because either alone is Critical in this architecture.",
             "breach_distance": 1,
             "keystones": [
+              "T-009",
               "T-013",
-              "T-019",
-              "T-033"
+              "T-051",
+              "T-052"
             ],
             "contributors": [],
             "members": [
+              "T-009",
               "T-013",
-              "T-019",
-              "T-033"
+              "T-051",
+              "T-052"
             ],
             "narrative": "**Keystone (each alone realises the chain):** The registration endpoint\n({{MA_MEMBERS}}) accepts a `role` field in the request body. The missing\nserver-side admin-role guard on privileged routes ({{AUTHZ_MEMBERS}})\nmeans a user with `role: admin` in their JWT is accepted — no further\nvalidation. A single anonymous POST to create a user with `role=admin`\nyields full admin access. Fix either keystone to close the chain."
           }
@@ -1398,8 +1476,8 @@
       }
     },
     "reconciliation_summary": {
-      "findings_elevated_via_chain": 8,
-      "findings_capped_by_cwe": 1,
+      "findings_elevated_via_chain": 11,
+      "findings_capped_by_cwe": 0,
       "contributors_capped_at_high": 3,
       "chains_active": 4
     }

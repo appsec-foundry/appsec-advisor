@@ -2,72 +2,179 @@
   "schema_version": 1,
   "components": [
     {
-      "id": "backend-api",
-      "name": "Express REST API Backend",
-      "description": "Node.js/Express server handling all REST/API endpoints at /rest/* and /api/*, JWT authentication, file serving, middleware chain, and business logic orchestration. Central component with 50+ route handlers and intentionally vulnerable SQL and code execution paths.",
+      "id": "angular-spa",
+      "name": "Angular SPA Frontend",
+      "description": "Angular-based single-page application served from frontend/dist/frontend/. Handles all user-facing UI, stores JWT tokens in localStorage, and communicates with the Express backend via REST and Socket.IO. Contains intentional client-side vulnerabilities including DOM XSS, insecure localStorage token storage, and prototype pollution.",
       "paths": [
-        "server.ts",
-        "routes/**",
-        "lib/**",
-        "app.ts"
-      ],
-      "tier": "application",
-      "complexity": "complex",
-      "framework": "express"
-    },
-    {
-      "id": "frontend-spa",
-      "name": "Angular Single-Page Application",
-      "description": "Angular 20 SPA compiled to static assets and served by the backend. Implements client-side route guards (LoginGuard, AdminGuard, AccountingGuard), stores JWT in localStorage, and uses bypassSecurityTrustHtml() in multiple components.",
-      "paths": [
-        "frontend/src/**"
+        "frontend/src/**",
+        "frontend/dist/**",
+        "frontend/*.ts",
+        "frontend/*.json"
       ],
       "tier": "client",
       "complexity": "moderate",
-      "framework": "angular"
+      "deployment_zones": [
+        "browser"
+      ],
+      "handles_sensitive_data": true,
+      "technology": "Angular 19+, TypeScript, Socket.IO client, localStorage JWT"
     },
     {
-      "id": "data-persistence",
-      "name": "Data Layer (SQLite + MarsDB)",
-      "description": "Dual-database persistence: SQLite via Sequelize ORM for relational data (users, products, orders, etc.) and MarsDB (MongoDB-like) for product reviews and order history. Multiple routes use raw SQL string interpolation enabling injection attacks.",
+      "id": "express-backend",
+      "name": "Express.js REST API Backend",
+      "description": "Node.js 24 / Express 4.22.1 monolith serving REST APIs, static files, and challenge logic. Contains intentional vulnerabilities including SQL injection (login, search), JWT signing with hardcoded RSA private key (lib/insecurity.ts), eval() SSTI (userProfile.ts), SSRF (profileImageUrlUpload.ts), and 21 endpoints missing authentication middleware.",
       "paths": [
-        "models/**",
-        "data/mongodb.ts",
-        "data/datacreator.ts",
-        "data/static/users.yml"
+        "routes/**",
+        "server.ts",
+        "lib/**",
+        "app.ts",
+        "build/**"
       ],
-      "tier": "data",
-      "complexity": "moderate",
-      "framework": "sequelize"
+      "tier": "application",
+      "complexity": "complex",
+      "deployment_zones": [
+        "container"
+      ],
+      "handles_sensitive_data": true,
+      "technology": "Node.js 24, Express 4.22.1, express-jwt 0.1.3, jsonwebtoken 0.4.0, helmet 4.6.0, morgan"
     },
     {
       "id": "file-upload-service",
-      "name": "File Upload Service",
-      "description": "Handles multipart file uploads (ZIP, XML, YAML, images) via multer. ZIP handler has directory traversal. XML handler uses libxmljs2 with noent:true enabling XXE. Profile image upload accepts URLs for SSRF. Exposed FTP directory at /ftp.",
+      "name": "File Upload & Processing Service",
+      "description": "Express route handlers responsible for file ingestion and processing: multer-based multipart upload (fileUpload.ts), profile image upload from URL (profileImageUrlUpload.ts), profile image from file (profileImageFileUpload.ts). Contains XXE via libxmljs2 with noent:true, SSRF via unchecked URL fetch, and path traversal via logfileServer/keyServer/quarantineServer.",
       "paths": [
         "routes/fileUpload.ts",
-        "routes/profileImageFileUpload.ts",
         "routes/profileImageUrlUpload.ts",
-        "routes/fileServer.ts",
-        "routes/keyServer.ts"
+        "routes/profileImageFileUpload.ts",
+        "routes/logfileServer.ts",
+        "routes/keyServer.ts",
+        "routes/quarantineServer.ts",
+        "ftp/**",
+        "encryptionkeys/**",
+        "uploads/**"
       ],
       "tier": "application",
       "complexity": "moderate",
-      "framework": "express"
+      "deployment_zones": [
+        "container"
+      ],
+      "handles_sensitive_data": true,
+      "technology": "multer 1.4.5-lts.1, libxmljs2 0.37.x, sanitize-filename 1.6.3, node:path"
     },
     {
       "id": "b2b-api",
-      "name": "B2B Order API",
-      "description": "Authenticated B2B endpoint at /b2b/v2 that evaluates user-supplied order data using notevil + vm.runInContext, enabling RCE via sandbox bypass. Also includes Web3 wallet, NFT minting, and contract exploit listener endpoints.",
+      "name": "B2B Order Processing API",
+      "description": "Machine-to-machine API endpoint at POST /b2b/v2/orders protected by JWT bearer auth. Processes JSON order payloads via notevil sandbox (routes/b2bOrder.ts:23) with vm.runInContext \u2014 susceptible to sandbox escape RCE. Accepts arbitrary JavaScript expressions as orderLinesData.",
       "paths": [
         "routes/b2bOrder.ts",
-        "routes/web3Wallet.ts",
-        "routes/nftMint.ts",
         "routes/checkKeys.ts"
       ],
       "tier": "application",
+      "complexity": "simple",
+      "deployment_zones": [
+        "container"
+      ],
+      "handles_sensitive_data": true,
+      "technology": "notevil, vm2, Node.js vm module"
+    },
+    {
+      "id": "data-layer",
+      "name": "Data Layer (SQLite + MarsDB)",
+      "description": "Persistence layer composed of SQLite 3 via Sequelize 6.37.3 ORM for relational user/product/order data, MarsDB 0.6.11 for in-memory NoSQL storage (chatbot/memories), and local filesystem for uploaded files, encryption keys, and FTP downloads. SQL injection paths exist at the Sequelize raw-query level (login, search). The encryption keys directory (encryptionkeys/) is served publicly.",
+      "paths": [
+        "models/**",
+        "data/**",
+        "config/**",
+        "lib/mongodb.ts",
+        "ftp/**",
+        "encryptionkeys/**"
+      ],
+      "tier": "data",
       "complexity": "moderate",
-      "framework": "express"
+      "deployment_zones": [
+        "container"
+      ],
+      "handles_sensitive_data": true,
+      "technology": "SQLite 3, Sequelize 6.37.3, MarsDB 0.6.11, sqlite3 5.1.7, local filesystem"
+    },
+    {
+      "id": "auth",
+      "name": "Authentication & Session Surface",
+      "description": "Login, token/session issuance, password-reset and MFA handlers (lib/insecurity.ts, lib/startup/registerWebsocketEvents.ts, routes/2fa.ts, routes/authenticatedUsers.ts, \u2026). The credential-bearing entry surface \u2014 the highest-value authentication boundary in the system.",
+      "paths": [
+        "lib/insecurity.ts",
+        "lib/startup/registerWebsocketEvents.ts",
+        "routes/2fa.ts",
+        "routes/authenticatedUsers.ts",
+        "routes/login.ts",
+        "routes/resetPassword.ts",
+        "routes/saveLoginIp.ts"
+      ],
+      "tier": "application",
+      "complexity": "moderate",
+      "framework": null,
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "handles_sensitive_data": true,
+      "origin": "reconciliation"
+    },
+    {
+      "id": "ci-cd-pipeline",
+      "name": "CI/CD Pipeline",
+      "description": "Continuous-integration / deployment workflows (.github/workflows/ci.yml, .github/workflows/codeql-analysis.yml, .github/workflows/frontend-bundle-analysis.yml, .github/workflows/lint-fixer.yml, \u2026). Build and release automation holding repository, registry and deploy credentials, with supply-chain reach into the produced artifact.",
+      "paths": [
+        ".github/workflows/**",
+        ".gitlab-ci.yml",
+        "Dockerfile",
+        "Dockerfile.*",
+        "*.Dockerfile",
+        "docker-compose*.yml",
+        "docker-compose*.yaml",
+        "compose*.yml",
+        "compose*.yaml",
+        ".dockerignore",
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        ".npmrc",
+        ".github/dependabot.yml",
+        ".github/dependabot.yaml",
+        ".github/renovate.json",
+        "renovate.json",
+        ".renovaterc",
+        ".renovaterc.json"
+      ],
+      "tier": "application",
+      "complexity": "simple",
+      "framework": null,
+      "deployment_zones": [
+        "ci-cd-runtime",
+        "build-pipeline"
+      ],
+      "handles_sensitive_data": true,
+      "origin": "reconciliation"
+    },
+    {
+      "id": "realtime-channel",
+      "name": "Real-time WebSocket Channel",
+      "description": "Server-side socket.io real-time channel pushing live events to connected browsers. Internet-facing WebSocket surface with its own connection auth/origin checks and message-handler trust boundary.",
+      "paths": [
+        "lib/challengeUtils.ts",
+        "lib/startup/registerWebsocketEvents.ts"
+      ],
+      "tier": "application",
+      "complexity": "simple",
+      "framework": "socket.io",
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "handles_sensitive_data": false,
+      "origin": "reconciliation"
     }
   ]
 }

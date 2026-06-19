@@ -7,20 +7,18 @@
         {
           "step": 1,
           "verdict": "confirmed",
-          "matched_finding_id": "T-018",
+          "matched_finding_id": "T-020",
           "evidence": {
             "file": "frontend/src/app/search-result/search-result.component.ts",
             "line": 132,
             "excerpt": "tableData[i].description = this.sanitizer.bypassSecurityTrustHtml(tableData[i].description)"
           },
-          "controls_found": [
-            "DomSanitizer injected but explicitly bypassed via bypassSecurityTrustHtml \u2014 no effective sanitization"
-          ]
+          "controls_found": []
         },
         {
           "step": 2,
           "verdict": "confirmed",
-          "matched_finding_id": "T-028",
+          "matched_finding_id": "T-001",
           "evidence": {
             "file": "frontend/src/app/login/login.component.ts",
             "line": 101,
@@ -31,16 +29,16 @@
         {
           "step": 3,
           "verdict": "confirmed",
-          "matched_finding_id": "T-027",
+          "matched_finding_id": "T-015",
           "evidence": {
             "file": "lib/insecurity.ts",
-            "line": 54,
-            "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)"
+            "line": 188,
+            "excerpt": "const token = req.cookies.token || utils.jwtFrom(req); jwt.verify(token, publicKey, ...); authenticatedUsers.put(token, decoded)"
           },
           "controls_found": []
         }
       ],
-      "chain_verdict": "partially_blocked"
+      "chain_verdict": "fully_viable"
     },
     {
       "abuse_case_id": "AC-T-002",
@@ -48,29 +46,27 @@
         {
           "step": 1,
           "verdict": "confirmed",
-          "matched_finding_id": "T-017",
+          "matched_finding_id": "T-007",
           "evidence": {
             "file": "routes/basket.ts",
             "line": 19,
-            "excerpt": "const basket = await BasketModel.findOne({ where: { id }, include: [...] }) // id = req.params.id, no UserId ownership check"
+            "excerpt": "const basket = await BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })"
           },
           "controls_found": []
         },
         {
           "step": 2,
-          "verdict": "confirmed",
-          "matched_finding_id": null,
+          "verdict": "inconclusive",
+          "matched_finding_id": "T-003",
           "evidence": {
-            "file": "routes/verify.ts",
-            "line": 52,
-            "excerpt": "challengeUtils.solveIf(challenges.registerAdminChallenge, () => { return req.body && req.body.role === security.roles.admin })"
+            "file": "frontend/src/app/oauth/oauth.component.ts",
+            "line": 30,
+            "excerpt": "(investigating: checking mass assignment on privileged field write)"
           },
-          "controls_found": [
-            "PUT /api/Users/:id mapped to security.denyAll() (server.ts:365); role field is writable via POST /api/Users with no server-side filtering (excludeAttributes omits role)"
-          ]
+          "controls_found": []
         }
       ],
-      "chain_verdict": "partially_blocked"
+      "chain_verdict": "inconclusive"
     },
     {
       "abuse_case_id": "AC-T-003",
@@ -78,7 +74,7 @@
         {
           "step": 1,
           "verdict": "confirmed",
-          "matched_finding_id": "T-002",
+          "matched_finding_id": "T-005",
           "evidence": {
             "file": "lib/insecurity.ts",
             "line": 54,
@@ -89,11 +85,28 @@
         {
           "step": 2,
           "verdict": "confirmed",
-          "matched_finding_id": "T-038",
+          "matched_finding_id": "T-003",
           "evidence": {
             "file": "lib/insecurity.ts",
             "line": 159,
-            "excerpt": "if (decodedToken?.data?.role === roles.accounting)"
+            "excerpt": "if (decodedToken?.data?.role === roles.accounting) { next() }"
+          },
+          "controls_found": []
+        }
+      ],
+      "chain_verdict": "fully_viable"
+    },
+    {
+      "abuse_case_id": "AC-T-004",
+      "step_verdicts": [
+        {
+          "step": 1,
+          "verdict": "confirmed",
+          "matched_finding_id": "T-003",
+          "evidence": {
+            "file": "server.ts",
+            "line": 483,
+            "excerpt": "{ name: 'User', exclude: ['password', 'totpSecret'], model: UserModel } \u2014 role is not excluded; finale-rest passes req.body directly to UserModel.create(); verify.registerAdminChallenge() (verify.ts:50-55) calls next() without stripping req.body.role"
           },
           "controls_found": []
         }
@@ -106,22 +119,22 @@
         {
           "step": 1,
           "verdict": "confirmed",
-          "matched_finding_id": "T-002",
+          "matched_finding_id": "T-003",
           "evidence": {
             "file": "lib/insecurity.ts",
             "line": 23,
-            "excerpt": "const privateKey = '-----BEGIN RSA PRIVATE KEY-----\\r\\nMIICXA...' (full key hardcoded as string literal)"
+            "excerpt": "const privateKey = '-----BEGIN RSA PRIVATE KEY-----\\r\\nMIICXAIBAAKBgQDNwqLE...' // full RSA private key hardcoded in source"
           },
           "controls_found": []
         },
         {
           "step": 2,
           "verdict": "confirmed",
-          "matched_finding_id": "T-002",
+          "matched_finding_id": "T-005",
           "evidence": {
             "file": "lib/insecurity.ts",
             "line": 54,
-            "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any) \u2014 publicKey read from encryptionkeys/jwt.pub; authorize() signs with hardcoded privateKey (RS256); /encryptionkeys served unauthenticated at server.ts:277"
+            "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)"
           },
           "controls_found": []
         }
@@ -136,11 +149,13 @@
           "verdict": "confirmed",
           "matched_finding_id": "T-011",
           "evidence": {
-            "file": "routes/userProfile.ts",
-            "line": 62,
-            "excerpt": "username = eval(code) // eslint-disable-line no-eval"
+            "file": "routes/b2bOrder.ts",
+            "line": 23,
+            "excerpt": "vm.runInContext('safeEval(orderLinesData)', sandbox, { timeout: 2000 })"
           },
-          "controls_found": []
+          "controls_found": [
+            "server.ts:423 app.use('/b2b/v2', security.isAuthorized()) \u2014 JWT auth required, but private key hardcoded in lib/insecurity.ts:23 enables self-signed token; algorithm not pinned (see AC-T-003), allowing bypass"
+          ]
         }
       ],
       "chain_verdict": "partially_blocked"

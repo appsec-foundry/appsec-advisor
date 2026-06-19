@@ -1,0 +1,1 @@
+{"tool_use_id": "toolu_01Q63DE5nxCVcNxReUf96ebv", "session_id": "040ee51b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1781722940, "input_summary": "cd /tmp/claude/opts CHROME=$(command -v google-chrome) for o in B C; do   printf '<!doctype html><meta charset=\"utf-8\"><body style=\"margin:0;background:#fff\"><i\u2026"}

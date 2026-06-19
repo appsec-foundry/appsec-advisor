@@ -1,0 +1,15 @@
+{
+  "source_kind": "disabled",
+  "url": null,
+  "label": null,
+  "human_source_url": null,
+  "demo": false,
+  "surfaced": false,
+  "disposition": "skipped",
+  "fetched_at": "2026-06-05T15:04:22.885282Z",
+  "generated": "2026-04-09T07:51:52Z",
+  "description": "KN Application Security Requirements (ASR)",
+  "count": 63,
+  "freshness": null,
+  "cache_path": "/home/mrohr/appsec-advisor/.cache/requirements.yaml"
+}

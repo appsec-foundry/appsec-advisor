@@ -3,48 +3,57 @@
   "trust_boundaries": [
     {
       "id": "tb-1",
-      "name": "Public Internet",
-      "description": "Unauthenticated external users and attackers. No trust. All traffic arrives here first.",
-      "components": ["external-user", "attacker"],
+      "name": "Public Internet / Browser Boundary",
+      "description": "The boundary between untrusted external actors (anonymous users, authenticated customers, attackers, B2B clients) and the Juice Shop application. All HTTP traffic crosses this boundary on port 3000.",
       "from": "external",
-      "to": "backend-api",
-      "crossing_enforcement": "None — CORS wildcard, no authentication required for many endpoints"
+      "to": "express-backend",
+      "enforcement": "Express middleware stack (cors, helmet partial, express-jwt, rate-limit on subset). No network-layer perimeter control configured in source.",
+      "weaknesses": ["wildcard CORS", "alg:none JWT bypass", "21 unauthenticated endpoints", "no rate limit on /rest/user/login"]
     },
     {
       "id": "tb-2",
-      "name": "Browser / Client Tier",
-      "description": "Angular SPA running in browser. JWT stored in localStorage (XSS-accessible). Client-side route guards only — no server enforcement.",
-      "components": ["frontend-spa"],
-      "from": "frontend-spa",
-      "to": "backend-api",
-      "crossing_enforcement": "JWT Bearer token in Authorization header (RS256, but private key hardcoded)"
+      "name": "Browser / Angular SPA Boundary",
+      "description": "The boundary between the browser DOM and the Angular SPA frontend. XSS payloads can cross this boundary and access localStorage JWT tokens.",
+      "from": "external",
+      "to": "angular-spa",
+      "enforcement": "Angular DOM sanitization (partial); sanitize-html 1.4.2 (outdated, bypassable); helmet XSS filter disabled.",
+      "weaknesses": ["outdated sanitize-html", "localStorage JWT storage", "no CSP", "XSS filter disabled"]
     },
     {
       "id": "tb-3",
-      "name": "Application Tier",
-      "description": "Express backend process. Handles all routing, authentication, and business logic. Partially enforces access control via express-jwt middleware on selected routes.",
-      "components": ["backend-api", "file-upload-service", "b2b-api"],
-      "from": "backend-api",
-      "to": "data-persistence",
-      "crossing_enforcement": "No network-level isolation — same process; Sequelize ORM with raw SQL fallback"
+      "name": "Application / Data Layer Boundary",
+      "description": "The boundary between Express route handlers and the SQLite database / filesystem. In-process, with no network segment or DB-level access control.",
+      "from": "express-backend",
+      "to": "data-layer",
+      "enforcement": "Sequelize ORM (bypassed via raw() in auth paths). No DB-level user permissions — single SQLite file with no auth.",
+      "weaknesses": ["raw SQL queries in login.ts and search.ts", "no DB-level access control", "Sequelize raw() escape bypass"]
     },
     {
       "id": "tb-4",
-      "name": "Data Tier",
-      "description": "SQLite file (data/juiceshop.sqlite) and MarsDB in-memory store. No network isolation — same filesystem.",
-      "components": ["data-persistence"],
-      "from": "backend-api",
-      "to": "data-persistence",
-      "crossing_enforcement": "File system permissions; no network segmentation; SQLite file accessible to any process running as same user"
+      "name": "Application / File System Boundary",
+      "description": "The boundary between the Node.js process and the local filesystem containing user uploads, encryption keys, FTP files, and logs.",
+      "from": "express-backend",
+      "to": "file-upload-service",
+      "enforcement": "Application-level path checks (keyServer checks for /); no OS-level mandatory access control. UID 65532 provides container-level isolation only.",
+      "weaknesses": ["path traversal in logfileServer / quarantineServer", "serve-index on ftp/ (directory listing)", "encryptionkeys/ served publicly"]
     },
     {
       "id": "tb-5",
-      "name": "Filesystem / Upload Zone",
-      "description": "Server filesystem including uploads/, ftp/, encryptionkeys/, logs/. Intended to be isolated but exposed via directory listing routes.",
-      "components": ["file-upload-service"],
-      "from": "file-upload-service",
-      "to": "external-user",
-      "crossing_enforcement": "None — /ftp, /encryptionkeys, /support/logs all publicly browsable"
+      "name": "B2B API JWT Boundary",
+      "description": "The boundary enforcing machine-to-machine authentication for the B2B order API at /b2b/v2. JWT bearer token required, but private key is public.",
+      "from": "external",
+      "to": "b2b-api",
+      "enforcement": "express-jwt isAuthorized() at server.ts:423. RS256 verification using publicKey — but private key is hardcoded in source at lib/insecurity.ts:23.",
+      "weaknesses": ["private key in source enables token forgery", "notevil sandbox escapable via prototype pollution", "vm.runInContext RCE"]
+    },
+    {
+      "id": "tb-6",
+      "name": "Container / Host Boundary",
+      "description": "Docker container boundary isolating the Node.js process from the host OS. Distroless image with UID 65532 provides strong isolation at the OS level.",
+      "from": "express-backend",
+      "to": "external",
+      "enforcement": "Docker container with distroless gcr.io/distroless/nodejs24-debian13 image, non-root UID 65532. No --privileged flag.",
+      "weaknesses": ["base images tag-pinned without digest", "npm install --unsafe-perm in build stage", "no cosign signing on release images"]
     }
   ]
 }

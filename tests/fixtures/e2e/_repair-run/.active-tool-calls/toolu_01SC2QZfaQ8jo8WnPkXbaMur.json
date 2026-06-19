@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_01SC2QZfaQ8jo8WnPkXbaMur", "session_id": "5f22d34b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1780516695, "input_summary": "cd /home/mrohr/appsec-advisor && python3 /tmp/claude/test_enforce.py"}

@@ -8,65 +8,68 @@
       "actor_label": "external-attacker \u2014 unauthenticated external attacker",
       "goal": "Obtain persistent authenticated access as an arbitrary user without valid credentials.",
       "prerequisite": "Attacker can submit content that is later rendered to other users (e.g. feedback, comments, profile fields).",
-      "combined_risk": "High",
-      "chain_verdict": "partially_blocked",
+      "combined_risk": "Critical",
+      "chain_verdict": "fully_viable",
       "rows": [
         {
           "step": 1,
-          "fid": "F-018",
-          "finding_title": "DOM XSS via search result rendering search result.component.ts",
+          "fid": "F-020",
+          "finding_title": "Stored XSS in Product Descriptions \u2014 search-result.component.ts:132",
+          "finding_sev": "High",
           "evidence": "frontend/src/app/search-result/search-result.component.ts:132",
           "outcome": "Attacker JavaScript executes in the victim's browser session.",
-          "status_icon": "\u25d0"
+          "status_icon": "\u26a0"
         },
         {
           "step": 2,
-          "fid": "F-028",
-          "finding_title": "JWT stored in localStorage XSS accessible token storage login.component.ts",
+          "fid": "F-001",
+          "finding_title": "JWT Bearer Token Stored in localStorage \u2014 login.component.ts:101",
+          "finding_sev": "High",
           "evidence": "frontend/src/app/login/login.component.ts:101",
           "outcome": "Token exfiltrated from local/session storage via the Step 1 payload.",
           "status_icon": "\u26a0"
         },
         {
           "step": 3,
-          "fid": "F-027",
-          "finding_title": "OAuth token exposed in URL fragment oauth/oauth.component.ts",
-          "evidence": "lib/insecurity.ts:54",
+          "fid": "F-015",
+          "finding_title": "OAuth Implicit Flow Without State or PKCE \u2014 login.component.ts:134",
+          "finding_sev": "High",
+          "evidence": "lib/insecurity.ts:188",
           "outcome": "Exfiltrated token accepted for a new session; absence of token binding / PKCE removes the last server-side revocation opportunity.",
           "status_icon": "\u26a0"
         }
       ],
       "matched_finding_ids": [
-        "F-018",
-        "F-028",
-        "F-027"
+        "F-020",
+        "F-001",
+        "F-015"
       ],
       "combined_risk_rationale": "Individually the XSS sink and the web-readable token storage rate below Critical, but chained they form a repeatable credential-theft path: a single stored payload causes indefinite session compromise for every user who views the affected page.",
       "blocking_mitigations": [
         {
-          "id": "M-022",
-          "title": "DOM XSS via search result rendering search result.component.ts",
+          "id": "M-030",
+          "title": "Encode output instead of bypassing the framework sanitizer",
           "priority": "P2",
           "addresses": [
-            "F-018"
+            "F-020"
           ],
           "breaks_at_step": 1
         },
         {
-          "id": "M-020",
-          "title": "JWT stored in localStorage XSS accessible token storage login.component.ts",
-          "priority": "P2",
+          "id": "M-011",
+          "title": "Store session tokens in HttpOnly, Secure cookies",
+          "priority": "P3",
           "addresses": [
-            "F-028"
+            "F-001"
           ],
           "breaks_at_step": 2
         },
         {
-          "id": "M-023",
-          "title": "OAuth token exposed in URL fragment oauth/oauth.component.ts",
+          "id": "M-025",
+          "title": "Replace OAuth Implicit Flow with Authorization Code Flow with PKCE and state validation",
           "priority": "P2",
           "addresses": [
-            "F-027"
+            "F-015"
           ],
           "breaks_at_step": 3
         }
@@ -79,39 +82,51 @@
       "actor_label": "authenticated-user \u2014 authenticated low-privilege user",
       "goal": "Enumerate and exfiltrate other users' records, then escalate own permissions via unguarded mass assignment.",
       "prerequisite": "Attacker holds a valid, non-privileged user account.",
-      "combined_risk": "High",
-      "chain_verdict": "partially_blocked",
+      "combined_risk": "Critical",
+      "chain_verdict": "inconclusive",
       "rows": [
         {
           "step": 1,
-          "fid": "F-017",
-          "finding_title": "NoSQL injection in review update no author verification updateProductReviews.ts",
+          "fid": "F-007",
+          "finding_title": "Insecure Direct Object Reference \u2014 routes/address.ts:11",
+          "finding_sev": "Critical",
           "evidence": "routes/basket.ts:19",
           "outcome": "Attacker enumerates and retrieves records for arbitrary object IDs; no ownership comparison is performed.",
           "status_icon": "\u26a0"
         },
         {
           "step": 2,
-          "fid": "",
-          "finding_title": "",
-          "evidence": "routes/verify.ts:52",
+          "fid": "F-003",
+          "finding_title": "OAuth Derived Password from Email Enables Credential \u2014 oauth.component.ts:30",
+          "finding_sev": "Critical",
+          "evidence": "frontend/src/app/oauth/oauth.component.ts:30",
           "outcome": "Update endpoint persists an unfiltered `role` (or equivalent) field supplied in the request body.",
-          "status_icon": "\u25d0"
+          "status_icon": "?"
         }
       ],
       "matched_finding_ids": [
-        "F-017"
+        "F-007",
+        "F-003"
       ],
       "combined_risk_rationale": "The ownership gap exposes every record, and the mass-assignment gap lets the same low-privilege actor self-elevate \u2014 together they turn a single compromised account into full tenant data access and role escalation.",
       "blocking_mitigations": [
         {
-          "id": "M-025",
-          "title": "NoSQL injection in review update no author verification updateProductReviews.ts",
-          "priority": "P2",
+          "id": "M-017",
+          "title": "Enforce object-level (ownership) authorization",
+          "priority": "P1",
           "addresses": [
-            "F-017"
+            "F-007"
           ],
           "breaks_at_step": 1
+        },
+        {
+          "id": "M-013",
+          "title": "Move secrets to a managed secret store",
+          "priority": "P2",
+          "addresses": [
+            "F-003"
+          ],
+          "breaks_at_step": 2
         }
       ]
     },
@@ -127,44 +142,82 @@
       "rows": [
         {
           "step": 1,
-          "fid": "F-002",
-          "finding_title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "fid": "F-005",
+          "finding_title": "Hardcoded RSA Private Key Enables Universal JWT Forgery \u2014 lib/insecurity.ts:23",
+          "finding_sev": "Critical",
           "evidence": "lib/insecurity.ts:54",
           "outcome": "Verifier accepts attacker-chosen `alg` (e.g. `none` or HMAC-with-public-key), allowing token re-signing without the secret.",
           "status_icon": "\u26a0"
         },
         {
           "step": 2,
-          "fid": "F-038",
-          "finding_title": "Client side only admin guard Angular route guard bypass app.guard.ts",
+          "fid": "F-003",
+          "finding_title": "OAuth Derived Password from Email Enables Credential \u2014 oauth.component.ts:30",
+          "finding_sev": "Critical",
           "evidence": "lib/insecurity.ts:159",
           "outcome": "Forged `role: admin` claim is accepted as authoritative because the role is not re-fetched from the database per request.",
           "status_icon": "\u26a0"
         }
       ],
       "matched_finding_ids": [
-        "F-002",
-        "F-038"
+        "F-005",
+        "F-003"
       ],
       "combined_risk_rationale": "Algorithm confusion alone yields a forgeable token; trusting the in-token role claim turns that forgery into instant admin access \u2014 neither gap is Critical in isolation, but the chain is a full authentication bypass.",
       "blocking_mitigations": [
         {
-          "id": "M-003",
-          "title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "id": "M-015",
+          "title": "Move cryptographic keys to a managed secret store",
           "priority": "P1",
           "addresses": [
-            "F-002"
+            "F-005"
           ],
           "breaks_at_step": 1
         },
         {
-          "id": "M-021",
-          "title": "Client side only admin guard Angular route guard bypass app.guard.ts",
+          "id": "M-013",
+          "title": "Move secrets to a managed secret store",
           "priority": "P2",
           "addresses": [
-            "F-038"
+            "F-003"
           ],
           "breaks_at_step": 2
+        }
+      ]
+    },
+    {
+      "id": "AC-T-004",
+      "title": "Privilege Escalation via Mass-Assignment on Registration",
+      "source": "mandatory",
+      "actor_label": "external-attacker \u2014 unauthenticated external attacker",
+      "goal": "Obtain an administrator account without any existing privilege.",
+      "prerequisite": "Self-registration is open (one unauthenticated POST).",
+      "combined_risk": "Critical",
+      "chain_verdict": "fully_viable",
+      "rows": [
+        {
+          "step": 1,
+          "fid": "F-003",
+          "finding_title": "OAuth Derived Password from Email Enables Credential \u2014 oauth.component.ts:30",
+          "finding_sev": "Critical",
+          "evidence": "server.ts:483",
+          "outcome": "The account-creation handler persists the request body wholesale, so a client-supplied `role` (or `isAdmin`) field is written verbatim.",
+          "status_icon": "\u26a0"
+        }
+      ],
+      "matched_finding_ids": [
+        "F-003"
+      ],
+      "combined_risk_rationale": "A single unauthenticated request mints an admin account when the registration handler trusts a client-supplied role field \u2014 the most direct full-compromise path in role-based apps with open sign-up.",
+      "blocking_mitigations": [
+        {
+          "id": "M-013",
+          "title": "Move secrets to a managed secret store",
+          "priority": "P2",
+          "addresses": [
+            "F-003"
+          ],
+          "breaks_at_step": 1
         }
       ]
     },
@@ -180,35 +233,46 @@
       "rows": [
         {
           "step": 1,
-          "fid": "F-002",
-          "finding_title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "fid": "F-003",
+          "finding_title": "OAuth Derived Password from Email Enables Credential \u2014 oauth.component.ts:30",
+          "finding_sev": "Critical",
           "evidence": "lib/insecurity.ts:23",
           "outcome": "A private key, signing secret, or credential file is committed to the source repository or served without authentication.",
           "status_icon": "\u26a0"
         },
         {
           "step": 2,
-          "fid": "F-002",
-          "finding_title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
+          "fid": "F-005",
+          "finding_title": "Hardcoded RSA Private Key Enables Universal JWT Forgery \u2014 lib/insecurity.ts:23",
+          "finding_sev": "Critical",
           "evidence": "lib/insecurity.ts:54",
           "outcome": "The exposed key/secret is the same one the server trusts, so a token signed with it (or the leaked credential) is accepted as authentic.",
           "status_icon": "\u26a0"
         }
       ],
       "matched_finding_ids": [
-        "F-002",
-        "F-002"
+        "F-003",
+        "F-005"
       ],
       "combined_risk_rationale": "Exposed signing material collapses the entire authentication boundary: any attacker who reads the key can mint a valid token for any identity or role, with no credential ever required.",
       "blocking_mitigations": [
         {
-          "id": "M-003",
-          "title": "Hardcoded RSA private key enables JWT forgery lib/insecurity.ts",
-          "priority": "P1",
+          "id": "M-013",
+          "title": "Move secrets to a managed secret store",
+          "priority": "P2",
           "addresses": [
-            "F-002"
+            "F-003"
           ],
           "breaks_at_step": 1
+        },
+        {
+          "id": "M-015",
+          "title": "Move cryptographic keys to a managed secret store",
+          "priority": "P1",
+          "addresses": [
+            "F-005"
+          ],
+          "breaks_at_step": 2
         }
       ]
     },
@@ -225,10 +289,11 @@
         {
           "step": 1,
           "fid": "F-011",
-          "finding_title": "RCE via vm.runInContext sandbox escape in B2B order routes/b2bOrder.ts",
-          "evidence": "routes/userProfile.ts:62",
+          "finding_title": "JavaScript Sandbox Escape \u2014 routes/b2bOrder.ts:23",
+          "finding_sev": "Critical",
+          "evidence": "routes/b2bOrder.ts:23",
           "outcome": "Attacker-controlled input is passed to `eval`, a server-side template engine, an unsafe sandbox, or an unsafe deserializer.",
-          "status_icon": "\u26a0"
+          "status_icon": "\u25d0"
         }
       ],
       "matched_finding_ids": [
@@ -237,8 +302,8 @@
       "combined_risk_rationale": "A single injection into a server-side interpreter yields code execution in the application process \u2014 the highest-impact outcome, granting full filesystem and network access from one unauthenticated request.",
       "blocking_mitigations": [
         {
-          "id": "M-033",
-          "title": "RCE via vm.runInContext sandbox escape in B2B order routes/b2bOrder.ts",
+          "id": "M-021",
+          "title": "Remove server-side evaluation of untrusted input",
           "priority": "P1",
           "addresses": [
             "F-011"
@@ -248,12 +313,5 @@
       ]
     }
   ],
-  "catalog_evaluated": [
-    {
-      "id": "AC-T-004",
-      "title": "Privilege Escalation via Mass-Assignment on Registration",
-      "source": "mandatory",
-      "reason": "no finding matched the required chain step(s) for this scenario"
-    }
-  ]
+  "catalog_evaluated": []
 }

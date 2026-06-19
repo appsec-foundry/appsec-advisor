@@ -1,125 +1,350 @@
 {
   "component_id": "file-upload-service",
-  "component_name": "File Upload Service",
-  "started_at": "2026-06-03T18:43:00Z",
-  "completed_at": "2026-06-03T18:55:00Z",
-  "source": "stride",
+  "component_name": "File Upload & Processing Service",
+  "started_at": "2026-06-17T16:18:46Z",
+  "analyzed_at": "2026-06-17T16:22:02Z",
+  "compliance_scope_applied": ["PCI-DSS", "SOC2"],
+  "partial": false,
+  "skipped_categories": [],
+  "resolved_prior_findings": [],
   "threats": [
     {
-      "id": "F-029",
-      "t_id": "T-029",
-      "title": "XXE via XML upload with noent:true — routes/fileUpload.ts",
-      "stride": "Information Disclosure",
-      "component": "file-upload-service",
-      "description": "The XML upload handler uses libxmljs2 with `noent: true`, which enables external entity processing. An attacker can upload an XML file with an XXE payload pointing to file:///etc/passwd or internal network URLs, causing the server to disclose local file contents or SSRF to internal services.",
-      "likelihood": "Critical",
+      "local_id": "file-upload-service-001",
+      "threat_category_id": "TH-02",
+      "additional_categories": ["TH-06"],
+      "stride": "Spoofing",
+      "cwe": "CWE-306",
+      "title": "Missing Authentication on /file-upload Multipart Upload Endpoint (routes/fileUpload.ts)",
+      "affected_parameter": "multipart/form-data file field",
+      "scenario": "The POST /file-upload route registered at server.ts:309 has no authentication middleware before the handler chain (`uploadToMemory.single('file'), ensureFileIsPassed, checkUploadSize, checkFileType, handleZipFileUpload, handleXmlUpload, handleYamlUpload`). Any unauthenticated network actor — including anonymous internet users — can submit XML, ZIP, or YAML payloads and trigger server-side XML parsing with `noent:true`, ZIP archive extraction, and YAML deserialization. The attacker does not need to possess any credential, session token, or account. This authentication bypass is the root enabler for all XXE, zip-slip, and YAML bomb threats catalogued separately. Compare server.ts:356 where basket endpoints correctly require authentication.",
+      "evidence_summary": "server.ts:309 registers POST /file-upload with no auth middleware; the next auth gate after line 309 is at line 353 (JWT challenge verification), which does not protect this route.",
+      "impact_description": "An anonymous attacker gains access to XML entity resolution, ZIP extraction, and YAML deserialization code paths that should be limited to authenticated B2B customers.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "multer fileSize limit (200000 bytes); file type check is advisory-only and does not block processing",
+      "mitigation_title": "Enforce JWT authentication middleware on POST /file-upload before all upload handlers",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `security.isAuthorized()` or `passport.authenticate('jwt', { session: false })` as the first middleware on the POST /file-upload route in server.ts before `uploadToMemory.single('file')`.",
+          "Restrict the endpoint to users whose `role` claim in the JWT includes `customer` or `b2b`; reject anonymous and unauthenticated requests with HTTP 401.",
+          "Add an integration test asserting that unauthenticated POST /file-upload returns 401 rather than 204/410."
+        ],
+        "code_example": "// server.ts\napp.post('/file-upload',\n  security.isAuthorized(),          // <-- add this gate\n  uploadToMemory.single('file'),\n  ensureFileIsPassed,\n  checkUploadSize,\n  checkFileType,\n  handleZipFileUpload,\n  handleXmlUpload,\n  handleYamlUpload\n)",
+        "reference": "CWE-306"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 309
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "isAuthorized|passport.authenticate|requireAuth|jwtAuth",
+          "search_paths": ["server.ts"],
+          "hit_count": 0,
+          "searched_at": "2026-06-17T16:21:00Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "file-upload-service-002",
+      "threat_category_id": "TH-01",
+      "additional_categories": ["TH-07"],
+      "stride": "Tampering",
+      "cwe": "CWE-611",
+      "title": "XXE via libxmljs2 noent:true on Unauthenticated Upload (routes/fileUpload.ts:83)",
+      "affected_parameter": "uploaded XML file body",
+      "scenario": "At fileUpload.ts:83, uploaded XML is parsed with `libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })` — the `noent: true` option instructs libxmljs2 to resolve external entity references declared in the DOCTYPE. An attacker submitting an XML file containing `<!DOCTYPE foo [ <!ENTITY xxe SYSTEM \"file:///etc/passwd\"> ]><root>&xxe;</root>` causes the server to read the local file and embed its contents in `xmlString`. The resolved string is then appended verbatim into the HTTP 410 error response at line 87: `'B2B customer complaints via file upload have been deprecated for security reasons: ' + utils.trunc(xmlString, 400)`. Because the /file-upload endpoint requires no authentication (finding file-upload-service-001), any internet-facing attacker can perform this attack without credentials.",
+      "evidence_summary": "fileUpload.ts:83 calls `libxml.parseXml(data, { noent: true })` — the `noent` flag is the direct enabler of external entity resolution; line 87 reflects up to 400 characters of the resolved XML document in the response.",
+      "impact_description": "An unauthenticated attacker can exfiltrate arbitrary files readable by the Node.js process, including /etc/passwd, application config files, and private keys.",
+      "likelihood": "High",
       "impact": "Critical",
       "risk": "Critical",
-      "cwe": "CWE-611",
-      "evidence": [
-        {
-          "file": "routes/fileUpload.ts",
-          "line": 45,
-          "excerpt": "const xmlDoc = vm.runInContext('libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })', sandbox, { timeout: 2000 })"
-        }
-      ],
-      "controls_in_place": "2000ms vm execution timeout",
-      "mitigation": {
-        "title": "Disable external entity processing in XML parser",
-        "steps": ["Change `noent: true` to `noent: false` in libxmljs2 options", "Validate XML against a schema before processing", "Consider rejecting XML uploads entirely if the B2B complaint use case can be deprecated"],
+      "controls_in_place": "2000ms VM execution timeout guards against infinite recursion (xxe DoS); `utils.trunc(xmlString, 400)` limits exfiltrated bytes per request but does not prevent multi-request exfiltration",
+      "mitigation_title": "Disable external entity resolution by removing noent:true from libxmljs2 parseXml options in fileUpload.ts",
+      "remediation": {
         "effort": "Low",
-        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html"
+        "steps": [
+          "Change the parseXml call at fileUpload.ts:83 to `libxml.parseXml(data, { noblanks: true, noent: false, nocdata: true })` — setting `noent: false` prevents external entity resolution at the C library level.",
+          "Additionally disable the DOCTYPE declaration entirely using `libxml.parseXml(data, { noent: false, nonet: true, dtdload: false, dtdattr: false })` to block all external DTD loading.",
+          "Do not reflect the parsed XML content in HTTP responses; replace the error message at line 87 with a fixed string that does not include `xmlString`.",
+          "If the B2B XML upload is deprecated (as the comment at line 78 suggests), consider removing the XML parsing branch entirely and returning HTTP 410 with a static message for all XML uploads."
+        ],
+        "code_example": "// fileUpload.ts:83 — before\nconst xmlDoc = vm.runInContext(\n  'libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })',\n  sandbox, { timeout: 2000 }\n)\n\n// after\nconst xmlDoc = vm.runInContext(\n  'libxml.parseXml(data, { noblanks: true, noent: false, nonet: true, nocdata: true })',\n  sandbox, { timeout: 2000 }\n)",
+        "reference": "CWE-611"
       },
-      "mitigation_ids": ["M-029"],
-      "source": "stride",
-      "evidence_check": "verified-prior"
+      "evidence": {
+        "file": "routes/fileUpload.ts",
+        "line": 83
+      },
+      "evidence_check": "unchecked",
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
     },
     {
-      "id": "F-030",
-      "t_id": "T-030",
-      "title": "Directory traversal in ZIP file upload — routes/fileUpload.ts",
-      "stride": "Elevation of Privilege",
-      "component": "file-upload-service",
-      "description": "The ZIP file upload handler extracts entries to uploads/complaints/ without sufficient path validation. The `absolutePath.includes(path.resolve('.'))` check can be bypassed with carefully crafted paths. An attacker can write files to arbitrary locations including ftp/ (e.g. ftp/legal.md), enabling overwrite of sensitive server files.",
-      "likelihood": "High",
-      "impact": "High",
-      "risk": "High",
-      "cwe": "CWE-22",
-      "evidence": [
-        {
-          "file": "routes/fileUpload.ts",
-          "line": 44,
-          "excerpt": "const absolutePath = path.resolve('uploads/complaints/' + fileName)\n  challengeUtils.solveIf(challenges.fileWriteChallenge, () => { return absolutePath === path.resolve('ftp/legal.md') })"
-        }
-      ],
-      "controls_in_place": "path.resolve check present but insufficient",
-      "mitigation": {
-        "title": "Use path.resolve with strict prefix validation for ZIP extraction",
-        "steps": ["After resolving the path, verify it starts with `path.resolve('uploads/complaints') + path.sep`", "Use the archiver library's safeExtract option or manually validate each entry", "Reject ZIP entries with absolute paths or path traversal sequences"],
-        "effort": "Low",
-        "reference": "https://snyk.io/research/zip-slip-vulnerability"
-      },
-      "mitigation_ids": ["M-030"],
-      "source": "stride",
-      "evidence_check": "verified-prior"
-    },
-    {
-      "id": "F-031",
-      "t_id": "T-031",
-      "title": "SSRF via profile image URL upload — routes/profileImageUrlUpload.ts",
-      "stride": "Information Disclosure",
-      "component": "file-upload-service",
-      "description": "The profile image URL upload endpoint fetches images from user-supplied URLs server-side without validation of the URL scheme or host. An attacker can supply internal URLs (file://, http://169.254.169.254/metadata, http://localhost:3000/metrics) to probe internal services or read local files via the SSRF vector.",
-      "likelihood": "High",
-      "impact": "High",
-      "risk": "High",
+      "local_id": "file-upload-service-003",
+      "threat_category_id": "TH-08",
+      "additional_categories": ["TH-07"],
+      "stride": "Tampering",
       "cwe": "CWE-918",
-      "evidence": [
-        {
-          "file": "routes/profileImageUrlUpload.ts",
-          "line": 1,
-          "excerpt": "Fetches profile image from user-supplied URL without scheme/host validation"
-        }
-      ],
-      "controls_in_place": "None",
-      "mitigation": {
-        "title": "Implement SSRF prevention for URL-based image upload",
-        "steps": ["Validate URL scheme is http:// or https:// only", "Implement allowlist of permitted image hosts", "Use DNS resolution check to block requests to private IP ranges (RFC 1918)", "Consider using a dedicated image proxy service"],
+      "title": "SSRF via Unvalidated URL Fetch in profileImageUrlUpload (routes/profileImageUrlUpload.ts:24)",
+      "affected_parameter": "imageUrl (POST body)",
+      "scenario": "At profileImageUrlUpload.ts:24, `const response = await fetch(url)` is called with the `url` value taken directly from `req.body.imageUrl` with no scheme allowlist, host allowlist, or CIDR block for RFC-1918 ranges. After the authentication check at line 21 confirms a logged-in user, any authenticated user can supply `imageUrl: 'http://169.254.169.254/latest/meta-data/iam/security-credentials/'` (AWS IMDS), `http://localhost:3000/rest/user/authentication-details`, or any other internal HTTP endpoint. The response body is written to disk at line 29-30 and — on fetch failure — the raw URL is stored as the user's profileImage in the database (line 36). The only SSRF detection is a pattern match for `/solve/challenges/server-side` (line 20), which is easily bypassed with any other internal URL.",
+      "evidence_summary": "profileImageUrlUpload.ts:24 calls `fetch(url)` where `url` comes directly from `req.body.imageUrl` with no URL validation beyond the challenge-detection pattern at line 20.",
+      "impact_description": "An authenticated attacker can use the application server as a proxy to reach internal services, cloud metadata endpoints, and loopback services, potentially exfiltrating AWS credentials, internal API responses, or internal configuration.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Authentication check at line 21 (requires valid session cookie); SSRF challenge detection pattern at line 20 (bypassable)",
+      "mitigation_title": "Validate imageUrl scheme and host against an allowlist before fetching in profileImageUrlUpload.ts",
+      "remediation": {
         "effort": "Medium",
-        "reference": "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
+        "steps": [
+          "Parse the supplied URL with `new URL(url)` and enforce that `url.protocol` is `https:` (or `http:` for dev only) and `url.hostname` resolves to a public IP (not 127.x, 10.x, 172.16–31.x, 192.168.x, 169.254.x).",
+          "Use a library such as `ssrf-req-filter` (npm) or implement a DNS-rebinding-safe resolver that re-checks the resolved IP after DNS lookup before opening the TCP connection.",
+          "Set an explicit fetch timeout (`AbortSignal.timeout(5000)`) to prevent slow-loris amplification.",
+          "Block `file://`, `ftp://`, `gopher://` schemes explicitly.",
+          "Remove the partial challenge-detection pattern at line 20 once a proper allowlist is in place."
+        ],
+        "code_example": "import { URL } from 'node:url'\nconst ALLOWED_SCHEMES = new Set(['https:', 'http:'])\nconst BLOCKED_HOSTS = /^(127\\.|10\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.|169\\.254\\.)/\n\nconst parsed = new URL(url)\nif (!ALLOWED_SCHEMES.has(parsed.protocol) || BLOCKED_HOSTS.test(parsed.hostname)) {\n  return next(new Error('Invalid image URL'))\n}\nconst response = await fetch(url, { signal: AbortSignal.timeout(5000) })",
+        "reference": "CWE-918"
       },
-      "mitigation_ids": ["M-031"],
-      "source": "stride",
-      "evidence_check": "verified-prior"
+      "evidence": {
+        "file": "routes/profileImageUrlUpload.ts",
+        "line": 24
+      },
+      "evidence_check": "unchecked",
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
     },
     {
-      "id": "F-032",
-      "t_id": "T-032",
-      "title": "Denial of Service via XML billion-laughs attack — routes/fileUpload.ts",
+      "local_id": "file-upload-service-004",
+      "threat_category_id": "TH-07",
+      "additional_categories": [],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-22",
+      "title": "Zip Slip Arbitrary File Write via Flawed Path-Containment Check (routes/fileUpload.ts:44-45)",
+      "affected_parameter": "ZIP archive entry filename (entry.path)",
+      "scenario": "In handleZipFileUpload (fileUpload.ts:40-45), entries from a ZIP archive are extracted and written to disk. The check at line 44 evaluates `absolutePath.includes(path.resolve('.'))`. While this check is designed to prevent writing outside the working directory, it is bypassed by the fact that `fs.createWriteStream` at line 45 receives the raw un-normalized `fileName` string: `fs.createWriteStream('uploads/complaints/' + fileName)`. A ZIP entry named `../../ftp/legal.md` produces `absolutePath = /app/ftp/legal.md` which DOES include `/app` (the working dir), so the check passes. The stream then writes to `uploads/complaints/../../ftp/legal.md` which resolves to `/app/ftp/legal.md`, overwriting the FTP directory file. With appropriate traversal, attacker-controlled content can be written to `routes/`, `models/`, or any location writable by the Node.js process, enabling backdoor injection or data destruction.",
+      "evidence_summary": "fileUpload.ts:45 passes the raw entry.path string directly to `fs.createWriteStream` without normalization, while the guard at line 44 checks the resolved absolute path — the mismatch allows traversal within the working directory.",
+      "impact_description": "An unauthenticated attacker can overwrite application source files, FTP contents, or configuration files within the working directory, leading to persistent backdoor injection or data destruction.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "Path containment check at line 44 (insufficient — bypassable by path normalization mismatch); multer 200KB file size limit applies to the outer ZIP, not individual extracted entries",
+      "mitigation_title": "Use the resolved absolute path as the write target in handleZipFileUpload and reject entries outside the complaints directory",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Replace `fs.createWriteStream('uploads/complaints/' + fileName)` at line 45 with a stream to the pre-resolved `absolutePath` variable that was already computed at line 42.",
+          "Strengthen the guard at line 44: change to `if (!absolutePath.startsWith(path.resolve('uploads/complaints') + path.sep))` — use `startsWith` with a trailing path separator to prevent a filename like `../complaints_evil` from matching a prefix.",
+          "Reject or skip ZIP entries whose `fileName` contains `..` before any path resolution.",
+          "Consider using the `unzipper` library's `entry.autodrain()` for any entry that fails validation instead of writing."
+        ],
+        "code_example": "const targetDir = path.resolve('uploads/complaints') + path.sep\nconst absolutePath = path.resolve('uploads/complaints/' + fileName)\nif (!absolutePath.startsWith(targetDir)) {\n  entry.autodrain()  // reject traversal entries\n  return\n}\n// Write to the pre-resolved absolute path, not the raw fileName\nentry.pipe(fs.createWriteStream(absolutePath).on('error', (err) => next(err)))",
+        "reference": "CWE-22"
+      },
+      "evidence": {
+        "file": "routes/fileUpload.ts",
+        "line": 45
+      },
+      "evidence_check": "unchecked",
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "file-upload-service-005",
+      "threat_category_id": "TH-07",
+      "additional_categories": ["TH-17"],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-538",
+      "title": "Unauthenticated Log File Disclosure via User-Controlled Filename (routes/logfileServer.ts:13-14)",
+      "affected_parameter": "params.file (GET /support/logs/:file)",
+      "scenario": "At logfileServer.ts:13-14, the `serveLogFiles` handler serves any file from the `logs/` directory specified in `params.file`. The only check is `!file.includes('/')` which prevents directory traversal via forward-slash path separators. No authentication is required to reach this endpoint (server.ts:283). An attacker who knows or guesses log file names (predictable names like `access.log`, `error.log`, `combined.log`) can fetch full application logs. Application logs in Node.js/Express commonly contain: request URLs with query parameters (potentially including JWT tokens or password reset tokens), IP addresses, user agent strings, internal error stack traces with source file paths, and in verbose modes, request bodies including email addresses and passwords. The directory listing at `/support/logs` (server.ts:281) further enumerates all log file names without authentication.",
+      "evidence_summary": "logfileServer.ts:13-14 checks only for `/` in the filename; server.ts:281-283 shows no auth middleware between the route registration and the handler.",
+      "impact_description": "Any internet-accessible attacker can download complete application access logs containing user IP addresses, session tokens embedded in URLs, and stack traces revealing internal file paths and application logic.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Forward-slash check prevents directory traversal; logs/ is a distinct subdirectory; sanitize-filename is available but not applied here",
+      "mitigation_title": "Require admin-role JWT authentication on GET /support/logs and GET /support/logs/:file in server.ts",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `security.isAuthorized()` and a role-check middleware (e.g. `security.denyAll()` except for admin role) before `serveIndexMiddleware` and `serveLogFiles()` at server.ts:281-283.",
+          "Apply `sanitize-filename` to `params.file` in `serveLogFiles` before constructing the path, removing null bytes and other bypass sequences.",
+          "Review whether application logs contain sensitive data (tokens, passwords, PII) and configure structured logging to redact such fields before writing to disk."
+        ],
+        "code_example": null,
+        "reference": "CWE-538"
+      },
+      "evidence": {
+        "file": "routes/logfileServer.ts",
+        "line": 14
+      },
+      "evidence_check": "unchecked",
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "file-upload-service-006",
+      "threat_category_id": "TH-03",
+      "additional_categories": ["TH-06"],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-200",
+      "title": "Unauthenticated Exposure of Encryption Keys and JWT Material via /encryptionkeys/:file (routes/keyServer.ts:13)",
+      "affected_parameter": "params.file (GET /encryptionkeys/:file)",
+      "scenario": "The `serveKeyFiles` handler at keyServer.ts:13 serves files from `encryptionkeys/` to any caller. The route is registered at server.ts:278 with no authentication middleware. The `encryptionkeys/` directory contains at minimum `jwt.pub` (the JWT signing public key) and `premium.key` (a key protecting premium features). While `jwt.pub` is intentionally public in many architectures, `premium.key` exposure is security-sensitive: an attacker who reads it can forge premium-feature JWTs or decrypt premium-tier content without purchasing a subscription. The directory browsing at server.ts:277 (`serveIndex('encryptionkeys', ...)`) also lists all key file names to anonymous callers. The only traversal protection is the `!file.includes('/')` check, which does not prevent enumeration of known filenames.",
+      "evidence_summary": "server.ts:277-278 registers both directory listing and file-serving for `/encryptionkeys` with no authentication middleware; `ls encryptionkeys/` confirms `premium.key` is present.",
+      "impact_description": "Any internet-accessible attacker can read `premium.key` and forge premium authorization tokens, bypassing the premium subscription enforcement and breaching the confidentiality of premium content.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Forward-slash check prevents path separator traversal; key directory is not web-root served by default Express static middleware",
+      "mitigation_title": "Restrict /encryptionkeys/:file to admin-role authenticated requests and remove directory listing",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add an authentication and role check before `serveIndex` and `serveKeyFiles()` at server.ts:277-278, permitting access only to admin-role JWT holders.",
+          "Remove the `serveIndex('encryptionkeys', ...)` middleware entirely — directory listing of cryptographic material serves no legitimate user need.",
+          "Relocate `premium.key` outside the web-accessible file tree (e.g., into a secrets manager or environment variable) and load it at startup rather than serving it over HTTP.",
+          "Rotate `premium.key` after any period of unauthenticated exposure."
+        ],
+        "code_example": null,
+        "reference": "CWE-200"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 278
+      },
+      "evidence_check": "unchecked",
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "file-upload-service-007",
+      "threat_category_id": "TH-16",
+      "additional_categories": [],
+      "stride": "Repudiation",
+      "cwe": "CWE-778",
+      "title": "No Audit Log on Unauthenticated File Upload or URL-Fetch Operations (server.ts:309-311)",
+      "affected_parameter": null,
+      "scenario": "The POST /file-upload endpoint (server.ts:309) processes XML, ZIP, and YAML payloads but emits no structured audit log entry recording the caller's IP, timestamp, file name, file hash, or upload result. The `profileImageUrlUpload` handler (profileImageUrlUpload.ts:37) logs only on error via `logger.warn()`, with no structured record of successful URL fetches or the identity of the initiating user. If an XXE or SSRF attack is conducted and the attacker erases or rotates the server before detection, there is no tamper-evident record to reconstruct the attack timeline. PCI-DSS Requirement 10 mandates audit trails for all access to cardholder data systems; SOC2 CC7.2 requires logging of security events. Both apply because this component processes user-supplied files in a Tier 1 system.",
+      "evidence_summary": "No `logger.info()` or structured audit call exists in fileUpload.ts or the success path of profileImageUrlUpload.ts; the only logging is `logger.warn()` on exception.",
+      "impact_description": "Security incidents triggered through the file upload surface (XXE, SSRF, zip-slip) cannot be attributed to specific actors or reconstructed for forensic investigation, violating PCI-DSS Req 10 and SOC2 CC7.2.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "controls_in_place": "Express access log middleware (if configured) captures HTTP request method and path but not file names, file hashes, or identity-bound context",
+      "mitigation_title": "Add structured audit log entries for all file upload and URL-fetch events including caller identity, filename, and outcome in fileUpload.ts and profileImageUrlUpload.ts",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `logger.info({ event: 'file_upload', userId: loggedInUser?.data?.id ?? 'anonymous', filename: file.originalname, size: file.size, outcome: 'accepted' })` at the successful-processing point in each upload handler.",
+          "For profileImageUrlUpload, log `{ event: 'url_fetch', userId: loggedInUser.data.id, url: url, outcome: 'success'|'error' }` in both success and error branches.",
+          "Pipe logs to an append-only sink (e.g., CloudWatch Logs, Splunk) to prevent tampering after an incident.",
+          "Configure log retention per PCI-DSS Req 10.5 (minimum 12 months, 3 months immediately available)."
+        ],
+        "code_example": "// fileUpload.ts — add after successful processing\nlogger.info({\n  event: 'file_upload',\n  userId: 'anonymous',   // replace with authenticated user id when auth is added\n  filename: file.originalname,\n  size: file.size,\n  fileType: fileType,\n  ip: req.ip,\n  outcome: 'processed'\n})",
+        "reference": "CWE-778"
+      },
+      "evidence": {
+        "file": "routes/fileUpload.ts",
+        "line": 75
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "logger\\.info.*file_upload|audit.*upload|log.*filename",
+          "search_paths": ["routes/fileUpload.ts", "routes/profileImageUrlUpload.ts"],
+          "hit_count": 0,
+          "searched_at": "2026-06-17T16:21:30Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "file-upload-service-008",
+      "threat_category_id": "TH-12",
+      "additional_categories": [],
       "stride": "Denial of Service",
-      "component": "file-upload-service",
-      "description": "The XML parser with `noent: true` is vulnerable to billion-laughs (XML DoS) attacks where entity expansion causes exponential memory allocation. While vm.runInContext has a 2000ms timeout, memory exhaustion can still crash the Node.js process before the timeout triggers.",
+      "cwe": "CWE-400",
+      "title": "XML/YAML Bomb DoS via Unauthenticated Upload Triggers Billion-Laughs Entity Expansion (routes/fileUpload.ts:83)",
+      "affected_parameter": "uploaded XML or YAML file body",
+      "scenario": "At fileUpload.ts:83, XML is parsed with `noent: true` inside a vm sandbox with a 2-second timeout. However, libxmljs2's entity expansion occurs at the C library (libxml2) level, before and outside the JavaScript execution context that the vm timeout guards. A billion-laughs XML attack (`<!DOCTYPE bomb [ <!ENTITY a \"lol\"> <!ENTITY b \"&a;&a;&a;&a;&a;\"> <!ENTITY c \"&b;&b;&b;&b;&b;\"> ... ]>`) causes exponential memory allocation in the native library, potentially exhausting the Node.js heap before the VM timer fires. Because the endpoint requires no authentication (finding file-upload-service-001), an attacker can submit concurrent requests to amplify resource exhaustion. The `xxeDosChallenge` at lines 91-93 confirms this vector is intentional but the authentication gap makes it exploitable at scale.",
+      "evidence_summary": "fileUpload.ts:83 passes `noent: true` to libxmljs2's C-level parser; the vm timeout at the same line guards only JavaScript execution, not C-level entity expansion memory allocation.",
+      "impact_description": "An unauthenticated attacker submitting concurrent billion-laughs payloads can exhaust Node.js heap memory, crashing the application and causing a denial of service for all users.",
       "likelihood": "Medium",
       "impact": "High",
       "risk": "High",
-      "cwe": "CWE-776",
-      "evidence": [
-        {
-          "file": "routes/fileUpload.ts",
-          "line": 45,
-          "excerpt": "libxml.parseXml(data, { noblanks: true, noent: true, nocdata: true })"
-        }
-      ],
-      "controls_in_place": "2000ms execution timeout (does not prevent memory exhaustion)",
-      "mitigation": {
-        "title": "Disable entity expansion and add file size limit",
-        "steps": ["Disable `noent: true` to prevent entity expansion", "Enforce maximum XML document size (e.g., 100KB) before parsing", "Consider rate-limiting the file upload endpoint"],
+      "controls_in_place": "vm.createContext timeout (2000ms) — guards JS execution only, not C-level libxml entity expansion; multer 200KB size limit reduces the bomb payload window but not fully",
+      "mitigation_title": "Disable noent:true in libxmljs2 and add rate limiting on POST /file-upload to mitigate XML/YAML bomb DoS",
+      "remediation": {
         "effort": "Low",
-        "reference": "https://cwe.mitre.org/data/definitions/776.html"
+        "steps": [
+          "Set `noent: false` and `dtdload: false` in the libxmljs2 parseXml options (fileUpload.ts:83) — entity expansion cannot occur without DTD processing, eliminating billion-laughs attacks.",
+          "Add `rateLimit({ windowMs: 60 * 1000, max: 5 })` middleware before `handleXmlUpload` in the POST /file-upload chain at server.ts:309 to limit upload frequency per IP.",
+          "Apply the same rate limit to `/profile/image/url` (server.ts:311) to prevent SSRF-amplified fetch floods."
+        ],
+        "code_example": null,
+        "reference": "CWE-400"
       },
-      "mitigation_ids": ["M-032"],
-      "source": "stride",
-      "evidence_check": "verified-prior"
+      "evidence": {
+        "file": "routes/fileUpload.ts",
+        "line": 83
+      },
+      "evidence_check": "unchecked",
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "file-upload-service-009",
+      "threat_category_id": "TH-07",
+      "additional_categories": ["TH-17"],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-548",
+      "title": "Unauthenticated FTP Directory Listing and Sensitive File Download (server.ts:269-270)",
+      "affected_parameter": "GET /ftp/ and GET /ftp/:file",
+      "scenario": "At server.ts:269-270, `serveIndex('ftp', { icons: true })` and `servePublicFiles()` expose the entire `ftp/` directory over HTTP without authentication. The directory contains sensitive files: `acquisitions.md` (business-sensitive M&A data), `incident-support.kdbx` (a KeePass database file potentially containing credentials), `coupons_2013.md.bak`, `package.json.bak` and `package-lock.json.bak` (which may expose exact dependency versions useful for vulnerability targeting). While this exposure may be intentional for Juice Shop challenge purposes, in the context of a real-world clone or production-like deployment it constitutes direct unauthenticated access to sensitive business documents. `robots.txt` disallows `/ftp` (server.ts:225) but this provides no security control — it merely signals to search engine crawlers.",
+      "evidence_summary": "server.ts:269-270 mounts `serveIndex` and `servePublicFiles()` on `/ftp` with no auth middleware; `ls ftp/` confirms `incident-support.kdbx` and `acquisitions.md` are present.",
+      "impact_description": "Any internet-accessible attacker can enumerate and download all FTP directory contents including KeePass credential databases and confidential business documents.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "robots.txt Disallow /ftp (not a security control); quarantine/ subdirectory handled separately by serveQuarantineFiles",
+      "mitigation_title": "Remove public directory listing from /ftp and restrict sensitive file downloads to authenticated administrators",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Remove the `serveIndex('ftp', { icons: true })` middleware from server.ts:269 to disable directory browsing.",
+          "Gate `servePublicFiles()` at server.ts:270 behind admin-role authentication for any non-intentionally-public files.",
+          "Move sensitive files (`incident-support.kdbx`, `acquisitions.md`) out of the web-accessible tree to a non-routed storage location.",
+          "If the FTP directory listing is required for application challenges, implement it behind a feature flag that is disabled in production."
+        ],
+        "code_example": null,
+        "reference": "CWE-548"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 269
+      },
+      "evidence_check": "unchecked",
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
     }
   ]
 }

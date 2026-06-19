@@ -3,86 +3,86 @@
   "assets": [
     {
       "id": "A-001",
-      "name": "User Credentials (email + password hash)",
-      "classification": "Restricted",
-      "description": "User account email addresses and MD5-hashed passwords stored in SQLite Users table. MD5 hashing makes these trivially reversible. Used for authentication.",
+      "name": "User Credentials (email + MD5 password hash)",
+      "classification": "Confidential",
+      "description": "All registered user email addresses and MD5-hashed passwords stored in SQLite Users table. MD5 provides no practical protection — precomputed rainbow tables can reverse most hashes in seconds. Also includes TOTP secrets for 2FA-enrolled users.",
       "linked_threats": []
     },
     {
       "id": "A-002",
-      "name": "JWT RSA Private Key",
+      "name": "RSA Private Key (JWT signing key)",
       "classification": "Restricted",
-      "description": "RSA private key used to sign all JWT tokens, hardcoded in lib/insecurity.ts:26. Any party with access to source code can sign arbitrary JWTs as any user including admin.",
+      "description": "1024-bit RSA private key hardcoded at lib/insecurity.ts:23. Used to sign all JWTs. Committed to public GitHub repository — permanently compromised. Any party who has read the source code can forge valid admin tokens.",
       "linked_threats": []
     },
     {
       "id": "A-003",
-      "name": "User Personal Data (PII)",
-      "classification": "Restricted",
-      "description": "User profile data including full name, address, credit card numbers, mobile numbers stored across multiple Sequelize models (Address, Card, User).",
+      "name": "Active JWT Session Tokens",
+      "classification": "Confidential",
+      "description": "6-hour RS256-signed JWTs stored in the client-side localStorage and tracked server-side in the authenticatedUsers in-memory map. Tokens encode user ID, role, and basket ID. Forgeable due to committed private key.",
       "linked_threats": []
     },
     {
       "id": "A-004",
-      "name": "Payment Card Data",
-      "classification": "Restricted",
-      "description": "Credit card numbers (CardNum), expiry months/years stored in Card model without encryption. Includes test cards like 4716190207394368.",
+      "name": "Customer Order History and Basket Contents",
+      "classification": "Confidential",
+      "description": "SQLite tables for Orders, Baskets, BasketItems including order line items, prices, addresses, and payment card last-four digits. Subject to IDOR attacks via missing authorization on order-history and basket endpoints.",
       "linked_threats": []
     },
     {
       "id": "A-005",
-      "name": "Confidential Business Documents",
+      "name": "User Profile Data (addresses, payment cards, memories)",
       "classification": "Confidential",
-      "description": "M&A acquisition plans in /ftp/acquisitions.md, incident support KeePass database at /ftp/incident-support.kdbx, and coupon codes in /ftp/coupons_2013.md.bak. All publicly accessible via directory listing.",
+      "description": "Personal data including delivery addresses, stored payment card references, profile images, and user-created memories. Accessible via IDOR-vulnerable address/payment APIs and served without proper authorization checks.",
       "linked_threats": []
     },
     {
       "id": "A-006",
-      "name": "Application Source Code and Config",
-      "classification": "Confidential",
-      "description": "Node.js TypeScript source including security library (lib/insecurity.ts with hardcoded private key, HMAC secret). Config files exposing Google OAuth client ID and server configuration.",
+      "name": "Uploaded Files (profile images, XML, YAML submissions)",
+      "classification": "Internal",
+      "description": "User-uploaded files stored in uploads/. Includes profile images (SSRF via URL upload), and XML/YAML files processed by the fileUpload handler with XXE enabled. Files served back without strict content-type enforcement.",
       "linked_threats": []
     },
     {
       "id": "A-007",
-      "name": "SQLite Database File",
-      "classification": "Confidential",
-      "description": "data/juiceshop.sqlite contains all user data, orders, and challenge state. The challenge tracking table reveals which challenges each user has solved.",
+      "name": "FTP Directory (public download area)",
+      "classification": "Internal",
+      "description": "The ftp/ directory served with serve-index directory listing at /ftp. Contains legal.md (removed), acquisition files, and a quarantine subdirectory. Path traversal in quarantine server may expose non-public files.",
       "linked_threats": []
     },
     {
       "id": "A-008",
-      "name": "Access Logs",
-      "classification": "Internal",
-      "description": "HTTP access logs stored in logs/access.log.* and accessible via /support/logs directory listing. Reveals user activity patterns, IP addresses, and browsed URLs.",
+      "name": "Encryption Keys Directory (jwt.pub, premium.key)",
+      "classification": "Restricted",
+      "description": "The encryptionkeys/ directory served publicly via keyServer.ts. Contains jwt.pub (RSA public key) and premium.key. Serving these files publicly exposes the public key for offline JWT analysis.",
       "linked_threats": []
     },
     {
       "id": "A-009",
-      "name": "Product Catalog and Pricing",
+      "name": "Application Configuration and Version Information",
       "classification": "Internal",
-      "description": "Product names, descriptions, prices, and quantities stored in SQLite Products table. Modifiable by authenticated users due to intentionally commented-out authorization.",
+      "description": "Unauthenticated endpoints /rest/admin/application-configuration and /rest/admin/application-version expose detailed runtime configuration including feature flags, domain name, challenge status, and deployed version. Useful for targeted exploitation.",
       "linked_threats": []
     },
     {
       "id": "A-010",
-      "name": "TOTP Secrets (2FA Seeds)",
-      "classification": "Restricted",
-      "description": "TOTP secret seeds stored in Users.totpSecret field in SQLite. These are the 2FA enrollment keys that, if extracted, allow bypassing 2FA.",
+      "name": "Access Logs",
+      "classification": "Internal",
+      "description": "Morgan combined-format access logs written to logs/. Served via logfileServer.ts with user-supplied filename parameter. Path traversal in the log server could expose other filesystem contents.",
       "linked_threats": []
     },
     {
       "id": "A-011",
-      "name": "Application Availability",
+      "name": "Challenge Solution State",
       "classification": "Internal",
-      "description": "The running Juice Shop instance serving training content. DoS via RCE, XML billion-laughs, ZIP bomb, or NoSQL sleep injection can make it unavailable.",
+      "description": "In-memory and database-backed challenge completion flags tracking which OWASP vulnerabilities have been solved. Can be manipulated via continue-code endpoints that lack authentication.",
       "linked_threats": []
     },
     {
       "id": "A-012",
-      "name": "User Security Answers",
-      "classification": "Restricted",
-      "description": "Answers to security questions stored in SecurityAnswer model, used for password reset flow. Predictable answers enable account takeover without knowing password.",
+      "name": "Prometheus Metrics Endpoint",
+      "classification": "Internal",
+      "description": "Unauthenticated /metrics endpoint exposing Express application internals including request counts, response times, endpoint mapping, and runtime behavior — useful for reconnaissance.",
       "linked_threats": []
     }
   ]

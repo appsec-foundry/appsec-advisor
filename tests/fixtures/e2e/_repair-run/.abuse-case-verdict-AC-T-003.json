@@ -4,23 +4,15 @@
     {
       "step": 1,
       "verdict": "confirmed",
-      "matched_finding_id": "T-002",
-      "evidence": {
-        "file": "lib/insecurity.ts",
-        "line": 54,
-        "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)"
-      },
+      "matched_finding_id": "T-005",
+      "evidence": { "file": "lib/insecurity.ts", "line": 54, "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)" },
       "controls_found": []
     },
     {
       "step": 2,
       "verdict": "confirmed",
-      "matched_finding_id": "T-038",
-      "evidence": {
-        "file": "lib/insecurity.ts",
-        "line": 159,
-        "excerpt": "if (decodedToken?.data?.role === roles.accounting)"
-      },
+      "matched_finding_id": "T-003",
+      "evidence": { "file": "lib/insecurity.ts", "line": 159, "excerpt": "if (decodedToken?.data?.role === roles.accounting) { next() }" },
       "controls_found": []
     }
   ]

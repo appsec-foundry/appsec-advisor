@@ -1,0 +1,552 @@
+{
+  "component_id": "express-backend",
+  "component_name": "Express.js REST API Backend",
+  "started_at": "2026-06-17T16:18:45Z",
+  "analyzed_at": "2026-06-17T16:20:30Z",
+  "partial": false,
+  "skipped_categories": [],
+  "compliance_scope_applied": [],
+  "resolved_prior_findings": [],
+  "threats": [
+    {
+      "local_id": "express-backend-001",
+      "threat_category_id": "TH-03",
+      "additional_categories": ["TH-02"],
+      "stride": "Spoofing",
+      "cwe": "CWE-321",
+      "title": "Hardcoded Cryptographic Key (lib/insecurity.ts:23)",
+      "affected_parameter": null,
+      "scenario": "The RSA private key at `lib/insecurity.ts:23` is committed in plaintext to the public GitHub repository. `security.authorize()` at line 56 signs every JWT issued by the application using this key. Any party who clones the repository can call `jwt.sign({data:{id:1,email:'admin@juice-sh.op',role:'admin'}}, privateKey, {algorithm:'RS256'})` and produce a token the server accepts via `express-jwt` with the matching public key. No credential theft or active exploitation of a running service is required — the key is readable at rest in version control history even if removed from HEAD.",
+      "evidence_summary": "`lib/insecurity.ts:23` contains the full 1024-bit RSA private key as a string literal; `lib/insecurity.ts:56` passes it to `jwt.sign()` for all token issuance.",
+      "impact_description": "Attacker mints admin-role JWTs offline; all server-side JWT validation is bypassed without touching the running application.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None — key is publicly committed.",
+      "mitigation_title": "Rotate the RSA key pair and load the private key from an environment secret, not source code",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Generate a fresh 2048-bit RSA key pair: `openssl genrsa -out jwt.key 2048 && openssl rsa -in jwt.key -pubout -out jwt.pub`.",
+          "Remove the hardcoded private key string from `lib/insecurity.ts:23` and replace with `process.env.JWT_PRIVATE_KEY` (or read from a mounted secret file at startup).",
+          "Mount the private key as a Docker secret or Kubernetes Secret (type `Opaque`) and reference via `JWT_PRIVATE_KEY` environment variable — never commit it.",
+          "Invalidate all currently-issued JWTs by bumping a `kid` or changing the signing key, forcing all active sessions to re-authenticate.",
+          "Add a pre-commit hook or CI secret-scanning step (`gitleaks`, `trufflehog`) to prevent future key commits."
+        ],
+        "code_example": "// lib/insecurity.ts — load from env at startup\nconst privateKey = process.env.JWT_PRIVATE_KEY ||\n  fs.readFileSync(process.env.JWT_PRIVATE_KEY_FILE ?? 'keys/jwt.key', 'utf8')\nexport const publicKey = process.env.JWT_PUBLIC_KEY ||\n  fs.readFileSync(process.env.JWT_PUBLIC_KEY_FILE ?? 'encryptionkeys/jwt.pub', 'utf8')",
+        "reference": "CWE-321"
+      },
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 23
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-002",
+      "threat_category_id": "TH-02",
+      "additional_categories": [],
+      "stride": "Spoofing",
+      "cwe": "CWE-347",
+      "title": "JWT Algorithm Confusion — alg:none (lib/insecurity.ts:54)",
+      "affected_parameter": "Authorization",
+      "scenario": "`isAuthorized()` at `lib/insecurity.ts:54` is implemented as `expressJwt({ secret: publicKey })` using `express-jwt@0.1.3`. This version does not enforce an `algorithms` allowlist, making it vulnerable to the `alg:none` attack. An attacker takes a valid token, changes the header to `{\"alg\":\"none\"}`, removes the signature, and the library accepts it because it does not reject unsigned tokens. Separately, because the RSA public key (`encryptionkeys/jwt.pub`) is served over an unauthenticated HTTP route (server.ts:277), an attacker can also perform RS256→HS256 algorithm confusion: sign a forged payload with `HMAC-SHA256` using the public key as the HMAC secret, change the header to `{\"alg\":\"HS256\"}`, and the library accepts it.",
+      "evidence_summary": "`express-jwt@0.1.3` at `lib/insecurity.ts:54` lacks an `algorithms:` parameter, accepting `alg:none` tokens and enabling algorithm confusion attacks.",
+      "impact_description": "Attacker authenticates as any user including admin without knowing any credential or private key.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None — express-jwt@0.1.3 is intentionally vulnerable.",
+      "mitigation_title": "Upgrade express-jwt and pin the RS256 algorithm in isAuthorized()",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Upgrade `express-jwt` to `>=8.4.1` (current stable) which rejects `alg:none` by default.",
+          "Pass an explicit `algorithms: ['RS256']` option: `expressJwt({ secret: publicKey, algorithms: ['RS256'] })`.",
+          "Remove public serving of `encryptionkeys/jwt.pub` at `server.ts:277` or require authentication to access it, to prevent RS256→HS256 confusion."
+        ],
+        "code_example": "// lib/insecurity.ts:54\nexport const isAuthorized = () =>\n  expressJwt({ secret: publicKey, algorithms: ['RS256'] })",
+        "reference": "CWE-347"
+      },
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 54
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-003",
+      "threat_category_id": "TH-01",
+      "additional_categories": [],
+      "stride": "Tampering",
+      "cwe": "CWE-89",
+      "title": "SQL Injection (routes/login.ts:34)",
+      "affected_parameter": "email",
+      "scenario": "`routes/login.ts:34` interpolates `req.body.email` and `req.body.password` directly into a raw Sequelize query: `SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${security.hash(req.body.password)}' AND deletedAt IS NULL`. Submitting `email=' OR '1'='1'--` with any password causes the WHERE clause to match all rows; the query returns the first user row, which is the seeded admin account (`admin@juice-sh.op`). A UNION-based payload on the email field can also dump arbitrary tables, including all user passwords.",
+      "evidence_summary": "`routes/login.ts:34` constructs the authentication SQL query via string template interpolation with `req.body.email` unsanitized.",
+      "impact_description": "Unauthenticated login as any user; full database extraction of the Users table including MD5-hashed passwords.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None — raw query without parameterization.",
+      "mitigation_title": "Replace raw Sequelize query with parameterized ORM lookup in routes/login.ts",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Replace `models.sequelize.query(\\`SELECT * FROM Users WHERE email = '${...}'\\`)` with `UserModel.findOne({ where: { email: req.body.email, password: security.hash(req.body.password), deletedAt: null } })`.",
+          "Ensure `UserModel.findOne` uses Sequelize's built-in parameterization — never pass `req.body` fields into a template literal used by `sequelize.query()`."
+        ],
+        "code_example": "// routes/login.ts — parameterized replacement\nconst authenticatedUser = await UserModel.findOne({\n  where: {\n    email: req.body.email || '',\n    password: security.hash(req.body.password || ''),\n    deletedAt: null\n  }\n})",
+        "reference": "CWE-89"
+      },
+      "evidence": {
+        "file": "routes/login.ts",
+        "line": 34
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-004",
+      "threat_category_id": "TH-01",
+      "additional_categories": [],
+      "stride": "Tampering",
+      "cwe": "CWE-89",
+      "title": "SQL Injection (routes/search.ts:23)",
+      "affected_parameter": "q",
+      "scenario": "`routes/search.ts:23` interpolates `req.query.q` into a raw Sequelize query: `SELECT * FROM Products WHERE ((name LIKE '%${criteria}%' OR description LIKE '%${criteria}%') AND deletedAt IS NULL)`. The `criteria` variable is truncated at 200 characters but is otherwise unsanitized. A UNION-based payload (`' UNION SELECT id,email,password,NULL,NULL,NULL,NULL,NULL,NULL FROM Users--`) dumps the Users table. The application itself validates a correct UNION dump at line 31–36 to solve the `unionSqlInjectionChallenge`, confirming the attack path is functional.",
+      "evidence_summary": "`routes/search.ts:23` uses a string-interpolated raw query with `req.query.q` directly in a LIKE clause — no parameterization.",
+      "impact_description": "Full database schema and all user credentials (including admin password hash) dumped via unauthenticated GET request.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "Input is truncated to 200 characters — does not prevent injection.",
+      "mitigation_title": "Replace raw LIKE query with Sequelize Op.like parameterization in routes/search.ts",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Replace the raw `sequelize.query()` call with `ProductModel.findAll({ where: { [Op.or]: [{ name: { [Op.like]: `%${criteria}%` } }, { description: { [Op.like]: `%${criteria}%` } }], deletedAt: null } })` — Sequelize parameterizes the LIKE operands automatically.",
+          "Import `{ Op }` from `sequelize`."
+        ],
+        "code_example": "import { Op } from 'sequelize'\n// routes/search.ts\nconst products = await ProductModel.findAll({\n  where: {\n    [Op.or]: [\n      { name: { [Op.like]: `%${criteria}%` } },\n      { description: { [Op.like]: `%${criteria}%` } }\n    ],\n    deletedAt: null\n  },\n  order: [['name', 'ASC']]\n})",
+        "reference": "CWE-89"
+      },
+      "evidence": {
+        "file": "routes/search.ts",
+        "line": 23
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-005",
+      "threat_category_id": "TH-16",
+      "additional_categories": [],
+      "stride": "Repudiation",
+      "cwe": "CWE-778",
+      "title": "Missing Security Audit Log (server.ts)",
+      "affected_parameter": null,
+      "scenario": "`server.ts:338` configures `morgan('combined')` which logs HTTP request lines to `logs/access.log.%DATE%`. No structured security event log records authentication outcomes, JWT rejections, admin actions, or data mutations. An attacker who exploits the SQLi login bypass, forges a JWT, or dumps the database via search SQLi produces no security alert. The `morgan` log captures the HTTP 200 response but not the attacker's identity or what was returned. Because the access log is also served unauthenticated at `/support/logs/` (server.ts:281), an attacker can review it to understand their own footprint and clean their traces by correlating requests.",
+      "evidence_summary": "`server.ts:338` installs only HTTP access logging; no structured security-event sink records authentication events, JWT issuance, role changes, or admin endpoint hits.",
+      "impact_description": "Post-incident forensics cannot reconstruct which accounts were compromised, when JWT forgery occurred, or which data was exfiltrated.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "HTTP access log via morgan (captures method/path/status only).",
+      "mitigation_title": "Add a structured security event log for authentication and admin actions",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Emit a structured JSON security event on every login attempt (success and failure), JWT rejection by `express-jwt`, admin endpoint hit, and data-export request — include actor IP, user ID, outcome, and timestamp.",
+          "Write security events to a separate append-only log sink (e.g. a separate file stream via `winston` with `maxFiles: 0`) — distinct from the HTTP access log.",
+          "Protect the log endpoint: remove unauthenticated access at `/support/logs/` (server.ts:281) or restrict to accounting/admin role."
+        ],
+        "code_example": "// lib/securityLogger.ts\nimport winston from 'winston'\nexport const seclog = winston.createLogger({\n  format: winston.format.json(),\n  transports: [new winston.transports.File({ filename: 'logs/security.log' })]\n})\n// usage in routes/login.ts after auth:\nseclog.info({ event:'login', outcome:'success', userId: user.data.id, ip: req.ip })",
+        "reference": "CWE-778"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 338
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-006",
+      "threat_category_id": "TH-17",
+      "additional_categories": [],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-548",
+      "title": "Unauthenticated FTP and Encryption Key Directory Listing (server.ts:269)",
+      "affected_parameter": null,
+      "scenario": "`server.ts:269` serves `/ftp/` directory listing and file download with `serveIndex('ftp', { icons: true })` and `servePublicFiles()` — no `security.isAuthorized()` middleware. Likewise `server.ts:277` serves `/encryptionkeys/` listing with no auth. `jwt.pub` is directly downloadable at `/encryptionkeys/jwt.pub`. Combined with finding express-backend-002 (RS256→HS256 algorithm confusion), the public key serves as the HMAC secret for forging HS256 tokens. The FTP directory exposes files such as `acquisition.md`, employee HR data, and legal documents that should be internal-only.",
+      "evidence_summary": "`server.ts:269-277` registers `serveIndex` and `express.static`-equivalent handlers for `/ftp/` and `/encryptionkeys/` with no auth middleware before or after.",
+      "impact_description": "Unauthenticated download of the JWT public key (used to forge HS256 tokens) and confidential files from the FTP directory.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None — both directories served without authentication.",
+      "mitigation_title": "Apply isAuthorized() middleware to /encryptionkeys/ and /ftp/ routes and restrict to admin role",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `security.isAuthorized()` before `serveIndex` and file-serving handlers for `/ftp/` and `/encryptionkeys/` in `server.ts`.",
+          "Restrict `/encryptionkeys/` to admin role using a role-check middleware — no end-user should need the signing public key at runtime.",
+          "Move the JWT public key out of a web-served directory and load it from `process.env.JWT_PUBLIC_KEY` at startup."
+        ],
+        "code_example": "// server.ts — before serving FTP and encryption keys\napp.use('/ftp', security.isAuthorized(), serveIndexMiddleware,\n  serveIndex('ftp', { icons: true }))\napp.use('/ftp(?!/quarantine)/:file', security.isAuthorized(), servePublicFiles())\napp.use('/encryptionkeys', security.isAuthorized(), serveIndexMiddleware,\n  serveIndex('encryptionkeys', { icons: true, view: 'details' }))",
+        "reference": "CWE-548"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 269
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-007",
+      "threat_category_id": "TH-17",
+      "additional_categories": [],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-209",
+      "title": "Verbose Error Handler Exposing Stack Traces (server.ts:676)",
+      "affected_parameter": null,
+      "scenario": "`server.ts:676` uses the `errorhandler` npm package (`const errorhandler = require('errorhandler')`). This package, designed for development, renders a full HTML page with the error message, stack trace, file path, and line number when an unhandled exception propagates. When `NODE_ENV` is not explicitly set to `production`, `errorhandler` sends this to the browser. Several routes deliberately call `next(error)` with user-readable error messages that include internal paths (e.g. `routes/login.ts`, `routes/resetPassword.ts:23` — `'Blocked illegal activity by ' + connection.remoteAddress`). An attacker who triggers a handled route error sees internal file paths and framework versions from the `errorhandler.title` field set at `server.ts:719`: `${config.get('application.name')} (Express ${utils.version('express')})`.",
+      "evidence_summary": "`server.ts:676` installs the `errorhandler` dev-mode package as the final error middleware; `server.ts:719` sets its title to expose the Express version.",
+      "impact_description": "Stack traces and library versions delivered in 500 responses aid targeted exploit selection against known Express/Node.js CVEs.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None — errorhandler is unconditionally registered.",
+      "mitigation_title": "Replace errorhandler with a production error handler that returns generic messages",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Remove the `errorhandler` package from production code paths.",
+          "Add a custom Express error middleware as the last `app.use()` that logs the full error internally (via `logger.error()`) and returns only `{ error: 'Internal server error' }` with HTTP 500 to the client.",
+          "Set `NODE_ENV=production` in Docker/container env to suppress any development-mode verbose output from other middleware."
+        ],
+        "code_example": "// server.ts — replace errorhandler with:\napp.use((err: Error, req: Request, res: Response, _next: NextFunction) => {\n  logger.error({ msg: err.message, stack: err.stack, url: req.url })\n  res.status(500).json({ error: 'Internal server error' })\n})",
+        "reference": "CWE-209"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 676
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-008",
+      "threat_category_id": "TH-12",
+      "additional_categories": [],
+      "stride": "Denial of Service",
+      "cwe": "CWE-400",
+      "title": "Unbounded Login Brute Force — No Rate Limit (server.ts:594)",
+      "affected_parameter": "email",
+      "scenario": "`server.ts:594` registers `app.post('/rest/user/login', login())` with no rate-limiting middleware. The password reset route has a rate limit (`server.ts:343`) but `/rest/user/login` does not. An attacker can fire unlimited login attempts against any account. The MD5 password hashing (see express-backend-010) means an offline pre-computed list suffices for common passwords. Additionally the rate-limit on `/rest/user/reset-password` uses `headers['X-Forwarded-For'] ?? ip` as the key (server.ts:346), which `app.enable('trust proxy')` at line 342 combined with the spoofable header allows any attacker to bypass by rotating the header value.",
+      "evidence_summary": "`server.ts:594` registers the login route without any `rateLimit()` middleware; `server.ts:342-347` shows the reset-password rate limit is bypassable via `X-Forwarded-For`.",
+      "impact_description": "Attacker brute-forces any user account without throttling; password-reset brute force is similarly unthrottled via header spoofing.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Rate limit on /rest/user/reset-password only (bypassable via X-Forwarded-For header spoofing).",
+      "mitigation_title": "Add rate limiting to /rest/user/login with IP-only key and account lockout",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `rateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyGenerator: (req) => req.ip })` middleware before `login()` at `server.ts:594`.",
+          "Fix the reset-password rate limiter key to use `req.ip` only — remove the `headers['X-Forwarded-For']` lookup, or if a trusted proxy is required, validate the header against a known proxy allowlist.",
+          "Implement account lockout (e.g. increment a `loginAttempts` counter in the Users table; block after 10 failures for 15 minutes)."
+        ],
+        "code_example": "// server.ts — before login route\nconst loginLimiter = rateLimit({\n  windowMs: 15 * 60 * 1000,\n  max: 20,\n  keyGenerator: (req) => req.ip  // never trust X-Forwarded-For unless behind a known proxy\n})\napp.post('/rest/user/login', loginLimiter, login())",
+        "reference": "CWE-400"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 594
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-009",
+      "threat_category_id": "TH-05",
+      "additional_categories": ["TH-01"],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-94",
+      "title": "Server-Side Template Injection via eval() (routes/userProfile.ts:62)",
+      "affected_parameter": "username",
+      "scenario": "`routes/userProfile.ts:62` executes `eval(code)` where `code = username.substring(2, username.length - 1)` when the username matches the pattern `/#\\{(.*)\\}/`. A user sets their username to `#{process.mainModule.require('child_process').execSync('cat /etc/passwd').toString()}` via the profile update endpoint, then GETs `/profile`. The `eval()` call runs arbitrary Node.js code in the server process context with full filesystem and network access. The guard `utils.isChallengeEnabled(challenges.usernameXssChallenge)` only disables the eval path if the challenge is disabled — the challenge is enabled by default.",
+      "evidence_summary": "`routes/userProfile.ts:62` calls `eval(code)` on a server-rendered username with no sandbox, no allowlist, and no output escaping — the raw eval return value replaces the template placeholder.",
+      "impact_description": "Authenticated attacker achieves arbitrary code execution as the Node.js process (running as root in the default Docker image), enabling file read/write, credential theft, and container escape.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "Gated by challenge flag (enabled by default). Attacker must be authenticated to set username.",
+      "mitigation_title": "Remove eval() from userProfile.ts and use safe template interpolation",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Remove the `eval(code)` block at `routes/userProfile.ts:55-68` entirely.",
+          "Replace the username substitution with HTML-entity encoding: `username = entities.encode(user.username ?? '')` before the template replace.",
+          "If the challenge SSTI payload must remain functional for the intentional vulnerability scenario, isolate it in a separate sandboxed process with no access to `require` — e.g. via `worker_threads` with a whitelist of permitted operations."
+        ],
+        "code_example": "// routes/userProfile.ts — safe replacement (non-challenge build)\nlet username = entities.encode(user.username ?? '')\ntemplate = template.replace(/_username_/g, username)",
+        "reference": "CWE-94"
+      },
+      "evidence": {
+        "file": "routes/userProfile.ts",
+        "line": 62
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-010",
+      "threat_category_id": "TH-03",
+      "additional_categories": [],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-916",
+      "title": "Weak Password Hashing — MD5 (lib/insecurity.ts:43)",
+      "affected_parameter": null,
+      "scenario": "`lib/insecurity.ts:43` hashes all user passwords with `crypto.createHash('md5').update(data).digest('hex')`. MD5 is a single-round fast hash with no salt. When the SQL injection at `routes/login.ts:34` or `routes/search.ts:23` dumps the Users table, every recovered hash is immediately reversible using public rainbow tables (CrackStation, md5decrypt.net) or GPU cracking at ~100 billion MD5/s. The seeded `admin` account password `admin123` produces `0192023a7bbd73250516f069df18b500`, a well-known entry in every rainbow table.",
+      "evidence_summary": "`lib/insecurity.ts:43` uses `crypto.createHash('md5')` with no salt for all password storage; `routes/login.ts:34` uses the same function for login comparison.",
+      "impact_description": "Any Users table dump (via SQLi or backup leak) yields plaintext passwords for all accounts in seconds.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None — no salt, no work factor.",
+      "mitigation_title": "Replace MD5 password hashing with bcrypt or Argon2 in lib/insecurity.ts",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Replace `crypto.createHash('md5').update(data).digest('hex')` with `await bcrypt.hash(data, 12)` for storage (using the `bcrypt` npm package).",
+          "Update `routes/login.ts` to compare with `await bcrypt.compare(req.body.password, storedHash)` instead of hashing the input and comparing hashes.",
+          "Add a migration that re-hashes existing MD5 passwords on next login (verify MD5 first, then replace with bcrypt)."
+        ],
+        "code_example": "import bcrypt from 'bcrypt'\n// lib/insecurity.ts\nexport const hashPassword = async (password: string) => bcrypt.hash(password, 12)\nexport const verifyPassword = async (input: string, stored: string) => bcrypt.compare(input, stored)",
+        "reference": "CWE-916"
+      },
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 43
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-011",
+      "threat_category_id": "TH-08",
+      "additional_categories": [],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-918",
+      "title": "Server-Side Request Forgery (routes/profileImageUrlUpload.ts:24)",
+      "affected_parameter": "imageUrl",
+      "scenario": "`routes/profileImageUrlUpload.ts:24` calls `fetch(url)` where `url = req.body.imageUrl` with no scheme or host validation. An authenticated user submits `imageUrl=http://169.254.169.254/latest/meta-data/iam/security-credentials/` to probe the AWS instance metadata service. The response body is written to `frontend/dist/frontend/assets/public/images/uploads/${loggedInUser.data.id}.jpg` and then served publicly. The attacker reads the file at `GET /assets/public/images/uploads/<id>.jpg` and obtains the IAM credentials. Any internal service reachable by the Node.js process is similarly accessible.",
+      "evidence_summary": "`routes/profileImageUrlUpload.ts:24` calls `fetch(url)` with `url` taken directly from `req.body.imageUrl` — no allowlist, no scheme check, no host validation.",
+      "impact_description": "Attacker reads cloud metadata credentials, internal service APIs, or localhost admin interfaces not intended for external access.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Attacker must be authenticated. The challenge detection at line 20 checks for `/solve/challenges/server-side` in the URL but does not block arbitrary URLs.",
+      "mitigation_title": "Validate imageUrl against an allowlisted scheme and hostname before fetching in profileImageUrlUpload.ts",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Parse `req.body.imageUrl` with `new URL(url)` and reject any scheme other than `https:` and any hostname not on an explicit allowlist of known CDN/image hosts.",
+          "Block loopback, link-local (169.254.x.x), and private IP ranges (10.x, 172.16-31.x, 192.168.x.x) using a DNS-rebinding-safe check after resolution.",
+          "Alternatively, accept only `data:image/...` base64 URLs for profile images and avoid outbound HTTP fetches entirely."
+        ],
+        "code_example": "// routes/profileImageUrlUpload.ts — before fetch\nconst parsed = new URL(req.body.imageUrl)\nif (!['https:'].includes(parsed.protocol)) throw new Error('Only HTTPS URLs allowed')\nconst ALLOWED_HOSTS = new Set(['cdn.example.com', 'i.imgur.com'])\nif (!ALLOWED_HOSTS.has(parsed.hostname)) throw new Error('Host not allowlisted')",
+        "reference": "CWE-918"
+      },
+      "evidence": {
+        "file": "routes/profileImageUrlUpload.ts",
+        "line": 24
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-012",
+      "threat_category_id": "TH-06",
+      "additional_categories": [],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-862",
+      "title": "Unauthenticated Admin Endpoints (server.ts:604)",
+      "affected_parameter": null,
+      "scenario": "`server.ts:604-605` registers `GET /rest/admin/application-version` and `GET /rest/admin/application-configuration` without any `security.isAuthorized()` middleware before the handlers. These endpoints expose the full application configuration object (returned by `retrieveAppConfiguration()`) and the running version string to unauthenticated callers. The configuration object includes challenge-solving flags, customization parameters, and potentially any config values that include secrets or internal hostnames depending on the runtime config file. Additionally, `GET /rest/chatbot/status` and `POST /rest/chatbot/respond` (server.ts:629-630) have no auth guard, exposing the chatbot interaction surface unauthenticated.",
+      "evidence_summary": "`server.ts:604-605` and `629-630` register admin and chatbot REST handlers without preceding `security.isAuthorized()` middleware.",
+      "impact_description": "Unauthenticated callers read full application configuration; chatbot responds to unauthenticated requests, potentially leaking internal information or being abused for denial-of-service against the LLM backend.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None — no auth middleware on these routes.",
+      "mitigation_title": "Add isAuthorized() and admin role check to /rest/admin/* endpoints in server.ts",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Prefix `GET /rest/admin/application-version` and `GET /rest/admin/application-configuration` with `security.isAuthorized(), security.isAccounting()` (or a new `isAdmin()` guard) at `server.ts:604-605`.",
+          "Add `security.isAuthorized()` before the chatbot routes at `server.ts:629-630` if the chatbot is intended for authenticated users only.",
+          "Add a broad catch-all: `app.use('/rest/admin', security.isAuthorized(), isAdminMiddleware)` before all admin-prefix handlers."
+        ],
+        "code_example": "// server.ts — protect admin endpoints\napp.get('/rest/admin/application-version', security.isAuthorized(), isAdmin(), retrieveAppVersion())\napp.get('/rest/admin/application-configuration', security.isAuthorized(), isAdmin(), retrieveAppConfiguration())",
+        "reference": "CWE-862"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 604
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-013",
+      "threat_category_id": "TH-06",
+      "additional_categories": [],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-915",
+      "title": "Mass Assignment — Admin Role via User Registration (server.ts:499)",
+      "affected_parameter": "role",
+      "scenario": "`server.ts:479-515` uses `finale-rest` to auto-generate CRUD endpoints for all models, including `POST /api/Users`. The `autoModels` array excludes `password` and `totpSecret` from responses (the `exclude` list) but does not restrict which fields are accepted on creation. An attacker sends `POST /api/Users` with `{\"email\":\"attacker@x.com\",\"password\":\"P@ss1\",\"role\":\"admin\"}` and the `finale-rest` handler maps `role` directly to the `UserModel.create()` call, creating an admin-role account. The `UserModel` has a `role` column with a default of `customer` but the ORM does not enforce that client-supplied values are limited to `customer`.",
+      "evidence_summary": "`server.ts:499-502` passes user body fields to `finale.resource({ model: UserModel, endpoints: ['/api/Users', '/api/Users/:id'] })` without a `writableAttributes` allowlist excluding the `role` field.",
+      "impact_description": "Any unauthenticated caller creates an admin account, gaining full access to admin endpoints and all authenticated functionality.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None — role field is writable by default in finale-rest.",
+      "mitigation_title": "Restrict writable attributes on POST /api/Users to exclude the role field",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Pass `writeableAttributes: ['email', 'password', 'passwordRepeat', 'securityQuestion', 'securityAnswer']` to the `finale.resource()` call for the User model at `server.ts:500-504`, explicitly excluding `role`, `totpSecret`, `isActive`, and `deletedAt`.",
+          "Add a `beforeCreate` hook on `UserModel` that forces `role = 'customer'` regardless of the incoming body value.",
+          "Verify the fix by checking that `POST /api/Users` with `{\"role\":\"admin\"}` creates a `customer`-role account."
+        ],
+        "code_example": "// server.ts — finale resource for User\nfinale.resource({\n  model: UserModel,\n  endpoints: ['/api/Users', '/api/Users/:id'],\n  excludeAttributes: ['password', 'totpSecret'],\n  writeableAttributes: ['email', 'password', 'passwordRepeat']\n})",
+        "reference": "CWE-915"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 499
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-014",
+      "threat_category_id": "TH-01",
+      "additional_categories": [],
+      "stride": "Tampering",
+      "cwe": "CWE-611",
+      "title": "XML External Entity Injection (routes/fileUpload.ts:83)",
+      "affected_parameter": "file",
+      "scenario": "`routes/fileUpload.ts:83` parses uploaded XML files with `libxmljs2.parseXml(data, { noblanks: true, noent: true, nocdata: true })` inside a vm sandbox. The `noent: true` option enables external entity expansion. An attacker uploads an XML file containing `<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><foo>&xxe;</foo>`. The expanded entity content is included in the parsed XML output, which is then returned in the error response body (line 87: `next(new Error('... : ' + utils.trunc(xmlString, 400) + ' ...'))`). The file content is truncated to 400 characters but can be read. A billion-laughs payload exploits the entity expansion to cause memory exhaustion before the vm timeout fires.",
+      "evidence_summary": "`routes/fileUpload.ts:83` calls `libxmljs2.parseXml(data, { noent: true })` on untrusted upload content; the parsed output including entity expansions appears in the error response at line 87.",
+      "impact_description": "Local file disclosure (up to 400 chars per request, repeatable to read arbitrary files); memory exhaustion from billion-laughs DoS.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "vm sandbox timeout 2s; truncation of error message at 400 chars.",
+      "mitigation_title": "Disable external entity expansion in libxmljs2 parseXml call in routes/fileUpload.ts",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Change `{ noent: true }` to `{ noent: false }` in `libxmljs2.parseXml()` at `routes/fileUpload.ts:83` to disable external entity expansion.",
+          "Do not include the raw parsed XML string in the error response — log it internally and return only a generic message like `'B2B customer complaints via file upload have been deprecated for security reasons'`.",
+          "Consider rejecting all XML uploads rather than attempting to parse them if the B2B XML interface is deprecated."
+        ],
+        "code_example": "// routes/fileUpload.ts:83 — safe parseXml options\nconst xmlDoc = vm.runInContext(\n  'libxml.parseXml(data, { noblanks: true, noent: false, nocdata: true })',\n  sandbox, { timeout: 2000 }\n)\n// Do NOT include xmlString in the error message returned to client",
+        "reference": "CWE-611"
+      },
+      "evidence": {
+        "file": "routes/fileUpload.ts",
+        "line": 83
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "express-backend-015",
+      "threat_category_id": "TH-05",
+      "additional_categories": ["TH-01"],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-94",
+      "title": "Remote Code Execution via B2B Order Eval (routes/b2bOrder.ts:23)",
+      "affected_parameter": "orderLinesData",
+      "scenario": "`routes/b2bOrder.ts:23` executes `vm.runInContext('safeEval(orderLinesData)', sandbox, { timeout: 2000 })` where `orderLinesData = req.body.orderLinesData`. The `notevil` library (`safeEval`) is intended as a safe expression evaluator, but known sandbox escapes exist. For instance, `[].constructor.constructor('return process')()` accesses the Node.js `process` object. The B2B endpoint is protected by `security.isAuthorized()` at `server.ts:423`, so exploitation requires an authenticated session, but any registered customer can reach it. Successful exploit yields server-side code execution as the Node.js process.",
+      "evidence_summary": "`routes/b2bOrder.ts:23` passes `req.body.orderLinesData` to `safeEval()` inside a vm context — no input validation, no output sanitization.",
+      "impact_description": "Authenticated attacker achieves arbitrary server-side code execution; severity is Critical because the Node.js process has container-level privileges.",
+      "likelihood": "Medium",
+      "impact": "Critical",
+      "risk": "High",
+      "controls_in_place": "Requires authentication (isAuthorized middleware); vm timeout set to 2s; notevil intended as sandbox.",
+      "mitigation_title": "Remove eval-based order processing and replace with strict schema validation in routes/b2bOrder.ts",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Remove the `vm.runInContext('safeEval(orderLinesData)')` call at `routes/b2bOrder.ts:23`.",
+          "Parse `orderLinesData` as a JSON array using `JSON.parse()` and validate each item against a strict schema (e.g. via `zod` or `joi`) — no dynamic code evaluation.",
+          "Reject any `orderLinesData` value that is not a valid JSON array of typed order-line objects."
+        ],
+        "code_example": "import { z } from 'zod'\nconst OrderLineSchema = z.array(z.object({\n  productId: z.number().int().positive(),\n  quantity: z.number().int().positive().max(100)\n}))\n// routes/b2bOrder.ts\nconst lines = OrderLineSchema.parse(JSON.parse(body.orderLinesData || '[]'))",
+        "reference": "CWE-94"
+      },
+      "evidence": {
+        "file": "routes/b2bOrder.ts",
+        "line": 23
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": null,
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    }
+  ]
+}

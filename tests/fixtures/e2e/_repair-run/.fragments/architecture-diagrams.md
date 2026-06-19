@@ -27,6 +27,8 @@ flowchart LR
     class EXTERNAL ext
 ```
 
+**Key takeaway:** Every actor in the context interacts with juice-shop through its external interface, so authentication and input validation at that edge govern the entire attack surface.
+
 ### 2.2 Container Architecture
 
 How the system decomposes into deployable units. Each box is a separate runtime process or service container; arrows show synchronous request paths between them. Components with ≥3 Critical findings carry a red border, ≥2 High amber (C4 Level 2).
@@ -34,27 +36,38 @@ How the system decomposes into deployable units. Each box is a separate runtime 
 ```mermaid
 flowchart TB
     subgraph Client
-        frontend_spa["Angular Single-Page Application"]
+        angular_spa["Angular SPA Frontend"]
+        express_backend["Express.js REST API Backend"]
     end
     subgraph Application
-        backend_api["Express REST API Backend"]
-        file_upload_service["File Upload Service"]
-        b2b_api["B2B Order API"]
+        file_upload_service["File Upload & Processing Service"]
+        b2b_api["B2B Order Processing API"]
+        auth["Authentication & Session Surface"]
+        ci_cd_pipeline["CI/CD Pipeline"]
+        realtime_channel["Real-time WebSocket Channel"]
     end
     subgraph Data
-        data_persistence[("Data Layer (SQLite + MarsDB)")]
+        data_layer[("Data Layer (SQLite + MarsDB)")]
     end
-    frontend_spa -->|HTTPS REST| backend_api
-    backend_api -->|driver| data_persistence
-    backend_api -->|in-process| file_upload_service
-    backend_api -->|in-process| b2b_api
+    angular_spa -->|HTTPS REST| file_upload_service
+    express_backend -->|HTTPS REST| file_upload_service
+    file_upload_service -->|driver| data_layer
+    file_upload_service -->|in-process| b2b_api
+    file_upload_service -->|in-process| auth
+    file_upload_service -->|in-process| ci_cd_pipeline
+    file_upload_service -->|in-process| realtime_channel
     classDef critical fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:3px
     classDef warning  fill:#fef3c7,stroke:#b45309,color:#78350f,stroke-width:2px
-    class backend_api critical
-    class frontend_spa warning
+    class express_backend critical
+    class auth critical
+    class angular_spa warning
     class file_upload_service warning
-    class b2b_api warning
+    class data_layer warning
+    class ci_cd_pipeline warning
+    class realtime_channel warning
 ```
+
+**Key takeaway:** The system decomposes into 2 client, 5 application and 1 data unit(s); Express.js REST API Backend carries the most Critical findings (5) and bounds the worst-case blast radius.
 
 ### 2.3 Components
 
@@ -67,19 +80,19 @@ flowchart TD
         VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
     end
     subgraph CLIENT["Client Tier"]
-        frontend_spa["fa:fa-window-restore frontend-spa Angular Single-Page Appli…<br/><i>5 threats</i>"]:::risk
+        angular_spa["fa:fa-window-restore angular-spa Angular SPA Frontend<br/>+ express-backend<br/><i>9 threats</i>"]:::risk
     end
     subgraph APP["Application Tier"]
-        backend_api["fa:fa-server backend-api Express REST API Backend<br/>+ file-upload-service + b2b-api<br/><i>21 threats</i>"]:::risk
+        file_upload_service["fa:fa-server file-upload-service File Upload & Processing S…<br/>+ b2b-api + auth + ci-cd-pipeline + realtime-channel<br/><i>5 threats</i>"]:::risk
     end
     subgraph DATA["Data Tier"]
-        data_persistence[("fa:fa-database data-persistence Data Layer (SQLite + MarsDB)<br/><i>3 threats</i>")]:::risk
+        data_layer[("fa:fa-database data-layer Data Layer (SQLite + MarsDB)<br/><i>3 threats</i>")]:::risk
     end
-    VICTIM_REQUIRED -->|"HTTPS · TLS"| frontend_spa
-    frontend_spa -->|"REST · JWT Bearer"| backend_api
-    backend_api -->|"ORM · queries"| data_persistence
-    INTERNET_ANON -.->|"injection · auth bypass · RCE"| backend_api
-    INTERNET_ANON -.->|"XSS · client tampering · token theft"| frontend_spa
+    VICTIM_REQUIRED -->|"HTTPS · TLS"| angular_spa
+    angular_spa -->|"REST · JWT Bearer"| file_upload_service
+    file_upload_service -->|"ORM · queries"| data_layer
+    INTERNET_ANON -.->|"injection · auth bypass · RCE"| file_upload_service
+    INTERNET_ANON -.->|"XSS · client tampering · token theft"| angular_spa
 
     classDef legit fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
     classDef threat fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
@@ -89,13 +102,18 @@ flowchart TD
     linkStyle 3,4 stroke:#b71c1c,stroke-width:2.5px,stroke-dasharray:6 4
 ```
 
+**Key takeaway:** Express.js REST API Backend concentrates the most findings (19 of 65 across all components); the table below maps each component to its source paths and linked threats.
+
 | Component ID | Name | Tier | Source paths | Threats |
 |---|---|---|---|---|
-| backend-api | Express REST API Backend | Application | `server.ts`, `routes/**`, `lib/**`, `app.ts` | 21 |
-| frontend-spa | Angular Single-Page Application | Client | `frontend/src/**` | 5 |
-| data-persistence | Data Layer (SQLite + MarsDB) | Data | `models/**`, `data/mongodb.ts`, `data/datacreator.ts`, `data/static/users.yml` | 3 |
-| file-upload-service | File Upload Service | Application | `routes/fileUpload.ts`, `routes/profileImageFileUpload.ts`, `routes/profileImageUrlUpload.ts`, `routes/fileServer.ts`, `routes/keyServer.ts` | 4 |
-| b2b-api | B2B Order API | Application | `routes/b2bOrder.ts`, `routes/web3Wallet.ts`, `routes/nftMint.ts`, `routes/checkKeys.ts` | 5 |
+| angular-spa | Angular SPA Frontend | Client | `frontend/src/**`, `frontend/dist/**`, `frontend/*.ts`, `frontend/*.json` | 9 |
+| express-backend | Express.js REST API Backend | Client | `routes/**`, `server.ts`, `lib/**`, `app.ts`, `build/**` | 19 |
+| file-upload-service | File Upload & Processing Service | Application | `routes/fileUpload.ts`, `routes/profileImageUrlUpload.ts`, `routes/profileImageFileUpload.ts`, `routes/logfileServer.ts`, `routes/keyServer.ts`, `routes/quarantineServer.ts`, `ftp/**`, `encryptionkeys/**`, `uploads/**` | 5 |
+| b2b-api | B2B Order Processing API | Application | `routes/b2bOrder.ts`, `routes/checkKeys.ts` | 4 |
+| data-layer | Data Layer (SQLite + MarsDB) | Data | `models/**`, `data/**`, `config/**`, `lib/mongodb.ts`, `ftp/**`, `encryptionkeys/**` | 3 |
+| auth | Authentication & Session Surface | Application | `lib/insecurity.ts`, `lib/startup/registerWebsocketEvents.ts`, `routes/2fa.ts`, `routes/authenticatedUsers.ts`, `routes/login.ts`, `routes/resetPassword.ts`, `routes/saveLoginIp.ts` | 7 |
+| ci-cd-pipeline | CI/CD Pipeline | Application | `.github/workflows/**`, `.gitlab-ci.yml`, `Dockerfile`, `Dockerfile.*`, `*.Dockerfile`, `docker-compose*.yml`, `docker-compose*.yaml`, `compose*.yml`, `compose*.yaml`, `.dockerignore`, `package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `.npmrc`, `.github/dependabot.yml`, `.github/dependabot.yaml`, `.github/renovate.json`, `renovate.json`, `.renovaterc`, `.renovaterc.json` | 14 |
+| realtime-channel | Real-time WebSocket Channel | Application | `lib/challengeUtils.ts`, `lib/startup/registerWebsocketEvents.ts` | 4 |
 
 ### 2.4 Technology Architecture
 
@@ -109,29 +127,32 @@ flowchart TD
     subgraph APP["Application Tier"]
         RUNTIME["fa:fa-server Node.js<br/><i>JS runtime</i>"]:::risk
         EXPRESS["fa:fa-server Express<br/><i>HTTP framework</i>"]:::risk
+        REALTIME["fa:fa-plug Socket.IO<br/><i>WebSocket</i>"]:::risk
     end
     subgraph DATA["Data Tier"]
         ORM["fa:fa-database Sequelize ORM<br/><i>object-relational mapper</i>"]:::risk
         SQLITE[("fa:fa-database SQLite<br/><i>embedded relational DB</i>")]:::risk
         MARSDB[("fa:fa-database MarsDB<br/><i>in-memory NoSQL</i>")]:::risk
-        MONGO[("fa:fa-database MongoDB<br/><i>document DB</i>")]:::risk
         LOCAL_FS["fa:fa-folder-open Local FS<br/><i>uploads · logs · keys</i>"]:::risk
     end
     subgraph INFRA["Cross-Cutting"]
+        INFRA_RUN["fa:fa-cube Docker<br/><i>container runtime</i>"]:::ok
         INFRA_SCM["fa:fa-code-branch GitHub (public)<br/><i>source supply chain</i>"]:::risk
     end
     FE_ANGULAR -->|"HTTPS · JWT"| RUNTIME
     EXPRESS -->|"DB driver"| ORM
     EXPRESS -->|"DB driver"| SQLITE
     EXPRESS -->|"DB driver"| MARSDB
-    EXPRESS -->|"DB driver"| MONGO
     EXPRESS -->|"file I/O"| LOCAL_FS
-    INFRA_SCM -.->|"clone · extract secrets"| EXPRESS
+    INFRA_SCM -.->|"build"| INFRA_RUN
+    INFRA_RUN -.->|"runs"| EXPRESS
 
     classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
     classDef ok fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
-    linkStyle 0,1,2,3,4,5 stroke:#424242,stroke-width:1.5px
-    linkStyle 6 stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3
+    linkStyle 0,1,2,3,4 stroke:#424242,stroke-width:1.5px
+    linkStyle 5,6 stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3
 ```
+
+**Key takeaway:** The stack spans 1 data-tier store(s) behind the application tier; injection and data-at-rest exposure track the data tier, detailed per finding in [§8 Findings Register](#8-findings-register).
 
 > **Legend:** **red border** ≥ 3 Critical threats on the component · **amber border** ≥ 2 High threats

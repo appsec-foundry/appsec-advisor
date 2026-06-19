@@ -1,0 +1,16 @@
+{
+  "abuse_case_id": "AC-T-004",
+  "step_verdicts": [
+    {
+      "step": 1,
+      "verdict": "confirmed",
+      "matched_finding_id": "T-003",
+      "evidence": {
+        "file": "server.ts",
+        "line": 483,
+        "excerpt": "{ name: 'User', exclude: ['password', 'totpSecret'], model: UserModel } — role is not excluded; finale-rest passes req.body directly to UserModel.create(); verify.registerAdminChallenge() (verify.ts:50-55) calls next() without stripping req.body.role"
+      },
+      "controls_found": []
+    }
+  ]
+}

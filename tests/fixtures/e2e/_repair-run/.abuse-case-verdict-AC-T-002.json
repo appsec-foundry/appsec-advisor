@@ -4,24 +4,24 @@
     {
       "step": 1,
       "verdict": "confirmed",
-      "matched_finding_id": "T-017",
+      "matched_finding_id": "T-007",
       "evidence": {
         "file": "routes/basket.ts",
         "line": 19,
-        "excerpt": "const basket = await BasketModel.findOne({ where: { id }, include: [...] }) // id = req.params.id, no UserId ownership check"
+        "excerpt": "const basket = await BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })"
       },
       "controls_found": []
     },
     {
       "step": 2,
-      "verdict": "confirmed",
-      "matched_finding_id": null,
+      "verdict": "inconclusive",
+      "matched_finding_id": "T-003",
       "evidence": {
-        "file": "routes/verify.ts",
-        "line": 52,
-        "excerpt": "challengeUtils.solveIf(challenges.registerAdminChallenge, () => { return req.body && req.body.role === security.roles.admin })"
+        "file": "frontend/src/app/oauth/oauth.component.ts",
+        "line": 30,
+        "excerpt": "(investigating: checking mass assignment on privileged field write)"
       },
-      "controls_found": ["PUT /api/Users/:id mapped to security.denyAll() (server.ts:365); role field is writable via POST /api/Users with no server-side filtering (excludeAttributes omits role)"]
+      "controls_found": []
     }
   ]
 }

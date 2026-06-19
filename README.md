@@ -6,7 +6,9 @@
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 [![codecov](https://codecov.io/gh/matthiasrohr/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/matthiasrohr/appsec-advisor)
 
-`appsec-advisor` is a Claude Code plugin built around a **threat modeler**: a staged agent pipeline that derives a security architecture model from a repository and applies STRIDE to produce structured findings. On top of that foundation sit a **requirements audit** (grades the codebase against a requirements catalog) and **developer helpers** (change review, pre-commit guidance, CI gates).
+`appsec-advisor` is a Claude Code plugin for AppSec teams, built around code-anchored threat modeling. It turns a repository into a security architecture model, identifies trust boundaries and data flows, applies STRIDE, and produces structured findings.
+
+On the same foundation, it also supports requirements audits and developer helpers (change review, pre-commit guidance, CI gates). Teams can use as-is or adapt with their own requirements, threat context, presets, guardrails, and company-branded packaging.
 
 ## Problem
 

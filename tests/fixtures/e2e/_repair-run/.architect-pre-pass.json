@@ -1,0 +1,581 @@
+{
+  "actor_coverage": {
+    "check": "actor-coverage",
+    "findings": [],
+    "reason": "no .actors-resolved.json",
+    "skipped": true
+  },
+  "arch_recon": {
+    "check": "arch-recon",
+    "findings": [
+      {
+        "check": "arch-recon",
+        "component_id": "realtime-channel",
+        "component_name": "Real-time WebSocket Channel",
+        "kind": "invented_component",
+        "message": "Component 'realtime-channel' has no grep-able evidence in .recon-summary.md. Either the recon scan missed it (add evidence) or the component is invented.",
+        "severity": "warning"
+      }
+    ],
+    "model_component_count": 8,
+    "recon_md_present": true,
+    "recon_service_tokens": [
+      "algorithms",
+      "authenticatedusers",
+      "criteria",
+      "jws.verify",
+      "jwt.verify",
+      "kekse",
+      "notevil",
+      "pa4qacea4vk9t9ngv7yztwmj",
+      "req.body.imageurl",
+      "vm2"
+    ],
+    "tm_yaml_present": true
+  },
+  "architecture_input_pack": {
+    "architecture_theme_clusters_top": [
+      {
+        "finding_count": 1,
+        "findings": [
+          "T-065"
+        ],
+        "theme": "DataProtection"
+      }
+    ],
+    "check": "architecture-input-pack",
+    "controls_total": 27,
+    "high_findings_top": [
+      {
+        "architectural_theme": null,
+        "component": "angular-spa",
+        "cwe": "CWE-922",
+        "finding_type_id": null,
+        "id": "T-001",
+        "severity": "Critical",
+        "title": "JWT Bearer Token Stored in localStorage \u2014 login.component.ts:101"
+      },
+      {
+        "architectural_theme": null,
+        "component": "angular-spa",
+        "cwe": "CWE-798",
+        "finding_type_id": null,
+        "id": "T-003",
+        "severity": "Critical",
+        "title": "OAuth Derived Password from Email Enables Credential \u2014 oauth.component.ts:30"
+      },
+      {
+        "architectural_theme": null,
+        "component": "auth",
+        "cwe": "CWE-89",
+        "finding_type_id": null,
+        "id": "T-004",
+        "severity": "Critical",
+        "title": "SQL Injection Authentication Bypass \u2014 routes/login.ts:34"
+      },
+      {
+        "architectural_theme": null,
+        "component": "auth",
+        "cwe": "CWE-321",
+        "finding_type_id": null,
+        "id": "T-005",
+        "severity": "Critical",
+        "title": "Hardcoded RSA Private Key Enables Universal JWT Forgery \u2014 lib/insecurity.ts:23"
+      },
+      {
+        "architectural_theme": null,
+        "component": "auth",
+        "cwe": "CWE-347",
+        "finding_type_id": null,
+        "id": "T-006",
+        "severity": "Critical",
+        "title": "Insecure JWT Verification \u2014 lib/insecurity.ts:54"
+      },
+      {
+        "architectural_theme": null,
+        "component": "express-backend",
+        "cwe": "CWE-639",
+        "finding_type_id": "FT-040",
+        "id": "T-007",
+        "severity": "Critical",
+        "title": "Insecure Direct Object Reference \u2014 routes/address.ts:11"
+      },
+      {
+        "architectural_theme": null,
+        "component": "express-backend",
+        "cwe": "CWE-89",
+        "finding_type_id": null,
+        "id": "T-008",
+        "severity": "Critical",
+        "title": "UNION SQL Injection \u2014 routes/search.ts:23"
+      },
+      {
+        "architectural_theme": null,
+        "component": "express-backend",
+        "cwe": "CWE-915",
+        "finding_type_id": null,
+        "id": "T-009",
+        "severity": "Critical",
+        "title": "Mass Assignment: role Field Writable \u2014 server.ts:483"
+      },
+      {
+        "architectural_theme": null,
+        "component": "file-upload-service",
+        "cwe": "CWE-611",
+        "finding_type_id": null,
+        "id": "T-010",
+        "severity": "Critical",
+        "title": "XXE \u2014 routes/fileUpload.ts:83"
+      },
+      {
+        "architectural_theme": null,
+        "component": "b2b-api",
+        "cwe": "CWE-94",
+        "finding_type_id": null,
+        "id": "T-011",
+        "severity": "Critical",
+        "title": "JavaScript Sandbox Escape \u2014 routes/b2bOrder.ts:23"
+      },
+      {
+        "architectural_theme": null,
+        "component": "express-backend",
+        "cwe": "CWE-94",
+        "finding_type_id": null,
+        "id": "T-012",
+        "severity": "Critical",
+        "title": "Server-Side Template Injection \u2014 routes/userProfile.ts:62"
+      },
+      {
+        "architectural_theme": null,
+        "component": "express-backend",
+        "cwe": "CWE-915",
+        "finding_type_id": null,
+        "id": "T-013",
+        "severity": "Critical",
+        "title": "Mass Assignment Admin Role \u2014 server.ts:499"
+      }
+    ],
+    "note": "Advisory input for architect-reviewer only; the LLM still judges architecture coherence, missing clusters, and mitigation realism.",
+    "trust_boundaries_total": 6,
+    "weak_or_missing_controls_top": [
+      {
+        "control": "CSRF Protection",
+        "domain": "Session and Token Controls",
+        "effectiveness": "Missing",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "Content Security Policy",
+        "domain": "Browser and Cross-Origin Controls",
+        "effectiveness": "Missing",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "SSRF Prevention",
+        "domain": "File Parser and Outbound Request Controls",
+        "effectiveness": "Missing",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "Automated dependency updates",
+        "domain": "Operations Runtime and Supply Chain Controls",
+        "effectiveness": "Missing",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "Lockfile hygiene",
+        "domain": "Operations Runtime and Supply Chain Controls",
+        "effectiveness": "Missing",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "Anonymous Access Controls",
+        "domain": "Identity and Authentication",
+        "effectiveness": "Weak",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "Role-Based Access Control",
+        "domain": "Authorization Controls",
+        "effectiveness": "Weak",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "Input Validation and Sanitization",
+        "domain": "Input Boundary Validation Controls",
+        "effectiveness": "Weak",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "CORS Policy",
+        "domain": "Browser and Cross-Origin Controls",
+        "effectiveness": "Weak",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      },
+      {
+        "control": "CI/CD Pipeline Security",
+        "domain": "Operations Runtime and Supply Chain Controls",
+        "effectiveness": "Weak",
+        "gaps": [],
+        "id": null,
+        "linked_findings": [],
+        "max_linked_severity": null
+      }
+    ]
+  },
+  "config_iac": {
+    "check": "config-iac",
+    "config_finding_count": 15,
+    "config_sourced_threats": 11,
+    "findings": [],
+    "skipped": false
+  },
+  "cvss_risk": {
+    "check": "cvss-risk",
+    "findings": [
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-003: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-003"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-004: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-004"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-006: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-006"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-007: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-007"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-008: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-008"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-009: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-009"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-010: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-010"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-011: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-011"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-012: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-012"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-013: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-013"
+      },
+      {
+        "check": "cvss-risk",
+        "kind": "critical_without_cvss",
+        "message": "Threat T-014: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+        "severity": "warning",
+        "t_id": "T-014"
+      }
+    ],
+    "threats_total": 65,
+    "threats_with_cvss": 0
+  },
+  "findings": [
+    {
+      "check": "arch-recon",
+      "component_id": "realtime-channel",
+      "component_name": "Real-time WebSocket Channel",
+      "kind": "invented_component",
+      "message": "Component 'realtime-channel' has no grep-able evidence in .recon-summary.md. Either the recon scan missed it (add evidence) or the component is invented.",
+      "severity": "warning"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-003: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-003"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-004: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-004"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-006: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-006"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-007: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-007"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-008: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-008"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-009: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-009"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-010: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-010"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-011: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-011"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-012: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-012"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-013: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-013"
+    },
+    {
+      "check": "cvss-risk",
+      "kind": "critical_without_cvss",
+      "message": "Threat T-014: qualitative Critical risk with no CVSS vector and no architectural_violation flag. Either attach a CVSS vector, mark the threat as architectural, or revisit the rating.",
+      "severity": "warning",
+      "t_id": "T-014"
+    },
+    {
+      "check": "remediation-roi",
+      "kind": "p1_low_roi",
+      "message": "M-015 is P1 but ROI 0.5 (< 1.0) \u2014 high effort for low \u2265High coverage; verify the prioritization.",
+      "mitigation_id": "M-015",
+      "roi": 0.5,
+      "severity": "info"
+    },
+    {
+      "check": "remediation-roi",
+      "kind": "p1_low_roi",
+      "message": "M-016 is P1 but ROI 0.5 (< 1.0) \u2014 high effort for low \u2265High coverage; verify the prioritization.",
+      "mitigation_id": "M-016",
+      "roi": 0.5,
+      "severity": "info"
+    },
+    {
+      "check": "remediation-roi",
+      "kind": "p1_low_roi",
+      "message": "M-017 is P1 but ROI 0.5 (< 1.0) \u2014 high effort for low \u2265High coverage; verify the prioritization.",
+      "mitigation_id": "M-017",
+      "roi": 0.5,
+      "severity": "info"
+    },
+    {
+      "check": "remediation-roi",
+      "kind": "p1_low_roi",
+      "message": "M-021 is P1 but ROI 0.5 (< 1.0) \u2014 high effort for low \u2265High coverage; verify the prioritization.",
+      "mitigation_id": "M-021",
+      "roi": 0.5,
+      "severity": "info"
+    },
+    {
+      "check": "sec7-quality-bar",
+      "kind": "section7_h4_status",
+      "message": "H4 subcontrol(s) without a **Status:** badge: 7.6.1.",
+      "severity": "warning"
+    }
+  ],
+  "findings_total": 17,
+  "mitigation_realism": {
+    "check": "mitigation-realism",
+    "findings": [],
+    "threat_count": 65
+  },
+  "ms_verdict": {
+    "actual_counts": {
+      "Critical": 12,
+      "High": 41,
+      "Low": 2,
+      "Medium": 10
+    },
+    "check": "ms-verdict",
+    "findings": [],
+    "reported_counts": null,
+    "tm_md_present": true,
+    "verdict_found": true
+  },
+  "remediation_roi": {
+    "check": "remediation-roi",
+    "findings": [
+      {
+        "check": "remediation-roi",
+        "kind": "p1_low_roi",
+        "message": "M-015 is P1 but ROI 0.5 (< 1.0) \u2014 high effort for low \u2265High coverage; verify the prioritization.",
+        "mitigation_id": "M-015",
+        "roi": 0.5,
+        "severity": "info"
+      },
+      {
+        "check": "remediation-roi",
+        "kind": "p1_low_roi",
+        "message": "M-016 is P1 but ROI 0.5 (< 1.0) \u2014 high effort for low \u2265High coverage; verify the prioritization.",
+        "mitigation_id": "M-016",
+        "roi": 0.5,
+        "severity": "info"
+      },
+      {
+        "check": "remediation-roi",
+        "kind": "p1_low_roi",
+        "message": "M-017 is P1 but ROI 0.5 (< 1.0) \u2014 high effort for low \u2265High coverage; verify the prioritization.",
+        "mitigation_id": "M-017",
+        "roi": 0.5,
+        "severity": "info"
+      },
+      {
+        "check": "remediation-roi",
+        "kind": "p1_low_roi",
+        "message": "M-021 is P1 but ROI 0.5 (< 1.0) \u2014 high effort for low \u2265High coverage; verify the prioritization.",
+        "mitigation_id": "M-021",
+        "roi": 0.5,
+        "severity": "info"
+      }
+    ],
+    "top5": [
+      {
+        "effort": "Low",
+        "high_plus": 1,
+        "id": "M-002",
+        "priority": "P2",
+        "roi": 1.0,
+        "title": "Drop unnecessary privileges in build and runtime"
+      },
+      {
+        "effort": "Low",
+        "high_plus": 1,
+        "id": "M-003",
+        "priority": "P2",
+        "roi": 1.0,
+        "title": "Apply least-privilege permissions"
+      },
+      {
+        "effort": "Low",
+        "high_plus": 1,
+        "id": "M-004",
+        "priority": "P2",
+        "roi": 1.0,
+        "title": "Pin third-party dependencies to immutable versions"
+      },
+      {
+        "effort": "Low",
+        "high_plus": 1,
+        "id": "M-005",
+        "priority": "P2",
+        "roi": 1.0,
+        "title": "Pin the container base image to an immutable digest"
+      },
+      {
+        "effort": "Low",
+        "high_plus": 1,
+        "id": "M-006",
+        "priority": "P2",
+        "roi": 1.0,
+        "title": "Pin the container base image to an immutable digest"
+      }
+    ]
+  },
+  "sec7_quality_bar": {
+    "check": "sec7-quality-bar",
+    "findings": [
+      {
+        "check": "sec7-quality-bar",
+        "kind": "section7_h4_status",
+        "message": "H4 subcontrol(s) without a **Status:** badge: 7.6.1.",
+        "severity": "warning"
+      }
+    ],
+    "h4_count": 31,
+    "skipped": false
+  },
+  "version": 2
+}

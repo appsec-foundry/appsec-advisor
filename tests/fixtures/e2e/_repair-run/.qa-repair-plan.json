@@ -1,5 +1,5 @@
 {
-  "generated": "2026-06-04T06:55:46Z",
+  "generated": "2026-06-18T16:42:01Z",
   "md_path": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_repair-run/threat-model.md",
   "output_dir": "/home/mrohr/appsec-advisor/tests/fixtures/e2e/_repair-run",
   "contract_path": "/home/mrohr/appsec-advisor/data/sections-contract.yaml",

@@ -4,18 +4,18 @@
     {
       "step": 1,
       "verdict": "confirmed",
-      "matched_finding_id": "T-018",
+      "matched_finding_id": "T-020",
       "evidence": {
         "file": "frontend/src/app/search-result/search-result.component.ts",
         "line": 132,
         "excerpt": "tableData[i].description = this.sanitizer.bypassSecurityTrustHtml(tableData[i].description)"
       },
-      "controls_found": ["DomSanitizer injected but explicitly bypassed via bypassSecurityTrustHtml — no effective sanitization"]
+      "controls_found": []
     },
     {
       "step": 2,
       "verdict": "confirmed",
-      "matched_finding_id": "T-028",
+      "matched_finding_id": "T-001",
       "evidence": {
         "file": "frontend/src/app/login/login.component.ts",
         "line": 101,
@@ -26,11 +26,11 @@
     {
       "step": 3,
       "verdict": "confirmed",
-      "matched_finding_id": "T-027",
+      "matched_finding_id": "T-015",
       "evidence": {
         "file": "lib/insecurity.ts",
-        "line": 54,
-        "excerpt": "export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)"
+        "line": 188,
+        "excerpt": "const token = req.cookies.token || utils.jwtFrom(req); jwt.verify(token, publicKey, ...); authenticatedUsers.put(token, decoded)"
       },
       "controls_found": []
     }

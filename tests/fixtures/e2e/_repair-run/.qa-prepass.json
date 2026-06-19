@@ -31,7 +31,7 @@
   },
   "cell_format": {
     "check": "cell_format",
-    "ok": 453,
+    "ok": 357,
     "issue_count": 0,
     "issues": [],
     "fix_count": 0,
@@ -51,7 +51,7 @@
   },
   "xrefs": {
     "check": "xrefs",
-    "ok": 48,
+    "ok": 71,
     "issue_count": 0,
     "issues": [],
     "fix_count": 0,
@@ -71,32 +71,41 @@
   },
   "heading_hygiene": {
     "check": "heading_hygiene",
-    "ok": 180,
+    "ok": 237,
     "issue_count": 0,
     "issues": [],
     "fix_count": 0,
     "fixes": [],
-    "warning_count": 12,
+    "warning_count": 19,
     "warnings": [
       "heading length 81 chars exceeds 80-char soft limit \u2014 consider shortening the title: `<a id=\"ac-t-001\"></a>AC-T-001 \u2014 Account Takeover via Stored XSS + Token Hijacking`",
       "heading length 86 chars exceeds 80-char soft limit \u2014 consider shortening the title: `<a id=\"ac-t-002\"></a>AC-T-002 \u2014 Bulk Data Exfiltration via Broken Object Authorization`",
       "heading length 89 chars exceeds 80-char soft limit \u2014 consider shortening the title: `<a id=\"ac-t-003\"></a>AC-T-003 \u2014 Privilege Escalation to Admin via JWT Algorithm Confusion`",
+      "heading length 88 chars exceeds 80-char soft limit \u2014 consider shortening the title: `<a id=\"ac-t-004\"></a>AC-T-004 \u2014 Privilege Escalation via Mass-Assignment on Registration`",
       "heading length 81 chars exceeds 80-char soft limit \u2014 consider shortening the title: `<a id=\"ac-t-005\"></a>AC-T-005 \u2014 Authentication Bypass via Exposed Secret Material`",
-      "heading length 86 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-016 \u2014 Missing Content Security Policy allows unrestricted script execution server.ts`",
-      "heading length 83 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-019 \u2014 Stored XSS via trust HTML bypass in admin panel administration.component.ts`",
-      "heading length 82 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-020 \u2014 JWT stored in localStorage XSS accessible token storage login.component.ts`",
-      "heading length 83 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-024 \u2014 NoSQL injection via \\$where clause in product reviews showProductReviews.ts`",
-      "heading length 87 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-025 \u2014 NoSQL injection in review update no author verification updateProductReviews.ts`",
-      "heading length 88 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-028 \u2014 SQLite database file on writable filesystem without encryption data/juiceshop.s\u2026`",
-      "heading length 88 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-037 \u2014 Dependabot vulnerability pinning suppresses security updates .dependabot/config\u2026`",
-      "heading length 85 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-038 \u2014 GitHub Actions not using least privilege permissions .github/workflows/ci.yml`"
+      "heading length 98 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-019 \u2014 Add 'role' to excludeAttributes in the finale User resource, and force server-side default`",
+      "heading length 81 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-023 \u2014 Restrict writable attributes on POST /api/Users to exclude the role field`",
+      "heading length 81 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-001 \u2014 Architecture review: validate Data disclosure through cleartext transport`",
+      "heading length 95 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-025 \u2014 Replace OAuth Implicit Flow with Authorization Code Flow with PKCE and state validation`",
+      "heading length 87 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-026 \u2014 Key rate limiting on the server-validated remote IP, not client X-Forwarded-For`",
+      "heading length 93 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-028 \u2014 Enforce JWT authentication middleware on POST /file-upload before all upload handlers`",
+      "heading length 85 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-037 \u2014 Eliminate token-in-fragment by migrating to Authorization Code Flow with PKCE`",
+      "heading length 88 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-043 \u2014 Gate /encryptionkeys/ and /ftp/ routes behind admin-only isAuthorized middleware`",
+      "heading length 94 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-046 \u2014 Require admin-role JWT authentication on GET /support/logs and GET /support/logs/:file`",
+      "heading length 96 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-047 \u2014 Scope challenge-solved notification broadcasts to the owning user's authenticated socket`",
+      "heading length 82 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-050 \u2014 Add rate limiting to /rest/user/login with IP-only key and account lockout`",
+      "heading length 83 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-052 \u2014 Enforce connection rate limits and maximum concurrent WebSocket connections`",
+      "heading length 92 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-053 \u2014 Add server-side session validation endpoint called by guards before route activation`",
+      "heading length 95 chars exceeds 80-char soft limit \u2014 consider shortening the title: `M-055 \u2014 Migrate 2FA password confirmation to use bcrypt comparison consistent with auth-005 fix`"
     ]
   },
   "toc_closure": {
     "check": "toc_closure",
-    "ok": 810,
-    "issue_count": 0,
-    "issues": [],
+    "ok": 859,
+    "issue_count": 1,
+    "issues": [
+      "unresolved TOC/link anchor: #79-cryptography-secrets-and-data-protection-controls"
+    ],
     "fix_count": 0,
     "fixes": [],
     "warning_count": 0,
@@ -104,17 +113,19 @@
   },
   "mermaid_syntax": {
     "check": "mermaid_syntax",
-    "ok": 467,
+    "ok": 463,
     "issue_count": 0,
     "issues": [],
     "fix_count": 0,
     "fixes": [],
-    "warning_count": 0,
-    "warnings": []
+    "warning_count": 1,
+    "warnings": [
+      "authoritative mermaid parse skipped \u2014 authoritative mermaid validator unavailable \u2014 missing: jsdom. Install via 'npm install --prefix $CLAUDE_PLUGIN_ROOT/scripts jsdom' and ensure @mermaid-js/mermaid-cli is present."
+    ]
   },
   "toc_nested_links": {
     "check": "toc_nested_links",
-    "ok": 810,
+    "ok": 860,
     "issue_count": 0,
     "issues": [],
     "fix_count": 0,
@@ -124,9 +135,12 @@
   },
   "infobox_completeness": {
     "check": "infobox_completeness",
-    "ok": 8,
-    "issue_count": 0,
-    "issues": [],
+    "ok": 2,
+    "issue_count": 2,
+    "issues": [
+      "infobox is missing required field(s): license, repository",
+      "infobox is sparse \u2014 optional fields missing: author, homepage, runtime, tags. Manifest/LICENSE/README enrichment recommended."
+    ],
     "fix_count": 0,
     "fixes": [],
     "warning_count": 0,
@@ -279,20 +293,27 @@
     "issues": [],
     "fix_count": 0,
     "fixes": [],
-    "warning_count": 12,
+    "warning_count": 19,
     "warnings": [
-      "unbacked path-shaped token 'lib/insecurity.ts' appears 40\u00d7 in prose (line(s) [45, 49, 191]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'routes/b2bOrder.ts' appears 15\u00d7 in prose (line(s) [191, 466, 1304]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'routes/fileUpload.ts' appears 13\u00d7 in prose (line(s) [191, 444, 1094]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'routes/login.ts' appears 8\u00d7 in prose (line(s) [43, 191, 268]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'routes/search.ts' appears 7\u00d7 in prose (line(s) [47, 191, 356]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'routes/userProfile.ts' appears 6\u00d7 in prose (line(s) [191, 488, 1330]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'data/static/users.yml' appears 6\u00d7 in prose (line(s) [191, 334, 1330]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'oauth/oauth.component.ts' appears 6\u00d7 in prose (line(s) [1330, 1692, 1986]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'models/user.ts' appears 4\u00d7 in prose (line(s) [191, 422, 1059]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'routes/profileImageUrlUpload.ts' appears 3\u00d7 in prose (line(s) [1330, 1677, 2112]) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'routes/redirect.ts' appears 3\u00d7 in prose (line(s) [1330, 1934, 2112]) \u2014 wrap in backticks per prose-style Rule 6",
-      "unbacked path-shaped token 'github/workflows/ci.yml' appears 2\u00d7 in prose (line(s) [1193, 1765]) \u2014 wrap in backticks per prose-style Rule 6"
+      "unbacked path-shaped token 'routes/fileUpload.ts:45' appears 6\u00d7 in prose (line(s) [543, 544, 546]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'lib/insecurity.ts:43' appears 5\u00d7 in prose (line(s) [543, 545, 580]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/logfileServer.ts:14' appears 5\u00d7 in prose (line(s) [543, 544, 546]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/profileImageUrlUpload.ts:24' appears 5\u00d7 in prose (line(s) [549, 571, 573]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'lib/insecurity.ts:23' appears 4\u00d7 in prose (line(s) [543, 544, 546]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/checkKeys.ts:10' appears 4\u00d7 in prose (line(s) [543, 544, 546]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/search.ts:23' appears 4\u00d7 in prose (line(s) [545, 547, 548]\u2026) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/login.ts:34' appears 3\u00d7 in prose (line(s) [545, 547, 548]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/fileUpload.ts:83' appears 3\u00d7 in prose (line(s) [549, 570]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/userProfile.ts:62' appears 3\u00d7 in prose (line(s) [549, 571, 573]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/fileUpload.ts:75' appears 3\u00d7 in prose (line(s) [549, 570, 576]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'github/dependabot.yml' appears 3\u00d7 in prose (line(s) [1332, 1462, 3879]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'lib/insecurity.ts:156' appears 2\u00d7 in prose (line(s) [543, 546]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/2fa.ts:158' appears 2\u00d7 in prose (line(s) [545, 619]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/address.ts:11' appears 2\u00d7 in prose (line(s) [547, 548]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'lib/insecurity.ts:54' appears 1\u00d7 in prose (line(s) [543]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/b2bOrder.ts:16' appears 1\u00d7 in prose (line(s) [547]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/b2bOrder.ts:23' appears 1\u00d7 in prose (line(s) [549]) \u2014 wrap in backticks per prose-style Rule 6",
+      "unbacked path-shaped token 'routes/dataErasure.ts:54' appears 1\u00d7 in prose (line(s) [587]) \u2014 wrap in backticks per prose-style Rule 6"
     ]
   },
   "label_as_code": {
@@ -307,9 +328,13 @@
   },
   "evidence_integrity": {
     "check": "evidence_integrity",
-    "ok": 0,
-    "issue_count": 0,
-    "issues": [],
+    "ok": 64,
+    "issue_count": 3,
+    "issues": [
+      "T-018: absence_grep_drift \u2014 pattern 'isAuthorized|passport.authenticate|requireAuth|jwtAuth' now matches 23 location(s); absence claim may be stale",
+      "T-061: evidence_missing_file \u2014 .github/dependabot.yml",
+      "T-063: evidence_line_out_of_range \u2014 line 66 exceeds 51 in .github/workflows/release.yml"
+    ],
     "fix_count": 0,
     "fixes": [],
     "warning_count": 0,
@@ -367,6 +392,18 @@
   },
   "section7_h4_status": {
     "check": "section7_h4_status",
+    "ok": 1,
+    "issue_count": 0,
+    "issues": [],
+    "fix_count": 0,
+    "fixes": [],
+    "warning_count": 1,
+    "warnings": [
+      "\u00a77 #### 7.6.1 Validation Approach (line 1559) \u2014 missing `**Status:**` verdict badge. Open every sub-control with `**Status:** <icon> <word> \u2014 <one clause>` so the reader sees the verdict (and FIX-vs-ADD for red) before the prose."
+    ]
+  },
+  "html_nested_finding_link": {
+    "check": "html_nested_finding_link",
     "ok": 1,
     "issue_count": 0,
     "issues": [],

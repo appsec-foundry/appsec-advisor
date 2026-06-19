@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_01QMqjChDERMecEcPtri1utc", "session_id": "5f22d34b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1780515929, "input_summary": "OUTPUT_DIR=/home/mrohr/juice-shop/docs/security echo \"=== security_controls entries mentioning JWT/issuance and their domain ===\" python3 - <<'PYEOF' import yam\u2026"}

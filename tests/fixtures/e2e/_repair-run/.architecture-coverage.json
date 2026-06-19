@@ -1,0 +1,1215 @@
+{
+  "version": 1,
+  "generated_at": "2026-06-17T15:54:32Z",
+  "repo_root": "/home/mrohr/juice-shop",
+  "rules_evaluated": [
+    {
+      "rule_id": "ARCH-COOKIE-001",
+      "title": "Insecure cookie / session hardening",
+      "status": "present",
+      "applies": true,
+      "confidence": "medium",
+      "control": "Session Cookie Hardening",
+      "domain": "SessionMgmt",
+      "evidence": [
+        {
+          "file": "docs/security-m1verify/.merge-candidates.json",
+          "line": 241,
+          "signal": "\"code_example\": \"// BFF pattern: session cookie set server-side, token never in localStorage\\n// Express BFF: POST /auth/callback\\n// res.cookie(\\\"session\\\", jwt, { httpOnly: true, secure: true, sameSite: \\\"strict\\\" })\\n// Remove from SPA: localStorage.setItem(\\\"token\\\", authentication.token)\","
+        },
+        {
+          "file": "docs/security-m1verify/threat-model.yaml",
+          "line": 1845,
+          "signal": "// res.cookie(\"session\", jwt, { httpOnly: true, secure: true, sameSite: \"strict\" })"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_control_only",
+      "architectural_theme": "SessionDesign",
+      "generic_threat_title": "Session token theft through weak cookie hardening"
+    },
+    {
+      "rule_id": "ARCH-CORS-001",
+      "title": "CORS wildcard origin combined with credentials",
+      "status": "present",
+      "applies": true,
+      "confidence": "medium",
+      "control": "CORS Policy",
+      "domain": "FrontendSec",
+      "evidence": [
+        {
+          "file": "lib/startup/registerWebsocketEvents.ts",
+          "line": 20,
+          "signal": "const io = new Server(server, { cors: { origin: 'http://localhost:4200' } })"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_control_only",
+      "architectural_theme": "SecureDefaults",
+      "generic_threat_title": "Cross-origin request abuse through permissive CORS"
+    },
+    {
+      "rule_id": "ARCH-JWT-001",
+      "title": "Weak JWT algorithm / missing algorithm whitelist",
+      "status": "weak",
+      "applies": true,
+      "confidence": "medium",
+      "control": "JWT Algorithm Whitelist",
+      "domain": "IAM",
+      "evidence": [
+        {
+          "file": "docs/security-m1verify/.merge-candidates.json",
+          "line": 1060,
+          "signal": "\"scenario\": \"`lib/insecurity.ts:54` registers the `express-jwt@0.1.3` middleware as `expressJwt({ secret: publicKey })` with no `algorithms` restriction. This version accepts tokens with `alg: none` and an empty signature. An attacker crafts a token `{alg:'none'}.{data:{role:'admin',id:1}}.` (empty signature) and presents it to any protected route; `express-jwt@0.1.3` verifies it successfull"
+        },
+        {
+          "file": "docs/security-m1verify/.stride-express-backend.json",
+          "line": 52,
+          "signal": "\"scenario\": \"`lib/insecurity.ts:54` registers the `express-jwt@0.1.3` middleware as `expressJwt({ secret: publicKey })` with no `algorithms` restriction. This version accepts tokens with `alg: none` and an empty signature. An attacker crafts a token `{alg:'none'}.{data:{role:'admin',id:1}}.` (empty signature) and presents it to any protected route; `express-jwt@0.1.3` verifies it successfull"
+        },
+        {
+          "file": "docs/security-m1verify/.threats-merged.json",
+          "line": 200,
+          "signal": "\"scenario\": \"`lib/insecurity.ts:54` registers the `express-jwt@0.1.3` middleware as `expressJwt({ secret: publicKey })` with no `algorithms` restriction. This version accepts tokens with `alg: none` and an empty signature. An attacker crafts a token `{alg:'none'}.{data:{role:'admin',id:1}}.` (empty signature) and presents it to any protected route; `express-jwt@0.1.3` verifies it successfull"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_control_only",
+      "architectural_theme": "Authentication",
+      "generic_threat_title": "Account impersonation through weak JWT verification"
+    },
+    {
+      "rule_id": "ARCH-TLS-001",
+      "title": "Cleartext transport or disabled DB-TLS",
+      "status": "anti_pattern",
+      "applies": true,
+      "confidence": "high",
+      "control": "Transport Encryption",
+      "domain": "DataProt",
+      "evidence": [
+        {
+          "file": "data/static/challenges.yml",
+          "line": 1381,
+          "signal": "description: 'Change the name of a user by performing Cross-Site Request Forgery from <a href=\"http://htmledit.squarefree.com\">another origin</a>.'"
+        },
+        {
+          "file": "data/static/challenges.yml",
+          "line": 1387,
+          "signal": "- 'Write the code for the CSRF attack within http://htmledit.squarefree.com and verify that it changes your username.'"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 68,
+          "signal": "answer: \"Stop'n'Drop\" # http://futurama.wikia.com/wiki/Suicide_booth"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 120,
+          "signal": "answer: 'SC OLEA SRL' # http://www.olea.com.ro/"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 129,
+          "signal": "answer: '5N0wb41L' # http://rickandmorty.wikia.com/wiki/Snuffles"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 175,
+          "signal": "answer: 'West-2082' # http://www.alte-postleitzahlen.de/uetersen"
+        },
+        {
+          "file": "config/mozilla.yml",
+          "line": 139,
+          "signal": "image: 'http://juicystudio.com/img/logo.gif'"
+        },
+        {
+          "file": "config/default.yml",
+          "line": 70,
+          "signal": "- { uri: 'http://192.168.99.100:3000', proxy: 'https://localmac.owasp-juice.shop' }"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_control_and_threat_candidate",
+      "architectural_theme": "DataProtection",
+      "generic_threat_title": "Data disclosure through cleartext transport"
+    },
+    {
+      "rule_id": "ARCH-MGMT-001",
+      "title": "Management / debug / metrics endpoint exposed without authn/authz signal",
+      "status": "partial",
+      "applies": true,
+      "confidence": "low",
+      "control": "Management Endpoint Protection",
+      "domain": "AuthZ",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 604,
+          "signal": "management surface GET /rest/admin/application-version authn=unknown \u2014 unknown does not escalate"
+        },
+        {
+          "file": "server.ts",
+          "line": 605,
+          "signal": "management surface GET /rest/admin/application-configuration authn=unknown \u2014 unknown does not escalate"
+        },
+        {
+          "file": "server.ts",
+          "line": 718,
+          "signal": "management surface GET /metrics authn=unknown \u2014 unknown does not escalate"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_control_only",
+      "architectural_theme": "Authorization",
+      "generic_threat_title": "Privilege abuse through inconsistent authorization"
+    },
+    {
+      "rule_id": "ARCH-XSS-001",
+      "title": "XSS exposure from weak output encoding",
+      "status": "partial",
+      "applies": true,
+      "confidence": "low",
+      "control": "Output Encoding / Templating Autoescape",
+      "domain": "FrontendSec",
+      "evidence": [
+        {
+          "file": "frontend/src/app/about/about.component.ts",
+          "line": 119,
+          "signal": "feedbacks[i].comment = this.sanitizer.bypassSecurityTrustHtml("
+        },
+        {
+          "file": "frontend/src/app/last-login-ip/last-login-ip.component.ts",
+          "line": 39,
+          "signal": "this.lastLoginIp = this.sanitizer.bypassSecurityTrustHtml(`<small>${payload.data.lastLoginIp}</small>`)"
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 60,
+          "signal": "user.email = this.sanitizer.bypassSecurityTrustHtml(`<span class=\"${this.doesUserHaveAnActiveSession(user) ? 'confirmation' : 'error'}\">${user.email}</span>`)"
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 78,
+          "signal": "feedback.comment = this.sanitizer.bypassSecurityTrustHtml(feedback.comment)"
+        },
+        {
+          "file": "frontend/src/app/data-export/data-export.component.ts",
+          "line": 57,
+          "signal": "this.captcha = this.sanitizer.bypassSecurityTrustHtml(data.image)"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 132,
+          "signal": "tableData[i].description = this.sanitizer.bypassSecurityTrustHtml(tableData[i].description) // vuln-code-snippet vuln-line restfulXssChallenge"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 170,
+          "signal": "this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam) // vuln-code-snippet vuln-line localXssChallenge xssBonusChallenge"
+        },
+        {
+          "file": "frontend/src/app/track-result/track-result.component.ts",
+          "line": 48,
+          "signal": "this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(`<code>${results.data[0].orderId}</code>`)"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "InputValidation",
+      "generic_threat_title": "Cross-site scripting through missing centralized output encoding"
+    },
+    {
+      "rule_id": "ARCH-SQLI-001",
+      "title": "SQL injection exposure from ad-hoc SQL construction",
+      "status": "partial",
+      "applies": true,
+      "confidence": "low",
+      "control": "Parameterized Database Access",
+      "domain": "InputVal",
+      "evidence": [
+        {
+          "file": "routes/vulnCodeSnippet.ts",
+          "line": 46,
+          "signal": "res.status(404).json({ status: 'error', error: `No code challenge for challenge key: ${req.params.challenge}` })"
+        },
+        {
+          "file": "docs/security-m1verify/.stride-dispatch-manifest.json",
+          "line": 133,
+          "signal": "\"SQL injection \\u2014 routes/login.ts:34: SELECT * FROM Users WHERE email = '${req.body.email}'\","
+        },
+        {
+          "file": "docs/security-m1verify/.stride-analyst-context.json",
+          "line": 99,
+          "signal": "\"SQL injection \u2014 routes/login.ts:34: SELECT * FROM Users WHERE email = '${req.body.email}'\","
+        },
+        {
+          "file": "docs/security-m1verify/threat-model.yaml",
+          "line": 736,
+          "signal": "SELECT * FROM Users WHERE email = ''${req.body.email}'' AND password = ''${security.hash(req.body.password)}''. An attacker"
+        },
+        {
+          "file": "docs/security-pstride-e2e/.security-controls.json",
+          "line": 9,
+          "signal": "\"assessment\": \"Login query uses raw SQL string interpolation (routes/login.ts:37): SELECT * FROM Users WHERE email = '${req.body.email}' \\u2014 trivially injectable. Password stored as MD5 (lib/insecurity.ts:43, models/user.ts:77) \\u2014 cryptographically broken. No account lockout. Rate limiting absent on login endpoint.\","
+        },
+        {
+          "file": "docs/security-pstride-e2e/.merge-candidates.json",
+          "line": 419,
+          "signal": "\"scenario\": \"The login handler constructs its SQL query via string interpolation: `SELECT * FROM Users WHERE email = '${req.body.email || ''}' AND password = '${security.hash(req.body.password || '')}' AND deletedAt IS NULL`. An unauthenticated attacker submits `' OR 1=1--` as the email field, causing the WHERE clause to evaluate TRUE for all rows and returning the first user in the database"
+        },
+        {
+          "file": "docs/security-pstride-e2e/.stride-dispatch-manifest.json",
+          "line": 116,
+          "signal": "\"SQL injection in login: SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${security.hash(req.body.password)}' (routes/login.ts:37)\","
+        },
+        {
+          "file": "docs/security-pstride-e2e/.stride-dispatch-manifest.json",
+          "line": 157,
+          "signal": "\"SQL injection in login: SELECT * FROM Users WHERE email = '${req.body.email}' (routes/login.ts:37)\","
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "InputValidation",
+      "generic_threat_title": "Injection through missing centralized input validation"
+    },
+    {
+      "rule_id": "ARCH-AUTHZ-001",
+      "title": "Broken Access Control exposure from inconsistent AuthZ",
+      "status": "weak",
+      "applies": true,
+      "confidence": "medium",
+      "control": "Centralised Authorization Policy",
+      "domain": "AuthZ",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 369,
+          "signal": "sensitive method PUT /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 370,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 388,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 389,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 425,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 428,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 432,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 439,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 440,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 449,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 450,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 603,
+          "signal": "sensitive method PUT /rest/basket/:id/coupon/:coupon authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 610,
+          "signal": "sensitive method PUT /rest/continue-code-findIt/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 611,
+          "signal": "sensitive method PUT /rest/continue-code-fixIt/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 612,
+          "signal": "sensitive method PUT /rest/continue-code/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 623,
+          "signal": "sensitive method PUT /rest/order-history/:id/delivery-status authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 625,
+          "signal": "sensitive method PUT /rest/wallet/balance authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 633,
+          "signal": "sensitive method PUT /rest/products/:id/reviews authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 634,
+          "signal": "sensitive method PATCH /rest/products/reviews authz=unknown"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "Authorization",
+      "generic_threat_title": "Privilege abuse through inconsistent authorization"
+    },
+    {
+      "rule_id": "ARCH-AUTHN-001",
+      "title": "State-changing or management route without an authentication gate",
+      "status": "weak",
+      "applies": true,
+      "confidence": "medium",
+      "control": "Route Authentication",
+      "domain": "IAM",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 309,
+          "signal": "POST /file-upload authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 310,
+          "signal": "POST /profile/image/file authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 311,
+          "signal": "POST /profile/image/url authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 312,
+          "signal": "POST /rest/memories authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 405,
+          "signal": "POST /api/Feedbacks authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 604,
+          "signal": "GET /rest/admin/application-version authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 605,
+          "signal": "GET /rest/admin/application-configuration authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 610,
+          "signal": "PUT /rest/continue-code-findIt/apply/:continueCode authn=unknown authz=unknown"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "Authentication",
+      "generic_threat_title": "Unauthenticated access to a privileged operation"
+    },
+    {
+      "rule_id": "ARCH-BOLA-001",
+      "title": "Authenticated object-addressing route without an authorization gate (BOLA/IDOR surface)",
+      "status": "weak",
+      "applies": true,
+      "confidence": "medium",
+      "control": "Object-Level Ownership Check",
+      "domain": "AuthZ",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 369,
+          "signal": "PUT /api/Products/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 370,
+          "signal": "DELETE /api/Products/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 387,
+          "signal": "GET /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 388,
+          "signal": "PUT /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 389,
+          "signal": "DELETE /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 425,
+          "signal": "PUT /api/BasketItems/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 428,
+          "signal": "DELETE /api/Quantitys/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 432,
+          "signal": "PUT /api/Feedbacks/:id authn=middleware_present authz=unknown"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "Authorization",
+      "generic_threat_title": "Broken object-level authorization (BOLA/IDOR)"
+    },
+    {
+      "rule_id": "ARCH-INPUT-001",
+      "title": "Broken input validation exposure",
+      "status": "partial",
+      "applies": true,
+      "confidence": "low",
+      "control": "Schema / Allowlist Input Validation",
+      "domain": "InputVal",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 203,
+          "signal": "req.url = req.url.replace(/[/]+/g, '/')"
+        },
+        {
+          "file": "server.ts",
+          "line": 246,
+          "signal": "const reqPath = req.originalUrl.replace(/\\?.*$/, '')"
+        },
+        {
+          "file": "server.ts",
+          "line": 410,
+          "signal": "req.body.email = req.body.email.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 411,
+          "signal": "req.body.password = req.body.password.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 412,
+          "signal": "req.body.passwordRepeat = req.body.passwordRepeat.trim()"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 207,
+          "signal": "func.inputValues.trim() !== ''"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 210,
+          "signal": "return this.parseInputValue(value.trim(), inputType)"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 165,
+          "signal": "queryParam = queryParam.trim()"
+        }
+      ],
+      "skip_reason": null,
+      "decision": "emit_control_and_hypothesis",
+      "architectural_theme": "InputValidation",
+      "generic_threat_title": "Injection through missing centralized input validation"
+    }
+  ],
+  "control_assessments": [
+    {
+      "rule_id": "ARCH-JWT-001",
+      "control": "JWT Algorithm Whitelist",
+      "domain": "IAM",
+      "status": "weak",
+      "confidence": "medium",
+      "evidence": [
+        {
+          "file": "docs/security-m1verify/.merge-candidates.json",
+          "line": 1060,
+          "signal": "\"scenario\": \"`lib/insecurity.ts:54` registers the `express-jwt@0.1.3` middleware as `expressJwt({ secret: publicKey })` with no `algorithms` restriction. This version accepts tokens with `alg: none` and an empty signature. An attacker crafts a token `{alg:'none'}.{data:{role:'admin',id:1}}.` (empty signature) and presents it to any protected route; `express-jwt@0.1.3` verifies it successfull"
+        },
+        {
+          "file": "docs/security-m1verify/.stride-express-backend.json",
+          "line": 52,
+          "signal": "\"scenario\": \"`lib/insecurity.ts:54` registers the `express-jwt@0.1.3` middleware as `expressJwt({ secret: publicKey })` with no `algorithms` restriction. This version accepts tokens with `alg: none` and an empty signature. An attacker crafts a token `{alg:'none'}.{data:{role:'admin',id:1}}.` (empty signature) and presents it to any protected route; `express-jwt@0.1.3` verifies it successfull"
+        },
+        {
+          "file": "docs/security-m1verify/.threats-merged.json",
+          "line": 200,
+          "signal": "\"scenario\": \"`lib/insecurity.ts:54` registers the `express-jwt@0.1.3` middleware as `expressJwt({ secret: publicKey })` with no `algorithms` restriction. This version accepts tokens with `alg: none` and an empty signature. An attacker crafts a token `{alg:'none'}.{data:{role:'admin',id:1}}.` (empty signature) and presents it to any protected route; `express-jwt@0.1.3` verifies it successfull"
+        }
+      ],
+      "hypothesis_ids": [],
+      "architectural_theme": "Authentication",
+      "generic_threat_title": "Account impersonation through weak JWT verification"
+    },
+    {
+      "rule_id": "ARCH-TLS-001",
+      "control": "Transport Encryption",
+      "domain": "DataProt",
+      "status": "anti_pattern",
+      "confidence": "high",
+      "evidence": [
+        {
+          "file": "data/static/challenges.yml",
+          "line": 1381,
+          "signal": "description: 'Change the name of a user by performing Cross-Site Request Forgery from <a href=\"http://htmledit.squarefree.com\">another origin</a>.'"
+        },
+        {
+          "file": "data/static/challenges.yml",
+          "line": 1387,
+          "signal": "- 'Write the code for the CSRF attack within http://htmledit.squarefree.com and verify that it changes your username.'"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 68,
+          "signal": "answer: \"Stop'n'Drop\" # http://futurama.wikia.com/wiki/Suicide_booth"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 120,
+          "signal": "answer: 'SC OLEA SRL' # http://www.olea.com.ro/"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 129,
+          "signal": "answer: '5N0wb41L' # http://rickandmorty.wikia.com/wiki/Snuffles"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 175,
+          "signal": "answer: 'West-2082' # http://www.alte-postleitzahlen.de/uetersen"
+        },
+        {
+          "file": "config/mozilla.yml",
+          "line": 139,
+          "signal": "image: 'http://juicystudio.com/img/logo.gif'"
+        },
+        {
+          "file": "config/default.yml",
+          "line": 70,
+          "signal": "- { uri: 'http://192.168.99.100:3000', proxy: 'https://localmac.owasp-juice.shop' }"
+        }
+      ],
+      "hypothesis_ids": [],
+      "architectural_theme": "DataProtection",
+      "generic_threat_title": "Data disclosure through cleartext transport"
+    },
+    {
+      "rule_id": "ARCH-MGMT-001",
+      "control": "Management Endpoint Protection",
+      "domain": "AuthZ",
+      "status": "partial",
+      "confidence": "low",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 604,
+          "signal": "management surface GET /rest/admin/application-version authn=unknown \u2014 unknown does not escalate"
+        },
+        {
+          "file": "server.ts",
+          "line": 605,
+          "signal": "management surface GET /rest/admin/application-configuration authn=unknown \u2014 unknown does not escalate"
+        },
+        {
+          "file": "server.ts",
+          "line": 718,
+          "signal": "management surface GET /metrics authn=unknown \u2014 unknown does not escalate"
+        }
+      ],
+      "hypothesis_ids": [],
+      "architectural_theme": "Authorization",
+      "generic_threat_title": "Privilege abuse through inconsistent authorization"
+    },
+    {
+      "rule_id": "ARCH-INPUT-001",
+      "control": "Schema / Allowlist Input Validation",
+      "domain": "InputVal",
+      "status": "partial",
+      "confidence": "low",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 203,
+          "signal": "req.url = req.url.replace(/[/]+/g, '/')"
+        },
+        {
+          "file": "server.ts",
+          "line": 246,
+          "signal": "const reqPath = req.originalUrl.replace(/\\?.*$/, '')"
+        },
+        {
+          "file": "server.ts",
+          "line": 410,
+          "signal": "req.body.email = req.body.email.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 411,
+          "signal": "req.body.password = req.body.password.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 412,
+          "signal": "req.body.passwordRepeat = req.body.passwordRepeat.trim()"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 207,
+          "signal": "func.inputValues.trim() !== ''"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 210,
+          "signal": "return this.parseInputValue(value.trim(), inputType)"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 165,
+          "signal": "queryParam = queryParam.trim()"
+        }
+      ],
+      "hypothesis_ids": [
+        "ARCH-HYP-INPUT-001"
+      ],
+      "architectural_theme": "InputValidation",
+      "generic_threat_title": "Injection through missing centralized input validation"
+    }
+  ],
+  "threat_hypotheses": [
+    {
+      "hypothesis_id": "ARCH-HYP-XSS-001",
+      "rule_id": "ARCH-XSS-001",
+      "title": "XSS exposure from weak output encoding",
+      "threat_category_id": "TH-11",
+      "stride": "Tampering",
+      "cwe": "CWE-79",
+      "component_id": null,
+      "domain": "FrontendSec",
+      "surface": null,
+      "proof_state": "control-derived",
+      "confidence": "low",
+      "weak_or_missing_controls": [
+        "Template Autoescape",
+        "Output Encoding",
+        "Content Security Policy"
+      ],
+      "positive_signals": [
+        {
+          "file": "frontend/src/app/about/about.component.ts",
+          "line": 119,
+          "signal": "feedbacks[i].comment = this.sanitizer.bypassSecurityTrustHtml("
+        },
+        {
+          "file": "frontend/src/app/last-login-ip/last-login-ip.component.ts",
+          "line": 39,
+          "signal": "this.lastLoginIp = this.sanitizer.bypassSecurityTrustHtml(`<small>${payload.data.lastLoginIp}</small>`)"
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 60,
+          "signal": "user.email = this.sanitizer.bypassSecurityTrustHtml(`<span class=\"${this.doesUserHaveAnActiveSession(user) ? 'confirmation' : 'error'}\">${user.email}</span>`)"
+        },
+        {
+          "file": "frontend/src/app/administration/administration.component.ts",
+          "line": 78,
+          "signal": "feedback.comment = this.sanitizer.bypassSecurityTrustHtml(feedback.comment)"
+        },
+        {
+          "file": "frontend/src/app/data-export/data-export.component.ts",
+          "line": 57,
+          "signal": "this.captcha = this.sanitizer.bypassSecurityTrustHtml(data.image)"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 132,
+          "signal": "tableData[i].description = this.sanitizer.bypassSecurityTrustHtml(tableData[i].description) // vuln-code-snippet vuln-line restfulXssChallenge"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 170,
+          "signal": "this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam) // vuln-code-snippet vuln-line localXssChallenge xssBonusChallenge"
+        },
+        {
+          "file": "frontend/src/app/track-result/track-result.component.ts",
+          "line": 48,
+          "signal": "this.results.orderNo = this.sanitizer.bypassSecurityTrustHtml(`<code>${results.data[0].orderId}</code>`)"
+        }
+      ],
+      "negative_signals": [],
+      "exculpatory_signals": [],
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "InputValidation",
+      "generic_threat_title": "Cross-site scripting through missing centralized output encoding"
+    },
+    {
+      "hypothesis_id": "ARCH-HYP-SQLI-001",
+      "rule_id": "ARCH-SQLI-001",
+      "title": "SQL injection exposure from ad-hoc SQL construction",
+      "threat_category_id": "TH-01",
+      "stride": "Tampering",
+      "cwe": "CWE-89",
+      "component_id": null,
+      "domain": "InputVal",
+      "surface": null,
+      "proof_state": "control-derived",
+      "confidence": "low",
+      "weak_or_missing_controls": [
+        "Parameterized Queries",
+        "ORM / Repository Layer"
+      ],
+      "positive_signals": [
+        {
+          "file": "routes/vulnCodeSnippet.ts",
+          "line": 46,
+          "signal": "res.status(404).json({ status: 'error', error: `No code challenge for challenge key: ${req.params.challenge}` })"
+        },
+        {
+          "file": "docs/security-m1verify/.stride-dispatch-manifest.json",
+          "line": 133,
+          "signal": "\"SQL injection \\u2014 routes/login.ts:34: SELECT * FROM Users WHERE email = '${req.body.email}'\","
+        },
+        {
+          "file": "docs/security-m1verify/.stride-analyst-context.json",
+          "line": 99,
+          "signal": "\"SQL injection \u2014 routes/login.ts:34: SELECT * FROM Users WHERE email = '${req.body.email}'\","
+        },
+        {
+          "file": "docs/security-m1verify/threat-model.yaml",
+          "line": 736,
+          "signal": "SELECT * FROM Users WHERE email = ''${req.body.email}'' AND password = ''${security.hash(req.body.password)}''. An attacker"
+        },
+        {
+          "file": "docs/security-pstride-e2e/.security-controls.json",
+          "line": 9,
+          "signal": "\"assessment\": \"Login query uses raw SQL string interpolation (routes/login.ts:37): SELECT * FROM Users WHERE email = '${req.body.email}' \\u2014 trivially injectable. Password stored as MD5 (lib/insecurity.ts:43, models/user.ts:77) \\u2014 cryptographically broken. No account lockout. Rate limiting absent on login endpoint.\","
+        },
+        {
+          "file": "docs/security-pstride-e2e/.merge-candidates.json",
+          "line": 419,
+          "signal": "\"scenario\": \"The login handler constructs its SQL query via string interpolation: `SELECT * FROM Users WHERE email = '${req.body.email || ''}' AND password = '${security.hash(req.body.password || '')}' AND deletedAt IS NULL`. An unauthenticated attacker submits `' OR 1=1--` as the email field, causing the WHERE clause to evaluate TRUE for all rows and returning the first user in the database"
+        },
+        {
+          "file": "docs/security-pstride-e2e/.stride-dispatch-manifest.json",
+          "line": 116,
+          "signal": "\"SQL injection in login: SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${security.hash(req.body.password)}' (routes/login.ts:37)\","
+        },
+        {
+          "file": "docs/security-pstride-e2e/.stride-dispatch-manifest.json",
+          "line": 157,
+          "signal": "\"SQL injection in login: SELECT * FROM Users WHERE email = '${req.body.email}' (routes/login.ts:37)\","
+        }
+      ],
+      "negative_signals": [],
+      "exculpatory_signals": [],
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "InputValidation",
+      "generic_threat_title": "Injection through missing centralized input validation"
+    },
+    {
+      "hypothesis_id": "ARCH-HYP-AUTHZ-001",
+      "rule_id": "ARCH-AUTHZ-001",
+      "title": "Broken Access Control exposure from inconsistent AuthZ",
+      "threat_category_id": "TH-06",
+      "stride": "ElevationOfPrivilege",
+      "cwe": "CWE-862",
+      "component_id": null,
+      "domain": "AuthZ",
+      "surface": null,
+      "proof_state": "control-derived",
+      "confidence": "medium",
+      "weak_or_missing_controls": [
+        "Centralised AuthZ Policy",
+        "Role / Scope Enforcement",
+        "Ownership Check"
+      ],
+      "positive_signals": [
+        {
+          "file": "server.ts",
+          "line": 369,
+          "signal": "sensitive method PUT /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 370,
+          "signal": "sensitive method DELETE /api/Products/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 388,
+          "signal": "sensitive method PUT /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 389,
+          "signal": "sensitive method DELETE /api/Recycles/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 425,
+          "signal": "sensitive method PUT /api/BasketItems/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 428,
+          "signal": "sensitive method DELETE /api/Quantitys/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 432,
+          "signal": "sensitive method PUT /api/Feedbacks/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 439,
+          "signal": "sensitive method PUT /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 440,
+          "signal": "sensitive method DELETE /api/Cards/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 449,
+          "signal": "sensitive method PUT /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 450,
+          "signal": "sensitive method DELETE /api/Addresss/:id authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 603,
+          "signal": "sensitive method PUT /rest/basket/:id/coupon/:coupon authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 610,
+          "signal": "sensitive method PUT /rest/continue-code-findIt/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 611,
+          "signal": "sensitive method PUT /rest/continue-code-fixIt/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 612,
+          "signal": "sensitive method PUT /rest/continue-code/apply/:continueCode authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 623,
+          "signal": "sensitive method PUT /rest/order-history/:id/delivery-status authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 625,
+          "signal": "sensitive method PUT /rest/wallet/balance authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 633,
+          "signal": "sensitive method PUT /rest/products/:id/reviews authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 634,
+          "signal": "sensitive method PATCH /rest/products/reviews authz=unknown"
+        }
+      ],
+      "negative_signals": [],
+      "exculpatory_signals": [],
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "Authorization",
+      "generic_threat_title": "Privilege abuse through inconsistent authorization"
+    },
+    {
+      "hypothesis_id": "ARCH-HYP-AUTHN-001",
+      "rule_id": "ARCH-AUTHN-001",
+      "title": "State-changing or management route without an authentication gate",
+      "threat_category_id": "TH-06",
+      "stride": "ElevationOfPrivilege",
+      "cwe": "CWE-306",
+      "component_id": null,
+      "domain": "IAM",
+      "surface": null,
+      "proof_state": "control-derived",
+      "confidence": "medium",
+      "weak_or_missing_controls": [
+        "Route Authentication Middleware",
+        "Server-Side Session Enforcement"
+      ],
+      "positive_signals": [
+        {
+          "file": "server.ts",
+          "line": 309,
+          "signal": "POST /file-upload authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 310,
+          "signal": "POST /profile/image/file authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 311,
+          "signal": "POST /profile/image/url authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 312,
+          "signal": "POST /rest/memories authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 405,
+          "signal": "POST /api/Feedbacks authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 604,
+          "signal": "GET /rest/admin/application-version authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 605,
+          "signal": "GET /rest/admin/application-configuration authn=unknown authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 610,
+          "signal": "PUT /rest/continue-code-findIt/apply/:continueCode authn=unknown authz=unknown"
+        }
+      ],
+      "negative_signals": [],
+      "exculpatory_signals": [],
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "Authentication",
+      "generic_threat_title": "Unauthenticated access to a privileged operation"
+    },
+    {
+      "hypothesis_id": "ARCH-HYP-BOLA-001",
+      "rule_id": "ARCH-BOLA-001",
+      "title": "Authenticated object-addressing route without an authorization gate (BOLA/IDOR surface)",
+      "threat_category_id": "TH-06",
+      "stride": "ElevationOfPrivilege",
+      "cwe": "CWE-639",
+      "component_id": null,
+      "domain": "AuthZ",
+      "surface": null,
+      "proof_state": "control-derived",
+      "confidence": "medium",
+      "weak_or_missing_controls": [
+        "Object-Level Ownership Check",
+        "Tenant Scoping"
+      ],
+      "positive_signals": [
+        {
+          "file": "server.ts",
+          "line": 369,
+          "signal": "PUT /api/Products/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 370,
+          "signal": "DELETE /api/Products/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 387,
+          "signal": "GET /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 388,
+          "signal": "PUT /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 389,
+          "signal": "DELETE /api/Recycles/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 425,
+          "signal": "PUT /api/BasketItems/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 428,
+          "signal": "DELETE /api/Quantitys/:id authn=middleware_present authz=unknown"
+        },
+        {
+          "file": "server.ts",
+          "line": 432,
+          "signal": "PUT /api/Feedbacks/:id authn=middleware_present authz=unknown"
+        }
+      ],
+      "negative_signals": [],
+      "exculpatory_signals": [],
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "Authorization",
+      "generic_threat_title": "Broken object-level authorization (BOLA/IDOR)"
+    },
+    {
+      "hypothesis_id": "ARCH-HYP-INPUT-001",
+      "rule_id": "ARCH-INPUT-001",
+      "title": "Broken input validation exposure",
+      "threat_category_id": "TH-01",
+      "stride": "Tampering",
+      "cwe": "CWE-20",
+      "component_id": null,
+      "domain": "InputVal",
+      "surface": null,
+      "proof_state": "control-derived",
+      "confidence": "low",
+      "weak_or_missing_controls": [
+        "Schema Validation",
+        "Allowlist Validation"
+      ],
+      "positive_signals": [
+        {
+          "file": "server.ts",
+          "line": 203,
+          "signal": "req.url = req.url.replace(/[/]+/g, '/')"
+        },
+        {
+          "file": "server.ts",
+          "line": 246,
+          "signal": "const reqPath = req.originalUrl.replace(/\\?.*$/, '')"
+        },
+        {
+          "file": "server.ts",
+          "line": 410,
+          "signal": "req.body.email = req.body.email.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 411,
+          "signal": "req.body.password = req.body.password.trim()"
+        },
+        {
+          "file": "server.ts",
+          "line": 412,
+          "signal": "req.body.passwordRepeat = req.body.passwordRepeat.trim()"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 207,
+          "signal": "func.inputValues.trim() !== ''"
+        },
+        {
+          "file": "frontend/src/app/web3-sandbox/web3-sandbox.component.ts",
+          "line": 210,
+          "signal": "return this.parseInputValue(value.trim(), inputType)"
+        },
+        {
+          "file": "frontend/src/app/search-result/search-result.component.ts",
+          "line": 165,
+          "signal": "queryParam = queryParam.trim()"
+        }
+      ],
+      "negative_signals": [],
+      "exculpatory_signals": [],
+      "decision": "emit_hypothesis_only",
+      "architectural_theme": "InputValidation",
+      "generic_threat_title": "Injection through missing centralized input validation"
+    }
+  ],
+  "anti_pattern_candidates": [
+    {
+      "rule_id": "ARCH-TLS-001",
+      "title": "Cleartext transport or disabled DB-TLS",
+      "cwe": "CWE-319",
+      "domain": "DataProt",
+      "stride": "InformationDisclosure",
+      "threat_category_id": "TH-03",
+      "severity_cap": "High",
+      "evidence": [
+        {
+          "file": "data/static/challenges.yml",
+          "line": 1381,
+          "signal": "description: 'Change the name of a user by performing Cross-Site Request Forgery from <a href=\"http://htmledit.squarefree.com\">another origin</a>.'"
+        },
+        {
+          "file": "data/static/challenges.yml",
+          "line": 1387,
+          "signal": "- 'Write the code for the CSRF attack within http://htmledit.squarefree.com and verify that it changes your username.'"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 68,
+          "signal": "answer: \"Stop'n'Drop\" # http://futurama.wikia.com/wiki/Suicide_booth"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 120,
+          "signal": "answer: 'SC OLEA SRL' # http://www.olea.com.ro/"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 129,
+          "signal": "answer: '5N0wb41L' # http://rickandmorty.wikia.com/wiki/Snuffles"
+        },
+        {
+          "file": "data/static/users.yml",
+          "line": 175,
+          "signal": "answer: 'West-2082' # http://www.alte-postleitzahlen.de/uetersen"
+        },
+        {
+          "file": "config/mozilla.yml",
+          "line": 139,
+          "signal": "image: 'http://juicystudio.com/img/logo.gif'"
+        },
+        {
+          "file": "config/default.yml",
+          "line": 70,
+          "signal": "- { uri: 'http://192.168.99.100:3000', proxy: 'https://localmac.owasp-juice.shop' }"
+        }
+      ],
+      "confidence": "high",
+      "must_not_carry_cvss": true,
+      "architectural_theme": "DataProtection",
+      "generic_threat_title": "Data disclosure through cleartext transport"
+    }
+  ],
+  "warnings": []
+}

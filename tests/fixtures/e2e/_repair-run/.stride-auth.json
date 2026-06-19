@@ -1,0 +1,382 @@
+{
+  "component_id": "auth",
+  "component_name": "Authentication & Session Surface",
+  "started_at": "2026-06-17T16:19:26Z",
+  "analyzed_at": "2026-06-17T16:22:00Z",
+  "partial": false,
+  "skipped_categories": [],
+  "compliance_scope_applied": [],
+  "resolved_prior_findings": [],
+  "threats": [
+    {
+      "local_id": "auth-001",
+      "threat_category_id": "TH-01",
+      "additional_categories": ["TH-05"],
+      "stride": "Spoofing",
+      "cwe": "CWE-89",
+      "title": "SQL Injection Authentication Bypass — routes/login.ts:34",
+      "affected_parameter": "email",
+      "scenario": "The login handler at routes/login.ts:34 constructs a raw SQL query via string interpolation: `SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${security.hash(req.body.password)}'`. An unauthenticated attacker submits `' OR '1'='1'--` as the email parameter. The injected clause short-circuits the WHERE condition, matching all rows. The application authenticates the attacker as the first returned user (typically admin). No prepared statements or ORM parameterization are used. This is a direct, Internet-exploitable authentication bypass requiring no credentials.",
+      "evidence_summary": "Raw string interpolation of `req.body.email` and `req.body.password` into a Sequelize `query()` call at line 34 of routes/login.ts — no bind parameters, no escaping.",
+      "impact_description": "Unauthenticated attacker gains a valid JWT as any application user, including admin, with full role privileges for 6 hours.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None — no input validation, no parameterization, no WAF in front of this endpoint.",
+      "mitigation_title": "Replace raw SQL in login handler with parameterized Sequelize query",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Replace `models.sequelize.query(\\`SELECT * FROM Users WHERE email = '${req.body.email}'...\\`)` with `UserModel.findOne({ where: { email: req.body.email, password: security.hash(req.body.password), deletedAt: null } })` using Sequelize ORM methods.",
+          "Validate and sanitize `req.body.email` with a strict email schema (e.g., `zod` — `z.string().email()`) before it reaches any query.",
+          "Add a per-IP rate limit to POST /rest/user/login (e.g., `express-rate-limit` at 10 attempts per 15 minutes) using a trusted server-side IP, not X-Forwarded-For."
+        ],
+        "code_example": "// Safe replacement using Sequelize ORM\nconst user = await UserModel.findOne({\n  where: {\n    email: req.body.email,\n    password: security.hash(req.body.password),\n    deletedAt: null\n  }\n})",
+        "reference": "CWE-89"
+      },
+      "evidence": {
+        "file": "routes/login.ts",
+        "line": 34
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "auth-002",
+      "threat_category_id": "TH-10",
+      "additional_categories": [],
+      "stride": "Spoofing",
+      "cwe": "CWE-321",
+      "title": "Hardcoded RSA Private Key Enables Universal JWT Forgery — lib/insecurity.ts:23",
+      "affected_parameter": null,
+      "scenario": "The RSA private key used to sign all application JWTs is embedded verbatim in lib/insecurity.ts at line 23. The public GitHub repository makes this key available to anyone. An attacker reads the private key from the source, crafts a JWT payload with `role: 'admin'` and any target `email`, signs it with the known private key using RS256, and submits it as a Bearer token. All role checks in `isAuthorized()`, `isAccounting()`, and `isDeluxe()` verify against the matching public key (`lib/insecurity.ts:54`) — they will accept this forged token. The attacker gains admin-level access to the entire application for any 6-hour window they choose.",
+      "evidence_summary": "A full RSA private key (1024-bit) is hardcoded as a string literal at lib/insecurity.ts:23 and used in `security.authorize()` at line 56 to sign all session JWTs.",
+      "impact_description": "Any party with read access to the source repository can forge valid admin JWTs, completely bypassing all authentication and authorization controls.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None — the key is in a public repository and is used for all JWT signing.",
+      "mitigation_title": "Remove hardcoded private key and load from environment secret or secrets manager",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Generate a new 2048-bit RSA key pair: `openssl genrsa -out jwt.pem 2048 && openssl rsa -in jwt.pem -pubout -out jwt.pub`.",
+          "Store the private key in an environment variable (`JWT_PRIVATE_KEY`) or a secrets manager (e.g., AWS Secrets Manager, HashiCorp Vault). Load it at startup: `const privateKey = process.env.JWT_PRIVATE_KEY ?? fs.readFileSync('encryptionkeys/jwt.pem', 'utf8')`.",
+          "Rotate the key immediately — all existing JWTs signed with the old key must be invalidated (clear `authenticatedUsers.tokenMap`).",
+          "Add `encryptionkeys/` to `.gitignore` to prevent future commits of key material."
+        ],
+        "code_example": null,
+        "reference": "CWE-321"
+      },
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 23
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "auth-003",
+      "threat_category_id": "TH-10",
+      "additional_categories": [],
+      "stride": "Spoofing",
+      "cwe": "CWE-347",
+      "title": "Algorithm Confusion (alg:none) via express-jwt@0.1.3 — lib/insecurity.ts:54",
+      "affected_parameter": null,
+      "scenario": "The application uses express-jwt version 0.1.3 (package.json line 167) and jsonwebtoken version 0.4.0 (line 189). These are pre-CVE-2015-9235 versions that do not enforce the expected algorithm and accept tokens with `alg: 'none'` in the header, treating the empty signature as valid. An attacker takes any valid JWT, changes the `alg` header to `none`, strips the signature, and submits the token. The `isAuthorized()` middleware at lib/insecurity.ts:54 (`expressJwt({ secret: publicKey })`) accepts it. The attacker can also forge RS256→HS256 algorithm confusion: use the RSA public key as the HMAC secret to sign a modified HS256 token that passes verification.",
+      "evidence_summary": "lib/insecurity.ts:54 configures `expressJwt({ secret: publicKey })` using express-jwt@0.1.3 — a version with confirmed alg:none and algorithm-confusion vulnerabilities.",
+      "impact_description": "Unauthenticated attacker bypasses JWT verification, accessing any endpoint protected by `security.isAuthorized()` middleware.",
+      "likelihood": "High",
+      "impact": "Critical",
+      "risk": "Critical",
+      "controls_in_place": "None — the algorithm is not pinned in the expressJwt configuration.",
+      "mitigation_title": "Upgrade express-jwt and jsonwebtoken to current versions with explicit algorithm pinning",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Upgrade `express-jwt` to >= 8.4.1 and `jsonwebtoken` to >= 9.0.2: `npm install express-jwt@latest jsonwebtoken@latest`.",
+          "Pin the expected algorithm explicitly: `expressJwt({ secret: publicKey, algorithms: ['RS256'] })` — this rejects tokens with any other algorithm including `none`.",
+          "Audit all `jwt.verify()` and `jws.verify()` call sites to ensure `algorithms` is always specified."
+        ],
+        "code_example": "// Safe configuration — pins algorithm, rejects alg:none\nexport const isAuthorized = () =>\n  expressJwt({ secret: publicKey, algorithms: ['RS256'] })",
+        "reference": "CWE-347"
+      },
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 54
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "auth-004",
+      "threat_category_id": "TH-01",
+      "additional_categories": [],
+      "stride": "Spoofing",
+      "cwe": "CWE-640",
+      "title": "Rate Limit Bypass via Attacker-Controlled X-Forwarded-For on Password Reset — server.ts:346",
+      "affected_parameter": "X-Forwarded-For",
+      "scenario": "The password reset endpoint `/rest/user/reset-password` is rate-limited to 100 requests per 5 minutes per IP (server.ts:343-347). However, `app.enable('trust proxy')` is set globally (line 342), and the rate-limit `keyGenerator` reads `headers['X-Forwarded-For'] ?? ip` directly from the request headers (line 346). An attacker rotates the `X-Forwarded-For` header value per request (e.g., `1.2.3.1`, `1.2.3.2`, ...), generating a new rate-limit bucket for each value. This enables unlimited brute-force of security question answers for any target email address without triggering the rate limit.",
+      "evidence_summary": "server.ts:346 uses `headers['X-Forwarded-For']` as the rate-limit key without validating that the header comes from a trusted upstream proxy — any client can set this header.",
+      "impact_description": "Attacker can enumerate security question answers for any account and execute full account takeover via the password reset flow.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "Rate limit exists but is bypassed via header spoofing.",
+      "mitigation_title": "Fix rate-limit key to use server-validated remote IP rather than client-supplied X-Forwarded-For",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Remove the custom `keyGenerator` or replace it with `req.socket.remoteAddress` (the actual TCP connection IP): `keyGenerator: (req) => req.socket.remoteAddress ?? req.ip`.",
+          "If behind a known reverse proxy (e.g., nginx), configure `trust proxy` to a specific IP or hop count (`app.set('trust proxy', 1)`) so that Express only trusts the first hop's IP — not the full X-Forwarded-For chain.",
+          "Lower the rate limit threshold for security-sensitive flows: e.g., 10 attempts per 15 minutes."
+        ],
+        "code_example": null,
+        "reference": "CWE-640"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 346
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "auth-005",
+      "threat_category_id": "TH-03",
+      "additional_categories": [],
+      "stride": "Tampering",
+      "cwe": "CWE-916",
+      "title": "MD5 Password Hashing — lib/insecurity.ts:43",
+      "affected_parameter": "password",
+      "scenario": "All user passwords are hashed with MD5 (`crypto.createHash('md5')` at lib/insecurity.ts:43). MD5 is a fast, unsalted hash with multi-billion-per-second GPU cracking speeds and massive publicly available rainbow tables (e.g., CrackStation). An attacker who obtains the `Users` table via SQL injection (auth-001) or a direct DB breach can crack all user passwords within minutes to hours for common passwords, and recover the admin password `admin123` (verified by the hardcoded challenge check at routes/login.ts:60) trivially. The same hash function is used to verify passwords in the 2FA setup/disable flow (routes/2fa.ts:113).",
+      "evidence_summary": "`security.hash()` at lib/insecurity.ts:43 calls `crypto.createHash('md5')` with no salt — used in every password compare path including login (routes/login.ts:34) and 2FA (routes/2fa.ts:113).",
+      "impact_description": "DB breach yields plaintext passwords for virtually all users within hours, enabling mass account takeover and credential reuse attacks against external services.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None — MD5 is used as the sole password storage mechanism with no salt.",
+      "mitigation_title": "Replace MD5 password hashing with bcrypt or Argon2 with appropriate cost factor",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Replace `security.hash()` with `bcrypt.hash(password, 12)` for storage and `bcrypt.compare(inputPassword, storedHash)` for verification.",
+          "Run a one-time migration: on each successful login, if the stored hash is MD5 format (32 hex chars), re-hash the verified password with bcrypt and update the record.",
+          "Update the `UserModel` password field length from 64 to 60 characters to accommodate bcrypt hashes.",
+          "Audit all callers of `security.hash()` — routes/login.ts:34, routes/2fa.ts:113 — to use the new bcrypt comparison."
+        ],
+        "code_example": "import bcrypt from 'bcrypt'\n// Storage\nconst hashed = await bcrypt.hash(plaintext, 12)\n// Verification\nconst matches = await bcrypt.compare(plaintext, hashed)",
+        "reference": "CWE-916"
+      },
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 43
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "auth-006",
+      "threat_category_id": "TH-04",
+      "additional_categories": [],
+      "stride": "Information Disclosure",
+      "cwe": "CWE-922",
+      "title": "JWT Stored in localStorage — frontend/src/app/Services/request.interceptor.ts:13",
+      "affected_parameter": "token",
+      "scenario": "The Angular `RequestInterceptor` at request.interceptor.ts:13 reads the JWT from `localStorage` and attaches it to every outbound HTTP request. `localStorage` is accessible to all JavaScript executing in the same origin. Any successful XSS attack (stored, reflected, or DOM-based) on the Juice Shop domain can call `localStorage.getItem('token')` and exfiltrate the JWT to an attacker-controlled server. Since the token encodes the user's full profile (email, role, basket ID) and is valid for 6 hours, the attacker has a full session for that window without the user's knowledge. Multiple components (navbar, oauth, two-factor-auth-enter) also write to localStorage.",
+      "evidence_summary": "`localStorage.getItem('token')` at request.interceptor.ts:13 is the token retrieval path; `localStorage.setItem('token', ...)` occurs in at least 3 other Angular components — token is never stored in an httpOnly cookie.",
+      "impact_description": "Any XSS vulnerability on the same origin results in full session theft and persistent account access for the JWT's 6-hour lifetime.",
+      "likelihood": "High",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "None — no httpOnly cookie is used; no Content Security Policy is enforced to limit XSS impact.",
+      "mitigation_title": "Move JWT from localStorage to httpOnly Secure SameSite=Strict cookie via a Backend-for-Frontend pattern",
+      "remediation": {
+        "effort": "High",
+        "steps": [
+          "Issue the JWT as a `Set-Cookie: token=<jwt>; HttpOnly; Secure; SameSite=Strict; Path=/` response header from the login endpoint instead of returning it in the JSON body.",
+          "Remove all `localStorage.setItem('token', ...)` and `localStorage.getItem('token')` calls from Angular components.",
+          "Update `RequestInterceptor` to remove the `Authorization` header injection — the browser will automatically send the httpOnly cookie.",
+          "Add a CSRF token mechanism (e.g., double-submit cookie pattern or `csurf` middleware) since cookie-based auth requires CSRF protection on state-changing requests."
+        ],
+        "code_example": null,
+        "reference": "CWE-922"
+      },
+      "evidence": {
+        "file": "frontend/src/app/Services/request.interceptor.ts",
+        "line": 13
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": true
+    },
+    {
+      "local_id": "auth-007",
+      "threat_category_id": "TH-08",
+      "additional_categories": [],
+      "stride": "Repudiation",
+      "cwe": "CWE-778",
+      "title": "No Authentication Event Audit Logging — routes/login.ts, routes/resetPassword.ts",
+      "affected_parameter": null,
+      "scenario": "Neither the login handler (routes/login.ts) nor the password reset handler (routes/resetPassword.ts) emit structured audit log entries for authentication events. Successful logins, failed login attempts, password reset completions, and 2FA changes produce no immutable record. The `saveLoginIp` route (routes/saveLoginIp.ts:32) overwrites a single mutable `lastLoginIp` DB field — providing no history and no timestamp. An attacker who successfully exploits SQL injection (auth-001) or account takeover via guessed security answers leaves no forensic trace. Incident response teams cannot determine when, from where, or by whom unauthorized access occurred.",
+      "evidence_summary": "routes/login.ts afterLogin() at line 19 issues JWT and returns a response with no `logger.info()`, `console.log()`, or audit sink call; routes/resetPassword.ts line 44 updates the password with no audit record.",
+      "impact_description": "Compromised accounts cannot be detected through log analysis; forensic investigation is impossible; regulatory audit requirements (e.g., PCI-DSS Req 10) cannot be met.",
+      "likelihood": "Medium",
+      "impact": "Medium",
+      "risk": "Medium",
+      "controls_in_place": "None — only mutable lastLoginIp field, no log records.",
+      "mitigation_title": "Add structured audit logging for all authentication lifecycle events",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "Integrate a structured logging library (e.g., `winston` with a JSON transport) and emit audit events on: successful login (user ID, IP, timestamp), failed login (email attempted, IP, timestamp), password reset (user ID, IP, timestamp), 2FA enable/disable (user ID, IP, timestamp).",
+          "Write audit logs to an append-only sink (separate log file or remote SIEM) — not the same mutable DB that the app writes session data to.",
+          "Include at minimum: `actor`, `action`, `resource`, `timestamp`, `sourceIp`, `outcome` in every audit record."
+        ],
+        "code_example": "// In afterLogin(), after JWT issuance:\nauditLogger.info({ actor: user.data.email, action: 'LOGIN_SUCCESS', sourceIp: req.ip, timestamp: new Date().toISOString() })",
+        "reference": "CWE-778"
+      },
+      "evidence": {
+        "file": "routes/login.ts",
+        "line": 19
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "auth-008",
+      "threat_category_id": "TH-06",
+      "additional_categories": [],
+      "stride": "Denial of Service",
+      "cwe": "CWE-307",
+      "title": "No Rate Limiting on Login Endpoint — server.ts:594",
+      "affected_parameter": null,
+      "scenario": "The POST `/rest/user/login` endpoint at server.ts:594 has no rate-limit middleware. An attacker can issue an unlimited number of login attempts per second per IP. Using a credential-stuffing list or known-weak passwords (admin:admin123 is confirmed by routes/login.ts:60), the attacker can enumerate valid accounts, brute-force passwords, and cause the SQLite/underlying DB to handle thousands of concurrent queries. Since the login query is an unsanitized raw SQL call (auth-001), high request volumes against a slow DB can also cause response delays degrading the service for legitimate users.",
+      "evidence_summary": "server.ts:594 registers `app.post('/rest/user/login', login())` with no preceding `rateLimit()` middleware; the reset-password endpoint at line 343 has a (bypassable) rate limit, confirming the login omission is not intentional absence of the middleware pattern.",
+      "impact_description": "Credential stuffing, password brute force, and account lockout-style DoS against all user accounts with no detection or throttling.",
+      "likelihood": "High",
+      "impact": "Medium",
+      "risk": "High",
+      "controls_in_place": "None on the login endpoint.",
+      "mitigation_title": "Add rate limiting middleware to POST /rest/user/login with server-validated IP key",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "Add `app.use('/rest/user/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, keyGenerator: (req) => req.socket.remoteAddress }))` before `app.post('/rest/user/login', login())` in server.ts.",
+          "Consider account-level lockout after N consecutive failures using a counter stored in Redis or memory-cache.",
+          "Implement CAPTCHA for repeated failures from the same IP."
+        ],
+        "code_example": "import { rateLimit } from 'express-rate-limit'\n\napp.use('/rest/user/login', rateLimit({\n  windowMs: 15 * 60 * 1000, // 15 minutes\n  max: 10,\n  keyGenerator: (req) => req.socket.remoteAddress ?? ''\n}))\napp.post('/rest/user/login', login())",
+        "reference": "CWE-307"
+      },
+      "evidence": {
+        "file": "server.ts",
+        "line": 594
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [
+        {
+          "pattern": "rateLimit.*login\\|login.*rateLimit",
+          "search_paths": ["server.ts"],
+          "hit_count": 0,
+          "searched_at": "2026-06-17T16:21:00Z"
+        }
+      ],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "auth-009",
+      "threat_category_id": "TH-07",
+      "additional_categories": [],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-269",
+      "title": "JWT Role Claims Not Validated Against Database at Request Time — lib/insecurity.ts:156",
+      "affected_parameter": null,
+      "scenario": "The `isAccounting()` middleware at lib/insecurity.ts:156 and `isDeluxe()` at line 167 check `decodedToken?.data?.role` from the JWT payload without performing a database lookup to confirm the user's current role. A user who was granted `accounting` or `admin` role and subsequently had that role revoked retains elevated access until their 6-hour JWT expires. More critically, with the hardcoded private key (auth-002) an attacker forges a token payload with `role: 'admin'`, signs it, and all role checks will pass — there is no server-side role truth to compare against.",
+      "evidence_summary": "lib/insecurity.ts:159 checks `decodedToken?.data?.role === roles.accounting` with no DB read — the token claim is treated as authoritative for access control decisions.",
+      "impact_description": "Role escalation via token forgery (facilitated by auth-002) or delayed revocation — an attacker or a revoked privileged user retains admin/accounting access for up to 6 hours after a privilege change.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "JWT expiry at 6 hours provides eventual revocation.",
+      "mitigation_title": "Validate user role against database on privileged endpoint access rather than trusting JWT role claim alone",
+      "remediation": {
+        "effort": "Medium",
+        "steps": [
+          "In `isAccounting()`, after decoding the JWT, perform `UserModel.findByPk(decodedToken.data.id, { attributes: ['role'] })` and check the DB role rather than (or in addition to) the token claim.",
+          "Reduce JWT expiry from 6 hours to 15-30 minutes; issue refresh tokens to maintain session without prolonged privilege persistence.",
+          "Implement a token revocation list (blocklist in Redis/memory) so that role changes take effect immediately without waiting for token expiry."
+        ],
+        "code_example": null,
+        "reference": "CWE-269"
+      },
+      "evidence": {
+        "file": "lib/insecurity.ts",
+        "line": 156
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    },
+    {
+      "local_id": "auth-010",
+      "threat_category_id": "TH-10",
+      "additional_categories": [],
+      "stride": "Elevation of Privilege",
+      "cwe": "CWE-308",
+      "title": "2FA Disable via MD5 Password Preimage — routes/2fa.ts:158",
+      "affected_parameter": "password",
+      "scenario": "The 2FA disable handler at routes/2fa.ts:158 verifies the user's password with `user.password !== security.hash(password)` — where `security.hash()` is MD5 (lib/insecurity.ts:43). An attacker who obtains the MD5 password hash (e.g., via the SQL injection at auth-001, or from the `/rest/user/authentication-details` endpoint accessible to admin users) can compute a preimage using rainbow tables (CrackStation, hashcat) or trivially crack `admin123` (32-char MD5: `0192023a7bbd73250516f069df18b500`). With the preimage in hand, the attacker submits the cleartext password to disable 2FA, then completes account takeover without needing the TOTP token.",
+      "evidence_summary": "routes/2fa.ts:158 calls `security.hash(password)` which maps to `crypto.createHash('md5')` at lib/insecurity.ts:43 — weak hash used to gate 2FA disable operation.",
+      "impact_description": "Attacker who knows a user's MD5 hash (trivially obtained via SQLi) can disable 2FA on their account, eliminating the second authentication factor before completing takeover.",
+      "likelihood": "Medium",
+      "impact": "High",
+      "risk": "High",
+      "controls_in_place": "2FA token required for initial login; disable requires password confirmation (but using MD5).",
+      "mitigation_title": "Migrate 2FA password confirmation to use bcrypt comparison consistent with auth-005 fix",
+      "remediation": {
+        "effort": "Low",
+        "steps": [
+          "After implementing bcrypt in auth-005, update routes/2fa.ts setup() and disable() to use `await bcrypt.compare(password, user.password)` instead of `user.password !== security.hash(password)`.",
+          "Consider requiring the current TOTP token in addition to the password when disabling 2FA — defense in depth against credential-only attacks.",
+          "Add rate limiting to the 2FA disable endpoint."
+        ],
+        "code_example": "// Safe comparison after bcrypt migration\nconst passwordValid = await bcrypt.compare(password, user.password)\nif (!passwordValid) throw new Error('Password does not match')",
+        "reference": "CWE-308"
+      },
+      "evidence": {
+        "file": "routes/2fa.ts",
+        "line": 158
+      },
+      "evidence_check": "unchecked",
+      "controls_absent_evidence": [],
+      "prior_finding_ref": null,
+      "cvss_v4": null,
+      "architectural_violation": false
+    }
+  ]
+}

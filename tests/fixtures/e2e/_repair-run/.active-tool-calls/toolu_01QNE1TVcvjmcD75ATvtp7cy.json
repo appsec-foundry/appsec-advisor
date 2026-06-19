@@ -1,0 +1,1 @@
+{"tool_use_id": "toolu_01QNE1TVcvjmcD75ATvtp7cy", "session_id": "040ee51b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1781716264, "input_summary": "cd /home/mrohr/juice-shop/docs/security python3 - <<'PY' import yaml, collections d=yaml.safe_load(open(\"threat-model.yaml\")) th=d[\"threats\"] raw=collections.Co\u2026"}

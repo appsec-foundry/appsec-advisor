@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_012e9m6s7dLNXZcVWWc1x8vR", "session_id": "5f22d34b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1780517362, "input_summary": "cd /home/mrohr/appsec-advisor git show HEAD:templates/fragments/toc.md.j2 > /tmp/claude/toc_orig.j2 python3 - <<'PYEOF' import jinja2 entries = [     {\"number\":\u2026"}

@@ -10,9 +10,9 @@
       "reason": null,
       "unmet_signals": null,
       "matched_finding_ids": [
-        "T-018",
-        "T-028",
-        "T-027"
+        "T-020",
+        "T-001",
+        "T-015"
       ],
       "step_matches": [
         {
@@ -22,14 +22,12 @@
           "grants": "script_execution_in_victim_session",
           "requires": null,
           "matched": true,
-          "matched_finding_id": "T-018",
+          "matched_finding_id": "T-020",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "frontend/src/app/search-result/search-result.component.ts",
+            "line": 132
           },
-          "controls_found": [
-            "DomSanitizer"
-          ]
+          "controls_found": []
         },
         {
           "step": 2,
@@ -38,10 +36,10 @@
           "grants": "stolen_session_token",
           "requires": "script_execution_in_victim_session",
           "matched": true,
-          "matched_finding_id": "T-028",
+          "matched_finding_id": "T-001",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "frontend/src/app/login/login.component.ts",
+            "line": 101
           },
           "controls_found": []
         },
@@ -52,10 +50,10 @@
           "grants": "persistent_account_access",
           "requires": "stolen_session_token",
           "matched": true,
-          "matched_finding_id": "T-027",
+          "matched_finding_id": "T-015",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "frontend/src/app/login/login.component.ts",
+            "line": 134
           },
           "controls_found": []
         }
@@ -66,11 +64,12 @@
       "title": "Bulk Data Exfiltration via Broken Object Authorization",
       "source": "mandatory",
       "applicable": true,
-      "structural_verdict": "partial_candidate",
-      "reason": "only some required chain steps have a matching finding",
+      "structural_verdict": "candidate",
+      "reason": null,
       "unmet_signals": null,
       "matched_finding_ids": [
-        "T-017"
+        "T-007",
+        "T-003"
       ],
       "step_matches": [
         {
@@ -80,10 +79,10 @@
           "grants": "arbitrary_object_read",
           "requires": "low_priv_account",
           "matched": true,
-          "matched_finding_id": "T-017",
+          "matched_finding_id": "T-007",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "routes/address.ts",
+            "line": 11
           },
           "controls_found": []
         },
@@ -93,9 +92,12 @@
           "required": true,
           "grants": "elevated_role",
           "requires": "arbitrary_object_read",
-          "matched": false,
-          "matched_finding_id": null,
-          "evidence": null,
+          "matched": true,
+          "matched_finding_id": "T-003",
+          "evidence": {
+            "file": "frontend/src/app/oauth/oauth.component.ts",
+            "line": 30
+          },
           "controls_found": []
         }
       ]
@@ -109,8 +111,8 @@
       "reason": null,
       "unmet_signals": null,
       "matched_finding_ids": [
-        "T-002",
-        "T-038"
+        "T-005",
+        "T-003"
       ],
       "step_matches": [
         {
@@ -120,10 +122,10 @@
           "grants": "forgeable_token",
           "requires": "any_valid_jwt",
           "matched": true,
-          "matched_finding_id": "T-002",
+          "matched_finding_id": "T-005",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "lib/insecurity.ts",
+            "line": 23
           },
           "controls_found": []
         },
@@ -134,10 +136,10 @@
           "grants": "admin_access",
           "requires": "forgeable_token",
           "matched": true,
-          "matched_finding_id": "T-038",
+          "matched_finding_id": "T-003",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "frontend/src/app/oauth/oauth.component.ts",
+            "line": 30
           },
           "controls_found": []
         }
@@ -148,10 +150,12 @@
       "title": "Privilege Escalation via Mass-Assignment on Registration",
       "source": "mandatory",
       "applicable": true,
-      "structural_verdict": "not_applicable",
-      "reason": "no finding matched the required chain step(s) for this scenario",
+      "structural_verdict": "candidate",
+      "reason": null,
       "unmet_signals": null,
-      "matched_finding_ids": [],
+      "matched_finding_ids": [
+        "T-003"
+      ],
       "step_matches": [
         {
           "step": 1,
@@ -159,9 +163,12 @@
           "required": true,
           "grants": "admin_access",
           "requires": null,
-          "matched": false,
-          "matched_finding_id": null,
-          "evidence": null,
+          "matched": true,
+          "matched_finding_id": "T-003",
+          "evidence": {
+            "file": "frontend/src/app/oauth/oauth.component.ts",
+            "line": 30
+          },
           "controls_found": []
         }
       ]
@@ -175,8 +182,8 @@
       "reason": null,
       "unmet_signals": null,
       "matched_finding_ids": [
-        "T-002",
-        "T-002"
+        "T-003",
+        "T-005"
       ],
       "step_matches": [
         {
@@ -186,10 +193,10 @@
           "grants": "stolen_signing_material",
           "requires": null,
           "matched": true,
-          "matched_finding_id": "T-002",
+          "matched_finding_id": "T-003",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "frontend/src/app/oauth/oauth.component.ts",
+            "line": 30
           },
           "controls_found": []
         },
@@ -200,10 +207,10 @@
           "grants": "identity_forgery",
           "requires": "stolen_signing_material",
           "matched": true,
-          "matched_finding_id": "T-002",
+          "matched_finding_id": "T-005",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "lib/insecurity.ts",
+            "line": 23
           },
           "controls_found": []
         }
@@ -230,8 +237,8 @@
           "matched": true,
           "matched_finding_id": "T-011",
           "evidence": {
-            "file": null,
-            "line": null
+            "file": "routes/b2bOrder.ts",
+            "line": 23
           },
           "controls_found": [
             "(?i)sandbox|allowlist|no-eval|csp"

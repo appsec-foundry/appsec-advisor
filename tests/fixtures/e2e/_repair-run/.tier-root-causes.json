@@ -2,20 +2,23 @@
   "schema_version": 1,
   "tier_root_causes": {
     "edge": [
-      "JWT stored in localStorage — accessible to any injected script",
-      "Angular route guards enforce authorization client-side only",
-      "DomSanitizer bypassed for user-controlled HTML output"
+      "OAuth-derived passwords via predictable email-based derivation",
+      "JWT bearer tokens in localStorage exposed to XSS-based theft",
+      "OAuth implicit flow without PKCE or state enables token interception",
+      "Angular bypassSecurityTrustHtml on product descriptions enables stored XSS",
+      "DOM XSS via unsanitized query parameters reflected into innerHTML sinks"
     ],
     "server": [
-      "Raw SQL string interpolation on multiple authentication and search paths",
-      "eval() and vm.runInContext accept user-supplied executable code",
-      "Wildcard CORS and missing CSP remove browser-enforced boundaries",
-      "Hardcoded RSA private key and HMAC secret in source code"
+      "Raw string interpolation in SQL queries across login, search, and review routes",
+      "Hardcoded RSA private key enables universal offline JWT forgery",
+      "JWT alg:none and weak verification allow signature bypass and role escalation",
+      "Missing ownership checks on resource endpoints enabling systemic IDOR",
+      "Unauthenticated management routes exposed to internet"
     ],
     "data": [
-      "MD5-only password hashing with no salt — trivially reversible",
-      "Sensitive PII and payment card data stored without field-level encryption",
-      "NoSQL $where clause accepts unparameterized JavaScript expressions"
+      "UNION-based SQL injection in product search enables full DB extraction",
+      "Mass assignment on POST /api/Users allows role escalation to admin",
+      "NoSQL injection with multi:true enables bulk overwrite of product reviews"
     ]
   }
 }
