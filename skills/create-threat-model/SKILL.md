@@ -13,11 +13,20 @@ cat "$CLAUDE_PLUGIN_ROOT/skills/create-threat-model/HELP.txt"
 ```
 
 **Case 2 — any other arguments (or no arguments):**
-Read `<base-dir>/SKILL-impl.md` in full (base-dir is on the `Base directory for this skill:` line in the invocation header), then follow all instructions in that file to run the assessment.
 
-Read it **silently** and proceed straight to execution. Do **not** narrate
+**First, before reading anything else, emit exactly this one status line** so
+the user gets immediate feedback while the large implementation file loads
+(`SKILL-impl.md` is ~86k tokens; ingesting it silently is the gap users
+perceive as a slow start):
+
+> 🔧 Building threat-model pipeline — resolving config and running pre-flight checks …
+
+Then read `<base-dir>/SKILL-impl.md` in full (base-dir is on the `Base directory for this skill:` line in the invocation header), then follow all instructions in that file to run the assessment.
+
+Apart from the single status line above, read it **silently** and proceed
+straight to execution. Do **not** narrate
 your reading: no "this is a large file", no "let me map its structure first",
 no description of how you are chunking or scanning the file. The user sees this
-meta-commentary as noise. Just read what you need and begin running the
-pipeline — your first user-visible output should be pipeline progress, not
+meta-commentary as noise. After the status line, your next user-visible output
+should be pipeline progress (the Pre-flight summary), not
 remarks about the instruction file.

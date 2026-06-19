@@ -11,8 +11,11 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 > combined pre-flight sequence in one shell", no "first I'll resolve config",
 > no narration of which commands you are bundling into a shell. Just call the
 > tool. Suppress all of it **silently** (same rule as the TaskList contract
-> below) — do not announce that you are suppressing it either. The user's first
-> visible output should be pipeline progress (the Pre-flight summary render),
+> below) — do not announce that you are suppressing it either. The **only**
+> permitted output before the Pre-flight summary is the single
+> `🔧 Building threat-model pipeline …` status line that SKILL.md tells you to
+> emit before this file loads; apart from that line, the user's first visible
+> output should be pipeline progress (the Pre-flight summary render),
 > not remarks about reading this file or running its commands.
 
 ## Pipeline Overview (Stage-D, post-M2.13)
