@@ -62,6 +62,23 @@ def test_unknown_preset_key_fails(acme_profile):
     assert any("mystery" in e for e in errors), errors
 
 
+def test_branding_block_validates(acme_profile):
+    acme_profile["branding"] = {
+        "report_title": "Security Assessment",
+        "contact_name": "Jane Doe",
+        "contact_email": "jane@acme.io",
+        "logo": "https://acme.io/logo.png",
+    }
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert errors == [], errors
+
+
+def test_branding_unknown_key_fails(acme_profile):
+    acme_profile["branding"] = {"tagline": "nope"}
+    errors = vop.validate(acme_profile, FIXTURE_DIR)
+    assert any("tagline" in e for e in errors), errors
+
+
 def test_context_path_must_stay_under_profile_dir(acme_profile):
     acme_profile["llm_context"]["documents"][0]["path"] = "../../../etc/passwd"
     errors = vop.validate(acme_profile, FIXTURE_DIR)

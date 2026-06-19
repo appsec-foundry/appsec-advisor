@@ -693,3 +693,116 @@ class TestRenderInfoboxDeriveName:
         out = compose._render_infobox(ctx, env, {})
         # Parent dir of the output dir is used when nothing else resolves.
         assert ctx.output_dir.parent.name in out or "Unknown Project" in out
+
+
+# ---------------------------------------------------------------------------
+# Cover branding — report_title / contact rows / logo staging
+# (.skill-config.json sidecar, mirrors the embed_figures pattern)
+# ---------------------------------------------------------------------------
+
+
+def _write_skill_config(ctx, **branding):
+    (ctx.output_dir / ".skill-config.json").write_text(_json.dumps(branding), encoding="utf-8")
+
+
+class TestCoverBranding:
+    def test_report_title_keeps_project_name_suffix(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(compose, "_read_live_plugin_meta", lambda: (None, None))
+        ctx = _mk_ctx(
+            tmp_path,
+            contract={"document": {"title_template": "Threat Model — {{ project.name }}"}},
+            yaml_data={"project": {"name": "Acme"}, "meta": {}},
+        )
+        _write_skill_config(ctx, report_title="Security Assessment")
+        out = compose._render_title(ctx)
+        assert out.startswith("# Security Assessment — Acme")
+
+    def test_report_title_not_treated_as_jinja_template(self, tmp_path, monkeypatch):
+        # An embedded {{ }} in the config title must render literally, not
+        # be interpolated (config text is data, not a template).
+        monkeypatch.setattr(compose, "_read_live_plugin_meta", lambda: (None, None))
+        ctx = _mk_ctx(
+            tmp_path,
+            contract={"document": {"title_template": "Threat Model — {{ project.name }}"}},
+            yaml_data={"project": {"name": "Acme"}, "meta": {}},
+        )
+        _write_skill_config(ctx, report_title="{{ 7*7 }} Report")
+        out = compose._render_title(ctx)
+        assert out.startswith("# {{ 7*7 }} Report — Acme")
+        assert "49" not in out
+
+    def test_no_report_title_uses_contract_template(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(compose, "_read_live_plugin_meta", lambda: (None, None))
+        ctx = _mk_ctx(
+            tmp_path,
+            contract={"document": {"title_template": "Threat Model — {{ project.name }}"}},
+            yaml_data={"project": {"name": "Acme"}, "meta": {}},
+        )
+        out = compose._render_title(ctx)
+        assert out.startswith("# Threat Model — Acme")
+
+    def test_contact_rows_rendered_in_infobox(self, tmp_path):
+        ctx = _mk_ctx(tmp_path, yaml_data={"project": {"name": "Acme"}, "meta": {}})
+        _write_skill_config(ctx, contact_name="Jane Doe", contact_email="jane@acme.io")
+        env = compose._build_jinja_env(ctx)
+        out = compose._render_infobox(ctx, env, {})
+        assert "**Contact**" in out and "Jane Doe" in out
+        assert "**Contact E-Mail**" in out and "jane@acme.io" in out
+
+    def test_contact_absent_no_rows(self, tmp_path):
+        ctx = _mk_ctx(tmp_path, yaml_data={"project": {"name": "Acme"}, "meta": {}})
+        env = compose._build_jinja_env(ctx)
+        out = compose._render_infobox(ctx, env, {})
+        assert "**Contact**" not in out
+
+    def test_contact_pipe_escaped(self, tmp_path):
+        ctx = _mk_ctx(tmp_path, yaml_data={"project": {"name": "Acme"}, "meta": {}})
+        _write_skill_config(ctx, contact_name="Ops | Sec")
+        env = compose._build_jinja_env(ctx)
+        out = compose._render_infobox(ctx, env, {})
+        assert r"Ops \| Sec" in out
+
+    def test_local_logo_staged_and_referenced(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(compose, "_read_live_plugin_meta", lambda: (None, None))
+        logo = tmp_path / "logo.png"
+        logo.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        ctx = _mk_ctx(
+            tmp_path,
+            contract={"document": {"title_template": "TM — {{ project.name }}"}},
+            yaml_data={"project": {"name": "Acme"}, "meta": {}},
+        )
+        _write_skill_config(ctx, logo=str(logo))
+        out = compose._render_title(ctx)
+        assert "![](branding-logo.png)" in out
+        assert (ctx.output_dir / "branding-logo.png").is_file()
+
+    def test_missing_local_logo_degrades_to_no_image(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(compose, "_read_live_plugin_meta", lambda: (None, None))
+        ctx = _mk_ctx(
+            tmp_path,
+            contract={"document": {"title_template": "TM — {{ project.name }}"}},
+            yaml_data={"project": {"name": "Acme"}, "meta": {}},
+        )
+        _write_skill_config(ctx, logo=str(tmp_path / "does-not-exist.png"))
+        out = compose._render_title(ctx)
+        assert "branding-logo" not in out
+        assert not (ctx.output_dir / "branding-logo.png").exists()
+
+    def test_stage_branding_logo_none_for_empty(self, tmp_path):
+        ctx = _mk_ctx(tmp_path)
+        assert compose._stage_branding_logo(ctx, None) is None
+        assert compose._stage_branding_logo(ctx, "   ") is None
+
+    def test_stage_branding_logo_unknown_ext_defaults_png(self, tmp_path):
+        logo = tmp_path / "brand"
+        logo.write_bytes(b"data")
+        ctx = _mk_ctx(tmp_path)
+        rel = compose._stage_branding_logo(ctx, str(logo))
+        assert rel == "branding-logo.png"
+
+    def test_stage_branding_logo_ssrf_url_rejected(self, tmp_path):
+        # SSRF guard must reject a loopback URL before any fetch — returns
+        # None and writes nothing. Literal IP → no DNS / network needed.
+        ctx = _mk_ctx(tmp_path)
+        assert compose._stage_branding_logo(ctx, "http://127.0.0.1/logo.png") is None
+        assert not (ctx.output_dir / "branding-logo.png").exists()

@@ -70,6 +70,43 @@ properties:
           var APPSEC_DISABLE_OPUS — any source can enable it, none can
           disable it for a given run.
 
+  branding:
+    type: object
+    additionalProperties: false
+    description: |
+      Org-wide cover-page branding for the produced report (PDF/HTML).
+      Profile-level (not preset-scoped): the same contact and logo apply
+      across every preset. A local `--report-title` / `--contact-name` /
+      `--contact-email` / `--logo` CLI flag overrides the matching field
+      here for a single run. All fields are optional; omitted fields fall
+      back to the core-default cover layout.
+    properties:
+      report_title:
+        type: string
+        minLength: 1
+        maxLength: 120
+        description: |
+          Cover title label. The project name is still appended, so
+          "Security Assessment" renders as "Security Assessment — <Project>".
+      contact_name:
+        type: string
+        minLength: 1
+        maxLength: 120
+        description: Contact person shown in the cover metadata table.
+      contact_email:
+        type: string
+        minLength: 1
+        maxLength: 254
+        description: Contact e-mail shown in the cover metadata table.
+      logo:
+        type: string
+        minLength: 1
+        maxLength: 2048
+        description: |
+          Cover logo: a local file path (relative to the profile dir or
+          absolute) or an http(s) URL. Staged into the output dir before
+          rendering; a fetch/copy failure degrades gracefully to no logo.
+
   default_preset:
     type: string
     pattern: "^[a-z0-9][a-z0-9_-]{1,62}$"

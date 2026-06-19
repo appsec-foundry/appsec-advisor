@@ -374,6 +374,24 @@ def resolve(
     policy = profile.get("policy") or {}
     defaults["disable_opus"] = bool(policy.get("disable_opus"))
 
+    # Profile-level cover branding (org-wide, not preset-scoped). Only set keys
+    # that the profile actually carries so resolve_config can distinguish
+    # "profile has no opinion" (None) from an explicit value.
+    branding = profile.get("branding") or {}
+    for _bkey in ("report_title", "contact_name", "contact_email", "logo"):
+        val = branding.get(_bkey)
+        if val is not None:
+            defaults[_bkey] = val
+    # Resolve a relative local logo path against the profile directory so the
+    # value is unambiguous by the time it reaches the renderer (which runs from
+    # a different CWD). URLs and absolute paths pass through unchanged.
+    logo = defaults.get("logo")
+    if logo and not str(logo).lower().startswith(("http://", "https://")):
+        lp = Path(str(logo)).expanduser()
+        if not lp.is_absolute():
+            lp = profile_path.parent / lp
+        defaults["logo"] = str(lp)
+
     manifest = build_context_manifest(profile, profile_path.parent)
     fingerprint = profile_fingerprint(profile_yaml_bytes, manifest)
     coach = profile.get("security_coach")

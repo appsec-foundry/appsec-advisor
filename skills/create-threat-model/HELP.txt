@@ -31,6 +31,12 @@ OUTPUT
                                SVG (threat-model.figure1.svg) is still written.
                                GitHub strips data: URIs, so the default file
                                reference is best for GitHub-hosted models.
+  --report-title <text>        Cover title label; rendered as "<text> — <Project>"
+  --contact-name <text>        Contact name shown in the cover metadata table
+  --contact-email <text>       Contact e-mail shown in the cover metadata table
+  --logo <path|url>            Cover logo: local file path or http(s) URL
+                               (org-profile branding.* sets these org-wide;
+                               these flags override per run)
   --verbose                    Append a Run Statistics section to the report
   --quiet                      Compact console summary — only repository, run,
                                results, outputs and warnings (omits the verdict,

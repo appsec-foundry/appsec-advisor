@@ -1326,6 +1326,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Org-profile selection flags. These are consumed by resolve_org_profile.
     # The resolver merges the resulting defaults below CLI flags.
+    # Cover-page branding. Local overrides for the org-profile `branding`
+    # block; consumed by compose_threat_model.py via .skill-config.json.
+    p.add_argument("--report-title", default=None,
+                   help="Override the report cover title (project name is still appended).")
+    p.add_argument("--contact-name", default=None,
+                   help="Contact name shown in the report cover metadata.")
+    p.add_argument("--contact-email", default=None,
+                   help="Contact e-mail shown in the report cover metadata.")
+    p.add_argument("--logo", default=None,
+                   help="Cover logo: local file path or http(s) URL (staged before render).")
+
     p.add_argument("--org-profile", default=None,
                    help="Path to an org-profile YAML; overrides the packaged default.")
     p.add_argument("--preset", default=None,
@@ -1425,6 +1436,12 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         # on EVERY invocation (renderer, recompose, fragment-fixer) without
         # threading a CLI flag through each call site.
         "embed_figures":   bool(ns.embed_figures),
+        # Cover branding. CLI value (or None) here; an active org profile may
+        # fill in a None field in _apply_org_profile (CLI always wins).
+        "report_title":    ns.report_title,
+        "contact_name":    ns.contact_name,
+        "contact_email":   ns.contact_email,
+        "logo":            ns.logo,
     }
 
     cfg.update(resolve_write_yaml(ns))
@@ -1535,6 +1552,17 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     #   + 1 when QA runs (not SKIP_QA and not DRY_RUN)
     #   + 1 when Architect Review runs (architect_review and not DRY_RUN)
     cfg["total_stages"] = _compute_total_stages(cfg)
+
+    # Normalise a relative local logo path (from --logo) against the current
+    # working directory so compose_threat_model.py — which runs from a
+    # different CWD — can resolve it. URLs and absolute paths (incl. an
+    # org-profile logo already absolutised against its profile dir) are
+    # unchanged.
+    _logo = cfg.get("logo")
+    if _logo and not str(_logo).lower().startswith(("http://", "https://")):
+        _lp = Path(str(_logo)).expanduser()
+        if not _lp.is_absolute():
+            cfg["logo"] = str((Path.cwd() / _lp).resolve())
 
     return cfg
 
@@ -1658,6 +1686,18 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
             org_block["requirements_label"] = f"enabled ({reason}: {req_name})"
         else:
             org_block["requirements_label"] = f"disabled ({reason})"
+
+    # Cover branding: a local CLI flag always wins; otherwise the org-profile
+    # `branding` value fills the field. cfg already carries the CLI value (or
+    # None) from the base dict, so only override when CLI was absent.
+    for _bkey, _cli_val in (
+        ("report_title", ns.report_title),
+        ("contact_name", ns.contact_name),
+        ("contact_email", ns.contact_email),
+        ("logo", ns.logo),
+    ):
+        if _cli_val is None and defaults.get(_bkey) is not None:
+            org_block[_bkey] = defaults[_bkey]
 
     # Tracing / scan_manifest: preset wins when user did not pass the flag.
     if not ns.tracing and isinstance(defaults.get("tracing"), bool):

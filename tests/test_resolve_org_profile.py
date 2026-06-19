@@ -279,6 +279,60 @@ def test_policy_disable_opus_true(isolated_root, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# branding — org-wide cover branding (profile-level)
+# ---------------------------------------------------------------------------
+
+
+def _branding_profile(tmp_path: Path, branding_yaml: str) -> Path:
+    profile = tmp_path / "org-profile.yaml"
+    profile.write_text(
+        "api_version: appsec-advisor.org-profile/v2\n"
+        "organization: { id: testco, name: TestCo, profile_version: t1 }\n"
+        'compatibility: { core: ">=0.0 <999.0" }\n'
+        f"{branding_yaml}"
+        "default_preset: std\n"
+        "presets:\n"
+        "  std:\n"
+        "    base_mode: standard\n"
+    )
+    return profile
+
+
+def test_branding_absent_keys_not_set(isolated_root, tmp_path):
+    profile = _branding_profile(tmp_path, "")
+    effective, errors = rop.resolve(str(profile), None, False, None, isolated_root, env={})
+    assert errors == []
+    for key in ("report_title", "contact_name", "contact_email", "logo"):
+        assert effective["defaults"].get(key) is None
+
+
+def test_branding_fields_surface_into_defaults(isolated_root, tmp_path):
+    profile = _branding_profile(
+        tmp_path,
+        "branding:\n"
+        "  report_title: Security Assessment\n"
+        "  contact_name: Jane Doe\n"
+        "  contact_email: jane@acme.io\n"
+        "  logo: https://acme.io/logo.png\n",
+    )
+    effective, errors = rop.resolve(str(profile), None, False, None, isolated_root, env={})
+    assert errors == []
+    d = effective["defaults"]
+    assert d["report_title"] == "Security Assessment"
+    assert d["contact_name"] == "Jane Doe"
+    assert d["contact_email"] == "jane@acme.io"
+    # URL logo passes through unchanged (not absolutised as a path).
+    assert d["logo"] == "https://acme.io/logo.png"
+
+
+def test_branding_relative_logo_resolved_against_profile_dir(isolated_root, tmp_path):
+    profile = _branding_profile(tmp_path, "branding:\n  logo: assets/logo.png\n")
+    effective, errors = rop.resolve(str(profile), None, False, None, isolated_root, env={})
+    assert errors == []
+    assert effective["defaults"]["logo"] == str(tmp_path / "assets" / "logo.png")
+
+
+# ---------------------------------------------------------------------------
 # Coverage: config-pointer edge cases, preset discovery, flatten, manifest, CLI
 # ---------------------------------------------------------------------------
 

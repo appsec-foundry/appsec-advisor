@@ -616,6 +616,10 @@ Parse the user's arguments for the following flags:
 | `--pdf` | `WRITE_PDF=true` (calls `scripts/export_pdf.py` after all stages — see PDF Export below) | `false` |
 | `--html` | `WRITE_HTML=true` (calls `scripts/export_html.py` after all stages — see HTML Export below) | `false` |
 | `--embed-figures` | `embed_figures=true` persisted to `.skill-config.json` by `resolve_config.py`; `compose_threat_model.py` reads it and inlines Figure 1 as a base64 `data:` URI in `threat-model.md` (figure1.svg still written). No flag threading needed — every compose call honours the config file. | `false` |
+| `--report-title <text>` | Cover-page title label persisted to `.skill-config.json`; `compose_threat_model.py` renders it as `<text> — <Project Name>` (project name still appended). Overrides the org-profile `branding.report_title`. | (contract default `Threat Model`) |
+| `--contact-name <text>` | Contact name persisted to `.skill-config.json`; rendered as a row in the cover metadata table. Overrides org-profile `branding.contact_name`. | (none) |
+| `--contact-email <text>` | Contact e-mail persisted to `.skill-config.json`; rendered as a row in the cover metadata table. Overrides org-profile `branding.contact_email`. | (none) |
+| `--logo <path\|url>` | Cover logo (local file path or `http(s)` URL). `compose_threat_model.py` stages it to `<output>/branding-logo.<ext>` and references it on the cover; remote fetch goes through the SSRF guard and degrades to no-logo on any failure. Overrides org-profile `branding.logo`. | (none) |
 | `--requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |

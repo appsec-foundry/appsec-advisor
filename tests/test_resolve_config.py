@@ -1194,6 +1194,98 @@ class TestEmbedFiguresFlag:
         assert ns.embed_figures is False
 
 
+class TestBrandingFlags:
+    """Cover-branding flags (--report-title / --contact-name / --contact-email
+    / --logo) flow to cfg, absolutise a relative local logo, and compose with
+    an org-profile `branding` block (CLI wins)."""
+
+    def _run(self, *argv):
+        return subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), *argv],
+            capture_output=True,
+            text=True,
+        )
+
+    def _write_branding_profile(self, tmp_path: Path) -> Path:
+        profile = tmp_path / "org-profile" / "org-profile.yaml"
+        profile.parent.mkdir()
+        profile.write_text(
+            "api_version: appsec-advisor.org-profile/v2\n"
+            'organization: { id: myorg, name: My Org, profile_version: "1" }\n'
+            'compatibility: { core: ">=0.0 <999.0" }\n'
+            "branding:\n"
+            "  report_title: Profile Title\n"
+            "  contact_name: Profile Contact\n"
+            "  contact_email: profile@org.test\n"
+            "  logo: https://org.test/logo.png\n"
+            "default_preset: std\n"
+            "presets:\n"
+            "  std:\n"
+            "    base_mode: standard\n"
+        )
+        return profile
+
+    def test_cli_flags_flow_to_cfg(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run(
+            "--report-title",
+            "Security Assessment",
+            "--contact-name",
+            "Jane Doe",
+            "--contact-email",
+            "jane@acme.io",
+            "--logo",
+            "https://acme.io/logo.png",
+        )
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["report_title"] == "Security Assessment"
+        assert cfg["contact_name"] == "Jane Doe"
+        assert cfg["contact_email"] == "jane@acme.io"
+        assert cfg["logo"] == "https://acme.io/logo.png"
+
+    def test_branding_defaults_none(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = json.loads(self._run().stdout)
+        for key in ("report_title", "contact_name", "contact_email", "logo"):
+            assert cfg[key] is None
+
+    def test_relative_local_logo_absolutised_against_cwd(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--logo", "assets/logo.png")
+        assert r.returncode == 0
+        cfg = json.loads(r.stdout)
+        assert cfg["logo"] == str((tmp_path / "assets" / "logo.png").resolve())
+
+    def test_org_profile_branding_fills_when_cli_absent(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        profile = self._write_branding_profile(tmp_path)
+        cfg = json.loads(self._run("--org-profile", str(profile)).stdout)
+        assert cfg["report_title"] == "Profile Title"
+        assert cfg["contact_name"] == "Profile Contact"
+        assert cfg["contact_email"] == "profile@org.test"
+        assert cfg["logo"] == "https://org.test/logo.png"
+
+    def test_cli_overrides_org_profile_branding(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        profile = self._write_branding_profile(tmp_path)
+        cfg = json.loads(
+            self._run(
+                "--org-profile",
+                str(profile),
+                "--report-title",
+                "Local Title",
+                "--contact-name",
+                "Local Contact",
+            ).stdout
+        )
+        assert cfg["report_title"] == "Local Title"
+        assert cfg["contact_name"] == "Local Contact"
+        # Untouched fields still come from the profile.
+        assert cfg["contact_email"] == "profile@org.test"
+        assert cfg["logo"] == "https://org.test/logo.png"
+
+
 # ---------------------------------------------------------------------------
 # Render helpers — coverage of the run-plan / config-summary surface.
 # These are pure functions over a resolved cfg dict; we resolve a real cfg

@@ -23,3 +23,9 @@
 {%- if project.tags %}
 > | **Tags** | {{ project.tags | join(', ') }} |
 {%- endif %}
+{%- if contact is defined and contact and contact.name %}
+> | **Contact** | {{ contact.name }} |
+{%- endif %}
+{%- if contact is defined and contact and contact.email %}
+> | **Contact E-Mail** | {{ contact.email }} |
+{%- endif %}

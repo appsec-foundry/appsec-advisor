@@ -1783,8 +1783,15 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     elif tags is None:
         project["tags"] = []
 
+    # Cover-page contact (optional, org-profile / CLI branding).
+    branding = _load_branding(ctx)
+    contact = {
+        "name": _clean_cell(branding.get("contact_name")),
+        "email": _clean_cell(branding.get("contact_email")),
+    }
+
     tpl = env.get_template(section.get("template", "infobox.md.j2"))
-    return tpl.render(project=project).rstrip() + "\n"
+    return tpl.render(project=project, contact=contact).rstrip() + "\n"
 
 
 def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -15187,6 +15194,102 @@ def _verdict_severity_from_fragment(fragments_dir: Path) -> str:
         return "yellow"
 
 
+_LOGO_EXTS = {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp"}
+_BRANDING_LOGO_STEM = "branding-logo"
+_LOGO_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB ceiling on a cover logo
+
+
+def _load_branding(ctx: RenderContext) -> dict:
+    """Read cover-branding fields the skill persisted in ``.skill-config.json``.
+
+    Mirrors the ``embed_figures`` pattern: the renderer / recompose /
+    fragment-fixer paths all read the resolved choice from the sidecar rather
+    than threading a CLI flag through each call site. Returns an empty dict
+    when the sidecar is absent or unreadable.
+    """
+    try:
+        sc = json.loads((ctx.output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(sc, dict):
+        return {}
+    return {k: sc.get(k) for k in ("report_title", "contact_name", "contact_email", "logo")}
+
+
+def _clean_cell(value: Any) -> str | None:
+    """Normalise a config-supplied string for a Markdown table cell.
+
+    Collapses whitespace and escapes the pipe so a stray ``|`` in a contact
+    field cannot break the infobox table. Org-profile/CLI text is semi-trusted
+    config, not scanned repo content, but this keeps the table well-formed.
+    """
+    if not value:
+        return None
+    s = " ".join(str(value).split()).replace("|", "\\|")
+    return s or None
+
+
+def _stage_branding_logo(ctx: RenderContext, logo: str | None) -> str | None:
+    """Stage a cover logo into the output dir; return its relative filename.
+
+    ``logo`` is an absolute local file path or an ``http(s)`` URL (relative
+    paths are resolved to absolute by resolve_config / resolve_org_profile
+    before they reach the sidecar). The asset lands at
+    ``<output_dir>/branding-logo.<ext>`` — a sibling of ``figure1.svg`` — so
+    ``export_pdf.stage_relative_images`` embeds it and the published Markdown
+    references it relatively.
+
+    Fail-safe: any copy/fetch error (offline, 404, oversized, unreadable)
+    returns ``None`` and the cover renders without a logo rather than aborting
+    the run.
+    """
+    if not logo or not str(logo).strip():
+        return None
+    logo = str(logo).strip()
+
+    ext = Path(logo.split("?", 1)[0].split("#", 1)[0]).suffix.lower()
+    if ext not in _LOGO_EXTS:
+        ext = ".png"
+    dest = ctx.output_dir / f"{_BRANDING_LOGO_STEM}{ext}"
+    is_url = bool(re.match(r"^https?://", logo, re.IGNORECASE))
+
+    try:
+        if is_url:
+            if dest.exists():
+                return dest.name  # cached — avoid refetch on every compose pass
+            # SSRF / cloud-metadata defence on the user-supplied logo URL —
+            # same guard the requirements/related-repo fetchers use.
+            from _url_guard import validate_target_url
+
+            verdict = validate_target_url(logo)
+            if not verdict.ok:
+                return None
+            import urllib.request
+
+            req = urllib.request.Request(logo, headers={"User-Agent": "appsec-advisor"})
+            with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310 (scheme checked above)
+                data = resp.read(_LOGO_MAX_BYTES + 1)
+            if not data or len(data) > _LOGO_MAX_BYTES:
+                return None
+            dest.write_bytes(data)
+        else:
+            import shutil
+
+            src = Path(logo).expanduser()
+            if not src.is_file() or src.stat().st_size > _LOGO_MAX_BYTES:
+                return None
+            shutil.copy2(src, dest)  # local copy is cheap — always refresh
+    except Exception:
+        # Cosmetic asset: never let a logo failure fail the render.
+        try:
+            if dest.exists():
+                dest.unlink()
+        except OSError:
+            pass
+        return None
+    return dest.name
+
+
 def _render_title(ctx: RenderContext, *, title_template_override: str | None = None) -> str:
     """Render the document `# Threat Model — <Project Name>` header.
 
@@ -15201,13 +15304,22 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
     the artefact. Falls back to title-only when plugin.json is
     unreadable.
     """
-    title_tpl = title_template_override or ctx.contract["document"].get("title_template", "Threat Model")
+    branding = _load_branding(ctx)
+    report_title = (branding.get("report_title") or "").strip()
     project = ctx.yaml_data.get("project")
     if not isinstance(project, dict):
         project = {}
     project.setdefault("name", _derive_project_name(ctx))
-    env = jinja2.Environment(autoescape=False)
-    title = env.from_string(title_tpl).render(project=project)
+
+    if report_title and title_template_override is None:
+        # Keep the `— <Project Name>` suffix. Do NOT route the config-supplied
+        # report_title through a Jinja template — treat it as data, not a
+        # template (an embedded `{{ ... }}` must render literally).
+        title = f"{report_title} — {project['name']}"
+    else:
+        title_tpl = title_template_override or ctx.contract["document"].get("title_template", "Threat Model")
+        env = jinja2.Environment(autoescape=False)
+        title = env.from_string(title_tpl).render(project=project)
 
     plugin_v: str | None = None
     analysis_v: int | None = None
@@ -15223,11 +15335,16 @@ def _render_title(ctx: RenderContext, *, title_template_override: str | None = N
             if isinstance(av, int):
                 analysis_v = av
 
+    # Cover logo (optional). Placed inside the title block so export_pdf's
+    # cover-page wrap (<h1>…<h2>) includes it; staged as a sibling asset.
+    logo_rel = _stage_branding_logo(ctx, branding.get("logo"))
+    logo_md = f"\n![]({logo_rel})\n" if logo_rel else ""
+
     if plugin_v:
         suffix = f" (analysis v{analysis_v})" if analysis_v else ""
         subtitle = f"_Generated by appsec-advisor v{plugin_v}{suffix}_\n"
-        return f"# {title}\n\n{subtitle}"
-    return f"# {title}\n"
+        return f"# {title}\n\n{subtitle}{logo_md}"
+    return f"# {title}\n{logo_md}"
 
 
 def _derive_project_name(ctx: RenderContext) -> str:

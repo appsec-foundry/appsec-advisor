@@ -197,6 +197,15 @@ li { margin: 0.15em 0; }
 .cover-page p { color: #57606a; }
 .cover-page a { color: inherit; }
 .cover-page hr { display: none; }
+/* Optional cover logo (branding). Centered, bounded so a large source asset
+ * never overflows the cover page. */
+.cover-page img {
+  display: block;
+  margin: 0.6em auto 1.4em auto;
+  max-width: 55%;
+  max-height: 60mm;
+  height: auto;
+}
 
 /* Table of Contents — append the target page number to each entry. export_pdf
  * wraps the TOC heading + its lists in <nav class="toc">. Scoped to print media

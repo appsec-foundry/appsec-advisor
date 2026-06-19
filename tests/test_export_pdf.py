@@ -636,6 +636,25 @@ class TestCoverPage:
         cover = re.search(r'<div class="cover-page">(.*?)</div>', out, re.S).group(1)
         assert "table-of-contents" not in cover
 
+    def test_branding_logo_and_contact_land_inside_cover(self):
+        # The cover logo (<img> emitted by compose after the H1) and the
+        # contact rows in the metadata table sit between <h1> and the first
+        # <h2>, so the cover-region wrap must include them.
+        html = (
+            "<body>\n"
+            '<h1 id="tm">Security Assessment — Acme</h1>\n'
+            '<p><img src="branding-logo.png" alt="" /></p>\n'
+            "<blockquote>\n<table>\n<tr><td>Contact</td><td>Jane Doe</td></tr>\n"
+            "</table>\n</blockquote>\n"
+            "<hr />\n"
+            '<h2 id="toc">Table of Contents</h2>\n<p>body</p>\n'
+            "</body>"
+        )
+        out = ep._wrap_cover_page(html)
+        cover = re.search(r'<div class="cover-page">(.*?)</div>', out, re.S).group(1)
+        assert 'src="branding-logo.png"' in cover
+        assert "Jane Doe" in cover
+
     def test_no_cover_region_returns_unchanged(self):
         # No <hr> → no cover; pandoc header preserved so a title still shows.
         html = (
