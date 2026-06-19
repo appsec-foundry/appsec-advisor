@@ -125,7 +125,18 @@ _TIER_HINTS = {
 
 
 def _classify_tier(component: dict) -> str:
-    """Return 'client' | 'application' | 'data' for a component."""
+    """Return 'client' | 'application' | 'data' for a component.
+
+    Hints match at a token-start boundary (``(?<![a-z0-9])``), not as bare
+    substrings. A bare ``h in haystack`` lets a short hint false-match the
+    middle of an unrelated path token — ``ui`` inside ``b·ui·ld`` and
+    ``j·ui·ceshop.sqlite`` pulled ``express-backend`` and ``data-layer`` into
+    the ``client`` tier, left the data tier empty, and made §2.2 emit a
+    redundant fallback ``DATA`` node that pushed the diagram to 9 nodes and
+    tripped ``diagram_compactness``. Boundary-anchoring keeps legitimate prefix
+    matches (``mongo``→``mongodb``, ``sql``→``sqlite``) while dropping the
+    mid-token hits.
+    """
     haystack = " ".join(
         [
             (component.get("id") or "").lower(),
@@ -134,7 +145,7 @@ def _classify_tier(component: dict) -> str:
         ]
     )
     for tier, hints in _TIER_HINTS.items():
-        if any(h in haystack for h in hints):
+        if any(re.search(r"(?<![a-z0-9])" + re.escape(h), haystack) for h in hints):
             return tier
     return "application"
 

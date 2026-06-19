@@ -2829,3 +2829,55 @@ class TestOverviewVerdictBranches:
         weak = [l for l in rows if "🟠 Weak" in l]
         assert weak, "expected a weak-from-routed-finding row"
         assert any("no compensating controls catalogued" in l for l in weak)
+
+
+class TestClassifyTierBoundary:
+    """`_classify_tier` must match hints at a token boundary, not as bare
+    substrings. Regression for the §2.2 9-node diagram_compactness trip: the
+    `ui` hint false-matched `b·ui·ld/**` and `j·ui·ceshop.sqlite`, pulling the
+    backend and data components into the `client` tier, emptying the data tier,
+    and emitting a redundant fallback `DATA` node (8 real components + 1 fallback
+    = 9 > max 8).
+    """
+
+    def test_ui_hint_does_not_match_build_path(self):
+        comp = {"id": "express-backend", "name": "Express Backend API",
+                "paths": ["server.ts", "routes/**", "build/**"]}
+        assert pf._classify_tier(comp) == "application"
+
+    def test_ui_hint_does_not_match_juiceshop_sqlite(self):
+        comp = {"id": "data-layer", "name": "Data Layer",
+                "paths": ["models/**", "data/juiceshop.sqlite"]}
+        assert pf._classify_tier(comp) == "data"
+
+    def test_prefix_hints_still_match(self):
+        # mongo→mongodb and sql→sqlite must still resolve to the data tier.
+        assert pf._classify_tier({"id": "x", "name": "x", "paths": ["data/mongodb.ts"]}) == "data"
+        assert pf._classify_tier({"id": "y", "name": "y", "paths": ["store/cache.sqlite"]}) == "data"
+
+    def test_spa_still_client(self):
+        assert pf._classify_tier({"id": "angular-spa", "name": "Angular SPA",
+                                  "paths": ["frontend/src/**"]}) == "client"
+
+    def test_eight_components_no_fallback_data_node(self):
+        # 8 real components with one genuine data-tier component must yield a
+        # diagram with no synthetic BROWSER/APP/DATA fallback node (≤8 nodes).
+        data = {
+            "meta": {"project": {"name": "JS"}},
+            "components": [
+                {"id": "angular-spa", "name": "Angular SPA", "paths": ["frontend/src/**"]},
+                {"id": "express-backend", "name": "Express Backend", "paths": ["server.ts", "build/**"]},
+                {"id": "file-upload-service", "name": "File Upload", "paths": ["routes/fileUpload.ts"]},
+                {"id": "b2b-api", "name": "B2B API", "paths": ["routes/b2bOrder.ts"]},
+                {"id": "auth", "name": "Auth", "paths": ["lib/insecurity.ts"]},
+                {"id": "ci-cd-pipeline", "name": "CI/CD", "paths": [".github/workflows/**"]},
+                {"id": "realtime-channel", "name": "Realtime", "paths": ["lib/startup/registerWebsocketEvents.ts"]},
+                {"id": "data-layer", "name": "Data Layer", "paths": ["models/**", "data/juiceshop.sqlite"]},
+            ],
+            "threats": [],
+        }
+        frag = pf.gen_architecture_diagrams(data)
+        block = re.search(r"### 2\.2 Container Architecture.*?```mermaid(.*?)```", frag, re.S).group(1)
+        node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
+        assert "DATA" not in node_ids and "APP" not in node_ids and "BROWSER" not in node_ids
+        assert len(node_ids) <= 8, f"expected ≤8 nodes, got {sorted(node_ids)}"
