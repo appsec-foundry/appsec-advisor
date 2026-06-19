@@ -27,12 +27,26 @@ labels: bug
 
 <!-- e.g. appsec-threat-analyst, create-threat-model skill, appsec-qa-reviewer, etc. -->
 
-**Relevant output**
+**Diagnostic bundle (recommended — anonymised)**
+
+Instead of pasting raw output, attach an **anonymised** diagnostic bundle. In the
+Claude Code session where the error happened, run:
 
 ```
-Paste relevant terminal output here
+/appsec-advisor:report-error
+```
+
+This writes an `appsec-diag-<id>.tgz` containing only tool/plugin versions, the
+run shape (phases reached, timings, aggregate counts), and scrubbed logs —
+**no threat-model results, findings, source, or repo paths**. The tool makes no
+network calls; you choose whether to attach it. It prints a summary so you can
+review it first, then drag the `.tgz` onto this issue.
+
+If you cannot produce a bundle, paste only a **non-sensitive** error message:
+
+```
 ```
 
 **Additional context**
 
-<!-- Any other details (OS, repo type, stack being analyzed, etc.) -->
+<!-- Any other non-sensitive details (OS, repo type, etc.) -->

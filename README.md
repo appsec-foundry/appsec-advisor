@@ -181,7 +181,14 @@ Full guide: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage
 
 ### Reporting a pipeline error
 
-If a run fails, build an **anonymised** diagnostic bundle to send the maintainer:
+If a run fails, build an **anonymised** diagnostic bundle to send the maintainer.
+Plugin users (no checkout) run the skill in the failing session:
+
+```
+/appsec-advisor:report-error
+```
+
+Developers with a checkout can use the Make target instead:
 
 ```bash
 make diagnostic-bundle RUN=<repo>/docs/security    # → appsec-diag-<id>.tgz
