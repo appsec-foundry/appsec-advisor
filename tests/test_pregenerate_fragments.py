@@ -2841,13 +2841,11 @@ class TestClassifyTierBoundary:
     """
 
     def test_ui_hint_does_not_match_build_path(self):
-        comp = {"id": "express-backend", "name": "Express Backend API",
-                "paths": ["server.ts", "routes/**", "build/**"]}
+        comp = {"id": "express-backend", "name": "Express Backend API", "paths": ["server.ts", "routes/**", "build/**"]}
         assert pf._classify_tier(comp) == "application"
 
     def test_ui_hint_does_not_match_juiceshop_sqlite(self):
-        comp = {"id": "data-layer", "name": "Data Layer",
-                "paths": ["models/**", "data/juiceshop.sqlite"]}
+        comp = {"id": "data-layer", "name": "Data Layer", "paths": ["models/**", "data/juiceshop.sqlite"]}
         assert pf._classify_tier(comp) == "data"
 
     def test_prefix_hints_still_match(self):
@@ -2856,8 +2854,7 @@ class TestClassifyTierBoundary:
         assert pf._classify_tier({"id": "y", "name": "y", "paths": ["store/cache.sqlite"]}) == "data"
 
     def test_spa_still_client(self):
-        assert pf._classify_tier({"id": "angular-spa", "name": "Angular SPA",
-                                  "paths": ["frontend/src/**"]}) == "client"
+        assert pf._classify_tier({"id": "angular-spa", "name": "Angular SPA", "paths": ["frontend/src/**"]}) == "client"
 
     def test_eight_components_no_fallback_data_node(self):
         # 8 real components with one genuine data-tier component must yield a

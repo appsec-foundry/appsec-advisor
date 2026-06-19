@@ -656,7 +656,10 @@ def test_changelog_same_run_rebuild_stays_initial(tmp_path):
     # A genuine later run (different commit) still diffs normally.
     run2 = b.build_changelog(
         _CL_CFG,
-        [{"id": "T-001", "component": "comp-a"}, {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"}],
+        [
+            {"id": "T-001", "component": "comp-a"},
+            {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"},
+        ],
         _CL_COMPS,
         [],
         rerun,
