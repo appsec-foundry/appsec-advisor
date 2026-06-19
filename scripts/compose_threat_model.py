@@ -14637,6 +14637,22 @@ def render(
         c.get("id", ""): c for c in (cat_tax_raw.get("categories") or []) if isinstance(c, dict) and c.get("id")
     }
 
+    # §3 Attack Walkthroughs gate. `skip_attack_walkthroughs` is the depth/
+    # config flag; the contract evaluates it for the §3 section-presence gate.
+    # The required `sequenceDiagram` pattern, however, is only present when
+    # walkthrough_renderer.py actually authored per-Critical blocks — i.e. when
+    # walkthroughs are NOT skipped AND at least one Critical finding exists
+    # (`select_walkthrough_picks` returns Criticals + `MAX_HIGH_WALKTHROUGHS`
+    # Highs, currently 0). A zero-Critical run renders an intro-only §3 stub
+    # with no diagram. The contract grammar (scripts/_safe_cond.py) has no
+    # `and`/numeric operators, so combine both into one precomputed boolean the
+    # contract references as a bare name for `required_patterns_condition`
+    # (mirrors `has_multi_critical`).
+    _skip_attack_walkthroughs = bool(_read_skill_config(output_dir).get("skip_attack_walkthroughs")) or (
+        ((yaml_data.get("meta") or {}).get("assessment_depth") or "").strip().lower() == "quick"
+    )
+    _has_authored_walkthroughs = (not _skip_attack_walkthroughs) and severity_counts["critical"] >= 1
+
     ctx = RenderContext(
         output_dir=output_dir,
         contract=contract,
@@ -14708,16 +14724,17 @@ def render(
             "is_quick_depth": (
                 ((yaml_data.get("meta") or {}).get("assessment_depth") or "").strip().lower() == "quick"
             ),
-            # Quick-depth skip flags. Plumbed in so the
-            # `required_patterns_condition` on §3 / §9 entries
-            # ("not skip_attack_walkthroughs", etc.) can be evaluated by
+            # Quick-depth skip flags. Plumbed in so the §3 / §9 section-presence
+            # gates ("not skip_attack_walkthroughs", etc.) can be evaluated by
             # `eval_condition`. Sourced from .skill-config.json with a
             # depth-based default so legacy configs without the explicit
             # flag still behave correctly.
-            "skip_attack_walkthroughs": (
-                bool(_read_skill_config(output_dir).get("skip_attack_walkthroughs"))
-                or (((yaml_data.get("meta") or {}).get("assessment_depth") or "").strip().lower() == "quick")
-            ),
+            "skip_attack_walkthroughs": _skip_attack_walkthroughs,
+            # §3 required-pattern gate — True iff §3 actually carries per-Critical
+            # `sequenceDiagram` blocks (not skipped AND ≥1 Critical). See the
+            # precompute above; drives `required_patterns_condition` so a clean
+            # report with zero Criticals no longer fails the missing-pattern check.
+            "has_authored_walkthroughs": _has_authored_walkthroughs,
             "skip_attack_paths_authoring": bool(_read_skill_config(output_dir).get("skip_attack_paths_authoring")),
             "skip_qa": bool(_read_skill_config(output_dir).get("skip_qa")),
             # 13-section schema_v2 — the only supported §7 contract.

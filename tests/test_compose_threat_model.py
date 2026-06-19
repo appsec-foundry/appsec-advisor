@@ -3955,3 +3955,117 @@ def test_render_figure1_svg_skill_config_false_is_file_reference(tmp_path: Path)
     (out / ".skill-config.json").write_text('{"embed_figures": false}', encoding="utf-8")
     md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
     assert "](figure1.svg)" in md and "data:image" not in md
+
+
+# ---------------------------------------------------------------------------
+# §3 required-pattern gate (zero-Critical reports) + §7 domain-pattern
+# applicability gating (non-applicable controls, e.g. no WebSockets).
+# ---------------------------------------------------------------------------
+
+
+def _attack_walkthroughs_section() -> dict:
+    contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+    return contract["sections"]["attack_walkthroughs"]
+
+
+def test_walkthroughs_stub_passes_when_no_authored_walkthroughs(tmp_path: Path) -> None:
+    """A zero-Critical §3 stub (intro only, no `sequenceDiagram`) must pass the
+    required-pattern check when `has_authored_walkthroughs` is False. This is
+    the gate that stops clean reports from hard-failing on missing diagrams."""
+    frag_dir = tmp_path / ".fragments"
+    frag_dir.mkdir()
+    (frag_dir / "attack-walkthroughs.md").write_text(
+        "## 3. Attack Walkthroughs\n\n"
+        "_No Critical findings were identified in this assessment, so there are "
+        "no per-Critical attack walkthroughs._\n",
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=frag_dir,
+        eval_context={"has_authored_walkthroughs": False},
+    )
+    md = compose._render_markdown_fragment(ctx, "attack_walkthroughs", _attack_walkthroughs_section())
+    assert md.lstrip().startswith("## 3. Attack Walkthroughs")
+    assert "sequenceDiagram" not in md
+
+
+def test_walkthroughs_required_pattern_enforced_when_authored(tmp_path: Path) -> None:
+    """Counterpart guard: when walkthroughs ARE authored
+    (`has_authored_walkthroughs` True) a §3 fragment lacking `sequenceDiagram`
+    still hard-fails — the gate must not silently disable the check."""
+    frag_dir = tmp_path / ".fragments"
+    frag_dir.mkdir()
+    (frag_dir / "attack-walkthroughs.md").write_text(
+        "## 3. Attack Walkthroughs\n\n### 3.1 Some Critical\n\nNo diagram in this block.\n",
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=frag_dir,
+        eval_context={"has_authored_walkthroughs": True},
+    )
+    with pytest.raises(compose.FragmentError) as exc:
+        compose._render_markdown_fragment(ctx, "attack_walkthroughs", _attack_walkthroughs_section())
+    assert "sequenceDiagram" in str(exc.value)
+
+
+def test_domain_required_pattern_skipped_when_subsection_absent(tmp_path: Path) -> None:
+    """A non-applicable control (e.g. no WebSocket flow) whose `### N.x`
+    subsection is simply absent must NOT trip its `domain_required_patterns`.
+    Enforcement only fires when the subsection heading is present — this is how
+    §7 lets a control be 'Not applicable' without raising a contract error."""
+    frag_dir = tmp_path / ".fragments"
+    frag_dir.mkdir()
+    (frag_dir / "demo.md").write_text(
+        "## 9. Demo\n\nThis app has no real-time surface, so there is no flow here.\n",
+        encoding="utf-8",
+    )
+    section = {
+        "heading": "## 9. Demo",
+        "fragment": "demo.md",
+        "domain_required_patterns": {"9.4 WebSocket Controls": ["sequenceDiagram"]},
+    }
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=frag_dir,
+        eval_context={},
+    )
+    md = compose._render_markdown_fragment(ctx, "demo", section)
+    assert "sequenceDiagram" not in md
+
+
+def test_domain_required_pattern_enforced_when_subsection_present(tmp_path: Path) -> None:
+    """Counterpart: when the control IS applicable (its `### N.x` heading is
+    rendered) the domain pattern is enforced and a missing diagram hard-fails."""
+    frag_dir = tmp_path / ".fragments"
+    frag_dir.mkdir()
+    (frag_dir / "demo.md").write_text(
+        "## 9. Demo\n\nintro\n\n### 9.4 WebSocket Controls\n\nNo diagram in this applicable control.\n",
+        encoding="utf-8",
+    )
+    section = {
+        "heading": "## 9. Demo",
+        "fragment": "demo.md",
+        "domain_required_patterns": {"9.4 WebSocket Controls": ["sequenceDiagram"]},
+    }
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=frag_dir,
+        eval_context={},
+    )
+    with pytest.raises(compose.FragmentError) as exc:
+        compose._render_markdown_fragment(ctx, "demo", section)
+    assert "sequenceDiagram" in str(exc.value)

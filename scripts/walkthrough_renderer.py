@@ -1059,6 +1059,23 @@ def render_attack_walkthroughs_md(
     out: list[str] = []
     out.append("## 3. Attack Walkthroughs")
     out.append("")
+
+    # No walkthrough picks (zero Criticals, since Highs are not walked through
+    # — MAX_HIGH_WALKTHROUGHS=0). Render an honest stub instead of the generic
+    # "one walkthrough per Critical" intro, which would promise sub-sections
+    # that never follow. The contract's `sequenceDiagram` requirement is gated
+    # on `has_authored_walkthroughs`, so this stub passes validation.
+    if not picks:
+        out.append(
+            "_No Critical findings were identified in this assessment, so there "
+            "are no per-Critical attack walkthroughs. See the "
+            "[§8 Findings Register](#8-findings-register) for finding-level "
+            "detail on every finding._"
+        )
+        out.append("")
+        out.append("<!-- generated:walkthrough_renderer -->")
+        return "\n".join(out).rstrip() + "\n"
+
     out.append(
         "This section walks through how the highest-risk findings are "
         "exploited — one short walkthrough per Critical, each with attack "

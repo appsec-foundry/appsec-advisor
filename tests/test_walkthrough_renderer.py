@@ -498,3 +498,43 @@ def test_weakness_class_strips_tail():
     )
     # No tail → unchanged (e.g. a consolidated systemic title).
     assert renderer._weakness_class("Insecure Direct Object Reference") == "Insecure Direct Object Reference"
+
+
+def test_zero_criticals_renders_honest_stub_without_diagram():
+    """Regression: a clean report with zero Critical findings must render §3 as
+    an honest stub — NO `sequenceDiagram` — so the contract's required-pattern
+    gate (`has_authored_walkthroughs`) is not tripped.
+
+    walkthrough_renderer only emits per-Critical blocks (each carrying a
+    `sequenceDiagram`); Highs are never walked through (MAX_HIGH_WALKTHROUGHS=0),
+    so a High-only report also produces the stub. Before this fix the renderer
+    emitted the generic "one short walkthrough per Critical" intro with no
+    blocks, and compose then hard-failed on the missing `sequenceDiagram`.
+    """
+    ydata = {
+        "threats": [
+            {
+                "id": "T-001",
+                "title": "Reflected XSS in search",
+                "component": "frontend",
+                "risk": "high",
+                "cwe": "CWE-79",
+                "vektor": "internet-anon",
+                "scenario": "Attacker reflects a script payload via the q param.",
+                "evidence": [{"file": "routes/search.ts", "line": 20}],
+            }
+        ]
+    }
+    md = renderer.render_attack_walkthroughs_md(ydata)
+    assert md.lstrip().startswith("## 3. Attack Walkthroughs")
+    assert "sequenceDiagram" not in md
+    assert "No Critical findings" in md
+    # The misleading "one short walkthrough per Critical" promise is gone.
+    assert "one short walkthrough per Critical" not in md
+
+
+def test_zero_threats_renders_honest_stub():
+    """Empty threat list (nothing found at all) also yields the stub."""
+    md = renderer.render_attack_walkthroughs_md({"threats": []})
+    assert "sequenceDiagram" not in md
+    assert "No Critical findings" in md
