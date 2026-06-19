@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_01BcEircDV8yEb8pAf38EJbP", "session_id": "040ee51b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1781714343, "input_summary": "OUTPUT_DIR=\"/home/mrohr/juice-shop/docs/security\" && \\ python3 -c \" import json, re path = '$OUTPUT_DIR/.threats-merged.json' d = json.load(open(path)) threats \u2026"}

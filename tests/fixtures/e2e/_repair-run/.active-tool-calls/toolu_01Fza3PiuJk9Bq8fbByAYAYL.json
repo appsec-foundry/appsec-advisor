@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_01Fza3PiuJk9Bq8fbByAYAYL", "session_id": "040ee51b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1781717425, "input_summary": "cd /home/mrohr/appsec-advisor && grep -n \"_already_num_re\\s*=\\|_h4_re\\s*=\\|_already_num_re =\\|_h4_re =\" scripts/compose_threat_model.py"}

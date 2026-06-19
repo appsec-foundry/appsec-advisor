@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_01WMHXeBXScU1nyqFsSLbGM7", "session_id": "040ee51b", "agent": "threat-analyst", "tool": "Bash", "started_at": 1781716038, "input_summary": "export CLAUDE_PLUGIN_ROOT=\"/home/mrohr/appsec-advisor\" OUTPUT_DIR=\"/home/mrohr/juice-shop/docs/security\" echo \"===== mitigation titles M-026 / M-043 / M-047 (le\u2026"}

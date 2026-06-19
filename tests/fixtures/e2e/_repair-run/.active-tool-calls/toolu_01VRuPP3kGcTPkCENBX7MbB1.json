@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_01VRuPP3kGcTPkCENBX7MbB1", "session_id": "040ee51b", "agent": "threat-analyst", "tool": "Read", "started_at": 1781717503, "input_summary": "/home/mrohr/appsec-advisor/scripts/test_compose_threat_model.py"}

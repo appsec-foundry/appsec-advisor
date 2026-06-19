@@ -1,1 +1,0 @@
-{"tool_use_id": "toolu_01SYSv4gR2XXTBb9fPmZCibH", "session_id": "040ee51b", "agent": "threat-analyst", "tool": "Read", "started_at": 1781713577, "input_summary": "/home/mrohr/juice-shop/lib/mongodb.ts"}
