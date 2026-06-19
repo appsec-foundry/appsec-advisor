@@ -1245,7 +1245,29 @@ def build_changelog(
     # delta (the flag's promise) instead of marking every threat "added".
     cur_fps = [_fp_str(t) for t in threats]
     cur_fp_set = set(cur_fps)
-    prior_entry = existing[0] if existing else None
+    # Select the prior entry to diff against — but SKIP an existing entry that
+    # describes THIS SAME run (identical current_sha/date/mode/plugin/analysis).
+    # Such an entry is this run's own earlier yaml build (Phase-11 may build the
+    # yaml more than once), NOT a genuine previous run; treating it as a baseline
+    # makes a first/full run self-diff into a bogus "+0 (stable)" delta. The
+    # idempotent dedup at the end of this function replaces that same-run entry
+    # anyway, so excluding it as a baseline here is consistent.
+    _new_key = (current_sha, _dt.date.today().isoformat(), mode, plugin_ver, analysis_ver)
+    prior_entry = next(
+        (
+            e
+            for e in existing
+            if (
+                e.get("current_sha"),
+                e.get("date"),
+                e.get("mode"),
+                e.get("plugin_version"),
+                e.get("analysis_version"),
+            )
+            != _new_key
+        ),
+        None,
+    )
     prior_fps_list = (prior_entry or {}).get("fingerprints") or []
     prior_fp_set = set(prior_fps_list)
     prior_has_fps = bool(prior_entry) and bool(prior_fps_list)
@@ -1465,14 +1487,23 @@ def main() -> int:
     # per component. Carried threats receive fresh, collision-free T-ids
     # (merge_threats._assign_t_ids restarts global numbering every run, so the
     # prior id cannot be reused safely). No-op on full/first runs.
-    threats, recon_info = reconcile_incremental_threats(
-        threats,
-        prior_yaml,
-        components,
-        od,
-        skill_cfg.get("assessment_depth", "standard"),
-        _index_resolved_prior(merged),
-    )
+    # Incremental reconciliation is an INCREMENTAL-only operation (depth-downgrade
+    # carry-forward). On full/rebuild/first runs it must be a no-op — gate on the
+    # resolved run mode, NOT on the mere presence of .appsec-cache/baseline.json.
+    # A same-run yaml rebuild (Phase-11 Substep 2 writes baseline.json, then the
+    # yaml is rebuilt) leaves baseline.json + a self-written threat-model.yaml on
+    # disk; keying "incremental" off those files made a first/full run self-diff
+    # into a bogus "+0 / ~0 / -0 · incremental · N threats (stable)" changelog.
+    recon_info = None
+    if (skill_cfg.get("mode") or "full").lower() == "incremental":
+        threats, recon_info = reconcile_incremental_threats(
+            threats,
+            prior_yaml,
+            components,
+            od,
+            skill_cfg.get("assessment_depth", "standard"),
+            _index_resolved_prior(merged),
+        )
 
     mitigations = build_mitigations(threats)
     mitigations, mit_warnings = apply_mitigation_overrides(mitigations, sidecar_mo)

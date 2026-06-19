@@ -638,6 +638,35 @@ def test_changelog_idempotent_rebuild_same_state_no_duplicate(tmp_path):
     assert rerun[0]["current_sha"] == "sha-1"
 
 
+def test_changelog_same_run_rebuild_stays_initial(tmp_path):
+    """Regression (2026-06-19 juice-shop): a same-run yaml rebuild — identical
+    commit/date/mode/plugin/analysis — must NOT treat its own prior build as a
+    baseline and self-diff into a bogus '+0 / ~0 / -0 · N threats (stable)'
+    delta. The prior same-key entry is excluded as a baseline (and replaced by
+    the idempotent dedup), so a first/full run stays 'initial'."""
+    b = _load()
+    run1 = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
+    assert run1[0]["delta_basis"] == "initial"
+    # Re-build against the run's OWN just-written entry (same key).
+    rerun = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], run1, tmp_path, current_sha="sha-1")
+    assert len(rerun) == 1
+    assert rerun[0]["delta_basis"] == "initial"
+    assert rerun[0]["note"] == "first full scan"
+    assert rerun[0]["previous_threat_count"] is None
+    # A genuine later run (different commit) still diffs normally.
+    run2 = b.build_changelog(
+        _CL_CFG,
+        [{"id": "T-001", "component": "comp-a"}, {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"}],
+        _CL_COMPS,
+        [],
+        rerun,
+        tmp_path,
+        current_sha="sha-2",
+    )
+    assert run2[0]["delta_basis"] == "fingerprint"
+    assert run2[0]["added"]["threats"] == ["T-002"]
+
+
 def test_changelog_none_history_treated_as_empty(tmp_path):
     b = _load()
     cl = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha=None)
