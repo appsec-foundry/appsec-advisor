@@ -259,14 +259,24 @@ P7 (Verbatim-Subjects als Copy-Block), P4 (Dedup — Marker-Block erst Autoritä
 P5 (Mode-Routing-Tabelle oben). Alle diff-verifizierbar, byte-identisch. Kleiner
 Zusatznutzen, weiter sinkendes Fehlerrisiko.
 
-**Schritt 4 — P3 nur, wenn Kosten/Größe eigenständig gewollt sind.**
+**Schritt 4 — P8: mode-spezifische Sektionen lazy laden (followability-erster Struktur-Hebel).**
+~597 Z. (13,8 %) aus dem residenten Full-Run-Kontext nehmen, indem mode-spezifische
+Sektionen in JIT-geladene `modes/*.md` wandern (Wiederverwendung des gepinnten
+phase-group-Loaders, `SKILL.md`-„in full" entsprechend lockern). Dient direkt dem
+Primärziel (weniger residenter Kontext für ein schwaches Modell) bei niedrig–mittlerem
+Risiko — **vor** P3, weil kein neues Arg-Interface und kein Reimplementierungs-Drift.
+Verifikation: Golden-Run je Modus (full + incremental + rerender) lädt korrekt; phase-group-
+Tests grün.
+
+**Schritt 5 — P3 nur, wenn Kosten/Größe eigenständig gewollt sind.**
 Shell-Extraktion, **Charakterisierungstests zuerst**, **verbatim Bash→`.sh`** (kein
 Python-Rewrite), größter Block zuerst (Auto-Emitter 138 Z. → 1). Höchster Token-Gewinn
 (~10–25k), aber riskantester Schritt — zuletzt, nur nach bewiesener Followability.
 P6 (Rationale) wird hier als Nebenprodukt der Extraktion mitgezogen (in Skript-Docstrings).
 
 **Entscheidungsregel:** Nach Schritt 2 stoppen, wenn das Ziel „Sonnet zuverlässig" war.
-Schritt 3/4 nur, wenn zusätzlich Kosten-/Größenreduktion gewünscht ist.
+Schritt 3 (risikoarmes Bündel) + Schritt 4 (P8) bringen Followability/Größe bei geringem
+Risiko; Schritt 5 (P3) nur, wenn zusätzlich maximale Kosten-/Größenreduktion gewünscht ist.
 
 ## Sofort-Hebel ohne Refactor (heute nutzbar)
 
@@ -285,11 +295,65 @@ Plans macht genau diesen Sonnet-Default *sicher*; den `/clear`-Effekt gibt es sc
 - **Sekundär:** Messbar niedrigere Orchestrierungs-Tokens/Kosten pro Lauf.
 - Pro Workstream grüner Test + reviewbarer Einzel-Commit.
 
+## Offene Lücken / vor Umsetzung zu klären
+
+Sieben konkrete Auslassungen, belegt gegen den Code-Stand 2026-06-20. Nach Wert sortiert.
+**L1+L2 zusammen sind die wichtigsten — sie ändern die Validierungs-Ökonomie des ganzen
+Plans** (von ~$30/1h pro Phase auf Sekunden) und machen alles Übrige erst zumutbar.
+
+**L1 — Billige Regressionsprüfung existiert; der Plan ignoriert sie (korrigiert R1).**
+Mehrere Testdateien pinnen `SKILL-impl.md`-Inhalt: `test_skill_composition_split.py`,
+`test_check_inline_shortcut.py`, `test_incremental_mode.py`, `test_help_file.py`,
+`test_skill_auto_retry.py`, `test_integration.py`. Jede Umformung (P2/P5/P7) und jede
+Auslagerung (P8) bricht diese Tests → sie sind im Gleichschritt zu updaten (CLAUDE.md §4,
+bidirektionale Verträge). **Nachzutragen:** pro Workstream eine Zeile „welche Testdatei
+pinnt diesen Text". Das — nicht der Golden-Run — ist das Pro-Phase-Akzeptanz-Gate.
+
+**L2 — Deterministische Gates sind der Followability-Orakel; ungenutzt.**
+~13 Gates messen, ob der Orchestrierer das Richtige tat: `check_stride_dispatch.py`
+(Fan-out wirklich parallel), `validate_dispatch_manifest.py`, `check_inline_shortcut.py`,
+`requirements_gate.py`, `qa_release_gate.py`. **Nachzutragen:** je Followability-Eigenschaft
+den prüfenden Gate benennen und **N≥3 Sonnet-Läufe gegen die Exit-Codes** als Reliability-
+Signal setzen (statt „1 Golden-Run struct-identisch", was für ein Zuverlässigkeitsziel zu
+dünn ist).
+
+**L3 — `data/required-permissions.yaml`-Updates für P3 und P8 (Non-Negotiable, AGENTS.md §7).**
+P3 führt `bash scripts/x.sh` ein → Bash-Eintrag nötig. P8 führt `Read(modes/*.md)` ein →
+verifizieren, ob `Read(${PLUGIN_ROOT}/**)` das bereits deckt (nicht annehmen). Der Plan
+erwähnt die Datei nirgends.
+
+**L4 — Kostenbeleg nicht operationalisiert, obwohl Werkzeug existiert.**
+DoD „messbar niedrigere Tokens" ohne Wie. Es gibt `scripts/measure_run.py`,
+`scripts/verify_run_costs.py`, `scripts/cost_running_total.py`, `cache_read` in
+`agent_logger.py`. **Nachzutragen:** Baseline mit `measure_run.py` vor Refactor, gleiches
+nach P8/P3, Orchestrierungs-Cache-Reads vergleichen — sonst ist die 15–29 %-/$3–6-Rechnung
+unfalsifizierbar.
+
+**L5 — Recovery/Resume unter schwächerem Modell ist UNGETESTET (die Pfade mit MEHR Last).**
+Resume-from-Checkpoint, STAGE11-Recovery, Cut-off-Handling, Pre-flight-Recovery werden von
+einem schwächeren Modell *häufiger* aktiviert, nicht seltener. Der Plan behandelt sie nur
+als „P3 off-path → Fixtures". **Nachzutragen:** ein Sonnet-Lauf, der Kill+Resume/Recovery
+erzwingt — nicht nur der saubere Durchlauf.
+
+**L6 — Kein Shipping-Mechanismus für „Sonnet-Default".**
+Primärziel „Sonnet zuverlässig" ohne Auslieferungsweg. „Sofort-Hebel" sagt nur „starte eine
+Sonnet-Session" — keine durable Config, kein Flag, kein Fallback (großer/recovery-anfälliger
+Lauf → Opus). Sonst alles über env-vars/`resolve_config.py` gegated. **Zu klären:**
+dokumentierte Guidance, Profil-Schalter oder automatischer Tier-Fallback?
+
+**L7 — Workstreams an grep-Counts statt an belegte Failures gehängt.**
+„28× Narration / 12× TaskStop / 6× Fan-out" verknüpft keinen Count mit einem beobachteten
+Defekt. Dokumentierter Failure-Katalog existiert: `bug_stride_inline_shortcut`,
+`bug_stride_dispatch_gate_blind_in_parallel`, `bug_budget_flag_poisons_renderer`,
+`bug_substep2_schema_drift`. **Nachzutragen:** jeden Workstream an einen belegten
+Failure-Modus binden (z. B. „P1-Fan-out adressiert `bug_stride_inline_shortcut`") — sonst
+optimiert der Plan nach Häufigkeit, nicht nach Schaden.
+
 ## Risiken & Gegenmaßnahmen
 
 | Risiko | Gegenmaßnahme |
 |---|---|
-| **R1** Keine billige Regressionsprüfung (Lauf ~$30/~1h, LLM-geführt) | Charakterisierungstests für Skripte; Sonnet-Golden-Run als Akzeptanz-Gate je Phase |
+| **R1** Golden-Run teuer (~$30/~1h) UND statistisch dünn (1 Lauf beweist keine Zuverlässigkeit) | **Billiges Substrat existiert** (Lücke L1/L2): die `SKILL-impl`-pinnenden Testdateien + die deterministischen Gates (`check_stride_dispatch`/`validate_dispatch_manifest`/`check_inline_shortcut`/`requirements_gate`) als primäres Per-Phase-Gate; Golden-Run nur als finaler N≥3-Smoke, nicht als Pro-Phase-Gate |
 | **R2** Redundanzabbau schwächt LLM-Adhärenz | Lokale Verstärkung am Ausführungspunkt statt globaler Wiederholung |
 | **R3** Cross-File-Referenzen werden unter Kontextdruck nicht geladen | Gilt nur für **operative Verträge am Dispatch-Punkt** (MUST-Blöcke INLINE). KEIN pauschales Auslagerungsverbot: phase-group-Dateien lagern phasen-/mode-gescopte Instruktionen bereits erfolgreich aus (gepinnt). Auslagerbar: Rationale/Historie (P6) + mode-conditional Bodies (P8). NICHT auslagerbar: Verträge, die am Ausführungspunkt gelesen werden müssen. |
 | **R4** Chesterton — verlorene Schutz-Rationale | Pointer-Token am Ort; Rationale in Skript-Docstring ko-lokalisieren |
@@ -301,6 +365,7 @@ Plans macht genau diesen Sonnet-Default *sicher*; den `/clear`-Effekt gibt es sc
 
 - Keine funktionale Änderung an Pipeline, Gates oder Output-Schema.
 - Kein Entfernen von Sicherheits-Gates oder Recovery-Pfaden.
-- Kein Big-Bang-Rewrite; keine Aufteilung der operativen Verträge über Dateigrenzen.
+- Kein Big-Bang-Rewrite; keine Aufteilung der **operativen Verträge** über Dateigrenzen
+  (P8 lagert nur mode-conditional Bodies aus, keine Dispatch-Punkt-Verträge — siehe R3).
 - Keine Modell-Routing-Änderung der Analyse-Sub-Agenten (die sind unabhängig vom
   Session-Modell bereits auto-geroutet).
