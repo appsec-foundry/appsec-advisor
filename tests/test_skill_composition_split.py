@@ -203,3 +203,14 @@ def test_max_turns_120_documented_in_orchestrator(orchestrator_text):
     assert "maxTurns: 300" in orchestrator_text
     # And referenced in the M2.9 header guidance
     assert "M2.9" in orchestrator_text or "120 turns" in orchestrator_text
+
+
+@pytest.mark.parametrize("heading", ["Verbose Mode — Marker File Lifecycle", "Tracing Mode — Marker File Lifecycle"])
+def test_marker_lifecycle_section_is_single_source(skill_impl_text, heading):
+    """P4 (2026-06-20): the verbose/tracing marker-file lifecycle had a divergent
+    duplicate — an early `$VERBOSE_REPORT`/`$TRACING`-gated copy plus the canonical
+    `RESOLVED_JSON`-gated one with the EXIT trap. Consolidated to one authoritative
+    section each; guard against the duplicate creeping back."""
+    assert skill_impl_text.count(f"### {heading}") == 1, (
+        f"'{heading}' must appear exactly once — the divergent duplicate was removed"
+    )

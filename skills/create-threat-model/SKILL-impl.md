@@ -18,6 +18,20 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 > output should be pipeline progress (the Pre-flight summary render),
 > not remarks about reading this file or running its commands.
 
+## Mode Routing — which sections apply (navigation aid; per-section conditions remain authoritative)
+
+`MODE` and the mode flags are resolved in **Configuration Resolution** below. This table is a
+read-order map only — it does **not** override any section's own gating logic; when in doubt,
+the condition stated *in* the section wins.
+
+| MODE / flag | Sections that apply (in order) | Skip |
+|---|---|---|
+| **full / standard / thorough** (default, incl. `rebuild`) | Prerequisites → Argument Parsing → Configuration Resolution → Plugin Version Gate → Configuration Summary → Stage 1 → Stage 1c (unless `skip_abuse_case_verification`/`DRY_RUN`) → Stage 2 → Stage 3 (unless `SKIP_QA`/`DRY_RUN`/`PR_MODE`) → Stage 4 (thorough or opt-in) → Completion Summary | Re-Render Mode, all Incremental sections, Resume from Checkpoint, Dry-Run Mode |
+| **incremental** (auto or `--incremental`) | as full, **plus** Incremental Pre-Check → Incremental Fast-Path (null-change abort) → Full-Scan Recommendation Prompt → Incremental Mode. Parallel-STRIDE is **never** used here. | Resume from Checkpoint, Dry-Run Mode |
+| **`--rerender`** | Configuration Resolution → **Re-Render Mode** (skips Stage 1, re-renders + re-QAs from existing fragments) → Stage 3 | Stage 1 / 1c / Stage-2 authoring |
+| **resume** (`--resume` / checkpoint present) | **Resume from Checkpoint** first, then continue at the interrupted stage | sections already completed before the checkpoint |
+| **`--dry-run`** | as full but observe **Dry-Run Mode**; no `TaskCreate`, no abuse-verifier fan-out, no Stage 3/4 | — |
+
 ## Pipeline Overview (Stage-D, post-M2.13)
 
 > **TaskList contract — read before tracking progress.** The boxes in the
@@ -691,42 +705,12 @@ RESOLVE_ARGS=$(printf '%s' "$INVOCATION_ARGS" | sed 's/--force\b//g' | xargs)
 
 Use `$RESOLVE_ARGS` (not `$INVOCATION_ARGS`) in all `resolve_config.py` invocations below. `INVOCATION_ARGS` is still passed verbatim to Stage 1/2 agent prompts so the orchestrator can see the original invocation.
 
-### Verbose Mode — Marker File Lifecycle
-
-`--verbose` has two distinct effects that must both be activated for the user to actually see verbose behaviour:
-
-1. **`VERBOSE_REPORT=true`** — appends the `## Appendix: Run Statistics` section to `threat-model.md` (handled by the orchestrator via the variable passed in the Stage 1 agent prompt).
-2. **Live stderr mirroring** — causes `scripts/agent_logger.py` to mirror each hook log line to stderr in real time, surfacing `PHASE_START`, `STEP_START`, `SCAN_START`, `AGENT_INVOKE`, `TOOL_ERROR` etc. to the terminal as the run progresses.
-
-Effect (2) runs inside hook processes spawned by Claude Code itself, **not** inside the skill's Bash calls. Env vars set with `export` inside a skill Bash call therefore do **not** reach the hooks — Claude Code is the parent process of both, so the skill can only communicate with hooks through the filesystem (or through config.json, which is shared across runs).
-
-The mechanism: when `VERBOSE_REPORT=true` is resolved, `touch` a per-user marker file that `agent_logger.py` checks alongside `APPSEC_VERBOSE` and `config.json → logging.verbose`. On skill exit (both success and failure paths), remove the marker so later non-verbose runs are not accidentally verbose.
-
-```bash
-VERBOSE_MARKER="${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
-
-if [ "$VERBOSE_REPORT" = "true" ]; then
-  touch "$VERBOSE_MARKER"
-fi
-```
-
-The cleanup is placed at the **end** of the Completion Summary section (both the dry-run and normal paths) and inside every error branch that exits non-zero. See "Completion Summary" and "Error Handling" below.
-
-### Tracing Mode — Marker File Lifecycle
-
-`--tracing` activates per-agent token/turn/cost/wall-time tracking. Like verbose mode, the hook processes that perform the tracing are spawned by Claude Code itself and cannot inherit env vars from skill Bash calls — the marker-file mechanism is used.
-
-```bash
-TRACING_MARKER="${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
-
-if [ "$TRACING" = "true" ]; then
-  touch "$TRACING_MARKER"
-fi
-```
-
-When active, `agent_logger.py` writes `AGENT_DISPATCH` events (at agent spawn time) and `AGENT_COMPLETE` events (at session end) to `.appsec-trace.log`, then appends an `ASSESSMENT_TRACE` Markdown table when the outer session ends.
-
-Clean up `$TRACING_MARKER` at the same places as the verbose marker (Completion Summary, error branches, dry-run path). The trace log itself (`.appsec-trace.log`) is **not** cleaned up — it is a permanent audit artifact alongside `.agent-run.log` and `.hook-events.log`.
+The verbose/tracing **marker-file lifecycle** (touch on resolve, EXIT-trap cleanup) is
+defined and executed once, canonically, in the Verbose-Mode and Tracing-Mode Marker
+File Lifecycle sections after Configuration Resolution. Those canonical blocks gate the
+`touch` on `RESOLVED_JSON` (`verbose` / `tracing`). A divergent earlier duplicate of these
+two sections (gated on `$VERBOSE_REPORT`/`$TRACING`) was removed 2026-06-20; the canonical
+blocks remain authoritative and carry the EXIT trap.
 
 ## Configuration Resolution
 
@@ -901,33 +885,15 @@ The `EXIT` trap fires whether the shell exits via `exit N`, `return`, a signal, 
 
 ## Re-Render Mode (`--rerender`) — skip Stage 1, re-render + re-QA from existing fragments
 
-**When `RERENDER=true` (`MODE=rerender`), take this branch and SKIP everything between here and "## Stage 2 — Report Rendering"** — the Incremental Pre-Check, the Incremental Fast-Path (null-change abort), the Resume-from-Checkpoint section, **Stage 1**, and **Stage 1c**. Re-render mode trusts the on-disk Stage-1 artifacts as canonical, re-runs only the LLM-cheap render + the full Stage-3 QA gate (incl. the Re-Render Loop), and never re-analyzes source. It is the right tool when a fragment was hand-edited or the renderer/QA/contract logic changed; it is the **wrong** tool when source code changed (use `--incremental`/`--full` then).
-
-**Why this branch exists / what it bypasses:** the Incremental Fast-Path below runs "before anything else" and would null-change-abort an unchanged repo, and a `--full` run would re-run Stage 1 and regenerate every fragment. Re-render needs neither — it explicitly re-renders the existing fragments. This branch is therefore evaluated **before** the fast-path.
-
-**Step R1 — precondition gate (hard).** Re-render needs a complete Stage-1 artifact set on disk. Verify all of the following exist; if any is missing, print the banner and exit 2 (do not fall through to Stage 1):
-
-```bash
-MISSING=""
-for f in threat-model.yaml .threats-merged.json .triage-flags.json; do
-  [ -f "$OUTPUT_DIR/$f" ] || MISSING="$MISSING $f"
-done
-FRAG_COUNT=$(find "$OUTPUT_DIR/.fragments" -maxdepth 1 -type f 2>/dev/null | wc -l)
-[ "$FRAG_COUNT" -ge 3 ] || MISSING="$MISSING .fragments/(>=3)"
-if [ -n "$MISSING" ]; then
-  printf '\n✗ --rerender needs an existing assessment to re-render.\n' >&2
-  printf '  Missing under %s:%s\n' "$OUTPUT_DIR" "$MISSING" >&2
-  printf '  Run a full/standard assessment first; --rerender then re-renders\n' >&2
-  printf '  its fragments. For source-code changes use --incremental or --full.\n\n' >&2
-  exit 2
-fi
-```
-
-**Step R2 — acquire the lock** exactly as a normal run does (the skill owns the lock across Stage 2 + Stage 3; same `acquire_lock.py` call + skill_watchdog spawn used before the Stage-2 dispatch below).
-
-**Step R3 — proceed directly to "## Stage 2 — Report Rendering".** Dispatch `appsec-advisor:appsec-threat-renderer` with the **identical** prompt/config the normal post-Stage-1 flow uses (REPO_ROOT, OUTPUT_DIR, WRITE_SARIF, ASSESSMENT_DEPTH, models, etc.). The renderer reuses the existing `.fragments/`, `.threats-merged.json`, `.triage-flags.json`, `threat-model.yaml`, and `.abuse-case-verdicts.json` (it authors only the 2 MS JSON fragments + walkthroughs/posture and never regenerates analyst-authored fragments such as `security-architecture.md`). Then continue **unchanged** into the post-Stage-2 flow: pre-generation backstop + inline-shortcut hard gate + **Stage 3 QA + Re-Render Loop** (where a contract-drift triggers the `appsec-fragment-fixer`), then the Completion Summary.
-
-**Do NOT** re-run the deterministic emitters (Phase 10 SCA etc.) — their outputs are already baked into the fragments/yaml (same rule as the Re-Render Loop, see §"AFTER the Stage-2 no-op gate"). **Do NOT** re-dispatch Stage 1c abuse-case verifiers — reuse the existing `.abuse-case-verdicts.json`.
+**Lazy-load — only when `MODE=rerender`.** When `RERENDER=true`, read
+`<base-dir>/modes/rerender.md` now (base-dir is the skill dir on the
+`Base directory for this skill:` invocation line) and follow it: it is the complete
+rerender branch (precondition gate → lock → proceed to Stage 2) and replaces everything
+between here and "## Stage 2 — Report Rendering". **On any other mode, do NOT read it —
+skip straight past this section.** Just-in-time loading keeps the rerender branch out of
+the resident full-run context, the same pattern as the lazy-loaded
+`agents/phases/phase-group-*.md` files (do not bulk-read it at startup — it breaks the
+cache-stable prefix).
 
 ---
 
@@ -2460,144 +2426,17 @@ Both scripts are **idempotent** — they strip prior auto-emitted entries before
 - **NOT re-run inside the Re-Render Loop** — the loop dispatches `appsec-fragment-fixer` in REPAIR_MODE which never re-writes Stage-1 YAML (it only touches `.fragments/` + recompose). Re-running emitters per repair iteration would reshuffle M-NNN IDs because `_scan_max_m_id` returns a different ceiling after partial repair-write.
 
 ```bash
-# Auto-emitter pass — Meta-Findings + Review-Mitigations (M-RCA-2026-05) +
-# deterministic YAML hygiene (M-RCA-2026-05b: sanitize_perimeter_claims,
-# validate_evidence_lines, reclassify_components). Order matters:
-#   1. emit_meta_findings   — derives MF-NNN from threats[] by source.
-#   2. emit_review_mitigations — synthesises kind:review/investigate mitigations.
-#   3. sanitize_perimeter_claims — strips speculative WAF/DDoS/firewall
-#      absence phrasing from trust_boundaries[].enforcement and
-#      security_controls[].notes. Runs BEFORE pre-gen so the deterministic
-#      architecture-diagrams.md fragment inherits clean text.
-#   4. validate_evidence_lines — deterministic floor for the
-#      appsec-evidence-verifier agent. Sets evidence_check + evidence_flags
-#      on every threat where the LLM verifier did not already write a
-#      verified/refuted/verified-prior verdict.
-#   5. reclassify_components — fixes attack-target-tier vs control-location-
-#      tier drift. Reassigns threats whose evidence.file matches exactly
-#      one other component's paths globs.
-#   6. enforce_control_taxonomy — RC-1 + RC-6 (2026-05): canonicalises
-#      security_controls[].control names (e.g. "JWT RS256 Authentication"
-#      → "JWT Bearer Authentication") and re-routes mis-classified
-#      security_controls[].domain entries (e.g. auth-flow rate limiting
-#      parked in §7.12 Real-time → §7.2 IAM). Must run BEFORE
-#      pregenerate_fragments so the mechanical §7.1 overview table +
-#      `**Controls covered:**` lines are built from a taxonomy-clean yaml.
-# All scripts are idempotent + best-effort: failures fall back to the
-# pre-script YAML rather than aborting the run after 25+ minutes of Stage 1.
-if [ "$DRY_RUN" = "false" ]; then
-  {
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_START  meta-findings + review-mitigations + config-scan-mitigations + yaml-hygiene + vektors + open-registration + asset-links + control-taxonomy"
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_meta_findings.py" "$OUTPUT_DIR" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_review_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
-    # M-RCA-2026-05 — `kind: fix` mitigations for config-scan threats.
-    # Stage 1's appsec-config-scanner emits findings without remediation
-    # prose (the agent's actual output schema is leaner than its docs imply)
-    # and merge_threats._config_finding_to_threat does not populate
-    # `mitigation_ids[]` or `remediation`. As a result, build_mitigations
-    # never produced an M-NNN card for them and the §8 Threat Register
-    # shipped with empty **Fix:** cells on every config-scan row. This
-    # emitter looks up canonical remediation prose (config-iac-checks.yaml
-    # by `config_check_id` → built-in slug map for scanner-synthesised
-    # checks → generic fallback), allocates a new M-NNN per threat, and
-    # links it back via threats[].mitigation_ids. Idempotent: prior
-    # auto_source="config-scan" cards are cleared before re-computing.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_config_scan_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
-    # M-RCA-2026-06 — `kind: fix` mitigations for CODE findings the LLM left
-    # uncovered. build_mitigations only emits an M-NNN card when the threat
-    # already carries mitigation_ids[]; when Phase-11's LLM yaml-write
-    # under-produces (2026-06-02 juice-shop: all 13 Critical findings came
-    # back with mitigation_ids=[]), the Mitigation Register ships
-    # "_No P1 mitigations._" despite every threat carrying a full remediation
-    # block. This emitter backfills a fix card (priority from severity+effort)
-    # for any non-config-scan threat with remediation content but no link, and
-    # back-references it via threats[].mitigation_ids. Idempotent; runs AFTER
-    # emit_config_scan_mitigations so config-scan threats are already linked
-    # and skipped.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_finding_fix_mitigations.py" "$OUTPUT_DIR" 2>&1 || true
-    # Clean finding TITLES (2026-06-12) — normalize threats[].title to
-    # `<weakness class> — <file:line>` (strip `via <impl>`, parens, params,
-    # embedded files). The verbose code-laden titles otherwise render into every
-    # xref cell (§2/§4/§2.3/§8). Idempotent (_title_source). Runs before the
-    # mitigation-title pass (independent; that keys on CWE, not title).
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_clean_finding_titles.py" "$OUTPUT_DIR" 2>&1 || true
-    # General mitigation TITLES (2026-06-12) — runs AFTER all mitigation
-    # emitters so it generalizes the full set. Stage 1 authors detailed
-    # remediation instructions as mitigation_title ("Replace `.decode(token)`
-    # with `.verify(...)`…", "Add HEALTHCHECK CMD curl -f http://…"); this
-    # rewrites the §10 register/index TITLE to a clear class-level label keyed
-    # on the addressed CWE (the actionable detail stays in the block body's
-    # How/steps/code). Idempotent (stashes _title_source).
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_general_mitigation_titles.py" "$OUTPUT_DIR" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/sanitize_perimeter_claims.py" "$OUTPUT_DIR" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_evidence_lines.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" "$OUTPUT_DIR" 2>&1 || true
-    # RC-1 + RC-6 (2026-05): canonicalise security_controls[].control names
-    # against forbidden_heading_patterns + alias rewrites, and re-route
-    # security_controls[].domain when token-match against a §7 method_whitelist
-    # contradicts the Stage-1 assignment (specifically: auth controls parked
-    # in §7.12 Real-time and Not Applicable Controls). Closes the cascade
-    # of §7.2.1 heading-rename / §7.1 overview-table inconsistencies that
-    # surfaced in the 2026-05-23 juice-shop run. Idempotent.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/enforce_control_taxonomy.py" "$OUTPUT_DIR" 2>&1 || true
-    # Auth-coverage completeness (2026-06-06): §7.2 must ALWAYS identify,
-    # describe and rate every authentication variant the app exposes — password
-    # login, MFA, social/OAuth login — plus the password-credential lifecycle
-    # (user registration, password reset). The Phase-8 analyst routinely omits
-    # variants that exist in code (juice-shop: OAuth, registration, reset all
-    # present, two anchoring Critical findings, none cataloged → §7.2 listed
-    # only Password + MFA). This emitter backfills any DETECTED-but-uncataloged
-    # canonical auth mechanism into security_controls[] with kind:mechanism (so
-    # §7 renders a flow sub-block + sequenceDiagram) rated from its linked
-    # finding(s), and records a lifecycle-required aspect (registration / reset)
-    # that is genuinely absent under password auth as effectiveness:Missing.
-    # Runs AFTER enforce_control_taxonomy (so the coverage check sees canonical
-    # control names) and BEFORE pregenerate_fragments. Idempotent.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_auth_coverage.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
-    # Issue-1: deterministic vektor field per threat (CWE + attack_surface
-    # auth_required → repo-read / victim-required / internet-anon /
-    # internet-user) so §8 Vektor column reflects real reachability rather
-    # than the renderer's `"internet-user"` default. Idempotent — preserves
-    # any hand-set values.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_threat_vektors.py" "$OUTPUT_DIR" 2>&1 || true
-    # Surface WHY a rating sits above its class baseline (public-repo secret,
-    # unauth privileged endpoint, attack-chain keystone) as a short inline
-    # severity_rationale the §8 card renders. Runs AFTER emit_threat_vektors
-    # because the rationale keys on threats[].vektor. Idempotent.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/emit_severity_rationale.py" "$OUTPUT_DIR" 2>&1 || true
-    # Issue-1: detect open user self-registration; sets
-    # meta.open_user_registration which the §6 heatmap renderer reads to
-    # collapse internet-user / internet-priv-user actor cards into
-    # internet-anon (registration is one POST away, the spectrum is
-    # misleading on the at-a-glance view).
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_open_registration.py" "$OUTPUT_DIR" 2>&1 || true
-    # Public-repo detection (2026-06): sets meta.public_source_repo only on
-    # high-confidence LOCAL signals (OSI license file + public-host github/
-    # gitlab/bitbucket source URL). When true, compose collapses the repo-read
-    # actor "Internal Developer" into "Anonymous Internet Attacker" (a public
-    # repo's committed secrets are readable by anyone). When the evidence is
-    # insufficient the flag is left UNSET and the Internal Developer actor is
-    # kept — never guess public on a repo we cannot confirm. Honors the operator
-    # override meta.public_source_repo_pinned. Needs --repo-root.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/detect_public_repo.py" "$OUTPUT_DIR" --repo-root "$REPO_ROOT" 2>&1 || true
-    # R-3 (2026-05): rebuild assets[].linked_threats from CWE-class affinity +
-    # keyword overlap. Stage 1 Phase 5 is LLM-authored and routinely produces
-    # links that have nothing to do with the asset (e.g. session-tokens linked
-    # to YAML bomb / CORS / mass assignment instead of XSS + JWT storage).
-    # Idempotent. Hand-set entries preserved via assets[].linked_threats_manual.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/enrich_asset_links.py" "$OUTPUT_DIR" 2>&1 || true
-    # Mask committed secrets in Stage-1 evidence excerpts (e.g. raw
-    # `password: 'admin123'`, PEM private-key markers) so the Stage-3
-    # unmasked_secrets gate — which scans threat-model.yaml as well as the
-    # rendered markdown — cannot trip on author-supplied excerpts. Uses the
-    # SAME secret_scan.py pattern set as the gate, so detector⇔masker symmetry
-    # guarantees the yaml passes. The composer applies the identical mask to the
-    # rendered markdown (it re-reads real source files for §8 evidence), so both
-    # artifacts are clean by construction. Idempotent and best-effort.
-    python3 "$CLAUDE_PLUGIN_ROOT/scripts/secret_scan.py" --mask "$OUTPUT_DIR/threat-model.yaml" 2>&1 || true
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_END"
-  } | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
-fi
+# Auto-emitter pass — extracted verbatim to scripts/auto_emitter_pass.sh (P3,
+# 2026-06-20) to remove 139 lines of inline orchestration shell from the skill
+# body. The script runs the same fixed sequence of deterministic emitters, each
+# best-effort `|| true`, gated on DRY_RUN=false, tee'd to .agent-run.log. The
+# emitter ORDER and rationale (meta-findings → mitigation backfills → title
+# normalisation → yaml hygiene → control-taxonomy → auth-coverage → vektors →
+# registration/public-repo/asset-links → secret-mask) live in the script's header
+# and per-call comments. Idempotent + best-effort; NOT re-run inside the
+# Re-Render Loop.
+bash "$CLAUDE_PLUGIN_ROOT/scripts/auto_emitter_pass.sh" \
+    "$OUTPUT_DIR" "$REPO_ROOT" "$CLAUDE_PLUGIN_ROOT" "$DRY_RUN"
 ```
 
 Behaviour contract:
@@ -2660,7 +2499,15 @@ fi
    CANDIDATES=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/match_abuse_cases.py" \
        list-candidates --output-dir "$OUTPUT_DIR" 2>/dev/null)
    ```
-2. **Verifier fan-out** — for each AC-ID in `$CANDIDATES`, dispatch the `appsec-advisor:appsec-abuse-case-verifier` Agent (`model: sonnet`, foreground) with the prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=sonnet`. **Single-pass sonnet** (perf 2026-06-02): the former haiku-first + bounded-sonnet-escalation two-tier ran its waves *sequentially* (haiku → finalize barrier → sonnet re-verify), and on complex repos most candidates escalated anyway (juice-shop: 5/6) — so the haiku wave was near-pure wasted wall-time for the same final verdicts (sonnet is what produced them). Dispatching sonnet directly collapses it to one wave. Dispatch all candidates together in ONE message (wall-clock ≈ slowest single case). Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file. **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
+2. **Verifier fan-out.**
+
+   **⚠ HARD CONSTRAINT — ONE MESSAGE, ALL CANDIDATES, NO EXCEPTIONS.** Issue ALL `appsec-advisor:appsec-abuse-case-verifier` `Agent` calls **in a SINGLE message turn** (multiple tool-use blocks in one response) — one per AC-ID in `$CANDIDATES`. This is NOT optional and NOT sequential: **DO NOT dispatch one verifier, wait for it to return, then dispatch the next** — that collapses the fan-out to a serial chain (wall-clock × N instead of ≈ slowest single case). Concrete check: if you are about to call `Agent` for candidate 2 AFTER candidate 1 returned, you have already violated this — stop. (Same proven model the STRIDE fan-out points back to.)
+
+   **Dispatch params** — for each AC-ID in `$CANDIDATES`, call `appsec-advisor:appsec-abuse-case-verifier` (`model: sonnet`, foreground, `run_in_background: false`) with prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=sonnet`. Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file.
+
+   **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
+
+   *Why single-pass sonnet (perf 2026-06-02):* the former haiku-first + bounded-sonnet-escalation two-tier ran its waves *sequentially* (haiku → finalize barrier → sonnet re-verify), and on complex repos most candidates escalated anyway (juice-shop: 5/6) — so the haiku wave was near-pure wasted wall-time for the same final verdicts (sonnet is what produced them). Dispatching sonnet directly collapses it to one wave.
 3. **Merge + finalize** (deterministic) — produces the final chain verdicts directly from the single sonnet wave:
    ```bash
    if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/verify_abuse_cases.py" merge --output-dir "$OUTPUT_DIR"; then

@@ -30,7 +30,11 @@ You emit three operational signals during the run. Treat them as one concern:
 
 **1. Print** — every status line uses the prefix `[stride | <COMPONENT_NAME>]` and is printed immediately before the action it describes.
 
-**2. Log** — follow `shared/logging-standard.md` (agent: `stride-analyzer`, model: `sonnet`, event types: `STEP_START` / `STEP_END`). Write to `$OUTPUT_DIR/.agent-run.log`, prefix all entries with `[<COMPONENT_ID>]`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. Log each STRIDE category start, file writes, errors, and agent completion.
+**2. Log** — follow `shared/logging-standard.md` (agent: `stride-analyzer`, model: `sonnet`, event types: `STEP_START` / `STEP_END`). Write to `$OUTPUT_DIR/.agent-run.log`, prefix the `<message>` with `[<COMPONENT_ID>]`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. Log each STRIDE category start, file writes, errors, and agent completion. **Use the canonical emitter `scripts/log_event.py` (`step-start` / `step-end`), NEVER hand-roll a log line and NEVER call `event_log.format_line` via `python3 -c` — its `level`/`component`/`sid` are keyword-only and a positional or `event_type=` call raises `TypeError`, leaving `LOG_ERR` noise in `.agent-run.log`:**
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[<COMPONENT_ID>] <message>" --agent stride-analyzer
+```
 
 **3. Progress** — write a per-component progress file the orchestrator polls. Use the helper script, never inline the JSON:
 

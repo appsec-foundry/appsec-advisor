@@ -832,3 +832,102 @@ def test_stride_stale_fires_when_output_frozen(out_dir, silent_heartbeat):
     )
     log = (out_dir / ".agent-run.log").read_text()
     assert "STRIDE_STALE" in log
+
+
+# ---------------------------------------------------------------------------
+# RUN_PROGRESS — coarse % + net-runtime liner (Element 1 + 2)
+# ---------------------------------------------------------------------------
+
+
+def test_phase_position_mapping():
+    sw = _load()
+    assert sw._phase_position("1") == 1.0
+    assert sw._phase_position("2.5") == 2.5
+    assert sw._phase_position("9") == 9.0
+    assert sw._phase_position("10b") == 10.5
+    assert sw._phase_position("11") == 11.0
+    # Non-numeric finalization/repair tokens saturate near the end.
+    assert sw._phase_position("repair/1") == 99.0
+    assert sw._phase_position("writing_output") == 99.0
+
+
+def test_fmt_hms():
+    sw = _load()
+    assert sw._fmt_hms(5) == "5s"
+    assert sw._fmt_hms(65) == "1m05s"
+    assert sw._fmt_hms(3725) == "1h02m"
+    assert sw._fmt_hms(-10) == "0s"
+
+
+def test_progress_snapshot_percent_is_completed_lower_bound(out_dir):
+    sw = _load()
+    weights = sw._PROGRESS_WEIGHTS["standard"]
+    # phase=9 → completed phases 1..8 over the total. For the standard table
+    # that is 11.0 / 27.5 = 40%.
+    (out_dir / ".appsec-checkpoint").write_text("phase=9 status=in_progress\n")
+    pct, token = sw._progress_snapshot(out_dir, weights)
+    assert token == "9"
+    assert pct == 40
+    # phase=11 (finalization still running) → ~96%, never a premature 100.
+    (out_dir / ".appsec-checkpoint").write_text("phase=11 status=writing_output\n")
+    pct11, _ = sw._progress_snapshot(out_dir, weights)
+    assert pct11 == 96
+    # repair/completed token saturates to 100.
+    (out_dir / ".appsec-checkpoint").write_text("phase=repair/1 status=in_progress\n")
+    pct_done, _ = sw._progress_snapshot(out_dir, weights)
+    assert pct_done == 100
+    # Terminal status=completed at phase=11 saturates to 100, not 96.
+    (out_dir / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
+    pct_term, _ = sw._progress_snapshot(out_dir, weights)
+    assert pct_term == 100
+
+
+def test_progress_snapshot_none_without_checkpoint(out_dir):
+    sw = _load()
+    weights = sw._PROGRESS_WEIGHTS["standard"]
+    # No checkpoint at all.
+    assert sw._progress_snapshot(out_dir, weights) is None
+    # Checkpoint without a phase= token.
+    (out_dir / ".appsec-checkpoint").write_text("status=started\n")
+    assert sw._progress_snapshot(out_dir, weights) is None
+
+
+def test_run_progress_emitted_for_timeable_run(out_dir, silent_heartbeat):
+    sw = silent_heartbeat
+    (out_dir / ".appsec-checkpoint").write_text("phase=9 status=in_progress\n")
+    (out_dir / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
+    (out_dir / ".scan-start-epoch").write_text(str(int(time.time()) - 120))
+    sw.watch(
+        output_dir=out_dir,
+        plugin_root=REPO_ROOT,
+        heartbeat_interval=0,
+        stride_stale_seconds=999,
+        stride_canary_seconds=999,
+        component_timeout_seconds=999,
+        max_iterations=1,
+        run_idle_seconds=0,
+    )
+    log = (out_dir / ".agent-run.log").read_text()
+    assert "RUN_PROGRESS" in log
+    assert "~40%" in log
+    assert "phase=9" in log
+    # ~120s elapsed, no standby tracking (run_idle_seconds=0) → net shown.
+    assert "net=2m" in log
+
+
+def test_run_progress_silent_without_scan_start_epoch(out_dir, silent_heartbeat):
+    sw = silent_heartbeat
+    # Checkpoint present but no .scan-start-epoch → not a timeable run → silent.
+    (out_dir / ".appsec-checkpoint").write_text("phase=9 status=in_progress\n")
+    sw.watch(
+        output_dir=out_dir,
+        plugin_root=REPO_ROOT,
+        heartbeat_interval=0,
+        stride_stale_seconds=999,
+        stride_canary_seconds=999,
+        component_timeout_seconds=999,
+        max_iterations=1,
+        run_idle_seconds=0,
+    )
+    log = (out_dir / ".agent-run.log").read_text()
+    assert "RUN_PROGRESS" not in log

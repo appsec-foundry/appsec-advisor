@@ -86,6 +86,16 @@ try:
 except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
+# Reuse the calibrated per-phase relative weights for the coarse run-progress
+# percentage (RUN_PROGRESS). Single source of truth — the same table drives
+# the resume-time estimate in estimate_duration.py. Guarded like phase_budgets
+# so a missing/partial sibling never breaks the watchdog loop; progress % is
+# simply skipped when the table is unavailable.
+try:
+    from estimate_duration import _PHASE_DURATION as _PROGRESS_WEIGHTS  # type: ignore
+except Exception:  # pragma: no cover
+    _PROGRESS_WEIGHTS = None  # type: ignore[assignment]
+
 
 _LOG_NAME = ".agent-run.log"
 _HOOK_LOG_NAME = ".hook-events.log"
@@ -483,6 +493,94 @@ def _is_past_stride_phase(output_dir: Path) -> bool:
     return token != "9"
 
 
+def _read_epoch(path: Path) -> int | None:
+    """Best-effort read of an integer epoch file (``.scan-start-epoch``).
+
+    Returns None on any error so the caller drops the timing portion of the
+    progress line rather than crashing.
+    """
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _fmt_hms(secs: float) -> str:
+    """Compact ``1h02m`` / ``3m05s`` / ``42s`` duration formatting."""
+    s = int(max(0, secs))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m"
+    if m:
+        return f"{m}m{sec:02d}s"
+    return f"{sec}s"
+
+
+def _phase_position(token: str) -> float | None:
+    """Map an ``.appsec-checkpoint`` phase token to a numeric pipeline position.
+
+    Examples: ``1`` → 1.0, ``2.5`` → 2.5, ``10b`` → 10.5, ``11`` → 11.0.
+    Non-numeric tokens (``repair/1``, ``writing_output``) mean the run is at or
+    past finalization → a large sentinel so the percentage saturates near 100.
+    """
+    m = re.match(r"(\d+(?:\.\d+)?)", token)
+    if not m:
+        return 99.0
+    val = float(m.group(1))
+    # `10b` (and any `<n>b` sub-phase) sits just after its base integer phase.
+    if token[m.end():].startswith("b"):
+        val += 0.5
+    return val
+
+
+def _resolve_depth(output_dir: Path) -> str:
+    """Resolve ASSESSMENT_DEPTH from ``.skill-config.json`` (quick/standard/
+    thorough). Defaults to ``standard`` when the file is absent or malformed —
+    the percentage only needs the right relative phase weights, and standard is
+    the representative middle profile."""
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+        depth = cfg.get("assessment_depth")
+        if isinstance(depth, str) and _PROGRESS_WEIGHTS and depth in _PROGRESS_WEIGHTS:
+            return depth
+    except Exception:
+        pass
+    return "standard"
+
+
+def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int, str] | None:
+    """Return ``(percent, phase_token)`` from ``.appsec-checkpoint``, or None.
+
+    The percentage is the cumulative weight of all *completed* phases (those
+    strictly before the current phase position) over the total — a deliberate
+    lower bound that never overstates and is phase-granular (it jumps at phase
+    boundaries and sits flat within a long phase such as Phase 9 / STRIDE). The
+    caller clamps it monotonically so resume/incremental can't move it back.
+    """
+    try:
+        text = (output_dir / ".appsec-checkpoint").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"phase=([^\s]+)", text)
+    if not m:
+        return None
+    token = m.group(1)
+    # Terminal checkpoint — the phase token (e.g. `11`) is still mid-table but
+    # the run is done; saturate to 100 rather than the 96% the weights imply.
+    if re.search(r"status=completed", text):
+        return 100, token
+    pos = _phase_position(token)
+    if pos is None:
+        return None
+    total = sum(weights.values())
+    if total <= 0:
+        return None
+    done = sum(w for p, w in weights.items() if p < pos)
+    pct = max(0, min(100, round(100 * done / total)))
+    return pct, token
+
+
 def watch(
     output_dir: Path,
     plugin_root: Path,
@@ -537,6 +635,14 @@ def watch(
     # true stall length (the summary subtracts it from wall-clock).
     run_idle_fired = False
     run_idle_peak = 0.0
+    # Periodic RUN_PROGRESS line (coarse % + net runtime). `idle_total`
+    # accumulates the peak of every *completed* stall so net runtime mid-run is
+    # wall-clock minus all standby so far; `last_pct` enforces a monotonic
+    # percentage. Both stay inert unless the run is timeable + checkpointed.
+    idle_total = 0.0
+    last_pct = -1
+    scan_start_epoch = _read_epoch(output_dir / ".scan-start-epoch")
+    progress_weights = _PROGRESS_WEIGHTS.get(_resolve_depth(output_dir)) if _PROGRESS_WEIGHTS else None
     iteration = 0
 
     while lock_path.exists():
@@ -733,7 +839,33 @@ def watch(
                         f"activity resumed after {int(run_idle_peak)}s idle (this stall)",
                     )
                     run_idle_fired = False
+                # Roll the just-ended stall's peak into the cumulative standby
+                # total before resetting (adds 0 when no stall was active).
+                idle_total += run_idle_peak
                 run_idle_peak = 0.0
+
+        # 7d — periodic RUN_PROGRESS line: coarse phase-granular % plus net
+        # runtime (wall minus cumulative standby). Best-effort and additive —
+        # only emitted for a real, timeable run (``.scan-start-epoch`` present)
+        # so unit tests with bare fixtures and pre-checkpoint early phases stay
+        # silent. The percentage is intentionally approximate (it jumps at
+        # phase boundaries and sits flat through long phases); cost is
+        # deliberately NOT shown here — a mid-run total is always an undercount
+        # while sub-agents are still running.
+        if progress_weights and scan_start_epoch:
+            snap = _progress_snapshot(output_dir, progress_weights)
+            if snap is not None:
+                pct, token = snap
+                if pct < last_pct:  # monotonic clamp (resume/incremental)
+                    pct = last_pct
+                last_pct = pct
+                elapsed = time.time() - scan_start_epoch
+                idle_now = idle_total + run_idle_peak
+                net = elapsed - idle_now
+                detail = f"~{pct}%  phase={token}  elapsed={_fmt_hms(elapsed)}  net={_fmt_hms(net)}"
+                if idle_now >= 1:
+                    detail += f" (standby {_fmt_hms(idle_now)})"
+                _log(output_dir, "INFO", "RUN_PROGRESS", detail)
 
         # 8 — self-liveness tick.
         _bump_tick(output_dir, iteration)

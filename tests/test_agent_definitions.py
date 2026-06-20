@@ -321,6 +321,24 @@ class TestBodyContentConsistency:
         _, body = parse_frontmatter(path)
         assert "claude-sonnet-4-6" in body, f"{ORCHESTRATOR}: must contain 'claude-sonnet-4-6' as MODEL_ID value"
 
+    def test_step_logging_guidance_forbids_inline_format_line(self):
+        """Regression guard (2026-06-20 Sonnet run): step/check logging must route
+        through log_event.py, and the shared standard must explicitly forbid calling
+        event_log.format_line via `python3 -c`. format_line's level/component/sid are
+        keyword-only, so a hand-rolled positional/`event_type=` call TypeErrors and
+        leaves LOG_ERR noise in .agent-run.log. The agents that already carried this
+        local prohibition (abuse-case-verifier, eval-judge) did not crash; the
+        stride-analyzer, which lacked it, did."""
+        shared = (AGENTS_DIR / "shared" / "logging-standard.md").read_text(encoding="utf-8")
+        assert "log_event.py" in shared, "logging-standard.md must mandate log_event.py for step/check logging"
+        assert "format_line" in shared and "python3 -c" in shared, (
+            "logging-standard.md must explicitly forbid calling format_line via python3 -c"
+        )
+        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer.md")
+        assert "log_event.py" in stride and "format_line" in stride, (
+            "stride-analyzer must carry the local log_event.py mandate + format_line prohibition"
+        )
+
 
 # ---------------------------------------------------------------------------
 # .gitignore-template — must cover all intermediate dot-files
