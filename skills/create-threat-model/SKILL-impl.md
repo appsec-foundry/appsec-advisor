@@ -18,6 +18,20 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 > output should be pipeline progress (the Pre-flight summary render),
 > not remarks about reading this file or running its commands.
 
+## Mode Routing — which sections apply (navigation aid; per-section conditions remain authoritative)
+
+`MODE` and the mode flags are resolved in **Configuration Resolution** below. This table is a
+read-order map only — it does **not** override any section's own gating logic; when in doubt,
+the condition stated *in* the section wins.
+
+| MODE / flag | Sections that apply (in order) | Skip |
+|---|---|---|
+| **full / standard / thorough** (default, incl. `rebuild`) | Prerequisites → Argument Parsing → Configuration Resolution → Plugin Version Gate → Configuration Summary → Stage 1 → Stage 1c (unless `skip_abuse_case_verification`/`DRY_RUN`) → Stage 2 → Stage 3 (unless `SKIP_QA`/`DRY_RUN`/`PR_MODE`) → Stage 4 (thorough or opt-in) → Completion Summary | Re-Render Mode, all Incremental sections, Resume from Checkpoint, Dry-Run Mode |
+| **incremental** (auto or `--incremental`) | as full, **plus** Incremental Pre-Check → Incremental Fast-Path (null-change abort) → Full-Scan Recommendation Prompt → Incremental Mode. Parallel-STRIDE is **never** used here. | Resume from Checkpoint, Dry-Run Mode |
+| **`--rerender`** | Configuration Resolution → **Re-Render Mode** (skips Stage 1, re-renders + re-QAs from existing fragments) → Stage 3 | Stage 1 / 1c / Stage-2 authoring |
+| **resume** (`--resume` / checkpoint present) | **Resume from Checkpoint** first, then continue at the interrupted stage | sections already completed before the checkpoint |
+| **`--dry-run`** | as full but observe **Dry-Run Mode**; no `TaskCreate`, no abuse-verifier fan-out, no Stage 3/4 | — |
+
 ## Pipeline Overview (Stage-D, post-M2.13)
 
 > **TaskList contract — read before tracking progress.** The boxes in the
