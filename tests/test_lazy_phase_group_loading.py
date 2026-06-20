@@ -174,6 +174,4 @@ def test_rerender_mode_lazy_loaded_not_inline():
     assert impl.count("modes/rerender.md") == 1, (
         "SKILL-impl.md must reference modes/rerender.md exactly once (single lazy-load pointer)"
     )
-    assert "only when `MODE=rerender`" in impl, (
-        "the modes/rerender.md load must be explicitly gated on rerender mode"
-    )
+    assert "only when `MODE=rerender`" in impl, "the modes/rerender.md load must be explicitly gated on rerender mode"
