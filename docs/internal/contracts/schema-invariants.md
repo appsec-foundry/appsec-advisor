@@ -60,9 +60,9 @@ After Phase 11, `components[i].threat_ids[]` MUST be the reverse index of `threa
 
 When `SKIP_ATTACK_WALKTHROUGHS=true`, `attack-walkthroughs.md` contains only a skip notice and no Mermaid blocks. Any QA/contract check that would fire on this stub is a false positive and MUST be conditioned on the flag. `data/sections-contract.yaml` documents this with `required_patterns_condition` and `per_critical_subsection_condition`.
 
-## §4e. §8 Threat Register — source-file links
+## §4e. §8 Threat Register — source locations
 
-When a threat carries `evidence.file` (and optionally `evidence.line`), the §8 Component column MUST render a `vscode://file/<path>:<line>` link to the exact source location, not only the component anchor. `scripts/compose_threat_model.py` emits `` [`basename:line`](vscode://file/…) (ComponentName) `` instead of `[C-NN](#c-nn) — ComponentName`. AGENTS.md Rule 10 applies at the table-cell level too.
+When a threat carries `evidence.file` (and optionally `evidence.line`), §8 must surface that exact source location in the finding card's `**Location:**` meta field. `scripts/compose_threat_model.py:_build_threat_card` renders it as one backticked token, for example `` `lib/insecurity.ts:58` ``, while the component remains a separate `C-NN` anchor in the same meta line. Do not collapse the location back into the component anchor or split the line number outside the code span.
 
 ## §4f. Fragment registry maps — single source of truth
 
