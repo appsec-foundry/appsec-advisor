@@ -3,6 +3,34 @@
 **Datei:** `appsec-advisor/skills/create-threat-model/SKILL-impl.md`
 **Stand Baseline:** 4329 Zeilen / ~346 KB (~86k Tokens)
 
+## Umsetzungsstatus (Branch `feature/skill-impl-sonnet-cleanup`, 2026-06-20)
+
+Umgesetzt wurde der **voll deterministisch verifizierbare** Teil des Plans. Alles, dessen
+plan-eigenes Akzeptanz-Gate ein Live-Sonnet-Golden-Run oder Charakterisierungstests sind
+(die ich in dieser Umgebung nicht ausführen kann), ist bewusst **nicht blind umgesetzt** —
+das gebietet „korrekte Umsetzung sicherstellen".
+
+| Workstream | Status | Beleg / Grund |
+|---|---|---|
+| **Schritt 0** Diagnose | **n/a** | Kein frischer Sonnet-Run-Hook-Log im Repo → empirische Fan-out-Kollaps-Diagnose nicht möglich; Fixes sind unabhängig valide |
+| **Schritt 1 / P1** Abuse-Verifier-MUST-Block | **DONE** (`cf7c13a`) | Vergrabener „ONE message"-Vertrag in lokalen HARD-CONSTRAINT-Block gehoben, spiegelt den bereits starken STRIDE-Block; 245+184 Tests grün |
+| P1 STRIDE-MUST-Block | **bereits ideal** | Z. 2124 hatte schon `⚠ HARD CONSTRAINT — ONE MESSAGE` + Negativ-Beispiel; kein Churn (Leitplanke 1) |
+| **P5** Mode-Routing-Tabelle | **DONE** (`6bcf2bd`) | Additive Navigations-Tabelle vor Pipeline Overview; per-Sektion-Bedingungen bleiben autoritativ; 295 Tests grün |
+| **P7** Verbatim-Subjects-Copy-Block | **bewusst NICHT** | Subjects stehen schon in gebacktickter Bedingungstabelle (Z. 1952), explizit „source of truth"; ein Copy-Block schüfe konkurrierende Zweitquelle (verletzt Leitplanke 3) |
+| **P4** pregenerate-Dedup | **bewusst NICHT** | Keine echte Duplikation: 3 Ausführungs-Sites, 2. Aufruf divergent (`+_chain-skeleton.md`); Dedup zu kanonischer Referenz verletzt R3 |
+| **P4** Marker-Lifecycle | **Befund dokumentiert, nicht ausgeführt** | Sektion „Verbose Mode — Marker File Lifecycle" existiert 2× (Z. ~699 `$VERBOSE_REPORT` vs. 863 `RESOLVED_JSON`); **863 ist autoritativ** (EXIT-Trap + Tracing-Sibling), `VERBOSE_REPORT` wird nirgends im Bash zugewiesen → ~706er Touch ist wahrscheinlich toter Code. Konsolidierung ist Code-Änderung, plan-Gate = „Golden-Run --verbose UND ohne" → nicht ausführbar hier |
+| **P8** Lazy-Load Mode-Sektionen | **gated** | Akzeptanz = Golden-Run je Modus (full+incremental+rerender); + `SKILL.md`-„in full"-Lockerung + `required-permissions.yaml` (L3) |
+| **P3** Shell→`.sh` | **gated** | Akzeptanz = Charakterisierungstests + Golden-Run; höchstes Drift-Risiko |
+| **Schritt 2** Live-Sonnet-Golden-Run | **OFFEN — Nutzer-Aktion** | ~$30/1h LLM-Lauf; das ist das Primär-Akzeptanz-Gate für ALLES oben und Vorbedingung für P4-Code/P8/P3 |
+
+**Verifikation des Umgesetzten:** volle Suite **8376 passed / 55 skipped / 0 failed**;
+`make lint` sauber bis auf vorbestehende Format-Drift in `tests/test_scan_excludes.py`
+(nicht von diesen Commits berührt). Drei reviewbare Einzel-Commits.
+
+**Nächster Schritt für den Nutzer:** Schritt 2 fahren — ein `/model sonnet`-Lauf gegen
+Juice Shop. Bestätigt der parallelen Fan-out + Strukturgleichheit zur Opus-Baseline, ist das
+Primärziel erreicht (Plan-Stopregel). Erst danach lohnen P4-Code/P8/P3.
+
 ## Ziel
 
 Der Skill soll **zuverlässig von Sonnet** (statt nur Opus) als Orchestrierer ausgeführt
