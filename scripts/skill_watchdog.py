@@ -529,7 +529,7 @@ def _phase_position(token: str) -> float | None:
         return 99.0
     val = float(m.group(1))
     # `10b` (and any `<n>b` sub-phase) sits just after its base integer phase.
-    if token[m.end():].startswith("b"):
+    if token[m.end() :].startswith("b"):
         val += 0.5
     return val
 

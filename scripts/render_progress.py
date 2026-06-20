@@ -206,6 +206,12 @@ def main() -> int:
             w(f"    ⚠ idle stall detected — {detail}")
         elif event == "RUN_RESUMED":
             w(f"    ↻ resumed — {detail}")
+        elif event == "RUN_PROGRESS":
+            w(f"    ◷ progress · {detail}")
+        elif event in ("STRIDE_STALE", "STRIDE_CANARY_TIMEOUT", "STRIDE_COMPONENT_TIMEOUT"):
+            w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
+        elif event == "SUBSTEP2_IDLE":
+            w(f"    ⛔ substep-2 idle — {detail}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")
         elif event == "ROUTE_INVENTORY_PREPASS":
@@ -213,6 +219,8 @@ def main() -> int:
         elif event == "ASSESSMENT_SUMMARY":
             w()
             w(f"✓ assessment complete — {detail}")
+        elif event == "ASSESSMENT_MODELS":
+            w(f"    models · {detail}")
 
     if status_shown:  # leave the cursor on a clean line at EOF
         out.write("\n")

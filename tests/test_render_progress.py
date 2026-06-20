@@ -61,6 +61,55 @@ def test_phase_start_banner_and_action():
     assert "dispatching recon-scanner" in out
 
 
+def test_run_progress_line_is_rendered():
+    out = _render(
+        [
+            "2026-06-20T15:45:37Z  [--------]  INFO   skill-watchdog      RUN_PROGRESS"
+            "        ~41%  phase=3  elapsed=10m55s  net=10m55s",
+        ]
+    )
+    assert "progress · ~41%" in out
+    assert "net=10m55s" in out
+
+
+def test_stride_stall_and_timeout_warnings_are_rendered():
+    out = _render(
+        [
+            "2026-06-20T15:01:00Z  [--------]  WARN   skill-watchdog    STRIDE_STALE"
+            "        no progress for 900s  stride_files=2  threshold=900s",
+            "2026-06-20T15:02:00Z  [--------]  WARN   skill-watchdog    STRIDE_CANARY_TIMEOUT"
+            "  no stride output 180s after Phase 9 start — Phase 9 likely wedged",
+            "2026-06-20T15:03:00Z  [--------]  WARN   skill-watchdog    STRIDE_COMPONENT_TIMEOUT"
+            "  component=api  idle=480s  threshold=480s",
+        ]
+    )
+    assert "⚠ stride stale —" in out
+    assert "⚠ stride canary timeout —" in out
+    assert "⚠ stride component timeout —" in out
+    assert "component=api" in out
+
+
+def test_substep2_idle_hard_limit_is_rendered():
+    out = _render(
+        [
+            "2026-06-20T15:04:00Z  [--------]  ERROR  skill-watchdog    SUBSTEP2_IDLE"
+            "        Phase 11 Substep 2 idle for 600s (threshold=600s).",
+        ]
+    )
+    assert "⛔ substep-2 idle —" in out
+    assert "600s" in out
+
+
+def test_assessment_models_line_is_rendered():
+    out = _render(
+        [
+            "2026-06-20T15:05:00Z  [--------]  INFO   hook-logger       ASSESSMENT_MODELS"
+            "   agents: stride-analyzer=sonnet, recon-scanner=haiku",
+        ]
+    )
+    assert "models · agents: stride-analyzer=sonnet" in out
+
+
 def test_agent_invoke_uses_component_and_model():
     out = _render(
         [
