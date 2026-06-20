@@ -1,8 +1,17 @@
 # Plan: Headless-Fortschritt + Laufzeit + Kosten (Analyse, NICHT umgesetzt)
 
-Status: **Analyse-only**, 2026-06-20. Drei Anzeige-Elemente in einem periodischen
-Headless-Liner + End-Summary: (1) grober Prozent-Fortschritt, (2) Netto-Laufzeit
-(gesamt − Standby), (3) Kosten (tatsächlich + API-äquivalent).
+Status: Element 1+2 **UMGESETZT** 2026-06-20 (branch feature/skill-impl-sonnet-cleanup),
+Element 3 weiterhin **deferred** (trockene Token-Pipe). Drei Anzeige-Elemente in einem
+periodischen Headless-Liner + End-Summary: (1) grober Prozent-Fortschritt, (2) Netto-
+Laufzeit (gesamt − Standby), (3) Kosten (tatsächlich + API-äquivalent).
+
+UMSETZUNG Element 1+2 (`scripts/skill_watchdog.py`): neues `RUN_PROGRESS`-Event im
+60s-Watchdog-Loop (Sektion 7d). Gewichte aus `estimate_duration._PHASE_DURATION`
+(guarded import), Depth aus `.skill-config.json`, Phase aus `.appsec-checkpoint`,
+Wall aus `.scan-start-epoch`, Standby = kumulierte RUN_RESUMED-Peaks (`idle_total`).
+Prozent monoton geklemmt, lower-bound (completed phases), `status=completed`→100.
+Nur für timeable Runs (scan-start-epoch vorhanden). 6 neue Tests, suite 56 grün,
+ruff clean. Kosten bewusst NICHT im Liner.
 
 Leitprinzip: **kleine Lösung**. Keine neue Infrastruktur, wo bestehende wiederverwendbar
 ist. Alles deterministisches Python im bestehenden 60s-Watchdog-Loop + End-Summary.
