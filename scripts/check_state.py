@@ -640,7 +640,12 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
 
     checkpoint_path = output_dir / CHECKPOINT_FILE
     if not checkpoint_path.is_file():
-        return (0, "no checkpoint present — treating as fresh run")
+        return (
+            0,
+            f"no checkpoint in {output_dir} — nothing to resume; starting "
+            "fresh. If the interrupted run used a different --output, re-run "
+            "--resume with that same path.",
+        )
     try:
         age = time.time() - checkpoint_path.stat().st_mtime
     except OSError:
@@ -709,7 +714,13 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         else:
-            marker = "✓" if code == 0 else "✗"
+            # A code-0 "no checkpoint" result is not a success — the user asked
+            # to resume and there was nothing to resume from. Flag it (⚠) rather
+            # than printing a reassuring green ✓ next to "starting fresh".
+            if code == 0 and msg.startswith("no checkpoint"):
+                marker = "⚠"
+            else:
+                marker = "✓" if code == 0 else "✗"
             print(f"{marker} {msg}")
         return code
 
