@@ -16,10 +16,13 @@ Verträgen** und **Prosa-statt-Tabellen-Verzweigungen**.
 
 ## Status — was umgesetzt + validiert ist
 
-Primärziel **erreicht und live belegt**: `/model sonnet`-Standardlauf (juice-shop
-`455206c32`, ~66 min) sauber durch — alle drei Fan-outs parallel (STRIDE 7/64 s, **Abuse 6/7 s**,
-Render 2/4 s), QA-Gate `pass` (`gate_exit 0`), Secret-Scan clean, **0 errors**, keine
-übersprungenen Schritte. Volle Suite grün (8384), je Workstream eigener Commit.
+Primärziel **erreicht und mehrfach live belegt** (Orchestrator = Sonnet):
+- Standardlauf (`455206c32`, ~66 min): alle drei Fan-outs parallel, QA-Gate `pass`, **0 errors**.
+- **Re-Validierung 2026-06-20** (`--verbose --quick --abuse-cases`, `/tmp/tm-phase-d-quick`) nach dem
+  ganzen Bündel: **STRIDE 5/38 s + Abuse 6/17 s parallel**, Verbose-Marker nach P4-Dedup ok (Appendix da,
+  **0** format_line/LOG_ERR), sauberer Abschluss (0 errors). De-Akkretierung hat Followability nicht gebrochen.
+
+Volle Suite grün, je Workstream eigener Commit.
 
 | Workstream | Status |
 |---|---|
@@ -28,28 +31,24 @@ Render 2/4 s), QA-Gate `pass` (`gate_exit 0`), Secret-Scan clean, **0 errors**, 
 | **format_line-Bug** (vom Live-Lauf aufgedeckt) | **DONE** `007f4be` — Step-Logging auf `log_event.py` mandatet, inline-`format_line` verboten; Guard-Test |
 | **P8** Lazy-Load (Pattern) | **TEILWEISE** `d3a1d4f` — Re-Render-Branch → `modes/rerender.md`, JIT-Load; Guard-Test |
 | **P3** Shell→`.sh` (größter Block) | **TEILWEISE** `df36584` — Auto-Emitter (139 Z.) → `scripts/auto_emitter_pass.sh`, Charakterisierungstests |
+| **P4** Marker-Lifecycle-Dedup | **DONE** `e8fd2c1` — divergente frühe `$VERBOSE_REPORT`-Dublette (Verbose+Tracing) raus, autoritative `RESOLVED_JSON`-Sektion + EXIT-Trap bleibt; Guard-Test; live re-validiert |
 
-## Offene Arbeit (aktueller Strang: Variante b — erst Review-Scan, dann gebündelt)
+## Abgeschlossen (Strang Variante b: Review-Scan → Fix → Re-Validierung)
 
-Voraussetzung: **ein `--verbose --quick --keep-runtime-files`-Sonnet-Lauf** (`/tmp/tm-verbose-quick`)
-liefert die Evidenz für Phase B.
+- **Phase B (DONE):** P4-Marker-Dedup (`e8fd2c1`, oben). **Recon-Inline = KEIN Fix** — der
+  `--verbose`-Lauf hatte `.route-inventory.json` (50 KB), kein Fallback → war transiente API-Latenz im
+  Standardlauf, kein Struktur-Bug.
+- **Phase D (GRÜN):** Re-Validierungslauf bestätigt das ganze Bündel (siehe Status oben).
 
-**Phase B — mit Lauf-Evidenz:**
-- **P4-Marker:** Sektionen „Verbose Mode" **und** „Tracing Mode — Marker File Lifecycle" existieren
-  je 2× (früh `$VERBOSE_REPORT` ⟷ autoritativ `RESOLVED_JSON` + EXIT-Trap). Frühes Paar entfernen,
-  autoritatives als einzige Quelle → behebt zugleich die **`VERBOSE_REPORT`-Fragilität** (2× gelesen,
-  0× zugewiesen). Gate = `--verbose`-Lauf bestätigt Marker-Verhalten unverändert.
-- **Recon-Inline-Fallback:** Diagnose aus dem Lauf — `.route-inventory.json` vorhanden? Turn-Exhaustion
-  vs. API-Latenz? **Fix nur falls Turn-Budget**; bei API-Latenz kein sauberer Struktur-Fix.
+## Offen — bewusst zurückgestellt
 
-**Phase C — De-Akkretierung (runtime-byte-identisch, test-verifiziert, konservativ):**
-- **P6:** ~132 Incident-/Versions-Marker aus dem Anweisungsfluss → knappe Rand-/Changelog-Notiz.
-  Chesterton: schützende Rationale ko-lokalisieren, nicht löschen.
-- **Meta-Narration:** 28× verstreut → 1 starke Aussage oben + lokale Verstärkung an 2–3 heißen
-  Stellen. R2-Risiko (Redundanzabbau schwächt Adhärenz) → genau dafür ist Phase D Pflicht.
-
-**Phase D — finaler Sonnet-Re-Validierungslauf.** Beweist, dass das Entrümpeln die Followability
-nicht geschwächt hat (Tests beweisen nur „Pipeline unverändert", **nicht** „Sonnet folgt noch").
+**Phase C — P6 (132 Marker) + Meta-Narration-Konsolidierung: NICHT gemacht, empfohlen wegzulassen.**
+Genaue Sichtung zeigte: die „echten" Redundanzen/Widersprüche (Dubletten-Sektionen, format_line) sind
+in B/format_line bereits behoben. Was bei P6/Meta-Narration bliebe, ist **diffuses historisches Rauschen**
+— die meisten der 28 `narrat/suppress`-Treffer sind unverwandt (`--no-yaml`, `SUPPRESS_INCOMPLETE_BANNER`,
+`NARRATIVE_PLACEHOLDER`), echte „nicht narrieren"-Wiederholung ≈ nur der Top-Block. Kosmetisch, höchstes
+Followability-Risiko (R2), geringster Korrektheitswert → Aufwand/Risiko nicht gerechtfertigt für
+„sauber + performant unter Sonnet" (= bereits erreicht).
 
 ### Gated / niedrig priorisiert (eigener Live-Run nötig oder geringer Wert)
 
