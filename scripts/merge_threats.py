@@ -65,6 +65,7 @@ _STRIDE_LETTER = {
 }
 
 _CWE_RE = re.compile(r"^CWE-(\d+)$")
+_TH_ID_RE = re.compile(r"^TH-[0-9]{2}$")
 
 
 @functools.lru_cache(maxsize=1)
@@ -216,9 +217,20 @@ def _flatten_threats(pairs: list[tuple[str, dict]]) -> list[dict]:
             # architectural_violation: required field — default False.
             t.setdefault("architectural_violation", False)
             # threat_category_id: required for source=stride; derive from
-            # CWE→TH taxonomy when missing.
-            if not t.get("threat_category_id"):
-                t["threat_category_id"] = _threat_category_id_for(t)
+            # CWE→TH taxonomy when missing OR left as the UNCLASSIFIED
+            # sentinel. The STRIDE analyzer is an LLM and sometimes emits
+            # "TH-UNCLASSIFIED" even when the threat's CWE has a deterministic
+            # mapping (e.g. CWE-829 → TH-14, a floating base-image tag).
+            # Backstop those deterministically so the merged artifact meets
+            # the ^TH-[0-9]{2}$ contract validate_intermediate enforces,
+            # rather than trusting the LLM to apply the map it was handed.
+            # If the CWE is genuinely unmappable the sentinel is left intact
+            # so validation still surfaces it.
+            tcid = t.get("threat_category_id")
+            if not tcid or not _TH_ID_RE.match(str(tcid)):
+                derived = _threat_category_id_for(t)
+                if derived:
+                    t["threat_category_id"] = derived
             # M-18 (configuration-defect tail): if the source ended up as
             # `configuration-defect` and the threat has no LLM-authored
             # mitigation_title yet, stamp a review-shaped hint so the §1

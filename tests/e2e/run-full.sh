@@ -162,7 +162,7 @@ if [ "$HTML_CAPABLE" -eq 1 ]; then
     echo ""
     echo "[1b] exporting HTML ..."
     if python3 "$PLUGIN_ROOT/scripts/export_html.py" \
-            "$OUTPUT_DIR/threat-model.md" \
+            --input "$OUTPUT_DIR/threat-model.md" \
             --output "$OUTPUT_DIR/threat-model.html"; then
         HTML_DONE=1
     else

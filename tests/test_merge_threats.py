@@ -1063,6 +1063,40 @@ class TestFlattenThreats:
         out = mt._flatten_threats([("c1", {"threats": [t]})])
         assert out[0]["evidence"] is None
 
+    def test_unclassified_sentinel_backstopped_from_cwe(self, mt):
+        # Regression: the STRIDE LLM emits the truthy "TH-UNCLASSIFIED"
+        # sentinel even when the CWE has a deterministic taxonomy mapping
+        # (CWE-829 → TH-14). The backstop must treat the sentinel as missing
+        # and derive the real category, else validate_intermediate rejects
+        # the merged artifact (^TH-[0-9]{2}$ contract).
+        t = {
+            "title": "Unpinned base image tag allows silent substitution",
+            "stride": "Tampering",
+            "cwe": "CWE-829",
+            "threat_category_id": "TH-UNCLASSIFIED",
+        }
+        out = mt._flatten_threats([("c1", {"threats": [t]})])
+        assert out[0]["threat_category_id"] == "TH-14"
+
+    def test_unclassified_sentinel_kept_when_cwe_unmappable(self, mt):
+        # Honest failure: an unmappable CWE leaves the sentinel intact so
+        # validation still surfaces it rather than silently inventing a TH.
+        t = {
+            "title": "x",
+            "stride": "Tampering",
+            "cwe": "CWE-99999",
+            "threat_category_id": "TH-UNCLASSIFIED",
+        }
+        out = mt._flatten_threats([("c1", {"threats": [t]})])
+        assert out[0]["threat_category_id"] == "TH-UNCLASSIFIED"
+
+    def test_valid_category_id_preserved(self, mt):
+        # A well-formed TH-NN must not be overwritten by the backstop even
+        # when the CWE would map elsewhere.
+        t = {"title": "y", "stride": "Tampering", "cwe": "CWE-829", "threat_category_id": "TH-08"}
+        out = mt._flatten_threats([("c1", {"threats": [t]})])
+        assert out[0]["threat_category_id"] == "TH-08"
+
     def test_configuration_defect_gets_mitigation_hint(self, mt):
         # line 228: source=configuration-defect + no mitigation_title → hint
         # stamped. Triggered via the hardcoded-secret classifier.
