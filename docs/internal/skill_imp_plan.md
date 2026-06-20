@@ -31,6 +31,11 @@ tabellarisch machen und fragile Inline-Shell entfernen.
    falsch ist), wird nicht gelöscht, sondern ko-lokalisiert (Skript-Docstring) oder knapp
    inline belassen — nie pauschal entfernt.
 5. **Inkrementell, kein Big-Bang.** Pro Workstream ein eigener, reviewbarer Commit + Test.
+6. **Cache-stable prefix respektieren.** Der Skill-Body wird pro Turn als Cache-Read
+   serviert; Einfügungen/Umordnungen nahe am Dateianfang invalidieren den stabilen Prefix
+   und können Cache-Misses *erhöhen* statt senken (AGENTS.md:186 Group-A→B→C-Disziplin).
+   Additive Änderungen unterhalb des stabilen Prefix; Byte-Offset-Verschiebung durch
+   Extraktion gegen Cache-Verhalten prüfen, nicht nur gegen Exit-Codes.
 
 ## Verifizierte Baseline (Belege, Stand 4329 Zeilen)
 
@@ -50,6 +55,9 @@ tabellarisch machen und fragile Inline-Shell entfernen.
 | Mode→Sektion-Routing-Tabelle | existiert NICHT (nur verstreute „SKIP …"-Prosa, z. B. Z. 904) | P5 |
 | Historische Rationale-Marker | 131 (M2/M3, Daten, Sprint, RC, G/DG) | P6 |
 | TaskCreate-Subjects | als verbatim-Pflicht definiert ab Z. 1946 | P7 |
+| Mode-spezifische Top-Level-Sektionen (nie im Full-Run) | 597 Z. = 13,8 % (Re-Render 32, Incr-Pre-Check 37, Incr-Fast-Path 298, Full-Scan-Prompt 119, Resume 79, Incr-Mode 20, Dry-Run 12) | P8 |
+| `SKILL-impl.md` wird „in full" geladen (Wurzel: defeats jede in-file-Lazyness) | `SKILL.md` Case-2-Anweisung | P8 |
+| Lazy-Load existiert bereits (phase-group, gepinnt) | 4 Dateien / ~6000 Z., JIT an Phasengrenzen, `test_lazy_phase_group_loading.py` | P8 |
 
 ## Workstreams
 
@@ -74,8 +82,13 @@ Bootstrap-Schritt; Prosa-Erklärung daneben kürzen.
 ### P4 — Divergente Duplikate auf eine Quelle reduzieren
 **Problem:** pregenerate 3×; Marker-Lifecycle 2× mit **unterschiedlichem** Code.
 **Aktion:**
-- pregenerate: den identischen `--only …`-Block einmal kanonisch, Wiederholungen
-  referenzieren (Identität vorher per Diff bestätigt — der `--only`-String IST identisch).
+- pregenerate: **ACHTUNG — keine vollständige Identität (per Diff verifiziert 2026-06-20).**
+  An den 3 Stellen (Z. ~2751 / ~3267 / ~3336) stehen je ZWEI Aufrufe. Der erste
+  (`--force --only system-overview…attack-walkthroughs.md`) IST über alle drei identisch →
+  kanonisierbar. Der zweite ist NICHT identisch: Z. 2760 = `--only security-architecture.md`,
+  Z. 3271/3340 = `--only security-architecture.md,_chain-skeleton.md` (Stage-2 vs.
+  Recovery-Pfad). Nur den Force-Block dedupen; den zweiten Aufruf als eigenständig behandeln,
+  sonst geht `_chain-skeleton.md` verloren bzw. wandert an die falsche Stelle.
 - Marker-Lifecycle: **zuerst klären, welcher Code-Block maßgeblich ist** (Z. 706 hängt an
   `$VERBOSE_REPORT`, Z. 875 leitet aus `RESOLVED_JSON` ab — NICHT identisch). Eine Fassung
   als kanonisch festlegen, die andere entfernen. Prosa/Überschrift sicher zusammenführbar;
@@ -130,6 +143,32 @@ korrumpiert.
 (v. a. Net-Wall-Vergleich / baseline.json-Merge → Standby-Miscount-Klasse).
 **Verifikation:** Charakterisierungstest (alt vs. neu identisch) + Golden-Run.
 
+### P8 — Mode-spezifische Sektionen lazy laden (struktureller Hebel, statt in-place komprimieren)
+**Problem:** `SKILL.md` weist an, `SKILL-impl.md` **„in full"** zu lesen → die ganze Datei
+ist jeden Lauf, in jedem Modus, resident. **597 Z. (13,8 %)** sind mode-spezifische
+Top-Level-Sektionen (incremental/rerender/resume/dry-run), die ein Standard-Full-Run nie
+ausführt, aber mitliest. Folge: ein schwaches Modell trägt 14 % irrelevanten Kontext, in
+dem es den Faden verlieren kann; P5 (Routing-Tabelle) lenkt nur die *Aufmerksamkeit* um,
+entfernt aber **keine Bytes** — sie sind durch „in full" längst geladen.
+**Schlüssel:** Das Repo hat den Mechanismus bereits — `agents/phases/phase-group-*.md`
+werden JIT an Phasengrenzen geladen (gepinnt in `test_lazy_phase_group_loading.py`,
+AGENTS.md:186). P8 wendet dieses bewährte Muster auf den Skill-Body an.
+**Aktion:** Mode-spezifische Sektionen aus `SKILL-impl.md` in eigene, an der
+Mode-Verzweigung JIT geladene Dateien migrieren (z. B. `modes/incremental.md`,
+`modes/rerender.md`, `modes/resume.md`); `SKILL-impl.md` bleibt als dünnes Full-Run-Rückgrat.
+Die Mode-Routing-Tabelle aus P5 wird dann zur *Lade*-Tabelle (welche Datei wann), nicht nur
+zur Lese-Hinweis-Tabelle. **`SKILL.md`'s „in full"-Anweisung muss entsprechend gelockert
+werden** — sie ist die eigentliche Wurzel.
+**Abgrenzung zu R3:** Operative Verträge am Dispatch-Punkt bleiben INLINE (Leitplanke 3).
+Ausgelagert werden nur *mode-conditional Bodies* — genau die Klasse, die phase-group bereits
+erfolgreich out-of-line hält. R3 verbietet das NICHT (siehe geschärftes R3).
+**Risiko:** niedrig–mittel — kein neues Arg-Interface (anders als P3), wiederverwendet
+gepinnten Loader; Hauptconstraint = cache-stable prefix (Leitplanke 6): Auslagerung muss an
+Mode-Grenzen unterhalb des stabilen Prefix sitzen.
+**Verifikation:** Golden-Run je Modus (full + mindestens incremental + rerender) lädt die
+richtige Datei zur richtigen Zeit; Full-Run-Kontext nachweislich um ~597 Z. kleiner;
+phase-group-Lazy-Load-Tests bleiben grün; Mode-Läufe strukturidentisch zur Baseline.
+
 ## Erwarteter Gewinn (Token / Zeit / Kosten)
 
 **Kernbefund: Token-/Kostenersparnis und Risiko sind korreliert.** Die billigen,
@@ -140,6 +179,7 @@ sicheren Maßnahmen sparen fast nichts; die Ersparnis steckt in den riskanteren.
 | Maßnahme | Token-Effekt | Risiko |
 |---|---|---|
 | **P3** Inline-Shell → Skript | **stark −** (größter Hebel) | hoch |
+| **P8** Mode-Sektionen lazy laden | **stark −** für Full-Run (~597 Z. / 13,8 %) | niedrig–mittel |
 | **P6** Rationale aus dem Fluss | mittel − | mittel |
 | **P1** Verträge lokal-einmal | mittel − | mittel |
 | **P4** Dedup | leicht − | niedrig–mittel |
@@ -148,7 +188,11 @@ sicheren Maßnahmen sparen fast nichts; die Ersparnis steckt in den riskanteren.
 | **P5** Routing-Tabelle | leicht **+** (additiv) | ~null |
 
 Folge: Das risikoarme Bündel **P2+P4+P5+P7 ist praktisch token-neutral** — sein Wert
-ist Followability, nicht Größe. Echte Ersparnis nur aus **P3/P6/P1**.
+ist Followability, nicht Größe. Echte Ersparnis nur aus **P3/P6/P1** — und aus **P8**, das
+für den Full-Run einen P3-vergleichbaren Byte-Gewinn (~597 Z.) bei deutlich geringerem
+Risiko liefert (kein Arg-Interface, gepinnter Loader). **P5 und P8 sind komplementär:**
+P5 ohne P8 senkt keine Tokens (Datei wird „in full" geladen), erst P8 macht die
+Routing-Tabelle zur Lade-Entscheidung.
 
 ### P3 — konkrete Messung (Baseline 4330 Zeilen)
 
@@ -247,7 +291,7 @@ Plans macht genau diesen Sonnet-Default *sicher*; den `/clear`-Effekt gibt es sc
 |---|---|
 | **R1** Keine billige Regressionsprüfung (Lauf ~$30/~1h, LLM-geführt) | Charakterisierungstests für Skripte; Sonnet-Golden-Run als Akzeptanz-Gate je Phase |
 | **R2** Redundanzabbau schwächt LLM-Adhärenz | Lokale Verstärkung am Ausführungspunkt statt globaler Wiederholung |
-| **R3** Cross-File-Referenzen werden unter Kontextdruck nicht geladen | Contracts INLINE belassen; nur Rationale/Historie auslagern |
+| **R3** Cross-File-Referenzen werden unter Kontextdruck nicht geladen | Gilt nur für **operative Verträge am Dispatch-Punkt** (MUST-Blöcke INLINE). KEIN pauschales Auslagerungsverbot: phase-group-Dateien lagern phasen-/mode-gescopte Instruktionen bereits erfolgreich aus (gepinnt). Auslagerbar: Rationale/Historie (P6) + mode-conditional Bodies (P8). NICHT auslagerbar: Verträge, die am Ausführungspunkt gelesen werden müssen. |
 | **R4** Chesterton — verlorene Schutz-Rationale | Pointer-Token am Ort; Rationale in Skript-Docstring ko-lokalisieren |
 | **R5** Extraktions-Drift (Exit-Codes/Quoting/JSON-Merge) | Verbatim Bash→`.sh` statt Python-Rewrite; Charakterisierungstest alt==neu |
 | **R6** Off-Path-Blöcke vom Golden-Run nicht abgedeckt | Synthetische Fixture-Tests für Deadline/Detektoren |
