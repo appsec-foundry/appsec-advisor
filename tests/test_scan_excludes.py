@@ -161,9 +161,7 @@ class TestYamlResolutionAndValidation:
         assert data["max_file_bytes"] == scan_excludes.DEFAULT_MAX_FILE_BYTES
 
     def test_loader_rejects_non_int_max_file_bytes(self, tmp_path):
-        fixture = _write_yaml(
-            tmp_path / "scan-excludes.yaml", {"version": 1, "max_file_bytes": "big"}
-        )
+        fixture = _write_yaml(tmp_path / "scan-excludes.yaml", {"version": 1, "max_file_bytes": "big"})
         with pytest.raises(ValueError, match="max_file_bytes must be an integer"):
             scan_excludes.load_excludes(str(fixture))
 
