@@ -19,17 +19,21 @@ das gebietet „korrekte Umsetzung sicherstellen".
 | **P7** Verbatim-Subjects-Copy-Block | **bewusst NICHT** | Subjects stehen schon in gebacktickter Bedingungstabelle (Z. 1952), explizit „source of truth"; ein Copy-Block schüfe konkurrierende Zweitquelle (verletzt Leitplanke 3) |
 | **P4** pregenerate-Dedup | **bewusst NICHT** | Keine echte Duplikation: 3 Ausführungs-Sites, 2. Aufruf divergent (`+_chain-skeleton.md`); Dedup zu kanonischer Referenz verletzt R3 |
 | **P4** Marker-Lifecycle | **Befund dokumentiert, nicht ausgeführt** | Sektion „Verbose Mode — Marker File Lifecycle" existiert 2× (Z. ~699 `$VERBOSE_REPORT` vs. 863 `RESOLVED_JSON`); **863 ist autoritativ** (EXIT-Trap + Tracing-Sibling), `VERBOSE_REPORT` wird nirgends im Bash zugewiesen → ~706er Touch ist wahrscheinlich toter Code. Konsolidierung ist Code-Änderung, plan-Gate = „Golden-Run --verbose UND ohne" → nicht ausführbar hier |
-| **P8** Lazy-Load Mode-Sektionen | **gated** | Akzeptanz = Golden-Run je Modus (full+incremental+rerender); + `SKILL.md`-„in full"-Lockerung + `required-permissions.yaml` (L3) |
-| **P3** Shell→`.sh` | **gated** | Akzeptanz = Charakterisierungstests + Golden-Run; höchstes Drift-Risiko |
+| **format_line-Bug** (surfaced Schritt 2) | **DONE** (`007f4be`) | Agent rollte Step-Logging von Hand → `python3 -c format_line(…4 positional/event_type=)` → `TypeError` + LOG_ERR-Müll. Producer-Fix: `logging-standard.md` + `stride-analyzer.md` mandaten `log_event.py` (kanonisch) + Verbot inline-`format_line`; Diff zu nicht-crashenden Agenten (abuse-verifier/eval-judge haben lokales Verbot) bestätigt die Ursache. Guard-Test. 130 grün |
+| **P8** Lazy-Load Mode-Sektionen | **TEILWEISE — Pattern bewiesen** (`d3a1d4f`) | Re-Render-Branch (saubere self-contained Sektion) verbatim → `modes/rerender.md`, JIT-Lazy-Load am Routing-Anker; `Read(${PLUGIN_ROOT}/**)` deckt `modes/*.md` (keine Permission-/`SKILL.md`-Änderung nötig). Guard-Test (9 grün). **Rest bewusst nicht blind:** Resume enthält das Always-Run **Requirements-fail-closed-Gate** (extrahieren = Bug), Incremental-Cluster ist kontrollfluss-+test-verflochten, Dry-Run rein deskriptiv → brauchen Live-Per-Mode-Run als Gate |
+| **P3** Shell→`.sh` | **TEILWEISE — größter Block** (`df36584`) | Auto-Emitter-Pass (139 Z., größter Inline-Block, „sauberster 1:1-Fall") verbatim → `scripts/auto_emitter_pass.sh`, Skill ruft `bash …`; `Bash(*)` deckt es. **Charakterisierungstests (Plan-P3-Gate, voll lauffähig):** Emitter-Sequenz+Reihenfolge gepinnt, DRY_RUN-Guard/tee-Contract, Smoke-Run gegen Golden-yaml (exit 0 + Marker + yaml-intakt), Drift-Guard. 6 grün. Weitere Blöcke (Deadline-Watchdog/Wipes/Completion-Persistenz) analog möglich, je eigener verifizierter Commit |
 | **Schritt 2** Live-Sonnet-Golden-Run | **BESTÄTIGT 2026-06-20** (DoD erfüllt) | `/model sonnet`-Lauf (standard, juice-shop `455206c32`, ~66 min) sauber durch: **alle drei Fan-outs parallel, kein Kollaps** — STRIDE 7/64 s, **Abuse-Verifier (P1-Edit) 6/7 s**, Render 2/4 s. QA-Gate `pass` (`gate_exit 0`, deterministic fast-path), Secret-Scan clean, **0 errors**, Stages 1/1c/2/3 liefen (Stage 4 korrekt @thorough-only übersprungen). 4 Warnings advisory (abuse-inconclusive, infobox-contract-drift, 2× perf-anomaly = API-Latenz), 69 threats/7 comps. **Verbleibend nur:** YAML-Struktur-Diff vs. `scans/standard2` (Nutzer-seitig, Baseline außerhalb Sandbox). Surfaced (pre-existing, NICHT vom Markdown-Refactor): `event_log.format_line()` Arg-Mismatch (2×, logging-only, nicht als error aggregiert) + Recon-Inline-Fallback |
 
-**Verifikation des Umgesetzten:** volle Suite **8376 passed / 55 skipped / 0 failed**;
-`make lint` sauber bis auf vorbestehende Format-Drift in `tests/test_scan_excludes.py`
-(nicht von diesen Commits berührt). Drei reviewbare Einzel-Commits.
+**Verifikation des Umgesetzten:** je Workstream eigener reviewbarer Commit + Tests; volle
+Suite grün (`make lint` sauber bis auf vorbestehende Format-Drift in
+`tests/test_scan_excludes.py`, nicht berührt). Branch `feature/skill-impl-sonnet-cleanup`.
 
-**Nächster Schritt für den Nutzer:** Schritt 2 fahren — ein `/model sonnet`-Lauf gegen
-Juice Shop. Bestätigt der parallelen Fan-out + Strukturgleichheit zur Opus-Baseline, ist das
-Primärziel erreicht (Plan-Stopregel). Erst danach lohnen P4-Code/P8/P3.
+**Verbleibende Live-Gates (nicht in dieser Umgebung fahrbar, Nutzer-seitig):**
+- **P8/Incremental + Resume + Dry-Run**: per-Modus Golden-Run (`--incremental` / `--rerender`)
+  bevor die entangleten Sektionen extrahiert werden — Resume v. a. wegen des Always-Run
+  Requirements-fail-closed-Gates.
+- **P3/weitere Blöcke**: Charakterisierungstest + ein voller Golden-Run pro extrahiertem Block.
+- **P4-Marker**: `--verbose` UND ohne, um die Autorität von Z. 863 vs. ~706 zu bestätigen.
 
 ## Ziel
 
