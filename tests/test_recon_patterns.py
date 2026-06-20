@@ -127,6 +127,28 @@ class TestHardExcludes:
         assert files == ["src/app.ts"]
         assert manifest == ["src/app.ts"]
 
+    def test_walk_repo_skips_oversize_files(self, repo, monkeypatch, capsys):
+        monkeypatch.setenv("APPSEC_MAX_FILE_BYTES", "1000")
+        (repo / "src").mkdir()
+        (repo / "src" / "small.ts").write_text("export const x = 1;\n", encoding="utf-8")
+        (repo / "src" / "huge.json").write_text("x" * 2000, encoding="utf-8")
+
+        rp._OVERSIZE_SKIPPED.clear()
+        files = [p.relative_to(repo).as_posix() for p in rp._walk_repo(repo)]
+
+        assert files == ["src/small.ts"]
+        assert "src/huge.json" in rp._OVERSIZE_SKIPPED
+        assert "skipped oversize file" in capsys.readouterr().err
+
+    def test_run_all_reports_oversize_count(self, repo, monkeypatch):
+        monkeypatch.setenv("APPSEC_MAX_FILE_BYTES", "1000")
+        (repo / "huge.json").write_text("x" * 2000, encoding="utf-8")
+
+        report = rp.run_all(repo)
+
+        assert report["skipped_oversize_count"] == 1
+        assert report["skipped_oversize"] == ["huge.json"]
+
     def test_grep_file_truncates_long_lines_and_ignores_missing_file(self, repo):
         path = repo / "app.ts"
         path.write_text('app.get("/admin", h);' + "x" * 450 + "\n", encoding="utf-8")

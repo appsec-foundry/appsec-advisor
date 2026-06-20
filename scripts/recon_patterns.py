@@ -71,6 +71,13 @@ except Exception:  # pragma: no cover
     _SCAN_EXCLUDES = False
 
 
+# Repo-relative paths skipped this run because they exceed the central
+# per-file byte cap (scan_excludes.max_file_bytes). Accumulated across every
+# per-category walk, deduped, surfaced on stderr (once each) and in run_all's
+# JSON. Cleared at the start of each run_all().
+_OVERSIZE_SKIPPED: set[str] = set()
+
+
 # ---------------------------------------------------------------------------
 # Default fallback excludes when scan_excludes.yaml is unavailable.
 # ---------------------------------------------------------------------------
@@ -289,6 +296,23 @@ def _walk_repo(
                 except (OSError, RuntimeError, ValueError):
                     continue
             if not _should_read(p):
+                continue
+            # Central per-file byte cap: a file past the cap is almost never
+            # application source (data blob / bundle / generated artifact);
+            # skip it rather than burn tokens reading it. Report once per
+            # unique path so the omission is visible, not silent.
+            if _SCAN_EXCLUDES and scan_excludes.is_oversize(p):
+                if rel not in _OVERSIZE_SKIPPED:
+                    _OVERSIZE_SKIPPED.add(rel)
+                    try:
+                        sz = p.stat().st_size
+                    except OSError:
+                        sz = -1
+                    print(
+                        f"recon_patterns.py: skipped oversize file "
+                        f"({sz} bytes > cap {scan_excludes.max_file_bytes()}): {rel}",
+                        file=sys.stderr,
+                    )
                 continue
             if manifest is not None:
                 manifest.append(rel)
@@ -942,6 +966,7 @@ def run_all(
     repo_root: Path,
     include_manifest: bool = False,
 ) -> dict[str, Any]:
+    _OVERSIZE_SKIPPED.clear()
     out: dict[str, Any] = {
         "version": 1,
         "repo_root": str(repo_root),
@@ -967,6 +992,9 @@ def run_all(
             pass
         out["scan_manifest"] = sorted(manifest)
         out["scan_manifest_count"] = len(manifest)
+    if _OVERSIZE_SKIPPED:
+        out["skipped_oversize"] = sorted(_OVERSIZE_SKIPPED)
+        out["skipped_oversize_count"] = len(_OVERSIZE_SKIPPED)
     return out
 
 

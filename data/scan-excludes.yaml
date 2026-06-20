@@ -16,6 +16,19 @@
 version: 1
 
 # ---------------------------------------------------------------------------
+# Per-file byte cap. Files larger than this are skipped by every scan stage
+# that enumerates files in deterministic Python (recon_patterns,
+# route_inventory). Application source is almost always small; a file past
+# this size is overwhelmingly a data blob, bundle, snapshot, or generated
+# artifact — not code worth analysing — and reading it only burns tokens and
+# wall-clock. Skipped files are reported on stderr and in the recon JSON
+# (skipped_oversize / skipped_oversize_count).
+#
+# Override per run without editing this file via the APPSEC_MAX_FILE_BYTES
+# env var (takes precedence over this value). Set to 0 to disable the cap.
+max_file_bytes: 1000000   # 1 MB
+
+# ---------------------------------------------------------------------------
 # Directory names excluded from all scans (match any path segment).
 # ---------------------------------------------------------------------------
 directories:

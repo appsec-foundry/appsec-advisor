@@ -157,6 +157,56 @@ class TestYamlResolutionAndValidation:
         assert data["always_include"]["file_patterns"] == []
         assert data["always_include"]["path_prefixes"] == []
         assert data["opt_in"] == {}
+        # max_file_bytes defaults when omitted.
+        assert data["max_file_bytes"] == scan_excludes.DEFAULT_MAX_FILE_BYTES
+
+    def test_loader_rejects_non_int_max_file_bytes(self, tmp_path):
+        fixture = _write_yaml(
+            tmp_path / "scan-excludes.yaml", {"version": 1, "max_file_bytes": "big"}
+        )
+        with pytest.raises(ValueError, match="max_file_bytes must be an integer"):
+            scan_excludes.load_excludes(str(fixture))
+
+
+# ---------------------------------------------------------------------------
+# max_file_bytes() / is_oversize() — per-file byte cap
+# ---------------------------------------------------------------------------
+
+
+class TestMaxFileBytes:
+    def test_shipped_yaml_declares_cap(self):
+        data = scan_excludes.load_excludes()
+        assert isinstance(data["max_file_bytes"], int)
+        assert data["max_file_bytes"] > 0
+
+    def test_yaml_value_used(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("APPSEC_MAX_FILE_BYTES", raising=False)
+        excludes = _minimal_excludes(max_file_bytes=512)
+        assert scan_excludes.max_file_bytes(excludes) == 512
+
+    def test_env_overrides_yaml(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_MAX_FILE_BYTES", "777")
+        excludes = _minimal_excludes(max_file_bytes=512)
+        assert scan_excludes.max_file_bytes(excludes) == 777
+
+    def test_bad_env_falls_back_to_yaml(self, monkeypatch):
+        monkeypatch.setenv("APPSEC_MAX_FILE_BYTES", "not-a-number")
+        excludes = _minimal_excludes(max_file_bytes=512)
+        assert scan_excludes.max_file_bytes(excludes) == 512
+
+    def test_is_oversize_respects_limit(self, tmp_path):
+        f = tmp_path / "blob.json"
+        f.write_text("x" * 2000, encoding="utf-8")
+        assert scan_excludes.is_oversize(f, limit=1000)
+        assert not scan_excludes.is_oversize(f, limit=5000)
+
+    def test_is_oversize_disabled_when_cap_not_positive(self, tmp_path):
+        f = tmp_path / "blob.json"
+        f.write_text("x" * 2000, encoding="utf-8")
+        assert not scan_excludes.is_oversize(f, limit=0)
+
+    def test_is_oversize_missing_file_returns_false(self, tmp_path):
+        assert not scan_excludes.is_oversize(tmp_path / "nope.json", limit=1)
 
 
 # ---------------------------------------------------------------------------

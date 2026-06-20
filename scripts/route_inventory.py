@@ -51,8 +51,10 @@ _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 try:
     from scan_excludes import is_excluded as _scan_is_excluded  # type: ignore
+    from scan_excludes import is_oversize as _scan_is_oversize  # type: ignore
 except Exception:  # pragma: no cover
     _scan_is_excluded = None
+    _scan_is_oversize = None
 
 
 _SOURCE_EXTS = {
@@ -111,6 +113,9 @@ def _walk_sources(repo_root: Path) -> Iterable[Path]:
                 continue
             p = Path(dirpath) / name
             if p.suffix.lower() not in _SOURCE_EXTS:
+                continue
+            # Central per-file byte cap: skip oversize blobs (not real source).
+            if _scan_is_oversize is not None and _scan_is_oversize(p):
                 continue
             yield p
 

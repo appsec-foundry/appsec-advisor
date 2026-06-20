@@ -54,6 +54,10 @@ except ImportError:  # pragma: no cover - pyyaml is a hard dependency
 _HERE = Path(__file__).resolve().parent
 _DEFAULT_YAML = _HERE.parent / "data" / "scan-excludes.yaml"
 
+# Per-file byte cap applied when the YAML omits `max_file_bytes`. Files larger
+# than this are almost never application source — see scan-excludes.yaml.
+DEFAULT_MAX_FILE_BYTES = 1_000_000
+
 
 def _yaml_path() -> Path:
     """Resolve the scan-excludes.yaml location.
@@ -98,6 +102,11 @@ def load_excludes(yaml_path_str: str | None = None) -> dict:
     for key in ("file_patterns", "path_prefixes"):
         data["always_include"].setdefault(key, [])
     data.setdefault("opt_in", {})
+
+    # Per-file byte cap. Missing → default; must be a plain integer.
+    cap = data.setdefault("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
+    if isinstance(cap, bool) or not isinstance(cap, int):
+        raise ValueError("scan-excludes.yaml: max_file_bytes must be an integer")
 
     return data
 
@@ -192,6 +201,43 @@ def is_excluded(
         return True
 
     return False
+
+
+def max_file_bytes(excludes: dict | None = None) -> int:
+    """Resolve the per-file byte cap for scans.
+
+    Precedence: ``APPSEC_MAX_FILE_BYTES`` env var → ``max_file_bytes`` in
+    scan-excludes.yaml → :data:`DEFAULT_MAX_FILE_BYTES`. A value ``<= 0``
+    disables the cap (no file is treated as oversize). An unparseable env
+    value is ignored in favour of the configured value.
+    """
+    env = os.environ.get("APPSEC_MAX_FILE_BYTES")
+    if env is not None and env.strip():
+        try:
+            return int(env)
+        except ValueError:
+            pass
+    excludes = excludes or load_excludes()
+    val = excludes.get("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
+    try:
+        return int(val)
+    except (TypeError, ValueError):  # pragma: no cover - load_excludes validates
+        return DEFAULT_MAX_FILE_BYTES
+
+
+def is_oversize(path, limit: int | None = None) -> bool:
+    """Return True iff *path* exceeds the configured byte cap.
+
+    A cap ``<= 0`` disables the check. Stat failures return ``False`` so a
+    transient error never silently drops a file from the scan.
+    """
+    cap = max_file_bytes() if limit is None else limit
+    if cap <= 0:
+        return False
+    try:
+        return os.path.getsize(path) > cap
+    except OSError:
+        return False
 
 
 def glob_exclusion_string(
