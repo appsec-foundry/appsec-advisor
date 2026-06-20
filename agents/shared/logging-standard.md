@@ -81,7 +81,18 @@ Run the echo and `date +%s` as two separate Bash calls (or combine only those tw
 
 ## Step/check logging
 
-Append at the **start** and **end** of each step or check (see event catalog above for which event pair applies to each agent):
+Emit at the **start** and **end** of each step or check (see event catalog above for which event pair applies to each agent). **Use the canonical `log_event.py` helper** — it stamps the timestamp and the correct column widths for you, so the line can never be malformed:
+
+```bash
+# STEP_START / STEP_END pairs (stride-analyzer, context-resolver, triage-validator, orchestrator):
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent <AGENT>
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent <AGENT>
+
+# Any other event type (recon SCAN_START/SCAN_END, qa CHECK_START/CHECK_END, …) — use the `info` form:
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info <EVENT> "<message>" --agent <AGENT>
+```
+
+**⚠ NEVER hand-roll the line via `python3 -c` calling `event_log.format_line` directly.** `format_line`'s `level` / `component` / `sid` parameters are **keyword-only** — a positional call (`format_line(ts, sid, event, detail)`) or an invented kwarg (`event_type=`) raises `TypeError: format_line() takes from 1 to 2 positional arguments…` and leaves `LOG_ERR` / traceback noise in `.agent-run.log` (observed on the 2026-06-20 Sonnet run). Always go through `log_event.py` above. If — and only if — that script is unavailable, fall back to a plain `echo` (never `python3 -c`):
 
 ```bash
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   <AGENT>  <EVENT>   <message>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
