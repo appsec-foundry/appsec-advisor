@@ -21,7 +21,7 @@ das gebietet „korrekte Umsetzung sicherstellen".
 | **P4** Marker-Lifecycle | **Befund dokumentiert, nicht ausgeführt** | Sektion „Verbose Mode — Marker File Lifecycle" existiert 2× (Z. ~699 `$VERBOSE_REPORT` vs. 863 `RESOLVED_JSON`); **863 ist autoritativ** (EXIT-Trap + Tracing-Sibling), `VERBOSE_REPORT` wird nirgends im Bash zugewiesen → ~706er Touch ist wahrscheinlich toter Code. Konsolidierung ist Code-Änderung, plan-Gate = „Golden-Run --verbose UND ohne" → nicht ausführbar hier |
 | **P8** Lazy-Load Mode-Sektionen | **gated** | Akzeptanz = Golden-Run je Modus (full+incremental+rerender); + `SKILL.md`-„in full"-Lockerung + `required-permissions.yaml` (L3) |
 | **P3** Shell→`.sh` | **gated** | Akzeptanz = Charakterisierungstests + Golden-Run; höchstes Drift-Risiko |
-| **Schritt 2** Live-Sonnet-Golden-Run | **OFFEN — Nutzer-Aktion** | ~$30/1h LLM-Lauf; das ist das Primär-Akzeptanz-Gate für ALLES oben und Vorbedingung für P4-Code/P8/P3 |
+| **Schritt 2** Live-Sonnet-Golden-Run | **TEILWEISE — Kern bestätigt 2026-06-20** | `/model sonnet`-Lauf (standard, juice-shop `455206c32`) gefahren: **alle drei Fan-outs unter Sonnet parallel, kein Kollaps** — STRIDE 7 Komp. in 64 s, **Abuse-Verifier (P1-Edit) 6 in 7 s**, Parallel-Render 2 in 4 s. Followability-Primärziel live erreicht. **Offen:** voller Completion-DoD (Stage 3 QA + Abschluss) + YAML-Struktur-Diff vs. Baseline. Surfaced (pre-existing, nicht vom Refactor): `event_log.format_line()` Arg-Mismatch + Recon-Inline-Fallback |
 
 **Verifikation des Umgesetzten:** volle Suite **8376 passed / 55 skipped / 0 failed**;
 `make lint` sauber bis auf vorbestehende Format-Drift in `tests/test_scan_excludes.py`
