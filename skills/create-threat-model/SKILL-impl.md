@@ -705,42 +705,12 @@ RESOLVE_ARGS=$(printf '%s' "$INVOCATION_ARGS" | sed 's/--force\b//g' | xargs)
 
 Use `$RESOLVE_ARGS` (not `$INVOCATION_ARGS`) in all `resolve_config.py` invocations below. `INVOCATION_ARGS` is still passed verbatim to Stage 1/2 agent prompts so the orchestrator can see the original invocation.
 
-### Verbose Mode — Marker File Lifecycle
-
-`--verbose` has two distinct effects that must both be activated for the user to actually see verbose behaviour:
-
-1. **`VERBOSE_REPORT=true`** — appends the `## Appendix: Run Statistics` section to `threat-model.md` (handled by the orchestrator via the variable passed in the Stage 1 agent prompt).
-2. **Live stderr mirroring** — causes `scripts/agent_logger.py` to mirror each hook log line to stderr in real time, surfacing `PHASE_START`, `STEP_START`, `SCAN_START`, `AGENT_INVOKE`, `TOOL_ERROR` etc. to the terminal as the run progresses.
-
-Effect (2) runs inside hook processes spawned by Claude Code itself, **not** inside the skill's Bash calls. Env vars set with `export` inside a skill Bash call therefore do **not** reach the hooks — Claude Code is the parent process of both, so the skill can only communicate with hooks through the filesystem (or through config.json, which is shared across runs).
-
-The mechanism: when `VERBOSE_REPORT=true` is resolved, `touch` a per-user marker file that `agent_logger.py` checks alongside `APPSEC_VERBOSE` and `config.json → logging.verbose`. On skill exit (both success and failure paths), remove the marker so later non-verbose runs are not accidentally verbose.
-
-```bash
-VERBOSE_MARKER="${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)"
-
-if [ "$VERBOSE_REPORT" = "true" ]; then
-  touch "$VERBOSE_MARKER"
-fi
-```
-
-The cleanup is placed at the **end** of the Completion Summary section (both the dry-run and normal paths) and inside every error branch that exits non-zero. See "Completion Summary" and "Error Handling" below.
-
-### Tracing Mode — Marker File Lifecycle
-
-`--tracing` activates per-agent token/turn/cost/wall-time tracking. Like verbose mode, the hook processes that perform the tracing are spawned by Claude Code itself and cannot inherit env vars from skill Bash calls — the marker-file mechanism is used.
-
-```bash
-TRACING_MARKER="${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
-
-if [ "$TRACING" = "true" ]; then
-  touch "$TRACING_MARKER"
-fi
-```
-
-When active, `agent_logger.py` writes `AGENT_DISPATCH` events (at agent spawn time) and `AGENT_COMPLETE` events (at session end) to `.appsec-trace.log`, then appends an `ASSESSMENT_TRACE` Markdown table when the outer session ends.
-
-Clean up `$TRACING_MARKER` at the same places as the verbose marker (Completion Summary, error branches, dry-run path). The trace log itself (`.appsec-trace.log`) is **not** cleaned up — it is a permanent audit artifact alongside `.agent-run.log` and `.hook-events.log`.
+The verbose/tracing **marker-file lifecycle** (touch on resolve, EXIT-trap cleanup) is
+defined and executed once, canonically, in the Verbose-Mode and Tracing-Mode Marker
+File Lifecycle sections after Configuration Resolution. Those canonical blocks gate the
+`touch` on `RESOLVED_JSON` (`verbose` / `tracing`). A divergent earlier duplicate of these
+two sections (gated on `$VERBOSE_REPORT`/`$TRACING`) was removed 2026-06-20; the canonical
+blocks remain authoritative and carry the EXIT trap.
 
 ## Configuration Resolution
 
