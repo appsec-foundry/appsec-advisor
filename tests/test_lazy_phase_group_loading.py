@@ -149,3 +149,31 @@ def test_agents_md_documents_lazy_loading():
     assert re.search(r"lazy[- ]load", text, re.IGNORECASE), (
         "AGENTS.md must document the lazy-loading protocol (Sprint 4 Item #9)"
     )
+
+
+# ---------------------------------------------------------------------------
+# P8 — mode-specific sections lazy-loaded out of SKILL-impl.md (modes/*.md)
+# ---------------------------------------------------------------------------
+
+SKILL_IMPL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+MODES_DIR = PLUGIN_ROOT / "skills" / "create-threat-model" / "modes"
+
+
+def test_rerender_mode_lazy_loaded_not_inline():
+    """P8: the rerender branch body must live in modes/rerender.md and be loaded
+    just-in-time, not sit inline in SKILL-impl.md's resident full-run context.
+    SKILL-impl.md keeps exactly one lazy-load pointer; the operative bash gate
+    moved verbatim into the mode file."""
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+    mode = (MODES_DIR / "rerender.md").read_text(encoding="utf-8")
+
+    gate = "rerender needs an existing assessment"
+    assert gate not in impl, "rerender precondition gate must NOT be inline in SKILL-impl.md (lazy-load it)"
+    assert gate in mode, "rerender precondition gate must live verbatim in modes/rerender.md"
+
+    assert impl.count("modes/rerender.md") == 1, (
+        "SKILL-impl.md must reference modes/rerender.md exactly once (single lazy-load pointer)"
+    )
+    assert "only when `MODE=rerender`" in impl, (
+        "the modes/rerender.md load must be explicitly gated on rerender mode"
+    )
