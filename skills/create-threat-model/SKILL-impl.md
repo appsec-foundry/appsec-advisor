@@ -282,8 +282,8 @@ RECOVERY_AUTO_TRACING=false
 DEAD_PRIOR_BY_HOOKLOG=false
 HOOK_LOG="$OUTPUT_DIR_PREVIEW/.hook-events.log"
 if [ -f "$HOOK_LOG" ]; then
-  HK_SPAWN=$(grep -c "AGENT_SPAWN.*appsec-threat-analyst" "$HOOK_LOG" 2>/dev/null || echo 0)
-  HK_SUMMARY=$(grep -c "ASSESSMENT_SUMMARY" "$HOOK_LOG" 2>/dev/null || echo 0)
+  HK_SPAWN=$(grep -c "AGENT_SPAWN.*appsec-threat-analyst" "$HOOK_LOG" 2>/dev/null)
+  HK_SUMMARY=$(grep -c "ASSESSMENT_SUMMARY" "$HOOK_LOG" 2>/dev/null)
   # Each successful run produces exactly one AGENT_SPAWN of the orchestrator
   # and one ASSESSMENT_SUMMARY at the end. If spawns exceed summaries by ≥1
   # AND the most recent log entry is more than 5 minutes old, the prior run
@@ -757,7 +757,7 @@ The JSON contains, among others:
 | ``incremental`` / ``rebuild`` / ``dry_run`` | bool | |
 | ``assessment_depth`` / ``depth_label`` | str | ``"standard"`` |
 | ``reasoning_model`` / ``reasoning_label`` | str | ``"opus-cheap"`` |
-| ``stride_model`` / ``triage_model`` / ``merger_model`` | str | ``"claude-sonnet-4-6"`` / ``"claude-sonnet-4-6"`` / ``"claude-opus-4-7"`` (at default ``opus-cheap``) |
+| ``stride_model`` / ``triage_model`` / ``merger_model`` | str | all Opus at the standard/thorough default (``opus`` tier); all ``"claude-sonnet-4-6"`` at ``quick``/``sonnet-economy`` |
 | ``architect_review`` / ``architect_model`` / ``architect_label`` | bool / str | |
 | ``write_yaml`` / ``write_sarif`` / ``write_pentest_tasks`` | bool | |
 | ``check_requirements`` / ``requirements_url_override`` / ``requirements_label`` | bool / str | |
@@ -1168,7 +1168,7 @@ Notes
   • `plugin tier=major` → `"STRONGLY consider --full — major plugin bump may contain breaking analysis changes that incremental cannot retro-apply."`
   • `plugin tier=minor` → `"Consider --full — minor plugin bumps usually ship analysis improvements that only affect newly-scanned code in incremental."`
   • `compat=older-compatible` → `"Analysis schema drifted (baseline analysis_version older but compatible) — full rebuild applies new categories to ALL findings."`
-  • `cfg.repo_size_capped=True` → `"STRIDE component count capped at <N> (would have been 5) due to large repo (<S> source files)."`
+  • `cfg.repo_size_capped=True` → `"Large repo (<S> source files) → longer run expected; reasoning stays on the default tier and components are criteria-selected, not reduced (no attack surface dropped)."`
 
 The rendered summary goes verbatim into the response text — no
 ``` code fence around it. Section headers (`Target`, `Plugin`, `Decision`, ...)
