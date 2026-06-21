@@ -140,6 +140,89 @@ def test_cmd_merge_existing_verdict_not_stubbed(tmp_path):
     assert "note" not in v  # real verdict kept verbatim
 
 
+# --- RC-4: unfinalized pre-seed detection ----------------------------------
+
+
+def test_is_unfinalized_preseed_all_inconclusive_no_reason():
+    v = {
+        "abuse_case_id": "AC-T-003",
+        "step_verdicts": [
+            {"step": 1, "verdict": "inconclusive", "evidence": {"file": "x", "line": 1}},
+            {"step": 2, "verdict": "inconclusive", "evidence": {"file": "", "line": 0}},
+        ],
+    }
+    assert mod._is_unfinalized_preseed(v) is True
+
+
+def test_is_unfinalized_preseed_reasoned_inconclusive_is_genuine():
+    # A reasoned inconclusive (per the verifier contract) is NOT a pre-seed.
+    v = {
+        "step_verdicts": [
+            {"step": 1, "verdict": "inconclusive", "reason": "could not resolve handler precedence within budget"},
+        ],
+    }
+    assert mod._is_unfinalized_preseed(v) is False
+
+
+def test_is_unfinalized_preseed_any_decided_step_is_finalized():
+    v = {
+        "step_verdicts": [
+            {"step": 1, "verdict": "confirmed"},
+            {"step": 2, "verdict": "inconclusive"},
+        ],
+    }
+    assert mod._is_unfinalized_preseed(v) is False
+
+
+def test_is_unfinalized_preseed_empty_steps_is_not_preseed():
+    # No steps at all → handled by the missing-candidate stub path, not here.
+    assert mod._is_unfinalized_preseed({"step_verdicts": []}) is False
+
+
+def test_load_verdict_files_flags_unfinalized(tmp_path):
+    _write(
+        tmp_path / ".abuse-case-verdict-AC-T-003.json",
+        {
+            "abuse_case_id": "AC-T-003",
+            "step_verdicts": [
+                {"step": 1, "verdict": "inconclusive"},
+                {"step": 2, "verdict": "inconclusive"},
+            ],
+        },
+    )
+    out = mod._load_verdict_files(tmp_path)
+    assert out["AC-T-003"]["_not_finalized"] is True
+
+
+def test_cmd_merge_warns_on_unfinalized(tmp_path, capsys):
+    _write(
+        tmp_path / ".abuse-case-verdict-AC-T-003.json",
+        {
+            "abuse_case_id": "AC-T-003",
+            "step_verdicts": [{"step": 1, "verdict": "inconclusive"}],
+        },
+    )
+    rc = mod.cmd_merge(_ns(tmp_path))
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "did not finalize" in err and "AC-T-003" in err
+    merged = json.loads((tmp_path / ".abuse-case-verdicts.json").read_text())
+    v = next(v for v in merged["verdicts"] if v["abuse_case_id"] == "AC-T-003")
+    assert v["_not_finalized"] is True
+
+
+def test_cmd_merge_no_unfinalized_warning_when_reasoned(tmp_path, capsys):
+    _write(
+        tmp_path / ".abuse-case-verdict-AC-T-009.json",
+        {
+            "abuse_case_id": "AC-T-009",
+            "step_verdicts": [{"step": 1, "verdict": "inconclusive", "reason": "ambiguous middleware order"}],
+        },
+    )
+    mod.cmd_merge(_ns(tmp_path))
+    assert "did not finalize" not in capsys.readouterr().err
+
+
 # --- main / argparse -------------------------------------------------------
 
 

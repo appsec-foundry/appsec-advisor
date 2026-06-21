@@ -632,7 +632,15 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
       * ``output_tokens > 50k`` regardless of reason → ``high_token_usage``
             (always emit — long sessions are independently interesting).
     """
-    issues: list[dict] = []
+    # SESSION_STOP is logged REPEATEDLY for the same session with a
+    # monotonically-growing CUMULATIVE `out` (the Claude Code SessionStop hook
+    # fires per checkpoint, not once). Counting each snapshot as its own anomaly
+    # turns one long session into dozens of identical warnings (2026-06-21
+    # juice-shop: 18 threat-analyst snapshots → 18 `session_stop_unknown`
+    # entries that swamped the real signals). Collapse per source-agent to the
+    # FINAL (max-out) snapshot — the cumulative figure is the actionable one.
+    by_source: dict[str, dict] = {}
+    counts: dict[str, int] = {}
     for ln, raw in agent_log:
         ev = _parse_event_line(raw)
         if not ev or ev["event"] != "SESSION_STOP":
@@ -653,27 +661,41 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
         # actionable (long-running session worth flagging).
         if reason == "unknown" and 0 < out_tokens <= SUBAGENT_OUTPUT_TOKEN_WARN:
             continue
-        if reason == "unknown" or out_tokens > SUBAGENT_OUTPUT_TOKEN_WARN:
-            issues.append(
-                {
-                    "category": "session_stop_unknown" if reason == "unknown" else "high_token_usage",
-                    "severity": "warning",
-                    "title": (
-                        f"SESSION_STOP from {ev['source']}: reason={reason}, "
-                        f"out={out_tokens:,} tokens, cost=${cost:.2f}"
-                    ),
-                    "evidence": {
-                        "log_file": ".agent-run.log",
-                        "log_line": ln,
-                        "raw_event": raw[:300],
-                        "timestamp_iso": ev["ts"],
-                        "source_agent": ev["source"],
-                        "stop_reason": reason,
-                        "output_tokens": out_tokens,
-                        "cost_usd": cost,
-                    },
-                }
-            )
+        if not (reason == "unknown" or out_tokens > SUBAGENT_OUTPUT_TOKEN_WARN):
+            continue
+        key = ev["source"] or "?"
+        counts[key] = counts.get(key, 0) + 1
+        candidate = {
+            "category": "session_stop_unknown" if reason == "unknown" else "high_token_usage",
+            "severity": "warning",
+            "title": (
+                f"SESSION_STOP from {ev['source']}: reason={reason}, "
+                f"out={out_tokens:,} tokens, cost=${cost:.2f}"
+            ),
+            "evidence": {
+                "log_file": ".agent-run.log",
+                "log_line": ln,
+                "raw_event": raw[:300],
+                "timestamp_iso": ev["ts"],
+                "source_agent": ev["source"],
+                "stop_reason": reason,
+                "output_tokens": out_tokens,
+                "cost_usd": cost,
+            },
+        }
+        prev = by_source.get(key)
+        if prev is None or out_tokens >= prev["evidence"]["output_tokens"]:
+            by_source[key] = candidate
+
+    issues: list[dict] = []
+    for issue in sorted(by_source.values(), key=lambda i: i["evidence"]["log_line"]):
+        key = issue["evidence"]["source_agent"] or "?"
+        folded = counts.get(key, 1)
+        if folded > 1:
+            # Make the collapse explicit so the count is not silently hidden.
+            issue["evidence"]["folded_snapshots"] = folded
+            issue["title"] += f" (final of {folded} cumulative snapshots)"
+        issues.append(issue)
     return issues
 
 

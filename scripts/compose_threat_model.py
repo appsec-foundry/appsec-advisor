@@ -947,36 +947,12 @@ def _component_lookup(ctx: RenderContext) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _normalize_anti_pattern_component_refs(ctx: RenderContext) -> None:
-    """Rewrite ms-anti-patterns.json ``affected_components`` slug ids → canonical C-NN.
+def _component_slug_to_cnn_map(ctx: RenderContext) -> dict[str, str]:
+    """Build a lower-cased {component-id-or-slug → canonical C-NN} lookup.
 
-    The threat-renderer (RENDER_ROLE=ms) is documented to emit C-NN ids
-    (``agents/appsec-threat-renderer.md`` → ms-anti-patterns authoring contract),
-    but in practice it sometimes writes the raw component slug it reads from
-    ``threat-model.yaml`` (``backend-api``) instead. ``anti-patterns.schema.json``
-    requires the canonical ``^C-\\d{2,}$`` form, and the section renderer emits
-    the value verbatim as a Markdown anchor — so a slug both fails strict
-    validation (a HARD compose abort, observed on the 2026-06-12 juice-shop run)
-    and, if it slipped through, would point at a non-existent ``#backend-api``
-    anchor. Normalising slug→C-NN here — once, before either validation site
-    (the strict pre-pass and the section renderer) — makes the fragment
-    schema-valid and the anchor resolvable.
-
-    Idempotent: an already-canonical ref is untouched; an unknown ref is left
-    as-is so the schema still catches genuine garbage. The C-NN assignment
-    (``C-{idx:02d}`` by component array order) is identical to
-    ``_component_lookup`` so anchors stay consistent across the document.
+    The C-NN assignment (``C-{idx:02d}`` by component array order) is identical
+    to ``_component_lookup`` so anchors stay consistent across the document.
     """
-    path = ctx.fragments_dir / "ms-anti-patterns.json"
-    if not path.is_file():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return  # malformed JSON is the validator's problem, not ours
-    aps = data.get("anti_patterns")
-    if not isinstance(aps, list):
-        return
     cmap: dict[str, str] = {}
     for idx, c in enumerate(ctx.yaml_data.get("components") or [], start=1):
         if not isinstance(c, dict):
@@ -986,31 +962,95 @@ def _normalize_anti_pattern_component_refs(ctx: RenderContext) -> None:
         if raw:
             cmap[raw.lower()] = canonical
         cmap[canonical.lower()] = canonical
+    return cmap
+
+
+def _normalize_affected_component_refs(refs: Any, cmap: dict[str, str]) -> tuple[Any, bool]:
+    """Return (normalised refs, changed?) for an ``affected_components`` list.
+
+    Accepts both the bare-string form (``"backend-api"``) and the ``{id, name}``
+    dict form the schemas permit. An already-canonical or unknown ref is left
+    untouched so the schema still catches genuine garbage.
+    """
+    if not isinstance(refs, list):
+        return refs, False
+    new_refs: list[Any] = []
     changed = False
-    for ap in aps:
-        if not isinstance(ap, dict):
+    for r in refs:
+        if isinstance(r, str):
+            canon = cmap.get(r.strip().lower())
+            if canon and canon != r:
+                new_refs.append(canon)
+                changed = True
+                continue
+        elif isinstance(r, dict) and isinstance(r.get("id"), str):
+            canon = cmap.get(r["id"].strip().lower())
+            if canon and canon != r["id"]:
+                r = {**r, "id": canon}
+                changed = True
+        new_refs.append(r)
+    return new_refs, changed
+
+
+def _normalize_fragment_component_refs(
+    ctx: RenderContext, filename: str, list_key: str
+) -> None:
+    """Rewrite ``affected_components`` slug ids → canonical C-NN in one MS fragment.
+
+    Shared engine for ms-anti-patterns.json (``anti_patterns[]``) and
+    ms-ai-exposure.json (``ai_risks[]``). Both fragment schemas require the
+    canonical ``^C-\\d{2,}$`` form, but the threat-renderer (RENDER_ROLE=ms)
+    sometimes writes the raw component slug it reads from ``threat-model.yaml``
+    (e.g. ``ai-chatbot-service``) instead — a HARD ``--strict`` compose abort
+    (observed: anti-patterns 2026-06-12, ai-exposure 2026-06-21 juice-shop).
+    Normalising here — once, before BOTH validation sites — makes the fragment
+    schema-valid and any derived anchor resolvable. Idempotent.
+    """
+    path = ctx.fragments_dir / filename
+    if not path.is_file():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return  # malformed JSON is the validator's problem, not ours
+    items = data.get(list_key)
+    if not isinstance(items, list):
+        return
+    cmap = _component_slug_to_cnn_map(ctx)
+    changed = False
+    for it in items:
+        if not isinstance(it, dict):
             continue
-        refs = ap.get("affected_components")
-        if not isinstance(refs, list):
-            continue
-        new_refs: list[Any] = []
-        for r in refs:
-            if isinstance(r, str):
-                canon = cmap.get(r.strip().lower())
-                if canon and canon != r:
-                    new_refs.append(canon)
-                    changed = True
-                    continue
-            elif isinstance(r, dict) and isinstance(r.get("id"), str):
-                # The schema also accepts {id, name} dicts; normalise the id.
-                canon = cmap.get(r["id"].strip().lower())
-                if canon and canon != r["id"]:
-                    r = {**r, "id": canon}
-                    changed = True
-            new_refs.append(r)
-        ap["affected_components"] = new_refs
+        new_refs, item_changed = _normalize_affected_component_refs(
+            it.get("affected_components"), cmap
+        )
+        if item_changed:
+            it["affected_components"] = new_refs
+            changed = True
     if changed:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _normalize_anti_pattern_component_refs(ctx: RenderContext) -> None:
+    """Normalise ms-anti-patterns.json ``affected_components`` slug ids → C-NN.
+
+    Thin wrapper over ``_normalize_fragment_component_refs`` retained as a stable
+    public entry point (referenced by ``tests/test_fragment_authoring_fidelity``).
+    """
+    _normalize_fragment_component_refs(ctx, "ms-anti-patterns.json", "anti_patterns")
+
+
+def _normalize_ms_component_refs(ctx: RenderContext) -> None:
+    """Normalise component refs across every MS fragment that carries them.
+
+    Covers both ms-anti-patterns.json (``anti_patterns[]``) and
+    ms-ai-exposure.json (``ai_risks[]``) so a slug in EITHER fragment is rewritten
+    to its canonical C-NN before validation. Previously only anti-patterns was
+    normalised, so an ai-exposure slug hard-failed ``compose --strict`` with no
+    recovery (RC-1, 2026-06-21 juice-shop run).
+    """
+    _normalize_fragment_component_refs(ctx, "ms-anti-patterns.json", "anti_patterns")
+    _normalize_fragment_component_refs(ctx, "ms-ai-exposure.json", "ai_risks")
 
 
 def _threat_lookup(ctx: RenderContext) -> dict[str, dict[str, Any]]:
@@ -14776,12 +14816,13 @@ def render(
     # Render each section in contract order.
     rendered_parts: list[str] = []
 
-    # Normalise LLM-authored component refs in ms-anti-patterns.json (slug→C-NN)
-    # before BOTH validation sites — the strict pre-pass directly below and the
-    # `_render_architectural_anti_patterns` section renderer. The renderer
-    # documents C-NN ids but sometimes emits the yaml slug, which fails the
-    # schema and breaks the anchor (2026-06-12 juice-shop compose abort).
-    _normalize_anti_pattern_component_refs(ctx)
+    # Normalise LLM-authored component refs (slug→C-NN) across ALL MS fragments
+    # that carry them — ms-anti-patterns.json AND ms-ai-exposure.json — before
+    # BOTH validation sites (the strict pre-pass directly below and the section
+    # renderers). The renderer documents C-NN ids but sometimes emits the yaml
+    # slug, which fails the schema and breaks the anchor (anti-patterns
+    # 2026-06-12; ai-exposure 2026-06-21 juice-shop compose aborts).
+    _normalize_ms_component_refs(ctx)
 
     _validate_known_json_fragments(ctx)
 

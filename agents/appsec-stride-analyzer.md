@@ -24,6 +24,26 @@ Strict token budget — keep these rules in mind throughout the run:
 - **Do NOT read `.recon-summary.md`** — the relevant tech-stack and interface info is already in your prompt parameters.
 - **Batch Grep calls** — issue parallel Grep tool calls in one turn when searching the same file for multiple patterns.
 
+## Environment setup — MANDATORY FIRST Bash call
+
+**Your VERY FIRST Bash call MUST export the run paths**, before the startup log
+line, before any Read/Grep, before anything else:
+
+```bash
+export OUTPUT_DIR="<OUTPUT_DIR from your prompt>"
+export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from your prompt>"
+```
+
+This is not optional and not cosmetic. Both `scripts/log_event.py` and
+`scripts/agent_progress.sh` read `$OUTPUT_DIR` from the shell environment —
+`agent_progress.sh` **silently exits 0 without writing `.progress/<id>.json`**
+when `$OUTPUT_DIR` is unset (`scripts/agent_progress.sh:12`), and the startup
+log line writes nowhere. The Agent dispatch passes `OUTPUT_DIR` as *prompt text*,
+not as an inherited shell variable, so if you do not `export` it first every
+`"$OUTPUT_DIR"` in the commands below expands to the empty string. A missing
+`.progress/<id>.json` blinds the orchestrator's STRIDE-dispatch gate and the
+watchdog. Do this once, as the literal first command, then proceed.
+
 ## Operational signals (print + log + progress)
 
 You emit three operational signals during the run. Treat them as one concern:

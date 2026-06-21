@@ -5056,9 +5056,31 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             covered_idx = len(lines)
             lines.append(_COVERED_SENTINEL)
         else:
-            lines.append(
-                "**Controls covered:** <!-- NARRATIVE_PLACEHOLDER: list concrete subcontrols as markdown links to H4 headings. -->"
-            )
+            # Empty security_controls[] for this §7.x. When findings ARE routed
+            # (the case-(b) fallback below emits a single
+            # `#### {section}.1 {default_mech}` block), emit a MECHANICAL, LOCKED
+            # `**Controls covered:**` line linking to exactly that heading so the
+            # link↔heading pair is consistent by construction. The old free-form
+            # NARRATIVE_PLACEHOLDER here invited the renderer to invent control
+            # links (CORS/CSRF/CSP) with no matching #### blocks, which trips
+            # qa_checks.check_control_subsection_coverage (§7.8 RC, 2026-06-21
+            # juice-shop run). When NO findings are routed (case a) the section
+            # ships a `_Not applicable_` stub the gate skips, and at quick depth
+            # the section is dropped entirely at the `quick_depth` guard below —
+            # both keep the legacy placeholder (harmless, never gate-checked).
+            _fb_links = _v2_finding_links(threats, heading, max_links=5)
+            if _fb_links and not quick_depth:
+                _fb_mech_raw = _V2_DEFAULT_MECHANISM.get(heading, heading.split(" ", 1)[1])
+                _fb_mech = _friendly_subcontrol_title(_fb_mech_raw)
+                lines.append(
+                    "<!-- The line below is mechanically derived from the section's "
+                    "default mechanism — LLM must not re-author it. -->"
+                )
+                lines.append(f"**Controls covered:** [{_fb_mech}](#{_v2_slug(_fb_mech)}).")
+            else:
+                lines.append(
+                    "**Controls covered:** <!-- NARRATIVE_PLACEHOLDER: list concrete subcontrols as markdown links to H4 headings. -->"
+                )
         lines.append("")
         # R12 — `**Implemented controls:**` MUST open with a positive
         # inventory ("X, Y, Z are present.") and never with a negative

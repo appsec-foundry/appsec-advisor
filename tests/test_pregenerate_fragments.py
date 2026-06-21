@@ -2878,3 +2878,58 @@ class TestClassifyTierBoundary:
         node_ids = set(re.findall(r"^\s*([A-Za-z0-9_]+)[\[(]", block, re.M))
         assert "DATA" not in node_ids and "APP" not in node_ids and "BROWSER" not in node_ids
         assert len(node_ids) <= 8, f"expected ≤8 nodes, got {sorted(node_ids)}"
+
+
+# ---------------------------------------------------------------------------
+# RC-2 (2026-06-21 juice-shop): a §7.x section with routed findings but NO
+# catalogued controls must ship a `**Controls covered:**` line that matches its
+# fallback #### heading, so check_control_subsection_coverage passes WITHOUT an
+# LLM repair pass. Previously the empty-controls branch emitted a free
+# placeholder that baited the renderer into inventing mismatched control links.
+# ---------------------------------------------------------------------------
+
+
+def _load_qa():
+    if "qa_checks" in sys.modules:
+        return sys.modules["qa_checks"]
+    spec = importlib.util.spec_from_file_location("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["qa_checks"] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestControlCoverageSparseFallback:
+    def _yaml(self):
+        # CWE-352 routes to §7.8 "Browser and Cross-Origin Controls".
+        # Empty security_controls[] forces the empty-controls fallback path.
+        return {
+            "meta": {"project": {"name": "T", "description": "d"}},
+            "components": [{"id": "frontend-spa", "name": "SPA", "paths": ["frontend/**"]}],
+            "assets": [],
+            "trust_boundaries": [],
+            "attack_surface": {"unauthenticated": [], "authenticated": []},
+            "security_controls": [],
+            "threats": [
+                {"id": "T-001", "cwe": "CWE-352", "title": "CSRF on state-changing route", "severity": "high"},
+            ],
+        }
+
+    def test_78_fallback_emits_matching_controls_covered(self):
+        md = pf.gen_security_architecture_v2(self._yaml(), "standard")
+        assert "### 7.8 Browser and Cross-Origin Controls" in md
+        sec = md.split("### 7.8", 1)[1].split("\n### ", 1)[0]
+        assert "**Controls covered:**" in sec, "§7.8 fallback must keep a Controls-covered line"
+        # The free placeholder that baited the LLM into inventing links is gone.
+        assert "NARRATIVE_PLACEHOLDER: list concrete subcontrols" not in sec
+        assert "####" in sec, "§7.8 fallback must emit at least one #### heading"
+
+    def test_78_passes_real_control_coverage_gate(self, tmp_path):
+        qa = _load_qa()
+        md = pf.gen_security_architecture_v2(self._yaml(), "standard")
+        p = tmp_path / "threat-model.md"
+        p.write_text(md, encoding="utf-8")
+        report = qa.check_control_subsection_coverage(p)
+        flagged = [i for i in report.issues if "7.8" in i]
+        assert not flagged, f"§7.8 still trips control_subsection_coverage: {flagged}"

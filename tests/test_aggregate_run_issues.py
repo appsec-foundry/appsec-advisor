@@ -280,6 +280,27 @@ class TestSessionStopUnknownFilter:
         assert len(issues) == 1
         assert issues[0]["category"] == "high_token_usage"
 
+    def test_cumulative_snapshots_collapse_to_one(self):
+        """RC-5 (2026-06-21 juice-shop): SESSION_STOP fires repeatedly for the
+        SAME session with a growing cumulative `out`. The aggregator must
+        collapse those snapshots to a single final entry per source, not emit
+        one warning per snapshot (18 → 1)."""
+        log = [(i, self._stop_line(out_tokens=100_000 + i * 5_000)) for i in range(1, 19)]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert len(issues) == 1, f"expected 1 collapsed issue, got {len(issues)}"
+        ev = issues[0]["evidence"]
+        assert ev["output_tokens"] == 100_000 + 18 * 5_000  # final/max snapshot kept
+        assert ev["folded_snapshots"] == 18
+        assert "final of 18 cumulative snapshots" in issues[0]["title"]
+
+    def test_distinct_sources_not_collapsed_together(self):
+        """Two different source agents each keep their own (final) entry."""
+        a = self._stop_line(out_tokens=120_000).replace("threat-analyst", "threat-analyst")
+        b = self._stop_line(out_tokens=130_000).replace("threat-analyst", "threat-renderer")
+        log = [(1, a), (2, b)]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert {i["evidence"]["source_agent"] for i in issues} == {"threat-analyst", "threat-renderer"}
+
 
 # ---------------------------------------------------------------------------
 # _extract_gate_events — persistent gate artifacts (2026-06-12 blind spot)

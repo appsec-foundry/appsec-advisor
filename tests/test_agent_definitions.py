@@ -339,6 +339,18 @@ class TestBodyContentConsistency:
             "stride-analyzer must carry the local log_event.py mandate + format_line prohibition"
         )
 
+    def test_stride_analyzer_mandates_output_dir_export(self):
+        """Regression guard (2026-06-21 juice-shop run): 5/8 parallel stride
+        analyzers never wrote .progress/<id>.json because they did not export
+        OUTPUT_DIR as their first Bash call, so agent_progress.sh (which exits 0
+        silently when $OUTPUT_DIR is unset) no-opped. The agent doc must mandate
+        the export as the literal first command."""
+        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer.md")
+        assert 'export OUTPUT_DIR=' in stride, (
+            "stride-analyzer must mandate `export OUTPUT_DIR=` as its first Bash call "
+            "so agent_progress.sh / log_event.py see the path (RC-3)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # .gitignore-template — must cover all intermediate dot-files
