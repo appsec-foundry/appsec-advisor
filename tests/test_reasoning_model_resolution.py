@@ -196,28 +196,6 @@ class TestDefaultCoupling:
 
 
 # ---------------------------------------------------------------------------
-# --stride-model punctual override (deprecated alias)
-# ---------------------------------------------------------------------------
-
-
-class TestStrideModelDeprecation:
-    def test_stride_model_still_parsable(self):
-        rc = _load_resolver()
-        ns = rc.build_parser().parse_args(["--stride-model", "claude-custom"])
-        out = rc.resolve_reasoning_model(ns, "standard")
-        assert out["stride_model"] == "claude-custom"
-
-    def test_stride_model_does_not_affect_triage_or_merger(self):
-        """Deprecation property: --stride-model only touches STRIDE_MODEL."""
-        rc = _load_resolver()
-        ns = rc.build_parser().parse_args(["--stride-model", "claude-custom"])
-        out = rc.resolve_reasoning_model(ns, "standard")
-        # opus-cheap default → triage stays on Sonnet, merger stays on Opus.
-        assert out["triage_model"] == "sonnet"
-        assert out["merger_model"] == "opus"
-
-
-# ---------------------------------------------------------------------------
 # Env-var escape hatches
 # ---------------------------------------------------------------------------
 
@@ -234,11 +212,12 @@ class TestEnvVarOverrides:
     def test_env_var_referenced_in_resolver(self, env):
         assert env in RESOLVE_CONFIG_PY.read_text(), f"{env} must appear as an escape hatch in resolve_config.py"
 
-    def test_env_var_beats_flags(self, monkeypatch):
+    def test_env_var_beats_tier(self, monkeypatch):
         rc = _load_resolver()
         monkeypatch.setenv("APPSEC_STRIDE_MODEL", "claude-override")
-        ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet", "--stride-model", "claude-cli"])
+        ns = rc.build_parser().parse_args(["--reasoning-model", "opus"])
         out = rc.resolve_reasoning_model(ns, "standard")
+        # opus tier would set STRIDE to opus, but the env override wins.
         assert out["stride_model"] == "claude-override"
 
 
@@ -300,13 +279,3 @@ class TestAgentsMdDocumentsFlag:
     def test_opus_cheap_mode_described(self):
         text = AGENTS_MD.read_text()
         assert "opus-cheap" in text, "AGENTS.md must describe the opus-cheap mode"
-
-    def test_stride_model_deprecation_noted(self):
-        text = AGENTS_MD.read_text()
-        m = re.search(
-            r"^-\s+`--stride-model[^\n]+(?:\n\s+[^\n-][^\n]*)*",
-            text,
-            re.MULTILINE,
-        )
-        assert m, "AGENTS.md must document --stride-model as a flag bullet"
-        assert "deprecated" in m.group(0).lower(), "AGENTS.md flag bullet for --stride-model must mark it deprecated"

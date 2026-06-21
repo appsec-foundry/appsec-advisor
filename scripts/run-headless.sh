@@ -41,7 +41,8 @@
 #   --clean-all             Delete everything in <output-dir> (with confirmation); exits
 #   --force                 Skip confirmation for --clean-all (auto in CI)
 #   --model <model>         Override the Claude model (default: sonnet)
-#   --stride-model <model>  Override model for STRIDE analyzers (e.g. opus)
+#   --reasoning-model <t>   Reasoning tier for STRIDE/triage/merger: opus,
+#                           opus-cheap, sonnet, sonnet-economy
 #   --assessment-depth <l>  Assessment depth: quick, standard (default), thorough
 #   --json                  Return structured JSON output
 #   --verbose               Show the full real-time hook event log on stderr
@@ -109,7 +110,8 @@ Options:
                              unless --force / CI=true). Exits without running.
   --force                    Skip the interactive confirmation for --clean-all
   --model <model>            Override the Claude model (default: sonnet)
-  --stride-model <model>     Override model for STRIDE analyzers (e.g. opus)
+  --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
+                             opus, opus-cheap, sonnet, sonnet-economy
   --assessment-depth <level> Assessment depth: quick (~15min), standard (~25min), thorough (~40min)
   --json                     Return structured JSON output
   --verbose                  Show the full real-time hook event log on stderr
@@ -286,8 +288,8 @@ while [ $# -gt 0 ]; do
             MAX_BUDGET="$2"; shift 2 ;;
         --model)
             MODEL="$2"; shift 2 ;;
-        --stride-model)
-            SKILL_FLAGS="$SKILL_FLAGS --stride-model $2"; shift 2 ;;
+        --reasoning-model)
+            SKILL_FLAGS="$SKILL_FLAGS --reasoning-model $2"; shift 2 ;;
         --assessment-depth)
             case "$2" in
                 quick|standard|thorough)
@@ -577,6 +579,19 @@ echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
 [ -n "$VERBOSE" ]          && echo "  Verbose    : real-time hook event log on stderr"
 echo ""
+
+# ── Opus-orchestrator advisory ──────────────────────────────────────
+# `--model opus` only raises the orchestrator (main loop) — it assembles and
+# writes the report (composition, walkthroughs, banners). The actual
+# threat-reasoning work (STRIDE/triage/merger) follows its own per-agent
+# routing and is NOT affected, so Opus here adds ~5x cost without finding more.
+# The real levers are --reasoning-model opus (deeper analysis) and
+# --assessment-depth thorough (wider coverage).
+# Non-blocking: a deliberate Opus orchestrator is a legitimate choice.
+case "$MODEL" in
+    *opus*)
+        warn "Opus on --model only raises the orchestrator that writes the report (~5x cost, no extra findings). For deeper analysis use --reasoning-model opus, and/or --assessment-depth thorough for wider coverage." ;;
+esac
 
 # ── Execute ─────────────────────────────────────────────────────────
 TAIL_PID=""

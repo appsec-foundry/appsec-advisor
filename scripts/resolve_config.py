@@ -502,11 +502,7 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
 
     models = dict(MODEL_MATRIX[mode])
 
-    # Step 2: punctual override from --stride-model (deprecated alias).
-    if ns.stride_model:
-        models["stride"] = ns.stride_model
-
-    # Step 3: env var highest precedence.
+    # Step 2: env var highest precedence.
     env_map = {
         "stride": "APPSEC_STRIDE_MODEL",
         "triage": "APPSEC_TRIAGE_MODEL",
@@ -589,7 +585,7 @@ _MODEL_FIELDS = (
 def apply_opus_ban(cfg: dict, disable_opus: bool) -> dict:
     """Single, non-bypassable ceiling: rewrite every Opus selection to Sonnet.
 
-    Runs LAST in resolve() — after env overrides, --stride-model,
+    Runs LAST in resolve() — after env overrides,
     --reasoning-model resolution, the repo-size auto-switch, and the
     org-profile merge. That ordering is what makes the ceiling
     non-bypassable: an explicit ``--reasoning-model opus`` or an
@@ -1204,7 +1200,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reasoning-model",
                    choices=("sonnet", "opus-cheap", "opus",
                             "sonnet-economy", "haiku-economy"))  # haiku-economy: deprecated alias
-    p.add_argument("--stride-model", default=None)
     # Opus ceiling. When set, every Opus selection anywhere in the run is
     # downgraded to Sonnet (cost/compliance ceiling). Also settable org-wide
     # via the org-profile `policy.disable_opus` key, or via the environment

@@ -219,8 +219,7 @@ Thorough deep-dive with Opus reasoning, SCA, custom requirements, verbose stream
   --repo /repos/team-payment-api \
   --output /appsec-reports/team-payment-api/2026-04-09 \
   --assessment-depth thorough \
-  --model opus \
-  --stride-model opus \
+  --reasoning-model opus \
   --sarif \
   --requirements https://security.example.com/appsec-requirements.yaml \
   --max-budget 15 \
@@ -596,7 +595,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 | Flag | Purpose |
 |---|---|
 | `--model <model>` | Override the default Claude model (default: sonnet) |
-| `--stride-model <model>` | Override model for STRIDE analysers (e.g. `opus`) |
+| `--reasoning-model <tier>` | Reasoning tier for STRIDE/triage/merger: `opus`, `opus-cheap`, `sonnet`, `sonnet-economy` |
 
 ### Gates & caps
 

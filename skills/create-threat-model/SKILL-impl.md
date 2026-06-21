@@ -654,8 +654,7 @@ Parse the user's arguments for the following flags:
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
 | `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|sonnet-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `sonnet-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
-| `--stride-model <model>` | `STRIDE_MODEL=<model>` (punctual override, applied **after** `--reasoning-model` resolution) | (none — inherits from `--reasoning-model`) |
-| `--no-opus` | Forbid Opus anywhere; downgrades every Opus selection (incl. the `opus`/`opus-cheap` tier merger and the architect default) to Sonnet. Applied **last** in `resolve_config.py`, so it overrides `--reasoning-model opus`, `--stride-model`, and any `APPSEC_*_MODEL` env override. Also settable org-wide via org-profile `policy.disable_opus`, or via env `APPSEC_DISABLE_OPUS=1`. The three sources OR together — any can enable, none can disable. | off (Opus allowed) |
+| `--no-opus` | Forbid Opus anywhere; downgrades every Opus selection (incl. the `opus`/`opus-cheap` tier merger and the architect default) to Sonnet. Applied **last** in `resolve_config.py`, so it overrides `--reasoning-model opus` and any `APPSEC_*_MODEL` env override. Also settable org-wide via org-profile `policy.disable_opus`, or via env `APPSEC_DISABLE_OPUS=1`. The three sources OR together — any can enable, none can disable. | off (Opus allowed) |
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
 | `--quick` | shortcut for `--assessment-depth quick`; also sets `SKIP_QA=true` and `SKIP_ATTACK_WALKTHROUGHS=true` (mutually exclusive with `--thorough`) | n/a |
 | `--thorough` | shortcut for `--assessment-depth thorough` (mutually exclusive with `--quick`) | n/a |
@@ -1170,7 +1169,6 @@ Notes
   • `plugin tier=minor` → `"Consider --full — minor plugin bumps usually ship analysis improvements that only affect newly-scanned code in incremental."`
   • `compat=older-compatible` → `"Analysis schema drifted (baseline analysis_version older but compatible) — full rebuild applies new categories to ALL findings."`
   • `cfg.repo_size_capped=True` → `"STRIDE component count capped at <N> (would have been 5) due to large repo (<S> source files)."`
-  • orchestrating model is Opus-class (the model running THIS skill — you know your own model) → `"Orchestrating on Opus — this mechanical driver layer (gates/dispatch/context) costs ~5× a Sonnet session for no analysis-quality gain (sub-agents are auto-routed regardless). For routine runs, /clear then /model sonnet and re-run."` Emit this note ONCE per run, advisory only — never block, never prompt; suppress it when the orchestrating model is Sonnet/Haiku-class.
 
 The rendered summary goes verbatim into the response text — no
 ``` code fence around it. Section headers (`Target`, `Plugin`, `Decision`, ...)
@@ -3021,7 +3019,7 @@ Pass the following variables to the agent prompt:
 - `REBUILD=<true|false>` (when `true`, Phase 11 writes a `note: "full rebuild — prior threat model and changelog history were discarded on user request (--rebuild)"` into the fresh `v1` changelog entry — the pre-flight wipe already removed the baseline so the orchestrator itself runs as if first-ever)
 - `KEEP_RUNTIME_FILES=<true|false>` (default `false`; when `true` Phase 11 skips cleanup of transient artifacts — useful for debugging)
 - `SCAN_MANIFEST=<true|false>` (default `false`; when `true` the recon-scanner writes every processed file path to `$OUTPUT_DIR/.scan-manifest.txt`)
-- `STRIDE_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `--stride-model` or `$APPSEC_STRIDE_MODEL` when set)
+- `STRIDE_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `$APPSEC_STRIDE_MODEL` when set)
 - `TRIAGE_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `$APPSEC_TRIAGE_MODEL` when set)
 - `MERGER_MODEL=<model>` (from `--reasoning-model` resolution; overridden by `$APPSEC_MERGER_MODEL` when set)
 - `CONTEXT_RESOLVER_MODEL=<model>` (sonnet-economy tier; default `claude-sonnet-4-6`. Read by Phase 1 dispatch in `phase-group-recon.md`. Override via `$APPSEC_CONTEXT_RESOLVER_MODEL`.)

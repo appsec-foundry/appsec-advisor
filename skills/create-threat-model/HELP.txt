@@ -59,7 +59,6 @@ DEPTH & MODEL
                                (haiku-economy = deprecated alias, still accepted)
                                Defaults: sonnet-economy at quick,
                                          opus-cheap at standard/thorough
-  --stride-model <model>       Override the STRIDE analyzer model directly
   --architect-review           Run an advisory architect review (Stage 4)
                                Auto-enabled at depth=thorough
   --no-architect-review        Disable Stage 4 even at depth=thorough

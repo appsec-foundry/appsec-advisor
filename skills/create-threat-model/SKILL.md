@@ -21,9 +21,31 @@ perceive as a slow start):
 
 > 🔧 Building threat-model pipeline — resolving config and running pre-flight checks …
 
+**Then, only if you (the orchestrator) are running on an Opus-tier model**, emit
+exactly this one advisory line directly beneath the status line — otherwise emit
+nothing extra. The session model you started with only assembles and writes the
+report; it does **not** deepen the security analysis itself, so Opus here mostly
+multiplies cost (~5x) without finding more:
+
+> ⚠ Heads-up: running on Opus mainly increases cost (~5x), not depth — the model picked here only writes up the report, it doesn't find more threats. For a deeper assessment, put the threat analysis itself on Opus with `--reasoning-model opus`, and/or widen coverage with a thorough scan via `--assessment-depth thorough`. You can safely continue this run on a cheaper model.
+
+This advisory is console-only — never write it to any file or report artifact,
+emit it at most once, and skip it entirely on non-Opus models. (Headless
+`--model opus` runs also get a deterministic pre-launch warning from
+`scripts/run-headless.sh`; a duplicate there is harmless.)
+
+**Conversely, only if you (the orchestrator) are running on a Haiku-tier
+model**, emit this line instead (mutually exclusive with the Opus advisory —
+one or the other, never both, nothing on Sonnet):
+
+> ⚠ Warning: Haiku is too weak to orchestrate this skill — it drives strict JSON contracts, gates, and dispatch/repair loops that Haiku mishandles, which can corrupt the pipeline or produce an incomplete report. Switch with `/clear` then `/model sonnet` and re-run.
+
+Console-only, emit at most once.
+
 Then read `<base-dir>/SKILL-impl.md` in full (base-dir is on the `Base directory for this skill:` line in the invocation header), then follow all instructions in that file to run the assessment.
 
-Apart from the single status line above, read it **silently** and proceed
+Apart from the single status line above (and the conditional Opus/Haiku advisory),
+read it **silently** and proceed
 straight to execution. Do **not** narrate
 your reading: no "this is a large file", no "let me map its structure first",
 no description of how you are chunking or scanning the file. The user sees this

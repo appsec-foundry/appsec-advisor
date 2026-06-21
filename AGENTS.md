@@ -231,8 +231,7 @@ Incremental runs preserve carry-forward state used for T-ID stability; full scan
 
 Model flags:
 
-- `--reasoning-model` selects routing tier: `sonnet-economy`, `opus-cheap`, `sonnet`, or `opus`; `haiku-economy` is a deprecated alias for `sonnet-economy`.
-- `--stride-model` is a deprecated compatibility override for STRIDE only; prefer `--reasoning-model`.
+- `--reasoning-model` selects routing tier: `sonnet-economy`, `opus-cheap`, `sonnet`, or `opus`; `haiku-economy` is a deprecated alias for `sonnet-economy`. Per-agent env overrides (`APPSEC_STRIDE_MODEL` / `APPSEC_TRIAGE_MODEL` / `APPSEC_MERGER_MODEL`) take highest precedence for ad-hoc debugging.
 
 ### Deliverable presentation invariants
 

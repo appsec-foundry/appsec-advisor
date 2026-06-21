@@ -203,13 +203,6 @@ class TestResolveReasoningModel:
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["stride_model"] == "opus"
 
-    def test_stride_model_override_does_not_touch_triage(self):
-        ns = rc.build_parser().parse_args(["--stride-model", "claude-custom-1"])
-        out = rc.resolve_reasoning_model(ns, "standard")
-        assert out["stride_model"] == "claude-custom-1"
-        # opus-cheap default → triage stays on its tier-default (Sonnet).
-        assert out["triage_model"] == "sonnet"
-
     def test_env_var_highest_precedence(self, monkeypatch):
         monkeypatch.setenv("APPSEC_STRIDE_MODEL", "claude-env-override")
         ns = rc.build_parser().parse_args(["--reasoning-model", "opus"])
