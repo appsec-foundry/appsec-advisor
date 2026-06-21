@@ -525,7 +525,7 @@ def test_builder_skips_malformed_selected_component_rows(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _fake_repo(tmp_path: Path, *, cicd=True, socketio=True, auth=True) -> Path:
+def _fake_repo(tmp_path: Path, *, cicd=True, socketio=True, auth=True, web3=False) -> Path:
     repo = tmp_path / "repo"
     (repo / "routes").mkdir(parents=True)
     (repo / "lib").mkdir(parents=True)
@@ -540,6 +540,20 @@ def _fake_repo(tmp_path: Path, *, cicd=True, socketio=True, auth=True) -> Path:
         (repo / "lib" / "startup.ts").write_text("import { Server } from 'socket.io'\n", encoding="utf-8")
         (repo / "server.ts").write_text("const io = require('socket.io')\n", encoding="utf-8")
         (repo / "lib" / "insecurity.ts").write_text("// jwt helpers, no realtime\n", encoding="utf-8")
+    if web3:
+        deps["ethers"] = "^6.16.0"
+        # checkKeys.ts has no web3 token in its STEM — it is captured only by
+        # the content scan (the BIP-39 mnemonic), the exact juice-shop shape.
+        (repo / "routes" / "checkKeys.ts").write_text(
+            "// validates a BIP-39 mnemonic against a hardcoded key\n", encoding="utf-8"
+        )
+        (repo / "routes" / "nftMint.ts").write_text(
+            "import { ethers } from 'ethers'\n// NFT mint listener\n", encoding="utf-8"
+        )
+        # a shared lib mentioning web3 must NOT be claimed by web3-nft
+        (repo / "lib" / "insecurity.ts").write_text(
+            "// jwt + a web3 helper line\n", encoding="utf-8"
+        )
     (repo / "package.json").write_text(json.dumps({"dependencies": deps}), encoding="utf-8")
     if auth:
         (repo / "routes" / "login.ts").write_text("export function login(){}\n", encoding="utf-8")
@@ -689,6 +703,55 @@ def test_reconcile_no_evidence_no_injection(tmp_path):
     empty.mkdir()
     _, injected = bm.reconcile_inventory(_backend_only(), empty)
     assert injected == []
+
+
+# --- web3/wallet/NFT reconciliation (2026-06-21 juice-shop: standard folded the
+#     whole /rest/web3/ surface into backend-api and missed the Critical
+#     hardcoded BIP-39 mnemonic; thorough carved out web3-nft and found it) ----
+
+
+def test_reconcile_injects_web3_when_folded(tmp_path):
+    repo = _fake_repo(tmp_path, web3=True)
+    _, injected = bm.reconcile_inventory(_backend_only(), repo)
+    web3 = next((c for c in injected if c["id"] == "web3-nft"), None)
+    assert web3 is not None, "web3 surface evidenced but not injected"
+    assert web3["origin"] == "reconciliation"
+    assert web3["handles_sensitive_data"] is True
+    assert "internet" in web3["deployment_zones"]
+    # content-captured handler (no web3 token in its stem) is included…
+    assert any("checkKeys" in p for p in web3["paths"])
+    # …but the shared lib mentioning web3 is NOT claimed by web3-nft
+    assert not any("insecurity" in p for p in web3["paths"])
+
+
+def test_web3_injected_component_is_selected_at_standard(tmp_path):
+    repo = _fake_repo(tmp_path, web3=True)
+    augmented, _ = bm.reconcile_inventory(_backend_only(), repo)
+    selected, _ = bm.select_stride_components(augmented, "standard")
+    assert any(c["id"] == "web3-nft" for c in selected), (
+        "injected web3-nft must be selected at standard (internet-exposed + sensitive)"
+    )
+
+
+def test_web3_idempotent_when_role_already_enumerated(tmp_path):
+    repo = _fake_repo(tmp_path, web3=True)
+    comps = _backend_only() + [
+        {
+            "id": "web3-nft",
+            "name": "Web3 NFT Service",
+            "description": "wallet + nft",
+            "paths": ["routes/web3*.ts"],
+            "tier": "application",
+        }
+    ]
+    _, injected = bm.reconcile_inventory(comps, repo)
+    assert not any(c["id"] == "web3-nft" for c in injected)
+
+
+def test_detect_web3_no_evidence_returns_none(tmp_path):
+    # repo with auth/cicd/socketio but no web3 dep and no web3 content.
+    repo = _fake_repo(tmp_path, web3=False)
+    assert bm._detect_web3(repo) is None
 
 
 def test_detect_cicd_paths_cover_config_scan_surface(tmp_path):

@@ -166,6 +166,20 @@ def _is_realtime(c: dict) -> bool:
     return bool(_REALTIME_RE.search(_component_text(c)))
 
 
+# Web3 / wallet / NFT role. Matched against id/name/type only (via
+# _component_text), so a generic backend that merely *mentions* web3 in its
+# prose description does NOT count as carrying the role — only a component
+# whose stable label is actually a web3/wallet/NFT unit suppresses injection.
+_WEB3_HINTS = (
+    "web3", "nft", "blockchain", "ethereum", "wallet",
+    "smart-contract", "smartcontract", "dapp", "defi", "crypto-wallet",
+)
+
+
+def _is_web3(c: dict) -> bool:
+    return any(h in _component_text(c) for h in _WEB3_HINTS)
+
+
 def _is_exposed(c: dict) -> bool:
     return bool(_zones(c) & EXPOSED_ZONES)
 
@@ -487,12 +501,84 @@ def _detect_auth(repo_root: Path) -> dict | None:
     }
 
 
+# Web3/wallet/NFT crypto-asset surface. A distinct, high-value security unit
+# (on-chain key material, wallet-ownership proofs, NFT minting) that Phase-3
+# routinely FOLDS into a generic backend at standard depth — the deterministic
+# route inventory sees `/rest/web3/*` but no `web3` component is enumerated, so
+# the selector has nothing to pick and a whole crypto surface is never analyzed
+# (2026-06-21 juice-shop: standard missed the Critical hardcoded BIP-39 mnemonic
+# in routes/checkKeys.ts; thorough carved out `web3-nft` and found it). Detected
+# by a web3 dependency (ethers/web3/bip39/…) OR web3-signalling source content.
+_WEB3_DEPS = (
+    "ethers", "web3", "web3.js", "ethereumjs-wallet", "ethereumjs-tx",
+    "ethereumjs-util", "bip39", "bip32", "hdkey", "@ethersproject/wallet",
+    "hardhat", "solc", "merkletreejs", "keccak", "@openzeppelin/contracts",
+)
+# Content signal — word-boundary matched so a stray "ether" inside another word
+# does not fire. Deliberately omits the bare token "wallet" (too broad in
+# content) while keeping the specific web3Wallet/walletNFT identifiers.
+_WEB3_CONTENT_RE = re.compile(
+    r"\b(web3|ethers|nft|mnemonic|blockchain|ethereum|bip-?39|bip-?32|"
+    r"web3wallet|walletnft|smart[- ]?contract)\b",
+    re.I,
+)
+# Scan route-handler / contract dirs only — NOT shared `lib/` (where a web3
+# token in e.g. lib/insecurity.ts would wrongly claim the auth component's file
+# for web3-nft and create cross-component path overlap). The web3 surface is its
+# route handlers; the dep signal already covers detection regardless of layout.
+_WEB3_SCAN_DIRS = ("routes", "src", "contracts", "blockchain", "api")
+
+
+def _detect_web3(repo_root: Path) -> dict | None:
+    deps = _package_deps(repo_root)
+    dep_lib = next((d for d in _WEB3_DEPS if d in deps), None)
+    sites: set[str] = set()
+    for d in _WEB3_SCAN_DIRS:
+        base = repo_root / d
+        if not base.is_dir():
+            continue
+        try:
+            cands = [p for p in base.rglob("*") if p.is_file() and p.suffix.lower() in _SRC_SUFFIXES][:400]
+        except OSError:
+            continue
+        for p in cands:
+            try:
+                if _WEB3_CONTENT_RE.search(p.read_text(encoding="utf-8", errors="ignore")):
+                    sites.add(p.relative_to(repo_root).as_posix())
+            except OSError:
+                continue
+    paths = sorted(sites)[:12]
+    if not dep_lib and not paths:
+        return None  # no evidence — safe no-op
+    if not paths:
+        paths = ["routes/**"]  # dep present but no source matched — broad fallback
+    return {
+        "id": "web3-nft",
+        "name": "Web3 / Wallet / NFT Surface",
+        "description": (
+            "Blockchain/web3 endpoints handling wallet addresses, NFT minting, and "
+            "on-chain key material"
+            + (f" ({dep_lib})" if dep_lib else "")
+            + ". Internet-facing crypto-asset surface with its own key-handling and "
+            "ownership-verification trust boundary."
+        ),
+        "paths": paths,
+        "tier": "application",
+        "complexity": "moderate",
+        "framework": dep_lib,
+        "deployment_zones": ["internet", "dmz"],
+        "handles_sensitive_data": True,
+        "origin": "reconciliation",
+    }
+
+
 # (role-predicate, detector) pairs. A detected unit is injected only when NO
 # enumerated component already carries the role.
 _RECONCILE_DETECTORS = (
     (_is_auth, _detect_auth),
     (_is_cicd, _detect_cicd),
     (_is_realtime, _detect_realtime),
+    (_is_web3, _detect_web3),
 )
 
 
