@@ -3445,6 +3445,21 @@ loop:
       # the repaired document does not regress to plain wide-column GFM tables.
       python3 $CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py "$OUTPUT_DIR/threat-model.md" || true
       python3 $CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py autofix "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT" || true
+      # Sprint 3A-bis — after content-repair + recompose the contract may
+      # already be clean (the QA reviewer's .qa-repair-plan.json was written
+      # against a pre-repair state and is now stale). Refresh the gate here
+      # so the loop reads an up-to-date status; without this a clean document
+      # always dispatches an unnecessary fragment-fixer iteration.
+      python3 $CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py repair_plan \
+          "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" > /dev/null
+      if [ $? -eq 0 ]; then
+          python3 -c "
+import json, datetime
+json.dump({'status': 'pass', 'source': 'deterministic-post-content-repair',
+           'timestamp': datetime.datetime.utcnow().isoformat() + 'Z', 'gate_exit': 0},
+          open('$OUTPUT_DIR/.qa-status.json', 'w'), indent=2)
+"
+      fi
   read   $OUTPUT_DIR/.qa-status.json   (qa_status)
   read   $OUTPUT_DIR/.qa-repair-plan.json   (qa_plan, optional)
 

@@ -3642,6 +3642,8 @@ def _render_threat_hypotheses_table(yaml_data: dict) -> list[str]:
     lines: list[str] = [
         "#### Threat Hypotheses Requiring Validation",
         "",
+        "**Status:** 🟡 Partial — architecture-derived control gaps not yet source-to-sink proven; treat as leads requiring a validate-or-refute pentest probe before promotion to a finding.",
+        "",
         (
             "_Architecture- and control-derived threats. Plausible but not yet "
             "source-to-sink proven; each entry needs a `validate-or-refute` "
