@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+### Changed
+
+- QA re-render no longer triggers on cosmetic-only findings (diagram/chain
+  compactness, walkthrough depth, list shape, recon hints). They're reported as
+  advisories instead. Real defects — broken diagrams, missing sections, §7 drift,
+  wrong T-ID references — still re-render. Set `APPSEC_QA_COSMETIC_BLOCKING=1` for
+  the old behaviour.
+- Threat reasoning defaults to Opus at `standard` and `thorough` depth (`quick`
+  stays on Sonnet). Opt out with `--reasoning-model sonnet-economy`. Note: the
+  quality/cost payoff isn't validated yet, and earlier runs showed STRIDE
+  falling back to Sonnet despite the default — a `stride_model_mismatch` run-issue
+  now flags that case.
+- Dropped the large-repo reasoning auto-downgrade. Repository size is now
+  informational only; it no longer forces a cheaper model.
+
 ## 0.4.0-beta — 2026-06-19
 
 First public release. (Internal development reached 0.9.x; the public release

@@ -117,6 +117,15 @@ Examples: cross-reference bugs belong in the linkifier/renderer; weak threat pro
 
 Any new event-log line must go through `scripts/event_log.py` (`format_line`). Do not hand-roll log f-strings. The shared format covers `.agent-run.log`, `.hook-events.log`, and the `--------` no-session sentinel.
 
+### 14. Write `CHANGELOG.md` like a human, not an LLM
+
+Entries are for users skimming what changed, not a design log. Write the way a maintainer would: short, plain, only the points that matter.
+
+- One bullet per change, ideally one or two sentences. Lead with what changed and what the user does about it (flag, env var, command).
+- Cut the rationale, the internal mechanism, and the caveat essays. Keep a caveat only if it changes how someone uses the feature; one clause, not a paragraph.
+- No bold lead-in labels, no exhaustive enumeration of every sub-case, no "the rationale is…" / "Note that…" scaffolding. If a bullet runs past three lines, it's too long.
+- Group under the existing `Added` / `Changed` / `Fixed` headings. Match the tone of the released `0.4.0-beta` section.
+
 ## Non-obvious Design Decisions
 
 These are here because a previous run failed in a non-obvious way. Do not undo them without checking the original trigger.
@@ -125,7 +134,7 @@ These are here because a previous run failed in a non-obvious way. Do not undo t
 - **Phase group files lazy-load just in time.** Only `phase-group-recon.md` loads during Pre-Phase; the architecture, threats, and finalization groups load immediately before their phases. Bulk-reading them at startup breaks the cache-stable prefix.
 - **Prompt caching uses Group A -> Group B -> Group C ordering.** Stable values first, component scalars second, volatile context paths last. Canonical spec: `agents/phases/phase-group-threats.md` -> "Dispatch"; drift guard: `tests/test_dispatch_prompt_cache_order.py`.
 - **`docs/related-repos.yaml` is the only source for cross-repo findings deep-reads.** Filesystem siblings may annotate C4 diagrams only.
-- **Default reasoning tiers are constrained.** `quick` -> `sonnet-economy`; `standard`/`thorough` -> `opus-cheap`; `--no-opus`, `APPSEC_DISABLE_OPUS=1`, or org-profile `policy.disable_opus` downgrade all Opus selections through `scripts/resolve_config.py:apply_opus_ban()`.
+- **Default reasoning tiers are constrained.** `quick` -> `sonnet-economy`; `standard`/`thorough` -> `opus` (STRIDE/triage/merger resolve to Opus, since 2026-06 — threat reasoning is the value phase; the prior `opus-cheap` default and the large-repo economy auto-downgrade were removed). **Resolution ≠ execution for STRIDE:** the parallel dispatch must set each analyzer's Agent `model` param or it silently falls back to the `sonnet` frontmatter default (flagged as a `stride_model_mismatch` run-issue); the Opus-STRIDE benefit is not yet validated. `opus-cheap` remains an explicit `--reasoning-model` opt-in. `--no-opus`, `APPSEC_DISABLE_OPUS=1`, or org-profile `policy.disable_opus` downgrade all Opus selections through `scripts/resolve_config.py:apply_opus_ban()`.
 - **Two operating modes:** dev-team output in `docs/security/`; AppSec-team with `--repo <path>` and `--output <path>`. Path handling must work for both.
 - **Phase 2.5 is conditional config/IaC scanning** for Dockerfile, CI, docker-compose, dependency-update config, or npm/yarn config surfaces.
 - **Mermaid validation is batched.** `qa_checks.py` calls `scripts/mermaid_validate.mjs --batch-json` once per report.
@@ -167,9 +176,9 @@ Resolved by `scripts/resolve_config.py:resolve_extended_models` + `MODEL_MATRIX`
 | `appsec-context-resolver` | Haiku | Always; override `APPSEC_CONTEXT_RESOLVER_MODEL`. |
 | `appsec-recon-scanner` | Haiku | Always; override `APPSEC_RECON_SCANNER_MODEL`. |
 | `appsec-config-scanner` | Haiku | Always; override `APPSEC_CONFIG_SCANNER_MODEL`. |
-| `appsec-stride-analyzer` | Sonnet | Opus only at `--reasoning-model opus`. |
-| `appsec-threat-merger` | Opus at `opus-cheap` | Sonnet at `sonnet` / `sonnet-economy`. |
-| `appsec-triage-validator` | Sonnet | Deterministic floor in `triage_validate_ratings.py`; Opus only at explicit Opus tier. |
+| `appsec-stride-analyzer` | Opus (resolved) | Default at `standard`/`thorough` (`opus` tier); Sonnet at `quick` / `sonnet-economy` / `opus-cheap` / `sonnet`. **Caveat:** the parallel dispatch must set each Agent call's `model` param or the analyzer silently runs on its frontmatter default (`sonnet`) — `aggregate_run_issues.py` flags a `stride_model_mismatch` run-issue when it happens. |
+| `appsec-threat-merger` | Opus | Opus at `opus` / `opus-cheap`; Sonnet at `sonnet` / `sonnet-economy`. |
+| `appsec-triage-validator` | Opus | Default at `standard`/`thorough`; deterministic floor in `triage_validate_ratings.py`; Sonnet at `quick` / `sonnet-economy` / `opus-cheap` / `sonnet`. |
 | `appsec-evidence-verifier` | Sonnet | Sampled re-read. |
 | `appsec-threat-renderer` | Sonnet | Fresh Stage-2 budget. |
 | `appsec-qa-reviewer` | Sonnet | `qa_content` stays Sonnet; `qa_routine` may downgrade by tier/depth. |
@@ -203,13 +212,13 @@ Instructions live in `agents/phases/`. This table is an orientation aid and a dr
 
 ### Assessment depth profiles
 
-`--assessment-depth quick|standard|thorough` drives STRIDE turns, diagrams, QA depth, and component-selection criteria. Component selection is criteria-based in `scripts/build_stride_dispatch_manifest.py:select_stride_components()`; `max_stride_components` is a safety ceiling, not a target.
+`--assessment-depth quick|standard|thorough` drives STRIDE turns, diagrams, QA depth, and component-selection criteria. Component selection is criteria-based in `scripts/build_stride_dispatch_manifest.py:select_stride_components()`; `max_stride_components` is a flat safety ceiling (`STRIDE_COMPONENT_CEILING = 10`, the same at every depth), not a per-depth target.
 
-| Depth | Max components | STRIDE turns (simple / moderate / complex) | Diagrams | QA |
-|---|---:|---|---|---|
-| `quick` | 3 | 10 / 15 / 20 | minimal | core only (Stage 3 skipped) |
-| `standard` | 5 | 15 / 22 / 31 | standard | full |
-| `thorough` | 8 | 20 / 28 / 35 | extended | extended |
+| Depth | STRIDE turns (simple / moderate / complex) | Diagrams | QA |
+|---|---|---|---|
+| `quick` | 10 / 15 / 20 | minimal | core only (Stage 3 skipped) |
+| `standard` | 15 / 22 / 31 | standard | full |
+| `thorough` | 20 / 28 / 35 | extended | extended |
 
 Quick + default `sonnet-economy` activates `scripts/resolve_config.py:QUICK_STRIDE_PROFILE`; any other `--reasoning-model` disables that profile.
 
@@ -262,6 +271,7 @@ Prefer small, consistent changes. Before changing behavior, identify affected co
 | Agent or phase prompt | schema/output drift, permissions, model routing, prompt-injection exposure, stale phase/artifact names, Group A/B/C order, prose-style anchor |
 | New `scripts/` module | matching `tests/test_*.py` in the same commit |
 | Script command, tool use, or path access | `data/required-permissions.yaml`, `tests/test_check_permissions.py` |
+| `--flag`, depth/tier default, or model routing in `scripts/resolve_config.py` | keep the user-facing option docs in sync in the SAME commit: `docs/threat-modeler.md` (depth + reasoning-model tables), `docs/headless-mode.md`, the SKILL flag table, the AGENTS.md "Runtime model routing" table + reasoning-tier note (§Non-obvious Design Decisions), and `tests/test_resolve_config.py`. `resolve_config.py` is the single source of truth — prose that restates a default/route must point back to it, never re-derive it. |
 | Schema, fragment, or report structure | `docs/internal/contracts/schema-invariants.md`, contract, schema, producer, renderer, QA, tests |
 | Org-profile schema or packaging scripts | example org packaging repo still builds cleanly |
 | Template (`.j2`) | renderer cell-builder, schema fields, `data/sections-contract.yaml`, render/QA tests |
