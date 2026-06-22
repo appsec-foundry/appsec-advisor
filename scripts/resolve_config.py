@@ -66,6 +66,11 @@ MODEL_MATRIX = {
         "triage": "sonnet",
         "merger": "sonnet",
     },
+    # opus-cheap: explicit opt-in only — no longer any depth's default since
+    # 2026-06 (was the standard/thorough default). It puts Opus on the cheap
+    # merger phase while leaving STRIDE — the value-creating reasoning — on
+    # Sonnet, which is the inverse of where Opus pays off. Kept as a valid
+    # --reasoning-model choice for a deliberate middle ground.
     "opus-cheap": {
         "stride": "sonnet",
         # triage stays on Sonnet: scripts/triage_validate_ratings.py provides a
@@ -335,9 +340,10 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
 # cost/time lever — it created whole-component BLIND SPOTS (the 2026-06-02
 # cap-to-3 run missed the b2b-api RCE and the data-tier entirely, 23 threats vs
 # 42, and never even catalogued the §7.2 MFA surface). On large repos we now
-# keep the cheaper economy reasoning tier (sonnet-economy: STRIDE stays on
-# Sonnet, only merger/qa downgrade) but analyze ALL components — the Phase-9
-# heartbeat watchdog (skill_watchdog.py: stride-stale 900s, per-component
+# keep the default reasoning tier (Opus on STRIDE/triage/merger — large repos
+# are where Opus pays off; the B2d economy auto-downgrade was removed 2026-06)
+# and analyze ALL components — the Phase-9 heartbeat watchdog
+# (skill_watchdog.py: stride-stale 900s, per-component
 # timeout 480s) bounds any cold-cache hang instead of pre-emptively dropping
 # attack surface. Cost is controlled by the tier, not by blind spots.
 LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
@@ -371,7 +377,7 @@ def _count_source_files(repo_root: Path) -> int:
 
 
 def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
-    """B2c — switch large standard-depth repos to the economy reasoning tier.
+    """B2c — flag large standard-depth repos (informational only).
 
     Triggers only when:
       * assessment_depth is "standard" (the default tier — so the user did
@@ -379,10 +385,12 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
       * source-file count > LARGE_REPO_SOURCE_FILE_THRESHOLD
       * the user did not pass --assessment-depth thorough explicitly
 
-    On trigger: set repo_size_capped=True (drives the economy reasoning tier
-    downstream) and append a marker to depth_label. No component count is
-    reduced — the analyzed set is criteria-derived (2026-06-07), so cost is
-    controlled by the tier, not by dropping attack surface.
+    On trigger: set repo_size_capped=True and append a marker to depth_label.
+    No component count is reduced — the analyzed set is criteria-derived
+    (2026-06-07). Since 2026-06 the flag is **purely informational** (a
+    "large repo → longer run" heads-up); it no longer downgrades the reasoning
+    tier (the B2d auto-downgrade was removed — large repos are where Opus
+    reasoning pays off).
 
     Returns the patched cfg slice (dict — not the full cfg) so the caller
     can `cfg.update(...)` it.
@@ -392,15 +400,16 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
     src_count = _count_source_files(repo_root)
     if src_count <= LARGE_REPO_SOURCE_FILE_THRESHOLD:
         return {}
-    # Large repo: switch to the economy reasoning tier for cost (downstream
-    # resolve_default_tier_for_capped_repos keys on repo_size_capped). We do NOT
-    # drop components — dropping creates whole-component blind spots (2026-06-02);
-    # since 2026-06-07 the analyzed set is criteria-derived, not a number, so
-    # there is no component count to reduce here. Cost is controlled by the tier,
-    # not by blind spots.
+    # Large repo: flag it (informational). We do NOT drop components —
+    # dropping creates whole-component blind spots (2026-06-02); since
+    # 2026-06-07 the analyzed set is criteria-derived, not a number, so there
+    # is no component count to reduce here. Since 2026-06 the flag no longer
+    # downgrades the reasoning tier either (B2d removed) — it is purely a
+    # "large repo → longer run" heads-up.
     new_label = (
         f"{cfg['assessment_depth']} (criteria-selected components — "
-        f"large repo: {src_count} source files → economy reasoning tier, "
+        f"large repo: {src_count} source files → longer run expected, "
+        f"reasoning on default tier, "
         f"STRIDE turns: {cfg['stride_turns_simple']}/"
         f"{cfg['stride_turns_moderate']}/{cfg['stride_turns_complex']}, "
         f"diagrams: {cfg['diagram_depth']}, QA: {cfg['qa_depth']})"
@@ -412,74 +421,14 @@ def resolve_repo_size_cap(cfg: dict, repo_root: Path) -> dict:
     }
 
 
-def resolve_default_tier_for_capped_repos(cfg: dict,
-                                           ns: argparse.Namespace) -> dict:
-    """B2d — auto-switch reasoning tier on capped large repos.
-
-    Triggers only when ALL of the following hold:
-      * user did NOT pass ``--reasoning-model`` on the CLI (resolution
-        silently picked the depth default — opus-cheap at standard/thorough)
-      * ``repo_size_capped`` is True (set by resolve_repo_size_cap when
-        source-file count exceeds LARGE_REPO_SOURCE_FILE_THRESHOLD at
-        ``--assessment-depth standard``)
-      * the silently-resolved tier is ``opus-cheap`` (the only tier where
-        switching to ``sonnet-economy`` produces real savings — quick already
-        defaults to sonnet-economy, opus is an explicit user choice)
-
-    On trigger: switch reasoning_model to ``sonnet-economy`` and re-run the
-    dependent resolvers (reasoning_model, extended_models, stride_profile)
-    so the resulting cfg is internally consistent.
-
-    Rationale: the large-repo cap reduces ``MAX_STRIDE_COMPONENTS`` to 3,
-    which keeps the merger/triage workload small enough that paying Opus
-    rates per-token is uneconomical (Phase 9 merger handles ≤45 threats,
-    Phase 10b triage runs deterministically since M3.1). Sonnet-economy
-    keeps STRIDE on Sonnet (the value-creating phase) and downgrades only
-    merger + qa-routine where Sonnet/Haiku is sufficient.
-
-    Override path: pass any explicit ``--reasoning-model`` flag to opt out
-    of the auto-switch (this resolver does not run when ns.reasoning_model
-    is set).
-    """
-    if ns.reasoning_model:                            # explicit user choice — never override
-        return {}
-    if not cfg.get("repo_size_capped"):
-        return {}
-    if cfg.get("reasoning_model") != "opus-cheap":   # only the opus-cheap → sonnet-economy path
-        return {}
-
-    depth = cfg["assessment_depth"]
-
-    # Re-run the same resolvers we ran initially, but with the new tier.
-    # Build a synthetic ns that records the implicit tier choice so
-    # resolve_reasoning_model treats it as user-selected.
-    import copy
-    ns_synth = copy.copy(ns)
-    ns_synth.reasoning_model = "sonnet-economy"
-
-    patch: dict = {}
-    patch.update(resolve_reasoning_model(ns_synth, depth))
-    patch.update(resolve_extended_models("sonnet-economy", depth))
-    patch.update(resolve_stride_profile("sonnet-economy", depth))
-
-    # Override the label so the auto-switch is visible in --config-summary.
-    patch["reasoning_label"] = (
-        "sonnet-economy (auto — large repo: economy tier across all "
-        "criteria-selected components; "
-        "Opus on merger/triage uneconomical at this scale, STRIDE stays Sonnet)"
-    )
-    patch["reasoning_auto_switched"] = True
-    return patch
-
-
 def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     """Resolution order: env-vars → --reasoning-model → depth default.
 
     Defaults per depth:
       • quick    → sonnet-economy (deterministic-leaning agents on Haiku;
                    Reasoning core stays on Sonnet)
-      • standard → opus-cheap
-      • thorough → opus-cheap
+      • standard → opus  (STRIDE/triage/merger on Opus)
+      • thorough → opus  (STRIDE/triage/merger on Opus)
 
     Override with ``--reasoning-model sonnet`` to keep all agents on
     Sonnet at quick (pre-2026-05 behaviour). Env vars
@@ -498,7 +447,14 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     elif depth == "quick":
         mode = "sonnet-economy"
     else:
-        mode = "opus-cheap"
+        # standard/thorough default: Opus on STRIDE/triage/merger. Threat
+        # reasoning is the tool's primary value contribution; Opus there
+        # improves severity calibration and surface coverage, and on
+        # large/complex repos converges in fewer turns (lower cache-read
+        # churn), so it is at worst cost-neutral vs Sonnet there. See
+        # docs/analysis/analysis-model-placement-orchestrator-vs-stride-2026-06-21.md.
+        # Opt out with --reasoning-model sonnet-economy (or --no-opus).
+        mode = "opus"
 
     models = dict(MODEL_MATRIX[mode])
 
@@ -586,8 +542,8 @@ def apply_opus_ban(cfg: dict, disable_opus: bool) -> dict:
     """Single, non-bypassable ceiling: rewrite every Opus selection to Sonnet.
 
     Runs LAST in resolve() — after env overrides,
-    --reasoning-model resolution, the repo-size auto-switch, and the
-    org-profile merge. That ordering is what makes the ceiling
+    --reasoning-model resolution and the org-profile merge. That ordering
+    is what makes the ceiling
     non-bypassable: an explicit ``--reasoning-model opus`` or an
     ``APPSEC_*_MODEL=claude-opus-4-7`` env override are both clamped here
     after they have been applied.
@@ -1437,6 +1393,8 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         "contact_name":    ns.contact_name,
         "contact_email":   ns.contact_email,
         "logo":            ns.logo,
+        "write_pdf":       bool(ns.pdf),
+        "write_html":      bool(ns.html),
     }
 
     cfg.update(resolve_write_yaml(ns))
@@ -1502,10 +1460,11 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # know the tier.
     cfg.update(resolve_repo_size_cap(cfg, Path(cfg["repo_root"])))
 
-    # B2d — auto-switch reasoning tier on capped large repos. Must run
-    # after resolve_repo_size_cap (depends on `repo_size_capped`) and
-    # silently no-ops when ns.reasoning_model is set.
-    cfg.update(resolve_default_tier_for_capped_repos(cfg, ns))
+    # (Removed 2026-06: the B2d large-repo reasoning-tier auto-downgrade.
+    # Large repos are exactly where Opus reasoning pays off — better
+    # calibration and, via lower cache-read churn, at worst cost-neutral —
+    # so forcing them down to Sonnet was backwards. repo_size_capped is now
+    # purely informational. See docs/analysis/plan-opus-stride-default-2026-06-21.md.)
 
     cfg.update(resolve_incremental_mode(
         ns, Path(cfg["output_dir"]), ns.dry_run,
@@ -2196,8 +2155,8 @@ def _run_plan_notes(
     if cfg.get("repo_size_capped"):
         notes.append(
             f"Large repo ({cfg.get('repo_size_source_files')} source files) → "
-            f"economy reasoning tier (all criteria-selected components analyzed; "
-            f"cost controlled by tier, not by dropping components)."
+            f"longer run expected; reasoning stays on the default tier and all "
+            f"criteria-selected components are analyzed (no attack surface dropped)."
         )
 
     return notes
@@ -2356,8 +2315,6 @@ def _format_reasoning_summary(cfg: dict) -> str:
     mode = canonical_reasoning_model(cfg.get("reasoning_model")) or "unknown"
     if cfg.get("opus_disabled"):
         return f"{mode}; no-opus ceiling → all Opus selections downgraded to Sonnet"
-    if cfg.get("reasoning_auto_switched"):
-        return f"{mode}; auto-switched for large repo; STRIDE Sonnet"
     if mode == "sonnet-economy":
         return "sonnet-economy; cheap phases Haiku; STRIDE/triage/merge Sonnet"
 
@@ -2536,9 +2493,10 @@ def _configuration_post_summary_notes(cfg: dict) -> list[str]:
     if cfg.get("repo_size_capped"):
         post_lines.append(
             f"Note: large repository ({cfg['repo_size_source_files']} source files) "
-            f"→ economy reasoning tier. All criteria-selected components are still "
-            f"analyzed (no attack surface dropped). Pass --assessment-depth thorough "
-            f"to also analyze internal-only components and deepen per-component budget."
+            f"→ longer run expected. Reasoning stays on the default tier and all "
+            f"criteria-selected components are still analyzed (no attack surface "
+            f"dropped). Pass --assessment-depth thorough to also analyze internal-only "
+            f"components and deepen per-component budget."
         )
 
     # Mermaid validator status — surfaces whether Layer B (authoritative

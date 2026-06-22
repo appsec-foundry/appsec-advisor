@@ -149,18 +149,52 @@ Assessment depth controls how much of the repository is reviewed and how much va
 
 The plugin supports three assessment depths. Pick the lightest mode that still matches the risk of the change.
 
-Within a run, *which* components receive a full STRIDE pass is derived from criteria rather than a fixed per-depth count: **quick** covers the frontend, the authentication surface, internet-exposed components, and any component whose reachability cannot be proven internal (exposure-unknown — empty or runtime-only zones such as `docker-container`); **standard** additionally covers CI/CD & deployment pipelines and data stores holding credentials, PII, or payment data; **thorough** adds proven-internal components and deepens per-component analysis. The analyzed count therefore follows the repository's attack surface rather than a hard cap. (The component figures in the benchmarks below predate this criteria-based selection.)
+Within a run, *which* components get a full STRIDE pass is criteria-driven, not a fixed per-depth count:
+
+- **quick** — frontend, auth surface, internet-exposed, and exposure-unknown components (reachability not provably internal);
+- **standard** — the above plus CI/CD & deployment pipelines and stores holding credentials, PII, or payment data;
+- **thorough** — the above plus proven-internal components, with deeper per-component analysis.
+
+The analyzed count follows the repo's attack surface, not a hard cap. (Component counts in the benchmarks below predate this selection.)
 
 | Mode | Best fit | What changes | Juice Shop benchmark |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Fast feedback, pre-commit checks, early design iterations. | Covers the frontend, auth, internet-exposed components, and any component not provably internal (exposure-unknown), at reduced depth. Skips attack-chain validation and the final quality review. Good for early signal; rerun at standard depth before release decisions. | **Cost** ~ $8.49<br>**Time** ~ 33 min<br>**Findings** 14 threats / 3 components<br>Critical 4, High 8, Medium 2<br>[sample report](../examples/threat-modeler/threat-mode-juice-shop-quick.md) |
-| **Standard** *(default)* | Normal threat models and security reviews. | Full threat analysis of the exposed surface plus CI/CD and sensitive data stores, with attack-chain validation and a full quality review. The default for engineering review. | **Cost** ~ $17.37<br>**Time** ~ 65 min<br>**Findings** 31 threats / 3 components<br>Critical 9, High 13, Medium 6<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-standard.md) |
-| **Thorough** `--assessment-depth thorough` | Pre-release reviews, high-risk services, major architecture changes. | Everything in standard, plus proven-internal components, deeper analysis, and an extra architecture-review pass. Best when missed architecture risk is expensive. | **Cost** ~ $50.00+<br>**Time** ~ 72 min<br>**Findings** 38 threats / 8 components<br>Critical 8, High 23, Medium 6<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-thorough.md) |
+| **Quick** `--assessment-depth quick` | Fast feedback, pre-commit checks, early design iterations. | Reduced-depth pass; **skips** attack-chain (abuse-case) validation and the final QA review. Early signal — rerun at standard before release decisions. | **Cost** ~ $8.49<br>**Time** ~ 33 min<br>**Findings** 14 threats / 3 components<br>Critical 4, High 8, Medium 2<br>[sample report](../examples/threat-modeler/threat-mode-juice-shop-quick.md) |
+| **Standard** *(default)* | Normal threat models and security reviews. | Full-depth analysis with attack-chain validation and a full QA review. The engineering-review default. | **Cost** ~ $32<br>**Time** ~ 121 min net compute (~40 min wall-clock)<br>**Findings** 80 findings / 9 components<br>Critical 11, High 39, Medium 21, Low 9<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-thorough.md) |
+| **Thorough** `--assessment-depth thorough` | Pre-release reviews, high-risk services, major architecture changes. | Everything in standard, plus deeper per-component analysis and an extra architecture-review pass. Best when missed architecture risk is expensive. | **Cost** ~ $43+ †<br>**Time** ~ 100 min<br>**Findings** 102 findings / 10 components<br>Critical 22, High 66, Medium 12, Low 2<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-thorough.md) |
 
 > [!NOTE]
 > Benchmark numbers come from a single Node.js/Express reference app (OWASP Juice Shop) and vary substantially with repository size, language/framework mix, model routing, and cache effects. Treat the figures as ballpark orientation, not as predictions for your repo. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
 >
-> The figures above also include the **orchestration layer**, which runs in your interactive session's model (see the tip below). The standard Juice Shop run above costs ~$47 from an Opus session — but ~$20 of that is just Opus orchestration; from a Sonnet session the same run is ~$30 (the analysis sub-agents are auto-routed to Sonnet/Haiku either way, so only the orchestration share shrinks).
+> The **standard** figures reflect the 2026-06-22 Juice Shop run (standard depth, `--reasoning-model opus`) driven from a Sonnet session. STRIDE ran on **verified Opus** — `model: opus` was passed explicitly to every parallel STRIDE Agent call, closing the silent-Sonnet-fallback gap identified in earlier runs. 9 components analyzed (incl. Web3/NFT surface), 80 findings, net API compute ~121 min, wall-clock ~40 min for Stage 1 (parallel STRIDE). The **thorough** figures reflect an earlier 2026-06-22 run with 102 findings / 10 components. **† Which model actually ran STRIDE could not be verified** for that thorough run: the hook `model` fields are cosmetic/frontmatter-defaulted, and `/cost` under-reports sub-agent Opus usage. Triage is the one stage with a real Opus record (`claude-opus-4-8`); the STRIDE execution model is unknown, so the ~$43 cost should be treated as indicative only. The linked sample reports predate this run. (To run the reasoning core on Sonnet instead, see **Reasoning model** below.)
+>
+> The figures above also include the **orchestration layer**, which runs in your interactive session's model (see the tip below). The standard Juice Shop run above is ~$32 from a Sonnet session; the same run driven from an Opus session is ~$47 — the ~$15 difference is purely the added cost of running orchestration on Opus instead of Sonnet (the analysis sub-agents are routed the same way either way, so only the orchestration share grows). In relative terms the orchestration layer is roughly **40–50% of an Opus-driven run** (here ~$20 of ~$47), so driving the session with Opus adds on the order of **+25–55% to the total** — not a fixed surcharge but a *proportional* one that **grows with run length and repo size** (the orchestrator re-reads its accumulating cached context on every dispatch, so longer/larger runs carry a bigger absolute premium). None of it deepens the analysis.
+
+### Reasoning model
+
+`--reasoning-model` sets which foundation model runs the **threat-reasoning core** (STRIDE, triage, merge). The rest of the pipeline is routed independently of the tier.
+
+| Tier | STRIDE · triage · merge | When to use |
+|---|---|---|
+| `sonnet-economy` | Sonnet · Sonnet · Sonnet | Cheapest — same core as `sonnet`, but helper agents drop to Haiku. **Default at quick**; opt-in at standard/thorough. |
+| `sonnet` | Sonnet · Sonnet · Sonnet | Like `sonnet-economy`, but helper agents stay on Sonnet. |
+| `opus-cheap` | Sonnet · Sonnet · **Opus** | Opus only on the cheap merge step — a middle ground (opt-in). |
+| `opus` | **Opus** · **Opus** · **Opus** | **Default at standard/thorough** (resolved config). *Intended* for best calibration/coverage, but **the benefit is not yet validated** — observed runs silently fell back to Sonnet for STRIDE because the parallel dispatch omitted the Agent `model` param (a `stride_model_mismatch` run-issue now flags this). Treat Opus-vs-Sonnet cost/quality claims as provisional. |
+
+`--no-opus` forbids Opus everywhere (downgrades `opus`/`opus-cheap` to Sonnet; overrides all other sources, including the org profile and `APPSEC_DISABLE_OPUS=1`).
+
+Which model each role runs on:
+
+| Role | Model |
+|---|---|
+| Reasoning core (STRIDE · triage · merge) | per tier above |
+| Recon, context, config scanners | Haiku |
+| QA reviewer | Sonnet |
+| Orchestrator | Sonnet |
+| Session driver | your interactive session model |
+
+> [!TIP]
+> The reasoning model and the session model are separate, separately-billed knobs: `--reasoning-model` sets the analysis core; the session model drives orchestration (see the session-model tips below).
 
 ### Budget guardrails
 
@@ -184,7 +218,7 @@ Example:
 For very large repositories, the advisor automatically switches to an optimized scanning strategy to avoid context window overflows.
 
 > [!TIP]
-> **The session model only changes the orchestration layer** — the analysis sub-agents are auto-routed by depth/repo size either way. Sonnet is enough to drive the pipeline (it is a deterministic playbook), so for routine and incremental runs start from a Sonnet session (`/model sonnet`, `/clear` first); Opus orchestration costs ~5× more and only buys higher reliability on long, branchy runs (first runs, large repos, recovery paths) — insurance against a mis-orchestrated run, not better analysis.
+> **The session model only changes the orchestration layer** — the analysis sub-agents are auto-routed by depth/repo size either way. Sonnet is enough to drive the pipeline (it is a deterministic playbook), so for routine and incremental runs start from a Sonnet session (`/model sonnet`, `/clear` first); Opus orchestration costs ~5× more *per token on that layer* — which works out to roughly **+25–55% on the total run** (a proportional share that scales with run length and repo size, not a fixed amount) — and only buys higher reliability on long, branchy runs (first runs, large repos, recovery paths) — insurance against a mis-orchestrated run, not better analysis.
 
 ## Repo-local context
 
