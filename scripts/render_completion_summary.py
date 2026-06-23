@@ -496,6 +496,8 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         # wall-clock dominated by sleep. Single source shared with the skill's
         # last_run_seconds writer.
         "timing": run_timing.compute_timing(output_dir),
+        # Scan start epoch for local-time timestamp display.
+        "scan_start_epoch": None,
     }
 
     # Total wall-clock from .stage-stats.jsonl. Lines are JSON objects with
@@ -542,6 +544,15 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
             w = int(wall_path.read_text(encoding="utf-8").strip() or "0")
             if w > 0:
                 stats["wall_secs"] = w
+        except (OSError, ValueError):
+            pass
+
+    start_epoch_path = output_dir / ".scan-start-epoch"
+    if start_epoch_path.is_file():
+        try:
+            ep = int(start_epoch_path.read_text(encoding="utf-8").strip() or "0")
+            if ep > 0:
+                stats["scan_start_epoch"] = ep
         except (OSError, ValueError):
             pass
 
@@ -1443,6 +1454,15 @@ def _summary_architect(output_dir: Path, cfg: dict) -> str:
     return "not recorded"
 
 
+def _fmt_local_ts(epoch: int) -> str:
+    """Format an epoch as a local-time string (system timezone, e.g. CET/CEST)."""
+    try:
+        dt = _dt.datetime.fromtimestamp(epoch)
+        return dt.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+    except (OSError, OverflowError, ValueError):
+        return str(epoch)
+
+
 def render_run_overview(
     repo_root: Path,
     output_dir: Path,
@@ -1459,7 +1479,15 @@ def render_run_overview(
         scope = "fresh full repository assessment"
     if change:
         mode = f"{mode} (delta: +{change['added_n']} / ~{change['changed_n']} / -{change['resolved_n']})"
-    return [
+
+    # Local-time start / end timestamps
+    timing = stats.get("timing") or {}
+    wall = timing.get("wall_secs") or stats.get("wall_secs") or 0
+    start_epoch = stats.get("scan_start_epoch")
+    started_str = _fmt_local_ts(start_epoch) if start_epoch else "unknown"
+    finished_str = _fmt_local_ts(start_epoch + wall) if (start_epoch and wall) else "unknown"
+
+    lines = [
         "Assessment complete: Create Threat Model",
         "",
         "Repository",
@@ -1469,11 +1497,14 @@ def render_run_overview(
         f"  Mode      : {mode}",
         f"  Scope     : {scope}",
         f"  Depth     : {cfg.get('assessment_depth', 'standard')}",
+        f"  Started   : {started_str}",
+        f"  Finished  : {finished_str}",
         f"  Duration  : {_summary_duration(stats)}",
         f"  Cost      : {_summary_cost(cost)}",
         f"  QA        : {_summary_qa(output_dir, cfg)}",
         f"  Architect : {_summary_architect(output_dir, cfg)}",
     ]
+    return lines
 
 
 def render_summary(
