@@ -63,9 +63,15 @@ def main(argv: list[str] | None = None) -> int:
             continue
         dst = dest_dir / _stamped_name(basename, slug)
         if basename == "threat-model.md":
-            # Copy with the Figure 1 reference repointed at the stamped SVG.
             text = src.read_text(encoding="utf-8")
-            text = text.replace("threat-model.figure1.svg", _stamped_name("threat-model.figure1.svg", slug))
+            # Only remap the Figure 1 reference when the SVG will actually be
+            # copied — avoids a broken image link in the stamped Markdown when
+            # figure generation was skipped or failed.
+            if (src_dir / "threat-model.figure1.svg").is_file():
+                text = text.replace(
+                    "threat-model.figure1.svg",
+                    _stamped_name("threat-model.figure1.svg", slug),
+                )
             dst.write_text(text, encoding="utf-8")
         else:
             shutil.copy2(src, dst)

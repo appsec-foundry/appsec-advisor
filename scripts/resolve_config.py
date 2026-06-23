@@ -197,12 +197,23 @@ QUICK_STRIDE_PROFILE = {
 # decided by the criteria predicate over the full inventory in .components.json.
 DEPTH_PARAMS = {
     "quick":    {"simple": 10, "moderate": 15, "complex": 20,
-                 "diagrams": "minimal",  "qa": "core", "qa_label": "skipped"},
+                 "diagrams": "minimal",  "qa": "core", "qa_label": "skipped",
+                 "max_repair_iterations": 1},
     "standard": {"simple": 15, "moderate": 22, "complex": 31,
-                 "diagrams": "standard", "qa": "full", "qa_label": "full"},
+                 "diagrams": "standard", "qa": "full", "qa_label": "full",
+                 "max_repair_iterations": 1},
     "thorough": {"simple": 20, "moderate": 28, "complex": 35,
-                 "diagrams": "extended", "qa": "extended", "qa_label": "extended"},
+                 "diagrams": "extended", "qa": "extended", "qa_label": "extended",
+                 "max_repair_iterations": 3},
 }
+# ``max_repair_iterations`` — the hard cap on the Stage-3 QA / Stage-4 architect
+# Re-Render Loop. At quick/standard the loop is a SINGLE quick-fix pass (one
+# repair attempt, then fail-closed `exit 2` if the contract still does not hold —
+# never ship an invalid report). thorough keeps the historical budget of 3.
+# Consumed by skills/create-threat-model/SKILL-impl.md (the loop reads
+# $MAX_REPAIR_ITERATIONS). NOTE: this key is intentionally NOT mirrored into
+# build_stride_dispatch_manifest._FALLBACK_DEPTH_PARAMS — that fallback only
+# tracks the per-complexity STRIDE turn budgets (simple/moderate/complex).
 
 # Operational safety ceiling on the number of components dispatched to STRIDE —
 # a merge/turn-budget guard, NOT the selection count. The criteria predicate is
@@ -245,8 +256,8 @@ def detect_conflicts(ns: argparse.Namespace) -> Optional[str]:
     slug = getattr(ns, "slug", None)
     # "__auto__" is the bare-flag sentinel (random slug generated at resolve
     # time) — only an explicit user value is validated for filename-safety.
-    if slug is not None and slug != "__auto__" and not re.fullmatch(r"[A-Za-z0-9._-]{1,32}", slug):
-        return ("--slug must be 1-32 filename-safe characters "
+    if slug is not None and slug != "__auto__" and not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", slug):
+        return ("--slug must be 1-64 filename-safe characters "
                 "([A-Za-z0-9._-]); got: " + repr(slug))
     return None
 
@@ -306,6 +317,7 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
         "stride_turns_complex":  params["complex"],
         "diagram_depth":         params["diagrams"],
         "qa_depth":              params["qa"],
+        "max_repair_iterations": params["max_repair_iterations"],
         "depth_label":           label,
     }
 
@@ -579,7 +591,9 @@ def apply_opus_ban(cfg: dict, disable_opus: bool) -> dict:
     return patch
 
 
-def resolve_stride_profile(reasoning_mode: str, depth: str) -> dict:
+def resolve_stride_profile(
+    reasoning_mode: str, depth: str, stride_cap: int | None = None
+) -> dict:
     """Return the STRIDE-analyzer depth profile.
 
     The STRIDE depth-reduction (A-F) is gated on
@@ -603,12 +617,35 @@ def resolve_stride_profile(reasoning_mode: str, depth: str) -> dict:
       F. Lower TURN_BUDGET hard cap from 40 to 25
 
     The model itself stays Sonnet — only the task scope is reduced.
+
+    ``stride_cap`` (the opt-in ``--stride-cap N`` flag) is an ORTHOGONAL
+    cost lever: when set (>=1) it injects ``max_threats_per_category = N``
+    into the emitted profile **at any depth** without enabling the other
+    A-F reductions — so standard/thorough keep full CVSS/evidence/grep
+    depth and only trim the High/Medium/Low tail per STRIDE category per
+    component. The default (None) preserves the documented "standard =
+    full STRIDE, reduction opt-in only" invariant. CRITICAL-SAFE: the
+    analyzer never drops a Critical to honour the cap (see
+    ``agents/appsec-stride-analyzer.md`` cap table). The cap is key-gated
+    in the analyzer — it activates whenever ``max_threats_per_category``
+    is present in the profile, independent of the label.
     """
     reasoning_mode = canonical_reasoning_model(reasoning_mode)
+    cap = stride_cap if (stride_cap and stride_cap >= 1) else None
     if reasoning_mode == "sonnet-economy" and depth == "quick":
         profile = dict(QUICK_STRIDE_PROFILE)
         profile["stride_profile_label"] = "quick (depth-reduced via sonnet-economy)"
+        if cap is not None:
+            profile["max_threats_per_category"] = cap
+            profile["stride_profile_label"] = (
+                f"quick (depth-reduced via sonnet-economy, per-category cap {cap})"
+            )
         return {"stride_profile": profile}
+    if cap is not None:
+        return {"stride_profile": {
+            "max_threats_per_category": cap,
+            "stride_profile_label": f"full (per-category cap {cap})",
+        }}
     return {"stride_profile": {"stride_profile_label": "full"}}
 
 
@@ -1177,6 +1214,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Shortcut for --assessment-depth quick.")
     p.add_argument("--thorough", action="store_true",
                    help="Shortcut for --assessment-depth thorough.")
+    # Opt-in per-category STRIDE threat cap (cost lever). OFF by default — the
+    # full STRIDE depth at standard/thorough is preserved unless this is set.
+    p.add_argument("--stride-cap", type=int, default=None, metavar="N",
+                   help="Opt-in: keep at most N threats per STRIDE category per "
+                        "component (Critical-safe — Criticals are never dropped). "
+                        "Trims the High/Medium/Low tail to cut tokens/cost; the "
+                        "rest of full depth (CVSS, evidence, verification greps) "
+                        "stays intact. Off by default.")
     # Architect
     p.add_argument("--architect-review",   action="store_true")
     p.add_argument("--no-architect-review", action="store_true")
@@ -1427,7 +1472,8 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         cfg["reasoning_model"], depth_info["assessment_depth"]
     ))
     cfg.update(resolve_stride_profile(
-        cfg["reasoning_model"], depth_info["assessment_depth"]
+        cfg["reasoning_model"], depth_info["assessment_depth"],
+        getattr(ns, "stride_cap", None),
     ))
     cfg.update(resolve_architect_review(
         ns, depth_info["assessment_depth"], ns.dry_run

@@ -658,6 +658,7 @@ Parse the user's arguments for the following flags:
 | `--assessment-depth <level>` | `ASSESSMENT_DEPTH=<quick\|standard\|thorough>` | `standard` |
 | `--quick` | shortcut for `--assessment-depth quick`; also sets `SKIP_QA=true` and `SKIP_ATTACK_WALKTHROUGHS=true` (mutually exclusive with `--thorough`) | n/a |
 | `--thorough` | shortcut for `--assessment-depth thorough` (mutually exclusive with `--quick`) | n/a |
+| `--stride-cap <N>` | opt-in per-category STRIDE threat cap (Critical-safe); emits `stride_profile.max_threats_per_category=N` (label `full (per-category cap N)`). Off by default — full STRIDE depth otherwise preserved. | unset (no cap) |
 | `--architect-review` | `ARCHITECT_REVIEW=true` — enables Stage 4 (advisory architect-level review) | auto-on at `--assessment-depth thorough`, off otherwise |
 | `--no-architect-review` | `ARCHITECT_REVIEW=false` — escape hatch to disable Stage 4 even at `--assessment-depth thorough` | n/a |
 | `--architect-model <sonnet\|opus>` | `ARCHITECT_MODEL=<model>` — model for Stage 4 (ignored when `ARCHITECT_REVIEW=false`) | `opus` when Stage 4 is enabled |
@@ -674,7 +675,7 @@ Parse the user's arguments for the following flags:
 | `--abuse-cases` | `skip_abuse_case_verification=false` — force the Stage 1c abuse-case verifier fan-out ON at any depth (overrides the quick-depth default-off). Conflicts with `--no-abuse-cases`. | on at standard/thorough; off at quick |
 | `--no-abuse-cases` | `skip_abuse_case_verification=true` — force the Stage 1c abuse-case verifier fan-out OFF at any depth (skips matcher + verifiers + chain fold even at standard/thorough; §9 renders the not-applicable catalog and no finding is chain-elevated). Conflicts with `--abuse-cases`. | on at standard/thorough; off at quick |
 | `--scan-manifest` | `SCAN_MANIFEST=true` — write a sorted, newline-separated list of every file the recon-scanner processed to `$OUTPUT_DIR/.scan-manifest.txt`. Useful for auditing which files were and weren't included in the assessment. | `false` |
-| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure1.svg` / `.pdf` / `.html`, figure reference rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,32}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
+| `--slug [<value>]` | `SLUG=<value>` — after all stages, also emit a postfix-stamped, copy-ready deliverable set (`threat-model-<slug>.md` / `.yaml` / `.figure1.svg` / `.pdf` / `.html`, figure reference rewritten) via `scripts/stamp_threat_model.py`, so several models can be copied into one directory without overwriting each other. Bare `--slug` generates a random 4-hex postfix; `--slug <value>` uses a filename-safe value (`[A-Za-z0-9._-]{1,64}`). The canonical `threat-model.*` files are still written normally (the pipeline, gates, and incremental baseline use them). | none (no stamped copy) |
 | _(no CLI flag)_ | `APPSEC_PLUGIN_DEV=1` — show auto-fix suggestions and `/appsec-advisor:fix-run-issues` hints in the completion summary's Run Issues block. Off by default; intended for plugin developers working on appsec-advisor itself. Set in `.claude/settings.json → env` in the plugin repo. | `false` |
 
 **Deprecated aliases:** The old flags `--with-requirements`, `--ignore-requirements`, and `--requirements-url <url>` are accepted for backward compatibility. If encountered, print a deprecation warning and map them:
@@ -842,6 +843,10 @@ STRIDE_PROFILE_LABEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; prin
 WRITE_SARIF=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_sarif',False)).lower())")
 WRITE_PDF=$(echo "$RESOLVED_JSON"   | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_pdf',False)).lower())")
 WRITE_HTML=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_html',False)).lower())")
+# Depth-aware Re-Render Loop budget (Stage 3 QA + Stage 4 architect). quick/standard
+# = 1 (single quick-fix pass, then fail-closed exit 2); thorough = 3. Default 3 if
+# the key is absent (older .skill-config.json). Source of truth: resolve_config.DEPTH_PARAMS.
+MAX_REPAIR_ITERATIONS=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('max_repair_iterations',3))")
 ```
 
 (A convenience: ``eval $(python3 ... --emit-env)`` is on the roadmap; for now the skill pulls individual keys via ``python3 -c``.)
@@ -3432,7 +3437,9 @@ Some QA / architect failures are recoverable by re-rendering `threat-model.md` f
 **Loop logic (both stages share the same mechanics):**
 
 ```
-MAX_REPAIR_ITERATIONS = 3       # hard cap on loop depth
+MAX_REPAIR_ITERATIONS = $MAX_REPAIR_ITERATIONS   # depth-aware: quick/standard=1 (single
+                                #   quick-fix pass), thorough=3. Sourced from
+                                #   resolve_config.DEPTH_PARAMS above; default 3.
 repair_iteration = 0            # counts post-Stage-1 repair passes
 
 # Initial pass
@@ -3619,7 +3626,7 @@ The release-blocker scan deliberately runs **before** the cosmetic manual-review
 ══════════════════════════════════════════════════════════════
 ```
 
-The analogous loop then runs for Stage 4 when `ARCHITECT_REVIEW=true`, using `.architect-status.json` / `.architect-repair-plan.json`. Each stage has its own `MAX_REPAIR_ITERATIONS` budget (default 3); they are not shared. The same `manual_review` short-circuit applies.
+The analogous loop then runs for Stage 4 when `ARCHITECT_REVIEW=true`, using `.architect-status.json` / `.architect-repair-plan.json`. Each stage has its own `MAX_REPAIR_ITERATIONS` *counter* (`repair_iteration` is reset per stage; they are not shared), but both read the same depth-aware `$MAX_REPAIR_ITERATIONS` budget (quick/standard=1, thorough=3 — sourced from `resolve_config.DEPTH_PARAMS`). The same `manual_review` short-circuit applies. (Architect review is off by default at standard, so the standard=1 cap normally only affects the Stage-3 QA loop.)
 
 **Between-iteration handoff banner (print before each repair Stage 1):**
 
