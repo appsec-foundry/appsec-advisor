@@ -991,6 +991,36 @@ def test_format_selection_console_renders_empty_skipped_set():
     assert "(none)" in text
 
 
+def test_print_selection_reads_persisted_json(tmp_path, capsys):
+    (tmp_path / ".stride-selection.json").write_text(
+        json.dumps(
+            {
+                "mode": "criteria",
+                "depth": "standard",
+                "selected": [{"id": "api", "reasons": ["internet-exposed (internet)"]}],
+                "excluded": [{"id": "worker", "reason": "out-of-scope at depth=standard"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert bm.main([str(tmp_path), "--print-selection"]) == 0
+    out = capsys.readouterr().out
+    assert "ANALYZED (1):" in out and "api — internet-exposed" in out
+    assert "SKIPPED (1):" in out and "worker — out-of-scope at depth=standard" in out
+
+
+def test_print_selection_missing_json_returns_1(tmp_path):
+    assert bm.main([str(tmp_path), "--print-selection"]) == 1
+
+
+def test_skill_surfaces_component_selection_to_console():
+    """The skill must surface the analyzed/skipped selection (with reasons) to the
+    user console at the manifest-build seam, mirroring report §1 + §11."""
+    impl = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md").read_text(encoding="utf-8")
+    assert "Surface the component selection to the user" in impl
+    assert "--print-selection" in impl
+
+
 def test_main_writes_manifest_and_prints_selection(tmp_path, capsys):
     _seed_output_dir(tmp_path)
 

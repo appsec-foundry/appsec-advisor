@@ -966,7 +966,22 @@ def main(argv: list[str] | None = None) -> int:
         "frontend/exposed are never dropped (cap lifts with a log). "
         "Omit for unbounded (the recon hint cap already bounds the inventory).",
     )
+    ap.add_argument(
+        "--print-selection",
+        action="store_true",
+        help="Read the already-written .stride-selection.json and print the "
+        "human-readable ANALYZED/SKIPPED console block, then exit. Does not "
+        "rebuild — for re-surfacing the selection to the user.",
+    )
     ns = ap.parse_args(argv)
+
+    if ns.print_selection:
+        sel = _read_json(ns.output_dir / ".stride-selection.json", {})
+        if not sel:
+            print("No .stride-selection.json yet — selection not computed.", file=sys.stderr)
+            return 1
+        print(format_selection_console(sel))
+        return 0
 
     ctx = _read_json(ns.analyst_context, {}) if ns.analyst_context else {}
     manifest = build(ns.output_dir, ns.depth, ctx, ns.plugin_root, ceiling=ns.ceiling)

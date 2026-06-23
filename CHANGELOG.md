@@ -27,6 +27,10 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- The console now shows which components get a STRIDE pass and which are skipped
+  (each with its reason — e.g. `out-of-scope at depth=standard`) right before the
+  analysis fans out, mirroring the report's §1 Scope and §11 Out of Scope. Re-render it
+  any time with `build_stride_dispatch_manifest.py --print-selection <output-dir>`.
 - The console run-plan now adds a short hint on `standard` runs that
   `--assessment-depth thorough` may surface more (deeper per-component analysis +
   architect review, Opus reasoning) at higher cost and time. Shown only when the
