@@ -84,7 +84,31 @@ def _trust_boundaries_for(component_id: str, all_boundaries: list) -> str:
 # the selection *criteria*, not a count — defining "exposed" is policy that has
 # to live somewhere; it is exactly the "general criteria" the count derives from.
 # ---------------------------------------------------------------------------
-EXPOSED_ZONES = frozenset({"internet", "dmz", "client-device", "mobile-device"})
+# Internet/client-reachable zones. The architecture phase emits these as free
+# text, so the SAME exposure is labelled many ways — a juice-shop run tagged its
+# Socket.IO channel and Multer file-upload handler `internet-facing` (and others
+# `external` / `browser`), none of which matched the old narrow set, so both
+# genuinely-exposed components were mis-classified internal-only and dropped at
+# standard depth. Match the common synonyms, not just the canonical token.
+EXPOSED_ZONES = frozenset(
+    {
+        "internet",
+        "internet-facing",
+        "internet-exposed",
+        "public-internet",
+        "public",
+        "public-facing",
+        "publicly-accessible",
+        "externally-reachable",
+        "external",
+        "edge",
+        "dmz",
+        "client-device",
+        "mobile-device",
+        "browser",
+        "web-browser",
+    }
+)
 CICD_ZONES = frozenset({"ci-cd-runtime", "ci-cd-secrets", "build-pipeline", "deployment-pipeline"})
 # Pure runtime / where-it-runs zones carry NO internet-reachability signal. A
 # component tagged ONLY with these is exposure-UNKNOWN for selection purposes
@@ -212,6 +236,24 @@ def _is_llm(c: dict) -> bool:
     return bool(_LLM_RE.search(_component_text(c)) or _LLM_RE.search(stack))
 
 
+# File-upload / file-processing role. A unit that accepts and parses
+# user-supplied files carries severe, zone-independent risk — unrestricted
+# upload (CWE-434), zip/path traversal, XXE, archive bombs, parser/
+# deserialization RCE — even when deployed "internally". Matched on id/name/type
+# AND tech_stack[] (multer/busboy/formidable/multipart parsers); description is
+# excluded for the same over-match reason as the other role predicates.
+_FILE_UPLOAD_RE = re.compile(
+    r"\b(file-?upload|upload(?:er|s)?|multer|busboy|formidable|multipart"
+    r"|attachment|media-?upload|image-?upload|document-?upload|file-?(?:handler|processor|ingest))\b",
+    re.I,
+)
+
+
+def _is_file_upload(c: dict) -> bool:
+    stack = " ".join(str(x) for x in (c.get("tech_stack") or []))
+    return bool(_FILE_UPLOAD_RE.search(_component_text(c)) or _FILE_UPLOAD_RE.search(stack))
+
+
 def _is_exposed(c: dict) -> bool:
     return bool(_zones(c) & EXPOSED_ZONES)
 
@@ -229,7 +271,14 @@ def _is_internal_only(c: dict) -> bool:
     if not _reachability_zones(c):
         return False  # exposure-unknown → fail-safe, never silently dropped
     return not (
-        _is_exposed(c) or _is_cicd(c) or _is_crown_jewel(c) or _is_auth(c) or _is_frontend(c) or _is_llm(c)
+        _is_exposed(c)
+        or _is_cicd(c)
+        or _is_crown_jewel(c)
+        or _is_auth(c)
+        or _is_frontend(c)
+        or _is_llm(c)
+        or _is_realtime(c)
+        or _is_file_upload(c)
     )
 
 
@@ -245,6 +294,8 @@ def _priority(c: dict) -> int:
         return 2  # directly reachable by an external actor — never drop (cap lifts)
     if _is_crown_jewel(c):
         return 3
+    if _is_file_upload(c) or _is_realtime(c):
+        return 3  # untrusted-input entry point (upload parser / realtime channel) — never drop
     if _is_cicd(c):
         return 4
     return 5  # internal-only / transitively-reachable — drop first
@@ -264,6 +315,10 @@ def _selection_reasons(c: dict, depth: str) -> list:
         reasons.append("ci-cd / deployment (supply-chain boundary)")
     if depth != "quick" and _is_crown_jewel(c):
         reasons.append("crown-jewel (credentials/PII/payment/secrets)")
+    if depth != "quick" and _is_file_upload(c):
+        reasons.append("file-upload surface (CWE-434 / zip-path traversal / XXE / parser RCE, mandatory)")
+    if depth != "quick" and _is_realtime(c):
+        reasons.append("real-time channel (message injection / channel authz, mandatory)")
     if depth == "thorough" and not reasons:
         reasons.append("transitively reachable (thorough)")
     if not _reachability_zones(c) and not _is_auth(c) and not _is_frontend(c):
@@ -293,7 +348,7 @@ def _in_scope(c: dict, depth: str) -> bool:
         # Proven-internal / ci-cd / crown-jewel are deferred to standard+.
         return False
     # standard + thorough
-    if _is_cicd(c) or _is_crown_jewel(c):
+    if _is_cicd(c) or _is_crown_jewel(c) or _is_file_upload(c) or _is_realtime(c):
         return True
     # Reachability zones present but none exposed/cicd → internal-only: thorough only.
     return depth == "thorough"
