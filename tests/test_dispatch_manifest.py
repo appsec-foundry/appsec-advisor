@@ -1122,6 +1122,52 @@ def test_llm_survives_operational_ceiling():
     assert "llm-chat-service" in {c["id"] for c in selected}
 
 
+def test_exposed_zone_synonyms_recognized():
+    """The architecture phase labels the same exposure many ways. Genuinely
+    internet/client-reachable synonyms must all count as exposed (2026-06-23:
+    `internet-facing` socket + upload handler were mis-dropped as internal)."""
+    for z in (
+        "internet-facing", "internet-exposed", "public-internet", "public",
+        "public-facing", "publicly-accessible", "externally-reachable",
+        "external", "edge", "browser", "web-browser",
+    ):
+        assert bm._is_exposed(_c("x", zones=[z])) is True, z
+    # genuinely-internal zones still NOT exposed
+    assert bm._is_exposed(_c("y", zones=["internal", "internal-network"])) is False
+
+
+def test_internet_facing_components_selected_at_standard():
+    """The exact juice-shop shed: internet-facing Socket.IO + Multer upload."""
+    socket = _c("socketio-server", zones=["internet-facing"], name="Socket.IO channel")
+    upload = _c("file-upload-handler", zones=["internet-facing"], name="Multer upload")
+    sel, _ = bm.select_stride_components([socket, upload], "standard")
+    assert {c["id"] for c in sel} == {"socketio-server", "file-upload-handler"}
+
+
+def test_is_file_upload_detects_and_guards():
+    assert bm._is_file_upload(_c("file-upload-handler")) is True
+    assert bm._is_file_upload(_c("uploader")) is True
+    assert bm._is_file_upload({"id": "media", "name": "Media", "type": "process",
+                               "tech_stack": ["multer", "sharp"]}) is True
+    for cid in ("backend-api", "load-balancer", "download-cache", "payload-router"):
+        assert bm._is_file_upload(_c(cid)) is False, cid
+
+
+def test_file_upload_and_realtime_mandatory_at_standard_even_if_internal():
+    upload = _c("file-upload-handler", zones=["internal-network"])
+    rt = _c("realtime-bus", zones=["internal-network"], name="Socket.IO channel")
+    worker = _c("worker", zones=["internal-network"])
+    sel_s = {c["id"] for c in bm.select_stride_components([upload, rt, worker], "standard")[0]}
+    assert "file-upload-handler" in sel_s and "realtime-bus" in sel_s
+    assert "worker" not in sel_s  # plain internal still shed at standard
+    # never treated as internal-only → never ceiling-dropped
+    assert bm._is_internal_only(upload) is False
+    assert bm._is_internal_only(rt) is False
+    # quick stays minimal: a GENUINELY-internal upload/realtime is not force-selected
+    sel_q = {c["id"] for c in bm.select_stride_components([upload, rt, worker], "quick")[0]}
+    assert "file-upload-handler" not in sel_q and "realtime-bus" not in sel_q
+
+
 def test_excluded_reason_is_depth_specific():
     comps = [
         _c("backend", zones=["internet"]),
