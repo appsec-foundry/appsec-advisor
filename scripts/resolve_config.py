@@ -439,8 +439,9 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     Defaults per depth:
       • quick    → sonnet-economy (deterministic-leaning agents on Haiku;
                    Reasoning core stays on Sonnet)
-      • standard → opus  (STRIDE/triage/merger on Opus)
-      • thorough → opus  (STRIDE/triage/merger on Opus)
+      • standard → sonnet-economy (the everyday default — favour cost;
+                   Reasoning core on Sonnet)
+      • thorough → opus  (premium tier: STRIDE/triage/merger on Opus)
 
     Override with ``--reasoning-model sonnet`` to keep all agents on
     Sonnet at quick (pre-2026-05 behaviour). Env vars
@@ -456,15 +457,19 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     # Step 1: pick the base mode (normalising deprecated aliases).
     if ns.reasoning_model:
         mode = canonical_reasoning_model(ns.reasoning_model)
-    elif depth == "quick":
+    elif depth in ("quick", "standard"):
+        # quick + standard default: sonnet-economy. A clean A/B (Juice Shop,
+        # 2026-06-23 — see docs/analysis/analysis-model-placement-...§10) showed
+        # Opus reasoning costs ~+$10.77 (+36%) over sonnet-economy with NO
+        # measurable quality/coverage gain; the earlier "Opus cheaper/better for
+        # STRIDE" thesis was refuted (Opus-STRIDE never actually ran in the
+        # measurements behind it). standard is the everyday default → favour
+        # cost. Opt into Opus with --reasoning-model opus, or upgrade just the
+        # severity stage with --triage-model opus.
         mode = "sonnet-economy"
     else:
-        # standard/thorough default: Opus on STRIDE/triage/merger. Threat
-        # reasoning is the tool's primary value contribution; Opus there
-        # improves severity calibration and surface coverage, and on
-        # large/complex repos converges in fewer turns (lower cache-read
-        # churn), so it is at worst cost-neutral vs Sonnet there. See
-        # docs/analysis/analysis-model-placement-orchestrator-vs-stride-2026-06-21.md.
+        # thorough default: Opus on STRIDE/triage/merger — the premium tier
+        # where full reasoning depth + architect review justify the cost.
         # Opt out with --reasoning-model sonnet-economy (or --no-opus).
         mode = "opus"
 

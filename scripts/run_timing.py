@@ -224,6 +224,19 @@ def compute_timing(output_dir: Path, gap_threshold_s: int = STANDBY_GAP_THRESHOL
     # miscounted as in-run standby.
     wall_secs = _read_int_file(output_dir / ".scan-wall-seconds")
     scan_start = _read_int_file(output_dir / ".scan-start-epoch")
+    # Fallback: derive wall from scan-start-epoch when .scan-wall-seconds was
+    # never written (context-compressed orchestration can miss that step).
+    # Write the derived value so downstream callers (compose, estimate) also
+    # see it without repeating the derivation.
+    if wall_secs is None and scan_start is not None:
+        import time as _time
+        derived = int(_time.time()) - scan_start
+        if derived > 0:
+            wall_secs = derived
+            try:
+                (output_dir / ".scan-wall-seconds").write_text(str(derived), encoding="utf-8")
+            except OSError:
+                pass
     run_window: tuple[int, int] | None = None
     if scan_start is not None and wall_secs is not None:
         # +gap_threshold slack so a final event landing just past the frozen

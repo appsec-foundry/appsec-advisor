@@ -1079,6 +1079,49 @@ def test_priority_ladder_full_ordering():
     assert bm._priority(_c("w", zones=["internal-network"])) == 5  # internal-only
 
 
+def test_is_llm_detects_by_id_name_and_techstack():
+    # id / name signals
+    assert bm._is_llm(_c("llm-chat-service")) is True
+    assert bm._is_llm(_c("svc", name="LLM Chat Service")) is True
+    assert bm._is_llm(_c("chatbot-api")) is True
+    # tech_stack signal (a generically-named component whose stack is an LLM SDK)
+    comp = {"id": "assistant", "name": "Assistant", "type": "process",
+            "tech_stack": ["@ai-sdk/openai-compatible", "Ollama"]}
+    assert bm._is_llm(comp) is True
+    # false-positive guards — bare 'ai' substrings must NOT match
+    for cid in ("email-service", "retail-domain", "maintenance-worker", "available-stock"):
+        assert bm._is_llm(_c(cid)) is False, cid
+
+
+def test_llm_component_selected_at_every_depth():
+    """Regression (2026-06-23): juice-shop's internal-zone `llm-chat-service` was
+    dropped at standard depth. An AI/LLM component must be in scope at EVERY depth."""
+    llm = _c("llm-chat-service", zones=["internal-network"], name="LLM Chat Service")
+    worker = _c("worker", zones=["internal-network"])  # plain internal-only → not selected < thorough
+    for depth in ("quick", "standard", "thorough"):
+        selected, report = bm.select_stride_components([llm, worker], depth)
+        sel_ids = {c["id"] for c in selected}
+        assert "llm-chat-service" in sel_ids, f"LLM component dropped at depth={depth}"
+    # and the plain internal worker is still shed at standard (proves it's the LLM role, not a passthrough)
+    selected_s, _ = bm.select_stride_components([llm, worker], "standard")
+    assert "worker" not in {c["id"] for c in selected_s}
+
+
+def test_llm_is_not_internal_only_and_priority_two():
+    llm = _c("llm-chat-service", zones=["internal-network"])
+    assert bm._is_internal_only(llm) is False
+    assert bm._priority(llm) == 2  # never dropped by the operational ceiling
+
+
+def test_llm_survives_operational_ceiling():
+    """An AI/LLM component (priority 2) is never shed when the ceiling forces drops."""
+    comps = [_c("llm-chat-service", zones=["internal-network"])] + [
+        _c(f"w{i}", zones=["internal-network"]) for i in range(6)
+    ]
+    selected, _ = bm.select_stride_components(comps, "thorough", ceiling=2)
+    assert "llm-chat-service" in {c["id"] for c in selected}
+
+
 def test_excluded_reason_is_depth_specific():
     comps = [
         _c("backend", zones=["internet"]),

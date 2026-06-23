@@ -227,3 +227,40 @@ After extractions, re-run the measurement scripts (`scratchpad/ctxmeasure.py`,
 `reads.py`) against a fresh standard run: `SKILL-impl.md` resident chars should drop and
 the pre-STRIDE peak should fall below the auto-compact threshold (no `compact_boundary`
 marker before the STRIDE dispatch).
+
+---
+
+## 9. Phase 2 — the mode extractions were insufficient; the real fix (implemented 2026-06-23)
+
+Measuring a fresh full run (`7e4cd879`, juice-shop, 153 turns) confirmed the mode
+extractions (Phase 1, §8) barely moved the needle:
+
+```
+turn 16 130k (65%)   } 9 Reads of SKILL-impl.md = ~80k tokens (321k chars) — read IN FULL
+turn 27 153k (77%)   ← pre-flight first renders HERE  (the user's "instantly at 77%")
+turn 57 166k (83%)   ← PEAK → AUTO-COMPACT fires (2 compact markers, drop to 55k)
+```
+
+Root cause confirmed: `SKILL.md:45` said "read `SKILL-impl.md` **in full**", so the whole
+~80k-token file loads before pre-flight regardless of the mode extractions (which only
+shrank the file ~4k). The dominant cost is the full upfront read, not the mode branches.
+
+**Fix shipped (read-schedule change, content-preserving — chosen over §8's "extract stage
+tail to files", which would churn ~10 tests):** a `<!-- LAZY-LOAD BOUNDARY` marker sits
+just before `## Stage 2 - Report Rendering`. `SKILL.md` now instructs the orchestrator to
+read only down to that marker during initial load (Stage 1 core, ~48k), and a resume
+instruction just above the marker tells it to read from the boundary to EOF at the Stage-2
+handoff. The Stage 2/3/4/Completion/Error-Handling tail (~30k) is deferred. The
+Incremental-Mode and Dry-Run-Mode sections in the tail are descriptive reference only
+(operative logic runs earlier), so deferring is behavior-neutral.
+
+Because the content stays in `SKILL-impl.md`, every test that greps it still passes (no
+churn), and correctness is unaffected even if the orchestrator ignores the stop and reads
+ahead — worst case is no saving, never a wrong run. Drift guard:
+`tests/test_lazy_phase_group_loading.py::test_skill_impl_stage2_tail_lazy_loaded`.
+
+Expected: pre-flight ~77% → ~62%; pre-STRIDE peak ~83% → ~68% (below the auto-compact
+threshold). To verify, re-run `scratchpad/run_profile.py` against the next full-scan
+transcript: the `compact_boundary` marker before STRIDE should be gone. Further reduction
+(toward ~40%) would require a second boundary deferring the Stage-1-dispatch detail past
+pre-flight — a follow-up, not done here.

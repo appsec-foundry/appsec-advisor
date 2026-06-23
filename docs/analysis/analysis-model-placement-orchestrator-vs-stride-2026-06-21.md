@@ -341,3 +341,24 @@ billiger" trägt nicht mehr — billiger ist es nicht. Es bleibt ein reiner **Qu
 ($10.77 / +36 % für bessere Severity-Kalibrierung + Web3-Surface). Ein Opus-Default ist damit **nicht**
 durch Kosten gedeckt; sinnvoller Mittelweg wäre **Opus nur auf Triage** (die Kalibrierungsstufe) bei
 **Sonnet-STRIDE** — ungemessen, nächster Test.
+
+### ENTSCHEIDUNG 2026-06-23 — standard-Default → sonnet-economy (umgesetzt)
+
+Nach der A/B (§10) und einem inhaltlichen Vergleich der beiden Läufe (opus-triage vs sonnet-triage, beide
+sonnet-STRIDE + cap) wurde entschieden: **`standard` defaultet wieder auf `sonnet-economy`; nur `thorough`
+bleibt Opus.** Begründung:
+
+- **Kosten:** Opus-Reasoning bei standard ist ~+$10.77 (+36 %) ohne belegten Nutzen → der everyday-Default
+  optimiert auf Kosten. Damit sind die Tiers endlich eine echte Kosten-Leiter (quick≈$8 / standard≈$30 /
+  thorough≈$42), was den Ausgangsbefund „standard ≈ thorough" auflöst.
+- **Qualität:** Der inhaltliche Vergleich zeigte, dass der Unterschied zwischen Läufen **Run-Varianz der
+  (Sonnet-)STRIDE/Architektur-Phasen** ist (zwei „gleiche" Läufe teilten nur ~6 von ~50 Findings exakt;
+  einer fand Web3, der andere LLM). Der Triage-Modell-Effekt war **nicht messbar** (0 Severity-Diffs auf den
+  6 gematchten). Opus-Triage-Kalibrierung ist unter dem Cap confounded. → kein belastbarer Qualitätsgrund für
+  einen Opus-Default.
+- **Opt-in erhalten:** Opus bleibt an standard verfügbar (`--reasoning-model opus`), ebenso der Mittelweg
+  `--triage-model opus` (per-stage flag, neu). Wer volle Coverage will → `thorough` (mehr Komponenten/Turns)
+  schlägt die Tier-Wahl, weil die Lücke Run-Varianz ist, nicht das Modell.
+
+§8 Stufe 2 (Opus als Default) ist damit **verworfen**. Umsetzung: `resolve_reasoning_model` (standard→
+sonnet-economy), Tests, AGENTS.md/threat-modeler.md/HELP/SKILL-Tabelle, CHANGELOG.

@@ -653,7 +653,7 @@ Parse the user's arguments for the following flags:
 | `--max-cost <usd>` | `MAX_COST_USD=<float>` — hard cumulative cost deadline for the watchdog. | (none) |
 | `--repo <path>` | `REPO_ROOT=<abs-path>` | current working directory |
 | `--output <path>` | `OUTPUT_DIR=<abs-path>` | `$REPO_ROOT/docs/security` |
-| `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|sonnet-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `sonnet-economy` at quick (since 2026-05); `opus-cheap` at standard/thorough (see Reasoning Model Resolution) |
+| `--reasoning-model <mode>` | `REASONING_MODEL=<sonnet\|opus-cheap\|opus\|sonnet-economy>` → resolves to `STRIDE_MODEL`, `TRIAGE_MODEL`, `MERGER_MODEL` plus the extended-agent matrix | `sonnet-economy` at quick & standard (standard since 2026-06-23); `opus` at thorough (see Reasoning Model Resolution) |
 | `--stride-model <sonnet\|opus>` | per-stage override of `STRIDE_MODEL` on top of the tier — inline equivalent of `APPSEC_STRIDE_MODEL` (no settings.json/restart). Highest precedence except `--no-opus`. | tier default |
 | `--triage-model <sonnet\|opus>` | per-stage override of `TRIAGE_MODEL` (e.g. `sonnet-economy` STRIDE + Opus triage for calibrated severities at low cost). Inline equivalent of `APPSEC_TRIAGE_MODEL`. | tier default |
 | `--merger-model <sonnet\|opus>` | per-stage override of `MERGER_MODEL`. Inline equivalent of `APPSEC_MERGER_MODEL`. | tier default |
@@ -761,7 +761,7 @@ The JSON contains, among others:
 | ``incremental`` / ``rebuild`` / ``dry_run`` | bool | |
 | ``assessment_depth`` / ``depth_label`` | str | ``"standard"`` |
 | ``reasoning_model`` / ``reasoning_label`` | str | ``"opus-cheap"`` |
-| ``stride_model`` / ``triage_model`` / ``merger_model`` | str | all Opus at the standard/thorough default (``opus`` tier); all ``"claude-sonnet-4-6"`` at ``quick``/``sonnet-economy`` |
+| ``stride_model`` / ``triage_model`` / ``merger_model`` | str | all Opus at the thorough default (``opus`` tier); all ``"claude-sonnet-4-6"`` at ``quick``/``standard`` (``sonnet-economy``) and any per-stage `--*-model` override |
 | ``architect_review`` / ``architect_model`` / ``architect_label`` | bool / str | |
 | ``write_yaml`` / ``write_sarif`` / ``write_pentest_tasks`` | bool | |
 | ``check_requirements`` / ``requirements_url_override`` / ``requirements_label`` | bool / str | |
@@ -2406,6 +2406,21 @@ fi
    - `TaskUpdate` `Stage 1c - Abuse Case Verification` → `completed`.
 
 The §9 fragment is **also** re-rendered idempotently in the Stage-3 pre-generation block (a backstop that picks up any late verdict change); rendering it here as well guarantees the FIRST Stage-2 compose already includes §9. Both calls read `.abuse-case-verdicts.json` (viable chains) **and** `.abuse-case-matches.json` (the generic catalog evaluated-but-not-applicable table) and are byte-identical given identical inputs.
+
+▶ **End of the initial-load portion.** Per `SKILL.md`, the initial read of this file
+stops at the `LAZY-LOAD BOUNDARY` marker just below — the Stage 2 / 3 / 4 / Completion /
+Error-Handling instructions were **not** read yet. When Stage 1 + 1c are complete and you
+are ready to compose the report — **or immediately, if you took the `--rerender` branch**
+(which lands here) — read `<base-dir>/SKILL-impl.md` **from the `LAZY-LOAD BOUNDARY`
+marker below to the END of the file now** (a single Read with `offset` at the marker), then
+follow those instructions. Do not skip this read: the renderer dispatch, the QA gate, the
+architect review, and the Completion Summary all live below it.
+
+<!-- LAZY-LOAD BOUNDARY — read from here to EOF at the Stage-2 handoff (see SKILL.md).
+Everything below (Stage 2 + Incremental/Dry-Run reference + Stage 3 + Stage 4 + Completion
++ Error Handling, ~30k tokens) is deferred out of the pre-Stage-1 resident context. The
+Incremental-Mode and Dry-Run-Mode sections below are descriptive reference only — their
+operative logic runs earlier in the file, so deferring them does not change behavior. -->
 
 ## Stage 2 - Report Rendering (M2.12 — Sprint 3)
 

@@ -182,7 +182,7 @@ The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not 
 > [!NOTE]
 > Benchmark numbers come from a single Node.js/Express reference app (OWASP Juice Shop) and vary substantially with repository size, language/framework mix, model routing, and cache effects. Treat the figures as ballpark orientation, not as predictions for your repo. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
 >
-> The **finding counts above are the committed Juice Shop sample reports** linked in each row. At standard/thorough the reasoning core defaults to Opus (`--reasoning-model opus`), with `model: opus` passed explicitly to every parallel STRIDE Agent call. The `~` cost/time figures are approximate: the hook `model` fields are cosmetic/frontmatter-defaulted and `/cost` under-reports sub-agent Opus usage, so treat per-mode costs as indicative only. (To run the reasoning core on Sonnet instead, see **Reasoning model** below.)
+> The **finding counts above are the committed Juice Shop sample reports** linked in each row. Since 2026-06-23 **quick and standard default to `sonnet-economy`** (Sonnet reasoning core; ~$30 at standard on Juice Shop) and **thorough defaults to Opus**. A clean A/B found Opus reasoning ~$10.77 (+36 %) over sonnet-economy with no measurable quality gain, so standard favours cost; opt into Opus with `--reasoning-model opus` (or just the severity stage with `--triage-model opus`). The `~` cost/time figures are approximate and benchmark-dependent. (See **Reasoning model** below.)
 >
 > The figures above also include the **orchestration layer**, which runs in your interactive session's model. The standard Juice Shop run above is ~$32 from a Sonnet session; the same run driven from an Opus session is ~$47 — the ~$15 difference is purely orchestration running on Opus instead of Sonnet, since the analysis sub-agents are routed the same way either way. It does not deepen the analysis; for how this scales with run length and repo size, see the session-model tip below.
 
@@ -192,10 +192,10 @@ The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not 
 
 | Tier | STRIDE · triage · merge | When to use |
 |---|---|---|
-| `sonnet-economy` | Sonnet · Sonnet · Sonnet | Cheapest — same core as `sonnet`, but helper agents drop to Haiku. **Default at quick**; opt-in at standard/thorough. |
+| `sonnet-economy` | Sonnet · Sonnet · Sonnet | Cheapest — same core as `sonnet`, but helper agents drop to Haiku. **Default at quick and standard** (since 2026-06-23); opt-in at thorough. |
 | `sonnet` | Sonnet · Sonnet · Sonnet | Like `sonnet-economy`, but helper agents stay on Sonnet. |
 | `opus-cheap` | Sonnet · Sonnet · **Opus** | Opus only on the cheap merge step — a middle ground (opt-in). |
-| `opus` | **Opus** · **Opus** · **Opus** | **Default at standard/thorough** (resolved config). *Intended* for best calibration/coverage, but **the benefit is not yet validated** — observed runs silently fell back to Sonnet for STRIDE because the parallel dispatch omitted the Agent `model` param (a `stride_model_mismatch` run-issue now flags this). Treat Opus-vs-Sonnet cost/quality claims as provisional. |
+| `opus` | **Opus** · **Opus** · **Opus** | **Default at thorough** (the premium tier); opt-in at standard. A clean A/B (2026-06-23) found Opus reasoning ~$10.77 (+36 %) more than `sonnet-economy` with **no measurable quality/coverage gain** on Juice Shop — the earlier "Opus cheaper/better for STRIDE" claim was refuted. Use it when you specifically want maximum reasoning depth and accept the cost. |
 
 **Per-stage overrides.** `--stride-model`, `--triage-model`, `--merger-model` (`sonnet`|`opus`) override a single stage on top of the tier — the inline equivalent of the `APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL` env vars, but settable right in the command (no `settings.json` + restart). They win over the tier and the env vars; `--no-opus` still clamps last.
 

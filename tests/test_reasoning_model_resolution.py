@@ -182,11 +182,25 @@ class TestDefaultCoupling:
         out = rc.resolve_reasoning_model(ns, "quick")
         assert out["reasoning_model"] == "sonnet"
 
-    def test_standard_defaults_to_opus(self):
+    def test_standard_defaults_to_sonnet_economy(self):
+        # 2026-06-23: standard reverted to sonnet-economy. A clean A/B showed
+        # Opus reasoning was ~+$10.77 with no measurable quality gain; standard
+        # is the everyday default, so it favours cost. Opus stays opt-in
+        # (--reasoning-model opus) and remains the thorough default.
         rc = _load_resolver()
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
+        assert out["reasoning_model"] == "sonnet-economy"
+        # STRIDE/triage/merger all on Sonnet at the standard default.
+        assert out["stride_model"] == "sonnet"
+        assert out["triage_model"] == "sonnet"
+
+    def test_standard_opus_still_opt_in(self):
+        rc = _load_resolver()
+        ns = rc.build_parser().parse_args(["--reasoning-model", "opus"])
+        out = rc.resolve_reasoning_model(ns, "standard")
         assert out["reasoning_model"] == "opus"
+        assert out["stride_model"] == "opus"
 
     def test_thorough_defaults_to_opus(self):
         rc = _load_resolver()

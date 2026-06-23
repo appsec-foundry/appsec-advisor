@@ -195,15 +195,22 @@ class TestResolveAssessmentDepth:
 
 
 class TestResolveReasoningModel:
-    def test_default_standard_gives_opus(self):
-        # 2026-06: standard/thorough default is the full opus tier — STRIDE,
-        # triage and merger all on Opus (threat reasoning is the value phase).
+    def test_default_standard_gives_sonnet_economy(self):
+        # 2026-06-23: standard default reverted to sonnet-economy. A clean A/B
+        # showed Opus reasoning was ~+$10.77 with no measurable quality gain, so
+        # the everyday default favours cost. Opus is opt-in; thorough keeps Opus.
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
+        assert out["reasoning_model"] == "sonnet-economy"
+        assert out["stride_model"] == "sonnet"
+        assert out["triage_model"] == "sonnet"
+        assert out["merger_model"] == "sonnet"
+
+    def test_default_thorough_still_opus(self):
+        ns = rc.build_parser().parse_args([])
+        out = rc.resolve_reasoning_model(ns, "thorough")
         assert out["reasoning_model"] == "opus"
         assert out["stride_model"] == "opus"
-        assert out["triage_model"] == "opus"
-        assert out["merger_model"] == "opus"
 
     def test_default_quick_gives_haiku_economy(self):
         ns = rc.build_parser().parse_args([])
@@ -610,7 +617,7 @@ class TestCLI:
         assert cfg["mode"] == "full"  # first run
         assert cfg["write_yaml"] is True
         assert cfg["assessment_depth"] == "standard"
-        assert cfg["reasoning_model"] == "opus"
+        assert cfg["reasoning_model"] == "sonnet-economy"  # standard default (2026-06-23)
         assert cfg["architect_review"] is False
         assert cfg["quiet"] is False  # verdict echoed by default
 
@@ -964,10 +971,11 @@ class TestIntegrationScenarios:
         cfg = rc.resolve([], REPO_ROOT)
         assert cfg["mode"] == "full"
         assert cfg["mode_label"] == "full (first run)"
-        assert cfg["reasoning_model"] == "opus"
-        assert cfg["stride_model"] == "opus"
-        assert cfg["triage_model"] == "opus"
-        assert cfg["merger_model"] == "opus"
+        # standard default is sonnet-economy since 2026-06-23 (cost; Opus opt-in).
+        assert cfg["reasoning_model"] == "sonnet-economy"
+        assert cfg["stride_model"] == "sonnet"
+        assert cfg["triage_model"] == "sonnet"
+        assert cfg["merger_model"] == "sonnet"
         assert cfg["architect_review"] is False
         assert cfg["check_requirements"] is False
 
@@ -1006,9 +1014,11 @@ class TestOpusBan:
     and an explicit --reasoning-model opus alike."""
 
     def test_baseline_unchanged_when_off(self, tmp_path, monkeypatch):
-        """No switch → no-op: merger stays on Opus, flag records False."""
+        """No switch → no-op: an explicit Opus tier stays on Opus, flag False.
+        (The standard default is now sonnet-economy, so use an explicit opus
+        tier to have an Opus selection that the off-state must leave intact.)"""
         monkeypatch.chdir(tmp_path)
-        cfg = rc.resolve([], REPO_ROOT)
+        cfg = rc.resolve(["--reasoning-model", "opus"], REPO_ROOT)
         assert cfg["opus_disabled"] is False
         assert cfg["merger_model"] == "opus"
 
@@ -1021,11 +1031,15 @@ class TestOpusBan:
         assert cfg["triage_model"] == "sonnet"
         assert cfg["merger_model"] == "sonnet"
 
-    def test_no_opus_clamps_default_merger(self, tmp_path, monkeypatch):
-        """Default standard tier is opus → STRIDE/triage/merger would be Opus."""
+    def test_no_opus_noop_on_sonnet_default(self, tmp_path, monkeypatch):
+        """Standard now defaults to sonnet-economy (all Sonnet), so --no-opus has
+        nothing to clamp in the reasoning core — it records the flag and leaves
+        the already-Sonnet models unchanged. (Clamping of an explicit Opus tier
+        is covered by test_no_opus_clamps_explicit_opus_tier.)"""
         monkeypatch.chdir(tmp_path)
         cfg = rc.resolve(["--no-opus"], REPO_ROOT)
-        assert cfg["reasoning_model"] == "sonnet"
+        assert cfg["opus_disabled"] is True
+        assert cfg["reasoning_model"] == "sonnet-economy"
         assert cfg["merger_model"] == "sonnet"
 
     def test_no_opus_clamps_architect_model(self, tmp_path, monkeypatch):

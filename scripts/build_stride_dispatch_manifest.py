@@ -188,6 +188,30 @@ def _is_web3(c: dict) -> bool:
     return any(h in _component_text(c) for h in _WEB3_HINTS)
 
 
+# AI/LLM role. An LLM/AI-agent surface carries inherent OWASP-LLM-Top-10 risk
+# (prompt injection, excessive agency, system-prompt leakage, unbounded
+# consumption) regardless of deployment zone — an "internal" LLM endpoint is
+# still reachable through the data it ingests. So an AI/LLM component is
+# MANDATORY at every depth and is never shed as internal-only (2026-06-23:
+# juice-shop's `llm-chat-service`, tagged zone=internal, was dropped at standard
+# depth — "out-of-scope at depth=standard" — leaving the whole chatbot prompt-
+# injection / tool-use surface unanalyzed; cf. the deterministic recon cat-13
+# detector that now reliably identifies these components). Word-boundary matched
+# against id/name/type AND the structured tech_stack[] (NOT the prose
+# description, which over-matches — same rule as the other role predicates).
+_LLM_RE = re.compile(
+    r"\b(llm|chat-?bot|gen-?ai|generative-ai|openai|anthropic|langchain"
+    r"|llama-?index|ollama|copilot|gpt-?[0-9]|claude-[0-9a-z]|gemini-[0-9]"
+    r"|bedrock|vertex-ai|ai-(?:chat|agent|assistant|service|gateway))\b",
+    re.I,
+)
+
+
+def _is_llm(c: dict) -> bool:
+    stack = " ".join(str(x) for x in (c.get("tech_stack") or []))
+    return bool(_LLM_RE.search(_component_text(c)) or _LLM_RE.search(stack))
+
+
 def _is_exposed(c: dict) -> bool:
     return bool(_zones(c) & EXPOSED_ZONES)
 
@@ -204,7 +228,9 @@ def _is_internal_only(c: dict) -> bool:
     never silently dropped."""
     if not _reachability_zones(c):
         return False  # exposure-unknown → fail-safe, never silently dropped
-    return not (_is_exposed(c) or _is_cicd(c) or _is_crown_jewel(c) or _is_auth(c) or _is_frontend(c))
+    return not (
+        _is_exposed(c) or _is_cicd(c) or _is_crown_jewel(c) or _is_auth(c) or _is_frontend(c) or _is_llm(c)
+    )
 
 
 def _priority(c: dict) -> int:
@@ -213,6 +239,8 @@ def _priority(c: dict) -> int:
         return 0  # M3.4 invariant — never drop
     if _is_frontend(c):
         return 1  # frontend attack-surface invariant — never drop
+    if _is_llm(c):
+        return 2  # AI/LLM surface — OWASP LLM Top-10 risk, never drop
     if _is_exposed(c):
         return 2  # directly reachable by an external actor — never drop (cap lifts)
     if _is_crown_jewel(c):
@@ -228,6 +256,8 @@ def _selection_reasons(c: dict, depth: str) -> list:
         reasons.append("auth (M3.4 mandatory)")
     if _is_frontend(c):
         reasons.append("frontend attack surface (mandatory)")
+    if _is_llm(c):
+        reasons.append("AI/LLM surface (OWASP LLM Top-10 — prompt injection / excessive agency, mandatory)")
     if _is_exposed(c):
         reasons.append(f"internet-exposed ({','.join(sorted(_zones(c) & EXPOSED_ZONES))})")
     if depth != "quick" and _is_cicd(c):
@@ -242,8 +272,8 @@ def _selection_reasons(c: dict, depth: str) -> list:
 
 
 def _in_scope(c: dict, depth: str) -> bool:
-    # Role-floor: auth + frontend are mandatory at every depth.
-    if _is_auth(c) or _is_frontend(c):
+    # Role-floor: auth + frontend + AI/LLM are mandatory at every depth.
+    if _is_auth(c) or _is_frontend(c) or _is_llm(c):
         return True
     if _is_exposed(c):
         return True

@@ -974,14 +974,16 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
         # compare against the net compute.
         if wall and wall > net:
             idle_total = wall - net
-            lines.append(f"  Idle / standby      : {_fmt_duration(idle_total)}  (excluded from net compute)")
-            # The standby/suspend vs API+orchestration split is extra detail —
-            # verbose-only. The default summary keeps a single Idle line.
-            if verbose and standby > 0:
+            if standby > 0:
+                # Always show the standby/suspend vs API+orchestration split —
+                # the user needs to distinguish "machine was asleep" from
+                # "model was thinking / waiting for API".
                 lines.append(
-                    f"     standby/suspend  : {_fmt_duration(standby)}  (>10m gap — machine asleep or hung dispatch)"
+                    f"  Standby / suspend   : {_fmt_duration(standby)}  (>10m gap — machine asleep or hung dispatch)"
                 )
-                lines.append(f"     API + orchestr.  : {_fmt_duration(max(0, idle_total - standby))}")
+                lines.append(f"  API + orchestration : {_fmt_duration(max(0, idle_total - standby))}")
+            else:
+                lines.append(f"  Idle / standby      : {_fmt_duration(idle_total)}  (excluded from net compute)")
 
     # End-to-end wall-clock — surfaced whenever it is known, INDEPENDENT of
     # whether per-stage agent compute is available. When `.stage-stats.jsonl`
@@ -990,18 +992,11 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
     # the console summary entirely (regression 2026-06-14).
     if wall and wall > 0:
         if standby > 0:
-            # Make explicit that the headline wall includes dead standby
-            # time, and surface the standby-corrected figure the estimator
-            # uses as the next-run basis.
-            # The standby-corrected "Net run" figure is verbose-only detail;
-            # the default keeps just the raw end-to-end wall (which still
-            # notes the standby it includes).
-            if verbose:
-                net_wall = timing.get("net_wall_secs") or (wall - standby)
-                lines.append(
-                    f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  "
-                    f"(standby excluded — basis for the next estimate)"
-                )
+            net_wall = timing.get("net_wall_secs") or (wall - standby)
+            lines.append(
+                f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  "
+                f"(standby excluded — basis for the next estimate)"
+            )
             lines.append(
                 f"  Total elapsed (wall): {_fmt_duration(wall)}  (end-to-end, incl. {_fmt_duration(standby)} standby)"
             )
@@ -1391,16 +1386,18 @@ def render_log_files(output_dir: Path) -> list[str]:
 
 
 def _summary_duration(stats: dict) -> str:
+    # Prefer wall-clock as the headline "how long did this take" figure.
+    # Net agent compute is a lower bound (excludes orchestration + API wait)
+    # and misleads when most of the clock was idle. Wall is surfaced here;
+    # the net breakdown lives in the Run Statistics section below.
+    timing = stats.get("timing") or {}
+    wall = timing.get("wall_secs") or stats.get("wall_secs") or 0
+    if wall:
+        return _fmt_duration(wall)
+    # Fallback: net compute sum (pre-stage-stats runs or missing wall marker).
     total = stats.get("total_secs_from_stages")
     if not total:
         total = sum(secs or 0 for secs in (stats.get("assess_secs"), stats.get("qa_secs"), stats.get("arch_secs")))
-    if not total:
-        # Last resort: the end-to-end wall-clock. When `.stage-stats.jsonl` is
-        # absent there is no per-stage compute to sum, but the wall-clock marker
-        # is still an honest "how long did it take" figure — far better than
-        # showing n/a (regression 2026-06-14).
-        timing = stats.get("timing") or {}
-        total = timing.get("wall_secs") or stats.get("wall_secs") or 0
     return _fmt_duration(total) if total else "n/a"
 
 

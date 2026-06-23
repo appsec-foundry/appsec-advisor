@@ -42,7 +42,7 @@ one or the other, never both, nothing on Sonnet):
 
 Console-only, emit at most once.
 
-Then read `<base-dir>/SKILL-impl.md` in full (base-dir is on the `Base directory for this skill:` line in the invocation header), then follow all instructions in that file to run the assessment.
+Then read `<base-dir>/SKILL-impl.md` (base-dir is on the `Base directory for this skill:` line in the invocation header) from the top **down to the `<!-- LAZY-LOAD BOUNDARY` marker** (~60% in, immediately before `## Stage 2 - Report Rendering`) — do **not** read past that marker during this initial load. Follow those instructions to run Stages 1 and 1c. The Stage 2 / 3 / 4 / Completion / Error-Handling sections below the marker are read just-in-time at the Stage-2 handoff (an instruction right above the marker tells you exactly when) — deferring them keeps the pre-flight resident context roughly a third smaller, which avoids the auto-compaction that otherwise fires just before the STRIDE dispatch.
 
 Apart from the single status line above (and the conditional Opus/Haiku advisory),
 read it **silently** and proceed

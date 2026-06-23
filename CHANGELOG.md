@@ -27,11 +27,22 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- AI/LLM components are now always STRIDE-analyzed at every depth. Component selection
+  used to drop an LLM service tagged as an internal zone ("out-of-scope at depth=standard"),
+  which skipped the dedicated OWASP LLM Top-10 pass and left the chatbot's prompt-injection /
+  excessive-agency / system-prompt-leakage surface uncovered. An AI/LLM component now joins
+  auth and frontend as a mandatory role that is never shed — so a chatbot gets a full LLM
+  threat enumeration, not one incidental finding.
 - AI/LLM detection is now deterministic. The `### AI / LLM Exposure` report section was
   driven by an LLM grep that needed a full agentic RAG stack to fire and could be skipped
   under load; it now comes from `recon_patterns.py` and triggers on any real SDK, framework,
   vector DB, or model id (and on SDK-less integrations that co-locate a prompt with model
   config). A plain `openai` chatbot is now reliably detected.
+- The orchestrator no longer reads the whole `SKILL-impl.md` up front. The initial load
+  now stops at a lazy-load boundary after Stage 1; the Stage 2/3/4/Completion tail (~30k
+  tokens) is read just-in-time at the Stage-2 handoff. This drops the context window at
+  pre-flight from ~77% to ~62% and avoids the auto-compaction that previously fired right
+  before the STRIDE dispatch.
 - Trimmed the orchestrator's resident context: the rebuild-wipe and auto-incremental
   full-scan-recommendation branches now lazy-load from `modes/*.md` only when their
   mode runs, instead of sitting inline in the always-read `SKILL-impl.md`. A standard
@@ -44,11 +55,15 @@ All notable changes to this project are documented here.
   advisories instead. Real defects — broken diagrams, missing sections, §7 drift,
   wrong T-ID references — still re-render. Set `APPSEC_QA_COSMETIC_BLOCKING=1` for
   the old behaviour.
-- Threat reasoning defaults to Opus at `standard` and `thorough` depth (`quick`
-  stays on Sonnet). Opt out with `--reasoning-model sonnet-economy`. Note: the
-  quality/cost payoff isn't validated yet, and earlier runs showed STRIDE
-  falling back to Sonnet despite the default — a `stride_model_mismatch` run-issue
-  now flags that case.
+- Threat reasoning now defaults to `sonnet-economy` at `standard` (and `quick`);
+  only `thorough` defaults to Opus. A clean A/B (Juice Shop, 2026-06-23) found
+  Opus reasoning ~$10.77 (+36 %) more expensive than sonnet-economy with no
+  measurable quality or coverage gain — the earlier "Opus is cheaper/better for
+  STRIDE" rationale was refuted (Opus-STRIDE never actually ran in the
+  measurements behind it; the cost-inversion was an Opus-triage/merger artifact).
+  Opt into Opus at standard with `--reasoning-model opus`, or upgrade only the
+  severity stage with `--triage-model opus`. (Supersedes the earlier
+  Opus-default-at-standard change from this same Unreleased cycle.)
 - Dropped the large-repo reasoning auto-downgrade. Repository size is now
   informational only; it no longer forces a cheaper model.
 

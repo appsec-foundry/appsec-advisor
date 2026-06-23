@@ -63,9 +63,9 @@ DEPTH & MODEL
   --reasoning-model <mode>     Model tier for STRIDE analysis:
                                sonnet | opus-cheap | opus | sonnet-economy
                                (haiku-economy = deprecated alias, still accepted)
-                               Defaults: sonnet-economy at quick,
-                                         opus at standard/thorough
-                                         (STRIDE/triage/merger on Opus)
+                               Defaults: sonnet-economy at quick & standard,
+                                         opus at thorough
+                                         (Opus opt-in at standard)
   --stride-model <m>           Override just the STRIDE stage: sonnet | opus
   --triage-model <m>           Override just the triage (severity) stage:
                                sonnet | opus. Inline equivalent of

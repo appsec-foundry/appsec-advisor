@@ -218,3 +218,38 @@ def test_rebuild_wipe_lazy_loaded_not_inline():
     assert "only when `REBUILD=true`" in impl, (
         "the modes/rebuild-wipe.md load must be explicitly gated on rebuild mode"
     )
+
+
+def test_skill_impl_stage2_tail_lazy_loaded():
+    """Context-budget fix (2026-06-23): the orchestrator must read SKILL-impl.md only
+    through the LAZY-LOAD BOUNDARY during initial load (Stage 1 core), deferring the
+    Stage 2/3/4/Completion tail (~30k tokens) until the Stage-2 handoff. This keeps the
+    pre-flight resident context below the auto-compaction threshold that otherwise fires
+    just before STRIDE dispatch. Content stays in SKILL-impl.md (no test churn) — only the
+    *read schedule* changes."""
+    skill = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md").read_text(encoding="utf-8")
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+
+    # SKILL.md no longer reads the whole file upfront; it stops at the boundary.
+    assert "read `<base-dir>/SKILL-impl.md` in full" not in skill, (
+        "SKILL.md must NOT instruct reading SKILL-impl.md in full (defeats the lazy tail)"
+    )
+    assert "LAZY-LOAD BOUNDARY" in skill, "SKILL.md must point the initial read at the LAZY-LOAD BOUNDARY"
+
+    # Exactly one boundary marker, and it sits before the Stage 2 section.
+    assert impl.count("<!-- LAZY-LOAD BOUNDARY") == 1, (
+        "SKILL-impl.md must contain exactly one LAZY-LOAD BOUNDARY marker"
+    )
+    boundary_pos = impl.find("<!-- LAZY-LOAD BOUNDARY")
+    stage2_pos = impl.find("## Stage 2 - Report Rendering")
+    assert 0 < boundary_pos < stage2_pos, (
+        "the LAZY-LOAD BOUNDARY marker must appear immediately before '## Stage 2 - Report Rendering'"
+    )
+
+    # The resume instruction (read from the boundary to EOF) must sit ABOVE the marker,
+    # i.e. inside the initially-read portion, or the orchestrator never learns to resume.
+    resume_pos = impl.find("to the END of the file now")
+    assert 0 < resume_pos < boundary_pos, (
+        "the 'read from the boundary to EOF' resume instruction must sit above the marker "
+        "(in the initially-read Stage-1 portion)"
+    )
