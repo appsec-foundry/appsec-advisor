@@ -11278,6 +11278,18 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     plugin_cell = f"{plugin_v}" + (f" (analysis v{analysis_v})" if analysis_v else "")
     lines.append(f"| Plugin version | {plugin_cell or '—'} |")
     lines.append(f"| Orchestrator model | {orch_model} |")
+    # Per-stage reasoning models. Surfaces per-stage overrides (e.g.
+    # APPSEC_TRIAGE_MODEL=opus while STRIDE stays sonnet) that the tier name
+    # alone hides, so a mixed-tier run is honestly disclosed. meta first,
+    # skill-config fallback (meta omits these on older runs).
+    _stride_m = meta.get("stride_model") or skill_cfg.get("stride_model")
+    _triage_m = meta.get("triage_model") or skill_cfg.get("triage_model")
+    _merger_m = meta.get("merger_model") or skill_cfg.get("merger_model")
+    if _stride_m or _triage_m or _merger_m:
+        lines.append(
+            f"| Reasoning models | STRIDE {_stride_m or '—'}, "
+            f"triage {_triage_m or '—'}, merger {_merger_m or '—'} |"
+        )
     lines.append(f"| Repository | {repo} |")
     lines.append(f"| Output directory | {out_dir} |")
     # Show wall and compute separately. When only one is known, emit just that

@@ -667,6 +667,17 @@ class TestRenderAppendixRunStatistics:
         assert "| STRIDE per-category cap | 2 threat(s) per category" in out
         assert "Critical-safe" in out
 
+    def test_reasoning_models_row_rendered(self, tmp_path):
+        ctx = _bare_ctx(tmp_path, {"meta": {
+            "stride_model": "sonnet", "triage_model": "opus", "merger_model": "sonnet"}})
+        out = compose._render_appendix_run_statistics(ctx, None, {})
+        assert "| Reasoning models | STRIDE sonnet, triage opus, merger sonnet |" in out
+
+    def test_reasoning_models_row_omitted_when_unknown(self, tmp_path):
+        ctx = _bare_ctx(tmp_path, {"meta": {}})
+        out = compose._render_appendix_run_statistics(ctx, None, {})
+        assert "Reasoning models" not in out
+
     def test_with_stage_stats_and_meta(self, tmp_path):
         (tmp_path / ".stage-stats.jsonl").write_text(
             '{"stage": 1, "name": "Recon", "agent": "ns:recon", "model": "sonnet", '

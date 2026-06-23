@@ -436,6 +436,14 @@ def build_meta(
         "analysis_version": analysis_ver,
         "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
         "reasoning_model": skill_cfg.get("reasoning_model", "sonnet-economy"),
+        # Per-stage reasoning models. The ``reasoning_model`` above is only the
+        # tier NAME (e.g. "sonnet-economy"); it does NOT reveal per-stage env
+        # overrides like APPSEC_TRIAGE_MODEL=opus (triage→opus while STRIDE stays
+        # sonnet). Persist the resolved per-stage models so the report can
+        # honestly disclose the actual mix (Run Statistics row).
+        "stride_model": skill_cfg.get("stride_model"),
+        "triage_model": skill_cfg.get("triage_model"),
+        "merger_model": skill_cfg.get("merger_model"),
         "scope": skill_cfg.get("scope", []),
         "repo_url": repo_url,
         "team_owner": (org or {}).get("team_owner"),

@@ -401,6 +401,15 @@ def test_build_meta_stride_cap_none_when_full():
     ] is None
 
 
+def test_build_meta_propagates_per_stage_reasoning_models():
+    """Per-stage models reach meta so the report can disclose mixed tiers
+    (e.g. APPSEC_TRIAGE_MODEL=opus while STRIDE stays sonnet)."""
+    m = _meta(stride_model="sonnet", triage_model="opus", merger_model="sonnet")
+    assert m["stride_model"] == "sonnet"
+    assert m["triage_model"] == "opus"
+    assert m["merger_model"] == "sonnet"
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 
