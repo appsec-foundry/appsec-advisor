@@ -1243,122 +1243,18 @@ section above).
 
 ## Full-Scan Recommendation Prompt (auto-incremental only)
 
-After the fast-path and the Plugin Version Compatibility Gate, and **before** the Stage 1 Handoff Banner, evaluate whether the user should be offered a chance to switch to a full scan. This prompt fires **only** when all of the following are true:
-
-1. `INCREMENTAL_IS_AUTO=true` — mode was auto-detected, not explicitly requested via `--incremental`
-2. At least one recommendation trigger is present (see table below)
-3. `NO_CONFIRM=false` — `--no-confirm` / `--yes` was not passed
-4. `APPSEC_CI_MODE` is not `1`
-5. stdin is a TTY (`[ -t 0 ]`)
-
-| Trigger | Variable | Condition |
-|---------|----------|-----------|
-| Analysis-version drifted | `COMPAT_LABEL` | `older-compatible` (baseline yaml's `analysis_version` is older but compatible with the current plugin) |
-| Plugin-version drifted | `PLUGIN_TIER` | `minor` \| `major` (semver bump even if `analysis_version` did not move — the runtime prompts / heuristics may still be different) |
-| Broad source delta | `SEC_CHANGE_COUNT` vs `MAX_STRIDE_COMPONENTS` | security-relevant file count is large relative to the operational component ceiling: `SEC_CHANGE_COUNT / MAX_STRIDE_COMPONENTS >= 0.8` (integer: `SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS >= 8`) — a broad delta where a full scan gives better T-ID stability |
-| Critical / attack-surface change | `CRITICAL_CHANGE_COUNT` | one or more changed files are high-blast-radius: **security primitives** (auth / crypto / session / validation / CORS / CSP) **or** **trust-boundary & I/O surface** (new/changed routes, endpoints, controllers, interfaces, GraphQL/gRPC/OpenAPI, serializers, schemas) **or** **architecture / data model** (middleware, gateways, adapters, ORM/entities, model files, migrations); `security_critical_change_count > 0` from the fast-path. The incremental dirty-set maps such a file to a single component and carries every other component forward — but a new route or a shared-code change expands or shifts the attack surface in ways a delta scope never re-models. Fires **regardless of count** (a single such file is enough). |
-
-```bash
-# Only evaluate when mode was auto-detected incremental.
-if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
-    && [ "$NO_CONFIRM" = "false" ] \
-    && [ "${APPSEC_CI_MODE:-}" != "1" ] \
-    && [ -t 0 ]; then
-
-  # Collect trigger reasons.
-  PROMPT_REASONS=""
-  BASELINE_PLUGIN=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("plugin_version",{}).get("baseline","?"))' 2>/dev/null || echo '?')
-  CURRENT_PLUGIN=$(echo  "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("plugin_version",{}).get("current","?"))' 2>/dev/null || echo '?')
-  PLUGIN_TIER=$(echo     "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("plugin_version",{}).get("tier","?"))' 2>/dev/null || echo '?')
-
-  if [ "$COMPAT_LABEL" = "older-compatible" ]; then
-    PROMPT_REASONS="${PROMPT_REASONS}    • Analysis schema drifted (baseline analysis_version is older but compatible) — full rebuild ensures new categories / CWE remappings apply to ALL findings, not just newly-scanned code\n"
-  elif [ "$PLUGIN_TIER" = "major" ]; then
-    PROMPT_REASONS="${PROMPT_REASONS}    • Plugin upgraded ${BASELINE_PLUGIN} → ${CURRENT_PLUGIN} (MAJOR) — STRIDE prompts / heuristics likely changed; carried-forward threats use the old reasoning\n"
-  elif [ "$PLUGIN_TIER" = "minor" ]; then
-    PROMPT_REASONS="${PROMPT_REASONS}    • Plugin upgraded ${BASELINE_PLUGIN} → ${CURRENT_PLUGIN} (minor) — analysis improvements ship in minors and only apply to newly-scanned code in incremental mode\n"
-  fi
-
-  SEC_CHANGE_COUNT=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("security_relevant_change_count",0))' 2>/dev/null || echo 0)
-  # Integer arithmetic: count*10/max >= 8  ⟺  count/max >= 0.8
-  if [ "$(( SEC_CHANGE_COUNT * 10 / MAX_STRIDE_COMPONENTS ))" -ge 8 ] && [ "$SEC_CHANGE_COUNT" -gt 0 ]; then
-    PROMPT_REASONS="${PROMPT_REASONS}    • ${SEC_CHANGE_COUNT} security-relevant files changed (broad delta vs the ${MAX_STRIDE_COMPONENTS}-component operational ceiling) — full scan gives better T-ID stability at similar cost\n"
-  fi
-
-  # Critical / attack-surface change — fires on a SINGLE file. Security
-  # primitives (auth/crypto/session/validation) OR trust-boundary & I/O surface
-  # (new/changed routes, endpoints, interfaces, schemas) OR architecture/data
-  # model (middleware, gateway, adapter, ORM, model, migration). A delta scope
-  # re-examines just the one component the file's path-glob matched.
-  CRITICAL_CHANGE_COUNT=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("security_critical_change_count",0))' 2>/dev/null || echo 0)
-  CRITICAL_SAMPLE=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(", ".join(d.get("security_critical_changes",[])[:3]))' 2>/dev/null || echo '')
-  if [ "$CRITICAL_CHANGE_COUNT" -gt 0 ]; then
-    PROMPT_REASONS="${PROMPT_REASONS}    • ${CRITICAL_CHANGE_COUNT} critical / attack-surface file(s) changed (${CRITICAL_SAMPLE}) — security primitive, route/interface, or architecture/model change with system-wide blast radius; incremental only re-scans the one matching component and carries dependents forward\n"
-  fi
-
-  if [ -n "$PROMPT_REASONS" ]; then
-    printf "\n⚠ Incremental run not recommended:\n"
-    printf "%b" "$PROMPT_REASONS"
-    printf "\n  [I] Continue incremental   [F] Switch to full scan   [A] Abort\n"
-    printf "  Choice (default: F in 30s): "
-
-    # Read with timeout; default to 'f' on timeout or empty input.
-    CONFIRM_TIMEOUT="${APPSEC_CONFIRM_TIMEOUT:-30}"
-    if read -r -t "$CONFIRM_TIMEOUT" CONFIRM_CHOICE 2>/dev/null; then
-      CONFIRM_CHOICE=$(echo "$CONFIRM_CHOICE" | tr '[:upper:]' '[:lower:]' | tr -d ' ')
-    else
-      CONFIRM_CHOICE="f"
-      printf "\n  (timed out — defaulting to full scan)\n"
-    fi
-
-    case "$CONFIRM_CHOICE" in
-      i|incremental)
-        echo "  Continuing with incremental run."
-        ;;
-      a|abort)
-        echo "  Aborted."
-        rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
-        exit 0
-        ;;
-      *)
-        # 'f', empty, or anything else → switch to full.
-        echo "  Switching to full scan."
-        MODE="full"
-        INCREMENTAL="false"
-        MODE_UPGRADED_BY_PROMPT=true
-        # Carry the trigger that justified the upgrade into the re-rendered
-        # Pre-flight Reason line (§"Full scan over an existing model"). Collapse
-        # the first PROMPT_REASONS bullet to a one-liner; fall back to a generic
-        # phrase. The post-upgrade summary surfaces this so a full scan over an
-        # existing model is never unexplained.
-        MODE_UPGRADED_REASON=$(printf '%b' "$PROMPT_REASONS" | sed -n 's/^[[:space:]]*•[[:space:]]*//p' | head -1)
-        [ -z "$MODE_UPGRADED_REASON" ] && MODE_UPGRADED_REASON="auto-incremental upgraded to full at user request"
-        MODE_UPGRADED_REASON="existing model present; switched to full — ${MODE_UPGRADED_REASON}"
-        ;;
-    esac
-  fi
-fi
-
-# Non-interactive backstop for the critical / attack-surface trigger. The
-# prompt above is interactive-only (CI / --no-confirm / non-TTY all skip it),
-# but a security-primitive, route/interface, or architecture/model change is a
-# CORRECTNESS concern, not a preference — so even when we cannot prompt we
-# still (a) print a visible advisory and (b) set
-# RECOMMEND_FULL=true so Phase 11 renders the "consider --full" callout in the
-# report and sets meta.recommend_full_rerun. We do NOT silently force a full
-# scan in CI: that could 10× an automated run's cost/time on a 1-line change.
-if [ "$MODE" = "incremental" ] && [ "$INCREMENTAL_IS_AUTO" = "true" ] \
-    && { [ "$NO_CONFIRM" = "true" ] || [ "${APPSEC_CI_MODE:-}" = "1" ] || [ ! -t 0 ]; }; then
-  CRITICAL_CHANGE_COUNT=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("security_critical_change_count",0))' 2>/dev/null || echo 0)
-  if [ "$CRITICAL_CHANGE_COUNT" -gt 0 ]; then
-    CRITICAL_SAMPLE=$(echo "$FAST_PATH_OUTPUT" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(", ".join(d.get("security_critical_changes",[])[:3]))' 2>/dev/null || echo '')
-    printf '\n⚠ %s critical / attack-surface file(s) changed (%s) — security primitive, route/interface, or architecture/model change; incremental re-scans only the matching component and carries dependents forward.\n  Consider re-running with --full. (Set meta.recommend_full_rerun in this run.)\n' "$CRITICAL_CHANGE_COUNT" "$CRITICAL_SAMPLE" >&2
-    RECOMMEND_FULL=true
-  fi
-fi
-```
-
-**When the user chooses full:** override `MODE=full` and `INCREMENTAL=false` in shell scope, then continue with the Stage 1 Handoff Banner as normal. The orchestrator receives `INCREMENTAL=false` and runs a complete assessment.
+**Lazy-load — only when `MODE=incremental` and the mode was auto-detected
+(`INCREMENTAL_IS_AUTO=true`).** At this point (after the fast-path + Plugin Version
+Compatibility Gate, before the Stage 1 Handoff Banner), if both hold, read
+`<base-dir>/modes/full-scan-recommendation.md` now (base-dir is the skill dir on the
+`Base directory for this skill:` invocation line) and follow it: it is the complete
+auto-incremental full-scan recommendation prompt (interactive switch-to-full + the
+non-interactive `RECOMMEND_FULL` backstop). **On a full / standard / thorough / rerender
+run — or any explicitly-requested `--incremental` — do NOT read it; skip straight past
+this section.** Just-in-time loading keeps the incremental-only prompt out of the resident
+full-run context, the same pattern as the lazy-loaded
+`agents/phases/phase-group-*.md` files (do not bulk-read it at startup — it breaks the
+cache-stable prefix).
 
 ## Plugin Version Compatibility Gate
 
@@ -1469,86 +1365,15 @@ fi
 
 ### Rebuild Pre-flight Wipe (only when `REBUILD=true`)
 
-When `REBUILD=true` and `DRY_RUN=false`, wipe prior model and cached state **before** the Stage 1 handoff banner but **after** the Configuration Summary (so the user has already seen `Mode: rebuild (...)` and the `POST_SUMMARY_NOTE` warning).
-
-Print the wipe header:
-
-```
-
-Rebuild: discarding prior threat model and all cached state.
-  Removing from <OUTPUT_DIR>:
-    threat-model.md / threat-model.yaml / threat-model.sarif.json / threat-model.pdf / threat-model.html / figure SVGs / pentest-tasks.yaml (if present)
-    threat-model-<slug>.{md,yaml,sarif.json,pdf,html,figure*.svg} — prior slug/report-title variants (so a rebuild never leaves stale slugged reports alongside the fresh output)
-    .architect-review.md, .threat-modeling-context.md, .recon-summary.md
-    .sca-practice-findings.json, .known-bad-libs-findings.json
-    .stride-*.json, .threats-merged.json, .triage-flags.json, .triage-ranking.json, .merge-*.json
-    .fragments/ (compose inputs from prior contract version — must not survive a rebuild)
-    .appsec-cache/ (baseline cache directory)
-    .progress/, .taxonomy-slices/ (runtime-only directories)
-    .appsec-checkpoint, .phase-epoch, .session-agent-map, .assessment-summary-emitted
-    .skill-config.json, .recon-patterns.json, .compose-stats.json
-    .context-resolver.stdout, .ctx-resolver.pid, .recon-scanner.pid, .recon-scanner.stdout
-    .coverage-gaps.json, .scan-manifest.txt, .requirements.yaml
-    .prior-findings-index.json, .stage1-resume-count
-    .run-issues.json, .run-issues-fixes.json
-    .pre-render-repair-plan.json, .qa-repair-plan.json, .qa-content-repair-plan.json,
-    .architect-repair-plan.json (if present)
-  Preserved:
-    .agent-run.log, .hook-events.log (audit trail — overwritten by next run's ASSESSMENT_START)
-    .activity-throttle (session-rate counter — intentionally survives rebuild)
-    .appsec-lock (managed separately by the lock acquire/release mechanism)
-  Note: --rebuild clears disk artifacts only. The in-process session context
-    (conversation history cached in the Claude process) cannot be wiped by a
-    script. If the cache_read bloat detector above fired, run /clear before
-    re-invoking for a genuinely clean start.
-```
-
-Then perform the wipe in a single Bash call:
-
-```bash
-cd "$OUTPUT_DIR" 2>/dev/null || true
-WIPED_COUNT=$(find . -maxdepth 1 \
-  \( -name "threat-model.md" -o -name "threat-model.yaml" -o -name "threat-model.sarif.json" \
-     -o -name "threat-model.pdf" -o -name "threat-model.html" -o -name "threat-model.figure*.svg" \
-     -o -name "threat-model-*.md" -o -name "threat-model-*.yaml" -o -name "threat-model-*.sarif.json" \
-     -o -name "threat-model-*.pdf" -o -name "threat-model-*.html" -o -name "threat-model-*.figure*.svg" \
-     -o -name "pentest-tasks.yaml" -o -name ".architect-review.md" \
-     -o -name ".threat-modeling-context.md" -o -name ".recon-summary.md" \
-     -o -name ".sca-practice-findings.json" -o -name ".known-bad-libs-findings.json" \
-     -o -name ".stride-*.json" -o -name ".threats-merged.json" -o -name ".triage-flags.json" \
-     -o -name ".merge-*.json" -o -name ".appsec-checkpoint" \
-     -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
-     -o -name ".qa-content-repair-plan.json" -o -name ".architect-repair-plan.json" \
-     -o -name ".stage-stats.jsonl" -o -name ".direct-write-blocked" \
-     -o -name ".phase-epoch" -o -name ".session-agent-map" \
-     -o -name ".assessment-summary-emitted" -o -name ".skill-config.json" \
-     -o -name ".recon-patterns.json" -o -name ".compose-stats.json" \
-     -o -name ".context-resolver.stdout" -o -name ".ctx-resolver.pid" \
-     -o -name ".recon-scanner.pid" -o -name ".recon-scanner.stdout" \
-     -o -name ".coverage-gaps.json" -o -name ".scan-manifest.txt" \
-     -o -name ".requirements.yaml" \
-     -o -name ".prior-findings-index.json" -o -name ".stage1-resume-count" \
-     -o -name ".triage-ranking.json" \
-     -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \) \
-  -print -delete 2>/dev/null | wc -l)
-# .fragments/ MUST be wiped — stale compose inputs from a prior contract
-# version are the #1 cause of the Phase 11 compose-fix-loop (see Bug 1 /
-# §7 numbering drift). A --rebuild that leaves them on disk silently
-# reuses fragments that do not match the current `sections-contract.yaml`.
-# Sprint 3C (M3.5): also wipe .stage-stats.jsonl and .direct-write-blocked
-# so a fresh rebuild starts with empty observability state — without this,
-# `record_stage_stats.py` saw stale entries from the prior run and refused
-# to log any of run N+1's stages (the 2026-04-27 run produced no stage
-# stats at all because it was the second --rebuild in a row).
-# .progress/ and .taxonomy-slices/ are runtime-only dirs that must not
-# survive a rebuild.
-rm -rf .fragments .appsec-cache .progress .taxonomy-slices 2>/dev/null
-echo "  Removed $WIPED_COUNT files + .fragments/ + .appsec-cache/ + .progress/ + .taxonomy-slices/"
-```
-
-If `$OUTPUT_DIR` does not exist or `find` fails, treat as no-op — the rebuild is starting from a clean slate anyway, which is the desired outcome.
-
-After the wipe, set `BASELINE_STATE=empty` in memory (the baseline no longer exists on disk). The orchestrator will therefore run as a first-ever full assessment: no baseline snapshot, fresh `v1` changelog entry, no T-ID stability, no Change Summary block in the completion summary.
+**Lazy-load — only when `REBUILD=true` and `DRY_RUN=false`.** At this point (after the
+Configuration Summary, before the Stage 1 Handoff Banner), if both hold, read
+`<base-dir>/modes/rebuild-wipe.md` now (base-dir is the skill dir on the
+`Base directory for this skill:` invocation line) and follow it: it prints the wipe header,
+performs the prior-model/cache wipe in a single Bash call, and sets `BASELINE_STATE=empty`.
+**On any non-rebuild run, do NOT read it — skip straight past this section.** Just-in-time
+loading keeps the rebuild wipe out of the resident full-run context, the same pattern as
+the lazy-loaded `agents/phases/phase-group-*.md` files (do not bulk-read it at startup — it
+breaks the cache-stable prefix).
 
 ### Full-run Pre-flight Intermediate Wipe (only when `MODE=full` and `REBUILD=false`)
 

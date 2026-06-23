@@ -175,3 +175,46 @@ def test_rerender_mode_lazy_loaded_not_inline():
         "SKILL-impl.md must reference modes/rerender.md exactly once (single lazy-load pointer)"
     )
     assert "only when `MODE=rerender`" in impl, "the modes/rerender.md load must be explicitly gated on rerender mode"
+
+
+def test_full_scan_recommendation_lazy_loaded_not_inline():
+    """Context-budget fix (2026-06-23): the auto-incremental full-scan recommendation
+    prompt body must live in modes/full-scan-recommendation.md and load just-in-time,
+    not sit inline in SKILL-impl.md's resident full-run context. A standard/full scan
+    never runs this branch, so carrying it in context is pure dead weight. SKILL-impl.md
+    keeps exactly one gated lazy-load pointer; the operative bash moved verbatim into the
+    mode file."""
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+    mode = (MODES_DIR / "full-scan-recommendation.md").read_text(encoding="utf-8")
+
+    gate = "Incremental run not recommended"
+    assert gate not in impl, "full-scan recommendation prompt body must NOT be inline in SKILL-impl.md (lazy-load it)"
+    assert gate in mode, "full-scan recommendation prompt must live verbatim in modes/full-scan-recommendation.md"
+
+    assert impl.count("modes/full-scan-recommendation.md") == 1, (
+        "SKILL-impl.md must reference modes/full-scan-recommendation.md exactly once (single lazy-load pointer)"
+    )
+    assert "only when `MODE=incremental`" in impl, (
+        "the modes/full-scan-recommendation.md load must be explicitly gated on auto-incremental mode"
+    )
+
+
+def test_rebuild_wipe_lazy_loaded_not_inline():
+    """Context-budget fix (2026-06-23): the rebuild pre-flight wipe body must live in
+    modes/rebuild-wipe.md and load just-in-time, not sit inline in SKILL-impl.md's
+    resident full-run context. A full / standard / thorough scan without --rebuild never
+    runs this branch. SKILL-impl.md keeps exactly one gated lazy-load pointer; the
+    operative bash moved verbatim into the mode file."""
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+    mode = (MODES_DIR / "rebuild-wipe.md").read_text(encoding="utf-8")
+
+    gate = "discarding prior threat model and all cached state"
+    assert gate not in impl, "rebuild wipe body must NOT be inline in SKILL-impl.md (lazy-load it)"
+    assert gate in mode, "rebuild wipe body must live verbatim in modes/rebuild-wipe.md"
+
+    assert impl.count("modes/rebuild-wipe.md") == 1, (
+        "SKILL-impl.md must reference modes/rebuild-wipe.md exactly once (single lazy-load pointer)"
+    )
+    assert "only when `REBUILD=true`" in impl, (
+        "the modes/rebuild-wipe.md load must be explicitly gated on rebuild mode"
+    )

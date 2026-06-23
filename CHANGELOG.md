@@ -22,6 +22,10 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Trimmed the orchestrator's resident context: the rebuild-wipe and auto-incremental
+  full-scan-recommendation branches now lazy-load from `modes/*.md` only when their
+  mode runs, instead of sitting inline in the always-read `SKILL-impl.md`. A standard
+  or full scan no longer carries those incremental/rebuild-only branches in context.
 - QA re-render is now a single quick-fix pass at `quick`/`standard` depth (was up
   to 3 rounds). One repair attempt, then fail-closed if the contract still does
   not hold — never ships an invalid report. `thorough` keeps the 3-round budget.
