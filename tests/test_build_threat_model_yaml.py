@@ -410,6 +410,14 @@ def test_build_meta_propagates_per_stage_reasoning_models():
     assert m["merger_model"] == "sonnet"
 
 
+def test_build_meta_records_invocation():
+    """The exact invocation flags reach meta (reproducibility anchor that
+    survives runtime cleanup, unlike .skill-config.json)."""
+    m = _meta(invocation_args="--reasoning-model sonnet-economy --triage-model opus --stride-cap 2")
+    assert m["invocation"] == "--reasoning-model sonnet-economy --triage-model opus --stride-cap 2"
+    assert _meta()["invocation"] is None  # absent → None (renderer falls back)
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 

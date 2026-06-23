@@ -435,6 +435,11 @@ def build_meta(
         "plugin_version": plugin_ver,
         "analysis_version": analysis_ver,
         "assessment_depth": skill_cfg.get("assessment_depth", "standard"),
+        # Exact create-threat-model invocation flags (depth, reasoning tier,
+        # per-stage overrides, --stride-cap, mode, …) so the report can show the
+        # precise parameterization that produced it — reproducibility anchor.
+        # Survives runtime cleanup, unlike .skill-config.json.
+        "invocation": skill_cfg.get("invocation_args"),
         "reasoning_model": skill_cfg.get("reasoning_model", "sonnet-economy"),
         # Per-stage reasoning models. The ``reasoning_model`` above is only the
         # tier NAME (e.g. "sonnet-economy"); it does NOT reveal per-stage env

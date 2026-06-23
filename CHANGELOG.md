@@ -19,6 +19,11 @@ All notable changes to this project are documented here.
   calibrated `standard` run is `--reasoning-model sonnet-economy --triage-model opus`
   (Sonnet STRIDE, Opus triage). The resolved per-stage mix is recorded in the
   report's Run Statistics (`Reasoning models` row).
+- Report Run Statistics now records the **exact invocation** (the full
+  `create-threat-model` flags) and names the **reasoning tier** alongside the
+  per-stage models, so a report states precisely what parameterization produced
+  it and how to reproduce it. Persisted to `meta.invocation` (survives runtime
+  cleanup); falls back to `.skill-config.json` for older runs.
 
 ### Changed
 

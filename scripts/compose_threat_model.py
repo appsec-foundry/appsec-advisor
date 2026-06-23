@@ -11263,7 +11263,16 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     # --- Header field table -------------------------------------------------
     lines.append("| Field | Value |")
     lines.append("|-------|-------|")
-    lines.append(f"| Invocation | `{invocation}` |")
+    # Exact invocation: meta first (survives runtime cleanup), skill-config
+    # fallback (older runs / when meta lacks it). Shows the precise flags
+    # (depth, reasoning tier, per-stage overrides, --stride-cap, …).
+    invocation_cell = invocation if invocation != "(not recorded)" else (
+        skill_cfg.get("invocation_args") or "(not recorded)"
+    )
+    inv_prefix = "/appsec-advisor:create-threat-model " if (
+        invocation_cell != "(not recorded)" and not invocation_cell.startswith("/")
+    ) else ""
+    lines.append(f"| Invocation | `{inv_prefix}{invocation_cell}` |")
     lines.append(f"| Generated | {generated} |")
     lines.append(f"| Mode | {mode} |")
     lines.append(f"| Assessment depth | {depth} |")
@@ -11286,8 +11295,10 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     _triage_m = meta.get("triage_model") or skill_cfg.get("triage_model")
     _merger_m = meta.get("merger_model") or skill_cfg.get("merger_model")
     if _stride_m or _triage_m or _merger_m:
+        _tier = meta.get("reasoning_model") or skill_cfg.get("reasoning_model")
+        _tier_prefix = f"{_tier} — " if _tier else ""
         lines.append(
-            f"| Reasoning models | STRIDE {_stride_m or '—'}, "
+            f"| Reasoning models | {_tier_prefix}STRIDE {_stride_m or '—'}, "
             f"triage {_triage_m or '—'}, merger {_merger_m or '—'} |"
         )
     lines.append(f"| Repository | {repo} |")
