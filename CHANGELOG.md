@@ -11,6 +11,14 @@ All notable changes to this project are documented here.
   the High/Medium/Low tail while keeping full depth (CVSS, evidence, verification
   greps). Off by default — `standard`/`thorough` keep full STRIDE depth. The cap
   is disclosed in the report's Run Statistics appendix.
+- `--stride-model` / `--triage-model` / `--merger-model` (`sonnet`|`opus`) —
+  per-stage model overrides settable inline on the command line (the equivalent
+  of the `APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL` env vars, but without
+  `settings.json` + a session restart). They win over the tier and the env vars;
+  `--no-opus` still clamps Opus→Sonnet last. The sweet spot for a cheap-but-
+  calibrated `standard` run is `--reasoning-model sonnet-economy --triage-model opus`
+  (Sonnet STRIDE, Opus triage). The resolved per-stage mix is recorded in the
+  report's Run Statistics (`Reasoning models` row).
 
 ### Changed
 

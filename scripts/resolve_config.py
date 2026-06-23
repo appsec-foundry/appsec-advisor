@@ -470,7 +470,7 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
 
     models = dict(MODEL_MATRIX[mode])
 
-    # Step 2: env var highest precedence.
+    # Step 2: env var override (over the matrix default).
     env_map = {
         "stride": "APPSEC_STRIDE_MODEL",
         "triage": "APPSEC_TRIAGE_MODEL",
@@ -479,6 +479,18 @@ def resolve_reasoning_model(ns: argparse.Namespace, depth: str) -> dict:
     for k, env in env_map.items():
         if os.environ.get(env):
             models[k] = os.environ[env]
+
+    # Step 3: explicit per-stage CLI flags — highest precedence (most explicit,
+    # per-run intent). They win over both the matrix and the env vars. --no-opus
+    # still clamps Opus→Sonnet later in resolve() via apply_opus_ban().
+    cli_map = {
+        "stride": getattr(ns, "stride_model", None),
+        "triage": getattr(ns, "triage_model", None),
+        "merger": getattr(ns, "merger_model", None),
+    }
+    for k, v in cli_map.items():
+        if v:
+            models[k] = v
 
     label = (f"{mode} (STRIDE: {models['stride']}, "
              f"triage: {models['triage']}, merger: {models['merger']})")
@@ -1193,6 +1205,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reasoning-model",
                    choices=("sonnet", "opus-cheap", "opus",
                             "sonnet-economy", "haiku-economy"))  # haiku-economy: deprecated alias
+    # Per-stage model overrides — the inline (console) equivalent of the
+    # APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL env vars, but without needing
+    # ~/.claude/settings.json + a session restart. Each overrides just that one
+    # stage on top of the --reasoning-model tier. Highest precedence among model
+    # selectors EXCEPT --no-opus, which still clamps Opus→Sonnet last. Example:
+    # `--reasoning-model sonnet-economy --triage-model opus` = Sonnet STRIDE with
+    # Opus triage (cheap run, calibrated severities).
+    p.add_argument("--stride-model", choices=("sonnet", "opus"), default=None)
+    p.add_argument("--triage-model", choices=("sonnet", "opus"), default=None)
+    p.add_argument("--merger-model", choices=("sonnet", "opus"), default=None)
     # Opus ceiling. When set, every Opus selection anywhere in the run is
     # downgraded to Sonnet (cost/compliance ceiling). Also settable org-wide
     # via the org-profile `policy.disable_opus` key, or via the environment

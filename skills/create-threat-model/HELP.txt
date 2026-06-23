@@ -66,6 +66,15 @@ DEPTH & MODEL
                                Defaults: sonnet-economy at quick,
                                          opus at standard/thorough
                                          (STRIDE/triage/merger on Opus)
+  --stride-model <m>           Override just the STRIDE stage: sonnet | opus
+  --triage-model <m>           Override just the triage (severity) stage:
+                               sonnet | opus. Inline equivalent of
+                               APPSEC_TRIAGE_MODEL (no settings.json/restart).
+                               E.g. --reasoning-model sonnet-economy
+                               --triage-model opus = cheap STRIDE + calibrated
+                               severities. Wins over the tier; --no-opus still
+                               clamps Opus->Sonnet.
+  --merger-model <m>           Override just the merge stage: sonnet | opus
   --architect-review           Run an advisory architect review (Stage 4)
                                Auto-enabled at depth=thorough
   --no-architect-review        Disable Stage 4 even at depth=thorough

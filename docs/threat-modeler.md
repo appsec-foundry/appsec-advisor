@@ -197,7 +197,17 @@ The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not 
 | `opus-cheap` | Sonnet · Sonnet · **Opus** | Opus only on the cheap merge step — a middle ground (opt-in). |
 | `opus` | **Opus** · **Opus** · **Opus** | **Default at standard/thorough** (resolved config). *Intended* for best calibration/coverage, but **the benefit is not yet validated** — observed runs silently fell back to Sonnet for STRIDE because the parallel dispatch omitted the Agent `model` param (a `stride_model_mismatch` run-issue now flags this). Treat Opus-vs-Sonnet cost/quality claims as provisional. |
 
-`--no-opus` forbids Opus everywhere (downgrades `opus`/`opus-cheap` to Sonnet; overrides all other sources, including the org profile and `APPSEC_DISABLE_OPUS=1`).
+**Per-stage overrides.** `--stride-model`, `--triage-model`, `--merger-model` (`sonnet`|`opus`) override a single stage on top of the tier — the inline equivalent of the `APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL` env vars, but settable right in the command (no `settings.json` + restart). They win over the tier and the env vars; `--no-opus` still clamps last.
+
+The useful one is **`--triage-model opus` on a `sonnet-economy` run**: STRIDE stays on Sonnet (the cost driver — 9 dispatches), while triage (the severity-assignment stage) runs on Opus. A clean A/B showed this recovers the severity calibration of a full-Opus run (real Med/Low tail, not 81 % Crit/High) at roughly the all-Sonnet price (~$2 over, vs ~$11 for full Opus) — the genuine cost/quality sweet spot for `standard`:
+
+```text
+/appsec-advisor:create-threat-model --reasoning-model sonnet-economy --triage-model opus --stride-cap 2
+```
+
+The resolved per-stage mix is shown in the pre-flight box and recorded in the report's *Run Statistics* (`Reasoning models` row), so a mixed-tier run is disclosed, not hidden behind the tier name.
+
+`--no-opus` forbids Opus everywhere (downgrades `opus`/`opus-cheap` and any per-stage `--*-model opus` to Sonnet; overrides all other sources, including the org profile and `APPSEC_DISABLE_OPUS=1`).
 
 Which model each role runs on:
 
