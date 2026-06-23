@@ -177,16 +177,32 @@ class TestResolveAssessmentDepth:
         }
         assert len(set(ceilings.values())) == 1
 
+    def test_max_repair_iterations_depth_aware(self):
+        """Re-Render Loop budget: quick/standard = single quick-fix pass (1),
+        thorough keeps the historical budget of 3."""
+        got = {
+            d: rc.resolve_assessment_depth(
+                rc.build_parser().parse_args(["--assessment-depth", d])
+            )["max_repair_iterations"]
+            for d in ("quick", "standard", "thorough")
+        }
+        assert got == {"quick": 1, "standard": 1, "thorough": 3}
+
+    def test_max_repair_iterations_default_is_one(self):
+        """The default depth (standard) caps QA repair at a single pass."""
+        out = rc.resolve_assessment_depth(rc.build_parser().parse_args([]))
+        assert out["max_repair_iterations"] == 1
+
 
 class TestResolveReasoningModel:
-    def test_default_standard_gives_opus_cheap(self):
+    def test_default_standard_gives_opus(self):
+        # 2026-06: standard/thorough default is the full opus tier — STRIDE,
+        # triage and merger all on Opus (threat reasoning is the value phase).
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
-        assert out["reasoning_model"] == "opus-cheap"
-        assert out["stride_model"] == "sonnet"
-        # opus-cheap routes only the merger to Opus; triage stays on Sonnet
-        # because triage_validate_ratings.py is the deterministic floor.
-        assert out["triage_model"] == "sonnet"
+        assert out["reasoning_model"] == "opus"
+        assert out["stride_model"] == "opus"
+        assert out["triage_model"] == "opus"
         assert out["merger_model"] == "opus"
 
     def test_default_quick_gives_haiku_economy(self):
@@ -210,84 +226,18 @@ class TestResolveReasoningModel:
         assert out["stride_model"] == "claude-env-override"
 
 
-class TestResolveDefaultTierForCappedRepos:
-    """B2d — auto-switch from opus-cheap to sonnet-economy on capped repos.
-
-    Trigger: repo_size_capped=True AND user did not pass --reasoning-model.
-    No-op in every other case.
-    """
-
-    def _ns(self, *argv):
-        return rc.build_parser().parse_args(list(argv))
-
-    def _capped_cfg(self, reasoning_model="opus-cheap", depth="standard", stride_components=3, capped=True):
-        """Build a minimal cfg dict in the post-cap state."""
-        return {
-            "assessment_depth": depth,
-            "reasoning_model": reasoning_model,
-            "max_stride_components": stride_components,
-            "repo_size_capped": capped,
-        }
-
-    def test_triggers_when_capped_and_no_flag(self):
-        ns = self._ns()  # no --reasoning-model
-        cfg = self._capped_cfg()
-        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out["reasoning_model"] == "sonnet-economy"
-        assert out["reasoning_auto_switched"] is True
-        assert "auto" in out["reasoning_label"]
-        # 2026-06-02/06-07: large repos keep the economy tier but never DROP
-        # components — the analyzed set is criteria-selected, so the label says
-        # "economy tier across all criteria-selected components".
-        assert "criteria-selected components" in out["reasoning_label"]
-        assert "economy tier" in out["reasoning_label"]
-        # Dependent fields re-resolved
-        assert out["triage_model"] == "sonnet"  # was Opus
-        assert out["merger_model"] == "sonnet"  # was Opus
-        assert out["recon_scanner_model"] == "haiku"
-
-    def test_explicit_flag_disables_auto_switch(self):
-        ns = self._ns("--reasoning-model", "opus-cheap")
-        cfg = self._capped_cfg()
-        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out == {}  # no patch
-
-    def test_no_op_when_not_capped(self):
-        ns = self._ns()
-        cfg = self._capped_cfg(capped=False)
-        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out == {}
-
-    def test_no_op_when_already_haiku_economy(self):
-        # quick depth defaults to sonnet-economy already → no need to switch.
-        ns = self._ns()
-        cfg = self._capped_cfg(reasoning_model="sonnet-economy", depth="quick")
-        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out == {}
-
-    def test_no_op_when_explicit_opus_chosen(self):
-        # User explicitly wants Opus → never auto-downgrade.
-        ns = self._ns("--reasoning-model", "opus")
-        cfg = self._capped_cfg(reasoning_model="opus")
-        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out == {}
-
-    def test_thorough_capped_also_switches(self):
-        # Thorough capped: same logic — capped components mean Opus
-        # uneconomical regardless of whether the cap was set at standard
-        # or carried into thorough.
-        ns = self._ns()
-        cfg = self._capped_cfg(depth="thorough")
-        out = rc.resolve_default_tier_for_capped_repos(cfg, ns)
-        assert out["reasoning_model"] == "sonnet-economy"
-        assert out["reasoning_auto_switched"] is True
+# (Removed 2026-06: TestResolveDefaultTierForCappedRepos — the B2d large-repo
+# reasoning-tier auto-downgrade was removed. Large repos now keep the default
+# Opus reasoning tier. repo_size_capped is purely informational. See
+# docs/analysis/plan-opus-stride-default-2026-06-21.md.)
 
 
 class TestResolveRepoSizeCap:
-    """2026-06-02/06-07: a large repo flips to the economy tier (repo_size_capped)
-    but NEVER drops components — dropping components created whole-component blind
-    spots, and since 2026-06-07 the analyzed set is criteria-derived (no count to
-    reduce). The cap patch therefore carries NO max_stride_components key."""
+    """2026-06: a large repo is flagged (repo_size_capped, informational only
+    since the B2d auto-downgrade was removed) but NEVER drops components —
+    dropping components created whole-component blind spots, and since 2026-06-07
+    the analyzed set is criteria-derived (no count to reduce). The cap patch
+    therefore carries NO max_stride_components key."""
 
     def _cfg(self):
         return {
@@ -303,7 +253,7 @@ class TestResolveRepoSizeCap:
     def test_large_repo_keeps_all_components_but_marks_capped(self, monkeypatch):
         monkeypatch.setattr(rc, "_count_source_files", lambda p: 600)
         out = rc.resolve_repo_size_cap(self._cfg(), Path("/tmp/x"))
-        assert out["repo_size_capped"] is True  # → drives economy tier
+        assert out["repo_size_capped"] is True  # informational flag only
         assert "max_stride_components" not in out  # no count touched
         assert "criteria-selected components" in out["depth_label"]
         assert "capped from" not in out["depth_label"]
@@ -660,7 +610,7 @@ class TestCLI:
         assert cfg["mode"] == "full"  # first run
         assert cfg["write_yaml"] is True
         assert cfg["assessment_depth"] == "standard"
-        assert cfg["reasoning_model"] == "opus-cheap"
+        assert cfg["reasoning_model"] == "opus"
         assert cfg["architect_review"] is False
         assert cfg["quiet"] is False  # verdict echoed by default
 
@@ -1014,9 +964,9 @@ class TestIntegrationScenarios:
         cfg = rc.resolve([], REPO_ROOT)
         assert cfg["mode"] == "full"
         assert cfg["mode_label"] == "full (first run)"
-        assert cfg["reasoning_model"] == "opus-cheap"
-        assert cfg["stride_model"] == "sonnet"
-        assert cfg["triage_model"] == "sonnet"
+        assert cfg["reasoning_model"] == "opus"
+        assert cfg["stride_model"] == "opus"
+        assert cfg["triage_model"] == "opus"
         assert cfg["merger_model"] == "opus"
         assert cfg["architect_review"] is False
         assert cfg["check_requirements"] is False
@@ -1072,7 +1022,7 @@ class TestOpusBan:
         assert cfg["merger_model"] == "sonnet"
 
     def test_no_opus_clamps_default_merger(self, tmp_path, monkeypatch):
-        """Default standard tier is opus-cheap → merger would be Opus."""
+        """Default standard tier is opus → STRIDE/triage/merger would be Opus."""
         monkeypatch.chdir(tmp_path)
         cfg = rc.resolve(["--no-opus"], REPO_ROOT)
         assert cfg["reasoning_model"] == "sonnet"
@@ -1375,10 +1325,6 @@ class TestFormatReasoningSummary:
     def test_opus_disabled_ceiling(self):
         s = rc._format_reasoning_summary(_base_cfg(opus_disabled=True))
         assert "no-opus ceiling" in s
-
-    def test_auto_switched_large_repo(self):
-        s = rc._format_reasoning_summary(_base_cfg(opus_disabled=False, reasoning_auto_switched=True))
-        assert "auto-switched for large repo" in s
 
     def test_sonnet_economy_special(self):
         s = rc._format_reasoning_summary(

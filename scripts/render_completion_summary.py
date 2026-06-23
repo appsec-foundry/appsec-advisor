@@ -752,9 +752,22 @@ def build_next_steps(
         top = "Critical" if critical else "High"
         lines.append(f'Review {top} findings in Section 8 "Findings Register"')
 
-    # Architect review available.
+    # Architect review — only surface the dot-file when it contains actionable defects.
+    # Advisory-only reviews (technical_defects=0, no repair plan) are internal
+    # artefacts; everything important is already in threat-model.md.
     if cfg.get("architect_review") and (output_dir / ".architect-review.md").is_file():
-        lines.append(f"Review {output_dir}/.architect-review.md → architect-level verdict and findings")
+        _arch_status_path = output_dir / ".architect-status.json"
+        _arch_has_defects = True  # default: show it if we can't read the status
+        if _arch_status_path.is_file():
+            try:
+                _arch_data = json.loads(_arch_status_path.read_text(encoding="utf-8"))
+                _arch_has_defects = int(_arch_data.get("technical_defects", 1)) > 0 or bool(
+                    _arch_data.get("repair_plan_exists", False)
+                )
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                pass
+        if _arch_has_defects:
+            lines.append(f"Review {output_dir}/.architect-review.md → architect-level verdict and findings")
 
     # SARIF uploaded.
     if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
@@ -1690,7 +1703,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--mode", default="full", choices=("full", "incremental", "rebuild", "dry-run"))
     p.add_argument(
         "--reasoning-model",
-        default="opus-cheap",
+        default="opus",
         choices=("opus-cheap", "sonnet", "opus", "sonnet-economy", "haiku-economy"),
     )
     p.add_argument("--assessment-depth", default="standard", choices=("quick", "standard", "thorough"))

@@ -214,13 +214,17 @@ Instructions live in `agents/phases/`. This table is an orientation aid and a dr
 
 `--assessment-depth quick|standard|thorough` drives STRIDE turns, diagrams, QA depth, and component-selection criteria. Component selection is criteria-based in `scripts/build_stride_dispatch_manifest.py:select_stride_components()`; `max_stride_components` is a flat safety ceiling (`STRIDE_COMPONENT_CEILING = 10`, the same at every depth), not a per-depth target.
 
-| Depth | STRIDE turns (simple / moderate / complex) | Diagrams | QA |
-|---|---|---|---|
-| `quick` | 10 / 15 / 20 | minimal | core only (Stage 3 skipped) |
-| `standard` | 15 / 22 / 31 | standard | full |
-| `thorough` | 20 / 28 / 35 | extended | extended |
+| Depth | STRIDE turns (simple / moderate / complex) | Diagrams | QA | Re-Render Loop cap |
+|---|---|---|---|---|
+| `quick` | 10 / 15 / 20 | minimal | core only (Stage 3 skipped) | 1 (single quick-fix pass) |
+| `standard` | 15 / 22 / 31 | standard | full | 1 (single quick-fix pass) |
+| `thorough` | 20 / 28 / 35 | extended | extended | 3 |
 
 Quick + default `sonnet-economy` activates `scripts/resolve_config.py:QUICK_STRIDE_PROFILE`; any other `--reasoning-model` disables that profile.
+
+**Re-Render Loop cap (`max_repair_iterations`, `DEPTH_PARAMS`).** The Stage-3 QA / Stage-4 architect repair loop caps at this many repair attempts; at quick/standard it is a SINGLE quick-fix pass, then fail-closed `exit 2` if the contract still does not hold (never ship an invalid report). thorough keeps the historical budget of 3. Sourced into `SKILL-impl.md` as `$MAX_REPAIR_ITERATIONS`.
+
+**Opt-in per-category STRIDE cap (`--stride-cap N`).** Off by default — standard/thorough keep full STRIDE depth (the documented "reduction is opt-in only" invariant). When set, `resolve_stride_profile()` emits `max_threats_per_category: N` with label `full (per-category cap N)`; the cap is **key-gated** in `agents/appsec-stride-analyzer.md` (applies whenever the key is present, independent of the quick label) and is Critical-safe (Criticals are never dropped). Persisted to `meta.stride_per_category_cap` for report self-disclosure (Run Statistics row).
 
 ### Prompt caching contract
 

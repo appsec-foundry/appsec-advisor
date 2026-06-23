@@ -27,7 +27,7 @@ nothing extra. The session model you started with only assembles and writes the
 report; it does **not** deepen the security analysis itself, so Opus here mostly
 multiplies cost (~5x) without finding more:
 
-> ⚠ Heads-up: running on Opus mainly increases cost (~5x), not depth — the model picked here only writes up the report, it doesn't find more threats. For a deeper assessment, put the threat analysis itself on Opus with `--reasoning-model opus`, and/or widen coverage with a thorough scan via `--assessment-depth thorough`. You can safely continue this run on a cheaper model.
+> ⚠ Heads-up: running on Opus mainly increases cost, not depth — the model picked here only writes up the report, it doesn't find more threats. Orchestration is ~half of an Opus-driven run, so this adds roughly +25–55% to the run's total (a proportional share that grows with repo size, not a fixed amount). For a deeper assessment, put the threat analysis itself on Opus with `--reasoning-model opus`, and/or widen coverage with a thorough scan via `--assessment-depth thorough`. You can safely continue this run on a cheaper model.
 
 This advisory is console-only — never write it to any file or report artifact,
 emit it at most once, and skip it entirely on non-Opus models. (Headless

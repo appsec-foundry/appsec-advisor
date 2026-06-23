@@ -346,7 +346,7 @@ class TestBodyContentConsistency:
         silently when $OUTPUT_DIR is unset) no-opped. The agent doc must mandate
         the export as the literal first command."""
         _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer.md")
-        assert 'export OUTPUT_DIR=' in stride, (
+        assert "export OUTPUT_DIR=" in stride, (
             "stride-analyzer must mandate `export OUTPUT_DIR=` as its first Bash call "
             "so agent_progress.sh / log_event.py see the path (RC-3)"
         )

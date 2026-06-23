@@ -59,6 +59,53 @@ def test_simple_pair_yields_one_duration():
     assert out[0]["duration_seconds"] == 180
 
 
+# ---------------------------------------------------------------------------
+# _extract_stride_model_mismatch
+# ---------------------------------------------------------------------------
+
+
+def _stride_invoke(model: str) -> str:
+    return (
+        "2026-06-22T08:20:00Z  [d95edeed]  INFO   AGENT_INVOKE        "
+        f"appsec-advisor:appsec-stride-analyzer        model={model}  "
+        "STRIDE: Express Backend  [COMPONENT_ID=express-backend]"
+    )
+
+
+def _write_stride_cfg(tmp_path, stride_model):
+    import json
+
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"stride_model": stride_model}), encoding="utf-8")
+
+
+def test_stride_model_mismatch_flagged_when_sonnet_but_opus_expected(tmp_path):
+    _write_stride_cfg(tmp_path, "opus")
+    hook = [(1, _stride_invoke("sonnet")), (2, _stride_invoke("sonnet"))]
+    out = agg._extract_stride_model_mismatch(tmp_path, hook, [])
+    assert len(out) == 1
+    assert out[0]["category"] == "stride_model_mismatch"
+    assert out[0]["severity"] == "warning"
+    assert out[0]["evidence"]["expected_stride_model"] == "opus"
+    assert out[0]["evidence"]["observed_models"] == {"sonnet": 2}
+
+
+def test_stride_model_match_no_issue(tmp_path):
+    """Full Opus id resolves to family 'opus' → matches expected → no warning."""
+    _write_stride_cfg(tmp_path, "opus")
+    hook = [(1, _stride_invoke("claude-opus-4-8"))]
+    assert agg._extract_stride_model_mismatch(tmp_path, hook, []) == []
+
+
+def test_stride_model_no_config_no_issue(tmp_path):
+    hook = [(1, _stride_invoke("sonnet"))]
+    assert agg._extract_stride_model_mismatch(tmp_path, hook, []) == []
+
+
+def test_stride_model_no_stride_invokes_no_issue(tmp_path):
+    _write_stride_cfg(tmp_path, "opus")
+    assert agg._extract_stride_model_mismatch(tmp_path, [], []) == []
+
+
 def test_orphan_start_followed_by_real_start_pairs_only_once():
     """Bug #5 from 2026-04-26 19:55 — orphan PHASE_START preceded the real one.
 

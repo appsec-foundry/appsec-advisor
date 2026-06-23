@@ -451,6 +451,14 @@ def build_meta(
         # CHECK_REQUIREMENTS=true that ran Phase 8b still rendered nothing —
         # the flag lived in .skill-config.json but never reached the yaml.
         "check_requirements": bool(skill_cfg.get("check_requirements", False)),
+        # Opt-in --stride-cap N transparency. When the per-category STRIDE cap is
+        # active, persist it so the rendered report self-discloses the reduced
+        # scope (analogous to component_selection). None when no cap → the
+        # renderer omits the Run-Statistics row. meta has additionalProperties:true
+        # so no schema bump is needed.
+        "stride_per_category_cap": (skill_cfg.get("stride_profile") or {}).get(
+            "max_threats_per_category"
+        ),
     }
 
 

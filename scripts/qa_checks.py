@@ -1700,6 +1700,38 @@ def _heading_to_section_id(heading: str, contract: dict) -> str | None:
     return None
 
 
+# Repair-plan action types that are cosmetic — readability / compactness /
+# list-shape nits. They surface as advisories but must NOT trigger the
+# skill-layer Re-Render Loop: re-authoring a fragment + recompose is an LLM
+# pass (minutes) that is not worth a diagram-too-wide or walkthrough-too-short
+# finding. Everything NOT listed here (broken diagram, missing table/section,
+# §7 contract-structure drift, wrong T-ID reference) stays blocking and
+# re-renders as before. Override per run with APPSEC_QA_COSMETIC_BLOCKING=1.
+COSMETIC_ACTION_TYPES = frozenset(
+    {
+        "diagram_compactness",
+        "chain_compactness",
+        "walkthrough_depth",
+        "relevant_findings_bullet_list",
+        "recon_iam_bridge",
+    }
+)
+
+
+def _action_severity(action_type: str) -> str:
+    """Classify a repair-plan action ``type`` as ``"cosmetic"`` or ``"blocking"``.
+
+    Only ``blocking`` actions with a writable fragment target drive the
+    Re-Render Loop (``cmd_repair_plan`` exit 1). Cosmetic-only plans return
+    exit 4 (``cosmetic_advisory``) — surfaced, not re-rendered. Setting
+    ``APPSEC_QA_COSMETIC_BLOCKING=1`` restores the pre-2026-06-22 behaviour
+    where every action was blocking.
+    """
+    if os.environ.get("APPSEC_QA_COSMETIC_BLOCKING") == "1":
+        return "blocking"
+    return "cosmetic" if action_type in COSMETIC_ACTION_TYPES else "blocking"
+
+
 def build_repair_plan(
     md_path: Path,
     output_dir: Path,
@@ -2362,6 +2394,11 @@ def build_repair_plan(
         deduped.append(a)
     actions = deduped
 
+    # Tag each action blocking|cosmetic so the gate (and the Completion Summary)
+    # can tell a contract/render defect from a readability nit.
+    for a in actions:
+        a["severity"] = _action_severity(a.get("type") or "unclassified")
+
     status, actionable = _classify_plan_status(report.issues, actions)
 
     plan: dict = {
@@ -2390,24 +2427,37 @@ def _classify_plan_status(
     Sprint 1D (M3.5): the skill-layer Re-Render Loop uses ``status`` to
     decide whether iteration can possibly converge:
 
-      * ``pass``          — no issues, no actions, no work.
-      * ``manual_review`` — issues exist but every action's
-                            ``fragments_to_rewrite`` is empty. Re-rendering
-                            cannot fix this (typically renderer/checker
-                            drift); the loop must short-circuit.
-      * ``fail``          — at least one action carries a writable fragment
-                            target. The loop iterates as designed.
+      * ``pass``              — no issues, no actions, no work.
+      * ``manual_review``     — issues exist but every action's
+                                ``fragments_to_rewrite`` is empty. Re-rendering
+                                cannot fix this (typically renderer/checker
+                                drift); the loop must short-circuit.
+      * ``cosmetic_advisory`` — (2026-06-22) the only writable-fragment actions
+                                are ``severity == "cosmetic"`` (compactness,
+                                walkthrough depth, list shape, recon-IAM hint).
+                                Surfaced as advisories but NOT re-rendered — an
+                                LLM fixer pass is not worth a readability nit.
+      * ``fail``              — at least one BLOCKING action carries a writable
+                                fragment target. The loop iterates as designed.
+
+    ``actionable`` is True only when a blocking action can be re-rendered, so
+    the skill's existing ``actionable == false`` guard short-circuits both
+    ``manual_review`` and ``cosmetic_advisory`` even before it learns exit 4.
 
     Without the ``manual_review`` classification, the 2026-04-27 juice-shop
     run's all-``posture_renderer_bug`` repair plan would have burnt 3 ×
     ~10 min loop iterations on a problem only a code change can fix.
     """
-    actionable = any(a.get("fragments_to_rewrite") for a in actions)
+    blocking = any(a.get("fragments_to_rewrite") and a.get("severity") != "cosmetic" for a in actions)
+    cosmetic = any(a.get("fragments_to_rewrite") and a.get("severity") == "cosmetic" for a in actions)
+    actionable = blocking
     if not issues:
         return "pass", actionable
-    if actions and not actionable:
-        return "manual_review", actionable
-    return "fail", actionable
+    if blocking:
+        return "fail", actionable
+    if cosmetic:
+        return "cosmetic_advisory", actionable
+    return "manual_review", actionable
 
 
 def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int:
@@ -2420,6 +2470,10 @@ def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int
       3 — non-actionable violations only, plan written (manual review required —
           re-render cannot fix them; skill-layer loop should bail out instead
           of burning iterations). Sprint 1D (M3.5).
+      4 — cosmetic violations only, plan written (compactness / depth / list
+          shape — surfaced as advisories, NOT re-rendered). Skill treats this
+          like exit 0 but copies the advisories into the Completion Summary.
+          Override with APPSEC_QA_COSMETIC_BLOCKING=1. (2026-06-22)
     """
     if not md_path.is_file():
         print(f"error: {md_path} not found", file=sys.stderr)
@@ -2440,6 +2494,8 @@ def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int
     print(json.dumps(plan, indent=2))
     if plan["status"] == "manual_review":
         return 3
+    if plan["status"] == "cosmetic_advisory":
+        return 4
     return 1
 
 

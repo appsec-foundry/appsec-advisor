@@ -101,9 +101,7 @@ def cmd_merge(args: argparse.Namespace) -> int:
     merged = {"schema_version": 1, "verdicts": list(verdicts.values())}
     (output_dir / ".abuse-case-verdicts.json").write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     not_finalized = sorted(
-        v["abuse_case_id"]
-        for v in verdicts.values()
-        if v.get("_not_finalized") and v.get("abuse_case_id")
+        v["abuse_case_id"] for v in verdicts.values() if v.get("_not_finalized") and v.get("abuse_case_id")
     )
     sys.stderr.write(
         f"VERIFY: merged {len(verdicts)} verdict(s)" + (" [budget-critical]" if budget_critical else "") + "\n"

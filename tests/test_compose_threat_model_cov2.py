@@ -658,6 +658,14 @@ class TestRenderAppendixRunStatistics:
         # no per-stage / agent-dispatch / tokens blocks
         assert "### Per-Stage Breakdown" not in out
         assert "No per-phase timing captured" in out
+        # --stride-cap row omitted when no cap is active
+        assert "STRIDE per-category cap" not in out
+
+    def test_stride_cap_row_rendered_when_active(self, tmp_path):
+        ctx = _bare_ctx(tmp_path, {"meta": {"stride_per_category_cap": 2}})
+        out = compose._render_appendix_run_statistics(ctx, None, {})
+        assert "| STRIDE per-category cap | 2 threat(s) per category" in out
+        assert "Critical-safe" in out
 
     def test_with_stage_stats_and_meta(self, tmp_path):
         (tmp_path / ".stage-stats.jsonl").write_text(

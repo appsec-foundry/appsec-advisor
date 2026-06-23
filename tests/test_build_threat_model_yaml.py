@@ -385,6 +385,22 @@ def test_build_meta_check_requirements_defaults_false():
     assert _meta(check_requirements=False)["check_requirements"] is False
 
 
+def test_build_meta_stride_cap_propagated_when_active():
+    """--stride-cap N → .skill-config stride_profile.max_threats_per_category
+    reaches meta so the report self-discloses the reduced scope."""
+    m = _meta(stride_profile={"max_threats_per_category": 2,
+                              "stride_profile_label": "full (per-category cap 2)"})
+    assert m["stride_per_category_cap"] == 2
+
+
+def test_build_meta_stride_cap_none_when_full():
+    """No cap (full profile or missing) → None, renderer omits the row."""
+    assert _meta()["stride_per_category_cap"] is None
+    assert _meta(stride_profile={"stride_profile_label": "full"})[
+        "stride_per_category_cap"
+    ] is None
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
 

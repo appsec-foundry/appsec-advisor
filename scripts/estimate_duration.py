@@ -68,6 +68,10 @@ from pathlib import Path
 # observed wall, not the agent self-time. Between-stage idle lives in
 # _TRANSITION_BUFFER. quick has no measured anchor; scaled to land ~53 min
 # total on a juice-shop-sized repo (matches the operator's ~55-min recall).
+# NOTE (2026-06): the standard/thorough default is now the ``opus`` tier
+# (_MODEL_FACTOR 1.40) — the anchors above were measured on sonnet-economy/
+# opus-cheap. The factor lookup adapts the estimate automatically, but the
+# base anchors should be re-measured against a clean opus standard run.
 _STAGE1_BASE: dict[str, float] = {
     "quick": 32.0,
     "standard": 38.0,

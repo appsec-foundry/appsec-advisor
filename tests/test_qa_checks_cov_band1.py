@@ -715,6 +715,88 @@ def test_classify_plan_status_fail():
 
 
 # ---------------------------------------------------------------------------
+# Cosmetic severity gating (2026-06-22)
+# ---------------------------------------------------------------------------
+
+
+def test_action_severity_cosmetic_types(monkeypatch):
+    monkeypatch.delenv("APPSEC_QA_COSMETIC_BLOCKING", raising=False)
+    for t in (
+        "diagram_compactness",
+        "chain_compactness",
+        "walkthrough_depth",
+        "relevant_findings_bullet_list",
+        "recon_iam_bridge",
+    ):
+        assert qa._action_severity(t) == "cosmetic"
+
+
+def test_action_severity_blocking_types(monkeypatch):
+    monkeypatch.delenv("APPSEC_QA_COSMETIC_BLOCKING", raising=False)
+    # chain_tid_consistency and walkthrough_coverage are deliberately blocking.
+    for t in (
+        "mermaid_syntax",
+        "missing_section",
+        "table_schema_drift",
+        "chain_tid_consistency",
+        "walkthrough_coverage",
+        "unclassified",
+    ):
+        assert qa._action_severity(t) == "blocking"
+
+
+def test_action_severity_env_override_forces_blocking(monkeypatch):
+    monkeypatch.setenv("APPSEC_QA_COSMETIC_BLOCKING", "1")
+    assert qa._action_severity("diagram_compactness") == "blocking"
+
+
+def test_classify_plan_status_cosmetic_only():
+    actions = [{"fragments_to_rewrite": [".fragments/x.md"], "severity": "cosmetic"}]
+    status, actionable = qa._classify_plan_status(["issue"], actions)
+    assert status == "cosmetic_advisory"
+    # cosmetic-only must NOT be actionable so the loop short-circuits.
+    assert actionable is False
+
+
+def test_classify_plan_status_mixed_blocking_wins():
+    actions = [
+        {"fragments_to_rewrite": [".fragments/x.md"], "severity": "cosmetic"},
+        {"fragments_to_rewrite": [".fragments/y.md"], "severity": "blocking"},
+    ]
+    status, actionable = qa._classify_plan_status(["issue"], actions)
+    assert status == "fail"
+    assert actionable is True
+
+
+def test_classify_plan_status_no_severity_key_is_blocking():
+    # Backward-compat: an action without a `severity` key is treated as blocking.
+    actions = [{"fragments_to_rewrite": [".fragments/x.md"]}]
+    status, _ = qa._classify_plan_status(["issue"], actions)
+    assert status == "fail"
+
+
+def test_cmd_repair_plan_cosmetic_only_returns_4(tmp_path: Path, monkeypatch):
+    md = _md(tmp_path, "## x\n")
+    out = tmp_path / "out"
+    plan = {
+        "status": "cosmetic_advisory",
+        "actions": [
+            {
+                "type": "diagram_compactness",
+                "raw_issue": "§2.4: 9 nodes (>7)",
+                "fragments_to_rewrite": [".fragments/architecture-diagrams.md"],
+                "severity": "cosmetic",
+            }
+        ],
+    }
+    monkeypatch.setattr(qa, "build_repair_plan", lambda *a, **k: (plan, None))
+    rc = qa.cmd_repair_plan(md, out, _minimal_contract(tmp_path))
+    assert rc == 4
+    # Plan is kept on disk so the Completion Summary can surface the advisory.
+    assert (out / ".qa-repair-plan.json").is_file()
+
+
+# ---------------------------------------------------------------------------
 # build_repair_plan / cmd_repair_plan
 # ---------------------------------------------------------------------------
 

@@ -182,17 +182,17 @@ class TestDefaultCoupling:
         out = rc.resolve_reasoning_model(ns, "quick")
         assert out["reasoning_model"] == "sonnet"
 
-    def test_standard_defaults_to_opus_cheap(self):
+    def test_standard_defaults_to_opus(self):
         rc = _load_resolver()
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "standard")
-        assert out["reasoning_model"] == "opus-cheap"
+        assert out["reasoning_model"] == "opus"
 
-    def test_thorough_defaults_to_opus_cheap(self):
+    def test_thorough_defaults_to_opus(self):
         rc = _load_resolver()
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_reasoning_model(ns, "thorough")
-        assert out["reasoning_model"] == "opus-cheap"
+        assert out["reasoning_model"] == "opus"
 
 
 # ---------------------------------------------------------------------------

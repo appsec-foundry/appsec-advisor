@@ -135,3 +135,65 @@ def test_profile_does_not_skip_stride_categories():
     p = out["stride_profile"]
     assert "skip_categories" not in p
     assert "stride_categories" not in p
+
+
+# ---------------------------------------------------------------------------
+# Opt-in --stride-cap N — a per-category threat cap that is ORTHOGONAL to the
+# quick A-F profile and preserves full STRIDE depth at standard/thorough.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("depth", ["standard", "thorough"])
+def test_stride_cap_injects_cap_at_full_depth(depth):
+    """--stride-cap N at standard/thorough emits ONLY the per-category cap; the
+    rest of full depth (no skip_cvss / skip_greps / evidence drop) is preserved."""
+    rc = _load_resolver()
+    out = rc.resolve_stride_profile("opus", depth, stride_cap=2)
+    p = out["stride_profile"]
+    assert p["max_threats_per_category"] == 2
+    assert p["stride_profile_label"] == "full (per-category cap 2)"
+    # No other A-F reduction leaked — full depth otherwise intact.
+    for key in (
+        "skip_verification_greps",
+        "skip_code_examples",
+        "skip_evidence_excerpt",
+        "skip_cvss_scoring",
+        "turn_budget_hard_cap",
+    ):
+        assert key not in p, f"{key!r} must not leak into a --stride-cap full profile"
+
+
+def test_stride_cap_none_preserves_full_invariant():
+    """No flag (None) keeps the documented 'standard = full, opt-in only' rule."""
+    rc = _load_resolver()
+    out = rc.resolve_stride_profile("opus", "standard", stride_cap=None)
+    assert out["stride_profile"] == {"stride_profile_label": "full"}
+
+
+@pytest.mark.parametrize("bad", [0, -1])
+def test_stride_cap_non_positive_ignored(bad):
+    """A non-positive cap is treated as 'no cap' (defensive)."""
+    rc = _load_resolver()
+    out = rc.resolve_stride_profile("opus", "standard", stride_cap=bad)
+    assert out["stride_profile"] == {"stride_profile_label": "full"}
+
+
+def test_stride_cap_overrides_quick_profile_value():
+    """At quick+economy the A-F profile still applies, but --stride-cap overrides
+    the cap VALUE (and is reflected in the label)."""
+    rc = _load_resolver()
+    out = rc.resolve_stride_profile("sonnet-economy", "quick", stride_cap=3)
+    p = out["stride_profile"]
+    assert p["max_threats_per_category"] == 3
+    assert p["skip_cvss_scoring"] is True  # quick reductions still present
+    assert "per-category cap 3" in p["stride_profile_label"]
+
+
+def test_stride_cap_flag_parses_and_flows_through_resolver():
+    """End-to-end: --stride-cap on the parser reaches the emitted profile."""
+    rc = _load_resolver()
+    ns = rc.build_parser().parse_args(["--stride-cap", "2"])
+    assert ns.stride_cap == 2
+    # default (no flag) parses to None
+    ns0 = rc.build_parser().parse_args([])
+    assert ns0.stride_cap is None

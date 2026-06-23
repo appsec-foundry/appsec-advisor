@@ -202,6 +202,27 @@ def test_builder_roundtrip_validates(tmp_path):
     assert {c["component_id"] for c in manifest["components"]} == {"backend-api", "frontend-spa"}
 
 
+def test_builder_stamps_stride_model(tmp_path):
+    """The dispatched STRIDE reasoning model is recorded in the manifest
+    (top-level + per-component) so config→execution is auditable from the
+    intermediates — the .stride-<id>.json outputs carry no model field."""
+    _seed_output_dir(tmp_path)
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"stride_model": "opus"}), encoding="utf-8")
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    assert manifest["stride_model"] == "opus"
+    assert manifest["components"]
+    assert all(c["model"] == "opus" for c in manifest["components"])
+
+
+def test_builder_stride_model_unknown_when_config_absent(tmp_path):
+    """No .skill-config.json → recorded as 'unknown' (never crashes, never
+    silently claims a model)."""
+    _seed_output_dir(tmp_path)
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    assert manifest["stride_model"] == "unknown"
+    assert all(c["model"] == "unknown" for c in manifest["components"])
+
+
 def test_builder_max_turns_from_complexity(tmp_path):
     _seed_output_dir(tmp_path)
     manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
@@ -551,9 +572,7 @@ def _fake_repo(tmp_path: Path, *, cicd=True, socketio=True, auth=True, web3=Fals
             "import { ethers } from 'ethers'\n// NFT mint listener\n", encoding="utf-8"
         )
         # a shared lib mentioning web3 must NOT be claimed by web3-nft
-        (repo / "lib" / "insecurity.ts").write_text(
-            "// jwt + a web3 helper line\n", encoding="utf-8"
-        )
+        (repo / "lib" / "insecurity.ts").write_text("// jwt + a web3 helper line\n", encoding="utf-8")
     (repo / "package.json").write_text(json.dumps({"dependencies": deps}), encoding="utf-8")
     if auth:
         (repo / "routes" / "login.ts").write_text("export function login(){}\n", encoding="utf-8")

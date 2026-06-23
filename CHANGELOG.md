@@ -4,8 +4,19 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Added
+
+- `--stride-cap N` — opt-in cost lever that keeps at most N threats per STRIDE
+  category per component. Critical-safe (Criticals are never dropped); trims only
+  the High/Medium/Low tail while keeping full depth (CVSS, evidence, verification
+  greps). Off by default — `standard`/`thorough` keep full STRIDE depth. The cap
+  is disclosed in the report's Run Statistics appendix.
+
 ### Changed
 
+- QA re-render is now a single quick-fix pass at `quick`/`standard` depth (was up
+  to 3 rounds). One repair attempt, then fail-closed if the contract still does
+  not hold — never ships an invalid report. `thorough` keeps the 3-round budget.
 - QA re-render no longer triggers on cosmetic-only findings (diagram/chain
   compactness, walkthrough depth, list shape, recon hints). They're reported as
   advisories instead. Real defects — broken diagrams, missing sections, §7 drift,

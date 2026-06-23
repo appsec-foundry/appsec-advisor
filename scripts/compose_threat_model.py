@@ -992,9 +992,7 @@ def _normalize_affected_component_refs(refs: Any, cmap: dict[str, str]) -> tuple
     return new_refs, changed
 
 
-def _normalize_fragment_component_refs(
-    ctx: RenderContext, filename: str, list_key: str
-) -> None:
+def _normalize_fragment_component_refs(ctx: RenderContext, filename: str, list_key: str) -> None:
     """Rewrite ``affected_components`` slug ids → canonical C-NN in one MS fragment.
 
     Shared engine for ms-anti-patterns.json (``anti_patterns[]``) and
@@ -1021,9 +1019,7 @@ def _normalize_fragment_component_refs(
     for it in items:
         if not isinstance(it, dict):
             continue
-        new_refs, item_changed = _normalize_affected_component_refs(
-            it.get("affected_components"), cmap
-        )
+        new_refs, item_changed = _normalize_affected_component_refs(it.get("affected_components"), cmap)
         if item_changed:
             it["affected_components"] = new_refs
             changed = True
@@ -11271,6 +11267,14 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     lines.append(f"| Generated | {generated} |")
     lines.append(f"| Mode | {mode} |")
     lines.append(f"| Assessment depth | {depth} |")
+    # Opt-in --stride-cap N transparency: disclose the per-category STRIDE cap so
+    # a capped report is never mistaken for a full-depth one. Omitted when absent.
+    stride_cap = meta.get("stride_per_category_cap")
+    if stride_cap:
+        lines.append(
+            f"| STRIDE per-category cap | {stride_cap} threat(s) per category "
+            f"per component (Critical-safe; `--stride-cap`) |"
+        )
     plugin_cell = f"{plugin_v}" + (f" (analysis v{analysis_v})" if analysis_v else "")
     lines.append(f"| Plugin version | {plugin_cell or '—'} |")
     lines.append(f"| Orchestrator model | {orch_model} |")

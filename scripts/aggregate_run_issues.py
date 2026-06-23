@@ -179,8 +179,9 @@ def _count_repo_files(repo_root: Path) -> int:
 
 
 # Model-speed scaling — the size scaler above assumes default (sonnet-class)
-# sub-agent speed. When the run auto-switched to ``sonnet-economy`` (cheaper,
-# but slower wall-time on tool-heavy scan agents), the model-bound recon
+# sub-agent speed. When the run uses ``sonnet-economy`` (cheaper, but slower
+# wall-time on tool-heavy scan agents — e.g. an explicit --reasoning-model
+# sonnet-economy opt-out), the model-bound recon
 # phases legitimately take longer than the size-scaled budget predicts.
 # Without this factor a sonnet-economy run on a large repo emits a mild
 # false-positive perf_anomaly (observed: juice-shop Phase 2 recon ran 8m14s
@@ -203,6 +204,74 @@ def _run_used_economy_model(output_dir: Path) -> bool:
     except (OSError, ValueError):
         return False
     return str(cfg.get("reasoning_model", "")).strip().lower() in ("sonnet-economy", "haiku-economy")
+
+
+_MODEL_FAMILY_RE = re.compile(r"(opus|sonnet|haiku)", re.IGNORECASE)
+_STRIDE_INVOKE_MODEL_RE = re.compile(r"AGENT_INVOKE.*appsec-stride-analyzer.*\bmodel=(\S+)")
+
+
+def _model_family(value: str) -> str:
+    """Reduce a model id/label (``claude-opus-4-8``, ``opus``, ``sonnet``) to its
+    family. Empty when none recognised."""
+    m = _MODEL_FAMILY_RE.search(value or "")
+    return m.group(1).lower() if m else ""
+
+
+def _extract_stride_model_mismatch(
+    output_dir: Path,
+    hook_log: list[tuple[int, str]],
+    agent_log: list[tuple[int, str]],
+) -> list[dict]:
+    """Warn when the STRIDE analyzers ran on a different model than the resolved
+    ``stride_model``. The parallel fan-out must set each Agent call's ``model``
+    param to ``$STRIDE_MODEL``; when omitted, Claude Code silently falls back to
+    the analyzer's frontmatter default (``model: sonnet``), so e.g.
+    ``--reasoning-model opus`` is silently ignored for the value-defining STRIDE
+    phase (verified 2026-06-22 juice-shop). ``agent_logger._agent_model`` mirrors
+    Claude Code's own resolution (Agent-call ``model`` param else frontmatter),
+    so the ``AGENT_INVOKE`` ``model=`` value is the authoritative executed model.
+    Non-blocking advisory."""
+    try:
+        cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    expected = _model_family(str(cfg.get("stride_model", "")))
+    if not expected:
+        return []
+    observed: dict[str, int] = {}
+    first_line = 0
+    for ln, raw in list(hook_log) + list(agent_log):
+        m = _STRIDE_INVOKE_MODEL_RE.search(raw)
+        if not m:
+            continue
+        fam = _model_family(m.group(1))
+        if not fam:
+            continue
+        observed[fam] = observed.get(fam, 0) + 1
+        if first_line == 0:
+            first_line = ln
+    wrong = {fam: n for fam, n in observed.items() if fam != expected}
+    if not observed or not wrong:
+        return []
+    got = ", ".join(f"{fam} ×{n}" for fam, n in sorted(wrong.items()))
+    return [
+        {
+            "category": "stride_model_mismatch",
+            "severity": "warning",
+            "title": (
+                f"STRIDE analyzers ran on {got}, but the resolved stride_model is "
+                f"'{expected}' — the dispatch omitted the Agent 'model' param, so the "
+                f"analyzers fell back to the frontmatter default. --reasoning-model was "
+                f"silently ignored for the (value-defining) STRIDE phase."
+            ),
+            "evidence": {
+                "log_file": ".agent-run.log / .hook-events.log",
+                "log_line": first_line,
+                "expected_stride_model": expected,
+                "observed_models": observed,
+            },
+        }
+    ]
 
 
 # Sub-agent token-output ceiling — abnormal Sonnet sessions go up to
@@ -669,8 +738,7 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
             "category": "session_stop_unknown" if reason == "unknown" else "high_token_usage",
             "severity": "warning",
             "title": (
-                f"SESSION_STOP from {ev['source']}: reason={reason}, "
-                f"out={out_tokens:,} tokens, cost=${cost:.2f}"
+                f"SESSION_STOP from {ev['source']}: reason={reason}, out={out_tokens:,} tokens, cost=${cost:.2f}"
             ),
             "evidence": {
                 "log_file": ".agent-run.log",
@@ -971,6 +1039,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_gate_events(output_dir))
+    issues.extend(_extract_stride_model_mismatch(output_dir, hook_log, agent_log))
 
     # Assign deterministic IDs (ordered by category then evidence line).
     issues.sort(key=lambda i: (i["category"], i["evidence"].get("log_line", 0)))

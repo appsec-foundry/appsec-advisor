@@ -171,8 +171,16 @@ def _is_realtime(c: dict) -> bool:
 # prose description does NOT count as carrying the role — only a component
 # whose stable label is actually a web3/wallet/NFT unit suppresses injection.
 _WEB3_HINTS = (
-    "web3", "nft", "blockchain", "ethereum", "wallet",
-    "smart-contract", "smartcontract", "dapp", "defi", "crypto-wallet",
+    "web3",
+    "nft",
+    "blockchain",
+    "ethereum",
+    "wallet",
+    "smart-contract",
+    "smartcontract",
+    "dapp",
+    "defi",
+    "crypto-wallet",
 )
 
 
@@ -510,9 +518,21 @@ def _detect_auth(repo_root: Path) -> dict | None:
 # in routes/checkKeys.ts; thorough carved out `web3-nft` and found it). Detected
 # by a web3 dependency (ethers/web3/bip39/…) OR web3-signalling source content.
 _WEB3_DEPS = (
-    "ethers", "web3", "web3.js", "ethereumjs-wallet", "ethereumjs-tx",
-    "ethereumjs-util", "bip39", "bip32", "hdkey", "@ethersproject/wallet",
-    "hardhat", "solc", "merkletreejs", "keccak", "@openzeppelin/contracts",
+    "ethers",
+    "web3",
+    "web3.js",
+    "ethereumjs-wallet",
+    "ethereumjs-tx",
+    "ethereumjs-util",
+    "bip39",
+    "bip32",
+    "hdkey",
+    "@ethersproject/wallet",
+    "hardhat",
+    "solc",
+    "merkletreejs",
+    "keccak",
+    "@openzeppelin/contracts",
 )
 # Content signal — word-boundary matched so a stray "ether" inside another word
 # does not fire. Deliberately omits the bare token "wallet" (too broad in
@@ -679,6 +699,14 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     if not isinstance(all_components, list):
         all_components = []
 
+    # Stamp the dispatched STRIDE reasoning model into the manifest so the
+    # model that runs each component is auditable from the intermediates. The
+    # .stride-<id>.json outputs carry no model field, and .stage-stats.jsonl is
+    # LLM-extracted (unreliable under turn pressure), so this deterministic
+    # record is the config→execution cross-check. Uniform across components for
+    # a given run (read from the resolved skill-config; "unknown" if absent).
+    stride_model = _read_json(output_dir / ".skill-config.json", {}).get("stride_model") or "unknown"
+
     # Enumeration-completeness reconciliation: restore security-relevant units
     # (auth / ci-cd / real-time) that Phase-3 folded into a coarser parent. The
     # augmented inventory is persisted so it is the single source of truth for
@@ -789,11 +817,13 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                         except (TypeError, ValueError):
                             v = 3
                 comp[k] = v
+        comp["model"] = stride_model
         out_components.append(comp)
 
     return {
         "schema_version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "stride_model": stride_model,
         "stride_profile": analyst_context.get("_stride_profile", "full")
         if isinstance(analyst_context, dict)
         else "full",

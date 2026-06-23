@@ -66,6 +66,32 @@ Load `PRE_PASS_JSON_PATH` first. It is the authoritative result for **every** me
 
 **Token discipline:** **Do not read the full `threat-model.md` on the normal plan-triage path.** Use targeted line reads from issue line-numbers in the pre-pass. Prefer `Edit` over `Write` for every repair.
 
+## Fast-exit gate — run immediately after loading PRE_PASS_JSON
+
+**Before running any checks**, evaluate whether the full check suite is warranted:
+
+```bash
+BLOCKING_COUNT=$(python3 -c "
+import json, sys
+try:
+    plan = json.load(open('$OUTPUT_DIR/.qa-repair-plan.json'))
+    blocking = [a for a in plan.get('actions', []) if a.get('severity','') == 'blocking']
+    print(len(blocking))
+except Exception:
+    print(0)
+" 2>/dev/null)
+```
+
+If `BLOCKING_COUNT == 0` AND `.qa-repair-plan.json` either does not exist or has `action_count == 0`:
+
+1. Write `.qa-status.json` with `status=pass`, `blocking_count=0`, `threat_count_in=<N>`, `threat_count_out=<N>`.
+2. Print the completion summary with all check lines as `0` or `n/a`.
+3. **Exit immediately** — do NOT run Checks 1–14, do NOT run `compose_threat_model.py`, do NOT produce `.qa-content-repair-plan.json` or `.qa-repair-plan.json`.
+
+**Rationale:** cosmetic findings (diagram node counts, TOC anchor slugs, mitigation heading lengths, soft warnings) are advisory only. Re-rendering for cosmetic issues wastes significant compute and agent turns. The re-render loop is reserved exclusively for `severity=blocking` violations surfaced by `qa_checks.py repair_plan`.
+
+**Post-blocking-fix early exit.** If you were dispatched for blocking issues and applied repairs (fragment edits + recompose), re-run `qa_checks.py repair_plan` after recompose. If the result is exit 0 or exit 4 (cosmetic-only), write `.qa-status.json` with `status=pass` and **exit immediately** — do NOT proceed to run Checks 1–14 on the recomposed document. The remaining checks are semantic review; they are not needed when no blocking structural issues remain.
+
 ## Inputs (provided in the invocation prompt)
 
 - `REPO_ROOT` — absolute path to the repository being analyzed

@@ -160,9 +160,7 @@ class TestAiExposureComponentNormalization:
                             "severity": "red",
                             "description": "User chat input is concatenated into the prompt.",
                             "affected_components": affected,
-                            "findings": [
-                                {"ref": "T-020", "label": "Prompt injection via chat input"}
-                            ],
+                            "findings": [{"ref": "T-020", "label": "Prompt injection via chat input"}],
                         }
                     ],
                 }

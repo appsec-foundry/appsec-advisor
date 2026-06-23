@@ -113,7 +113,7 @@ Compliance + asset:
 Run config:
 - `MAX_TURNS` — soft target. The frontmatter `maxTurns` is the hard ceiling.
 - `ESTIMATED_THREAT_COUNT` — `low` (≤3) / `moderate` (4–7) / `high` (≥8). Drives pacing (see *Turn budget self-regulation*).
-- `STRIDE_PROFILE_JSON` — JSON object from `resolve_stride_profile()`. When `stride_profile_label = "quick (depth-reduced via sonnet-economy)"`, apply *Quick-mode adjustments* in Step 3. The flag values mirror `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py` — keep that file and the Step-3 table in sync.
+- `STRIDE_PROFILE_JSON` — JSON object from `resolve_stride_profile()`. When `stride_profile_label = "quick (depth-reduced via sonnet-economy)"`, apply the full *Quick-mode adjustments* in Step 3. The flag values mirror `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py` — keep that file and the Step-3 table in sync. **Key-gated cap (independent of the label):** if the profile contains a `max_threats_per_category` key — which can appear at *any* depth via the opt-in `--stride-cap N` flag, not only under the quick label — apply the `max_threats_per_category` row of the Step-3 table regardless of the rest of the profile. All other Step-3 reductions stay gated on the quick label; a `full (per-category cap N)` profile trims only the per-category tail and keeps full CVSS/evidence/grep depth.
 - `ASSESSMENT_DEPTH` — `quick` / `standard` / `thorough`. Drives turn ceilings and diagram depth; the Step-2 raw-SQL IDOR trace now runs at every depth (access-control recall must not depend on depth).
 - `PRIOR_ASSESSMENT_DEPTH` — `quick` / `standard` / `thorough` / `none`. The depth of the baseline run (incremental only). When it is DEEPER than `ASSESSMENT_DEPTH`, apply the conservative carry rule in Step 1 to prior findings you cannot confirm fixed (disposition #3 below). `none` on full/first runs → normal disposition, no carry rule.
 
@@ -273,12 +273,14 @@ Eight forbidden substrings are schema-enforced; the rest is author discipline.
 
 ### Quick-mode adjustments
 
-Apply when `STRIDE_PROFILE_JSON.stride_profile_label = "quick (depth-reduced via sonnet-economy)"`. Cuts verification overhead — never coverage. Per-threat quality bar identical to Full mode. **Source of truth: `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py`** — update this table in the same commit when a flag flips.
+Apply the full table when `STRIDE_PROFILE_JSON.stride_profile_label = "quick (depth-reduced via sonnet-economy)"`. Cuts verification overhead — never coverage. Per-threat quality bar identical to Full mode. **Source of truth: `QUICK_STRIDE_PROFILE` in `scripts/resolve_config.py`** — update this table in the same commit when a flag flips.
+
+**`max_threats_per_category` is KEY-GATED, not label-gated:** apply that one row whenever the key is present in `STRIDE_PROFILE_JSON` — including a `full (per-category cap N)` profile produced by the opt-in `--stride-cap N` flag at standard/thorough. In that case apply *only* the cap row; every other row below stays inactive (full CVSS/evidence/grep depth is preserved). The remaining rows apply only under the quick label.
 
 | Flag | Value | Adjustment |
 |---|---|---|
 | `skip_verification_greps` | `true` | Skip the targeted verification grep before discarding a candidate. **Exception:** Spoofing / Tampering / EoP rated Critical or High — grep is mandatory regardless. Skipping in those cases produced silent false positives. |
-| `max_threats_per_category` | `1` | After enumerating per category, sort by severity descending (Critical > High > Medium > Low) and keep the top 1. **Critical-safe exception:** never drop a Critical to honour this cap — if a category has 2+ Critical findings, keep **all** of them (the cap applies only to the High/Medium/Low tail). |
+| `max_threats_per_category` | `N` (the value in the profile; `1` under the quick profile, `N` under `--stride-cap N`) | After enumerating per category, sort by severity descending (Critical > High > Medium > Low) and keep the top **N**. **Critical-safe exception:** never drop a Critical to honour this cap — if a category has more than N Critical findings, keep **all** of them (the cap applies only to the High/Medium/Low tail). |
 | `skip_code_examples` | `false` | Inactive — `code_example` remains mandatory. |
 | `skip_evidence_excerpt` | `false` | Inactive — file:line evidence stays. |
 | `skip_cvss_scoring` | `true` | Do not emit `cvss_v4`. |
