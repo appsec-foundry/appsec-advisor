@@ -27,12 +27,21 @@ All notable changes to this project are documented here.
 
 ### Changed
 
-- AI/LLM components are now always STRIDE-analyzed at every depth. Component selection
-  used to drop an LLM service tagged as an internal zone ("out-of-scope at depth=standard"),
-  which skipped the dedicated OWASP LLM Top-10 pass and left the chatbot's prompt-injection /
-  excessive-agency / system-prompt-leakage surface uncovered. An AI/LLM component now joins
-  auth and frontend as a mandatory role that is never shed — so a chatbot gets a full LLM
-  threat enumeration, not one incidental finding.
+- The console run-plan now adds a short hint on `standard` runs that
+  `--assessment-depth thorough` may surface more (deeper per-component analysis +
+  architect review, Opus reasoning) at higher cost and time. Shown only when the
+  run will actually execute; not on quick/thorough or no-op reruns.
+- Component selection no longer silently drops high-risk components. Three fixes:
+  (1) AI/LLM components are now a mandatory role at every depth — a chatbot tagged as an
+  internal zone used to be dropped ("out-of-scope at depth=standard"), skipping its OWASP
+  LLM Top-10 pass and leaving prompt-injection / excessive-agency / prompt-leakage
+  uncovered. (2) The exposed-zone vocabulary now matches the synonyms the analysis actually
+  emits (`internet-facing`, `external`, `public`, `browser`, …), not just `internet` — so
+  genuinely internet-facing services (a Socket.IO channel, a file-upload handler) are no
+  longer mis-classified as internal and shed. (3) File-upload/parser and real-time/WebSocket
+  components are now mandatory at standard+ regardless of zone (upload CWE-434 / zip-path
+  traversal / XXE, and channel injection/authz). On Juice Shop this took standard-depth
+  coverage from 7 components to all 10, with nothing dropped.
 - AI/LLM detection is now deterministic. The `### AI / LLM Exposure` report section was
   driven by an LLM grep that needed a full agentic RAG stack to fire and could be skipped
   under load; it now comes from `recon_patterns.py` and triggers on any real SDK, framework,

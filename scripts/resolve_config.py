@@ -2204,6 +2204,12 @@ def _run_plan_notes(
         notes.append("Ctrl-C now to abort before any tokens are spent.")
         if not verdict["mode_line"].startswith("full") and not verdict["mode_line"].startswith("rebuild"):
             notes.append("Pass --full to widen the scope to a complete re-assessment.")
+        if cfg.get("assessment_depth") == "standard":
+            notes.append(
+                "--assessment-depth thorough may surface more (deeper "
+                "per-component analysis + architect review, Opus reasoning) "
+                "at higher cost and time."
+            )
     else:
         notes.append("threat-model.md preserved as-is.")
         notes.append("Pass --full to force a complete re-assessment regardless.")

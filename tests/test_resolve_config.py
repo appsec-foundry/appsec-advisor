@@ -1630,6 +1630,38 @@ class TestRunPlanVerdictIncremental:
         assert "bootstrap full run" in v["reason"]
 
 
+class TestRunPlanDepthHint:
+    """standard runs surface a console hint that thorough may do better at higher cost."""
+
+    def _verdict(self, will_run=True):
+        return {"will_run": will_run, "mode_line": "full (first run)"}
+
+    def test_standard_shows_thorough_hint(self):
+        notes = rc._run_plan_notes(
+            self._verdict(), _base_cfg(assessment_depth="standard"), None, None, None
+        )
+        assert any("thorough" in n and "higher cost" in n for n in notes)
+
+    def test_thorough_no_hint(self):
+        notes = rc._run_plan_notes(
+            self._verdict(), _base_cfg(assessment_depth="thorough"), None, None, None
+        )
+        assert not any("--assessment-depth thorough may surface more" in n for n in notes)
+
+    def test_quick_no_hint(self):
+        notes = rc._run_plan_notes(
+            self._verdict(), _base_cfg(assessment_depth="quick"), None, None, None
+        )
+        assert not any("--assessment-depth thorough may surface more" in n for n in notes)
+
+    def test_no_hint_on_noop(self):
+        # When nothing will run, skip the depth upsell.
+        notes = rc._run_plan_notes(
+            self._verdict(will_run=False), _base_cfg(assessment_depth="standard"), None, None, None
+        )
+        assert not any("--assessment-depth thorough may surface more" in n for n in notes)
+
+
 class TestPipelineString:
     def test_full(self):
         s = rc._pipeline_string(_base_cfg(skip_qa=False), full=True)
