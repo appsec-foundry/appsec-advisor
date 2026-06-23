@@ -87,8 +87,6 @@ appsec-reviewer agent
   -> core reviewer used by the skill and CLI
 ```
 
-The hook is proactive guidance. The agent, skill, and CLI are review paths for code that already changed.
-
 ## Setup and prerequisites
 
 Interactive use needs Claude Code with the plugin loaded:
@@ -187,15 +185,6 @@ Output:
 ```
 
 The agent only writes findings. Gate decisions belong to `scripts/requirements_gate.py`; the skill and CLI call that script when gate mode is enabled.
-
-Console finding shape:
-
-```text
-  - [FAIL] MUST  BP-INJ-SQL-PARAM  Parameterized SQL Queries
-  Finding : raw request input reaches sequelize.query() in src/routes/search.ts:23
-  Fix     : bind the term: sequelize.query(sql, { replacements: { term } })
-  Effort  : M
-```
 
 ## verify-requirements skill
 

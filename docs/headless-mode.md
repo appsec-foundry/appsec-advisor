@@ -195,7 +195,7 @@ Run the `audit-security-requirements` skill to verify security requirements agai
 # Filter to a single category
 ./scripts/run-headless.sh --audit-requirements --category SEC-AUTH
 
-# Save the report (Markdown + JSON)
+# Save the report (Markdown + PDF + JSON)
 ./scripts/run-headless.sh --audit-requirements --save-report
 
 # External repo
@@ -206,7 +206,7 @@ Run the `audit-security-requirements` skill to verify security requirements agai
 ./scripts/run-headless.sh --audit-requirements --repo /repos/team-api --save-report
 ```
 
-Output: console report with pass/fail per requirement, VS Code deep links to evidence, remediation roadmap. With `--save-report` also writes `docs/security/appsec-requirements-report.md` and `.json`.
+Output: console report with pass/fail per requirement, VS Code deep links to evidence, remediation roadmap. With `--save-report` also writes `docs/security/appsec-requirements-report.md`, `.pdf`, and `.json`.
 
 <a id="a5-full-featured-assessment"></a>
 
@@ -538,7 +538,7 @@ All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
 | `threat-model.md` | Always | Human-readable threat model report |
 | `threat-model.yaml` | Always (unless `--no-yaml`) | Machine-readable export; baseline for incremental runs |
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1.0 for code scanning upload |
-| `appsec-requirements-report.md` / `.json` | `--audit-requirements --save-report` | Requirements compliance report |
+| `appsec-requirements-report.md` / `.pdf` / `.json` | `--audit-requirements --save-report` | Requirements compliance report |
 | `.agent-run.log` | Always | Agent lifecycle, phase progress, step detail |
 | `.hook-events.log` | Always | Hook events, token usage, cost per agent |
 | `.threat-modeling-context.md` | Always | Combined context from all sources |
@@ -586,7 +586,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 
 | Flag | Purpose |
 |---|---|
-| `--assessment-depth quick\|standard\|thorough` | Depth control (3/5/8 STRIDE components); quick also skips Stage-3 QA and detailed walkthroughs by default |
+| `--assessment-depth quick\|standard\|thorough` | Depth control (STRIDE component count is criteria-derived, not fixed per depth); quick also skips Stage-3 QA and detailed walkthroughs by default |
 | `--requirements [<url>]` | Enable Phase 8b requirements compliance check |
 | `--no-requirements` | Skip requirements even when enabled in config |
 
@@ -621,7 +621,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 | `--audit-requirements` | Run `audit-security-requirements` instead of the threat model |
 | `--check-requirements` | Legacy alias for `--audit-requirements` |
 | `--category <filter>` | Category filter for requirements check (e.g. `SEC-AUTH`) |
-| `--save-report` | Save requirements report (Markdown + JSON) |
+| `--save-report` | Save requirements report (Markdown + PDF + JSON) |
 
 <a id="troubleshooting"></a>
 

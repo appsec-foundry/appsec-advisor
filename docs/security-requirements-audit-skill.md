@@ -1,6 +1,6 @@
 # Requirements Audit
 
-Grades a repository against a security requirements catalog, reporting PASS / FAIL / PARTIAL per requirement with file/line evidence. Faster than a full threat model — fits PR gates, compliance dashboards, and audit preparation.
+Grades a repository against a security requirements catalog, reporting PASS / FAIL / PARTIAL per requirement with file/line evidence. Faster than a full threat model, and suited to PR gates and audit preparation.
 
 → [Back to README](../README.md)
 
@@ -162,7 +162,7 @@ All flags accepted by `/appsec-advisor:audit-security-requirements`. Each one ch
 
 ## Structured verdict & CI gate
 
-A plain console run writes nothing. `--md`/`--pdf` add the human report; `--json`/`--save` or `--gate` also write a structured verdict to `docs/security/.requirements-audit.json` ([`schemas/requirements-audit.schema.json`](../schemas/requirements-audit.schema.json)) — one `results[]` entry per requirement (status, priority, `in_scope`, evidence, finding, fix, verbatim text, blueprint and threat-model links). Summary counts are recomputed by `scripts/requirements_report.py` (the model authors the fields, the script owns the tally), so the Result block never drifts from a hand-count. `--json` copies the verdict to `appsec-requirements-report.json`.
+A plain console run writes nothing. `--md`/`--pdf` add the human report; `--json`/`--save` or `--gate` also write a structured verdict to `docs/security/.requirements-audit.json` ([`schemas/requirements-audit.schema.json`](../schemas/requirements-audit.schema.json)) — one `results[]` entry per requirement (status, priority, `in_scope`, evidence, finding, fix, verbatim text, blueprint and threat-model links). Summary counts are recomputed by `scripts/requirements_report.py`, so the Result block never drifts from a hand-count. `--json` copies the verdict to `appsec-requirements-report.json`.
 
 The gate is decided by `scripts/requirements_gate.py` — the same deterministic gate `verify-requirements` uses — from the verdict's `results[]`, not the model's advisory flags. A requirement gates when `in_scope AND status==FAIL (or PARTIAL with --gate-on partial) AND priority >= floor`. Advisory by default; `--gate` exits non-zero on a gating failure, so it drops into CI:
 

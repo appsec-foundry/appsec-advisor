@@ -54,11 +54,18 @@ DEPTH & MODEL
   --quick                      Shortcut for --assessment-depth quick;
                                also skips Stage 3 QA and detailed walkthroughs
   --thorough                   Shortcut for --assessment-depth thorough
+  --stride-cap <N>             Opt-in cost lever: keep at most N threats per
+                               STRIDE category per component (Critical-safe —
+                               Criticals are never dropped). Trims the
+                               High/Medium/Low tail to cut tokens; full depth
+                               (CVSS, evidence, greps) otherwise unchanged.
+                               Off by default.
   --reasoning-model <mode>     Model tier for STRIDE analysis:
                                sonnet | opus-cheap | opus | sonnet-economy
                                (haiku-economy = deprecated alias, still accepted)
                                Defaults: sonnet-economy at quick,
-                                         opus-cheap at standard/thorough
+                                         opus at standard/thorough
+                                         (STRIDE/triage/merger on Opus)
   --architect-review           Run an advisory architect review (Stage 4)
                                Auto-enabled at depth=thorough
   --no-architect-review        Disable Stage 4 even at depth=thorough
@@ -173,4 +180,4 @@ PIPELINE
   contract-clean document or aborts with a structured repair plan.
 
 See /appsec-advisor:status for plugin version and last-run info.
-Full flag reference: docs/threat-model-skill.md
+Full flag reference: docs/threat-modeler.md

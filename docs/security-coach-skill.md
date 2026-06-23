@@ -26,7 +26,7 @@ The coach is a prompt-augmentation hook only — it does not block prompts and d
 
 ## When the coach helps most
 
-- **Mixed sessions.** Long coding sessions where only some prompts touch security. Example trace across a 2h session: `"explain the architecture"` (0 tokens injected) → `"implement OAuth refresh"` (auth topic + `SEC-API-AUTH` injected) → `"add logging"` (0 tokens) → `"the SQL for user search"` (injection topic + `SEC-SQL`, `SEC-IV`). A static AGENTS.md baseline would pay tokens on all four turns.
+- **Mixed sessions.** Long coding sessions where only some prompts touch security: `"explain the architecture"` injects nothing, while `"implement OAuth refresh"` pulls in `SEC-API-AUTH`. A static AGENTS.md baseline would pay tokens on every turn regardless.
 - **Short, time-pressured prompts.** Requests like `"quickly wire up Stripe"` receive a focused nudge (`SEC-SECRETS`, three lines) rather than requiring Claude to extract the relevant rule from a long static baseline.
 - **Teams with a living requirements catalog.** When the harvester refreshes `appsec-requirements-fallback.yaml`, the coach picks up the new text on the next prompt — no AGENTS.md edit, no PR, no pull required across the team.
 - **Multi-agent pipelines.** Sub-agents that do not run `UserPromptSubmit` (STRIDE analyzers, QA reviewer) receive requirement context through the orchestrator's selective injection. The coach covers the user-facing surface; per-component logic stays with the orchestrator.
@@ -76,7 +76,7 @@ Precedence: environment variable wins (including as kill switch `APPSEC_COACH=0`
 
 ## Trigger logic
 
-Tiered keyword matching — designed to activate on security-relevant intent without firing on every prompt that happens to mention the word "file".
+Tiered keyword matching activates on security-relevant intent, not on any prompt that merely mentions a code word.
 
 | Tier | Example keywords | Threshold |
 |------|------------------|-----------|
@@ -141,7 +141,7 @@ Applicable requirements:
 **System message shown to the user:**
 
 ```
-AppSec Coach active (via env): auth
+AppSec Coach active (via env): auth.
 ```
 
 The system message lists every matched topic so the user can see at a glance which guidance set was applied. Requirements are resolved from the same YAML that powers `/appsec-advisor:audit-security-requirements`, so their text stays in sync with the baseline.
@@ -177,7 +177,7 @@ The active catalog is exclusive: the first readable file wins. Which catalog is 
 - **Org profile with `requirements_yaml_url`** → harvester populates `.cache/requirements.yaml` → company `SEC-*` / `SSDLC-*` requirements are injected.
 - **No org profile or no URL configured** → falls through to `appsec-requirements-fallback.yaml` (if shipped) or the OWASP `BP-*` baseline.
 
-To control this via packaging, set `requirements.source.requirements_yaml_url` in the org profile. The coach picks up the active catalog on the next prompt — no restart, no plugin reinstall.
+To control this via packaging, set `requirements.source.requirements_yaml_url` in the org profile. The coach picks up the active catalog on the next prompt.
 
 The topic keyword lists in `hooks/steering_keywords.json` carry both `SEC-*` and `BP-*` IDs per topic. The coach filters at runtime to only inject IDs present in the active catalog, so the same plugin build works correctly with either a company catalog or the OWASP baseline.
 
@@ -203,11 +203,7 @@ Fields:
 - `chars` — length of the injected context block
 - `prompt` — first 8 hex chars of a SHA-256 of the prompt (stable reference without logging the prompt text)
 
-The event is append-only and never includes the prompt body, so the log is safe to share with a platform team for tuning reviews. Use it to answer:
-
-- "Which topics actually fire in our team's sessions?" → frequency analysis over `topics=…`
-- "Did we miss the auth rule when implementing PR #1234?" → correlate `prompt=<hash>` with the request that produced that hash
-- "Are new trigger words we added actually catching anything?" → compare injection counts before and after a config change
+The event is append-only and never includes the prompt body, so the log is safe to share with a platform team for tuning reviews. For example, a frequency analysis over `topics=…` shows which topics actually fire in your team's sessions, and comparing injection counts before and after a config change shows whether newly added trigger words catch anything.
 
 Telemetry is best-effort: if the log directory is not writable (e.g. read-only filesystem, external working directory), the event is silently dropped. The hook never fails because of a logging error.
 

@@ -52,7 +52,7 @@
 #   --audit-requirements    Run audit-security-requirements instead of threat model
 #   --check-requirements    Legacy alias for --audit-requirements
 #   --category <filter>     Category filter for requirements check (e.g. SEC-AUTH)
-#   --save-report           Save requirements report (--md --json)
+#   --save-report           Save requirements report (--md --pdf --json)
 #
 # Environment:
 #   ANTHROPIC_API_KEY       Anthropic API key (optional — uses subscription if unset)
@@ -122,7 +122,7 @@ Skill selection:
   --audit-requirements       Run audit-security-requirements instead of threat model
   --check-requirements       Legacy alias for --audit-requirements
   --category <filter>        Category filter for requirements check (e.g. SEC-AUTH)
-  --save-report              Save requirements report (--md --json)
+  --save-report              Save requirements report (--md --pdf --json)
 
   -h, --help                 Show this help message and exit
 
@@ -584,13 +584,16 @@ echo ""
 # `--model opus` only raises the orchestrator (main loop) — it assembles and
 # writes the report (composition, walkthroughs, banners). The actual
 # threat-reasoning work (STRIDE/triage/merger) follows its own per-agent
-# routing and is NOT affected, so Opus here adds ~5x cost without finding more.
+# routing and is NOT affected. Opus tokens cost ~5x Sonnet's on that layer,
+# and orchestration is ~half of an Opus-driven run, so this adds roughly
+# +25-55% to the run total (proportional to repo size, not fixed) without
+# finding more.
 # The real levers are --reasoning-model opus (deeper analysis) and
 # --assessment-depth thorough (wider coverage).
 # Non-blocking: a deliberate Opus orchestrator is a legitimate choice.
 case "$MODEL" in
     *opus*)
-        warn "Opus on --model only raises the orchestrator that writes the report (~5x cost, no extra findings). For deeper analysis use --reasoning-model opus, and/or --assessment-depth thorough for wider coverage." ;;
+        warn "Opus on --model only raises the orchestrator that writes the report (~+25-55% on the run total, proportional to repo size, no extra findings). For deeper analysis use --reasoning-model opus, and/or --assessment-depth thorough for wider coverage." ;;
 esac
 
 # ── Execute ─────────────────────────────────────────────────────────

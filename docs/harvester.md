@@ -1,6 +1,6 @@
 # Bringing your AppSec requirements into the plugin
 
-If your organisation already runs a security-requirements catalog (Confluence, Antora, an ISO 27001 spreadsheet someone exported to HTML), the plugin can grade repositories against it. The plugin reads requirements as a single structured YAML file; this document covers how to produce that file from existing pages and keep it current.
+If your organisation already runs a security-requirements catalog (Confluence, Antora, an exported spreadsheet), the plugin can grade repositories against it. The plugin reads requirements as a single structured YAML file; this document covers how to produce that file from existing pages and keep it current.
 
 ## The flow
 
@@ -20,7 +20,7 @@ flowchart LR
 Four moving parts:
 
 - **The harvester** — `scripts/harvest_requirements.py`, a one-shot Python script that crawls your pages and writes `appsec-requirements.yaml`.
-- **The YAML file** — the canonical format the plugin reads. Ships with a 53-requirement example (`data/appsec-requirements-fallback.yaml`) usable as template or starting point.
+- **The YAML file** — the canonical format the plugin reads. Ships with a 63-requirement example (`data/appsec-requirements-fallback.yaml`) usable as template or starting point.
 - **A way to expose the YAML** — commit it to the plugin repo, publish it to a static URL, or serve it locally via the mock server while iterating.
 - **Plugin config** — `requirements_yaml_url` in `skills/audit-security-requirements/config.json`; once set, every `create-threat-model --requirements` and every `/appsec-advisor:audit-security-requirements` run picks up the catalog without further flags.
 
@@ -126,7 +126,7 @@ A single JSON file drives the crawler. Below is the minimum useful shape; defaul
 }
 ```
 
-The harvester recognises requirement IDs of the shape `PREFIX-PART[-PART…]` — `SEC-AUTH-01`, `SCG-HARDENXML`, `OWASP-A01`, `ISO27K-A12`. No prefix is hardcoded; whatever shape your org uses will be picked up. It tries five HTML-parser strategies per page (Antora sectionbody, anchor IDs, definition lists, free-text references, table rows) and keeps the first match per ID.
+The harvester recognises requirement IDs of the shape `PREFIX-PART[-PART…]` — `SEC-AUTH-01`, `SCG-HARDENXML`, `OWASP-A01`, `ISO27K-A12`. No prefix is hardcoded; whatever shape your org uses will be picked up. It tries five HTML-parser strategies per page and keeps the first match per ID.
 
 For every source, `crawl_url` is both a page to index and the base path for direct child-page discovery. The harvester fetches `crawl_url`, indexes that page, then indexes same-origin links below that path up to `max_pages`. Crawling is intentionally one level deep; add another `sources[]` entry when important pages live outside the configured path or are only reachable through a deeper navigation tree.
 

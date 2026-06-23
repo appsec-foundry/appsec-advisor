@@ -1,8 +1,8 @@
 # Org Profiles
 
-Org profiles let AppSec teams ship Acme-flavoured defaults — presets, requirements source, optional markdown context, skill toggles — alongside the plugin **without forking the core**. Profiles are validated and resolved deterministically before Stage 1 of any scan; they never inject agent instructions and never replace renderer / QA / schema pipelines.
+Org profiles let AppSec teams ship organisation-specific defaults — presets, requirements source, optional markdown context, skill toggles — alongside the plugin **without forking the core**. Profiles are validated and resolved deterministically before Stage 1 of any scan. What they can and cannot change is listed below.
 
-The current profile contract is `api_version: appsec-advisor.org-profile/v2`, which adds the `actors:` block. v1 profiles are auto-upgraded on load with an `info` notice in run-issues.json.
+The current profile contract is `api_version: appsec-advisor.org-profile/v2`, which adds the `actors:` block. A v1 profile (no `actors:` block) loads as if it declared `actors: {inherit_defaults: true}`, so no migration is required.
 
 This page is the **reference** for the profile format. To build and ship a company-branded plugin that bundles a profile, follow the build runbook: [internal-plugin-packaging.md](internal-plugin-packaging.md).
 
@@ -23,8 +23,6 @@ This page is the **reference** for the profile format. To build and ship a compa
 - inject agent instructions or prompt overrides
 - override schemas, QA gates, permissions, or any renderer template
 - ship remote markdown context, signed packages, or arbitrary scripts
-
-The MVP is intentionally narrow.
 
 ## Packaging
 
@@ -204,7 +202,7 @@ actors:
 
 **v2 profile fingerprint:** includes all actor definition files — changes to actor files invalidate the actor-layer cache and trigger a per-component slice re-run (not a full recon re-run).
 
-**v1 → v2 migration:** v1 profiles are auto-upgraded to v2 on load, defaulting to `actors: {inherit_defaults: true}` (with an `info` notice in run-issues.json). No manual migration step is required.
+**v1 → v2 migration:** a v1 profile (no `actors:` block) is treated as `actors: {inherit_defaults: true}`. No manual migration step is required.
 
 ## Markdown context
 

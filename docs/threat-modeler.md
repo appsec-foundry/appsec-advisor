@@ -50,6 +50,8 @@ All optional deliverables can also be generated after an assessment. This is use
 
 SARIF and pentest-tasks are produced deterministically from `threat-model.yaml` — no LLM tokens spent. PDF and HTML are converted from `threat-model.md`: HTML needs only `pandoc`, PDF additionally needs `weasyprint`. Mermaid diagrams are rendered to vector graphics by `mmdc` (`@mermaid-js/mermaid-cli`), which drives a headless **Chrome/Chromium via Puppeteer** — install one (`npx puppeteer browsers install chrome`, or `apt install chromium` and set `PUPPETEER_EXECUTABLE_PATH`). The PDF exporter's preflight aborts with a clear message if any required tool is missing or non-functional; run `/appsec-advisor:export-threat-model --check-only` to verify the toolchain, or pass `--no-mermaid` to export without diagrams.
 
+**Optional: grammar-level Mermaid QA.** The Stage-3 QA gate validates every Mermaid block. By default it runs a permissive regex pre-pass; for the authoritative grammar check (which catches breakages the regex pass misses) it needs the real Mermaid parser. Install the optional Node deps once with `npm install --prefix "$CLAUDE_PLUGIN_ROOT/scripts"` (pulls `jsdom` + `mermaid`). When they are absent the validator falls back to regex-only checks and logs a skip warning at run-start — the pipeline still completes, just with a degraded diagram QA gate.
+
 ## Example report: OWASP Juice Shop
 
 The following example shows the output of a thorough-mode assessment against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/).
@@ -157,18 +159,32 @@ Within a run, *which* components get a full STRIDE pass is criteria-driven, not 
 
 The analyzed count follows the repo's attack surface, not a hard cap. (Component counts in the benchmarks below predate this selection.)
 
+**Cost levers within a depth.** Two knobs trim a standard run without changing depth:
+
+- `--stride-cap N` *(opt-in, off by default)* — keep at most **N** threats per STRIDE category per component. The dominant lever on threat volume, and on the merge/mitigation/QA tokens those threats drive. It is **Critical-safe** — Criticals are never dropped — and trims only the High/Medium/Low tail; full depth (CVSS, evidence, verification greps) is otherwise preserved. The cap is disclosed in the report's *Run Statistics* appendix so a capped report is never mistaken for a full one. Standard/thorough keep full STRIDE depth unless you set this.
+- **Single-pass QA repair at quick/standard** *(automatic)* — the post-render QA/architect Re-Render Loop runs at most **one** repair attempt at quick/standard (thorough keeps up to 3). If the contract still fails after one pass the run fails closed (`exit 2`) rather than burning extra repair rounds — it never ships an invalid report.
+
+**Measured cost impact** (Juice Shop, standard depth, clean runs, identical flags except the reasoning tier, 2026-06-23):
+
+| Standard config | Cost | Threats | Note |
+|---|---|---|---|
+| `--reasoning-model opus --stride-cap 2` | $40.78 | 53 | best severity calibration |
+| `--reasoning-model sonnet-economy --stride-cap 2` | **$30.01** | 52 | **−$10.77**; but 81 % Crit/High (2 Low) — more severity inflation; no Web3/NFT surface |
+
+The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not the per-category cap: the cap alone trims threat *volume* (89 → ~52) but only ~$4, because the largest cost is the always-Sonnet orchestrator's cache-read, not threat count. Going to `sonnet-economy` is a **cost-vs-quality** trade — it also moves *triage* to Sonnet, which calibrates severities and surfaces less (e.g. the Web3/NFT component the Opus run found). Earlier internal notes claimed Opus STRIDE was *cheaper*; a clean A/B refutes that — Opus reasoning is **more** expensive, you pay it for calibration/coverage, not savings.
+
 | Mode | Best fit | What changes | Juice Shop benchmark |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Fast feedback, pre-commit checks, early design iterations. | Reduced-depth pass; **skips** attack-chain (abuse-case) validation and the final QA review. Early signal — rerun at standard before release decisions. | **Cost** ~ $8.49<br>**Time** ~ 33 min<br>**Findings** 14 threats / 3 components<br>Critical 4, High 8, Medium 2<br>[sample report](../examples/threat-modeler/threat-mode-juice-shop-quick.md) |
-| **Standard** *(default)* | Normal threat models and security reviews. | Full-depth analysis with attack-chain validation and a full QA review. The engineering-review default. | **Cost** ~ $32<br>**Time** ~ 121 min net compute (~40 min wall-clock)<br>**Findings** 80 findings / 9 components<br>Critical 11, High 39, Medium 21, Low 9<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-thorough.md) |
-| **Thorough** `--assessment-depth thorough` | Pre-release reviews, high-risk services, major architecture changes. | Everything in standard, plus deeper per-component analysis and an extra architecture-review pass. Best when missed architecture risk is expensive. | **Cost** ~ $43+ †<br>**Time** ~ 100 min<br>**Findings** 102 findings / 10 components<br>Critical 22, High 66, Medium 12, Low 2<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-thorough.md) |
+| **Quick** `--assessment-depth quick` | Fast feedback, pre-commit checks, early design iterations. | Reduced-depth pass; **skips** attack-chain (abuse-case) validation and the final QA review. Early signal — rerun at standard before release decisions. | **Cost** ~ $8.49<br>**Time** ~ 33 min<br>**Findings** 36 findings / 8 components (6 analyzed)<br>Critical 8, High 20, Medium 6, Low 2<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-quick.md) |
+| **Standard** *(default)* | Normal threat models and security reviews. | Full-depth analysis with attack-chain validation and a full QA review. The engineering-review default. | **Cost** ~ $32<br>**Time** ~ 121 min net compute (~40 min wall-clock)<br>**Findings** 52 findings / 9 components<br>Critical 10, High 32, Medium 8, Low 2<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-standard.md) |
+| **Thorough** `--assessment-depth thorough` | Pre-release reviews, high-risk services, major architecture changes. | Everything in standard, plus deeper per-component analysis and an extra architecture-review pass. Best when missed architecture risk is expensive. | **Cost** ~ $43+<br>**Time** ~ 100 min<br>**Findings** 80 findings / 9 components<br>Critical 11, High 39, Medium 21, Low 9<br>[sample report](../examples/threat-modeler/threat-model-juice-shop-thorough.md) |
 
 > [!NOTE]
 > Benchmark numbers come from a single Node.js/Express reference app (OWASP Juice Shop) and vary substantially with repository size, language/framework mix, model routing, and cache effects. Treat the figures as ballpark orientation, not as predictions for your repo. **Incremental scans** are used automatically when an existing model is available and typically reduce token usage by 70–90%.
 >
-> The **standard** figures reflect the 2026-06-22 Juice Shop run (standard depth, `--reasoning-model opus`) driven from a Sonnet session. STRIDE ran on **verified Opus** — `model: opus` was passed explicitly to every parallel STRIDE Agent call, closing the silent-Sonnet-fallback gap identified in earlier runs. 9 components analyzed (incl. Web3/NFT surface), 80 findings, net API compute ~121 min, wall-clock ~40 min for Stage 1 (parallel STRIDE). The **thorough** figures reflect an earlier 2026-06-22 run with 102 findings / 10 components. **† Which model actually ran STRIDE could not be verified** for that thorough run: the hook `model` fields are cosmetic/frontmatter-defaulted, and `/cost` under-reports sub-agent Opus usage. Triage is the one stage with a real Opus record (`claude-opus-4-8`); the STRIDE execution model is unknown, so the ~$43 cost should be treated as indicative only. The linked sample reports predate this run. (To run the reasoning core on Sonnet instead, see **Reasoning model** below.)
+> The **finding counts above are the committed Juice Shop sample reports** linked in each row. At standard/thorough the reasoning core defaults to Opus (`--reasoning-model opus`), with `model: opus` passed explicitly to every parallel STRIDE Agent call. The `~` cost/time figures are approximate: the hook `model` fields are cosmetic/frontmatter-defaulted and `/cost` under-reports sub-agent Opus usage, so treat per-mode costs as indicative only. (To run the reasoning core on Sonnet instead, see **Reasoning model** below.)
 >
-> The figures above also include the **orchestration layer**, which runs in your interactive session's model (see the tip below). The standard Juice Shop run above is ~$32 from a Sonnet session; the same run driven from an Opus session is ~$47 — the ~$15 difference is purely the added cost of running orchestration on Opus instead of Sonnet (the analysis sub-agents are routed the same way either way, so only the orchestration share grows). In relative terms the orchestration layer is roughly **40–50% of an Opus-driven run** (here ~$20 of ~$47), so driving the session with Opus adds on the order of **+25–55% to the total** — not a fixed surcharge but a *proportional* one that **grows with run length and repo size** (the orchestrator re-reads its accumulating cached context on every dispatch, so longer/larger runs carry a bigger absolute premium). None of it deepens the analysis.
+> The figures above also include the **orchestration layer**, which runs in your interactive session's model. The standard Juice Shop run above is ~$32 from a Sonnet session; the same run driven from an Opus session is ~$47 — the ~$15 difference is purely orchestration running on Opus instead of Sonnet, since the analysis sub-agents are routed the same way either way. It does not deepen the analysis; for how this scales with run length and repo size, see the session-model tip below.
 
 ### Reasoning model
 
@@ -226,7 +242,7 @@ Two optional files let the owning team feed the threat model directly. Commit th
 
 ### Business context — `docs/business-context.md`
 
-Free-form Markdown, read verbatim (up to 200 lines). Use it to state what the code can't show: which flows are revenue-critical, what regulatory drivers apply, where the crown-jewel data lives, and which failure scenarios would hurt most. The analysis uses it to weight severity and priority — the same SQL injection reads differently on a marketing page than on a payment path once that context is on the table.
+Free-form Markdown, read verbatim (up to 200 lines). Use it to state what the code can't show: which flows are revenue-critical, what regulatory drivers apply, where the crown-jewel data lives, and which failure scenarios would hurt most. The analysis uses it to weight severity and priority — the same SQL injection reads differently on a marketing page than on a payment path.
 
 ### Known threats — `docs/known-threats.yaml`
 

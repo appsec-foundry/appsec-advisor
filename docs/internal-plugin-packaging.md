@@ -38,7 +38,7 @@ presets:
 YAML
 ```
 
-This profile is still tiny, but it changes behavior: a plain `/my-appsec:create-threat-model` uses standard depth, emits SARIF, and caps spend at `$10`. `compatibility` is required by the org-profile schema; it prevents packaging a profile with an unsupported upstream plugin version.
+With this profile, a plain `/my-appsec:create-threat-model` uses standard depth, emits SARIF, and caps spend at `$10`. `compatibility` is required by the org-profile schema; it prevents packaging a profile with an unsupported upstream plugin version.
 
 **3. Clone the upstream release.**
 
@@ -64,7 +64,7 @@ $ claude --plugin-dir build/my-appsec
 /my-appsec:create-threat-model
 ```
 
-That is enough for a local branded plugin. The following steps turn the same setup into a team-ready package with requirements, business context, optional actors, and CI artifacts.
+That is enough for a local branded plugin. The steps below extend it into a team-ready package.
 
 ## Step 1 - Create the packaging repo
 

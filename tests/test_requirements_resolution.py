@@ -184,7 +184,7 @@ class TestDepthOverride:
         """Config enabled, no flags, quick depth → check must be off."""
         check, url, err = resolve_check_requirements(config_enabled=True, assessment_depth="quick")
         assert check is False, (
-            "quick depth should suppress config auto-on to avoid 53-requirement noise on ≤3-component scopes"
+            "quick depth should suppress config auto-on to avoid 63-requirement noise on ≤3-component scopes"
         )
         assert err is None
 

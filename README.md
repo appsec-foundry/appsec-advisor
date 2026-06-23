@@ -6,6 +6,8 @@
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 [![codecov](https://codecov.io/gh/matthiasrohr/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/matthiasrohr/appsec-advisor)
 
+> ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
+
 `appsec-advisor` is a Claude Code plugin for AppSec teams, built around code-anchored threat modeling. It turns a repository into a security architecture model, identifies trust boundaries and data flows, applies STRIDE, and produces structured findings.
 
 On the same foundation, it also supports requirements audits and developer helpers (change review, pre-commit guidance, CI gates). Teams can use as-is or adapt with their own requirements, threat context, presets, guardrails, and company-branded packaging.
@@ -24,13 +26,13 @@ The threat modeler treats the repository as the primary evidence source for secu
 
 * **Code-anchored architecture model:** Architecture, trust boundaries, and data flows are read from the current code, with no diagrams to keep in sync.
 
-* **Staged agent pipeline:** Specialized agents run recon, analysis, triage, and QA as separate stages, bound by shared schemas, contracts, and templates: structured, validatable output instead of freeform LLM responses.
+* **Staged agent pipeline:** Specialized agents run recon, analysis, triage, and QA as separate stages, bound by shared schemas, contracts, and templates. The output is structured and validatable rather than freeform LLM text.
 
 * **Catalog-grounded context:** Your requirements, prior threats, and adjacent services feed the analysis, so findings reference your controls, not a generic checklist.
 
 * **Diff-based reruns:** Findings keep stable IDs across runs, so a rescan shows what actually moved, not a fresh report.
 
-* **Architecture-level review:** Findings sit at trust boundaries, service trust, and unauthenticated paths: the architecture risks code scanners miss.
+* **Architecture-level review:** Findings sit at trust boundaries, service trust, and unauthenticated paths — the architecture risks code scanners miss.
 
 The result is a repeatable, code-aware starting point for review. It supports architectural judgment, but it is not a verdict. The requirements audit and developer helpers reuse the same catalog and agent infrastructure to extend this into day-to-day development.
 
@@ -41,8 +43,6 @@ The result is a repeatable, code-aware starting point for review. It supports ar
 AppSec and security architecture teams own the plugin configuration, defaults, templates, and review policy. Engineering teams run threat models during design work, review preparation, major changes, or release readiness checks, and use the requirements audit and developer helpers for ongoing compliance checks and change review.
 
 Threat model findings should be validated by an AppSec engineer or security architect before they inform release decisions, remediation commitments, exceptions, or formal risk acceptance.
-
-> **Status:** 0.4.0-beta. The plugin is under active development, so prompts, schemas, scripts, defaults, and report formats may change between releases.
 
 ## Security notes
 
@@ -72,7 +72,7 @@ Threat model findings should be validated by an AppSec engineer or security arch
 
 The steps below get you to your first threat model, the plugin's primary tool. Requirements audit and developer helpers use the same setup and are covered in their own sections below.
 
-This plugin requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`.
+This plugin requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Node deps (`jsdom` + `mermaid`) enable grammar-level Mermaid QA; see the [Threat Modeler](#threat-modeler) docs.
 
 The plugin is registered once, then invoked from the repository you want to assess.
 For now, installation uses a local checkout rather than a packaged release. This makes the plugin files, prompts, schemas, and scripts easy to inspect, patch, or pin while the project is still in beta.
@@ -130,9 +130,13 @@ Generated reports are not committed automatically. For a local review, you can s
 
 An assessment produces a report covering architecture observations, trust boundaries, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams. Default outputs are `threat-model.md` and `threat-model.yaml`; optional exports include PDF, HTML, SARIF, and pentest task lists.
 
-**Example:** A thorough-mode run against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) produces 38 findings across 8 components (8 Critical, 23 High, 6 Medium) including architecture diagrams, abuse-case chains, and a full mitigation register. → [Read the full example report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
+**Example:** A thorough-mode run against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) produces 80 findings across 9 components (11 Critical, 39 High, 21 Medium, 9 Low) including architecture diagrams, abuse-case chains, and a full mitigation register. → [Read the full example report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 
-![Threat Model Juice Shop Standard](./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
+  <img
+    src="./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg"
+    alt="Threat Model Juice Shop Standard"
+    width="50%"
+  />
 
 **→ Full reference: [docs/threat-modeler.md](docs/threat-modeler.md)**
 
@@ -258,7 +262,11 @@ What the org-profile buys you over the generic plugin:
 
 The diagram below shows the packaging and distribution flow using "Acme" as a placeholder for your organisation.
 
-![AppSec Advisor workflow](docs/images/orgpackaging.svg)
+  <img
+    src="docs/images/orgpackaging.svg"
+    alt="Enterprise rollout pipeline"
+    width="50%"
+  />
 
 The initializer guides you through the required organization-specific settings and creates a ready-to-use packaging repository.
 
@@ -278,12 +286,6 @@ Target directory [./ac-appsec-advisor]:
 Include demo content (example requirements + filled org profile)? [y/N]: N
 
 ==> Cloning template from GitHub …
-Cloning into '/tmp/tmp.M4d7y2PdQl'...
-remote: Enumerating objects: 25, done.
-remote: Counting objects: 100% (25/25), done.
-remote: Compressing objects: 100% (19/19), done.
-remote: Total 25 (delta 0), reused 13 (delta 0), pack-reused 0 (from 0)
-Receiving objects: 100% (25/25), 15.80 KiB | 703.00 KiB/s, done.
 
 Done. Your packaging repo is ready at: ./ac-appsec-advisor
 
@@ -295,7 +297,7 @@ Done. Your packaging repo is ready at: ./ac-appsec-advisor
 
 ## Roadmap
 
-Open work items currently shaping the next iterations of the plugin:
+Planned and in-progress work:
 
 - **Validation against real-world applications.** The plugin is being tested across a growing set of applications — different stacks, architectures, and deployment patterns — to harden prompt behaviour, improve output consistency, and surface edge cases that synthetic fixtures don't cover.
 
@@ -316,6 +318,8 @@ Open work items currently shaping the next iterations of the plugin:
 - **Slimming the orchestration skill.** `create-threat-model/SKILL-impl.md` has grown large. Shrink it incrementally — extract inline Bash into tested scripts, deduplicate blocks, move rationale into script docstrings — lowering orchestration cost (less context per turn). Golden-run-verified, behaviour byte-identical.
 
 - **Ingest existing threat models (idea).** Detect an existing model (e.g. Threat Dragon `threat-model.json`) and use it as non-authoritative context.
+
+- **Marketplace release (idea).** Once out of beta, publish the plugin to the Claude Code plugin marketplace for one-step installation.
 
 
 ## Related projects
