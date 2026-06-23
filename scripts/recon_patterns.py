@@ -958,6 +958,141 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Category 13 — AI / LLM integration (deterministic; replaces the former
+# LLM-grep 5-AND rule). Two signal strengths so a single import/framework/
+# vector-DB/model-id (STRONG) is enough, while generic tokens (WEAK) only count
+# in combination — see docs/analysis/plan-deterministic-ai-llm-detection-2026-06-23.md.
+# ---------------------------------------------------------------------------
+
+# Code + structured-config extensions only (all are a subset of _TEXT_EXT). Docs
+# (.md/.adoc) are excluded on purpose: a README that merely *mentions* "OpenAI"
+# is not an AI surface.
+_CAT13_EXTS = {
+    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".java", ".kt", ".scala", ".go", ".rb", ".php", ".cs", ".rs",
+    ".yml", ".yaml", ".json", ".toml", ".env",
+}
+
+# (subcategory, strength, pattern). STRONG tokens essentially never occur outside
+# genuine LLM code; one hit ⇒ AI surface. WEAK tokens also occur in non-LLM code
+# (ML, sensors, games), so they only count via the anchored weak rule below.
+_CAT13_GROUPS: list[tuple[str, str, re.Pattern[str]]] = [
+    # --- STRONG -----------------------------------------------------------
+    ("llm-sdk", "strong", re.compile(
+        r"(?i)(\bopenai\b|\banthropic\b|@anthropic-ai|\blangchain\b|@langchain/"
+        r"|llama[_-]?index|\bllamaindex\b|\bautogen\b|\bcrewai\b|\blitellm\b"
+        r"|\bcohere\b|\bmistralai\b|google\.generativeai|@google/generative-ai"
+        r"|\bollama\b|@azure/openai|\bbedrock-runtime\b|ChatCompletion"
+        r"|chat\.completions|GenerativeModel|\bInvokeModel\b)")),
+    ("vector-db", "strong", re.compile(
+        r"(?i)(\bchromadb\b|\bpinecone\b|\bweaviate\b|\bqdrant\b|\bmilvus\b)")),
+    ("agent-framework", "strong", re.compile(
+        r"(AgentExecutor|ReActAgent|create_react_agent|create_tool_calling_agent)")),
+    ("prompt-framework", "strong", re.compile(
+        r"(ChatPromptTemplate|\bSystemMessage\b|\bHumanMessage\b|\bPromptTemplate\b|from_messages)")),
+    ("tokenizer", "strong", re.compile(r"(?i)\btiktoken\b")),
+    ("model-name", "strong", re.compile(
+        r"(?i)(gpt-4|gpt-3\.5|claude-3|claude-2|claude-sonnet|claude-opus"
+        r"|gemini-1\.|text-embedding-(?:ada|3)|\bo1-(?:preview|mini)\b)")),
+    # --- WEAK -------------------------------------------------------------
+    ("prompt-construction", "weak", re.compile(
+        r"(?i)(system[ _-]?prompt|system[ _-]?message|prompt[ _-]?template|user[ _-]?prompt)")),
+    ("model-config", "weak", re.compile(
+        r"(?i)(\btemperature\b|max[ _-]?tokens|\btop[ _-]?p\b|model[ _-]?name|model[ _-]?id)")),
+    ("vector-semantic", "weak", re.compile(
+        r"(?i)(\bembedding|vector[ _-]?store|similarity[ _-]?search|\bpgvector\b|\bfaiss\b)")),
+    ("tool-use", "weak", re.compile(
+        r"(?i)(tool[ _-]?use|function[ _-]?call|tool[ _-]?choice)")),
+]
+
+_CAT13_PER_SUBCAT_CAP = 20
+
+# AI-coding-assistant / IDE-agent config dirs. Their files name AI providers
+# ("api.anthropic.com" in a Claude Code permission list) but describe the
+# DEVELOPER's tooling, not the target app's LLM usage — so they must not flag an
+# AI surface here. Cat 28 still catalogs them (that is a separate supply-chain
+# signal), which is why this is a Cat-13-local skip, not a global hard-exclude.
+_CAT13_SKIP_DIRS = frozenset(
+    {".claude", ".cursor", ".continue", ".codeium", ".aider", ".windsurf"}
+)
+
+
+def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
+    """Detect a genuine AI/LLM surface deterministically.
+
+    Returns findings only when ``has_ai_surface`` holds:
+      (>=1 STRONG hit anywhere) OR (a SINGLE file co-locating the
+      'prompt-construction' weak group plus >=1 other distinct weak group).
+      The anchored, co-located weak rule catches SDK-less REST integrations
+      (whose prompt + model-config sit in the same module) while rejecting both
+      non-LLM ML repos (embedding + temperature without a prompt anchor) and
+      scattered security-vocabulary (a docs/taxonomy repo that merely *names*
+      "prompt injection", "embeddings", "tool use" across separate files). An
+      empty result ⇒ KNOWN_LLM_PATTERNS = none ⇒ the '### AI / LLM Exposure'
+      section renders nothing.
+    """
+    findings: list[dict[str, Any]] = []
+    per_cap: dict[str, int] = {}
+    strong_seen: set[str] = set()
+    weak_by_file: dict[str, set[str]] = {}
+    truncated = False
+
+    for p in _walk_repo(repo_root):
+        if p.suffix.lower() not in _CAT13_EXTS:
+            continue
+        rel_path = p.relative_to(repo_root)
+        if any(part in _CAT13_SKIP_DIRS for part in rel_path.parts[:-1]):
+            continue
+        rel = str(rel_path).replace("\\", "/")
+        try:
+            with p.open("r", encoding="utf-8", errors="replace") as f:
+                for n, line in enumerate(f, start=1):
+                    for subcat, strength, pat in _CAT13_GROUPS:
+                        if not pat.search(line):
+                            continue
+                        if strength == "strong":
+                            strong_seen.add(subcat)
+                        else:
+                            weak_by_file.setdefault(rel, set()).add(subcat)
+                        if per_cap.get(subcat, 0) < _CAT13_PER_SUBCAT_CAP:
+                            stripped = line.rstrip("\r\n")
+                            if len(stripped) > 400:
+                                stripped = stripped[:400] + "…"
+                            findings.append(
+                                {
+                                    "category": 13,
+                                    "subcategory": subcat,
+                                    "strength": strength,
+                                    "file": rel,
+                                    "line": n,
+                                    "match": stripped.strip(),
+                                }
+                            )
+                            per_cap[subcat] = per_cap.get(subcat, 0) + 1
+                        else:
+                            truncated = True
+        except OSError:
+            continue
+
+    has_ai_surface = bool(strong_seen) or any(
+        "prompt-construction" in groups and len(groups) >= 2
+        for groups in weak_by_file.values()
+    )
+    if not has_ai_surface:
+        return {"category": 13, "name": "AI / LLM Integration", "findings": [], "count": 0}
+
+    out: dict[str, Any] = {
+        "category": 13,
+        "name": "AI / LLM Integration",
+        "findings": findings,
+        "count": len(findings),
+    }
+    if truncated:
+        out["truncated"] = True
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -972,6 +1107,7 @@ def run_all(
         "repo_root": str(repo_root),
         "categories": {
             "11": scan_exposed_routes(repo_root),
+            "13": scan_ai_integration(repo_root),
             "14": scan_ci_supply_chain(repo_root),
             "15": scan_container_images(repo_root),
             "17": scan_postinstall(repo_root),
@@ -1005,6 +1141,7 @@ def run_all(
 
 _DISPATCH = {
     "exposed-routes": (scan_exposed_routes, "Cat 11"),
+    "ai-integration": (scan_ai_integration, "Cat 13"),
     "ci-supply-chain": (scan_ci_supply_chain, "Cat 14"),
     "container-images": (scan_container_images, "Cat 15"),
     "postinstall": (scan_postinstall, "Cat 17"),

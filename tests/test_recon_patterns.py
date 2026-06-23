@@ -3,6 +3,7 @@ Tests for scripts/recon_patterns.py — Sprint 3 Item #1.
 
 Covers the Python-migrated recon categories:
   Cat 11  Exposed Routes
+  Cat 13  AI / LLM Integration (deterministic detection)
   Cat 14  CI/CD Supply Chain (unpinned GitHub Actions)
   Cat 15  Container Base Images
   Cat 17  Postinstall Scripts
@@ -617,6 +618,115 @@ class TestAdditionalDeterministicCategories:
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Cat 13 — AI / LLM Integration (deterministic detection)
+# ---------------------------------------------------------------------------
+
+
+class TestCat13AiIntegration:
+    # --- positive: must detect -------------------------------------------
+
+    def test_plain_openai_chatbot(self, repo):
+        """The #1 case the old 5-AND rule missed: a bare SDK import."""
+        (repo / "chat.ts").write_text(
+            'import OpenAI from "openai";\nconst c = new OpenAI();\n', encoding="utf-8"
+        )
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] >= 1
+        subs = {f["subcategory"] for f in out["findings"]}
+        assert "llm-sdk" in subs
+
+    def test_langchain_rag(self, repo):
+        (repo / "rag.py").write_text(
+            "from langchain.prompts import ChatPromptTemplate\nimport chromadb\n",
+            encoding="utf-8",
+        )
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] >= 1
+        subs = {f["subcategory"] for f in out["findings"]}
+        assert {"llm-sdk", "prompt-framework", "vector-db"} & subs
+
+    def test_agent_stack(self, repo):
+        (repo / "agent.py").write_text(
+            "executor = AgentExecutor(agent=a, tools=t)\n", encoding="utf-8"
+        )
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] >= 1
+        assert any(f["subcategory"] == "agent-framework" for f in out["findings"])
+
+    def test_sdkless_rest_integration_weak_path(self, repo):
+        """No SDK token — detected via the anchored weak rule:
+        prompt-construction + model-config."""
+        (repo / "llm.py").write_text(
+            'system_prompt = "You are a helpful assistant"\n'
+            'r = requests.post(url, json={"temperature": 0.7, "messages": msgs})\n',
+            encoding="utf-8",
+        )
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] >= 1
+        subs = {f["subcategory"] for f in out["findings"]}
+        assert "prompt-construction" in subs and "model-config" in subs
+
+    def test_literal_model_id(self, repo):
+        (repo / "config.yaml").write_text('model: gpt-4o\n', encoding="utf-8")
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] >= 1
+        assert any(f["subcategory"] == "model-name" for f in out["findings"])
+
+    # --- negative: must NOT detect (false-positive guards) ----------------
+
+    def test_classic_ml_not_detected(self, repo):
+        """embedding + temperature (annealing) but NO prompt anchor → no fire."""
+        (repo / "train.py").write_text(
+            "from sklearn.manifold import TSNE\n"
+            "embedding_dim = 128\n"
+            "temperature = 0.95  # simulated annealing\n",
+            encoding="utf-8",
+        )
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] == 0
+
+    def test_person_named_claude_not_detected(self, repo):
+        """Bare 'claude' is a name, not a model id."""
+        (repo / "users.py").write_text(
+            'claude = User(name="Claude", role="admin")\n', encoding="utf-8"
+        )
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] == 0
+
+    def test_lone_temperature_not_detected(self, repo):
+        (repo / "thermostat.py").write_text("self.temperature = 21.5\n", encoding="utf-8")
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] == 0
+
+    def test_scattered_weak_signals_not_detected(self, repo):
+        """Weak signals in SEPARATE files (scattered security vocabulary, e.g. a
+        docs/taxonomy repo) must NOT trip the co-located weak rule."""
+        (repo / "a.yaml").write_text("note: system prompt injection is a risk\n", encoding="utf-8")
+        (repo / "b.yaml").write_text("note: embeddings can leak data\n", encoding="utf-8")
+        (repo / "c.yaml").write_text("note: temperature of the reactor\n", encoding="utf-8")
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] == 0
+
+    def test_claude_tooling_dir_excluded(self, repo):
+        """A Claude Code config mentioning api.anthropic.com must not flag the
+        target as an LLM app — .claude/ is tooling, not application source."""
+        cdir = repo / ".claude"
+        cdir.mkdir()
+        (cdir / "settings.local.json").write_text(
+            '{"permissions":{"allow":["WebFetch(domain:api.anthropic.com)"]}}\n',
+            encoding="utf-8",
+        )
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] == 0
+
+    def test_empty_repo(self, repo):
+        out = rp.scan_ai_integration(repo)
+        assert out["count"] == 0
+        assert out["category"] == 13
+
+
+# ---------------------------------------------------------------------------
 # run_all + CLI
 # ---------------------------------------------------------------------------
 
@@ -673,6 +783,7 @@ class TestCLI:
         out = json.loads(r.stdout)
         assert set(out["categories"].keys()) == {
             "11",
+            "13",
             "14",
             "15",
             "17",
@@ -689,6 +800,7 @@ class TestCLI:
         "cmd",
         [
             "exposed-routes",
+            "ai-integration",
             "ci-supply-chain",
             "container-images",
             "postinstall",

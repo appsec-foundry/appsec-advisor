@@ -27,6 +27,11 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- AI/LLM detection is now deterministic. The `### AI / LLM Exposure` report section was
+  driven by an LLM grep that needed a full agentic RAG stack to fire and could be skipped
+  under load; it now comes from `recon_patterns.py` and triggers on any real SDK, framework,
+  vector DB, or model id (and on SDK-less integrations that co-locate a prompt with model
+  config). A plain `openai` chatbot is now reliably detected.
 - Trimmed the orchestrator's resident context: the rebuild-wipe and auto-incremental
   full-scan-recommendation branches now lazy-load from `modes/*.md` only when their
   mode runs, instead of sitting inline in the always-read `SKILL-impl.md`. A standard
