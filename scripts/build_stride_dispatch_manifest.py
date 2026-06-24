@@ -49,14 +49,24 @@ def _cat13_supplement(output_dir: Path) -> str:
         findings = data.get("categories", {}).get("13", {}).get("findings", [])
     except Exception:
         return ""
-    parts = []
-    for f in findings[:10]:
-        subcat = f.get("subcategory", "llm-sdk")
+    # Prioritise the anchors the STRIDE analyzer actually needs: STRONG signals
+    # (real SDK / framework / agent / model-id — the integration code) before
+    # WEAK ones, and one anchor per file so a repo with many static prompt-data
+    # lines (e.g. juice-shop's challenges.yml) cannot crowd out the genuine
+    # routes/chat.ts integration point under the 10-entry cap.
+    findings = sorted(findings, key=lambda f: 0 if f.get("strength") == "strong" else 1)
+    parts, seen_files = [], set()
+    for f in findings:
         fpath = f.get("file", "")
+        if not fpath or fpath in seen_files:
+            continue
+        seen_files.add(fpath)
+        subcat = f.get("subcategory", "llm-sdk")
         line = f.get("line", "")
         loc = f"{fpath}:{line}" if line else fpath
-        if loc:
-            parts.append(f"{subcat}: {loc}")
+        parts.append(f"{subcat}: {loc}")
+        if len(parts) >= 10:
+            break
     return "; ".join(parts)
 
 # max_turns per (depth, complexity) — single source of truth is
@@ -260,6 +270,17 @@ _LLM_RE = re.compile(
 
 
 def _is_llm(c: dict) -> bool:
+    # A populated `known_llm_patterns` is an affirmative analyst/recon flag that
+    # this component carries an LLM surface — honour it even when id/name/type
+    # and tech_stack name no LLM token. The enumerator sometimes FOLDS a chatbot
+    # into a generically-named unit (e.g. juice-shop's chat route folded into
+    # "express-backend"); the LLM signal then lives ONLY in known_llm_patterns.
+    # Without this branch the mandatory floor, the OWASP-LLM-Top-10 dispatch
+    # reason, and the Cat-13 supplement (all gated on _is_llm) silently skip the
+    # folded component, dropping LLM07/LLM10 and the AI/LLM Exposure section.
+    klp = c.get("known_llm_patterns")
+    if klp and (klp if isinstance(klp, str) else " ".join(str(x) for x in klp)).strip():
+        return True
     stack = " ".join(str(x) for x in (c.get("tech_stack") or []))
     return bool(_LLM_RE.search(_component_text(c)) or _LLM_RE.search(stack))
 
@@ -736,6 +757,62 @@ def reconcile_inventory(components: list, repo_root: Path) -> tuple:
     return augmented, injected
 
 
+def _path_owns(paths: list, fpath: str) -> bool:
+    """True when a component `paths` entry contains (or globs over) `fpath`.
+    Glob tails are stripped to a directory prefix (``routes/**`` → ``routes``)."""
+    fp = str(fpath).replace("\\", "/")
+    for p in paths or []:
+        pp = str(p).replace("\\", "/").rstrip("/")
+        base = pp.split("*")[0].rstrip("/")
+        if not base:
+            continue
+        if fp == base or fp.startswith(base + "/"):
+            return True
+    return False
+
+
+def _seed_llm_role(components: list, output_dir: Path, analyst_context: dict) -> list:
+    """Make the LLM role visible to the selection predicates BEFORE the analyst-
+    context merge runs (build() merges `known_llm_patterns` only into the OUTPUT
+    component, long after selection has already decided scope). Without this, a
+    chatbot folded into a generically-named unit escapes the mandatory _is_llm
+    floor, the OWASP-LLM-Top-10 dispatch reason, and the Cat-13 supplement.
+
+    Two deterministic sources, in order:
+      1. analyst_context[cid]['known_llm_patterns'] — the analyst's own flag.
+      2. Cat-13 recon STRONG findings whose file falls under a component's
+         `paths` — a code-traceable LLM surface even when the analyst omitted
+         the flag. This is the fully deterministic bridge from recon to STRIDE.
+
+    Mutates and returns `components`."""
+    if isinstance(analyst_context, dict):
+        for c in components:
+            if isinstance(c, dict) and c.get("id"):
+                klp = analyst_context.get(c["id"], {}).get("known_llm_patterns")
+                if klp and not c.get("known_llm_patterns"):
+                    c["known_llm_patterns"] = klp
+    if any(isinstance(c, dict) and c.get("known_llm_patterns") for c in components):
+        return components  # already flagged (analyst or prior seeding)
+    data = _read_json(output_dir / ".recon-patterns.json", {})
+    strong = [
+        f
+        for f in (data.get("categories", {}) or {}).get("13", {}).get("findings", [])
+        if isinstance(f, dict) and f.get("strength") == "strong" and f.get("file")
+    ]
+    if not strong:
+        return components
+    for c in components:
+        if not isinstance(c, dict):
+            continue
+        owned = [f for f in strong if _path_owns(c.get("paths") or [], f["file"])]
+        if owned:
+            c["known_llm_patterns"] = "; ".join(
+                f"{f.get('subcategory', 'llm-sdk')}: {f['file']}:{f.get('line', '')}" for f in owned[:6]
+            )
+            break
+    return components
+
+
 def select_stride_components(components: list, depth: str, ceiling: int | None = None) -> tuple:
     """Derive the STRIDE-analyzed subset from criteria — count is emergent.
 
@@ -841,6 +918,10 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             + " — security-relevant unit(s) evidenced in repo but absent from "
             "Phase-3 enumeration (role-folded). Now in scope.\n"
         )
+
+    # Seed the LLM role onto components from analyst-context / Cat-13 recon
+    # BEFORE selection, so a folded chatbot is floored into STRIDE scope.
+    all_components = _seed_llm_role(all_components, output_dir, analyst_context)
 
     components, selection_report = select_stride_components(all_components, depth, ceiling)
     # Persist the selection rationale so a run is auditable (which components were

@@ -221,6 +221,85 @@ def test_all_condition_expressions_are_safe(contract):
     assert not violations, "\n".join(violations)
 
 
+COMPOSE_SRC = (REPO_ROOT / "scripts" / "compose_threat_model.py").read_text(encoding="utf-8")
+_COND_KEYWORDS = {"not", "and", "or", "in", "len", "True", "False", "None"}
+
+
+def _eval_context_keys(src: str) -> set[str]:
+    """Keys compose populates into RenderContext.eval_context: the `eval_context={…}`
+    dict-literal keys (brace-matched) plus every `eval_context["key"] =` assignment."""
+    keys: set[str] = set()
+    start = src.find("eval_context={")
+    if start != -1:
+        i = src.find("{", start)
+        depth, j = 0, i
+        while j < len(src):
+            if src[j] == "{":
+                depth += 1
+            elif src[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        block = src[i : j + 1]
+        # only top-level dict keys (depth 1) — good enough: nested dicts here use
+        # different key styles, and a stray nested key only widens the allowlist.
+        keys |= set(re.findall(r"""["']([a-z_][a-z0-9_]*)["']\s*:""", block))
+    keys |= set(re.findall(r"""eval_context\[["']([a-z_][a-z0-9_]*)["']\]\s*=""", src))
+    return keys
+
+
+def _condition_variables(expr: str) -> set[str]:
+    """Variable names referenced by a safe-cond expression. Strips `[…]` enum
+    lists (their members are literal values, not variables) and drops keywords."""
+    no_lists = re.sub(r"\[[^\]]*\]", "", expr)
+    return {t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", no_lists) if t not in _COND_KEYWORDS}
+
+
+# Condition variables that are DOCUMENTARY only: their section is rendered by a
+# special-case path that never calls eval_condition against eval_context, so the
+# variable is intentionally not an eval_context key. `changelog` is one of the
+# `("infobox", "changelog", "quick_mode_notice", "toc", "skipped_sections_placeholder")`
+# document.order sections compose special-cases (compose_threat_model.py ~L1978);
+# `len(changelog) > 0` documents intent but the changelog renderer self-gates.
+# Keep this set MINIMAL and justified — every entry is a condition NOT enforced
+# by the safe evaluator, so adding one knowingly forfeits that guard.
+_DOCUMENTARY_CONDITION_VARS = {"changelog"}
+
+
+def test_all_condition_variables_are_populated_in_eval_context(contract):
+    """Every variable a `condition:`/`conditional:` references MUST be a key compose
+    actually puts into `eval_context`. A condition on an unpopulated variable
+    resolves to False silently (scripts/_safe_cond → env.get) — so the gated
+    section NEVER renders and no error is raised. This is the systemic version of
+    the 2026-06-24 `has_llm_surface` bug (referenced in the contract, populated
+    nowhere → the AI/LLM Exposure gate was dead). General guard, all sections."""
+    provided = _eval_context_keys(COMPOSE_SRC)
+    assert provided, "could not extract any eval_context keys — extractor drifted"
+
+    missing: list[str] = []
+
+    def check(where: str, expr):
+        if not isinstance(expr, str):
+            return
+        for var in _condition_variables(expr):
+            if var not in provided and var not in _DOCUMENTARY_CONDITION_VARS:
+                missing.append(f"{where}: '{var}' (in {expr!r}) not populated in eval_context")
+
+    for raw in contract["document"]["order"]:
+        if isinstance(raw, dict):
+            check(f"document.order[{raw.get('id')}]", raw.get("condition"))
+    for sid, sec in contract["sections"].items():
+        check(f"sections.{sid}.conditional", sec.get("conditional"))
+        for opt in sec.get("optional_subsections") or []:
+            if isinstance(opt, dict):
+                check(f"sections.{sid}.optional_subsections[{opt.get('id', '?')}]", opt.get("condition"))
+        for sub in sec.get("sub_sections") or []:
+            check(f"sections.{sid}.sub_sections[{sub.get('id', '?')}]", sub.get("conditional"))
+
+    assert not missing, "Dead condition variable(s) — section would silently never render:\n" + "\n".join(missing)
+
+
 # ---------------------------------------------------------------------------
 # Severity / effectiveness taxonomy completeness
 # ---------------------------------------------------------------------------

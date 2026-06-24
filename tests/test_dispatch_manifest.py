@@ -1238,6 +1238,74 @@ def test_is_llm_detects_by_id_name_and_techstack():
         assert bm._is_llm(_c(cid)) is False, cid
 
 
+def test_is_llm_detects_by_known_llm_patterns_when_folded():
+    """Regression (2026-06-24): juice-shop's chat route was folded into a
+    generically-named `express-backend` component; the LLM signal lived only in
+    `known_llm_patterns`. _is_llm must honour that field so the mandatory floor,
+    the OWASP-LLM-Top-10 dispatch reason, and the Cat-13 supplement all fire."""
+    folded = {"id": "express-backend", "name": "Express Backend", "type": "process",
+              "tech_stack": ["Express", "Node.js"],
+              "known_llm_patterns": "Chatbot route POST /rest/chat — proxies to Ollama."}
+    assert bm._is_llm(folded) is True
+    # list form (manifest sometimes normalises to a list)
+    folded_list = dict(folded, known_llm_patterns=["chatbot POST /rest/chat"])
+    assert bm._is_llm(folded_list) is True
+    # empty / whitespace must NOT flag a non-LLM backend
+    assert bm._is_llm(dict(folded, known_llm_patterns="")) is False
+    assert bm._is_llm(dict(folded, known_llm_patterns=[])) is False
+    assert bm._is_llm(dict(folded, known_llm_patterns="   ")) is False
+    # and the folded LLM backend is now mandatory-floored at standard depth
+    selected, report = bm.select_stride_components(
+        [folded, _c("plain-worker", zones=["internal-network"])], "standard")
+    assert "express-backend" in {c["id"] for c in selected}
+    reasons = next(s["reasons"] for s in report["selected"] if s["id"] == "express-backend")
+    assert any("AI/LLM surface" in r for r in reasons)
+
+
+def test_path_owns_matches_exact_and_glob():
+    assert bm._path_owns(["routes/chat.ts"], "routes/chat.ts") is True
+    assert bm._path_owns(["routes/**"], "routes/chat.ts") is True
+    assert bm._path_owns(["routes"], "routes/chat.ts") is True
+    assert bm._path_owns(["server.ts"], "routes/chat.ts") is False
+    assert bm._path_owns([], "routes/chat.ts") is False
+
+
+def test_seed_llm_role_from_analyst_context(tmp_path):
+    comps = [{"id": "express-backend", "name": "Express Backend", "paths": ["server.ts"]}]
+    bm._seed_llm_role(comps, tmp_path, {"express-backend": {"known_llm_patterns": "chatbot /rest/chat"}})
+    assert comps[0]["known_llm_patterns"] == "chatbot /rest/chat"
+    assert bm._is_llm(comps[0]) is True
+
+
+def test_seed_llm_role_from_recon_when_analyst_omits(tmp_path):
+    """Deterministic bridge: a strong Cat-13 finding under a component's paths
+    flags it even when the analyst supplied no known_llm_patterns."""
+    (tmp_path / ".recon-patterns.json").write_text(json.dumps({
+        "categories": {"13": {"findings": [
+            {"subcategory": "llm-sdk", "strength": "strong", "file": "routes/chat.ts", "line": 9},
+            {"subcategory": "llm-sdk", "strength": "strong", "file": "package.json", "line": 94},
+            {"subcategory": "tool-use", "strength": "weak", "file": "server.ts", "line": 685},
+        ]}}
+    }), encoding="utf-8")
+    comps = [
+        {"id": "express-backend", "name": "Express Backend", "paths": ["server.ts", "routes/chat.ts"]},
+        {"id": "sqlite-db", "name": "SQLite DB", "paths": ["models/"]},
+    ]
+    bm._seed_llm_role(comps, tmp_path, {})  # analyst omitted the flag
+    eb = comps[0]
+    assert "routes/chat.ts:9" in eb["known_llm_patterns"]
+    assert bm._is_llm(eb) is True
+    # the weak-only / unrelated component is NOT flagged
+    assert not comps[1].get("known_llm_patterns")
+    assert bm._is_llm(comps[1]) is False
+
+
+def test_seed_llm_role_noop_without_recon_or_context(tmp_path):
+    comps = [{"id": "worker", "name": "Worker", "paths": ["jobs/"]}]
+    bm._seed_llm_role(comps, tmp_path, {})
+    assert not comps[0].get("known_llm_patterns")
+
+
 def test_llm_component_selected_at_every_depth():
     """Regression (2026-06-23): juice-shop's internal-zone `llm-chat-service` was
     dropped at standard depth. An AI/LLM component must be in scope at EVERY depth."""

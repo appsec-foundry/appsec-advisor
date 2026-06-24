@@ -14764,6 +14764,14 @@ def render(
             # threat-renderer authored ms-anti-patterns.json (gated on presence;
             # the renderer also self-gates defensively).
             "has_anti_patterns": (fragments_dir / "ms-anti-patterns.json").is_file(),
+            # Optional MS "AI / LLM Exposure" callout — true when the
+            # threat-renderer authored ms-ai-exposure.json (gated on presence,
+            # mirroring has_anti_patterns). The section itself renders via the
+            # file-presence special-case path in _render_management_summary, so
+            # this flag makes the contract's `has_llm_surface` condition real
+            # (it was referenced but never populated) and future-proofs any
+            # move to the generic condition-gated loop.
+            "has_llm_surface": (fragments_dir / "ms-ai-exposure.json").is_file(),
             "verbose_report": bool(yaml_data.get("meta", {}).get("verbose_report")),
             # §6 use_cases removed 2026-05. Conditional retained as False so
             # any stale config that still references `has_use_cases` evaluates

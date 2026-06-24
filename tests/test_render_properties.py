@@ -167,6 +167,49 @@ def test_every_link_target_resolves(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Chapter presence — every unconditional report chapter must actually render
+# ---------------------------------------------------------------------------
+
+# Unconditional sections handled by a special-case / structural renderer whose
+# presence depends on run-state (toc requires headings; changelog requires
+# changelog entries) rather than being a fixed content chapter. Excluded from
+# the must-always-render guard; everything else with a heading must appear.
+_STRUCTURAL_SECTIONS = {"infobox", "toc", "changelog", "quick_mode_notice", "skipped_sections_placeholder"}
+
+
+def test_all_unconditional_chapters_render(tmp_path: Path) -> None:
+    """Compose the representative fixture and assert EVERY unconditional chapter
+    in `document.order` actually appears in the output. Contract-driven, so it
+    auto-covers Threat Register (§8), Abuse Cases (§9), Mitigation Register
+    (§10), Assets (§4), Attack Surface (§5), System Overview (§1), Architecture
+    Diagrams (§2), Out of Scope (§11) and the appendices — and any chapter added
+    later. Catches the failure mode where a whole chapter silently goes missing
+    because a renderer returns empty or is dropped from the dispatch map. The
+    fixture also exercises the two conditional chapters §3 Attack Walkthroughs
+    and §7 Security Architecture, asserted explicitly below."""
+    contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+    out = _prepare(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+
+    expected: list[str] = []
+    for raw in contract["document"]["order"]:
+        sid = raw if isinstance(raw, str) else raw.get("id")
+        cond = None if isinstance(raw, str) else raw.get("condition")
+        if cond or sid in _STRUCTURAL_SECTIONS:
+            continue
+        heading = (contract["sections"].get(sid, {}) or {}).get("heading")
+        if heading:
+            expected.append(heading)
+
+    missing = [h for h in expected if h not in rendered]
+    assert not missing, "Unconditional chapter(s) absent from composed report:\n  " + "\n  ".join(missing)
+
+    # The fixture is built to exercise these two condition-gated chapters too.
+    for heading in ("## 3. Attack Walkthroughs", "## 7. Security Architecture"):
+        assert heading in rendered, f"fixture should render {heading!r} but it is missing"
+
+
+# ---------------------------------------------------------------------------
 # No bare refs in computed sections
 # ---------------------------------------------------------------------------
 
