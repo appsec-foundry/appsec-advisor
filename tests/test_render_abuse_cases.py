@@ -186,6 +186,60 @@ def test_not_applicable_case_excluded(tmp_path: Path):
     assert rac.build_models(tmp_path, None) == []
 
 
+# Regression: the deterministic fold (match_abuse_cases.finalize_verdict) runs
+# in a separate pipeline step that can be skipped (a Stage-1c orchestration
+# gap), leaving .abuse-case-verdicts.json with step_verdicts but NO
+# chain_verdict. Without the renderer self-heal every chain silently rendered
+# "Inconclusive" even when all steps were confirmed (juice-shop 2026-06-24).
+_NO_CHAIN_VERDICT = {
+    "schema_version": 1,
+    "verdicts": [
+        {
+            "abuse_case_id": "AC-T-001",
+            # NOTE: no "chain_verdict" key — finalize never ran.
+            "step_verdicts": [
+                {"step": 1, "verdict": "confirmed", "matched_finding_id": "T-010", "controls_found": []},
+                {"step": 2, "verdict": "confirmed", "matched_finding_id": "T-046", "controls_found": []},
+                {"step": 3, "verdict": "confirmed", "matched_finding_id": "T-001", "controls_found": []},
+            ],
+        }
+    ],
+}
+
+_MATCHES_HEAL = {
+    "schema_version": 1,
+    "matches": [
+        {
+            "abuse_case_id": "AC-T-001",
+            "step_matches": [
+                {"step": 1, "required": True},
+                {"step": 2, "required": True},
+                {"step": 3, "required": True},
+            ],
+        }
+    ],
+}
+
+
+def test_missing_chain_verdict_is_self_healed_from_step_verdicts(tmp_path: Path):
+    _setup(tmp_path, _NO_CHAIN_VERDICT)
+    (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(_MATCHES_HEAL))
+    models = rac.build_models(tmp_path, None)
+    assert len(models) == 1
+    # All required steps confirmed, no controls → folds to fully_viable,
+    # NOT the bare "inconclusive" default.
+    assert models[0]["chain_verdict"] == "fully_viable"
+
+
+def test_missing_chain_verdict_without_matches_stays_inconclusive(tmp_path: Path):
+    # No .abuse-case-matches.json → no case_match to fold against → graceful
+    # fallback to the historical "inconclusive" default (never crashes).
+    _setup(tmp_path, _NO_CHAIN_VERDICT)
+    models = rac.build_models(tmp_path, None)
+    assert len(models) == 1
+    assert models[0]["chain_verdict"] == "inconclusive"
+
+
 _MATCHES_NA = {
     "schema_version": 1,
     "matches": [

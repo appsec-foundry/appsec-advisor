@@ -318,6 +318,14 @@ followed.
 
 | If recon Section 7.9 says (for this component or one of its files) | You MUST emit at least one finding of type |
 |---|---|
+| `oauth-implicit-flow` | **FT-091** *OAuth Redirect Flow / Token Exposure Weakness* (TH-10, CWE-598/522) — High |
+| `oauth-code-without-pkce` OR `oauth-pkce-plain` OR `oauth-pkce-s256-not-evident` | **FT-091** *OAuth code flow without strong PKCE* (TH-10) — High for public/frontend clients, Medium otherwise |
+| `oauth-missing-state` OR `oauth-static-state-or-nonce` | **FT-091** *OAuth state missing/static* — High |
+| `oidc-missing-nonce` OR `oidc-claim-validation-gap` | **FT-092** *OAuth/OIDC Token Claim Validation Skip* (TH-10) — High |
+| `oauth-refresh-token-browser-storage` | **FT-093** *Refresh Token Browser Exposure* (TH-10) — High |
+| `oauth-ropc-grant` | **FT-091** *Resource Owner Password Credentials grant* — High |
+| `oauth-insecure-redirect-uri` OR `oauth-redirect-uri-weak-match` OR `oauth-post-logout-redirect-weak` | TH-10 *redirect_uri allowlist weakness* — Medium/High |
+| `oauth-client-secret-in-frontend` | TH-10 *Public-client credential exposure* — High |
 | `OAuth flow present in frontend` AND any of {`No.*PKCE`, `no PKCE`, `missing PKCE`} | **FT-091** *OAuth Implicit Flow / Token in URL* (TH-10, CWE-598/522) — Critical/High depending on whether the public client is exposed |
 | `OAuth.*token handling` in URL fragment OR `response_type=token` literal | **FT-091** *Token in URL* — High |
 | `derived.*password` OR `password = btoa(*email*)` (`oauth.component.ts`-style) | **FT-091** *Derived password from claim* — **Critical** (the password endpoint becomes a parallel-auth bypass) |
@@ -325,7 +333,7 @@ followed.
 | `nonce.*missing\|not validated` on `id_token` | **FT-092** *OAuth/OIDC Token Claim Validation Skip* (TH-10) — High |
 | `refresh.*token.*(localStorage\|sessionStorage)` | **FT-093** *Refresh Token Browser Exposure* (TH-10) — High |
 | `redirect_uri.*(includes\|substring\|prefix)` allowlist or `find(r => r.uri === redirectUri).*proxy` | TH-10 *redirect_uri allowlist weakness* — Medium/High |
-| `client_secret` literal in `frontend/` or `client_id` hardcoded in SPA module | TH-10 *Public-client credential exposure* — Medium |
+| `client_secret` literal in `frontend/` | TH-10 *Public-client credential exposure* — High |
 | `aud.*not validated` OR `iss.*not validated` | **FT-092** *Claim validation skip* — High |
 
 | If recon Section 7.10 says (for a frontend/client-tier component) | You MUST emit |
@@ -532,7 +540,7 @@ Write to `$OUTPUT_DIR/.stride-<COMPONENT_ID>.json`:
       "title": "<see shared/finding-title-contract.md — canonical form: <Weakness class> (<relative_file_path[:line]>), MAX 80 chars>",
       "affected_parameter": "<optional — when meaningful: 'email', 'q', 'id', 'X-Forwarded-For'. Do NOT cram into title.>",
       "scenario": "<longer prose description of the attack — used in §8 detail body, not in table rows>",
-      "evidence_summary": "<RECOMMENDED — one-sentence structural assertion about the code that the snippet below visually proves. Distinct from scenario (attack narrative) and impact_description (consequence).>",
+      "evidence_summary": "<RECOMMENDED — one-sentence structural assertion about the code that the snippet below visually proves. Distinct from scenario (attack narrative) and impact_description (consequence). Reference code with SHORT inline identifiers only (a file:line, function or variable name); do NOT paste a multi-statement expression or arrow function inline — that code belongs in the fenced snippet below, and embedding it half-quoted renders as broken partial formatting.>",
       "impact_description": "<RECOMMENDED — one-sentence concrete consequence. Distinct from scenario and evidence_summary.>",
       "likelihood": "<High | Medium | Low>",
       "impact": "<Critical | High | Medium | Low>",

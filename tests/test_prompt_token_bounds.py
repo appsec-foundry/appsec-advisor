@@ -43,7 +43,10 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     # ops/progress sections. Measured 8_040.
     # Raised 2026-06-05: STRIDE parallel-dispatch + abuse-case guidance added.
     # Measured 10_694; high = ~20% buffer above the new size.
-    "agents/appsec-stride-analyzer.md": (6_500, 12_850),
+    # Raised 2026-06-24: OAuth/OIDC FT-091/092/093 finding-type rows + the
+    # evidence_summary "short inline identifiers only" code-formatting rule.
+    # Measured 13_011; high = ~14% buffer above the new size.
+    "agents/appsec-stride-analyzer.md": (6_500, 14_900),
 }
 
 

@@ -62,6 +62,16 @@ def _rac():
     return mod
 
 
+def _match_mod():
+    spec = importlib.util.spec_from_file_location(
+        "match_abuse_cases", Path(__file__).resolve().parent / "match_abuse_cases.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
 # ---------------------------------------------------------------------------
 # threat-model.yaml projections
 # ---------------------------------------------------------------------------
@@ -429,14 +439,47 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
     # a verifier sub-agent produced no (or partial) step verdicts. Keyed by
     # abuse_case_id → {step_number: step_match}.
     matches_by_id: dict[str, dict] = {}
+    # Raw match docs keyed by id (step_matches kept as a LIST, with `required`
+    # flags) — the self-heal fold below needs the full case_match shape, not the
+    # step-keyed projection used for finding-link fallback.
+    case_match_by_id: dict[str, dict] = {}
     matches_path = output_dir / ".abuse-case-matches.json"
     if matches_path.exists():
         try:
             mdoc = json.loads(matches_path.read_text(encoding="utf-8"))
             for m in mdoc.get("matches", []):
                 matches_by_id[m.get("abuse_case_id")] = {sm.get("step"): sm for sm in m.get("step_matches", [])}
+                case_match_by_id[m.get("abuse_case_id")] = m
         except (OSError, json.JSONDecodeError):
             matches_by_id = {}
+            case_match_by_id = {}
+
+    # Self-heal: the renderer consumes a pre-computed `chain_verdict`, but the
+    # deterministic fold (`match_abuse_cases.finalize_verdict`) runs in a
+    # separate pipeline step that can be skipped/interrupted (e.g. a Stage-1c
+    # orchestration gap leaves `.abuse-case-verdicts.json` with step_verdicts
+    # but no chain_verdict). Without a fallback every chain silently renders
+    # "Inconclusive" even when its steps are all confirmed. When the key is
+    # absent we fold it inline from the on-disk step verdicts + matcher
+    # required-step flags — purely deterministic, same inputs the standalone
+    # finalize would use. RC-2026-06-24.
+    _finalize = None
+    if any("chain_verdict" not in (verdicts.get(cid) or {}) for cid in verdicts):
+        try:
+            _finalize = _match_mod().finalize_verdict
+        except Exception:
+            _finalize = None
+    if _finalize is not None:
+        for cid, verdict in verdicts.items():
+            if "chain_verdict" in verdict:
+                continue
+            case_match = case_match_by_id.get(cid)
+            if not case_match:
+                continue
+            try:
+                verdict["chain_verdict"] = _finalize(case_match, verdict.get("step_verdicts") or [])
+            except Exception:
+                pass
 
     models = []
     # Stable order: by id.
