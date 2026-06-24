@@ -1654,12 +1654,13 @@ class TestRunPlanDepthHint:
         )
         assert not any("--assessment-depth thorough may surface more" in n for n in notes)
 
-    def test_no_hint_on_noop(self):
-        # When nothing will run, skip the depth upsell.
+    def test_hint_on_noop(self):
+        # The depth upsell is always surfaced at standard depth, even when
+        # nothing will run (a no-op rerun still benefits from the hint).
         notes = rc._run_plan_notes(
             self._verdict(will_run=False), _base_cfg(assessment_depth="standard"), None, None, None
         )
-        assert not any("--assessment-depth thorough may surface more" in n for n in notes)
+        assert any("--assessment-depth thorough may surface more" in n for n in notes)
 
 
 class TestPipelineString:

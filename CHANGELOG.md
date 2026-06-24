@@ -33,8 +33,8 @@ All notable changes to this project are documented here.
   any time with `build_stride_dispatch_manifest.py --print-selection <output-dir>`.
 - The console run-plan now adds a short hint on `standard` runs that
   `--assessment-depth thorough` may surface more (deeper per-component analysis +
-  architect review, Opus reasoning) at higher cost and time. Shown only when the
-  run will actually execute; not on quick/thorough or no-op reruns.
+  architect review, Opus reasoning) at higher cost and time. Always shown at
+  standard depth (including no-op reruns); not on quick/thorough.
 - Component selection no longer silently drops high-risk components. Three fixes:
   (1) AI/LLM components are now a mandatory role at every depth — a chatbot tagged as an
   internal zone used to be dropped ("out-of-scope at depth=standard"), skipping its OWASP
