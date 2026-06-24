@@ -323,6 +323,121 @@ def test_internal_only_is_false_for_exposure_unknown():
     assert bm._is_internal_only(_c("mystery", zones=[])) is False
 
 
+# ---------------------------------------------------------------------------
+# Cat-13 known_llm_patterns supplement
+# ---------------------------------------------------------------------------
+
+
+def test_cat13_supplement_returns_empty_when_no_recon_patterns(tmp_path):
+    """No .recon-patterns.json → supplement is empty string (graceful fallback)."""
+    assert bm._cat13_supplement(tmp_path) == ""
+
+
+def test_cat13_supplement_returns_file_line_entries(tmp_path):
+    """When .recon-patterns.json has Cat-13 findings, returns subcategory: file:line pairs."""
+    (tmp_path / ".recon-patterns.json").write_text(
+        json.dumps({
+            "categories": {
+                "13": {
+                    "findings": [
+                        {"subcategory": "llm-sdk", "file": "package.json", "line": 94},
+                        {"subcategory": "llm-invoke", "file": "routes/chat.ts", "line": 191},
+                    ],
+                    "count": 2,
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+    result = bm._cat13_supplement(tmp_path)
+    assert "llm-sdk: package.json:94" in result
+    assert "llm-invoke: routes/chat.ts:191" in result
+
+
+def test_builder_supplements_sparse_llm_patterns_from_cat13(tmp_path):
+    """LLM component with sparse analyst known_llm_patterns gets Cat-13 supplement appended."""
+    (tmp_path / ".components.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "components": [{
+                "id": "llm-chat-service",
+                "name": "LLM Chat Service",
+                "description": "Ollama proxy at POST /rest/chat",
+                "paths": ["routes/chat.ts"],
+                "complexity": "moderate",
+                "deployment_zones": ["internet"],
+            }],
+        }),
+        encoding="utf-8",
+    )
+    (tmp_path / ".trust-boundaries.json").write_text(
+        json.dumps({"schema_version": 1, "trust_boundaries": []}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".recon-patterns.json").write_text(
+        json.dumps({
+            "categories": {
+                "13": {
+                    "findings": [
+                        {"subcategory": "llm-sdk", "file": "package.json", "line": 94},
+                        {"subcategory": "llm-invoke", "file": "routes/chat.ts", "line": 191},
+                    ],
+                    "count": 2,
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+    # Analyst provides a sparse (< 120 char) known_llm_patterns
+    ctx = {"llm-chat-service": {"known_llm_patterns": "chatbot POST /rest/chat"}}
+    manifest = bm.build(tmp_path, "standard", ctx, PLUGIN_ROOT)
+    comp = manifest["components"][0]
+    klp = comp.get("known_llm_patterns", "")
+    assert "chatbot POST /rest/chat" in klp, "analyst value should be retained"
+    assert "llm-sdk: package.json:94" in klp, "Cat-13 supplement should be appended"
+    assert "routes/chat.ts:191" in klp, "Cat-13 file:line should appear in supplement"
+
+
+# ---------------------------------------------------------------------------
+# Spec drift guards — renderer and OWASP LLM Top 10 contract text
+# ---------------------------------------------------------------------------
+
+AGENTS_DIR = PLUGIN_ROOT / "agents"
+
+
+def test_renderer_ms_role_includes_ms_ai_exposure_in_author_list():
+    """RENDER_ROLE=ms row in appsec-threat-renderer.md must include ms-ai-exposure.json.
+
+    Guard against future edits that re-strip it from the allowlist — this was the
+    root cause of the AI/LLM Exposure section missing from the Management Summary
+    on the 2026-06-24 juice-shop standard run.
+    """
+    renderer_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
+    # The ms row must mention both the fragment name and the condition
+    assert "ms-ai-exposure.json" in renderer_md, \
+        "ms-ai-exposure.json must appear in appsec-threat-renderer.md"
+    # The fragment contract list must also include it (not just the table row)
+    fragment_contract_idx = renderer_md.index("## Fragment Contract")
+    fragment_contract_section = renderer_md[fragment_contract_idx:fragment_contract_idx + 2000]
+    assert "ms-ai-exposure.json" in fragment_contract_section, \
+        "ms-ai-exposure.json must be listed in the Fragment Contract section"
+
+
+def test_owasp_llm07_grep_covers_cookie_tool_call_leakage():
+    """LLM07 grep in owasp-llm-top10.md must cover cookie/flag-gated tool call disclosure.
+
+    The show_tool_calls cookie pattern (routes/chat.ts:225 in juice-shop) was missed
+    because the old LLM07 grep only matched system.?prompt patterns — it did not cover
+    an SSE gate controlled by a debug cookie. Fixed 2026-06-24.
+    """
+    top10_md = (AGENTS_DIR / "shared" / "owasp-llm-top10.md").read_text(encoding="utf-8")
+    # Find the LLM07 row
+    llm07_idx = top10_md.index("LLM07")
+    llm07_row = top10_md[llm07_idx:llm07_idx + 600]
+    assert "show_tool_calls" in llm07_row, \
+        "LLM07 grep must include show_tool_calls to catch cookie-gated tool call disclosure"
+
+
 def test_select_standard_includes_exposed_cicd_crownjewel_excludes_internal():
     comps = [
         _c("backend-api", zones=["internet"]),

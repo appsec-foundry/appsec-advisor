@@ -31,6 +31,34 @@ import re
 import sys
 from pathlib import Path
 
+
+def _cat13_supplement(output_dir: Path) -> str:
+    """Return a deterministic `known_llm_patterns` supplement from Cat-13 recon findings.
+
+    Reads `.recon-patterns.json` if present (written by Phase 2 Step 0 before
+    STRIDE dispatch). Returns a "; "-joined string of "subcategory: file:line"
+    entries, capped at 10, or "" when the file is absent or Cat-13 is empty.
+    Used to enrich a sparse analyst-authored `known_llm_patterns` field so the
+    STRIDE analyzer has concrete file:line anchors for every LLM code pattern.
+    """
+    rp = output_dir / ".recon-patterns.json"
+    if not rp.is_file():
+        return ""
+    try:
+        data = json.loads(rp.read_text(encoding="utf-8"))
+        findings = data.get("categories", {}).get("13", {}).get("findings", [])
+    except Exception:
+        return ""
+    parts = []
+    for f in findings[:10]:
+        subcat = f.get("subcategory", "llm-sdk")
+        fpath = f.get("file", "")
+        line = f.get("line", "")
+        loc = f"{fpath}:{line}" if line else fpath
+        if loc:
+            parts.append(f"{subcat}: {loc}")
+    return "; ".join(parts)
+
 # max_turns per (depth, complexity) — single source of truth is
 # resolve_config.DEPTH_PARAMS; imported when available, else a synced fallback
 # (kept identical by tests/test_dispatch_manifest.py::test_depth_params_in_sync).
@@ -902,6 +930,21 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                         except (TypeError, ValueError):
                             v = 3
                 comp[k] = v
+        # P3 — Cat-13 deterministic supplement: when this is an LLM component
+        # and the analyst-supplied `known_llm_patterns` is absent or a single
+        # short sentence (< 120 chars), append file:line anchors from the
+        # deterministic Cat-13 recon scan so the STRIDE analyzer has concrete
+        # code locations beyond what the analyst summarized.
+        if _is_llm(c):
+            existing = comp.get("known_llm_patterns", "") or ""
+            if isinstance(existing, str) and len(existing) < 120:
+                supplement = _cat13_supplement(output_dir)
+                if supplement:
+                    comp["known_llm_patterns"] = (
+                        (existing + "; " + supplement).lstrip("; ")
+                        if existing
+                        else supplement
+                    )
         comp["model"] = stride_model
         out_components.append(comp)
 
