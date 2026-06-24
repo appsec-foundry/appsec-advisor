@@ -1972,6 +1972,7 @@ def render_run_plan(
         lines.append("Configuration")
         lines.extend(kv("Depth", _format_depth_summary(cfg)))
         lines.extend(kv("Reasoning", _format_reasoning_summary(cfg)))
+        lines.extend(kv("STRIDE cap", _format_stride_cap(cfg)))
         active = _summary_active_options(cfg)
         for label, value in active:
             lines.extend(kv(label, value))
@@ -2336,6 +2337,7 @@ def _render_summary_box(cfg: dict) -> list[str]:
     lines.extend(_box_kv("Depth", _format_depth_summary(cfg), width))
     lines.extend(_box_kv("Pipeline", _format_pipeline_summary(cfg), width))
     lines.extend(_box_kv("Reasoning", _format_reasoning_summary(cfg), width))
+    lines.extend(_box_kv("STRIDE cap", _format_stride_cap(cfg), width))
 
     active_options = _summary_active_options(cfg)
     if active_options:
@@ -2415,6 +2417,21 @@ def _format_reasoning_summary(cfg: dict) -> str:
     )
 
 
+def _format_stride_cap(cfg: dict) -> str:
+    """Always-on pre-flight row: how many threats STRIDE keeps per category.
+
+    Sourced from the resolved ``stride_profile.max_threats_per_category`` — set
+    either by ``--stride-cap N`` at any depth, or implicitly by the quick
+    triage profile (cap 1). When absent, standard/thorough keep full STRIDE
+    depth. Shown in both states so the user always sees, before any tokens are
+    spent, whether the per-component threat count is bounded.
+    """
+    cap = (cfg.get("stride_profile") or {}).get("max_threats_per_category")
+    if cap:
+        return f"≤{cap} per STRIDE category per component (Criticals always kept)"
+    return "none — full STRIDE depth (all threats kept)"
+
+
 def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
 
@@ -2431,6 +2448,11 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
         extras.append(f"requirements ({cfg['requirements_label']})")
     if cfg.get("architect_review"):
         extras.append(f"architect review ({cfg['architect_label']})")
+    # Abuse-case verification (Stage 1c) forced ON where it would otherwise be
+    # off — i.e. explicit --abuse-cases at quick depth. The default-on
+    # standard/thorough case is silent (not a deviation).
+    if cfg.get("abuse_case_label") == "enabled (--abuse-cases)":
+        extras.append("abuse-case verification (--abuse-cases)")
     if extras:
         rows.append(("Extras", ", ".join(extras)))
 
@@ -2442,6 +2464,15 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
             "walkthroughs "
             f"{cfg.get('skip_attack_walkthroughs_label', 'skipped')}"
         )
+    # Stage 1c abuse-case verifier fan-out (matcher + verifiers + chain fold) is
+    # the most expensive part of Stage 1c — surface whenever it is skipped
+    # (explicit --no-abuse-cases, or the auto quick-depth default), mirroring how
+    # QA / walkthroughs surface their skip.
+    if cfg.get("skip_abuse_case_verification"):
+        skips.append(
+            "abuse-case verification "
+            f"{cfg.get('abuse_case_label', 'skipped')}"
+        )
     if skips:
         rows.append(("Skips", ", ".join(skips)))
 
@@ -2449,10 +2480,14 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     if flags:
         rows.append(("Run flags", flags))
 
+    # Depth-reduced STRIDE profiles (quick) still surface their label here.
+    # The per-category cap is NOT shown via this row — it has its own always-on
+    # "STRIDE cap" line in the Configuration block, so a "full (per-category
+    # cap N)" label would only duplicate it.
     sp_label = (cfg.get("stride_profile") or {}).get(
         "stride_profile_label", "full"
     )
-    if sp_label != "full":
+    if not sp_label.startswith("full"):
         rows.append(("STRIDE", sp_label))
 
     # Full-M1 parallel-STRIDE opt-in surfacing. Mirror the exact skill-Bash

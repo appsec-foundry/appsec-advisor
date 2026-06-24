@@ -1395,6 +1395,37 @@ class TestSummaryActiveOptions:
         assert "Skips" in labels
         assert "Run flags" in labels
 
+    def test_abuse_cases_skipped_surfaces_in_skips(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(_base_cfg(
+            mode="full",
+            skip_abuse_case_verification=True,
+            abuse_case_label="skipped (--no-abuse-cases)",
+        )))
+        assert "abuse-case verification skipped" in rows["Skips"]
+
+    def test_abuse_cases_forced_on_surfaces_in_extras(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(_base_cfg(
+            mode="incremental",
+            skip_abuse_case_verification=False,
+            abuse_case_label="enabled (--abuse-cases)",
+        )))
+        assert "abuse-case verification" in rows["Extras"]
+
+    def test_abuse_cases_default_on_is_silent(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(_base_cfg(
+            mode="incremental",
+            skip_abuse_case_verification=False,
+            abuse_case_label="enabled",
+        )))
+        assert "abuse-case" not in rows.get("Extras", "")
+        assert "abuse-case" not in rows.get("Skips", "")
+
     def test_parallel_stride_default_on_for_full(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
@@ -1730,6 +1761,8 @@ class TestRenderRunPlan:
         assert "Threat Model — Pre-flight" in out
         assert "Configuration" in out
         assert "Verdict" in out
+        # The STRIDE cap row is always present (capped or not).
+        assert "STRIDE cap" in out
 
     def test_dirty_incremental_renders_files_and_why(self):
         cfg = _base_cfg(incremental=True, mode="incremental")
@@ -1798,6 +1831,76 @@ class TestRenderRunPlan:
         }
         out = rc.render_run_plan(cfg, pre, ds, None)
         assert "Unmapped (possible new component)" in out
+
+
+class TestStrideCapDisplay:
+    """The per-component STRIDE cap is surfaced in the pre-flight in BOTH
+    states (set / unset), and never double-shown via the active-options row."""
+
+    def test_format_capped(self):
+        cfg = _base_cfg(stride_profile={
+            "stride_profile_label": "full (per-category cap 2)",
+            "max_threats_per_category": 2,
+        })
+        s = rc._format_stride_cap(cfg)
+        assert "≤2 per STRIDE category per component" in s
+        assert "Criticals always kept" in s
+
+    def test_format_uncapped(self):
+        cfg = _base_cfg(stride_profile={"stride_profile_label": "full"})
+        s = rc._format_stride_cap(cfg)
+        assert s == "none — full STRIDE depth (all threats kept)"
+
+    def test_format_missing_profile(self):
+        cfg = _base_cfg()
+        cfg.pop("stride_profile", None)
+        assert "none" in rc._format_stride_cap(cfg)
+
+    def test_run_plan_shows_uncapped_line(self):
+        cfg = _base_cfg(incremental=False, baseline_state="empty",
+                        stride_profile={"stride_profile_label": "full"})
+        out = rc.render_run_plan(cfg, None, None, None)
+        assert "STRIDE cap" in out
+        assert "full STRIDE depth" in out
+
+    def test_run_plan_shows_capped_line(self):
+        cfg = _base_cfg(incremental=False, baseline_state="empty",
+                        stride_profile={
+                            "stride_profile_label": "full (per-category cap 2)",
+                            "max_threats_per_category": 2,
+                        })
+        out = rc.render_run_plan(cfg, None, None, None)
+        assert "≤2 per STRIDE category per component" in out
+
+    def test_config_summary_shows_cap_line(self):
+        out = rc.render_configuration_summary(_base_cfg())
+        assert "STRIDE cap" in out
+
+    def test_cap_not_duplicated_in_active_options(self, monkeypatch):
+        # A pure cap label must NOT appear as a separate "STRIDE" active-options
+        # row — the dedicated STRIDE cap line owns it.
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(_base_cfg(
+            mode="incremental",
+            stride_profile={
+                "stride_profile_label": "full (per-category cap 2)",
+                "max_threats_per_category": 2,
+            },
+        )))
+        assert "STRIDE" not in rows
+
+    def test_quick_profile_still_shown_in_active_options(self, monkeypatch):
+        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
+        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+        rows = dict(rc._summary_active_options(_base_cfg(
+            mode="incremental",
+            stride_profile={
+                "stride_profile_label": "quick (depth-reduced via sonnet-economy)",
+                "max_threats_per_category": 1,
+            },
+        )))
+        assert "depth-reduced" in rows.get("STRIDE", "")
 
 
 class TestRunPlanCLI:

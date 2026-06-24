@@ -1158,6 +1158,7 @@ Files
 <if will_run:>Configuration
   Depth     : <depth_summary — see _format_depth_summary>
   Reasoning : <reasoning_summary>
+  STRIDE cap : <if stride_profile.max_threats_per_category set: ≤<N> per STRIDE category per component (Criticals always kept); else: none — full STRIDE depth (all threats kept)>
   <if PARALLEL_STRIDE=true:>STRIDE disp: parallel (per-component fan-out, Level-0; default)
   <elif mode∈{full,rebuild} AND APPSEC_PARALLEL_STRIDE=0:>STRIDE disp: serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)
   <if LIVE_PHASE=true:>Live phase : on (background dispatch + console phase)

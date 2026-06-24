@@ -27,6 +27,25 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- The pre-flight now always shows a `STRIDE cap` line in the Configuration block,
+  in both states: `≤N per STRIDE category per component (Criticals always kept)`
+  when `--stride-cap N` (or the quick triage profile) bounds the per-component
+  threat count, and `none — full STRIDE depth (all threats kept)` otherwise. Visible
+  in all three surfaces (create-threat-model pre-flight, `/status`,
+  `/threat-model-health`); a pure cap is no longer duplicated as a separate STRIDE
+  active-options row.
+- The pre-flight now surfaces abuse-case verification (Stage 1c — the most
+  expensive verifier fan-out) when it deviates: shown under `Skips` whenever it is
+  off (`--no-abuse-cases`, or auto at quick depth) and under `Extras` when forced on
+  (`--abuse-cases`). The default-on standard/thorough case stays silent. Previously
+  the resolved `abuse_case_label` was computed but never displayed.
+- The `--rebuild` pre-flight wipe is now honest about what was actually present.
+  The `discarding prior threat model and all cached state` header is printed only
+  when something really exists to remove; a first-ever `--rebuild` (clean slate)
+  prints `Rebuild: clean slate — nothing to discard.` instead. The removal line
+  reports the real file count and lists only the runtime/cache directories that
+  were actually present (no more hard-coded `+ .fragments/ + .appsec-cache/ …`
+  suffix when those never existed).
 - The console now shows which components get a STRIDE pass and which are skipped
   (each with its reason — e.g. `out-of-scope at depth=standard`) right before the
   analysis fans out, mirroring the report's §1 Scope and §11 Out of Scope. Re-render it
