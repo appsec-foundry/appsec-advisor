@@ -2213,9 +2213,9 @@ def _run_plan_notes(
     # will_run (a no-op rerun still benefits from knowing thorough digs deeper).
     if cfg.get("assessment_depth") == "standard":
         notes.append(
-            "--assessment-depth thorough may surface more (deeper "
-            "per-component analysis + architect review, Opus reasoning) "
-            "at higher cost and time."
+            "Hint: the most thorough results come from --assessment-depth "
+            "thorough (deeper per-component analysis + architect review, Opus "
+            "reasoning) — at correspondingly higher cost and time."
         )
 
     if plugin_tier == "major":

@@ -1189,7 +1189,7 @@ Notes
   • `will_run=True ∧ mode != full/rebuild` → `"Pass --full to widen the scope to a complete re-assessment."`
   • `will_run=False` → `"threat-model.md preserved as-is."`
   • `will_run=False` → `"Pass --full to force a complete re-assessment regardless."`
-  • `assessment_depth=standard` (always, regardless of `will_run`) → `"--assessment-depth thorough may surface more (deeper per-component analysis + architect review, Opus reasoning) at higher cost and time."`
+  • `assessment_depth=standard` (always, regardless of `will_run`) → `"Hint: the most thorough results come from --assessment-depth thorough (deeper per-component analysis + architect review, Opus reasoning) — at correspondingly higher cost and time."`
   • `plugin tier=major` → `"STRONGLY consider --full — major plugin bump may contain breaking analysis changes that incremental cannot retro-apply."`
   • `plugin tier=minor` → `"Consider --full — minor plugin bumps usually ship analysis improvements that only affect newly-scanned code in incremental."`
   • `compat=older-compatible` → `"Analysis schema drifted (baseline analysis_version older but compatible) — full rebuild applies new categories to ALL findings."`

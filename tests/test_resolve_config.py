@@ -1677,13 +1677,13 @@ class TestRunPlanDepthHint:
         notes = rc._run_plan_notes(
             self._verdict(), _base_cfg(assessment_depth="thorough"), None, None, None
         )
-        assert not any("--assessment-depth thorough may surface more" in n for n in notes)
+        assert not any("most thorough results come from" in n for n in notes)
 
     def test_quick_no_hint(self):
         notes = rc._run_plan_notes(
             self._verdict(), _base_cfg(assessment_depth="quick"), None, None, None
         )
-        assert not any("--assessment-depth thorough may surface more" in n for n in notes)
+        assert not any("most thorough results come from" in n for n in notes)
 
     def test_hint_on_noop(self):
         # The depth upsell is always surfaced at standard depth, even when
@@ -1691,7 +1691,7 @@ class TestRunPlanDepthHint:
         notes = rc._run_plan_notes(
             self._verdict(will_run=False), _base_cfg(assessment_depth="standard"), None, None, None
         )
-        assert any("--assessment-depth thorough may surface more" in n for n in notes)
+        assert any("most thorough results come from" in n for n in notes)
 
 
 class TestPipelineString:
