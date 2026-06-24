@@ -258,6 +258,34 @@ def test_attack_surface_carries_relevance_tags_from_inventory():
     assert "relevance_tags" not in by_ep["GET /rest/products"]
 
 
+def test_attack_surface_maps_graphql_inventory_entries():
+    routes = {
+        "routes": [
+            {
+                "method": "GRAPHQL",
+                "path": "Mutation updateUser",
+                "framework": "graphql",
+                "authn_signal": "unknown",
+                "route_id": "r0",
+                "notes": ["GraphQL Mutation", "args: id,input", "returns: User"],
+                "relevance_tags": ["graphql-mutation", "missing-auth"],
+            }
+        ]
+    }
+
+    out, _ = b.build_attack_surface(routes, None)
+
+    assert out == [
+        {
+            "entry_point": "GRAPHQL Mutation updateUser",
+            "protocol": "GraphQL",
+            "auth_required": False,
+            "notes": "GraphQL Mutation; args: id,input; returns: User",
+            "relevance_tags": ["graphql-mutation", "missing-auth"],
+        }
+    ]
+
+
 def test_attack_surface_relevance_tags_union_on_dedup():
     # Same method+path registered twice with different tags → union, deduped row.
     routes = {
@@ -388,17 +416,14 @@ def test_build_meta_check_requirements_defaults_false():
 def test_build_meta_stride_cap_propagated_when_active():
     """--stride-cap N → .skill-config stride_profile.max_threats_per_category
     reaches meta so the report self-discloses the reduced scope."""
-    m = _meta(stride_profile={"max_threats_per_category": 2,
-                              "stride_profile_label": "full (per-category cap 2)"})
+    m = _meta(stride_profile={"max_threats_per_category": 2, "stride_profile_label": "full (per-category cap 2)"})
     assert m["stride_per_category_cap"] == 2
 
 
 def test_build_meta_stride_cap_none_when_full():
     """No cap (full profile or missing) → None, renderer omits the row."""
     assert _meta()["stride_per_category_cap"] is None
-    assert _meta(stride_profile={"stride_profile_label": "full"})[
-        "stride_per_category_cap"
-    ] is None
+    assert _meta(stride_profile={"stride_profile_label": "full"})["stride_per_category_cap"] is None
 
 
 def test_build_meta_propagates_per_stage_reasoning_models():

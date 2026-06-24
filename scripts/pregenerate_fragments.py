@@ -2385,7 +2385,7 @@ def gen_assets(yaml_data: dict) -> str:
 # Generator: attack-surface.md
 # ---------------------------------------------------------------------------
 
-_HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "WS", "ALL"}
+_HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "WS", "ALL", "GRAPHQL"}
 
 
 def _wrappable_route(route: str) -> str:
@@ -2725,6 +2725,8 @@ def _coerce_surface_list(value: Any) -> list:
 _RELEVANCE_LABELS = {
     "registration": "registration flow",
     "authentication": "auth/token endpoint",
+    "graphql-mutation": "GraphQL write/stream operation",
+    "graphql-object-access": "GraphQL object lookup",
     "missing-auth": "no auth guard detected",
     "missing-authz": "no authz guard detected",
 }

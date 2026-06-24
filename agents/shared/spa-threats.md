@@ -17,3 +17,5 @@ Applied by `appsec-stride-analyzer` when `COMPONENT_ID` is `frontend`, `spa`, `w
 | **Clickjacking** | Is `X-Frame-Options` or CSP `frame-ancestors` set? Can the app be framed by an attacker? | Spoofing |
 
 Do not generate a threat if the vector is not applicable (e.g. no WebSockets found = skip WebSocket auth). Confirm presence/absence with grep when in doubt.
+
+Prefer deterministic Recon subcategories when present: `spa-without-bff-candidate`, `spa-client-side-role-trust`, `frontend-sanitizer-bypass`, `dom-xss-source-sink-candidate`, `postmessage-wildcard-target`, `message-listener-no-origin-check`, `websocket-missing-auth-candidate`, and `websocket-origin-validation-gap`. These are architecture or trust-boundary signals, not just grep hits.

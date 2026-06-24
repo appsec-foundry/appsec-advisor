@@ -11,6 +11,7 @@ Scope (per arch.md §Route Inventory):
   * Python FastAPI / Flask / Django: @app.METHOD / @router.METHOD / path() / url()
   * Spring / JAX-RS: @GetMapping / @RequestMapping / @Path
   * ASP.NET minimal APIs: app.MapGet / MapPost / MapPut / MapDelete
+  * GraphQL SDL operations: type Query / Mutation / Subscription fields
 
 Out of scope (NOT MVP):
   * Cross-file router composition / mounting
@@ -73,6 +74,9 @@ _SOURCE_EXTS = {
     ".go",
     ".rb",
     ".php",
+    ".graphql",
+    ".gql",
+    ".graphqls",
 }
 
 _MANAGEMENT_PATH_PATTERN = re.compile(
@@ -216,6 +220,49 @@ _ASPNET_MAP_RE = re.compile(
     """
 )
 
+_GRAPHQL_OPERATION_RE = re.compile(
+    r"""(?imsx)
+    ^\s*(?:extend\s+)?type\s+
+    (?P<op>Query|Mutation|Subscription)\b
+    (?P<header>[^{]*)
+    \{
+    (?P<body>.*?)
+    ^\s*\}
+    """
+)
+
+_GRAPHQL_FIELD_RE = re.compile(
+    r"""(?x)
+    ^\s*
+    (?P<name>[_A-Za-z][_0-9A-Za-z]*)
+    \s*
+    (?:\((?P<args>[^)]*)\))?
+    \s*:\s*
+    (?P<returns>[^@#]+?)
+    \s*
+    (?P<directives>@.*)?
+    $
+    """
+)
+
+_GRAPHQL_ARG_NAME_RE = re.compile(r"\b([_A-Za-z][_0-9A-Za-z]*)\s*:")
+
+_GRAPHQL_AUTHN_RE = re.compile(
+    r"(?i)@(?:auth|authenticated|requires?Auth|loginRequired|isAuthenticated|guard|aws_auth|aws_cognito_user_pools)\b"
+)
+
+_GRAPHQL_AUTHZ_RE = re.compile(
+    r"(?i)(@(?:hasRole|hasPermission|requires?Role|requires?Scope|authz|authorization|policy|role|roles|scope|scopes|allow)\b|"
+    r"\b(?:roles?|permissions?|scopes?|policy|requires)\s*:)"
+)
+
+_GRAPHQL_OBJECT_ARG_RE = re.compile(r"(?i)(^id$|_id$|Id$|ID$|uuid|slug|key)")
+
+_GRAPHQL_SENSITIVE_RE = re.compile(
+    r"(?i)(user|account|tenant|org|order|invoice|payment|card|wallet|address|email|"
+    r"password|secret|token|key|role|permission|admin|profile|session)"
+)
+
 
 # ---------------------------------------------------------------------------
 # Auth signals
@@ -263,6 +310,21 @@ _PUBLIC_BY_DESIGN_RE = re.compile(
     r"oauth|openid|sso|saml|health|healthz|readyz|livez|ping|status|version|"
     r"webhook|webhooks)\b"
 )
+
+_PUBLIC_OPERATION_NAME_RE = re.compile(
+    r"(?i)\b(?:login|logout|register|signup|sign-up|reset-password|"
+    r"forgot-password|forgot|recover|token|refresh|oauth|openid|sso|saml)\b"
+)
+
+
+def _is_public_by_design(path: str | None) -> bool:
+    value = path or ""
+    if _PUBLIC_BY_DESIGN_RE.search(value):
+        return True
+    # GraphQL logical operation names are not URL segments (`Mutation login`),
+    # so the path-oriented regex above cannot see their public auth-flow names.
+    # Keep this branch off normal HTTP paths to avoid broadening the URL rule.
+    return "/" not in value and bool(_PUBLIC_OPERATION_NAME_RE.search(value))
 
 # Positive security-relevance patterns — INTENTIONALLY NARROWER than
 # _PUBLIC_BY_DESIGN_RE, which also matches health/ping/version/webhook noise we
@@ -327,6 +389,7 @@ class RouteCandidate:
     missing_auth_suspect: bool = False
     missing_authz_suspect: bool = False
     relevance_tags: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
     confidence: str = "medium"
 
 
@@ -575,6 +638,105 @@ def _extract_aspnet(path: Path, lines: list[str]) -> list[RouteCandidate]:
     return out
 
 
+def _strip_graphql_comments(line: str) -> str:
+    """Remove GraphQL # comments for schema parsing.
+
+    GraphQL descriptions can contain comment-like text inside quoted strings,
+    but route inventory only needs operation signatures. Keeping this simple
+    avoids treating human schema comments as instructions or executable input.
+    """
+    return line.split("#", 1)[0].strip()
+
+
+def _graphql_arg_names(args: str | None) -> list[str]:
+    if not args:
+        return []
+    return [m.group(1) for m in _GRAPHQL_ARG_NAME_RE.finditer(args)]
+
+
+def _graphql_return_name(raw: str) -> str:
+    value = re.sub(r"[\[\]!]", "", raw or "").strip()
+    return value.split()[0] if value else ""
+
+
+def _graphql_has_object_arg(arg_names: list[str]) -> bool:
+    return any(_GRAPHQL_OBJECT_ARG_RE.search(name or "") for name in arg_names)
+
+
+def _graphql_is_sensitive(operation: str, field_name: str, return_name: str, arg_names: list[str]) -> bool:
+    haystack = " ".join([operation, field_name, return_name, *arg_names])
+    return bool(_GRAPHQL_SENSITIVE_RE.search(haystack))
+
+
+def _extract_graphql(path: Path, lines: list[str]) -> list[RouteCandidate]:
+    """Extract logical GraphQL operations from SDL schema files.
+
+    A GraphQL API normally exposes one HTTP mount (often `/graphql`), but the
+    security-relevant entry points are the Query/Mutation/Subscription fields:
+    `Mutation updateUser` is materially different from `Query products`. The
+    inventory records those logical operations so §5 and architecture coverage
+    can reason about authn/authz hypotheses instead of collapsing everything
+    into a single POST /graphql row.
+    """
+    out: list[RouteCandidate] = []
+    text = "".join(lines)
+    for block in _GRAPHQL_OPERATION_RE.finditer(text):
+        op_type = block.group("op")
+        header = block.group("header") or ""
+        body = block.group("body") or ""
+        body_start_line = text.count("\n", 0, block.start("body")) + 1
+        header_authn = bool(_GRAPHQL_AUTHN_RE.search(header) or _GRAPHQL_AUTHZ_RE.search(header))
+        header_authz = bool(_GRAPHQL_AUTHZ_RE.search(header))
+
+        for offset, raw_line in enumerate(body.splitlines(), start=0):
+            line = _strip_graphql_comments(raw_line)
+            if not line or line.startswith(("}", "@")):
+                continue
+            # Multi-line argument lists are intentionally left to the LLM
+            # fallback for now; the deterministic pass handles the common
+            # single-line SDL form without pretending to understand every schema.
+            m = _GRAPHQL_FIELD_RE.match(line)
+            if not m:
+                continue
+            field_name = m.group("name")
+            if field_name.startswith("__"):
+                continue
+            directives = m.group("directives") or ""
+            auth_blob = f"{header} {directives}"
+            authz = bool(header_authz or _GRAPHQL_AUTHZ_RE.search(auth_blob))
+            authn = bool(header_authn or authz or _GRAPHQL_AUTHN_RE.search(auth_blob))
+            arg_names = _graphql_arg_names(m.group("args"))
+            return_name = _graphql_return_name(m.group("returns"))
+            object_access = _graphql_has_object_arg(arg_names)
+            sensitive = _graphql_is_sensitive(op_type, field_name, return_name, arg_names)
+            notes = [f"GraphQL {op_type}"]
+            if arg_names:
+                notes.append("args: " + ",".join(arg_names[:5]))
+            if return_name:
+                notes.append(f"returns: {return_name}")
+            if object_access:
+                notes.append("object-id argument")
+            if sensitive:
+                notes.append("sensitive-name signal")
+
+            out.append(
+                RouteCandidate(
+                    method="GRAPHQL",
+                    path=f"{op_type} {field_name}",
+                    framework="graphql",
+                    handler_file=str(path).replace("\\", "/"),
+                    handler_line=body_start_line + offset,
+                    authn_signal="decorator_present" if authn else "unknown",
+                    authz_signal="decorator_present" if authz else "unknown",
+                    management_surface=False,
+                    notes=notes,
+                    confidence="medium",
+                )
+            )
+
+    return out
+
+
 def _extract_file(repo_root: Path, path: Path) -> list[RouteCandidate]:
     rel = path.relative_to(repo_root)
     lines = _read_lines(path)
@@ -592,6 +754,8 @@ def _extract_file(repo_root: Path, path: Path) -> list[RouteCandidate]:
         routes = _extract_java(rel, lines)
     elif suffix in {".cs", ".vb"}:
         routes = _extract_aspnet(rel, lines)
+    elif suffix in {".graphql", ".gql", ".graphqls"}:
+        routes = _extract_graphql(rel, lines)
     else:
         routes = []
 
@@ -640,6 +804,12 @@ def build_inventory(repo_root: Path) -> dict:
         return False
 
     for r in all_routes:
+        is_graphql = r.framework == "graphql"
+        gql_notes = set(r.notes or [])
+        gql_object_access = "object-id argument" in gql_notes
+        gql_sensitive = "sensitive-name signal" in gql_notes
+        gql_mutation = (r.path or "").startswith("Mutation ")
+        gql_subscription = (r.path or "").startswith("Subscription ")
         if r.authn_signal == "unknown" and _prefix_match(r.path, guarded_prefixes):
             r.authn_signal = "middleware_present"
         # Cross-file authZ lift: a route under a centrally-mounted role/permission
@@ -654,7 +824,20 @@ def build_inventory(repo_root: Path) -> dict:
         if (
             r.authn_signal == "unknown"
             and (r.method.upper() in _STATE_CHANGING or r.management_surface)
-            and not _PUBLIC_BY_DESIGN_RE.search(r.path or "")
+            and not _is_public_by_design(r.path)
+        ):
+            r.missing_auth_suspect = True
+        # GraphQL SDL has no HTTP verb per operation. Treat unauthenticated
+        # mutations/subscriptions and sensitive object lookups as review
+        # candidates so the existing ARCH-AUTHN hypothesis covers GraphQL too.
+        if (
+            is_graphql
+            and r.authn_signal == "unknown"
+            and (
+                (gql_mutation and not _is_public_by_design(r.path))
+                or gql_subscription
+                or (gql_object_access and gql_sensitive)
+            )
         ):
             r.missing_auth_suspect = True
         # Advisory (not a finding): an AUTHENTICATED, object-addressing route
@@ -666,8 +849,8 @@ def build_inventory(repo_root: Path) -> dict:
         if (
             r.authn_signal in _AUTHN_PRESENT
             and r.authz_signal not in _AUTHZ_PRESENT
-            and bool(_PATH_PARAM_RE.search(r.path or ""))
-            and not _PUBLIC_BY_DESIGN_RE.search(r.path or "")
+            and (bool(_PATH_PARAM_RE.search(r.path or "")) or (is_graphql and gql_object_access and gql_sensitive))
+            and not _is_public_by_design(r.path)
         ):
             r.missing_authz_suspect = True
         # Display relevance (NOT a finding): reasons a route still merits an
@@ -675,12 +858,18 @@ def build_inventory(repo_root: Path) -> dict:
         # these out of the "N further entry points" collapse and shows the
         # reason as a review chip. Order is deterministic.
         tags: list[str] = []
-        if _REGISTRATION_PATH_RE.search(r.path or ""):
+        if _REGISTRATION_PATH_RE.search(r.path or "") or (
+            is_graphql and re.search(r"(?i)\b(?:register|signup|sign-up)\b", r.path or "")
+        ):
             tags.append("registration")
-        if _AUTHFLOW_PATH_RE.search(r.path or ""):
+        if _AUTHFLOW_PATH_RE.search(r.path or "") or (is_graphql and _PUBLIC_OPERATION_NAME_RE.search(r.path or "")):
             tags.append("authentication")
         if r.management_surface:
             tags.append("management")
+        if is_graphql and (gql_mutation or gql_subscription):
+            tags.append("graphql-mutation")
+        if is_graphql and gql_object_access and gql_sensitive:
+            tags.append("graphql-object-access")
         if r.missing_auth_suspect:
             tags.append("missing-auth")
         if r.missing_authz_suspect:
@@ -713,6 +902,7 @@ def build_inventory(repo_root: Path) -> dict:
             "missing_auth_suspect": d["missing_auth_suspect"],
             "missing_authz_suspect": d["missing_authz_suspect"],
             "relevance_tags": d["relevance_tags"],
+            "notes": d["notes"],
             "confidence": d["confidence"],
         }
         routes_out.append(ordered)

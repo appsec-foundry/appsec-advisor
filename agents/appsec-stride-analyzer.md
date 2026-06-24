@@ -339,8 +339,25 @@ followed.
 | If recon Section 7.10 says (for a frontend/client-tier component) | You MUST emit |
 |---|---|
 | `localStorage` AND `token` AND **no** `bff\|backend.for.frontend\|proxy.*auth` in the same section | **Architectural anti-pattern: "SPA without BFF"** — `source: architectural-anti-pattern`, `architectural_violation: true`, **risk: High** minimum (review-recommendations 2026-05). Mitigation must propose a Backend-for-Frontend (BFF) that holds tokens server-side; the SPA receives session via `httpOnly Secure SameSite=Strict` cookies. This anti-pattern was previously gated on `CHECK_REQUIREMENTS=true` (Phase 8b, `phase-group-architecture.md:1831`) — the STRIDE-analyzer enforces it unconditionally because the architectural truth is independent of whether the user supplied a `.requirements.yaml`. |
+| `spa-without-bff-candidate` | Same mandatory **Architectural anti-pattern: "SPA without BFF"** as above — prefer this deterministic Cat 10 subcategory over prose regex matching when present. |
+| `spa-token-browser-storage` | **FT-090** *Insecure Client-Side Storage* (TH-04, CWE-922) — High when the token is the active session credential. Also tag `⚠ Anti-pattern: JWT in localStorage` when the finding represents systemic session design rather than one debug line. |
+| `spa-refresh-token-browser-storage` | **FT-093** *Refresh Token Browser Exposure* (TH-10) — High. |
+| `spa-client-side-role-trust` OR `client-side-role-guard` OR `guard-without-server-authority-candidate` | **FT-043** *Client-Side-Only Access Control* (TH-06, CWE-602/285) — High for admin/role decisions, Medium for route-only gating. Tag `⚠ Anti-pattern: Client-side trust boundary` for systemic client-side authorization design. |
 | `withCredentials` mixed with `localStorage` token storage | TH-04 *Insecure Client-Side Storage* — High |
+| `spa-withcredentials-token-mix` | TH-04 *Insecure Client-Side Storage* — High; the browser mixes cookie-style credentialed requests with JavaScript-readable bearer tokens. |
 | `cors().*no origin\|allows all origins` | **Cross-cutting** — emit a CORS-misconfiguration finding even if your component is the SPA (the SPA is the *target* of the open CORS) |
+| `frontend-sanitizer-bypass` OR `frontend-unsafe-html-sink` | **FT-010** *Cross-Site Scripting* (TH-11) — High when user/content input can reach the sink. Tag `⚠ Anti-pattern: Sanitizer bypass by default` when bypass/raw-HTML rendering is a repeated framework pattern. |
+| `dom-xss-source-sink-candidate` | **FT-010** *DOM-based XSS* (TH-11) — High candidate; read the cited source/sink lines before final severity. |
+| `postmessage-wildcard-target` OR `message-listener-no-origin-check` | Browser trust-boundary spoofing/tampering finding — High when privileged actions or tokens cross the message boundary. Tag `⚠ Anti-pattern: Client-side trust boundary` for systemic iframe/window messaging designs. |
+| `websocket-cleartext` | **FT-053** *Missing Transport Encryption* or **FT-100** when paired with auth/session traffic — High outside localhost/dev-only evidence. |
+| `websocket-missing-auth-candidate` OR `websocket-origin-validation-gap` | **FT-100** *Unauthenticated WebSocket / Real-time Channel* (TH-13) — Medium/High after verifying the channel carries privileged or user-specific events. |
+| Cat 29 `android-debuggable-enabled` OR `android-webview-debugging-enabled` | Mobile architecture anti-pattern: debug client shipped — High unless clearly debug-only build files. |
+| Cat 29 `android-cleartext-traffic-enabled` OR `android-network-config-cleartext` OR `ios-ats-arbitrary-loads` OR `ios-ats-insecure-exception` | **FT-053** *Missing Transport Encryption* — High; tag `⚠ Anti-pattern: Mobile cleartext network policy` when it is app-wide. |
+| Cat 29 `android-exported-component-without-permission` | Mobile IPC boundary exposure — High; model as Spoofing/Elevation of Privilege depending on the component action. |
+| Cat 29 `android-webview-js-bridge` OR `android-webview-file-access` OR `ios-webview-js-bridge` | Mobile WebView bridge anti-pattern — High when untrusted web content can reach native capabilities. |
+| Cat 29 `android-token-sharedpreferences` OR `ios-token-userdefaults` | **FT-090**-style insecure client storage — High for session/refresh tokens; tag `⚠ Anti-pattern: Mobile token in app storage`. |
+| Cat 29 `android-accept-all-tls` OR `ios-accept-all-tls` | Mobile TLS trust disabled — Critical/High depending on production reachability. |
+| Cat 29 `android-custom-url-scheme` OR `android-applink-not-verified` OR `ios-custom-url-scheme-surface` | Mobile deep-link trust boundary — Medium/High when auth callbacks, payment actions, or privileged intents enter through the link. |
 
 **How to compose the mandatory finding** (applies to both tables above):
 
@@ -453,6 +470,10 @@ Read `shared/owasp-llm-top10.md` for the full threat table, grep patterns, and f
 ### Client-side / SPA — conditional (only for frontend components)
 
 When `COMPONENT_ID ∈ {frontend, spa, web-app, client}` or `COMPONENT_DESCRIPTION` indicates a browser-based app, read `shared/spa-threats.md` for the 11 client-side vectors. Same quality bar.
+
+### Mobile client — conditional (only for mobile client components)
+
+When `COMPONENT_ID` is `mobile-app`, `COMPONENT_DESCRIPTION` indicates Android/iOS/React Native/Flutter, or recon Cat 29 findings are in this component's context, treat the app runtime as an untrusted client boundary. Systematically check platform configuration (`AndroidManifest.xml`, `Info.plist`, network security config), exported Android components / custom URL schemes / app links, WebView native bridges, local token storage (`SharedPreferences`, `UserDefaults`), and TLS trust overrides. Prefer Cat 29 subcategory rows from the mandatory recon-derived table above over generic mobile prose.
 
 ### Supply chain — conditional (only when `SUPPLY_CHAIN_FINDINGS != none`)
 

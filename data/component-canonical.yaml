@@ -98,6 +98,28 @@ canonical_components:
       - "react-dom"
     category: frontend
 
+  mobile-app:
+    display_name: "Mobile App"
+    aliases:
+      - mobile-app
+      - mobile-client
+      - mobile-frontend
+      - android-app
+      - android-client
+      - ios-app
+      - ios-client
+      - react-native-app
+      - flutter-app
+    detection_signals:
+      - "AndroidManifest.xml"
+      - "Info.plist"
+      - "network_security_config.xml"
+      - "WKWebView"
+      - "WebView"
+      - "SharedPreferences"
+      - "UserDefaults"
+    category: frontend
+
   data-persistence:
     display_name: "Data Persistence Layer"
     aliases:

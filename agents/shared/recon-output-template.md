@@ -106,12 +106,26 @@ The agent fills in every `<placeholder>` and writes the resulting Markdown verba
 
 ### 7.9 OAuth / OIDC
 **Key files:** <file:line references>
+**Deterministic findings (Cat 9):**
+
+| Severity | File | Line | Subcategory | Evidence |
+|----------|------|------|-------------|----------|
+| <High/Medium/Info> | <path> | <line/-> | <oauth-implicit-flow / oauth-code-without-pkce / oidc-missing-nonce / ...> | <helper evidence text> |
+
+If none: `No OAuth / OIDC patterns detected.`
+
 **Observations:**
 - <flows used? PKCE? state parameter validation?>
 - **Frontend integrations (Sprint 2C — list separately even when there is no backend OAuth):** when the codebase contains an SPA with a Google / Auth0 / Azure / NextAuth / generic-OIDC client-side login button, enumerate it here even when the *server* has no OAuth code. List each provider once with: provider name, integration mechanism (redirect / popup / implicit / PKCE), scope of token use (frontend-only social login vs. backend session exchange), and the file:line where the `clientId`, redirect URL, or SDK call is declared. Without this, downstream Phase 8 catalogues `Google OAuth` only when the *server* sees the callback — frontend-only Google sign-ins (e.g. `userService.oauthLogin(accessToken)` calling `googleapis.com/oauth2/v1/userinfo`) are silently dropped from `security_controls[]` and the §7.3 IAM section ends up missing the OAuth flow entirely (observed in the 2026-04-27 juice-shop run).
 
 ### 7.10 SPA / BFF
 **Key files:** <file:line references>
+**Deterministic findings (Cat 10):**
+
+| Severity | File | Line | Subcategory | Anti-pattern |
+|----------|------|------|-------------|--------------|
+| <High/Medium/Info> | <file> | <line> | <spa-without-bff-candidate / spa-token-browser-storage / ...> | <anti_pattern or —> |
+
 **Observations:**
 - <token storage? cookie config? BFF pattern?>
 
@@ -197,6 +211,12 @@ The agent fills in every `<placeholder>` and writes the resulting Markdown verba
 ### 7.19 Frontend Framework & XSS Patterns
 **Framework detected:** <React <version> / Angular <version> / Vue <version> / Svelte / Next.js / Nuxt / none>
 **Key files:** <file:line references>
+**Deterministic findings (Cat 19):**
+
+| Severity | File | Line | Subcategory | Anti-pattern |
+|----------|------|------|-------------|--------------|
+| <High/Info> | <file> | <line> | <frontend-sanitizer-bypass / frontend-unsafe-html-sink / ...> | <anti_pattern or —> |
+
 **Observations:**
 - <Framework-specific XSS bypasses found? (dangerouslySetInnerHTML, v-html, bypassSecurityTrust, etc.)>
 - <Sanitizer configuration — default or customized?>
@@ -204,6 +224,12 @@ The agent fills in every `<placeholder>` and writes the resulting Markdown verba
 
 ### 7.20 DOM-Based XSS Sources
 **Key files:** <file:line references>
+**Deterministic findings (Cat 20):**
+
+| Severity | Source | Sink | Subcategory |
+|----------|--------|------|-------------|
+| <High/Info> | <file:line> | <sink_line or —> | <dom-xss-source-sink-candidate / dom-xss-source> |
+
 **Observations:**
 - <User-controlled DOM sources found? (location.hash, URLSearchParams, useParams, etc.)>
 - <Do any sources flow to known sinks from 7.8? List file:line pairs for source→sink paths>
@@ -220,18 +246,21 @@ The agent fills in every `<placeholder>` and writes the resulting Markdown verba
 **Observations:**
 - <WebSocket/Socket.IO endpoints found? Using ws:// or wss://?>
 - <Authentication on WebSocket connections? Origin validation?>
+- <Deterministic Cat 22 subcategories: websocket-cleartext, websocket-missing-auth-candidate, websocket-origin-validation-gap?>
 
 ### 7.23 postMessage & iframe
 **Key files:** <file:line references>
 **Observations:**
 - <postMessage listeners found? Origin validated in handler?>
 - <iframes present? Sandbox attribute set? Allow attribute restrictive?>
+- <Deterministic Cat 23 subcategories: postmessage-wildcard-target, message-listener-no-origin-check, iframe-missing-sandbox, iframe-permissive-sandbox, window-opener-noopener-missing?>
 
 ### 7.24 Client-Side Routing & Auth Guards
 **Key files:** <file:line references>
 **Observations:**
 - <Client-side route guards found? (canActivate, beforeEach, PrivateRoute, etc.)>
 - <Are guards backed by server-side authorization, or client-only?>
+- <Mobile Cat 29 architecture signals routed here when present: exported Android components, custom schemes/app links, WebView bridges/debug/file access, ATS/cleartext, token storage, accept-all TLS. Mirror Cat 29 transport/storage details in 7.18/7.21 as applicable; do not create §7.33.>
 
 ### 7.25 Cross-Repository & SaaS Dependencies
 **SCM sibling projects:** <n found>

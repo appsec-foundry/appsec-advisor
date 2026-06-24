@@ -107,8 +107,9 @@ categories:
     title: Insecure Client-Side Storage
     description: >
       Session tokens or sensitive data stored in browser-accessible locations
-      (localStorage, sessionStorage, non-HttpOnly cookies) exposing them to
-      XSS exfiltration.
+      (localStorage, sessionStorage, non-HttpOnly cookies) or mobile app
+      storage not designed for secrets (SharedPreferences, UserDefaults)
+      exposing them to XSS, device compromise, backup, or local extraction.
     stride: [Information Disclosure]
     cwe_pillar: CWE-664
     cwe_canonical: CWE-922
@@ -117,6 +118,7 @@ categories:
     owasp_asvs: V3.4
     typical_findings:
       - JWT in localStorage
+      - Refresh token in SharedPreferences / UserDefaults
       - PII (email, basket ID) in localStorage
       - Cookies without HttpOnly / Secure / SameSite
 
@@ -217,9 +219,11 @@ categories:
     title: OAuth / OIDC Misconfiguration
     description: >
       OAuth / OIDC flows implemented with deprecated patterns — implicit
-      flow, missing PKCE, missing state, tokens leaked via URL fragments,
-      claim validation skipped (aud/iss/nonce), refresh tokens exposed to
-      the browser, or derived credentials predictable from the identity claim.
+      flow, missing or downgraded PKCE, missing state/nonce, tokens leaked
+      via URL fragments, claim validation skipped (signature/iss/aud/azp/
+      nonce/exp), refresh tokens exposed to the browser or replayable without
+      rotation/sender-constraining, weak redirect URI matching, ROPC/password
+      grant usage, or derived credentials predictable from the identity claim.
     stride: [Spoofing, Information Disclosure]
     cwe_pillar: CWE-693
     cwe_canonical: CWE-287
@@ -228,16 +232,21 @@ categories:
     owasp_asvs: V2.1
     typical_findings:
       - Implicit flow (no PKCE)
-      - State parameter missing / unvalidated
+      - Authorization code flow without PKCE on a public client
+      - PKCE `plain` or no `S256` challenge method evidence
+      - State parameter missing / unvalidated / static
       - Token in URL fragment exposed to history/referer
       - Derived password from email / subject claim
+      - Resource Owner Password Credentials (`grant_type=password`)
       - "`aud` claim not validated — token issued for a different audience accepted"
       - "`iss` claim not validated — token from an unexpected IdP accepted"
+      - ID Token signature / `exp` / `azp` not validated against the issuer's JWKS
       - "`nonce` missing or not validated on id_token (OIDC replay protection)"
       - Refresh token stored in browser (localStorage/sessionStorage) instead of BFF
+      - Refresh token issued to public client without rotation or sender-constraining
       - "`redirect_uri` allowlist uses substring/prefix match instead of exact match"
       - "`post_logout_redirect_uri` not allowlisted — open-redirect on logout flow"
-      - Authorization code exchanged without PKCE on a public client
+      - Non-loopback HTTP redirect URI
 
   - id: TH-11
     title: Cross-Site Scripting (XSS)
@@ -254,6 +263,8 @@ categories:
     typical_findings:
       - DomSanitizer.bypassSecurityTrustHtml on user input
       - innerHTML assignments with attacker data
+      - React dangerouslySetInnerHTML fed from route/query state
+      - Mobile WebView JavaScript bridge reachable by untrusted content
       - Template interpolation without escape
       - Missing Content Security Policy
 
@@ -290,6 +301,7 @@ categories:
     typical_findings:
       - "`Socket.IO` upgrade without JWT"
       - WS origin header not validated
+      - Cleartext `ws://` channel outside localhost/dev-only context
       - Client-supplied challenge-verification events trusted
 
   - id: TH-14

@@ -2,18 +2,23 @@
 Tests for scripts/recon_patterns.py — Sprint 3 Item #1.
 
 Covers the Python-migrated recon categories:
+  Cat 9   OAuth / OIDC
+  Cat 10  SPA / BFF
   Cat 11  Exposed Routes
   Cat 13  AI / LLM Integration (deterministic detection)
   Cat 14  CI/CD Supply Chain (unpinned GitHub Actions)
   Cat 15  Container Base Images
   Cat 17  Postinstall Scripts
   Cat 18  Security Headers & CORS
+  Cat 19  Frontend Framework & XSS Patterns
+  Cat 20  DOM-Based XSS Sources
   Cat 21  Client-Side Secrets
   Cat 22  WebSocket & Real-Time
   Cat 23  postMessage & iframe
   Cat 24  Client-Side Routing & Auth Guards
   Cat 27  GitHub Actions Workflow Privilege Hardening
   Cat 28  AI Coding Assistant & IDE Agent Configurations
+  Cat 29  Mobile App Architecture & Platform Config
 
 Plus repo-walk behaviour, hard-exclude regression guards, and CLI smoke.
 """
@@ -158,6 +163,85 @@ class TestHardExcludes:
 
         assert matches[0][1].endswith("…")
         assert rp._grep_file(repo / "missing.ts", rp._CAT11_PATTERN) == []
+
+
+# ---------------------------------------------------------------------------
+# Category 9 — OAuth / OIDC
+# ---------------------------------------------------------------------------
+
+
+class TestCat9OAuthOidc:
+    def test_oauth_frontend_code_flow_without_pkce_and_state_flagged(self, repo):
+        (repo / "frontend" / "src" / "app").mkdir(parents=True)
+        (repo / "frontend" / "src" / "app" / "login.ts").write_text(
+            "const url = `https://idp.example/authorize?response_type=code&client_id=${clientId}`;\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_oauth_oidc(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert "oauth-oidc-surface" in subs
+        assert "oauth-code-without-pkce" in subs
+        assert "oauth-missing-state" in subs
+        assert any(f["subcategory"] == "oauth-code-without-pkce" and f["severity"] == "High" for f in out["findings"])
+
+    def test_oauth_implicit_plain_pkce_ropc_and_refresh_storage_flagged(self, repo):
+        (repo / "auth.ts").write_text(
+            "const implicit = 'response_type=token';\n"
+            "const method = 'code_challenge_method=plain';\n"
+            "const grant = 'grant_type=password';\n"
+            "localStorage.setItem('refresh_token', refreshToken);\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_oauth_oidc(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert {
+            "oauth-implicit-flow",
+            "oauth-pkce-plain",
+            "oauth-ropc-grant",
+            "oauth-refresh-token-browser-storage",
+        } <= subs
+
+    def test_oidc_missing_nonce_and_claim_validation_gap_flagged(self, repo):
+        (repo / "server.py").write_text(
+            "def callback():\n"
+            "    id_token = request.args['id_token']\n"
+            "    return exchange(id_token)\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_oauth_oidc(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert "oidc-missing-nonce" in subs
+        assert "oidc-claim-validation-gap" in subs
+
+    def test_redirect_secret_and_static_state_antipatterns_flagged(self, repo):
+        (repo / "frontend").mkdir()
+        (repo / "frontend" / "oauth.ts").write_text(
+            "const client_secret = 'do-not-ship';\n"
+            "const redirect_uri = 'http://evil.example/callback';\n"
+            "if (allowedRedirects.some(r => redirect_uri.startsWith(r))) return redirect_uri;\n"
+            "const state = 'state';\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_oauth_oidc(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert "oauth-client-secret-in-frontend" in subs
+        assert "oauth-insecure-redirect-uri" in subs
+        assert "oauth-redirect-uri-weak-match" in subs
+        assert "oauth-static-state-or-nonce" in subs
+
+    def test_run_all_includes_oauth_category(self, repo):
+        (repo / "auth.ts").write_text("const url = '/authorize?response_type=token';\n", encoding="utf-8")
+        out = rp.run_all(repo)
+        assert "9" in out["categories"]
+        assert any(f["subcategory"] == "oauth-implicit-flow" for f in out["categories"]["9"]["findings"])
 
 
 # ---------------------------------------------------------------------------
@@ -496,11 +580,74 @@ class TestCat18:
 
 
 # ---------------------------------------------------------------------------
-# Categories 21–24, 27, 28
+# Categories 10, 19–24, 27–29
 # ---------------------------------------------------------------------------
 
 
 class TestAdditionalDeterministicCategories:
+    def test_spa_without_bff_and_client_role_trust_flagged(self, repo):
+        (repo / "app.ts").write_text(
+            "localStorage.setItem('access_token', jwt);\n"
+            "const isAdmin = jwtDecode(localStorage.getItem('access_token')).role === 'admin';\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_spa_bff(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert "spa-token-browser-storage" in subs
+        assert "spa-client-side-role-trust" in subs
+        assert "spa-without-bff-candidate" in subs
+        assert any(f.get("anti_pattern") == "SPA without BFF" for f in out["findings"])
+
+    def test_bff_marker_suppresses_spa_without_bff_candidate(self, repo):
+        (repo / "app.ts").write_text(
+            "localStorage.setItem('access_token', jwt);\n"
+            "// Backend-for-Frontend uses httpOnly SameSite cookies for the real session.\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_spa_bff(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert "spa-token-browser-storage" in subs
+        assert "spa-without-bff-candidate" not in subs
+
+    def test_frontend_framework_and_unsafe_html_patterns_flagged(self, repo):
+        (repo / "package.json").write_text(
+            json.dumps({"dependencies": {"@angular/core": "19.0.0", "react": "18.2.0"}}),
+            encoding="utf-8",
+        )
+        (repo / "component.tsx").write_text(
+            "return <div dangerouslySetInnerHTML={{__html: userHtml}} />;\n",
+            encoding="utf-8",
+        )
+        (repo / "safe-html.service.ts").write_text(
+            "return sanitizer.bypassSecurityTrustHtml(userHtml);\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_frontend_xss(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+        frameworks = {f.get("framework") for f in out["findings"]}
+
+        assert {"Angular", "React"} <= frameworks
+        assert "frontend-unsafe-html-sink" in subs
+        assert "frontend-sanitizer-bypass" in subs
+
+    def test_dom_xss_source_sink_candidate_flagged(self, repo):
+        (repo / "search.ts").write_text(
+            "const q = new URLSearchParams(location.search).get('q');\n"
+            "document.getElementById('out')!.innerHTML = q ?? '';\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_dom_xss(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert "dom-xss-source" in subs
+        assert "dom-xss-source-sink-candidate" in subs
+
     def test_client_secret_pattern_flagged(self, repo):
         (repo / ".env").write_text("VITE_FIREBASE_APIKEY=abc123\n", encoding="utf-8")
         out = rp.scan_client_secrets(repo)
@@ -508,19 +655,148 @@ class TestAdditionalDeterministicCategories:
         assert out["findings"][0]["category"] == 21
 
     def test_websocket_pattern_flagged(self, repo):
-        (repo / "socket.ts").write_text("const ws = new WebSocket(url)\n", encoding="utf-8")
+        (repo / "socket.ts").write_text("const ws = new WebSocket('ws://chat.example/ws')\n", encoding="utf-8")
         out = rp.scan_websocket(repo)
-        assert out["count"] == 1
+        subs = {f["subcategory"] for f in out["findings"]}
+        assert "websocket-surface" in subs
+        assert "websocket-cleartext" in subs
+
+    def test_websocket_server_auth_and_origin_candidates_flagged(self, repo):
+        (repo / "server.ts").write_text(
+            "const wss = new WebSocketServer({ server });\n"
+            "wss.on('connection', socket => socket.send('ready'));\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_websocket(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert "websocket-missing-auth-candidate" in subs
+        assert "websocket-origin-validation-gap" in subs
 
     def test_postmessage_pattern_flagged(self, repo):
-        (repo / "frame.ts").write_text("window.addEventListener('message', onMsg)\n", encoding="utf-8")
+        (repo / "frame.ts").write_text(
+            "window.postMessage(payload, '*');\n"
+            "window.addEventListener('message', onMsg);\n"
+            "<iframe src=\"https://widgets.example\"></iframe>\n"
+            "<a target=\"_blank\" href=\"https://example.test\">open</a>\n",
+            encoding="utf-8",
+        )
         out = rp.scan_postmessage(repo)
-        assert out["count"] == 1
+        subs = {f["subcategory"] for f in out["findings"]}
+        assert "browser-message-surface" in subs
+        assert "postmessage-wildcard-target" in subs
+        assert "message-listener-no-origin-check" in subs
+        assert "iframe-missing-sandbox" in subs
+        assert "window-opener-noopener-missing" in subs
 
     def test_client_routing_guard_flagged(self, repo):
-        (repo / "router.ts").write_text("router.beforeEach(requireAuth)\n", encoding="utf-8")
+        (repo / "router.ts").write_text(
+            "router.beforeEach(requireAuth)\n"
+            "if (localStorage.getItem('role') === 'admin') next();\n",
+            encoding="utf-8",
+        )
         out = rp.scan_client_routing(repo)
-        assert out["count"] == 1
+        subs = {f["subcategory"] for f in out["findings"]}
+        assert "client-side-auth-guard-surface" in subs
+        assert "client-side-role-guard" in subs
+        assert "guard-without-server-authority-candidate" in subs
+
+    def test_mobile_android_architecture_antipatterns_flagged(self, repo):
+        android = repo / "android" / "app" / "src" / "main"
+        android.mkdir(parents=True)
+        (android / "AndroidManifest.xml").write_text(
+            textwrap.dedent(
+                """
+                <manifest>
+                  <application android:debuggable="true" android:allowBackup="true" android:usesCleartextTraffic="true">
+                    <activity android:name=".DeepLinkActivity" android:exported="true">
+                      <intent-filter>
+                        <data android:scheme="myapp"/>
+                      </intent-filter>
+                    </activity>
+                  </application>
+                </manifest>
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        net = android / "res" / "xml"
+        net.mkdir(parents=True)
+        (net / "network_security_config.xml").write_text(
+            '<network-security-config><base-config cleartextTrafficPermitted="true">'
+            '<trust-anchors><certificates src="user"/></trust-anchors></base-config></network-security-config>\n',
+            encoding="utf-8",
+        )
+        (android / "MainActivity.kt").write_text(
+            "webView.settings.setJavaScriptEnabled(true)\n"
+            "webView.addJavascriptInterface(bridge, \"Native\")\n"
+            "WebView.setWebContentsDebuggingEnabled(true)\n"
+            "getSharedPreferences(\"auth\", 0).getString(\"refresh_token\", null)\n"
+            "val verifier = HostnameVerifier { _, _ -> true }\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_mobile_architecture(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert {
+            "mobile-app-surface",
+            "android-debuggable-enabled",
+            "android-allowbackup-enabled",
+            "android-cleartext-traffic-enabled",
+            "android-exported-component-without-permission",
+            "android-custom-url-scheme",
+            "android-network-config-cleartext",
+            "android-user-ca-trusted",
+            "android-webview-js-bridge",
+            "android-webview-javascript-enabled",
+            "android-webview-debugging-enabled",
+            "android-token-sharedpreferences",
+            "android-accept-all-tls",
+        } <= subs
+
+    def test_mobile_ios_architecture_antipatterns_flagged(self, repo):
+        ios = repo / "ios" / "App"
+        ios.mkdir(parents=True)
+        (ios / "Info.plist").write_text(
+            textwrap.dedent(
+                """
+                <plist><dict>
+                  <key>NSAllowsArbitraryLoads</key>
+                  <true/>
+                  <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                  <true/>
+                  <key>CFBundleURLSchemes</key>
+                </dict></plist>
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        (ios / "WebView.swift").write_text(
+            "import WebKit\n"
+            "webView.configuration.userContentController.addScriptMessageHandler(self, name: \"bridge\")\n"
+            "UserDefaults.standard.set(refreshToken, forKey: \"refresh_token\")\n"
+            "let policy = kSecAttrAccessibleAlways\n"
+            "let credential = URLCredential(trust: serverTrust)\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_mobile_architecture(repo)
+        subs = {f["subcategory"] for f in out["findings"]}
+
+        assert {
+            "mobile-app-surface",
+            "ios-ats-arbitrary-loads",
+            "ios-ats-insecure-exception",
+            "ios-custom-url-scheme-surface",
+            "ios-webview-js-bridge",
+            "ios-token-userdefaults",
+            "ios-keychain-accessible-always",
+            "ios-accept-all-tls",
+        } <= subs
 
     def test_github_actions_privilege_patterns_flagged(self, repo):
         wf = repo / ".github" / "workflows"
@@ -616,6 +892,46 @@ class TestAdditionalDeterministicCategories:
         sec = [f for f in out["findings"] if f["file"] == ".claude/agents/sec.md" and f["line"] is None][0]
         assert sec["size"] is None
 
+    def test_mcp_servers_are_classified_by_transport_origin_and_secret(self, repo):
+        (repo / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "remote": {
+                            "type": "sse",
+                            "url": "https://mcp.example.test/sse",
+                            "headers": {"Authorization": "Bearer ${MCP_TOKEN}"},
+                        },
+                        "registry": {
+                            "command": "npx",
+                            "args": ["-y", "@example/mcp-server"],
+                        },
+                        "secret": {
+                            "command": "node",
+                            "args": ["server.js"],
+                            "env": {"API_KEY": "sk-test-hardcoded-secret"},
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        out = rp.scan_ai_assistant_configs(repo)
+        mcp = {f["server"]: f for f in out["findings"] if f.get("server")}
+
+        assert mcp["remote"]["subcategory"] == "mcp-remote-server"
+        assert mcp["remote"]["transport"] == "sse"
+        assert mcp["remote"]["origin"] == "remote URL"
+        assert mcp["remote"]["severity"] == "High"
+
+        assert mcp["registry"]["subcategory"] == "mcp-public-registry-server"
+        assert mcp["registry"]["origin"] == "public registry (npx)"
+        assert mcp["registry"]["severity"] == "High"
+
+        assert mcp["secret"]["subcategory"] == "mcp-hardcoded-secret"
+        assert mcp["secret"]["severity"] == "Critical"
+
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -628,9 +944,7 @@ class TestCat13AiIntegration:
 
     def test_plain_openai_chatbot(self, repo):
         """The #1 case the old 5-AND rule missed: a bare SDK import."""
-        (repo / "chat.ts").write_text(
-            'import OpenAI from "openai";\nconst c = new OpenAI();\n', encoding="utf-8"
-        )
+        (repo / "chat.ts").write_text('import OpenAI from "openai";\nconst c = new OpenAI();\n', encoding="utf-8")
         out = rp.scan_ai_integration(repo)
         assert out["count"] >= 1
         subs = {f["subcategory"] for f in out["findings"]}
@@ -647,9 +961,7 @@ class TestCat13AiIntegration:
         assert {"llm-sdk", "prompt-framework", "vector-db"} & subs
 
     def test_agent_stack(self, repo):
-        (repo / "agent.py").write_text(
-            "executor = AgentExecutor(agent=a, tools=t)\n", encoding="utf-8"
-        )
+        (repo / "agent.py").write_text("executor = AgentExecutor(agent=a, tools=t)\n", encoding="utf-8")
         out = rp.scan_ai_integration(repo)
         assert out["count"] >= 1
         assert any(f["subcategory"] == "agent-framework" for f in out["findings"])
@@ -668,7 +980,7 @@ class TestCat13AiIntegration:
         assert "prompt-construction" in subs and "model-config" in subs
 
     def test_literal_model_id(self, repo):
-        (repo / "config.yaml").write_text('model: gpt-4o\n', encoding="utf-8")
+        (repo / "config.yaml").write_text("model: gpt-4o\n", encoding="utf-8")
         out = rp.scan_ai_integration(repo)
         assert out["count"] >= 1
         assert any(f["subcategory"] == "model-name" for f in out["findings"])
@@ -678,9 +990,7 @@ class TestCat13AiIntegration:
     def test_classic_ml_not_detected(self, repo):
         """embedding + temperature (annealing) but NO prompt anchor → no fire."""
         (repo / "train.py").write_text(
-            "from sklearn.manifold import TSNE\n"
-            "embedding_dim = 128\n"
-            "temperature = 0.95  # simulated annealing\n",
+            "from sklearn.manifold import TSNE\nembedding_dim = 128\ntemperature = 0.95  # simulated annealing\n",
             encoding="utf-8",
         )
         out = rp.scan_ai_integration(repo)
@@ -688,9 +998,7 @@ class TestCat13AiIntegration:
 
     def test_person_named_claude_not_detected(self, repo):
         """Bare 'claude' is a name, not a model id."""
-        (repo / "users.py").write_text(
-            'claude = User(name="Claude", role="admin")\n', encoding="utf-8"
-        )
+        (repo / "users.py").write_text('claude = User(name="Claude", role="admin")\n', encoding="utf-8")
         out = rp.scan_ai_integration(repo)
         assert out["count"] == 0
 
@@ -742,13 +1050,26 @@ class TestRunAll:
         # Cat 15 signal
         (repo / "Dockerfile").write_text("FROM python\n", encoding="utf-8")
         # Cat 17 signal
-        (repo / "package.json").write_text(json.dumps({"scripts": {"postinstall": "./hook.sh"}}), encoding="utf-8")
+        (repo / "package.json").write_text(
+            json.dumps({"scripts": {"postinstall": "./hook.sh"}, "dependencies": {"react": "18.2.0"}}),
+            encoding="utf-8",
+        )
         # Cat 18 signal
         (repo / "mw.ts").write_text("app.use(helmet());\n", encoding="utf-8")
-        # Cat 21–24 signals
+        # Cat 10, 20–24 signals
         (repo / ".env").write_text("VITE_FIREBASE_APIKEY=abc\n", encoding="utf-8")
         (repo / "client.ts").write_text(
+            "localStorage.setItem('access_token', jwt)\n"
+            "const q = new URLSearchParams(location.search)\n"
+            "document.body.innerHTML = q\n"
             "new WebSocket(url)\nwindow.postMessage('x','*')\nrouter.beforeEach(requireAuth)\n",
+            encoding="utf-8",
+        )
+        # Cat 29 signal
+        android = repo / "android" / "app" / "src" / "main"
+        android.mkdir(parents=True)
+        (android / "AndroidManifest.xml").write_text(
+            '<manifest><application android:debuggable="true"/></manifest>\n',
             encoding="utf-8",
         )
         # Cat 28 signal
@@ -756,7 +1077,7 @@ class TestRunAll:
 
         report = rp.run_all(repo)
         assert report["version"] == 1
-        for cat_id in ("11", "14", "15", "17", "18", "21", "22", "23", "24", "27", "28"):
+        for cat_id in ("10", "11", "14", "15", "17", "18", "19", "20", "21", "22", "23", "24", "27", "28", "29"):
             assert report["categories"][cat_id]["count"] >= 1
 
     def test_scan_manifest(self, repo):
@@ -782,35 +1103,44 @@ class TestCLI:
         )
         out = json.loads(r.stdout)
         assert set(out["categories"].keys()) == {
+            "9",
+            "10",
             "11",
             "13",
             "14",
             "15",
             "17",
             "18",
+            "19",
+            "20",
             "21",
             "22",
             "23",
             "24",
             "27",
             "28",
+            "29",
         }
 
     @pytest.mark.parametrize(
         "cmd",
         [
+            "spa-bff",
             "exposed-routes",
             "ai-integration",
             "ci-supply-chain",
             "container-images",
             "postinstall",
             "security-headers",
+            "frontend-xss",
+            "dom-xss",
             "client-secrets",
             "websocket",
             "postmessage",
             "client-routing",
             "gha-privileges",
             "ai-assistant-configs",
+            "mobile-architecture",
         ],
     )
     def test_category_subcommands(self, cmd, repo):

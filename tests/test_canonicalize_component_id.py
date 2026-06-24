@@ -1,7 +1,7 @@
 """Tests for scripts/canonicalize_component_id.py (M4/M13).
 
 Verify:
-  - All 22 historically-observed Juice-Shop component IDs map to 6 canonical IDs
+  - historically-observed Juice-Shop IDs and client aliases map to canonical IDs
   - Pass-through behavior on miss
   - --strict exit code
   - Signal-based matching
@@ -26,8 +26,8 @@ sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 import canonicalize_component_id as cci  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# All 22 historical Juice-Shop names → expected canonical
-# (extracted from .hook-events.log analysis 22.04 - 27.04)
+# Historical Juice-Shop names plus stable client aliases -> expected canonical
+# (the Juice-Shop subset was extracted from .hook-events.log analysis 22.04 - 27.04)
 # ---------------------------------------------------------------------------
 HISTORICAL_MAPPINGS = {
     # backend-api family
@@ -47,6 +47,10 @@ HISTORICAL_MAPPINGS = {
     "angular-spa-frontend": "frontend-spa",
     "frontend-spa": "frontend-spa",
     "frontend": "frontend-spa",
+    # mobile-app family
+    "mobile-client": "mobile-app",
+    "android-app": "mobile-app",
+    "ios-app": "mobile-app",
     # data-persistence family
     "data-layer": "data-persistence",
     "database": "data-persistence",
@@ -96,9 +100,9 @@ class TestCLI:
             text=True,
         )
         assert r.returncode == 0
-        # 8 canonical IDs expected
+        # 9 canonical IDs expected
         lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
-        assert len(lines) == 8, f"expected 8 canonical IDs, got {len(lines)}"
+        assert len(lines) == 9, f"expected 9 canonical IDs, got {len(lines)}"
 
     def test_validate_all_historical_ids(self):
         r = subprocess.run(

@@ -6,18 +6,23 @@ Replaces four pattern-only categories that the LLM-driven recon-scanner
 used to grep for. These are pure regex scans with no judgement involved:
 
   Cat 11  Exposed Routes — admin/debug/swagger/actuator endpoints
+  Cat 9   OAuth / OIDC — redirect-flow and token-handling anti-patterns
+  Cat 10  SPA / BFF — browser token and client-trust anti-patterns
   Cat 14  CI/CD Supply Chain — unpinned GitHub Actions (no SHA ref),
           GitLab CI image directives
   Cat 15  Container Base Images — unpinned Docker / Compose images
   Cat 17  Postinstall Scripts — package.json lifecycle hooks,
           Python setup.py install-time shell, .npmrc ignore-scripts
   Cat 18  Security Headers & CORS — presence of hardening config
+  Cat 19  Frontend Framework & XSS Patterns — unsafe framework HTML sinks
+  Cat 20  DOM-Based XSS Sources — browser-controlled source/sink candidates
   Cat 21  Client-Side Secrets — public frontend env var secret patterns
   Cat 22  WebSocket & Real-Time — WebSocket / Socket.IO entry points
   Cat 23  postMessage & iframe — browser message / iframe surfaces
   Cat 24  Client-Side Routing & Auth Guards — frontend auth guard signals
   Cat 27  GitHub Actions Workflow Privilege Hardening
   Cat 28  AI Coding Assistant & IDE Agent Configurations
+  Cat 29  Mobile App Architecture — platform config, WebView, storage, TLS
 
 The script walks `REPO_ROOT` honouring `data/scan-excludes.yaml`, emits
 findings as JSON on stdout, and runs in a single process instead of N
@@ -26,17 +31,22 @@ categories in its grep loop.
 
 CLI:
   python3 recon_patterns.py all             --repo-root <path>
+  python3 recon_patterns.py oauth-oidc      --repo-root <path>
+  python3 recon_patterns.py spa-bff         --repo-root <path>
   python3 recon_patterns.py exposed-routes  --repo-root <path>
   python3 recon_patterns.py ci-supply-chain --repo-root <path>
   python3 recon_patterns.py container-images --repo-root <path>
   python3 recon_patterns.py postinstall     --repo-root <path>
   python3 recon_patterns.py security-headers --repo-root <path>
+  python3 recon_patterns.py frontend-xss    --repo-root <path>
+  python3 recon_patterns.py dom-xss         --repo-root <path>
   python3 recon_patterns.py client-secrets  --repo-root <path>
   python3 recon_patterns.py websocket       --repo-root <path>
   python3 recon_patterns.py postmessage     --repo-root <path>
   python3 recon_patterns.py client-routing  --repo-root <path>
   python3 recon_patterns.py gha-privileges  --repo-root <path>
   python3 recon_patterns.py ai-assistant-configs --repo-root <path>
+  python3 recon_patterns.py mobile-architecture --repo-root <path>
 
 Scan manifest (only with 'all'):
   --scan-manifest               embed sorted file list in JSON as 'scan_manifest'
@@ -125,6 +135,8 @@ _TEXT_EXT = {
     ".cpp",
     ".h",
     ".hpp",
+    ".m",
+    ".mm",
     ".yml",
     ".yaml",
     ".json",
@@ -139,11 +151,19 @@ _TEXT_EXT = {
     ".ps1",
     ".bat",
     ".cmd",
+    ".html",
+    ".htm",
     ".md",
     ".adoc",
     ".env",
     ".npmrc",
     ".yarnrc",
+    ".gradle",
+    ".properties",
+    ".plist",
+    ".entitlements",
+    ".xcconfig",
+    ".pbxproj",
     # Also match files with no extension when the name suggests code (Dockerfile, Jenkinsfile)
 }
 
@@ -259,6 +279,11 @@ def _should_read(path: Path) -> bool:
         "setup.py",
         "setup.cfg",
         "pyproject.toml",
+        "AndroidManifest.xml",
+        "Info.plist",
+        "network_security_config.xml",
+        "build.gradle",
+        "gradle.properties",
     }:
         return True
     if path.name.startswith(".env") or path.name.startswith("Dockerfile."):
@@ -334,6 +359,314 @@ def _grep_file(path: Path, pattern: re.Pattern[str]) -> list[tuple[int, str]]:
     except OSError:
         pass
     return out
+
+
+# ---------------------------------------------------------------------------
+# Category 9 — OAuth / OIDC
+# ---------------------------------------------------------------------------
+
+
+_CAT9_EXTS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".scala",
+    ".go",
+    ".rb",
+    ".php",
+    ".cs",
+    ".rs",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".toml",
+    ".env",
+    ".html",
+    ".htm",
+}
+
+_CAT9_SURFACE = re.compile(
+    r"(?i)(\boauth2?\b|\boidc\b|openid(?:connect)?|@auth0\b|next-auth\b|NextAuth\b|"
+    r"passport-(?:google|oauth|openidconnect)|\bopenid-client\b|\boidc-client\b|"
+    r"loginWithRedirect|loginWithPopup|signInWithRedirect|signInWithPopup|"
+    r"\buseSession\s*\(|\buseAuth\s*\(|@azure/msal|msal-browser|"
+    r"accounts\.google\.com/o/oauth|googleapis\.com/oauth|/\.well-known/openid-configuration|"
+    r"\bjwks_uri\b|\bid_token\b|\baccess_token\b|\brefresh_token\b|"
+    r"\bcode_verifier\b|\bcode_challenge\b|\bredirect_uri\b|\bredirectUri\b|"
+    r"\bresponse_type\b|\bresponseType\b|\bgrant_type\b|\bgrantType\b)"
+)
+
+_CAT9_FRONTEND_HINT = re.compile(r"(?i)(frontend|client|spa|browser|src/app|components?|pages?|views?|\.tsx?$|\.jsx?$|\.html?$)")
+_CAT9_AUTH_REQUEST = re.compile(
+    r"(?i)(response_type|responseType|authorization_endpoint|authorize\b|/authorize\b|loginWithRedirect|loginWithPopup|signInWithRedirect|signInWithPopup)"
+)
+_CAT9_IMPLICIT = re.compile(
+    r"(?i)(response[_-]?type\s*[:=]\s*['\"]?(?:token|id_token\s+token|token\s+id_token)\b|"
+    r"responseType\s*[:=]\s*['\"]?(?:token|id_token\s+token|token\s+id_token)\b|"
+    r"#(?:access_token|id_token)=|location\.hash[^\\n]*(?:access_token|id_token))"
+)
+_CAT9_CODE_FLOW = re.compile(
+    r"(?i)(response[_-]?type\s*[:=]\s*['\"]?code\b|responseType\s*[:=]\s*['\"]?code\b|"
+    r"grant[_-]?type\s*[:=]\s*['\"]?authorization_code\b|authorization_code)"
+)
+_CAT9_PKCE_PRESENT = re.compile(r"(?i)(\bpkce\b|\bcode_verifier\b|\bcode_challenge\b|codeChallenge|codeVerifier)")
+_CAT9_PKCE_PLAIN = re.compile(
+    r"(?i)(code_challenge_method\s*[:=]\s*['\"]?plain\b|codeChallengeMethod\s*[:=]\s*['\"]?plain\b)"
+)
+_CAT9_PKCE_S256 = re.compile(r"(?i)(code_challenge_method\s*[:=]\s*['\"]?S256\b|codeChallengeMethod\s*[:=]\s*['\"]?S256\b)")
+_CAT9_STATE_TOKEN = re.compile(r"(?i)\bstate\b")
+_CAT9_NONCE_TOKEN = re.compile(r"(?i)\bnonce\b")
+_CAT9_ID_TOKEN_FLOW = re.compile(r"(?i)(\bid_token\b|\bscope\s*[:=][^\n]*(?:openid)|response[_-]?type[^\n]*id_token)")
+_CAT9_REFRESH_BROWSER = re.compile(r"(?i)refresh[_-]?token[^\n]{0,120}(localStorage|sessionStorage)|"
+                                   r"(localStorage|sessionStorage)[^\n]{0,120}refresh[_-]?token")
+_CAT9_ROPC = re.compile(r"(?i)(grant[_-]?type\s*[:=]\s*['\"]?password\b|grant_type=password|resource owner password)")
+_CAT9_CLIENT_SECRET = re.compile(r"(?i)\bclient_secret\b|\bclientSecret\b")
+_CAT9_HTTP_REDIRECT = re.compile(r"(?i)(redirect_uri|redirectUri)[^\n]{0,120}http://(?!localhost\b|127\.0\.0\.1\b|\[::1\])")
+_CAT9_REDIRECT_WEAK_MATCH = re.compile(
+    r"(?i)(redirect_uri|redirectUri|callbackUrl|callback_url|allowedRedirect|allowed_redirect|post_logout_redirect_uri)"
+    r"[^\n]{0,160}(includes|startsWith|indexOf|contains|match\s*\(|regex|wildcard|\*)|"
+    r"(includes|startsWith|indexOf|contains|match\s*\(|regex|wildcard)[^\n]{0,160}"
+    r"(redirect_uri|redirectUri|callbackUrl|callback_url|post_logout_redirect_uri)"
+)
+_CAT9_POST_LOGOUT = re.compile(r"(?i)post_logout_redirect_uri|postLogoutRedirectUri")
+_CAT9_CLAIM_CONTEXT = re.compile(r"(?i)(id_token|issuer|jwks|jwks_uri|audience|\baud\b|\biss\b|nonce)")
+_CAT9_CLAIM_VALIDATION = re.compile(r"(?i)(issuer|expectedIssuer|\biss\b|audience|expectedAudience|\baud\b|jwks|jwks_uri|verifyIdToken|validateIdToken|nonce)")
+_CAT9_STATIC_STATE_NONCE = re.compile(
+    r"(?i)\b(state|nonce)\b\s*[:=]\s*['\"](?:state|nonce|test|changeme|static|12345|abcdef)['\"]"
+)
+
+
+def _line_hits(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    for n, line in enumerate(lines, start=1):
+        if pattern.search(line):
+            text = line.rstrip("\r\n")
+            if len(text) > 400:
+                text = text[:400] + "…"
+            hits.append((n, text.strip()))
+    return hits
+
+
+def _add_cat9(
+    findings: list[dict[str, Any]],
+    *,
+    rel: str,
+    subcategory: str,
+    severity: str,
+    line: int | None,
+    match: str,
+    evidence: str,
+) -> None:
+    findings.append(
+        {
+            "category": 9,
+            "subcategory": subcategory,
+            "file": rel,
+            "line": line,
+            "severity": severity,
+            "match": match,
+            "evidence": evidence,
+        }
+    )
+
+
+def scan_oauth_oidc(repo_root: Path) -> dict[str, Any]:
+    """Detect OAuth/OIDC surfaces and common security anti-patterns.
+
+    This is intentionally a signal scanner, not a full protocol verifier. It
+    finds high-value review candidates from RFC 9700 / OIDC Core: no implicit
+    token response, PKCE/S256 on code flows, state/nonce, exact redirect checks,
+    no ROPC, no browser refresh tokens, and validated ID-token claims.
+    """
+    findings: list[dict[str, Any]] = []
+
+    for p in _walk_repo(repo_root):
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        if p.suffix.lower() not in _CAT9_EXTS:
+            continue
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        surface_hits = _line_hits(lines, _CAT9_SURFACE)
+        if not surface_hits:
+            continue
+
+        _add_cat9(
+            findings,
+            rel=rel,
+            subcategory="oauth-oidc-surface",
+            severity="Info",
+            line=surface_hits[0][0],
+            match=surface_hits[0][1],
+            evidence="OAuth/OIDC-related token, endpoint, SDK, or config pattern present",
+        )
+
+        frontend_like = bool(_CAT9_FRONTEND_HINT.search(rel))
+        for n, line in _line_hits(lines, _CAT9_IMPLICIT):
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-implicit-flow",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="Implicit/hybrid token response or token-in-fragment pattern; RFC 9700 deprecates less-secure browser token delivery",
+            )
+
+        code_hits = _line_hits(lines, _CAT9_CODE_FLOW)
+        if code_hits and not _CAT9_PKCE_PRESENT.search(text):
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-code-without-pkce",
+                severity="High" if frontend_like else "Medium",
+                line=code_hits[0][0],
+                match=code_hits[0][1],
+                evidence="Authorization-code flow found without PKCE markers in the same file",
+            )
+
+        for n, line in _line_hits(lines, _CAT9_PKCE_PLAIN):
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-pkce-plain",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="PKCE uses plain challenge method instead of S256",
+            )
+
+        if _CAT9_AUTH_REQUEST.search(text) and not _CAT9_STATE_TOKEN.search(text):
+            auth_hits = _line_hits(lines, _CAT9_AUTH_REQUEST)
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-missing-state",
+                severity="High",
+                line=auth_hits[0][0] if auth_hits else surface_hits[0][0],
+                match=auth_hits[0][1] if auth_hits else surface_hits[0][1],
+                evidence="OAuth authorization request pattern without state marker in the same file",
+            )
+
+        id_token_flow = bool(_CAT9_ID_TOKEN_FLOW.search(text))
+        if id_token_flow and not _CAT9_NONCE_TOKEN.search(text):
+            id_hits = _line_hits(lines, _CAT9_ID_TOKEN_FLOW)
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oidc-missing-nonce",
+                severity="High",
+                line=id_hits[0][0] if id_hits else surface_hits[0][0],
+                match=id_hits[0][1] if id_hits else surface_hits[0][1],
+                evidence="OIDC id_token/openid flow without nonce marker in the same file",
+            )
+
+        if id_token_flow and _CAT9_CLAIM_CONTEXT.search(text) and not _CAT9_CLAIM_VALIDATION.search(text):
+            id_hits = _line_hits(lines, _CAT9_ID_TOKEN_FLOW)
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oidc-claim-validation-gap",
+                severity="High",
+                line=id_hits[0][0] if id_hits else surface_hits[0][0],
+                match=id_hits[0][1] if id_hits else surface_hits[0][1],
+                evidence="OIDC token handling without issuer/audience/JWKS/nonce validation markers in the same file",
+            )
+
+        for n, line in _line_hits(lines, _CAT9_REFRESH_BROWSER):
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-refresh-token-browser-storage",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="Refresh token appears to be stored in browser-accessible storage",
+            )
+
+        for n, line in _line_hits(lines, _CAT9_ROPC):
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-ropc-grant",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="Resource Owner Password Credentials grant is present; RFC 9700 says it MUST NOT be used",
+            )
+
+        for n, line in _line_hits(lines, _CAT9_CLIENT_SECRET):
+            if frontend_like:
+                _add_cat9(
+                    findings,
+                    rel=rel,
+                    subcategory="oauth-client-secret-in-frontend",
+                    severity="High",
+                    line=n,
+                    match=line,
+                    evidence="Client secret marker appears in frontend/browser code",
+                )
+
+        for n, line in _line_hits(lines, _CAT9_HTTP_REDIRECT):
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-insecure-redirect-uri",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="OAuth redirect URI uses non-loopback HTTP",
+            )
+
+        for n, line in _line_hits(lines, _CAT9_REDIRECT_WEAK_MATCH):
+            subcat = "oauth-post-logout-redirect-weak" if _CAT9_POST_LOGOUT.search(line) else "oauth-redirect-uri-weak-match"
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory=subcat,
+                severity="High",
+                line=n,
+                match=line,
+                evidence="Redirect URI allowlist appears to use substring/prefix/wildcard matching instead of exact matching",
+            )
+
+        for n, line in _line_hits(lines, _CAT9_STATIC_STATE_NONCE):
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-static-state-or-nonce",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="State or nonce appears to be a static constant",
+            )
+
+        if _CAT9_PKCE_PRESENT.search(text) and not _CAT9_PKCE_S256.search(text) and _CAT9_CODE_FLOW.search(text):
+            pkce_hits = _line_hits(lines, _CAT9_PKCE_PRESENT)
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-pkce-s256-not-evident",
+                severity="Medium",
+                line=pkce_hits[0][0] if pkce_hits else code_hits[0][0],
+                match=pkce_hits[0][1] if pkce_hits else code_hits[0][1],
+                evidence="PKCE markers found on code flow but S256 is not evident in the same file",
+            )
+
+    return {
+        "category": 9,
+        "name": "OAuth / OIDC",
+        "findings": findings,
+        "count": len(findings),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -698,24 +1031,116 @@ def scan_security_headers(repo_root: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Categories 21–24 — frontend/client runtime patterns
+# Categories 10, 19–24 — frontend/client runtime patterns
 # ---------------------------------------------------------------------------
 
 
+_CLIENT_EXTS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".html", ".htm"}
+
+_CAT10_TOKEN_STORAGE = re.compile(
+    r"(?i)((localStorage|sessionStorage|indexedDB|document\.cookie)[^\n]{0,180}"
+    r"(token|jwt|bearer|access[_-]?token|refresh[_-]?token|id[_-]?token|session)"
+    r"|"
+    r"(token|jwt|bearer|access[_-]?token|refresh[_-]?token|id[_-]?token|session)"
+    r"[^\n]{0,180}(localStorage|sessionStorage|indexedDB|document\.cookie))"
+)
+_CAT10_REFRESH_STORAGE = re.compile(
+    r"(?i)((localStorage|sessionStorage|indexedDB|document\.cookie)[^\n]{0,180}refresh[_-]?token"
+    r"|refresh[_-]?token[^\n]{0,180}(localStorage|sessionStorage|indexedDB|document\.cookie))"
+)
+_CAT10_BFF = re.compile(
+    r"(?i)(backend[-_ ]?for[-_ ]?frontend|\bbff\b|proxy[^\n]{0,80}auth|forward[^\n]{0,80}token|"
+    r"httpOnly|SameSite|server-side session)"
+)
+_CAT10_CREDENTIALS = re.compile(r"(?i)(withCredentials\s*[:=]\s*true|credentials\s*:\s*['\"]include['\"])")
+_CAT10_CLIENT_ROLE = re.compile(
+    r"(?i)((localStorage|sessionStorage|jwtDecode|jwt_decode|atob\s*\()[^\n]{0,180}"
+    r"(isAdmin|admin|role|roles|permission|permissions|scope|scopes|claim|claims)"
+    r"|"
+    r"(isAdmin|admin|role|roles|permission|permissions|scope|scopes|claim|claims)"
+    r"[^\n]{0,180}(localStorage|sessionStorage|jwtDecode|jwt_decode|atob\s*\())"
+)
+
+_FRONTEND_DEPS = {
+    "@angular/core": "Angular",
+    "react": "React",
+    "react-dom": "React",
+    "vue": "Vue",
+    "svelte": "Svelte",
+    "next": "Next.js",
+    "nuxt": "Nuxt",
+}
+_CAT19_UNSAFE_HTML = re.compile(
+    r"(?i)(dangerouslySetInnerHTML|bypassSecurityTrust(?:Html|Url|ResourceUrl|Script|Style)?|"
+    r"\bDomSanitizer\b|\bv-html\b|\{@html\b|ng-bind-html|innerHTML\s*=|insertAdjacentHTML\s*\()"
+)
+_CAT19_STRONG_SANITIZER = re.compile(r"(?i)(DOMPurify\.sanitize|sanitize\s*\(|TrustedHTML|trustedTypes)")
+
+_CAT20_DOM_SOURCE = re.compile(
+    r"(?i)(location\.(?:hash|search|href|pathname)|window\.name|document\.(?:referrer|URL|documentURI)|"
+    r"URLSearchParams|useParams\s*\(|useSearchParams\s*\(|paramMap|queryParamMap|hashchange|popstate)"
+)
+_CAT20_DOM_SINK = re.compile(
+    r"(?i)(innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\s*\(|new\s+Function\s*\(|"
+    r"dangerouslySetInnerHTML|bypassSecurityTrust|v-html|\{@html)"
+)
+
 _CAT21_PATTERN = re.compile(
     r"(?i)(REACT_APP_|NEXT_PUBLIC_|VITE_|NUXT_ENV_|EXPO_PUBLIC_).{0,120}"
-    r"(api[_-]?key|apikey|api[_-]?secret|secret|token|auth0|firebase|stripe|algolia|maps)"
+    r"(api[_-]?key|apikey|api[_-]?secret|secret|token|auth0|firebase|stripe|algolia|maps|sentry)"
+    r"|(stripe|supabase|firebase|amplify|sentry)[^\n]{0,80}"
+    r"(secret|service[_-]?role|admin[_-]?key|auth[_-]?token|sk_live|sk_test)"
 )
 _CAT22_PATTERN = re.compile(
-    r"(?i)(new\s+WebSocket|socket\.io|ws://|wss://|\.on\(\s*['\"]message|io\(|createServer.*socket)"
+    r"(?i)(new\s+WebSocket|WebSocketServer|socket\.io|ws://|wss://|\.on\(\s*['\"]message|io\(|createServer.*socket|handleUpgrade)"
 )
+_CAT22_CLEARTEXT = re.compile(r"(?i)\bws://(?!localhost\b|127\.0\.0\.1\b|\[::1\])")
+_CAT22_AUTH = re.compile(r"(?i)(auth|token|jwt|bearer|cookie|session|Authorization|withCredentials|credentials)")
+_CAT22_SERVER_SOCKET = re.compile(r"(?i)(handleUpgrade|\.on\(\s*['\"]connection|io\(|socket\.io|WebSocketServer)")
+_CAT22_ORIGIN = re.compile(r"(?i)(origin|allowRequest|cors|verifyClient)")
+
 _CAT23_PATTERN = re.compile(
-    r"(?i)(postMessage|addEventListener\s*\(\s*['\"]message|window\.opener|parent\.postMessage|<iframe|sandbox=|allow=)"
+    r"(?i)(postMessage|addEventListener\s*\(\s*['\"]message|window\.opener|parent\.postMessage|<iframe|sandbox=|allow=|target=['\"]_blank)"
 )
+_CAT23_WILDCARD_TARGET = re.compile(r"(?i)postMessage\s*\([^,\n]+,\s*['\"]\*['\"]")
+_CAT23_MESSAGE_LISTENER = re.compile(r"(?i)addEventListener\s*\(\s*['\"]message")
+_CAT23_ORIGIN_CHECK = re.compile(r"(?i)(event\.origin|\borigin\b|allowedOrigins?|trustedOrigins?|includes\s*\()")
+_CAT23_IFRAME = re.compile(r"(?i)<iframe\b")
+_CAT23_IFRAME_SANDBOX = re.compile(r"(?i)\bsandbox\s*=")
+_CAT23_PERMISSIVE_SANDBOX = re.compile(r"(?i)sandbox\s*=\s*['\"][^'\"]*allow-scripts[^'\"]*allow-same-origin")
+_CAT23_BLANK_NO_NOOPENER = re.compile(
+    r"(?i)(target\s*=\s*['\"]_blank['\"](?![^>\n]*(?:noopener|noreferrer))|window\.open\s*\([^;\n]*(?!noopener|noreferrer))"
+)
+
 _CAT24_PATTERN = re.compile(
     r"(?i)(canActivate|canDeactivate|beforeEach|beforeEnter|requireAuth|PrivateRoute|ProtectedRoute|useAuth|authGuard|RouteGuard|\.guard\.ts)"
 )
-_CLIENT_EXTS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".html"}
+_CAT24_SERVER_AUTHORITY = re.compile(r"(?i)(HttpClient|fetch\s*\(|axios\.|superagent|/me\b|/session\b|/authorize\b|/permissions\b)")
+
+
+def _add_client_finding(
+    findings: list[dict[str, Any]],
+    *,
+    category: int,
+    rel: str,
+    subcategory: str,
+    severity: str,
+    line: int | None,
+    match: str,
+    evidence: str,
+    **extra: Any,
+) -> None:
+    item: dict[str, Any] = {
+        "category": category,
+        "subcategory": subcategory,
+        "file": rel,
+        "line": line,
+        "severity": severity,
+        "match": match.strip() if isinstance(match, str) else match,
+        "evidence": evidence,
+    }
+    item.update(extra)
+    findings.append(item)
 
 
 def _scan_pattern_category(
@@ -742,22 +1167,829 @@ def _scan_pattern_category(
     return {"category": category, "name": name, "findings": findings, "count": len(findings)}
 
 
+def scan_spa_bff(repo_root: Path) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    token_hits: list[dict[str, Any]] = []
+    credentials_hits: list[dict[str, Any]] = []
+    bff_seen = False
+
+    for p in _walk_repo(repo_root):
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        if _CAT10_BFF.search(text):
+            bff_seen = True
+        if p.suffix.lower() not in _CLIENT_EXTS:
+            continue
+
+        for n, line in _line_hits(lines, _CAT10_TOKEN_STORAGE):
+            subcat = "spa-token-browser-storage"
+            severity = "High"
+            if _CAT10_REFRESH_STORAGE.search(line):
+                subcat = "spa-refresh-token-browser-storage"
+            item = {
+                "category": 10,
+                "subcategory": subcat,
+                "file": rel,
+                "line": n,
+                "severity": severity,
+                "match": line,
+                "evidence": "Session credential appears in browser-accessible storage",
+                "anti_pattern": "JWT in localStorage",
+            }
+            findings.append(item)
+            token_hits.append(item)
+
+        for n, line in _line_hits(lines, _CAT10_CREDENTIALS):
+            item = {
+                "category": 10,
+                "subcategory": "spa-withcredentials-surface",
+                "file": rel,
+                "line": n,
+                "severity": "Info",
+                "match": line,
+                "evidence": "Browser credentialed request mode is used",
+            }
+            findings.append(item)
+            credentials_hits.append(item)
+
+        for n, line in _line_hits(lines, _CAT10_CLIENT_ROLE):
+            _add_client_finding(
+                findings,
+                category=10,
+                rel=rel,
+                subcategory="spa-client-side-role-trust",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="Role, permission, or claim decision appears to be derived from browser state",
+                anti_pattern="Client-side trust boundary",
+            )
+
+    if token_hits and credentials_hits:
+        first = credentials_hits[0]
+        _add_client_finding(
+            findings,
+            category=10,
+            rel=first["file"],
+            subcategory="spa-withcredentials-token-mix",
+            severity="High",
+            line=first["line"],
+            match=first["match"],
+            evidence="Credentialed browser requests coexist with browser-readable token storage",
+            anti_pattern="Client-side trust boundary",
+        )
+
+    if token_hits and not bff_seen:
+        first = token_hits[0]
+        _add_client_finding(
+            findings,
+            category=10,
+            rel=first["file"],
+            subcategory="spa-without-bff-candidate",
+            severity="High",
+            line=first["line"],
+            match=first["match"],
+            evidence="Browser-readable session credential found and no BFF/server-side session marker was detected in scanned client files",
+            anti_pattern="SPA without BFF",
+        )
+
+    return {"category": 10, "name": "SPA / BFF", "findings": findings, "count": len(findings)}
+
+
+def _package_json_line(path: Path, dependency: str) -> int | None:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    quoted = f'"{dependency}"'
+    for n, line in enumerate(lines, start=1):
+        if quoted in line:
+            return n
+    return None
+
+
+def scan_frontend_xss(repo_root: Path) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+
+    for p in repo_root.rglob("package.json"):
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        if _is_excluded(rel):
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        deps: dict[str, Any] = {}
+        for key in ("dependencies", "devDependencies", "peerDependencies"):
+            value = data.get(key) if isinstance(data, dict) else None
+            if isinstance(value, dict):
+                deps.update(value)
+        for dep, framework in _FRONTEND_DEPS.items():
+            if dep not in deps:
+                continue
+            _add_client_finding(
+                findings,
+                category=19,
+                rel=rel,
+                subcategory="frontend-framework-detected",
+                severity="Info",
+                line=_package_json_line(p, dep),
+                match=f"{dep}: {deps[dep]}",
+                evidence=f"{framework} dependency detected",
+                framework=framework,
+            )
+
+    for p in _walk_repo(repo_root):
+        if p.suffix.lower() not in _CLIENT_EXTS:
+            continue
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        has_strong_sanitizer = bool(_CAT19_STRONG_SANITIZER.search(text))
+        for n, line in _line_hits(lines, _CAT19_UNSAFE_HTML):
+            if re.search(r"(?i)bypassSecurityTrust", line):
+                subcat = "frontend-sanitizer-bypass"
+                severity = "High"
+                evidence = "Framework sanitizer bypass API is used"
+                anti_pattern = "Sanitizer bypass by default"
+            elif re.search(r"(?i)\bDomSanitizer\b", line):
+                subcat = "frontend-sanitizer-api-surface"
+                severity = "Info"
+                evidence = "Angular DomSanitizer API is referenced; verify it is not used as a default bypass"
+                anti_pattern = None
+            elif has_strong_sanitizer:
+                subcat = "frontend-html-sink-with-sanitizer"
+                severity = "Info"
+                evidence = "Unsafe HTML sink is present with sanitizer markers in the same file"
+                anti_pattern = None
+            else:
+                subcat = "frontend-unsafe-html-sink"
+                severity = "High"
+                evidence = "Unsafe HTML rendering sink is present without sanitizer markers in the same file"
+                anti_pattern = "Sanitizer bypass by default"
+            extra = {"anti_pattern": anti_pattern} if anti_pattern else {}
+            _add_client_finding(
+                findings,
+                category=19,
+                rel=rel,
+                subcategory=subcat,
+                severity=severity,
+                line=n,
+                match=line,
+                evidence=evidence,
+                **extra,
+            )
+
+    return {"category": 19, "name": "Frontend Framework & XSS Patterns", "findings": findings, "count": len(findings)}
+
+
+def scan_dom_xss(repo_root: Path) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    for p in _walk_repo(repo_root):
+        if p.suffix.lower() not in _CLIENT_EXTS:
+            continue
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        source_hits = _line_hits(lines, _CAT20_DOM_SOURCE)
+        sink_hits = _line_hits(lines, _CAT20_DOM_SINK)
+        for n, line in source_hits:
+            _add_client_finding(
+                findings,
+                category=20,
+                rel=rel,
+                subcategory="dom-xss-source",
+                severity="Info",
+                line=n,
+                match=line,
+                evidence="Browser-controlled DOM source is read",
+            )
+        if source_hits and sink_hits:
+            source_line, source_match = source_hits[0]
+            sink_line, sink_match = sink_hits[0]
+            _add_client_finding(
+                findings,
+                category=20,
+                rel=rel,
+                subcategory="dom-xss-source-sink-candidate",
+                severity="High",
+                line=source_line,
+                match=source_match,
+                evidence=f"Browser-controlled DOM source and HTML/code sink appear in the same file; sink at line {sink_line}",
+                sink_line=sink_line,
+                sink_match=sink_match,
+                anti_pattern="Client-side trust boundary",
+            )
+    return {"category": 20, "name": "DOM-Based XSS Sources", "findings": findings, "count": len(findings)}
+
+
 def scan_client_secrets(repo_root: Path) -> dict[str, Any]:
     return _scan_pattern_category(repo_root, 21, "Client-Side Secrets", _CAT21_PATTERN)
 
 
 def scan_websocket(repo_root: Path) -> dict[str, Any]:
-    return _scan_pattern_category(
-        repo_root, 22, "WebSocket & Real-Time", _CAT22_PATTERN, _CLIENT_EXTS | {".py", ".go", ".java", ".cs"}
-    )
+    findings: list[dict[str, Any]] = []
+    for p in _walk_repo(repo_root):
+        if p.suffix.lower() not in (_CLIENT_EXTS | {".py", ".go", ".java", ".kt", ".cs"}):
+            continue
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        surface_hits = _line_hits(lines, _CAT22_PATTERN)
+        for n, line in surface_hits:
+            _add_client_finding(
+                findings,
+                category=22,
+                rel=rel,
+                subcategory="websocket-surface",
+                severity="Info",
+                line=n,
+                match=line,
+                evidence="WebSocket or Socket.IO surface is present",
+            )
+        for n, line in _line_hits(lines, _CAT22_CLEARTEXT):
+            _add_client_finding(
+                findings,
+                category=22,
+                rel=rel,
+                subcategory="websocket-cleartext",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="WebSocket URL uses cleartext ws:// outside loopback",
+            )
+        if surface_hits and _CAT22_SERVER_SOCKET.search(text) and not _CAT22_AUTH.search(text):
+            n, line = surface_hits[0]
+            _add_client_finding(
+                findings,
+                category=22,
+                rel=rel,
+                subcategory="websocket-missing-auth-candidate",
+                severity="Medium",
+                line=n,
+                match=line,
+                evidence="Server-side WebSocket surface without auth/token/session markers in the same file",
+            )
+        if surface_hits and _CAT22_SERVER_SOCKET.search(text) and not _CAT22_ORIGIN.search(text):
+            n, line = surface_hits[0]
+            _add_client_finding(
+                findings,
+                category=22,
+                rel=rel,
+                subcategory="websocket-origin-validation-gap",
+                severity="Medium",
+                line=n,
+                match=line,
+                evidence="Server-side WebSocket surface without origin/cors validation markers in the same file",
+            )
+    return {"category": 22, "name": "WebSocket & Real-Time", "findings": findings, "count": len(findings)}
 
 
 def scan_postmessage(repo_root: Path) -> dict[str, Any]:
-    return _scan_pattern_category(repo_root, 23, "postMessage & iframe", _CAT23_PATTERN, _CLIENT_EXTS)
+    findings: list[dict[str, Any]] = []
+    for p in _walk_repo(repo_root):
+        if p.suffix.lower() not in _CLIENT_EXTS:
+            continue
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        surface_hits = _line_hits(lines, _CAT23_PATTERN)
+        for n, line in surface_hits:
+            _add_client_finding(
+                findings,
+                category=23,
+                rel=rel,
+                subcategory="browser-message-surface",
+                severity="Info",
+                line=n,
+                match=line,
+                evidence="postMessage, message listener, window opener, or iframe surface is present",
+            )
+        for n, line in _line_hits(lines, _CAT23_WILDCARD_TARGET):
+            _add_client_finding(
+                findings,
+                category=23,
+                rel=rel,
+                subcategory="postmessage-wildcard-target",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="postMessage uses wildcard target origin",
+                anti_pattern="Client-side trust boundary",
+            )
+        if _CAT23_MESSAGE_LISTENER.search(text) and not _CAT23_ORIGIN_CHECK.search(text):
+            listener = _line_hits(lines, _CAT23_MESSAGE_LISTENER)[0]
+            _add_client_finding(
+                findings,
+                category=23,
+                rel=rel,
+                subcategory="message-listener-no-origin-check",
+                severity="High",
+                line=listener[0],
+                match=listener[1],
+                evidence="message event listener lacks origin allowlist markers in the same file",
+                anti_pattern="Client-side trust boundary",
+            )
+        if _CAT23_IFRAME.search(text) and not _CAT23_IFRAME_SANDBOX.search(text):
+            iframe = _line_hits(lines, _CAT23_IFRAME)[0]
+            _add_client_finding(
+                findings,
+                category=23,
+                rel=rel,
+                subcategory="iframe-missing-sandbox",
+                severity="Medium",
+                line=iframe[0],
+                match=iframe[1],
+                evidence="iframe is present without sandbox attribute in the same file",
+            )
+        for n, line in _line_hits(lines, _CAT23_IFRAME_SANDBOX):
+            lowered = line.lower()
+            if "allow-scripts" in lowered and "allow-same-origin" in lowered:
+                _add_client_finding(
+                    findings,
+                    category=23,
+                    rel=rel,
+                    subcategory="iframe-permissive-sandbox",
+                    severity="Medium",
+                    line=n,
+                    match=line,
+                    evidence="iframe sandbox combines allow-scripts and allow-same-origin",
+                )
+        for n, line in _line_hits(lines, _CAT23_BLANK_NO_NOOPENER):
+            if "noopener" in line.lower() or "noreferrer" in line.lower():
+                continue
+            _add_client_finding(
+                findings,
+                category=23,
+                rel=rel,
+                subcategory="window-opener-noopener-missing",
+                severity="Medium",
+                line=n,
+                match=line,
+                evidence="new tab/window opener lacks noopener/noreferrer marker",
+            )
+    return {"category": 23, "name": "postMessage & iframe", "findings": findings, "count": len(findings)}
 
 
 def scan_client_routing(repo_root: Path) -> dict[str, Any]:
-    return _scan_pattern_category(repo_root, 24, "Client-Side Routing & Auth Guards", _CAT24_PATTERN, _CLIENT_EXTS)
+    findings: list[dict[str, Any]] = []
+    for p in _walk_repo(repo_root):
+        if p.suffix.lower() not in _CLIENT_EXTS:
+            continue
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        guard_hits = _line_hits(lines, _CAT24_PATTERN)
+        for n, line in guard_hits:
+            _add_client_finding(
+                findings,
+                category=24,
+                rel=rel,
+                subcategory="client-side-auth-guard-surface",
+                severity="Info",
+                line=n,
+                match=line,
+                evidence="Client-side route/auth guard surface is present",
+            )
+        for n, line in _line_hits(lines, _CAT10_CLIENT_ROLE):
+            _add_client_finding(
+                findings,
+                category=24,
+                rel=rel,
+                subcategory="client-side-role-guard",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="Client-side route guard appears to trust browser-held role or claim state",
+                anti_pattern="Client-side trust boundary",
+            )
+        if guard_hits and not _CAT24_SERVER_AUTHORITY.search(text):
+            n, line = guard_hits[0]
+            _add_client_finding(
+                findings,
+                category=24,
+                rel=rel,
+                subcategory="guard-without-server-authority-candidate",
+                severity="Medium",
+                line=n,
+                match=line,
+                evidence="Client-side auth guard is present without same-file server authority check marker",
+                anti_pattern="Client-side trust boundary",
+            )
+    return {
+        "category": 24,
+        "name": "Client-Side Routing & Auth Guards",
+        "findings": findings,
+        "count": len(findings),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Category 29 — Mobile App Architecture & Platform Config
+# ---------------------------------------------------------------------------
+
+
+_MOBILE_EXTS = {
+    ".xml",
+    ".java",
+    ".kt",
+    ".swift",
+    ".m",
+    ".mm",
+    ".plist",
+    ".entitlements",
+    ".gradle",
+    ".properties",
+}
+
+_ANDROID_MANIFEST_SURFACE = re.compile(r"(?i)<manifest\b|<application\b|<activity\b|<service\b|<receiver\b|<provider\b")
+_ANDROID_DEBUGGABLE = re.compile(r"android:debuggable\s*=\s*['\"]true['\"]")
+_ANDROID_ALLOW_BACKUP = re.compile(r"android:allowBackup\s*=\s*['\"]true['\"]")
+_ANDROID_CLEARTEXT = re.compile(r"android:usesCleartextTraffic\s*=\s*['\"]true['\"]")
+_ANDROID_EXPORTED_TRUE = re.compile(r"android:exported\s*=\s*['\"]true['\"]")
+_ANDROID_PERMISSION = re.compile(r"android:permission\s*=")
+_ANDROID_COMPONENT = re.compile(r"<(activity|service|receiver|provider)\b", re.IGNORECASE)
+_ANDROID_SCHEME = re.compile(r"android:scheme\s*=\s*['\"](?P<scheme>[^'\"]+)['\"]")
+_ANDROID_AUTOVERIFY = re.compile(r"android:autoVerify\s*=\s*['\"]true['\"]")
+_ANDROID_NETWORK_CLEAR = re.compile(r"cleartextTrafficPermitted\s*=\s*['\"]true['\"]")
+_ANDROID_USER_CA = re.compile(r"<certificates\b[^>]*src\s*=\s*['\"]user['\"]", re.IGNORECASE)
+_ANDROID_DEBUG_OVERRIDES = re.compile(r"<debug-overrides\b", re.IGNORECASE)
+
+_ANDROID_WEBVIEW_JS = re.compile(r"\.setJavaScriptEnabled\s*\(\s*true\s*\)")
+_ANDROID_WEBVIEW_BRIDGE = re.compile(r"\.addJavascriptInterface\s*\(")
+_ANDROID_WEBVIEW_FILE = re.compile(
+    r"\.(setAllowFileAccess|setAllowUniversalAccessFromFileURLs|setAllowFileAccessFromFileURLs)\s*\(\s*true\s*\)"
+)
+_ANDROID_WEBVIEW_DEBUG = re.compile(r"WebView\.setWebContentsDebuggingEnabled\s*\(\s*true\s*\)")
+_ANDROID_SHARED_PREF_TOKEN = re.compile(
+    r"(?i)(SharedPreferences|getSharedPreferences|EncryptedSharedPreferences|putString|getString)[^\n]{0,180}"
+    r"(token|jwt|password|secret|refresh|access)"
+)
+_ANDROID_WORLD_READABLE = re.compile(r"\bMODE_WORLD_READABLE\b")
+_ANDROID_ACCEPT_ALL_TLS = re.compile(
+    r"(?i)(TrustAll|trustAll|X509TrustManager|HostnameVerifier|verify\s*\([^)]*\)\s*\{?\s*return\s+true|"
+    r"checkServerTrusted\s*\([^)]*\)\s*\{?\s*\}|setHostnameVerifier\s*\([^)]*ALLOW_ALL)"
+)
+
+_IOS_ATS_ARBITRARY = re.compile(r"<key>NSAllowsArbitraryLoads</key>\s*<true/>")
+_IOS_ATS_INSECURE_EXCEPTION = re.compile(r"<key>NSExceptionAllowsInsecureHTTPLoads</key>\s*<true/>")
+_IOS_URL_SCHEME = re.compile(r"<key>CFBundleURLSchemes</key>")
+_IOS_ASSOCIATED_DOMAINS = re.compile(r"com\.apple\.developer\.associated-domains|applinks:")
+_IOS_WEBVIEW_BRIDGE = re.compile(r"(?i)(WKScriptMessageHandler|addScriptMessageHandler|evaluateJavaScript\s*\(|UIWebView)")
+_IOS_USERDEFAULTS_TOKEN = re.compile(r"(?i)(UserDefaults|NSUserDefaults)[^\n]{0,180}(token|jwt|password|secret|refresh|access)")
+_IOS_KEYCHAIN_ALWAYS = re.compile(r"kSecAttrAccessibleAlways")
+_IOS_ACCEPT_ALL_TLS = re.compile(
+    r"(?i)(allowsAnyHTTPSCertificateForHost|ServerTrustManager\s*\([^)]*allHostsMustBeEvaluated\s*:\s*false|"
+    r"validateCertificateChain\s*:\s*false|certificateChainValidation\s*:\s*\.disabled|URLCredential\(trust:)"
+)
+_MOBILE_MINIFY_FALSE = re.compile(r"(?i)\b(minifyEnabled|isMinifyEnabled)\s*=?\s*false\b")
+_ANDROID_CODE_HINT = re.compile(
+    r"(?i)(\bandroid\.|\bandroidx\.|WebView|SharedPreferences|X509TrustManager|HostnameVerifier|"
+    r"MODE_WORLD_READABLE|addJavascriptInterface|com\.android\.application)"
+)
+_IOS_CODE_HINT = re.compile(
+    r"(?i)(\bUIKit\b|\bFoundation\b|WKWebView|UserDefaults|NSUserDefaults|CFBundle|Keychain|SecItem|Alamofire|"
+    r"NSAppTransportSecurity)"
+)
+
+
+def _add_mobile(
+    findings: list[dict[str, Any]],
+    *,
+    rel: str,
+    subcategory: str,
+    severity: str,
+    line: int | None,
+    match: str,
+    evidence: str,
+    platform: str,
+    anti_pattern: str | None = None,
+) -> None:
+    item: dict[str, Any] = {
+        "category": 29,
+        "subcategory": subcategory,
+        "file": rel,
+        "line": line,
+        "severity": severity,
+        "match": match.strip(),
+        "evidence": evidence,
+        "platform": platform,
+    }
+    if anti_pattern:
+        item["anti_pattern"] = anti_pattern
+    findings.append(item)
+
+
+def _android_component_blocks(lines: list[str]) -> list[tuple[int, str]]:
+    blocks: list[tuple[int, str]] = []
+    current: list[str] = []
+    start: int | None = None
+    for n, line in enumerate(lines, start=1):
+        if start is None and _ANDROID_COMPONENT.search(line):
+            start = n
+            current = [line.strip()]
+            if ">" in line:
+                blocks.append((start, " ".join(current)))
+                start = None
+                current = []
+            continue
+        if start is not None:
+            current.append(line.strip())
+            if ">" in line:
+                blocks.append((start, " ".join(current)))
+                start = None
+                current = []
+    return blocks
+
+
+def _plist_true_key_hits(lines: list[str], key: str) -> list[tuple[int, str]]:
+    hits: list[tuple[int, str]] = []
+    key_marker = f"<key>{key}</key>"
+    for n, line in enumerate(lines, start=1):
+        if key_marker not in line:
+            continue
+        for next_line in lines[n:]:
+            stripped = next_line.strip()
+            if not stripped:
+                continue
+            if stripped == "<true/>":
+                hits.append((n, f"{line.strip()} {stripped}"))
+            break
+    return hits
+
+
+def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    surface_files: dict[str, str] = {}
+
+    for p in _walk_repo(repo_root):
+        rel = str(p.relative_to(repo_root)).replace("\\", "/")
+        if p.suffix.lower() not in _MOBILE_EXTS and p.name not in {"AndroidManifest.xml", "Info.plist"}:
+            continue
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        text = "\n".join(lines)
+        lower_rel = rel.lower()
+        is_android = (
+            p.name == "AndroidManifest.xml"
+            or "network_security_config" in lower_rel
+            or "/android/" in f"/{lower_rel}"
+            or bool(_ANDROID_MANIFEST_SURFACE.search(text))
+            or bool(_ANDROID_CODE_HINT.search(text))
+        )
+        is_ios = (
+            p.name == "Info.plist"
+            or "/ios/" in f"/{lower_rel}"
+            or "CFBundle" in text
+            or bool(_IOS_CODE_HINT.search(text))
+        )
+        if is_android:
+            surface_files[rel] = "Android"
+        elif is_ios:
+            surface_files[rel] = "iOS"
+
+        if p.name == "AndroidManifest.xml":
+            for n, line in _line_hits(lines, _ANDROID_DEBUGGABLE):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="android-debuggable-enabled",
+                    severity="High",
+                    line=n,
+                    match=line,
+                    evidence="Android manifest enables debuggable runtime",
+                    platform="Android",
+                    anti_pattern="Mobile debug build shipped",
+                )
+            for n, line in _line_hits(lines, _ANDROID_ALLOW_BACKUP):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="android-allowbackup-enabled",
+                    severity="Medium",
+                    line=n,
+                    match=line,
+                    evidence="Android app data backup is enabled in the manifest",
+                    platform="Android",
+                    anti_pattern="Mobile client stores sensitive state without platform hardening",
+                )
+            for n, line in _line_hits(lines, _ANDROID_CLEARTEXT):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="android-cleartext-traffic-enabled",
+                    severity="High",
+                    line=n,
+                    match=line,
+                    evidence="Android manifest permits cleartext network traffic",
+                    platform="Android",
+                    anti_pattern="Mobile cleartext network policy",
+                )
+            for start, block in _android_component_blocks(lines):
+                if _ANDROID_EXPORTED_TRUE.search(block) and not _ANDROID_PERMISSION.search(block):
+                    _add_mobile(
+                        findings,
+                        rel=rel,
+                        subcategory="android-exported-component-without-permission",
+                        severity="High",
+                        line=start,
+                        match=block[:400],
+                        evidence="Exported Android component lacks an explicit permission in the component declaration",
+                        platform="Android",
+                        anti_pattern="Mobile IPC boundary exposed",
+                    )
+            for n, line in _line_hits(lines, _ANDROID_SCHEME):
+                scheme_match = _ANDROID_SCHEME.search(line)
+                scheme = scheme_match.group("scheme").lower() if scheme_match else ""
+                if scheme and scheme not in {"http", "https"}:
+                    _add_mobile(
+                        findings,
+                        rel=rel,
+                        subcategory="android-custom-url-scheme",
+                        severity="Medium",
+                        line=n,
+                        match=line,
+                        evidence="Custom-scheme deep link is present; ownership is not OS-verified like app links",
+                        platform="Android",
+                        anti_pattern="Mobile deep-link trust boundary",
+                    )
+                elif scheme in {"http", "https"} and not _ANDROID_AUTOVERIFY.search(text):
+                    _add_mobile(
+                        findings,
+                        rel=rel,
+                        subcategory="android-applink-not-verified",
+                        severity="Medium",
+                        line=n,
+                        match=line,
+                        evidence="HTTP(S) deep link lacks autoVerify marker in the manifest",
+                        platform="Android",
+                        anti_pattern="Mobile deep-link trust boundary",
+                    )
+
+        if p.name == "network_security_config.xml" or "network_security_config" in lower_rel:
+            for n, line in _line_hits(lines, _ANDROID_NETWORK_CLEAR):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="android-network-config-cleartext",
+                    severity="High",
+                    line=n,
+                    match=line,
+                    evidence="Android network security config permits cleartext traffic",
+                    platform="Android",
+                    anti_pattern="Mobile cleartext network policy",
+                )
+            for n, line in _line_hits(lines, _ANDROID_USER_CA):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="android-user-ca-trusted",
+                    severity="Medium",
+                    line=n,
+                    match=line,
+                    evidence="Android network security config trusts user-installed CAs",
+                    platform="Android",
+                    anti_pattern="Mobile TLS trust weakened",
+                )
+            for n, line in _line_hits(lines, _ANDROID_DEBUG_OVERRIDES):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="android-debug-overrides",
+                    severity="Medium",
+                    line=n,
+                    match=line,
+                    evidence="Android debug network trust overrides are present",
+                    platform="Android",
+                    anti_pattern="Mobile debug trust override",
+                )
+
+        if is_android:
+            android_patterns = [
+                (_ANDROID_WEBVIEW_BRIDGE, "android-webview-js-bridge", "High", "WebView JavaScript bridge is exposed", "Mobile WebView bridge"),
+                (_ANDROID_WEBVIEW_JS, "android-webview-javascript-enabled", "Medium", "WebView JavaScript execution is enabled", "Mobile WebView bridge"),
+                (_ANDROID_WEBVIEW_FILE, "android-webview-file-access", "High", "WebView file/universal file URL access is enabled", "Mobile WebView bridge"),
+                (_ANDROID_WEBVIEW_DEBUG, "android-webview-debugging-enabled", "High", "WebView remote debugging is enabled", "Mobile debug build shipped"),
+                (_ANDROID_SHARED_PREF_TOKEN, "android-token-sharedpreferences", "High", "Sensitive token/secret marker appears in SharedPreferences usage", "Mobile token in app storage"),
+                (_ANDROID_WORLD_READABLE, "android-world-readable-storage", "High", "World-readable Android storage mode is used", "Mobile token in app storage"),
+                (_ANDROID_ACCEPT_ALL_TLS, "android-accept-all-tls", "Critical", "Android TLS validation appears to accept arbitrary certificates or hosts", "Mobile TLS trust disabled"),
+                (_MOBILE_MINIFY_FALSE, "android-minify-disabled", "Info", "Android build disables code shrinking/obfuscation", "Mobile release hardening gap"),
+            ]
+            for pattern, subcat, severity, evidence, anti_pattern in android_patterns:
+                for n, line in _line_hits(lines, pattern):
+                    _add_mobile(
+                        findings,
+                        rel=rel,
+                        subcategory=subcat,
+                        severity=severity,
+                        line=n,
+                        match=line,
+                        evidence=evidence,
+                        platform="Android",
+                        anti_pattern=anti_pattern,
+                    )
+
+        if p.name == "Info.plist":
+            for n, line in _plist_true_key_hits(lines, "NSAllowsArbitraryLoads"):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="ios-ats-arbitrary-loads",
+                    severity="High",
+                    line=n,
+                    match=line,
+                    evidence="iOS App Transport Security allows arbitrary loads",
+                    platform="iOS",
+                    anti_pattern="Mobile cleartext network policy",
+                )
+            for n, line in _plist_true_key_hits(lines, "NSExceptionAllowsInsecureHTTPLoads"):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="ios-ats-insecure-exception",
+                    severity="High",
+                    line=n,
+                    match=line,
+                    evidence="iOS ATS exception permits insecure HTTP loads",
+                    platform="iOS",
+                    anti_pattern="Mobile cleartext network policy",
+                )
+            for n, line in _line_hits(lines, _IOS_URL_SCHEME):
+                _add_mobile(
+                    findings,
+                    rel=rel,
+                    subcategory="ios-custom-url-scheme-surface",
+                    severity="Info",
+                    line=n,
+                    match=line,
+                    evidence="iOS custom URL scheme surface is present",
+                    platform="iOS",
+                    anti_pattern="Mobile deep-link trust boundary",
+                )
+
+        if is_ios:
+            ios_patterns = [
+                (_IOS_WEBVIEW_BRIDGE, "ios-webview-js-bridge", "High", "iOS WebView JavaScript bridge or evaluation API is present", "Mobile WebView bridge"),
+                (_IOS_USERDEFAULTS_TOKEN, "ios-token-userdefaults", "High", "Sensitive token/secret marker appears in UserDefaults usage", "Mobile token in app storage"),
+                (_IOS_KEYCHAIN_ALWAYS, "ios-keychain-accessible-always", "Medium", "Keychain item uses always-accessible class", "Mobile token in app storage"),
+                (_IOS_ACCEPT_ALL_TLS, "ios-accept-all-tls", "Critical", "iOS TLS validation appears to accept arbitrary certificates or hosts", "Mobile TLS trust disabled"),
+                (_IOS_ASSOCIATED_DOMAINS, "ios-associated-domains-surface", "Info", "iOS Associated Domains entitlement is present", "Mobile deep-link trust boundary"),
+            ]
+            for pattern, subcat, severity, evidence, anti_pattern in ios_patterns:
+                for n, line in _line_hits(lines, pattern):
+                    _add_mobile(
+                        findings,
+                        rel=rel,
+                        subcategory=subcat,
+                        severity=severity,
+                        line=n,
+                        match=line,
+                        evidence=evidence,
+                        platform="iOS",
+                        anti_pattern=anti_pattern,
+                    )
+
+    for rel, platform in sorted(surface_files.items()):
+        findings.insert(
+            0,
+            {
+                "category": 29,
+                "subcategory": "mobile-app-surface",
+                "file": rel,
+                "line": None,
+                "severity": "Info",
+                "match": rel,
+                "evidence": "Mobile app source or platform configuration detected",
+                "platform": platform,
+            },
+        )
+
+    return {
+        "category": 29,
+        "name": "Mobile App Architecture & Platform Config",
+        "findings": findings,
+        "count": len(findings),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -898,6 +2130,183 @@ _CAT28_DANGEROUS = re.compile(
     r"(?i)(Bash\(\*\)|Bash\(\*:\*\)|allowDangerous|dangerously|mcpServers|postToolUse|preToolUse|curl\s+[^|;]*\|\s*(?:sh|bash)|rm\s+-rf|chmod\s+777)"
 )
 
+_MCP_CONFIG_NAMES = {"mcp.json", ".mcp.json", "MCP_CONFIG.json"}
+_MCP_SECRET_KEY_RE = re.compile(r"(?i)(api[_-]?key|token|secret|password|passwd|pwd|authorization|bearer|credential)")
+_MCP_REMOTE_URL_RE = re.compile(r"(?i)^https?://")
+_MCP_PUBLIC_REGISTRY_COMMANDS = {"npx", "uvx", "pipx"}
+
+
+def _is_mcp_config_path(rel: str) -> bool:
+    return PurePosixPath(rel).name in _MCP_CONFIG_NAMES
+
+
+def _mcp_servers_from_config(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        return {}
+    for key in ("mcpServers", "servers"):
+        value = data.get(key)
+        if isinstance(value, dict):
+            return value
+    nested = data.get("mcp")
+    if isinstance(nested, dict):
+        return _mcp_servers_from_config(nested)
+    return {}
+
+
+def _first_http_url(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value if _MCP_REMOTE_URL_RE.match(value) else None
+    if isinstance(value, dict):
+        for v in value.values():
+            found = _first_http_url(v)
+            if found:
+                return found
+    if isinstance(value, list):
+        for v in value:
+            found = _first_http_url(v)
+            if found:
+                return found
+    return None
+
+
+def _mcp_command_parts(server_cfg: Any) -> list[str]:
+    if not isinstance(server_cfg, dict):
+        return []
+    parts: list[str] = []
+    command = server_cfg.get("command")
+    if isinstance(command, str) and command.strip():
+        parts.append(command.strip())
+    args = server_cfg.get("args")
+    if isinstance(args, list):
+        parts.extend(str(a).strip() for a in args if str(a).strip())
+    return parts
+
+
+def _looks_like_env_ref(value: str) -> bool:
+    stripped = value.strip()
+    return bool(re.search(r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?", stripped))
+
+
+def _mcp_hardcoded_secret(server_cfg: Any) -> tuple[str, str] | None:
+    if not isinstance(server_cfg, dict):
+        return None
+    for container_name in ("env", "headers"):
+        container = server_cfg.get(container_name)
+        if not isinstance(container, dict):
+            continue
+        for key, value in container.items():
+            if not _MCP_SECRET_KEY_RE.search(str(key)):
+                continue
+            if not isinstance(value, str):
+                continue
+            stripped = value.strip()
+            if len(stripped) >= 8 and not _looks_like_env_ref(stripped):
+                return str(key), container_name
+    return None
+
+
+def _mcp_has_auth_reference(server_cfg: Any) -> bool:
+    if not isinstance(server_cfg, dict):
+        return False
+    for container_name in ("env", "headers"):
+        container = server_cfg.get(container_name)
+        if not isinstance(container, dict):
+            continue
+        for key, value in container.items():
+            if _MCP_SECRET_KEY_RE.search(str(key)) and isinstance(value, str) and _looks_like_env_ref(value):
+                return True
+    return False
+
+
+def _classify_mcp_server(server_cfg: Any) -> dict[str, Any]:
+    if not isinstance(server_cfg, dict):
+        return {
+            "transport": "unknown",
+            "origin": "unknown",
+            "severity": "Info",
+            "subcategory": "mcp-local-server",
+            "reason": "server config is not an object",
+        }
+
+    cfg_type = str(server_cfg.get("type") or "").strip().lower()
+    url = server_cfg.get("url") if isinstance(server_cfg.get("url"), str) else _first_http_url(server_cfg)
+    command_parts = _mcp_command_parts(server_cfg)
+    command_name = PurePosixPath(command_parts[0]).name if command_parts else ""
+
+    if cfg_type in {"http", "sse"}:
+        transport = cfg_type
+    elif url:
+        transport = "http"
+    elif command_parts:
+        transport = "stdio"
+    else:
+        transport = cfg_type or "unknown"
+
+    secret = _mcp_hardcoded_secret(server_cfg)
+    if secret:
+        return {
+            "transport": transport,
+            "origin": "remote URL" if url else "local/public-registry",
+            "severity": "Critical",
+            "subcategory": "mcp-hardcoded-secret",
+            "reason": f"hardcoded {secret[0]} in {secret[1]}",
+        }
+
+    if url or transport in {"http", "sse"}:
+        reason = "remote MCP server controls assistant tool output"
+        if _mcp_has_auth_reference(server_cfg):
+            reason += " and requires an auth token from the environment"
+        return {
+            "transport": transport,
+            "origin": "remote URL",
+            "severity": "High",
+            "subcategory": "mcp-remote-server",
+            "reason": reason,
+        }
+
+    if command_name in _MCP_PUBLIC_REGISTRY_COMMANDS:
+        return {
+            "transport": "stdio",
+            "origin": f"public registry ({command_name})",
+            "severity": "High",
+            "subcategory": "mcp-public-registry-server",
+            "reason": "server binary is fetched from a public registry at invocation time",
+        }
+
+    return {
+        "transport": transport,
+        "origin": "local binary" if command_parts else "unknown",
+        "severity": "Info",
+        "subcategory": "mcp-local-server",
+        "reason": "local MCP server config; manual binary review still warranted",
+    }
+
+
+def _scan_mcp_servers(path: Path, rel: str) -> list[dict[str, Any]]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    findings: list[dict[str, Any]] = []
+    for server_name, server_cfg in sorted(_mcp_servers_from_config(data).items()):
+        if not isinstance(server_cfg, dict):
+            continue
+        classified = _classify_mcp_server(server_cfg)
+        findings.append(
+            {
+                "category": 28,
+                "subcategory": classified["subcategory"],
+                "file": rel,
+                "line": None,
+                "server": str(server_name),
+                "transport": classified["transport"],
+                "origin": classified["origin"],
+                "severity": classified["severity"],
+                "match": classified["reason"],
+            }
+        )
+    return findings
+
 
 def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
@@ -937,6 +2346,8 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
                     "match": text.strip(),
                 }
             )
+        if _is_mcp_config_path(rel):
+            findings.extend(_scan_mcp_servers(path, rel))
 
     for rel in _AI_CONFIG_PATTERNS:
         add_path(repo_root / rel)
@@ -968,9 +2379,26 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
 # (.md/.adoc) are excluded on purpose: a README that merely *mentions* "OpenAI"
 # is not an AI surface.
 _CAT13_EXTS = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
-    ".java", ".kt", ".scala", ".go", ".rb", ".php", ".cs", ".rs",
-    ".yml", ".yaml", ".json", ".toml", ".env",
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".scala",
+    ".go",
+    ".rb",
+    ".php",
+    ".cs",
+    ".rs",
+    ".yml",
+    ".yaml",
+    ".json",
+    ".toml",
+    ".env",
 }
 
 # (subcategory, strength, pattern). STRONG tokens essentially never occur outside
@@ -978,31 +2406,54 @@ _CAT13_EXTS = {
 # (ML, sensors, games), so they only count via the anchored weak rule below.
 _CAT13_GROUPS: list[tuple[str, str, re.Pattern[str]]] = [
     # --- STRONG -----------------------------------------------------------
-    ("llm-sdk", "strong", re.compile(
-        r"(?i)(\bopenai\b|\banthropic\b|@anthropic-ai|\blangchain\b|@langchain/"
-        r"|llama[_-]?index|\bllamaindex\b|\bautogen\b|\bcrewai\b|\blitellm\b"
-        r"|\bcohere\b|\bmistralai\b|google\.generativeai|@google/generative-ai"
-        r"|\bollama\b|@azure/openai|\bbedrock-runtime\b|ChatCompletion"
-        r"|chat\.completions|GenerativeModel|\bInvokeModel\b)")),
-    ("vector-db", "strong", re.compile(
-        r"(?i)(\bchromadb\b|\bpinecone\b|\bweaviate\b|\bqdrant\b|\bmilvus\b)")),
-    ("agent-framework", "strong", re.compile(
-        r"(AgentExecutor|ReActAgent|create_react_agent|create_tool_calling_agent)")),
-    ("prompt-framework", "strong", re.compile(
-        r"(ChatPromptTemplate|\bSystemMessage\b|\bHumanMessage\b|\bPromptTemplate\b|from_messages)")),
+    (
+        "llm-sdk",
+        "strong",
+        re.compile(
+            r"(?i)(\bopenai\b|\banthropic\b|@anthropic-ai|\blangchain\b|@langchain/"
+            r"|llama[_-]?index|\bllamaindex\b|\bautogen\b|\bcrewai\b|\blitellm\b"
+            r"|\bcohere\b|\bmistralai\b|google\.generativeai|@google/generative-ai"
+            r"|\bollama\b|@azure/openai|\bbedrock-runtime\b|ChatCompletion"
+            r"|chat\.completions|GenerativeModel|\bInvokeModel\b)"
+        ),
+    ),
+    ("vector-db", "strong", re.compile(r"(?i)(\bchromadb\b|\bpinecone\b|\bweaviate\b|\bqdrant\b|\bmilvus\b)")),
+    (
+        "agent-framework",
+        "strong",
+        re.compile(r"(AgentExecutor|ReActAgent|create_react_agent|create_tool_calling_agent)"),
+    ),
+    (
+        "prompt-framework",
+        "strong",
+        re.compile(r"(ChatPromptTemplate|\bSystemMessage\b|\bHumanMessage\b|\bPromptTemplate\b|from_messages)"),
+    ),
     ("tokenizer", "strong", re.compile(r"(?i)\btiktoken\b")),
-    ("model-name", "strong", re.compile(
-        r"(?i)(gpt-4|gpt-3\.5|claude-3|claude-2|claude-sonnet|claude-opus"
-        r"|gemini-1\.|text-embedding-(?:ada|3)|\bo1-(?:preview|mini)\b)")),
+    (
+        "model-name",
+        "strong",
+        re.compile(
+            r"(?i)(gpt-4|gpt-3\.5|claude-3|claude-2|claude-sonnet|claude-opus"
+            r"|gemini-1\.|text-embedding-(?:ada|3)|\bo1-(?:preview|mini)\b)"
+        ),
+    ),
     # --- WEAK -------------------------------------------------------------
-    ("prompt-construction", "weak", re.compile(
-        r"(?i)(system[ _-]?prompt|system[ _-]?message|prompt[ _-]?template|user[ _-]?prompt)")),
-    ("model-config", "weak", re.compile(
-        r"(?i)(\btemperature\b|max[ _-]?tokens|\btop[ _-]?p\b|model[ _-]?name|model[ _-]?id)")),
-    ("vector-semantic", "weak", re.compile(
-        r"(?i)(\bembedding|vector[ _-]?store|similarity[ _-]?search|\bpgvector\b|\bfaiss\b)")),
-    ("tool-use", "weak", re.compile(
-        r"(?i)(tool[ _-]?use|function[ _-]?call|tool[ _-]?choice)")),
+    (
+        "prompt-construction",
+        "weak",
+        re.compile(r"(?i)(system[ _-]?prompt|system[ _-]?message|prompt[ _-]?template|user[ _-]?prompt)"),
+    ),
+    (
+        "model-config",
+        "weak",
+        re.compile(r"(?i)(\btemperature\b|max[ _-]?tokens|\btop[ _-]?p\b|model[ _-]?name|model[ _-]?id)"),
+    ),
+    (
+        "vector-semantic",
+        "weak",
+        re.compile(r"(?i)(\bembedding|vector[ _-]?store|similarity[ _-]?search|\bpgvector\b|\bfaiss\b)"),
+    ),
+    ("tool-use", "weak", re.compile(r"(?i)(tool[ _-]?use|function[ _-]?call|tool[ _-]?choice)")),
 ]
 
 _CAT13_PER_SUBCAT_CAP = 20
@@ -1012,9 +2463,7 @@ _CAT13_PER_SUBCAT_CAP = 20
 # DEVELOPER's tooling, not the target app's LLM usage — so they must not flag an
 # AI surface here. Cat 28 still catalogs them (that is a separate supply-chain
 # signal), which is why this is a Cat-13-local skip, not a global hard-exclude.
-_CAT13_SKIP_DIRS = frozenset(
-    {".claude", ".cursor", ".continue", ".codeium", ".aider", ".windsurf"}
-)
+_CAT13_SKIP_DIRS = frozenset({".claude", ".cursor", ".continue", ".codeium", ".aider", ".windsurf"})
 
 
 def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
@@ -1075,8 +2524,7 @@ def scan_ai_integration(repo_root: Path) -> dict[str, Any]:
             continue
 
     has_ai_surface = bool(strong_seen) or any(
-        "prompt-construction" in groups and len(groups) >= 2
-        for groups in weak_by_file.values()
+        "prompt-construction" in groups and len(groups) >= 2 for groups in weak_by_file.values()
     )
     if not has_ai_surface:
         return {"category": 13, "name": "AI / LLM Integration", "findings": [], "count": 0}
@@ -1106,18 +2554,23 @@ def run_all(
         "version": 1,
         "repo_root": str(repo_root),
         "categories": {
+            "9": scan_oauth_oidc(repo_root),
+            "10": scan_spa_bff(repo_root),
             "11": scan_exposed_routes(repo_root),
             "13": scan_ai_integration(repo_root),
             "14": scan_ci_supply_chain(repo_root),
             "15": scan_container_images(repo_root),
             "17": scan_postinstall(repo_root),
             "18": scan_security_headers(repo_root),
+            "19": scan_frontend_xss(repo_root),
+            "20": scan_dom_xss(repo_root),
             "21": scan_client_secrets(repo_root),
             "22": scan_websocket(repo_root),
             "23": scan_postmessage(repo_root),
             "24": scan_client_routing(repo_root),
             "27": scan_gha_privileges(repo_root),
             "28": scan_ai_assistant_configs(repo_root),
+            "29": scan_mobile_architecture(repo_root),
         },
     }
     if include_manifest:
@@ -1140,18 +2593,23 @@ def run_all(
 
 
 _DISPATCH = {
+    "oauth-oidc": (scan_oauth_oidc, "Cat 9"),
+    "spa-bff": (scan_spa_bff, "Cat 10"),
     "exposed-routes": (scan_exposed_routes, "Cat 11"),
     "ai-integration": (scan_ai_integration, "Cat 13"),
     "ci-supply-chain": (scan_ci_supply_chain, "Cat 14"),
     "container-images": (scan_container_images, "Cat 15"),
     "postinstall": (scan_postinstall, "Cat 17"),
     "security-headers": (scan_security_headers, "Cat 18"),
+    "frontend-xss": (scan_frontend_xss, "Cat 19"),
+    "dom-xss": (scan_dom_xss, "Cat 20"),
     "client-secrets": (scan_client_secrets, "Cat 21"),
     "websocket": (scan_websocket, "Cat 22"),
     "postmessage": (scan_postmessage, "Cat 23"),
     "client-routing": (scan_client_routing, "Cat 24"),
     "gha-privileges": (scan_gha_privileges, "Cat 27"),
     "ai-assistant-configs": (scan_ai_assistant_configs, "Cat 28"),
+    "mobile-architecture": (scan_mobile_architecture, "Cat 29"),
 }
 
 

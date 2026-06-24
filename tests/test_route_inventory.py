@@ -114,6 +114,47 @@ def test_aspnet_minimal_apis(tmp_path: Path) -> None:
     assert "aspnet-minimal" in inv["coverage"]["frameworks_detected"]
 
 
+def test_graphql_schema_operations_are_logical_entry_points(tmp_path: Path) -> None:
+    (tmp_path / "schema.graphql").write_text(
+        """
+type Query {
+  user(id: ID!): User @auth
+  products: [Product]
+}
+
+type Mutation {
+  updateUser(id: ID!, input: UserInput!): User
+  login(email: String!, password: String!): AuthPayload
+  grantRole(userId: ID!, role: Role!): User @hasRole(role: ADMIN)
+}
+""",
+        encoding="utf-8",
+    )
+
+    inv = _run(tmp_path)
+    jsonschema.validate(inv, SCHEMA)
+
+    by_path = {r["path"]: r for r in inv["routes"]}
+    assert by_path["Query user"]["method"] == "GRAPHQL"
+    assert by_path["Query user"]["framework"] == "graphql"
+    assert by_path["Query user"]["authn_signal"] == "decorator_present"
+    assert by_path["Query user"]["missing_authz_suspect"] is True
+    assert {"graphql-object-access", "missing-authz"} <= set(by_path["Query user"]["relevance_tags"])
+
+    assert by_path["Mutation updateUser"]["missing_auth_suspect"] is True
+    assert {"graphql-mutation", "graphql-object-access", "missing-auth"} <= set(
+        by_path["Mutation updateUser"]["relevance_tags"]
+    )
+
+    assert by_path["Mutation login"]["missing_auth_suspect"] is False
+    assert "graphql-mutation" in by_path["Mutation login"]["relevance_tags"]
+
+    assert by_path["Mutation grantRole"]["authz_signal"] == "decorator_present"
+    assert by_path["Mutation grantRole"]["missing_auth_suspect"] is False
+    assert by_path["Mutation grantRole"]["missing_authz_suspect"] is False
+    assert inv["coverage"]["frameworks_detected"] == ["graphql"]
+
+
 def test_javascript_framework_detection_and_nestjs_decorators() -> None:
     fastify = ri._extract_javascript(
         Path("api.ts"), ["const fastify = require('fastify')();\n", "fastify.get('/fast', h);\n"]

@@ -82,7 +82,7 @@
           "type": "string",
           "enum": [
             "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS",
-            "ANY", "ALL", "UNKNOWN"
+            "ANY", "ALL", "GRAPHQL", "UNKNOWN"
           ]
         },
         "path": {
@@ -103,6 +103,7 @@
             "spring",
             "jaxrs",
             "aspnet-minimal",
+            "graphql",
             "rails",
             "laravel",
             "gin",
@@ -140,7 +141,15 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["registration", "authentication", "management", "missing-auth", "missing-authz"]
+            "enum": [
+              "registration",
+              "authentication",
+              "management",
+              "graphql-mutation",
+              "graphql-object-access",
+              "missing-auth",
+              "missing-authz"
+            ]
           },
           "uniqueItems": true,
           "description": "Display-relevance reasons (NOT findings): why a finding-free route still merits an individual row in §5 Attack Surface — it sits on the registration / authentication surface, is a management endpoint, or is a missing-auth/authz suspect. Consumed by pregenerate_fragments.gen_attack_surface to exempt these rows from the large-inventory collapse."

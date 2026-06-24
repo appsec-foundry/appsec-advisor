@@ -57,13 +57,14 @@ finding_types:
     name: "Stored / Reflected XSS"
     parent_category: TH-11
     cwe_any: [CWE-79]
-    title_hints: ["stored XSS", "reflected XSS", "bypassSecurityTrust", "DomSanitizer"]
+    title_hints: ["stored XSS", "reflected XSS", "bypassSecurityTrust", "DomSanitizer",
+                  "dangerouslySetInnerHTML", "WebView bridge"]
 
   - id: FT-011
     name: "DOM-based XSS"
     parent_category: TH-11
     cwe_any: [CWE-79]
-    title_hints: ["innerHTML", "DOM XSS", "document.write"]
+    title_hints: ["innerHTML", "DOM XSS", "document.write", "URLSearchParams"]
 
   - id: FT-012
     name: "Missing Content Security Policy"
@@ -207,13 +208,16 @@ finding_types:
     name: "Insecure Client-Side Storage (localStorage)"
     parent_category: TH-04
     cwe_any: [CWE-922]
-    title_hints: ["localStorage", "sessionStorage"]
+    title_hints: ["localStorage", "sessionStorage", "SharedPreferences", "UserDefaults"]
 
   - id: FT-091
-    name: "OAuth Implicit Flow / Token in URL"
+    name: "OAuth Redirect Flow / Token Exposure Weakness"
     parent_category: TH-10
-    cwe_any: [CWE-598, CWE-522]
-    title_hints: ["implicit flow", "URL fragment", "response_type=token"]
+    cwe_any: [CWE-598, CWE-522, CWE-352, CWE-345]
+    title_hints: ["implicit flow", "URL fragment", "response_type=token",
+                  "missing PKCE", "without PKCE", "code_challenge_method=plain",
+                  "missing state", "state not validated", "grant_type=password",
+                  "ROPC", "redirect_uri weak", "redirect_uri substring"]
 
   - id: FT-092
     name: "OAuth/OIDC Token Claim Validation Skip"
@@ -221,6 +225,7 @@ finding_types:
     cwe_any: [CWE-345, CWE-287]
     title_hints: ["aud claim", "iss claim", "issuer validation", "audience validation",
                   "nonce missing", "nonce not validated", "id_token replay",
+                  "signature not validated", "JWKS validation", "azp claim",
                   "claim not validated"]
 
   - id: FT-093
@@ -236,7 +241,7 @@ finding_types:
     name: "Unauthenticated WebSocket / Real-time Channel"
     parent_category: TH-13
     cwe_any: [CWE-306]
-    title_hints: ["Socket.IO", "WebSocket", "WS upgrade"]
+    title_hints: ["Socket.IO", "WebSocket", "WS upgrade", "ws://"]
 
   # ---------- CSRF ----------
   - id: FT-110

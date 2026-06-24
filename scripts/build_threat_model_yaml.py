@@ -469,9 +469,7 @@ def build_meta(
         # scope (analogous to component_selection). None when no cap → the
         # renderer omits the Run-Statistics row. meta has additionalProperties:true
         # so no schema bump is needed.
-        "stride_per_category_cap": (skill_cfg.get("stride_profile") or {}).get(
-            "max_threats_per_category"
-        ),
+        "stride_per_category_cap": (skill_cfg.get("stride_profile") or {}).get("max_threats_per_category"),
     }
 
 
@@ -927,8 +925,14 @@ def build_attack_surface(routes: dict | None, sidecar: dict | None = None) -> tu
     if routes:
         for r in routes.get("routes", []):
             notes_parts = []
+            is_graphql = (
+                str(r.get("framework") or "").lower() == "graphql" or str(r.get("method") or "").upper() == "GRAPHQL"
+            )
             if r.get("management_surface"):
                 notes_parts.append("Management surface")
+            for note in r.get("notes") or []:
+                if isinstance(note, str) and note and note not in notes_parts:
+                    notes_parts.append(note)
             if r.get("handler_file"):
                 notes_parts.append(f"handler: {r['handler_file']}:{r.get('handler_line', '')}")
             # authn_signal is a STRING enum from route_inventory.py:
@@ -942,7 +946,7 @@ def build_attack_surface(routes: dict | None, sidecar: dict | None = None) -> tu
             auth_required = authn_sig in ("middleware_present", "decorator_present", "present", "required")
             entry = {
                 "entry_point": f"{r.get('method', '?')} {r.get('path', '/')}",
-                "protocol": "HTTP",
+                "protocol": "GraphQL" if is_graphql else "HTTP",
                 "auth_required": auth_required,
                 "notes": "; ".join(notes_parts) or None,
             }
