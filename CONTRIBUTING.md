@@ -186,7 +186,7 @@ consented repos.) `make diagnostic-bundle RUN=/out` / `make inspect-bundle BUNDL
 | `agents/` | Agent definitions (Markdown with YAML frontmatter) |
 | `agents/phases/` | Phase-group reference files (authoritative phase instructions) |
 | `agents/shared/` | Shared standards (logging format, validation routines) |
-| `skills/` | User-invocable skills: `create-threat-model`, `audit-security-requirements` |
+| `skills/` | User-invocable skills, one directory per skill (e.g. `create-threat-model`, `audit-security-requirements`, `status`, `publish-threat-model`, `export-threat-model`) |
 | `hooks/` | Hook definitions + configurable steering keywords |
 | `schemas/` | YAML/JSON schemas for intermediate files and output |
 | `templates/` | Report templates (management summary, sections) |
@@ -195,7 +195,8 @@ consented repos.) `make diagnostic-bundle RUN=/out` / `make inspect-bundle BUNDL
 | `tests/` | Pytest suite — agent definitions, integration, steering, SARIF, schemas |
 | `examples/` | Reference threat model outputs (e.g. OWASP Juice Shop) |
 | `docs/` | Cross-cutting reference documentation (handwritten, durable) |
-| `docs/internal/analysis/` | Generated analyses and proposals (`analysis-*`, `proposal-*`) — agent-authored design/investigation write-ups, kept separate from reference docs |
+| `docs/analysis/` | Agent-authored analyses and plans (`analysis-*`, `plan-*`, `proposal-*`) — design/investigation write-ups, kept separate from the durable reference docs above |
+| `docs/internal/analysis/` | Earlier agent-authored analyses and proposals — same nature as `docs/analysis/`, older write-ups |
 | `config.json` | Plugin config (external context, pricing, logging) |
 
 ## Agent definition format

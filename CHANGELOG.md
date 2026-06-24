@@ -6,107 +6,42 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- Context-window problems are now durably logged for post-hoc analysis, not just
-  warned on stderr. The pre-flight `cache_read` bloat detector writes a
-  `SESSION_BLOAT` event (recording the cached-token size, the 8 M threshold, and
-  the user's continue/abort choice) so a slow run can later be attributed to a
-  bloated session. Separately, when the outer session ends uncleanly mid-run
-  (the common cause being context-compaction between stages), a
-  `SESSION_ABORTED_MIDRUN` event records the phase and stop reason instead of
-  leaving it inferable only from a checkpoint rewrite. Both render in the live
-  progress view (`/appsec-advisor:status --live`).
-- `--stride-cap N` — opt-in cost lever that keeps at most N threats per STRIDE
-  category per component. Critical-safe (Criticals are never dropped); trims only
-  the High/Medium/Low tail while keeping full depth (CVSS, evidence, verification
-  greps). Off by default — `standard`/`thorough` keep full STRIDE depth. The cap
-  is disclosed in the report's Run Statistics appendix.
+- `--stride-cap N` — cap of N threats per STRIDE category per component.
+  Critical-safe (Criticals never dropped); trims only the High/Medium/Low tail.
+  Off by default.
 - `--stride-model` / `--triage-model` / `--merger-model` (`sonnet`|`opus`) —
-  per-stage model overrides settable inline on the command line (the equivalent
-  of the `APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL` env vars, but without
-  `settings.json` + a session restart). They win over the tier and the env vars;
-  `--no-opus` still clamps Opus→Sonnet last. The sweet spot for a cheap-but-
-  calibrated `standard` run is `--reasoning-model sonnet-economy --triage-model opus`
-  (Sonnet STRIDE, Opus triage). The resolved per-stage mix is recorded in the
-  report's Run Statistics (`Reasoning models` row).
-- Report Run Statistics now records the **exact invocation** (the full
-  `create-threat-model` flags) and names the **reasoning tier** alongside the
-  per-stage models, so a report states precisely what parameterization produced
-  it and how to reproduce it. Persisted to `meta.invocation` (survives runtime
-  cleanup); falls back to `.skill-config.json` for older runs.
+  inline per-stage model overrides; `--no-opus` still clamps last. Cheap-but-
+  calibrated `standard` combo: `--reasoning-model sonnet-economy --triage-model opus`.
+- Context-window problems are now logged for later analysis: a pre-flight warning
+  when the session is too large (cached-token bloat) and an unclean mid-run abort.
+  Both show in `/appsec-advisor:status --live`.
+- Reports record the exact invocation (full flags) and reasoning tier, so a report
+  states how it was produced and how to reproduce it.
 
 ### Changed
 
-- The pre-flight now always shows a `STRIDE cap` line in the Configuration block,
-  in both states: `≤N per STRIDE category per component (Criticals always kept)`
-  when `--stride-cap N` (or the quick triage profile) bounds the per-component
-  threat count, and `none — full STRIDE depth (all threats kept)` otherwise. Visible
-  in all three surfaces (create-threat-model pre-flight, `/status`,
-  `/threat-model-health`); a pure cap is no longer duplicated as a separate STRIDE
-  active-options row.
-- The pre-flight now surfaces abuse-case verification (Stage 1c — the most
-  expensive verifier fan-out) when it deviates: shown under `Skips` whenever it is
-  off (`--no-abuse-cases`, or auto at quick depth) and under `Extras` when forced on
-  (`--abuse-cases`). The default-on standard/thorough case stays silent. Previously
-  the resolved `abuse_case_label` was computed but never displayed.
-- The `--rebuild` pre-flight wipe is now honest about what was actually present.
-  The `discarding prior threat model and all cached state` header is printed only
-  when something really exists to remove; a first-ever `--rebuild` (clean slate)
-  prints `Rebuild: clean slate — nothing to discard.` instead. The removal line
-  reports the real file count and lists only the runtime/cache directories that
-  were actually present (no more hard-coded `+ .fragments/ + .appsec-cache/ …`
-  suffix when those never existed).
-- The console now shows which components get a STRIDE pass and which are skipped
-  (each with its reason — e.g. `out-of-scope at depth=standard`) right before the
-  analysis fans out, mirroring the report's §1 Scope and §11 Out of Scope. Re-render it
-  any time with `build_stride_dispatch_manifest.py --print-selection <output-dir>`.
-- The console run-plan now adds a short hint on `standard` runs that
-  `--assessment-depth thorough` may surface more (deeper per-component analysis +
-  architect review, Opus reasoning) at higher cost and time. Always shown at
-  standard depth (including no-op reruns); not on quick/thorough.
-- Component selection no longer silently drops high-risk components. Three fixes:
-  (1) AI/LLM components are now a mandatory role at every depth — a chatbot tagged as an
-  internal zone used to be dropped ("out-of-scope at depth=standard"), skipping its OWASP
-  LLM Top-10 pass and leaving prompt-injection / excessive-agency / prompt-leakage
-  uncovered. (2) The exposed-zone vocabulary now matches the synonyms the analysis actually
-  emits (`internet-facing`, `external`, `public`, `browser`, …), not just `internet` — so
-  genuinely internet-facing services (a Socket.IO channel, a file-upload handler) are no
-  longer mis-classified as internal and shed. (3) File-upload/parser and real-time/WebSocket
-  components are now mandatory at standard+ regardless of zone (upload CWE-434 / zip-path
-  traversal / XXE, and channel injection/authz). On Juice Shop this took standard-depth
-  coverage from 7 components to all 10, with nothing dropped.
-- AI/LLM detection is now deterministic. The `### AI / LLM Exposure` report section was
-  driven by an LLM grep that needed a full agentic RAG stack to fire and could be skipped
-  under load; it now comes from `recon_patterns.py` and triggers on any real SDK, framework,
-  vector DB, or model id (and on SDK-less integrations that co-locate a prompt with model
-  config). A plain `openai` chatbot is now reliably detected.
-- The orchestrator no longer reads the whole `SKILL-impl.md` up front. The initial load
-  now stops at a lazy-load boundary after Stage 1; the Stage 2/3/4/Completion tail (~30k
-  tokens) is read just-in-time at the Stage-2 handoff. This drops the context window at
-  pre-flight from ~77% to ~62% and avoids the auto-compaction that previously fired right
-  before the STRIDE dispatch.
-- Trimmed the orchestrator's resident context: the rebuild-wipe and auto-incremental
-  full-scan-recommendation branches now lazy-load from `modes/*.md` only when their
-  mode runs, instead of sitting inline in the always-read `SKILL-impl.md`. A standard
-  or full scan no longer carries those incremental/rebuild-only branches in context.
-- QA re-render is now a single quick-fix pass at `quick`/`standard` depth (was up
-  to 3 rounds). One repair attempt, then fail-closed if the contract still does
-  not hold — never ships an invalid report. `thorough` keeps the 3-round budget.
-- QA re-render no longer triggers on cosmetic-only findings (diagram/chain
-  compactness, walkthrough depth, list shape, recon hints). They're reported as
-  advisories instead. Real defects — broken diagrams, missing sections, §7 drift,
-  wrong T-ID references — still re-render. Set `APPSEC_QA_COSMETIC_BLOCKING=1` for
-  the old behaviour.
-- Threat reasoning now defaults to `sonnet-economy` at `standard` (and `quick`);
-  only `thorough` defaults to Opus. A clean A/B (Juice Shop, 2026-06-23) found
-  Opus reasoning ~$10.77 (+36 %) more expensive than sonnet-economy with no
-  measurable quality or coverage gain — the earlier "Opus is cheaper/better for
-  STRIDE" rationale was refuted (Opus-STRIDE never actually ran in the
-  measurements behind it; the cost-inversion was an Opus-triage/merger artifact).
-  Opt into Opus at standard with `--reasoning-model opus`, or upgrade only the
-  severity stage with `--triage-model opus`. (Supersedes the earlier
-  Opus-default-at-standard change from this same Unreleased cycle.)
-- Dropped the large-repo reasoning auto-downgrade. Repository size is now
-  informational only; it no longer forces a cheaper model.
+- Pre-flight is clearer about scope and cost: it lists which components get a
+  STRIDE pass and which are skipped (with reason), always shows the STRIDE cap
+  (or "full depth"), surfaces abuse-case verification when toggled, and on
+  `standard` runs hints that `thorough` digs deeper at higher cost.
+- `--rebuild` now reports only what it actually wiped; a first-ever rebuild says
+  "nothing to discard" instead of listing files and caches that never existed.
+- Component selection no longer drops high-risk components: AI/LLM is mandatory at
+  every depth, file-upload and real-time/WebSocket components at `standard`+, and
+  internet-facing detection now matches the exposure terms the analysis emits.
+- AI/LLM detection is deterministic (pattern-based), so a plain `openai` chatbot is
+  reliably detected and gets its OWASP LLM Top-10 pass.
+- Threat reasoning defaults to `sonnet-economy` at `quick`/`standard` (cheaper, no
+  measured quality loss); only `thorough` defaults to Opus. Opt in with
+  `--reasoning-model opus` or just `--triage-model opus`.
+- Repository size is informational only — it no longer forces a cheaper model.
+- QA re-render is a single quick-fix pass at `quick`/`standard`, fail-closed if the
+  report is still invalid; `thorough` keeps 3 rounds. Cosmetic-only findings no
+  longer trigger a re-render (reported as advisories); `APPSEC_QA_COSMETIC_BLOCKING=1`
+  restores the old behaviour.
+- Lower pre-flight context use: the orchestrator lazy-loads the Stage 2+ and
+  rebuild/incremental parts of its playbook instead of reading everything up front,
+  avoiding the auto-compaction that previously fired before STRIDE.
 
 ## 0.4.0-beta — 2026-06-19
 
