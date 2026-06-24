@@ -151,11 +151,20 @@ Assessment depth controls how much of the repository is reviewed and how much va
 
 The plugin supports three assessment depths. Pick the lightest mode that still matches the risk of the change.
 
-Within a run, *which* components get a full STRIDE pass is criteria-driven, not a fixed per-depth count:
+Within a run, *which* components get a full STRIDE pass is criteria-driven, not a fixed per-depth count. Each depth includes everything from the lighter one:
 
-- **quick** — frontend, auth surface, internet-exposed, and exposure-unknown components (reachability not provably internal);
-- **standard** — the above plus CI/CD & deployment pipelines and stores holding credentials, PII, or payment data;
-- **thorough** — the above plus proven-internal components, with deeper per-component analysis.
+| Component criterion | quick | standard | thorough |
+|---|:---:|:---:|:---:|
+| Role-floor: frontend, auth, AI/LLM surface | ✓ | ✓ | ✓ |
+| Internet-exposed | ✓ | ✓ | ✓ |
+| Exposure-unknown (reachability not provably internal) | ✓ | ✓ | ✓ |
+| CI/CD & deployment pipelines | | ✓ | ✓ |
+| Crown-jewel stores (credentials, PII, payment, secrets) | | ✓ | ✓ |
+| File-upload surface | | ✓ | ✓ |
+| Real-time channels | | ✓ | ✓ |
+| Proven-internal (reachable but not exposed) | | | ✓ |
+
+Thorough also applies deeper per-component analysis to every selected component, not just a wider net.
 
 The analyzed count follows the repo's attack surface, not a hard cap. (Component counts in the benchmarks below predate this selection.)
 
