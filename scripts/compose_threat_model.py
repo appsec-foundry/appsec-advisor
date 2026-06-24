@@ -9434,7 +9434,13 @@ def _section7_number_and_bulletize(md: str) -> str:
         if m4 and cur_section:
             name = m4.group(1).strip()
             h4_n += 1
-            num = name.split(" ", 1)[0] if _already_num_re.match(name) else f"{cur_section}.{h4_n}"
+            # Always use the sequentially-assigned number (not the fragment's
+            # stale number) so that Pass-1 name_num matches Pass-2 renumbering.
+            # An unnumbered H4 (e.g. "#### Threat Hypotheses Requiring
+            # Validation") that precedes numbered siblings shifts all subsequent
+            # fragment numbers by 1; Pass 2 re-assigns correctly, but if Pass 1
+            # preserves the old fragment number the link-prefix lookup diverges.
+            num = f"{cur_section}.{h4_n}"
             plain = re.sub(r"^\d+(?:\.\d+)+\s+", "", name).strip()
             name_num[plain.lower()] = num
             for a in pending_anchors:
