@@ -721,6 +721,24 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             rendered.append(line)
         return sep.join(rendered)
 
+    def format_one_finding(item: dict[str, Any]) -> str:
+        """Render a single {ref, label?} findings dict as a markdown link string.
+
+        Used by ai-exposure.md.j2 to loop over findings individually so each
+        can be emitted as a proper indented sub-list item (``  - ↳ link``)
+        rather than inline via ``<br/>↳`` within the parent bullet.
+        Applies the same T-NNN → F-NNN normalisation as format_weakness_findings.
+        """
+        ref = (item.get("ref") or "").strip()
+        m_t = re.match(r"^T-(\d+)$", ref)
+        if m_t:
+            ref = f"F-{m_t.group(1)}"
+        label = (item.get("label") or "").strip()
+        line = f"[{ref}](#{ref.lower()})"
+        if label:
+            line += f" — {label}"
+        return line
+
     # Back-compat alias: callers in older templates still use the legacy
     # `format_defect_findings` name. New code uses `format_weakness_findings`.
     format_defect_findings = format_weakness_findings
@@ -832,6 +850,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
     env.filters["format_mitigations"] = format_mitigations
     env.filters["format_defect_findings"] = format_defect_findings  # back-compat alias
     env.filters["format_weakness_findings"] = format_weakness_findings
+    env.filters["format_one_finding"] = format_one_finding
     env.filters["format_weakness_components"] = format_weakness_components
     env.filters["format_component_list"] = format_component_list
     env.filters["format_mitigation_addresses"] = format_mitigation_addresses
@@ -1560,7 +1579,17 @@ def _canonical_finding_title(t: dict) -> str:
             "from",
             "into",
         }
-        tokens = [w for w in raw.split() if w.lower() not in stopwords]
+
+        def _is_noise_token(tok: str) -> bool:
+            # ALL_CAPS_UNDERSCORE constants (e.g. DEFAULT_FULL_SCHEMA, NODE_ENV)
+            if re.match(r"^[A-Z][A-Z0-9_]{2,}$", tok):
+                return True
+            # npm/pip package names with hyphens or dots (e.g. js-yaml, socket.io)
+            if re.match(r"^[a-z][a-z0-9]*[-\.][a-z][a-z0-9\-\.]*$", tok):
+                return True
+            return False
+
+        tokens = [w for w in raw.split() if w.lower() not in stopwords and not _is_noise_token(w)]
         class_label = " ".join(tokens[:5]).strip(" ,;:.")
     if not class_label:
         return ""
@@ -4581,7 +4610,9 @@ def _severity_by_finding_num(threats: list) -> dict:
     for t in threats or []:
         m = re.search(r"(\d+)$", (t.get("id") or t.get("t_id") or "").strip())
         if m:
-            out[int(m.group(1))] = (t.get("risk") or t.get("severity") or "low").strip().lower()
+            out[int(m.group(1))] = (
+                (t.get("effective_severity") or t.get("risk") or t.get("severity") or "low").strip().lower()
+            )
     return out
 
 
@@ -6905,7 +6936,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         max_sev = 99
         for tid in addressed_ids:
             t = threats.get(tid, {})
-            sev = _severity_rank(t.get("risk") or t.get("severity"))
+            sev = _severity_rank(t.get("effective_severity") or t.get("risk") or t.get("severity"))
             max_sev = min(max_sev, sev)
             # M3.12 — short title KEEPS the trailing `(<param>, <file>)` /
             # `(<file>)` token. A bare "SQL Injection" cell is structurally
@@ -7050,7 +7081,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
 
     def _is_critical(tid: str) -> bool:
         t = threats_by_id.get(tid) or {}
-        return (t.get("risk") or t.get("severity") or "").strip().lower() == "critical"
+        return (t.get("effective_severity") or t.get("risk") or t.get("severity") or "").strip().lower() == "critical"
 
     def _covers_critical(m: dict[str, Any]) -> bool:
         return any(_is_critical(a.get("ref")) for a in (m.get("addresses") or []))
@@ -11272,12 +11303,14 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     # Exact invocation: meta first (survives runtime cleanup), skill-config
     # fallback (older runs / when meta lacks it). Shows the precise flags
     # (depth, reasoning tier, per-stage overrides, --stride-cap, …).
-    invocation_cell = invocation if invocation != "(not recorded)" else (
-        skill_cfg.get("invocation_args") or "(not recorded)"
+    invocation_cell = (
+        invocation if invocation != "(not recorded)" else (skill_cfg.get("invocation_args") or "(not recorded)")
     )
-    inv_prefix = "/appsec-advisor:create-threat-model " if (
-        invocation_cell != "(not recorded)" and not invocation_cell.startswith("/")
-    ) else ""
+    inv_prefix = (
+        "/appsec-advisor:create-threat-model "
+        if (invocation_cell != "(not recorded)" and not invocation_cell.startswith("/"))
+        else ""
+    )
     lines.append(f"| Invocation | `{inv_prefix}{invocation_cell}` |")
     lines.append(f"| Generated | {generated} |")
     lines.append(f"| Mode | {mode} |")
@@ -12598,7 +12631,119 @@ def _codify_inline_identifiers(text: str) -> str:
         for _rx in (_CODE_FILE_RE, _CODE_CALL_RE, _CODE_BARE_CALL_RE, _CODE_DOTTED_RE):
             run = _sub_outside_spans(_rx, run)
         out_parts.append(run)
-    return "".join(out_parts)
+    # Final pass: absorb un-backticked code that FLANKS an inline span the
+    # author only partially wrapped (e.g. `foo.forEach((x) => { `bar(x)` })`).
+    # The per-token matchers above deliberately skip non-empty-paren calls and
+    # arrow functions, so a multi-statement expression would otherwise render
+    # half-monospaced (juice-shop 2026-06-24 user report). `_balance_code_spans`
+    # merges the whole balanced expression into one span.
+    return _balance_code_spans("".join(out_parts))
+
+
+_BRACKET_OPENERS = {"(": ")", "[": "]", "{": "}"}
+_BRACKET_CLOSERS = {")": "(", "]": "[", "}": "{"}
+# A flank between an inline span and the surrounding expression may carry only
+# code-shaped characters; a natural-language word (≥2 letters, space-bounded on
+# both sides and not glued to `.`/`(`/etc.) blocks the merge.
+_FLANK_CODE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") | set(
+    ".(){}[]_$@/\\:'\"=>,;+-*%&|!? \t"
+)
+_FLANK_WORD_RE = re.compile(r"[A-Za-z][A-Za-z]+")
+_FLANK_CALL_HEAD_RE = re.compile(r"[A-Za-z_$][\w$.]*\(")
+
+
+def _flank_is_standalone_word(text: str, start: int, end: int) -> bool:
+    """True when ``text[start:end]`` is an alphabetic word bounded by non-glue
+    context on BOTH sides — i.e. prose, not a code identifier attached to
+    ``.`` / ``(`` / ``)`` / ``_`` etc."""
+    glue = set(".(){}[]_$@/\\:")
+    before = text[start - 1] if start > 0 else " "
+    after = text[end] if end < len(text) else " "
+    return before not in glue and after not in glue
+
+
+def _flank_balance(s: str) -> int:
+    """Net unclosed-opener depth of ``s`` (positive = more openers), ignoring
+    brackets inside single/double quotes."""
+    depth = 0
+    quote = None
+    for ch in s:
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"":
+            quote = ch
+        elif ch in _BRACKET_OPENERS:
+            depth += 1
+        elif ch in _BRACKET_CLOSERS:
+            depth -= 1
+    return depth
+
+
+def _flank_boundary_left(text: str, end: int) -> int:
+    """Leftmost index of the contiguous code flank ending at ``end`` (exclusive):
+    walk left over code-shaped chars, then cut to just after the last standalone
+    prose word so a sentence prefix is never swallowed."""
+    i = end
+    while i > 0 and text[i - 1] in _FLANK_CODE_CHARS:
+        i -= 1
+    cut = i
+    for m in _FLANK_WORD_RE.finditer(text, i, end):
+        if _flank_is_standalone_word(text, m.start(), m.end()):
+            cut = m.end()
+    while cut < end and text[cut] in " \t-:":
+        cut += 1
+    return cut
+
+
+def _flank_boundary_right(text: str, start: int) -> int:
+    """Exclusive end index of the contiguous code flank beginning at ``start``:
+    walk right over code-shaped chars, then cut before the first standalone
+    prose word so trailing narration is never swallowed."""
+    i = start
+    n = len(text)
+    while i < n and text[i] in _FLANK_CODE_CHARS:
+        i += 1
+    end = i
+    for m in _FLANK_WORD_RE.finditer(text, start, end):
+        if _flank_is_standalone_word(text, m.start(), m.end()):
+            cut = m.start()
+            while cut > start and text[cut - 1] in " \t":
+                cut -= 1
+            return cut
+    return end
+
+
+def _balance_code_spans(text: str) -> str:
+    """Absorb un-backticked code FLANKING an inline ``code`` span into one span
+    when the author only partially wrapped a single bracketed expression — e.g.
+    ``foo.forEach((x) => { `bar(x)` })`` → ``` `foo.forEach((x) => { bar(x) })` ```.
+
+    Conservative + idempotent: fires only when the left flank opens brackets
+    (and carries a call/arrow head) that the right flank closes around the span,
+    so balanced standalone spans and ordinary prose are left untouched.
+    """
+    if text.count("`") < 2:
+        return text
+    spans = [(m.start(), m.end()) for m in re.finditer(r"`[^`]+`", text)]
+    # Right-to-left so earlier indices stay valid as we splice.
+    for a, b in reversed(spans):
+        left_start = _flank_boundary_left(text, a)
+        right_end = _flank_boundary_right(text, b)
+        left = text[left_start:a]
+        right = text[b:right_end]
+        ld = _flank_balance(left)
+        rd = _flank_balance(right)
+        # Partial-wrap signature: left opens net brackets, right closes exactly
+        # those, and the left flank is real code (a call/arrow head), not prose.
+        if ld <= 0 or (ld + rd) != 0 or not _FLANK_CALL_HEAD_RE.search(left):
+            continue
+        inner = text[a + 1 : b - 1]
+        merged = "`" + left.rstrip() + (" " if left.endswith(" ") else "") + inner + right.rstrip() + "`"
+        trail = right[len(right.rstrip()) :]
+        text = text[:left_start] + merged + trail + text[right_end:]
+    return text
 
 
 def _build_threat_card(
@@ -12914,7 +13059,7 @@ def _build_threat_card(
     evidence_summary_explicit = (t.get("evidence_summary") or t.get("evidence_prose") or "").strip()
     evidence_line = ""
     if evidence_summary_explicit:
-        text = evidence_summary_explicit
+        text = _codify_inline_identifiers(evidence_summary_explicit)
         if not text.endswith((".", "!", "?")):
             text += "."
         evidence_line = f"**Evidence:** {text}"
@@ -13576,7 +13721,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         # 48 findings (2026-05-31 user request — bare ID links were unreadable).
         _sev_by_num = _severity_by_finding_num(threats)
         _title_by_num = {
-            int(m.group(1)): (t.get("title") or "").strip()
+            int(m.group(1)): (_canonical_finding_title(t) or (t.get("title") or "").strip())
             for t in threats
             if (m := re.search(r"(\d+)$", (t.get("id") or t.get("t_id") or "").strip()))
         }

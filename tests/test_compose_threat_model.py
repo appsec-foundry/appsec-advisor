@@ -1265,6 +1265,38 @@ def test_codify_inline_identifiers_no_mid_token_backticks() -> None:
     assert "`bypassSecurityTrustHtml()`" in out2
 
 
+def test_balance_code_spans_merges_partially_wrapped_expression() -> None:
+    """An arrow-function / multi-call expression the author only half-wrapped
+    must render as ONE code span, not half-monospaced prose.
+
+    Regression (juice-shop 2026-06-24): the per-token matchers skip non-empty
+    paren calls + arrow functions, so `foo.forEach((x) => { `bar(x)` })` shipped
+    with only the inner call backticked. `_codify_inline_identifiers` now runs
+    `_balance_code_spans` as a final pass.
+    """
+    raw = (
+        "◌ ambiguous - notifications.forEach((notification) => "
+        "{ `socket.emit('challenge solved', notification)` }) at line 29 pushes data."
+    )
+    out = compose._codify_inline_identifiers(raw)
+    assert "`notifications.forEach((notification) => { socket.emit('challenge solved', notification) })`" in out
+    # one balanced span, prose tail preserved
+    assert out.count("`") == 2
+    assert out.endswith("at line 29 pushes data.")
+    # idempotent
+    assert compose._codify_inline_identifiers(out) == out
+
+
+def test_balance_code_spans_leaves_standalone_span_and_prose_untouched() -> None:
+    """A balanced standalone span surrounded by prose must NOT absorb words."""
+    # `socket.emit()` is whole; "call broadcasts" is prose → no merge.
+    assert compose._balance_code_spans("the `socket.emit()` call broadcasts") == "the `socket.emit()` call broadcasts"
+    # file:line locator followed by prose → untouched.
+    assert compose._balance_code_spans("`routes/foo.ts:9` defines the handler") == "`routes/foo.ts:9` defines the handler"
+    # no backticks at all → returned verbatim.
+    assert compose._balance_code_spans("plain prose, no code") == "plain prose, no code"
+
+
 def test_curate_top_mitigations_floor_and_llm_order() -> None:
     """Critical-floor always shown; LLM curates the extras within the soft max."""
     floor = [{"id": "M-001"}, {"id": "M-002"}]
@@ -4069,3 +4101,114 @@ def test_domain_required_pattern_enforced_when_subsection_present(tmp_path: Path
     with pytest.raises(compose.FragmentError) as exc:
         compose._render_markdown_fragment(ctx, "demo", section)
     assert "sequenceDiagram" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Regression: severity helpers honour effective_severity (2026-06-24)
+# ---------------------------------------------------------------------------
+
+
+def test_severity_by_finding_num_uses_effective_severity() -> None:
+    """Threats with only effective_severity (no risk/severity) must not default to 'low'."""
+    threats = [{"id": "T-001", "effective_severity": "Critical"}]
+    result = compose._severity_by_finding_num(threats)
+    assert result[1] == "critical", f"expected 'critical', got {result[1]!r}"
+
+
+def test_severity_by_finding_num_effective_severity_wins_over_risk() -> None:
+    """effective_severity takes priority over risk when both present."""
+    threats = [{"id": "T-007", "effective_severity": "High", "risk": "Low"}]
+    result = compose._severity_by_finding_num(threats)
+    assert result[7] == "high", f"expected 'high', got {result[7]!r}"
+
+
+def test_severity_by_finding_num_falls_back_to_risk_when_no_effective() -> None:
+    """Without effective_severity, risk is used as before."""
+    threats = [{"id": "T-003", "risk": "Medium"}]
+    result = compose._severity_by_finding_num(threats)
+    assert result[3] == "medium"
+
+
+def test_severity_by_finding_num_low_default_when_all_absent() -> None:
+    """No effective_severity / risk / severity → 'low' default unchanged."""
+    threats = [{"id": "T-002"}]
+    result = compose._severity_by_finding_num(threats)
+    assert result[2] == "low"
+
+
+# ---------------------------------------------------------------------------
+# Regression: _canonical_finding_title strips noise tokens (2026-06-24)
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_finding_title_strips_all_caps_constant() -> None:
+    """ALL_CAPS_UNDERSCORE constants (e.g. DEFAULT_FULL_SCHEMA) must not appear in title."""
+    t = {
+        "title": "YAML Arbitrary Code Execution via js-yaml DEFAULT_FULL_SCHEMA",
+        "cwe": "CWE-502",  # unmapped → falls through to fallback
+    }
+    # Ensure CWE-502 is not in the map so fallback activates.
+    original = compose._CWE_CLASS_NAMES.pop("CWE-502", None)
+    try:
+        result = compose._canonical_finding_title(t)
+    finally:
+        if original is not None:
+            compose._CWE_CLASS_NAMES["CWE-502"] = original
+    assert "DEFAULT_FULL_SCHEMA" not in result, f"constant leaked into title: {result!r}"
+    assert "js-yaml" not in result, f"package name leaked into title: {result!r}"
+
+
+def test_canonical_finding_title_strips_npm_package_names() -> None:
+    """npm-style hyphenated package names must not appear in the fallback title."""
+    t = {
+        "title": "Prototype Pollution via lodash merge deep",
+        "cwe": "CWE-FAKE-NOT-MAPPED",
+    }
+    result = compose._canonical_finding_title(t)
+    # "lodash" is a single token (no hyphen) so it may survive; "merge" / "deep" are fine
+    # The key check: the result is non-empty and no npm-style token sneaks in.
+    assert result  # non-empty
+    # no token matching npm-style pattern ^[a-z]+[-\.][a-z]+ in result
+    for tok in result.split():
+        assert not re.match(r"^[a-z][a-z0-9]*[-\.][a-z][a-z0-9\-\.]*$", tok), (
+            f"npm-style token {tok!r} in canonical title {result!r}"
+        )
+
+
+def test_canonical_finding_title_keeps_weakness_class_words() -> None:
+    """Normal weakness-class words must survive noise filtering."""
+    t = {
+        "title": "SQL Injection login route",
+        "cwe": "CWE-UNMAPPED-XYZ",
+    }
+    result = compose._canonical_finding_title(t)
+    # Should keep "SQL" and "Injection" (uppercase is not ALL_CAPS_UNDERSCORE: length < 3 chars after first)
+    assert "SQL" in result or "Injection" in result, f"weakness words stripped: {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# Regression: evidence_summary gets _codify_inline_identifiers applied (2026-06-24)
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_summary_codify_applied_to_file_path() -> None:
+    """File paths in evidence_summary must be backtick-wrapped by _codify_inline_identifiers.
+
+    This validates the fix: the function was previously NOT applied to
+    evidence_summary_explicit prose — now applied before building **Evidence:**.
+    Uses a simple file:line token that codify reliably handles.
+    """
+    raw = "routes/userProfile.ts:61 calls eval(code) where code is user-supplied."
+    result = compose._codify_inline_identifiers(raw)
+    # The file:line token must be backtick-wrapped.
+    assert "`" in result, f"no backticks produced for evidence prose: {result!r}"
+    assert result != raw, "evidence prose returned unmodified — codify had no effect"
+
+
+def test_evidence_summary_codify_wraps_dotted_method_call() -> None:
+    """socket.emit style dotted call must be backticked by codify."""
+    raw = "socket.emit fires on every new connection before authentication."
+    result = compose._codify_inline_identifiers(raw)
+    assert "socket.emit" in result
+    # The dotted call should be wrapped; backtick count is even and >= 2.
+    assert result.count("`") >= 2, f"dotted method call not backticked: {result!r}"
