@@ -155,6 +155,14 @@ make fix             # repair lint + format automatically
 make release-check   # re-check; fix any remaining stage 3–6 failure by hand
 ```
 
+**Triage helper (maintainer dev tool).** Every `make release-check` run captures
+its full output to `.cache/release-check.log` (gitignored). When the gate fails,
+run the project-local slash command `/triage-release-check`: it reads that log,
+identifies the first red stage, and recommends the producer-side fix using the
+table above — analysis only, it applies nothing unless you ask. It is a
+`.claude/commands/` dev command (like `e2e-full`), **not** part of the shipped
+plugin.
+
 ### What CI does
 
 - **Test workflow** — every push and PR to `main` and `dev`: lint, format,
