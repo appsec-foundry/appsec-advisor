@@ -136,3 +136,32 @@ def test_never_raises_on_missing_dir(tmp_path: Path, monkeypatch):
         spec.loader.exec_module(module)
     # No exception even though dir is missing
     module._mark_checkpoint_aborted_if_dirty("unknown")
+
+
+# ---------------------------------------------------------------------------
+# Return contract — drives the SESSION_ABORTED_MIDRUN event at the call site
+# ---------------------------------------------------------------------------
+
+
+def test_returns_phase_on_active_rewrite(tmp_path: Path, agent_logger):
+    _write_checkpoint(tmp_path, "phase=9 status=started\n")
+    assert agent_logger._mark_checkpoint_aborted_if_dirty("max_turns") == "9"
+
+
+def test_returns_question_mark_when_phase_missing(tmp_path: Path, agent_logger):
+    _write_checkpoint(tmp_path, "status=started\n")
+    assert agent_logger._mark_checkpoint_aborted_if_dirty("unknown") == "?"
+
+
+def test_returns_none_on_clean_stop_reason(tmp_path: Path, agent_logger):
+    _write_checkpoint(tmp_path, "phase=5 status=started\n")
+    assert agent_logger._mark_checkpoint_aborted_if_dirty("end_turn") is None
+
+
+def test_returns_none_when_no_checkpoint(tmp_path: Path, agent_logger):
+    assert agent_logger._mark_checkpoint_aborted_if_dirty("unknown") is None
+
+
+def test_returns_none_when_already_terminal(tmp_path: Path, agent_logger):
+    _write_checkpoint(tmp_path, "phase=11 status=completed\n")
+    assert agent_logger._mark_checkpoint_aborted_if_dirty("unknown") is None

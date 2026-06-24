@@ -6,6 +6,15 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Context-window problems are now durably logged for post-hoc analysis, not just
+  warned on stderr. The pre-flight `cache_read` bloat detector writes a
+  `SESSION_BLOAT` event (recording the cached-token size, the 8 M threshold, and
+  the user's continue/abort choice) so a slow run can later be attributed to a
+  bloated session. Separately, when the outer session ends uncleanly mid-run
+  (the common cause being context-compaction between stages), a
+  `SESSION_ABORTED_MIDRUN` event records the phase and stop reason instead of
+  leaving it inferable only from a checkpoint rewrite. Both render in the live
+  progress view (`/appsec-advisor:status --live`).
 - `--stride-cap N` — opt-in cost lever that keeps at most N threats per STRIDE
   category per component. Critical-safe (Criticals are never dropped); trims only
   the High/Medium/Low tail while keeping full depth (CVSS, evidence, verification

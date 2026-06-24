@@ -210,10 +210,14 @@ def _trace_path() -> str:
 _CLEAN_STOP_REASONS = {"end_turn", "stop_sequence"}
 
 
-def _mark_checkpoint_aborted_if_dirty(stop_reason: str) -> None:
+def _mark_checkpoint_aborted_if_dirty(stop_reason: str) -> str | None:
     """Rewrite `$OUTPUT_DIR/.appsec-checkpoint` to status=aborted on unclean stop.
 
-    No-op when:
+    Returns the ``phase`` of the checkpoint it transitioned to ``aborted`` (so
+    the caller can emit a SESSION_ABORTED_MIDRUN event), or ``None`` when it made
+    no change.
+
+    No-op (returns ``None``) when:
       * the checkpoint file does not exist (run never reached Phase 1, or
         already cleaned),
       * its current status is `completed` (clean finalization),
@@ -223,15 +227,15 @@ def _mark_checkpoint_aborted_if_dirty(stop_reason: str) -> None:
     must never break the Stop event.
     """
     if stop_reason in _CLEAN_STOP_REASONS:
-        return
+        return None
     try:
         cp_path = os.path.join(_output_dir(), ".appsec-checkpoint")
         if not os.path.isfile(cp_path):
-            return
+            return None
         with open(cp_path, encoding="utf-8", errors="replace") as fh:
             raw = fh.read().strip()
         if not raw:
-            return
+            return None
         # Parse key=value pairs on a single line (or whitespace-separated).
         fields: dict[str, str] = {}
         for token in raw.split():
@@ -241,7 +245,7 @@ def _mark_checkpoint_aborted_if_dirty(stop_reason: str) -> None:
         status = fields.get("status", "")
         if status in ("completed", "aborted"):
             # Already terminal — do not overwrite a legitimate final state.
-            return
+            return None
         phase = fields.get("phase", "?")
         ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         # Atomic rewrite so a concurrent reader never sees a half-written line.
@@ -258,10 +262,12 @@ def _mark_checkpoint_aborted_if_dirty(stop_reason: str) -> None:
             # pre-atomic code, still better than leaving a stale status=started.
             with open(cp_path, "w", encoding="utf-8") as fh:
                 fh.write(f"phase={phase} status=aborted reason={stop_reason} aborted_at={ts}\n")
+        return phase
     except Exception:
         # Never let a hook crash the session. The worst-case regression is
         # the pre-existing behaviour (status=started lingers until auto-clean).
         pass
+    return None
 
 
 def _write_trace(event: str, detail: str, sid: str = "") -> None:
@@ -1906,7 +1912,23 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         # a sub-agent name being registered — e.g. context-compaction kills the
         # outer session between Stage 1 return and Stage 2 dispatch).
         if agent_name == "threat-analyst" or not agent_name:
-            _mark_checkpoint_aborted_if_dirty(reason)
+            aborted_phase = _mark_checkpoint_aborted_if_dirty(reason)
+            if aborted_phase is not None:
+                # The outer session ended uncleanly while a run was mid-flight.
+                # Log it as a first-class event so post-hoc analysis can find it
+                # (the raw signal was previously only a checkpoint rewrite). When
+                # agent_name is empty the skill-Bash layer died without a
+                # sub-agent registered — context-compaction between stages is the
+                # common cause; we record the fact without asserting the cause.
+                who = agent_name or "skill-session"
+                detail = (
+                    f"phase={aborted_phase}  reason={reason}  agent={who}  "
+                    f"(unclean stop mid-run; if agent=skill-session, "
+                    f"context-compaction between stages is the common cause)"
+                )
+                _write("WARN ", "SESSION_ABORTED_MIDRUN", detail, sid)
+                _write_agent_run("WARN", who, "SESSION_ABORTED_MIDRUN",
+                                 f"phase={aborted_phase}  reason={reason}")
 
     # --- Tracing: emit AGENT_COMPLETE with per-session token/cost/wall-time ---
     if _TRACING and agent_name:

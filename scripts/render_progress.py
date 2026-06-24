@@ -212,6 +212,10 @@ def main() -> int:
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "SUBSTEP2_IDLE":
             w(f"    ⛔ substep-2 idle — {detail}")
+        elif event == "SESSION_BLOAT":
+            w(f"    ⚠ session context bloat — {detail}")
+        elif event == "SESSION_ABORTED_MIDRUN":
+            w(f"    ⛔ aborted mid-run — {detail}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")
         elif event == "ROUTE_INVENTORY_PREPASS":

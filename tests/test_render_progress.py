@@ -206,3 +206,25 @@ def test_assessment_start_renders_requirements_and_roadmap():
     assert "mode=full" in out and "requirements=on" in out
     assert "requirements ← /tmp/reqs.yaml" in out
     assert "Pipeline:" in out and "9 STRIDE" in out
+
+
+def test_session_bloat_event_renders():
+    out = _render(
+        [
+            "2026-06-20T10:00:00Z  [abcdef12]  WARN   hook-logger  SESSION_BLOAT"
+            "  cache_read=19000000  threshold=8000000  choice=continue  mode=interactive",
+        ]
+    )
+    assert "session context bloat" in out
+    assert "choice=continue" in out
+
+
+def test_session_aborted_midrun_event_renders():
+    out = _render(
+        [
+            "2026-06-20T10:00:00Z  [abcdef12]  WARN   skill-session  SESSION_ABORTED_MIDRUN"
+            "  phase=9  reason=unknown",
+        ]
+    )
+    assert "aborted mid-run" in out
+    assert "phase=9" in out

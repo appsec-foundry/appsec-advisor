@@ -576,6 +576,15 @@ fi
 if [ "${LAST_CACHE_READ:-0}" -ge 8000000 ] && [ "${PRIOR_RUNS:-0}" -lt 2 ]; then
   # PRIOR_RUNS didn't already fire a warning — emit a standalone bloat alert.
   BLOAT_M=$(awk "BEGIN{printf \"%.0f\", ${LAST_CACHE_READ}/1000000}")
+  # Durably record the detection (and the user's choice) so a slow run can later
+  # be attributed to a bloated session. stderr warnings vanish; this SESSION_BLOAT
+  # line in .agent-run.log survives for post-hoc analysis. Best-effort — never
+  # blocks the run on a log-write failure.
+  _log_bloat() {  # $1 = choice (continue|abort)  $2 = mode (interactive|advisory)
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR_PREVIEW" info \
+      SESSION_BLOAT "cache_read=$LAST_CACHE_READ  threshold=8000000  choice=$1  mode=$2" \
+      >/dev/null 2>&1 || true
+  }
   if [ -t 0 ] \
       && [ "${APPSEC_CI_MODE:-}" != "1" ] \
       && [ "${APPSEC_NO_CONFIRM:-}" != "1" ]; then
@@ -601,9 +610,11 @@ EOF
     fi
     case "$BLOAT_CHOICE" in
       y|yes)
+        _log_bloat continue interactive
         printf '  Continuing with ~%sM token context overhead.\n\n' "$BLOAT_M" >&2
         ;;
       *)
+        _log_bloat abort interactive
         printf '  Aborted. Run /clear and re-invoke for a fresh session.\n' >&2
         rm -f "${TMPDIR:-/tmp}/.appsec-verbose-$(id -u)" \
               "${TMPDIR:-/tmp}/.appsec-tracing-$(id -u)"
@@ -612,6 +623,7 @@ EOF
     esac
   else
     # Non-interactive / CI: advisory only, never blocks.
+    _log_bloat continue advisory
     printf '\n⚠ Session context is large (~%sM cached tokens). Run /clear before next assessment for full reset.\n\n' \
         "$BLOAT_M" >&2
   fi
