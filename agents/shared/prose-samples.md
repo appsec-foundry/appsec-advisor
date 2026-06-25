@@ -22,7 +22,7 @@
 
 ### BEFORE (95 Wörter, 5 Sätze, AI-flavored)
 
-> 🔴 Not production-ready. OWASP Juice Shop is deliberately designed as a training target for security practitioners, embedding intentional weaknesses across every tier of its architecture. The application exposes multiple independent paths to full account and host compromise that require no elevated privilege or specialised tooling - a user with only a browser and repository read access can bypass authentication entirely. Closing the risk requires structural changes at the authentication, data-access, and secret-management layers, not a single-point patch.
+> 🔴 Not production-ready. This deliberately vulnerable training application embeds intentional weaknesses across every tier of its architecture. The application exposes multiple independent paths to full account and host compromise that require no elevated privilege or specialised tooling - a user with only a browser and repository read access can bypass authentication entirely. Closing the risk requires structural changes at the authentication, data-access, and secret-management layers, not a single-point patch.
 
 ### Diagnose
 - "embedding intentional weaknesses across every tier of its architecture" — drei Nominalisierungen in einem Atemzug
@@ -32,7 +32,7 @@
 
 ### AFTER (62 Wörter, 4 Sätze, menschlich)
 
-> 🔴 Not production-ready. Juice Shop is a training target — intentional weaknesses live in every tier. Anyone with a browser and repo read access can take over admin accounts and the host server through several independent paths, none of which need elevated privilege or special tooling. Fixing this means rebuilding authentication, data access, and secret management — not patching a single bug.
+> 🔴 Not production-ready. The app is a training target — intentional weaknesses live in every tier. Anyone with a browser and repo read access can take over admin accounts and the host server through several independent paths, none of which need elevated privilege or special tooling. Fixing this means rebuilding authentication, data access, and secret management — not patching a single bug.
 
 ### Regel
 1. **Nominalisierungen auflösen**: "embedding weaknesses" → "weaknesses live"

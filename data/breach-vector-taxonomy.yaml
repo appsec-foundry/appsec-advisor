@@ -27,7 +27,7 @@ vectors:
       - "No authentication middleware blocks the request"
     typical_cwes: [89, 79, 306, 327, 611, 918]
     typical_owasp_top10: ["A01:2021", "A03:2021", "A07:2021"]
-    examples_in_juice_shop:
+    examples:
       - "F-009 SQL injection in product search (`/rest/products/search`)"
       - "F-014 SQL injection in login (`/rest/user/login`)"
       - "F-049 `Socket.IO` unauthenticated WS upgrade"
@@ -41,7 +41,7 @@ vectors:
       - "Endpoint is behind auth but not behind role/admin checks"
     typical_cwes: [434, 611, 918, 352, 287]
     typical_owasp_top10: ["A01:2021", "A04:2021", "A05:2021", "A10:2021"]
-    examples_in_juice_shop:
+    examples:
       - "F-010 RCE via `notevil` sandbox escape (B2B orders)"
       - "F-027 SSRF via profile image URL"
       - "F-028 Unrestricted file type upload"
@@ -55,7 +55,7 @@ vectors:
       - "Endpoint gated on admin role but still exploitable once reached"
     typical_cwes: [862, 79, 94]
     typical_owasp_top10: ["A01:2021"]
-    examples_in_juice_shop:
+    examples:
       - "F-023 Admin panel client-side guard only"
       - "F-046 Admin user deletion without safeguards"
 
@@ -68,7 +68,7 @@ vectors:
       - "Applies to XSS, CSRF, click-jacking, open redirect"
     typical_cwes: [79, 352, 601, 1021]
     typical_owasp_top10: ["A01:2021", "A03:2021"]
-    examples_in_juice_shop:
+    examples:
       - "F-017 CSRF on password change"
       - "F-024 Stored / Reflected XSS via `DomSanitizer.bypass…()`"
       - "F-025 DOM XSS via `innerHTML`"
@@ -83,7 +83,7 @@ vectors:
     typical_cwes: [506, 829, 1039, 1104]
     typical_owasp_top10: ["A08:2021"]
     typical_owasp_llm: ["LLM03:2025", "LLM04:2025"]
-    examples_in_juice_shop:
+    examples:
       - "F-051 Chatbot `trainingData` URL fetched without validation"
       - "F-052..F-059 config/IaC supply-chain findings"
       - "AF-007 No supply-chain integrity controls in build pipeline"
@@ -97,7 +97,7 @@ vectors:
       - "No runtime exploit needed — the vulnerability is the content of the repo"
     typical_cwes: [798, 312, 540]
     typical_owasp_top10: ["A02:2021", "A07:2021"]
-    examples_in_juice_shop:
+    examples:
       - "F-001 RSA private key committed to repository"
       - "F-002 Hardcoded HMAC key in source"
       - "AF-002 All secrets embedded in source code"
@@ -110,7 +110,7 @@ vectors:
       - "Finding is AF-NNN (architectural) rather than F-NNN (code-level)"
     typical_cwes: []
     typical_owasp_top10: []
-    examples_in_juice_shop:
+    examples:
       - "AF-001 Monolithic trust boundary — single `Node.js` process hosts all"
       - "AF-002 All secrets embedded in source code"
       - "AF-003 Unsafe code execution pattern — user input reaches eval-equivalent"

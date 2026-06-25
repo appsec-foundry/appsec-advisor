@@ -143,6 +143,21 @@ def test_authz003_suppressed_by_allowlist(tmp_path: Path) -> None:
     assert "AUTHZ-003" not in _ids(_scan(tmp_path))
 
 
+def test_authz003_does_not_skip_challenge_or_verify_named_source(tmp_path: Path) -> None:
+    """Production source must not be hidden just because its filename is generic."""
+    (tmp_path / "challengeHandler.ts").write_text(
+        "export function updateChallenge(req, res) {\n"
+        "  return Challenge.create({ name: req.body.name, role: req.body.role });\n"
+        "}\n"
+    )
+    (tmp_path / "verifyUser.ts").write_text(
+        "export function verifyUser(req, res) {\n"
+        "  return User.update({ isAdmin: req.body.isAdmin }, { where: { id: req.body.id } });\n"
+        "}\n"
+    )
+    assert "AUTHZ-003" in _ids(_scan(tmp_path))
+
+
 def test_authz008_sensitive_route_without_auth(tmp_path: Path) -> None:
     (tmp_path / "server.js").write_text("const app = express();\napp.post('/api/Users', createUser);\n")
     assert "AUTHZ-008" in _ids(_scan(tmp_path))

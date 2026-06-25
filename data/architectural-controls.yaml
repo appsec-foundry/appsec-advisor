@@ -60,7 +60,7 @@ controls:
   - name: "Multi-Factor Enrollment (TOTP)"
     # Name aliases AND concrete library / code / route signals so recon maps a
     # detected TOTP setup onto this mechanism even when it was never named
-    # (the juice-shop routes/2fa.ts case: hand-rolled otplib, no "MFA" string).
+    # (hand-rolled otplib route, no "MFA" string).
     aliases: ["TOTP Enrollment", "MFA Enrollment", "2FA Enrollment",
               "Authenticator Setup", "Multi-Factor Authentication",
               # library / code / route signals
@@ -182,8 +182,8 @@ controls:
     # Name aliases AND concrete library / import / route signals so recon and
     # the stride-analyzer reliably map a detected OAuth integration onto this
     # canonical mechanism (previously only name-level aliases existed, so OAuth
-    # was missed whenever recon had not already named it — the juice-shop
-    # Google-login case). Mirrors the library-level detection the SAML entry
+    # was missed whenever recon had not already named it. Mirrors the
+    # library-level detection the SAML entry
     # below already carries.
     aliases: ["Federated Identity / OAuth", "OAuth Login Adapter", "OAuth Adapter",
               "OAuth 2.0", "OIDC", "OpenID Connect", SSO,
@@ -200,7 +200,7 @@ controls:
               "/auth/google", "/oauth/callback", "/oauth2/callback",
               "authorization_code", "response_type=code", "openid profile email",
               # SPA / hand-rolled front-end OAuth signals — a client-side
-              # redirect flow with NO backend OAuth library (the juice-shop
+              # redirect flow with NO backend OAuth library (frontend-only
               # Google-login case: frontend/src/app/oauth/oauth.component.ts
               # reads the implicit-grant access_token and calls the local login
               # with `oauth: true`). Backend-library signals above never match

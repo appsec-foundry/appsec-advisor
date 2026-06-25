@@ -356,7 +356,7 @@ The `ESTIMATED_THREAT_COUNT` parameter lets the analyzer decide whether it can a
 
 ### FOCUS_PATHS — orchestrator-curated priority files (M15 / M20)
 
-**What problem this solves.** Empirical analysis of 8 historical Juice-Shop runs (M3.4 incident report) shows file-services and frontend STRIDE analyzers spend a disproportionate share of their turn budget on Find/Glob discovery — file-services takes 179 s mean (vs. auth-identity at 73 s) despite producing the smallest output. Frontend has 269 TS + 77 HTML files but typically only ~10 are actually security-relevant.
+**What problem this solves.** Empirical analysis of 8 historical web-application runs (M3.4 incident report) shows file-services and frontend STRIDE analyzers spend a disproportionate share of their turn budget on Find/Glob discovery — file-services takes 179 s mean (vs. auth-identity at 73 s) despite producing the smallest output. Frontend-heavy repos can contain hundreds of TS/HTML files while only a small subset is security-relevant.
 
 **Mechanism.** When dispatching a STRIDE analyzer for a component whose source surface is broad and pattern-heavy (frontend, file-handling, large data-persistence), the orchestrator MUST pass a `FOCUS_PATHS` parameter listing the curated priority files. The STRIDE analyzer reads these files **first** (before any Glob/Find discovery) at Step 2 of its workflow.
 
@@ -433,7 +433,7 @@ mkdir -p "$OUTPUT_DIR/.progress"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  STEP_START   [Phase 9 step] ▶ STRIDE Enumeration — dispatching <N> analyzer(s)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
-**⚠ Logging-Form note (M3.5):** The line above is a **`STEP_START`**, not `PHASE_START`. The canonical `PHASE_START` for Phase 9 is emitted once by the orchestrator from `appsec-threat-analyst.md` (the `[Phase 9/11] ▶ STRIDE Threat Enumeration — <n> components (expect ~15m)` template) before lazy-loading this file. Emitting a second `PHASE_START` here would create the doubled phase boundary observed in the 2026-05-04 juice-shop run (15:35:48 + 15:39:10) and break the `ASSESSMENT_PHASES` pairing aggregator.
+**⚠ Logging-Form note (M3.5):** The line above is a **`STEP_START`**, not `PHASE_START`. The canonical `PHASE_START` for Phase 9 is emitted once by the orchestrator from `appsec-threat-analyst.md` (the `[Phase 9/11] ▶ STRIDE Threat Enumeration — <n> components (expect ~15m)` template) before lazy-loading this file. Emitting a second `PHASE_START` here would create the doubled phase boundary observed in a historical run and break the `ASSESSMENT_PHASES` pairing aggregator.
 
 **⚠ MANDATORY per-component dispatch log (since M2.7):** Background agents spawned via `run_in_background: true` do **not** reliably emit `AGENT_INVOKE` log lines through the hook logger — production runs showed only 1 of 5 dispatched STRIDE analyzers logged. The orchestrator MUST therefore emit its own `AGENT_INVOKE` and `AGENT_DONE` lines explicitly, one per component, so `.agent-run.log` shows which components were analyzed and how long each one took. Emit the lines in a single batched Bash call **immediately before** the Agent tool dispatch block and **immediately after** the Validation & Retry step (once each `.stride-<id>.json` is present):
 
@@ -482,7 +482,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
 3. Exit code `1` means the cap was reached; proceed to **Validation & Retry** so missing components get the normal invalid/missing handling.
 4. Exit code `2` means the watcher invocation itself was invalid; log the failure and fall through to **Validation & Retry** rather than re-dispatching all components.
 
-**Cap rationale:** the previous 12-round / 4-minute cap was tuned for warm-cache runs on small-to-medium repos. On large repos with cold caches (e.g. OWASP Juice Shop after `--rebuild`), STRIDE analyzers routinely take 8-12 minutes per component even though the design budget is 6 min. 15 minutes covers the 95th percentile while still bounding worst-case waste. The skill-layer watchdog (`SKILL-impl.md`) provides an additional safety net: if no `.stride-*.json` file appears for 15+ minutes the watchdog aborts the run regardless of orchestrator state.
+**Cap rationale:** the previous 12-round / 4-minute cap was tuned for warm-cache runs on small-to-medium repos. On large repos with cold caches after `--rebuild`, STRIDE analyzers routinely take 8-12 minutes per component even though the design budget is 6 min. 15 minutes covers the 95th percentile while still bounding worst-case waste. The skill-layer watchdog (`SKILL-impl.md`) provides an additional safety net: if no `.stride-*.json` file appears for 15+ minutes the watchdog aborts the run regardless of orchestrator state.
 
 The script prints one line of the form:
 
@@ -496,7 +496,7 @@ A trailing `⧗` marker on a component means its progress file has not been upda
 
 Validate each `$OUTPUT_DIR/.stride-<id>.json` **before** invoking `merge_threats.py`. The validation has two layers:
 
-1. **JSON syntax** — `python3 -c "import json; json.load(open('<path>'))"`. LLM-authored JSON occasionally ships with a missing comma or unescaped quote (a 2026-05-07 juice-shop run lost ~5 minutes recovering from one such file). Catch it here, not in `merge_threats.py`.
+1. **JSON syntax** — `python3 -c "import json; json.load(open('<path>'))"`. LLM-authored JSON occasionally ships with a missing comma or unescaped quote (a historical run lost ~5 minutes recovering from one such file). Catch it here, not in `merge_threats.py`.
 2. **Schema** — `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" stride "<path>"`. Exit 0 = valid, 1 = schema violation.
 
 On failure: retry the affected component **once** by re-dispatching the single `appsec-stride-analyzer` (same prompt as the original Phase 9 dispatch, `run_in_background: false`). If the retry still fails validation, move the corrupt file to `$OUTPUT_DIR/.quarantine/<iso-timestamp>/` and proceed without that component — `merge_threats.py` tolerates missing components but does **not** tolerate invalid JSON.
@@ -827,7 +827,7 @@ Compound chains document cross-cutting attack paths where two or more findings c
 ```markdown
 ### 8.C Compound Attack Chains
 
-<Intro paragraph naming the number of chains and the keystone/contributor distinction. Example: "Juice Shop exhibits **<N> recognised compound attack chains** — combinations of findings that, in aggregate, pose elevated architectural risk. Each chain distinguishes **keystone** findings (direct exploit vector, effective severity = chain severity) from **contributor** findings (amplifiers / defense-in-depth failures, capped at High)." >
+<Intro paragraph naming the number of chains and the keystone/contributor distinction. Example: "This system exhibits **<N> recognised compound attack chains** — combinations of findings that, in aggregate, pose elevated architectural risk. Each chain distinguishes **keystone** findings (direct exploit vector, effective severity = chain severity) from **contributor** findings (amplifiers / defense-in-depth failures, capped at High)." >
 
 #### <a id="cc-NN"></a>CC-NN — <Short chain title — business outcome phrasing>
 
@@ -1417,7 +1417,7 @@ If `CRIT`/`HIGH`/`MED`/`LOW` are not yet in scope, substitute the actual counts 
 
 ## Phase 10: Secret & Supply-Chain Posture Synthesis
 
-**Log `PHASE_START` before Step 1** (mandatory — without this the `ASSESSMENT_PHASES` aggregator drops Phase 10 from the per-phase cost breakdown; the 2026-05-04 juice-shop run lost Phase 10 from telemetry for exactly this reason). Batch with the first Bash call of Step 1:
+**Log `PHASE_START` before Step 1** (mandatory — without this the `ASSESSMENT_PHASES` aggregator drops Phase 10 from the per-phase cost breakdown; a historical run lost Phase 10 from telemetry for exactly this reason). Batch with the first Bash call of Step 1:
 
 ```bash
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   [Phase 10/11] Scan Synthesis — secrets + supply-chain posture" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null

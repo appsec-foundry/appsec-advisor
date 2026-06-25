@@ -69,7 +69,7 @@ The schemas are strict (`additionalProperties: false` on top-level). The LLM has
 
 **For the combined single-pass execution of Phases 5–7** (see "Phases 5–7 combined" below), emit all three `PHASE_START` lines together at the start of the combined pass and all three `PHASE_END` lines together at the end. Do **not** collapse them into a single entry — timing analysis requires per-phase markers.
 
-**⚠ No look-ahead logging — contract violation.** Phases 3, 4, and 8 each get their own `PHASE_START`/`PHASE_END` pair, emitted **immediately before / after** the actual work for that phase. The 5–7 exception above is the **only** legal batching in this file. Pre-emitting `PHASE_START` for phases that have not yet started (e.g. dumping all of 3–8 as a "plan" before doing any work) is **forbidden**: it makes silent-death diagnosis impossible because the log shows phases that never ran. This was the failure mode of the 2026-04-25 juice-shop Run 1 LLM-stall — the orchestrator emitted `PHASE_START` for phases 3, 4, 5, 6, 7, 8 in a single second at 13:02:37 UTC, then hung in Phase 3 for 1h 44m. Without the burst, the diagnosis would have been trivially "died in Phase 3"; with it, we could not tell which phase actually stalled. **Rule:** if you are not about to run the work for phase N right now, do not emit `PHASE_START Phase N/11`.
+**⚠ No look-ahead logging — contract violation.** Phases 3, 4, and 8 each get their own `PHASE_START`/`PHASE_END` pair, emitted **immediately before / after** the actual work for that phase. The 5–7 exception above is the **only** legal batching in this file. Pre-emitting `PHASE_START` for phases that have not yet started (e.g. dumping all of 3–8 as a "plan" before doing any work) is **forbidden**: it makes silent-death diagnosis impossible because the log shows phases that never ran. This was the failure mode of a historical LLM-stall run — the orchestrator emitted `PHASE_START` for phases 3, 4, 5, 6, 7, 8 in a single second, then hung in Phase 3 for 1h 44m. Without the burst, the diagnosis would have been trivially "died in Phase 3"; with it, we could not tell which phase actually stalled. **Rule:** if you are not about to run the work for phase N right now, do not emit `PHASE_START Phase N/11`.
 
 **Self-check with auto-repair before leaving this file:** After Phase 8 END, the orchestrator MUST run this validator (cheap, never skipped). It detects missing `PHASE_START`/`PHASE_END` markers in the range 3–8 and auto-repairs them by appending synthetic entries using the earliest and latest phase-group timestamps — preventing the historically observed failure where Phases 3, 4, 5, 6, 7 emit only `PHASE_START` (never `PHASE_END`), leaving the skill unable to compute per-phase durations in the Run Statistics appendix. The validator **also** flags look-ahead bursts (>3 distinct PHASE_START lines within the same second is a contract violation — only Phases 5+6+7 are allowed to share a timestamp).
 
@@ -93,7 +93,7 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   done
 fi
 
-# Look-ahead burst detector — flags the 2026-04-25 juice-shop bug where the
+# Look-ahead burst detector — flags the historical bug where the
 # orchestrator emitted PHASE_START for phases 3, 4, 5, 6, 7, 8 in the same
 # second before doing any work. Only Phases 5+6+7 may legally share a timestamp
 # (combined single-pass execution). 4+ distinct phases at one timestamp is a
@@ -113,8 +113,7 @@ if [ -n "$BURST_LINE" ]; then
     "$BURST" "$BURST_COUNT" > "$OUTPUT_DIR/.phase-burst-flag.json"
 fi
 
-# STEP_START burst detector (Phase 8 batched-emit pattern, 2026-05-25 juice-shop
-# run). Phase 8 is supposed to iterate 13 control domains serially (each is an
+# STEP_START burst detector (historical Phase 8 batched-emit pattern). Phase 8 is supposed to iterate 13 control domains serially (each is an
 # LLM judgement against the recon snapshot). Observed failure: all 13
 # STEP_START lines AND the PHASE_END line landed at the same timestamp
 # (10:42:58Z) — the orchestrator dumped the entire phase log AT phase end as
@@ -259,7 +258,7 @@ Derive the system's architecture from code and config. Determine complexity:
 | 2.3 | Components |
 | 2.4 | Technology Architecture |
 
-The `complexity_tier` controls **how much content goes inside each subsection**, not which subsections exist. A Simple-tier app with one container still emits a `### 2.3 Components` heading — it can be a short note ("This is a single-process application; the lone component is described in §2.2.") if a per-component diagram would be redundant. **Forbidden** (per contract `forbidden_subsection_patterns`): `### 2.5 Security Architecture Assessment` (its content lives in §7), any `2.x Data Flow Matrix`, any `2.x Trust Boundaries`. The 2026-04-25 juice-shop Run 2 failed precisely because the orchestrator emitted `2.3 Technology Architecture` (per a stale tier-table that used to live here) instead of `2.3 Components` — pre-render gate caught it but the run had no turns left to repair.
+The `complexity_tier` controls **how much content goes inside each subsection**, not which subsections exist. A Simple-tier app with one container still emits a `### 2.3 Components` heading — it can be a short note ("This is a single-process application; the lone component is described in §2.2.") if a per-component diagram would be redundant. **Forbidden** (per contract `forbidden_subsection_patterns`): `### 2.5 Security Architecture Assessment` (its content lives in §7), any `2.x Data Flow Matrix`, any `2.x Trust Boundaries`. A historical run failed precisely because the orchestrator emitted `2.3 Technology Architecture` (per a stale tier-table that used to live here) instead of `2.3 Components` — pre-render gate caught it but the run had no turns left to repair.
 
 Content scaling by complexity:
 
@@ -771,7 +770,7 @@ graph TD
 
 Phase 3 emits both `components[]` (system actors / processes / data stores) and `data_flows[]` (cross-component traffic). These two arrays drive every §2 diagram the deterministic renderer produces. Without `data_flows[]`, the §2.2 Container Architecture diagram falls back to a stub with one arrow per tier-pair — which loses every nuance of the actual system topology (auth flow, file-upload flow, Socket.IO flow, etc.).
 
-**Component IDs MUST be canonicalized (M4/M13).** Before writing `components[]`, run each candidate `id` through `scripts/canonicalize_component_id.py` to normalize against `data/component-canonical.yaml`. This eliminates the historical drift across runs (`rest-api`/`express-api`/`express-rest-api`/`express-backend` for the same Juice-Shop backend → 22 unique names across 8 runs in M3.4 incident analysis), which silently breaks `--incremental` T-ID stability.
+**Component IDs MUST be canonicalized (M4/M13).** Before writing `components[]`, run each candidate `id` through `scripts/canonicalize_component_id.py` to normalize against `data/component-canonical.yaml`. This eliminates the historical drift across runs (`rest-api`/`express-api`/`express-rest-api`/`express-backend` for the same backend → 22 unique names across 8 runs in M3.4 incident analysis), which silently breaks `--incremental` T-ID stability.
 
 **Mechanism:** for each component you intend to emit, batch a single Bash call:
 
@@ -826,7 +825,7 @@ data_flows:
     threats: [T-003, T-008]              # FK to threats that exercise this flow (optional pre-Phase-9)
 ```
 
-Emit one `data_flows[]` entry per **distinct cross-component traffic pattern**. Heuristic: if you would draw an arrow between two boxes in §2.2, it's a data flow. For the OWASP Juice Shop standard-depth scope, that's typically 8–12 flows: client→backend (REST + WebSocket), backend→data-layer (ORM queries + raw SQL), backend→file-upload (multipart), file-upload→filesystem (write), backend→external (SSRF attack vector), and the B2B sandbox pathway.
+Emit one `data_flows[]` entry per **distinct cross-component traffic pattern**. Heuristic: if you would draw an arrow between two boxes in §2.2, it's a data flow. For a standard-depth web application scope, that's typically 8–12 flows: client→backend (REST + WebSocket), backend→data-layer (ORM queries + raw SQL), backend→file-upload (multipart), file-upload→filesystem (write), backend→external (SSRF attack vector), and a partner / batch-processing pathway when present.
 
 When a flow crosses a trust boundary, set `data_classification` to a tag that reflects the *highest* sensitivity of any payload that traverses it (so e.g. an unauthenticated `/rest/products/search` carrying a SQLi-eligible query parameter still tags as `Confidential` because the *response* leaks data).
 
@@ -1115,7 +1114,7 @@ If your project uses different classification labels, adapt the legend wording b
 
 ### Phase 5 sidecar — `.assets.json` (Substep-2 deterministic migration)
 
-**Why:** Phase 11 Substep 2 historically required the orchestrator to re-author the full `threat-model.yaml` from working memory, including all assets — which routinely consumed 15-20 turns at the end of the pipeline where budget is most constrained (verified MAX_TURNS bootstrap-stub failure on 2026-05-24 juice-shop run). The deterministic yaml builder (`scripts/build_threat_model_yaml.py`) eliminates that turn-burn by reading per-phase sidecars instead. Phase 5 is the PoC pilot.
+**Why:** Phase 11 Substep 2 historically required the orchestrator to re-author the full `threat-model.yaml` from working memory, including all assets — which routinely consumed 15-20 turns at the end of the pipeline where budget is most constrained (verified MAX_TURNS bootstrap-stub failure in a historical run). The deterministic yaml builder (`scripts/build_threat_model_yaml.py`) eliminates that turn-burn by reading per-phase sidecars instead. Phase 5 is the PoC pilot.
 **Protocol (3 deterministic Bash calls, runs immediately after the §4 table is rendered, BEFORE the PHASE_END log line):**
 
 1. **Reserve A-NNN IDs** for every asset row in the §4 table:
@@ -1468,7 +1467,7 @@ The catalog MUST emit one row per detected mechanism from the union of these tab
 - A **primitive** is a building block used inside a mechanism: Password Hashing, JWT Signature Verification, Rate Limiting, Cookie-Flag Hardening, Token Storage. Each gets a `kind: primitive` row and appears ONLY in the §7.1 Security Control Overview table — and, in v2 rendering, folded as a bullet aspect inside the owning mechanism's H4 subcontrol — **never as its own §7.2 H4 / Flow sub-block**. (Session-token primitives — JWT signing/validation/storage/revocation/expiry — carry `domain: SessionMgmt` and render under §7.3, not §7.2.)
 - A **token format** (JWT RS256, PASETO, opaque session ID, SAML assertion) is a transport detail, NOT a mechanism. Do not emit a control row whose name is just a token format. JWT validation is captured by the `JWT Signature Verification` primitive; JWT issuance belongs inside the mechanism that issues it.
 
-The 2026-04-27 juice-shop run shipped a §7.3 with `#### 7.3.1 JWT RS256 Signing Flow` instead of the actual mechanisms (`Password Login`, `2FA/TOTP`, `Session Cookie`). Root cause: Phase 8 emitted only primitive rows (`JWT Authentication`, `Password Hashing`, `Login Rate Limiting`) — no `kind: mechanism` rows. The pregenerator then produced one Flow sub-block per row, which is correct for mechanisms but absurd for primitives. The `kind` discriminator below makes this distinction enforceable. **The 2026-05 juice-shop run reproduced this exact failure** (§7.2 shipped `JWT Bearer Authentication` / `Password Hashing` / `Login Rate Limiting` as peer mechanisms; OAuth and TOTP were never cataloged at all even though `oauth.component.ts` and `routes/2fa.ts` exist) — the guidance above was present but ignored. The self-check below is therefore **mandatory**, not advisory.
+A historical run shipped a §7.3 with `#### 7.3.1 JWT RS256 Signing Flow` instead of the actual mechanisms (`Password Login`, `2FA/TOTP`, `Session Cookie`). Root cause: Phase 8 emitted only primitive rows (`JWT Authentication`, `Password Hashing`, `Login Rate Limiting`) — no `kind: mechanism` rows. The pregenerator then produced one Flow sub-block per row, which is correct for mechanisms but absurd for primitives. A later run reproduced this exact failure (§7.2 shipped `JWT Bearer Authentication` / `Password Hashing` / `Login Rate Limiting` as peer mechanisms; OAuth and TOTP were never cataloged at all even though `oauth.component.ts` and `routes/2fa.ts` exist) — the guidance above was present but ignored. The self-check below is therefore **mandatory**, not advisory.
 
 **⚠ Phase 8 IAM self-check (mandatory — perform before emitting `PHASE_END`).** After writing the IAM rows to `.security-controls.json`, inspect them and do not close Phase 8 until all three hold:
 
@@ -1541,7 +1540,7 @@ security_controls:
 | `effectiveness_reason` | **always** (M3.3 — was "always" but enforcement was loose; treat as a hard requirement) | One to two sentences explaining the rating. For Missing controls, explain *why the control is expected* (usually due to a threat class being present). **Renders as the `Notes` cell of the §7 sub-section tables** — leaving it blank produces a row that looks broken. |
 | `gaps[]` | when effectiveness ∈ {partial, weak, missing} | Bullet list of concrete shortcomings. **Renderer uses `gaps[0]` as a Notes-cell fallback when `effectiveness_reason` is missing**, so even a single concrete gap-string keeps the table readable. |
 | `mitigates_findings[]` | always (can be empty) | FK to threat IDs. Empty `[]` is valid — e.g. a Missing control may list expected threats that the control *would* mitigate |
-| `references.cwe[]` | always | Applicable CWEs; cross-populated by the STRIDE-analyzer via `cwe-taxonomy.yaml`. **The §7 renderer also uses CWEs to surface threats in domains that have no matching cataloged control** (M3.3 — Real-time / WebSocket §7.8 used to render empty for juice-shop despite Socket.IO threats existing; the CWE→domain map now bridges that gap). |
+| `references.cwe[]` | always | Applicable CWEs; cross-populated by the STRIDE-analyzer via `cwe-taxonomy.yaml`. **The §7 renderer also uses CWEs to surface threats in domains that have no matching cataloged control** (M3.3 — Real-time / WebSocket §7.8 used to render empty despite Socket.IO threats existing; the CWE→domain map now bridges that gap). |
 | `references.owasp_asvs` | recommended | ASVS chapter |
 | `references.nist_sp_800_53` | recommended | NIST 800-53 control family |
 | `positive_framing` | always | `true` for controls that are a glass-half-full statement (everything except `effectiveness: missing`). `false` for Missing controls |
@@ -1564,9 +1563,8 @@ authentication **flows** (the paths by which a principal proves identity).
 flow. The token-handling primitives (signing, validation middleware,
 storage, revocation, expiry) live in §7.3 — they are NOT subordinate to
 any individual §7.2 flow because the same local session token is issued
-regardless of which §7.2 path established it. In particular, OAuth in
-codebases like Juice Shop is a frontend identity hint that ends in local
-login; it does NOT consume an IdP-issued id_token, so JWT Issuance /
+regardless of which §7.2 path established it. In particular, frontend-only OAuth in
+some codebases is an identity hint that ends in local login; it does NOT consume an IdP-issued id_token, so JWT Issuance /
 Verification belong in §7.3, not nested under OAuth.
 
 Flow-like mechanisms (always populate subcontrols, all under §7.2):

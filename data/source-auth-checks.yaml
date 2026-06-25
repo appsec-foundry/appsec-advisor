@@ -172,13 +172,6 @@ checks:
       - "**/dist/**"
       - "**/build/**"
       - "**/coverage/**"
-      # Verification / challenge-detection code reads req.body.role to
-      # detect attempted attacks — skip those files explicitly.
-      - "**/verify*.ts"
-      - "**/verify*.js"
-      - "**/verify/**"
-      - "**/challenge*.ts"
-      - "**/challenge*.js"
     pattern: 'req\.body\.(role|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|admin|administrator|permissions?|privileges?|scopes?|roleId|role_id|userType|user_type)\b'
     counter_scope: window
     counter_window: 8

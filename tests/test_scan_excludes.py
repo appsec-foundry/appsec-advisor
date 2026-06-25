@@ -634,6 +634,8 @@ class TestSourceCodePassthrough:
             "packages/test-utils/auth.ts",  # 'test-utils' != 'test' segment
             "src/examples.ts",  # file named 'examples.ts'
             "lib/example.py",  # file named 'example.py'
+            "codefixes/update-user-role.ts",
+            "data/static/codefixes/patch-auth.ts",
         ],
     )
     def test_source_paths_pass_through(self, path):
