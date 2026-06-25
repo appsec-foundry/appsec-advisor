@@ -110,6 +110,9 @@ EXPECTED_POST_QA_FILES_IF_PASS = {
     # M2.14 — Sprint 6 observability. Reaped on success; canonical
     # persistence is the §Composition Notes appendix in threat-model.md.
     ".compose-stats.json",
+    # Report-integrity manifest. Reaped on clean pass; preserved on a
+    # non-clean run for inspection.
+    ".render-integrity.json",
     # M2.15 — Sprint 7 observability. Reaped on success; canonical
     # persistence is the §Run Issues appendix in threat-model.md.
     ".run-issues.json",

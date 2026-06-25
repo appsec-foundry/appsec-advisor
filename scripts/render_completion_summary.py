@@ -1292,6 +1292,39 @@ def extract_composition_health(output_dir: Path) -> Optional[dict]:
     }
 
 
+def render_report_integrity(output_dir: Path) -> list[str]:
+    """One-line report-integrity readout from ``.render-integrity.json``.
+
+    Always shown when the sidecar exists — a clean run visibly reads
+    ``100%`` so the operator can see the report is structurally complete
+    (every in-scope section rendered, every expected fragment wired); a
+    degraded run reads e.g. ``83% ⚠`` and names the broken sections. This is
+    the "report integrity" signal; the deterministic per-section detail lives
+    in the sidecar for the QA agent.
+    """
+    path = Path(output_dir) / ".render-integrity.json"
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    pct = data.get("integrity_pct")
+    ok = bool(data.get("report_integrity_ok", True))
+    rendered = (data.get("sections_rendered") or 0) + (data.get("sections_fallback") or 0)
+    n = data.get("sections_in_scope") or 0
+    wired = data.get("fragments_wired") or 0
+    badge = "" if ok else " ⚠"
+    out = [f"  Report integrity    : {pct}%{badge}  ({rendered}/{n} sections, {wired} fragments wired)"]
+    if not ok:
+        broken = data.get("broken_sections") or []
+        if broken:
+            out.append(f"                        broken: {', '.join(broken)}")
+    return out
+
+
 def render_composition_health(health: Optional[dict]) -> list[str]:
     """Render the conditional Composition Health block. Returns an empty
     list when health is None (clean run) so the caller can extend
@@ -1532,6 +1565,7 @@ def render_summary(
         # statistics, and the log listing; the full detail stays in the report.
         run_issues = extract_run_issues(output_dir)
         lines.extend(render_run_issues(run_issues, plugin_dev=cfg.get("plugin_dev", False)))
+        lines.extend(render_report_integrity(output_dir))
         lines.extend(render_security_notice(output_dir))
         lines.extend(render_files(output_dir, cfg))
         return "\n".join(lines) + "\n"
@@ -1541,6 +1575,8 @@ def render_summary(
         lines.extend(render_change_summary(change))
         lines.extend(render_threat_delta(change))
     lines.extend(render_files(output_dir, cfg))
+    # Report-integrity readout — always shown (clean run reads 100%).
+    lines.extend(render_report_integrity(output_dir))
     # M2.14 — Sprint 6 observability. Conditional block: rendered only when
     # the prior compose run reported soft warnings, section retries, or the
     # skill-level auto-retry loop fired. On a clean run the section is

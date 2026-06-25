@@ -825,6 +825,49 @@ def _extract_recovery_events(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _extract_render_integrity(output_dir: Path) -> list[dict]:
+    """Flag a structurally incomplete report.
+
+    Reads ``.render-integrity.json`` (written by ``compose_threat_model.render``).
+    When ``report_integrity_ok`` is false an in-scope section rendered degraded
+    or empty — a missing / schema-invalid fragment. This is the deterministic
+    "model is broken" signal the QA agent reacts to, instead of re-checking
+    prose. Surfaced as a warning (non-fatal): the run completes, the operator
+    and QA agent see it, and a targeted re-render of the broken fragment can
+    follow.
+    """
+    issues: list[dict] = []
+    path = output_dir / ".render-integrity.json"
+    if not path.is_file():
+        return issues
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return issues
+    if not isinstance(data, dict) or data.get("report_integrity_ok", True):
+        return issues
+    broken = data.get("broken_sections") or []
+    pct = data.get("integrity_pct")
+    issues.append(
+        {
+            "category": "report_integrity",
+            "severity": "warning",
+            "title": (
+                f"Report integrity {pct}% — {len(broken)} in-scope section(s) "
+                f"rendered degraded/empty: {', '.join(broken) or '(unknown)'}"
+            ),
+            "evidence": {
+                "log_file": ".render-integrity.json",
+                "log_line": 1,
+                "raw_event": f"integrity_pct={pct}, broken={broken}",
+                "broken_sections": broken,
+                "integrity_pct": pct,
+            },
+        }
+    )
+    return issues
+
+
 def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     """Flag abuse-case chains the verifier fan-out could not confirm.
 
@@ -1037,6 +1080,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))
+    issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_gate_events(output_dir))
     issues.extend(_extract_stride_model_mismatch(output_dir, hook_log, agent_log))

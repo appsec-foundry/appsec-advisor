@@ -228,6 +228,14 @@ class RenderContext:
     # loop in main(). Keyed by section_id, value = number of compose attempts
     # that had to run for that section to converge (1 = first try).
     section_retry_counts: dict[str, int] = field(default_factory=dict)
+    # Per-section render-outcome manifest — one dict per entry in document.order,
+    # populated by the render loop. Persisted to .render-integrity.json so the
+    # completion summary can show "Report integrity: N%" and aggregate_run_issues
+    # / the QA agent can react deterministically when an in-scope section
+    # rendered degraded or empty (a structurally broken model) instead of
+    # re-checking prose. Each entry: {id, in_scope, outcome, expected_fragments,
+    # present_fragments}.
+    render_manifest: list[dict[str, Any]] = field(default_factory=list)
     # Quick-mode §7 override resolved at ctx-setup time:
     #   None      — render §7 from the regular fragment (depth != quick).
     #   ""        — skip §7 entirely (depth = quick, no rich prior).
@@ -15025,14 +15033,19 @@ def render(
 
     total_sections = sum(1 for raw in section_order if _passes_cond(raw))
     progress_idx = 0
+    ctx.render_manifest = []
     for raw in section_order:
         sid, cond = (raw, None) if isinstance(raw, str) else (raw["id"], raw.get("condition"))
         if cond and not eval_condition(cond, ctx.eval_context):
+            # Condition false → section intentionally absent. Recorded as
+            # out-of-scope so it never counts against report integrity.
+            ctx.render_manifest.append(_manifest_entry(sid, in_scope=False, outcome="skipped_conditional"))
             continue
         section = contract["sections"].get(sid)
         if not section:
             if document == "architecture":
                 ctx.warnings.append(f"architecture section {sid!r} not in contract — skipped")
+                ctx.render_manifest.append(_manifest_entry(sid, in_scope=False, outcome="not_in_contract"))
                 continue
             raise ContractError(f"document.order references unknown section id: {sid!r}")
         progress_idx += 1
@@ -15042,6 +15055,7 @@ def render(
                 sys.stderr.flush()
             except OSError:
                 pass
+        degraded = False
         try:
             body = _render_by_id(ctx, env, sid, section)
         except FragmentError:
@@ -15052,6 +15066,32 @@ def render(
                 f"Its data fragment is missing or schema-invalid.\n"
             )
             ctx.warnings.append(f"soft-skip section {sid}")
+            degraded = True
+        # Record the render outcome for .render-integrity.json. Classification
+        # is driven by what actually reached the report, NOT by fragment
+        # presence — `_SECTION_FRAGMENT_MAP` lists fragments a section *may*
+        # consume, several of which are optional enrichments (e.g.
+        # compound-chains.json enriches the otherwise yaml-computed threat
+        # register). So a non-empty body is `rendered` even if an optional
+        # fragment was absent. Outcomes:
+        #   degraded — lenient soft-skip above (fragment missing / schema-invalid)
+        #   empty    — in-scope section produced no body (a real content gap)
+        #   fallback — body rendered via a sanctioned deterministic fallback
+        #              for an absent fragment (still complete, but flagged)
+        #   rendered — normal, content present
+        expected, present, fallback_eligible = _section_fragment_status(ctx, sid)
+        missing = [n for n in expected if n not in present]
+        if degraded:
+            outcome = "degraded"
+        elif not body.strip():
+            outcome = "empty"
+        elif missing and fallback_eligible:
+            outcome = "fallback"
+        else:
+            outcome = "rendered"
+        ctx.render_manifest.append(
+            _manifest_entry(sid, in_scope=True, outcome=outcome, expected=expected, present=present)
+        )
         if body.strip():
             rendered_parts.append(body.rstrip())
 
@@ -15204,6 +15244,13 @@ def render(
         rendered,
         lambda s: _prepend_mitigation_prio_circles(ctx, _prepend_finding_severity_dots(ctx, s)),
     )
+
+    # Report-integrity manifest: certify which sections rendered and which
+    # fragments were wired, surfaced on the console and consumed by the QA
+    # agent / aggregate_run_issues to react to a structurally broken model.
+    integrity = _compute_integrity(ctx.render_manifest)
+    _write_render_integrity(output_dir, integrity)
+    _emit_render_integrity_marker(integrity)
 
     return rendered, ctx.warnings
 
@@ -15840,6 +15887,115 @@ def _delete_pre_render_repair_plan(output_dir: Path) -> None:
 # changes in a way that breaks downstream consumers (renderer + completion
 # summary). Renderer reads this and ignores reports with a future version.
 COMPOSE_STATS_SCHEMA_VERSION = 1
+
+# ---------------------------------------------------------------------------
+# Report-integrity manifest: .render-integrity.json
+# ---------------------------------------------------------------------------
+
+# Schema version of the .render-integrity.json file. Bump when the on-disk
+# shape changes in a way that breaks downstream consumers (completion summary,
+# aggregate_run_issues, the QA agent).
+RENDER_INTEGRITY_SCHEMA_VERSION = 1
+
+
+def _manifest_entry(
+    sid: str,
+    *,
+    in_scope: bool,
+    outcome: str,
+    expected: list[str] | None = None,
+    present: list[str] | None = None,
+) -> dict[str, Any]:
+    """One render-manifest record (see RenderContext.render_manifest)."""
+    return {
+        "id": sid,
+        "in_scope": in_scope,
+        "outcome": outcome,
+        "expected_fragments": list(expected or []),
+        "present_fragments": list(present or []),
+    }
+
+
+def _section_fragment_status(ctx: RenderContext, sid: str) -> tuple[list[str], list[str], bool]:
+    """Return (expected, present, fallback_eligible) fragment basenames for a section.
+
+    `expected` are the fragment files the contract maps to ``sid``; `present`
+    are those that actually exist in the run's fragments dir; a section is
+    fallback-eligible when any expected fragment has a sanctioned deterministic
+    fallback (``_FRAGMENTS_WITH_FALLBACK``) so a missing fragment is degraded-
+    but-acceptable rather than broken.
+    """
+    expected = [Path(f).name for f in _SECTION_FRAGMENT_MAP.get(sid, [])]
+    present = [name for name in expected if (ctx.fragments_dir / name).is_file()]
+    fallback_eligible = any(name in _FRAGMENTS_WITH_FALLBACK for name in expected)
+    return expected, present, fallback_eligible
+
+
+def _compute_integrity(manifest: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarise a render manifest into the .render-integrity.json payload.
+
+    ``integrity_pct`` is the share of in-scope sections that rendered cleanly
+    (including sanctioned fallbacks); out-of-scope (condition-false) sections
+    are excluded from the denominator. ``report_integrity_ok`` is True only
+    when no in-scope section was degraded or empty — the deterministic
+    "model is not broken" signal the QA agent reacts to.
+    """
+    in_scope = [m for m in manifest if m.get("in_scope")]
+    n = len(in_scope)
+
+    def _cnt(outcome: str) -> int:
+        return sum(1 for m in in_scope if m.get("outcome") == outcome)
+
+    rendered = _cnt("rendered")
+    fallback = _cnt("fallback")
+    degraded = _cnt("degraded")
+    empty = _cnt("empty")
+    ok = rendered + fallback
+    return {
+        "schema_version": RENDER_INTEGRITY_SCHEMA_VERSION,
+        "report_integrity_ok": degraded == 0 and empty == 0,
+        "integrity_pct": 100 if n == 0 else round(100 * ok / n),
+        "sections_in_scope": n,
+        "sections_rendered": rendered,
+        "sections_fallback": fallback,
+        "sections_degraded": degraded,
+        "sections_empty": empty,
+        "sections_skipped_conditional": sum(1 for m in manifest if not m.get("in_scope")),
+        "fragments_expected": sum(len(m.get("expected_fragments") or []) for m in in_scope),
+        "fragments_wired": sum(len(m.get("present_fragments") or []) for m in in_scope),
+        "broken_sections": [m["id"] for m in in_scope if m.get("outcome") in ("degraded", "empty")],
+        "sections": manifest,
+        "generated": _now_iso_z(),
+    }
+
+
+def _write_render_integrity(output_dir: Path, integrity: dict[str, Any]) -> None:
+    """Persist .render-integrity.json — best-effort observability (never fatal)."""
+    try:
+        import json as _json
+
+        atomic_write_text(
+            Path(output_dir) / ".render-integrity.json",
+            _json.dumps(integrity, indent=2) + "\n",
+        )
+    except OSError:
+        pass
+
+
+def _emit_render_integrity_marker(integrity: dict[str, Any]) -> None:
+    """Print a one-line stderr marker (sibling to RENDERED:) for run-log capture."""
+    ok = integrity["sections_rendered"] + integrity["sections_fallback"]
+    broken = integrity.get("broken_sections") or []
+    suffix = f"; broken: {', '.join(broken)}" if broken else ""
+    try:
+        sys.stderr.write(
+            f"RENDER_INTEGRITY: {integrity['integrity_pct']}% "
+            f"({ok}/{integrity['sections_in_scope']} sections, "
+            f"{integrity['fragments_wired']} fragments wired{suffix})\n"
+        )
+        sys.stderr.flush()
+    except OSError:
+        pass
 
 
 def _categorize_warning(warning_text: str) -> dict[str, str]:

@@ -196,6 +196,11 @@ POST_QA_FILES_IF_PASS = [
     # (which compose embeds before this cleanup runs). Keeping the JSON
     # around after a successful run would just duplicate the data.
     ".compose-stats.json",
+    # Report-integrity manifest. Read by the completion summary (the console
+    # Report-integrity line) and aggregate_run_issues / the QA agent during
+    # the run; reaped only on a clean pass. On a non-clean run POST-QA cleanup
+    # is bypassed, so a degraded-integrity sidecar is preserved for inspection.
+    ".render-integrity.json",
     # M2.15 — Sprint 7 observability. Reaped on success; the canonical
     # persistence is the §Run Issues appendix in threat-model.md.
     # The .run-issues-fixes.json (audit trail) is also reaped — applied
