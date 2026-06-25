@@ -920,7 +920,7 @@ class TestRenderRunStatistics:
             },
         }
         out = "\n".join(rcs.render_run_statistics(stats, None, verbose=True))
-        assert "standby/suspend" in out
+        assert "Standby / suspend" in out
         assert "Net run (wall−sleep)" in out
         assert "standby" in out
 

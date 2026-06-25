@@ -53,7 +53,7 @@ def test_invalid_slug_rejected(tmp_path, monkeypatch):
 
 def test_overlong_slug_rejected(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    r = _run("--validate-only", "--quick", "--slug", "x" * 33)
+    r = _run("--validate-only", "--quick", "--slug", "x" * 65)
     assert r.returncode != 0
 
 

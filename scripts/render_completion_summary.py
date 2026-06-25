@@ -1003,10 +1003,9 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
     # the console summary entirely (regression 2026-06-14).
     if wall and wall > 0:
         if standby > 0:
-            net_wall = timing.get("net_wall_secs") or (wall - standby)
+            net_wall = max(0, timing.get("net_wall_secs") or (wall - standby))
             lines.append(
-                f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  "
-                f"(standby excluded — basis for the next estimate)"
+                f"  Net run (wall−sleep): {_fmt_duration(net_wall)}  (standby excluded — basis for the next estimate)"
             )
             lines.append(
                 f"  Total elapsed (wall): {_fmt_duration(wall)}  (end-to-end, incl. {_fmt_duration(standby)} standby)"
