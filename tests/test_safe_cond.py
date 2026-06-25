@@ -139,3 +139,36 @@ def test_qa_safe_eval_cond_returns_false_on_malformed():
     # qa side wraps SafeCondError → False (robust against typo'd YAML)
     assert qa._safe_eval_cond("().__class__.__bases__", {}) is False
     assert qa._safe_eval_cond("check_requirements", {"check_requirements": True}) is True
+
+
+# ---------------------------------------------------------------------------
+# referenced_names — the variable(s) a condition reads from eval_context.
+# Single source of truth for the section-condition wiring guard
+# (tests/test_section_condition_wiring.py).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "expr,want",
+    [
+        ("check_requirements", {"check_requirements"}),
+        ("not skip_attack_walkthroughs", {"skip_attack_walkthroughs"}),
+        # only the leading name is a variable — list items are string literals
+        ("verdict_severity in [yellow, red]", {"verdict_severity"}),
+        ('verdict_severity not in ["yellow", "red"]', {"verdict_severity"}),
+        # falsy / non-string → references nothing
+        ("", set()),
+        (None, set()),
+        (True, set()),
+    ],
+)
+def test_referenced_names(safe_cond, expr, want):
+    assert safe_cond.referenced_names(expr) == want
+
+
+@pytest.mark.parametrize("expr", ["low_category_count > 0", "a and b", "lambda: 1"])
+def test_referenced_names_raises_on_unsupported_grammar(safe_cond, expr):
+    # Mirrors resolve_condition: unsupported expressions raise rather than
+    # silently returning a bogus name set.
+    with pytest.raises(safe_cond.SafeCondError):
+        safe_cond.referenced_names(expr)

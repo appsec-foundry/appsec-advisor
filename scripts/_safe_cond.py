@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-__all__ = ["SafeCondError", "resolve_condition"]
+__all__ = ["SafeCondError", "referenced_names", "resolve_condition"]
 
 
 class SafeCondError(ValueError):
@@ -46,6 +46,28 @@ def _coerce_item(token: str) -> str:
     if bare is not None:
         return bare
     return sq if sq is not None else dq
+
+
+def referenced_names(expr: str) -> set[str]:
+    """Return the ``eval_context`` variable names a condition expression reads.
+
+    The supported grammar references exactly one variable — the leading name
+    in each pattern (``name``, ``not name``, ``name in [...]``). List items are
+    string literals, never variables, so they are not returned.
+
+    Returns an empty set for falsy / non-string input (an absent condition
+    references nothing). Raises ``SafeCondError`` for unsupported grammar,
+    mirroring :func:`resolve_condition` — so callers that walk a contract can
+    assert both "expression is valid" and "every variable it reads is provided"
+    from one source of truth.
+    """
+    if not expr or not isinstance(expr, str):
+        return set()
+    for rx in (_RE_BARE, _RE_NOT_BARE, _RE_MEMBERSHIP):
+        m = rx.match(expr)
+        if m:
+            return {m.group(1)}
+    raise SafeCondError(f"unsupported condition expression: {expr!r}")
 
 
 def resolve_condition(expr: str, env: dict[str, Any]) -> bool:
