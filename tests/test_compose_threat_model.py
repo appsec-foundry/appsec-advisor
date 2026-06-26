@@ -1566,6 +1566,65 @@ def _contract_with_changelog_style(tmp_path: Path, style: str) -> Path:
     return dst
 
 
+def _make_history(n: int) -> list[dict]:
+    """n synthetic changelog entries, newest-first (run n .. run 1)."""
+    out = []
+    for v in range(n, 0, -1):
+        out.append(
+            {
+                "version": 1,
+                "date": f"2026-06-{v:02d}",
+                "mode": "full",
+                "assessment_depth": "quick",
+                "reasoning_model": "sonnet-economy",
+                "current_sha": f"sha{v:04d}",
+                "threat_count": 30 + v,
+                "delta_basis": "initial" if v == 1 else "count-only",
+                "note": "first full scan" if v == 1 else f"run {v}",
+                "added": {"threats": []},
+            }
+        )
+    return out
+
+
+def _changelog_data_rows(section: str) -> list[str]:
+    return [ln for ln in section.splitlines() if ln.startswith("| v") or ln.startswith("| ⋯")]
+
+
+def test_changelog_table_renders_full_history_at_or_below_threshold(tmp_path: Path) -> None:
+    """≤10 runs render every row — no collapse, no marker."""
+    out = _prepare_output_dir(tmp_path)
+    _rewrite_changelog(out, _make_history(10))
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _extract_changelog_section(rendered)
+    rows = _changelog_data_rows(section)
+    assert len(rows) == 10
+    assert "collapsed" not in section
+    assert "| v10 |" in section and "| v1 |" in section
+
+
+def test_changelog_table_windows_long_history_keeping_first_and_last_five(tmp_path: Path) -> None:
+    """>10 runs collapse to newest 5 + the original v1 + one marker row. The
+    full history stays in the yaml; only the rendered table is windowed. The
+    first-scan row (v1) is always retained (the user's original concern)."""
+    out = _prepare_output_dir(tmp_path)
+    _rewrite_changelog(out, _make_history(12))
+    rendered, _ = compose.render(CONTRACT, out)
+    section = _extract_changelog_section(rendered)
+    rows = _changelog_data_rows(section)
+    # newest 5 (v12..v8) + marker + v1 = 7 rows
+    assert len(rows) == 7
+    for v in (12, 11, 10, 9, 8):
+        assert f"| v{v} |" in section
+    assert "| v1 |" in section  # first-scan row retained
+    for v in (7, 6, 5, 4, 3, 2):
+        assert f"| v{v} |" not in section  # middle collapsed
+    assert "v2–v7 (6 older runs) collapsed" in section
+    assert "full history in `threat-model.yaml`" in section
+    # Every rendered row is a well-formed 9-column table row.
+    assert all(r.count("|") == 10 for r in rows)
+
+
 def test_changelog_v1_initial_assessment_has_no_delta_bullets(tmp_path: Path) -> None:
     """First-run entry (no baseline) renders heading + zero delta bullets."""
     out = _prepare_output_dir(tmp_path)

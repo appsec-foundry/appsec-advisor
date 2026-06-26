@@ -358,6 +358,30 @@ def cmd_update(args: argparse.Namespace) -> int:
         if _carry in existing and _carry not in state:
             state[_carry] = existing[_carry]
 
+    # Mirror the committed changelog from threat-model.yaml into the cache.
+    # The yaml is the canonical, schema-stable store, but it is fragile: it is
+    # frequently untracked in git (the completion summary even nudges users to
+    # gitignore docs/security/), and a crash mid-write, a stray rm, or a
+    # --rebuild removes it outright. baseline.json lives under .appsec-cache/
+    # and survives the --full intermediate wipe, so mirroring the changelog
+    # here lets build_threat_model_yaml.py rehydrate an accumulating history
+    # instead of silently resetting a lost yaml to "first full scan". The yaml
+    # stays authoritative — this is a recovery copy, never the primary source.
+    # Best-effort: a parse failure or a changelog-less yaml must never drop an
+    # existing mirror (that would defeat the durability it provides).
+    changelog_mirror = None
+    if yaml_text:
+        try:
+            import yaml as _yaml  # noqa: PLC0415
+
+            changelog_mirror = (_yaml.safe_load(yaml_text) or {}).get("changelog")
+        except Exception:
+            changelog_mirror = None
+    if changelog_mirror:
+        state["changelog_mirror"] = changelog_mirror
+    elif existing.get("changelog_mirror"):
+        state["changelog_mirror"] = existing["changelog_mirror"]
+
     cache_dir.mkdir(parents=True, exist_ok=True)
     # Atomic tempfile+rename — a crash mid-write must leave the prior cache
     # intact or the file absent, never a truncated JSON. See _atomic_io.py.

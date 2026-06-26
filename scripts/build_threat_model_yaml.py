@@ -1755,12 +1755,42 @@ def main() -> int:
     critical = build_critical_findings(threats)
     tier_rcs = build_tier_root_causes(threats, components, sidecar_trc)
 
+    # Resolve the prior changelog history. The committed threat-model.yaml is
+    # the canonical store, but it is fragile (often untracked, wiped by a crash
+    # or a stray rm). When it is absent or carries no changelog, fall back to
+    # the cache mirror (.appsec-cache/baseline.json -> changelog_mirror, written
+    # by baseline_state.py cmd_update) so a lost yaml does not silently reset an
+    # accumulating history to "first full scan". When even the mirror is gone
+    # but the cache still proves a prior run happened, warn rather than quietly
+    # claiming this is the initial scan — a false "first scan" is exactly the
+    # kind of misleading audit claim the changelog must never make.
+    existing_changelog = (prior_yaml or {}).get("changelog")
+    if not existing_changelog:
+        _baseline = _load_json(od / ".appsec-cache" / "baseline.json")
+        _mirror = (_baseline or {}).get("changelog_mirror")
+        if _mirror:
+            existing_changelog = _mirror
+            _n = len(_mirror)
+            sys.stderr.write(
+                f"⚠ changelog: threat-model.yaml carried no changelog history; "
+                f"recovered {_n} prior entr{'y' if _n == 1 else 'ies'} from the "
+                f".appsec-cache mirror (lost/deleted yaml).\n"
+            )
+        elif _baseline and _baseline.get("last_run_at"):
+            sys.stderr.write(
+                "⚠ changelog: a prior run is recorded in .appsec-cache "
+                f"(last_run_at={_baseline.get('last_run_at')}) but no changelog "
+                "history survived in threat-model.yaml or the cache mirror — "
+                "recording this run as the initial entry; earlier run history "
+                "is unrecoverable.\n"
+            )
+
     changelog = build_changelog(
         skill_cfg,
         threats,
         components,
         attack_surface,
-        (prior_yaml or {}).get("changelog"),
+        existing_changelog,
         args.plugin_root,
         current_sha=(meta.get("git") or {}).get("commit_sha"),
         recon_info=recon_info,

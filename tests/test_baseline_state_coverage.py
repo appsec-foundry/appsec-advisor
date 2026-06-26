@@ -204,6 +204,45 @@ def test_cmd_update_writes_baseline_and_carries_forward(tmp_path: Path):
     assert data["mode"] == "incremental"
 
 
+def test_cmd_update_mirrors_changelog_from_yaml(tmp_path: Path):
+    # The committed changelog is mirrored into the (wipe-surviving) cache so a
+    # lost threat-model.yaml can rehydrate history instead of resetting to v1.
+    repo = _make_git_repo(tmp_path)
+    out = repo / "docs" / "security"
+    out.mkdir(parents=True)
+    (out / "threat-model.yaml").write_text(
+        "changelog:\n"
+        "  - version: 1\n"
+        "    date: '2026-06-19'\n"
+        "    mode: full\n"
+        "    threat_count: 31\n"
+        "threats:\n  - id: T-001\n"
+    )
+    rc = bs.cmd_update(_ns(output_dir=str(out), repo_root=str(repo), mode="full", manifest_hashes=None))
+    assert rc == 0
+    data = json.loads((out / ".appsec-cache" / "baseline.json").read_text())
+    assert data["changelog_mirror"][0]["date"] == "2026-06-19"
+    assert data["changelog_mirror"][0]["threat_count"] == 31
+
+
+def test_cmd_update_preserves_mirror_when_yaml_absent(tmp_path: Path):
+    # A run whose yaml carries no changelog (or is gone) must never drop an
+    # existing mirror — that would defeat the durability it provides.
+    repo = _make_git_repo(tmp_path)
+    out = repo / "docs" / "security"
+    out.mkdir(parents=True)
+    cache_dir = out / ".appsec-cache"
+    cache_dir.mkdir()
+    (cache_dir / "baseline.json").write_text(
+        json.dumps({"changelog_mirror": [{"version": 1, "date": "2026-06-19", "mode": "full"}]})
+    )
+    # No threat-model.yaml on disk at all.
+    rc = bs.cmd_update(_ns(output_dir=str(out), repo_root=str(repo), mode="full", manifest_hashes=None))
+    assert rc == 0
+    data = json.loads((cache_dir / "baseline.json").read_text())
+    assert data["changelog_mirror"][0]["date"] == "2026-06-19"  # preserved
+
+
 def test_cmd_update_with_precomputed_manifest_hashes(tmp_path: Path):
     repo = _make_git_repo(tmp_path)
     out = tmp_path / "out"

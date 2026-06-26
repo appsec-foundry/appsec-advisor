@@ -105,7 +105,17 @@ _Append-only history of assessment runs. Most recent first._
 {%- set _ = code_parts.append('+' ~ ins ~ '/-' ~ dels) -%}
 {%- endif -%}
 {%- set code_cell = code_parts | join(', ') if code_parts else '—' -%}
+{#- Display window — the yaml DATA stays complete (append-only audit trail);
+    only this rendered table is windowed. When the history exceeds 10 runs,
+    show the newest 5 + the original v1 and collapse the middle into one marker
+    row so §Changelog cannot bloat the report. run_no derives from the FULL
+    length, so the visible numbers stay correct even with rows hidden, and the
+    first-scan date is always retained. ≤10 runs render in full. -#}
+{%- if (loop.length <= 10) or (loop.index0 < 5) or loop.last -%}
 | v{{ run_no }} | {{ date }} | {{ mode }} | {{ depth }} | {{ reasoning }} | {{ sha_cell }} | {{ delta_cell }} | {{ code_cell }} | {{ note or '—' }} |
+{% elif loop.index0 == 5 -%}
+| ⋯ | _v2–v{{ loop.length - 5 }} ({{ loop.length - 6 }} older run{{ 's' if (loop.length - 6) != 1 else '' }}) collapsed_ | — | — | — | — | — | — | _full history in `threat-model.yaml`_ |
+{% endif -%}
 {% endfor %}
 {#- Detail block for the LATEST entry. Rendered when the latest run has a
     comparable baseline (incremental git diff OR a fingerprint delta) AND there

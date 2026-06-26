@@ -536,6 +536,114 @@ def test_cli_merges_supply_chain_sidecars_into_meta_findings(tmp_path: Path):
     assert all(mf["derived_from"] == [] for mf in rendered["meta_findings"])
 
 
+def _write_min_intermediates(out: Path) -> None:
+    """Minimal sidecar set so build_threat_model_yaml.py main() runs cleanly."""
+    _write_json(
+        out / ".skill-config.json",
+        {"mode": "full", "assessment_depth": "quick", "reasoning_model": "sonnet-economy",
+         "stride_model": "sonnet", "scope": []},
+    )
+    _write_json(out / ".threats-merged.json", {"threats": []})
+    _write_json(out / ".components.json", {"schema_version": 1, "components": [{"id": "C-01", "name": "API"}]})
+    _write_json(out / ".assets.json", {"schema_version": 1, "assets": [{"name": "Data", "classification": "Confidential"}]})
+    _write_json(out / ".trust-boundaries.json", {"schema_version": 1, "trust_boundaries": [{"name": "Internet to API"}]})
+    _write_json(
+        out / ".security-controls.json",
+        {"schema_version": 1, "security_controls": [
+            {"domain": "Authentication", "control": "JWT verification", "effectiveness": "Partial"}
+        ]},
+    )
+
+
+def test_changelog_recovers_history_from_cache_mirror_when_yaml_lost(tmp_path: Path):
+    """A lost/deleted threat-model.yaml must not silently reset the changelog to
+    'first full scan'. main() rehydrates the prior history from the
+    .appsec-cache/baseline.json changelog_mirror (written by baseline_state.py
+    cmd_update). Regression for the 2026-06-26 juice-shop "--full reset my
+    changelog" report."""
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    out.mkdir()
+    (out / ".appsec-cache").mkdir()
+    _write_min_intermediates(out)
+    # Cache mirror from a prior run last week (different commit + date), NO yaml.
+    _write_json(
+        out / ".appsec-cache" / "baseline.json",
+        {
+            "schema_version": 1, "analysis_version": 2, "plugin_version": "0.4.0-beta",
+            "last_run_at": "2026-06-19T10:00:00Z",
+            "changelog_mirror": [
+                {"version": 1, "date": "2026-06-19", "mode": "full", "assessment_depth": "quick",
+                 "reasoning_model": "sonnet-economy", "plugin_version": "0.4.0-beta", "analysis_version": 2,
+                 "current_sha": "OLDSHA", "threat_count": 31, "delta_basis": "initial",
+                 "note": "first full scan", "fingerprints": [], "added": {"threats": []}}
+            ],
+        },
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(out), "--repo-root", str(repo), "--plugin-root", str(ROOT)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "recovered 1 prior entr" in result.stderr  # warning fired
+    cl = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["changelog"]
+    # Prior run survived — the first-scan date is still visible, not reset.
+    assert len(cl) == 2
+    assert cl[1]["date"] == "2026-06-19"
+    assert cl[1]["note"] == "first full scan"
+    assert cl[0]["note"] != "first full scan"  # today is a genuine delta, not "initial"
+
+
+def test_changelog_warns_when_prior_run_evidenced_but_history_gone(tmp_path: Path):
+    """When neither the yaml nor a mirror survived but baseline.json still proves
+    a prior run happened (last_run_at), main() warns instead of silently
+    claiming 'first full scan' — a false initial claim is the one thing a
+    security audit trail must never make."""
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    out.mkdir()
+    (out / ".appsec-cache").mkdir()
+    _write_min_intermediates(out)
+    _write_json(
+        out / ".appsec-cache" / "baseline.json",
+        {"schema_version": 1, "analysis_version": 2, "last_run_at": "2026-06-19T10:00:00Z"},
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(out), "--repo-root", str(repo), "--plugin-root", str(ROOT)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "prior run is recorded" in result.stderr
+    assert "unrecoverable" in result.stderr
+    cl = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["changelog"]
+    assert len(cl) == 1  # genuinely cannot recover — single initial entry, but the user was warned
+
+
+def test_changelog_no_warning_on_genuine_first_run(tmp_path: Path):
+    """A true first run (no yaml, no baseline cache at all) stays silent — the
+    recovery warnings must not fire when there is genuinely no prior run."""
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    out.mkdir()
+    _write_min_intermediates(out)
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(out), "--repo-root", str(repo), "--plugin-root", str(ROOT)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "recovered" not in result.stderr
+    assert "prior run is recorded" not in result.stderr
+    cl = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))["changelog"]
+    assert len(cl) == 1
+    assert cl[0]["note"] == "first full scan"
+
+
 # ---------------------------------------------------------------------------
 # build_component_selection — §1 Scope / verdict coverage transparency
 # ---------------------------------------------------------------------------
