@@ -13331,12 +13331,19 @@ def _build_threat_card(
 
     # Evidence — status glyph + one-sentence prose; the fenced snippet (if any)
     # follows on its own lines.
-    ev_glyph = {"verified": "✓", "verified-prior": "✓", "ambiguous": "◌", "refuted": "⚠"}.get(ec, "")
+    ev_glyph = {
+        "verified": "✓",
+        "verified-prior": "✓",
+        "ambiguous": "◌",
+        "refuted": "⚠",
+        "carried-unverified-shallower-depth": "↻",
+    }.get(ec, "")
     ev_word = {
         "verified": "verified",
         "verified-prior": "verified",
         "ambiguous": "ambiguous",
         "refuted": "refuted",
+        "carried-unverified-shallower-depth": "carried, unverified at this depth",
     }.get(ec, "")
     ev_prose = evidence_line[len("**Evidence:** ") :] if evidence_line.startswith("**Evidence:** ") else ""
     # The Location is already in the meta line — drop any redundant
@@ -13599,6 +13606,12 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
     # M3: tracks whether any row carries an evidence_check marker
     # (refuted or ambiguous). Drives the §8 evidence-check footnote.
     has_evidence_drift = False
+    # Tracks whether any row was carried forward from a prior deeper scan
+    # without re-verification (incremental depth-downgrade). Drives a
+    # depth-independent §8 footnote — unlike the quick-only banner line, this
+    # surfaces carried findings on a standard re-scan that downgraded from
+    # thorough too.
+    has_carried_unverified = False
     # Load threat-category taxonomy once (via module-level cache).
     tax_raw = _load_taxonomy("threat-category-taxonomy.yaml")
     taxonomy: dict[str, dict] = {
@@ -13793,6 +13806,8 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             has_raw_downgrade = True
         if (t.get("evidence_check") or "").strip().lower() in {"refuted", "ambiguous"}:
             has_evidence_drift = True
+        if (t.get("evidence_check") or "").strip().lower() == "carried-unverified-shallower-depth":
+            has_carried_unverified = True
 
     # Group by severity (desc) and emit a card per finding under a tier header.
     by_sev: dict[str, list[dict]] = {}
@@ -13856,6 +13871,22 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
             "Rows tagged `◌ (evidence ambiguous)` could not be confirmed or "
             "refuted from the cited snippet alone — a human reviewer should "
             "decide whether to keep, downgrade, or remove these findings._"
+        )
+        lines.append("")
+
+    # ---- §8 footnote: carried-forward (incremental depth-downgrade) ------
+    # Depth-independent so a standard re-scan that downgraded from thorough
+    # discloses carried findings too — the quick-mode banner only fires at
+    # quick depth.
+    if has_carried_unverified:
+        lines.append("---")
+        lines.append("")
+        lines.append(
+            "_**Carried findings:** rows tagged `↻ carried, unverified at this "
+            "depth` were preserved from a prior **deeper** scan that this "
+            "shallower run could not re-confirm. Absence of re-confirmation at "
+            "reduced depth is **not** evidence of a fix — re-run at the prior "
+            "depth (or `--full`) to re-verify._"
         )
         lines.append("")
 

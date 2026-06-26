@@ -824,6 +824,48 @@ def test_evidence_check_footnote_omitted_when_no_drift(tmp_path: Path) -> None:
     assert "**Evidence verification:**" not in rendered
 
 
+def test_carried_unverified_renders_per_row_marker_and_footnote(tmp_path: Path) -> None:
+    """Incremental depth-downgrade: a threat carried forward from a prior
+    deeper scan (evidence_check=carried-unverified-shallower-depth) must be
+    visibly distinguished in §8 — a `↻ carried, unverified at this depth`
+    glyph in its **Evidence:** field plus a once-only "**Carried findings:**"
+    footnote. This closes the gap where carried findings rendered identically
+    to freshly verified ones.
+
+    The footnote is depth-independent (it lives in §8, not the quick-only
+    banner) so a standard re-scan that downgraded from thorough discloses
+    carried findings too — asserted here by the absence of the quick-banner
+    phrase while the §8 footnote is present.
+    """
+    out = _prepare_output_dir(tmp_path)
+    yml_path = out / "threat-model.yaml"
+    data = yaml.safe_load(yml_path.read_text())
+    threats = data["threats"]
+    assert len(threats) >= 1, "fixture must have at least 1 threat for this test"
+    threats[0]["evidence_check"] = "carried-unverified-shallower-depth"
+    yml_path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    rendered, _ = compose.render(CONTRACT, out)
+
+    # Per-row marker in the Story-Card **Evidence:** field.
+    assert "↻ carried, unverified at this depth" in rendered
+    # Depth-independent §8 footnote, emitted exactly once.
+    assert "**Carried findings:**" in rendered
+    assert rendered.count("**Carried findings:**") == 1
+    # The disclosure came from §8 (non-quick render) — NOT the quick banner.
+    assert "carried forward without re-verification" not in rendered
+
+
+def test_carried_footnote_omitted_when_no_carried_rows(tmp_path: Path) -> None:
+    """The carried-findings footnote is conditional — absent when no row
+    carries the depth-downgrade marker. Avoids dead text on full/equal-depth
+    runs."""
+    out = _prepare_output_dir(tmp_path)
+    rendered, _ = compose.render(CONTRACT, out)
+    assert "**Carried findings:**" not in rendered
+    assert "↻ carried, unverified at this depth" not in rendered
+
+
 def test_threat_register_is_card_layout(tmp_path: Path) -> None:
     """§8 Findings Register uses the 2026-05 severity-grouped card layout.
 
