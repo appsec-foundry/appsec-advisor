@@ -230,6 +230,7 @@ def compute_timing(output_dir: Path, gap_threshold_s: int = STANDBY_GAP_THRESHOL
     # see it without repeating the derivation.
     if wall_secs is None and scan_start is not None:
         import time as _time
+
         derived = int(_time.time()) - scan_start
         if derived > 0:
             wall_secs = derived

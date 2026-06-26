@@ -245,9 +245,7 @@ class TestPerStageModelFlags:
         """--triage-model opus on a sonnet-economy run = the middle config:
         Sonnet STRIDE/merger, Opus triage (calibrated severities, cheap)."""
         rc = _load_resolver()
-        ns = rc.build_parser().parse_args(
-            ["--reasoning-model", "sonnet-economy", "--triage-model", "opus"]
-        )
+        ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet-economy", "--triage-model", "opus"])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert out["stride_model"] == "sonnet"
         assert out["triage_model"] == "opus"
@@ -260,7 +258,9 @@ class TestPerStageModelFlags:
         )
         out = rc.resolve_reasoning_model(ns, "standard")
         assert (out["stride_model"], out["triage_model"], out["merger_model"]) == (
-            "opus", "sonnet", "opus",
+            "opus",
+            "sonnet",
+            "opus",
         )
 
     def test_cli_flag_beats_env(self, monkeypatch):
@@ -279,9 +279,7 @@ class TestPerStageModelFlags:
 
     def test_triage_flag_label_reflects_override(self):
         rc = _load_resolver()
-        ns = rc.build_parser().parse_args(
-            ["--reasoning-model", "sonnet-economy", "--triage-model", "opus"]
-        )
+        ns = rc.build_parser().parse_args(["--reasoning-model", "sonnet-economy", "--triage-model", "opus"])
         out = rc.resolve_reasoning_model(ns, "standard")
         assert "triage: opus" in out["reasoning_label"]
 

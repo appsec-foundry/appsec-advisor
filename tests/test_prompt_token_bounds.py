@@ -30,7 +30,10 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     "agents/phases/phase-group-finalization.md": (32_000, 60_000),
     "agents/phases/phase-group-architecture.md": (25_000, 45_000),
     "agents/phases/phase-group-threats.md": (24_000, 45_000),
-    "agents/phases/phase-group-recon.md": (3_000, 7_500),
+    # Raised 2026-06-26: commit 77721d7 added the ⛔ "never re-dispatch
+    # context-resolver/recon-scanner after a stall" rule (real token-waste
+    # bugfix, pinned by a drift guard). Measured 7_613; high = ~20% buffer.
+    "agents/phases/phase-group-recon.md": (3_000, 9_100),
     # Lowered 2026-05-28: deterministic-first migration. All mechanical
     # checks already covered by qa_checks.py (53 check functions) were
     # collapsed to thin "consume PRE_PASS_JSON" pointers. Detailed §2.4

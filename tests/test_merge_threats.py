@@ -181,12 +181,20 @@ class TestEvidenceDedup:
         # dropped CWE is preserved in merged_cwes for traceability.
         ev = {"file": "lib/insecurity.ts", "line": 21}
         spoof = _threat(
-            component_id="auth", cwe="CWE-321", stride="Spoofing", risk="Critical",
-            evidence=dict(ev), title="Hardcoded RSA private key signs all JWTs",
+            component_id="auth",
+            cwe="CWE-321",
+            stride="Spoofing",
+            risk="Critical",
+            evidence=dict(ev),
+            title="Hardcoded RSA private key signs all JWTs",
         )
         disclose = _threat(
-            component_id="backend", cwe="CWE-798", stride="Information Disclosure", risk="Critical",
-            evidence=dict(ev), title="RSA private key exposed in committed source",
+            component_id="backend",
+            cwe="CWE-798",
+            stride="Information Disclosure",
+            risk="Critical",
+            evidence=dict(ev),
+            title="RSA private key exposed in committed source",
         )
         result = mt._dedupe_evidence([spoof, disclose])
         assert len(result) == 1
@@ -582,12 +590,24 @@ class TestDecisionApplication:
         # findings below share an endpoint and exploitation family but differ in
         # (CWE, STRIDE), so they form a GE- group, never a G- one.
         threats = [
-            {**_threat(component_id="api", cwe="CWE-862", stride="Tampering",
-                       title="Missing authz on POST /api/Users",
-                       evidence={"file": "routes/users.ts", "line": 10})},
-            {**_threat(component_id="api", cwe="CWE-639", stride="Elevation of Privilege",
-                       title="IDOR on POST /api/Users escalates role",
-                       evidence={"file": "routes/users.ts", "line": 12})},
+            {
+                **_threat(
+                    component_id="api",
+                    cwe="CWE-862",
+                    stride="Tampering",
+                    title="Missing authz on POST /api/Users",
+                    evidence={"file": "routes/users.ts", "line": 10},
+                )
+            },
+            {
+                **_threat(
+                    component_id="api",
+                    cwe="CWE-639",
+                    stride="Elevation of Privilege",
+                    title="IDOR on POST /api/Users escalates role",
+                    evidence={"file": "routes/users.ts", "line": 12},
+                )
+            },
         ]
         groups = mt._group_candidates(threats)
         ge = [g for g in groups if g["group_key"] == "endpoint_family"]

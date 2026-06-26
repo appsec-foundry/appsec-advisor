@@ -326,6 +326,7 @@ def _is_public_by_design(path: str | None) -> bool:
     # Keep this branch off normal HTTP paths to avoid broadening the URL rule.
     return "/" not in value and bool(_PUBLIC_OPERATION_NAME_RE.search(value))
 
+
 # Positive security-relevance patterns — INTENTIONALLY NARROWER than
 # _PUBLIC_BY_DESIGN_RE, which also matches health/ping/version/webhook noise we
 # do NOT want to surface. A finding-free route whose path matches one of these

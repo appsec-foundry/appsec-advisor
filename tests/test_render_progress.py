@@ -222,8 +222,7 @@ def test_session_bloat_event_renders():
 def test_session_aborted_midrun_event_renders():
     out = _render(
         [
-            "2026-06-20T10:00:00Z  [abcdef12]  WARN   skill-session  SESSION_ABORTED_MIDRUN"
-            "  phase=9  reason=unknown",
+            "2026-06-20T10:00:00Z  [abcdef12]  WARN   skill-session  SESSION_ABORTED_MIDRUN  phase=9  reason=unknown",
         ]
     )
     assert "aborted mid-run" in out

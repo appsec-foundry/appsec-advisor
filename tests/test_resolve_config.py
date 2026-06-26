@@ -181,9 +181,9 @@ class TestResolveAssessmentDepth:
         """Re-Render Loop budget: quick/standard = single quick-fix pass (1),
         thorough keeps the historical budget of 3."""
         got = {
-            d: rc.resolve_assessment_depth(
-                rc.build_parser().parse_args(["--assessment-depth", d])
-            )["max_repair_iterations"]
+            d: rc.resolve_assessment_depth(rc.build_parser().parse_args(["--assessment-depth", d]))[
+                "max_repair_iterations"
+            ]
             for d in ("quick", "standard", "thorough")
         }
         assert got == {"quick": 1, "standard": 1, "thorough": 3}
@@ -1398,31 +1398,43 @@ class TestSummaryActiveOptions:
     def test_abuse_cases_skipped_surfaces_in_skips(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(
-            mode="full",
-            skip_abuse_case_verification=True,
-            abuse_case_label="skipped (--no-abuse-cases)",
-        )))
+        rows = dict(
+            rc._summary_active_options(
+                _base_cfg(
+                    mode="full",
+                    skip_abuse_case_verification=True,
+                    abuse_case_label="skipped (--no-abuse-cases)",
+                )
+            )
+        )
         assert "abuse-case verification skipped" in rows["Skips"]
 
     def test_abuse_cases_forced_on_surfaces_in_extras(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(
-            mode="incremental",
-            skip_abuse_case_verification=False,
-            abuse_case_label="enabled (--abuse-cases)",
-        )))
+        rows = dict(
+            rc._summary_active_options(
+                _base_cfg(
+                    mode="incremental",
+                    skip_abuse_case_verification=False,
+                    abuse_case_label="enabled (--abuse-cases)",
+                )
+            )
+        )
         assert "abuse-case verification" in rows["Extras"]
 
     def test_abuse_cases_default_on_is_silent(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(
-            mode="incremental",
-            skip_abuse_case_verification=False,
-            abuse_case_label="enabled",
-        )))
+        rows = dict(
+            rc._summary_active_options(
+                _base_cfg(
+                    mode="incremental",
+                    skip_abuse_case_verification=False,
+                    abuse_case_label="enabled",
+                )
+            )
+        )
         assert "abuse-case" not in rows.get("Extras", "")
         assert "abuse-case" not in rows.get("Skips", "")
 
@@ -1668,21 +1680,15 @@ class TestRunPlanDepthHint:
         return {"will_run": will_run, "mode_line": "full (first run)"}
 
     def test_standard_shows_thorough_hint(self):
-        notes = rc._run_plan_notes(
-            self._verdict(), _base_cfg(assessment_depth="standard"), None, None, None
-        )
+        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="standard"), None, None, None)
         assert any("thorough" in n and "higher cost" in n for n in notes)
 
     def test_thorough_no_hint(self):
-        notes = rc._run_plan_notes(
-            self._verdict(), _base_cfg(assessment_depth="thorough"), None, None, None
-        )
+        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="thorough"), None, None, None)
         assert not any("most thorough results come from" in n for n in notes)
 
     def test_quick_no_hint(self):
-        notes = rc._run_plan_notes(
-            self._verdict(), _base_cfg(assessment_depth="quick"), None, None, None
-        )
+        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="quick"), None, None, None)
         assert not any("most thorough results come from" in n for n in notes)
 
     def test_hint_on_noop(self):
@@ -1692,6 +1698,39 @@ class TestRunPlanDepthHint:
             self._verdict(will_run=False), _base_cfg(assessment_depth="standard"), None, None, None
         )
         assert any("most thorough results come from" in n for n in notes)
+
+
+class TestRenderRunPlanNotes:
+    """The Notes block is emitted deterministically by Bash (render_run_plan_notes),
+    not re-typed by the LLM banner — so the standard→thorough hint can never be dropped."""
+
+    def test_standard_emits_notes_block_with_hint(self):
+        out = rc.render_run_plan_notes(_base_cfg(assessment_depth="standard"), None, None, None)
+        assert out.startswith("Notes\n")
+        assert "  • " in out
+        assert "most thorough results come from" in out
+        assert out.endswith("\n")
+
+    def test_thorough_omits_hint(self):
+        out = rc.render_run_plan_notes(_base_cfg(assessment_depth="thorough"), None, None, None)
+        assert "most thorough results come from" not in out
+        # Notes still render (Ctrl-C abort note) — just without the upsell.
+        assert out.startswith("Notes\n")
+
+    def test_matches_canonical_banner_notes(self):
+        # The deterministic block must contain the exact bullets the full
+        # render_run_plan banner produces — same formatter, no drift.
+        cfg = _base_cfg(assessment_depth="standard")
+        banner = rc.render_run_plan(cfg, None, None, None)
+        notes_only = rc.render_run_plan_notes(cfg, None, None, None)
+        for line in notes_only.splitlines():
+            if line.strip():
+                assert line in banner
+
+    def test_empty_when_no_notes(self, monkeypatch):
+        # When _run_plan_notes yields nothing, the block is empty (caller omits it).
+        monkeypatch.setattr(rc, "_run_plan_notes", lambda *a, **k: [])
+        assert rc.render_run_plan_notes(_base_cfg(), None, None, None) == ""
 
 
 class TestPipelineString:
@@ -1838,10 +1877,12 @@ class TestStrideCapDisplay:
     states (set / unset), and never double-shown via the active-options row."""
 
     def test_format_capped(self):
-        cfg = _base_cfg(stride_profile={
-            "stride_profile_label": "full (per-category cap 2)",
-            "max_threats_per_category": 2,
-        })
+        cfg = _base_cfg(
+            stride_profile={
+                "stride_profile_label": "full (per-category cap 2)",
+                "max_threats_per_category": 2,
+            }
+        )
         s = rc._format_stride_cap(cfg)
         assert "≤2 per STRIDE category per component" in s
         assert "Criticals always kept" in s
@@ -1857,18 +1898,20 @@ class TestStrideCapDisplay:
         assert "none" in rc._format_stride_cap(cfg)
 
     def test_run_plan_shows_uncapped_line(self):
-        cfg = _base_cfg(incremental=False, baseline_state="empty",
-                        stride_profile={"stride_profile_label": "full"})
+        cfg = _base_cfg(incremental=False, baseline_state="empty", stride_profile={"stride_profile_label": "full"})
         out = rc.render_run_plan(cfg, None, None, None)
         assert "STRIDE cap" in out
         assert "full STRIDE depth" in out
 
     def test_run_plan_shows_capped_line(self):
-        cfg = _base_cfg(incremental=False, baseline_state="empty",
-                        stride_profile={
-                            "stride_profile_label": "full (per-category cap 2)",
-                            "max_threats_per_category": 2,
-                        })
+        cfg = _base_cfg(
+            incremental=False,
+            baseline_state="empty",
+            stride_profile={
+                "stride_profile_label": "full (per-category cap 2)",
+                "max_threats_per_category": 2,
+            },
+        )
         out = rc.render_run_plan(cfg, None, None, None)
         assert "≤2 per STRIDE category per component" in out
 
@@ -1881,25 +1924,33 @@ class TestStrideCapDisplay:
         # row — the dedicated STRIDE cap line owns it.
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(
-            mode="incremental",
-            stride_profile={
-                "stride_profile_label": "full (per-category cap 2)",
-                "max_threats_per_category": 2,
-            },
-        )))
+        rows = dict(
+            rc._summary_active_options(
+                _base_cfg(
+                    mode="incremental",
+                    stride_profile={
+                        "stride_profile_label": "full (per-category cap 2)",
+                        "max_threats_per_category": 2,
+                    },
+                )
+            )
+        )
         assert "STRIDE" not in rows
 
     def test_quick_profile_still_shown_in_active_options(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(
-            mode="incremental",
-            stride_profile={
-                "stride_profile_label": "quick (depth-reduced via sonnet-economy)",
-                "max_threats_per_category": 1,
-            },
-        )))
+        rows = dict(
+            rc._summary_active_options(
+                _base_cfg(
+                    mode="incremental",
+                    stride_profile={
+                        "stride_profile_label": "quick (depth-reduced via sonnet-economy)",
+                        "max_threats_per_category": 1,
+                    },
+                )
+            )
+        )
         assert "depth-reduced" in rows.get("STRIDE", "")
 
 

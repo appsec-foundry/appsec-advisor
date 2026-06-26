@@ -207,9 +207,7 @@ class TestCat9OAuthOidc:
 
     def test_oidc_missing_nonce_and_claim_validation_gap_flagged(self, repo):
         (repo / "server.py").write_text(
-            "def callback():\n"
-            "    id_token = request.args['id_token']\n"
-            "    return exchange(id_token)\n",
+            "def callback():\n    id_token = request.args['id_token']\n    return exchange(id_token)\n",
             encoding="utf-8",
         )
 
@@ -663,8 +661,7 @@ class TestAdditionalDeterministicCategories:
 
     def test_websocket_server_auth_and_origin_candidates_flagged(self, repo):
         (repo / "server.ts").write_text(
-            "const wss = new WebSocketServer({ server });\n"
-            "wss.on('connection', socket => socket.send('ready'));\n",
+            "const wss = new WebSocketServer({ server });\nwss.on('connection', socket => socket.send('ready'));\n",
             encoding="utf-8",
         )
 
@@ -678,8 +675,8 @@ class TestAdditionalDeterministicCategories:
         (repo / "frame.ts").write_text(
             "window.postMessage(payload, '*');\n"
             "window.addEventListener('message', onMsg);\n"
-            "<iframe src=\"https://widgets.example\"></iframe>\n"
-            "<a target=\"_blank\" href=\"https://example.test\">open</a>\n",
+            '<iframe src="https://widgets.example"></iframe>\n'
+            '<a target="_blank" href="https://example.test">open</a>\n',
             encoding="utf-8",
         )
         out = rp.scan_postmessage(repo)
@@ -692,8 +689,7 @@ class TestAdditionalDeterministicCategories:
 
     def test_client_routing_guard_flagged(self, repo):
         (repo / "router.ts").write_text(
-            "router.beforeEach(requireAuth)\n"
-            "if (localStorage.getItem('role') === 'admin') next();\n",
+            "router.beforeEach(requireAuth)\nif (localStorage.getItem('role') === 'admin') next();\n",
             encoding="utf-8",
         )
         out = rp.scan_client_routing(repo)
@@ -731,9 +727,9 @@ class TestAdditionalDeterministicCategories:
         )
         (android / "MainActivity.kt").write_text(
             "webView.settings.setJavaScriptEnabled(true)\n"
-            "webView.addJavascriptInterface(bridge, \"Native\")\n"
+            'webView.addJavascriptInterface(bridge, "Native")\n'
             "WebView.setWebContentsDebuggingEnabled(true)\n"
-            "getSharedPreferences(\"auth\", 0).getString(\"refresh_token\", null)\n"
+            'getSharedPreferences("auth", 0).getString("refresh_token", null)\n'
             "val verifier = HostnameVerifier { _, _ -> true }\n",
             encoding="utf-8",
         )
@@ -777,8 +773,8 @@ class TestAdditionalDeterministicCategories:
         )
         (ios / "WebView.swift").write_text(
             "import WebKit\n"
-            "webView.configuration.userContentController.addScriptMessageHandler(self, name: \"bridge\")\n"
-            "UserDefaults.standard.set(refreshToken, forKey: \"refresh_token\")\n"
+            'webView.configuration.userContentController.addScriptMessageHandler(self, name: "bridge")\n'
+            'UserDefaults.standard.set(refreshToken, forKey: "refresh_token")\n'
             "let policy = kSecAttrAccessibleAlways\n"
             "let credential = URLCredential(trust: serverTrust)\n",
             encoding="utf-8",

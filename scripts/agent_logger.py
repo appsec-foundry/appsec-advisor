@@ -1927,8 +1927,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                     f"context-compaction between stages is the common cause)"
                 )
                 _write("WARN ", "SESSION_ABORTED_MIDRUN", detail, sid)
-                _write_agent_run("WARN", who, "SESSION_ABORTED_MIDRUN",
-                                 f"phase={aborted_phase}  reason={reason}")
+                _write_agent_run("WARN", who, "SESSION_ABORTED_MIDRUN", f"phase={aborted_phase}  reason={reason}")
 
     # --- Tracing: emit AGENT_COMPLETE with per-session token/cost/wall-time ---
     if _TRACING and agent_name:

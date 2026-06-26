@@ -668,8 +668,9 @@ class TestRenderAppendixRunStatistics:
         assert "Critical-safe" in out
 
     def test_reasoning_models_row_rendered(self, tmp_path):
-        ctx = _bare_ctx(tmp_path, {"meta": {
-            "stride_model": "sonnet", "triage_model": "opus", "merger_model": "sonnet"}})
+        ctx = _bare_ctx(
+            tmp_path, {"meta": {"stride_model": "sonnet", "triage_model": "opus", "merger_model": "sonnet"}}
+        )
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert "| Reasoning models | STRIDE sonnet, triage opus, merger sonnet |" in out
 
@@ -679,18 +680,29 @@ class TestRenderAppendixRunStatistics:
         assert "Reasoning models" not in out
 
     def test_reasoning_models_row_includes_tier(self, tmp_path):
-        ctx = _bare_ctx(tmp_path, {"meta": {
-            "reasoning_model": "sonnet-economy", "stride_model": "sonnet",
-            "triage_model": "opus", "merger_model": "sonnet"}})
+        ctx = _bare_ctx(
+            tmp_path,
+            {
+                "meta": {
+                    "reasoning_model": "sonnet-economy",
+                    "stride_model": "sonnet",
+                    "triage_model": "opus",
+                    "merger_model": "sonnet",
+                }
+            },
+        )
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert "| Reasoning models | sonnet-economy — STRIDE sonnet, triage opus, merger sonnet |" in out
 
     def test_invocation_row_from_meta(self, tmp_path):
-        ctx = _bare_ctx(tmp_path, {"meta": {
-            "invocation": "--reasoning-model sonnet-economy --triage-model opus --stride-cap 2"}})
+        ctx = _bare_ctx(
+            tmp_path, {"meta": {"invocation": "--reasoning-model sonnet-economy --triage-model opus --stride-cap 2"}}
+        )
         out = compose._render_appendix_run_statistics(ctx, None, {})
-        assert ("| Invocation | `/appsec-advisor:create-threat-model "
-                "--reasoning-model sonnet-economy --triage-model opus --stride-cap 2` |") in out
+        assert (
+            "| Invocation | `/appsec-advisor:create-threat-model "
+            "--reasoning-model sonnet-economy --triage-model opus --stride-cap 2` |"
+        ) in out
 
     def test_with_stage_stats_and_meta(self, tmp_path):
         (tmp_path / ".stage-stats.jsonl").write_text(

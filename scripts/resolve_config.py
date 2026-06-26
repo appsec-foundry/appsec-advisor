@@ -1988,6 +1988,42 @@ def render_run_plan(
     return "\n".join(lines) + "\n"
 
 
+def render_run_plan_notes(
+    cfg: dict,
+    pre_check: dict | None,
+    dirty_set: dict | None,
+    compat_label: str | None,
+) -> str:
+    """Render ONLY the Notes / Recommendations block of the run-plan box.
+
+    The create-threat-model skill renders the full Pre-flight banner LLM-side
+    (to avoid the Bash output double-fold) but emits this Notes block via a
+    deterministic Bash call so advisory hints — notably the standard→thorough
+    upsell — never depend on the model re-typing them. Same inputs and same
+    bullet formatting as ``render_run_plan``; returns "" when there are no
+    notes so the caller can omit the section entirely.
+    """
+    verdict = _run_plan_verdict(cfg, pre_check, dirty_set, compat_label)
+    notes = _run_plan_notes(verdict, cfg, pre_check, dirty_set, compat_label)
+    if not notes:
+        return ""
+    width = _summary_width()
+    prefix = "  • "
+    value_width = max(20, width - len(prefix))
+    lines: list[str] = ["Notes"]
+    for n in notes:
+        chunks = wrap(
+            str(n),
+            width=value_width,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+        lines.append(prefix + chunks[0])
+        cont = " " * len(prefix)
+        lines.extend(cont + c for c in chunks[1:])
+    return "\n".join(lines) + "\n"
+
+
 def _full_over_existing_reason(
     cfg: dict,
     pre_check: dict | None,
@@ -2716,10 +2752,12 @@ def main(argv: list[str] | None = None) -> int:
     # the same file ``--emit-file`` writes — so this never re-resolves
     # user argv after the skill has already fixed those values.
     run_plan_flag = "--run-plan" in argv
+    run_plan_notes_flag = "--run-plan-notes" in argv
+    any_run_plan = run_plan_flag or run_plan_notes_flag
     pre_check_path: str | None = None
     dirty_set_path: str | None = None
     compat_label: str | None = None
-    if run_plan_flag:
+    if any_run_plan:
         i = 0
         while i < len(argv):
             a = argv[i]
@@ -2739,10 +2777,10 @@ def main(argv: list[str] | None = None) -> int:
 
     filtered = [a for a in argv if a not in (
         "--emit-file", "--config-summary", "--validate-only", "--force",
-        "--run-plan",
+        "--run-plan", "--run-plan-notes",
     )]
     # Strip the run-plan companion flags + their values too.
-    if run_plan_flag:
+    if any_run_plan:
         clean: list[str] = []
         skip_next = False
         for a in filtered:
@@ -2755,7 +2793,7 @@ def main(argv: list[str] | None = None) -> int:
             clean.append(a)
         filtered = clean
 
-    if run_plan_flag:
+    if any_run_plan:
         # The skill has already resolved the cfg and persisted it to
         # ``.skill-config.json``. Read from there so the renderer sees the
         # exact same values downstream consumers do — no second resolve.
@@ -2790,7 +2828,13 @@ def main(argv: list[str] | None = None) -> int:
 
         pre_check = _read_json(pre_check_path)
         dirty_set = _read_json(dirty_set_path)
-        print(render_run_plan(cfg, pre_check, dirty_set, compat_label), end="")
+        if run_plan_notes_flag:
+            print(
+                render_run_plan_notes(cfg, pre_check, dirty_set, compat_label),
+                end="",
+            )
+        else:
+            print(render_run_plan(cfg, pre_check, dirty_set, compat_label), end="")
         return 0
 
     cfg = resolve(filtered, plugin_root)

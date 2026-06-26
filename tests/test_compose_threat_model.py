@@ -1292,7 +1292,9 @@ def test_balance_code_spans_leaves_standalone_span_and_prose_untouched() -> None
     # `socket.emit()` is whole; "call broadcasts" is prose → no merge.
     assert compose._balance_code_spans("the `socket.emit()` call broadcasts") == "the `socket.emit()` call broadcasts"
     # file:line locator followed by prose → untouched.
-    assert compose._balance_code_spans("`routes/foo.ts:9` defines the handler") == "`routes/foo.ts:9` defines the handler"
+    assert (
+        compose._balance_code_spans("`routes/foo.ts:9` defines the handler") == "`routes/foo.ts:9` defines the handler"
+    )
     # no backticks at all → returned verbatim.
     assert compose._balance_code_spans("plain prose, no code") == "plain prose, no code"
 

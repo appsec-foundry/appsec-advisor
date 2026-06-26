@@ -402,7 +402,9 @@ _CAT9_SURFACE = re.compile(
     r"\bresponse_type\b|\bresponseType\b|\bgrant_type\b|\bgrantType\b)"
 )
 
-_CAT9_FRONTEND_HINT = re.compile(r"(?i)(frontend|client|spa|browser|src/app|components?|pages?|views?|\.tsx?$|\.jsx?$|\.html?$)")
+_CAT9_FRONTEND_HINT = re.compile(
+    r"(?i)(frontend|client|spa|browser|src/app|components?|pages?|views?|\.tsx?$|\.jsx?$|\.html?$)"
+)
 _CAT9_AUTH_REQUEST = re.compile(
     r"(?i)(response_type|responseType|authorization_endpoint|authorize\b|/authorize\b|loginWithRedirect|loginWithPopup|signInWithRedirect|signInWithPopup)"
 )
@@ -419,15 +421,21 @@ _CAT9_PKCE_PRESENT = re.compile(r"(?i)(\bpkce\b|\bcode_verifier\b|\bcode_challen
 _CAT9_PKCE_PLAIN = re.compile(
     r"(?i)(code_challenge_method\s*[:=]\s*['\"]?plain\b|codeChallengeMethod\s*[:=]\s*['\"]?plain\b)"
 )
-_CAT9_PKCE_S256 = re.compile(r"(?i)(code_challenge_method\s*[:=]\s*['\"]?S256\b|codeChallengeMethod\s*[:=]\s*['\"]?S256\b)")
+_CAT9_PKCE_S256 = re.compile(
+    r"(?i)(code_challenge_method\s*[:=]\s*['\"]?S256\b|codeChallengeMethod\s*[:=]\s*['\"]?S256\b)"
+)
 _CAT9_STATE_TOKEN = re.compile(r"(?i)\bstate\b")
 _CAT9_NONCE_TOKEN = re.compile(r"(?i)\bnonce\b")
 _CAT9_ID_TOKEN_FLOW = re.compile(r"(?i)(\bid_token\b|\bscope\s*[:=][^\n]*(?:openid)|response[_-]?type[^\n]*id_token)")
-_CAT9_REFRESH_BROWSER = re.compile(r"(?i)refresh[_-]?token[^\n]{0,120}(localStorage|sessionStorage)|"
-                                   r"(localStorage|sessionStorage)[^\n]{0,120}refresh[_-]?token")
+_CAT9_REFRESH_BROWSER = re.compile(
+    r"(?i)refresh[_-]?token[^\n]{0,120}(localStorage|sessionStorage)|"
+    r"(localStorage|sessionStorage)[^\n]{0,120}refresh[_-]?token"
+)
 _CAT9_ROPC = re.compile(r"(?i)(grant[_-]?type\s*[:=]\s*['\"]?password\b|grant_type=password|resource owner password)")
 _CAT9_CLIENT_SECRET = re.compile(r"(?i)\bclient_secret\b|\bclientSecret\b")
-_CAT9_HTTP_REDIRECT = re.compile(r"(?i)(redirect_uri|redirectUri)[^\n]{0,120}http://(?!localhost\b|127\.0\.0\.1\b|\[::1\])")
+_CAT9_HTTP_REDIRECT = re.compile(
+    r"(?i)(redirect_uri|redirectUri)[^\n]{0,120}http://(?!localhost\b|127\.0\.0\.1\b|\[::1\])"
+)
 _CAT9_REDIRECT_WEAK_MATCH = re.compile(
     r"(?i)(redirect_uri|redirectUri|callbackUrl|callback_url|allowedRedirect|allowed_redirect|post_logout_redirect_uri)"
     r"[^\n]{0,160}(includes|startsWith|indexOf|contains|match\s*\(|regex|wildcard|\*)|"
@@ -436,7 +444,9 @@ _CAT9_REDIRECT_WEAK_MATCH = re.compile(
 )
 _CAT9_POST_LOGOUT = re.compile(r"(?i)post_logout_redirect_uri|postLogoutRedirectUri")
 _CAT9_CLAIM_CONTEXT = re.compile(r"(?i)(id_token|issuer|jwks|jwks_uri|audience|\baud\b|\biss\b|nonce)")
-_CAT9_CLAIM_VALIDATION = re.compile(r"(?i)(issuer|expectedIssuer|\biss\b|audience|expectedAudience|\baud\b|jwks|jwks_uri|verifyIdToken|validateIdToken|nonce)")
+_CAT9_CLAIM_VALIDATION = re.compile(
+    r"(?i)(issuer|expectedIssuer|\biss\b|audience|expectedAudience|\baud\b|jwks|jwks_uri|verifyIdToken|validateIdToken|nonce)"
+)
 _CAT9_STATIC_STATE_NONCE = re.compile(
     r"(?i)\b(state|nonce)\b\s*[:=]\s*['\"](?:state|nonce|test|changeme|static|12345|abcdef)['\"]"
 )
@@ -627,7 +637,9 @@ def scan_oauth_oidc(repo_root: Path) -> dict[str, Any]:
             )
 
         for n, line in _line_hits(lines, _CAT9_REDIRECT_WEAK_MATCH):
-            subcat = "oauth-post-logout-redirect-weak" if _CAT9_POST_LOGOUT.search(line) else "oauth-redirect-uri-weak-match"
+            subcat = (
+                "oauth-post-logout-redirect-weak" if _CAT9_POST_LOGOUT.search(line) else "oauth-redirect-uri-weak-match"
+            )
             _add_cat9(
                 findings,
                 rel=rel,
@@ -1115,7 +1127,9 @@ _CAT23_BLANK_NO_NOOPENER = re.compile(
 _CAT24_PATTERN = re.compile(
     r"(?i)(canActivate|canDeactivate|beforeEach|beforeEnter|requireAuth|PrivateRoute|ProtectedRoute|useAuth|authGuard|RouteGuard|\.guard\.ts)"
 )
-_CAT24_SERVER_AUTHORITY = re.compile(r"(?i)(HttpClient|fetch\s*\(|axios\.|superagent|/me\b|/session\b|/authorize\b|/permissions\b)")
+_CAT24_SERVER_AUTHORITY = re.compile(
+    r"(?i)(HttpClient|fetch\s*\(|axios\.|superagent|/me\b|/session\b|/authorize\b|/permissions\b)"
+)
 
 
 def _add_client_finding(
@@ -1653,8 +1667,12 @@ _IOS_ATS_ARBITRARY = re.compile(r"<key>NSAllowsArbitraryLoads</key>\s*<true/>")
 _IOS_ATS_INSECURE_EXCEPTION = re.compile(r"<key>NSExceptionAllowsInsecureHTTPLoads</key>\s*<true/>")
 _IOS_URL_SCHEME = re.compile(r"<key>CFBundleURLSchemes</key>")
 _IOS_ASSOCIATED_DOMAINS = re.compile(r"com\.apple\.developer\.associated-domains|applinks:")
-_IOS_WEBVIEW_BRIDGE = re.compile(r"(?i)(WKScriptMessageHandler|addScriptMessageHandler|evaluateJavaScript\s*\(|UIWebView)")
-_IOS_USERDEFAULTS_TOKEN = re.compile(r"(?i)(UserDefaults|NSUserDefaults)[^\n]{0,180}(token|jwt|password|secret|refresh|access)")
+_IOS_WEBVIEW_BRIDGE = re.compile(
+    r"(?i)(WKScriptMessageHandler|addScriptMessageHandler|evaluateJavaScript\s*\(|UIWebView)"
+)
+_IOS_USERDEFAULTS_TOKEN = re.compile(
+    r"(?i)(UserDefaults|NSUserDefaults)[^\n]{0,180}(token|jwt|password|secret|refresh|access)"
+)
 _IOS_KEYCHAIN_ALWAYS = re.compile(r"kSecAttrAccessibleAlways")
 _IOS_ACCEPT_ALL_TLS = re.compile(
     r"(?i)(allowsAnyHTTPSCertificateForHost|ServerTrustManager\s*\([^)]*allHostsMustBeEvaluated\s*:\s*false|"
@@ -1886,14 +1904,62 @@ def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
 
         if is_android:
             android_patterns = [
-                (_ANDROID_WEBVIEW_BRIDGE, "android-webview-js-bridge", "High", "WebView JavaScript bridge is exposed", "Mobile WebView bridge"),
-                (_ANDROID_WEBVIEW_JS, "android-webview-javascript-enabled", "Medium", "WebView JavaScript execution is enabled", "Mobile WebView bridge"),
-                (_ANDROID_WEBVIEW_FILE, "android-webview-file-access", "High", "WebView file/universal file URL access is enabled", "Mobile WebView bridge"),
-                (_ANDROID_WEBVIEW_DEBUG, "android-webview-debugging-enabled", "High", "WebView remote debugging is enabled", "Mobile debug build shipped"),
-                (_ANDROID_SHARED_PREF_TOKEN, "android-token-sharedpreferences", "High", "Sensitive token/secret marker appears in SharedPreferences usage", "Mobile token in app storage"),
-                (_ANDROID_WORLD_READABLE, "android-world-readable-storage", "High", "World-readable Android storage mode is used", "Mobile token in app storage"),
-                (_ANDROID_ACCEPT_ALL_TLS, "android-accept-all-tls", "Critical", "Android TLS validation appears to accept arbitrary certificates or hosts", "Mobile TLS trust disabled"),
-                (_MOBILE_MINIFY_FALSE, "android-minify-disabled", "Info", "Android build disables code shrinking/obfuscation", "Mobile release hardening gap"),
+                (
+                    _ANDROID_WEBVIEW_BRIDGE,
+                    "android-webview-js-bridge",
+                    "High",
+                    "WebView JavaScript bridge is exposed",
+                    "Mobile WebView bridge",
+                ),
+                (
+                    _ANDROID_WEBVIEW_JS,
+                    "android-webview-javascript-enabled",
+                    "Medium",
+                    "WebView JavaScript execution is enabled",
+                    "Mobile WebView bridge",
+                ),
+                (
+                    _ANDROID_WEBVIEW_FILE,
+                    "android-webview-file-access",
+                    "High",
+                    "WebView file/universal file URL access is enabled",
+                    "Mobile WebView bridge",
+                ),
+                (
+                    _ANDROID_WEBVIEW_DEBUG,
+                    "android-webview-debugging-enabled",
+                    "High",
+                    "WebView remote debugging is enabled",
+                    "Mobile debug build shipped",
+                ),
+                (
+                    _ANDROID_SHARED_PREF_TOKEN,
+                    "android-token-sharedpreferences",
+                    "High",
+                    "Sensitive token/secret marker appears in SharedPreferences usage",
+                    "Mobile token in app storage",
+                ),
+                (
+                    _ANDROID_WORLD_READABLE,
+                    "android-world-readable-storage",
+                    "High",
+                    "World-readable Android storage mode is used",
+                    "Mobile token in app storage",
+                ),
+                (
+                    _ANDROID_ACCEPT_ALL_TLS,
+                    "android-accept-all-tls",
+                    "Critical",
+                    "Android TLS validation appears to accept arbitrary certificates or hosts",
+                    "Mobile TLS trust disabled",
+                ),
+                (
+                    _MOBILE_MINIFY_FALSE,
+                    "android-minify-disabled",
+                    "Info",
+                    "Android build disables code shrinking/obfuscation",
+                    "Mobile release hardening gap",
+                ),
             ]
             for pattern, subcat, severity, evidence, anti_pattern in android_patterns:
                 for n, line in _line_hits(lines, pattern):
@@ -1949,11 +2015,41 @@ def scan_mobile_architecture(repo_root: Path) -> dict[str, Any]:
 
         if is_ios:
             ios_patterns = [
-                (_IOS_WEBVIEW_BRIDGE, "ios-webview-js-bridge", "High", "iOS WebView JavaScript bridge or evaluation API is present", "Mobile WebView bridge"),
-                (_IOS_USERDEFAULTS_TOKEN, "ios-token-userdefaults", "High", "Sensitive token/secret marker appears in UserDefaults usage", "Mobile token in app storage"),
-                (_IOS_KEYCHAIN_ALWAYS, "ios-keychain-accessible-always", "Medium", "Keychain item uses always-accessible class", "Mobile token in app storage"),
-                (_IOS_ACCEPT_ALL_TLS, "ios-accept-all-tls", "Critical", "iOS TLS validation appears to accept arbitrary certificates or hosts", "Mobile TLS trust disabled"),
-                (_IOS_ASSOCIATED_DOMAINS, "ios-associated-domains-surface", "Info", "iOS Associated Domains entitlement is present", "Mobile deep-link trust boundary"),
+                (
+                    _IOS_WEBVIEW_BRIDGE,
+                    "ios-webview-js-bridge",
+                    "High",
+                    "iOS WebView JavaScript bridge or evaluation API is present",
+                    "Mobile WebView bridge",
+                ),
+                (
+                    _IOS_USERDEFAULTS_TOKEN,
+                    "ios-token-userdefaults",
+                    "High",
+                    "Sensitive token/secret marker appears in UserDefaults usage",
+                    "Mobile token in app storage",
+                ),
+                (
+                    _IOS_KEYCHAIN_ALWAYS,
+                    "ios-keychain-accessible-always",
+                    "Medium",
+                    "Keychain item uses always-accessible class",
+                    "Mobile token in app storage",
+                ),
+                (
+                    _IOS_ACCEPT_ALL_TLS,
+                    "ios-accept-all-tls",
+                    "Critical",
+                    "iOS TLS validation appears to accept arbitrary certificates or hosts",
+                    "Mobile TLS trust disabled",
+                ),
+                (
+                    _IOS_ASSOCIATED_DOMAINS,
+                    "ios-associated-domains-surface",
+                    "Info",
+                    "iOS Associated Domains entitlement is present",
+                    "Mobile deep-link trust boundary",
+                ),
             ]
             for pattern, subcat, severity, evidence, anti_pattern in ios_patterns:
                 for n, line in _line_hits(lines, pattern):

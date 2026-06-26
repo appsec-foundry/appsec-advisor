@@ -11,9 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-IMPL = (REPO_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md").read_text(
-    encoding="utf-8"
-)
+IMPL = (REPO_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md").read_text(encoding="utf-8")
 
 
 def test_log_bloat_helper_defined():

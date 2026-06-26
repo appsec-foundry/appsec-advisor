@@ -1176,29 +1176,48 @@ Files
   <if LIVE_PHASE=true:>Live phase : on (background dispatch + console phase)
   <elif env APPSEC_LIVE_PHASE=1 (set but PARALLEL_STRIDE active):>Live phase : requested — inactive (PARALLEL_STRIDE wins)
   <active options if any (Outputs / Extras / Skips / Run flags / STRIDE / Limits)>
-
-Notes
-  • <note 1>
-  • <note 2>
-  ...
 ```
 
-**Notes** content (concatenate, in this order, those whose precondition is true):
-
-  • `will_run=True` → `"Ctrl-C now to abort before any tokens are spent."`
-  • `will_run=True ∧ mode != full/rebuild` → `"Pass --full to widen the scope to a complete re-assessment."`
-  • `will_run=False` → `"threat-model.md preserved as-is."`
-  • `will_run=False` → `"Pass --full to force a complete re-assessment regardless."`
-  • `assessment_depth=standard` (always, regardless of `will_run`) → `"Hint: the most thorough results come from --assessment-depth thorough (deeper per-component analysis + architect review, Opus reasoning) — at correspondingly higher cost and time."`
-  • `plugin tier=major` → `"STRONGLY consider --full — major plugin bump may contain breaking analysis changes that incremental cannot retro-apply."`
-  • `plugin tier=minor` → `"Consider --full — minor plugin bumps usually ship analysis improvements that only affect newly-scanned code in incremental."`
-  • `compat=older-compatible` → `"Analysis schema drifted (baseline analysis_version older but compatible) — full rebuild applies new categories to ALL findings."`
-  • `cfg.repo_size_capped=True` → `"Large repo (<S> source files) → longer run expected; reasoning stays on the default tier and components are criteria-selected, not reduced (no attack surface dropped)."`
+**Do NOT render a `Notes` section in this LLM-typed banner.** The Notes /
+recommendations block — including the standard→thorough hint — is emitted
+**deterministically by a Bash call immediately after this banner** (see the
+"Notes block — deterministic Bash emit" section below). It used to be re-typed
+here, but the model intermittently dropped the whole section (and with it the
+standard-depth upsell), so its single authoritative source is now
+`resolve_config.py:render_run_plan_notes`. Stop the LLM banner at the last
+`Configuration` row.
 
 The rendered summary goes verbatim into the response text — no
 ``` code fence around it. Section headers (`Target`, `Plugin`, `Decision`, ...)
 are the visible structure; the leading `Threat Model — Pre-flight` heading
 identifies the block to the user.
+
+#### Notes block — deterministic Bash emit (immediately after the banner)
+
+Right after emitting the LLM banner above (which omits Notes), run this so the
+advisory Notes — `Ctrl-C now to abort`, the `--full` widen hints, and the
+**standard→thorough upsell** — print deterministically. `render_run_plan_notes`
+reads the same cfg (`.skill-config.json`), pre-check, dirty-set, and compat
+inputs as `--run-plan`, so the bullets match the canonical formatter exactly
+and never depend on the model re-typing them. `FAST_PATH_OUTPUT` /
+`DIRTY_SET_OUTPUT` / `COMPAT_LABEL` are empty in full / rebuild / first-run mode
+— that is fine: empty inputs resolve to the full-assessment verdict, yielding
+the `Ctrl-C now` + standard-depth hint bullets.
+
+```bash
+PRE_CHECK_TMP="$(mktemp)"; DIRTY_SET_TMP="$(mktemp)"
+printf '%s' "${FAST_PATH_OUTPUT:-}" > "$PRE_CHECK_TMP"
+printf '%s' "${DIRTY_SET_OUTPUT:-}" > "$DIRTY_SET_TMP"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_config.py" --output "$OUTPUT_DIR" \
+  --run-plan-notes \
+  --pre-check-file "$PRE_CHECK_TMP" \
+  --dirty-set-file "$DIRTY_SET_TMP" \
+  --compat-label "${COMPAT_LABEL:-equal}"
+rm -f "$PRE_CHECK_TMP" "$DIRTY_SET_TMP"
+```
+
+(The mode-upgrade re-render path below re-emits the banner; re-run this same
+Bash emit after it so the post-upgrade Notes stay in sync.)
 
 #### Per-decision next step after rendering the summary
 
@@ -3612,6 +3631,27 @@ Pass the following variables in the prompt:
 The architect reviewer runs with its own turn budget (up to 40 turns) and writes `$OUTPUT_DIR/.architect-review.md` with findings and a single-line verdict. It never modifies the threat model itself.
 
 **Non-fatal.** If Stage 4 errors out or returns without writing `.architect-review.md`, proceed to the Completion Summary as normal — the threat model is still valid. Log the failure to `.agent-run.log` but do not fail the overall skill.
+
+### Hard broken-link gate
+
+Before the Completion Summary, run a deterministic broken-link check on the final `threat-model.md`. This runs **after** all LLM-driven stages so no further pass can introduce a regression, and **before** the PDF / slug exports so broken links never reach a deliverable.
+
+`check_toc_closure` (despite its name) verifies **all** `[text](#anchor)` links in the document — TOC entries, finding cross-references, section back-links — not just the TOC. RC=1 when any `#anchor` has no matching heading slug or `<a id>`. **Skip when `DRY_RUN=true`** (temp output dir is discarded anyway).
+
+```bash
+if [ "${DRY_RUN:-false}" != "true" ]; then
+    LINK_GATE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" toc_closure \
+        "$OUTPUT_DIR/threat-model.md" 2>&1)
+    LINK_GATE_RC=$?
+    if [ "$LINK_GATE_RC" -ne 0 ]; then
+        printf '\n  ✗ BROKEN INTERNAL LINKS — pipeline aborted before PDF/slug export.\n' >&2
+        printf '%s\n' "$LINK_GATE_JSON" >&2
+        printf '\n  Fix: re-run Stage 3 (triggers recompose + QA), or edit the\n' >&2
+        printf '       offending .fragments/ file and recompose manually.\n' >&2
+        exit 1
+    fi
+fi
+```
 
 ## Completion Summary
 

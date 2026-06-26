@@ -336,17 +336,19 @@ def test_cat13_supplement_returns_empty_when_no_recon_patterns(tmp_path):
 def test_cat13_supplement_returns_file_line_entries(tmp_path):
     """When .recon-patterns.json has Cat-13 findings, returns subcategory: file:line pairs."""
     (tmp_path / ".recon-patterns.json").write_text(
-        json.dumps({
-            "categories": {
-                "13": {
-                    "findings": [
-                        {"subcategory": "llm-sdk", "file": "package.json", "line": 94},
-                        {"subcategory": "llm-invoke", "file": "routes/chat.ts", "line": 191},
-                    ],
-                    "count": 2,
+        json.dumps(
+            {
+                "categories": {
+                    "13": {
+                        "findings": [
+                            {"subcategory": "llm-sdk", "file": "package.json", "line": 94},
+                            {"subcategory": "llm-invoke", "file": "routes/chat.ts", "line": 191},
+                        ],
+                        "count": 2,
+                    }
                 }
             }
-        }),
+        ),
         encoding="utf-8",
     )
     result = bm._cat13_supplement(tmp_path)
@@ -357,17 +359,21 @@ def test_cat13_supplement_returns_file_line_entries(tmp_path):
 def test_builder_supplements_sparse_llm_patterns_from_cat13(tmp_path):
     """LLM component with sparse analyst known_llm_patterns gets Cat-13 supplement appended."""
     (tmp_path / ".components.json").write_text(
-        json.dumps({
-            "schema_version": 1,
-            "components": [{
-                "id": "llm-chat-service",
-                "name": "LLM Chat Service",
-                "description": "Ollama proxy at POST /rest/chat",
-                "paths": ["routes/chat.ts"],
-                "complexity": "moderate",
-                "deployment_zones": ["internet"],
-            }],
-        }),
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {
+                        "id": "llm-chat-service",
+                        "name": "LLM Chat Service",
+                        "description": "Ollama proxy at POST /rest/chat",
+                        "paths": ["routes/chat.ts"],
+                        "complexity": "moderate",
+                        "deployment_zones": ["internet"],
+                    }
+                ],
+            }
+        ),
         encoding="utf-8",
     )
     (tmp_path / ".trust-boundaries.json").write_text(
@@ -375,17 +381,19 @@ def test_builder_supplements_sparse_llm_patterns_from_cat13(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / ".recon-patterns.json").write_text(
-        json.dumps({
-            "categories": {
-                "13": {
-                    "findings": [
-                        {"subcategory": "llm-sdk", "file": "package.json", "line": 94},
-                        {"subcategory": "llm-invoke", "file": "routes/chat.ts", "line": 191},
-                    ],
-                    "count": 2,
+        json.dumps(
+            {
+                "categories": {
+                    "13": {
+                        "findings": [
+                            {"subcategory": "llm-sdk", "file": "package.json", "line": 94},
+                            {"subcategory": "llm-invoke", "file": "routes/chat.ts", "line": 191},
+                        ],
+                        "count": 2,
+                    }
                 }
             }
-        }),
+        ),
         encoding="utf-8",
     )
     # Analyst provides a sparse (< 120 char) known_llm_patterns
@@ -414,13 +422,13 @@ def test_renderer_ms_role_includes_ms_ai_exposure_in_author_list():
     """
     renderer_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
     # The ms row must mention both the fragment name and the condition
-    assert "ms-ai-exposure.json" in renderer_md, \
-        "ms-ai-exposure.json must appear in appsec-threat-renderer.md"
+    assert "ms-ai-exposure.json" in renderer_md, "ms-ai-exposure.json must appear in appsec-threat-renderer.md"
     # The fragment contract list must also include it (not just the table row)
     fragment_contract_idx = renderer_md.index("## Fragment Contract")
-    fragment_contract_section = renderer_md[fragment_contract_idx:fragment_contract_idx + 2000]
-    assert "ms-ai-exposure.json" in fragment_contract_section, \
+    fragment_contract_section = renderer_md[fragment_contract_idx : fragment_contract_idx + 2000]
+    assert "ms-ai-exposure.json" in fragment_contract_section, (
         "ms-ai-exposure.json must be listed in the Fragment Contract section"
+    )
 
 
 def test_owasp_llm07_grep_covers_cookie_tool_call_leakage():
@@ -433,9 +441,10 @@ def test_owasp_llm07_grep_covers_cookie_tool_call_leakage():
     top10_md = (AGENTS_DIR / "shared" / "owasp-llm-top10.md").read_text(encoding="utf-8")
     # Find the LLM07 row
     llm07_idx = top10_md.index("LLM07")
-    llm07_row = top10_md[llm07_idx:llm07_idx + 600]
-    assert "show_tool_calls" in llm07_row, \
+    llm07_row = top10_md[llm07_idx : llm07_idx + 600]
+    assert "show_tool_calls" in llm07_row, (
         "LLM07 grep must include show_tool_calls to catch cookie-gated tool call disclosure"
+    )
 
 
 def test_select_standard_includes_exposed_cicd_crownjewel_excludes_internal():
@@ -1230,8 +1239,12 @@ def test_is_llm_detects_by_id_name_and_techstack():
     assert bm._is_llm(_c("svc", name="LLM Chat Service")) is True
     assert bm._is_llm(_c("chatbot-api")) is True
     # tech_stack signal (a generically-named component whose stack is an LLM SDK)
-    comp = {"id": "assistant", "name": "Assistant", "type": "process",
-            "tech_stack": ["@ai-sdk/openai-compatible", "Ollama"]}
+    comp = {
+        "id": "assistant",
+        "name": "Assistant",
+        "type": "process",
+        "tech_stack": ["@ai-sdk/openai-compatible", "Ollama"],
+    }
     assert bm._is_llm(comp) is True
     # false-positive guards — bare 'ai' substrings must NOT match
     for cid in ("email-service", "retail-domain", "maintenance-worker", "available-stock"):
@@ -1243,9 +1256,13 @@ def test_is_llm_detects_by_known_llm_patterns_when_folded():
     generically-named `express-backend` component; the LLM signal lived only in
     `known_llm_patterns`. _is_llm must honour that field so the mandatory floor,
     the OWASP-LLM-Top-10 dispatch reason, and the Cat-13 supplement all fire."""
-    folded = {"id": "express-backend", "name": "Express Backend", "type": "process",
-              "tech_stack": ["Express", "Node.js"],
-              "known_llm_patterns": "Chatbot route POST /rest/chat — proxies to Ollama."}
+    folded = {
+        "id": "express-backend",
+        "name": "Express Backend",
+        "type": "process",
+        "tech_stack": ["Express", "Node.js"],
+        "known_llm_patterns": "Chatbot route POST /rest/chat — proxies to Ollama.",
+    }
     assert bm._is_llm(folded) is True
     # list form (manifest sometimes normalises to a list)
     folded_list = dict(folded, known_llm_patterns=["chatbot POST /rest/chat"])
@@ -1255,8 +1272,7 @@ def test_is_llm_detects_by_known_llm_patterns_when_folded():
     assert bm._is_llm(dict(folded, known_llm_patterns=[])) is False
     assert bm._is_llm(dict(folded, known_llm_patterns="   ")) is False
     # and the folded LLM backend is now mandatory-floored at standard depth
-    selected, report = bm.select_stride_components(
-        [folded, _c("plain-worker", zones=["internal-network"])], "standard")
+    selected, report = bm.select_stride_components([folded, _c("plain-worker", zones=["internal-network"])], "standard")
     assert "express-backend" in {c["id"] for c in selected}
     reasons = next(s["reasons"] for s in report["selected"] if s["id"] == "express-backend")
     assert any("AI/LLM surface" in r for r in reasons)
@@ -1280,13 +1296,22 @@ def test_seed_llm_role_from_analyst_context(tmp_path):
 def test_seed_llm_role_from_recon_when_analyst_omits(tmp_path):
     """Deterministic bridge: a strong Cat-13 finding under a component's paths
     flags it even when the analyst supplied no known_llm_patterns."""
-    (tmp_path / ".recon-patterns.json").write_text(json.dumps({
-        "categories": {"13": {"findings": [
-            {"subcategory": "llm-sdk", "strength": "strong", "file": "routes/chat.ts", "line": 9},
-            {"subcategory": "llm-sdk", "strength": "strong", "file": "package.json", "line": 94},
-            {"subcategory": "tool-use", "strength": "weak", "file": "server.ts", "line": 685},
-        ]}}
-    }), encoding="utf-8")
+    (tmp_path / ".recon-patterns.json").write_text(
+        json.dumps(
+            {
+                "categories": {
+                    "13": {
+                        "findings": [
+                            {"subcategory": "llm-sdk", "strength": "strong", "file": "routes/chat.ts", "line": 9},
+                            {"subcategory": "llm-sdk", "strength": "strong", "file": "package.json", "line": 94},
+                            {"subcategory": "tool-use", "strength": "weak", "file": "server.ts", "line": 685},
+                        ]
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     comps = [
         {"id": "express-backend", "name": "Express Backend", "paths": ["server.ts", "routes/chat.ts"]},
         {"id": "sqlite-db", "name": "SQLite DB", "paths": ["models/"]},
@@ -1340,9 +1365,17 @@ def test_exposed_zone_synonyms_recognized():
     internet/client-reachable synonyms must all count as exposed (2026-06-23:
     `internet-facing` socket + upload handler were mis-dropped as internal)."""
     for z in (
-        "internet-facing", "internet-exposed", "public-internet", "public",
-        "public-facing", "publicly-accessible", "externally-reachable",
-        "external", "edge", "browser", "web-browser",
+        "internet-facing",
+        "internet-exposed",
+        "public-internet",
+        "public",
+        "public-facing",
+        "publicly-accessible",
+        "externally-reachable",
+        "external",
+        "edge",
+        "browser",
+        "web-browser",
     ):
         assert bm._is_exposed(_c("x", zones=[z])) is True, z
     # genuinely-internal zones still NOT exposed
@@ -1360,8 +1393,10 @@ def test_internet_facing_components_selected_at_standard():
 def test_is_file_upload_detects_and_guards():
     assert bm._is_file_upload(_c("file-upload-handler")) is True
     assert bm._is_file_upload(_c("uploader")) is True
-    assert bm._is_file_upload({"id": "media", "name": "Media", "type": "process",
-                               "tech_stack": ["multer", "sharp"]}) is True
+    assert (
+        bm._is_file_upload({"id": "media", "name": "Media", "type": "process", "tech_stack": ["multer", "sharp"]})
+        is True
+    )
     for cid in ("backend-api", "load-balancer", "download-cache", "payload-router"):
         assert bm._is_file_upload(_c(cid)) is False, cid
 

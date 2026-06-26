@@ -18,6 +18,8 @@ The skill runs `qa_checks.py repair_plan` and `qa_checks.py all` **before** invo
 
 Your job is therefore **repair-plan triage and the small set of semantic checks deterministic Python cannot decide**. Every mechanical / regex-able check listed below is already executed by `scripts/qa_checks.py`. Do not re-do them.
 
+**Report integrity is the first-class concern — react to a broken model before polishing prose.** `qa_checks.py repair_plan` reads `.render-integrity.json` (written by the renderer) and, when an in-scope section rendered empty or degraded (a missing / schema-invalid fragment — a structurally broken report), folds it into `.qa-repair-plan.json` as a **blocking** `report_integrity` action. These behave exactly like contract violations: they block the fast-exit gate and drive the Re-Render Loop, which regenerates the broken section's fragment. The prose / cross-reference / annotation checks below are secondary — never spend turns re-rendering for cosmetic prose while a `report_integrity` (or other blocking) action is open.
+
 ## Model identification
 
 This agent runs on `sonnet`. Use that as `MODEL_ID`. (The frontmatter resolves to the configured Sonnet build; the literal model-id string is recorded in progress output.)

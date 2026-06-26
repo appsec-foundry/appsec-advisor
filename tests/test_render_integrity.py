@@ -43,6 +43,7 @@ def _load(name: str):
 compose = _load("compose_threat_model")
 rcs = _load("render_completion_summary")
 ari = _load("aggregate_run_issues")
+qa = _load("qa_checks")
 
 
 def _entry(sid, in_scope, outcome, expected=None, present=None):
@@ -219,3 +220,60 @@ def test_aggregate_flips_run_status_on_broken_report(tmp_path: Path):
     result = ari.aggregate(tmp_path, depth="standard", repo_root=tmp_path)
     assert result["run_status"] == "issues"
     assert any(i["category"] == "report_integrity" for i in result["issues"])
+
+
+# ---------------------------------------------------------------------------
+# qa_checks: a broken report feeds the Re-Render Loop (blocking repair action)
+# ---------------------------------------------------------------------------
+
+
+def test_integrity_actions_helper(tmp_path: Path):
+    # ok / missing → no actions; broken → one blocking action targeting the fragment.
+    assert qa._render_integrity_actions(tmp_path) == ([], [])  # no sidecar
+    _write_sidecar(tmp_path)
+    assert qa._render_integrity_actions(tmp_path) == ([], [])  # ok sidecar
+    (tmp_path / ".render-integrity.json").write_text(
+        json.dumps(
+            {
+                "report_integrity_ok": False,
+                "broken_sections": ["critical_attack_tree"],
+                "sections": [
+                    {
+                        "id": "critical_attack_tree",
+                        "in_scope": True,
+                        "outcome": "empty",
+                        "expected_fragments": ["ms-critical-attack-tree.json"],
+                        "present_fragments": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    issues, actions = qa._render_integrity_actions(tmp_path)
+    assert len(actions) == 1
+    assert actions[0]["type"] == "report_integrity"
+    assert actions[0]["fragments_to_rewrite"] == [".fragments/ms-critical-attack-tree.json"]
+    assert qa._action_severity(actions[0]["type"]) == "blocking"
+
+
+def test_build_repair_plan_folds_in_broken_report(tmp_path: Path):
+    # The compose fixture gates critical_attack_tree in (>=2 Criticals) but ships
+    # no fragment → it renders empty → the repair plan must carry a blocking
+    # report_integrity action that points the Re-Render Loop at the fragment.
+    out = tmp_path / "output"
+    shutil.copytree(FIXTURE, out)
+    rendered, _ = compose.render(CONTRACT, out)
+    # render() returns the markdown + writes .render-integrity.json; the CLI
+    # main() is what persists threat-model.md — do the same so build_repair_plan
+    # (which reads the md) sees the same on-disk state as the real pipeline.
+    (out / "threat-model.md").write_text(rendered, encoding="utf-8")
+
+    plan, _report = qa.build_repair_plan(out / "threat-model.md", out, CONTRACT)
+    integrity = [a for a in plan["actions"] if a["type"] == "report_integrity"]
+    assert integrity, "broken report did not produce a report_integrity repair action"
+    assert any(".fragments/ms-critical-attack-tree.json" in a["fragments_to_rewrite"] for a in integrity)
+    assert all(a["severity"] == "blocking" for a in integrity)
+    # A blocking action with a writable fragment → the loop is expected to run.
+    assert plan["status"] == "fail"
+    assert plan["actionable"] is True

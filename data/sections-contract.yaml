@@ -142,6 +142,7 @@ document:
         # Item 3 — activated dormant Critical Attack Tree fragment producer.
         - { id: critical_attack_tree, condition: "has_multi_critical" }
         - system_overview
+        - { id: identified_actors, condition: "has_resolved_actors" }
         - architecture_diagrams
         # §3 conditional on `not skip_attack_walkthroughs` — see main `order:` block.
         - { id: attack_walkthroughs, condition: "not skip_attack_walkthroughs" }

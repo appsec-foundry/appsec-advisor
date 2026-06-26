@@ -1732,6 +1732,60 @@ def _action_severity(action_type: str) -> str:
     return "cosmetic" if action_type in COSMETIC_ACTION_TYPES else "blocking"
 
 
+def _render_integrity_actions(output_dir: Path) -> tuple[list[str], list[dict]]:
+    """Translate a broken report-integrity manifest into blocking repair actions.
+
+    Reads ``.render-integrity.json`` (written by ``compose_threat_model.render``).
+    When ``report_integrity_ok`` is false, each in-scope section that rendered
+    degraded or empty has a missing / schema-invalid fragment — a structurally
+    broken model. This emits one blocking action per broken section that points
+    the Re-Render Loop at the section's fragment(s) to regenerate, so QA
+    *repairs* a broken model rather than only reporting it.
+
+    A broken section with no fragment of its own (a deterministic/computed
+    section) yields an action with empty ``fragments_to_rewrite`` — surfaced as
+    ``manual_review`` (re-render cannot fix a renderer bug), not looped.
+
+    Returns ``(issue_strings, actions)``. No sidecar / ok report → empty lists
+    (backward-compatible with runs that predate the manifest).
+    """
+    issues: list[str] = []
+    actions: list[dict] = []
+    path = output_dir / ".render-integrity.json"
+    if not path.is_file():
+        return issues, actions
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return issues, actions
+    if not isinstance(data, dict) or data.get("report_integrity_ok", True):
+        return issues, actions
+    by_id = {s.get("id"): s for s in (data.get("sections") or []) if isinstance(s, dict)}
+    for sid in data.get("broken_sections") or []:
+        sec = by_id.get(sid) or {}
+        outcome = sec.get("outcome", "empty")
+        frags = [f".fragments/{name}" for name in (sec.get("expected_fragments") or [])]
+        issues.append(f"report integrity: in-scope section '{sid}' rendered {outcome} — fragment missing/invalid")
+        actions.append(
+            {
+                "raw_issue": f"report_integrity: {sid} rendered {outcome}",
+                "type": "report_integrity",
+                "section_id": sid,
+                "fragments_to_rewrite": frags,
+                "remediation": (
+                    f"Section '{sid}' is in scope (its condition is true) but rendered "
+                    f"'{outcome}' — its data/markdown fragment is missing or empty. "
+                    f"Re-author {frags or '(this section has no fragment)'} from "
+                    f"threat-model.yaml plus the schema/contract rules for this section, "
+                    f"then re-run compose_threat_model.py --strict. If the section has no "
+                    f"fragment, it is a deterministic/computed-section renderer bug — "
+                    f"escalate, do not loop."
+                ),
+            }
+        )
+    return issues, actions
+
+
 def build_repair_plan(
     md_path: Path,
     output_dir: Path,
@@ -1806,6 +1860,13 @@ def build_repair_plan(
     report.issues.extend(walkthrough_coverage_issues)
     report.issues.extend(walkthrough_depth_issues)
     report.issues.extend(recon_iam_issues)
+    # Report-integrity manifest (.render-integrity.json) — an in-scope section
+    # that rendered empty/degraded is a structurally broken model. Fold each
+    # broken section into the repair plan as a blocking action so the existing
+    # Re-Render Loop regenerates its fragment. This is QA reacting to a broken
+    # model, not re-checking prose.
+    integrity_issues, integrity_actions = _render_integrity_actions(output_dir)
+    report.issues.extend(integrity_issues)
     # falls_short issues are warnings only — extend warnings, not issues.
     report.warnings.extend(falls_short_report.warnings)
     report.issues.extend(falls_short_issues)
@@ -2369,6 +2430,8 @@ def build_repair_plan(
                 ),
             }
         )
+
+    actions.extend(integrity_actions)
 
     # ---- Repair-plan deduplication ---------------------------------------
     # Multiple structural checks (e.g. ``check_mermaid_syntax`` +

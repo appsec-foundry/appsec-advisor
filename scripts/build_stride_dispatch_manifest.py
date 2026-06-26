@@ -69,6 +69,7 @@ def _cat13_supplement(output_dir: Path) -> str:
             break
     return "; ".join(parts)
 
+
 # max_turns per (depth, complexity) — single source of truth is
 # resolve_config.DEPTH_PARAMS; imported when available, else a synced fallback
 # (kept identical by tests/test_dispatch_manifest.py::test_depth_params_in_sync).
@@ -1021,11 +1022,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             if isinstance(existing, str) and len(existing) < 120:
                 supplement = _cat13_supplement(output_dir)
                 if supplement:
-                    comp["known_llm_patterns"] = (
-                        (existing + "; " + supplement).lstrip("; ")
-                        if existing
-                        else supplement
-                    )
+                    comp["known_llm_patterns"] = (existing + "; " + supplement).lstrip("; ") if existing else supplement
         comp["model"] = stride_model
         out_components.append(comp)
 

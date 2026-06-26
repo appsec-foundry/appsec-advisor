@@ -215,9 +215,7 @@ def test_rebuild_wipe_lazy_loaded_not_inline():
     assert impl.count("modes/rebuild-wipe.md") == 1, (
         "SKILL-impl.md must reference modes/rebuild-wipe.md exactly once (single lazy-load pointer)"
     )
-    assert "only when `REBUILD=true`" in impl, (
-        "the modes/rebuild-wipe.md load must be explicitly gated on rebuild mode"
-    )
+    assert "only when `REBUILD=true`" in impl, "the modes/rebuild-wipe.md load must be explicitly gated on rebuild mode"
 
 
 def test_skill_impl_stage2_tail_lazy_loaded():
