@@ -77,11 +77,7 @@ def _read_prior_depth(output_dir: Path) -> str:
     baseline = output_dir / ".appsec-cache" / "baseline.json"
     if baseline.is_file():
         try:
-            return (
-                (json.loads(baseline.read_text(encoding="utf-8")).get("last_run_depth") or "")
-                .strip()
-                .lower()
-            )
+            return (json.loads(baseline.read_text(encoding="utf-8")).get("last_run_depth") or "").strip().lower()
         except (OSError, ValueError, json.JSONDecodeError):
             return ""
     return ""
@@ -151,8 +147,7 @@ def snapshot(output_dir: Path, plugin_root: Path, repo_root: Path | None) -> int
     # overwrite a genuine standard/thorough snapshot.
     if _depth_rank(prior_depth) < stored_rank:
         sys.stdout.write(
-            f"snapshot-sections: kept existing (stored depth rank {stored_rank} "
-            f"> prior '{prior_depth or '?'}')\n"
+            f"snapshot-sections: kept existing (stored depth rank {stored_rank} > prior '{prior_depth or '?'}')\n"
         )
         return 0
 
@@ -183,7 +178,9 @@ def snapshot(output_dir: Path, plugin_root: Path, repo_root: Path | None) -> int
         elif s["substrate"] == "md-slice":
             # Backed by prior-report.md — captured iff the section heading exists.
             num = s.get("md_section_number")
-            if num is not None and re.search(rf"(?m)^## {int(num)}\. ", prior_md.read_text(encoding='utf-8', errors='ignore')):
+            if num is not None and re.search(
+                rf"(?m)^## {int(num)}\. ", prior_md.read_text(encoding="utf-8", errors="ignore")
+            ):
                 entry["captured"] = True
         # Staleness input: hash the repo files the section describes, if declared.
         if repo_root is not None and s.get("source_globs"):
@@ -202,10 +199,7 @@ def snapshot(output_dir: Path, plugin_root: Path, repo_root: Path | None) -> int
         "sections": section_meta,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    sys.stdout.write(
-        f"snapshot-sections: captured {', '.join(captured)} "
-        f"(origin depth: {prior_depth or '?'})\n"
-    )
+    sys.stdout.write(f"snapshot-sections: captured {', '.join(captured)} (origin depth: {prior_depth or '?'})\n")
     return 0
 
 

@@ -583,9 +583,12 @@ class TestClassifyFiles:
     def test_no_diff_untracked_security_content_relevant(self):
         """No git diff (untracked/new file) but the file's CONTENT carries
         security signal → relevant via the content-scan fallback."""
-        with patch("security_relevance_filter.get_diff_for_file", return_value=""), patch(
-            "security_relevance_filter._read_untracked_content",
-            return_value="token = jwt.encode(payload, SECRET_KEY)\n",
+        with (
+            patch("security_relevance_filter.get_diff_for_file", return_value=""),
+            patch(
+                "security_relevance_filter._read_untracked_content",
+                return_value="token = jwt.encode(payload, SECRET_KEY)\n",
+            ),
         ):
             result = classify_files("/tmp/repo", "abc123", ["src/new_route.py"])
         assert result["verdict"] == "relevant"
@@ -597,9 +600,12 @@ class TestClassifyFiles:
         .bashrc/.zshrc sitting in the repo dir) → irrelevant. This is the
         regression guard for the false-positive that forced needless
         re-analyses on trees whose application surface was unchanged."""
-        with patch("security_relevance_filter.get_diff_for_file", return_value=""), patch(
-            "security_relevance_filter._read_untracked_content",
-            return_value="export PATH=$HOME/bin:$PATH\nalias ll='ls -la'\n",
+        with (
+            patch("security_relevance_filter.get_diff_for_file", return_value=""),
+            patch(
+                "security_relevance_filter._read_untracked_content",
+                return_value="export PATH=$HOME/bin:$PATH\nalias ll='ls -la'\n",
+            ),
         ):
             result = classify_files("/tmp/repo", "abc123", [".bashrc"])
         assert result["verdict"] == "irrelevant"
@@ -609,8 +615,9 @@ class TestClassifyFiles:
     def test_no_diff_no_content_irrelevant(self):
         """No git diff AND no readable content (missing/binary) → irrelevant
         (no signal to act on)."""
-        with patch("security_relevance_filter.get_diff_for_file", return_value=""), patch(
-            "security_relevance_filter._read_untracked_content", return_value=None
+        with (
+            patch("security_relevance_filter.get_diff_for_file", return_value=""),
+            patch("security_relevance_filter._read_untracked_content", return_value=None),
         ):
             result = classify_files("/tmp/repo", "abc123", ["src/server.py"])
         assert result["verdict"] == "irrelevant"

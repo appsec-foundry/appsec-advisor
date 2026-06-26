@@ -1195,9 +1195,7 @@ def extract_run_issues(output_dir: Path) -> Optional[dict]:
 
             try:
                 gen_epoch = int(
-                    _dt.datetime.strptime(gen, "%Y-%m-%dT%H:%M:%SZ")
-                    .replace(tzinfo=_dt.timezone.utc)
-                    .timestamp()
+                    _dt.datetime.strptime(gen, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc).timestamp()
                 )
             except ValueError:
                 gen_epoch = None

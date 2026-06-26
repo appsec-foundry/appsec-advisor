@@ -636,9 +636,7 @@ def _has_security_relevant_package_json_change(
             # flip the manifest to "security-relevant". Adds/removes and
             # minor/major bumps still count.
             if key in _DEP_SEMVER_KEYS:
-                common_diff = [
-                    k for k in common_diff if not _is_patch_only_bump(str(bv[k]), str(av[k]))
-                ]
+                common_diff = [k for k in common_diff if not _is_patch_only_bump(str(bv[k]), str(av[k]))]
             if not (added or removed or common_diff):
                 # Every difference in this key was a patch-only bump → noise.
                 continue

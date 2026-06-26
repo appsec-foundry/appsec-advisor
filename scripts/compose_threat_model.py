@@ -1932,6 +1932,7 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
 
 def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     changelog = ctx.yaml_data.get("changelog") or []
+
     # Drop malformed/out-of-contract entries (2026-06-26). The deterministic
     # build_changelog always sets delta_basis, threat_count, and
     # assessment_depth. An entry with ALL THREE missing is a hand-written stub
@@ -1943,10 +1944,7 @@ def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict
     def _is_wellformed(e: dict) -> bool:
         if not isinstance(e, dict):
             return False
-        return any(
-            e.get(k) is not None
-            for k in ("delta_basis", "threat_count", "assessment_depth")
-        )
+        return any(e.get(k) is not None for k in ("delta_basis", "threat_count", "assessment_depth"))
 
     dropped = [e for e in changelog if not _is_wellformed(e)]
     if dropped:
@@ -2068,8 +2066,7 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
             when = f"the {prov['origin_date']} " if prov.get("origin_date") else "a prior "
             dpth = f"{prov['origin_depth']} " if prov.get("origin_depth") else "deeper "
             lines.append(
-                f"> - **Carried forward from {when}{dpth}assessment (not re-analysed here):** "
-                + ", ".join(names)
+                f"> - **Carried forward from {when}{dpth}assessment (not re-analysed here):** " + ", ".join(names)
             )
     lines.extend(
         [
@@ -2363,9 +2360,7 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
             notes = []
             if retired:
                 _g = ", ".join(f"§{n}" for n in retired)
-                notes.append(
-                    f"{_g} {'was' if len(retired) == 1 else 'were'} retired in a prior revision"
-                )
+                notes.append(f"{_g} {'was' if len(retired) == 1 else 'were'} retired in a prior revision")
             if suppressed:
                 _g = ", ".join(f"§{n}" for n in suppressed)
                 notes.append(
@@ -2374,9 +2369,7 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
                 )
             if other:
                 _g = ", ".join(f"§{n}" for n in other)
-                notes.append(
-                    f"{_g} {'is' if len(other) == 1 else 'are'} not present in this report"
-                )
+                notes.append(f"{_g} {'is' if len(other) == 1 else 'are'} not present in this report")
             out += (
                 f"\n> _Section numbering is non-contiguous: "
                 f"{'; '.join(notes)}. The remaining sections keep their original "
@@ -16137,7 +16130,7 @@ def _section_substance_ok(ctx: RenderContext, sid: str, body: str) -> bool:
         # heading-only §10. A model with zero threats may legitimately have none.
         if not threats:
             return True
-        return bool(re.search(r'(?m)^#{2,4}\s.*\bM-\d{2,}', body)) or '<a id="m-' in body.lower()
+        return bool(re.search(r"(?m)^#{2,4}\s.*\bM-\d{2,}", body)) or '<a id="m-' in body.lower()
     if sid == "threat_register":
         if not threats:
             return True

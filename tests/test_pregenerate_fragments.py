@@ -203,26 +203,55 @@ class TestAiExposure:
             {"id": "llm-chatbot", "name": "LLM Chatbot Service"},
         ],
         "threats": [
-            {"id": "T-026", "title": "Prompt Injection — routes/chat.ts:179", "component": "llm-chatbot", "effective_severity": "High"},
-            {"id": "T-035", "title": "Confidential System Prompt Extractable — routes/chat.ts:104", "component": "llm-chatbot", "risk": "High"},
-            {"id": "T-043", "title": "Unbounded LLM API Consumption on Chat Endpoint — server.ts", "component": "express-api", "effective_severity": "High"},
+            {
+                "id": "T-026",
+                "title": "Prompt Injection — routes/chat.ts:179",
+                "component": "llm-chatbot",
+                "effective_severity": "High",
+            },
+            {
+                "id": "T-035",
+                "title": "Confidential System Prompt Extractable — routes/chat.ts:104",
+                "component": "llm-chatbot",
+                "risk": "High",
+            },
+            {
+                "id": "T-043",
+                "title": "Unbounded LLM API Consumption on Chat Endpoint — server.ts",
+                "component": "express-api",
+                "effective_severity": "High",
+            },
             # noise — must NOT be categorised as an LLM risk:
-            {"id": "T-025", "title": "NoSQL Injection — routes/chat.ts:149", "component": "llm-chatbot", "effective_severity": "Critical"},
-            {"id": "T-041", "title": "Unbounded In-Memory Token Store — lib/insecurity.ts:70", "component": "auth", "risk": "High"},
+            {
+                "id": "T-025",
+                "title": "NoSQL Injection — routes/chat.ts:149",
+                "component": "llm-chatbot",
+                "effective_severity": "Critical",
+            },
+            {
+                "id": "T-041",
+                "title": "Unbounded In-Memory Token Store — lib/insecurity.ts:70",
+                "component": "auth",
+                "risk": "High",
+            },
         ],
     }
 
     def test_returns_none_without_llm_surface(self):
         d = {
             "components": [{"id": "api", "name": "API Server"}],
-            "threats": [{"id": "T-001", "title": "SQL Injection — routes/login.ts", "component": "api", "risk": "Critical"}],
+            "threats": [
+                {"id": "T-001", "title": "SQL Injection — routes/login.ts", "component": "api", "risk": "Critical"}
+            ],
         }
         assert pf.gen_ai_exposure(d) is None
 
     def test_returns_none_when_llm_component_has_no_llm_risk(self):
         d = {
             "components": [{"id": "llm-chatbot", "name": "LLM Chatbot Service"}],
-            "threats": [{"id": "T-002", "title": "NoSQL Injection — routes/chat.ts", "component": "llm-chatbot", "risk": "High"}],
+            "threats": [
+                {"id": "T-002", "title": "NoSQL Injection — routes/chat.ts", "component": "llm-chatbot", "risk": "High"}
+            ],
         }
         assert pf.gen_ai_exposure(d) is None
 

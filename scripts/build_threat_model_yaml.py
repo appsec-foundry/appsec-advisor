@@ -690,12 +690,7 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         # risk → severity precedence so the dropped set matches the rendered
         # tally. Anything below the floor (default: Low/Informational) is
         # excluded from the canonical threats[] entirely.
-        sev = (
-            threat.get("effective_severity")
-            or threat.get("risk")
-            or threat.get("severity")
-            or "medium"
-        )
+        sev = threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "medium"
         if _SEVERITY_FLOOR_RANK.get(str(sev).strip().lower(), 2) < floor_rank:
             skipped_below_floor += 1
             continue
@@ -793,11 +788,7 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
     # share a fix converge onto one M-card (dedupe_mitigation_controls later
     # converges the rest). New M-IDs continue past the highest existing number.
     def _next_num() -> int:
-        nums = [
-            int(mid.split("-")[1])
-            for mid in by_mid
-            if mid.startswith("M-") and mid.split("-")[1].isdigit()
-        ]
+        nums = [int(mid.split("-")[1]) for mid in by_mid if mid.startswith("M-") and mid.split("-")[1].isdigit()]
         return (max(nums) + 1) if nums else 1
 
     fallback_groups: dict[str, dict] = {}
@@ -825,9 +816,7 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
             key=lambda s: risk_order.get(s, 4),
         )
         efforts = [
-            (m.get("remediation") or {}).get("effort", "Medium")
-            if isinstance(m.get("remediation"), dict)
-            else "Medium"
+            (m.get("remediation") or {}).get("effort", "Medium") if isinstance(m.get("remediation"), dict) else "Medium"
             for m in members
         ]
         effort = min(efforts, key=lambda e: {"Low": 0, "Medium": 1, "High": 2}.get(str(e).capitalize(), 1))
@@ -1697,9 +1686,7 @@ def main() -> int:
         prior_yaml=prior_yaml,
     )
 
-    threats, threat_warnings = build_threats(
-        merged, register_floor=skill_cfg.get("register_severity_floor", "medium")
-    )
+    threats, threat_warnings = build_threats(merged, register_floor=skill_cfg.get("register_severity_floor", "medium"))
     for w in threat_warnings:
         sys.stderr.write(f"  {w}\n")
 

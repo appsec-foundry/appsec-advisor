@@ -51,8 +51,7 @@ def chk_every_threat_has_id(y: dict, md: str) -> tuple[bool, str]:
 def chk_mitigations_nonempty_when_remediations(y: dict, md: str) -> tuple[bool, str]:
     threats = y.get("threats") or []
     has_remediation = any(
-        (isinstance(t, dict))
-        and ((t.get("remediation") or {}).get("steps") or t.get("mitigation_title"))
+        (isinstance(t, dict)) and ((t.get("remediation") or {}).get("steps") or t.get("mitigation_title"))
         for t in threats
     )
     if not has_remediation:
@@ -68,12 +67,12 @@ def chk_mitigation_links_resolve(y: dict, md: str) -> tuple[bool, str]:
     threat_ids = {t.get("id") for t in threats if isinstance(t, dict)}
     dangling_t = []
     for t in threats:
-        for mid in (t.get("mitigation_ids") or []):
+        for mid in t.get("mitigation_ids") or []:
             if mid not in mit_ids:
                 dangling_t.append(f"{t.get('id')}→{mid}")
     dangling_m = []
     for m in mits:
-        for tid in (m.get("threat_ids") or []):
+        for tid in m.get("threat_ids") or []:
             if tid not in threat_ids:
                 dangling_m.append(f"{m.get('id')}→{tid}")
     problems = dangling_t + dangling_m
@@ -89,7 +88,11 @@ def chk_crit_high_have_mitigation_link(y: dict, md: str) -> tuple[bool, str]:
             continue
         if _crit_high(t) and not (t.get("mitigation_ids") or []):
             unlinked.append(t.get("id"))
-    return (not unlinked, f"{len(unlinked)} Critical/High finding(s) without a mitigation link: " + ", ".join(str(x) for x in unlinked[:10]))
+    return (
+        not unlinked,
+        f"{len(unlinked)} Critical/High finding(s) without a mitigation link: "
+        + ", ".join(str(x) for x in unlinked[:10]),
+    )
 
 
 def chk_conditional_fragment_present(y: dict, md: str) -> tuple[bool, str]:
@@ -206,9 +209,7 @@ def run(output_dir: Path, plugin_root: Path, phase: str) -> int:
             f"across {ran} check(s) — BLOCKING\n"
         )
         return 2
-    sys.stdout.write(
-        f"assert-completeness[{phase}]: OK ({ran} check(s), {len(warnings)} warning(s))\n"
-    )
+    sys.stdout.write(f"assert-completeness[{phase}]: OK ({ran} check(s), {len(warnings)} warning(s))\n")
     return 0
 
 

@@ -152,17 +152,13 @@ def _print_matrix(m: dict) -> None:
     for r in m["rows"]:
         scope = "in" if r["in_scope"] else "out"
         mark = "✗" if r["verdict"].startswith("FAIL") else " "
-        sys.stdout.write(
-            f"  {mark} {r['id']:<26} {scope:<6} {str(r['outcome']):<20} {r['verdict']}\n"
-        )
+        sys.stdout.write(f"  {mark} {r['id']:<26} {scope:<6} {str(r['outcome']):<20} {r['verdict']}\n")
 
 
 def run(output_dir: Path, plugin_root: Path) -> int:
     m = build_matrix(output_dir, plugin_root)
     try:
-        (output_dir / ".section-integrity.json").write_text(
-            json.dumps(m, indent=2) + "\n", encoding="utf-8"
-        )
+        (output_dir / ".section-integrity.json").write_text(json.dumps(m, indent=2) + "\n", encoding="utf-8")
     except OSError:
         pass
     _print_matrix(m)
@@ -171,9 +167,7 @@ def run(output_dir: Path, plugin_root: Path) -> int:
     if not m["ok"]:
         sys.stderr.write(
             "section-integrity: FAIL — "
-            + ", ".join(
-                f"{r['id']}={r['verdict']}" for r in m["rows"] if r["verdict"].startswith("FAIL")
-            )
+            + ", ".join(f"{r['id']}={r['verdict']}" for r in m["rows"] if r["verdict"].startswith("FAIL"))
             + "\n"
         )
         return 2
