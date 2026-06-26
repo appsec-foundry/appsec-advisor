@@ -708,6 +708,25 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
     # juice-shop: 18 threat-analyst snapshots → 18 `session_stop_unknown`
     # entries that swamped the real signals). Collapse per source-agent to the
     # FINAL (max-out) snapshot — the cumulative figure is the actionable one.
+    # Planned-exit detection (2026-06-26). In the PARALLEL_STRIDE A/B split the
+    # threat-analyst is dispatched twice with STAGE1_PHASE_LIMIT (Analyst-A stops
+    # after Phase 8, Analyst-B after Phase 10b) — each logs `ASSESSMENT_END … (…
+    # STAGE1_PHASE_LIMIT=…)` on a *successful* planned stop. Their cumulative
+    # SESSION_STOP output (summed across both dispatches) routinely exceeds the
+    # 50k warn threshold and was mis-flagged as `session_stop_unknown` /
+    # "turn-budget exhaustion", even though the deliverable is complete. A source
+    # agent that logged a planned-exit marker did NOT exhaust its budget — skip
+    # the unknown-reason warning for it. A genuine budget kill never reaches the
+    # ASSESSMENT_END line (it dies mid-phase), so this cannot mask a real
+    # exhaustion. out==0 stops are still surfaced below (real crash signal).
+    planned_exit_sources: set[str] = set()
+    for _ln, _raw in agent_log:
+        _ev = _parse_event_line(_raw)
+        if not _ev or _ev["event"] != "ASSESSMENT_END":
+            continue
+        if "STAGE1_PHASE_LIMIT" in (_ev.get("detail") or ""):
+            planned_exit_sources.add(_ev["source"] or "?")
+
     by_source: dict[str, dict] = {}
     counts: dict[str, int] = {}
     for ln, raw in agent_log:
@@ -729,6 +748,11 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
         # tokens) regardless of stop_reason — that signal is independently
         # actionable (long-running session worth flagging).
         if reason == "unknown" and 0 < out_tokens <= SUBAGENT_OUTPUT_TOKEN_WARN:
+            continue
+        # Skip unknown-reason high-output stops from agents that logged a
+        # planned A/B-split exit — expected, not budget exhaustion. out==0
+        # crashes (out_tokens not > 0) still fall through and are surfaced.
+        if reason == "unknown" and out_tokens > 0 and (ev["source"] or "?") in planned_exit_sources:
             continue
         if not (reason == "unknown" or out_tokens > SUBAGENT_OUTPUT_TOKEN_WARN):
             continue

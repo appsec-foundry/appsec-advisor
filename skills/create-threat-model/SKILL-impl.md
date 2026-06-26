@@ -1448,7 +1448,7 @@ Full run: discarding stale intermediate artifacts to avoid cross-contamination.
     .progress/ (per-agent progress tracker — will be recreated)
     .fragments/ (compose inputs from prior contract version)
     .pre-render-repair-plan.json, .qa-repair-plan.json, .architect-repair-plan.json (stale repair signals)
-    .stage-stats.jsonl, .run-issues-fixes.json (prior-run observability — must not bleed into this run's stats)
+    .stage-stats.jsonl, .run-issues.json, .run-issues-fixes.json (prior-run observability — must not bleed into this run's stats)
   Preserved:
     threat-model.md, threat-model.yaml, threat-model.sarif.json (overwritten by orchestrator)
     .appsec-cache/ (baseline cache; used for incremental fingerprint comparison)
@@ -1469,15 +1469,20 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".session-agent-map" -o -name ".prior-findings-index.json" \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
      -o -name ".architect-repair-plan.json" \
-     -o -name ".stage-stats.jsonl" -o -name ".run-issues-fixes.json" \) \
+     -o -name ".stage-stats.jsonl" -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \) \
   -print -delete 2>/dev/null | wc -l)
-# .stage-stats.jsonl + .run-issues-fixes.json are run-scoped observability,
-# NOT carried-forward state. Before 2026-06-13 the full-run wipe omitted them
-# (only --rebuild cleared .stage-stats.jsonl), so a --full run over an existing
-# OUTPUT_DIR inherited the PRIOR run's stage rows. record_stage_stats.py is
-# idempotent per (stage, variant) → it then no-ops on the new run's records and
+# .stage-stats.jsonl + .run-issues.json + .run-issues-fixes.json are run-scoped
+# observability, NOT carried-forward state. Before 2026-06-13 the full-run wipe
+# omitted them (only --rebuild cleared .stage-stats.jsonl), so a --full run over
+# an existing OUTPUT_DIR inherited the PRIOR run's stage rows. record_stage_stats.py
+# is idempotent per (stage, variant) → it then no-ops on the new run's records and
 # the completion summary reports last run's timings. Wiping them here makes a
-# full run record only its own stages.
+# full run record only its own stages. .run-issues.json was added 2026-06-26: it
+# is only rewritten by aggregate_run_issues.py at the §Completion step, so if that
+# step is skipped (e.g. a manual --resume completion) the completion summary reads
+# the PRIOR run's stale issues (observed: a standard-run 68k SESSION_STOP surfaced
+# on a later quick run). The freshness guard in render_completion_summary.py is the
+# belt-and-braces backstop for the same failure.
 # .fragments/ MUST be wiped. Stale fragments from a previous contract
 # version (e.g. §7 layout prior to the 7.8/7.9 insertion) are the
 # single biggest cause of Phase 11 compose failures — the orchestrator

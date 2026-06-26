@@ -1175,6 +1175,36 @@ def extract_run_issues(output_dir: Path) -> Optional[dict]:
         return None
     if data.get("schema_version") != 1:
         return None
+    # Freshness guard (2026-06-26): .run-issues.json is only rewritten by
+    # aggregate_run_issues.py at the §Completion step. If that step is skipped
+    # (e.g. a manual --resume completion) OR the --full wipe missed the file,
+    # a PRIOR run's issues bleed into this run's summary (observed: a
+    # standard-run 68k SESSION_STOP surfaced on a later quick run). Drop the
+    # file when its `generated` timestamp predates this run's start epoch.
+    # Defensive: if either timestamp is missing/unparseable, trust the file
+    # (current behaviour) rather than risk hiding a real issue.
+    start_path = output_dir / ".scan-start-epoch"
+    if start_path.is_file():
+        try:
+            start_epoch = int(start_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            start_epoch = None
+        gen = data.get("generated")
+        if start_epoch is not None and isinstance(gen, str) and gen:
+            import datetime as _dt
+
+            try:
+                gen_epoch = int(
+                    _dt.datetime.strptime(gen, "%Y-%m-%dT%H:%M:%SZ")
+                    .replace(tzinfo=_dt.timezone.utc)
+                    .timestamp()
+                )
+            except ValueError:
+                gen_epoch = None
+            # 120s grace: clock skew between the start-epoch write and the
+            # aggregator's _now_iso_z() must not falsely flag a same-run file.
+            if gen_epoch is not None and gen_epoch < start_epoch - 120:
+                return None
     if (data.get("run_status") or "").lower() == "clean" and not data.get("issues"):
         return None
     return data
