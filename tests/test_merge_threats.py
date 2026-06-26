@@ -167,9 +167,41 @@ class TestEvidenceDedup:
         assert result[0]["risk"] == "Critical"
 
     def test_same_line_different_cwe_stays_distinct(self, mt):
+        # CWE-89 (injection family) vs CWE-862 (authz family) — DIFFERENT
+        # exploitation families at one line stay separate.
         ev = {"file": "routes/x.ts", "line": 50}
         a = _threat(component_id="c", cwe="CWE-89", stride="Tampering", evidence=dict(ev))
         b = _threat(component_id="c", cwe="CWE-862", stride="Elevation of Privilege", evidence=dict(ev))
+        assert len(mt._dedupe_evidence([a, b])) == 2
+
+    def test_same_line_sibling_cwe_same_family_collapses(self, mt):
+        # The same code object flagged under sibling CWEs of one family — e.g. a
+        # hardcoded RSA key as CWE-321 (Spoofing) AND CWE-798 (Information
+        # Disclosure) — is ONE finding. Family-keyed identity reunites them; the
+        # dropped CWE is preserved in merged_cwes for traceability.
+        ev = {"file": "lib/insecurity.ts", "line": 21}
+        spoof = _threat(
+            component_id="auth", cwe="CWE-321", stride="Spoofing", risk="Critical",
+            evidence=dict(ev), title="Hardcoded RSA private key signs all JWTs",
+        )
+        disclose = _threat(
+            component_id="backend", cwe="CWE-798", stride="Information Disclosure", risk="Critical",
+            evidence=dict(ev), title="RSA private key exposed in committed source",
+        )
+        result = mt._dedupe_evidence([spoof, disclose])
+        assert len(result) == 1
+        kept = result[0]
+        assert set(kept.get("merged_cwes", [])) == {"CWE-321", "CWE-798"}
+        assert set(kept.get("merged_strides", [])) == {"Spoofing", "Information Disclosure"}
+
+    def test_same_line_other_family_falls_back_to_exact_cwe(self, mt):
+        # Two findings whose CWEs both land in the catch-all "other" family must
+        # NOT merge unless the CWE is literally identical — the conservative
+        # guard that keeps unclassified weaknesses (e.g. a Dockerfile:N pair)
+        # distinct.
+        ev = {"file": "Dockerfile", "line": 5}
+        a = _threat(component_id="ci", cwe="CWE-1104", stride="Information Disclosure", evidence=dict(ev))
+        b = _threat(component_id="ci", cwe="CWE-703", stride="Information Disclosure", evidence=dict(ev))
         assert len(mt._dedupe_evidence([a, b])) == 2
 
     def test_no_concrete_line_is_too_coarse_to_merge(self, mt):
@@ -542,6 +574,33 @@ class TestDecisionApplication:
         decisions = [{"group_id": "G-deadbeef", "action": "merge", "merge_target_index": 0}]
         result = mt._apply_decisions(list(threats), decisions)
         assert len(result) == 2  # unchanged — unknown group safely ignored
+
+    def test_endpoint_group_merge_decision_is_applied(self, mt):
+        # Regression for the pre-2026-06-26 bug: a merge decision on a secondary
+        # (endpoint_family / GE-) candidate group was silently dropped because
+        # _apply_decisions only reconstructed primary (G-) group_ids. The two
+        # findings below share an endpoint and exploitation family but differ in
+        # (CWE, STRIDE), so they form a GE- group, never a G- one.
+        threats = [
+            {**_threat(component_id="api", cwe="CWE-862", stride="Tampering",
+                       title="Missing authz on POST /api/Users",
+                       evidence={"file": "routes/users.ts", "line": 10})},
+            {**_threat(component_id="api", cwe="CWE-639", stride="Elevation of Privilege",
+                       title="IDOR on POST /api/Users escalates role",
+                       evidence={"file": "routes/users.ts", "line": 12})},
+        ]
+        groups = mt._group_candidates(threats)
+        ge = [g for g in groups if g["group_key"] == "endpoint_family"]
+        assert ge, "expected a GE- endpoint candidate group"
+        gid = ge[0]["group_id"]
+        # The reconstruction the apply path uses must agree on that group_id.
+        assert gid in mt._reconstruct_group_member_indices(threats)
+        result = mt._apply_decisions(
+            list(threats),
+            [{"group_id": gid, "action": "merge", "merge_target_index": 0, "rationale": "same endpoint object"}],
+        )
+        assert len(result) == 1  # GE- merge now actually applies
+        assert "merged_from" in result[0]
 
 
 # ---------------------------------------------------------------------------

@@ -6,13 +6,20 @@
 # judgment "which code sites are the same object" lives HERE, not in a heuristic.
 #
 # A finding consolidates only if it matches a group below. No match → it stays a
-# separate finding (per_instance default). This is deliberately conservative:
-# XSS (CWE-79) matches NOTHING here, so XSS sinks remain distinct findings —
-# different sinks are different objects. IDOR (CWE-639) is consolidated
+# separate finding (per_instance default). IDOR (CWE-639) is consolidated
 # cross-component (see the idor-object-authz group): broken object-level
 # authorization is ONE systemic control gap, and listing every vulnerable route
 # as a separate Critical buried the signal under ~17 near-identical findings.
 # Each route is preserved as an `instances[]` entry on the single survivor.
+#
+# XSS (CWE-79/80) policy (revised 2026-06-25): XSS sinks in DIFFERENT components
+# stay distinct (different objects, different fixes), but multiple XSS sinks in
+# the SAME component are now consolidated by the xss-per-component group below —
+# they share one root cause (that component doesn't encode output / bypasses the
+# framework sanitizer) and one fix. This matches the Opus/thorough merger's own
+# behavior; every sink is preserved as an `instances[]` entry so no detail is
+# lost. (Earlier revisions kept ALL XSS separate; that buried 4–5 near-identical
+# client-side XSS findings per SPA component.)
 #
 # Matching: a threat joins the FIRST group whose `match_any` has an entry where
 # ALL present predicates hold. Predicates (all optional, AND within one entry):
@@ -69,3 +76,59 @@ groups:
     scope: cross-component          # broken object-level authz is one control gap
     match_any:
       - cwe: [CWE-639]
+
+  # --- New rules (2026-06-25) ---
+  #
+  # missing-audit-logging: CWE-778 / CWE-223 findings are consistently one
+  # systemic gap — "no centralized security event logging." Separate findings
+  # per event type (auth, upload, b2b, challenge) share a single fix (add an
+  # audit-log middleware / SIEM drain) and a single owner. Cross-component
+  # because the missing infrastructure is shared.
+  - id: missing-audit-logging
+    title: "Missing Security Event Logging"
+    scope: cross-component
+    match_any:
+      - cwe: [CWE-778, CWE-223]
+
+  # xss-per-component: XSS sinks in DIFFERENT components are deliberately kept
+  # separate (a React/Angular component and a server-side template are distinct
+  # objects with distinct fixes). Within the SAME component, multiple unescaped
+  # output paths share one root cause (missing sanitization library call) and
+  # one fix. per-component scope handles this without merging across the trust
+  # boundary.
+  - id: xss-per-component
+    title: "Cross-Site Scripting (XSS)"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-79, CWE-80]
+
+  # ci-workflow-supply-chain: GitHub Actions / CI pipeline supply-chain findings
+  # (unpinned third-party action SHAs, non-deterministic installs in CI) target
+  # the same workflow file(s) and have the same fix (pin to commit SHA, lock npm
+  # versions). Scoped per-component so a repo with multiple CI systems keeps them
+  # separate. Note: evidence.file is often empty in practice for CI findings
+  # (the STRIDE analyzer records the filename in the title tail, not evidence.file),
+  # so matching by title_pattern is the reliable predicate here.
+  - id: ci-workflow-supply-chain
+    title: "CI/CD Workflow Supply-Chain Risk"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-829, CWE-1357]
+        title_pattern: '(?i)\b(github.action|action.pin|sha.pin|commit.sha|non.deterministic)\b'
+      - cwe: [CWE-829, CWE-1357]
+        title_pattern: '(?i)\b(workflow|ci\.yml|ci\/cd|pipeline)\b.*\b(inject|pin|supply|install)\b'
+
+  # absent-dependency-tooling: "no lockfile", "Renovate not present",
+  # "Dependabot npm ecosystem not configured" are three symptoms of ONE missing
+  # control: automated dependency tracking. They share a single remediation
+  # (add lockfile + enable Dependabot/Renovate) and a single owner (platform
+  # team). Guarded by title_pattern so Docker/Actions pinning (also CWE-1104)
+  # stays in ci-workflow-supply-chain above.
+  - id: absent-dependency-tooling
+    title: "Automated Dependency Tracking Not Configured"
+    scope: cross-component
+    match_any:
+      - cwe: [CWE-1104, CWE-937]
+        title_pattern: '(?i)\b(lock.?file|package.lock|renovate|dependabot|sca|dependency.review|dependency.track|supply.chain.gate)\b'
+      - cwe: [CWE-1104, CWE-937]
+        title_pattern: '(?i)\babsent\b.{0,40}\b(repository|repo|project)\b'

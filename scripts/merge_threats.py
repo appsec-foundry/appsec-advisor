@@ -657,6 +657,7 @@ _CWE_FAMILY: dict[str, str] = {
     # Crypto
     "CWE-321": "crypto",
     "CWE-327": "crypto",
+    "CWE-328": "crypto",
     "CWE-330": "crypto",
     "CWE-798": "crypto",
     "CWE-916": "crypto",
@@ -719,8 +720,19 @@ def _evidence_identity_key(t: dict) -> tuple | None:
 
     Returns ``None`` when the evidence lacks a concrete positive line — a bare
     file (line 0 / absent) is too coarse to assert identity, since many
-    distinct findings can legitimately share a file. CWE is part of the key so
-    two genuinely-different weaknesses at the same line (rare) stay separate."""
+    distinct findings can legitimately share a file.
+
+    The third key element is the CWE's exploitation FAMILY (``_cwe_family``),
+    not the exact CWE. This reunites the same code object flagged under sibling
+    CWEs from different STRIDE lenses — e.g. a hardcoded RSA key reported as
+    CWE-321 (Spoofing) *and* CWE-798 (Information Disclosure), or weak+unsalted
+    MD5 as CWE-327 *and* CWE-328 — which an exact-CWE key split into two
+    findings the merger never compared. Families are coarse and curated; the
+    catch-all ``other`` bucket falls back to the exact CWE, so two unclassified
+    weaknesses at one line stay separate unless their CWE is literally identical
+    (the pre-2026-06-26 behavior). Net: the OBJECT — not its STRIDE letter or
+    its precise CWE label — is the identity, while ``other``-family findings
+    keep the conservative exact-CWE guard."""
     ev = t.get("evidence") or {}
     if not isinstance(ev, dict):
         ev = {}
@@ -729,7 +741,8 @@ def _evidence_identity_key(t: dict) -> tuple | None:
     cwe = (t.get("cwe") or "").strip()
     if not f or not cwe or not isinstance(ln, int) or isinstance(ln, bool) or ln <= 0:
         return None
-    return (f, ln, cwe)
+    family = _cwe_family(cwe)
+    return (f, ln, family if family != "other" else cwe)
 
 
 def _declassify_config_title(title: str) -> str:
@@ -1060,6 +1073,13 @@ def _dedupe_evidence(threats: list[dict]) -> list[dict]:
         ds = dropped.get("stride")
         if ds and ds not in ms:
             ms.append(ds)
+        # The family-keyed merge can now collapse SIBLING CWEs (e.g. CWE-321 +
+        # CWE-798 for the same key). Record the dropped CWE so the surviving
+        # finding still carries every classification facet it absorbed.
+        mc = keep.setdefault("merged_cwes", [keep.get("cwe")])
+        dc = dropped.get("cwe")
+        if dc and dc not in mc:
+            mc.append(dc)
     return out
 
 
@@ -1335,12 +1355,67 @@ def _remap_scenario_local_refs(threats: list[dict]) -> list[dict]:
     return threats
 
 
+def _reconstruct_group_member_indices(threats: list[dict]) -> dict[str, list[int]]:
+    """Rebuild the ``{group_id: [member_indices]}`` map that ``_group_candidates``
+    produced, so ``_apply_decisions`` can resolve a decision's ``group_id`` back
+    to the live threat indices **regardless of which pass created it** — the
+    primary ``(CWE, STRIDE)`` ``G-`` pass OR the secondary ``(endpoint,
+    cwe_family)`` ``GE-`` pass.
+
+    Before 2026-06-26 the apply path only rebuilt the primary ``G-`` keys, so a
+    merger decision on a ``GE-`` endpoint group was silently dropped
+    (``gid_to_key.get("GE-…")`` → ``None`` → skipped): the entire RC.G.2
+    secondary pass was non-functional in finalize, shipping the cross-CWE
+    endpoint duplicates it was built to merge.
+
+    Must stay in lockstep with ``_group_candidates``: identical grouping order,
+    identical hash inputs (``cwe|stride|len`` / ``endpoint|family|len``), and
+    identical member ordering (threat order), so the reconstructed ``group_id``s
+    and member positions match what the agent's decisions reference."""
+    out: dict[str, list[int]] = {}
+
+    # Primary pass — (CWE, STRIDE). Mirrors _group_candidates' primary loop.
+    primary: dict[tuple, list[int]] = {}
+    for idx, t in enumerate(threats):
+        primary.setdefault(_candidate_key(t), []).append(idx)
+    grouped: set[int] = set()
+    for key, members in primary.items():
+        if len(members) < 2:
+            continue
+        cwe, stride = key
+        gid = "G-" + hashlib.sha256(f"{cwe}|{stride}|{len(members)}".encode()).hexdigest()[:8]
+        out[gid] = members
+        grouped.update(members)
+
+    # Secondary pass — (endpoint, cwe_family), only on threats not already in a
+    # primary group, and only when the members span >1 (CWE, STRIDE) signature
+    # (the same guard _group_candidates applies).
+    secondary: dict[tuple[str, str], list[int]] = {}
+    for idx, t in enumerate(threats):
+        if idx in grouped:
+            continue
+        key2 = _endpoint_candidate_key(t)
+        if key2 is None:
+            continue
+        secondary.setdefault(key2, []).append(idx)
+    for (endpoint, family), members in secondary.items():
+        if len(members) < 2:
+            continue
+        sig = {(threats[i].get("cwe") or "", threats[i].get("stride") or "") for i in members}
+        if len(sig) <= 1:
+            continue
+        gid = "GE-" + hashlib.sha256(f"{endpoint}|{family}|{len(members)}".encode()).hexdigest()[:8]
+        out[gid] = members
+
+    return out
+
+
 def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     """Apply LLM-produced merge decisions.
 
     Decision schema (produced by appsec-threat-merger):
       {
-        "group_id": "G-abcd1234",
+        "group_id": "G-abcd1234",       # or "GE-…" for endpoint groups
         "action": "merge" | "keep" | "consolidate",
         "keep_indices": [0, 2],         # for "keep": which group members survive
         "merge_target_index": 0,        # for "merge": which member absorbs the rest
@@ -1356,17 +1431,9 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
     if not decisions:
         return threats
 
-    # We grouped by (cwe, stride) — to apply a decision we need to re-group
-    groups: dict[tuple, list[int]] = {}
-    for idx, t in enumerate(threats):
-        groups.setdefault(_candidate_key(t), []).append(idx)
-
-    # Build group_id → group key mapping from _group_candidates logic
-    def _gid_for_key(k: tuple) -> str:
-        cwe, stride = k
-        return "G-" + hashlib.sha256(f"{cwe}|{stride}|{len(groups[k])}".encode()).hexdigest()[:8]
-
-    gid_to_key = {_gid_for_key(k): k for k in groups if len(groups[k]) >= 2}
+    # Rebuild the group_id → member-indices map for BOTH the primary (G-) and
+    # secondary (GE-) candidate passes, so endpoint-group decisions apply too.
+    gid_to_indices = _reconstruct_group_member_indices(threats)
 
     drop: set[int] = set()
     for d in decisions:
@@ -1374,10 +1441,9 @@ def _apply_decisions(threats: list[dict], decisions: list[dict]) -> list[dict]:
             continue
         gid = d.get("group_id")
         action = d.get("action")
-        key = gid_to_key.get(gid)
-        if key is None:
+        member_indices = gid_to_indices.get(gid)
+        if member_indices is None:
             continue
-        member_indices = groups[key]
         if action == "merge":
             target = d.get("merge_target_index", 0)
             if not isinstance(target, int) or target < 0 or target >= len(member_indices):
