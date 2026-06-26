@@ -184,6 +184,135 @@ def _fp_str(t: dict) -> str:
     return f"{comp}|{cwe}|{title}"
 
 
+# ─── Cross-run diff key (file | cwe-family) ─────────────────────────────────
+#
+# The changelog diffs findings by ``evidence-file | cwe-family`` rather than the
+# display fingerprint ``component|cwe|title``. Component IDs, CWE numbers, AND
+# titles are ALL LLM-generated and drift between two ``--full`` runs over
+# identical code: 2026-06-26 (juice-shop) two quick runs an hour apart, repo
+# unchanged, had only 2 of 33 finding fingerprints match → 27 bogus "added" +
+# 31 bogus "resolved", a false "fixed" claim the changelog must never make.
+# Measured churn by key on that data: comp|cwe|title=58, file|cwe=49,
+# file-only=11. file|cwe still churned because the CWE itself swaps on the
+# highest-value findings (RSA key 798↔321, JWT verify 347↔345). Folding CWE into
+# a FAMILY absorbs that swap while the file path — the one signal derived from
+# source, not phrasing — anchors identity.
+#
+# Families are deliberately NARROW: only CWEs observed to swap for the SAME
+# finding. Since the file is already in the key, a family only needs to
+# disambiguate findings WITHIN one file, so narrowness keeps two genuinely
+# distinct findings in the same file apart (e.g. lib/insecurity.ts holds a
+# hardcoded RSA key AND weak password hashing — different families, so they keep
+# separate identities and a partial fix is still visible). Unlisted CWEs map to
+# themselves. Add a pair here only when a real same-finding CWE swap is observed.
+_CWE_FAMILIES: dict[str, str] = {
+    # Hard-coded key / cryptographic material / cleartext secret.
+    "CWE-798": "hardcoded-key",
+    "CWE-321": "hardcoded-key",
+    "CWE-320": "hardcoded-key",
+    "CWE-312": "hardcoded-key",
+    "CWE-522": "hardcoded-key",
+    # Weak / plaintext password storage & hashing.
+    "CWE-256": "password-weak",
+    "CWE-257": "password-weak",
+    "CWE-259": "password-weak",
+    "CWE-261": "password-weak",
+    "CWE-916": "password-weak",
+    # Signature / data-authenticity verification.
+    "CWE-347": "sig-verify",
+    "CWE-345": "sig-verify",
+    "CWE-295": "sig-verify",
+    "CWE-924": "sig-verify",
+    # Uncontrolled resource consumption / missing resource limits (DoS).
+    "CWE-400": "resource-exhaustion",
+    "CWE-770": "resource-exhaustion",
+    "CWE-405": "resource-exhaustion",
+    "CWE-1333": "resource-exhaustion",
+}
+
+
+def _cwe_family(cwe: str) -> str:
+    """Map a CWE to its drift-absorbing family, or itself when unlisted."""
+    c = (cwe or "").strip().upper()
+    return _CWE_FAMILIES.get(c, c)
+
+
+def _norm_file(path: str) -> str:
+    """Lowercased, ``./``-stripped path for stable cross-run file comparison."""
+    return (path or "").strip().lstrip("./").strip().lower()
+
+
+def _anchor_file(t: dict) -> str:
+    """Primary evidence file for a threat — its diff anchor. Uses the first
+    instance location for a consolidated finding, else the evidence anchor.
+    Mirrors the anchor selection in _instance_fingerprints()."""
+    insts = t.get("instances")
+    if isinstance(insts, list):
+        for i in insts:
+            if isinstance(i, dict) and i.get("file"):
+                return _norm_file(i["file"])
+    ev = t.get("evidence")
+    if isinstance(ev, list):
+        ev = next((e for e in ev if isinstance(e, dict)), {})
+    elif not isinstance(ev, dict):
+        ev = {}
+    return _norm_file(ev.get("file") or "")
+
+
+def _match_key(t: dict) -> str:
+    """Stable cross-run identity for the changelog diff: ``file|cwe-family``.
+    Falls back to the legacy ``comp|cwe|title`` fingerprint when a threat has no
+    evidence file, so file-less findings still get a stable-enough identity."""
+    f = _anchor_file(t)
+    if not f:
+        return _fp_str(t)
+    return f"{f}|{_cwe_family(t.get('cwe') or '')}"
+
+
+def _prior_match_index(entry: dict | None) -> tuple[set[str], dict[str, str]]:
+    """Return ``(match-key set, match-key → display-label)`` for a prior
+    changelog entry, so the current run can diff against it AND render resolved
+    findings with a human-readable label.
+
+    Resolution order:
+      1. explicit ``match_keys`` (written by current builds, paired positionally
+         with ``fingerprints``) — exact, no re-derivation;
+      2. derive ``file|family`` keys from ``instance_fingerprints`` (which carry
+         ``comp|cwe|title|file:line``) — lets the fix work retroactively against
+         entries written before ``match_keys`` existed;
+      3. legacy fallback: the ``fingerprints`` themselves (``comp|cwe|title`` —
+         no file, so they only match another legacy entry's fingerprints).
+    """
+    if not entry:
+        return set(), {}
+    mks = entry.get("match_keys")
+    fps = entry.get("fingerprints") or []
+    if isinstance(mks, list) and mks and len(mks) == len(fps):
+        return set(mks), {mk: fp for mk, fp in zip(mks, fps)}
+    ifps = entry.get("instance_fingerprints") or []
+    if ifps:
+        keys: set[str] = set()
+        label: dict[str, str] = {}
+        for ifp in ifps:
+            parts = str(ifp).split("|")
+            # Format is comp|cwe|title|file:line. The title MAY contain a '|',
+            # so anchor on the OUTER fields: cwe is parts[1], file:line is the
+            # LAST segment, and the display label is everything but that last
+            # segment (the comp|cwe|title fingerprint).
+            if len(parts) < 4:
+                continue
+            cwe, loc = parts[1], parts[-1]
+            f = _norm_file(loc.rsplit(":", 1)[0])
+            if not f:
+                continue
+            mk = f"{f}|{_cwe_family(cwe)}"
+            keys.add(mk)
+            label.setdefault(mk, "|".join(parts[:-1]))
+        if keys:
+            return keys, label
+    return set(fps), {fp: fp for fp in fps}
+
+
 def _mitigation_fp(m: dict) -> str:
     """Stable cross-run identity for a mitigation: its location-stripped,
     lowercased title. M-IDs are derived from threats and renumber every run
@@ -303,7 +432,14 @@ def _reanalyzed_component_ids(output_dir: Path) -> set[str] | None:
 
 def _index_resolved_prior(merged: dict) -> dict[str, str]:
     """Map every analyzer-affirmed fix to a reason, keyed by BOTH the prior id
-    and the threat fingerprint, so the reconciler can match either way."""
+    and the comp|cwe|title fingerprint, so the reconciler can match either way.
+
+    The fingerprint key stays `_fp_str` (comp|cwe|title), NOT the file|cwe-family
+    match key: `resolved_prior_findings` carry no `file` (stride.schema.yaml:
+    only prior_id/cwe/title/reason), so a match key can't be computed for them.
+    This is fine — `prior_id` is required on every entry and is the reliable
+    match; the fingerprint is only a secondary fallback. The reconciler probes
+    this dict with `_fp_str(prior_threat)`, keeping both sides comp|cwe|title."""
     out: dict[str, str] = {}
     for r in merged.get("resolved_prior_findings") or []:
         if not isinstance(r, dict):
@@ -312,8 +448,7 @@ def _index_resolved_prior(merged: dict) -> dict[str, str]:
         pid = r.get("prior_id")
         if pid:
             out[pid] = reason
-        fp = _threat_fingerprint({"component": r.get("component_id"), "cwe": r.get("cwe"), "title": r.get("title")})
-        out[fp] = reason
+        out[_fp_str({"component": r.get("component_id"), "cwe": r.get("cwe"), "title": r.get("title")})] = reason
     return out
 
 
@@ -340,8 +475,14 @@ def reconcile_incremental_threats(
     prior_depth = _load_last_run_depth(output_dir)
     shallower = _depth_is_shallower(cur_depth, prior_depth)
 
-    present = {_threat_fingerprint(t) for t in threats}
-    prior_fps = {_threat_fingerprint(pt) for pt in (prior_yaml.get("threats") or [])}
+    # Diff on the stable file|cwe-family match key, NOT comp|cwe|title: an
+    # analyzer that re-emits a prior finding with a drifted CWE/title/component
+    # would otherwise look "not reproduced" → bogus resolved (equal/deeper) or a
+    # duplicate carry (shallower). The match key absorbs that drift, matching the
+    # full-run changelog diff. prior threats carry `evidence`, so a file anchor
+    # is available on both sides. (2026-06-26)
+    present = {_match_key(t) for t in threats}
+    prior_keys = {_match_key(pt) for pt in (prior_yaml.get("threats") or [])}
 
     # merge_threats._assign_t_ids restarts global T-numbering at T-001 every run,
     # so a carried threat's prior id may collide with a freshly-assigned one.
@@ -358,10 +499,14 @@ def reconcile_incremental_threats(
         comp = pt.get("component") or pt.get("component_id") or ""
         if comp not in reanalyzed:
             continue  # carried-forward component → threats already intact
-        fp = _threat_fingerprint(pt)
-        if fp in present:
+        key = _match_key(pt)
+        if key in present:
             continue  # re-emitted by the analyzer (B1) → keep, no double-inject
         pid = pt.get("id", "")
+        # resolved_prior is keyed by prior_id (reliable) + _fp_str fallback (the
+        # resolved findings carry no file, so probe with the prior threat's
+        # comp|cwe|title — both sides agree on that representation).
+        fp = _fp_str(pt)
         if pid in resolved_prior or fp in resolved_prior:
             resolved_reason_by_id[pid] = resolved_prior.get(pid) or resolved_prior.get(fp)
             continue
@@ -371,7 +516,7 @@ def reconcile_incremental_threats(
             carried["id"] = f"T-{next_t_num:03d}"
             carried["evidence_check"] = "carried-unverified-shallower-depth"
             threats.append(carried)
-            present.add(fp)
+            present.add(key)
             carried_ids.append(carried["id"])
         else:
             resolved_reason_by_id[pid] = "not reproduced at equal-or-deeper depth"
@@ -382,7 +527,7 @@ def reconcile_incremental_threats(
         "carried_forward_ids": sorted(all_ids - reanalyzed),
         "resolved_reason_by_id": resolved_reason_by_id,
         "carried_ids": sorted(carried_ids),
-        "added_ids": sorted(t["id"] for t in threats if t.get("id") and _threat_fingerprint(t) not in prior_fps),
+        "added_ids": sorted(t["id"] for t in threats if t.get("id") and _match_key(t) not in prior_keys),
     }
     return threats, recon_info
 
@@ -1409,7 +1554,13 @@ def build_changelog(
     # makes a --full re-run over an existing model surface a real per-finding
     # delta (the flag's promise) instead of marking every threat "added".
     cur_fps = [_fp_str(t) for t in threats]
-    cur_fp_set = set(cur_fps)
+    # Stable cross-run diff keys (file|cwe-family — see _match_key). Parallel to
+    # cur_fps (same order), persisted as `match_keys` so the next run diffs
+    # against an exact key set rather than re-deriving from instance fingerprints.
+    # The diff (added/resolved) runs on these keys; cur_fps stays the human-
+    # readable display/identity label.
+    cur_match_keys = [_match_key(t) for t in threats]
+    cur_match_set = set(cur_match_keys)
     # Select the prior entry to diff against — but SKIP an existing entry that
     # describes THIS SAME run (this run's own earlier yaml build — Phase-11 may
     # build the yaml more than once), NOT a genuine previous run; treating it as
@@ -1466,9 +1617,11 @@ def build_changelog(
         return _legacy_key(e) == _new_key
 
     prior_entry = next((e for e in existing if not _is_same_run(e)), None)
-    prior_fps_list = (prior_entry or {}).get("fingerprints") or []
-    prior_fp_set = set(prior_fps_list)
-    prior_has_fps = bool(prior_entry) and bool(prior_fps_list)
+    # Stable match keys + display labels for the prior entry. Diffs are computed
+    # on the match keys (file|cwe-family), but resolved findings are RENDERED via
+    # the prior entry's comp|cwe|title label so the changelog stays readable.
+    prior_match_set, prior_label_by_key = _prior_match_index(prior_entry)
+    prior_has_fps = bool(prior_entry) and bool(prior_match_set)
     prior_depth = (prior_entry or {}).get("assessment_depth")
     prior_n = (
         (prior_entry or {}).get("threat_count")
@@ -1504,18 +1657,21 @@ def build_changelog(
         resolved_block = {"threats": [], "reason_by_id": {}}
     elif prior_has_fps:
         # Full run over a FINGERPRINTED prior entry at SAME-OR-DEEPER depth →
-        # real per-finding delta.
+        # real per-finding delta, computed on stable file|cwe-family match keys
+        # (NOT comp|cwe|title — those drift between runs and churn the diff).
         delta_basis = "fingerprint"
-        added_threats = sorted(t["id"] for t in threats if t.get("id") and _fp_str(t) not in prior_fp_set)
-        resolved_fps = sorted(prior_fp_set - cur_fp_set)
+        added_threats = sorted(t["id"] for t in threats if t.get("id") and _match_key(t) not in prior_match_set)
+        resolved_keys = sorted(prior_match_set - cur_match_set)
         reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
         carried_components = []
         resolved_block = {
             # T-IDs are not stable across full runs, so resolved findings are
-            # identified by their (prior) fingerprint label, not a dangling
-            # T-NNN anchor. The template renders these as plain text.
+            # identified by their (prior) comp|cwe|title label, not a dangling
+            # T-NNN anchor. The template renders these as plain text. Each
+            # resolved match key is mapped back to the prior entry's readable
+            # label; a key with no recorded label degrades to the key itself.
             "threats": [],
-            "fingerprints": resolved_fps,
+            "fingerprints": [prior_label_by_key.get(k, k) for k in resolved_keys],
             "reason_by_id": {},
         }
     else:
@@ -1602,6 +1758,10 @@ def build_changelog(
         # Delta bookkeeping (new 2026-06-13).
         "threat_count": cur_n,
         "fingerprints": cur_fps,
+        # Stable cross-run diff keys (file|cwe-family), positionally paired with
+        # `fingerprints`. The diff runs on these; `fingerprints` stays the
+        # display label. Next run reads these back via _prior_match_index.
+        "match_keys": cur_match_keys,
         "mitigation_fingerprints": cur_mit_fps,
         "instance_fingerprints": cur_instance_fps,
         "delta_basis": delta_basis,

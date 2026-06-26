@@ -793,6 +793,89 @@ def test_changelog_full_delta_resolves_by_fingerprint(tmp_path):
     assert "+1/-1 vs prior" in e["note"]
 
 
+def test_changelog_stable_across_cwe_and_title_drift_same_file(tmp_path):
+    """Regression (2026-06-26 juice-shop): two --full runs over IDENTICAL code
+    churned the whole register (27 added / 31 resolved) because the diff keyed on
+    comp|cwe|title — all three LLM-generated and drifting run-to-run. The diff now
+    keys on file|cwe-family, so a finding whose component is renamed, whose CWE
+    swaps within its family, and whose title is reworded — but whose evidence file
+    is unchanged — must be carried, NOT churned."""
+    b = _load()
+    run1 = b.build_changelog(
+        _CL_CFG,
+        [
+            # RSA key — run1 labels it auth / CWE-798 / "forgery".
+            {"id": "T-001", "component": "auth", "cwe": "CWE-798",
+             "title": "Hardcoded RSA private key enabling JWT forgery",
+             "evidence": {"file": "lib/insecurity.ts", "line": 21}},
+            # JWT verify — run1 labels it backend-api / CWE-347.
+            {"id": "T-002", "component": "backend-api", "cwe": "CWE-347",
+             "title": "Insecure JWT verification",
+             "evidence": {"file": "lib/insecurity.ts", "line": 52}},
+        ],
+        _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1000",
+    )
+    run2 = b.build_changelog(
+        _CL_CFG,
+        [
+            # Same RSA key — run2 renames component, swaps CWE within the
+            # hardcoded-key family (798→321), rewords the title.
+            {"id": "T-009", "component": "express-backend", "cwe": "CWE-321",
+             "title": "Hardcoded RSA private key enables arbitrary JWT signing",
+             "evidence": {"file": "lib/insecurity.ts", "line": 21}},
+            # Same JWT verify — sig-verify family swap (347→345), component rename.
+            {"id": "T-014", "component": "auth", "cwe": "CWE-345",
+             "title": "Insecure JWT verification path",
+             "evidence": {"file": "lib/insecurity.ts", "line": 52}},
+        ],
+        _CL_COMPS, [], run1, tmp_path, current_sha="sha-2", run_id="2000",
+    )
+    e = run2[0]
+    assert e["delta_basis"] == "fingerprint"
+    # Zero churn: both findings carried despite comp/cwe/title drift.
+    assert e["added"]["threats"] == []
+    assert e["resolved"]["fingerprints"] == []
+    assert "+0/-0 vs prior" in e["note"]
+    # match_keys are persisted for the next run to diff against exactly.
+    assert sorted(e["match_keys"]) == [
+        "lib/insecurity.ts|hardcoded-key",
+        "lib/insecurity.ts|sig-verify",
+    ]
+
+
+def test_changelog_distinct_findings_same_file_stay_separate(tmp_path):
+    """Narrow families must NOT collapse two genuinely-distinct findings that
+    share a file: a hardcoded key (hardcoded-key family) and weak password
+    hashing (password-weak family) both in lib/insecurity.ts keep separate
+    identities, so fixing one shows exactly one resolved."""
+    b = _load()
+    run1 = b.build_changelog(
+        _CL_CFG,
+        [
+            {"id": "T-001", "component": "auth", "cwe": "CWE-321",
+             "title": "Hardcoded RSA private key",
+             "evidence": {"file": "lib/insecurity.ts", "line": 21}},
+            {"id": "T-002", "component": "auth", "cwe": "CWE-916",
+             "title": "MD5 password hashing",
+             "evidence": {"file": "lib/insecurity.ts", "line": 41}},
+        ],
+        _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1000",
+    )
+    # Run2: the hardcoded key is fixed (gone); weak hashing persists.
+    run2 = b.build_changelog(
+        _CL_CFG,
+        [
+            {"id": "T-007", "component": "auth", "cwe": "CWE-916",
+             "title": "Weak MD5 password hashing",
+             "evidence": {"file": "lib/insecurity.ts", "line": 41}},
+        ],
+        _CL_COMPS, [], run1, tmp_path, current_sha="sha-2", run_id="2000",
+    )
+    e = run2[0]
+    assert e["added"]["threats"] == []
+    assert e["resolved"]["fingerprints"] == ["auth|CWE-321|hardcoded rsa private key"]
+
+
 def test_changelog_count_only_when_prior_lacks_fingerprints(tmp_path):
     b = _load()
     # Simulate a legacy prior entry (pre-fingerprinting): no `fingerprints` key.
@@ -1096,6 +1179,67 @@ def test_reconcile_skips_carried_forward_component(tmp_path):
     assert out == []  # nothing injected
     assert recon["resolved_reason_by_id"] == {}
     assert recon["carried_forward_ids"] == ["api"]
+
+
+def _prior_threat_with_file(tid, comp, cwe, title, file, line):
+    t = _prior_threat(tid, comp, cwe, title)
+    t["evidence"] = [{"file": file, "line": line}]
+    return t
+
+
+def test_reconcile_recognises_reproduced_finding_across_cwe_drift(tmp_path):
+    """Regression (2026-06-26): an incremental re-scan that re-emits a prior
+    finding with a drifted component/CWE/title but the SAME evidence file must
+    recognise it as reproduced via the file|cwe-family match key — NOT mark it
+    resolved at equal depth (a false "fixed" claim)."""
+    _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
+    prior = {"threats": [_prior_threat_with_file(
+        "T-007", "auth", "CWE-798",
+        "Hardcoded RSA private key enabling JWT forgery", "lib/insecurity.ts", 21)]}
+    # Re-emitted: component renamed, CWE swapped within hardcoded-key family
+    # (798→321), title reworded — same file.
+    new_threats = [_prior_threat_with_file(
+        "T-001", "express-backend", "CWE-321",
+        "Hardcoded RSA private key enables arbitrary JWT signing", "lib/insecurity.ts", 21)]
+    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
+    # Recognised as present: no bogus resolved, and not double-counted as added.
+    assert recon["resolved_reason_by_id"] == {}
+    assert recon["added_ids"] == []
+    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
+
+
+def test_reconcile_no_duplicate_carry_across_cwe_drift_shallower(tmp_path):
+    """Same drift at SHALLOWER depth must not DUPLICATE the finding: the prior
+    threat is recognised as re-emitted (match key) and not carried alongside its
+    own re-emission."""
+    _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
+    prior = {"threats": [_prior_threat_with_file(
+        "T-007", "auth", "CWE-770",
+        "No rate limit on websocket", "lib/ws.ts", 19)]}
+    new_threats = [_prior_threat_with_file(
+        "T-001", "realtime-channel", "CWE-400",
+        "No rate limiting on socket.io connections", "lib/ws.ts", 19)]
+    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
+    assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
+    assert len(out) == 1  # only the re-emitted finding, no carried duplicate
+
+
+def test_reconcile_distinct_findings_same_file_stay_separate(tmp_path):
+    """Narrow families must not over-merge in the incremental path either: a
+    distinct finding in a re-analyzed file (different family) that is genuinely
+    gone is still recorded resolved at equal depth."""
+    _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
+    prior = {"threats": [
+        _prior_threat_with_file("T-007", "auth", "CWE-321", "Hardcoded key", "lib/insecurity.ts", 21),
+        _prior_threat_with_file("T-008", "auth", "CWE-916", "MD5 hashing", "lib/insecurity.ts", 41),
+    ]}
+    # Only the hardcoded key persists; weak hashing is gone.
+    new_threats = [_prior_threat_with_file(
+        "T-001", "auth", "CWE-321", "Hardcoded RSA key", "lib/insecurity.ts", 21)]
+    out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
+    # Hardcoded key recognised (present); weak hashing recorded resolved.
+    assert recon["resolved_reason_by_id"].get("T-008", "").startswith("not reproduced")
+    assert "T-007" not in recon["resolved_reason_by_id"]
 
 
 def test_reconcile_no_double_count_when_reemitted(tmp_path):
@@ -1803,6 +1947,9 @@ def test_index_resolved_prior_keys_by_id_and_fingerprint():
     }
     idx = b._index_resolved_prior(merged)
     assert idx["T-009"] == "fixed in PR"
-    # fingerprint key present for the second (default reason)
-    fp = b._threat_fingerprint({"component": "c2", "cwe": "CWE-79", "title": "XSS"})
+    # fingerprint key present for the second (default reason). The key is the
+    # _fp_str string (comp|cwe|title), matching how the reconciler probes this
+    # dict — resolved findings carry no file, so the secondary key stays the
+    # comp|cwe|title fingerprint rather than the file|cwe-family match key.
+    fp = b._fp_str({"component": "c2", "cwe": "CWE-79", "title": "XSS"})
     assert idx[fp] == "fix confirmed by re-scan"
