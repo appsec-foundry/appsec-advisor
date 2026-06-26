@@ -150,12 +150,30 @@ def _carry_forward(prior_yaml: dict | None, field: str, sidecar_name: str) -> An
 _DEPTH_RANK = {"quick": 0, "standard": 1, "thorough": 2}
 
 
+def _normalize_fp_title(title: str) -> str:
+    """Normalize a finding/mitigation title into a stable cross-run identity
+    token, resilient to the LLM rewording that causes phantom resolved/added
+    churn (2026-06-26). Conservative — keeps the common case byte-identical to
+    the prior `(file:line)`-trailing-strip so migration churn is minimal:
+
+    * strip ALL parentheticals (file:line, payloads, lib versions) — not only a
+      trailing one, so a mid-title `(routes/x.ts:9)` no longer perturbs identity;
+    * strip a trailing ``- CWE-NNN`` tagline;
+    * collapse whitespace; lowercase.
+    """
+    s = title or ""
+    s = re.sub(r"\s*\([^()]*\)", "", s)  # drop ALL parentheticals (was: only trailing :NN)
+    s = re.sub(r"\s*[-—:]\s*CWE-\d+\s*$", "", s, flags=re.IGNORECASE)  # trailing CWE tagline
+    s = re.sub(r"\s+", " ", s)
+    return s.strip().lower()
+
+
 def _threat_fingerprint(t: dict) -> tuple:
-    """Stable cross-run identity: component + cwe + location-stripped title.
+    """Stable cross-run identity: component + cwe + normalized title.
     Mirrors the re-dispatch fingerprint contract in phase-group-threats.md:50."""
     comp = (t.get("component") or t.get("component_id") or "").strip().lower()
     cwe = (t.get("cwe") or "").strip().upper()
-    title = re.sub(r"\s*\([^()]*:\d+\)\s*$", "", (t.get("title") or "")).strip().lower()
+    title = _normalize_fp_title(t.get("title") or "")
     return (comp, cwe, title)
 
 
@@ -172,7 +190,7 @@ def _mitigation_fp(m: dict) -> str:
     (merge_threats restarts numbering), so — exactly like threats are diffed by
     `_fp_str` rather than T-ID — the changelog diffs mitigations by this title
     fingerprint, persisted per entry as `mitigation_fingerprints[]`."""
-    return re.sub(r"\s*\([^()]*:\d+\)\s*$", "", (m.get("title") or "")).strip().lower()
+    return _normalize_fp_title(m.get("title") or "")
 
 
 def _instance_fingerprints(t: dict) -> list[str]:
@@ -1409,7 +1427,22 @@ def build_changelog(
     # makes a first/full run self-diff into a bogus "+0 (stable)" delta. The
     # idempotent dedup at the end of this function replaces that same-run entry
     # anyway, so excluding it as a baseline here is consistent.
-    _new_key = (current_sha, _dt.date.today().isoformat(), mode, plugin_ver, analysis_ver)
+    # Entry identity includes assessment_depth + reasoning_model (2026-06-26):
+    # without them, two genuine assessments of the SAME commit on the SAME day
+    # at different depths/models (e.g. standard then thorough) collide and the
+    # second SILENTLY OVERWRITES the first. Including them so only a true
+    # Phase-11 re-build (identical in every parameter) collapses; distinct
+    # assessments accumulate.
+    _cur_reasoning = skill_cfg.get("reasoning_model", "sonnet-economy")
+    _new_key = (
+        current_sha,
+        _dt.date.today().isoformat(),
+        mode,
+        cur_depth,
+        _cur_reasoning,
+        plugin_ver,
+        analysis_ver,
+    )
     prior_entry = next(
         (
             e
@@ -1418,6 +1451,8 @@ def build_changelog(
                 e.get("current_sha"),
                 e.get("date"),
                 e.get("mode"),
+                e.get("assessment_depth"),
+                e.get("reasoning_model"),
                 e.get("plugin_version"),
                 e.get("analysis_version"),
             )
@@ -1580,12 +1615,17 @@ def build_changelog(
 
     # Idempotent re-build: drop any prior entry that describes the identical
     # run state, then prepend the fresh one. Distinct scans (new commit, later
-    # date, plugin upgrade, mode switch) keep their own entries and accumulate.
+    # date, plugin upgrade, mode switch, DEPTH or REASONING-MODEL change) keep
+    # their own entries and accumulate — depth + reasoning_model are part of the
+    # identity so a standard→thorough re-run on the same commit/day does not
+    # silently overwrite the standard entry. (2026-06-26)
     def _entry_key(e: dict) -> tuple:
         return (
             e.get("current_sha"),
             e.get("date"),
             e.get("mode"),
+            e.get("assessment_depth"),
+            e.get("reasoning_model"),
             e.get("plugin_version"),
             e.get("analysis_version"),
         )
