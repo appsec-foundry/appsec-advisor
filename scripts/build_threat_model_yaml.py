@@ -217,6 +217,11 @@ def _changelog_note(
     """
     if delta_basis == "initial" or prior_entry is None:
         return "first full scan"
+    if delta_basis == "shallower-scan":
+        # Honest framing for a shallower re-scan: no +A/-R delta (the prior's
+        # deeper findings were not re-examined, not resolved).
+        d = f"shallower than {prior_depth} run" if prior_depth else "shallower re-scan"
+        return f"{cur_n} total; {d}; deltas vs prior not comparable"
     parts: list[str] = []
     if prior_depth and cur_depth and prior_depth != cur_depth:
         parts.append(f"depth {prior_depth}→{cur_depth}")
@@ -1442,8 +1447,23 @@ def build_changelog(
             "threats": sorted(recon_info["resolved_reason_by_id"].keys()),
             "reason_by_id": dict(recon_info["resolved_reason_by_id"]),
         }
+    elif prior_has_fps and _depth_is_shallower(cur_depth, prior_depth):
+        # Full run over a FINGERPRINTED prior, but at a SHALLOWER depth
+        # (e.g. standard → quick). The current run did not examine everything
+        # the deeper prior did, so a fingerprint set-diff would mis-report every
+        # prior finding the shallow scan didn't reach as "resolved" — a false
+        # "fixed" claim, the one thing a security changelog must never make.
+        # Suppress the delta and report an honest snapshot count with an explicit
+        # shallower-scan note. The findings still live in the prior run's entry;
+        # they are NOT resolved, merely not re-examined. (2026-06-26)
+        delta_basis = "shallower-scan"
+        added_threats = [t["id"] for t in threats]
+        reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
+        carried_components = []
+        resolved_block = {"threats": [], "reason_by_id": {}}
     elif prior_has_fps:
-        # Full run over a FINGERPRINTED prior entry → real per-finding delta.
+        # Full run over a FINGERPRINTED prior entry at SAME-OR-DEEPER depth →
+        # real per-finding delta.
         delta_basis = "fingerprint"
         added_threats = sorted(t["id"] for t in threats if t.get("id") and _fp_str(t) not in prior_fp_set)
         resolved_fps = sorted(prior_fp_set - cur_fp_set)

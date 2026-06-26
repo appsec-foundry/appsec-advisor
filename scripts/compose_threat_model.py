@@ -15193,6 +15193,13 @@ def render(
             outcome = "degraded"
         elif not body.strip():
             outcome = "empty"
+        elif not _section_substance_ok(ctx, sid, body):
+            # Section emitted only boilerplate (heading + preamble) despite
+            # upstream data that should have produced content — a real gap the
+            # byte check misses. Treat as empty so report_integrity_ok flips and
+            # the QA repair loop fires. (2026-06-26)
+            outcome = "empty"
+            ctx.warnings.append(f"section {sid} rendered only boilerplate (no substance)")
         elif missing and fallback_eligible:
             outcome = "fallback"
         else:
@@ -16022,6 +16029,34 @@ def _manifest_entry(
         "expected_fragments": list(expected or []),
         "present_fragments": list(present or []),
     }
+
+
+def _section_substance_ok(ctx: RenderContext, sid: str, body: str) -> bool:
+    """Return False when a section that SHOULD carry substance rendered only
+    boilerplate (heading + preamble) — a real content gap the byte-level
+    ``not body.strip()`` check misses, because register sections always emit a
+    heading and an intro paragraph. (2026-06-26)
+
+    Only the register sections whose emptiness-given-data is a bug carry a
+    substance signal; every other section returns True so the caller falls back
+    to the byte check. The signal is gated on the relevant upstream data
+    existing, so a model that legitimately has nothing (e.g. zero threats) is
+    not flagged. This makes ``outcome == "empty"`` meaningful, which in turn
+    makes ``report_integrity_ok`` real and lets the existing QA repair loop fire.
+    """
+    threats = ctx.yaml_data.get("threats") or []
+    if sid == "mitigation_register":
+        # Every threat should yield at least a fix mitigation; an empty register
+        # over a non-empty threat list is the exact failure that shipped a
+        # heading-only §10. A model with zero threats may legitimately have none.
+        if not threats:
+            return True
+        return bool(re.search(r'(?m)^#{2,4}\s.*\bM-\d{2,}', body)) or '<a id="m-' in body.lower()
+    if sid == "threat_register":
+        if not threats:
+            return True
+        return bool(re.search(r"F-\d{2,}", body)) or '<a id="f-' in body.lower()
+    return True
 
 
 def _section_fragment_status(ctx: RenderContext, sid: str) -> tuple[list[str], list[str], bool]:
