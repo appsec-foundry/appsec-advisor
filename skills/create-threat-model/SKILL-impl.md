@@ -3240,16 +3240,27 @@ fi
 # Clean up the retry counter so a future fresh invocation starts at 0.
 rm -f "$OUTPUT_DIR/.inline-shortcut-retry-count" "$OUTPUT_DIR/.inline-shortcut-repair-plan.json"
 
-# Completeness assertion — render phase (2026-06-26). The inline-shortcut gate
-# above proves the renderer ran and the structural fragments are present; this
-# asserts the rendered threat-model.md is SUBSTANTIVELY complete — §10 carries
-# real M-NNN cards (not heading-only boilerplate), §8 carries F-rows, and the
-# always-required sections are present. Substance, not bytes. Blocks Stage 3 on
-# a fail-severity violation (artifacts preserved for --resume). Skip on DRY_RUN.
+# Per-section integrity matrix — render phase (2026-06-26). The inline-shortcut
+# gate above proves the renderer ran and the structural fragments are present;
+# this goes through EVERY section of the rendered report and asserts each is in
+# the correct presence state, cross-referencing three concerns at once:
+#   • condition gates  — a section absent because its gate is off is OK
+#   • substance        — an in-scope section that rendered only heading/boilerplate
+#                        (outcome empty/degraded) is a FAIL-empty
+#   • preserve-on-downgrade — a deep-only section that a deeper PRIOR run produced
+#                        (captured in the snapshot) but this shallower run dropped
+#                        is a FAIL-dropped — it should have been CARRIED, not removed
+# This is the single check that guarantees both "all relevant sections are present"
+# AND "a shallower re-scan does not delete deeper content it didn't re-examine".
+# It reads .render-integrity.json (the composer's per-section manifest), the
+# contract preserve block, and the snapshot manifest; writes .section-integrity.json;
+# exits 2 on any FAIL-*. The completeness build-phase gate (cross-yaml invariants)
+# already ran after the auto-emitter pass; this is its render-side counterpart.
+# Blocks Stage 3 on failure (artifacts preserved for --resume). Skip on DRY_RUN.
 if [ "$DRY_RUN" != "true" ]; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/assert_completeness.py" "$OUTPUT_DIR" \
-      --phase render --plugin-root "$CLAUDE_PLUGIN_ROOT" || {
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  skill  COMPLETENESS_GATE_BLOCKED  render-phase invariant violated — report substantively incomplete" >> "$OUTPUT_DIR/.agent-run.log"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/section_integrity.py" "$OUTPUT_DIR" \
+      --plugin-root "$CLAUDE_PLUGIN_ROOT" || {
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  skill  SECTION_INTEGRITY_BLOCKED  a section is missing/empty or a deeper-prior section was dropped instead of carried" >> "$OUTPUT_DIR/.agent-run.log"
     exit 2
   }
 fi

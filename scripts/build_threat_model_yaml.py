@@ -1576,6 +1576,10 @@ def build_changelog(
         "version": 1,  # changelog entry SCHEMA version (the run sequence number
         # is derived positionally at render time — newest entry = highest vN).
         "date": _dt.date.today().isoformat(),
+        # Local wall-clock time of the run, e.g. "14:32 CEST" (2026-06-26). `date`
+        # stays a bare ISO date — it is part of the entry identity key and is
+        # parsed by date regexes — so the time is a separate display-only field.
+        "time_local": _dt.datetime.now().astimezone().strftime("%H:%M %Z"),
         "mode": mode,
         "assessment_depth": cur_depth,
         "reasoning_model": skill_cfg.get("reasoning_model", "sonnet-economy"),

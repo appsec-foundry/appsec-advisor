@@ -40,6 +40,7 @@ _Append-only history of assessment runs. Most recent first._
 {%- set run_no        = (changelog | length) - loop.index0 -%}
 {%- set prior_run     = run_no - 1 -%}
 {%- set date          = entry.date or '—' -%}
+{%- if entry.time_local -%}{%- set date = date ~ ' ' ~ entry.time_local -%}{%- endif -%}
 {%- set mode          = (entry.mode or 'full') | lower -%}
 {%- set depth         = (entry.assessment_depth or '—') | lower -%}
 {%- set reasoning     = entry.reasoning_model or '—' -%}
