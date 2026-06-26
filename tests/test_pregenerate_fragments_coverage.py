@@ -392,7 +392,13 @@ class TestGeneratorsRich:
                 out = fn(rich_yaml_data, "standard")
             else:
                 out = fn(rich_yaml_data)
-            assert isinstance(out, str) and out
+            if name == "ms-ai-exposure.json":
+                # Opt-out generator: returns None ("write nothing") when the
+                # model has no LLM/AI surface. The rich fixture has none, so a
+                # None here is the contract, not a failure.
+                assert out is None or (isinstance(out, str) and out)
+            else:
+                assert isinstance(out, str) and out
 
     def test_system_overview_rich(self, rich_yaml_data):
         md = pf.gen_system_overview(rich_yaml_data)

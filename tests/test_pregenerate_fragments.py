@@ -9,6 +9,7 @@ idempotency, --force, --only, and --dry-run flags.
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import subprocess
 import sys
@@ -191,6 +192,66 @@ class TestAssets:
         md = pf.gen_assets({"assets": []})
         assert md.startswith("## 4. Assets\n")
         assert "_No assets enumerated" in md
+
+
+class TestAiExposure:
+    """Deterministic ms-ai-exposure.json generator (gen_ai_exposure)."""
+
+    _LLM_YAML = {
+        "components": [
+            {"id": "express-api", "name": "Express API Server"},
+            {"id": "llm-chatbot", "name": "LLM Chatbot Service"},
+        ],
+        "threats": [
+            {"id": "T-026", "title": "Prompt Injection — routes/chat.ts:179", "component": "llm-chatbot", "effective_severity": "High"},
+            {"id": "T-035", "title": "Confidential System Prompt Extractable — routes/chat.ts:104", "component": "llm-chatbot", "risk": "High"},
+            {"id": "T-043", "title": "Unbounded LLM API Consumption on Chat Endpoint — server.ts", "component": "express-api", "effective_severity": "High"},
+            # noise — must NOT be categorised as an LLM risk:
+            {"id": "T-025", "title": "NoSQL Injection — routes/chat.ts:149", "component": "llm-chatbot", "effective_severity": "Critical"},
+            {"id": "T-041", "title": "Unbounded In-Memory Token Store — lib/insecurity.ts:70", "component": "auth", "risk": "High"},
+        ],
+    }
+
+    def test_returns_none_without_llm_surface(self):
+        d = {
+            "components": [{"id": "api", "name": "API Server"}],
+            "threats": [{"id": "T-001", "title": "SQL Injection — routes/login.ts", "component": "api", "risk": "Critical"}],
+        }
+        assert pf.gen_ai_exposure(d) is None
+
+    def test_returns_none_when_llm_component_has_no_llm_risk(self):
+        d = {
+            "components": [{"id": "llm-chatbot", "name": "LLM Chatbot Service"}],
+            "threats": [{"id": "T-002", "title": "NoSQL Injection — routes/chat.ts", "component": "llm-chatbot", "risk": "High"}],
+        }
+        assert pf.gen_ai_exposure(d) is None
+
+    def test_categorises_and_excludes_noise(self):
+        out = pf.gen_ai_exposure(self._LLM_YAML)
+        assert out is not None
+        data = json.loads(out)
+        ids = {r["owasp_llm_id"] for r in data["ai_risks"]}
+        assert "LLM01" in ids  # prompt injection
+        assert "LLM07" in ids  # system prompt leakage
+        assert "LLM10" in ids  # unbounded LLM consumption (has LLM context)
+        refs = {f["ref"] for r in data["ai_risks"] for f in r["findings"]}
+        assert "T-025" not in refs  # NoSQL injection is not an LLM risk
+        assert "T-041" not in refs  # unbounded token store has no LLM context
+
+    def test_output_is_schema_valid(self):
+        out = pf.gen_ai_exposure(self._LLM_YAML)
+        data = json.loads(out)
+        assert 1 <= len(data["ai_risks"]) <= 10
+        for r in data["ai_risks"]:
+            assert 4 <= len(r["name"]) <= 60
+            assert 40 <= len(r["description"]) <= 400
+            assert 1 <= len(r["findings"]) <= 6
+            for f in r["findings"]:
+                assert re.match(r"^[FTM]-\d{3,4}$", f["ref"])
+                assert 5 <= len(f["label"]) <= 80
+            for c in r.get("affected_components", []):
+                assert re.match(r"^C-\d{2,}$", c)
+        assert 20 <= len(data.get("summary", "")) <= 300
 
 
 class TestAttackSurface:
@@ -1459,6 +1520,11 @@ class TestCli:
         frag_dir = output_dir / ".fragments"
         assert frag_dir.is_dir()
         for name in pf.GENERATORS:
+            # ms-ai-exposure.json is conditional — written ONLY when the model
+            # has an LLM/AI surface, which the minimal fixture does not.
+            if name == "ms-ai-exposure.json":
+                assert not (frag_dir / name).exists(), "ms-ai-exposure must not be written without an LLM surface"
+                continue
             assert (frag_dir / name).is_file(), f"{name} not written"
 
     def test_idempotent_skips_existing(self, output_dir):
@@ -1488,7 +1554,10 @@ class TestCli:
         # --force should overwrite
         result = _run_cli(str(output_dir), "--force")
         assert result.returncode == 0
-        expected = f"wrote {len(pf.GENERATORS)}"
+        # ms-ai-exposure.json is conditional (no LLM surface in the fixture), so
+        # it is not part of the written set even with --force.
+        unconditional = [n for n in pf.GENERATORS if n != "ms-ai-exposure.json"]
+        expected = f"wrote {len(unconditional)}"
         assert expected in result.stdout
         assert "MUTATED" not in target.read_text()
 

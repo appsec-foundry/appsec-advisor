@@ -495,6 +495,22 @@ def get_diff_for_file(repo_root: str, baseline_sha: str | None, file_path: str) 
         return ""
 
 
+def _read_untracked_content(repo_root: str, file_path: str, max_bytes: int = 262_144) -> str | None:
+    """Read a file's content for relevance scanning when no git diff exists
+    (untracked / newly-added file). Returns ``None`` when the path is missing,
+    unreadable, or a directory. The read is capped at ``max_bytes`` so a large
+    generated/vendored file cannot stall classification; the security-pattern
+    scan only needs a representative head of the file."""
+    try:
+        p = Path(repo_root) / file_path
+        if not p.is_file():
+            return None
+        data = p.read_bytes()[:max_bytes]
+        return data.decode("utf-8", errors="ignore")
+    except OSError:
+        return None
+
+
 def _git_show_blob(repo_root: str, ref: str, file_path: str) -> str | None:
     """Return the file content at the given ref, or None on error / missing."""
     try:
@@ -539,6 +555,47 @@ _PKG_JSON_SEC_KEYS = frozenset(
 )
 
 
+# Dependency maps whose values are bare semver specifiers, so a patch-only
+# version bump ("4.17.20" → "4.17.21") can be recognised as noise. Other
+# _PKG_JSON_SEC_KEYS (scripts/engines/overrides/…) carry richer values where
+# any change is meaningful, so they are NOT semver-filtered.
+_DEP_SEMVER_KEYS = frozenset(
+    {
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+        "bundledDependencies",
+        "bundleDependencies",
+    }
+)
+
+_SEMVER_RE = re.compile(r"^\s*([\^~>=<]*)\s*v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _is_patch_only_bump(before_spec: str, after_spec: str) -> bool:
+    """True iff ``before_spec`` and ``after_spec`` are semver specifiers that
+    share the same range operator and major.minor, differing only in the patch
+    component (e.g. ``^1.2.3`` → ``^1.2.7``). A patch release is, by semver
+    contract, a backwards-compatible bug-fix with no new API surface, so it
+    cannot introduce a new route / capability / trust boundary and must not
+    trigger a STRIDE re-analysis.
+
+    Conservative: returns ``False`` (i.e. "treat as a real change") whenever
+    either side is unparseable, the operator differs (``~`` vs ``^`` widens the
+    accepted range), or the major/minor differ. False negatives here only cost
+    an unnecessary re-scan, never a missed one."""
+    mb = _SEMVER_RE.match(before_spec or "")
+    ma = _SEMVER_RE.match(after_spec or "")
+    if not mb or not ma:
+        return False
+    op_b, maj_b, min_b, _patch_b = mb.groups()
+    op_a, maj_a, min_a, _patch_a = ma.groups()
+    if op_b != op_a:
+        return False
+    return (maj_b, min_b) == (maj_a, min_a)
+
+
 def _has_security_relevant_package_json_change(
     before_text: str | None, after_text: str | None
 ) -> tuple[bool | None, list[str]]:
@@ -574,6 +631,17 @@ def _has_security_relevant_package_json_change(
             added = sorted(set(av.keys()) - set(bv.keys()))
             removed = sorted(set(bv.keys()) - set(av.keys()))
             common_diff = sorted(k for k in (set(bv.keys()) & set(av.keys())) if bv[k] != av[k])
+            # For dependency maps, drop patch-only version bumps — a backwards-
+            # compatible bug-fix release adds no attack surface, so it must not
+            # flip the manifest to "security-relevant". Adds/removes and
+            # minor/major bumps still count.
+            if key in _DEP_SEMVER_KEYS:
+                common_diff = [
+                    k for k in common_diff if not _is_patch_only_bump(str(bv[k]), str(av[k]))
+                ]
+            if not (added or removed or common_diff):
+                # Every difference in this key was a patch-only bump → noise.
+                continue
             parts: list[str] = []
             for k in added[:3]:
                 parts.append(f"+{k}")
@@ -896,9 +964,32 @@ def classify_files(
         # Tier 2+3: need diff content
         diff_text = get_diff_for_file(repo_root, baseline_sha, f)
         if not diff_text:
-            # No diff available — conservative: mark as relevant
-            results[f] = {"relevant": True, "reasons": ["no_diff_available"]}
-            relevant_files.append(f)
+            # No git diff — almost always an UNTRACKED/new file git cannot diff
+            # against the baseline. The old behaviour blindly marked these
+            # "relevant", which flagged every stray tooling / home dotfile that
+            # happens to sit in the repo working dir (.bashrc, .zshrc,
+            # .gitconfig, .profile, …) and forced a needless re-analysis on a
+            # tree whose actual application surface was unchanged.
+            #
+            # Instead, read the file's full content and classify it as if every
+            # line were added. A genuinely security-relevant NEW file (a new
+            # route, auth module, crypto helper, …) still trips the Tier-2/3
+            # patterns and stays relevant — but inert config with no security
+            # signal is correctly dropped. This preserves the safe direction
+            # (no false negatives on real new code) while killing the dotfile
+            # false positives.
+            content = _read_untracked_content(repo_root, f)
+            if content is None:
+                # Missing / unreadable / binary — no signal to act on.
+                results[f] = {"relevant": False, "reasons": ["no_diff_no_content"]}
+                continue
+            pseudo_diff = "\n".join("+" + ln for ln in content.splitlines())
+            is_relevant, diff_reasons = classify_by_diff(pseudo_diff)
+            if is_relevant:
+                results[f] = {"relevant": True, "reasons": ["untracked", *diff_reasons]}
+                relevant_files.append(f)
+            else:
+                results[f] = {"relevant": False, "reasons": ["untracked_no_security_patterns"]}
             continue
 
         is_relevant, diff_reasons = classify_by_diff(diff_text)

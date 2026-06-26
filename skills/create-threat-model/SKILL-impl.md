@@ -3032,6 +3032,18 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --only security-architecture.md,_chain-skeleton.md \
     || true
+# ms-ai-exposure.json — deterministic "AI / LLM Exposure" MS callout, IDEMPOTENT
+# (no --force). The renderer authors this fragment only at its discretion, so it
+# used to appear on some runs and silently vanish on others (quick emitted it,
+# standard of the SAME repo did not — and vice-versa). This backstop derives it
+# from threat-model.yaml whenever the model has an LLM/AI surface with ≥1
+# LLM-categorizable threat, guaranteeing the section is present consistently. A
+# renderer-authored (richer) version already on disk is preserved; a repo with
+# no LLM surface writes nothing (the generator returns no content), so the
+# section correctly renders nothing there.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
+    --only ms-ai-exposure.json \
+    || true
 # §9 Abuse Cases — deterministic render from the Phase-10b verdicts. No-ops
 # (and removes any stale fragment) when no abuse case applied, so compose then
 # emits its placeholder line and §8 → §10 numbering stays contiguous.

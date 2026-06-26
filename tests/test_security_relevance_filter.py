@@ -413,6 +413,33 @@ class TestSemanticDiffHelpers:
             json.dumps({"type": "module"}),
         ) == (True, ["type"])
 
+    def test_is_patch_only_bump(self):
+        assert srf._is_patch_only_bump("4.17.20", "4.17.21") is True
+        assert srf._is_patch_only_bump("^1.2.3", "^1.2.9") is True
+        assert srf._is_patch_only_bump("~1.2.3", "~1.2.9") is True
+        # minor / major bumps are NOT patch-only
+        assert srf._is_patch_only_bump("1.2.3", "1.3.0") is False
+        assert srf._is_patch_only_bump("1.2.3", "2.0.0") is False
+        # operator change widens the accepted range → not patch-only
+        assert srf._is_patch_only_bump("~1.2.3", "^1.2.3") is False
+        # unparseable specifier → conservative (not patch-only)
+        assert srf._is_patch_only_bump("latest", "1.0.0") is False
+
+    def test_package_json_patch_only_bump_is_noise(self):
+        before = json.dumps({"dependencies": {"lodash": "4.17.20"}})
+        # pure patch bump → not security-relevant
+        after_patch = json.dumps({"dependencies": {"lodash": "4.17.21"}})
+        assert srf._has_security_relevant_package_json_change(before, after_patch) == (False, [])
+        # minor bump → relevant
+        after_minor = json.dumps({"dependencies": {"lodash": "4.18.0"}})
+        verdict, details = srf._has_security_relevant_package_json_change(before, after_minor)
+        assert verdict is True
+        # added dependency → relevant even when an existing dep only patch-bumped
+        after_add = json.dumps({"dependencies": {"lodash": "4.17.21", "evil": "1.0.0"}})
+        verdict2, details2 = srf._has_security_relevant_package_json_change(before, after_add)
+        assert verdict2 is True
+        assert any("+evil" in d for d in details2)
+
     def test_dockerfile_normalization_and_security_change_details(self):
         before = "# comment\nfrom node:20\nRUN echo old \\\n  && true\n"
         after = "\nFROM node:20\nRUN echo new \\\n  && true\nCOPY . /app\n"
@@ -553,13 +580,42 @@ class TestClassifyFiles:
         assert result["verdict"] == "irrelevant"
         assert result["files"]["src/utils.py"]["relevant"] is False
 
-    def test_no_diff_available_conservative(self):
-        """When diff can't be retrieved, file is conservatively marked relevant."""
-        with patch("security_relevance_filter.get_diff_for_file", return_value=""):
-            result = classify_files("/tmp/repo", "abc123", ["src/server.py"])
+    def test_no_diff_untracked_security_content_relevant(self):
+        """No git diff (untracked/new file) but the file's CONTENT carries
+        security signal → relevant via the content-scan fallback."""
+        with patch("security_relevance_filter.get_diff_for_file", return_value=""), patch(
+            "security_relevance_filter._read_untracked_content",
+            return_value="token = jwt.encode(payload, SECRET_KEY)\n",
+        ):
+            result = classify_files("/tmp/repo", "abc123", ["src/new_route.py"])
         assert result["verdict"] == "relevant"
-        assert result["files"]["src/server.py"]["relevant"] is True
-        assert "no_diff_available" in result["files"]["src/server.py"]["reasons"]
+        assert result["files"]["src/new_route.py"]["relevant"] is True
+        assert "untracked" in result["files"]["src/new_route.py"]["reasons"]
+
+    def test_no_diff_untracked_inert_content_irrelevant(self):
+        """No git diff and inert content (a stray home/tooling dotfile such as
+        .bashrc/.zshrc sitting in the repo dir) → irrelevant. This is the
+        regression guard for the false-positive that forced needless
+        re-analyses on trees whose application surface was unchanged."""
+        with patch("security_relevance_filter.get_diff_for_file", return_value=""), patch(
+            "security_relevance_filter._read_untracked_content",
+            return_value="export PATH=$HOME/bin:$PATH\nalias ll='ls -la'\n",
+        ):
+            result = classify_files("/tmp/repo", "abc123", [".bashrc"])
+        assert result["verdict"] == "irrelevant"
+        assert result["files"][".bashrc"]["relevant"] is False
+        assert "untracked_no_security_patterns" in result["files"][".bashrc"]["reasons"]
+
+    def test_no_diff_no_content_irrelevant(self):
+        """No git diff AND no readable content (missing/binary) → irrelevant
+        (no signal to act on)."""
+        with patch("security_relevance_filter.get_diff_for_file", return_value=""), patch(
+            "security_relevance_filter._read_untracked_content", return_value=None
+        ):
+            result = classify_files("/tmp/repo", "abc123", ["src/server.py"])
+        assert result["verdict"] == "irrelevant"
+        assert result["files"]["src/server.py"]["relevant"] is False
+        assert "no_diff_no_content" in result["files"]["src/server.py"]["reasons"]
 
     def test_empty_file_list(self):
         result = classify_files("/tmp/repo", None, [])

@@ -5321,6 +5321,266 @@ def gen_security_architecture(yaml_data: dict, depth: str = "standard") -> str:
 
 
 # ---------------------------------------------------------------------------
+# ms-ai-exposure.json — deterministic AI/LLM Exposure MS fragment
+# ---------------------------------------------------------------------------
+#
+# The "### AI / LLM Exposure" Management-Summary callout used to be authored
+# ONLY at the renderer LLM's discretion. That made it non-deterministic: it
+# appeared on some runs of a repo and silently vanished on others (e.g. a quick
+# scan emitted it but the standard scan of the SAME repo did not). Deriving it
+# from threat-model.yaml makes it reproducible — present whenever, and only
+# when, the model actually has an LLM/AI surface with ≥1 LLM-categorizable
+# threat. Used as an idempotent backstop after Stage 2: if the renderer
+# authored a richer version, that file is preserved; if it skipped it, this
+# guarantees the section still appears.
+
+# OWASP Top-10 for LLM Applications (2025) mapping rules. Each rule:
+#   (llm_id, canonical_name, severity_default, [title keywords], description, strong)
+# ``strong`` keywords are unambiguous LLM risks and match wherever they occur.
+# Non-strong (weak) keywords are broad words ("unbounded", "data leak") that
+# also appear on non-LLM threats, so they only count when the threat carries an
+# LLM context (lives on an LLM component or names an LLM in its title). Rule
+# order is the scan precedence — the first matching rule wins per threat.
+_LLM_TOP10_RULES = [
+    (
+        "LLM01",
+        "Prompt Injection",
+        ["prompt injection", "prompt-injection", "jailbreak"],
+        "Untrusted user input reaches the LLM prompt/context without sufficient "
+        "trust separation, letting an attacker override system instructions, "
+        "redirect tool calls, or coerce unintended model behaviour.",
+        True,
+    ),
+    (
+        "LLM07",
+        "System Prompt Leakage",
+        ["system prompt", "prompt leak", "prompt disclosure", "prompt extract"],
+        "The system prompt — carrying internal policy, tool rules, or secrets — "
+        "is extractable through conversational manipulation, exposing the tool "
+        "capability surface and internal business logic encoded in it.",
+        True,
+    ),
+    (
+        "LLM06",
+        "Excessive Agency",
+        [
+            "excessive agency",
+            "assistant-role",
+            "conversation history",
+            "unauthorized tool",
+            "tool-call",
+            "tool calling",
+            "tool invocation",
+        ],
+        "The LLM is granted tool/function-calling authority without a secondary "
+        "authorization boundary, so a manipulated model turn can invoke "
+        "privileged actions on the user's behalf.",
+        True,
+    ),
+    (
+        "LLM05",
+        "Improper Output Handling",
+        ["improper output", "insecure output", "output handling", "output encoding"],
+        "LLM-generated output flows into a downstream sink (browser, shell, "
+        "query, eval) without validation or encoding, turning a model "
+        "completion into an injection vector.",
+        True,
+    ),
+    (
+        "LLM04",
+        "Data and Model Poisoning",
+        ["data poisoning", "model poisoning", "training data"],
+        "Untrusted content can influence the model's training, fine-tuning, or "
+        "retrieval corpus, allowing an attacker to bias or backdoor model "
+        "behaviour.",
+        True,
+    ),
+    (
+        "LLM08",
+        "Vector and Embedding Weaknesses",
+        ["vector database", "embedding", "retrieval-augmented", "rag pipeline"],
+        "Retrieval/embedding inputs are not isolated by trust, letting injected "
+        "documents or queries steer retrieval-augmented responses or leak "
+        "indexed content.",
+        True,
+    ),
+    (
+        "LLM09",
+        "Misinformation",
+        ["misinformation", "hallucination", "overreliance"],
+        "The system relies on LLM output without verification, so hallucinated "
+        "or manipulated completions can drive incorrect or harmful downstream "
+        "decisions.",
+        True,
+    ),
+    (
+        "LLM03",
+        "Supply Chain",
+        ["model supply chain", "model provenance", "third-party model"],
+        "The model, its provider SDK, or plugins enter the system from third "
+        "parties without provenance or integrity controls, exposing a "
+        "supply-chain compromise path.",
+        True,
+    ),
+    (
+        "LLM10",
+        "Unbounded Consumption",
+        ["unbounded", "resource exhaustion", "model denial", "rate limit", "provider cost"],
+        "The LLM endpoint imposes no authentication, rate, or quota boundary, so "
+        "any client can drive unbounded model invocations — uncontrolled "
+        "provider cost and denial of service for legitimate users.",
+        False,  # weak: "unbounded"/"rate limit" also hit non-LLM threats
+    ),
+    (
+        "LLM02",
+        "Sensitive Information Disclosure",
+        ["sensitive information disclosure", "information disclosure", "data leak"],
+        "The LLM surface can return sensitive data — internal secrets, other "
+        "users' data, or privileged context — to an attacker who crafts the "
+        "right conversational input.",
+        False,  # weak: generic disclosure language
+    ),
+]
+
+_LLM_COMPONENT_HINTS = ("llm", "chatbot", "ai-agent", "ai agent", "genai", "copilot")
+
+_SEVERITY_RANK = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+
+
+def _llm_severity_glyph(sev_rank: int) -> str:
+    if sev_rank >= 2:
+        return "red"
+    if sev_rank == 1:
+        return "yellow"
+    return "green"
+
+
+def _is_llm_component(comp: dict) -> bool:
+    blob = (str(comp.get("id", "")) + " " + str(comp.get("name", ""))).lower()
+    return any(h in blob for h in _LLM_COMPONENT_HINTS)
+
+
+def _clean_finding_label(title: str) -> str:
+    """Reduce a finding title to a short weakness-class label for the MS list
+    (the schema caps labels at 80 chars). Strips the ``— file:line`` tail and
+    any trailing dash artifacts, then truncates."""
+    label = (title or "").split(" — ")[0].strip().rstrip("—-– ").strip()
+    if not label:
+        label = (title or "").strip()
+    if len(label) > 80:
+        label = label[:77].rstrip() + "…"
+    if len(label) < 5:  # schema floor — pad defensively (titles are rarely this short)
+        label = (label + " (LLM risk)")[:80]
+    return label
+
+
+def gen_ai_exposure(yaml_data: dict):
+    """Deterministically emit ms-ai-exposure.json when the model has an LLM/AI
+    surface, else return ``None`` (→ no file written, section renders nothing).
+
+    Detection is yaml-derived (an LLM component and/or LLM-categorizable threat
+    titles), so the section is reproducible across depths and runs instead of
+    depending on the renderer LLM's discretion."""
+    import json
+
+    components = yaml_data.get("components") or []
+    threats = yaml_data.get("threats") or []
+    if not threats:
+        return None
+
+    # Positional C-NN map (matches compose_threat_model.py component numbering).
+    cmap = {c.get("id"): "C-%02d" % (i + 1) for i, c in enumerate(components) if c.get("id")}
+    llm_component_ids = {c.get("id") for c in components if _is_llm_component(c)}
+    llm_component_names = [c.get("name") for c in components if _is_llm_component(c) and c.get("name")]
+
+    def _llm_context(threat: dict, title_lc: str) -> bool:
+        if threat.get("component") in llm_component_ids:
+            return True
+        return any(h in title_lc for h in ("llm", "chatbot", "prompt", "model api"))
+
+    # First-match-wins categorization of each threat into an LLM Top-10 bucket.
+    buckets: dict[str, dict] = {}
+    for th in threats:
+        title = th.get("title", "") or ""
+        title_lc = title.lower()
+        for llm_id, name, keywords, description, strong in _LLM_TOP10_RULES:
+            if not any(kw in title_lc for kw in keywords):
+                continue
+            if not strong and not _llm_context(th, title_lc):
+                continue
+            b = buckets.setdefault(
+                llm_id,
+                {"name": name, "description": description, "threats": [], "sev_rank": -1},
+            )
+            b["threats"].append(th)
+            sev = str(th.get("effective_severity") or th.get("risk") or "").lower()
+            b["sev_rank"] = max(b["sev_rank"], _SEVERITY_RANK.get(sev, 1))
+            break
+
+    if not buckets:
+        # No LLM-categorizable threat — even if a component looks LLM-ish, there
+        # is no concrete risk to surface, so emit nothing (zero-cost contract).
+        return None
+
+    ai_risks = []
+    for llm_id, b in buckets.items():
+        group = b["threats"]
+        # Order findings by severity then id; cap at the schema max (6).
+        group_sorted = sorted(
+            group,
+            key=lambda t: (
+                -_SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1),
+                str(t.get("id", "")),
+            ),
+        )
+        findings = []
+        seen_refs = set()
+        for t in group_sorted:
+            ref = t.get("id")
+            if not ref or ref in seen_refs:
+                continue
+            seen_refs.add(ref)
+            findings.append({"ref": ref, "label": _clean_finding_label(t.get("title", ""))})
+            if len(findings) >= 6:
+                break
+        if not findings:
+            continue
+        affected = []
+        for t in group_sorted:
+            cnn = cmap.get(t.get("component"))
+            if cnn and cnn not in affected:
+                affected.append(cnn)
+        risk = {
+            "owasp_llm_id": llm_id,
+            "name": b["name"],
+            "severity": _llm_severity_glyph(b["sev_rank"]),
+            "description": b["description"],
+            "findings": findings,
+        }
+        if affected:
+            risk["affected_components"] = affected[:8]
+        ai_risks.append((b["sev_rank"], llm_id, risk))
+
+    if not ai_risks:
+        return None
+
+    # Most severe first, then stable by LLM id; cap at the schema max (10).
+    ai_risks.sort(key=lambda x: (-x[0], x[1]))
+    payload = {"ai_risks": [r for _, _, r in ai_risks][:10]}
+
+    surface = llm_component_names[0] if llm_component_names else "an LLM/AI integration"
+    summary = (
+        f"This system embeds an LLM/AI surface ({surface}); the risks below are "
+        "architectural — they follow from how untrusted input reaches the model's "
+        "prompt, tools, and outputs."
+    )
+    if 20 <= len(summary) <= 300:
+        payload = {"summary": summary, **payload}
+
+    return json.dumps(payload, indent=2) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -5337,6 +5597,10 @@ GENERATORS = {
     # agent does NOT author this fragment any more; the §3 repair loop was
     # collapsed because the contract is now satisfied by construction.
     "attack-walkthroughs.md": gen_attack_walkthroughs,
+    # ms-ai-exposure.json — deterministic "AI / LLM Exposure" MS callout.
+    # Returns None (no file) on repos without an LLM/AI surface, so non-LLM
+    # repos pay zero cost and the section renders nothing.
+    "ms-ai-exposure.json": gen_ai_exposure,
     # Kept for one release as a deprecated transitional artifact — the
     # legacy renderer prompt has a fallback path that reads it. Removed in
     # the release after the deterministic flip lands.
@@ -5494,6 +5758,12 @@ def main(argv: list[str] | None = None) -> int:
                 content = GENERATORS[name](yaml_data)
         except Exception as exc:  # noqa: BLE001 — we want to keep going
             failed.append((name, str(exc)))
+            continue
+        if content is None:
+            # Generator opted out (e.g. ms-ai-exposure.json on a repo with no
+            # LLM/AI surface). Not a failure — there is simply nothing to write,
+            # and the optional section then renders nothing.
+            skipped.append(f"{name} (not applicable)")
             continue
         if args.dry_run:
             written.append(f"{name} (dry-run, {len(content)} chars)")
