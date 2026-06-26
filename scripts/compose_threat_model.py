@@ -8419,7 +8419,8 @@ def _render_ai_exposure(ctx: RenderContext, env: jinja2.Environment) -> str:
     if not (data.get("ai_risks") or []):
         return ""
     tpl = env.get_template("ai-exposure.md.j2")
-    body = tpl.render(data=data)
+    section7_present = bool(ctx.eval_context.get("render_security_architecture", True))
+    body = tpl.render(data=data, section7_present=section7_present)
     # Provenance (2026-06-26): if this AI callout was restored from a deeper
     # prior run (restore_preserved_sections recorded it), mark it as carried.
     prov = _carried_provenance(ctx.output_dir)

@@ -1380,6 +1380,7 @@ def build_changelog(
     current_sha: str | None = None,
     recon_info: dict | None = None,
     mitigations: list[dict] | None = None,
+    run_id: str | None = None,
 ) -> list[dict]:
     """Prepend a new entry to the prior changelog history (newest first).
 
@@ -1410,19 +1411,28 @@ def build_changelog(
     cur_fps = [_fp_str(t) for t in threats]
     cur_fp_set = set(cur_fps)
     # Select the prior entry to diff against — but SKIP an existing entry that
-    # describes THIS SAME run (identical current_sha/date/mode/plugin/analysis).
-    # Such an entry is this run's own earlier yaml build (Phase-11 may build the
-    # yaml more than once), NOT a genuine previous run; treating it as a baseline
-    # makes a first/full run self-diff into a bogus "+0 (stable)" delta. The
-    # idempotent dedup at the end of this function replaces that same-run entry
-    # anyway, so excluding it as a baseline here is consistent.
-    # Entry identity includes assessment_depth + reasoning_model (2026-06-26):
-    # without them, two genuine assessments of the SAME commit on the SAME day
-    # at different depths/models (e.g. standard then thorough) collide and the
-    # second SILENTLY OVERWRITES the first. Including them so only a true
-    # Phase-11 re-build (identical in every parameter) collapses; distinct
-    # assessments accumulate.
+    # describes THIS SAME run (this run's own earlier yaml build — Phase-11 may
+    # build the yaml more than once), NOT a genuine previous run; treating it as
+    # a baseline makes a first/full run self-diff into a bogus "+0 (stable)"
+    # delta. The idempotent dedup at the end of this function replaces that
+    # same-run entry anyway, so excluding it as a baseline here is consistent.
+    #
+    # Run identity is keyed on `run_id` (the per-invocation `.scan-start-epoch`,
+    # written ONCE at every real-run start). This is the only token that is
+    # stable across a single run's multiple Phase-11 yaml builds yet DISTINCT
+    # between two separate user invocations. The previous key —
+    # (current_sha, date, mode, depth, reasoning, plugin_ver, analysis_ver) —
+    # could not tell apart "one run rebuilt its yaml" from "the user ran --full
+    # twice on the same commit on the same day with the same params": both
+    # collapsed, so the second genuine run SILENTLY OVERWROTE the first as a
+    # fresh "initial" entry instead of appending a v2 delta (2026-06-26 juice-
+    # shop: two --full quick runs on commit 08fc2760 → second reset to v1).
+    # `run_id` fixes that — same epoch ⇒ same run ⇒ collapse; different epoch ⇒
+    # distinct runs ⇒ accumulate with a real fingerprint delta.
     _cur_reasoning = skill_cfg.get("reasoning_model", "sonnet-economy")
+    # Legacy fallback identity (used only when run_id is unavailable on this run
+    # — e.g. no .scan-start-epoch — so the 2026-06-19 self-diff protection still
+    # holds for runs that cannot identify themselves).
     _new_key = (
         current_sha,
         _dt.date.today().isoformat(),
@@ -1432,23 +1442,30 @@ def build_changelog(
         plugin_ver,
         analysis_ver,
     )
-    prior_entry = next(
-        (
-            e
-            for e in existing
-            if (
-                e.get("current_sha"),
-                e.get("date"),
-                e.get("mode"),
-                e.get("assessment_depth"),
-                e.get("reasoning_model"),
-                e.get("plugin_version"),
-                e.get("analysis_version"),
-            )
-            != _new_key
-        ),
-        None,
-    )
+
+    def _legacy_key(e: dict) -> tuple:
+        return (
+            e.get("current_sha"),
+            e.get("date"),
+            e.get("mode"),
+            e.get("assessment_depth"),
+            e.get("reasoning_model"),
+            e.get("plugin_version"),
+            e.get("analysis_version"),
+        )
+
+    def _is_same_run(e: dict) -> bool:
+        """True iff `e` is this run's own earlier yaml build (must be collapsed,
+        never diffed against). When this run has a `run_id`, identity is the
+        run_id alone: an entry with a different run_id — or NO run_id at all
+        (written by a pre-run_id invocation, hence necessarily a prior run) — is
+        a genuine previous run and is preserved. Only when this run has no
+        run_id do we fall back to the legacy param-key match."""
+        if run_id:
+            return e.get("run_id") == run_id
+        return _legacy_key(e) == _new_key
+
+    prior_entry = next((e for e in existing if not _is_same_run(e)), None)
     prior_fps_list = (prior_entry or {}).get("fingerprints") or []
     prior_fp_set = set(prior_fps_list)
     prior_has_fps = bool(prior_entry) and bool(prior_fps_list)
@@ -1574,6 +1591,11 @@ def build_changelog(
         "reasoning_model": skill_cfg.get("reasoning_model", "sonnet-economy"),
         "plugin_version": plugin_ver,
         "analysis_version": analysis_ver,
+        # Per-invocation identity (the run's .scan-start-epoch). Stable across
+        # this run's Phase-11 yaml rebuilds, distinct between separate runs — so
+        # two --full runs on the same commit/day/params accumulate instead of
+        # the second overwriting the first. None on runs with no scan-start-epoch.
+        "run_id": run_id,
         "baseline_sha": None,
         "current_sha": current_sha,
         "changed_files": None,
@@ -1606,25 +1628,13 @@ def build_changelog(
         "note": note,
     }
 
-    # Idempotent re-build: drop any prior entry that describes the identical
-    # run state, then prepend the fresh one. Distinct scans (new commit, later
-    # date, plugin upgrade, mode switch, DEPTH or REASONING-MODEL change) keep
-    # their own entries and accumulate — depth + reasoning_model are part of the
-    # identity so a standard→thorough re-run on the same commit/day does not
-    # silently overwrite the standard entry. (2026-06-26)
-    def _entry_key(e: dict) -> tuple:
-        return (
-            e.get("current_sha"),
-            e.get("date"),
-            e.get("mode"),
-            e.get("assessment_depth"),
-            e.get("reasoning_model"),
-            e.get("plugin_version"),
-            e.get("analysis_version"),
-        )
-
-    new_key = _entry_key(new_entry)
-    deduped = [e for e in existing if _entry_key(e) != new_key]
+    # Idempotent re-build: drop only THIS run's own earlier yaml build (same
+    # run_id), then prepend the fresh one. Two genuine invocations have distinct
+    # run_ids — even on the same commit/day/params — so both keep their entries
+    # and accumulate (the second now shows a real v2 fingerprint delta instead
+    # of overwriting v1 as "initial"). `_is_same_run` falls back to the legacy
+    # param-key match only when this run has no run_id. (2026-06-26)
+    deduped = [e for e in existing if not _is_same_run(e)]
     return [new_entry, *deduped]
 
 
@@ -1785,6 +1795,19 @@ def main() -> int:
                 "is unrecoverable.\n"
             )
 
+    # Per-invocation run identity for changelog dedup: the skill writes this
+    # epoch once at every real-run start (overwriting any stale value), so it is
+    # stable across this run's Phase-11 yaml rebuilds yet distinct between two
+    # separate invocations. Absent → run_id stays None and build_changelog falls
+    # back to legacy param-key dedup.
+    _run_id = None
+    try:
+        _epoch = (od / ".scan-start-epoch").read_text(encoding="utf-8").strip()
+        if _epoch:
+            _run_id = _epoch
+    except OSError:
+        _run_id = None
+
     changelog = build_changelog(
         skill_cfg,
         threats,
@@ -1795,6 +1818,7 @@ def main() -> int:
         current_sha=(meta.get("git") or {}).get("commit_sha"),
         recon_info=recon_info,
         mitigations=mitigations,
+        run_id=_run_id,
     )
 
     # Compose final document

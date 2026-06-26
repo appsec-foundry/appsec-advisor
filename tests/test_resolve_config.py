@@ -1673,44 +1673,41 @@ class TestRunPlanVerdictIncremental:
         assert "bootstrap full run" in v["reason"]
 
 
-class TestRunPlanDepthHint:
-    """standard runs surface a console hint that thorough may do better at higher cost."""
+class TestDepthTradeoffCallout:
+    """Depth-vs-coverage guidance is a dedicated, marked callout block (above
+    Notes), not a buried bullet: a ⚠ WARNING at quick, a ℹ neutral reference at
+    standard, omitted at thorough."""
 
-    def _verdict(self, will_run=True):
-        return {"will_run": will_run, "mode_line": "full (first run)"}
+    def test_quick_is_a_warning_naming_both_upgrades(self):
+        block = rc._render_depth_tradeoff(_base_cfg(assessment_depth="quick"))
+        assert block, "quick must surface a depth-tradeoff callout"
+        assert block[0].startswith("⚠")
+        body = " ".join(block)
+        assert "Depth tradeoff" in block[0]
+        # Names BOTH upgrade paths and the cost tradeoff.
+        assert "--standard" in body and "--thorough" in body
+        assert "higher cost" in body
 
-    def test_standard_shows_thorough_hint(self):
-        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="standard"), None, None, None)
-        assert any("thorough" in n and "higher cost" in n for n in notes)
+    def test_standard_is_a_neutral_reference_to_thorough(self):
+        block = rc._render_depth_tradeoff(_base_cfg(assessment_depth="standard"))
+        assert block
+        # Neutral info marker, NOT a warning.
+        assert block[0].startswith("ℹ")
+        assert "⚠" not in block[0]
+        body = " ".join(block)
+        assert "--thorough" in body and "higher cost" in body
 
-    def test_thorough_no_hint(self):
-        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="thorough"), None, None, None)
-        assert not any("most thorough results come from" in n for n in notes)
+    def test_thorough_has_no_callout(self):
+        assert rc._render_depth_tradeoff(_base_cfg(assessment_depth="thorough")) == []
 
-    def test_quick_no_hint(self):
-        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="quick"), None, None, None)
-        assert not any("most thorough results come from" in n for n in notes)
-
-    def test_quick_shows_triage_limits_note(self):
-        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="quick"), None, None, None)
-        assert any("--quick is a fast triage pass" in n and "higher cost" in n for n in notes)
-
-    def test_quick_triage_note_on_noop(self):
-        # Surfaced regardless of will_run, same as the standard upsell.
-        notes = rc._run_plan_notes(self._verdict(will_run=False), _base_cfg(assessment_depth="quick"), None, None, None)
-        assert any("--quick is a fast triage pass" in n for n in notes)
-
-    def test_standard_has_no_quick_note(self):
-        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="standard"), None, None, None)
-        assert not any("--quick is a fast triage pass" in n for n in notes)
-
-    def test_hint_on_noop(self):
-        # The depth upsell is always surfaced at standard depth, even when
-        # nothing will run (a no-op rerun still benefits from the hint).
-        notes = rc._run_plan_notes(
-            self._verdict(will_run=False), _base_cfg(assessment_depth="standard"), None, None, None
-        )
-        assert any("most thorough results come from" in n for n in notes)
+    def test_depth_guidance_removed_from_notes(self):
+        # The guidance now lives in the callout, never as a Notes bullet.
+        verdict = {"will_run": True, "mode_line": "full (first run)"}
+        for depth in ("quick", "standard", "thorough"):
+            notes = rc._run_plan_notes(verdict, _base_cfg(assessment_depth=depth), None, None, None)
+            joined = " ".join(notes)
+            assert "most thorough results come from" not in joined
+            assert "fast triage pass" not in joined
 
 
 class TestPreflightStatusLine:
@@ -1750,20 +1747,29 @@ class TestPreflightStatusLine:
 
 
 class TestRenderRunPlanNotes:
-    """The Notes block is emitted deterministically by Bash (render_run_plan_notes),
-    not re-typed by the LLM banner — so the standard→thorough hint can never be dropped."""
+    """The depth-tradeoff callout + Notes block are emitted deterministically by
+    Bash (render_run_plan_notes), not re-typed by the LLM banner — so the depth
+    guidance can never be dropped."""
 
-    def test_standard_emits_notes_block_with_hint(self):
+    def test_standard_leads_with_callout_then_notes(self):
         out = rc.render_run_plan_notes(_base_cfg(assessment_depth="standard"), None, None, None)
-        assert out.startswith("Notes\n")
+        # Callout leads, Notes follow.
+        assert out.startswith("ℹ Depth tradeoff")
+        assert "--thorough" in out
+        assert "\nNotes\n" in out
         assert "  • " in out
-        assert "most thorough results come from" in out
         assert out.endswith("\n")
 
-    def test_thorough_omits_hint(self):
+    def test_quick_leads_with_warning_callout(self):
+        out = rc.render_run_plan_notes(_base_cfg(assessment_depth="quick"), None, None, None)
+        assert out.startswith("⚠ Depth tradeoff")
+        assert "--standard" in out and "--thorough" in out
+        assert "\nNotes\n" in out
+
+    def test_thorough_omits_callout(self):
         out = rc.render_run_plan_notes(_base_cfg(assessment_depth="thorough"), None, None, None)
-        assert "most thorough results come from" not in out
-        # Notes still render (Ctrl-C abort note) — just without the upsell.
+        assert "Depth tradeoff" not in out
+        # Notes still render (Ctrl-C abort note) — just without the callout.
         assert out.startswith("Notes\n")
 
     def test_matches_canonical_banner_notes(self):
@@ -1776,10 +1782,11 @@ class TestRenderRunPlanNotes:
             if line.strip():
                 assert line in banner
 
-    def test_empty_when_no_notes(self, monkeypatch):
-        # When _run_plan_notes yields nothing, the block is empty (caller omits it).
+    def test_empty_when_no_notes_and_no_callout(self, monkeypatch):
+        # When _run_plan_notes yields nothing AND there is no callout (thorough),
+        # the block is empty (caller omits it).
         monkeypatch.setattr(rc, "_run_plan_notes", lambda *a, **k: [])
-        assert rc.render_run_plan_notes(_base_cfg(), None, None, None) == ""
+        assert rc.render_run_plan_notes(_base_cfg(assessment_depth="thorough"), None, None, None) == ""
 
 
 class TestPipelineString:

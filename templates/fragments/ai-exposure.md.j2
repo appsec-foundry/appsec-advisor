@@ -7,7 +7,7 @@
 
 {% if data.summary %}{{ data.summary }}
 
-{% endif %}This system embeds an LLM / AI-agent surface. The risks below are architectural — each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain). See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.
+{% endif %}This system embeds an LLM / AI-agent surface. The risks below are architectural — each follows from how untrusted input reaches an AI sink (prompt, tool call, retrieval, model supply chain).{% if section7_present %} See **[§7 Security Architecture](#7-security-architecture)** for the per-control detail.{% endif %}
 
 {# No severity glyph on the LLMxx risk header — the coloured dot belongs to
    the findings only (_prepend_finding_severity_dots decorates each [F-NNN]

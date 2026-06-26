@@ -2015,6 +2015,12 @@ def render_run_plan(
         for label, value in active:
             lines.extend(kv(label, value))
 
+    # --- Section: Depth tradeoff (prominent callout, above Notes) ---
+    tradeoff = _render_depth_tradeoff(cfg)
+    if tradeoff:
+        lines.append("")
+        lines.extend(tradeoff)
+
     # --- Section: Notes / Recommendations ---
     notes = _run_plan_notes(verdict, cfg, pre_check, dirty_set, compat_label)
     if notes:
@@ -2032,33 +2038,41 @@ def render_run_plan_notes(
     dirty_set: dict | None,
     compat_label: str | None,
 ) -> str:
-    """Render ONLY the Notes / Recommendations block of the run-plan box.
+    """Render the advisory tail of the run-plan box — the depth-tradeoff callout
+    plus the Notes / Recommendations block.
 
     The create-threat-model skill renders the full Pre-flight banner LLM-side
-    (to avoid the Bash output double-fold) but emits this Notes block via a
-    deterministic Bash call so advisory hints — notably the standard→thorough
-    upsell — never depend on the model re-typing them. Same inputs and same
-    bullet formatting as ``render_run_plan``; returns "" when there are no
-    notes so the caller can omit the section entirely.
+    (to avoid the Bash output double-fold) but emits this tail via a
+    deterministic Bash call so the depth-vs-coverage callout and advisory hints
+    never depend on the model re-typing them. Same inputs and same formatting as
+    ``render_run_plan``; the callout (when present) leads, then ``Notes``.
+    Returns "" when there is nothing to emit so the caller can omit it.
     """
     verdict = _run_plan_verdict(cfg, pre_check, dirty_set, compat_label)
+    tradeoff = _render_depth_tradeoff(cfg)
     notes = _run_plan_notes(verdict, cfg, pre_check, dirty_set, compat_label)
-    if not notes:
+    if not tradeoff and not notes:
         return ""
-    width = _summary_width()
-    prefix = "  • "
-    value_width = max(20, width - len(prefix))
-    lines: list[str] = ["Notes"]
-    for n in notes:
-        chunks = wrap(
-            str(n),
-            width=value_width,
-            break_long_words=True,
-            break_on_hyphens=False,
-        ) or [""]
-        lines.append(prefix + chunks[0])
-        cont = " " * len(prefix)
-        lines.extend(cont + c for c in chunks[1:])
+    lines: list[str] = []
+    if tradeoff:
+        lines.extend(tradeoff)
+    if notes:
+        if tradeoff:
+            lines.append("")
+        width = _summary_width()
+        prefix = "  • "
+        value_width = max(20, width - len(prefix))
+        lines.append("Notes")
+        for n in notes:
+            chunks = wrap(
+                str(n),
+                width=value_width,
+                break_long_words=True,
+                break_on_hyphens=False,
+            ) or [""]
+            lines.append(prefix + chunks[0])
+            cont = " " * len(prefix)
+            lines.extend(cont + c for c in chunks[1:])
     return "\n".join(lines) + "\n"
 
 
@@ -2264,6 +2278,52 @@ def _pipeline_string(
     return " -> ".join(steps)
 
 
+def _render_depth_tradeoff(cfg: dict) -> list[str]:
+    """A prominent, visually-separated depth-vs-coverage callout.
+
+    Rendered as its own marked block (above ``Notes``) rather than one bullet
+    buried in the advisory list — the depth guidance kept getting lost there.
+    The marker carries the intent: ``⚠`` is a WARNING at ``quick`` (shallow),
+    ``ℹ`` is a neutral reference at ``standard``. Returns ``[]`` at ``thorough``
+    (the deepest tier — no upsell). Body paragraphs wrap to the summary width,
+    matching the ``Notes`` formatter.
+    """
+    depth = cfg.get("assessment_depth")
+    if depth == "quick":
+        header = "⚠ Depth tradeoff"
+        paras = [
+            "--quick is a fast triage pass — shallow coverage (QA, "
+            "walkthroughs, abuse-case verification and §7 enrichment are "
+            "skipped, STRIDE is depth-capped).",
+            "For a dependable assessment use --standard (default) or "
+            "--thorough (deepest: deeper per-component analysis + architect "
+            "review, Opus). More depth = higher cost & time.",
+        ]
+    elif depth == "standard":
+        header = "ℹ Depth tradeoff"
+        paras = [
+            "--standard is the balanced default. --thorough digs deeper "
+            "(deeper per-component analysis + architect review, Opus "
+            "reasoning) — at correspondingly higher cost & time.",
+        ]
+    else:
+        return []
+
+    width = _summary_width()
+    indent = "  "
+    value_width = max(20, width - len(indent))
+    lines: list[str] = [header]
+    for p in paras:
+        chunks = wrap(
+            p,
+            width=value_width,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ) or [""]
+        lines.extend(indent + c for c in chunks)
+    return lines
+
+
 def _run_plan_notes(
     verdict: dict,
     cfg: dict,
@@ -2271,7 +2331,11 @@ def _run_plan_notes(
     dirty_set: dict | None,
     compat_label: str | None,
 ) -> list[str]:
-    """Notes / recommendations to surface below the box."""
+    """Notes / recommendations to surface below the box.
+
+    Depth-vs-coverage guidance is NOT here — it is a dedicated, marked callout
+    rendered above this block by :func:`_render_depth_tradeoff`.
+    """
     notes: list[str] = []
 
     plugin_tier = ((pre_check or {}).get("plugin_version", {}) or {}).get("tier", "equal")
@@ -2282,28 +2346,6 @@ def _run_plan_notes(
     else:
         notes.append("threat-model.md preserved as-is.")
         notes.append("Pass --full to force a complete re-assessment regardless.")
-
-    # Standard-depth upsell — always surfaced at standard depth, regardless of
-    # will_run (a no-op rerun still benefits from knowing thorough digs deeper).
-    if cfg.get("assessment_depth") == "standard":
-        notes.append(
-            "Hint: the most thorough results come from --assessment-depth "
-            "thorough (deeper per-component analysis + architect review, Opus "
-            "reasoning) — at correspondingly higher cost and time."
-        )
-
-    # Quick-depth limits hint — quick is the most reduced mode (a fast triage
-    # pass: abuse-case verification, architect review and §7 enrichment are
-    # dropped, the QA repair loop is a single pass, and STRIDE is depth-capped),
-    # so it is exactly where the user most needs to know what was traded away.
-    # Surfaced regardless of will_run, same as the standard upsell.
-    if cfg.get("assessment_depth") == "quick":
-        notes.append(
-            "Note: --quick is a fast triage pass (abuse-case verification, "
-            "architect review and §7 enrichment are skipped, STRIDE is "
-            "depth-capped). For more complete results use --assessment-depth "
-            "standard or thorough — at correspondingly higher cost and time."
-        )
 
     if plugin_tier == "major":
         notes.append(

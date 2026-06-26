@@ -540,18 +540,30 @@ def _write_min_intermediates(out: Path) -> None:
     """Minimal sidecar set so build_threat_model_yaml.py main() runs cleanly."""
     _write_json(
         out / ".skill-config.json",
-        {"mode": "full", "assessment_depth": "quick", "reasoning_model": "sonnet-economy",
-         "stride_model": "sonnet", "scope": []},
+        {
+            "mode": "full",
+            "assessment_depth": "quick",
+            "reasoning_model": "sonnet-economy",
+            "stride_model": "sonnet",
+            "scope": [],
+        },
     )
     _write_json(out / ".threats-merged.json", {"threats": []})
     _write_json(out / ".components.json", {"schema_version": 1, "components": [{"id": "C-01", "name": "API"}]})
-    _write_json(out / ".assets.json", {"schema_version": 1, "assets": [{"name": "Data", "classification": "Confidential"}]})
-    _write_json(out / ".trust-boundaries.json", {"schema_version": 1, "trust_boundaries": [{"name": "Internet to API"}]})
+    _write_json(
+        out / ".assets.json", {"schema_version": 1, "assets": [{"name": "Data", "classification": "Confidential"}]}
+    )
+    _write_json(
+        out / ".trust-boundaries.json", {"schema_version": 1, "trust_boundaries": [{"name": "Internet to API"}]}
+    )
     _write_json(
         out / ".security-controls.json",
-        {"schema_version": 1, "security_controls": [
-            {"domain": "Authentication", "control": "JWT verification", "effectiveness": "Partial"}
-        ]},
+        {
+            "schema_version": 1,
+            "security_controls": [
+                {"domain": "Authentication", "control": "JWT verification", "effectiveness": "Partial"}
+            ],
+        },
     )
 
 
@@ -571,20 +583,35 @@ def test_changelog_recovers_history_from_cache_mirror_when_yaml_lost(tmp_path: P
     _write_json(
         out / ".appsec-cache" / "baseline.json",
         {
-            "schema_version": 1, "analysis_version": 2, "plugin_version": "0.4.0-beta",
+            "schema_version": 1,
+            "analysis_version": 2,
+            "plugin_version": "0.4.0-beta",
             "last_run_at": "2026-06-19T10:00:00Z",
             "changelog_mirror": [
-                {"version": 1, "date": "2026-06-19", "mode": "full", "assessment_depth": "quick",
-                 "reasoning_model": "sonnet-economy", "plugin_version": "0.4.0-beta", "analysis_version": 2,
-                 "current_sha": "OLDSHA", "threat_count": 31, "delta_basis": "initial",
-                 "note": "first full scan", "fingerprints": [], "added": {"threats": []}}
+                {
+                    "version": 1,
+                    "date": "2026-06-19",
+                    "mode": "full",
+                    "assessment_depth": "quick",
+                    "reasoning_model": "sonnet-economy",
+                    "plugin_version": "0.4.0-beta",
+                    "analysis_version": 2,
+                    "current_sha": "OLDSHA",
+                    "threat_count": 31,
+                    "delta_basis": "initial",
+                    "note": "first full scan",
+                    "fingerprints": [],
+                    "added": {"threats": []},
+                }
             ],
         },
     )
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(out), "--repo-root", str(repo), "--plugin-root", str(ROOT)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stderr
     assert "recovered 1 prior entr" in result.stderr  # warning fired
@@ -614,7 +641,9 @@ def test_changelog_warns_when_prior_run_evidenced_but_history_gone(tmp_path: Pat
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(out), "--repo-root", str(repo), "--plugin-root", str(ROOT)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stderr
     assert "prior run is recorded" in result.stderr
@@ -634,7 +663,9 @@ def test_changelog_no_warning_on_genuine_first_run(tmp_path: Path):
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(out), "--repo-root", str(repo), "--plugin-root", str(ROOT)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, result.stderr
     assert "recovered" not in result.stderr
@@ -834,6 +865,77 @@ def test_changelog_same_run_rebuild_stays_initial(tmp_path):
     )
     assert run2[0]["delta_basis"] == "fingerprint"
     assert run2[0]["added"]["threats"] == ["T-002"]
+
+
+def test_changelog_two_runs_same_commit_day_params_accumulate_via_run_id(tmp_path):
+    """Regression (2026-06-26 juice-shop): two SEPARATE --full invocations on the
+    same commit + same day + same depth/model collapsed into one because the
+    dedup keyed identity on (commit, date, mode, depth, reasoning, versions) —
+    indistinguishable from a single run's Phase-11 yaml rebuild. The second
+    genuine run SILENTLY OVERWROTE the first as a fresh 'initial' entry instead
+    of appending a v2 delta. With a per-invocation `run_id` (.scan-start-epoch)
+    the two runs are distinct and accumulate."""
+    b = _load()
+    # Run 1 — run_id "1000". One finding.
+    run1 = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1000")
+    assert run1[0]["delta_basis"] == "initial"
+    assert run1[0]["run_id"] == "1000"
+    # Run 2 — DIFFERENT run_id "2000", IDENTICAL commit/date/params, T-002 added.
+    threats2 = [
+        {"id": "T-001", "component": "comp-a"},
+        {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"},
+    ]
+    run2 = b.build_changelog(_CL_CFG, threats2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-1", run_id="2000")
+    # Accumulates — the prior run survives, the new run diffs against it.
+    assert len(run2) == 2
+    assert run2[0]["run_id"] == "2000"
+    assert run2[1]["run_id"] == "1000"
+    assert run2[0]["delta_basis"] == "fingerprint"
+    assert run2[0]["added"]["threats"] == ["T-002"]
+
+
+def test_changelog_same_run_id_rebuild_collapses(tmp_path):
+    """The flip side: a Phase-11 yaml rebuild WITHIN one run carries the SAME
+    run_id, so it must still collapse (no duplicate, stays 'initial' — no
+    self-diff)."""
+    b = _load()
+    run1 = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1000")
+    rerun = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], run1, tmp_path, current_sha="sha-1", run_id="1000")
+    assert len(rerun) == 1
+    assert rerun[0]["delta_basis"] == "initial"
+    assert rerun[0]["note"] == "first full scan"
+
+
+def test_changelog_run_id_distinguishes_from_legacy_entry(tmp_path):
+    """A pre-run_id entry (no run_id key) is, by definition, from an earlier
+    invocation. When THIS run has a run_id, that legacy entry must be preserved
+    and diffed against — never collapsed — even on the same commit/day/params."""
+    b = _load()
+    import datetime as _dt
+
+    legacy_prior = [
+        {
+            "version": 1,
+            "date": _dt.date.today().isoformat(),
+            "mode": "full",
+            "assessment_depth": "standard",
+            "reasoning_model": "sonnet-economy",
+            "current_sha": "sha-1",
+            "threat_count": 1,
+            "fingerprints": ["comp-a|none|"],
+            "added": {"threats": ["T-001"]},
+            "changed": {"threats": []},
+            "resolved": {"threats": []},
+        }
+    ]
+    threats2 = [
+        {"id": "T-001", "component": "comp-a"},
+        {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"},
+    ]
+    cl = b.build_changelog(_CL_CFG, threats2, _CL_COMPS, [], legacy_prior, tmp_path, current_sha="sha-1", run_id="2000")
+    assert len(cl) == 2  # legacy entry preserved, not overwritten
+    assert cl[1].get("run_id") is None
+    assert cl[0]["run_id"] == "2000"
 
 
 def test_changelog_none_history_treated_as_empty(tmp_path):

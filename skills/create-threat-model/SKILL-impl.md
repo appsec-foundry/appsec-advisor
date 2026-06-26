@@ -1201,12 +1201,14 @@ Files
   <active options if any (Outputs / Extras / Skips / Run flags / STRIDE / Limits)>
 ```
 
-**Do NOT render a `Notes` section in this LLM-typed banner.** The Notes /
-recommendations block — including the standard→thorough hint — is emitted
-**deterministically by a Bash call immediately after this banner** (see the
-"Notes block — deterministic Bash emit" section below). It used to be re-typed
-here, but the model intermittently dropped the whole section (and with it the
-standard-depth upsell), so its single authoritative source is now
+**Do NOT render the `Depth tradeoff` callout or the `Notes` section in this
+LLM-typed banner.** The depth-vs-coverage callout (a `⚠` WARNING at quick, a
+`ℹ` neutral reference at standard, omitted at thorough) and the Notes /
+recommendations block are emitted **deterministically by a Bash call
+immediately after this banner** (see the "Depth-tradeoff callout + Notes block
+— deterministic Bash emit" section below). They used to be re-typed here, but
+the model intermittently dropped them (and with them the depth guidance), so
+their single authoritative source is now
 `resolve_config.py:render_run_plan_notes`. Stop the LLM banner at the last
 `Configuration` row.
 
@@ -1215,17 +1217,18 @@ The rendered summary goes verbatim into the response text — no
 are the visible structure; the leading `Threat Model — Pre-flight` heading
 identifies the block to the user.
 
-#### Notes block — deterministic Bash emit (immediately after the banner)
+#### Depth-tradeoff callout + Notes block — deterministic Bash emit (immediately after the banner)
 
-Right after emitting the LLM banner above (which omits Notes), run this so the
-advisory Notes — `Ctrl-C now to abort`, the `--full` widen hints, and the
-**standard→thorough upsell** — print deterministically. `render_run_plan_notes`
-reads the same cfg (`.skill-config.json`), pre-check, dirty-set, and compat
-inputs as `--run-plan`, so the bullets match the canonical formatter exactly
-and never depend on the model re-typing them. `FAST_PATH_OUTPUT` /
-`DIRTY_SET_OUTPUT` / `COMPAT_LABEL` are empty in full / rebuild / first-run mode
-— that is fine: empty inputs resolve to the full-assessment verdict, yielding
-the `Ctrl-C now` + standard-depth hint bullets.
+Right after emitting the LLM banner above (which omits both), run this so the
+prominent **depth-tradeoff callout** and the advisory Notes — `Ctrl-C now to
+abort`, the `--full` widen hints — print deterministically. The callout leads
+(its own `⚠`/`ℹ`-marked block), then `Notes`. `render_run_plan_notes` reads the
+same cfg (`.skill-config.json`), pre-check, dirty-set, and compat inputs as
+`--run-plan`, so the lines match the canonical formatter exactly and never
+depend on the model re-typing them. `FAST_PATH_OUTPUT` / `DIRTY_SET_OUTPUT` /
+`COMPAT_LABEL` are empty in full / rebuild / first-run mode — that is fine:
+empty inputs resolve to the full-assessment verdict, yielding the depth callout
++ `Ctrl-C now` bullets.
 
 ```bash
 PRE_CHECK_TMP="$(mktemp)"; DIRTY_SET_TMP="$(mktemp)"
