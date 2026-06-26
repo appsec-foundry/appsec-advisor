@@ -1944,6 +1944,14 @@ def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict
     def _is_wellformed(e: dict) -> bool:
         if not isinstance(e, dict):
             return False
+        # An entry carrying real identity (version + date/mode) is well-formed
+        # even if it predates the delta-accounting fields — legacy,
+        # carried-forward, and v1 initial entries legitimately lack
+        # delta_basis/threat_count/assessment_depth and must NOT be dropped
+        # (that would silently delete real changelog history on the first run
+        # after upgrade). Only an identity-less stub is out of contract.
+        if e.get("version") is not None and (e.get("date") or e.get("mode")):
+            return True
         return any(e.get(k) is not None for k in ("delta_basis", "threat_count", "assessment_depth"))
 
     dropped = [e for e in changelog if not _is_wellformed(e)]
