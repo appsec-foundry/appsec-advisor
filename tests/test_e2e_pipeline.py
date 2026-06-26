@@ -23,6 +23,23 @@ What is covered:
                          legacy dep_scan validator was removed 2026-05.
     * Pentest pipeline — render_pentest_tasks.py consumes .threats-merged.json
                          and emits a schema-valid pentest-tasks.yaml.
+    * Export chain     — export_sarif.py consumes the produced threat-model.yaml
+                         and emits a schema-valid SARIF v2.1.0 (one result per
+                         threat, no silent drops); export_html.py / export_pdf.py
+                         consume the composed markdown (skipped when their
+                         converter tooling — pandoc / weasyprint+chrome — is
+                         absent). Closes the gap where the exporters were only
+                         unit-tested against their own hand-built YAML, never the
+                         real generator output.
+    * Completeness     — the render-integrity certificate (.render-integrity.json)
+                         proves every in-scope section rendered with nothing
+                         degraded/empty; every structural-spine section (incl.
+                         the Mitigation Register) is asserted present and the
+                         report is free of placeholder leakage.
+    * Golden master    — the rendered threat-model.md and the exported SARIF are
+                         byte-pinned against committed goldens, so ANY renderer /
+                         contract / fragment / exporter change that alters output
+                         fails the suite (regenerate with APPSEC_UPDATE_GOLDEN=1).
     * Incremental      — baseline_state.py update + check_fingerprint round
                          trip against a fresh synthetic repo, then detects a
                          mutation correctly.
@@ -42,6 +59,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -56,6 +75,47 @@ CONTRACT = REPO_ROOT / "data" / "sections-contract.yaml"
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "e2e"
 FROZEN_RUN = FIXTURE_ROOT / "frozen-run"
 SYNTHETIC_REPO = FIXTURE_ROOT / "synthetic-repo"
+GOLDEN = FIXTURE_ROOT / "golden"
+
+# The structural spine every complete report must always carry: the body
+# sections §1–§11 plus the named registers and appendices. Conditional /
+# data-driven sections (requirements_compliance, identified_actors,
+# critical_attack_tree, …) are intentionally excluded — their presence depends
+# on the run, and the render-integrity certificate already accounts for them.
+CORE_SECTIONS = [
+    "management_summary",
+    "system_overview",
+    "architecture_diagrams",
+    "attack_walkthroughs",
+    "assets",
+    "attack_surface",
+    "security_architecture",
+    "threat_register",  # ## 8. Findings Register
+    "abuse_cases",  # ## 9. Abuse Cases
+    "mitigation_register",  # ## 10. Mitigation Register
+    "out_of_scope",
+    "appendix_run_statistics",
+    "appendix_vektor_taxonomy",
+]
+
+# Human-readable mirror of CORE_SECTIONS — the literal Markdown headings a
+# reader expects to find (incl. the Mitigation Register).
+CORE_HEADINGS = [
+    "## Management Summary",
+    "## 1. System Overview",
+    "## 2. Architecture Diagrams",
+    "## 3. Attack Walkthroughs",
+    "## 4. Assets",
+    "## 5. Attack Surface",
+    "## 7. Security Architecture",
+    "## 8. Findings Register",
+    "## 9. Abuse Cases",
+    "## 10. Mitigation Register",
+    "## 11. Out of Scope",
+]
+
+# Scaffolding that must never leak into the composed report.
+PLACEHOLDER_TOKENS = ["placeholder", "todo:", "fixme:", "lorem ipsum", "[redacted]"]
 
 
 def _load_module(name: str, path: Path):
@@ -68,6 +128,12 @@ def _load_module(name: str, path: Path):
 
 
 compose = _load_module("compose_threat_model", SCRIPTS / "compose_threat_model.py")
+
+# Reuse the canonical SARIF validator that test_export_sarif.py uses, rather
+# than re-implementing structural checks here (single source of truth).
+if str(REPO_ROOT / "tests") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "tests"))
+from test_sarif_validation import validate_sarif  # noqa: E402
 
 
 def _run_script(script: str, *args: str) -> subprocess.CompletedProcess:
@@ -417,3 +483,191 @@ def test_compose_is_deterministic_across_runs(tmp_path: Path, e2e_run: Path) -> 
     r1, _ = compose.render(CONTRACT, e2e_run)
     r2, _ = compose.render(CONTRACT, second)
     assert r1 == r2, "compose_threat_model.render is not deterministic"
+
+
+# ---------------------------------------------------------------------------
+# 6. Export chain — every exporter a real run invokes must survive the REAL
+#    generator output (the frozen fixture), not an exporter's own hand-built
+#    YAML. That seam is exactly what the isolated unit tests (test_export_*.py)
+#    miss: a producer-side schema change can break an exporter while every unit
+#    test stays green because it feeds the exporter its own fixture.
+# ---------------------------------------------------------------------------
+
+
+def test_export_sarif_from_yaml(e2e_run: Path) -> None:
+    """export_sarif.py consumes the frozen threat-model.yaml and emits a
+    schema-valid SARIF v2.1.0 with one result per threat (no silent drops).
+    Pure Python — always runs, no external converter needed."""
+    yml = e2e_run / "threat-model.yaml"
+    out = e2e_run / "threat-model.sarif.json"
+    result = _run_script("export_sarif.py", "--threat-model", str(yml), "--output", str(out))
+    assert result.returncode == 0, (
+        f"export_sarif.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert out.is_file() and out.stat().st_size > 0, "SARIF output missing/empty"
+
+    sarif = json.loads(out.read_text(encoding="utf-8"))
+    ok, errors = validate_sarif(sarif)
+    assert ok, f"SARIF failed validation: {errors}"
+    assert sarif["version"] == "2.1.0"
+
+    # One SARIF result per threat — catches a producer change that silently
+    # drops findings on the way into the exported artifact.
+    threat_count = len(yaml.safe_load(yml.read_text(encoding="utf-8")).get("threats", []))
+    results = sarif["runs"][0]["results"]
+    assert len(results) == threat_count, (
+        f"SARIF result count {len(results)} != threat count {threat_count} — exporter dropped findings"
+    )
+
+
+def test_export_html_from_markdown(rendered_run: Path) -> None:
+    """export_html.py consumes the composed markdown. Gated on its own
+    --check-only preflight so a box without pandoc skips instead of failing.
+    --no-mermaid keeps the assertion on the HTML conversion itself, not on
+    diagram rendering (which needs mmdc/chrome)."""
+    md = rendered_run / "threat-model.md"
+    preflight = _run_script("export_html.py", "--check-only", "--input", str(md))
+    if preflight.returncode != 0:
+        pytest.skip("export_html preflight failed (pandoc absent)")
+
+    out = rendered_run / "threat-model.html"
+    result = _run_script("export_html.py", "--input", str(md), "--output", str(out), "--no-mermaid")
+    assert result.returncode == 0, (
+        f"export_html.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert out.is_file() and out.stat().st_size > 0, "HTML output missing/empty"
+    assert "<html" in out.read_text(encoding="utf-8", errors="ignore").lower(), "no <html> element"
+
+
+def test_export_pdf_from_markdown(rendered_run: Path) -> None:
+    """export_pdf.py consumes the composed markdown. Gated on its own
+    --check-only preflight (with --no-mermaid, so only weasyprint is required)
+    so a box without the PDF converter skips instead of failing."""
+    md = rendered_run / "threat-model.md"
+    preflight = _run_script("export_pdf.py", "--check-only", "--input", str(md), "--no-mermaid")
+    if preflight.returncode != 0:
+        pytest.skip("export_pdf preflight failed (weasyprint/chrome absent)")
+
+    out = rendered_run / "threat-model.pdf"
+    result = _run_script("export_pdf.py", "--input", str(md), "--output", str(out), "--no-mermaid")
+    assert result.returncode == 0, (
+        f"export_pdf.py failed (exit {result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert out.is_file(), "PDF output missing"
+    assert out.stat().st_size > 1024, f"PDF suspiciously small ({out.stat().st_size} bytes)"
+    assert out.read_bytes()[:5] == b"%PDF-", "PDF lacks a %PDF- header"
+
+
+# ---------------------------------------------------------------------------
+# 7. Report completeness & integrity — every element is present and the
+#    document is error-free. This is the "if the e2e is green the report is
+#    actually complete and renders correctly" guarantee the rest of the file
+#    builds toward.
+# ---------------------------------------------------------------------------
+
+
+def test_render_integrity_certificate(rendered_run: Path) -> None:
+    """compose writes .render-integrity.json certifying that every in-scope
+    section rendered with nothing degraded or empty. report_integrity_ok is the
+    deterministic 'the report is not broken' signal the QA loop reacts to."""
+    integ = json.loads((rendered_run / ".render-integrity.json").read_text(encoding="utf-8"))
+    assert integ["report_integrity_ok"] is True, f"broken sections: {integ.get('broken_sections')}"
+    assert integ["integrity_pct"] == 100, integ
+    assert integ["sections_degraded"] == 0, f"degraded sections: {integ.get('broken_sections')}"
+    assert integ["sections_empty"] == 0, f"empty sections: {integ.get('broken_sections')}"
+    # Most expected fragments must be wired; the producer tolerates a small
+    # number of sanctioned-optional fragments (e.g. operational-strengths
+    # overrides) being absent, which is why report_integrity_ok stays True at
+    # 8/9. Guard against a wholesale fragment-wiring collapse, not the optional
+    # tail.
+    assert integ["fragments_wired"] >= integ["fragments_expected"] - 1, (
+        f"fragment-wiring collapse: {integ['fragments_wired']} wired of {integ['fragments_expected']} expected"
+    )
+
+
+def test_core_sections_all_present(rendered_run: Path) -> None:
+    """Every structural-spine section (incl. the Mitigation Register) must be in
+    scope and rendered. Names the exact missing section on failure — unlike the
+    opaque golden byte-diff below."""
+    integ = json.loads((rendered_run / ".render-integrity.json").read_text(encoding="utf-8"))
+    by_id = {m["id"]: m for m in integ["sections"]}
+    for sid in CORE_SECTIONS:
+        assert sid in by_id, f"section '{sid}' absent from the render manifest"
+        m = by_id[sid]
+        assert m.get("in_scope"), f"core section '{sid}' unexpectedly out of scope"
+        assert m.get("outcome") in ("rendered", "fallback"), (
+            f"core section '{sid}' did not render (outcome={m.get('outcome')})"
+        )
+
+
+def test_core_section_headings_in_markdown(rendered_run: Path) -> None:
+    """The reader-facing mirror: each spine heading is literally present in
+    threat-model.md (the user-visible 'every element is there' contract)."""
+    md = (rendered_run / "threat-model.md").read_text(encoding="utf-8")
+    missing = [h for h in CORE_HEADINGS if f"{h}\n" not in md]
+    assert not missing, f"missing report headings: {missing}"
+
+
+def test_mitigation_register_is_populated(rendered_run: Path) -> None:
+    """The Mitigation Register must carry real mitigations, not just an empty
+    heading — a register that renders empty passes schema checks yet is a silent
+    regression."""
+    md = (rendered_run / "threat-model.md").read_text(encoding="utf-8")
+    start = md.index("## 10. Mitigation Register")
+    rest = md[start + len("## 10. Mitigation Register") :]
+    nxt = rest.find("\n## ")
+    body = rest if nxt == -1 else rest[:nxt]
+    has_priority = any(p in body for p in ("### P1", "### P2", "### P3", "### P4"))
+    has_row = "|" in body or re.search(r"M-\d{3}", body) is not None
+    assert has_priority and has_row, "Mitigation Register rendered with no mitigation entries"
+
+
+def test_no_placeholder_leakage(rendered_run: Path) -> None:
+    """The composed report must not leak LLM/template scaffolding. (Jinja
+    delimiters are deliberately not checked here: Mermaid `%%{init …}%%` blocks
+    legitimately contain `}}`.)"""
+    lower = (rendered_run / "threat-model.md").read_text(encoding="utf-8").lower()
+    found = [t for t in PLACEHOLDER_TOKENS if t in lower]
+    assert not found, f"placeholder tokens leaked into threat-model.md: {found}"
+
+
+# ---------------------------------------------------------------------------
+# 8. Golden master — byte-pin the rendered report and the exported SARIF
+#    against committed goldens. This catches ANY renderer / contract / fragment
+#    / exporter change that alters output, beyond mere section presence. On an
+#    intentional change, regenerate:
+#        APPSEC_UPDATE_GOLDEN=1 python -m pytest tests/test_e2e_pipeline.py -k golden
+# ---------------------------------------------------------------------------
+
+_REGEN_HINT = "APPSEC_UPDATE_GOLDEN=1 python -m pytest tests/test_e2e_pipeline.py -k golden"
+
+
+def test_compose_matches_golden(e2e_run: Path) -> None:
+    rendered, warnings = compose.render(CONTRACT, e2e_run)
+    assert warnings == [], f"unexpected compose warnings: {warnings}"
+    golden = GOLDEN / "threat-model.md"
+    if os.environ.get("APPSEC_UPDATE_GOLDEN") == "1":
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_text(rendered, encoding="utf-8")
+        pytest.skip("golden threat-model.md updated (APPSEC_UPDATE_GOLDEN=1)")
+    assert golden.is_file(), f"missing golden {golden} — regenerate with: {_REGEN_HINT}"
+    assert rendered == golden.read_text(encoding="utf-8"), (
+        f"rendered threat-model.md != golden. If intentional, regenerate: {_REGEN_HINT}"
+    )
+
+
+def test_export_sarif_matches_golden(e2e_run: Path) -> None:
+    yml = e2e_run / "threat-model.yaml"
+    out = e2e_run / "threat-model.sarif.json"
+    result = _run_script("export_sarif.py", "--threat-model", str(yml), "--output", str(out))
+    assert result.returncode == 0, result.stderr
+    produced = out.read_text(encoding="utf-8")
+    golden = GOLDEN / "threat-model.sarif.json"
+    if os.environ.get("APPSEC_UPDATE_GOLDEN") == "1":
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_text(produced, encoding="utf-8")
+        pytest.skip("golden threat-model.sarif.json updated (APPSEC_UPDATE_GOLDEN=1)")
+    assert golden.is_file(), f"missing golden {golden} — regenerate with: {_REGEN_HINT}"
+    assert produced == golden.read_text(encoding="utf-8"), (
+        f"exported SARIF != golden. If intentional, regenerate: {_REGEN_HINT}"
+    )

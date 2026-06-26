@@ -1,0 +1,188 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "appsec-advisor",
+          "version": "0.4.0-beta",
+          "semanticVersion": "0.4.0-beta",
+          "rules": [
+            {
+              "id": "T-001",
+              "name": "Tampering/sql-injection-in-product-search",
+              "shortDescription": {
+                "text": "Product search builds raw SQL via template literal, enabling UNION dump."
+              },
+              "fullDescription": {
+                "text": "Product search builds raw SQL via template literal, enabling UNION dump."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical"
+              }
+            },
+            {
+              "id": "T-002",
+              "name": "Tampering/sql-injection-in-login",
+              "shortDescription": {
+                "text": "Login concatenates email/password into SQL; `--` comments bypass the password check."
+              },
+              "fullDescription": {
+                "text": "Login concatenates email/password into SQL; `--` comments bypass the password check."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical"
+              }
+            },
+            {
+              "id": "T-003",
+              "name": "Spoofing/hardcoded-rsa-private-key",
+              "shortDescription": {
+                "text": "RSA private key committed to public repo allows offline admin JWT forgery."
+              },
+              "fullDescription": {
+                "text": "RSA private key committed to public repo allows offline admin JWT forgery."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "spoofing"
+                ],
+                "stride": "Spoofing",
+                "likelihood": "High",
+                "impact": "Critical",
+                "risk": "Critical"
+              }
+            },
+            {
+              "id": "T-010",
+              "name": "Tampering/persistent-xss-via-bypasssecuritytrustht",
+              "shortDescription": {
+                "text": "Angular component bypasses DomSanitizer, enabling stored XSS in reviews."
+              },
+              "fullDescription": {
+                "text": "Angular component bypasses DomSanitizer, enabling stored XSS in reviews."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "properties": {
+                "tags": [
+                  "security",
+                  "tampering"
+                ],
+                "stride": "Tampering",
+                "likelihood": "High",
+                "impact": "High",
+                "risk": "High"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "T-001",
+          "level": "error",
+          "message": {
+            "text": "Product search builds raw SQL via template literal, enabling UNION dump."
+          },
+          "fixes": [
+            {
+              "description": {
+                "text": "Parameterize SQL queries"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-001"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-002",
+          "level": "error",
+          "message": {
+            "text": "Login concatenates email/password into SQL; `--` comments bypass the password check."
+          },
+          "fixes": [
+            {
+              "description": {
+                "text": "Parameterize SQL queries"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-001"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-003",
+          "level": "error",
+          "message": {
+            "text": "RSA private key committed to public repo allows offline admin JWT forgery."
+          },
+          "fixes": [
+            {
+              "description": {
+                "text": "Externalize RSA key"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-002"
+            ]
+          }
+        },
+        {
+          "ruleId": "T-010",
+          "level": "error",
+          "message": {
+            "text": "Angular component bypasses DomSanitizer, enabling stored XSS in reviews."
+          },
+          "fixes": [
+            {
+              "description": {
+                "text": "Remove DomSanitizer bypasses"
+              }
+            }
+          ],
+          "properties": {
+            "mitigationIds": [
+              "M-003"
+            ]
+          }
+        }
+      ],
+      "columnKind": "utf16CodeUnits"
+    }
+  ]
+}

@@ -142,6 +142,22 @@ pytest tests/test_reference_parity.py
 pytest tests/test_sarif_validation.py
 ```
 
+#### Deterministic end-to-end (no LLM)
+
+`tests/test_e2e_pipeline.py` runs in `make test`. It renders the frozen fixture
+(`tests/fixtures/e2e/frozen-run/`) and checks the result against a golden copy
+in `tests/fixtures/e2e/golden/` — every section present, no broken output, and
+`threat-model.md` / `threat-model.sarif.json` byte-for-byte as expected.
+
+If you change a renderer, contract, or exporter on purpose, the golden tests
+will fail. Check the diff is what you intended, then regenerate the goldens:
+
+```bash
+APPSEC_UPDATE_GOLDEN=1 python3 -m pytest tests/test_e2e_pipeline.py -k golden
+```
+
+Don't edit a golden by hand to make the test pass — fix the producer.
+
 If the repo already has failing tests, capture the baseline and clearly distinguish pre-existing failures from new failures caused by the current change. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
 
 ### Validation scripts
