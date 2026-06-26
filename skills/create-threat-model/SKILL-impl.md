@@ -2364,6 +2364,26 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/auto_emitter_pass.sh" \
     "$OUTPUT_DIR" "$REPO_ROOT" "$CLAUDE_PLUGIN_ROOT" "$DRY_RUN"
 ```
 
+**Completeness assertion — build phase (2026-06-26).** Immediately after the
+auto-emitter pass, assert the cross-yaml completeness invariants
+(`data/completeness-contract.yaml`) deterministically. This is the single
+authority that catches a skipped populate step — a §10 Mitigation Register left
+empty while threats carry remediation, dangling threat↔mitigation links, a
+Critical/High finding with no mitigation — regardless of which LLM/skill-body
+step died. It runs OUTSIDE any agent so it cannot be "softly" skipped. `fail`
+-severity violations exit 2 (artifacts preserved for `--resume`); `warn` ones are
+logged. Skip on `DRY_RUN=true`.
+
+```bash
+if [ "$DRY_RUN" != "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/assert_completeness.py" "$OUTPUT_DIR" \
+      --phase build --plugin-root "$CLAUDE_PLUGIN_ROOT" || {
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  skill  COMPLETENESS_GATE_BLOCKED  build-phase invariant violated — Stage 2 not dispatched" >> "$OUTPUT_DIR/.agent-run.log"
+    exit 2
+  }
+fi
+```
+
 Behaviour contract:
 
 - **Empty `threats[]`** — both emitters no-op (zero auto-cards added, no `meta_findings` block emitted). The composer sees the YAML untouched.
@@ -3216,6 +3236,20 @@ fi
 # Reaching here means the gate finally passed (possibly after retries).
 # Clean up the retry counter so a future fresh invocation starts at 0.
 rm -f "$OUTPUT_DIR/.inline-shortcut-retry-count" "$OUTPUT_DIR/.inline-shortcut-repair-plan.json"
+
+# Completeness assertion — render phase (2026-06-26). The inline-shortcut gate
+# above proves the renderer ran and the structural fragments are present; this
+# asserts the rendered threat-model.md is SUBSTANTIVELY complete — §10 carries
+# real M-NNN cards (not heading-only boilerplate), §8 carries F-rows, and the
+# always-required sections are present. Substance, not bytes. Blocks Stage 3 on
+# a fail-severity violation (artifacts preserved for --resume). Skip on DRY_RUN.
+if [ "$DRY_RUN" != "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/assert_completeness.py" "$OUTPUT_DIR" \
+      --phase render --plugin-root "$CLAUDE_PLUGIN_ROOT" || {
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  ERROR  skill  COMPLETENESS_GATE_BLOCKED  render-phase invariant violated — report substantively incomplete" >> "$OUTPUT_DIR/.agent-run.log"
+    exit 2
+  }
+fi
 ```
 
 Behaviour contract:

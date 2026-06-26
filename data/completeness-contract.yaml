@@ -1,0 +1,77 @@
+# Completeness contract — declarative invariants that the generated threat model
+# must satisfy. This is the SINGLE authority for "is the report substantively
+# complete", replacing the scattered presence-only gates that let a heading-only
+# §10 Mitigation Register ship at "17/17 sections".
+#
+# Each invariant maps to a NAMED check implemented in scripts/assert_completeness.py.
+# The contract declares only which checks are active, at which pipeline phase, and
+# how loudly they fail — no embedded expression language (that would be fragile).
+#
+#   phase:    build   → asserted against threat-model.yaml after build + emitters
+#             render  → asserted against the rendered threat-model.md after compose
+#   severity: fail    → non-zero exit; blocks the pipeline / fails the gate
+#             warn    → logged, does not block
+#   when:     (documentation only) the precondition the check self-gates on, so a
+#             legitimately-empty model (e.g. zero threats) is never flagged.
+#
+# Soften any check by setting enabled: false or severity: warn.
+
+invariants:
+  # ── build phase (threat-model.yaml) ──────────────────────────────────────
+  - id: every_threat_has_id
+    phase: build
+    severity: fail
+    when: "always"
+    fix_hint: "merge_threats / build_threats must assign every threat a T-id"
+
+  - id: mitigations_nonempty_when_remediations
+    phase: build
+    severity: fail
+    when: "any threat carries remediation.steps or mitigation_title"
+    fix_hint: "run auto_emitter_pass.sh; build_mitigations fallback also backfills from remediation"
+
+  - id: mitigation_links_resolve
+    phase: build
+    severity: fail
+    when: "always"
+    fix_hint: "every threat.mitigation_ids[] must reference an existing mitigations[].id, and every mitigation.threat_ids[] an existing threat"
+
+  - id: crit_high_have_mitigation_link
+    phase: build
+    severity: warn
+    when: "threat.effective_severity/risk in {Critical, High} and source != config-scan"
+    fix_hint: "emit_finding_fix_mitigations.py / build_mitigations fallback should link every Critical/High finding"
+
+  - id: conditional_fragment_present
+    phase: build
+    severity: warn
+    when: "an upstream signal implies a conditional section (e.g. has_llm_surface)"
+    fix_hint: "the renderer/emitter that authors the conditional fragment was skipped"
+
+  # ── render phase (threat-model.md) ───────────────────────────────────────
+  - id: render_required_sections_present
+    phase: render
+    severity: fail
+    when: "always"
+    fix_hint: "compose dropped a structurally-required section"
+
+  - id: render_mitigation_register_substance
+    phase: render
+    severity: fail
+    when: "yaml has >=1 mitigation"
+    fix_hint: "§10 rendered only boilerplate — check fragment wiring / _render_mitigation_register"
+
+  - id: render_findings_register_substance
+    phase: render
+    severity: fail
+    when: "yaml has >=1 threat"
+    fix_hint: "§8 rendered only boilerplate — check threat register rendering"
+
+# Sections that MUST always be present in a rendered report regardless of depth.
+# Depth-suppressed sections (§3, §7) and conditional sections (§9 when no abuse
+# cases) are intentionally NOT listed — their absence is governed by the section
+# contract's condition gates, not by completeness.
+required_sections:
+  - "Management Summary"
+  - "8. Findings Register"
+  - "10. Mitigation Register"
