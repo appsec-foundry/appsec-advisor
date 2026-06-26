@@ -319,6 +319,10 @@ def resolve_assessment_depth(ns: argparse.Namespace) -> dict:
         "qa_depth":              params["qa"],
         "max_repair_iterations": params["max_repair_iterations"],
         "depth_label":           label,
+        # Severity floor for the canonical register (2026-06-26). Default
+        # 'medium' drops Low/Informational — low-risk findings are noise in a
+        # threat model. Override with --register-severity-floor low to keep them.
+        "register_severity_floor": (getattr(ns, "register_severity_floor", None) or "medium"),
     }
 
 
@@ -1300,6 +1304,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Force abuse-case verification OFF at any depth "
                         "(skip the Stage 1c verifier fan-out even at "
                         "standard/thorough).")
+    p.add_argument("--register-severity-floor",
+                   dest="register_severity_floor",
+                   choices=("critical", "high", "medium", "low", "informational"),
+                   default=None,
+                   help="Drop threats below this severity from the canonical "
+                        "register and every downstream count. Default 'medium' "
+                        "(Low/Informational excluded — they are noise in a "
+                        "threat model). Pass 'low' to keep Low findings.")
     # PR / base / no-qa / qa-scan-repo
     p.add_argument("--base",         default=None)
     p.add_argument("--pr-mode",      action="store_true")

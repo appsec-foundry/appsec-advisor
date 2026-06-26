@@ -610,7 +610,16 @@ def _clean_title(raw: str) -> str:
     return f"{s}{suffix}"
 
 
-def build_threats(merged: dict) -> tuple[list[dict], list[str]]:
+_SEVERITY_FLOOR_RANK = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+    "informational": 0,
+}
+
+
+def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[dict], list[str]]:
     """Transform .threats-merged.json[threats] into yaml.threats[] shape.
 
     Field renames per output schema: t_id→id, component_id→component.
@@ -620,11 +629,24 @@ def build_threats(merged: dict) -> tuple[list[dict], list[str]]:
     Filters out observation-stub entries (Phase 10b sometimes parks notes
     in threats[] with id=None, likelihood='info', empty cwe/scenario).
     These would fail output schema validation; skip them with a warning.
+
+    ``register_floor`` (default ``"medium"``) drops any threat whose effective
+    severity ranks below the floor from the canonical threats[]. Because every
+    downstream consumer (counts, risk distribution, register, attack tree,
+    SARIF, mitigations, changelog) reads this one list, filtering here keeps all
+    totals consistent with zero extra recompute. The default excludes Low /
+    Informational — low-risk findings are noise in a threat model. Set the floor
+    to ``"low"`` (or ``"informational"``) via ``register_severity_floor`` in
+    ``.skill-config.json`` to keep them. Severity is read with the same
+    effective_severity → risk → severity precedence the composer's
+    ``_severity_counts`` uses, so the filtered set matches the rendered tally.
     Returns (threats, warnings).
     """
+    floor_rank = _SEVERITY_FLOOR_RANK.get((register_floor or "medium").strip().lower(), 2)
     out: list[dict] = []
     warnings: list[str] = []
     skipped_stubs = 0
+    skipped_below_floor = 0
     for t in merged.get("threats", []):
         threat = dict(t)
         threat["id"] = threat.pop("t_id", threat.get("id"))
@@ -640,6 +662,19 @@ def build_threats(merged: dict) -> tuple[list[dict], list[str]]:
         ).lower() == "info"
         if not threat.get("id") or is_info_stub:
             skipped_stubs += 1
+            continue
+        # Severity-floor filter. Mirror the composer's effective_severity →
+        # risk → severity precedence so the dropped set matches the rendered
+        # tally. Anything below the floor (default: Low/Informational) is
+        # excluded from the canonical threats[] entirely.
+        sev = (
+            threat.get("effective_severity")
+            or threat.get("risk")
+            or threat.get("severity")
+            or "medium"
+        )
+        if _SEVERITY_FLOOR_RANK.get(str(sev).strip().lower(), 2) < floor_rank:
+            skipped_below_floor += 1
             continue
         threat["component"] = threat.pop("component_id", threat.get("component", ""))
         threat["title"] = _clamp_title(_clean_title(threat.get("title", "")))
@@ -665,7 +700,26 @@ def build_threats(merged: dict) -> tuple[list[dict], list[str]]:
         warnings.append(
             f"threats: {skipped_stubs} observation-stub entries skipped (id=None — Phase 10b notes mis-parked in threats[])"
         )
+    if skipped_below_floor:
+        warnings.append(
+            f"threats: {skipped_below_floor} below severity floor ({(register_floor or 'medium').lower()}) dropped from register"
+        )
     return out, warnings
+
+
+def _remediation_how_text(t: dict) -> str:
+    """Build a 'how' string from a threat's remediation block (steps joined).
+
+    Mirrors emit_finding_fix_mitigations._remediation_how so the in-builder
+    fallback produces the same shape as the auto-emitter pass.
+    """
+    rem = t.get("remediation")
+    if not isinstance(rem, dict):
+        return ""
+    steps = rem.get("steps")
+    if isinstance(steps, list) and steps:
+        return " ".join(str(s).strip() for s in steps if str(s).strip())
+    return str(rem.get("how") or "").strip()
 
 
 def build_mitigations(threats: list[dict]) -> list[dict]:
@@ -674,6 +728,18 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
     Each unique M-ID becomes one mitigation entry. threat_ids[] lists every
     threat that references that M-ID. Title from first threat's
     mitigation_title; severity = max risk of linked threats.
+
+    Fallback (2026-06-26): when a threat carries NO ``mitigation_ids`` but DOES
+    carry ``mitigation_title``/``remediation`` content, synthesise an M-card and
+    link it here. This is the deterministic safety net for the failure mode where
+    the LLM yaml-write left ``mitigation_ids=[]`` AND the skill-body auto-emitter
+    pass (``emit_finding_fix_mitigations.py``) was skipped (e.g. a mid-run
+    session abort) — which leaves §10 Mitigation Register empty even though the
+    raw remediation content exists. With this fallback a non-empty register is
+    guaranteed-by-construction whenever threats carry remediation content,
+    independent of the auto-emitter pass surviving. ``threats`` is mutated in
+    place (synthesised ``mitigation_ids`` are written back) so §8 finding links
+    resolve too.
     """
     by_mid: dict[str, dict] = {}
     risk_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Informational": 4}
@@ -698,6 +764,67 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
             new_rank = risk_order.get(t.get("risk", "Low"), 4)
             if new_rank < cur_rank:
                 entry["severity"] = t.get("risk", entry["severity"])
+
+    # Fallback synthesis for threats that reached here with no link but with
+    # remediation content. Group by normalised mitigation title so threats that
+    # share a fix converge onto one M-card (dedupe_mitigation_controls later
+    # converges the rest). New M-IDs continue past the highest existing number.
+    def _next_num() -> int:
+        nums = [
+            int(mid.split("-")[1])
+            for mid in by_mid
+            if mid.startswith("M-") and mid.split("-")[1].isdigit()
+        ]
+        return (max(nums) + 1) if nums else 1
+
+    fallback_groups: dict[str, dict] = {}
+    fallback_order: list[str] = []
+    for t in threats:
+        if t.get("mitigation_ids"):
+            continue
+        title = (t.get("mitigation_title") or "").strip()
+        how = _remediation_how_text(t)
+        if not title and not how:
+            continue  # no content to synthesise from
+        if not title:
+            title = f"Remediate {t.get('title', t.get('id', ''))}"
+        key = re.sub(r"\s+", " ", title.lower()).strip()
+        if key not in fallback_groups:
+            fallback_groups[key] = {"title": title, "threats": [], "how": how}
+            fallback_order.append(key)
+        fallback_groups[key]["threats"].append(t)
+
+    for key in fallback_order:
+        g = fallback_groups[key]
+        members = g["threats"]
+        sev = min(
+            (m.get("risk") or "Medium" for m in members),
+            key=lambda s: risk_order.get(s, 4),
+        )
+        efforts = [
+            (m.get("remediation") or {}).get("effort", "Medium")
+            if isinstance(m.get("remediation"), dict)
+            else "Medium"
+            for m in members
+        ]
+        effort = min(efforts, key=lambda e: {"Low": 0, "Medium": 1, "High": 2}.get(str(e).capitalize(), 1))
+        mid = f"M-{_next_num():03d}"
+        entry = {
+            "id": mid,
+            "title": g["title"],
+            "threat_ids": [m["id"] for m in members],
+            "priority": "P2",
+            "severity": sev,
+            "effort": str(effort).capitalize(),
+            "kind": "fix",
+            "auto_emitted": True,
+            "auto_source": "build-mitigations-fallback",
+        }
+        if g["how"]:
+            entry["how"] = g["how"]
+        by_mid[mid] = entry
+        for m in members:
+            m.setdefault("mitigation_ids", []).append(mid)
 
     # Priority from severity
     sev_to_pri = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4", "Informational": "P4"}
@@ -1333,8 +1460,13 @@ def build_changelog(
     else:
         # First run, OR a prior entry that predates fingerprinting (legacy) →
         # no comparable baseline, so we honestly report a snapshot count rather
-        # than a fake "+N added" delta.
-        delta_basis = "count-only" if prior_entry else "initial"
+        # than a fake "+N added" delta. A prior entry with NO threats (prior_n
+        # falsy) is not a real baseline either — e.g. a noise-only no-op that
+        # left a fingerprint-less, zero-threat entry. Treating it as a baseline
+        # mis-frames the first real full scan as "0→N threats; count-only (vs
+        # v1)". Require a non-empty prior before choosing count-only; otherwise
+        # this IS the initial substantive scan. (2026-06-26)
+        delta_basis = "count-only" if (prior_entry and prior_n) else "initial"
         added_threats = [t["id"] for t in threats]
         reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
         carried_components = []
@@ -1403,8 +1535,12 @@ def build_changelog(
         "mitigation_fingerprints": cur_mit_fps,
         "instance_fingerprints": cur_instance_fps,
         "delta_basis": delta_basis,
-        "previous_date": (prior_entry or {}).get("date"),
-        "previous_threat_count": prior_n,
+        # On an `initial` basis there is no comparable prior, so leave
+        # previous_* unset — otherwise the changelog template's `has_prior`
+        # gate (driven by previous_date) renders a misleading "(vs vN)" against
+        # a non-baseline (e.g. a noise-only no-op entry). (2026-06-26)
+        "previous_date": (prior_entry or {}).get("date") if delta_basis != "initial" else None,
+        "previous_threat_count": prior_n if delta_basis != "initial" else None,
         "reanalyzed_components": reanalyzed,
         "carried_forward_components": carried_components,
         "added": {
@@ -1497,7 +1633,9 @@ def main() -> int:
         prior_yaml=prior_yaml,
     )
 
-    threats, threat_warnings = build_threats(merged)
+    threats, threat_warnings = build_threats(
+        merged, register_floor=skill_cfg.get("register_severity_floor", "medium")
+    )
     for w in threat_warnings:
         sys.stderr.write(f"  {w}\n")
 

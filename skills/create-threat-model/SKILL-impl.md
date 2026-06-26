@@ -1419,6 +1419,27 @@ if [ "$REBUILD" = "true" ] && [ "$DRY_RUN" = "false" ]; then
 fi
 ```
 
+### Preserve deep sections — run-start snapshot (skip when `REBUILD=true` or `DRY_RUN=true`)
+
+Before any wipe runs and before the orchestrator overwrites `threat-model.md`,
+snapshot the deep-only sections of the prior report so a shallower re-run does
+not delete content it cannot regenerate (the user contract: §7 Security
+Architecture and the AI/LLM Exposure callout must survive a `standard → quick`
+re-scan). The snapshot lands in `.appsec-cache/preserved-sections/` (a directory
+the full-run wipe preserves, since it lives under `.appsec-cache/`). The composer
+then restores §7 verbatim from the snapshot's `prior-report.md`
+(`_resolve_security_arch_override`) and the restore step below copies the AI
+fragment back before compose.
+
+Skip on `REBUILD=true` (rebuild deliberately discards all prior content) and on
+`DRY_RUN=true`. Best-effort — failure is non-fatal.
+
+```bash
+if [ "$REBUILD" != "true" ] && [ "$DRY_RUN" != "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/snapshot_preserved_sections.py" "$OUTPUT_DIR" || true
+fi
+```
+
 ### Rebuild Pre-flight Wipe (only when `REBUILD=true`)
 
 **Lazy-load — only when `REBUILD=true` and `DRY_RUN=false`.** At this point (after the
@@ -2525,6 +2546,16 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
 # expansion bait there.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --only security-architecture.md \
+    || true
+
+# Restore deep-only fragments preserved from a prior deeper run (2026-06-26).
+# On a quick re-run over a prior standard/thorough report, copy the snapshotted
+# ms-ai-exposure.json back into .fragments/ so the AI/LLM Exposure callout is not
+# lost on downgrade. §7 is restored separately by the composer's
+# _resolve_security_arch_override (reads the snapshot's prior-report.md). No-op
+# on first/non-downgrade runs. Best-effort.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/restore_preserved_sections.py" "$OUTPUT_DIR" \
+    --current-depth "$ASSESSMENT_DEPTH" \
     || true
 ```
 

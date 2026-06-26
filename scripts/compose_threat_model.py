@@ -1385,22 +1385,49 @@ def _resolve_security_arch_override(
     if (current_depth or "").strip().lower() != "quick":
         return None
 
-    baseline_path = output_dir / ".appsec-cache" / "baseline.json"
+    # Preferred source (2026-06-26): the run-start snapshot in
+    # .appsec-cache/preserved-sections/, captured by snapshot_preserved_sections.py
+    # BEFORE the orchestrator overwrites threat-model.md. The prior depth comes
+    # from the snapshot manifest's `origin_depth`. This replaces the two
+    # unreliable inputs that made the preserve silently fail: the live (already
+    # clobbered) threat-model.md and baseline.json.last_run_depth (often never
+    # persisted). Falls back to the legacy live-md + baseline.json path so older
+    # output dirs without a snapshot still behave as before.
+    snap_dir = output_dir / ".appsec-cache" / "preserved-sections"
+    manifest_path = snap_dir / "manifest.json"
+    snap_md_path = snap_dir / "prior-report.md"
+
     prior_depth = ""
-    if baseline_path.is_file():
+    prior_md_path = None
+    if manifest_path.is_file() and snap_md_path.is_file():
         try:
-            prior_depth = (
-                (json.loads(baseline_path.read_text(encoding="utf-8")).get("last_run_depth", "") or "").strip().lower()
-            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            prior_depth = (manifest.get("origin_depth") or "").strip().lower()
+            prior_md_path = snap_md_path
         except (OSError, ValueError, json.JSONDecodeError):
             prior_depth = ""
+            prior_md_path = None
+
+    if prior_md_path is None:
+        # Legacy fallback: baseline.json depth + live md.
+        baseline_path = output_dir / ".appsec-cache" / "baseline.json"
+        if baseline_path.is_file():
+            try:
+                prior_depth = (
+                    (json.loads(baseline_path.read_text(encoding="utf-8")).get("last_run_depth", "") or "")
+                    .strip()
+                    .lower()
+                )
+            except (OSError, ValueError, json.JSONDecodeError):
+                prior_depth = ""
+        live_md = output_dir / "threat-model.md"
+        prior_md_path = live_md if live_md.is_file() else None
 
     if prior_depth not in ("standard", "thorough"):
         return ""  # quick → quick (or first run): skip §7 entirely.
 
-    prior_md_path = output_dir / "threat-model.md"
-    if not prior_md_path.is_file():
-        return ""  # claimed prior depth but no MD on disk — skip rather than fake
+    if prior_md_path is None or not prior_md_path.is_file():
+        return ""  # claimed prior depth but no MD to preserve from — skip rather than fake
 
     try:
         prior_md = prior_md_path.read_text(encoding="utf-8")
@@ -1869,6 +1896,30 @@ def _render_infobox(ctx: RenderContext, env: jinja2.Environment, section: dict) 
 
 def _render_changelog(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     changelog = ctx.yaml_data.get("changelog") or []
+    # Drop malformed/out-of-contract entries (2026-06-26). The deterministic
+    # build_changelog always sets delta_basis, threat_count, and
+    # assessment_depth. An entry with ALL THREE missing is a hand-written stub
+    # (e.g. a noise-only no-op that wrote a changelog row out of contract — the
+    # no-op path is supposed to write none). Such an entry renders as
+    # "incremental | - | -" with a truncated prose note and poisons the
+    # baseline framing of the next real run. Filter them at render so a stray
+    # entry can't surface even if it slipped into the yaml.
+    def _is_wellformed(e: dict) -> bool:
+        if not isinstance(e, dict):
+            return False
+        return any(
+            e.get(k) is not None
+            for k in ("delta_basis", "threat_count", "assessment_depth")
+        )
+
+    dropped = [e for e in changelog if not _is_wellformed(e)]
+    if dropped:
+        changelog = [e for e in changelog if _is_wellformed(e)]
+        sys.stderr.write(
+            f"  changelog: {len(dropped)} malformed/out-of-contract entr"
+            f"{'y' if len(dropped) == 1 else 'ies'} dropped at render "
+            "(missing delta_basis/threat_count/assessment_depth)\n"
+        )
     if not changelog:
         return ""  # conditional — skip when empty
     # Contract-driven style selection:
@@ -2243,12 +2294,38 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
     if _nums:
         _missing = [n for n in range(_nums[0], _nums[-1] + 1) if n not in _nums]
         if _missing:
-            _gap = ", ".join(f"§{n}" for n in _missing)
+            # Distinguish PERMANENTLY retired sections (§6 Use Cases, removed
+            # 2026-05) from sections merely DEPTH-SUPPRESSED on this run (§3
+            # Attack Walkthroughs and §7 Security Architecture are skipped at
+            # --quick and return at standard/thorough). Lumping them all as
+            # "retired in a prior revision" wrongly tells the reader recoverable
+            # content is gone forever and masks the depth-downgrade behaviour.
+            _RETIRED = {6}  # genuinely removed from the contract
+            _DEPTH_SUPPRESSED = {3, 7}  # absent at quick, re-introduced deeper
+            retired = [n for n in _missing if n in _RETIRED]
+            suppressed = [n for n in _missing if n in _DEPTH_SUPPRESSED]
+            other = [n for n in _missing if n not in _RETIRED and n not in _DEPTH_SUPPRESSED]
+            notes = []
+            if retired:
+                _g = ", ".join(f"§{n}" for n in retired)
+                notes.append(
+                    f"{_g} {'was' if len(retired) == 1 else 'were'} retired in a prior revision"
+                )
+            if suppressed:
+                _g = ", ".join(f"§{n}" for n in suppressed)
+                notes.append(
+                    f"{_g} {'is' if len(suppressed) == 1 else 'are'} omitted at the current "
+                    f"(quick) depth and return at `--standard`/`--thorough`"
+                )
+            if other:
+                _g = ", ".join(f"§{n}" for n in other)
+                notes.append(
+                    f"{_g} {'is' if len(other) == 1 else 'are'} not present in this report"
+                )
             out += (
-                f"\n> _Section numbering is non-contiguous: {_gap} "
-                f"{'was' if len(_missing) == 1 else 'were'} retired in a prior "
-                f"revision. The remaining sections keep their original numbers so "
-                f"existing cross-references stay valid._\n"
+                f"\n> _Section numbering is non-contiguous: "
+                f"{'; '.join(notes)}. The remaining sections keep their original "
+                f"numbers so existing cross-references stay valid._\n"
             )
     return out
 

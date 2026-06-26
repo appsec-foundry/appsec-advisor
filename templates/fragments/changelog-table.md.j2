@@ -61,10 +61,19 @@ _Append-only history of assessment runs. Most recent first._
 {%- set ins           = cl.insertions | default(none) -%}
 {%- set dels          = cl.deletions | default(none) -%}
 {%- set note          = (entry.note or '') | trim -%}
-{#- Aggressive truncation — the table row is narrow; long notes wrap the
-    whole changelog illegibly. Upstream the orchestrator is instructed to
-    keep `note` ≤12 words. -#}
-{%- if note|length > 60 -%}{%- set note = note[:58] ~ '…' -%}{%- endif -%}
+{#- Collapse embedded <br/> + whitespace FIRST so a multi-line hand-authored
+    note doesn't bleed across the cell, THEN truncate at a word boundary (not
+    mid-word) so the result reads cleanly. The table row is narrow; long notes
+    wrap the whole changelog illegibly — upstream the note is kept ≤12 words. -#}
+{%- if note -%}
+{%-   set note = note | replace('<br/>', ' ') | replace('<br>', ' ') | replace('<br />', ' ') -%}
+{%-   set note = note.split() | join(' ') -%}
+{%- endif -%}
+{%- if note|length > 60 -%}
+{%-   set _cut = note[:60] -%}
+{%-   set _sp = _cut.rfind(' ') -%}
+{%-   set note = (_cut[:_sp] if _sp > 30 else note[:58]) ~ '…' -%}
+{%- endif -%}
 {%- if note -%}{%- set note = note | replace('|', '\\|') -%}{%- endif -%}
 {#- Δ Threats: the +added / ~changed / -resolved delta only when the row
     represents a real diff against a baseline — a git baseline (incremental),

@@ -93,7 +93,13 @@ document:
     # prior §7 from a standard/thorough run is preservable. Quick mode then
     # skips §7 in both body and TOC; a subsequent standard run re-introduces
     # the full per-domain analysis on the same repo.
-    - { id: security_architecture, condition: "render_security_architecture" }
+    #
+    # preserve_on_downgrade (2026-06-26): §7 is a deep-only section. On a quick
+    # re-run over a prior standard/thorough report it is restored verbatim from
+    # the run-start snapshot (.appsec-cache/preserved-sections/prior-report.md)
+    # rather than deleted — see snapshot_preserved_sections.py and
+    # compose_threat_model._resolve_security_arch_override.
+    - { id: security_architecture, condition: "render_security_architecture", preserve_on_downgrade: true }
     # When §7 is suppressed at quick depth, the document jumps from §5
     # straight to §8 without explanation. The placeholder below renders
     # a single italic line so the reader sees the numbering gap is
@@ -343,7 +349,11 @@ sections:
       - operational_strengths
     optional_subsections:
       - { id: architectural_anti_patterns, condition: "has_anti_patterns" }
-      - { id: ai_exposure_ms,              condition: "has_llm_surface" }
+      # ai_exposure_ms is a deep-only callout (fragment-driven). On a quick
+      # re-run over a prior standard/thorough report the preserved fragment is
+      # restored (restore_preserved_sections.py copies ms-ai-exposure.json back
+      # into .fragments/ before compose) so the callout is not lost on downgrade.
+      - { id: ai_exposure_ms,              condition: "has_llm_surface", preserve_on_downgrade: true }
       - { id: requirements_compliance_ms, condition: "check_requirements" }
       - { id: triage_notes,               condition: "triage_has_warnings" }
     forbidden_subsection_patterns:                  # regexes; match = QA-strip
