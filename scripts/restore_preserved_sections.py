@@ -52,11 +52,13 @@ def restore(output_dir: Path, current_depth: str) -> int:
         return 0
 
     origin_depth = (manifest.get("origin_depth") or "").strip().lower()
+    origin_date = (manifest.get("origin_date") or "").strip()
     if _depth_rank(origin_depth) <= _depth_rank("quick"):
         return 0  # snapshot is not deeper than the current run — nothing to restore
 
     fragments_dir = output_dir / ".fragments"
     restored = []
+    carried_sections = []
 
     # AI/LLM exposure callout.
     if manifest.get("has_ai_exposure"):
@@ -66,6 +68,13 @@ def restore(output_dir: Path, current_depth: str) -> int:
             fragments_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(snap_ai, live_ai)
             restored.append("ms-ai-exposure.json")
+            carried_sections.append("ai_exposure_ms")
+
+    # Record provenance so the composer renders a "carried forward" marker on the
+    # restored section(s) — the user requirement: a shallow re-run must MARK
+    # preserved deeper content as carried, not pass it off as freshly analysed.
+    if carried_sections:
+        _record_provenance(output_dir, origin_depth, origin_date, carried_sections)
 
     if restored:
         sys.stdout.write(
@@ -73,6 +82,42 @@ def restore(output_dir: Path, current_depth: str) -> int:
             f"{origin_depth} snapshot (current depth: quick)\n"
         )
     return 0
+
+
+def record_provenance(output_dir: Path, origin_depth: str, origin_date: str, sections: list) -> None:
+    """Merge carried-section provenance into .preserved-provenance.json. Shared
+    by restore_preserved_sections.py (AI fragment) and the composer's §7
+    carry-forward path so the rendered report can mark every carried section."""
+    _record_provenance(output_dir, origin_depth, origin_date, sections)
+
+
+def _record_provenance(output_dir: Path, origin_depth: str, origin_date: str, sections: list) -> None:
+    path = output_dir / ".preserved-provenance.json"
+    data = {"origin_depth": origin_depth, "origin_date": origin_date, "sections": []}
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                data = existing
+                data.setdefault("sections", [])
+                # keep the deepest origin we've seen
+                if origin_depth and not data.get("origin_depth"):
+                    data["origin_depth"] = origin_depth
+                if origin_date and not data.get("origin_date"):
+                    data["origin_date"] = origin_date
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    for s in sections:
+        if s not in data["sections"]:
+            data["sections"].append(s)
+    if not data.get("origin_depth"):
+        data["origin_depth"] = origin_depth
+    if not data.get("origin_date"):
+        data["origin_date"] = origin_date
+    try:
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def main() -> int:

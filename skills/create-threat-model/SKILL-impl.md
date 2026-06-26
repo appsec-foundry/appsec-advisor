@@ -1490,7 +1490,8 @@ WIPED_COUNT=$(find . -maxdepth 1 \
      -o -name ".session-agent-map" -o -name ".prior-findings-index.json" \
      -o -name ".pre-render-repair-plan.json" -o -name ".qa-repair-plan.json" \
      -o -name ".architect-repair-plan.json" \
-     -o -name ".stage-stats.jsonl" -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \) \
+     -o -name ".stage-stats.jsonl" -o -name ".run-issues.json" -o -name ".run-issues-fixes.json" \
+     -o -name ".preserved-provenance.json" \) \
   -print -delete 2>/dev/null | wc -l)
 # .stage-stats.jsonl + .run-issues.json + .run-issues-fixes.json are run-scoped
 # observability, NOT carried-forward state. Before 2026-06-13 the full-run wipe

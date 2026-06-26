@@ -1398,11 +1398,13 @@ def _resolve_security_arch_override(
     snap_md_path = snap_dir / "prior-report.md"
 
     prior_depth = ""
+    prior_date = ""
     prior_md_path = None
     if manifest_path.is_file() and snap_md_path.is_file():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             prior_depth = (manifest.get("origin_depth") or "").strip().lower()
+            prior_date = (manifest.get("origin_date") or "").strip()
             prior_md_path = snap_md_path
         except (OSError, ValueError, json.JSONDecodeError):
             prior_depth = ""
@@ -1448,7 +1450,41 @@ def _resolve_security_arch_override(
     if not _verbatim_fnnn_refs_match(extracted, prior_md, current_threats or []):
         return ""
 
+    # Provenance (2026-06-26): §7 is being CARRIED FORWARD from a deeper prior
+    # run, not analysed this run. Record it and prepend a visible banner so the
+    # reader is never misled into thinking this shallow run produced §7. The
+    # banner is inserted right after the "## 7. …" heading line.
+    _record_carried_section(output_dir, prior_depth, prior_date, "security_architecture")
+    banner = _carried_forward_banner(prior_depth, prior_date)
+    lines = extracted.split("\n", 1)
+    if len(lines) == 2 and lines[0].startswith("## "):
+        extracted = lines[0] + "\n\n" + banner + "\n" + lines[1]
+    else:
+        extracted = banner + "\n\n" + extracted
     return extracted
+
+
+def _carried_forward_banner(origin_depth: str, origin_date: str) -> str:
+    """A single blockquote line marking a section as carried forward from a
+    prior deeper run (not re-analysed this run)."""
+    when = f"the {origin_date} " if origin_date else "a previous "
+    dpth = f"{origin_depth} " if origin_depth else "deeper "
+    return (
+        f"> ℹ️ _Carried forward from {when}{dpth}assessment — this section was "
+        f"not re-analysed in the current (quick) run; its content reflects the "
+        f"earlier deeper scan._"
+    )
+
+
+def _record_carried_section(output_dir: Path, origin_depth: str, origin_date: str, section_id: str) -> None:
+    """Record a carried section into .preserved-provenance.json (shared writer in
+    restore_preserved_sections.record_provenance)."""
+    try:
+        import restore_preserved_sections as _rps
+
+        _rps.record_provenance(output_dir, origin_depth, origin_date, [section_id])
+    except Exception:
+        pass
 
 
 def _extract_section_verbatim(md: str, *, top_level_number: int) -> str:
@@ -2016,6 +2052,25 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
             "without re-verification** (preserved from a prior deeper scan that this quick "
             "run was too shallow to re-confirm — re-run at the prior depth to re-verify)"
         )
+    # Carried-forward SECTIONS (2026-06-26): deep-only sections (§7, AI posture)
+    # preserved verbatim from a prior deeper run rather than re-analysed here.
+    # Surface them once so the reader knows which sections this quick run did not
+    # produce itself. Each carried section also carries its own inline banner.
+    prov = _carried_provenance(ctx.output_dir)
+    if prov:
+        _SECTION_LABELS = {
+            "security_architecture": "§7 Security Architecture",
+            "ai_exposure_ms": "AI/LLM Exposure callout",
+            "abuse_cases": "§9 Abuse Cases",
+        }
+        names = [_SECTION_LABELS.get(s, s) for s in prov.get("sections", [])]
+        if names:
+            when = f"the {prov['origin_date']} " if prov.get("origin_date") else "a prior "
+            dpth = f"{prov['origin_depth']} " if prov.get("origin_depth") else "deeper "
+            lines.append(
+                f"> - **Carried forward from {when}{dpth}assessment (not re-analysed here):** "
+                + ", ".join(names)
+            )
     lines.extend(
         [
             "> - **No LLM-enriched §7 architecture narrative** (scaffold + control tables only)",
@@ -8363,7 +8418,27 @@ def _render_ai_exposure(ctx: RenderContext, env: jinja2.Environment) -> str:
     if not (data.get("ai_risks") or []):
         return ""
     tpl = env.get_template("ai-exposure.md.j2")
-    return tpl.render(data=data)
+    body = tpl.render(data=data)
+    # Provenance (2026-06-26): if this AI callout was restored from a deeper
+    # prior run (restore_preserved_sections recorded it), mark it as carried.
+    prov = _carried_provenance(ctx.output_dir)
+    if prov and "ai_exposure_ms" in prov.get("sections", []):
+        banner = _carried_forward_banner(prov.get("origin_depth", ""), prov.get("origin_date", ""))
+        body = banner + "\n\n" + body
+    return body
+
+
+def _carried_provenance(output_dir: Path) -> dict | None:
+    """Read .preserved-provenance.json (which sections were carried forward from a
+    deeper prior run on this shallow re-run). Returns None when absent."""
+    path = output_dir / ".preserved-provenance.json"
+    if not path.is_file():
+        return None
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) and d.get("sections") else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
 
 
 def _render_requirements_compliance_ms(ctx: RenderContext) -> str:

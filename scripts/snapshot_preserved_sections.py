@@ -89,7 +89,36 @@ def _read_prior_depth(output_dir: Path) -> str:
     return ""
 
 
+def _read_prior_date(output_dir: Path) -> str:
+    """Return the prior report's run date for provenance ("carried forward from
+    the <date> run"). Reads the newest changelog entry's date from
+    threat-model.yaml; empty string if unavailable."""
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return ""
+    try:
+        text = yaml_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    # The first date: under changelog: is the newest entry's date (newest-first).
+    m = re.search(r"(?ms)^changelog:\s*\n.*?^\s*-?\s*.*?\bdate:\s*\"?(\d{4}-\d{2}-\d{2})", text)
+    if m:
+        return m.group(1)
+    return ""
+
+
 def snapshot(output_dir: Path) -> int:
+    # Clear any stale carried-section provenance from a PRIOR run first — it is
+    # repopulated within THIS run by restore_preserved_sections (AI) and the
+    # composer's §7 carry path. Without this, a later non-downgrade run would
+    # render bogus "carried forward" banners. (2026-06-26)
+    prov = output_dir / ".preserved-provenance.json"
+    if prov.is_file():
+        try:
+            prov.unlink()
+        except OSError:
+            pass
+
     prior_md = output_dir / "threat-model.md"
     if not prior_md.is_file():
         # First run / nothing to preserve.
@@ -136,6 +165,7 @@ def snapshot(output_dir: Path) -> int:
     manifest = {
         "schema_version": 1,
         "origin_depth": prior_depth,
+        "origin_date": _read_prior_date(output_dir),
         "captured_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "has_prior_report": True,
         "has_ai_exposure": has_ai,
