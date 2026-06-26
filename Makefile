@@ -59,6 +59,10 @@ coverage:  ## Run the suite + write an HTML coverage report to htmlcov/index.htm
 		status=$$?; rm -rf .coverage-data; exit $$status
 	@echo "HTML report: htmlcov/index.html"
 
+.PHONY: test-incremental
+test-incremental:  ## Fast focused subset: incremental-scan reconciliation + 2-run main() E2E (no LLM)
+	@$(PYTHON) -m pytest tests/test_incremental_two_run_e2e.py tests/test_build_threat_model_yaml.py -q
+
 .PHONY: lint
 lint:  ## Ruff check + format check
 	@ruff check scripts/ tests/ hooks/
