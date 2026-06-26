@@ -12,11 +12,16 @@ This file is loaded on demand by SKILL.md for non-help invocations. Do not modif
 > no narration of which commands you are bundling into a shell. Just call the
 > tool. Suppress all of it **silently** (same rule as the TaskList contract
 > below) — do not announce that you are suppressing it either. The **only**
-> permitted output before the Pre-flight summary is the single
-> `🔧 Building threat-model pipeline …` status line that SKILL.md tells you to
-> emit before this file loads; apart from that line, the user's first visible
-> output should be pipeline progress (the Pre-flight summary render),
-> not remarks about reading this file or running its commands.
+> permitted output before the Pre-flight summary is the `🔧 Building
+> threat-model pipeline …` status line that SKILL.md tells you to emit before
+> this file loads, followed by the single `PREFLIGHT_STATUS` line you print
+> after config resolution (see "Early pre-flight status line" below). Apart from
+> those two sanctioned lines, the user's first visible output should be pipeline
+> progress (the Pre-flight summary render), not remarks about reading this file
+> or running its commands. Narrating an action you are about to take ("Now
+> executing the combined pre-flight preamble", "Now rendering the Pre-flight
+> summary", "I've read to the LAZY-LOAD BOUNDARY") is a contract violation even
+> though it is true — the list is illustrative, not exhaustive.
 
 ## Mode Routing — which sections apply (navigation aid; per-section conditions remain authoritative)
 
@@ -862,9 +867,27 @@ WRITE_HTML=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(str(json
 # = 1 (single quick-fix pass, then fail-closed exit 2); thorough = 3. Default 3 if
 # the key is absent (older .skill-config.json). Source of truth: resolve_config.DEPTH_PARAMS.
 MAX_REPAIR_ITERATIONS=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('max_repair_iterations',3))")
+# Early pre-flight status line (deterministic, computed by resolve_config from
+# baseline_state + mode). Emitted as response text below — see "Early pre-flight
+# status line".
+PREFLIGHT_STATUS=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('preflight_status',''))")
 ```
 
 (A convenience: ``eval $(python3 ... --emit-env)`` is on the roadmap; for now the skill pulls individual keys via ``python3 -c``.)
+
+### Early pre-flight status line — emit `PREFLIGHT_STATUS` as response text
+
+Immediately after extracting the variables above (and **before** the Incremental
+Pre-Check / Fast-Path / dirty-set git diffs below, which are the slow part of the
+pre-flight in incremental mode), emit the single `PREFLIGHT_STATUS` line **verbatim
+as response text** — not via Bash `echo` (that folds into the `+N lines` widget).
+This is the one sanctioned interim line that fills the otherwise-silent gap between
+the `🔧 Building …` line and the Pre-flight summary, so the user sees *why* the wait
+is happening (e.g. `📋 Existing threat model found — computing the incremental delta …`).
+Print it once, as one short line, and nothing else; then continue silently to the
+pre-check commands. It does **not** replace the Pre-flight summary that follows. If
+`PREFLIGHT_STATUS` is empty (older `.skill-config.json` without the field), emit
+nothing and proceed.
 
 ### Verbose Mode — Marker File Lifecycle
 

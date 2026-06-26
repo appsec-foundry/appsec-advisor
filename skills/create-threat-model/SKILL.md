@@ -49,6 +49,17 @@ read it **silently** and proceed
 straight to execution. Do **not** narrate
 your reading: no "this is a large file", no "let me map its structure first",
 no description of how you are chunking or scanning the file. The user sees this
-meta-commentary as noise. After the status line, your next user-visible output
-should be pipeline progress (the Pre-flight summary), not
-remarks about the instruction file.
+meta-commentary as noise.
+
+**Hard rule (positive form — this is the enforceable one).** Between the
+`🔧 Building …` status line above and the pipeline's own output, the **only**
+two lines you may emit are: (1) the single `PREFLIGHT_STATUS` line that
+SKILL-impl tells you to print after config resolution (e.g.
+`📋 Existing threat model found — computing the incremental delta …`), and then
+(2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
+In particular do **not** announce your own actions — the following are all
+contract violations, even though they are *true*: "I've read through to the
+LAZY-LOAD BOUNDARY", "Now executing the combined pre-flight preamble", "Now
+rendering the Pre-flight summary", "Let me run the pre-flight checks". The list
+is illustrative, not exhaustive: **any** sentence describing what you are about
+to do (reading, executing, running, rendering) is forbidden here. Just do it.

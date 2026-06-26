@@ -1691,6 +1691,19 @@ class TestRunPlanDepthHint:
         notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="quick"), None, None, None)
         assert not any("most thorough results come from" in n for n in notes)
 
+    def test_quick_shows_triage_limits_note(self):
+        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="quick"), None, None, None)
+        assert any("--quick is a fast triage pass" in n and "higher cost" in n for n in notes)
+
+    def test_quick_triage_note_on_noop(self):
+        # Surfaced regardless of will_run, same as the standard upsell.
+        notes = rc._run_plan_notes(self._verdict(will_run=False), _base_cfg(assessment_depth="quick"), None, None, None)
+        assert any("--quick is a fast triage pass" in n for n in notes)
+
+    def test_standard_has_no_quick_note(self):
+        notes = rc._run_plan_notes(self._verdict(), _base_cfg(assessment_depth="standard"), None, None, None)
+        assert not any("--quick is a fast triage pass" in n for n in notes)
+
     def test_hint_on_noop(self):
         # The depth upsell is always surfaced at standard depth, even when
         # nothing will run (a no-op rerun still benefits from the hint).
@@ -1698,6 +1711,42 @@ class TestRunPlanDepthHint:
             self._verdict(will_run=False), _base_cfg(assessment_depth="standard"), None, None, None
         )
         assert any("most thorough results come from" in n for n in notes)
+
+
+class TestPreflightStatusLine:
+    """The early one-line status the skill prints during the otherwise-silent
+    pre-flight wait (before the slow incremental dirty-set git diffs)."""
+
+    def test_incremental_existing_model_announces_delta(self):
+        line = rc._preflight_status_line({"mode": "incremental", "incremental": True, "baseline_state": "structured"})
+        assert "Existing threat model found" in line and "incremental delta" in line
+
+    def test_incremental_legacy_baseline_also_counts_as_existing(self):
+        line = rc._preflight_status_line({"mode": "incremental", "incremental": True, "baseline_state": "legacy"})
+        assert "Existing threat model found" in line and "incremental delta" in line
+
+    def test_full_over_existing_model(self):
+        line = rc._preflight_status_line({"mode": "full", "incremental": False, "baseline_state": "structured"})
+        assert "Existing threat model found" in line and "full" in line
+
+    def test_first_run_no_prior_model(self):
+        line = rc._preflight_status_line({"mode": "full", "incremental": False, "baseline_state": "empty"})
+        assert "No prior threat model" in line and "full assessment" in line
+
+    def test_rebuild_wins_over_baseline(self):
+        line = rc._preflight_status_line({"mode": "rebuild", "incremental": False, "baseline_state": "structured"})
+        assert "Rebuilding" in line
+
+    def test_rerender(self):
+        line = rc._preflight_status_line({"mode": "full", "rerender": True, "baseline_state": "structured"})
+        assert "Re-rendering" in line
+
+    def test_resolve_populates_preflight_status(self):
+        # The field must be present in the resolved cfg so the skill can extract
+        # it from .skill-config.json.
+        cfg = rc.resolve([], REPO_ROOT)
+        assert "preflight_status" in cfg
+        assert cfg["preflight_status"]
 
 
 class TestRenderRunPlanNotes:

@@ -1591,7 +1591,33 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
         if not _lp.is_absolute():
             cfg["logo"] = str((Path.cwd() / _lp).resolve())
 
+    # Early pre-flight status line — a single human line the skill prints as
+    # response text right after extracting the resolved vars, BEFORE the slow
+    # incremental pre-check / dirty-set git diffs run. It fills the otherwise
+    # silent gap between the "🔧 Building …" line and the Pre-flight summary so
+    # the user knows what the wait is doing (notably "existing model found,
+    # computing incremental delta"). Deterministic content; the model only
+    # relays it (same pattern as the LLM-typed Pre-flight summary).
+    cfg["preflight_status"] = _preflight_status_line(cfg)
+
     return cfg
+
+
+def _preflight_status_line(cfg: dict) -> str:
+    """One-line early status for the pre-flight wait (see resolve())."""
+    state = cfg.get("baseline_state")
+    has_model = state in ("structured", "legacy")
+    if cfg.get("mode") == "rebuild":
+        return "🔧 Rebuilding from scratch — wiping the prior model and cache …"
+    if cfg.get("rerender"):
+        return "🖉 Re-rendering the report from existing analysis fragments …"
+    if cfg.get("incremental") and has_model:
+        return ("📋 Existing threat model found — computing the incremental "
+                "delta (changed files vs. baseline) …")
+    if has_model:
+        return ("📋 Existing threat model found — preparing a full "
+                "re-assessment …")
+    return "🔍 No prior threat model — preparing a full assessment …"
 
 
 def _compute_total_stages(cfg: dict) -> int:
@@ -2252,6 +2278,19 @@ def _run_plan_notes(
             "Hint: the most thorough results come from --assessment-depth "
             "thorough (deeper per-component analysis + architect review, Opus "
             "reasoning) — at correspondingly higher cost and time."
+        )
+
+    # Quick-depth limits hint — quick is the most reduced mode (a fast triage
+    # pass: abuse-case verification, architect review and §7 enrichment are
+    # dropped, the QA repair loop is a single pass, and STRIDE is depth-capped),
+    # so it is exactly where the user most needs to know what was traded away.
+    # Surfaced regardless of will_run, same as the standard upsell.
+    if cfg.get("assessment_depth") == "quick":
+        notes.append(
+            "Note: --quick is a fast triage pass (abuse-case verification, "
+            "architect review and §7 enrichment are skipped, STRIDE is "
+            "depth-capped). For more complete results use --assessment-depth "
+            "standard or thorough — at correspondingly higher cost and time."
         )
 
     if plugin_tier == "major":
