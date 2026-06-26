@@ -14200,6 +14200,17 @@ def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: di
     # GLOBAL retrofit pass at the end of render() — see the call sites just
     # before render() returns. Doing it there (rather than here) keeps a single
     # source of truth and covers §3/§5/§7/§9 uniformly.
+    # Provenance (2026-06-26): if §9 was carried forward from a deeper prior run
+    # (restore_preserved_sections restored abuse-cases.md), mark it as carried.
+    prov = _carried_provenance(ctx.output_dir)
+    if prov and "abuse_cases" in prov.get("sections", []):
+        banner = _carried_forward_banner(prov.get("origin_depth", ""), prov.get("origin_date", ""))
+        body = md.rstrip()
+        lines = body.split("\n", 1)
+        if lines and lines[0].strip() == heading:
+            rest = lines[1] if len(lines) == 2 else ""
+            return lines[0] + "\n\n" + banner + "\n" + rest.rstrip() + "\n"
+        return banner + "\n\n" + body + "\n"
     return md.rstrip() + "\n"
 
 

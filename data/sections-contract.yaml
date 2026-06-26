@@ -94,12 +94,9 @@ document:
     # skips §7 in both body and TOC; a subsequent standard run re-introduces
     # the full per-domain analysis on the same repo.
     #
-    # preserve_on_downgrade (2026-06-26): §7 is a deep-only section. On a quick
-    # re-run over a prior standard/thorough report it is restored verbatim from
-    # the run-start snapshot (.appsec-cache/preserved-sections/prior-report.md)
-    # rather than deleted — see snapshot_preserved_sections.py and
-    # compose_threat_model._resolve_security_arch_override.
-    - { id: security_architecture, condition: "render_security_architecture", preserve_on_downgrade: true }
+    # §7 is a deep-only section preserved on downgrade — see the authoritative
+    # `preserve_on_downgrade:` block at the end of this file (substrate: md-slice).
+    - { id: security_architecture, condition: "render_security_architecture" }
     # When §7 is suppressed at quick depth, the document jumps from §5
     # straight to §8 without explanation. The placeholder below renders
     # a single italic line so the reader sees the numbering gap is
@@ -349,11 +346,10 @@ sections:
       - operational_strengths
     optional_subsections:
       - { id: architectural_anti_patterns, condition: "has_anti_patterns" }
-      # ai_exposure_ms is a deep-only callout (fragment-driven). On a quick
-      # re-run over a prior standard/thorough report the preserved fragment is
-      # restored (restore_preserved_sections.py copies ms-ai-exposure.json back
-      # into .fragments/ before compose) so the callout is not lost on downgrade.
-      - { id: ai_exposure_ms,              condition: "has_llm_surface", preserve_on_downgrade: true }
+      # ai_exposure_ms is a deep-only callout preserved on downgrade — see the
+      # authoritative `preserve_on_downgrade:` block at the end of this file
+      # (substrate: fragment, ms-ai-exposure.json).
+      - { id: ai_exposure_ms,              condition: "has_llm_surface" }
       - { id: requirements_compliance_ms, condition: "check_requirements" }
       - { id: triage_notes,               condition: "triage_has_warnings" }
     forbidden_subsection_patterns:                  # regexes; match = QA-strip
@@ -1479,3 +1475,32 @@ invariants:
 
   # Determinism: rendering the same fragments/yaml twice produces byte-identical output.
   render_is_deterministic: true
+
+# ── Depth-downgrade preservation (2026-06-26) ─────────────────────────────────
+# THE single source of truth for which deep-only sections survive a shallower
+# re-run (e.g. standard → quick). Read by scripts/preserve_lib.py; consumed by
+# snapshot_preserved_sections.py (capture), restore_preserved_sections.py
+# (restore + provenance) and compose_threat_model.py (§7 verbatim carry). Adding
+# a section to preserve is an edit here — no code change.
+#
+#   substrate: fragment   → the section renders from a .fragments/<file>; the
+#                           fragment is snapshotted and restored before compose.
+#   substrate: md-slice   → the section is sliced verbatim from the prior
+#                           rendered threat-model.md (snapshotted as prior-report.md)
+#                           by md_section_number; restored by the composer's
+#                           _resolve_security_arch_override.
+#   source_globs (opt)    → repo files whose change INVALIDATES the carried
+#                           section (staleness); omitted = no staleness drop.
+#
+# §3 Attack Walkthroughs is intentionally ABSENT: quick is meant to drop §3
+# entirely (feedback_quick_skip_walkthroughs_completely), so it is not preserved.
+preserve_on_downgrade:
+  - id: security_architecture
+    substrate: md-slice
+    md_section_number: 7
+  - id: ai_exposure_ms
+    substrate: fragment
+    fragment: ms-ai-exposure.json
+  - id: abuse_cases
+    substrate: fragment
+    fragment: abuse-cases.md

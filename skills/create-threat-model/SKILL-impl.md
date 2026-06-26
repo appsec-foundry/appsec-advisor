@@ -1436,7 +1436,8 @@ Skip on `REBUILD=true` (rebuild deliberately discards all prior content) and on
 
 ```bash
 if [ "$REBUILD" != "true" ] && [ "$DRY_RUN" != "true" ]; then
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/snapshot_preserved_sections.py" "$OUTPUT_DIR" || true
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/snapshot_preserved_sections.py" "$OUTPUT_DIR" \
+      --plugin-root "$CLAUDE_PLUGIN_ROOT" --repo-root "$REPO_ROOT" || true
 fi
 ```
 
@@ -2577,6 +2578,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
 # on first/non-downgrade runs. Best-effort.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/restore_preserved_sections.py" "$OUTPUT_DIR" \
     --current-depth "$ASSESSMENT_DEPTH" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" --repo-root "$REPO_ROOT" \
     || true
 ```
 

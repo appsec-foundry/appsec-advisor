@@ -30,17 +30,23 @@ import shutil
 import sys
 from pathlib import Path
 
-_DEPTH_RANK = {"quick": 0, "standard": 2, "thorough": 3}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from preserve_lib import depth_rank as _depth_rank  # noqa: E402
+from preserve_lib import preservable_sections, source_fingerprint  # noqa: E402
 
 
-def _depth_rank(depth: str | None) -> int:
-    return _DEPTH_RANK.get((depth or "").strip().lower(), -1)
+def _is_stale(section_meta: dict, declared: dict, repo_root: Path | None) -> bool:
+    """A carried section is STALE (must be dropped, not preserved) when the repo
+    files it describes changed since capture. Only enforced when source_globs are
+    declared for the section AND a captured fingerprint exists. (2026-06-26)"""
+    globs = declared.get("source_globs") or []
+    captured_fp = (section_meta or {}).get("source_fingerprint")
+    if not globs or not captured_fp or repo_root is None:
+        return False  # staleness check disabled for this section
+    return source_fingerprint(repo_root, globs) != captured_fp
 
 
-def restore(output_dir: Path, current_depth: str) -> int:
-    if (current_depth or "").strip().lower() != "quick":
-        return 0  # only a shallow (quick) run needs to restore deeper content
-
+def restore(output_dir: Path, current_depth: str, plugin_root: Path, repo_root: Path | None) -> int:
     snap_dir = output_dir / ".appsec-cache" / "preserved-sections"
     manifest_path = snap_dir / "manifest.json"
     if not manifest_path.is_file():
@@ -53,22 +59,40 @@ def restore(output_dir: Path, current_depth: str) -> int:
 
     origin_depth = (manifest.get("origin_depth") or "").strip().lower()
     origin_date = (manifest.get("origin_date") or "").strip()
-    if _depth_rank(origin_depth) <= _depth_rank("quick"):
-        return 0  # snapshot is not deeper than the current run — nothing to restore
+    # Only restore when the current run is strictly SHALLOWER than the snapshot.
+    if _depth_rank(origin_depth) <= _depth_rank(current_depth):
+        return 0
 
+    declared = {s["id"]: s for s in preservable_sections(plugin_root)}
+    captured = {s.get("id"): s for s in (manifest.get("sections") or [])}
     fragments_dir = output_dir / ".fragments"
     restored = []
     carried_sections = []
+    dropped_stale = []
 
-    # AI/LLM exposure callout.
-    if manifest.get("has_ai_exposure"):
-        snap_ai = snap_dir / "ms-ai-exposure.json"
-        live_ai = fragments_dir / "ms-ai-exposure.json"
-        if snap_ai.is_file() and not live_ai.is_file():
-            fragments_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(snap_ai, live_ai)
-            restored.append("ms-ai-exposure.json")
-            carried_sections.append("ai_exposure_ms")
+    for sid, dmeta in declared.items():
+        cmeta = captured.get(sid)
+        # Back-compat with v1 manifests (no per-section block): treat AI as captured.
+        if cmeta is None and sid == "ai_exposure_ms" and manifest.get("has_ai_exposure"):
+            cmeta = {"id": sid, "fragment": "ms-ai-exposure.json", "captured": True}
+        if not cmeta or not cmeta.get("captured"):
+            continue
+        if _is_stale(cmeta, dmeta, repo_root):
+            dropped_stale.append(sid)
+            continue
+        if dmeta["substrate"] == "fragment" and dmeta.get("fragment"):
+            snap_frag = snap_dir / dmeta["fragment"]
+            live_frag = fragments_dir / dmeta["fragment"]
+            if snap_frag.is_file() and not live_frag.is_file():
+                fragments_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(snap_frag, live_frag)
+                restored.append(dmeta["fragment"])
+                carried_sections.append(sid)
+        elif dmeta["substrate"] == "md-slice":
+            # Restored by the composer's _resolve_security_arch_override directly
+            # from prior-report.md; nothing to copy here, but it IS carried — the
+            # composer records its own provenance entry when it carries.
+            pass
 
     # Record provenance so the composer renders a "carried forward" marker on the
     # restored section(s) — the user requirement: a shallow re-run must MARK
@@ -79,7 +103,12 @@ def restore(output_dir: Path, current_depth: str) -> int:
     if restored:
         sys.stdout.write(
             f"restore-sections: restored {', '.join(restored)} from "
-            f"{origin_depth} snapshot (current depth: quick)\n"
+            f"{origin_depth} snapshot (current depth: {current_depth})\n"
+        )
+    if dropped_stale:
+        sys.stdout.write(
+            f"restore-sections: dropped {', '.join(dropped_stale)} — source changed "
+            "since capture (carried content would be stale)\n"
         )
     return 0
 
@@ -124,11 +153,13 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("output_dir", type=Path)
     p.add_argument("--current-depth", default="quick")
+    p.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
+    p.add_argument("--repo-root", type=Path, default=None)
     args = p.parse_args()
     if not args.output_dir.is_dir():
         return 0
     try:
-        return restore(args.output_dir, args.current_depth)
+        return restore(args.output_dir, args.current_depth, args.plugin_root, args.repo_root)
     except Exception as e:  # best-effort
         sys.stderr.write(f"restore-sections: non-fatal error: {e}\n")
         return 0
