@@ -70,6 +70,37 @@ class TestReconForegroundDispatch:
 
 
 # ---------------------------------------------------------------------------
+# Fix 3 — no second dispatch of recon-scanner / context-resolver
+#
+# 2026-06-25 juice-shop standard run: after a 509s model/API stall recovered,
+# the orchestrator rechecked the recon/context output files, saw them as
+# "missing", and re-spawned BOTH agents ("Re-run … to write output file") —
+# re-paying full context prefill for zero new analysis (~$1-2 waste). The
+# contract already forbids re-dispatch (step 4 + the inline-fallback rule); the
+# wording was hardened so a missing-after-stall file routes to the fallback,
+# never a second Agent call.
+# ---------------------------------------------------------------------------
+
+
+class TestReconNoReDispatch:
+    def test_no_second_dispatch_rule_present(self):
+        text = RECON.read_text(encoding="utf-8")
+        assert "Never re-dispatch the context-resolver or recon-scanner" in text, (
+            "the explicit no-second-dispatch rule was removed — the orchestrator "
+            "will re-spawn recon/context agents on stalled runs again"
+        )
+        assert "contract violation" in text
+
+    def test_no_second_dispatch_names_the_observed_waste_pattern(self):
+        text = RECON.read_text(encoding="utf-8")
+        # The exact wasteful AGENT_SPAWN label seen in the field must be named so
+        # the rule is unmistakable to the orchestrator LLM.
+        assert "Re-run … to write output file" in text
+        # The missing-after-stall case must route to the fallback, not a re-spawn.
+        assert "after a model/API stall recovers" in text
+
+
+# ---------------------------------------------------------------------------
 # Fix 2 — truthful MODEL_ID in recon agents + dispatch prompts
 # ---------------------------------------------------------------------------
 
