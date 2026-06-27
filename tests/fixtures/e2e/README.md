@@ -22,8 +22,16 @@ and `.known-bad-libs-findings.json` (Phase 10 emitters) — those sidecars
 are not part of this frozen fixture; tests for them live in
 `test_emit_sca_practice.py` and the live emitters self-detect repo state.
 
-`synthetic-repo/` is a minimal repo whose manifests (`package.json`, `Dockerfile`)
-the baseline fingerprint tests operate against.
+`synthetic-repo/` is the code-bearing live-LLM fixture. It contains deliberately
+planted SQL/command injection, SSRF, missing object authorization, hardcoded
+secrets, an LLM prompt boundary, multi-tenancy/B2B actor signals, and weak CI
+configuration. `run-full.sh` scans a clean, standalone-Git `_last-repo/` copy
+so ignored local `docs/security/` state and the enclosing plugin repository
+cannot contaminate recon.
+
+`oracle/expected-signals.json` lives outside the scanned repo. The live E2E uses
+it for a recall floor, required planted findings, secret-leak canaries, and the
+prompt-injection sentinel.
 
 ## Refreshing the fixture
 

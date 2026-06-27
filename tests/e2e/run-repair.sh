@@ -3,11 +3,9 @@
 # QA-active E2E repair variant — exercises the REAL Stage-3 Re-Render Loop and
 # the appsec-fragment-fixer dispatch (M2b) in a live headless skill run.
 #
-# Why this exists: `run-full.sh` hardcodes `--no-qa`, so Stage 3 / the Re-Render
-# Loop / the fragment-fixer NEVER run in the normal E2E. And a clean render
-# triggers no repair anyway. This variant GUARANTEES a repair by:
-#   1. Seeding a known-good, full (standard-depth) output as the baseline.
-#   2. Corrupting §7.2 — the analyst-authored `security-architecture.md` fragment.
+# A clean standard run normally needs no repair. This variant guarantees one:
+#   1. Seed from the bundled E2E's immediately preceding clean standard run.
+#   2. Corrupt §7.2 by removing its required `Controls covered` label.
 #   3. Running headless with `--rerender --no-enrich-arch` (and QA on): the skill
 #      skips Stage 1 and the incremental no-op gate, re-renders Stage 2 from the
 #      existing fragments, then runs the Stage-3 QA gate → build_repair_plan flags
@@ -15,14 +13,9 @@
 #      recompose → clean.
 #
 #   `--no-enrich-arch` is LOAD-BEARING. At standard depth ENRICH_ARCH_FRAGMENTS
-#   defaults ON, so the `secarch` renderer RE-AUTHORS `security-architecture.md`
-#   (agents/appsec-threat-renderer.md:128 — it touches §7 "only when
-#   ENRICH_ARCH_FRAGMENTS=true") and silently rewrites the corrupted §7.2.2
-#   heading back to the canonical mechanism BEFORE Stage-3 QA sees it — so no auth
-#   violation is detected and the fixer never fires (the failure this variant is
-#   meant to catch). Disabling enrichment makes the renderer leave the corrupted
-#   fragment untouched, so the violation reaches QA and the real Re-Render Loop /
-#   fragment-fixer is exercised.
+#   defaults ON, so the `secarch` renderer re-authors the fragment before Stage 3
+#   sees it. Disabling enrichment lets `control_subsection_coverage` reach the
+#   real Re-Render Loop / fragment-fixer.
 #
 # Then asserts the real loop fired the fixer and converged to contract-clean.
 #
@@ -35,8 +28,8 @@
 set -uo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SEED="${APPSEC_E2E_REPAIR_SEED:-/home/mrohr/juice-shop/docs/security}"
-REPO="${APPSEC_E2E_REPAIR_REPO:-/home/mrohr/juice-shop}"
+SEED="${APPSEC_E2E_REPAIR_SEED:-$PLUGIN_ROOT/tests/fixtures/e2e/_last-run}"
+REPO="${APPSEC_E2E_REPAIR_REPO:-$PLUGIN_ROOT/tests/fixtures/e2e/_last-repo}"
 OUTPUT_DIR="$PLUGIN_ROOT/tests/fixtures/e2e/_repair-run"
 MAXDUR="${APPSEC_E2E_REPAIR_MAXDUR:-2400}"
 
@@ -50,6 +43,21 @@ echo "────────────────────────�
 
 [ -f "$SEED/threat-model.md" ] || { echo "ERROR: seed has no threat-model.md: $SEED" >&2; exit 3; }
 [ -f "$SEED/.fragments/security-architecture.md" ] || { echo "ERROR: seed lacks §7 fragment" >&2; exit 3; }
+[ -d "$REPO" ] || { echo "ERROR: analyzed fixture repo missing: $REPO" >&2; exit 3; }
+python3 - "$SEED/.skill-config.json" <<'PY' || exit 3
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    config = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError) as exc:
+    print(f"ERROR: cannot read standard seed config {path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+if config.get("assessment_depth") != "standard" or config.get("skip_qa") is not False:
+    print("ERROR: repair seed must be a standard run with Stage-3 QA enabled", file=sys.stderr)
+    raise SystemExit(1)
+PY
 
 # 1. Fresh copy of the clean baseline.
 rm -rf "$OUTPUT_DIR"
@@ -57,20 +65,38 @@ cp -r "$SEED" "$OUTPUT_DIR"
 # Drop stale lock/progress so the resume starts clean.
 rm -f "$OUTPUT_DIR/.appsec-lock" "$OUTPUT_DIR/.qa-repair-plan.json" "$OUTPUT_DIR/.qa-status.json"
 
-# 2. Corrupt §7.2 — turn a canonical mechanism heading into a FORBIDDEN primitive.
-#    Match the §7.2.2 heading by NUMBER, not by its (drift-prone) wording: the
-#    seed is a real run output whose mechanism title changes across regenerations
-#    (e.g. "MFA / TOTP" → "Multi-Factor Authentication (TOTP)"). Replacing the
-#    whole heading line with the forbidden "Login Rate Limiting" primitive still
-#    trips the auth_method_decomposition rule regardless of the original wording.
+# 2. Remove the first required §7 `Controls covered` label.
 FRAG="$OUTPUT_DIR/.fragments/security-architecture.md"
-if grep -qE '^#### 7\.2\.2 ' "$FRAG"; then
-    sed -i -E 's|^#### 7\.2\.2 .*|#### 7.2.2 Login Rate Limiting|' "$FRAG"
-    echo "→ corrupted §7.2.2 heading → 'Login Rate Limiting' (forbidden primitive)"
+if grep -qE '^\*\*Controls covered:\*\*' "$FRAG"; then
+    sed -i '0,/^\*\*Controls covered:\*\*/s//**Control inventory:**/' "$FRAG"
+    echo "→ corrupted §7 Controls covered label → Control inventory"
 else
-    echo "ERROR: expected a '#### 7.2.2 ...' heading not found in seed fragment" >&2
+    echo "ERROR: expected a '**Controls covered:**' label not found in seed fragment" >&2
     exit 3
 fi
+
+# Prove deterministically that fixture drift has not invalidated the trigger.
+python3 "$PLUGIN_ROOT/scripts/compose_threat_model.py" \
+    --output-dir "$OUTPUT_DIR" --strict >/dev/null 2>&1 || {
+  echo "ERROR: corruption no longer composes; expected a post-render QA defect" >&2
+  exit 3
+}
+python3 "$PLUGIN_ROOT/scripts/qa_checks.py" \
+    repair_plan "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" >/dev/null 2>&1 || true
+python3 - "$OUTPUT_DIR/.qa-repair-plan.json" <<'PY' || exit 3
+import json
+import sys
+
+plan = json.load(open(sys.argv[1], encoding="utf-8"))
+types = {action.get("type") for action in plan.get("actions", [])}
+if "control_subsection_coverage" not in types:
+    print(f"ERROR: corruption did not trigger control_subsection_coverage; got {sorted(types)}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+
+FIXER_BEFORE=$(grep -hciE 'appsec-fragment-fixer|fragment-fixer' \
+    "$OUTPUT_DIR/.hook-events.log" "$OUTPUT_DIR/.agent-run.log" 2>/dev/null \
+    | awk '{s+=$1} END{print s+0}')
 
 # 3. Drop the checkpoint so nothing looks mid-run; --rerender drives the flow.
 rm -f "$OUTPUT_DIR/.appsec-checkpoint"
@@ -98,29 +124,40 @@ echo ""
 echo "→ pipeline exit code: $RUN_STATUS"
 echo "→ wall-time: ${ELAPSED}s"
 
+if [ "$RUN_STATUS" -ne 0 ]; then
+    echo "PIPELINE FAILED — repair assertions are not valid." >&2
+    echo "Artifacts: $OUTPUT_DIR" >&2
+    exit 1
+fi
+
 # 5. Assertions — did the REAL loop fire the fixer and converge?
 echo ""
 echo "[2/2] repair-loop assertions ..."
 PASS=0; FAIL=0
 chk() { if eval "$2"; then echo "  ✓ $1"; PASS=$((PASS+1)); else echo "  ✗ $1"; FAIL=$((FAIL+1)); fi; }
 
-# (a) fragment-fixer was dispatched in the real loop (hook log / agent-run log)
-FIXER_SPAWN=$(grep -ciE 'appsec-fragment-fixer|fragment-fixer' "$OUTPUT_DIR/.hook-events.log" "$OUTPUT_DIR/.agent-run.log" 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
-chk "fragment-fixer dispatched in the live loop (>=1 log hit)" "[ \"$FIXER_SPAWN\" -ge 1 ]"
+# (a) a new fragment-fixer dispatch occurred after the seeded corruption
+FIXER_AFTER=$(grep -hciE 'appsec-fragment-fixer|fragment-fixer' \
+    "$OUTPUT_DIR/.hook-events.log" "$OUTPUT_DIR/.agent-run.log" 2>/dev/null \
+    | awk '{s+=$1} END{print s+0}')
+chk "fragment-fixer dispatched after corruption" "[ \"$FIXER_AFTER\" -gt \"$FIXER_BEFORE\" ]"
 
-# (b) §7.2.2 heading was repaired back to a canonical mechanism (not the primitive)
-chk "§7.2.2 no longer the forbidden 'Login Rate Limiting' heading" "! grep -q '^#### 7\.2\.2 Login Rate Limiting' '$FRAG'"
+# (b) the required §7 label was restored
+chk "§7 Controls covered label restored" "grep -q '^\\*\\*Controls covered:\\*\\*' '$FRAG'"
 
-# (c) final document is contract-clean w.r.t. the auth rule
+# (c) final document is contract-clean with respect to the seeded defect
 CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" python3 "$PLUGIN_ROOT/scripts/qa_checks.py" repair_plan "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" >/dev/null 2>&1
-AUTH_AFTER=$(python3 -c "import json,sys;
+CONTROL_AFTER=$(python3 -c "import json,sys;
 try:
   p=json.load(open('$OUTPUT_DIR/.qa-repair-plan.json'));
   t=[a.get('type') for a in p.get('actions',[])];
-  print('auth_present' if 'auth_method_decomposition' in t else 'clean')
+  print('control_present' if 'control_subsection_coverage' in t else 'clean')
 except FileNotFoundError:
   print('clean')" 2>/dev/null)
-chk "auth_method_decomposition violation cleared in final doc" "[ \"$AUTH_AFTER\" = clean ]"
+chk "control_subsection_coverage violation cleared in final doc" "[ \"$CONTROL_AFTER\" = clean ]"
+
+QA_STATUS=$(python3 -c "import json; print(json.load(open('$OUTPUT_DIR/.qa-status.json')).get('status',''))" 2>/dev/null)
+chk "Stage-3 QA status is pass" "[ \"$QA_STATUS\" = pass ]"
 
 echo ""
 echo "─────────────────────────────────────────────────────────────────────"

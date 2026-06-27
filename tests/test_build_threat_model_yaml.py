@@ -866,30 +866,56 @@ def test_changelog_stable_across_cwe_and_title_drift_same_file(tmp_path):
         _CL_CFG,
         [
             # RSA key — run1 labels it auth / CWE-798 / "forgery".
-            {"id": "T-001", "component": "auth", "cwe": "CWE-798",
-             "title": "Hardcoded RSA private key enabling JWT forgery",
-             "evidence": {"file": "lib/insecurity.ts", "line": 21}},
+            {
+                "id": "T-001",
+                "component": "auth",
+                "cwe": "CWE-798",
+                "title": "Hardcoded RSA private key enabling JWT forgery",
+                "evidence": {"file": "lib/insecurity.ts", "line": 21},
+            },
             # JWT verify — run1 labels it backend-api / CWE-347.
-            {"id": "T-002", "component": "backend-api", "cwe": "CWE-347",
-             "title": "Insecure JWT verification",
-             "evidence": {"file": "lib/insecurity.ts", "line": 52}},
+            {
+                "id": "T-002",
+                "component": "backend-api",
+                "cwe": "CWE-347",
+                "title": "Insecure JWT verification",
+                "evidence": {"file": "lib/insecurity.ts", "line": 52},
+            },
         ],
-        _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1000",
+        _CL_COMPS,
+        [],
+        None,
+        tmp_path,
+        current_sha="sha-1",
+        run_id="1000",
     )
     run2 = b.build_changelog(
         _CL_CFG,
         [
             # Same RSA key — run2 renames component, swaps CWE within the
             # hardcoded-key family (798→321), rewords the title.
-            {"id": "T-009", "component": "express-backend", "cwe": "CWE-321",
-             "title": "Hardcoded RSA private key enables arbitrary JWT signing",
-             "evidence": {"file": "lib/insecurity.ts", "line": 21}},
+            {
+                "id": "T-009",
+                "component": "express-backend",
+                "cwe": "CWE-321",
+                "title": "Hardcoded RSA private key enables arbitrary JWT signing",
+                "evidence": {"file": "lib/insecurity.ts", "line": 21},
+            },
             # Same JWT verify — sig-verify family swap (347→345), component rename.
-            {"id": "T-014", "component": "auth", "cwe": "CWE-345",
-             "title": "Insecure JWT verification path",
-             "evidence": {"file": "lib/insecurity.ts", "line": 52}},
+            {
+                "id": "T-014",
+                "component": "auth",
+                "cwe": "CWE-345",
+                "title": "Insecure JWT verification path",
+                "evidence": {"file": "lib/insecurity.ts", "line": 52},
+            },
         ],
-        _CL_COMPS, [], run1, tmp_path, current_sha="sha-2", run_id="2000",
+        _CL_COMPS,
+        [],
+        run1,
+        tmp_path,
+        current_sha="sha-2",
+        run_id="2000",
     )
     e = run2[0]
     assert e["delta_basis"] == "fingerprint"
@@ -913,24 +939,46 @@ def test_changelog_distinct_findings_same_file_stay_separate(tmp_path):
     run1 = b.build_changelog(
         _CL_CFG,
         [
-            {"id": "T-001", "component": "auth", "cwe": "CWE-321",
-             "title": "Hardcoded RSA private key",
-             "evidence": {"file": "lib/insecurity.ts", "line": 21}},
-            {"id": "T-002", "component": "auth", "cwe": "CWE-916",
-             "title": "MD5 password hashing",
-             "evidence": {"file": "lib/insecurity.ts", "line": 41}},
+            {
+                "id": "T-001",
+                "component": "auth",
+                "cwe": "CWE-321",
+                "title": "Hardcoded RSA private key",
+                "evidence": {"file": "lib/insecurity.ts", "line": 21},
+            },
+            {
+                "id": "T-002",
+                "component": "auth",
+                "cwe": "CWE-916",
+                "title": "MD5 password hashing",
+                "evidence": {"file": "lib/insecurity.ts", "line": 41},
+            },
         ],
-        _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1000",
+        _CL_COMPS,
+        [],
+        None,
+        tmp_path,
+        current_sha="sha-1",
+        run_id="1000",
     )
     # Run2: the hardcoded key is fixed (gone); weak hashing persists.
     run2 = b.build_changelog(
         _CL_CFG,
         [
-            {"id": "T-007", "component": "auth", "cwe": "CWE-916",
-             "title": "Weak MD5 password hashing",
-             "evidence": {"file": "lib/insecurity.ts", "line": 41}},
+            {
+                "id": "T-007",
+                "component": "auth",
+                "cwe": "CWE-916",
+                "title": "Weak MD5 password hashing",
+                "evidence": {"file": "lib/insecurity.ts", "line": 41},
+            },
         ],
-        _CL_COMPS, [], run1, tmp_path, current_sha="sha-2", run_id="2000",
+        _CL_COMPS,
+        [],
+        run1,
+        tmp_path,
+        current_sha="sha-2",
+        run_id="2000",
     )
     e = run2[0]
     assert e["added"]["threats"] == []
@@ -1263,14 +1311,25 @@ def test_reconcile_recognises_reproduced_finding_across_cwe_drift(tmp_path):
     recognise it as reproduced via the file|cwe-family match key — NOT mark it
     resolved at equal depth (a false "fixed" claim)."""
     _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
-    prior = {"threats": [_prior_threat_with_file(
-        "T-007", "auth", "CWE-798",
-        "Hardcoded RSA private key enabling JWT forgery", "lib/insecurity.ts", 21)]}
+    prior = {
+        "threats": [
+            _prior_threat_with_file(
+                "T-007", "auth", "CWE-798", "Hardcoded RSA private key enabling JWT forgery", "lib/insecurity.ts", 21
+            )
+        ]
+    }
     # Re-emitted: component renamed, CWE swapped within hardcoded-key family
     # (798→321), title reworded — same file.
-    new_threats = [_prior_threat_with_file(
-        "T-001", "express-backend", "CWE-321",
-        "Hardcoded RSA private key enables arbitrary JWT signing", "lib/insecurity.ts", 21)]
+    new_threats = [
+        _prior_threat_with_file(
+            "T-001",
+            "express-backend",
+            "CWE-321",
+            "Hardcoded RSA private key enables arbitrary JWT signing",
+            "lib/insecurity.ts",
+            21,
+        )
+    ]
     out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
     # Recognised as present: no bogus resolved, and not double-counted as added.
     assert recon["resolved_reason_by_id"] == {}
@@ -1283,12 +1342,14 @@ def test_reconcile_no_duplicate_carry_across_cwe_drift_shallower(tmp_path):
     threat is recognised as re-emitted (match key) and not carried alongside its
     own re-emission."""
     _setup_incremental(tmp_path, prior_depth="thorough", stride={"auth": (b"old", b"new")})
-    prior = {"threats": [_prior_threat_with_file(
-        "T-007", "auth", "CWE-770",
-        "No rate limit on websocket", "lib/ws.ts", 19)]}
-    new_threats = [_prior_threat_with_file(
-        "T-001", "realtime-channel", "CWE-400",
-        "No rate limiting on socket.io connections", "lib/ws.ts", 19)]
+    prior = {
+        "threats": [_prior_threat_with_file("T-007", "auth", "CWE-770", "No rate limit on websocket", "lib/ws.ts", 19)]
+    }
+    new_threats = [
+        _prior_threat_with_file(
+            "T-001", "realtime-channel", "CWE-400", "No rate limiting on socket.io connections", "lib/ws.ts", 19
+        )
+    ]
     out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
     assert not [t for t in out if t.get("evidence_check") == "carried-unverified-shallower-depth"]
     assert len(out) == 1  # only the re-emitted finding, no carried duplicate
@@ -1299,13 +1360,14 @@ def test_reconcile_distinct_findings_same_file_stay_separate(tmp_path):
     distinct finding in a re-analyzed file (different family) that is genuinely
     gone is still recorded resolved at equal depth."""
     _setup_incremental(tmp_path, prior_depth="quick", stride={"auth": (b"old", b"new")})
-    prior = {"threats": [
-        _prior_threat_with_file("T-007", "auth", "CWE-321", "Hardcoded key", "lib/insecurity.ts", 21),
-        _prior_threat_with_file("T-008", "auth", "CWE-916", "MD5 hashing", "lib/insecurity.ts", 41),
-    ]}
+    prior = {
+        "threats": [
+            _prior_threat_with_file("T-007", "auth", "CWE-321", "Hardcoded key", "lib/insecurity.ts", 21),
+            _prior_threat_with_file("T-008", "auth", "CWE-916", "MD5 hashing", "lib/insecurity.ts", 41),
+        ]
+    }
     # Only the hardcoded key persists; weak hashing is gone.
-    new_threats = [_prior_threat_with_file(
-        "T-001", "auth", "CWE-321", "Hardcoded RSA key", "lib/insecurity.ts", 21)]
+    new_threats = [_prior_threat_with_file("T-001", "auth", "CWE-321", "Hardcoded RSA key", "lib/insecurity.ts", 21)]
     out, recon = b.reconcile_incremental_threats(new_threats, prior, [{"id": "auth"}], tmp_path, "quick", {})
     # Hardcoded key recognised (present); weak hashing recorded resolved.
     assert recon["resolved_reason_by_id"].get("T-008", "").startswith("not reproduced")

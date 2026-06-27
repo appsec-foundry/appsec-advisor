@@ -26,10 +26,12 @@ set -eu
 PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEFAULT_REPO="$PLUGIN_ROOT/tests/fixtures/e2e/synthetic-repo"
 OUTPUT_DIR="$PLUGIN_ROOT/tests/fixtures/e2e/_last-run"
+WORK_REPO="$PLUGIN_ROOT/tests/fixtures/e2e/_last-repo"
 
 REPO="$DEFAULT_REPO"
 DEPTH="quick"
 KEEP_PREVIOUS=0
+BUNDLED_ORACLE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -46,6 +48,10 @@ if ! command -v claude >/dev/null 2>&1; then
     echo "ERROR: 'claude' CLI not on PATH. Install Claude Code first." >&2
     exit 3
 fi
+if ! command -v git >/dev/null 2>&1; then
+    echo "ERROR: 'git' not on PATH; fixture isolation requires a standalone worktree." >&2
+    exit 3
+fi
 
 if [ ! -d "$REPO" ]; then
     echo "ERROR: target repo not found: $REPO" >&2
@@ -57,12 +63,29 @@ if [ ! -x "$PLUGIN_ROOT/scripts/run-headless.sh" ]; then
     exit 3
 fi
 
+# The source fixture must be immutable and free of prior assessment state.
+# Local runs can leave ignored docs/security files under synthetic-repo; scan a
+# fresh scratch copy and strip that output tree so recon never consumes stale
+# logs, fragments, or threat models. Custom --repo paths are used as supplied.
+if [ "$REPO" = "$DEFAULT_REPO" ]; then
+    rm -rf "$WORK_REPO"
+    mkdir -p "$WORK_REPO"
+    cp -R "$DEFAULT_REPO/." "$WORK_REPO/"
+    rm -rf "$WORK_REPO/docs/security"
+    git -C "$WORK_REPO" init -q
+    git -C "$WORK_REPO" add -f .
+    git -C "$WORK_REPO" -c user.name=appsec-e2e -c user.email=e2e@invalid commit -qm "E2E fixture baseline"
+    REPO="$WORK_REPO"
+    BUNDLED_ORACLE=1
+fi
+
 # ── Optional export tooling (pdf/html need pandoc; pdf also weasyprint) ───────
 # Gated so the E2E never fails just because a CI box lacks the converters —
 # the matching pdf/html assertions skip themselves when the tool is absent.
 PDF_FLAG=""
 PDF_ATTEMPTED=0
 HTML_CAPABLE=0
+HTML_ATTEMPTED=0
 if command -v pandoc >/dev/null 2>&1; then
     HTML_CAPABLE=1
     if python3 -c 'import weasyprint' >/dev/null 2>&1; then
@@ -111,21 +134,26 @@ START_TS=$(date +%s)
 # at QUICK depth (killed at 1803s @ Phase 10b, before render — recon/context ate
 # ~24min, see bug_recon_api_latency_stalls). "Quick fits in 1800s" only holds
 # when recon does NOT stall, so the cap must survive the slow case. 3000s gives
-# every depth headroom; the cap is a ceiling, not a target — a fast run still
-# exits early the moment the pipeline completes.
-MAXDUR=3000
+# quick headroom; standard/thorough include the real Stage-3/4 review paths and
+# receive a larger ceiling. These are ceilings, not targets.
+case "$DEPTH" in
+    quick) MAXDUR=3000 ;;
+    standard) MAXDUR=3600 ;;
+    thorough) MAXDUR=4800 ;;
+    *) echo "ERROR: --depth must be quick, standard, or thorough" >&2; exit 3 ;;
+esac
 
 RUN_STATUS=0
 "$PLUGIN_ROOT/scripts/run-headless.sh" \
     --repo "$REPO" \
     --output "$OUTPUT_DIR" \
+    --full \
     --assessment-depth "$DEPTH" \
     --sarif \
     --pentest-tasks \
-    --requirements \
+    --requirements "$PLUGIN_ROOT/examples/appsec-requirements-example.yaml" \
     --keep-runtime-files \
     $PDF_FLAG \
-    --no-qa \
     --max-duration "$MAXDUR" \
     || RUN_STATUS=$?
 
@@ -159,6 +187,7 @@ fi
 # drive export_html.py directly to keep this deterministic (no LLM tokens).
 HTML_DONE=0
 if [ "$HTML_CAPABLE" -eq 1 ]; then
+    HTML_ATTEMPTED=1
     echo ""
     echo "[1b] exporting HTML ..."
     if python3 "$PLUGIN_ROOT/scripts/export_html.py" \
@@ -169,6 +198,48 @@ if [ "$HTML_CAPABLE" -eq 1 ]; then
         echo "HTML export failed (non-fatal)." >&2
     fi
 fi
+
+# Persist driver-only facts so `make e2e-full-keep` replays the exact depth,
+# source repo, oracle profile, and converter expectations from the original
+# run instead of hard-coding quick mode or silently skipping failed exports.
+python3 - \
+    "$OUTPUT_DIR/.e2e-driver.json" \
+    "$REPO" \
+    "$DEFAULT_REPO" \
+    "$DEPTH" \
+    "$ELAPSED" \
+    "$PDF_ATTEMPTED" \
+    "$HTML_ATTEMPTED" \
+    "$HTML_DONE" \
+    "$BUNDLED_ORACLE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+(
+    path,
+    target_repo,
+    source_fixture,
+    depth,
+    elapsed,
+    pdf_attempted,
+    html_attempted,
+    html_succeeded,
+    bundled_oracle,
+) = sys.argv[1:]
+payload = {
+    "schema_version": 1,
+    "target_repo": target_repo,
+    "source_fixture": source_fixture,
+    "assessment_depth": depth,
+    "pipeline_elapsed_seconds": int(elapsed),
+    "pdf_attempted": pdf_attempted == "1",
+    "html_attempted": html_attempted == "1",
+    "html_succeeded": html_succeeded == "1",
+    "bundled_oracle": bundled_oracle == "1",
+}
+Path(path).write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
 
 # ── Stage 2: assertion suite ────────────────────────────────────────────────
 echo ""
@@ -182,6 +253,7 @@ APPSEC_E2E_TARGET_REPO="$REPO" \
 APPSEC_E2E_DEPTH="$DEPTH" \
 APPSEC_E2E_PIPELINE_ELAPSED="$ELAPSED" \
 APPSEC_E2E_PDF="$PDF_ATTEMPTED" \
+APPSEC_E2E_HTML_ATTEMPTED="$HTML_ATTEMPTED" \
 APPSEC_E2E_HTML="$HTML_DONE" \
     python3 -m pytest \
         "$PLUGIN_ROOT/tests/test_full_run_e2e.py" \
