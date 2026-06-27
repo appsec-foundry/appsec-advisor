@@ -130,13 +130,9 @@ Generated reports are not committed automatically. For a local review, you can s
 
 An assessment produces a report covering architecture observations, trust boundaries, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams. Default outputs are `threat-model.md` and `threat-model.yaml`; optional exports include PDF, HTML, SARIF, and pentest task lists.
 
-**Example:** A thorough-mode run against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) produces 80 findings across 9 components (11 Critical, 39 High, 21 Medium, 9 Low) including architecture diagrams, abuse-case chains, and a full mitigation register. → [Read the full example report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
+**Example:** A thorough-mode run against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) produces 78 findings across 9 components (10 Critical, 40 High, 22 Medium, 6 Low) including architecture diagrams, abuse-case chains, and a full mitigation register. → [Read the full example report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 
-  <img
-    src="./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg"
-    alt="Threat Model Juice Shop Standard"
-    width="50%"
-  />
+![Threat Model Juice Shop Standard](./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
 
 **→ Full reference: [docs/threat-modeler.md](docs/threat-modeler.md)**
 
@@ -224,13 +220,13 @@ For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-m
 
 ## Plugin development checks
 
-For changes to this plugin repository, the deterministic test suite is the per-PR safety net. The committed GitHub Actions workflow runs config validation, ruff, and pytest across Python 3.10, 3.11, and 3.12:
+For changes to this plugin repository, the deterministic test suite is the per-PR safety net. The committed GitHub Actions workflow runs config validation, ruff, and pytest across Python 3.10, 3.11, and 3.12. Locally, the `Makefile` wraps the same checks:
 
 ```bash
-python3 scripts/validate_config.py .
-ruff check scripts/ tests/ hooks/
-ruff format --check scripts/ tests/ hooks/
-pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing
+make test           # standard pytest suite with coverage (no LLM)
+make lint           # ruff check + format check
+make check          # continuous gate: lint, format, config validation, fragment-registry/drift, full test suite
+make release-check  # release-boundary gate: `check` + version/tag/changelog consistency
 ```
 
 After non-trivial changes to renderers, schemas, phase prompts, hooks, or pipeline control flow, run the manual full-run E2E check:
@@ -262,11 +258,7 @@ What the org-profile buys you over the generic plugin:
 
 The diagram below shows the packaging and distribution flow using "Acme" as a placeholder for your organisation.
 
-  <img
-    src="docs/images/orgpackaging.svg"
-    alt="Enterprise rollout pipeline"
-    width="50%"
-  />
+![Enterprise rollout pipeline](docs/images/orgpackaging.svg)
 
 The initializer guides you through the required organization-specific settings and creates a ready-to-use packaging repository.
 
@@ -313,7 +305,7 @@ Planned and in-progress work:
 
 - **Multi-repo scans.** Per-repo scanning fits monorepos but is limited when an app spans several repos (APIs, IaC, …). Today only partially covered via `docs/related-repos.yaml`.
 
-- **Shared agent state.** Let STRIDE pods, merge, and triage exchange advisory hints via an append-only bulletin instead of only formal artifacts. → [`sharedstate.md`](sharedstate.md)
+- **Shared agent state.** Let STRIDE pods, merge, and triage exchange advisory hints via an append-only bulletin instead of only formal artifacts.
 
 - **Slimming the orchestration skill.** `create-threat-model/SKILL-impl.md` has grown large. Shrink it incrementally — extract inline Bash into tested scripts, deduplicate blocks, move rationale into script docstrings — lowering orchestration cost (less context per turn). Golden-run-verified, behaviour byte-identical.
 
