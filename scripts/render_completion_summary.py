@@ -306,7 +306,11 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
     # the console — including an explicit "no new / no resolved" line when
     # nothing changed. Non-iterative full snapshots keep the old suppression.
     basis = e.get("delta_basis")
-    is_iterative = basis in ("incremental", "fingerprint") or mode_val == "incremental" or bool(baseline_val)
+    is_iterative = (
+        basis in ("incremental", "fingerprint", "rescan-unchanged")
+        or mode_val == "incremental"
+        or bool(baseline_val)
+    )
 
     # Resolved on a full fingerprint delta are carried as prior fingerprints
     # (T-IDs aren't stable across full runs), not as resolved.threats.

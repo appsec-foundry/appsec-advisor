@@ -793,6 +793,67 @@ def test_changelog_full_delta_resolves_by_fingerprint(tmp_path):
     assert "+1/-1 vs prior" in e["note"]
 
 
+def test_changelog_rescan_same_commit_suppresses_noise_delta(tmp_path):
+    """Regression (2026-06-27 juice-shop): five quick --full re-runs of the SAME
+    commit, repo untouched, each reported ~16 added / ~37 resolved — pure LLM
+    analysis nondeterminism (title rewording, dropped/phantom findings, anchor
+    drift) mislabelled as added/fixed. A same-commit, same-depth re-scan must
+    claim NO per-finding delta (resolved-on-unchanged is a false-fixed claim)
+    while still accumulating and persisting its own match keys for a later real
+    diff against CHANGED code."""
+    b = _load()
+    cfg = {"mode": "full", "assessment_depth": "quick", "reasoning_model": "sonnet-economy"}
+    t1 = [
+        {"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi", "evidence": {"file": "routes/login.ts", "line": 34}},
+        {"id": "T-002", "component": "auth", "cwe": "CWE-639", "title": "IDOR", "evidence": {"file": "routes/address.ts", "line": 11}},
+    ]
+    m1 = [{"id": "M-001", "title": "Use parameterized queries"}]
+    run1 = b.build_changelog(cfg, t1, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="r1", mitigations=m1)
+    # Re-run on the SAME commit: the LLM surfaces a different-looking set —
+    # T-002 dropped, T-009 phantom-new, a title reworded, a new mitigation — all
+    # noise on untouched code.
+    t2 = [
+        {"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQL Injection in login", "evidence": {"file": "routes/login.ts", "line": 34}},
+        {"id": "T-009", "component": "web3", "cwe": "CWE-306", "title": "Missing auth", "evidence": {"file": "server.ts", "line": 641}},
+    ]
+    m2 = m1 + [{"id": "M-007", "title": "Rate limit login"}]
+    run2 = b.build_changelog(cfg, t2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-1", run_id="r2", mitigations=m2)
+    e = run2[0]
+    assert e["delta_basis"] == "rescan-unchanged"
+    assert e["added"]["threats"] == []
+    assert e["added"]["mitigations"] == []
+    assert e["added"]["instances"] == []
+    assert (e["resolved"].get("fingerprints") or []) == []
+    assert (e["resolved"].get("instances") or []) == []
+    # Accumulates AND still persists its own match keys for the NEXT real diff.
+    assert len(run2) == 2
+    assert len(e["match_keys"]) == 2
+    assert "re-derived" in e["note"]
+
+
+def test_changelog_rescan_guard_only_on_same_commit_and_depth(tmp_path):
+    """The suppression is narrow: a DIFFERENT commit (real change) or a DEEPER
+    depth (deeper scan finds genuinely new findings) must keep the real
+    fingerprint delta, never collapse to rescan-unchanged."""
+    b = _load()
+    cfg = {"mode": "full", "assessment_depth": "quick", "reasoning_model": "sonnet-economy"}
+    t1 = [{"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi", "evidence": {"file": "a.ts", "line": 1}}]
+    run1 = b.build_changelog(cfg, t1, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="r1")
+    t2 = [
+        {"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi", "evidence": {"file": "a.ts", "line": 1}},
+        {"id": "T-002", "component": "auth", "cwe": "CWE-79", "title": "XSS", "evidence": {"file": "b.ts", "line": 2}},
+    ]
+    # Different commit → genuine change → fingerprint delta (T-002 added).
+    diff_commit = b.build_changelog(cfg, t2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2", run_id="r2")
+    assert diff_commit[0]["delta_basis"] == "fingerprint"
+    assert diff_commit[0]["added"]["threats"] == ["T-002"]
+    # Same commit but DEEPER depth → not a no-op re-scan; keep the real delta.
+    cfg_deep = {"mode": "full", "assessment_depth": "thorough", "reasoning_model": "sonnet-economy"}
+    deeper = b.build_changelog(cfg_deep, t2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-1", run_id="r3")
+    assert deeper[0]["delta_basis"] == "fingerprint"
+    assert deeper[0]["added"]["threats"] == ["T-002"]
+
+
 def test_changelog_stable_across_cwe_and_title_drift_same_file(tmp_path):
     """Regression (2026-06-26 juice-shop): two --full runs over IDENTICAL code
     churned the whole register (27 added / 31 resolved) because the diff keyed on
@@ -957,13 +1018,21 @@ def test_changelog_two_runs_same_commit_day_params_accumulate_via_run_id(tmp_pat
     indistinguishable from a single run's Phase-11 yaml rebuild. The second
     genuine run SILENTLY OVERWROTE the first as a fresh 'initial' entry instead
     of appending a v2 delta. With a per-invocation `run_id` (.scan-start-epoch)
-    the two runs are distinct and accumulate."""
+    the two runs are distinct and accumulate.
+
+    Same commit + same depth, so the second run's basis is ``rescan-unchanged``:
+    the code did not change, so the per-finding delta is suppressed (a re-run's
+    finding-set difference is LLM analysis nondeterminism, not added/resolved
+    findings). The ACCUMULATION (both entries kept) is what this test guards;
+    the genuine fingerprint delta over CHANGED code is covered by
+    ``test_changelog_full_delta_resolves_by_fingerprint`` (sha-1 → sha-2)."""
     b = _load()
     # Run 1 — run_id "1000". One finding.
     run1 = b.build_changelog(_CL_CFG, _CL_THREATS, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="1000")
     assert run1[0]["delta_basis"] == "initial"
     assert run1[0]["run_id"] == "1000"
-    # Run 2 — DIFFERENT run_id "2000", IDENTICAL commit/date/params, T-002 added.
+    # Run 2 — DIFFERENT run_id "2000", IDENTICAL commit/date/params; the LLM
+    # happened to surface an extra finding this time (T-002).
     threats2 = [
         {"id": "T-001", "component": "comp-a"},
         {"id": "T-002", "component": "comp-a", "cwe": "CWE-79", "title": "XSS"},
@@ -973,8 +1042,9 @@ def test_changelog_two_runs_same_commit_day_params_accumulate_via_run_id(tmp_pat
     assert len(run2) == 2
     assert run2[0]["run_id"] == "2000"
     assert run2[1]["run_id"] == "1000"
-    assert run2[0]["delta_basis"] == "fingerprint"
-    assert run2[0]["added"]["threats"] == ["T-002"]
+    # Same commit + depth → no per-finding delta claimed on unchanged code.
+    assert run2[0]["delta_basis"] == "rescan-unchanged"
+    assert run2[0]["added"]["threats"] == []
 
 
 def test_changelog_same_run_id_rebuild_collapses(tmp_path):

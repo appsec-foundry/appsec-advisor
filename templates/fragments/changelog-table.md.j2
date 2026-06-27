@@ -12,6 +12,10 @@
       • incremental — baseline-diff computed upstream (git baseline_sha set).
       • count-only — a prior entry exists but predates fingerprinting, so we
         show a snapshot count ("N total") instead of a fake "+N added".
+      • rescan-unchanged — same HEAD commit re-scanned at the same depth. Source
+        unchanged, so the per-finding delta is suppressed (it would be pure LLM
+        analysis nondeterminism); the detail block shows the explicit "no
+        changes since the previous run" line.
       • initial — first run on this repo.
 
     Data shape per entry (see schemas/threat-model.output.schema.yaml):
@@ -81,7 +85,7 @@ _Append-only history of assessment runs. Most recent first._
     a fingerprint delta (full over an existing model), or an explicit
     incremental basis. A from-scratch full snapshot (no baseline, everything
     in `added`) shows an honest count instead of a fake "+N added". -#}
-{%- set is_delta_row = has_baseline or basis in ['fingerprint', 'incremental'] -%}
+{%- set is_delta_row = has_baseline or basis in ['fingerprint', 'incremental', 'rescan-unchanged'] -%}
 {%- if is_delta_row -%}
 {%- set delta_cell = '+' ~ (added_t|length) ~ ' / ~' ~ (changed_t|length) ~ ' / -' ~ n_resolved -%}
 {%- else -%}
@@ -132,7 +136,7 @@ _Append-only history of assessment runs. Most recent first._
 {%- set lr_fp  = (latest.resolved.fingerprints if latest.resolved else []) | default([]) -%}
 {%- set latest_basis = latest.delta_basis or '' -%}
 {%- set latest_has_baseline = (latest.baseline_sha or '') | length > 0 -%}
-{%- set show_detail = latest_has_baseline or latest_basis in ['incremental', 'fingerprint'] -%}
+{%- set show_detail = latest_has_baseline or latest_basis in ['incremental', 'fingerprint', 'rescan-unchanged'] -%}
 {#- On any iterative run (incremental git-baseline OR full-over-existing
     fingerprint delta) enumerate the actual finding IDs — definitely the new
     ones, and the resolved ones where possible. IDs are linked WITHOUT titles

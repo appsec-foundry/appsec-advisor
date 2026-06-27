@@ -6,6 +6,11 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Full change-log audit beside the report: `threat-model-changelog.md` (readable)
+  and `threat-model-changelog.jsonl` (machine). Every run, every added/changed/
+  removed finding, mitigation, abuse case, instance, and component — uncapped,
+  unlike the summarized Change Log inside the report. `--rebuild` archives the
+  prior pair into `changelog-history/` instead of deleting it.
 - `--stride-cap N` — cap of N threats per STRIDE category per component.
   Critical-safe (Criticals never dropped); trims only the High/Medium/Low tail.
   Off by default.
@@ -17,6 +22,14 @@ All notable changes to this project are documented here.
   Both show in `/appsec-advisor:status --live`.
 - Reports record the exact invocation (full flags) and reasoning tier, so a report
   states how it was produced and how to reproduce it.
+
+### Fixed
+
+- Re-running a full scan on the same commit no longer reports phantom added/
+  resolved findings. An unchanged-code re-scan now shows "no changes since the
+  previous run" instead of churning the register from run-to-run analysis
+  variance. Real deltas (changed code, or a deeper scan) are unaffected; use an
+  incremental scan for precise per-edit deltas.
 
 ### Changed
 

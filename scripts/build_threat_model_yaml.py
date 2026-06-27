@@ -369,6 +369,12 @@ def _changelog_note(
         # deeper findings were not re-examined, not resolved).
         d = f"shallower than {prior_depth} run" if prior_depth else "shallower re-scan"
         return f"{cur_n} total; {d}; deltas vs prior not comparable"
+    if delta_basis == "rescan-unchanged":
+        # Same commit, same depth as the prior run — no source change, findings
+        # re-derived. Per-finding delta withheld (analysis varies run-to-run).
+        if prior_n is not None and prior_n != cur_n:
+            return f"same commit as prior; {prior_n}→{cur_n} findings re-derived"
+        return f"same commit as prior; {cur_n} findings re-derived (no change)"
     parts: list[str] = []
     if prior_depth and cur_depth and prior_depth != cur_depth:
         parts.append(f"depth {prior_depth}→{cur_depth}")
@@ -1655,6 +1661,30 @@ def build_changelog(
         reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
         carried_components = []
         resolved_block = {"threats": [], "reason_by_id": {}}
+    elif (
+        prior_has_fps
+        and current_sha
+        and (prior_entry or {}).get("current_sha") == current_sha
+        and (cur_depth or "").strip().lower() == (prior_depth or "").strip().lower()
+    ):
+        # Same HEAD commit re-scanned at the SAME depth. The source did not
+        # change between the two runs, so a per-finding fingerprint diff surfaces
+        # only LLM analysis nondeterminism — title rewording, CWE swaps outside a
+        # family, anchor-file and instance-count drift, component folding — NOT
+        # findings the developer added or fixed. Reporting that churn as
+        # "resolved" is the false-fixed claim a security changelog must never
+        # make (2026-06-27 juice-shop: five quick re-runs of commit 08fc2760,
+        # repo untouched, each reported ~16 added / ~37 resolved). Suppress the
+        # delta and report an honest re-derived snapshot. The entry still
+        # persists its own fingerprints/match_keys (below), so a LATER run over
+        # CHANGED code diffs against this snapshot normally. For reliable
+        # per-edit deltas use the incremental path (git baseline diff), not a
+        # full re-scan.
+        delta_basis = "rescan-unchanged"
+        added_threats = []
+        reanalyzed = sorted({c.get("id", "") for c in components if c.get("id")})
+        carried_components = []
+        resolved_block = {"threats": [], "fingerprints": [], "reason_by_id": {}}
     elif prior_has_fps:
         # Full run over a FINGERPRINTED prior entry at SAME-OR-DEEPER depth →
         # real per-finding delta, computed on stable file|cwe-family match keys
@@ -1722,6 +1752,17 @@ def build_changelog(
         added_instances = sorted(cur_instance_fp_set - prior_instance_fps)
         resolved_instances = sorted(prior_instance_fps - cur_instance_fp_set)
     resolved_block["instances"] = resolved_instances
+
+    # Same-commit same-depth re-scan: the mitigation- and instance-level diffs
+    # (computed above independently of `delta_basis`) churn for the same reason
+    # the finding diff does — re-derived, not changed. Suppress them too so the
+    # entry reports an honest "no change since prior" instead of dozens of
+    # phantom new mitigations / resolved instances on untouched code.
+    if delta_basis == "rescan-unchanged":
+        added_mitigations = []
+        added_instances = []
+        resolved_instances = []
+        resolved_block["instances"] = []
 
     note = _changelog_note(
         delta_basis=delta_basis,

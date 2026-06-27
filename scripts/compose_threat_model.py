@@ -16688,6 +16688,17 @@ def main(argv: list[str] | None = None) -> int:
     # On success, clear any stale repair plan from a prior failed compose so
     # a later re-render doesn't accidentally consume it as actionable.
     _delete_pre_render_repair_plan(args.output_dir)
+
+    # Full, uncapped change-log audit export beside the report (threat-model.md's
+    # own §Changelog is a 5-per-bucket window). Pure render of the yaml changelog;
+    # never aborts the composed report. Only for the full threat-model document.
+    if not args.dry_run and args.document != "architecture":
+        try:
+            import render_changelog_audit
+
+            render_changelog_audit.write_audit(args.output_dir)
+        except Exception as _audit_exc:  # pragma: no cover — defensive, never fatal
+            print(f"RENDER_WARN: changelog audit export skipped — {_audit_exc}", file=sys.stderr)
     return 0
 
 

@@ -23,6 +23,12 @@ if [ ! -d "$OUTPUT_DIR" ]; then
   printf '\nRebuild: clean slate — no prior output directory, nothing to discard.\n'
 else
   cd "$OUTPUT_DIR"
+  # Archive the full change-log audit (threat-model-changelog.md / .jsonl) into
+  # changelog-history/ BEFORE the find -delete below — those files match the
+  # `threat-model-*.md` wipe glob and would otherwise be discarded. Archiving
+  # (not deleting) keeps the prior audit trail across a rebuild; the fresh run
+  # regenerates a new live pair from the reset changelog. No-op if absent.
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" --output-dir "$OUTPUT_DIR" --archive 2>/dev/null || true
   # Record which runtime/cache directories actually exist BEFORE wiping, so we
   # never claim to have removed a directory that was absent.
   REMOVED_DIRS=""
