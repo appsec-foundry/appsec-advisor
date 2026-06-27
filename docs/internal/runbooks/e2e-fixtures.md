@@ -4,7 +4,15 @@ This check runs the AppSec Advisor threat-model pipeline against one synthetic
 single-repo fixture and then verifies the generated report against the matching
 external oracle.
 
-By default the driver expects the shared sibling fixture-suite checkout:
+By default the driver expects the shared sibling fixture-suite checkout. Clone
+it next to this repo if you don't have it yet
+([github.com/matthiasrohr/appsec-advisor-fixtures](https://github.com/matthiasrohr/appsec-advisor-fixtures)):
+
+```bash
+git clone git@github.com:matthiasrohr/appsec-advisor-fixtures.git ../appsec-advisor-fixtures
+```
+
+Resulting layout:
 
 ```text
 <workspace>/

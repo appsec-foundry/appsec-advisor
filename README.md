@@ -242,7 +242,7 @@ For local regression checks against the external fixture suite, use the manual f
 ./scripts/e2e_cross_repo_fixture.sh --depth quick --clean-output
 ```
 
-The generic single-repo driver supports the Spring, Python, Rust, Go, Node.js/TypeScript, and Python/LangChain fixtures from the sibling `appsec-advisor-fixtures` checkout. These E2E runs are manual and opt-in because they invoke Claude Code and consume LLM budget. See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/internal/runbooks/e2e-fixtures.md`](docs/internal/runbooks/e2e-fixtures.md), and [`docs/internal/runbooks/e2e-cross-repo-fixture.md`](docs/internal/runbooks/e2e-cross-repo-fixture.md).
+The generic single-repo driver supports the Spring, Python, Rust, Go, Node.js/TypeScript, and Python/LangChain fixtures from the sibling [`appsec-advisor-fixtures`](https://github.com/matthiasrohr/appsec-advisor-fixtures) checkout. These E2E runs are manual and opt-in because they invoke Claude Code and consume LLM budget. See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/internal/runbooks/e2e-fixtures.md`](docs/internal/runbooks/e2e-fixtures.md), and [`docs/internal/runbooks/e2e-cross-repo-fixture.md`](docs/internal/runbooks/e2e-cross-repo-fixture.md).
 
 ## Enterprise rollout
 
