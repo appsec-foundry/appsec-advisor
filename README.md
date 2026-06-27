@@ -232,7 +232,11 @@ make release-check  # release-boundary gate: `check` + version/tag/changelog con
 After non-trivial changes to renderers, schemas, phase prompts, hooks, or pipeline control flow, run the manual full-run E2E check:
 
 ```bash
-make e2e-full
+make e2e-full           # quick: pipeline, schemas, full deterministic QA, oracle
+make e2e-full-standard  # also exercises Stage-3 QA
+make e2e-full-thorough  # also exercises Stage-4 architect review
+make e2e-full-eval      # fresh quick run plus adversarial semantic-quality gate
+make e2e-fixture-suite  # all six external language/architecture recall oracles
 ```
 
 For local regression checks against the external fixture suite, use the manual fixture drivers:
@@ -270,16 +274,16 @@ appsec-advisor — org packaging repo setup
 This script creates a ready-to-use packaging repo for appsec-advisor.
 You will need: git, python3 (3.10+), make
 
-Organization name (e.g. Acme Corp): ACME
-Organization id (short lowercase abbreviation, e.g. 'acme', 'hl' — used in plugin name) [a]: ac
-Plugin name (Claude Code command prefix) [ac-appsec]: ac-appsec
-Team owner (e.g. AppSec Team) [A AppSec Team]:
-Target directory [./ac-appsec-advisor]:
-Include demo content (example requirements + filled org profile)? [y/N]: N
+Organization name (e.g. Acme Corp): Secodis
+Organization id (short lowercase abbreviation, e.g. 'acme', 'hl' — used in plugin name) [s]: secodis
+Plugin name (Claude Code command prefix) [secodis-appsec]:
+Team owner (e.g. AppSec Team) [Secodis AppSec Team]:
+Target directory [./secodis-appsec-advisor]:
+Include demo content (example requirements + filled org profile)? [y/N]:
 
 ==> Cloning template from GitHub …
 
-Done. Your packaging repo is ready at: ./ac-appsec-advisor
+Done. Your packaging repo is ready at: ./secodis-appsec-advisor
 
 ```
 
