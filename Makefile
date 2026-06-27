@@ -26,22 +26,35 @@ e2e-full:  ## Run the full E2E pipeline + assertions against the synthetic-repo 
 	@./tests/e2e/run-full.sh --depth quick
 
 .PHONY: e2e-full-standard
-e2e-full-standard:  ## Same as e2e-full but at standard depth (slower, higher fidelity)
+e2e-full-standard:  ## Standard depth with Stage-3 QA enabled (slower, higher fidelity)
 	@command -v claude >/dev/null 2>&1 || { \
 		echo "ERROR: 'claude' CLI not on PATH. Install Claude Code first."; exit 3; }
 	@./tests/e2e/run-full.sh --depth standard
 
+.PHONY: e2e-full-thorough
+e2e-full-thorough:  ## Thorough depth with Stage-3 QA and Stage-4 architect review
+	@command -v claude >/dev/null 2>&1 || { \
+		echo "ERROR: 'claude' CLI not on PATH. Install Claude Code first."; exit 3; }
+	@./tests/e2e/run-full.sh --depth thorough
+
 .PHONY: e2e-full-repair
-e2e-full-repair:  ## QA-active variant: corrupt §7.2, resume with QA on, verify the real Re-Render Loop dispatches appsec-fragment-fixer (M2b) and converges
+e2e-full-repair: e2e-full-standard  ## Build a clean standard seed, corrupt §7, and verify the live Re-Render Loop
 	@command -v claude >/dev/null 2>&1 || { \
 		echo "ERROR: 'claude' CLI not on PATH. Install Claude Code first."; exit 3; }
 	@./tests/e2e/run-repair.sh
+
+.PHONY: e2e-full-eval
+e2e-full-eval: e2e-full  ## Run the adversarial semantic-quality judge over a fresh full E2E result
+	@./tests/e2e/run-eval.sh
+
+.PHONY: e2e-fixture-suite
+e2e-fixture-suite:  ## Run all six external language/architecture fixtures and their recall oracles
+	@./tests/e2e/run-fixture-suite.sh
 
 .PHONY: e2e-full-keep
 e2e-full-keep:  ## Re-run assertions against the previous _last-run/ output (no pipeline re-run)
 	@APPSEC_E2E_FULL=1 \
 	 APPSEC_E2E_OUTPUT_DIR="$(PWD)/tests/fixtures/e2e/_last-run" \
-	 APPSEC_E2E_DEPTH=quick \
 	 $(PYTHON) -m pytest tests/test_full_run_e2e.py -v --tb=short
 
 # ─────────────────────────────────────────────────────────────────────────────
