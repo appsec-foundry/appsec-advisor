@@ -348,6 +348,41 @@ class TestSessionStopUnknownFilter:
         issues = agg._extract_session_stop_anomalies(log)
         assert {i["evidence"]["source_agent"] for i in issues} == {"threat-analyst", "threat-renderer"}
 
+    def _assessment_end(self, detail: str) -> str:
+        ts = "2026-06-27T17:41:16Z"
+        return f"{ts}  [--------]  INFO   threat-analyst  ASSESSMENT_END   {detail}"
+
+    def test_planned_exit_any_assessment_end_skips_high_output_unknown(self):
+        """RC (2026-06-27): an agent that logged ANY ASSESSMENT_END completed its
+        planned work — its high-token cumulative unknown stop is not exhaustion.
+        The Analyst-A/B planned exits use descriptive text without the literal
+        STAGE1_PHASE_LIMIT token, so the old token-only guard mis-flagged them."""
+        log = [
+            (1, self._assessment_end("Analyst-B complete — Stage 1 done, need_render=true")),
+            (2, self._stop_line(out_tokens=148_786)),
+        ]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert issues == [], f"planned-exit source must skip; got {[i['title'] for i in issues]}"
+
+    def test_planned_exit_source_still_flags_zero_output_crash(self):
+        """A planned ASSESSMENT_END must NOT mask a later out==0 crash stop —
+        a genuine kill dies mid-phase with no output, which is still surfaced."""
+        log = [
+            (1, self._assessment_end("Analyst-A complete — Phases 1-8 done")),
+            (2, self._stop_line(out_tokens=0)),
+        ]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "session_stop_unknown"
+
+    def test_high_output_unknown_without_assessment_end_still_flagged(self):
+        """No ASSESSMENT_END for the source → not a proven planned exit → a
+        50k+ unknown stop remains worth a look (unchanged behaviour)."""
+        log = [(1, self._stop_line(out_tokens=148_786))]
+        issues = agg._extract_session_stop_anomalies(log)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "session_stop_unknown"
+
 
 # ---------------------------------------------------------------------------
 # _extract_gate_events — persistent gate artifacts (2026-06-12 blind spot)
@@ -382,6 +417,80 @@ class TestExtractGateEvents:
         # The shape a clean run leaves: qa-status=pass, no repair plans.
         (tmp_path / ".qa-status.json").write_text('{"status":"pass"}', encoding="utf-8")
         assert agg._extract_gate_events(tmp_path) == []
+
+    def test_stale_repair_plan_superseded_by_newer_pass_is_skipped(self, tmp_path):
+        """RC (2026-06-27): under --keep-runtime-files (cleanup skipped) or an
+        out-of-order gate sequence, a repair plan survives on disk after the
+        gate later recorded `pass`. A `.qa-status.json:{pass}` at least as new as
+        the plan proves the drift was resolved → the plan is stale, not live."""
+        import os
+
+        plan = tmp_path / ".qa-repair-plan.json"
+        plan.write_text(
+            '{"status":"fail","issue_count":1,"actions":[{"type":"x","heading":"## Critical Attack Tree"}]}',
+            encoding="utf-8",
+        )
+        status = tmp_path / ".qa-status.json"
+        status.write_text('{"status":"pass"}', encoding="utf-8")
+        # qa-status written AFTER the plan → plan superseded.
+        os.utime(plan, (1000, 1000))
+        os.utime(status, (2000, 2000))
+        issues = agg._extract_gate_events(tmp_path)
+        assert not any(i["category"] == "contract_gate_drift" for i in issues)
+
+    def test_live_repair_plan_newer_than_pass_still_flagged(self, tmp_path):
+        """A plan written AFTER a passing status is a genuine re-trip — the gate
+        found fresh drift, so it must still be flagged (no false suppression)."""
+        import os
+
+        plan = tmp_path / ".qa-repair-plan.json"
+        plan.write_text(
+            '{"status":"fail","issue_count":1,"actions":[{"type":"x","heading":"H"}]}',
+            encoding="utf-8",
+        )
+        status = tmp_path / ".qa-status.json"
+        status.write_text('{"status":"pass"}', encoding="utf-8")
+        # Plan newer than the passing status → live drift.
+        os.utime(status, (1000, 1000))
+        os.utime(plan, (2000, 2000))
+        issues = agg._extract_gate_events(tmp_path)
+        assert any(i["category"] == "contract_gate_drift" for i in issues)
+
+
+# ---------------------------------------------------------------------------
+# Aborted-mid-run phase duration is not a perf anomaly (2026-06-27)
+# ---------------------------------------------------------------------------
+
+
+class TestAbortedMidrunPerfSkip:
+    """A phase whose [start, end] window straddles a SESSION_ABORTED_MIDRUN is
+    not a contiguous compute window — its duration is the dead abort→resume gap
+    (watchdog heartbeats only), not slow work, so it must not perf-flag."""
+
+    def _l(self, ts: str, event: str, detail: str) -> str:
+        return f"{ts}  [--------]  INFO   threat-analyst  {event}   {detail}"
+
+    def test_phase_with_midrun_abort_flagged_and_skipped(self):
+        log = [
+            (1, self._l("2026-06-27T17:26:19Z", "PHASE_START", "[Phase 10b/11] Triage Validation")),
+            (2, self._l("2026-06-27T17:26:37Z", "SESSION_ABORTED_MIDRUN", "session ended mid-run")),
+            (3, self._l("2026-06-27T17:39:36Z", "PHASE_END", "[Phase 10b/11] Triage Validation")),
+        ]
+        durs = agg._extract_phase_durations(log)
+        assert durs and durs[0]["aborted_midrun"] is True
+        # 13m17s wall but abort-inflated → no perf anomaly at quick (limit 60s).
+        assert agg._extract_perf_anomalies(durs, "quick") == []
+
+    def test_clean_slow_phase_without_abort_still_flagged(self):
+        # Same 13min span, NO abort → a genuinely slow phase, still flagged.
+        log = [
+            (1, self._l("2026-06-27T17:26:19Z", "PHASE_START", "[Phase 10b/11] Triage Validation")),
+            (2, self._l("2026-06-27T17:39:36Z", "PHASE_END", "[Phase 10b/11] Triage Validation")),
+        ]
+        durs = agg._extract_phase_durations(log)
+        assert durs and durs[0].get("aborted_midrun") is False
+        issues = agg._extract_perf_anomalies(durs, "quick")
+        assert any(i["category"] == "perf_anomaly_phase" for i in issues)
 
     def test_aggregate_surfaces_drift_instead_of_clean(self, tmp_path):
         """End-to-end: a completed run that left an unresolved repair plan must

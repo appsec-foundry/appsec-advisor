@@ -478,6 +478,21 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
             next_ln, next_ts_e, next_raw_ts, _, _ = next_record
             pairs.append(((ln, ts_e, raw_ts, phase, label), (next_ln, next_ts_e, next_raw_ts), True))
 
+    # Mid-run-abort timestamps (epoch). A `SESSION_ABORTED_MIDRUN` means a
+    # sub-agent session died inside a phase and a later dispatch resumed it — so
+    # any START/END pair straddling one of these is not a single contiguous
+    # compute window. Its `duration_seconds` is dominated by the dead
+    # abort→resume gap (only watchdog heartbeats in between), NOT slow work, and
+    # must not be read as a performance anomaly (juice-shop 2026-06-27: Phase
+    # 10b "13m17s" was an 18s start + a 13m abort-to-resume gap).
+    abort_ts: list[int] = []
+    for _ln, _raw in agent_log:
+        _ev = _parse_event_line(_raw)
+        if _ev and _ev["event"] == "SESSION_ABORTED_MIDRUN":
+            _t = _parse_iso(_ev["ts"])
+            if _t is not None:
+                abort_ts.append(_t)
+
     out = []
     for (start_ln, ts_start, raw_ts, phase, label), (end_ln, ts_end, raw_end_ts), end_inferred in pairs:
         out.append(
@@ -490,6 +505,7 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
                 "start_line": start_ln,
                 "end_line": end_ln,
                 "end_inferred": end_inferred,
+                "aborted_midrun": any(ts_start <= a <= ts_end for a in abort_ts),
             }
         )
     # Sort by start line for stable ordering (matches the prior implementation).
@@ -623,6 +639,14 @@ def _extract_perf_anomalies(
         ph = pd["phase"]
         dur = pd["duration_seconds"]
         expected = limits.get(ph)
+        # A phase whose [start, end] window contains a mid-run session abort is
+        # not a clean compute measurement — the START and END belong to
+        # different dispatches separated by an abort→resume dead gap, so the
+        # duration is meaningless for anomaly detection. Skip it (the genuine
+        # incompleteness, if any, is surfaced by the budget/MAX_TURNS banner and
+        # the session-stop extractor, not by a phantom "slow phase").
+        if pd.get("aborted_midrun"):
+            continue
         # Hard ceiling first — fires regardless of expected.
         if dur > ANY_PHASE_HARD_CEILING_SECONDS:
             issues.append(
@@ -724,8 +748,18 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
         _ev = _parse_event_line(_raw)
         if not _ev or _ev["event"] != "ASSESSMENT_END":
             continue
-        if "STAGE1_PHASE_LIMIT" in (_ev.get("detail") or ""):
-            planned_exit_sources.add(_ev["source"] or "?")
+        # Any ASSESSMENT_END marks a *planned* completion of the source agent's
+        # scoped work. The original guard matched only the literal
+        # "STAGE1_PHASE_LIMIT" token, but the Analyst-A/B planned exits log
+        # descriptive text instead ("Analyst-B complete — Stage 1 done",
+        # "Phases 1-8 done, STRIDE dispatch prep ready") with no such token —
+        # so their high-token cumulative SESSION_STOP was mis-flagged as
+        # `session_stop_unknown` / budget exhaustion (juice-shop 2026-06-27,
+        # 148k-token threat-analyst stop). A genuine budget kill dies mid-phase
+        # and never reaches ASSESSMENT_END, so treating ANY ASSESSMENT_END
+        # source as a planned exit cannot mask a real exhaustion. out==0 crash
+        # stops are still surfaced below (they require out_tokens > 0 to skip).
+        planned_exit_sources.add(_ev["source"] or "?")
 
     by_source: dict[str, dict] = {}
     counts: dict[str, int] = {}
@@ -937,6 +971,33 @@ def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _qa_status_supersedes(output_dir: Path, plan_path: Path) -> bool:
+    """True when ``.qa-status.json`` proves the repair plan at ``plan_path`` is
+    stale — i.e. a passing QA status was written *after* (or at the same time
+    as) the plan.
+
+    A repair plan describes drift detected at the moment it was written. If the
+    skill later re-ran the gate and recorded ``status: pass``, the drift is
+    resolved even when the plan file itself was never unlinked (the
+    ``--keep-runtime-files`` and out-of-order-gate cases). Comparing the plan's
+    mtime against a ``pass`` ``.qa-status.json``'s mtime distinguishes a *live*
+    failure (plan newer than / no passing status) from a *superseded* one
+    (passing status at least as new as the plan)."""
+    qa_status = output_dir / ".qa-status.json"
+    if not qa_status.is_file():
+        return False
+    try:
+        st = json.loads(qa_status.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(st, dict) or str(st.get("status") or "").strip().lower() != "pass":
+        return False
+    try:
+        return qa_status.stat().st_mtime >= plan_path.stat().st_mtime
+    except OSError:
+        return False
+
+
 def _extract_gate_events(output_dir: Path) -> list[dict]:
     """Surface Stage-2/Stage-3 gate friction that left a *persistent artifact*.
 
@@ -956,8 +1017,19 @@ def _extract_gate_events(output_dir: Path) -> list[dict]:
     # 1. Contract / QA repair plan still on disk → the gate found drift the
     #    Re-Render Loop did not (or could not) clear. The skill unlinks this on
     #    a clean pass, so its presence at completion time is a real signal.
+    #
+    #    Staleness guard (2026-06-27 juice-shop): the "clean run unlinks the
+    #    plan" assumption breaks on two paths, both of which leave a STALE plan
+    #    that no longer reflects live drift —
+    #      (a) --keep-runtime-files skips runtime_cleanup.py (the plan survives
+    #          intentionally for debugging), and
+    #      (b) an out-of-order / manual gate sequence rewrote .qa-status.json to
+    #          pass without unlinking the superseded plan.
+    #    In both, a `.qa-status.json:{status:pass}` that is at least as new as
+    #    the plan proves the drift was resolved AFTER the plan was written, so
+    #    the plan is stale and must not be reported as unresolved.
     qa_plan = output_dir / ".qa-repair-plan.json"
-    if qa_plan.is_file():
+    if qa_plan.is_file() and not _qa_status_supersedes(output_dir, qa_plan):
         try:
             plan = json.loads(qa_plan.read_text(encoding="utf-8"))
         except (OSError, ValueError):

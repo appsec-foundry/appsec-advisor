@@ -2573,6 +2573,16 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --only security-architecture.md \
     || true
 
+# Class 1b — deterministic "## Critical Attack Tree" (ms-critical-attack-tree.json),
+# IDEMPOTENT. Generated BEFORE the renderer composes so the MANDATORY-at-≥2-Critical
+# section is present on the first compose pass (the renderer skipped it at quick
+# depth, which left compose to soft-warn and section_integrity to hard-fail —
+# juice-shop 2026-06-27). Self-gates: <2 Criticals → no file. A renderer-authored
+# version already on disk is preserved.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
+    --only ms-critical-attack-tree.json \
+    || true
+
 # Restore deep-only fragments preserved from a prior deeper run (2026-06-26).
 # On a quick re-run over a prior standard/thorough report, copy the snapshotted
 # ms-ai-exposure.json back into .fragments/ so the AI/LLM Exposure callout is not
@@ -3105,6 +3115,19 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
 # section correctly renders nothing there.
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --only ms-ai-exposure.json \
+    || true
+# ms-critical-attack-tree.json — deterministic "## Critical Attack Tree",
+# IDEMPOTENT (no --force). The section is MANDATORY whenever critical_count >= 2
+# (compose has_multi_critical + section_integrity), but the Stage-2 renderer
+# authored it only at its discretion and skipped it at quick depth — leaving
+# compose to soft-warn while section_integrity hard-failed (RC=2) (juice-shop
+# 2026-06-27). This backstop derives the tree from threat-model.yaml (Criticals
+# grouped by STRIDE capability) so the required section is always present. The
+# generator self-gates: <2 Criticals → no file (the section is then out of
+# scope and renders nothing). A renderer-authored version already on disk is
+# preserved.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
+    --only ms-critical-attack-tree.json \
     || true
 # §9 Abuse Cases — deterministic render from the Phase-10b verdicts. No-ops
 # (and removes any stale fragment) when no abuse case applied, so compose then

@@ -392,10 +392,11 @@ class TestGeneratorsRich:
                 out = fn(rich_yaml_data, "standard")
             else:
                 out = fn(rich_yaml_data)
-            if name == "ms-ai-exposure.json":
-                # Opt-out generator: returns None ("write nothing") when the
-                # model has no LLM/AI surface. The rich fixture has none, so a
-                # None here is the contract, not a failure.
+            if name in ("ms-ai-exposure.json", "ms-critical-attack-tree.json"):
+                # Opt-out generators: return None ("write nothing") when their
+                # gate is not tripped — ms-ai-exposure needs an LLM/AI surface,
+                # ms-critical-attack-tree needs ≥2 Critical findings. The rich
+                # fixture may trip neither, so None here is the contract.
                 assert out is None or (isinstance(out, str) and out)
             else:
                 assert isinstance(out, str) and out

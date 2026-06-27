@@ -283,6 +283,75 @@ class TestAiExposure:
         assert 20 <= len(data.get("summary", "")) <= 300
 
 
+class TestCriticalAttackTree:
+    """Deterministic ms-critical-attack-tree.json generator
+    (gen_critical_attack_tree). Root-cause fix for the juice-shop 2026-06-27
+    contract gap: the MANDATORY-at-≥2-Critical section was only LLM-authored and
+    got skipped at quick depth (compose soft-warn vs section_integrity hard-fail).
+    """
+
+    _CRIT_YAML = {
+        "threats": [
+            {"id": "T-001", "title": "JWT in localStorage — interceptor.ts:13", "risk": "Critical", "stride": "Information Disclosure"},
+            {"id": "T-006", "title": "SQL Injection in Login — routes/login.ts:34", "risk": "Critical", "stride": "Tampering"},
+            {"id": "T-012", "title": "Remote Code Execution — routes/b2bOrder.ts:23", "risk": "Critical", "stride": "Elevation of Privilege"},
+            {"id": "T-020", "title": "MD5 password hashing — lib/insecurity.ts:41", "risk": "High", "stride": "Information Disclosure"},
+        ]
+    }
+
+    def test_returns_none_below_two_criticals(self):
+        # 1 Critical → section is out of scope (has_multi_critical is >=2).
+        d = {"threats": [{"id": "T-001", "title": "X — a.ts:1", "risk": "Critical", "stride": "Tampering"}]}
+        assert pf.gen_critical_attack_tree(d) is None
+
+    def test_gates_on_risk_not_effective_severity(self):
+        # Mirror compose._severity_counts EXACTLY: only `risk`/`severity` counts,
+        # NOT effective_severity. Two effective-critical-but-risk-High threats
+        # must NOT trip the section (compose would mark it out of scope).
+        d = {
+            "threats": [
+                {"id": "T-1", "title": "A — a.ts:1", "risk": "High", "effective_severity": "Critical", "stride": "Tampering"},
+                {"id": "T-2", "title": "B — b.ts:1", "risk": "High", "effective_severity": "Critical", "stride": "Spoofing"},
+            ]
+        }
+        assert pf.gen_critical_attack_tree(d) is None
+
+    def test_emits_tree_for_two_plus_criticals(self):
+        out = pf.gen_critical_attack_tree(self._CRIT_YAML)
+        assert out is not None
+        data = json.loads(out)
+        nodes = data["mermaid"]["nodes"]
+        leaves = [n for n in nodes if n["class"] == "leaf"]
+        # 3 risk=Critical threats → 3 leaves; the risk=High one is excluded.
+        assert len(leaves) == 3
+        leaf_ids = {n["id"] for n in leaves}
+        assert leaf_ids == {"T001", "T006", "T012"}
+        # Every leaf label carries its T-NNN token so compose's findings-pointer
+        # deriver (keyed on `[FT]-\d{3,4}` AND class == "leaf") picks it up — the
+        # exact bug a class:"crit" hand-authored fragment hit (empty pointer).
+        for n in leaves:
+            assert re.search(r"T-\d{3}", n["label"])
+
+    def test_output_is_schema_valid(self):
+        import jsonschema
+
+        schema_path = (
+            Path(__file__).resolve().parent.parent / "schemas" / "fragments" / "critical-attack-tree.schema.json"
+        )
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        data = json.loads(pf.gen_critical_attack_tree(self._CRIT_YAML))
+        jsonschema.validate(data, schema)
+        # Node ids must satisfy the schema pattern ^[A-Z][A-Z0-9_]*$.
+        for n in data["mermaid"]["nodes"]:
+            assert re.match(r"^[A-Z][A-Z0-9_]*$", n["id"])
+
+    def test_capabilities_in_canonical_stride_order(self):
+        data = json.loads(pf.gen_critical_attack_tree(self._CRIT_YAML))
+        caps = [n["id"] for n in data["mermaid"]["nodes"] if n["class"] == "or_node"]
+        # Tampering before Information Disclosure before Elevation of Privilege.
+        assert caps == ["CAP_TAMPER", "CAP_INFO", "CAP_EOP"]
+
+
 class TestAttackSurface:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
         md = pf.gen_attack_surface(minimal_yaml_data)
@@ -1549,10 +1618,12 @@ class TestCli:
         frag_dir = output_dir / ".fragments"
         assert frag_dir.is_dir()
         for name in pf.GENERATORS:
-            # ms-ai-exposure.json is conditional — written ONLY when the model
-            # has an LLM/AI surface, which the minimal fixture does not.
-            if name == "ms-ai-exposure.json":
-                assert not (frag_dir / name).exists(), "ms-ai-exposure must not be written without an LLM surface"
+            # Conditional generators are written ONLY when their gate fires,
+            # which the minimal fixture does not trip:
+            #   • ms-ai-exposure.json     — needs an LLM/AI surface
+            #   • ms-critical-attack-tree.json — needs ≥2 Critical findings
+            if name in ("ms-ai-exposure.json", "ms-critical-attack-tree.json"):
+                assert not (frag_dir / name).exists(), f"{name} must not be written when its gate is not tripped"
                 continue
             assert (frag_dir / name).is_file(), f"{name} not written"
 
@@ -1583,9 +1654,12 @@ class TestCli:
         # --force should overwrite
         result = _run_cli(str(output_dir), "--force")
         assert result.returncode == 0
-        # ms-ai-exposure.json is conditional (no LLM surface in the fixture), so
-        # it is not part of the written set even with --force.
-        unconditional = [n for n in pf.GENERATORS if n != "ms-ai-exposure.json"]
+        # The conditional generators (ms-ai-exposure.json — no LLM surface;
+        # ms-critical-attack-tree.json — <2 Criticals) are not part of the
+        # written set even with --force, because their gate is not tripped by
+        # the minimal fixture.
+        conditional = {"ms-ai-exposure.json", "ms-critical-attack-tree.json"}
+        unconditional = [n for n in pf.GENERATORS if n not in conditional]
         expected = f"wrote {len(unconditional)}"
         assert expected in result.stdout
         assert "MUTATED" not in target.read_text()

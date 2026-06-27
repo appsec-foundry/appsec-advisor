@@ -5581,6 +5581,119 @@ def gen_ai_exposure(yaml_data: dict):
 
 
 # ---------------------------------------------------------------------------
+# Critical Attack Tree (`ms-critical-attack-tree.json`)
+# ---------------------------------------------------------------------------
+# Root cause it fixes (juice-shop 2026-06-27): the unnumbered "## Critical Attack
+# Tree" section is MANDATORY whenever critical_count >= 2 (compose's
+# has_multi_critical gate + section_integrity's required-section check), but it
+# was only ever LLM-authored by the Stage-2 renderer — which skipped it at quick
+# depth and rationalised the skip as "expected at quick depth". compose then only
+# SOFT-warns on the missing fragment (back-compat guard for legacy fixtures)
+# while section_integrity HARD-fails (RC=2), so the gap surfaced as a late
+# hard-gate failure instead of being filled at authoring time. Generating it
+# deterministically here removes the renderer dependency entirely — the same
+# pattern as ms-ai-exposure.json (idempotent: an LLM-authored richer fragment
+# already on disk is preserved).
+
+# Canonical STRIDE order → (match-needles, node-id, capability label). The
+# Criticals are grouped under their STRIDE class so the tree's middle layer is
+# the attacker's capability decomposition, derived deterministically (no LLM).
+_ATTACK_TREE_STRIDE_CAPABILITIES: list[tuple[tuple[str, ...], str, str]] = [
+    (("spoof",), "CAP_SPOOF", "Spoofing — identity & auth bypass"),
+    (("tamper", "inject"), "CAP_TAMPER", "Tampering — injection & data manipulation"),
+    (("repudiat",), "CAP_REPUD", "Repudiation — audit & accountability gaps"),
+    (("information", "disclos", "info"), "CAP_INFO", "Information Disclosure — secret & data exposure"),
+    (("denial", "dos", "availab"), "CAP_DOS", "Denial of Service — availability loss"),
+    (("elevation", "privilege", "eop", "rce", "execution"), "CAP_EOP", "Elevation of Privilege — escalation & RCE"),
+]
+_ATTACK_TREE_CANONICAL_CAPS = [c for _, c, _ in _ATTACK_TREE_STRIDE_CAPABILITIES] + ["CAP_OTHER"]
+
+
+def _attack_tree_capability_for_stride(stride: str) -> tuple[str, str]:
+    """Map a threat's STRIDE class to its (capability-node-id, label). Falls back
+    to a generic 'Other' capability for unknown/missing STRIDE so every Critical
+    lands under exactly one capability node."""
+    s = (stride or "").strip().lower()
+    for needles, node_id, label in _ATTACK_TREE_STRIDE_CAPABILITIES:
+        if any(n in s for n in needles):
+            return node_id, label
+    return "CAP_OTHER", "Other attack capabilities"
+
+
+def gen_critical_attack_tree(yaml_data: dict):
+    """Deterministically emit ms-critical-attack-tree.json when ≥2 Critical
+    findings exist, else return ``None`` (no file → the conditional section
+    renders nothing).
+
+    The Critical set mirrors compose_threat_model.py's ``_severity_counts``
+    EXACTLY (``risk`` → ``severity``, NOT ``effective_severity``) so the fragment
+    is generated precisely when the composer marks the section in-scope
+    (``has_multi_critical = severity_counts["critical"] >= 2``). Keying on
+    effective_severity here would over-/under-generate relative to the gate.
+    """
+    threats = yaml_data.get("threats") or []
+    crits = [
+        t for t in threats if str(t.get("risk") or t.get("severity") or "").strip().lower() == "critical"
+    ]
+    if len(crits) < 2:
+        # Section is conditional on has_multi_critical (>=2). With <2 Criticals
+        # the composer skips it, so a fragment here would be dead weight.
+        return None
+
+    # Stable ordering by finding id so the tree is reproducible run-to-run.
+    def _id_key(t: dict) -> tuple:
+        m = re.search(r"(\d+)", str(t.get("id") or ""))
+        return (int(m.group(1)) if m else 1_000_000, str(t.get("id") or ""))
+
+    crits = sorted(crits, key=_id_key)
+
+    # Schema caps `nodes` at 30. Reserve 1 goal + up to 7 capabilities; cap the
+    # leaves so a pathological Critical count never overflows the schema. The
+    # Criticals are id-sorted, so an over-cap run keeps the lowest ids (the rare
+    # dropped tail is still fully visible in §8 Findings Register).
+    _MAX_LEAVES = 22
+
+    cap_label: dict[str, str] = {}
+    cap_members: dict[str, list[dict]] = {}
+    for t in crits[:_MAX_LEAVES]:
+        cap_id, label = _attack_tree_capability_for_stride(t.get("stride"))
+        cap_label.setdefault(cap_id, label)
+        cap_members.setdefault(cap_id, []).append(t)
+
+    # Order capability nodes by the canonical STRIDE sequence, not first-seen.
+    cap_order = sorted(
+        cap_members,
+        key=lambda c: _ATTACK_TREE_CANONICAL_CAPS.index(c) if c in _ATTACK_TREE_CANONICAL_CAPS else 99,
+    )
+
+    nodes: list[dict] = [{"id": "GOAL", "label": "Full application compromise", "class": "goal"}]
+    edges: list[dict] = []
+    for cap_id in cap_order:
+        nodes.append({"id": cap_id, "label": cap_label[cap_id], "class": "or_node"})
+        edges.append({"from": "GOAL", "to": cap_id})
+        for t in cap_members[cap_id]:
+            tid = str(t.get("id") or "").strip()
+            # Node id must match ^[A-Z][A-Z0-9_]*$ — "T-001" → "T001".
+            leaf_id = re.sub(r"[^A-Z0-9_]", "", tid.upper().replace("-", "")) or f"N{len(nodes)}"
+            if not re.match(r"^[A-Z]", leaf_id):
+                leaf_id = "N" + leaf_id
+            # Leaf label MUST carry the id token (`_derive_attack_tree_findings`
+            # in compose keys the §8 Findings pointer off `[FT]-\d{3,4}` in the
+            # label, and only on `class == "leaf"` nodes). The composer strips
+            # the id + truncates the title at render, so the full short title is
+            # safe here.
+            short = _clean_finding_label(t.get("title", ""))
+            nodes.append({"id": leaf_id, "label": f"{tid} {short}".strip(), "class": "leaf"})
+            edges.append({"from": cap_id, "to": leaf_id})
+
+    payload = {
+        "root_goal": "Full application compromise via chained Critical defects",
+        "mermaid": {"orientation": "TD", "nodes": nodes, "edges": edges},
+    }
+    return json.dumps(payload, indent=2) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
@@ -5601,6 +5714,12 @@ GENERATORS = {
     # Returns None (no file) on repos without an LLM/AI surface, so non-LLM
     # repos pay zero cost and the section renders nothing.
     "ms-ai-exposure.json": gen_ai_exposure,
+    # ms-critical-attack-tree.json — deterministic "## Critical Attack Tree".
+    # Returns None when <2 Critical findings (the section's has_multi_critical
+    # gate), so it self-gates exactly like the composer's scope decision. This
+    # removes the Stage-2 renderer dependency that left the MANDATORY section
+    # empty at quick depth (compose soft-warn vs section_integrity hard-fail).
+    "ms-critical-attack-tree.json": gen_critical_attack_tree,
     # Kept for one release as a deprecated transitional artifact — the
     # legacy renderer prompt has a fallback path that reads it. Removed in
     # the release after the deterministic flip lands.
