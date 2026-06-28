@@ -999,9 +999,7 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
     return sorted(by_mid.values(), key=lambda m: m["id"])
 
 
-def prune_dangling_mitigation_threat_ids(
-    threats: list[dict], mitigations: list[dict]
-) -> tuple[list[dict], list[str]]:
+def prune_dangling_mitigation_threat_ids(threats: list[dict], mitigations: list[dict]) -> tuple[list[dict], list[str]]:
     """Drop ``mitigation.threat_ids[]`` entries that reference no existing threat.
 
     ``apply_mitigation_overrides`` is intentionally threat-agnostic: a sidecar
@@ -1024,8 +1022,7 @@ def prune_dangling_mitigation_threat_ids(
         if len(kept) != len(tids):
             dropped = [tid for tid in tids if tid not in valid_tids]
             warnings.append(
-                f"mitigation {m.get('id')}: dropped {len(dropped)} dangling threat_id(s) "
-                f"{dropped} (no matching threat)"
+                f"mitigation {m.get('id')}: dropped {len(dropped)} dangling threat_id(s) {dropped} (no matching threat)"
             )
             m["threat_ids"] = kept
     return mitigations, warnings
