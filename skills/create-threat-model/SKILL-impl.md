@@ -470,8 +470,13 @@ if [ -f "$HOOK_LOG" ]; then
   # 24h cut-off (UTC, ISO format)
   CUTOFF=$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
         || python3 -c "import datetime;print((datetime.datetime.utcnow() - datetime.timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
-  if [ -n "$CLAUDE_SESSION_ID" ]; then
-    SID_SHORT=$(printf '%s' "$CLAUDE_SESSION_ID" | head -c 8)
+  # Resolve the current session id. Claude Code exposes CLAUDE_CODE_SESSION_ID;
+  # older harnesses used CLAUDE_SESSION_ID. Without this fallback SID_SHORT stays
+  # empty and every session-scoped check silently degrades to the repo-wide path,
+  # which cannot tell THIS session's activity from another session's.
+  APPSEC_SID="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+  if [ -n "$APPSEC_SID" ]; then
+    SID_SHORT=$(printf '%s' "$APPSEC_SID" | head -c 8)
     # Count orchestrator spawns in this session (includes aborted runs)
     PRIOR_RUNS=$(awk -v cutoff="$CUTOFF" -v sid="[$SID_SHORT]" \
         '$1 > cutoff && index($0, sid) && /AGENT_SPAWN.*appsec-threat-analyst/ {c++} END {print c+0}' \
@@ -557,26 +562,73 @@ fi
 
 The Sprint-4A escalation is **interactive only** — `APPSEC_CI_MODE=1`, `APPSEC_NO_CONFIRM=1`, or a non-TTY stdin (headless `claude -p`) all fall through to the legacy advisory warning so CI pipelines never hang on a prompt. The 2-run threshold remains advisory regardless of mode.
 
-### M3.4 supplement — cache_read context-bloat detector
+### M3.4 supplement — session-context detector (non-empty + bloat)
 
-The spawn counter only catches previous `appsec-threat-analyst` invocations. Regular conversation turns (status checks, analysis, normal chat) also grow the session context and are completely invisible to `PRIOR_RUNS`. The `cache_read` value in the most-recent `SESSION_STOP` line of `.hook-events.log` is a direct, session-agnostic measure of how much cached context every sub-agent call will be forced to re-serve.
+The spawn counter only catches previous `appsec-threat-analyst` invocations. Ordinary conversation turns (status checks, analysis, normal chat) also grow the session context and are invisible to `PRIOR_RUNS`. Two **session-scoped** signals from `.hook-events.log` close that gap:
 
-**Empirical threshold: 8 M tokens.** From 22 real assessment spawns in the `2026-04-29` juice-shop hook log: all clean runs had `cache_read < 6.5 M`; all bloated runs had `cache_read > 11 M`. The 8 M threshold gives a comfortable margin with zero false positives in the observed data. The reference incident: a 19 M-token session caused the context-resolver to take **37 minutes** instead of its normal 2 minutes — a 18× slowdown that was invisible to the PRIOR_RUNS counter because it was caused by non-assessment conversation turns, not prior scans.
+- **`cache_read`** of THIS session's most-recent `SESSION_STOP` — cumulative
+  cached-token throughput. It correlates with a reused/expensive session but is
+  not current resident context occupancy.
+- **prior-activity count** — this session's hook lines older than ~3 min (i.e. predating the scan). Catches conversation bloat even when no sub-agent has spawned yet (`cache_read` is still 0).
 
-This check runs **after** the PRIOR_RUNS block and is independent of it. When `PRIOR_RUNS >= 2` the existing M3.4 prompt already fires; this supplement only activates when the spawn counter stayed silent but the cache is large.
+**Why session-scoped (correctness fix).** The repo `.hook-events.log` is shared across every session that ran in this repo. The previous *global* "last `SESSION_STOP` cache_read" therefore false-positived on a genuinely fresh session whenever a *different* bloated session's run was the most recent log entry. Tagging on the current session's 8-char id (`[<short>]`, resolved from `CLAUDE_CODE_SESSION_ID`) fixes that; an older harness with no session id falls back to the legacy global signal.
+
+**What the signal can and cannot do.** The orchestrator cannot selectively
+evict earlier turns from its interactive session; only `/clear` starts a fresh
+session. The skill can still reduce the context it adds. During the parity
+rollout, opted-in full/rebuild runs (`APPSEC_THIN_ORCHESTRATOR=1`) use
+`SKILL-full-runtime.md` plus deterministic `orchestration_controller.py`,
+avoiding the large preflight prefix. This detector remains useful for
+conversation context that predates the skill.
+`--rebuild` wipes disk artifacts, not conversation history. A larger-window
+model may delay compaction when the session cannot be cleared, but it does not
+reduce cache throughput.
+
+**Empirical advisory threshold: 8 M cache-read tokens.** This is a throughput
+threshold calibrated from prior run logs, not a context-window threshold.
+Below it, prior in-session activity raises the softer **non-empty session**
+advisory. Actual occupancy and compaction are measured from Claude JSONL via
+`scripts/context_window_report.py`.
+
+This check runs **after** the PRIOR_RUNS block and is independent of it. When `PRIOR_RUNS >= 2` the existing M3.4 prompt already fires; this supplement only activates when the spawn counter stayed silent.
 
 ```bash
-# M3.4 supplement — cache_read context-bloat detector
-# Reads the last SESSION_STOP cache_read value from .hook-events.log.
-# This is a session-agnostic signal: it catches bloat caused by ordinary
-# conversation turns that the AGENT_SPAWN counter cannot see.
+# M3.4 supplement — session-context detector (non-empty + bloat).
+# Two SESSION-SCOPED signals from .hook-events.log (each line is tagged with the
+# 8-char session id, [<short>]): this session's last SESSION_STOP cache_read, and
+# this session's prior tool-event count (lines older than ~3 min = activity that
+# predates the scan). Session-scoping is a correctness fix — the repo hook log is
+# shared, so the old GLOBAL last-SESSION_STOP false-positived on a fresh session.
+APPSEC_SID="${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+SID_SHORT=$(printf '%s' "$APPSEC_SID" | head -c 8)
 LAST_CACHE_READ=0
+PRIOR_ACTIVITY=0
 if [ -f "$HOOK_LOG" ]; then
-  LAST_CACHE_READ=$(awk '/SESSION_STOP/ {
-      match($0, /cache_read=([0-9,]+)/, a)
-      if (a[1]) { gsub(/,/, "", a[1]); last = a[1]+0 }
-    } END { print last+0 }' "$HOOK_LOG" 2>/dev/null || echo 0)
+  if [ -n "$SID_SHORT" ]; then
+    LAST_CACHE_READ=$(awk -v sid="[$SID_SHORT]" 'index($0,sid) && /SESSION_STOP/ {
+        match($0, /cache_read=([0-9,]+)/, a)
+        if (a[1]) { gsub(/,/, "", a[1]); last = a[1]+0 }
+      } END { print last+0 }' "$HOOK_LOG" 2>/dev/null || echo 0)
+    # Prior activity = this session's hook lines older than ~3 min. The current
+    # scan's own preflight reads are all within the last few seconds, so an older
+    # line means the session was already working before this scan — a non-empty
+    # session (prior scan OR ordinary tool-using conversation).
+    CUTOFF_3M=$(date -u -d '3 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+          || python3 -c "import datetime;print((datetime.datetime.utcnow()-datetime.timedelta(minutes=3)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+    PRIOR_ACTIVITY=$(awk -v sid="[$SID_SHORT]" -v cutoff="$CUTOFF_3M" \
+        'index($0,sid) && $1 < cutoff {c++} END {print c+0}' "$HOOK_LOG" 2>/dev/null || echo 0)
+  else
+    # Older harness with no session id — fall back to the global last
+    # SESSION_STOP cache_read (legacy behaviour; may over-warn across sessions).
+    LAST_CACHE_READ=$(awk '/SESSION_STOP/ {
+        match($0, /cache_read=([0-9,]+)/, a)
+        if (a[1]) { gsub(/,/, "", a[1]); last = a[1]+0 }
+      } END { print last+0 }' "$HOOK_LOG" 2>/dev/null || echo 0)
+  fi
 fi
+# Human-readable cached-token note, only when a measurement exists (>0).
+CTX_NOTE=""
+[ "${LAST_CACHE_READ:-0}" -gt 0 ] && CTX_NOTE=", ~$(awk "BEGIN{printf \"%.0f\", ${LAST_CACHE_READ}/1000000}")M cached tokens"
 
 if [ "${LAST_CACHE_READ:-0}" -ge 8000000 ] && [ "${PRIOR_RUNS:-0}" -lt 2 ]; then
   # PRIOR_RUNS didn't already fire a warning — emit a standalone bloat alert.
@@ -595,14 +647,24 @@ if [ "${LAST_CACHE_READ:-0}" -ge 8000000 ] && [ "${PRIOR_RUNS:-0}" -lt 2 ]; then
       && [ "${APPSEC_NO_CONFIRM:-}" != "1" ]; then
     cat <<EOF >&2
 
-⚠ Session context is large (~${BLOAT_M}M cached tokens from prior conversation turns).
-  --rebuild wipes all disk artifacts but cannot clear the in-process conversation
-  context. Sub-agent inference will be significantly slower regardless of --rebuild:
-  observed 37 min context-resolver (19M-token session) vs 2 min (fresh session).
+✖ Session context is large (~${BLOAT_M}M cached tokens from this conversation).
+  The orchestrator runs IN this session and cannot clear its own context — only
+  /clear can. At this size every sub-agent dispatch re-serves the whole prefix,
+  and once it exceeds the model's context window it triggers compaction + mid-run
+  aborts that re-read everything (a recent quick run burned ~\$25 this way).
+  --rebuild does NOT help: it wipes disk artifacts, not the conversation.
+  Observed: 37 min context-resolver (19M-token session) vs 2 min (fresh session).
+
+  Pick one before continuing:
+    1. /clear, then re-invoke              ← cheapest + fastest (full reset)
+    2. Switch to a model with a larger (1M-token) context window via /model
+       — only sensible if you must keep this conversation: it avoids the
+       compaction/abort storm, but re-reading a big context still costs tokens,
+       so /clear is the only real cost reset.
 
   Options:
       [Y] Continue anyway (acknowledged tradeoff)
-      [F] Abort — run /clear, then re-invoke (default in 30s)
+      [F] Abort — /clear (or switch model), then re-invoke (default in 30s)
 
   Choice: 
 EOF
@@ -629,9 +691,30 @@ EOF
   else
     # Non-interactive / CI: advisory only, never blocks.
     _log_bloat continue advisory
-    printf '\n⚠ Session context is large (~%sM cached tokens). Run /clear before next assessment for full reset.\n\n' \
+    printf '\n⚠ Session context is large (~%sM cached tokens). /clear before the next\n  assessment for a full reset, or use a 1M-context model to avoid mid-run aborts.\n\n' \
         "$BLOAT_M" >&2
   fi
+
+# --- Tier 2: non-empty session (below the 8 M bloat threshold) — advisory only.
+# Fires when this session already did work before the scan (prior tool events
+# older than ~3 min) but is not yet bloated. The orchestrator cannot clear its
+# own context, so even a moderately-used session is slower/costlier than fresh
+# and drifts toward the compaction threshold as the run proceeds. Never blocks.
+elif [ "${PRIOR_ACTIVITY:-0}" -gt 0 ] && [ "${PRIOR_RUNS:-0}" -lt 2 ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR_PREVIEW" info \
+    SESSION_NONEMPTY "prior_events=${PRIOR_ACTIVITY}  cache_read=${LAST_CACHE_READ:-0}" \
+    >/dev/null 2>&1 || true
+  cat <<EOF >&2
+
+⚠ This scan was started from a NON-EMPTY session (${PRIOR_ACTIVITY} prior tool events${CTX_NOTE}).
+  The orchestrator runs inside this session and cannot clear its own context, so a
+  used session is slower and costlier than a fresh one and drifts toward the
+  compaction threshold as the run proceeds.
+
+  For the fastest / cheapest run: /clear first, then re-invoke. Advisory only —
+  the run continues normally.
+
+EOF
 fi
 ```
 

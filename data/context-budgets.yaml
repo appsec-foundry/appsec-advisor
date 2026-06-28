@@ -1,0 +1,49 @@
+version: 1
+
+# Byte budgets are deterministic drift guards, not token-window assumptions.
+# The runtime acceptance test still measures real resident tokens from JSONL
+# with scripts/context_window_report.py.
+surfaces:
+  skill_router:
+    path: skills/create-threat-model/SKILL.md
+    max_bytes: 8000
+  thin_full_runtime:
+    path: skills/create-threat-model/SKILL-full-runtime.md
+    max_bytes: 12000
+  legacy_initial_slice:
+    path: skills/create-threat-model/SKILL-impl.md
+    start: BOF
+    end: "<!-- LAZY-LOAD BOUNDARY"
+    max_bytes: 220000
+  full_stage1_slice:
+    path: skills/create-threat-model/SKILL-impl.md
+    start: "## Stage 1 — Threat Analysis & Triage"
+    end: "<!-- LAZY-LOAD BOUNDARY"
+    max_bytes: 70000
+  post_stage1_tail:
+    path: skills/create-threat-model/SKILL-impl.md
+    start: "<!-- LAZY-LOAD BOUNDARY"
+    end: EOF
+    max_bytes: 145000
+  threat_analyst:
+    path: agents/appsec-threat-analyst.md
+    max_bytes: 155000
+  phase_group_recon:
+    path: agents/phases/phase-group-recon.md
+    max_bytes: 40000
+  phase_group_architecture:
+    path: agents/phases/phase-group-architecture.md
+    max_bytes: 190000
+  phase_group_threats:
+    path: agents/phases/phase-group-threats.md
+    max_bytes: 160000
+  phase_group_finalization:
+    path: agents/phases/phase-group-finalization.md
+    max_bytes: 155000
+
+aggregate:
+  # Router + compact runtime + Stage-1/1c slice. This is the full/rebuild
+  # resident skill text before the Phase-9 fan-out.
+  thin_full_pre_stage2_max_bytes: 90000
+  # The compact path must remain materially smaller than the legacy prefix.
+  thin_to_legacy_max_ratio: 0.50

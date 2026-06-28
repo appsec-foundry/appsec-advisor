@@ -59,8 +59,11 @@ Optional, depending on what you changed:
 
 | Command | When to use it |
 |---------|----------------|
-| `make e2e-full-standard` | You changed pipeline depth/fidelity and want a higher-fidelity run than `quick`. |
-| `make e2e-full-repair`   | You touched the QA / Re-Render Loop (`appsec-fragment-fixer`). |
+| `make e2e-full-standard` | You changed Stage-3 QA, actor discovery, enriched §7, or standard-depth routing. |
+| `make e2e-full-thorough` | You changed thorough-depth routing or the Stage-4 architect review. |
+| `make e2e-full-repair`   | You touched the QA / Re-Render Loop; this builds a standard seed and verifies a real fragment-fixer repair. |
+| `make e2e-full-eval`     | You changed threat-generation prompts or severity/coverage logic and want the adversarial semantic-quality gate. |
+| `make e2e-fixture-suite` | You changed language/framework detection or recall logic and have the external fixture checkout available. |
 
 ### 3. Merge into `main` and tag
 

@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- The manual full-run E2E now validates the complete QA/schema/export chain against a clean code fixture and an external planted-vulnerability oracle; standard and thorough targets cover Stage 3 and Stage 4.
 - Full change-log audit beside the report: `threat-model-changelog.md` (readable)
   and `threat-model-changelog.jsonl` (machine). Every run, every added/changed/
   removed finding, mitigation, abuse case, instance, and component — uncapped,
@@ -52,9 +53,9 @@ All notable changes to this project are documented here.
   report is still invalid; `thorough` keeps 3 rounds. Cosmetic-only findings no
   longer trigger a re-render (reported as advisories); `APPSEC_QA_COSMETIC_BLOCKING=1`
   restores the old behaviour.
-- Lower pre-flight context use: the orchestrator lazy-loads the Stage 2+ and
-  rebuild/incremental parts of its playbook instead of reading everything up front,
-  avoiding the auto-compaction that previously fired before STRIDE.
+- Opt-in full/rebuild scans (`APPSEC_THIN_ORCHESTRATOR=1`) can use a deterministic
+  pre-flight controller and thin runtime, cutting the live pre-Stage-2 playbook
+  by about 64%. The compatibility path remains the default until parity runs pass.
 
 ## 0.4.0-beta — 2026-06-19
 

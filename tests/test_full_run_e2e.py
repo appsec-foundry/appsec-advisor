@@ -400,21 +400,30 @@ def test_threats_carry_required_fields(threat_model_yaml: dict) -> None:
 # 6. Placeholder-ceiling — generated markdown must not leak LLM scaffolding
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Uppercase scaffolding markers — matched case-SENSITIVELY. Real LLM scaffolding
+# is always emitted in caps (PLACEHOLDER, NARRATIVE_PLACEHOLDER, {{PLACEHOLDER}},
+# [REDACTED]); the lowercase words are valid prose — e.g. "parameterized
+# placeholders" is correct SQL terminology in a remediation and must NOT trip
+# this gate (false positive observed in the 2026-06-27 E2E).
 PLACEHOLDER_TOKENS = [
     "PLACEHOLDER",
     "TODO:",
     "FIXME:",
-    "<insert ",
-    "lorem ipsum",
     "[REDACTED]",
     "TBD ",
+]
+# Filler prose whose capitalisation varies — matched case-INSENSITIVELY.
+PLACEHOLDER_TOKENS_CI = [
+    "<insert ",
+    "lorem ipsum",
 ]
 
 
 def test_no_placeholder_leakage_in_markdown(out_dir: Path) -> None:
     md = (out_dir / "threat-model.md").read_text()
     lower = md.lower()
-    found = [t for t in PLACEHOLDER_TOKENS if t.lower() in lower]
+    found = [t for t in PLACEHOLDER_TOKENS if t in md]
+    found += [t for t in PLACEHOLDER_TOKENS_CI if t.lower() in lower]
     assert not found, f"placeholder tokens leaked into threat-model.md: {found}"
 
 

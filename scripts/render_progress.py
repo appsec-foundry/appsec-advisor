@@ -214,6 +214,8 @@ def main() -> int:
             w(f"    ⛔ substep-2 idle — {detail}")
         elif event == "SESSION_BLOAT":
             w(f"    ⚠ session context bloat — {detail}")
+        elif event == "SESSION_NONEMPTY":
+            w(f"    ⚠ non-empty session at scan start — {detail}")
         elif event == "SESSION_ABORTED_MIDRUN":
             w(f"    ⛔ aborted mid-run — {detail}")
         elif event == "PARALLEL_STRIDE_RESOLVED":

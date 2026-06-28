@@ -17,3 +17,11 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.appsec-cache/baseline.json` | **Critical** — incremental anchor; deleting forces cold full scan and breaks T-ID stability |
 
 Canonical enforcement: `scripts/runtime_cleanup.py` (the cleanup script must never list these), drift-guarded by `tests/test_runtime_cleanup.py`.
+
+## Rebuild exception
+
+`--rebuild` intentionally discards analysis sidecars and the incremental
+baseline. Before deleting the live `threat-model-changelog.md` /
+`threat-model-changelog.jsonl`, both the legacy rebuild mode and the thin
+orchestration controller must archive them under `changelog-history/`.
+Archiving is fail-closed: a failure aborts before any rebuild deletion.

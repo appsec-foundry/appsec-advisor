@@ -5632,9 +5632,7 @@ def gen_critical_attack_tree(yaml_data: dict):
     effective_severity here would over-/under-generate relative to the gate.
     """
     threats = yaml_data.get("threats") or []
-    crits = [
-        t for t in threats if str(t.get("risk") or t.get("severity") or "").strip().lower() == "critical"
-    ]
+    crits = [t for t in threats if str(t.get("risk") or t.get("severity") or "").strip().lower() == "critical"]
     if len(crits) < 2:
         # Section is conditional on has_multi_critical (>=2). With <2 Criticals
         # the composer skips it, so a fragment here would be dead weight.

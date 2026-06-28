@@ -73,6 +73,17 @@ def test_yaml_entries_use_known_tools():
         assert prefix in allowed_tools, f"unknown tool prefix in entry {e['entry']!r}"
 
 
+def test_controller_command_and_paths_are_covered_by_existing_rules():
+    """The thin runtime adds no broader permission: Bash(*) runs the fixed
+    controller command and the existing plugin/output globs cover its reads
+    and writes."""
+    entries = cp.load_required(cp.DATA_FILE)
+    rules = [entry["entry"] for entry in entries]
+    assert any(cp._rule_covers(rule, "Bash(python3 orchestration_controller.py)") for rule in rules)
+    assert "Read(${PLUGIN_ROOT}/**)" in rules
+    assert "Write(${OUTPUT_DIR}/**)" in rules
+
+
 # ---------- template expansion ----------------------------------------
 
 

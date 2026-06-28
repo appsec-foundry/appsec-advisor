@@ -307,9 +307,7 @@ def extract_change_summary(yaml_data: dict) -> Optional[dict]:
     # nothing changed. Non-iterative full snapshots keep the old suppression.
     basis = e.get("delta_basis")
     is_iterative = (
-        basis in ("incremental", "fingerprint", "rescan-unchanged")
-        or mode_val == "incremental"
-        or bool(baseline_val)
+        basis in ("incremental", "fingerprint", "rescan-unchanged") or mode_val == "incremental" or bool(baseline_val)
     )
 
     # Resolved on a full fingerprint delta are carried as prior fingerprints

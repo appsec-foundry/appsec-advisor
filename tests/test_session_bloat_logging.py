@@ -35,3 +35,24 @@ def test_abort_logs_before_exit():
     exit_idx = IMPL.index("exit 0", abort_idx)
     between = IMPL[abort_idx:exit_idx]
     assert "Aborted. Run /clear" in between
+
+
+def test_detection_is_session_scoped():
+    # Correctness fix: cache_read / activity must be scoped to THIS session's
+    # 8-char id, not the global last SESSION_STOP (shared repo log).
+    assert "CLAUDE_CODE_SESSION_ID" in IMPL
+    assert 'awk -v sid="[$SID_SHORT]"' in IMPL
+    # The bloat detector reads cache_read filtered by the session id.
+    assert "index($0,sid) && /SESSION_STOP/" in IMPL
+
+
+def test_nonempty_session_advisory_present():
+    # Tier-2: a warning when the scan starts from a non-empty session.
+    assert "PRIOR_ACTIVITY" in IMPL
+    assert "SESSION_NONEMPTY" in IMPL
+    assert "NON-EMPTY session" in IMPL
+
+
+def test_bloat_message_recommends_larger_context_model():
+    # The bloat error must offer the larger-context-model alternative to /clear.
+    assert "1M-token) context window" in IMPL

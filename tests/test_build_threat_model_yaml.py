@@ -804,8 +804,20 @@ def test_changelog_rescan_same_commit_suppresses_noise_delta(tmp_path):
     b = _load()
     cfg = {"mode": "full", "assessment_depth": "quick", "reasoning_model": "sonnet-economy"}
     t1 = [
-        {"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi", "evidence": {"file": "routes/login.ts", "line": 34}},
-        {"id": "T-002", "component": "auth", "cwe": "CWE-639", "title": "IDOR", "evidence": {"file": "routes/address.ts", "line": 11}},
+        {
+            "id": "T-001",
+            "component": "auth",
+            "cwe": "CWE-89",
+            "title": "SQLi",
+            "evidence": {"file": "routes/login.ts", "line": 34},
+        },
+        {
+            "id": "T-002",
+            "component": "auth",
+            "cwe": "CWE-639",
+            "title": "IDOR",
+            "evidence": {"file": "routes/address.ts", "line": 11},
+        },
     ]
     m1 = [{"id": "M-001", "title": "Use parameterized queries"}]
     run1 = b.build_changelog(cfg, t1, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="r1", mitigations=m1)
@@ -813,8 +825,20 @@ def test_changelog_rescan_same_commit_suppresses_noise_delta(tmp_path):
     # T-002 dropped, T-009 phantom-new, a title reworded, a new mitigation — all
     # noise on untouched code.
     t2 = [
-        {"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQL Injection in login", "evidence": {"file": "routes/login.ts", "line": 34}},
-        {"id": "T-009", "component": "web3", "cwe": "CWE-306", "title": "Missing auth", "evidence": {"file": "server.ts", "line": 641}},
+        {
+            "id": "T-001",
+            "component": "auth",
+            "cwe": "CWE-89",
+            "title": "SQL Injection in login",
+            "evidence": {"file": "routes/login.ts", "line": 34},
+        },
+        {
+            "id": "T-009",
+            "component": "web3",
+            "cwe": "CWE-306",
+            "title": "Missing auth",
+            "evidence": {"file": "server.ts", "line": 641},
+        },
     ]
     m2 = m1 + [{"id": "M-007", "title": "Rate limit login"}]
     run2 = b.build_changelog(cfg, t2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-1", run_id="r2", mitigations=m2)
@@ -837,7 +861,9 @@ def test_changelog_rescan_guard_only_on_same_commit_and_depth(tmp_path):
     fingerprint delta, never collapse to rescan-unchanged."""
     b = _load()
     cfg = {"mode": "full", "assessment_depth": "quick", "reasoning_model": "sonnet-economy"}
-    t1 = [{"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi", "evidence": {"file": "a.ts", "line": 1}}]
+    t1 = [
+        {"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi", "evidence": {"file": "a.ts", "line": 1}}
+    ]
     run1 = b.build_changelog(cfg, t1, _CL_COMPS, [], None, tmp_path, current_sha="sha-1", run_id="r1")
     t2 = [
         {"id": "T-001", "component": "auth", "cwe": "CWE-89", "title": "SQLi", "evidence": {"file": "a.ts", "line": 1}},

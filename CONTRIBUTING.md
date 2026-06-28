@@ -69,7 +69,7 @@ Test dependencies: `tests/requirements-test.txt` (pytest, pytest-cov, pyyaml, js
 
 #### Manual full-run (end-to-end) test
 
-After a non-trivial refactor (renderer changes, schema bumps, phase-group edits, prompt restructures, hook changes), run the bundled end-to-end check. It exercises the full pipeline against a fixed synthetic fixture and validates ~25 structural invariants on the produced artifacts.
+After a non-trivial refactor (renderer changes, schema bumps, phase-group edits, prompt restructures, hook changes), run the bundled end-to-end check. It exercises the full pipeline against a clean copy of a code-bearing synthetic fixture and validates structural, grounding, export, orchestration, and planted-signal invariants.
 
 > [!IMPORTANT]
 > This check is **manual-only**. It is deliberately not wired into PR triggers, push hooks, or cron — it consumes real LLM budget (~30–50% of a Pro 5h subscription window, or ~$0.30–1.00 with API-key billing on `quick` depth). The standard `pytest tests/` suite (~50 deterministic tests) remains your per-PR safety net.
@@ -87,20 +87,22 @@ or, from inside a Claude Code session in this repository:
 Both routes drive `tests/e2e/run-full.sh`, which:
 
 1. Pre-flights the `claude` CLI (uses subscription auth via `~/.claude/` or `ANTHROPIC_API_KEY` if set).
-2. Runs `scripts/run-headless.sh` against `tests/fixtures/e2e/synthetic-repo/` and writes artifacts to `tests/fixtures/e2e/_last-run/` (git-ignored).
+2. Copies `tests/fixtures/e2e/synthetic-repo/` to the clean, git-ignored `_last-repo/`, strips stale `docs/security/`, and initializes it as a standalone Git worktree so parent-repo discovery cannot contaminate recon.
 3. Invokes `pytest tests/test_full_run_e2e.py`, which is skipped unless the driver sets `APPSEC_E2E_FULL=1`.
 
 **What's asserted:**
 
 | Group | Checks |
 |---|---|
-| Existence | All canonical outputs present (`threat-model.{md,yaml,sarif.json}`, `.threats-merged.json`, `.triage-flags.json`, `.recon-summary.md`, `.hook-events.log`) and all 11 Stage-2 fragments under `.fragments/`. |
-| Schemas | `validate_intermediate.py` accepts every intermediate artifact (`threats_merged`, `triage_flags`). |
-| Renderer | `compose_threat_model.render()` reproduces the markdown with zero warnings and is byte-idempotent. |
+| Existence | Canonical outputs, audit logs, resolved config, dispatch manifest, render-integrity certificate, run issues, checkpoint, and incremental baseline are present. |
+| Schemas | Final YAML, pentest tasks, merged/triage/config/source-auth artifacts, every dispatched STRIDE result, and every structured fragment validate. |
+| Renderer | `compose_threat_model.render()` has zero warnings and is byte-idempotent; `.render-integrity.json` reports 100%, no degraded or empty sections. |
 | Hard Gate | `check_inline_shortcut.py` confirms Stage 2 routed through the deterministic renderer (no LLM bypass). |
-| QA invariants | `qa_checks.py` passes `invariants`, `ms_structure`, `anchors`, `xrefs`, `cell_format`. |
-| Content bands | At least one threat with required fields; placeholder tokens (`TODO`, `PLACEHOLDER`, `lorem ipsum`, …) absent from the markdown. |
-| Audit trail | `.hook-events.log` shows `PHASE_START`/`PHASE_END` progression. |
+| QA and completeness | The full `qa_checks.py all` battery is clean and idempotent; build/render completeness contracts pass. |
+| Grounding and recall | Evidence resolves against real fixture code and the out-of-repo oracle meets its planted-vulnerability recall floor. |
+| Security | Raw fixture secret canaries do not leak, and malicious repository text cannot create its requested sentinel file. |
+| Exports | SARIF is v2.1-valid with exact result parity; pentest tasks are schema-valid, linked, unique, and read-only; attempted HTML/PDF exports must succeed. |
+| Audit trail | Expected agents and all manifest-selected STRIDE analyzers ran on the resolved model; checkpoint and run-issue state are clean. |
 
 **Exit codes:**
 
@@ -111,7 +113,11 @@ Both routes drive `tests/e2e/run-full.sh`, which:
 | 2 | Pipeline succeeded but assertions failed |
 | 3 | Pre-flight failed (missing `claude` CLI or fixture) |
 
-**Re-checking without a fresh run:** `make e2e-full-keep` replays the assertions against the previous `_last-run/` artifacts — useful while iterating on an assertion or when debugging a failure without burning another LLM budget.
+`make e2e-full-standard` enables the real Stage-3 QA path. `make e2e-full-thorough` additionally requires the Stage-4 architect review. `make e2e-full-repair` first creates a clean standard seed, corrupts §7, and verifies that the live fragment-fixer loop converges. `make e2e-full-eval` adds the five-dimension judge/verify semantic-quality gate and fails on confirmed High/Critical model defects.
+
+`make e2e-fixture-suite` runs all six external language/architecture fixtures through their out-of-repo recall oracles. It is the nightly/manual breadth gate and requires the sibling `appsec-advisor-fixtures` checkout.
+
+**Re-checking without a fresh run:** `make e2e-full-keep` replays the assertions against the previous `_last-run/` artifacts and retained `_last-repo/`. Driver metadata preserves the original depth and converter expectations.
 
 **Additional manual fixture:** Cross-repo context has its own opt-in driver,
 `scripts/e2e_cross_repo_fixture.sh`, backed by the external

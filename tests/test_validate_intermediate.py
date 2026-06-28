@@ -101,6 +101,44 @@ def test_stride_minimal_valid():
     assert ok, f"Expected valid stride, got errors: {errors}"
 
 
+def _stride_threat_with_code_example(code_example):
+    return {
+        "component_id": "auth-svc",
+        "component_name": "Auth Service",
+        "analyzed_at": "2026-04-22T10:00:00Z",
+        "threats": [
+            {
+                "local_id": "C-01",
+                "stride": "Tampering",
+                "threat_category_id": "TH-06",
+                "scenario": "Endpoint registered without auth middleware.",
+                "likelihood": "Medium",
+                "impact": "Medium",
+                "risk": "Medium",
+                "remediation": {
+                    "effort": "Low",
+                    "steps": ["Delete the unauthenticated endpoint."],
+                    "code_example": code_example,
+                    "reference": "CWE-862",
+                },
+            }
+        ],
+    }
+
+
+def test_stride_code_example_null_is_valid():
+    """code_example may be null when the fix is purely config/docs
+    (appsec-stride-analyzer.md spec); schemas/stride.schema.yaml allows null.
+    Regression: a non-null-only type tripped the 2026-06-27 E2E."""
+    ok, errors = vi.validate_stride(_stride_threat_with_code_example(None))
+    assert ok, f"null code_example must be valid: {errors}"
+
+
+def test_stride_code_example_non_string_rejected():
+    ok, errors = vi.validate_stride(_stride_threat_with_code_example(123))
+    assert not ok
+
+
 def test_write_first_stub_is_schema_valid():
     """The mandatory STRIDE write-first stub (appsec-stride-analyzer.md
     "Write-first guarantee") must satisfy stride.schema.yaml — otherwise a

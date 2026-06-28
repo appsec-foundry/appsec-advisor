@@ -146,8 +146,11 @@ Run `scripts/extract_data_relations.py` immediately after Step 0a, in the same B
 ```bash
 if [ "$RECON_SKIP" = "false" ]; then
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/extract_data_relations.py" \
-      "$REPO_ROOT" --quiet 2>/dev/null || true
-  # Output: $OUTPUT_DIR/.fragments/data-relations.json
+      "$REPO_ROOT" \
+      --output "$OUTPUT_DIR/.fragments/data-relations.json" \
+      --quiet 2>/dev/null || true
+  # Output: $OUTPUT_DIR/.fragments/data-relations.json (NEVER $REPO_ROOT/docs/security —
+  # without --output the script defaults there and pollutes the scanned repo)
 fi
 ```
 
@@ -249,9 +252,15 @@ the `ASSESSMENT_PHASES` aggregator (see `phase-group-finalization.md:1142`) does
 not add Phase 2.5 wall-clock to the sequential total. Without the suffix, every
 run statistics appendix overstates total wall-clock by ~30–90 s.
 
-Then validate the output against the schema:
+Then normalize and validate the output against the schema:
 
 ```bash
+# Deterministic producer-boundary fix: the config-scanner LLM can emit
+# generated_at with sub-second precision (…34.082802Z); the schema (and every
+# other sidecar) uses whole-second UTC. Strip it before validating rather than
+# relaxing the schema (AGENTS.md §12). Idempotent + non-fatal.
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/normalize_config_scan.py" \
+    "$OUTPUT_DIR/.config-scan-findings.json" 2>/dev/null || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
     config_scan_findings "$OUTPUT_DIR/.config-scan-findings.json"
 ```

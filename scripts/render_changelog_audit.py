@@ -278,6 +278,10 @@ def archive_audit(output_dir: Path, stamp: str | None = None) -> list[str]:
     if not existing:
         return []
     hist = output_dir / ARCHIVE_DIR
+    if hist.is_symlink():
+        raise OSError(f"refusing to archive through symlinked directory: {hist}")
+    if hist.exists() and not hist.is_dir():
+        raise OSError(f"archive target exists but is not a directory: {hist}")
     hist.mkdir(exist_ok=True)
     ts = stamp or datetime.now().strftime("%Y%m%d-%H%M%S")
     moved: list[str] = []

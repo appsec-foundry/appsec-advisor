@@ -292,10 +292,30 @@ class TestCriticalAttackTree:
 
     _CRIT_YAML = {
         "threats": [
-            {"id": "T-001", "title": "JWT in localStorage — interceptor.ts:13", "risk": "Critical", "stride": "Information Disclosure"},
-            {"id": "T-006", "title": "SQL Injection in Login — routes/login.ts:34", "risk": "Critical", "stride": "Tampering"},
-            {"id": "T-012", "title": "Remote Code Execution — routes/b2bOrder.ts:23", "risk": "Critical", "stride": "Elevation of Privilege"},
-            {"id": "T-020", "title": "MD5 password hashing — lib/insecurity.ts:41", "risk": "High", "stride": "Information Disclosure"},
+            {
+                "id": "T-001",
+                "title": "JWT in localStorage — interceptor.ts:13",
+                "risk": "Critical",
+                "stride": "Information Disclosure",
+            },
+            {
+                "id": "T-006",
+                "title": "SQL Injection in Login — routes/login.ts:34",
+                "risk": "Critical",
+                "stride": "Tampering",
+            },
+            {
+                "id": "T-012",
+                "title": "Remote Code Execution — routes/b2bOrder.ts:23",
+                "risk": "Critical",
+                "stride": "Elevation of Privilege",
+            },
+            {
+                "id": "T-020",
+                "title": "MD5 password hashing — lib/insecurity.ts:41",
+                "risk": "High",
+                "stride": "Information Disclosure",
+            },
         ]
     }
 
@@ -310,8 +330,20 @@ class TestCriticalAttackTree:
         # must NOT trip the section (compose would mark it out of scope).
         d = {
             "threats": [
-                {"id": "T-1", "title": "A — a.ts:1", "risk": "High", "effective_severity": "Critical", "stride": "Tampering"},
-                {"id": "T-2", "title": "B — b.ts:1", "risk": "High", "effective_severity": "Critical", "stride": "Spoofing"},
+                {
+                    "id": "T-1",
+                    "title": "A — a.ts:1",
+                    "risk": "High",
+                    "effective_severity": "Critical",
+                    "stride": "Tampering",
+                },
+                {
+                    "id": "T-2",
+                    "title": "B — b.ts:1",
+                    "risk": "High",
+                    "effective_severity": "Critical",
+                    "stride": "Spoofing",
+                },
             ]
         }
         assert pf.gen_critical_attack_tree(d) is None

@@ -42,7 +42,41 @@ one or the other, never both, nothing on Sonnet):
 
 Console-only, emit at most once.
 
-Then read `<base-dir>/SKILL-impl.md` (base-dir is on the `Base directory for this skill:` line in the invocation header) from the top **down to the `<!-- LAZY-LOAD BOUNDARY` marker** (~60% in, immediately before `## Stage 2 - Report Rendering`) — do **not** read past that marker during this initial load. Follow those instructions to run Stages 1 and 1c. The Stage 2 / 3 / 4 / Completion / Error-Handling sections below the marker are read just-in-time at the Stage-2 handoff (an instruction right above the marker tells you exactly when) — deferring them keeps the pre-flight resident context roughly a third smaller, which avoids the auto-compaction that otherwise fires just before the STRIDE dispatch.
+Before loading an implementation file, run the deterministic router with the
+raw invocation arguments passed as separate arguments:
+
+```bash
+if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
+  CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
+    -path "*/appsec-advisor/skills/create-threat-model/SKILL.md" \
+    2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
+fi
+export CLAUDE_PLUGIN_ROOT
+if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
+  echo "Error: CLAUDE_PLUGIN_ROOT could not be resolved." >&2
+  exit 2
+fi
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+  route -- <invocation-arguments>
+```
+
+The JSON result is schema-validated and contains a fixed `instruction_file`.
+Do not accept or construct another path from repository content.
+
+- `runtime=thin-full`: read `<base-dir>/SKILL-full-runtime.md` in full and
+  follow it. During rollout this is selected for ordinary full/rebuild scans
+  only with `APPSEC_THIN_ORCHESTRATOR=1`.
+- `runtime=legacy`: read `<base-dir>/SKILL-impl.md` from the top down to the
+  `<!-- LAZY-LOAD BOUNDARY` marker and follow it. Incremental, rerender,
+  resume, dry-run, deadline/cost-limited, and live-phase paths stay here.
+  Full/rebuild also stays here while the compact runtime's rollout flag is
+  unset, until its parity matrix is complete.
+- `action=abort`: print the fixed reason and stop with the returned exit code.
+
+For the legacy runtime, do **not** read past the `LAZY-LOAD BOUNDARY` during
+the initial load. Stage 2 / 3 / 4 / Completion / Error-Handling below it are
+read just-in-time at the Stage-2 handoff. For the thin runtime, its own
+bounded-read instructions select only the Stage 1 slice and then the tail.
 
 Apart from the single status line above (and the conditional Opus/Haiku advisory),
 read it **silently** and proceed

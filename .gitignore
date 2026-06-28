@@ -25,9 +25,13 @@ scripts/docs/
 # sensitivity rationale as docs/security/ above — never commit.
 tests/fixtures/e2e/_last-run/
 tests/fixtures/e2e/_last-run-req/
+# Clean source copy scanned by run-full.sh; retained so e2e-full-keep can
+# replay evidence-integrity assertions against the exact analyzed files.
+tests/fixtures/e2e/_last-repo/
 # QA-active repair variant (run-repair.sh) — `rm -rf` + `cp` regenerated
 # scratch dir, run with --keep-runtime-files. Never commit.
 tests/fixtures/e2e/_repair-run/
+tests/fixtures/e2e/_eval-run/
 # eval-threat-model skill working dir (brief + judge/verify sidecars +
 # EVAL-REVIEW.md). Same threat-data sensitivity rationale — never commit.
 .eval-out/

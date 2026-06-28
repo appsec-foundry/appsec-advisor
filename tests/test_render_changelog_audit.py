@@ -178,6 +178,17 @@ def test_archive_noop_when_absent(tmp_path):
     assert not (tmp_path / "changelog-history").exists()
 
 
+def test_archive_refuses_symlinked_history_directory(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "threat-model-changelog.md").write_text("# audit", encoding="utf-8")
+    (tmp_path / "changelog-history").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError, match="symlinked directory"):
+        rca.archive_audit(tmp_path)
+    assert (tmp_path / "threat-model-changelog.md").is_file()
+    assert list(outside.iterdir()) == []
+
+
 def test_cli_archive_then_render(tmp_path):
     # Seed a prior live pair, archive it (rebuild pre-flight), then render fresh.
     (tmp_path / "threat-model-changelog.md").write_text("prior", encoding="utf-8")

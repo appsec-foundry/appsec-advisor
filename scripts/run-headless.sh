@@ -224,6 +224,13 @@ while [ $# -gt 0 ]; do
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --yaml|--no-yaml|--sarif|--no-requirements|--dry-run|--rerender|--enrich-arch|--no-enrich-arch)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --keep-runtime-files)
+            # Preserve all transient runtime artifacts. runtime_cleanup.py reads
+            # the KEEP_RUNTIME_FILES env gate (not a CLI flag at its skill-layer
+            # call sites), so export it for the child claude process AND the
+            # deterministic post-run cleanup backstop below.
+            export KEEP_RUNTIME_FILES=true
+            KEEP_RUNTIME_FILES_FLAG="--keep-runtime-files"; shift ;;
         --incremental)
             INCREMENTAL_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
@@ -789,6 +796,19 @@ if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT
             EXIT_CODE=21
         fi
     fi
+fi
+
+# ── Deterministic runtime-cleanup backstop ─────────────────────────
+# runtime_cleanup.py is supposed to run from the skill's Completion Summary,
+# but that is an LLM-compliance dependency that headless --full runs have been
+# observed to skip entirely (no RUNTIME_CLEANUP audit line, transient dirs left
+# behind). Run it here unconditionally on success so the audit line is always
+# emitted and the KEEP_RUNTIME_FILES opt-out is honoured deterministically.
+# Idempotent + non-fatal; with --keep-runtime-files it self-skips and preserves
+# every transient artifact (relied on by the E2E asserts).
+if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
+    python3 "$PLUGIN_DIR/scripts/runtime_cleanup.py" "$OUTPUT_PATH" \
+        --stage post-qa ${KEEP_RUNTIME_FILES_FLAG:-} 2>/dev/null || true
 fi
 
 # ── PR Gate: --fail-on <level> ──────────────────────────────────────

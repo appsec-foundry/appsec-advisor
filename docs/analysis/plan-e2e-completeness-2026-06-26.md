@@ -32,8 +32,8 @@ Architekturen), kein einzelner grüner Haken.
 | Schicht | Prüft | Existiert | Automatisch? | Lücke |
 |---|---|---|---|---|
 | **A** | Struktur, Determinismus, Schema, Completeness-Contract | `tests/test_e2e_pipeline.py` (frozen-run), `compose_threat_model.render()` gegen `data/sections-contract.yaml`, `scripts/validate_intermediate.py`, Completeness-Contract (commit `5b8a9db`) | ✅ `make test` | Export-Kette + Byte-Golden + Fixture-Vielfalt fehlen |
-| **B** | jede `file:line` existiert, absence-grep-replay | `check_evidence_integrity` (`scripts/qa_checks.py:2929–3051`) | ⚠️ **im E2E abgeschaltet** (`tests/test_full_run_e2e.py:219`) | läuft auf **keinem** echten Repo automatisch |
-| **C** | „diese N Vulns MÜSSEN erscheinen" | `scripts/e2e_fixture.sh` + `<oracle>/verify_threat_model.py` + `expected-signals.json` | ❌ extern, manuell, nie CI/Nightly | gebündeltes `synthetic-repo` hat **kein** Oracle; keine Recall-Schwelle |
+| **B** | jede `file:line` existiert, absence-grep-replay | `check_evidence_integrity` (`scripts/qa_checks.py:2929–3051`) | ✅ im manuellen `e2e-full` über `qa_checks.py all` | Sprach-/Architekturbreite bleibt auf die externe Fixture-Suite begrenzt |
+| **C** | „diese N Vulns MÜSSEN erscheinen" | `scripts/e2e_fixture.sh` + `<oracle>/verify_threat_model.py` + `expected-signals.json` | ✅ in-tree für `e2e-full`; externe Suite weiter manuell | Nightly-Matrix über alle Sprach-Fixtures fehlt |
 | **D** | Plausibilität/Coverage/Severity/Actionability/missed-surface | `skills/eval-threat-model/`, `scripts/eval_threat_model.py`, `agents/appsec-eval-judge.md` (5 Dim., refute-by-default, exit 0/1) | ❌ rein manuell/dev | kein Gate — exit-1 könnte shippen |
 
 **Kernbefund:** Für C und D ist alles gebaut (Oracle-Muster, Judge-Loop, Exit-Codes) —
@@ -52,10 +52,9 @@ das winzige `synthetic-repo` Rausch-Zitate erzeugt.
    (MS-Heading, zero-warning, idempotent), nicht Golden-Gleichheit. Der Byte-Golden-Diff
    existiert (`scripts/threat_fixture.py replay`, Scrubbing inklusive), **skippt aber in CI**
    (`tests/test_threat_fixture.py:184` — braucht git-ignored `_last-run` oder externes Repo).
-3. **Fixture-Monokultur.** Nur eine In-Tree-Form (minimale Node-App). Folgen: `<2` Criticals
-   ⇒ `ms-critical-attack-tree`-Renderpfad nie *positiv* gerendert; keine LLM-Komponente ⇒
-   §9/AI-Exposure kalt; `requirements-compliance` skippt offline. Die Fixture-Verzeichnisse
-   `b2b-api/`, `multi-tenancy/`, `ci-pipeline/` werden von **keinem** CI-Test konsumiert.
+3. **Fixture-Monokultur.** Die In-Tree-Form bleibt eine Node-App, enthält nun aber
+   echte Codepfade für Injection/SSRF/AuthZ, LLM, Multi-Tenancy/B2B, Secrets und CI.
+   Sprach-/Framework-Breite bleibt Aufgabe der externen Fixture-Suite.
 
 ---
 
@@ -79,21 +78,24 @@ LLM-Schichten kosten Budget, daher nicht per-PR.
   fehlerfrei"): `report_integrity_ok`/100%/0-degraded/0-empty aus `.render-integrity.json`,
   kuratierte CORE_SECTIONS (inkl. Mitigation Register) + literale CORE_HEADINGS, Mitigation-
   Register-nicht-leer, Placeholder-Leak-Check. Schließt Loch A.2 + den Vollständigkeits-Gap.
-- **M3 — evidence_integrity im E2E reaktivieren. ⛔ BLOCKIERT (deferred).** Geht NICHT mit
-  den aktuellen Fixtures: die frozen-run-Threats haben keine `evidence.file`-Zitate und
-  `synthetic-repo` enthält keine Quelldateien (nur Dockerfile/package.json) — genau deshalb
-  skippt der echte E2E evidence_integrity. Braucht ein Fixture mit echten Quelldateien +
-  zitierenden Threats (Fixture-Bau, kein Wiring). Schicht B bleibt offen bis dahin.
+- **M3 — evidence_integrity im E2E reaktivieren. ✅ ERLEDIGT 2026-06-27.**
+  `synthetic-repo` enthält echte Quelldateien; `test_full_run_e2e.py` führt die
+  vollständige `qa_checks.py all`-Batterie gegen die beibehaltene `_last-repo/`
+  aus und verlangt Idempotenz.
 
 ### Tier 2 — Nightly / Release-Gate, mit LLM-Budget
 
-- **M4 — In-Tree-Oracle fürs synthetic-repo.** Gepflanzte Vulns + `expected-signals.json` +
-  Recall-Assertion in `make e2e-full`. Macht den einzigen In-Tree-LLM-Lauf von „strukturell
-  valide" zu „findet die gepflanzten Vulns + zitiert echten Code". Schicht C in-tree.
-- **M5 — `e2e_fixture.sh`-Suite als Nightly** über die 6 Sprach-Fixtures (spring-boot, python,
-  rust, go, node-typescript, python-langchain-llm) mit Recall-Schwelle. Schicht-C-Breite.
-- **M6 — `eval_threat_model.py` als Release-Soft-Gate.** Fail auf High/Critical Judge-Defekte.
-  Macht Schicht D zum Gate statt Dekoration.
+- **M4 — In-Tree-Oracle fürs synthetic-repo. ✅ ERLEDIGT 2026-06-27.**
+  Gepflanzte Vulns + externes `expected-signals.json` + Recall-, Secret- und
+  Prompt-Injection-Assertions sind in `make e2e-full` verdrahtet.
+- **M5 — `e2e_fixture.sh`-Suite als Nightly. 🟡 DRIVER ERLEDIGT 2026-06-27.**
+  `make e2e-fixture-suite` fährt alle 6 Sprach-Fixtures (Spring, Python, Rust,
+  Go, Node/TypeScript, Python/LangChain) mit ihren externen Recall-Oracles.
+  Die zeitgesteuerte Ausführung benötigt weiterhin CI-Credentials und den
+  separaten Fixture-Checkout.
+- **M6 — `eval_threat_model.py` als Release-Soft-Gate. ✅ ERLEDIGT 2026-06-27.**
+  `make e2e-full-eval` fährt nach einem frischen Quick-E2E den fünfteiligen
+  Judge/Verify-Loop und schlägt bei bestätigten High/Critical Modell-Defekten fehl.
 
 ---
 
@@ -135,8 +137,8 @@ Das ist die vollständige Definition von Korrektheit, soweit sie bei einer LLM-P
 ## 6. Reihenfolge / Risiko
 
 1. **M1, M2** zuerst — gratis, CI, schließt deterministisches „grün aber kaputt" sofort.
-2. **M3, M4** — erste echte LLM-Korrektheits-Scheibe (Grounding reaktivieren + ein Oracle).
-3. **M5, M6** — reine Korpus-Verbreiterung.
+2. **M3, M4** — erledigt: erste echte LLM-Korrektheits-Scheibe.
+3. **M5** — der Suite-Driver steht; nur die credential-gebundene Nightly-Planung bleibt extern offen.
 
 ## 7. Housekeeping (nebenbei)
 

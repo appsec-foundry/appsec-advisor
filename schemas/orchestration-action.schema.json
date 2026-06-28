@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/orchestration-action.schema.json",
+  "title": "Threat-model orchestration action",
+  "type": "object",
+  "required": ["schema_version", "action"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "action": {
+      "enum": [
+        "abort",
+        "complete",
+        "decision_required",
+        "dispatch_agent",
+        "dispatch_parallel",
+        "load_runtime",
+        "run_gate",
+        "start_watchdog",
+        "stop_watchdog"
+      ]
+    },
+    "mode": {
+      "enum": ["full", "rebuild", "incremental", "rerender"]
+    },
+    "stage": {
+      "type": "string",
+      "enum": ["stage1", "stage2", "stage3", "stage4", "complete"]
+    },
+    "runtime": {
+      "enum": ["thin-full", "legacy"]
+    },
+    "instruction_file": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "exit_code": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "preflight_status": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "run_plan": {
+      "type": "string",
+      "maxLength": 10000
+    },
+    "config_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "dispatch_values": {
+      "type": "object",
+      "maxProperties": 80,
+      "propertyNames": {
+        "enum": [
+          "actor_discovery_model",
+          "analysis_version",
+          "architect_model",
+          "architect_review",
+          "assessment_depth",
+          "base_ref",
+          "check_requirements",
+          "compat_label",
+          "config_scanner_model",
+          "context_resolver_model",
+          "diagram_depth",
+          "enrich_arch_fragments",
+          "estimate_source",
+          "estimate_stage1_min",
+          "estimate_stage2_min",
+          "estimate_stage3_min",
+          "estimate_stage4_min",
+          "estimate_total_pretty",
+          "incremental",
+          "invocation_args",
+          "keep_runtime_files",
+          "live_phase",
+          "max_cost_usd",
+          "max_repair_iterations",
+          "max_stride_components",
+          "max_wall_time_seconds",
+          "merger_model",
+          "orchestrator_model",
+          "org_profile_path",
+          "output_dir",
+          "parallel_stride",
+          "parallel_stride_env",
+          "pentest_format",
+          "pentest_target",
+          "plugin_root",
+          "plugin_version",
+          "pr_mode",
+          "qa_content_model",
+          "qa_depth",
+          "qa_routine_model",
+          "quiet",
+          "reasoning_label",
+          "reasoning_model",
+          "rebuild",
+          "recon_scanner_model",
+          "refresh_actor_discovery",
+          "repo_root",
+          "requirements_url_override",
+          "reuse_recon_eligible",
+          "scan_manifest",
+          "scope",
+          "skip_abuse_case_verification",
+          "skip_attack_paths_authoring",
+          "skip_attack_walkthroughs",
+          "skip_qa",
+          "slug",
+          "stride_model",
+          "stride_profile",
+          "stride_turns_complex",
+          "stride_turns_moderate",
+          "stride_turns_simple",
+          "total_stages",
+          "tracing",
+          "triage_model",
+          "verbose",
+          "write_html",
+          "write_pdf",
+          "write_pentest_tasks",
+          "write_sarif",
+          "write_yaml"
+        ]
+      },
+      "properties": {
+        "scope": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "stride_profile": {
+          "type": "object",
+          "maxProperties": 20,
+          "additionalProperties": {
+            "$ref": "#/$defs/scalar"
+          }
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/scalar"
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "maxItems": 50
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "abort"
+          }
+        }
+      },
+      "then": {
+        "required": ["reason", "exit_code"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "load_runtime"
+          }
+        }
+      },
+      "then": {
+        "required": ["mode", "runtime", "instruction_file", "reason"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "dispatch_agent"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "mode",
+          "stage",
+          "instruction_file",
+          "config_path",
+          "dispatch_values"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "complete"
+          }
+        }
+      },
+      "then": {
+        "required": ["mode", "stage", "config_path", "dispatch_values"],
+        "properties": {
+          "stage": {
+            "const": "complete"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "scalar": {
+      "oneOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

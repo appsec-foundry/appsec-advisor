@@ -149,7 +149,7 @@ $defs:
                 steps:
                   type: array
                   items: { type: string }
-                code_example: { type: string }
+                code_example: { type: [string, "null"] }
                 reference:    { type: string }
             evidence:
               type: [object, "null"]

@@ -28,7 +28,11 @@ else
   # `threat-model-*.md` wipe glob and would otherwise be discarded. Archiving
   # (not deleting) keeps the prior audit trail across a rebuild; the fresh run
   # regenerates a new live pair from the reset changelog. No-op if absent.
-  python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" --output-dir "$OUTPUT_DIR" --archive 2>/dev/null || true
+  if ! python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" \
+      --output-dir "$OUTPUT_DIR" --archive 2>/dev/null; then
+    printf 'Error: could not archive threat-model-changelog audit files; rebuild aborted before deletion.\n' >&2
+    exit 2
+  fi
   # Record which runtime/cache directories actually exist BEFORE wiping, so we
   # never claim to have removed a directory that was absent.
   REMOVED_DIRS=""

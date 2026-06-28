@@ -1,0 +1,42 @@
+# Orchestration Action Contract
+
+`scripts/orchestration_controller.py` is the deterministic control plane for
+the opt-in thin full/rebuild runtime. Its stdout is validated against
+`schemas/orchestration-action.schema.json` before the skill consumes it.
+
+## Ownership
+
+- `resolve_config.py` remains the source of truth for flags, paths, modes,
+  models, depth, and output settings.
+- `orchestration_controller.py` owns thin-runtime selection, full/rebuild
+  preflight mutations, fixed next-action classification, and compact dispatch
+  values.
+- `SKILL-full-runtime.md` owns user-visible preflight output, Task lifecycle,
+  and Level-0 Agent calls.
+- Existing agents, phase groups, deterministic gates, renderer, QA, and
+  cleanup remain authoritative for analysis and report quality.
+
+The action is not a persisted runtime sidecar. Rehydration reads existing
+`.skill-config.json`, checkpoints, validated phase artifacts, and status files.
+Therefore it adds no cleanup-whitelist or diagnostic-bundle entry.
+
+## Security and schema rules
+
+- Action names and stage names are fixed enums.
+- `dispatch_values` has an allow-listed key set and bounded scalar/profile
+  values; arbitrary command fields are rejected.
+- `instruction_file` is selected only from plugin-owned constants. Repository
+  content never supplies an action, command, write target, or instruction path.
+- Full/rebuild cleanup matches the exact filename globs in the legacy runtime;
+  prefix lookalikes and symlink targets must not be deleted.
+- Rebuild archives the live changelog audit before deletion and fails closed if
+  archiving fails.
+- All new event lines use `event_log.py`.
+
+## Rollout
+
+The thin path requires `APPSEC_THIN_ORCHESTRATOR=1`. Incremental, rerender,
+resume, dry-run, deadline/cost, and live-phase paths remain on
+`SKILL-impl.md`. The legacy path stays the default until same-commit
+quick/standard/thorough runs satisfy the context and quality gates in
+`docs/analysis/plan-sonnet-orchestrator-context-management-2026-06-27.md`.
