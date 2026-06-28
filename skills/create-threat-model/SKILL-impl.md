@@ -3408,7 +3408,17 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" \
 
 **Hard secret-leak gate (every depth, fail-closed).** Runs on *every* non-dry-run depth — incl. `--quick`/`--no-qa`/`PR_MODE`, where the rest of Stage 3 is skipped (see the depth-independent note at the top of this stage). The full `qa_checks.py all` detector battery is deferred off the clean path, so the secret check must run on its own to actually block a release. It scans `threat-model.md`, `threat-model.yaml`, the `threat-model.sarif.json`/`threat-model.html` exports, and `.fragments/*.md` (a raw secret can propagate into any of them — 2026-06-28 e2e leak); a hit exits non-zero and the skill aborts with exit 2. The detector excludes already-masked values (`AIza****`, `**** (12 chars)`, `[REDACTED]`) and unquoted code-identifier references (`secret: publicKey`, `password: security.hash`), so it fires only on genuine unmasked literals / typed tokens / private-key markers — which the masking policy (`agents/shared/secret-handling.md`) requires the author to redact. A correctly-masked document passes; a doc carrying a raw value is blocked until it is masked at authoring time.
 
+First, deterministically **redact** known secret values. Pattern masking only
+neutralises a secret in the form it can match; an author who copies a raw secret
+VALUE into prose evades every pattern. `redact_known_secrets.py` scans the repo
+SOURCE for secret values and exact-string-replaces them across every artifact
+(md/yaml/sarif/html + `.fragments` + the JSON data pipeline), prose included —
+then the detector scan below confirms nothing maskable survived:
+
 ```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/redact_known_secrets.py" \
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" || true
+
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" unmasked_secrets \
     "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" > "$OUTPUT_DIR/.qa-secret-scan.json"
 SECRET_GATE_EXIT=$?

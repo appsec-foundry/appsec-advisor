@@ -168,6 +168,7 @@ class SecretHit:
     pattern: str
     snippet: str
     line: int
+    value: str = ""  # the raw secret value (for exact-match redaction)
 
     def render(self) -> str:
         return f"line {self.line}: [{self.pattern}] {self.snippet!r}"
@@ -224,7 +225,7 @@ def scan_text(text: str) -> list[SecretHit]:
                 if "op" in groups and _is_identifier_suffix_keyword(text, m.start(), m.start("op")):
                     continue
             snippet = matched[:80].replace("\n", " ")
-            hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start())))
+            hits.append(SecretHit(pattern=pat.name, snippet=snippet, line=line_of(m.start()), value=value))
     return hits
 
 

@@ -25,6 +25,8 @@
 #   • scripts/_path_guard.py          — blocks symlink escapes during file reads
 #   • scripts/_url_guard.py           — SSRF / cloud-metadata defence on fetches
 #   • scripts/postscan_secret_check.py — fails the run on leaked secret values
+#   • scripts/redact_known_secrets.py  — exact-value redaction of source-found
+#     secrets across all artifacts (prose included); fails closed on residual
 # For real isolation, run against a throwaway git worktree (see below) or in a
 # container.
 #

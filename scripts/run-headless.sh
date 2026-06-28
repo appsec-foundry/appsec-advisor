@@ -841,6 +841,25 @@ else
     warn "Check intermediate files or run with --resume to continue."
 fi
 
+# ── Exact-value secret redaction ───────────────────────────────────
+# Pattern-based masking (upstream + postscan below) only neutralises a secret
+# in the form it can match; an LLM author who copies a raw secret VALUE into
+# prose evades every pattern (2026-06-28 e2e leak). This deterministic pass
+# scans the repo SOURCE for secret values and exact-string-replaces them across
+# every artifact (md/yaml/sarif/html + .fragments + the JSON data pipeline),
+# prose included. Runs on every depth; --write-scan-json guarantees the
+# .qa-secret-scan.json gate artifact exists. Fails closed if a raw value somehow
+# survives redaction.
+if [ "$SKILL" = "create-threat-model" ] && [ $EXIT_CODE -eq 0 ] && [ -d "$OUTPUT_PATH" ]; then
+    REDACT_SCRIPT="$PLUGIN_DIR/scripts/redact_known_secrets.py"
+    if [ -f "$REDACT_SCRIPT" ]; then
+        if ! python3 "$REDACT_SCRIPT" --repo-root "${REPO_PATH:-.}" --output-dir "$OUTPUT_PATH" --write-scan-json; then
+            err "exact-value secret redaction left a residual raw secret — see stderr above"
+            EXIT_CODE=21
+        fi
+    fi
+fi
+
 # ── Post-scan unmasked-secret check ────────────────────────────────
 # Runs scripts/postscan_secret_check.py over the rendered report and
 # headline intermediates. The rendered report + yaml are already masked
