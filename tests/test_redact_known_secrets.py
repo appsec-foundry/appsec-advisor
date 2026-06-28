@@ -41,9 +41,7 @@ def test_redacts_prose_form_across_artifacts(tmp_path: Path) -> None:
     (out / "threat-model.md").write_text(
         f"The signing secret is the literal {SECRET} in server.js.\n", encoding="utf-8"
     )
-    (out / "threat-model.sarif.json").write_text(
-        json.dumps({"x": f"leaked {SECRET}"}), encoding="utf-8"
-    )
+    (out / "threat-model.sarif.json").write_text(json.dumps({"x": f"leaked {SECRET}"}), encoding="utf-8")
     (out / ".fragments" / "attack-walkthroughs.md").write_text(
         f"attacker reads secret = '{SECRET}'\n", encoding="utf-8"
     )
