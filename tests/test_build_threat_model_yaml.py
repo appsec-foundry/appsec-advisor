@@ -855,6 +855,26 @@ def test_changelog_rescan_same_commit_suppresses_noise_delta(tmp_path):
     assert "re-derived" in e["note"]
 
 
+def test_changelog_note_rescan_differing_count_reads_as_no_real_change():
+    """rescan-unchanged with a drifting raw count must lead with 'no real change'
+    so the Note agrees with the Δ +0/~0/-0 cell — the 37→32 count movement is
+    labelled re-derivation noise, not a real finding delta (juice-shop v7)."""
+    note = b._changelog_note(
+        delta_basis="rescan-unchanged",
+        prior_entry={"version": 6},
+        prior_depth="quick",
+        cur_depth="quick",
+        prior_n=37,
+        cur_n=32,
+        n_added=0,
+        n_resolved=0,
+    )
+    assert "no real change" in note
+    assert "37→32" in note
+    assert "re-derived" in note
+    assert len(note) <= 60  # template truncates the Note cell at 60 chars
+
+
 def test_changelog_rescan_guard_only_on_same_commit_and_depth(tmp_path):
     """The suppression is narrow: a DIFFERENT commit (real change) or a DEEPER
     depth (deeper scan finds genuinely new findings) must keep the real
@@ -1947,6 +1967,32 @@ def test_apply_mitigation_overrides_addition_collision_subset_and_new():
     assert by_id["M-060"]["priority"] == "P2"  # derived from High
     assert any("merged onto baseline" in w for w in warnings)
     assert any("true additions" in w for w in warnings)
+
+
+# --- prune_dangling_mitigation_threat_ids ------------------------------------
+
+
+def test_prune_dangling_mitigation_threat_ids_drops_unknown_tid():
+    # Reproduces juice-shop 2026-06-28 M-901→T-034: an authored supply-chain
+    # mitigation names a threat (T-034) the final threat set does not contain.
+    threats = [{"id": "T-031"}, {"id": "T-015"}, {"id": "T-016"}]
+    mitigations = [
+        {"id": "M-901", "threat_ids": ["T-031", "T-034", "T-015", "T-016"]},
+        {"id": "M-001", "threat_ids": ["T-015"]},
+    ]
+    out, warnings = b.prune_dangling_mitigation_threat_ids(threats, mitigations)
+    by_id = {m["id"]: m for m in out}
+    assert by_id["M-901"]["threat_ids"] == ["T-031", "T-015", "T-016"]  # T-034 dropped, order kept
+    assert by_id["M-001"]["threat_ids"] == ["T-015"]  # untouched
+    assert any("M-901" in w and "T-034" in w for w in warnings)
+
+
+def test_prune_dangling_mitigation_threat_ids_noop_when_all_resolve():
+    threats = [{"id": "T-001"}, {"id": "T-002"}]
+    mitigations = [{"id": "M-001", "threat_ids": ["T-001", "T-002"]}]
+    out, warnings = b.prune_dangling_mitigation_threat_ids(threats, mitigations)
+    assert out[0]["threat_ids"] == ["T-001", "T-002"]
+    assert warnings == []
 
 
 # --- build_meta_findings branches --------------------------------------------

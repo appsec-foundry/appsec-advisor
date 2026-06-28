@@ -372,8 +372,10 @@ def _changelog_note(
     if delta_basis == "rescan-unchanged":
         # Same commit, same depth as the prior run — no source change, findings
         # re-derived. Per-finding delta withheld (analysis varies run-to-run).
+        # Lead with "no real change" so the note agrees with the Δ +0/~0/-0 cell;
+        # the raw count drift is labelled re-derivation noise, not a real delta.
         if prior_n is not None and prior_n != cur_n:
-            return f"same commit as prior; {prior_n}→{cur_n} findings re-derived"
+            return f"same commit; no real change; count {prior_n}→{cur_n} re-derived"
         return f"same commit as prior; {cur_n} findings re-derived (no change)"
     parts: list[str] = []
     if prior_depth and cur_depth and prior_depth != cur_depth:
@@ -995,6 +997,38 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
         m["priority"] = sev_to_pri.get(m["severity"], "P3")
 
     return sorted(by_mid.values(), key=lambda m: m["id"])
+
+
+def prune_dangling_mitigation_threat_ids(
+    threats: list[dict], mitigations: list[dict]
+) -> tuple[list[dict], list[str]]:
+    """Drop ``mitigation.threat_ids[]`` entries that reference no existing threat.
+
+    ``apply_mitigation_overrides`` is intentionally threat-agnostic: a sidecar
+    *addition* (e.g. an LLM-authored supply-chain mitigation) carries whatever
+    ``threat_ids`` the analyst wrote, verbatim. When that list names a T-ID the
+    final threat set does not contain — an LLM hallucination such as the 2026-06-28
+    juice-shop ``M-901→T-034`` (only T-001…T-032 existed) — the dangling link
+    fails the ``mitigation_links_resolve`` completeness gate and aborts the run.
+
+    This is the deterministic reconciliation point: the caller invokes it once the
+    final ``threats`` set is known (after incremental reconcile) and BEFORE
+    ``dedupe_mitigation_controls`` unions threat_ids, so a survivor never inherits
+    a dangling reference. Returns ``(mitigations, warnings)``; mutates in place.
+    """
+    valid_tids = {t.get("id") for t in threats if isinstance(t, dict) and t.get("id")}
+    warnings: list[str] = []
+    for m in mitigations:
+        tids = m.get("threat_ids") or []
+        kept = [tid for tid in tids if tid in valid_tids]
+        if len(kept) != len(tids):
+            dropped = [tid for tid in tids if tid not in valid_tids]
+            warnings.append(
+                f"mitigation {m.get('id')}: dropped {len(dropped)} dangling threat_id(s) "
+                f"{dropped} (no matching threat)"
+            )
+            m["threat_ids"] = kept
+    return mitigations, warnings
 
 
 def dedupe_mitigation_controls(threats: list[dict], mitigations: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -1932,6 +1966,12 @@ def main() -> int:
 
     mitigations = build_mitigations(threats)
     mitigations, mit_warnings = apply_mitigation_overrides(mitigations, sidecar_mo)
+    # Dangling-link prune (2026-06-28): sidecar additions can carry hallucinated
+    # threat_ids (juice-shop M-901→T-034). Drop them against the final threat set
+    # BEFORE dedupe unions threat_ids, so a survivor never inherits a dead link
+    # and the mitigation_links_resolve completeness gate passes.
+    mitigations, prune_warnings = prune_dangling_mitigation_threat_ids(threats, mitigations)
+    mit_warnings.extend(prune_warnings)
     # Control-dedup (2026-06-15): collapse identical-control mitigations (same
     # title fingerprint, distinct LLM-minted M-IDs) into one shared M-ID and
     # remap threats' mitigation_ids. Runs LAST so it sees the final mitigation
