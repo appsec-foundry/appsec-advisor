@@ -699,11 +699,71 @@ echo ""
 # Allow the claude subprocess to fail without tripping `set -e` so the
 # trap cleanup still runs and we can surface the real exit code.
 set +e
-eval "$CLAUDE_CMD"
+
+# Run claude in its OWN process group and wait on it, rather than as a
+# blocking foreground command. Two reasons:
+#   1. As a foreground child, terminal Ctrl-C reaches claude but bash *defers*
+#      its own INT trap until the child returns — so the parent can never
+#      escalate (a second/third Ctrl-C does nothing). Backgrounding + `wait`
+#      lets the trap fire immediately.
+#   2. `set -m` puts claude in its own process group (PGID == $!), so the
+#      terminal does NOT auto-deliver SIGINT to it; we forward signals
+#      explicitly via the trap. That gives us full control over escalation
+#      (graceful INT → TERM → KILL) and lets us signal the whole claude tree
+#      with `kill -<sig> -$CLAUDE_PID`.
+# stdin is redirected from /dev/null so the backgrounded group never blocks
+# on a terminal read (SIGTTIN).
+CLAUDE_PID=""
+SIGINT_COUNT=0
+on_interrupt() {
+    SIGINT_COUNT=$((SIGINT_COUNT + 1))
+    [ -n "$CLAUDE_PID" ] || return
+    if [ "$SIGINT_COUNT" -ge 3 ]; then
+        warn "Third interrupt — sending SIGKILL to the claude process group."
+        kill -KILL "-$CLAUDE_PID" 2>/dev/null || true
+    elif [ "$SIGINT_COUNT" -eq 2 ]; then
+        warn "Second interrupt — sending SIGTERM to the claude process group."
+        kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
+    else
+        warn "Interrupt — forwarding SIGINT to claude (graceful abort may take a few seconds; press Ctrl-C again to escalate)."
+        kill -INT "-$CLAUDE_PID" 2>/dev/null || true
+    fi
+}
+on_terminate() {
+    [ -n "$CLAUDE_PID" ] || return
+    kill -TERM "-$CLAUDE_PID" 2>/dev/null || true
+}
+
+set -m
+eval "$CLAUDE_CMD" < /dev/null &
+CLAUDE_PID=$!
+set +m
+
+trap 'on_interrupt' INT
+trap 'on_terminate' TERM HUP
+
+wait "$CLAUDE_PID"
 EXIT_CODE=$?
+# A trapped signal interrupts `wait` (exit > 128) before claude has finished
+# its own shutdown; keep waiting until the process actually exits so we report
+# its real code, not 128+signal.
+while [ "$EXIT_CODE" -gt 128 ] && kill -0 "$CLAUDE_PID" 2>/dev/null; do
+    wait "$CLAUDE_PID"
+    EXIT_CODE=$?
+done
+
+# Restore the tail-cleanup trap that the verbose/default branches installed.
+trap 'cleanup_tails' INT TERM HUP
 set -e
 
 cleanup_tails
+
+# If the run was interrupted by Ctrl-C, stop here instead of proceeding to
+# artifact parsing — the user asked to abort.
+if [ "$SIGINT_COUNT" -gt 0 ]; then
+    warn "Run aborted by user (exit $EXIT_CODE). Skipping post-run parsing."
+    exit "$EXIT_CODE"
+fi
 
 # ── Parse duration and files from log ──────────────────────────────
 RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
