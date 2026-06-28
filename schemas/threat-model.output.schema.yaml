@@ -672,6 +672,8 @@ properties:
             - architecture-coverage
             - threat-hypothesis
             - config-scan
+            # Static source-auth scanner — see threats-merged.schema.yaml.
+            - source-scan
             # M-3: Implementation-defect — see threats-merged.schema.yaml.
             - configuration-defect
         rule_id:

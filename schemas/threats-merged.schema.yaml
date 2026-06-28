@@ -102,6 +102,11 @@ properties:
             - architecture-coverage
             - threat-hypothesis
             - config-scan
+            # Static source-auth scanner output (source_auth_scanner.py →
+            # AUTHZ-001..008). Ingested by merge_threats.py:443 with file/line
+            # evidence. Lock-step with _shared_sources.CODE_LEVEL_SOURCES and
+            # threat-model.output.schema.yaml.
+            - source-scan
             # M-3: Implementation-defect threats that originate from an
             # otherwise-sound architecture. Examples: hardcoded secret in
             # source, mis-configured TLS, weak cookie flags. Distinct from

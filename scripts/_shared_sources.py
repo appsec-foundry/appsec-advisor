@@ -73,6 +73,16 @@ CODE_LEVEL_SOURCES: frozenset[str] = frozenset(
         "stride",
         "dep-scan",
         "known-vuln",
+        # Static source-auth scanner (source_auth_scanner.py → AUTHZ-001..008:
+        # BOLA / IDOR / mass assignment / JWT algorithm-confusion / missing
+        # route auth). Ingested by merge_threats._source_auth_finding_to_threat
+        # with file/line evidence — a code-level finding like the rest of this
+        # family. Was missing here while merge_threats.py:443 already emitted it,
+        # so triage_validate_ratings.py:411 flagged every source-auth threat as
+        # "not a valid source type" and the output schema enum lacked it (forcing
+        # the LLM to silently remap it to architectural-anti-pattern, losing
+        # provenance). Kept in lock-step with both schema enums.
+        "source-scan",
     }
 )
 """Sources tied to a concrete code-level finding with file/line evidence.
@@ -82,6 +92,11 @@ Eligible for CVSS, SARIF, and pentest-tasks emission."""
 CONFIG_DEFECT_SOURCES: frozenset[str] = frozenset(
     {
         "configuration-defect",
+        # Config/IaC scanner output (merge_threats.py:333 → config-scan).
+        # Already present in both schema enums but was absent from ALL_SOURCES,
+        # so triage_validate_ratings.py flagged config-scan threats as invalid
+        # sources. Same configuration-scanner family as configuration-defect.
+        "config-scan",
     }
 )
 """Configuration scanner output. Treated as code-level for CVSS but
