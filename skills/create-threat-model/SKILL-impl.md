@@ -2902,9 +2902,18 @@ if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" 
   # "Threat Model Renderer (Stage 2)"
   # and a prompt that:
   #   1. Sets RESUME_FROM_PHASE=11 so the agent skips Phases 1–10b entirely.
-  #   2. Lists the existing fragments under .fragments/ and instructs the agent
-  #      to author only the missing ones (cross-reference against the
-  #      sections-contract.yaml required-fragments list).
+  #   2. Scopes authoring DETERMINISTICALLY to what is not yet done. Instruct the
+  #      agent to first run
+  #        validate_fragment.py pre-render-gate "$OUTPUT_DIR" --json
+  #      and author ONLY fragments that are missing or schema-invalid — any
+  #      fragment already present under .fragments/ AND passing validation was
+  #      completed before the cut-off and MUST NOT be re-authored (it is the
+  #      on-disk progress record). This is the idempotent-skip rule from
+  #      phase-group-finalization.md → "Resume-aware authoring"; it keeps the
+  #      re-author cost at O(remaining), not O(all). Do NOT rely on the agent
+  #      eyeballing the fragment list against the contract — that re-authors the
+  #      whole heavy set (attack-walkthroughs.md, security-architecture.md fills)
+  #      on every resume, which is what makes wall-clock balloon vs net compute.
   #   3. Reuses .threats-merged.json + .triage-flags.json verbatim — no merge
   #      or triage re-run.
   #   4. Passes all original configuration vars (REPO_ROOT, OUTPUT_DIR,
@@ -3868,6 +3877,26 @@ Before the Completion Summary, run a deterministic broken-link check on the fina
 
 ```bash
 if [ "${DRY_RUN:-false}" != "true" ]; then
+    # Phantom-component gate (runs on EVERY path, incl. resume / Re-Render Loop
+    # where the build-phase auto-emitter pass — and its reclassify_components.py
+    # step — is NOT re-run). A leftover non-registered component (the hardcoded
+    # `backend-api` default from merge_threats._guess_component_from_path that
+    # reclassify never resolved) would otherwise reach the report and surface
+    # only as a cryptic `unresolved anchor #<id>` below. --check is read-only:
+    # the .md is already composed, so we fail closed with a clear, actionable
+    # message rather than silently rewriting the yaml.
+    PHANTOM_OUT=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/reclassify_components.py" \
+        --check --strict "$OUTPUT_DIR" 2>&1)
+    PHANTOM_RC=$?
+    if [ "$PHANTOM_RC" -eq 3 ]; then
+        printf '\n  ✗ PHANTOM COMPONENT — pipeline aborted before PDF/slug export.\n' >&2
+        printf '%s\n' "$PHANTOM_OUT" >&2
+        printf '\n  Fix: re-run the auto-emitter pass (reclassify_components.py\n' >&2
+        printf '       resolves the placeholder), or add the evidence file to a\n' >&2
+        printf '       components[].paths glob, then recompose.\n' >&2
+        exit 1
+    fi
+
     LINK_GATE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" toc_closure \
         "$OUTPUT_DIR/threat-model.md" 2>&1)
     LINK_GATE_RC=$?

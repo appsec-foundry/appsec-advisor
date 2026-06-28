@@ -434,6 +434,21 @@ Apply the five rules (specificity, falsifiability, information-density, scannabl
 
 Run the five-question pre-write self-check from `prose-samples.md` before saving each prose fragment. The QA reviewer rejects fragments whose prose reads as generic rhetoric or restates table content. A measure that shortens prose at the cost of information is **not** an improvement — keep facts, drop filler.
 
+**Resume-aware authoring — idempotent skip (do not re-author what is already done).** Substep 4 is the context-heaviest LLM step: on a long run the harness may compact/reset this session mid-authoring and resume it (logged as `SESSION_ABORTED_MIDRUN phase=11`). The `step=4 status=fragments_written` checkpoint only advances after *all* fragments validate, so a naive resume re-authors the whole set from scratch — the dominant cause of the net-compute-vs-wall-clock gap on aborted runs. **The on-disk fragments are the progress record:** a fragment already present under `.fragments/` *and* schema-valid was completed before the reset and MUST NOT be re-authored. So, on entry (and after every resume), determine your expected fragment set for this run (the LLM-authored rows in the table below — NOT the `DETERMINISTIC ONLY` rows, which the skill regenerates), then for each, skip it when it already passes validation:
+
+```bash
+# Per-fragment idempotent check before (re-)authoring a JSON fragment:
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" <type> "$OUTPUT_DIR/.fragments/<name>" \
+  && echo "SKIP <name> — already authored and valid" \
+  || echo "AUTHOR <name>"
+# Or compute the whole remaining set at once (writes .pre-render-report.json
+# with missing_required[] + failed[] — present-and-valid fragments appear in
+# neither, so they are the ones to skip):
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" pre-render-gate "$OUTPUT_DIR" --json
+```
+
+This keeps re-author cost at O(remaining), not O(all), across any number of resumes — without dropping conditional fragments (you still own the expected set; you only skip what is already complete). Author the missing/invalid fragments only, then proceed to the Substep-4b pre-render gate as usual.
+
 **How the LLM contributes content — and how it is constrained:**
 
 | Section | Fragment file | LLM writes | Renderer guarantees |

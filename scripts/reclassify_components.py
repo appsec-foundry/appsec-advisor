@@ -358,10 +358,27 @@ def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 1:
-        print("Usage: reclassify_components.py <output_dir>", file=sys.stderr)
+    # Optional flags (order-independent), exactly one positional <output_dir>:
+    #   --strict  exit non-zero (3) when a phantom component remains after
+    #             reclassification instead of only warning to stderr. A leftover
+    #             phantom dangles the §8/§6/§3 Component link at a missing anchor
+    #             (the broken-link gate would otherwise catch it late with a
+    #             cryptic "unresolved anchor #<id>" message). Use at gating
+    #             call sites; the best-effort auto-emitter pass omits it.
+    #   --check   read-only: detect + (with --strict) gate without rewriting the
+    #             yaml / .threats-merged.json. For the pre-PDF link gate, where
+    #             the report is already composed and a rewrite alone cannot cure
+    #             the already-rendered anchor — fail closed with a clear message.
+    strict = "--strict" in argv
+    check_only = "--check" in argv
+    positionals = [a for a in argv if not a.startswith("--")]
+    if len(positionals) != 1:
+        print(
+            "Usage: reclassify_components.py [--strict] [--check] <output_dir>",
+            file=sys.stderr,
+        )
         return 2
-    output_dir = Path(argv[0])
+    output_dir = Path(positionals[0])
     yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.is_file():
         print(f"reclassify_components: no yaml at {yaml_path}", file=sys.stderr)
@@ -375,8 +392,15 @@ def main(argv: list[str]) -> int:
         print(f"reclassify_components: {yaml_path} did not parse to a mapping", file=sys.stderr)
         return 1
 
+    # Snapshot phantoms in the ON-DISK state BEFORE reclassify mutates `data`.
+    # This is what the gate (--check) must judge: the composed report reflects
+    # the yaml as it is on disk, so a phantom here means a dangling §8 anchor
+    # ALREADY shipped — even if reclassify could resolve it in memory, that cure
+    # is worthless until the yaml is rewritten AND the report recomposed.
+    on_disk_phantoms = unresolved_phantoms(data)
+
     data, changes = reclassify(data)
-    if changes:
+    if changes and not check_only:
         yaml_path.write_text(
             yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
             encoding="utf-8",
@@ -388,21 +412,38 @@ def main(argv: list[str]) -> int:
             f"reclassify_components: reassigned {len(changes)} threat(s) "
             f"[{details}{more}]; updated .threats-merged.json={n_merged}"
         )
+    elif changes and check_only:
+        details = ", ".join(f"{c['id']}:{c['from']}→{c['to']}" for c in changes[:8])
+        more = f" (+{len(changes) - 8} more)" if len(changes) > 8 else ""
+        print(
+            f"reclassify_components: --check: {len(changes)} threat(s) WOULD be "
+            f"reassigned [{details}{more}] (no files written)"
+        )
     else:
         print("reclassify_components: no tier-confusion drift found — nothing to reassign")
 
-    # Postcondition: every threats[].component must now be a registered
-    # component id. A leftover phantom would dangle the §8/§6/§3 Component link
-    # at a missing anchor — surface it loudly rather than ship it silently.
-    leftovers = unresolved_phantoms(data)
+    # Postcondition: every threats[].component must be a registered component id.
+    # A leftover phantom dangles the §8/§6/§3 Component link at a missing anchor.
+    #   • --check (gate): judge the on-disk state — what the composed report
+    #     reflects. Catches the "reclassify was skipped on resume / Re-Render
+    #     Loop" case, where the cure exists in memory but never reached disk.
+    #   • normal (curing): judge the post-reassignment state — only truly
+    #     unresolvable phantoms (evidence file matches no component glob) remain.
+    leftovers = on_disk_phantoms if check_only else unresolved_phantoms(data)
     if leftovers:
         sample = ", ".join(f"{tid}:{cid}" for tid, cid in leftovers[:6])
-        print(
-            f"reclassify_components: WARNING {len(leftovers)} threat(s) still carry a "
+        # "(on disk) carry" for the read-only gate; "still carry" after a curing
+        # pass tried and failed to resolve them.
+        where = "(on disk) carry a" if check_only else "still carry a"
+        msg = (
+            f"reclassify_components: {len(leftovers)} threat(s) {where} "
             f"non-registered component [{sample}] — their §8 Component link will "
-            f"dangle. Check components[].paths cover the evidence files.",
-            file=sys.stderr,
+            f"dangle. Check components[].paths cover the evidence files."
         )
+        if strict:
+            print(f"ERROR {msg}", file=sys.stderr)
+            return 3
+        print(f"WARNING {msg}", file=sys.stderr)
     return 0
 
 
