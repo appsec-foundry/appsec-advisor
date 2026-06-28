@@ -1,5 +1,6 @@
 """Tests for scripts/source_auth_scanner.py (deterministic broken-access-control
-scanner, data/source-auth-checks.yaml → AUTHZ-001..008) and its wiring.
++ injection scanner, data/source-auth-checks.yaml → AUTHZ-001..102 + INJ-001..003)
+and its wiring.
 
 The scanner produces `.source-auth-findings.json`, ingested by
 `merge_threats.py:_load_source_auth_findings`. The producer is run by the
@@ -166,6 +167,60 @@ def test_authz008_sensitive_route_without_auth(tmp_path: Path) -> None:
 def test_authz008_suppressed_by_auth_middleware(tmp_path: Path) -> None:
     (tmp_path / "server.js").write_text("const app = express();\napp.post('/api/Users', isAuthorized(), createUser);\n")
     assert "AUTHZ-008" not in _ids(_scan(tmp_path))
+
+
+# ---------------------------------------------------------------------------
+# Injection family (INJ-001 SQLi / INJ-002 cmdi / INJ-003 SSRF)
+# ---------------------------------------------------------------------------
+
+
+def test_inj001_sql_injection_interpolated_query(tmp_path: Path) -> None:
+    (tmp_path / "login.js").write_text(
+        "app.post('/login', async (req, res) => {\n"
+        "  const sql = `SELECT id FROM users WHERE email = '${req.body.email}'`\n"
+        "  return db.query(sql)\n"
+        "})\n"
+    )
+    assert "INJ-001" in _ids(_scan(tmp_path))
+
+
+def test_inj001_not_triggered_by_parameterized_query(tmp_path: Path) -> None:
+    """A bound/placeholder query interpolates nothing into the SQL string."""
+    (tmp_path / "login.js").write_text(
+        "app.post('/login', async (req, res) => {\n"
+        "  return db.query('SELECT id FROM users WHERE email = ?', [req.body.email])\n"
+        "})\n"
+    )
+    assert "INJ-001" not in _ids(_scan(tmp_path))
+
+
+def test_inj002_command_injection_interpolated_exec(tmp_path: Path) -> None:
+    (tmp_path / "export.js").write_text(
+        "app.post('/admin/export', (req, res) => {\n"
+        "  exec(`tar -czf /tmp/out.tgz ${req.body.path}`, cb)\n"
+        "})\n"
+    )
+    assert "INJ-002" in _ids(_scan(tmp_path))
+
+
+def test_inj002_not_triggered_by_execfile_argv(tmp_path: Path) -> None:
+    """execFile with an argv array runs no shell, so it must not match."""
+    (tmp_path / "export.js").write_text(
+        "app.post('/admin/export', (req, res) => {\n"
+        "  execFile('tar', ['-czf', '/tmp/out.tgz', req.body.path], cb)\n"
+        "})\n"
+    )
+    assert "INJ-002" not in _ids(_scan(tmp_path))
+
+
+def test_inj003_ssrf_request_controlled_url(tmp_path: Path) -> None:
+    (tmp_path / "webhook.js").write_text(
+        "app.post('/webhooks/preview', async (req, res) => {\n"
+        "  const r = await fetch(req.body.url)\n"
+        "  res.json(await r.json())\n"
+        "})\n"
+    )
+    assert "INJ-003" in _ids(_scan(tmp_path))
 
 
 def test_test_files_are_excluded(tmp_path: Path) -> None:

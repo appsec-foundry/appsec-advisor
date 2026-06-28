@@ -365,8 +365,8 @@ def _config_finding_to_threat(f: dict) -> dict:
 # scanner is opt-in and the merger degrades gracefully when absent.
 # ---------------------------------------------------------------------------
 
-# AUTHZ check-id → STRIDE category. Conservative mapping — the scanner
-# produces deterministic findings whose STRIDE class is fixed by the
+# Source-scanner check-id → STRIDE category. Conservative mapping — the
+# scanner produces deterministic findings whose STRIDE class is fixed by the
 # pattern semantics (so we do not have to LLM-classify after the fact).
 _AUTHZ_TO_STRIDE: dict[str, str] = {
     "AUTHZ-001": "Tampering",  # BFLA via attacker-controlled owner ID
@@ -377,6 +377,9 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
     "AUTHZ-006": "Spoofing",  # JWT decode without verify
     "AUTHZ-007": "Spoofing",  # express-jwt without algorithms
     "AUTHZ-008": "Elevation of Privilege",  # Missing auth middleware
+    "INJ-001": "Tampering",  # SQL injection — request data in query string
+    "INJ-002": "Elevation of Privilege",  # Command injection — shell RCE
+    "INJ-003": "Information Disclosure",  # SSRF — reach internal targets
 }
 
 

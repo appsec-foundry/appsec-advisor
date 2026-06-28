@@ -98,9 +98,10 @@ $defs:
         type: string
         pattern: "^SAF-[0-9]{3,4}$"
       check_id:
-        # AUTHZ-NNN from data/source-auth-checks.yaml
+        # AUTHZ-NNN (auth/authz) or INJ-NNN (injection family) from
+        # data/source-auth-checks.yaml
         type: string
-        pattern: "^AUTHZ-[0-9]{3}$"
+        pattern: "^(?:AUTHZ|INJ)-[0-9]{3}$"
       finding_type_id:
         type: ["string", "null"]
         pattern: "^FT-[0-9]{3}$|^$"

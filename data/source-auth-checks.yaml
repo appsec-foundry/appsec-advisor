@@ -1,4 +1,4 @@
-# source-auth-checks.yaml — deterministic source-code authorization checks
+# source-auth-checks.yaml — deterministic source-code authorization + injection checks
 #
 # Used by `scripts/source_auth_scanner.py`. Each check targets a specific
 # privilege-escalation / broken-access-control pattern in source code
@@ -579,3 +579,138 @@ checks:
       claims (sub, roles, scope) with no key. Only the *Jws / parseSignedClaims
       variants verify the signature.
     remediation: "Replace parseClaimsJwt/parsePlaintextJwt with parseClaimsJws/parseSignedClaims and a configured signing key; reject unsigned tokens."
+
+  # ===================================================================
+  # Injection family (INJ-NNN) — deterministic source-code injection sinks.
+  # These complement the auth checks above: SQL injection, OS command
+  # injection, and SSRF have very low false-positive signatures when the
+  # untrusted value reaches the sink through a template literal / direct
+  # request field, so they produce reproducible per-line findings the LLM
+  # would otherwise emit only by chance. Node/Express + TypeScript scope.
+  # ===================================================================
+
+  # INJ-001 — SQL injection via string-interpolated query
+  - id: INJ-001
+    name: "SQL injection — request data interpolated into a SQL string"
+    description: >
+      A SQL statement is built as a template literal that interpolates a
+      value (typically req.body / req.query / req.params) directly into the
+      query text instead of using a parameterized / bound placeholder.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+      - "**/frontend/**"
+      - "**/client/**"
+    # Backtick template literal carrying a SQL DML keyword AND a ${...}
+    # interpolation. Parameterized queries (placeholders outside the SQL
+    # string) do not interpolate inside the backtick, so they do not match.
+    pattern: '(?is)`[^`]*\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^`]*\$\{[^}]*\}'
+    counter_scope: line
+    counter_window: 0
+    counter_patterns: []
+    severity_if_violated: Critical
+    cwe: CWE-89
+    finding_type: FT-001
+    breach_vector: "Internet Anon"
+    rationale: >
+      Interpolating request-controlled text into a SQL statement lets an
+      attacker alter the query — exfiltrating or modifying arbitrary rows,
+      bypassing authentication, or escalating to full database control.
+    remediation: "Use parameterized / bound queries (placeholders + a values array, or an ORM's safe query builder); never interpolate request data into the SQL string."
+
+  # INJ-002 — OS command injection via interpolated child_process exec
+  - id: INJ-002
+    name: "Command injection — request data interpolated into a shell command"
+    description: >
+      child_process exec / execSync is invoked with a template literal that
+      interpolates request-controlled data into the shell command line.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+      - "**/frontend/**"
+      - "**/client/**"
+    # exec(`…${…}`) — the interpolating shell form. execFile/execFileSync
+    # (argv array, no shell) do not match `exec\s*\(`.
+    pattern: '(?is)\b(?:child_process\.)?(?:exec|execSync)\s*\(\s*`[^`]*\$\{[^}]*\}'
+    counter_scope: line
+    counter_window: 0
+    counter_patterns: []
+    severity_if_violated: Critical
+    cwe: CWE-78
+    finding_type: FT-003
+    breach_vector: "Internet Anon"
+    rationale: >
+      Interpolating request data into a shell command lets an attacker chain
+      arbitrary OS commands (`; rm -rf`, backticks, `$( )`), yielding remote
+      code execution on the server.
+    remediation: "Use execFile / spawn with an argument array (no shell), or strictly validate and allowlist the input; never build a shell string from request data."
+
+  # INJ-003 — SSRF via request-controlled outbound URL
+  - id: INJ-003
+    name: "SSRF — outbound request to a request-controlled URL"
+    description: >
+      An outbound HTTP call (fetch / axios / got / http.get) is made directly
+      to a URL taken from req.body / req.query / req.params with no allowlist.
+    file_patterns:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+    exclude_file_patterns:
+      - "**/*.test.*"
+      - "**/*.spec.*"
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/__tests__/**"
+      - "**/__mocks__/**"
+      - "**/fixtures/**"
+      - "**/node_modules/**"
+      - "**/dist/**"
+      - "**/build/**"
+      - "**/coverage/**"
+      - "**/frontend/**"
+      - "**/client/**"
+    pattern: '(?is)\b(?:fetch|axios(?:\.\w+)?|got|superagent|http\.get|https\.get|request)\s*\(\s*req\.(?:body|query|params)\b'
+    counter_scope: line
+    counter_window: 0
+    counter_patterns: []
+    severity_if_violated: High
+    cwe: CWE-918
+    finding_type: FT-070
+    breach_vector: "Internet Anon"
+    rationale: >
+      Fetching an attacker-supplied URL server-side lets the attacker reach
+      internal services, cloud metadata endpoints, or the loopback interface
+      — pivoting past the network perimeter the application sits behind.
+    remediation: "Validate the URL against a strict allowlist of hosts/schemes, resolve and block private/link-local ranges, and disable redirects to internal targets."
