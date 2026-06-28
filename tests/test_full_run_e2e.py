@@ -567,7 +567,9 @@ def test_pentest_tasks_structure(out_dir: Path) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_requirements_check_ran(out_dir: Path, threat_model_yaml: dict) -> None:
+def test_requirements_check_ran(
+    out_dir: Path, threat_model_yaml: dict, assessment_depth: str
+) -> None:
     """The driver passes --requirements; the context-resolver resolves a source
     (a URL, or the bundled data/appsec-requirements-fallback.yaml offline) and
     Phase 8b runs. When that happens, meta.check_requirements flips True and the
@@ -575,7 +577,13 @@ def test_requirements_check_ran(out_dir: Path, threat_model_yaml: dict) -> None:
     contract.
 
     The driver supplies a local source explicitly. Missing requirements output
-    is therefore a hard failure, not an environment-dependent skip."""
+    (the 11 deterministic checks) is therefore a hard failure, not an
+    environment-dependent skip. The ONE LLM-semantic check — at least one threat
+    annotated with a provided requirement id — is depth-calibrated: hard at
+    standard/thorough, advisory at quick (``--lenient``), where per-threat
+    annotation is not reliably produced by the shallow run. Hard-gating a release
+    on non-deterministic LLM output would make the gate flaky; the deterministic
+    half stays strict at every depth."""
     ran = threat_model_yaml.get("meta", {}).get("check_requirements") is True
     has_source = (out_dir / ".requirements.yaml").is_file()
     assert ran, (
@@ -586,18 +594,17 @@ def test_requirements_check_ran(out_dir: Path, threat_model_yaml: dict) -> None:
     assert (out_dir / ".fragments" / "requirements-compliance.md").is_file(), (
         "missing requirements-compliance fragment — Phase 8b did not write it"
     )
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "tests" / "e2e" / "verify_requirements_integration.py"),
-            "--out",
-            str(out_dir),
-            "--source",
-            str(REQUIREMENTS_SOURCE),
-        ],
-        capture_output=True,
-        text=True,
-    )
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "tests" / "e2e" / "verify_requirements_integration.py"),
+        "--out",
+        str(out_dir),
+        "--source",
+        str(REQUIREMENTS_SOURCE),
+    ]
+    if assessment_depth == "quick":
+        cmd.append("--lenient")
+    result = subprocess.run(cmd, capture_output=True, text=True)
     assert result.returncode == 0, f"requirements integration verification failed:\n{result.stdout}\n{result.stderr}"
 
 

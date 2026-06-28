@@ -3003,6 +3003,17 @@ def check_evidence_integrity(output_dir: Path, repo_root: Path) -> Report:
             candidates.append(repo_root_resolved / ev_file)
         resolved = next((p for p in candidates if p.exists() and p.is_file()), None)
         if resolved is None:
+            # Config-posture "absence" findings (iac_type set, no specific line)
+            # legitimately cite a deliberately-MISSING artifact — the absence IS
+            # the evidence (e.g. IAC-050 "package-lock.json not committed",
+            # IAC-030 "dependabot.yml does not cover npm"). Flagging these as a
+            # hallucinated evidence file is a false positive. A genuinely
+            # hallucinated SOURCE citation has no iac_type (or carries a line
+            # number) and is still flagged below.
+            line_no = ev.get("line")
+            if t.get("iac_type") and not (isinstance(line_no, int) and line_no > 0):
+                report.ok += 1
+                continue
             report.issues.append(f"{tid}: evidence_missing_file — {ev_file}")
             continue
         report.ok += 1

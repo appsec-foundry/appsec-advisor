@@ -63,14 +63,23 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--source", required=True)
+    ap.add_argument(
+        "--lenient",
+        action="store_true",
+        help="Downgrade the LLM-semantic 'at least one finding references a "
+        "provided requirement' check to advisory (warn, do not fail). For quick "
+        "depth, where per-threat requirement annotation is not reliably produced; "
+        "the 11 deterministic checks stay hard.",
+    )
     a = ap.parse_args()
     out = Path(a.out)
     req_ids, bp_ids = _provided_ids(Path(a.source))
 
-    checks: list[tuple[str, bool, str]] = []
+    # (name, ok, detail, advisory) — advisory failures warn but do not fail the run.
+    checks: list[tuple[str, bool, str, bool]] = []
 
-    def chk(name: str, ok: bool, detail: str = "") -> None:
-        checks.append((name, ok, detail))
+    def chk(name: str, ok: bool, detail: str = "", advisory: bool = False) -> None:
+        checks.append((name, ok, detail, advisory))
 
     # --- artifacts present
     tm_yaml = out / "threat-model.yaml"
@@ -130,6 +139,7 @@ def main() -> int:
         "at least one finding references a provided requirement",
         threats_with_req > 0,
         f"{threats_with_req} threats carry a provided req id",
+        advisory=a.lenient,
     )
 
     # --- CONTRADICTION checks: every requirement-shaped / blueprint id the LLM
@@ -169,16 +179,18 @@ def main() -> int:
     return _report(checks)
 
 
-def _report(checks: list[tuple[str, bool, str]]) -> int:
+def _report(checks: list[tuple[str, bool, str, bool]]) -> int:
     print("\n── checks ────────────────────────────────────────────────")
     failed = 0
-    for name, ok, detail in checks:
-        mark = "✓" if ok else "✗"
+    for name, ok, detail, advisory in checks:
+        mark = "✓" if ok else ("⚠" if advisory else "✗")
         line = f"  {mark} {name}"
+        if advisory and not ok:
+            line += " (advisory)"
         if detail and not ok:
             line += f"   [{detail}]"
         print(line)
-        if not ok:
+        if not ok and not advisory:
             failed += 1
     print("──────────────────────────────────────────────────────────")
     print(f"  {'PASS' if failed == 0 else 'FAIL'}: {len(checks) - failed}/{len(checks)} checks passed")

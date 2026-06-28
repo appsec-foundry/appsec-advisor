@@ -1111,6 +1111,50 @@ def test_evidence_integrity_missing_file(tmp_path: Path):
     assert any("evidence_missing_file" in i for i in report.issues)
 
 
+def test_evidence_integrity_config_absence_not_flagged(tmp_path: Path):
+    """A config-posture absence finding (iac_type set, line 0) legitimately
+    cites a deliberately-missing artifact — the absence IS the evidence (e.g.
+    IAC-050 package-lock.json not committed). It must not be flagged as a
+    hallucinated evidence_missing_file."""
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps(
+            {
+                "threats": [
+                    {
+                        "t_id": "T-012",
+                        "iac_type": "npm_config",
+                        "evidence": {"file": "package-lock.json", "line": 0},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = qa.check_evidence_integrity(tmp_path, tmp_path)
+    assert not any("evidence_missing_file" in i for i in report.issues)
+
+
+def test_evidence_integrity_iac_with_line_still_flagged(tmp_path: Path):
+    """The carve-out is line-0 only: an iac_type finding that cites a real line
+    in a non-existent file is still a hallucinated citation and IS flagged."""
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps(
+            {
+                "threats": [
+                    {
+                        "t_id": "T-099",
+                        "iac_type": "dockerfile",
+                        "evidence": {"file": "ghost.Dockerfile", "line": 7},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = qa.check_evidence_integrity(tmp_path, tmp_path)
+    assert any("evidence_missing_file" in i for i in report.issues)
+
+
 def test_evidence_integrity_line_out_of_range(tmp_path: Path):
     code = tmp_path / "small.py"
     code.write_text("only one line\n", encoding="utf-8")
