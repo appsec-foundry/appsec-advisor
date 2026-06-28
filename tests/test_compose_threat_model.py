@@ -3423,6 +3423,36 @@ def test_linkify_no_dot_when_severity_unknown(tmp_path: Path) -> None:
     assert ctx.linkify_with_label("T-099").startswith("[F-099]")
 
 
+def test_short_label_normalises_tnnn_to_fnnn(tmp_path: Path) -> None:
+    """`linkify_with_short_label` exposes F-NNN (the user-visible form) and the
+    f-anchor when handed a T-NNN ref, mirroring linkify_with_label."""
+    ctx = _dot_ctx(tmp_path, [{"id": "T-002", "title": "Hardcoded key"}])
+    out = ctx.linkify_with_short_label("T-002")
+    assert out.startswith("[F-002](#f-002) (")
+
+
+def test_short_label_empty_degrades_to_bare_link(tmp_path: Path) -> None:
+    """No title available → `linkify_with_short_label` emits just the link with
+    no `(short_label)` parens."""
+    ctx = _dot_ctx(tmp_path, [])  # no threats → no label
+    assert ctx.linkify_with_short_label("T-099") == "[F-099](#f-099)"
+
+
+def test_linkify_bare_cwes_links_bare_reference() -> None:
+    out = compose._linkify_bare_cwes("Vulnerable to CWE-79 in the handler.")
+    assert "[CWE-79](https://cwe.mitre.org/data/definitions/79.html)" in out
+
+
+def test_linkify_bare_cwes_skips_already_linked() -> None:
+    src = "See [CWE-89](https://cwe.mitre.org/data/definitions/89.html) here."
+    assert compose._linkify_bare_cwes(src) == src
+
+
+def test_linkify_bare_cwes_skips_fenced_code() -> None:
+    src = "```text\nCWE-22 path traversal\n```\n"
+    assert compose._linkify_bare_cwes(src) == src
+
+
 def test_abuse_chain_ms_note_names_findings_and_chains(tmp_path: Path) -> None:
     ctx = _dot_ctx(
         tmp_path,
