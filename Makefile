@@ -116,7 +116,8 @@ check:  ## Continuous gate: lint, format, config, drift, full test suite
 .PHONY: release-check
 release-check:  ## Release-boundary gate: `check` + version/tag/changelog consistency
 	@mkdir -p .cache
-	@bash -c 'set -o pipefail; { $(MAKE) --no-print-directory check && python3 scripts/check_release_meta.py; } 2>&1 | tee .cache/release-check.log'
+	@bash scripts/run-interruptible.sh .cache/release-check.log \
+		bash -c '$(MAKE) --no-print-directory check && python3 scripts/check_release_meta.py'
 
 .PHONY: release-all
 release-all:  ## Full pre-release sequence: release-check then a live e2e-full (quick)
