@@ -76,9 +76,16 @@ def test_create_fallback_is_schema_valid(tmp_path: Path) -> None:
     2026-06-28 e2e failure where the fallback emitted an empty `summary` / no
     `generated_at`, so validate_intermediate.py rejected it."""
     threats = [
-        {"t_id": "F-001", "title": "X", "primary_cwe": "CWE-89", "risk": "High",
-         "impact": "High", "likelihood": "Medium", "scenario": "s",
-         "evidence": {"file": "a.ts", "line": 1}},
+        {
+            "t_id": "F-001",
+            "title": "X",
+            "primary_cwe": "CWE-89",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+            "scenario": "s",
+            "evidence": {"file": "a.ts", "line": 1},
+        },
     ]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
     assert not (tmp_path / ".triage-flags.json").is_file()  # create-owner path
@@ -93,9 +100,14 @@ def test_create_fallback_is_schema_valid(tmp_path: Path) -> None:
     assert summary["total_flags"] == len(flags.get("flags") or [])
     # Cross-check against the authoritative schema validator.
     val = subprocess.run(
-        [sys.executable, str(PLUGIN_ROOT / "scripts" / "validate_intermediate.py"),
-         "triage_flags", str(tmp_path / ".triage-flags.json")],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "scripts" / "validate_intermediate.py"),
+            "triage_flags",
+            str(tmp_path / ".triage-flags.json"),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert val.returncode == 0, f"schema-invalid fallback:\n{val.stdout}\n{val.stderr}"
 

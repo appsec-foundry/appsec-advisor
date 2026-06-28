@@ -196,9 +196,7 @@ def test_inj001_not_triggered_by_parameterized_query(tmp_path: Path) -> None:
 
 def test_inj002_command_injection_interpolated_exec(tmp_path: Path) -> None:
     (tmp_path / "export.js").write_text(
-        "app.post('/admin/export', (req, res) => {\n"
-        "  exec(`tar -czf /tmp/out.tgz ${req.body.path}`, cb)\n"
-        "})\n"
+        "app.post('/admin/export', (req, res) => {\n  exec(`tar -czf /tmp/out.tgz ${req.body.path}`, cb)\n})\n"
     )
     assert "INJ-002" in _ids(_scan(tmp_path))
 

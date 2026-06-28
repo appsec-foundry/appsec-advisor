@@ -567,9 +567,7 @@ def test_pentest_tasks_structure(out_dir: Path) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_requirements_check_ran(
-    out_dir: Path, threat_model_yaml: dict, assessment_depth: str
-) -> None:
+def test_requirements_check_ran(out_dir: Path, threat_model_yaml: dict, assessment_depth: str) -> None:
     """The driver passes --requirements; the context-resolver resolves a source
     (a URL, or the bundled data/appsec-requirements-fallback.yaml offline) and
     Phase 8b runs. When that happens, meta.check_requirements flips True and the
