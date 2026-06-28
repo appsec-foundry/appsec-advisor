@@ -1,6 +1,6 @@
 # Org Profiles
 
-Org profiles let AppSec teams ship organisation-specific defaults — presets, requirements source, optional markdown context, skill toggles — alongside the plugin **without forking the core**. Profiles are validated and resolved deterministically before Stage 1 of any scan. What they can and cannot change is listed below.
+Org profiles let AppSec teams ship organisation-specific defaults (presets, requirements source, optional markdown context, skill toggles) alongside the plugin **without forking the core**. Profiles are validated and resolved deterministically before Stage 1 of any scan. What they can and cannot change is listed below.
 
 The current profile contract is `api_version: appsec-advisor.org-profile/v2`, which adds the `actors:` block. A v1 profile (no `actors:` block) loads as if it declared `actors: {inherit_defaults: true}`, so no migration is required.
 
@@ -152,7 +152,7 @@ presets:
     guardrails: { max_wall_time: 1h, max_cost_usd: 20, tracing: true }
 ```
 
-Semantic rules enforced by `scripts/validate_org_profile.py` on top of JSON Schema:
+The following semantic rules also apply, on top of JSON Schema:
 
 - `default_preset` must exist in `presets`.
 - `compatibility.core` must accept the current plugin version.
@@ -165,11 +165,11 @@ Semantic rules enforced by `scripts/validate_org_profile.py` on top of JSON Sche
 
 ## Actors
 
-Org profiles can extend or restrict the plugin's default actor library (ACT-D-01 through ACT-D-09) via the `actors:` block (v2+ profiles):
+Org profiles can extend or restrict the plugin's default actor classes (ACT-D-01 through ACT-D-09) via the `actors:` block (v2+ profiles):
 
 ```yaml
 actors:
-  inherit_defaults: true              # keep plugin's 9 default actors (default)
+  inherit_defaults: true              # keep plugin's 9 default actor classes (default)
   disable: []                          # explicitly deactivate by ID (with audit)
   add: actors/*.yaml                  # glob for custom actor definition files
 ```
@@ -179,7 +179,7 @@ Actor definition files live in `org-profile/<name>/actors/` (parallel to `contex
 ```yaml
 # org-profile/acme/actors/insiders.yaml
 actors:
-  - id: ACT-E-1
+  - id: ACT-E-01
     label: acme-privileged-contractor
     access: [internal-network, ci-cd-secrets, staging-env]
     capabilities:
@@ -200,7 +200,7 @@ actors:
 
 **`inherit_defaults: false`** (regulated environments): the tool reports which of the 9 default actor classes are covered by your enterprise actors. Use `replaces: ACT-D-NN` on custom actors to mark a class as covered.
 
-**v2 profile fingerprint:** includes all actor definition files — changes to actor files invalidate the actor-layer cache and trigger a per-component slice re-run (not a full recon re-run).
+**v2 profile fingerprint:** includes all actor definition files, so editing an actor file re-runs only the affected per-component slices, not a full scan.
 
 **v1 → v2 migration:** a v1 profile (no `actors:` block) is treated as `actors: {inherit_defaults: true}`. No manual migration step is required.
 
@@ -214,7 +214,7 @@ actors:
 - hashed with SHA-256 for cache invalidation
 - wrapped with an explicit *untrusted reference data* preamble before it reaches any agent context
 
-The loader emits `.threat-modeling-context.md` (wrapped markdown) and `.org-context-manifest.json` (sha256 + bytes + loaded/skipped reasons).
+The loader emits the wrapped markdown plus a manifest recording which documents were loaded or skipped and why.
 
 ## Skill toggles
 
@@ -224,13 +224,13 @@ User-facing skills can be soft-disabled with a reason. The plan distinguishes th
 - **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.
 - **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org profile can warn but never hard-blocks them. Exit code 20.
 
-Each skill calls `scripts/check_skill_enabled.py <skill>` at the top of its preflight. With no active org profile the script always returns "enabled" so legacy invocations are bit-identical.
+Each skill checks whether it is enabled before running. With no active org profile every skill is treated as enabled, so existing invocations behave exactly as before.
 
 These toggles are a runtime governance layer, not a packaging boundary. To make a skill or hook unavailable in an internal artifact, use the packaging runbook's `org-profile/package-policy.yaml`; the packager removes those directories or hook registrations before validation and archive creation.
 
 ## Security Coach
 
-`security_coach.enabled_by_default: true` in the profile activates the coach without requiring `APPSEC_COACH=1` or `hooks/steering_keywords.json` `enabled: true`. Precedence stays strict — the environment variable still wins, including as a kill switch (`APPSEC_COACH=0`).
+`security_coach.enabled_by_default: true` in the profile activates the coach without requiring `APPSEC_COACH=1`. Precedence stays strict — the environment variable still wins, including as a kill switch (`APPSEC_COACH=0`).
 
 `security_coach.max_requirements_per_topic` overrides the static default (3) for per-prompt requirement injection.
 

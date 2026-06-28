@@ -1,6 +1,6 @@
 # Non-interactive Mode (Headless runs for CI/CD, scheduled scans, and AppSec ops)
 
-Runs the plugin via Claude Code's headless mode (`claude -p`) with the same plugin, agents, and skills as interactive mode, but driven from a shell script instead of a chat session. The wrapper `scripts/run-headless.sh` handles authentication detection, permission-mode selection, duration/budget caps, and exit-code propagation so downstream CI steps can gate on the result.
+Runs the plugin via Claude Code's headless mode (`claude -p`) with the same plugin, agents, and skills as interactive mode, but driven from a shell script instead of a chat session. The wrapper `scripts/run-headless.sh` handles authentication detection, permission-mode selection, duration/budget caps, and exit-code propagation. Downstream CI steps can then gate on the result.
 
 The same wrapper covers three non-interactive scenarios: local full-assessments from a developer shell, AppSec-team batch runs across external repositories, and scheduled CI/CD pipelines. The decision matrix below maps goals to sections.
 
@@ -44,7 +44,7 @@ Each row links to the section covering that scenario.
 | Explore / cap spend before a full run | Anyone | [A3](#a3-cost-limited--time-capped-assessments) | <$1 (dry-run) |
 | Verify that `[SEC-*]` requirements are implemented | Dev or AppSec | [A4](#a4-requirements-compliance-check-standalone) | ~$0.50–2 / 3–8 min |
 | Deep-scan with Opus, SCA, and custom requirements | AppSec deep dive | [A5](#a5-full-featured-assessment) | ~$10–20 / 40+ min |
-| **Scheduled CI scan** (weekly/daily) | CI pipeline | [B3](#b3-github-actions) / [B4](#b4-gitlab-ci) / [B5](#b5-jenkins) | ~$2–5 / 25 min |
+| **Scheduled CI scan** (weekly/daily) | CI pipeline | [B3](#b3-github-actions) / [B4](#b4-gitlab-ci) / [B5](#b5-jenkins) | ~$2–5 / 25–40 min |
 | **Gate a PR** on new Critical/High findings | CI pipeline | [B6](#b6-pr-gating) | ~$0.30–1.50 / 2–8 min |
 
 <a id="minimal-example"></a>
@@ -93,7 +93,7 @@ Developer workflow: run the full assessment from your repo root. Output lands in
 cd /path/to/my-project
 /path/to/appsec-advisor/scripts/run-headless.sh
 
-# With YAML and SARIF exports for downstream tooling
+# Add a SARIF export for downstream tooling (YAML is emitted by default)
 /path/to/appsec-advisor/scripts/run-headless.sh --sarif
 
 # Dry-run first to preview scope and estimated complexity
@@ -101,9 +101,6 @@ cd /path/to/my-project
 
 # Re-analyse only affected components after code changes
 /path/to/appsec-advisor/scripts/run-headless.sh --incremental
-
-# Full assessment with SARIF export
-/path/to/appsec-advisor/scripts/run-headless.sh --sarif
 ```
 
 Result: `docs/security/threat-model.md` (+ `.yaml`, `.sarif.json` when requested). YAML is always emitted unless `--no-yaml` is passed, because subsequent incremental runs need it as baseline.
@@ -148,7 +145,7 @@ When `--output` points outside the target repo, nothing is written into the team
 
 ### A3. Cost-limited / time-capped assessments
 
-`--max-budget` caps API spend; `--max-duration` caps wall-clock time. Either flag alone is a graceful stop — combine them for defence-in-depth in untrusted / long-running environments.
+`--max-budget` caps API spend; `--max-duration` caps wall-clock time. Either flag alone is a graceful stop. Combine both to cap spend and runtime at once in untrusted or long-running environments.
 
 ```bash
 # Free preview — dry-run uses minimal tokens, no model dispatch
@@ -175,7 +172,7 @@ When `--output` points outside the target repo, nothing is written into the team
 When the budget or duration limit fires, Claude Code stops gracefully and writes a checkpoint. Use `--resume` to continue:
 
 ```bash
-# Budget ran out at Phase 7 — resume from the last checkpoint
+# Budget ran out mid-run — resume from the last checkpoint
 ./scripts/run-headless.sh \
   --repo /repos/large-monorepo \
   --max-budget 5 \
@@ -253,7 +250,7 @@ A full threat model takes 15–40 minutes and incurs non-trivial API cost. The t
 | Release pipeline | Recommended — blocking on Critical | `--full --fail-on critical` |
 | `workflow_dispatch` (manual) | Recommended — when reviewer requests | any mode |
 
-`--incremental` with no changes detected returns in ~60 s and ~$0.05 — fine for a gate but the result is "no new findings", not "repo is clean". Keep a periodic full scan alongside.
+`--incremental` with no changes detected returns in ~60 s and ~$0.05. That is fine for a gate, but the result is "no new findings", not "repo is clean". Keep a periodic full scan alongside.
 
 <a id="b2-cost--duration-planning"></a>
 
@@ -423,7 +420,7 @@ pipeline {
 
 ### B6. Pull-request gating (`--pr-mode --fail-on`)
 
-`--pr-mode` produces a focused *delta* report for a merge request: implies `--incremental`, uses `--base <ref>` (target branch) to compute the diff, and emits only threats introduced in the PR.
+`--pr-mode` produces a focused *delta* report for a merge request: implies `--incremental`, uses `--base <ref>` (set it to the PR's target branch, e.g. `origin/main`) to compute the diff, and emits only threats introduced in the PR.
 
 `--fail-on <level>` turns the result into a build gate — the script exits non-zero when the delta contains at least one threat at or above `<level>` (`critical` | `high` | `medium`).
 
@@ -479,7 +476,7 @@ Incremental runs need a prior `threat-model.yaml` as baseline. In CI the workspa
   --max-budget 3
 ```
 
-Alternatively, use the native cache step your CI provider offers (examples in [B3](#b3-github-actions) / [B4](#b4-gitlab-ci)). Both approaches are equivalent — pick whichever your CI system makes idiomatic.
+Alternatively, use the native cache step your CI provider offers (examples in [B3](#b3-github-actions) / [B4](#b4-gitlab-ci)). Both approaches work; pick whichever fits your CI system.
 
 <a id="authentication"></a>
 
@@ -494,7 +491,7 @@ Two billing modes are supported. They differ significantly in how they behave in
 
 For CI use, always use an API key injected as a CI secret (`ANTHROPIC_API_KEY`). Subscription auth requires an interactive browser step that is incompatible with headless CI runners.
 
-If you must run subscription-based auth from a pipeline (dedicated self-hosted runner you control), perform `claude auth login` once on that runner and copy `~/.claude/` into the CI user's home; the stored refresh token will then work non-interactively until it expires. This is a workaround, not a supported path — API key auth is the right CI answer.
+If you must run subscription-based auth from a pipeline (dedicated self-hosted runner you control), perform `claude auth login` once on that runner and copy `~/.claude/` into the CI user's home; the stored refresh token will then work non-interactively until it expires. This is a workaround, not a supported path: API key auth is the right CI answer.
 
 <a id="security-and-permissions"></a>
 
@@ -506,11 +503,11 @@ The headless script runs with `--permission-mode bypassPermissions` and a fixed 
 
 **Write scope.** Writes are limited to `$OUTPUT_DIR` (default `<repo>/docs/security/`). The `--repo` target is read-only unless `$OUTPUT_DIR` lies inside it, which is the normal dev-team layout. To analyse without any writes into the target repo, always pass `--output` to a path outside it.
 
-**Credentials.** `ANTHROPIC_API_KEY` is read from the environment and forwarded to the Claude Code CLI — it never lands in any log or output file. `HARVEST_AUTH_TOKEN` is only consumed by the harvester script, not by the skill. No other authentication material is expected.
+**Credentials.** `ANTHROPIC_API_KEY` is read from the environment and forwarded to the Claude Code CLI; it never lands in any log or output file. No other authentication material is expected.
 
 **Logging.** `.agent-run.log` and `.hook-events.log` record agent lifecycle events, file paths touched, token counts, and cost estimates. Prompt and response bodies are **not** written to either log. Both rotate at 5 MB. If the logs themselves are sensitive in your threat model (e.g. file paths leak product structure), restrict access to `$OUTPUT_DIR`.
 
-**Concurrency.** `.appsec-lock` prevents overlapping runs against the same `$OUTPUT_DIR`. Stale locks older than 1 h are auto-overwritten — in CI, this means a failed previous run does not block the next scheduled build indefinitely.
+**Concurrency.** `.appsec-lock` prevents overlapping runs against the same `$OUTPUT_DIR`. Stale locks older than 1 h are auto-overwritten. In CI, this means a failed previous run does not block the next scheduled build indefinitely.
 
 <a id="exit-codes"></a>
 
@@ -543,12 +540,10 @@ All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
 | `.hook-events.log` | Always | Hook events, token usage, cost per agent |
 | `.threat-modeling-context.md` | Always | Combined context from all sources |
 | `.recon-summary.md` | Always | Repository structure and security findings |
-| `.sca-practice-findings.json` | Always | Supply-chain posture: §7.11 control rows (SCA practice, auto-updates, lockfile) — passive, no tool calls |
+| `.sca-practice-findings.json` | Always | Supply-chain posture (SCA practice, auto-updates, lockfile) |
 | `.known-bad-libs-findings.json` | Always | Known-bad-library matches against curated `data/known-bad-libs.yaml` |
-| `.dep-update-activity.json` | Always | Passive `git log` cadence signal for dep-update commits |
-| `.stride-*.json` | Always | Per-component STRIDE threat analysis |
-| `.threats-merged.json` | Always | Canonical merged threat list (annotated with triage flags) |
-| `.triage-flags.json` | Always | Triage validation flags (rating consistency, plausibility) |
+| `.dep-update-activity.json` | Always | `git log` cadence signal for dep-update commits |
+| `.stride-*.json`, `.threats-merged.json`, `.triage-flags.json` | Always | Internal intermediate artefacts (per-component STRIDE, merged threat list, triage flags) |
 | `.appsec-cache/baseline.json` | Always | Incremental-mode carry-forward cache |
 | `.appsec-lock` | During run | Prevents concurrent assessments (auto-deleted) |
 
@@ -564,7 +559,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 |---|---|
 | `--repo <path>` | Repository to analyse (default: current working directory) |
 | `--output <path>` | Output directory (default: `<repo>/docs/security`) |
-| `--incremental` | Force delta analysis based on git diff |
+| `--incremental` | Re-analyse only components affected by recent changes (delta based on git diff; carries forward prior STRIDE findings) |
 | `--full` | Force full scan even when prior output exists |
 | `--base <ref>` | Git ref to diff `HEAD` against (default: commit SHA recorded in prior `threat-model.yaml`) |
 | `--pr-mode` | Focused delta report for MR/PR (implies `--incremental`) |
@@ -586,8 +581,8 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 
 | Flag | Purpose |
 |---|---|
-| `--assessment-depth quick\|standard\|thorough` | Depth control (STRIDE component count is criteria-derived, not fixed per depth); quick also skips Stage-3 QA and detailed walkthroughs by default |
-| `--requirements [<url>]` | Enable Phase 8b requirements compliance check |
+| `--assessment-depth quick\|standard\|thorough` | Depth control (STRIDE component count is criteria-derived, not fixed per depth); quick also skips the Stage-3 QA reviewer (as if `--no-qa`) and detailed walkthroughs by default |
+| `--requirements [<url>]` | Enable the requirements compliance check during the assessment |
 | `--no-requirements` | Skip requirements even when enabled in config |
 
 ### Models
@@ -619,7 +614,7 @@ Not every `create-threat-model` flag is accepted by the wrapper. This table list
 | Flag | Purpose |
 |---|---|
 | `--audit-requirements` | Run `audit-security-requirements` instead of the threat model |
-| `--check-requirements` | Legacy alias for `--audit-requirements` |
+| `--check-requirements` | Deprecated alias for `--audit-requirements` (see [Deprecated flags](#deprecated-flags)) |
 | `--category <filter>` | Category filter for requirements check (e.g. `SEC-AUTH`) |
 | `--save-report` | Save requirements report (Markdown + PDF + JSON) |
 
@@ -646,7 +641,7 @@ The job needs `permissions: security-events: write` and the workflow needs `cont
 Pass absolute paths for `--output` when working from a different directory, or run from the repo root. The wrapper resolves relative paths against the current working directory at invocation time, not against `--repo`.
 
 **Run starts, but no progress for >5 minutes.**
-Enable `--verbose` to tail `.agent-run.log` on stderr. Phase 2 (recon scanner) is typically the longest silent phase on large repos — if it is stuck >10 min, abort with Ctrl-C and rerun with `--dry-run` to check the recon scope.
+Enable `--verbose` to tail `.agent-run.log` on stderr. The recon scan is typically the longest silent phase on large repos. If it is stuck >10 min, abort with Ctrl-C and rerun with `--dry-run` to check the recon scope.
 
 **"timeout: command not found" warning when `--max-duration` is set.**
 The wrapper uses the GNU `timeout` utility when `--max-duration` is active. On minimal CI images (e.g. Alpine without `coreutils`), install it (`apk add coreutils`) or drop `--max-duration` in favour of the Anthropic-side `--max-budget` cap.
@@ -662,6 +657,7 @@ Still accepted for backward compatibility; will print a deprecation warning:
 
 | Deprecated | Use instead |
 |---|---|
+| `--check-requirements` | `--audit-requirements` |
 | `--with-requirements` | `--requirements` |
 | `--ignore-requirements` | `--no-requirements` |
 | `--requirements-url <url>` | `--requirements <url>` |

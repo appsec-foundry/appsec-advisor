@@ -1,6 +1,6 @@
 # Requirements Audit
 
-Grades a repository against a security requirements catalog, reporting PASS / FAIL / PARTIAL per requirement with file/line evidence. Faster than a full threat model, and suited to PR gates and audit preparation.
+Grades a repository against a security requirements catalog, reporting PASS / FAIL / PARTIAL per requirement with file/line evidence. Narrower in scope than a full threat model; usable in PR gates and audit preparation.
 
 → [Back to README](../README.md)
 
@@ -40,7 +40,7 @@ Console output of a `--demo` run against [OWASP Juice Shop](https://owasp.org/ww
 Requirements Source
   Catalog  : OWASP baseline  ⚠ DEMO — not your organization's requirements
   Loaded   : packaged example examples/appsec-requirements-example.yaml
-  Count    : 64 requirements
+  Count    : 64 requirements   # this example catalog; the reference baseline (data/appsec-requirements-fallback.yaml) carries 63
 
 Results · OWASP Juice Shop · 64 requirements
 
@@ -88,7 +88,7 @@ The audit grades the repo against a **requirements catalog** — your AppSec sta
 | Reference baseline | Adapt `data/appsec-requirements-fallback.yaml` (63 OWASP-based requirements), serve over HTTP or a raw Git URL |
 | Local repo file | Drop `docs/security/requirements.yaml` into the repo |
 | Packaged org profile | Shipped with your org's plugin — picked up automatically, no flag |
-| URL | `requirements_yaml_url` in `skills/audit-security-requirements/config.json`, or `--requirements <url>` per run |
+| URL | `--requirements <url>` per run, or (legacy/fallback) a `requirements_yaml_url` in `skills/audit-security-requirements/config.json` |
 | None yet | `--demo` grades against the bundled example catalog |
 
 **2. Run the audit** from the repo you want to grade:
@@ -107,10 +107,10 @@ Every run opens with a **startup banner** naming the catalog in effect, its sour
 |---|--------|-------|
 | 1 | `--requirements <src>` | Explicit http(s) URL or local path, this run only. Fail-closed (no cache fallback). |
 | 2 | `--demo` | Packaged `examples/appsec-requirements-example.yaml`. Report is stamped **DEMO**. |
-| 3 | `docs/security/requirements.yaml` | A developer-authored **local repo catalog**. Overrides the org profile, surfaced in the banner. Non-dot name — distinct from the generated `.requirements.yaml`. |
+| 3 | `docs/security/requirements.yaml` | A developer-authored **local repo catalog**. Overrides the org profile, surfaced in the banner. A maintained input catalog, not a generated dotfile. |
 | 4 | Active org profile | The org profile's `requirements.source`, honouring `standalone_audit.enabled`. |
 | 5 | Legacy config | `skills/audit-security-requirements/config.json` when it carries a URL. |
-| 6 | Remembered source | The URL the catalog was last fetched from, served from the plugin cache (`.cache/requirements.yaml` + `.cache/requirements.source.json`). |
+| 6 | Remembered source | The URL the catalog was last fetched from, served from the plugin cache. |
 
 **Governance override:** if the org profile configures a source but sets `standalone_audit.enabled: false`, the audit is blocked even when a local `docs/security/requirements.yaml` exists — a committed file must not silently defeat org policy. Only an explicit `--requirements` or `--demo` overrides it. Otherwise the table applies as-is (local file beats the org source).
 
@@ -118,7 +118,7 @@ Every run opens with a **startup banner** naming the catalog in effect, its sour
 
 Every catalog uses one shape — the canonical format in [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml). Both `audit-security-requirements` and `create-threat-model` load it through the shared fetch gate, so a catalog that validates works for either.
 
-Minimum contract: a YAML mapping with a `categories[]` array, each category and each requirement carrying an `id`. Recommended per requirement: `text` (the grading basis), `priority` (`MUST` / `SHOULD` / `MAY`), and `url`. Requirement IDs use your own naming scheme (`SEC-*`, `SCG-*`, anything) and need not be tagged in the analyzed code.
+Minimum contract: a YAML mapping with a `categories[]` array, each category and each requirement carrying an `id`. Recommended per requirement: `text` (the grading basis), `priority` (`MUST` / `SHOULD` / `MAY`), and `url`. Requirement IDs use your own naming scheme (`AC-*`, `SEC-*`, `SCG-*`, anything) and need not be tagged in the analyzed code.
 
 The fetch gate validates every catalog against this schema: structural breakage (a 404 page, a truncated or wrong-shaped file) fails the run loudly rather than silently grading zero requirements; content-quality issues (missing `text`/`priority`, duplicate IDs) are warnings and the run proceeds. Validate one yourself:
 
@@ -130,7 +130,7 @@ The harvester runs the same validation on its output, so a malformed crawl is ca
 
 ## Source lifecycle: remember, refresh, inspect
 
-Once a source loads successfully, the skill remembers its URL (with a fetch timestamp and content hash) in `.cache/requirements.source.json` and caches the catalog. Freshness is then handled automatically:
+Once a source loads successfully, the skill remembers its URL (with a fetch timestamp and content hash) and caches the catalog. Freshness is then handled automatically:
 
 | Cache age | Behaviour |
 |-----------|-----------|
@@ -162,9 +162,9 @@ All flags accepted by `/appsec-advisor:audit-security-requirements`. Each one ch
 
 ## Structured verdict & CI gate
 
-A plain console run writes nothing. `--md`/`--pdf` add the human report; `--json`/`--save` or `--gate` also write a structured verdict to `docs/security/.requirements-audit.json` ([`schemas/requirements-audit.schema.json`](../schemas/requirements-audit.schema.json)) — one `results[]` entry per requirement (status, priority, `in_scope`, evidence, finding, fix, verbatim text, blueprint and threat-model links). Summary counts are recomputed by `scripts/requirements_report.py`, so the Result block never drifts from a hand-count. `--json` copies the verdict to `appsec-requirements-report.json`.
+A plain console run writes nothing. `--md`/`--pdf` add the human report; `--json`/`--save` or `--gate` also write a structured verdict to `docs/security/.requirements-audit.json` ([`schemas/requirements-audit.schema.json`](../schemas/requirements-audit.schema.json)) — one `results[]` entry per requirement (status, priority, `in_scope`, evidence, finding, fix, verbatim text, blueprint and threat-model links). Summary counts are recomputed deterministically from `results[]`, so the Result block never drifts from a hand-count. `--json` copies the verdict to `appsec-requirements-report.json`.
 
-The gate is decided by `scripts/requirements_gate.py` — the same deterministic gate `verify-requirements` uses — from the verdict's `results[]`, not the model's advisory flags. A requirement gates when `in_scope AND status==FAIL (or PARTIAL with --gate-on partial) AND priority >= floor`. Advisory by default; `--gate` exits non-zero on a gating failure, so it drops into CI:
+The gate is decided deterministically from the verdict's `results[]`, not the model's advisory flags — the same gate `verify-requirements` uses. A requirement gates when `in_scope AND status==FAIL (or PARTIAL with --gate-on partial) AND priority >= floor`. Advisory by default; `--gate` exits non-zero on a gating failure, so it drops into CI:
 
 ```bash
 /appsec-advisor:audit-security-requirements --gate            # block on a failing MUST
@@ -173,4 +173,4 @@ The gate is decided by `scripts/requirements_gate.py` — the same deterministic
 
 ## Shared source with the threat model
 
-Phase 8b of `/appsec-advisor:create-threat-model` uses the same catalog. When enabled, the threat model's Threat Register carries `Violated:` tags that link back to the requirement IDs in your YAML, and the Mitigation Register emits `Fulfills:` references. The two skills can run independently or together — configure the catalog once and both pick it up.
+The compliance step of `/appsec-advisor:create-threat-model` uses the same catalog. When enabled, the threat model's Threat Register carries `Violated:` tags that link back to the requirement IDs in your YAML, and the Mitigation Register emits `Fulfills:` references. The two skills can run independently or together — configure the catalog once and both pick it up.

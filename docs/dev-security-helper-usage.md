@@ -131,12 +131,7 @@ security_coach:
   enabled_by_default: true
 ```
 
-Enable globally in the hook config:
-
-```json
-// hooks/steering_keywords.json
-{ "enabled": true }
-```
+The org profile turns the hook on by default for the whole team; `APPSEC_COACH=1` enables it ad hoc per session.
 
 Example prompt:
 
@@ -178,13 +173,13 @@ Direct use:
 Use the appsec-reviewer agent to review my staged changes.
 ```
 
-Output:
+Output (in its configured output directory):
 
 ```text
-.requirements-verification.json
+<output-dir>/.requirements-verification.json
 ```
 
-The agent only writes findings. Gate decisions belong to `scripts/requirements_gate.py`; the skill and CLI call that script when gate mode is enabled.
+The agent only writes findings. Gating is a separate, deterministic step; the skill and CLI run it when gate mode is enabled.
 
 ## verify-requirements skill
 
@@ -248,7 +243,7 @@ Default behavior:
 - renders the requested Markdown report
 - exits `0` unless `--fail-on` is set and the deterministic gate fails
 
-Before using this in CI, read [CI security notes](#ci-security-notes). Pull-request code is untrusted input, and the wrapper runs Claude Code headlessly with bypassed interactive permission prompts so the job can complete unattended.
+Before using this in CI, read [CI security notes](#ci-security-notes). Pull-request code is untrusted input. The wrapper runs Claude Code headlessly with bypassed interactive permission prompts so the job can complete unattended.
 
 GitLab CI:
 
@@ -438,8 +433,8 @@ See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
 | `--base <ref>` | Review `git diff <ref>...HEAD`; default is the merge-base with the upstream default branch. |
 | `--staged` | Review staged changes only (`git diff --cached`); mutually exclusive with `--base`. |
 | `--gate` | Exit non-zero on a gating failure; default is advisory. |
-| `--gate-on fail\|partial` | Select what counts as gating; default is `fail`. |
-| `--priority-floor MUST\|SHOULD\|MAY` | Lowest priority allowed to gate; default is `MUST`. |
+| `--gate-on <fail\|partial>` | Select what counts as gating; default is `fail`. |
+| `--priority-floor <MUST\|SHOULD\|MAY>` | Lowest priority allowed to gate; default is `MUST`. |
 | `--requirements <src>` | Use an `http(s)://` URL or local file path; unreadable explicit sources abort. |
 | `--org-profile <path>` | Use this org profile for source resolution. |
 | `--preset <name>` | Use a preset from the active org profile. |
@@ -455,7 +450,7 @@ See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
 | `--diff <ref>` | Required base ref for `git diff <ref>...HEAD`. |
 | `--output <file>` | Markdown report path; default is `security-review.md`. |
 | `--requirements <src>` | Use an `http(s)://` URL or local file path; unreadable explicit sources abort. |
-| `--fail-on must\|partial` | Make CI fail; omit for advisory mode. `must` gates FAIL findings, `partial` gates FAIL and PARTIAL findings. |
-| `--priority-floor MUST\|SHOULD\|MAY` | Lowest priority allowed to gate; default is `MUST`. |
+| `--fail-on <must\|partial>` | Make CI fail; omit for advisory mode. `must` gates FAIL findings, `partial` gates FAIL and PARTIAL findings. |
+| `--priority-floor <MUST\|SHOULD\|MAY>` | Lowest priority allowed to gate; default is `MUST`. |
 
 Design rationale: [proposal-dev-security-helper.md](internal/analysis/proposal-dev-security-helper.md).

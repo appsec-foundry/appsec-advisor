@@ -22,15 +22,15 @@ Background guidance during a coding session. A `UserPromptSubmit` hook scans eac
 
 Before Claude sees a prompt, the hook checks whether the prompt is security-relevant. If so, it prepends a secure-by-default baseline plus topic-specific guidance (authentication, crypto, injection, IaC, secrets, etc.). Claude answers the original question with the injected context in its working memory.
 
-The coach is a prompt-augmentation hook only — it does not block prompts and does not call the model on its own.
+The coach is a prompt-augmentation hook. It never blocks a prompt, and it does not call the model on its own.
 
 ## When the coach helps most
 
 - **Mixed sessions.** Long coding sessions where only some prompts touch security: `"explain the architecture"` injects nothing, while `"implement OAuth refresh"` pulls in `SEC-API-AUTH`. A static AGENTS.md baseline would pay tokens on every turn regardless.
 - **Short, time-pressured prompts.** Requests like `"quickly wire up Stripe"` receive a focused nudge (`SEC-SECRETS`, three lines) rather than requiring Claude to extract the relevant rule from a long static baseline.
-- **Teams with a living requirements catalog.** When the harvester refreshes `appsec-requirements-fallback.yaml`, the coach picks up the new text on the next prompt — no AGENTS.md edit, no PR, no pull required across the team.
+- **Teams with a living requirements catalog.** When the harvester refreshes `data/appsec-requirements-fallback.yaml`, the coach picks up the new text on the next prompt. The team does not have to edit AGENTS.md or open a PR to distribute the change.
 - **Multi-agent pipelines.** Sub-agents that do not run `UserPromptSubmit` (STRIDE analyzers, QA reviewer) receive requirement context through the orchestrator's selective injection. The coach covers the user-facing surface; per-component logic stays with the orchestrator.
-- **Sessions requiring an audit trail.** Each injection is logged (see [Telemetry](#telemetry)), so questions like "did Claude see the auth requirement when this code was written?" are answerable from `.hook-events.log` rather than from inference.
+- **Sessions requiring an audit trail.** Each injection is logged (see [Telemetry](#telemetry)), so questions like "did Claude see the auth requirement when this code was written?" are answerable from the log rather than from inference.
 
 ## When a static AGENTS.md baseline is enough
 
@@ -94,7 +94,7 @@ Topics are defined in `hooks/steering_keywords.json` under `topics.<name>`. Each
 - `guidance` — the bullet list injected into the prompt when the topic matches
 - `requirements` — `SEC-*` IDs resolved at runtime against the requirements YAML
 
-Default topics (names as they appear in config and in the `systemMessage`):
+Default topics:
 
 | Topic | Scope |
 |-------|-------|
@@ -134,8 +134,9 @@ every JWT check; MFA for admin paths; Secure+HttpOnly+SameSite=Strict
 on session cookies.
 
 Applicable requirements:
-  - SEC-API-AUTH (MUST): Authenticate all API endpoints using KN SSO
-    or KNITE; service-to-service via mTLS or signed JWTs with short TTL.
+  - SEC-API-AUTH (MUST): Authenticate all API endpoints using your SSO
+    provider or internal IdP; service-to-service via mTLS or signed JWTs
+    with short TTL.
 ```
 
 **System message shown to the user:**
@@ -164,7 +165,7 @@ If you see a prompt firing that shouldn't, see [Tuning false positives](#tuning-
 
 When a security requirements catalog is loaded (see [`docs/harvester.md`](harvester.md)), matching `SEC-*` requirements are injected alongside the generic guidance. Each rendered line includes the ID, the priority tag (`MUST` / `SHOULD` / `MAY`), and the requirement text taken verbatim from the YAML.
 
-The number of requirements injected per topic is capped at `severity.max_requirements_per_topic` (default 3). The org profile can lower or raise this cap with `security_coach.max_requirements_per_topic`.
+The number of requirements injected per topic is capped at `severity.max_requirements_per_topic` in `hooks/steering_keywords.json` (default 3). An org profile can override the cap by setting `security_coach.max_requirements_per_topic`; that value is applied on top of the base setting at load time, so the org profile wins when both are present.
 
 Requirement text is resolved at runtime from whichever YAML is found first along `requirements_source.paths`:
 
@@ -175,7 +176,7 @@ Requirement text is resolved at runtime from whichever YAML is found first along
 The active catalog is exclusive: the first readable file wins. Which catalog is loaded therefore depends on the org profile configuration:
 
 - **Org profile with `requirements_yaml_url`** → harvester populates `.cache/requirements.yaml` → company `SEC-*` / `SSDLC-*` requirements are injected.
-- **No org profile or no URL configured** → falls through to `appsec-requirements-fallback.yaml` (if shipped) or the OWASP `BP-*` baseline.
+- **No org profile or no URL configured** → falls through to `data/appsec-requirements-fallback.yaml` (if shipped) or the OWASP `BP-*` baseline.
 
 To control this via packaging, set `requirements.source.requirements_yaml_url` in the org profile. The coach picks up the active catalog on the next prompt.
 
@@ -190,7 +191,7 @@ The topic keyword lists in `hooks/steering_keywords.json` carry both `SEC-*` and
 
 ## Telemetry
 
-When the coach injects, it appends a `COACH_INJECTED` event to `docs/security/.hook-events.log` alongside the standard hook events written by `agent_logger.py`. The line format matches the surrounding log:
+When the coach injects, it appends a `COACH_INJECTED` event to the run's hook-events log, in the same line format as the surrounding hook events:
 
 ```
 2026-04-19T10:14:27Z  [--------]  INFO   COACH_INJECTED     topics=auth req_ids=SEC-API-AUTH chars=412 prompt=7f3a2b1c
@@ -198,7 +199,7 @@ When the coach injects, it appends a `COACH_INJECTED` event to `docs/security/.h
 
 Fields:
 
-- `topics` — matched topic names (sorted, comma-separated), excluding internal `_legacy`
+- `topics` — matched topic names (sorted, comma-separated)
 - `req_ids` — requirement IDs resolved and injected, or `-` if none
 - `chars` — length of the injected context block
 - `prompt` — first 8 hex chars of a SHA-256 of the prompt (stable reference without logging the prompt text)
@@ -219,20 +220,25 @@ Edit `hooks/steering_keywords.json`:
 After edits, validate the file:
 
 ```bash
-python3 scripts/validate_config.py 
+python3 scripts/validate_config.py
 pytest tests/test_security_steering.py
 ```
 
 ## Disabling
 
-Any of the three activation mechanisms can be set to `false` / unset. To disable the hook entirely without touching the plugin:
+Disabling is the inverse of activation and follows the same precedence (env → org profile → hook config). Any one of the three mechanisms can be unset or set to `false`.
+
+To disable for a single session without touching any file, set the kill switch. It overrides the org profile and hook config:
 
 ```bash
 APPSEC_COACH=0 claude ...
 ```
 
-Or in `config.json`:
+To disable globally, set `enabled` to `false` in `hooks/steering_keywords.json` (the same flag used to enable it under [Activation](#activation)):
 
 ```json
-{ "security_coach": { "enabled": false } }
+// hooks/steering_keywords.json
+{ "enabled": false, ... }
 ```
+
+To disable for a team, set `security_coach.enabled_by_default: false` (or remove the block) in the org profile.

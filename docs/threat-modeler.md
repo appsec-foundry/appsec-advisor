@@ -31,7 +31,7 @@ Findings are rendered from structured artifacts and checked before release, so t
 
 | File | Enable with | Description |
 |---|---|---|
-| `threat-model.pdf` | `--pdf` | Print-ready PDF report: automatic cover page, page-numbered table of contents, rendered diagrams, content-aware tables. Requires `pandoc` + `weasyprint`; diagrams additionally need `mmdc` and a Chrome/Chromium for Puppeteer. Missing deps abort with a clear message — pass `--no-mermaid` to export without diagrams. |
+| `threat-model.pdf` | `--pdf` | Print-ready PDF report: automatic cover page, page-numbered table of contents, rendered diagrams, content-aware tables. Requires `pandoc` + `weasyprint`; diagrams additionally need `mmdc` and a Chrome/Chromium for Puppeteer. Missing deps abort with a clear message; pass `--no-mermaid` to export without diagrams. |
 | `threat-model.html` | `--html` (or `export-threat-model --formats html`) | Self-contained HTML5 (pandoc-only, no weasyprint) with a centered, readable screen layout and rendered diagrams — for browser viewing, wiki attachments, or as a styling-pipeline input. Diagrams need `mmdc` + Chrome (same as PDF); without them they stay as code. |
 | `threat-model.sarif.json` | `--sarif` | SARIF v2.1 output for code scanning integrations. |
 | `pentest-tasks.yaml` | `--pentest-tasks` | Endpoint catalog and test plan for AI pentesters such as Strix, including finding verification plus architecture-driven probes. |
@@ -50,7 +50,7 @@ All optional deliverables can also be generated after an assessment. This is use
 
 SARIF and pentest-tasks are produced deterministically from `threat-model.yaml` — no LLM tokens spent. PDF and HTML are converted from `threat-model.md`: HTML needs only `pandoc`, PDF additionally needs `weasyprint`. Mermaid diagrams are rendered to vector graphics by `mmdc` (`@mermaid-js/mermaid-cli`), which drives a headless **Chrome/Chromium via Puppeteer** — install one (`npx puppeteer browsers install chrome`, or `apt install chromium` and set `PUPPETEER_EXECUTABLE_PATH`). The PDF exporter's preflight aborts with a clear message if any required tool is missing or non-functional; run `/appsec-advisor:export-threat-model --check-only` to verify the toolchain, or pass `--no-mermaid` to export without diagrams.
 
-**Optional: grammar-level Mermaid QA.** The Stage-3 QA gate validates every Mermaid block. By default it runs a permissive regex pre-pass; for the authoritative grammar check (which catches breakages the regex pass misses) it needs the real Mermaid parser. Install the optional Node deps once with `npm install --prefix "$CLAUDE_PLUGIN_ROOT/scripts"` (pulls `jsdom` + `mermaid`). When they are absent the validator falls back to regex-only checks and logs a skip warning at run-start — the pipeline still completes, just with a degraded diagram QA gate.
+**Optional: grammar-level Mermaid QA.** The QA gate validates every Mermaid block. By default it runs a permissive regex pre-pass; for the authoritative grammar check (which catches breakages the regex pass misses) it needs the real Mermaid parser. Install the optional Mermaid-QA dependencies once with `npm install --prefix "$CLAUDE_PLUGIN_ROOT/scripts"`. When they are absent the validator falls back to regex-only checks and logs a skip warning at run-start — the pipeline still completes, just with a degraded diagram QA gate.
 
 ## Example report: OWASP Juice Shop
 
@@ -58,11 +58,11 @@ The following example shows the output of a thorough-mode assessment against [OW
 
 **Full example:** [OWASP Juice Shop threat model report](../examples/threat-modeler/threat-model-juice-shop-thorough.md)
 
-The report shows the architecture diagram, trust boundaries, STRIDE findings, evidence links, abuse-case scenarios, mitigation register, and attack-path discussion in a format that developers review after a run.
+The report presents those findings in the format developers review after a run, including evidence links, abuse-case scenarios, and an attack-path discussion.
 
 Example security posture diagram from the report:
 
-![Threat Model Juice Shop Standard](../examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
+![Threat Model Juice Shop Thorough](../examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
 
 ## What it checks
 
@@ -127,7 +127,7 @@ python3 scripts/mock-server.py
 /appsec-advisor:create-threat-model --requirements http://127.0.0.1:4444/requirements.yaml
 ```
 
-Once `requirements_yaml_url` is set in `skills/audit-security-requirements/config.json`, the `--requirements` flag is optional — every subsequent run picks up the catalog automatically.
+Once `requirements_yaml_url` is set in the plugin's skill configuration, the `--requirements` flag is optional — every subsequent run picks up the catalog automatically.
 
 ### Scanning external repositories
 
@@ -170,8 +170,8 @@ The analyzed count follows the repo's attack surface, not a hard cap. (Component
 
 **Cost levers within a depth.** Two knobs trim a standard run without changing depth:
 
-- `--stride-cap N` *(opt-in, off by default)* — keep at most **N** threats per STRIDE category per component. The dominant lever on threat volume, and on the merge/mitigation/QA tokens those threats drive. It is **Critical-safe** — Criticals are never dropped — and trims only the High/Medium/Low tail; full depth (CVSS, evidence, verification greps) is otherwise preserved. The cap is disclosed in the report's *Run Statistics* appendix so a capped report is never mistaken for a full one. Standard/thorough keep full STRIDE depth unless you set this.
-- **Single-pass QA repair at quick/standard** *(automatic)* — the post-render QA/architect Re-Render Loop runs at most **one** repair attempt at quick/standard (thorough keeps up to 3). If the contract still fails after one pass the run fails closed (`exit 2`) rather than burning extra repair rounds — it never ships an invalid report.
+- `--stride-cap N` *(opt-in, off by default)* — keep at most **N** threats per STRIDE category per component. The dominant lever on threat volume, and on the merge/mitigation/QA tokens those threats drive. Criticals are never dropped; it trims only the High/Medium/Low tail, and full depth (CVSS, evidence, verification greps) is otherwise preserved. The cap is disclosed in the report's *Run Statistics* appendix so a capped report is never mistaken for a full one. Standard/thorough keep full STRIDE depth unless you set this.
+- **Single-pass QA repair at quick/standard** *(automatic)* — the post-render QA repair runs at most **one** repair attempt at quick/standard (thorough keeps up to 3). If the contract still fails after one pass the run fails closed rather than burning extra repair rounds — it never ships an invalid report.
 
 **Measured cost impact** (Juice Shop, standard depth, clean runs, identical flags except the reasoning tier, 2026-06-23):
 
@@ -180,7 +180,7 @@ The analyzed count follows the repo's attack surface, not a hard cap. (Component
 | `--reasoning-model opus --stride-cap 2` | $40.78 | 53 | best severity calibration |
 | `--reasoning-model sonnet-economy --stride-cap 2` | **$30.01** | 52 | **−$10.77**; but 81 % Crit/High (2 Low) — more severity inflation; no Web3/NFT surface |
 
-The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not the per-category cap: the cap alone trims threat *volume* (89 → ~52) but only ~$4, because the largest cost is the always-Sonnet orchestrator's cache-read, not threat count. Going to `sonnet-economy` is a **cost-vs-quality** trade — it also moves *triage* to Sonnet, which calibrates severities and surfaces less (e.g. the Web3/NFT component the Opus run found). Earlier internal notes claimed Opus STRIDE was *cheaper*; a clean A/B refutes that — Opus reasoning is **more** expensive, you pay it for calibration/coverage, not savings.
+The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not the per-category cap: the cap alone trims threat *volume* (89 → ~52) but only ~$4, because the largest cost is the always-Sonnet orchestrator's cache-read, not threat count. Going to `sonnet-economy` is a **cost-vs-quality** trade. It also moves *triage* to Sonnet, which calibrates severities and surfaces less (e.g. the Web3/NFT component the Opus run found). Earlier internal notes claimed Opus STRIDE was *cheaper*; a clean A/B did not confirm this. Opus reasoning is **more** expensive; you pay it for calibration/coverage, not savings.
 
 | Mode | Best fit | What changes | Juice Shop benchmark |
 |---|---|---|---|
@@ -204,11 +204,11 @@ The **reasoning tier is the dominant cost lever** (~$10.77 / −26 % here), not 
 | `sonnet-economy` | Sonnet · Sonnet · Sonnet | Cheapest — same core as `sonnet`, but helper agents drop to Haiku. **Default at quick and standard** (since 2026-06-23); opt-in at thorough. |
 | `sonnet` | Sonnet · Sonnet · Sonnet | Like `sonnet-economy`, but helper agents stay on Sonnet. |
 | `opus-cheap` | Sonnet · Sonnet · **Opus** | Opus only on the cheap merge step — a middle ground (opt-in). |
-| `opus` | **Opus** · **Opus** · **Opus** | **Default at thorough** (the premium tier); opt-in at standard. A clean A/B (2026-06-23) found Opus reasoning ~$10.77 (+36 %) more than `sonnet-economy` with **no measurable quality/coverage gain** on Juice Shop — the earlier "Opus cheaper/better for STRIDE" claim was refuted. Use it when you specifically want maximum reasoning depth and accept the cost. |
+| `opus` | **Opus** · **Opus** · **Opus** | **Default at thorough** (the premium tier); opt-in at standard. A clean A/B (2026-06-23) found Opus reasoning ~$10.77 (+36 %) more than `sonnet-economy` with **no measurable quality/coverage gain** on Juice Shop, which did not bear out the earlier "Opus cheaper/better for STRIDE" claim. Use it when you specifically want maximum reasoning depth and accept the cost. |
 
 **Per-stage overrides.** `--stride-model`, `--triage-model`, `--merger-model` (`sonnet`|`opus`) override a single stage on top of the tier — the inline equivalent of the `APPSEC_{STRIDE,TRIAGE,MERGER}_MODEL` env vars, but settable right in the command (no `settings.json` + restart). They win over the tier and the env vars; `--no-opus` still clamps last.
 
-The useful one is **`--triage-model opus` on a `sonnet-economy` run**: STRIDE stays on Sonnet (the cost driver — 9 dispatches), while triage (the severity-assignment stage) runs on Opus. A clean A/B showed this recovers the severity calibration of a full-Opus run (real Med/Low tail, not 81 % Crit/High) at roughly the all-Sonnet price (~$2 over, vs ~$11 for full Opus) — the genuine cost/quality sweet spot for `standard`:
+The useful one is **`--triage-model opus` on a `sonnet-economy` run**: STRIDE stays on Sonnet (the cost driver), while triage (the severity-assignment stage) runs on Opus. A clean A/B showed this recovers the severity calibration of a full-Opus run (real Med/Low tail, not 81 % Crit/High) at roughly the all-Sonnet price (~$2 over, vs ~$11 for full Opus) — a good cost/quality balance for `standard`:
 
 ```text
 /appsec-advisor:create-threat-model --reasoning-model sonnet-economy --triage-model opus --stride-cap 2
@@ -253,7 +253,7 @@ Example:
 For very large repositories, the advisor automatically switches to an optimized scanning strategy to avoid context window overflows.
 
 > [!TIP]
-> **The session model only changes the orchestration layer** — the analysis sub-agents are auto-routed by depth/repo size either way. Sonnet is enough to drive the pipeline (it is a deterministic playbook), so for routine and incremental runs start from a Sonnet session (`/model sonnet`, `/clear` first); Opus orchestration costs ~5× more *per token on that layer* — which works out to roughly **+25–55% on the total run** (a proportional share that scales with run length and repo size, not a fixed amount) — and only buys higher reliability on long, branchy runs (first runs, large repos, recovery paths) — insurance against a mis-orchestrated run, not better analysis.
+> **The session model only changes the orchestration layer.** The analysis sub-agents are auto-routed by depth/repo size either way. Sonnet is enough to drive the pipeline (it is a deterministic playbook), so for routine and incremental runs start from a Sonnet session (`/model sonnet`, `/clear` first). Opus orchestration costs ~5× more *per token on that layer*, which works out to roughly **+25–55% on the total run** (a proportional share that scales with run length and repo size, not a fixed amount). It only buys higher reliability on long, branchy runs (first runs, large repos, recovery paths): insurance against a mis-orchestrated run, not better analysis.
 
 ## Repo-local context
 
@@ -296,7 +296,7 @@ Optional fields per entry: `evidence` (`file:line`), `pentest_ref`, `accepted_ri
 
 Declare the services this repo depends on in `docs/related-repos.yaml`.
 
-> **Note:** Actor pull from `related-repos.yaml` is not supported. Declaring a related repo does not import its actor definitions. `ACT-D-07` (compromised-third-party-service) is activated only when the scan detects external API calls in the repo itself, not through `related-repos.yaml` declarations.
+> **Note:** Actor pull from `related-repos.yaml` is not supported. Declaring a related repo does not import its actor definitions. The compromised-third-party-service actor is activated only when the scan detects external API calls in the repo itself, not through `related-repos.yaml` declarations.
 
 ### Add context for services you call
 

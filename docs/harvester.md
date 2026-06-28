@@ -19,10 +19,10 @@ flowchart LR
 
 Four moving parts:
 
-- **The harvester** — `scripts/harvest_requirements.py`, a one-shot Python script that crawls your pages and writes `appsec-requirements.yaml`.
-- **The YAML file** — the canonical format the plugin reads. Ships with a 63-requirement example (`data/appsec-requirements-fallback.yaml`) usable as template or starting point.
-- **A way to expose the YAML** — commit it to the plugin repo, publish it to a static URL, or serve it locally via the mock server while iterating.
-- **Plugin config** — `requirements_yaml_url` in `skills/audit-security-requirements/config.json`; once set, every `create-threat-model --requirements` and every `/appsec-advisor:audit-security-requirements` run picks up the catalog without further flags.
+- **The harvester:** `scripts/harvest_requirements.py` is a one-shot Python script that crawls your pages and writes the requirements YAML (the `requirements.yaml` placeholder in the diagram above is just a generic name for this output).
+- **The YAML file** is the canonical format the plugin reads. The bundled example/template, `data/appsec-requirements-fallback.yaml`, contains 63 baseline requirements across 38 categories plus 9 blueprint entries, and is usable as a starting point. A separate `examples/appsec-requirements-example.yaml` serves as mock/demo output for the local loop below.
+- **A way to expose the YAML.** You can commit it to the plugin repo, publish it to a static URL, or serve it locally via the mock server while iterating.
+- **Plugin config:** set `requirements_yaml_url` in `skills/audit-security-requirements/config.json`. Once set, every `create-threat-model --requirements` and every `/appsec-advisor:audit-security-requirements` run picks up the catalog without further flags.
 
 ## Three ways to get started
 
@@ -40,7 +40,7 @@ python3 scripts/mock-server.py
 
 Expected output: the skill fetches the YAML, grades the current repo against each requirement, and prints a compact color-coded console summary with only open requirements (`FAIL` and `PARTIAL`) plus file-and-line evidence. Passed and untestable requirements are counted in the summary but not listed. Once that works, the rest of this document is about replacing the mock URL with a real one.
 
-The mock also exposes `POST /` for the optional `external_context.rest_url` endpoint (business context), useful for exercising the second Phase-1 integration at the same time.
+The mock also exposes `POST /` for the optional `external_context.rest_url` endpoint (business context), useful for exercising the optional business-context integration at the same time.
 
 ### 2. Adapt the fallback YAML
 
@@ -82,7 +82,7 @@ The generated YAML lands at the path in `output` (defaults to `data/appsec-requi
 
 ### Output format & validation
 
-The harvester writes the **canonical catalog format** defined by [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml) — the same shape both `audit-security-requirements` and `create-threat-model` consume through the shared fetch gate. After writing, the harvester validates its own output against that schema: structural breakage fails the run (exit 2), while content-quality issues (a category with no requirements, a requirement missing `text`, duplicate IDs) print as warnings. To validate any catalog by hand — for example in CI before publishing:
+The harvester writes the **canonical catalog format** defined by [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml) — the same shape both `audit-security-requirements` and `create-threat-model` consume. After writing, the harvester validates its own output against that schema: structural breakage fails the run (exit 2), while content-quality issues (a category with no requirements, a requirement missing `text`, duplicate IDs) print as warnings. To validate any catalog by hand — for example in CI before publishing:
 
 ```bash
 python3 scripts/requirements_state.py --validate data/appsec-requirements-fallback.yaml [--strict]
@@ -96,12 +96,13 @@ A single JSON file drives the crawler. Below is the minimum useful shape; defaul
 {
   "description": "ACME Corp AppSec requirements",
   "url": "https://security.example.com",
-  "output": "../data/appsec-requirements-fallback.yaml",
+  "output": "../data/appsec-requirements-fallback.yaml",   // relative to scripts/, i.e. data/appsec-requirements-fallback.yaml from the repo root
 
   // HTTP session — timeout, TLS, auth. Safe to omit for public pages.
   "request": {
     "timeout_seconds": 15,
-    "auth_header_env": "HARVEST_AUTH_TOKEN",
+    "auth_header_env": "HARVEST_AUTH_TOKEN",     // name of the env var holding the bearer token; `--token` overrides it on the CLI
+
     "verify_ssl": true
   },
 
@@ -126,7 +127,7 @@ A single JSON file drives the crawler. Below is the minimum useful shape; defaul
 }
 ```
 
-The harvester recognises requirement IDs of the shape `PREFIX-PART[-PART…]` — `SEC-AUTH-01`, `SCG-HARDENXML`, `OWASP-A01`, `ISO27K-A12`. No prefix is hardcoded; whatever shape your org uses will be picked up. It tries five HTML-parser strategies per page and keeps the first match per ID.
+The harvester recognises requirement IDs of the shape `PREFIX-PART[-PART…]` — `SEC-AUTH-01`, `SCG-HARDENXML`, `OWASP-A01`, `ISO27K-A12`. No prefix is hardcoded; whatever shape your org uses will be picked up.
 
 For every source, `crawl_url` is both a page to index and the base path for direct child-page discovery. The harvester fetches `crawl_url`, indexes that page, then indexes same-origin links below that path up to `max_pages`. Crawling is intentionally one level deep; add another `sources[]` entry when important pages live outside the configured path or are only reachable through a deeper navigation tree.
 
@@ -195,7 +196,7 @@ jobs:
 
 ## Wiring it up
 
-A single config field enables the requirements integration. Once set, `create-threat-model` runs Phase 8b (compliance) automatically and the standalone `audit-security-requirements` skill reads the same URL.
+A single config field enables the requirements integration. Once set, `create-threat-model` runs the requirements-compliance check automatically and the standalone `audit-security-requirements` skill reads the same URL.
 
 ```json
 // skills/audit-security-requirements/config.json
@@ -207,7 +208,7 @@ A single config field enables the requirements integration. Once set, `create-th
 }
 ```
 
-The URL is cached at `$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml` — an unreachable URL falls back to the cached copy. An explicit `--requirements <url>` on the command line always wins over the config, and `--no-requirements` turns the check off for a single run.
+The fetched catalog is cached locally, so an unreachable URL falls back to the cached copy. An explicit `--requirements <url>` on the command line always wins over the config, and `--no-requirements` turns the check off for a single run.
 
 ## Troubleshooting
 

@@ -30,9 +30,9 @@ The threat modeler treats the repository as the primary evidence source for secu
 
 * **Catalog-grounded context:** Your requirements, prior threats, and adjacent services feed the analysis, so findings reference your controls, not a generic checklist.
 
-* **Diff-based reruns:** Findings keep stable IDs across runs, so a rescan shows what actually moved, not a fresh report.
+* **Diff-based reruns:** Findings keep stable IDs across runs, so a rescan shows what actually moved since the last one.
 
-* **Architecture-level review:** Findings sit at trust boundaries, service trust, and unauthenticated paths — the architecture risks code scanners miss.
+* **Architecture-level review:** Findings sit at trust boundaries, service trust, and unauthenticated paths: the architecture risks code scanners miss.
 
 The result is a repeatable, code-aware starting point for review. It supports architectural judgment, but it is not a verdict. The requirements audit and developer helpers reuse the same catalog and agent infrastructure to extend this into day-to-day development.
 
@@ -49,9 +49,9 @@ Threat model findings should be validated by an AppSec engineer or security arch
 > [!IMPORTANT]
 > **Treat any repository you scan as untrusted input.** Its contents flow into the LLM, so a repo can attempt prompt injection. Because the default Bash allow-list still contains general-purpose interpreters (`python3`, `awk`, `sed`), a successful injection can escalate into local command execution. For third-party or vendor code, run with `--trust-mode untrusted` inside a container or VM. Details in [SECURITY.md: Known issues](SECURITY.md#known-issues--untrusted-repositories).
 
-**What leaves your machine.** Only the source, manifests, and config of the components under analysis, never the whole repo. Secret snippets surfaced in `.recon-summary.md` are masked (up to 4 characters kept, the rest `****`). The plugin needs `api.anthropic.com` and cannot run air-gapped; cached prompt segments live on Anthropic infrastructure for the cache TTL.
+**What leaves your machine.** Only the source, manifests, and config of the components under analysis, never the whole repo. Secrets surfaced in recon output are masked. The plugin needs `api.anthropic.com` and cannot run air-gapped; cached prompt segments live on Anthropic infrastructure for the cache TTL.
 
-**How the report is produced.** The report is rendered by deterministic Python (Jinja), not by the model, so the same input yields the same report. Intermediate artefacts are schema-validated, template conditions use a small parser instead of `eval()`, and `secret_scan.py` blocks `publish-threat-model` from exposing an unmasked secret.
+**How the report is produced.** The report is rendered by deterministic Python (Jinja), not by the model, so the same input yields the same report. Intermediate artefacts are schema-validated, and secrets are blocked or masked before publishing, so `publish-threat-model` won't expose an unmasked secret.
 
 ---
 
@@ -72,7 +72,7 @@ Threat model findings should be validated by an AppSec engineer or security arch
 
 The steps below get you to your first threat model, the plugin's primary tool. Requirements audit and developer helpers use the same setup and are covered in their own sections below.
 
-This plugin requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Node deps (`jsdom` + `mermaid`) enable grammar-level Mermaid QA; see the [Threat Modeler](#threat-modeler) docs.
+This plugin requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Node deps (`jsdom` + `mermaid`) enable grammar-level Mermaid QA. See the [Threat Modeler](#threat-modeler) docs.
 
 The plugin is registered once, then invoked from the repository you want to assess.
 For now, installation uses a local checkout rather than a packaged release. This makes the plugin files, prompts, schemas, and scripts easy to inspect, patch, or pin while the project is still in beta.
@@ -82,7 +82,7 @@ For now, installation uses a local checkout rather than a packaged release. This
 Clone this repository and start Claude Code with the plugin directory enabled:
 
 ```bash
-git clone <repository-url> /path/to/appsec-advisor
+git clone https://github.com/matthiasrohr/appsec-advisor.git /path/to/appsec-advisor
 claude --plugin-dir /path/to/appsec-advisor
 ```
 
@@ -132,7 +132,7 @@ An assessment produces a report covering architecture observations, trust bounda
 
 **Example:** A thorough-mode run against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) produces 78 findings across 9 components (10 Critical, 40 High, 22 Medium, 6 Low) including architecture diagrams, abuse-case chains, and a full mitigation register. → [Read the full example report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
 
-![Threat Model Juice Shop Standard](./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
+![Threat Model Juice Shop Thorough](./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
 
 **→ Full reference: [docs/threat-modeler.md](docs/threat-modeler.md)**
 
@@ -168,7 +168,7 @@ Supported root blocks are `external_context` (optional REST business context), `
 
 The requirements audit (`audit-security-requirements`) is an AppSec-owned compliance gate: it grades a snapshot of the repository against a catalog and produces a structured report for dashboards, audits, and release gates.
 
-The tools below serve a different purpose: they are developer-facing helpers that give security feedback during active coding or on a diff in progress. They are not audit artifacts. Like the requirements audit they use the configured requirements catalog as their active standard, falling back to the bundled baseline when none is configured.
+The tools below serve a different purpose: they are developer-facing helpers that give security feedback during active coding or on a diff in progress. They are not audit artefacts. Like the requirements audit they use the configured requirements catalog as their active standard, falling back to the bundled baseline when none is configured.
 
 | Tool | Type | Scope | Entry point | When to use it |
 |---|---|---|---|---|
@@ -250,21 +250,21 @@ The generic single-repo driver supports the Spring, Python, Rust, Go, Node.js/Ty
 
 ## Enterprise rollout
 
-For AppSec and Platform teams: treat `appsec-advisor` as the upstream analysis core, wrap it in a company-branded plugin, and ship that to developers. They get one command that runs with your requirements catalog, presets, and guardrails already loaded, no per-developer configuration.
+For AppSec and Platform teams: treat `appsec-advisor` as the upstream analysis core, wrap it in a company-branded plugin, and ship that to developers. They get one command that runs with your requirements catalog, presets, and guardrails already loaded, with no per-developer configuration.
 
 What the org-profile buys you over the generic plugin:
 
-- **Your requirements catalog, not the generic baseline:** findings and audit grades reference your internal control IDs and severity definitions.
-- **Fixed cost limits:** token budget and max duration baked in; developers can't accidentally run an unbounded analysis.
-- **Pre-loaded business context:** service classification, regulatory scope, and risk appetite set centrally, not per run.
-- **Consistent presets:** assessment depth, output formats, and SARIF export configured once for the whole org.
-- **Locked surface:** `package-policy.yaml` removes experimental skills or hooks that aren't approved for internal use.
+- Findings and audit grades reference your internal control IDs and severity definitions instead of the generic baseline.
+- **Fixed cost limits.** Token budget and max duration are baked in, so developers can't accidentally run an unbounded analysis.
+- Service classification, regulatory scope, and risk appetite are set centrally rather than per run.
+- **Consistent presets:** assessment depth, output formats, and SARIF export are configured once for the whole org.
+- `package-policy.yaml` locks the surface, removing experimental skills or hooks that aren't approved for internal use.
 
 The diagram below shows the packaging and distribution flow using "Acme" as a placeholder for your organisation.
 
 ![Enterprise rollout pipeline](docs/images/orgpackaging.svg)
 
-The initializer guides you through the required organization-specific settings and creates a ready-to-use packaging repository.
+The initializer guides you through the required organisation-specific settings and creates a ready-to-use packaging repository.
 
 ```console
 $ bash <(curl -fsSL https://raw.githubusercontent.com/matthiasrohr/appsec-advisor-org-packaging-template/main/scripts/init-org-repo.sh)
@@ -305,13 +305,9 @@ Planned and in-progress work:
 
 - **Richer context input.** The pipeline is anchored almost entirely in the repo itself. The goal is to let product teams feed more context into the assessment — today this is limited to `docs/business-context.md`, `docs/known-threats.yaml`, and `docs/related-repos.yaml`.
 
-- **Scaling to component-heavy repos.** STRIDE merge and the per-agent turn budget run serially and strain past ~8–10 components. The run analyses them all and logs the overrun rather than dropping exposed components — correct, but slow and costly. Parallelising the merge is the open fix.
+- **Scaling to component-heavy repos.** The analysis covers every component but runs slower and costlier past roughly 8–10. No exposed component is dropped; the open work is making large repos faster.
 
 - **Multi-repo scans.** Per-repo scanning fits monorepos but is limited when an app spans several repos (APIs, IaC, …). Today only partially covered via `docs/related-repos.yaml`.
-
-- **Shared agent state.** Let STRIDE pods, merge, and triage exchange advisory hints via an append-only bulletin instead of only formal artifacts.
-
-- **Slimming the orchestration skill.** `create-threat-model/SKILL-impl.md` has grown large. Shrink it incrementally — extract inline Bash into tested scripts, deduplicate blocks, move rationale into script docstrings — lowering orchestration cost (less context per turn). Golden-run-verified, behaviour byte-identical.
 
 - **Ingest existing threat models (idea).** Detect an existing model (e.g. Threat Dragon `threat-model.json`) and use it as non-authoritative context.
 
