@@ -2534,6 +2534,101 @@ class TestCrossReferenceLabellingInvariant:
         # No `[F-001](#f-001)` link injected.
         assert "[F-001](#f-001)" not in new_text
 
+    # ------------------------------------------------------------------
+    # Per-class guard-branch coverage. The four substitution closures
+    # (sub_t / sub_m / sub_f / sub_th) each carry the same three skip
+    # guards: (1) the ref is the visible text of an existing
+    # `<a href="#id">ID</a>`, (2) the ref directly follows its own
+    # `<a id="id"></a>` declaration, (3) the author already wrote an
+    # em-dash description on the same line. Previously these were only
+    # exercised for a subset of the four ID classes; pin all of them so a
+    # refactor cannot silently drop a guard from one class.
+    # ------------------------------------------------------------------
+
+    def test_sub_t_skips_existing_html_anchor_text(self, tmp_path):
+        """Bare T-NNN that is the text of `<a href="#t-001">T-001</a>` is
+        not re-linkified (sub_t HTML-anchor guard)."""
+        md = self._write_pair(tmp_path, 'Top: <a href="#t-001">T-001</a> here.\n')
+        _, new_text = qa.linkify_anchors(md)
+        assert '<a href="#t-001">T-001</a>' in new_text
+        assert '<a href="#t-001">[T-001]' not in new_text
+
+    def test_sub_t_skips_after_anchor_declaration(self, tmp_path):
+        """Bare T-NNN directly after its `<a id="t-001"></a>` declaration in
+        prose is left bare (sub_t anchor-declaration guard)."""
+        md = self._write_pair(tmp_path, '<a id="t-001"></a>T-001 is the top class.\n')
+        _, new_text = qa.linkify_anchors(md)
+        assert '<a id="t-001"></a>T-001 is the top class.' in new_text
+        assert "</a>[T-001]" not in new_text
+
+    def test_sub_t_bare_with_author_em_dash(self, tmp_path):
+        """Bare T-NNN followed by ` — <text>` gets a plain hyperlink, not the
+        injected YAML title (sub_t em-dash guard)."""
+        md = self._write_pair(tmp_path, "**Threat:** T-001 — author note follows.\n")
+        _, new_text = qa.linkify_anchors(md)
+        assert "[T-001](#t-001) — author note follows." in new_text
+        assert "[T-001](#t-001) — SQL Injection" not in new_text
+
+    def test_sub_m_skips_existing_html_anchor_text(self, tmp_path):
+        """sub_m HTML-anchor guard."""
+        md = self._write_pair(tmp_path, 'Mitigated by <a href="#m-001">M-001</a> soon.\n')
+        _, new_text = qa.linkify_anchors(md)
+        assert '<a href="#m-001">M-001</a>' in new_text
+        assert '<a href="#m-001">[M-001]' not in new_text
+
+    def test_sub_m_skips_after_anchor_declaration(self, tmp_path):
+        """sub_m anchor-declaration guard (non-heading prose form)."""
+        md = self._write_pair(tmp_path, '<a id="m-001"></a>M-001 applies to the login flow.\n')
+        _, new_text = qa.linkify_anchors(md)
+        assert '<a id="m-001"></a>M-001 applies to the login flow.' in new_text
+        assert "</a>[M-001]" not in new_text
+
+    def test_sub_m_bare_with_author_em_dash(self, tmp_path):
+        """sub_m em-dash guard."""
+        md = self._write_pair(tmp_path, "Mitigation M-001 — apply parameterised queries.\n")
+        _, new_text = qa.linkify_anchors(md)
+        assert "[M-001](#m-001) — apply parameterised queries." in new_text
+        assert "[M-001](#m-001) — Use parameterized queries" not in new_text
+
+    def test_sub_f_bare_with_author_em_dash(self, tmp_path):
+        """sub_f em-dash guard."""
+        md = self._write_pair(tmp_path, "Finding F-001 — see the detailed analysis.\n")
+        _, new_text = qa.linkify_anchors(md)
+        assert "[F-001](#f-001) — see the detailed analysis." in new_text
+        assert "[F-001](#f-001) — SQL Injection" not in new_text
+
+    def test_sub_th_skips_existing_html_anchor_text(self, tmp_path):
+        """sub_th HTML-anchor guard."""
+        md = self._write_pair(tmp_path, 'Class <a href="#th-01">TH-01</a> dominates.\n')
+        _, new_text = qa.linkify_anchors(md)
+        assert '<a href="#th-01">TH-01</a>' in new_text
+        assert '<a href="#th-01">[TH-01]' not in new_text
+
+    def test_sub_th_skips_already_linked(self, tmp_path):
+        """sub_th bracket/paren guard: an already-linked [TH-01](#th-01) is not
+        wrapped a second time."""
+        md = self._write_pair(tmp_path, "See [TH-01](#th-01) for the top class.\n")
+        _, new_text = qa.linkify_anchors(md)
+        assert "[[TH-01]" not in new_text
+        assert "[TH-01](#th-01)" in new_text
+
+    def test_bare_ref_without_label_falls_back_to_plain_link(self, tmp_path):
+        """A bare ID with no entry in the label index (`_labelled` fallback)
+        becomes a plain `[ID](#id)` link with no ` — ` title suffix."""
+        md = self._write_pair(tmp_path, "Tracked separately as T-999 in the backlog.\n")
+        _, new_text = qa.linkify_anchors(md)
+        assert "[T-999](#t-999)" in new_text
+        assert "[T-999](#t-999) —" not in new_text
+
+    def test_bare_ref_inside_code_fence_left_alone(self, tmp_path):
+        """Bare IDs inside a fenced code block (e.g. Mermaid node labels) are
+        not linkified (pass-2 fence guard)."""
+        md_body = "## Notes\n\n```text\nnode T-036 stays bare here\n```\n"
+        md = self._write_pair(tmp_path, md_body)
+        _, new_text = qa.linkify_anchors(md)
+        assert "node T-036 stays bare here" in new_text
+        assert "[T-036]" not in new_text
+
 
 class TestEvidenceIntegrity:
     """Cover the M1 evidence-integrity check end-to-end.
