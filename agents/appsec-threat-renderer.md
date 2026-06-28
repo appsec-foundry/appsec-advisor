@@ -30,9 +30,10 @@ roles you do NOT compose and do NOT run those tail steps.
 | `secarch` | ONLY `security-architecture.md` per the §7 contract below | `architecture-diagrams.md` (deterministic — the skill force-regenerates it from `threat-model.yaml` before AND after this dispatch, so any edit here is always discarded; §2 incl. its `**Key takeaway:**` lines is owned by `pregenerate_fragments.py:gen_architecture_diagrams`), any `ms-*.json`, `security-posture-attack-paths.json`, `attack-walkthroughs.md` | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 | `ms` | ONLY `ms-verdict.json`, `ms-critical-attack-tree.json` (when ≥2 Critical), `security-posture-attack-paths.json` (unless `SKIP_ATTACK_PATHS_AUTHORING=true`), `requirements-compliance.md` (when `CHECK_REQUIREMENTS=true`), `ms-anti-patterns.json` (when §7 anti-pattern tags exist — see contract below), `ms-ai-exposure.json` (when `KNOWN_LLM_PATTERNS` non-empty and LLM threats found — see contract below); then run the MS compactness gate | `security-architecture.md`, `architecture-diagrams.md`, any §7 prose | **NO — skill does it.** Skip the `## Render Contract`, QA, `## Postcondition Gate`, and the `status=completed` checkpoint entirely |
 
-**Both split roles still run the `## First Action` telemetry** (tag the phase-start
-message with your role, e.g. `[Phase 11/11] §7 enrichment` / `[Phase 11/11]
-Management summary`) and obey `## Output Hygiene`, `## Secret Handling`, and the
+**Both split roles still run the `## First Action` telemetry** — its `case`
+block auto-tags the phase-start with your role (`[Phase 11/11] §7 enrichment` /
+`[Phase 11/11] Management summary`) from `RENDER_ROLE`, so run it verbatim; do not
+hand-edit the label. Then obey `## Output Hygiene`, `## Secret Handling`, and the
 `## Budget-critical wrap-up` skip table. When `RENDER_ROLE` is `full` or unset,
 ignore this section and execute the whole document as before. If your role is
 `secarch` or `ms`, your final return is a one-line status of what you authored —
@@ -89,7 +90,16 @@ Before reading artifacts or authoring fragments, emit Phase 11 start telemetry i
 ```bash
 date +%s > "$OUTPUT_DIR/.phase-epoch"
 echo "CHECKPOINT phase=11 status=writing_output" > "$OUTPUT_DIR/.appsec-checkpoint"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-start "[Phase 11/11] Finalization…" --agent threat-renderer
+# Role-tagged phase-start label so the two concurrent split agents emit
+# DISTINGUISHABLE console banners instead of two byte-identical "Finalization…"
+# lines (the §33 role-tag contract, wired here so it does not depend on prose
+# interpretation). full/unset → the generic single-dispatch label.
+case "${RENDER_ROLE:-full}" in
+  secarch) PHASE11_LABEL="§7 enrichment" ;;
+  ms)      PHASE11_LABEL="Management summary" ;;
+  *)       PHASE11_LABEL="Finalization" ;;
+esac
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-start "[Phase 11/11] ${PHASE11_LABEL}…" --agent threat-renderer
 ```
 
 The outcome must be visible in `.agent-run.log`, `.appsec-progress.json`, and `.appsec-checkpoint`.
@@ -801,11 +811,14 @@ This guard is non-optional. A return without this check is a contract violation 
 
 ## Completion
 
-> **`RENDER_ROLE=secarch` / `ms` → SKIP the `status=completed` checkpoint.** The
-> skill writes the final Phase-11 checkpoint after it composes. You may emit a
-> role-tagged phase-end log line, but do NOT write `status=completed` (it would
-> falsely signal the render finished before compose ran). Return your one-line
-> status instead. `RENDER_ROLE=full` (or unset) runs the steps below.
+> **`RENDER_ROLE=secarch` / `ms` → SKIP this entire section.** After both split
+> agents return, the skill composes and emits the single authoritative
+> `[Phase 11/11] Finalization (parallel renderer)` phase-end **plus** the
+> `status=completed` checkpoint (`SKILL-impl.md` parallel-render path). A split
+> role must therefore emit **no** phase-end log line (a second one duplicates the
+> skill's banner on the console) and **no** `status=completed` (it would falsely
+> signal the render finished before compose ran). Just return your one-line
+> status. `RENDER_ROLE=full` (or unset) runs the steps below.
 
 Write the final checkpoint and Phase 11 end telemetry:
 
