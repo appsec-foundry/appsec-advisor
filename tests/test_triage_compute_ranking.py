@@ -68,6 +68,38 @@ def test_empty_threats_emits_empty_block(tmp_path: Path) -> None:
     assert flags["ranking"]["reconciliation_summary"]["chains_active"] == 0
 
 
+def test_create_fallback_is_schema_valid(tmp_path: Path) -> None:
+    """When compute_ranking is the create-owner (the pre-flight writer
+    triage_validate_ratings.py never ran, so no .triage-flags.json exists), the
+    file it writes must still satisfy schemas/triage-flags.schema.yaml — i.e.
+    carry root `generated_at` and a populated `summary`. Regression for the
+    2026-06-28 e2e failure where the fallback emitted an empty `summary` / no
+    `generated_at`, so validate_intermediate.py rejected it."""
+    threats = [
+        {"t_id": "F-001", "title": "X", "primary_cwe": "CWE-89", "risk": "High",
+         "impact": "High", "likelihood": "Medium", "scenario": "s",
+         "evidence": {"file": "a.ts", "line": 1}},
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+    assert not (tmp_path / ".triage-flags.json").is_file()  # create-owner path
+    res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
+    assert res.returncode == 0, res.stderr
+    flags = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert flags.get("generated_at"), "root generated_at missing"
+    summary = flags.get("summary") or {}
+    for key in ("total_flags", "warnings", "info", "threats_reviewed"):
+        assert key in summary, f"summary.{key} missing"
+    assert summary["threats_reviewed"] == 1
+    assert summary["total_flags"] == len(flags.get("flags") or [])
+    # Cross-check against the authoritative schema validator.
+    val = subprocess.run(
+        [sys.executable, str(PLUGIN_ROOT / "scripts" / "validate_intermediate.py"),
+         "triage_flags", str(tmp_path / ".triage-flags.json")],
+        capture_output=True, text=True,
+    )
+    assert val.returncode == 0, f"schema-invalid fallback:\n{val.stdout}\n{val.stderr}"
+
+
 def test_basic_ranking_with_two_findings(tmp_path: Path) -> None:
     threats = [
         {

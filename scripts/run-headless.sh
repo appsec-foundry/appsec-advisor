@@ -228,9 +228,12 @@ while [ $# -gt 0 ]; do
             # Preserve all transient runtime artifacts. runtime_cleanup.py reads
             # the KEEP_RUNTIME_FILES env gate (not a CLI flag at its skill-layer
             # call sites), so export it for the child claude process AND the
-            # deterministic post-run cleanup backstop below.
+            # deterministic post-run cleanup backstop below. ALSO forward the flag
+            # to the skill so resolve_config.py records keep_runtime_files=true in
+            # .skill-config.json (resolve_config is CLI-driven, not env-driven).
             export KEEP_RUNTIME_FILES=true
-            KEEP_RUNTIME_FILES_FLAG="--keep-runtime-files"; shift ;;
+            KEEP_RUNTIME_FILES_FLAG="--keep-runtime-files"
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --incremental)
             INCREMENTAL_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;

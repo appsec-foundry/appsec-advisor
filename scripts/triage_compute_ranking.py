@@ -885,6 +885,26 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
     else:
         flags = {"version": 1, "flags": [], "summary": {}}
     flags["version"] = 2
+    # When compute_ranking is the create-owner (the pre-flight writer
+    # triage_validate_ratings.py did not run), the stub above lacks the
+    # schema-required root `generated_at` and the populated `summary` block.
+    # Backfill them so the file is ALWAYS schema-valid (schemas/triage-flags.
+    # schema.yaml requires generated_at + summary.{total_flags,warnings,info,
+    # threats_reviewed}). setdefault preserves real pre-flight values when the
+    # file already existed — only the create-fallback path is filled in.
+    flags.setdefault("generated_at", _now_iso())
+    flags_list = flags.get("flags") or []
+    summary = flags.setdefault("summary", {})
+    summary.setdefault("total_flags", len(flags_list))
+    summary.setdefault(
+        "warnings",
+        sum(1 for f in flags_list if isinstance(f, dict) and f.get("severity") == "warning"),
+    )
+    summary.setdefault(
+        "info",
+        sum(1 for f in flags_list if isinstance(f, dict) and f.get("severity") == "info"),
+    )
+    summary.setdefault("threats_reviewed", len(yaml_data.get("threats") or []))
     flags["ranking"] = ranking
     flags_path.write_text(json.dumps(flags, indent=2, ensure_ascii=False), encoding="utf-8")
 

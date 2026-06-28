@@ -954,8 +954,14 @@ def _flag_forbidden_strength_control(control_cell: str, report: Report) -> bool:
 def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Report:
     """Hard QA gate — scan rendered artifacts for raw, unmasked secrets.
 
-    Scans ``threat-model.md`` (always) plus ``threat-model.yaml`` (when an
-    ``output_dir`` is given and the file exists). A hit blocks release.
+    Scans ``threat-model.md`` (always) plus — when an ``output_dir`` is given —
+    every OTHER published artifact a secret can propagate into: the canonical
+    ``threat-model.yaml``, the ``threat-model.sarif.json`` and ``threat-model.html``
+    exports, and the LLM-authored ``.fragments/*.md`` that feed the compose. The
+    composer masks the final MD, but the data pipeline (STRIDE → merged → yaml/
+    sarif) and the fragments were previously unscanned, so an analyst-copied raw
+    secret could ship in those artifacts undetected (2026-06-28 e2e leak). A hit
+    in any of them blocks release.
 
     Masked values (``AIza****``, ``**** (12 chars)``, ``[REDACTED]``) are
     skipped — see ``scripts/secret_scan.py`` for the marker list.
@@ -963,9 +969,11 @@ def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Rep
     report = Report(check="unmasked_secrets")
     targets: list[Path] = [md_path]
     if output_dir is not None:
-        yaml_path = output_dir / "threat-model.yaml"
-        if yaml_path.exists():
-            targets.append(yaml_path)
+        for rel in ("threat-model.yaml", "threat-model.sarif.json", "threat-model.html"):
+            p = output_dir / rel
+            if p.exists():
+                targets.append(p)
+        targets.extend(sorted((output_dir / ".fragments").glob("*.md")))
     for target in targets:
         for hit in _scan_file_for_secrets(target):
             report.issues.append(
