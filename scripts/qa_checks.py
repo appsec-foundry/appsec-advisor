@@ -83,6 +83,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import _safe_cond
+from check_reference_format import lint_text as _reference_format_lint
 from perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
 from secret_scan import scan_file as _scan_file_for_secrets
 
@@ -382,6 +383,30 @@ def check_links(md_path: Path, repo_root: Path) -> tuple[Report, str]:
         else:
             report.issues.append(f"missing: {raw_path}")
     return report, new_text
+
+
+def check_reference_format(md_path: Path) -> Report:
+    """Per-run gate for the canonical finding/mitigation reference format.
+
+    Every `[F/T/M-NNN](#…)` reference must be the full form
+    (`<glyph> [ID](#id) — <label> (`file:line`)`) or the short form
+    (`<glyph> [ID](#id)`); an un-backticked locator, an ID baked into the link
+    text, or an em-dash locator is a defect (see scripts/check_reference_format.py
+    for the grammar). compose auto-normalises most of these via
+    `_normalize_reference_locators`; a surviving violation is something the
+    renderer could not fix, so it is surfaced as a blocking QA issue rather than
+    shipping a malformed link. Reference-adjacent — prose file mentions and URLs
+    are never flagged."""
+    report = Report("reference_format")
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError as e:
+        report.issues.append(f"reference_format: cannot read {md_path}: {e}")
+        return report
+    for violation in _reference_format_lint(text):
+        report.issues.append(f"reference-format: {violation}")
+    report.ok = 1 if not report.issues else 0
+    return report
 
 
 def check_xrefs(md_path: Path) -> Report:
@@ -4021,6 +4046,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         _PrePass.reset()
     contract_report = check_contract(md)
     xref_report = check_xrefs(md)
+    reference_format_report = check_reference_format(md)
     inv_report = check_invariants(md)
     # Check 7c-ext — requirement-sourced threats must carry Violated annotation.
     _check_requirements_violated_coverage(md, md.parent, inv_report)
@@ -4128,6 +4154,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "cell_format": cell_report.as_dict(),
         "contract": contract_report.as_dict(),
         "xrefs": xref_report.as_dict(),
+        "reference_format": reference_format_report.as_dict(),
         "invariants": inv_report.as_dict(),
         "heading_hygiene": heading_report.as_dict(),
         "toc_closure": toc_report.as_dict(),
@@ -9969,6 +9996,10 @@ def main(argv: list[str]) -> int:
         return 0 if not report.issues else 1
     if sub == "xrefs":
         report = check_xrefs(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "reference_format":
+        report = check_reference_format(Path(argv[2]))
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "anchors":

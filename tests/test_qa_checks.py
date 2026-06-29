@@ -59,6 +59,59 @@ def test_no_args_exits_nonzero():
     assert result.returncode != 0
 
 
+# ---------------------------------------------------------------------------
+# reference_format gate — guarantees finding links are correct on EVERY run
+# ---------------------------------------------------------------------------
+
+
+def test_reference_format_clean_doc_has_no_issues(tmp_path: Path):
+    md = _write_minimal_model(
+        tmp_path,
+        "## Findings\n\n🔴 [F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`)\n"
+        "🟠 [F-016](#f-016)\n",
+    )
+    report = qa.check_reference_format(md)
+    assert report.issues == []
+    assert report.ok == 1
+
+
+def test_reference_format_flags_unbackticked_locator(tmp_path: Path):
+    md = _write_minimal_model(
+        tmp_path,
+        "## Findings\n\n🔴 [F-010](#f-010) — Insecure Direct Object Reference (routes/memory.ts:15)\n",
+    )
+    report = qa.check_reference_format(md)
+    assert report.issues, "an un-backticked locator must be a blocking QA issue"
+    assert report.ok == 0
+
+
+def test_reference_format_flags_id_in_link_text(tmp_path: Path):
+    md = _write_minimal_model(tmp_path, "## Findings\n\n[F-010 — Insecure Direct Object Reference](#f-010)\n")
+    report = qa.check_reference_format(md)
+    assert report.issues
+
+
+def test_reference_format_cli_exit_codes(tmp_path: Path):
+    clean_dir = tmp_path / "c"
+    clean_dir.mkdir()
+    bad_dir = tmp_path / "b"
+    bad_dir.mkdir()
+    clean = _write_minimal_model(clean_dir, "## F\n\n🔴 [F-010](#f-010) — IDOR (`memory.ts:15`)\n")
+    bad = _write_minimal_model(bad_dir, "## F\n\n🔴 [F-010](#f-010) — IDOR (routes/memory.ts:15)\n")
+    assert _run(["reference_format", str(clean)]).returncode == 0
+    assert _run(["reference_format", str(bad)]).returncode == 1
+
+
+def test_reference_format_in_all_gate_summary(tmp_path: Path):
+    # The `all` aggregation must expose reference_format so a malformed link
+    # counts toward the gate's total_issues on every run.
+    import inspect
+
+    src = inspect.getsource(qa)
+    assert '"reference_format": reference_format_report.as_dict()' in src
+    assert "reference_format_report = check_reference_format(md)" in src
+
+
 def test_unknown_subcommand_exits_nonzero(tmp_path: Path):
     md = _write_minimal_model(tmp_path, "# Threat Model\n")
     result = _run(["unknown_subcommand", str(md)])
