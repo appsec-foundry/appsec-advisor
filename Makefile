@@ -105,13 +105,17 @@ fix:  ## Auto-repair the mechanical gate failures (ruff lint + format), then lis
 # ─────────────────────────────────────────────────────────────────────────────
 
 .PHONY: check
-check:  ## Continuous gate: lint, format, config, drift, full test suite
+check:  ## Continuous gate: lint, format, config, drift, full test suite (no coverage)
 	@ruff check scripts/ tests/ hooks/
 	@ruff format --check scripts/ tests/ hooks/
 	@python3 scripts/validate_config.py .
 	@python3 scripts/check_fragment_registry.py
-	@$(PYTHON) -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing; \
-		status=$$?; rm -rf .coverage-data; exit $$status
+	@# Run WITHOUT --cov: coverage enables `[tool.coverage.run] patch=["subprocess"]`,
+	@# which instruments every child interpreter. The subprocess-heavy integration
+	@# tests (e.g. test_incremental_mode spawning run-headless.sh) then crawl and the
+	@# release gate appears to hang. Coverage is enforced separately by `make test` /
+	@# `make coverage` (and the CI coverage job), not on this fast correctness gate.
+	@$(PYTHON) -m pytest tests/ --tb=short
 
 .PHONY: release-check
 release-check:  ## Release-boundary gate: `check` + version/tag/changelog consistency
