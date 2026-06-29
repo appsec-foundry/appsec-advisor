@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import base64
 import functools
+import importlib.util
 import json
 import re
 import sys
@@ -14168,16 +14169,87 @@ def _wrap_inline_code(text: str) -> str:
     return "".join(out)
 
 
+def _load_sibling_module(name: str):
+    """Import a sibling ``scripts/<name>.py`` module by path.
+
+    Used so compose can reuse another script's pure functions in-process
+    (e.g. the §9 self-heal below) without spawning a subprocess. Raises on a
+    missing/unloadable module — callers that want best-effort behaviour wrap
+    the call in try/except.
+    """
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / f"{name}.py")
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load sibling module {name!r}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _heal_abuse_cases_fragment(ctx: RenderContext) -> str:
+    """Regenerate the §9 fragment in-process from on-disk verdicts.
+
+    The orchestrator normally runs ``scripts/render_abuse_cases.py`` to write
+    ``.fragments/abuse-cases.md`` BEFORE compose. An interrupted or skipped
+    Stage-1c run can leave ``.abuse-case-verdicts.json`` (and the matcher's
+    ``.abuse-case-matches.json``) on disk with viable chains but no fragment —
+    in which case the bare placeholder below would falsely claim "no abuse
+    cases" even though the verified evidence is sitting right there. compose
+    has the exact inputs the standalone renderer uses, so it rebuilds the
+    fragment rather than silently dropping the data. RC-2026-06-29.
+
+    Returns the fragment markdown (also persisted to ``.fragments/`` so the MS
+    abuse-chain line and JSON sidecar stay consistent), or "" when there is
+    genuinely no abuse-case evaluation on disk to recover.
+    """
+    verdicts = ctx.output_dir / ".abuse-case-verdicts.json"
+    matches = ctx.output_dir / ".abuse-case-matches.json"
+    if not verdicts.exists() and not matches.exists():
+        return ""
+    try:
+        rac = _load_sibling_module("render_abuse_cases")
+    except Exception:
+        return ""
+    skill_cfg = _read_skill_config(ctx.output_dir)
+    repo_root = (ctx.yaml_data.get("meta") or {}).get("repository_root") or skill_cfg.get("repo_root") or None
+    op = skill_cfg.get("org_profile") if isinstance(skill_cfg.get("org_profile"), dict) else {}
+    org_profile = op.get("path") if op.get("active") else None
+    try:
+        models = rac.build_models(ctx.output_dir, org_profile, repo_root)
+        catalog_rows = rac.build_catalog_evaluation(ctx.output_dir)
+    except Exception:
+        return ""
+    if not models and not catalog_rows:
+        return ""
+    md = rac.render_fragment(models, catalog_rows)
+    try:
+        ctx.fragments_dir.mkdir(parents=True, exist_ok=True)
+        (ctx.fragments_dir / "abuse-cases.md").write_text(md, encoding="utf-8")
+        (ctx.fragments_dir / "abuse-cases.json").write_text(
+            json.dumps(
+                {"schema_version": 1, "abuse_cases": models, "catalog_evaluated": catalog_rows},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+    return md.strip()
+
+
 def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §9 Abuse Cases.
 
     The section body is produced deterministically by
     ``scripts/render_abuse_cases.py`` (from ``.abuse-case-verdicts.json`` +
     ``threat-model.yaml``) and dropped at ``.fragments/abuse-cases.md``. This
-    handler inlines that fragment verbatim when present; when it is absent —
-    no org-profile abuse case applied and none was discovered — it emits a
-    single italic placeholder so the §8 → §10 numbering stays contiguous (the
-    contract hard-numbers §10 Mitigation Register / §11 Out of Scope).
+    handler inlines that fragment verbatim when present. When it is absent the
+    handler first attempts an in-process self-heal from on-disk verdicts (see
+    ``_heal_abuse_cases_fragment`` — covers the orchestration gap where the
+    render step was skipped); only when there is genuinely no abuse-case
+    evaluation to recover does it emit a single italic placeholder so the §8 →
+    §10 numbering stays contiguous (the contract hard-numbers §10 Mitigation
+    Register / §11 Out of Scope).
 
     Like every markdown fragment, the first non-blank line must equal the
     contract heading, so a renderer/contract drift is caught here rather than
@@ -14189,6 +14261,8 @@ def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: di
         md = frag.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         md = ""
+    if not md:
+        md = _heal_abuse_cases_fragment(ctx)
     if not md:
         return f"{heading}\n\n_No abuse cases were identified or mandated for this assessment._\n"
     first = next((ln.strip() for ln in md.splitlines() if ln.strip()), "")
@@ -16144,7 +16218,44 @@ def _section_substance_ok(ctx: RenderContext, sid: str, body: str) -> bool:
         if not threats:
             return True
         return bool(re.search(r"F-\d{2,}", body)) or '<a id="f-' in body.lower()
+    if sid == "abuse_cases":
+        # §9 renders a deterministic placeholder when no abuse-case evaluation
+        # is on disk — legitimately empty for many repos, so no signal there.
+        # But when the verifier DID leave viable verdicts on disk and §9 still
+        # shows only the placeholder, the render step was skipped/failed and the
+        # verified chains were silently dropped (juice-shop 2026-06-29). That is
+        # a real content gap that previously still scored 100% integrity. Flag it
+        # so `report_integrity_ok` flips and the QA repair loop fires. The
+        # self-heal in `_render_abuse_cases` normally prevents this from ever
+        # rendering as a placeholder; this is the independent detection backstop.
+        if not _has_viable_abuse_verdicts(ctx.output_dir):
+            return True
+        return bool(re.search(r'(?i)id="ac-|\bAC-[A-Z]*-?\d', body))
     return True
+
+
+def _has_viable_abuse_verdicts(output_dir: Path) -> bool:
+    """True when ``.abuse-case-verdicts.json`` holds ≥1 chain that should render
+    in §9 — i.e. a verdict whose ``chain_verdict`` is anything other than
+    ``not_applicable`` (matching ``render_abuse_cases.build_models``, which only
+    drops ``not_applicable`` chains). A verdict with no ``chain_verdict`` yet is
+    treated as viable (the renderer self-heals the fold from its step verdicts).
+    Best-effort: any read/parse error returns False so this never spuriously
+    fails a clean render. RC-2026-06-29.
+    """
+    path = output_dir / ".abuse-case-verdicts.json"
+    if not path.is_file():
+        return False
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    for v in doc.get("verdicts") or []:
+        if not isinstance(v, dict):
+            continue
+        if v.get("chain_verdict", "viable") != "not_applicable":
+            return True
+    return False
 
 
 def _section_fragment_status(ctx: RenderContext, sid: str) -> tuple[list[str], list[str], bool]:

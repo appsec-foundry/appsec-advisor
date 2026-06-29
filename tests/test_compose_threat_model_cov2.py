@@ -371,6 +371,36 @@ class TestRenderAbuseCases:
         out = compose._render_abuse_cases(ctx, None, {"heading": "## 9. Abuse Cases"})
         assert "Body text." in out
 
+    def test_absent_fragment_self_heals_from_verdicts(self, tmp_path):
+        # Regression: the render step was skipped (no fragment) but the verified
+        # verdicts are on disk. compose must regenerate §9 from them, NOT emit
+        # the "no abuse cases" placeholder. AC-T-001 resolves from the plugin's
+        # standard abuse-case library. RC-2026-06-29.
+        (tmp_path / ".abuse-case-verdicts.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "verdicts": [
+                        {
+                            "abuse_case_id": "AC-T-001",
+                            "chain_verdict": "fully_viable",
+                            "step_verdicts": [
+                                {"step": 1, "verdict": "confirmed", "matched_finding_id": "T-001"}
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        ctx = self._ctx(tmp_path)  # no fragment on disk
+        out = compose._render_abuse_cases(ctx, None, {"heading": "## 9. Abuse Cases"})
+        assert "No abuse cases" not in out
+        assert out.lstrip().startswith("## 9. Abuse Cases")
+        # self-heal persists the fragment + JSON sidecar for downstream consumers
+        assert (tmp_path / ".fragments" / "abuse-cases.md").is_file()
+        assert (tmp_path / ".fragments" / "abuse-cases.json").is_file()
+
     def test_heading_mismatch_raises(self, tmp_path):
         ctx = self._ctx(tmp_path, frag_text="## Wrong Heading\n\nbody\n")
         with pytest.raises(compose.FragmentError):

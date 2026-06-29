@@ -101,6 +101,116 @@ def test_compute_integrity_empty_manifest_is_100():
 
 
 # ---------------------------------------------------------------------------
+# §9 Abuse Cases — silent-drop detection guard (juice-shop 2026-06-29 RC)
+#
+# Before this guard, §9 rendering its placeholder while viable verdicts sat on
+# disk scored 100% integrity — the verified chains were silently dropped and
+# nothing flagged it. These lock in that the placeholder-with-verdicts state is
+# now classified as a real content gap, while the legitimately-empty case is
+# not falsely flagged.
+# ---------------------------------------------------------------------------
+
+_PLACEHOLDER_9 = "## 9. Abuse Cases\n\n_No abuse cases were identified or mandated for this assessment._\n"
+_POPULATED_9 = '## 9. Abuse Cases\n\n### <a id="ac-t-001"></a>AC-T-001 — Account Takeover\n'
+
+
+def _ctx(tmp_path: Path):
+    return compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+    )
+
+
+def _write_verdicts(tmp_path: Path, *chain_verdicts):
+    (tmp_path / ".abuse-case-verdicts.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "verdicts": [
+                    {"abuse_case_id": f"AC-T-{i:03d}", **({"chain_verdict": cv} if cv is not None else {})}
+                    for i, cv in enumerate(chain_verdicts, start=1)
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_has_viable_abuse_verdicts_absent_file():
+    assert compose._has_viable_abuse_verdicts(Path("/nonexistent-dir-xyz")) is False
+
+
+def test_has_viable_abuse_verdicts_only_not_applicable(tmp_path: Path):
+    _write_verdicts(tmp_path, "not_applicable", "not_applicable")
+    assert compose._has_viable_abuse_verdicts(tmp_path) is False
+
+
+def test_has_viable_abuse_verdicts_one_viable(tmp_path: Path):
+    _write_verdicts(tmp_path, "not_applicable", "fully_viable")
+    assert compose._has_viable_abuse_verdicts(tmp_path) is True
+
+
+def test_has_viable_abuse_verdicts_missing_chain_verdict_is_viable(tmp_path: Path):
+    # No chain_verdict yet — renderer self-heals the fold; treat as viable.
+    _write_verdicts(tmp_path, None)
+    assert compose._has_viable_abuse_verdicts(tmp_path) is True
+
+
+def test_has_viable_abuse_verdicts_bad_json_is_false(tmp_path: Path):
+    (tmp_path / ".abuse-case-verdicts.json").write_text("{not json", encoding="utf-8")
+    assert compose._has_viable_abuse_verdicts(tmp_path) is False
+
+
+def test_substance_abuse_cases_placeholder_with_verdicts_is_gap(tmp_path: Path):
+    # The exact regression: verdicts on disk, §9 still only the placeholder.
+    _write_verdicts(tmp_path, "fully_viable")
+    assert compose._section_substance_ok(_ctx(tmp_path), "abuse_cases", _PLACEHOLDER_9) is False
+
+
+def test_substance_abuse_cases_populated_with_verdicts_is_ok(tmp_path: Path):
+    _write_verdicts(tmp_path, "fully_viable")
+    assert compose._section_substance_ok(_ctx(tmp_path), "abuse_cases", _POPULATED_9) is True
+
+
+def test_substance_abuse_cases_placeholder_without_verdicts_not_flagged(tmp_path: Path):
+    # Legitimately empty (no evaluation on disk) — must NOT be flagged.
+    assert compose._section_substance_ok(_ctx(tmp_path), "abuse_cases", _PLACEHOLDER_9) is True
+
+
+def test_render_flags_abuse_gap_when_verdicts_unrecoverable(tmp_path: Path):
+    # Full-loop proof of the silent-drop guard. A viable verdict sits on disk
+    # but its AC-id resolves to NO case definition, so even the compose
+    # self-heal cannot rebuild the fragment — §9 falls to its placeholder. The
+    # integrity pass must now classify that as a real gap (report_integrity_ok
+    # False, abuse_cases in broken_sections) so the QA repair loop fires, rather
+    # than shipping the old silent 100%.
+    out = tmp_path / "output"
+    shutil.copytree(FIXTURE, out)
+    (out / ".abuse-case-verdicts.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "verdicts": [
+                    {
+                        "abuse_case_id": "AC-UNRESOLVABLE-999",
+                        "chain_verdict": "fully_viable",
+                        "step_verdicts": [{"step": 1, "verdict": "confirmed"}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    compose.render(CONTRACT, out)
+    data = json.loads((out / ".render-integrity.json").read_text(encoding="utf-8"))
+    assert data["report_integrity_ok"] is False
+    assert "abuse_cases" in data["broken_sections"]
+
+
+# ---------------------------------------------------------------------------
 # Live render writes a well-formed sidecar
 # ---------------------------------------------------------------------------
 
