@@ -1512,6 +1512,9 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     # digit whose number is the priority (Variant B, 2026-06-04 — ❶❷❸❹) rather
     # than a dedicated bold column cell. Assert the circled-digit prefix renders.
     assert _re.search(r"[❶❷❸❹]\s+\[M-", ms_slice), "expected a Variant-B `❶ [M-NNN]` circled-digit priority prefix"
+    assert "❶ [M-001](#m-001)" in ms_slice
+    assert "❶ [M-002](#m-002)" in ms_slice
+    assert "❷ [M-003](#m-003)" in ms_slice
 
     # The Component column carries a label on the first row of each group,
     # linked to the component anchor exactly like the Architecture Assessment
@@ -3387,13 +3390,13 @@ _SEV_TAX = {
 }
 
 
-def _dot_ctx(tmp_path: Path, threats: list[dict]):
+def _dot_ctx(tmp_path: Path, threats: list[dict], mitigations: list[dict] | None = None):
     out = tmp_path / "out"
     out.mkdir(exist_ok=True)
     return compose.RenderContext(
         output_dir=out,
         contract={},
-        yaml_data={"threats": threats},
+        yaml_data={"threats": threats, "mitigations": mitigations or []},
         triage={},
         fragments_dir=out / ".fragments",
         severity_taxonomy=_SEV_TAX,
@@ -3416,6 +3419,20 @@ def test_linkify_no_dot_for_mitigation_or_component(tmp_path: Path) -> None:
     ctx = _dot_ctx(tmp_path, [{"id": "T-002", "effective_severity": "Critical"}])
     assert ctx.linkify_with_label("M-003").startswith("[M-003]")
     assert ctx.linkify_with_label("C-01").startswith("[C-01]")
+
+
+@pytest.mark.parametrize(
+    ("priority", "digit"),
+    [("P1", "❶"), ("P2", "❷"), ("P3", "❸"), ("P4", "❹")],
+)
+def test_linkify_mitigation_uses_monochrome_priority_digit(tmp_path: Path, priority: str, digit: str) -> None:
+    ctx = _dot_ctx(
+        tmp_path,
+        [],
+        [{"id": "M-003", "title": "Fix the control", "priority": priority}],
+    )
+    assert ctx.linkify_with_label("M-003") == f"{digit} [M-003](#m-003) — Fix the control"
+    assert ctx.linkify_with_label("M-003", compact=True) == f"{digit} [M-003](#m-003)"
 
 
 def test_linkify_no_dot_when_severity_unknown(tmp_path: Path) -> None:
@@ -3538,6 +3555,22 @@ def test_global_mitigation_circle_pass_dots_bare_link_and_is_idempotent(tmp_path
     once = compose._prepend_mitigation_prio_circles(ctx, md)
     assert once == "Blocking: ❶ [M-003](#m-003) breaks the chain."
     assert compose._prepend_mitigation_prio_circles(ctx, once) == once
+
+
+def test_global_mitigation_circle_pass_maps_all_priorities_and_repairs_stale_digit(tmp_path: Path) -> None:
+    ctx = _dot_ctx(
+        tmp_path,
+        [],
+        [
+            {"id": "M-001", "priority": "P1"},
+            {"id": "M-002", "priority": "P2"},
+            {"id": "M-003", "priority": "P3"},
+            {"id": "M-004", "priority": "P4"},
+        ],
+    )
+    md = "[M-001](#m-001), ❹ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), [M-004](#m-004)"
+    expected = "❶ [M-001](#m-001), ❷ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), ❹ [M-004](#m-004)"
+    assert compose._prepend_mitigation_prio_circles(ctx, md) == expected
 
 
 def test_global_mitigation_circle_pass_skips_code_spans(tmp_path: Path) -> None:

@@ -413,6 +413,25 @@ def test_annotate_id_refs_adds_dot_and_circle(tmp_path):
     assert "❶ [M-001](#m-001)" in out
 
 
+def test_annotate_id_refs_maps_all_priorities_and_repairs_stale_digit(tmp_path):
+    (tmp_path / "threat-model.yaml").write_text(
+        "threats: []\n"
+        "mitigations:\n"
+        "  - {m_id: M-001, priority: p1}\n"
+        "  - {m_id: M-002, priority: p2}\n"
+        "  - {m_id: M-003, priority: p3}\n"
+        "  - {m_id: M-004, priority: p4}\n",
+        encoding="utf-8",
+    )
+    p = _md(
+        tmp_path,
+        "[M-001](#m-001), ❹ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), [M-004](#m-004)\n",
+    )
+    assert qa._annotate_id_refs(p) == 1
+    assert p.read_text() == ("❶ [M-001](#m-001), ❷ [M-002](#m-002), ❸&nbsp;[M-003](#m-003), ❹ [M-004](#m-004)\n")
+    assert qa._annotate_id_refs(p) == 0
+
+
 def test_annotate_id_refs_idempotent_and_skips_code(tmp_path):
     (tmp_path / "threat-model.yaml").write_text(
         "threats:\n  - t_id: T-002\n    severity: high\n",

@@ -327,7 +327,9 @@ class RenderContext:
             mid = (m.get("m_id") or m.get("id") or "").strip().upper()
             if not mid:
                 continue
-            label = _strip_trailing_locator((m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip())
+            label = _strip_trailing_locator(
+                (m.get("title") or m.get("mitigation_title") or m.get("name") or "").strip()
+            )
             idx.setdefault(mid, label)
 
         for c in data.get("components", []) or []:
@@ -577,11 +579,12 @@ class RenderContext:
             r = f"F-{m.group(1)}"
         anchor = r.lower()
         label = "" if compact else (label_override or self.lookup_label(r) or "").strip()
-        # Leading criticality dot for finding refs only (F-/T-NNN). Mitigations
-        # (M-NNN), components (C-NN), and threat categories (TH-NN) carry no
-        # dot. The dot sits OUTSIDE the markdown link so `_enrich_linked_id_cells`
-        # (which extracts `[ID](#anchor)` and re-linkifies) regenerates exactly
-        # one dot — never doubles it. Empty/unknown severity → no dot.
+        # Leading criticality glyph: findings carry a coloured severity dot,
+        # mitigations a monochrome circled rollout-priority digit. Components
+        # (C-NN) and threat categories (TH-NN) carry no glyph. The glyph sits
+        # OUTSIDE the markdown link so `_enrich_linked_id_cells` (which extracts
+        # `[ID](#anchor)` and re-linkifies) regenerates exactly one glyph — never
+        # doubles it. Empty/unknown severity or priority → no glyph.
         dot = ""
         if re.match(r"^F-\d+$", r):
             emoji = self.severity_emoji(self.severity_for_ref(r))
@@ -782,7 +785,7 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
             }.get(kind, "")
             if mid:
                 # Variant B (2026-06-04): lead with the monochrome priority
-                # prefix (`● P1 · `) — same as every other linked measure —
+                # prefix (`❶ ` for P1) — same as every other linked measure —
                 # then the action-kind glyph (orthogonal signal). Supersedes the
                 # old trailing `(P1)` token.
                 line = f"{_measure_prio_prefix(ctx, mid)}{glyph}[{mid}](#{mid.lower()})"
@@ -889,7 +892,9 @@ def _build_jinja_env(ctx: RenderContext) -> jinja2.Environment:
         # other Addresses/Findings column; linkify_with_label normalises the
         # locator from the curated fragment label.
         parts = [
-            ctx.linkify_with_label(it.get("ref") or it.get("id", ""), label_override=(it.get("label") or "").strip() or None)
+            ctx.linkify_with_label(
+                it.get("ref") or it.get("id", ""), label_override=(it.get("label") or "").strip() or None
+            )
             for it in items
         ]
         return "<br/>".join(parts)
@@ -11395,31 +11400,38 @@ def _prepend_finding_severity_dots(ctx: RenderContext, md: str) -> str:
 
 
 _MITIGATION_CIRCLE_REF_RE = re.compile(
-    # Same `&nbsp;` / bullet tolerance as _FINDING_DOT_REF_RE so an
-    # already-circled `❶&nbsp;[M-001]` / `→ ❶ [M-002]` ref is skipped.
+    # Same `&nbsp;` / bullet tolerance as _FINDING_DOT_REF_RE so an existing
+    # `❶&nbsp;[M-001]` / `→ ❶ [M-002]` prefix can be retained or normalized
+    # without changing its separator.
     r"(?P<circ>[❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
 )
 
 
 def _prepend_mitigation_prio_circles(ctx: RenderContext, md: str) -> str:
     """Prefix every mitigation cross-reference ``[M-NNN](#m-nnn)`` with its
-    rollout-priority circle (❶ P1 … ❹ P4) — the colourless parallel to the
-    finding severity dot. Brings §3 Attack Walkthroughs and §9 Abuse Cases in
-    line with §1/§2/§8/§10, where the computed renderers already emit the circle
-    inline via ``linkify_with_label`` / ``_measure_prio_prefix``.
+    rollout-priority circle (❶ for P1 … ❹ for P4) — the colourless parallel to
+    the finding severity dot. Brings §3 Attack Walkthroughs and §9 Abuse Cases
+    in line with §1/§2/§8/§10, where the computed renderers already emit the
+    circle inline via ``linkify_with_label`` / ``_measure_prio_prefix``.
 
-    Idempotent — a ref already preceded by a circle glyph is left untouched.
-    Skips fenced code blocks and inline code spans (same masking as the
-    finding-dot pass).
+    Idempotent — a ref already preceded by the correct circle is unchanged.
+    A stale or incorrectly authored circle is replaced with the priority derived
+    from the structured model. Skips fenced code blocks and inline code spans
+    (same masking as the finding-dot pass).
     """
     if not md:
         return md
 
     def _sub(m: re.Match[str]) -> str:
-        if m.group("circ"):
-            return m.group(0)  # already circled
         digit = _PRIO_DIGIT_TBL.get(ctx.priority_for_ref(f"M-{m.group('num')}"), "")
-        return f"{digit} {m.group('link')}" if digit else m.group("link")
+        if not digit:
+            return m.group(0)
+        circ = m.group("circ") or ""
+        if circ:
+            # Preserve the original separator (` ` / `&nbsp;` / `•`) while
+            # replacing a stale priority digit. `circ[0]` is one Unicode glyph.
+            return f"{digit}{circ[1:]}{m.group('link')}"
+        return f"{digit} {m.group('link')}"
 
     out_chunks: list[str] = []
     for chunk in re.split(r"(```[^\n]*\n.*?\n```|`[^`\n]+`)", md, flags=re.DOTALL):

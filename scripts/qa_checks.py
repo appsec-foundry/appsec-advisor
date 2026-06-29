@@ -3687,7 +3687,7 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
 
 
 _SEV_DOT_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
-_PRIO_DOT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
+_PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
 _F_REF_RE = re.compile(r"(?P<dot>[🔴🟠🟡🟢⚪](?:\s|&nbsp;|•)*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))")
 _M_REF_RE = re.compile(r"(?P<circ>[❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))")
 
@@ -3701,9 +3701,10 @@ def _annotate_id_refs(md_path: Path) -> int:
     the composer's in-render annotation pass has already run — leaving the new
     link un-annotated (e.g. a §3 key-takeaway ref, or a self-reference inside a
     mitigation's own How steps). This retrofit reads the sibling
-    threat-model.yaml for severity/priority and annotates any still-bare ref.
-    Idempotent (the regex tolerates an existing dot/circle + `&nbsp;` separator)
-    and best-effort (any error leaves the document untouched).
+    threat-model.yaml for severity/priority, annotates bare refs, and normalizes
+    stale mitigation digits to the structured priority. Idempotent (the regex
+    tolerates an existing dot/circle + `&nbsp;` separator) and best-effort (any
+    error leaves the document untouched).
     """
     try:
         import yaml as _yaml
@@ -3727,7 +3728,7 @@ def _annotate_id_refs(md_path: Path) -> int:
             continue
         raw = str(mit.get("priority") or "").strip().lower().replace("p", "p")
         key = ""
-        if raw in _PRIO_DOT_TBL:
+        if raw in _PRIO_DIGIT_TBL:
             key = raw
         elif raw in sev_to_prio:
             key = sev_to_prio[raw]
@@ -3749,10 +3750,15 @@ def _annotate_id_refs(md_path: Path) -> int:
         return f"{dot} {m.group('link')}" if dot else m.group("link")
 
     def _m_sub(m: re.Match) -> str:
-        if m.group("circ"):
+        expected = _PRIO_DIGIT_TBL.get(prio_by_num.get(m.group("num").zfill(3), ""), "")
+        if not expected:
             return m.group(0)
-        circ = _PRIO_DOT_TBL.get(prio_by_num.get(m.group("num").zfill(3), ""), "")
-        return f"{circ} {m.group('link')}" if circ else m.group("link")
+        circ = m.group("circ") or ""
+        if circ:
+            # Preserve the existing separator but normalize a stale digit to
+            # the priority in threat-model.yaml.
+            return f"{expected}{circ[1:]}{m.group('link')}"
+        return f"{expected} {m.group('link')}"
 
     text = md_path.read_text(encoding="utf-8")
     out: list[str] = []

@@ -412,13 +412,13 @@ class TestDefenseInDepth:
         assert any("not yet defined" in b for b in bullets)
 
     def test_with_mitigations_and_priority(self):
-        idx = {"T-1": [{"id": "M-1", "title": "Fix it — lib/x.ts", "priority": "p1"}]}
+        idx = {"T-1": [{"id": f"M-{n}", "title": "Fix it — lib/x.ts", "priority": f"p{n}"} for n in range(1, 5)]}
         bullets, pid = renderer.render_defense_in_depth({"id": "T-1"}, idx)
         assert pid == "M-1"
-        assert "❶" in bullets[0]
-        assert "M-1" in bullets[0]
+        for n, digit in enumerate(("❶", "❷", "❸", "❹"), start=1):
+            assert f"{digit} [M-{n}](#m-{n})" in bullets[n - 1]
         # Short-label rule: the ` — file` tail is dropped.
-        assert "lib/x.ts" not in bullets[0]
+        assert all("lib/x.ts" not in bullet for bullet in bullets)
 
     def test_mitigation_without_title(self):
         idx = {"T-1": [{"id": "M-1"}]}
