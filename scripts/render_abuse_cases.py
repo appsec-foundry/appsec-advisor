@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -90,6 +91,54 @@ def _norm_fid(raw: str | None) -> str:
 
 def _anchor(fid: str) -> str:
     return "#" + fid.lower()
+
+
+# Locator helpers — mirror compose_threat_model's canonical reference format so
+# §9 finding cells read identically to §2/§4/§8 (ID — label (`basename:line`),
+# locator always backticked, label locator-free). Kept local so this module
+# stays import-light (compose is a 16k-line module). Keep in sync with
+# compose_threat_model._basename_locator / _strip_trailing_locator.
+_TRAILING_LOC = r"`?[\w./\\-]+\.[A-Za-z0-9]{1,6}(?::\d+)?`?"
+
+
+def _basename_loc(loc: str) -> str:
+    """``path/to/file.ts:76`` → ``file.ts:76``."""
+    if not loc:
+        return ""
+    path, sep, line = loc.partition(":")
+    base = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return f"{base}:{line}" if sep else base
+
+
+def _strip_locator(label: str) -> str:
+    """Drop a trailing file locator from a label in any form (parens / em-dash /
+    bare-space). Leaves prose parentheticals like ``(IDOR)`` untouched."""
+    if not label:
+        return label
+    s = label.rstrip()
+    for pat in (
+        rf"\s*\(\s*{_TRAILING_LOC}\s*\)\s*$",
+        rf"\s*—\s*{_TRAILING_LOC}\s*$",
+        rf"\s+{_TRAILING_LOC}\s*$",
+    ):
+        s2 = re.sub(pat, "", s)
+        if s2 != s and s2.strip():
+            return s2.rstrip()
+    return s
+
+
+def _finding_locator(finding: dict) -> str:
+    """Full ``file[:line]`` from a finding's evidence (dict or list), or ""."""
+    ev = finding.get("evidence") or {}
+    if isinstance(ev, list):
+        ev = ev[0] if ev and isinstance(ev[0], dict) else {}
+    if not isinstance(ev, dict):
+        return ""
+    f = (ev.get("file") or "").strip()
+    if not f:
+        return ""
+    ln = ev.get("line")
+    return f"{f}:{ln}" if ln is not None else f
 
 
 def _findings_index(tm: dict) -> dict[str, dict]:
@@ -214,7 +263,8 @@ def render_case(
             {
                 "step": n,
                 "fid": fid,
-                "finding_title": finding.get("title", ""),
+                "finding_title": _strip_locator(finding.get("title", "")),
+                "finding_loc": _basename_loc(_finding_locator(finding)),
                 "finding_sev": _severity(finding),
                 "evidence": loc,
                 "outcome": step.get("description") or step.get("grants") or "",
@@ -277,22 +327,23 @@ def _case_markdown(m: dict) -> str:
             # 2026-06: §9 was the only place F-NNN links rendered bare).
             dot = _RISK_EMOJI.get(r.get("finding_sev", ""), "")
             prefix = f"{dot} " if dot else ""
-            finding_cell = f"{prefix}[{r['fid']}]({_anchor(r['fid'])}) — {r['finding_title']}"
+            _loc = f" (`{r['finding_loc']}`)" if r.get("finding_loc") else ""
+            finding_cell = f"{prefix}[{r['fid']}]({_anchor(r['fid'])}) — {r['finding_title']}{_loc}"
         else:
             finding_cell = "_no matching finding_"
         # Only append the per-step evidence reference when it points at a
-        # DIFFERENT file than the one the finding title already names — the
-        # title carries `(file:line)` per the finding-title contract, so an
-        # evidence line for the same file is the same code reference repeated.
-        # A cross-file evidence line (e.g. the token-storage sink in a chain
-        # whose finding title names the XSS sink) still adds information and
-        # is kept. (2026-06-02 user request: one code reference per finding.)
+        # DIFFERENT file than the finding's own locator (now appended to the
+        # cell as `(`basename:line`)`) — an evidence line for the same file is
+        # the same code reference repeated. A cross-file evidence line (e.g. the
+        # token-storage sink in a chain whose finding names the XSS sink) still
+        # adds information and is kept. (2026-06-02 user request: one code
+        # reference per finding.)
         if r["evidence"]:
-            # Compare on basename so a title carrying `(wallet.ts:12)` also
-            # suppresses an evidence line of `routes/wallet.ts:12` (same file,
-            # path-prefix only differs).
+            # Compare on basename so a finding locator of `routes/wallet.ts:12`
+            # also suppresses an evidence line of `wallet.ts:12` (same file).
             ev_base = r["evidence"].rsplit(":", 1)[0].rsplit("/", 1)[-1]
-            if ev_base and ev_base not in r["finding_title"]:
+            loc_base = (r.get("finding_loc") or "").rsplit(":", 1)[0].rsplit("/", 1)[-1]
+            if ev_base and ev_base != loc_base:
                 finding_cell += f"<br/>`{r['evidence']}`"
         out.append(f"| {r['step']} | {finding_cell} | {r['outcome']} |")
     out.append("")

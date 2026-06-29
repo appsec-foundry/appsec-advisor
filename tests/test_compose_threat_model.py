@@ -3883,12 +3883,17 @@ def test_strip_label_code_removes_backticks_for_toc():
     assert compose._strip_label_code("SQL Injection (`search.ts:42`)") == "SQL Injection (search.ts:42)"
 
 
-def test_lookup_label_applies_codify(tmp_path: Path) -> None:
+def test_lookup_label_is_locator_free(tmp_path: Path) -> None:
+    # New contract (2026-06-29): lookup_label returns the locator-free class
+    # label; the `(`file:line`)` locator is appended by linkify_with_label from
+    # the location index, so a locator embedded in the YAML title is stripped
+    # here rather than codified in place — this is what keeps the canonical
+    # reference form from doubling the locator.
     yaml_data = {"threats": [{"id": "F-001", "title": "Missing Ownership Check (updateProductReviews.ts:18)"}]}
     ctx = compose.RenderContext(
         output_dir=tmp_path, contract={}, yaml_data=yaml_data, triage={}, fragments_dir=tmp_path
     )
-    assert ctx.lookup_label("F-001") == "Missing Ownership Check (`updateProductReviews.ts:18`)"
+    assert ctx.lookup_label("F-001") == "Missing Ownership Check"
 
 
 # ---------------------------------------------------------------------------

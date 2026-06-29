@@ -178,9 +178,9 @@ Operational controls rated Adequate or Partial - grouped into broad clusters (fu
 
 | Strength | What's in Place | Effectiveness | Gap | Mitigates |
 |----------------------|----------------------|-------------|----------------------|----------------|
-| **Container & Supply-Chain Hardening** | _Build-time and runtime hardening - minimal base image, non-root execution, dependency inventory._<br/>Container Base Image - Distroless nodejs24-debian13. | ✅ Adequate | - | - |
-| **Authentication & Session Management** | _Identity issuance, route-level authorisation, and second-factor handling for this codebase._<br/>TOTP Two-Factor Authentication - otplib on standard login path.<br/>JWT-based Authentication - RS256 JWT issued on login. | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
-| **Input Handling & Output Encoding** | _Boundary validation of untrusted input and consistent output encoding before persistence or rendering._<br/>Parameterized Database Access - Sequelize ORM used for most CRUD queries. | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
+| **Container & Supply-Chain Hardening** | _Build-time and runtime hardening - minimal base image, non-root execution, dependency inventory._<br/>Container Base Image | ✅ Adequate | - | - |
+| **Authentication & Session Management** | _Identity issuance, route-level authorisation, and second-factor handling for this codebase._<br/>TOTP Two-Factor Authentication<br/>JWT-based Authentication | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
+| **Input Handling & Output Encoding** | _Boundary validation of untrusted input and consistent output encoding before persistence or rendering._<br/>Parameterized Database Access | ⚠️ Partial | Coverage incomplete - see [§7](#7-security-architecture) control assessment. | - |
 
 
 **Bottom line:** These controls narrow specific attack surfaces but none eliminates a Critical finding on its own - every remaining Critical path bypasses them.
@@ -387,7 +387,7 @@ The flow exists, but the issued token depends on committed RSA material, so repo
 
 **Relevant findings**
 
-- F-003 hardcoded RSA signing material.
+- 🔴 [F-003](#f-003) hardcoded RSA signing material.
 
 <a id="oauth-login"></a>
 #### 7.2.2 OAuth Login
@@ -408,7 +408,7 @@ The legacy implicit flow exposes bearer material to browser URL handling and doe
 
 **Relevant findings**
 
-- F-001 OAuth token exposure.
+- 🔴 [F-001](#f-001) OAuth token exposure.
 
 ### 7.3 Session and Token Controls
 
@@ -443,7 +443,7 @@ The session token remains valid without a clear revocation control, and local br
 
 **Relevant findings**
 
-- F-003 signing-key exposure affects token trust.
+- 🔴 [F-003](#f-003) signing-key exposure affects token trust.
 
 ### 7.4 Authorization Controls
 
@@ -493,7 +493,7 @@ The ORM is present, but raw SQL construction remains on authentication and produ
 
 **Relevant findings**
 
-- F-001 raw SQL injection path.
+- 🔴 [F-001](#f-001) raw SQL injection path.
 
 ### 7.6 Input Boundary Validation Controls
 
@@ -543,7 +543,7 @@ Framework escaping is present, but trusted-HTML bypasses undercut that protectio
 
 **Relevant findings**
 
-- F-002 stored content rendering path.
+- 🔴 [F-002](#f-002) stored content rendering path.
 
 ### 7.8 Browser and Cross-Origin Controls
 
@@ -593,7 +593,7 @@ The RSA key material is part of the fixture source, so anyone with repository re
 
 **Relevant findings**
 
-- F-003 hardcoded RSA private key.
+- 🔴 [F-003](#f-003) hardcoded RSA private key.
 
 ### 7.10 File Parser and Outbound Request Controls
 
@@ -624,7 +624,7 @@ Dependabot coverage helps, but the fixture still carries critically outdated dep
 
 **Relevant findings**
 
-- F-010 outdated dependency posture.
+- 🟠 [F-010](#f-010) outdated dependency posture.
 
 ### 7.12 Real-time and Not Applicable Controls
 
