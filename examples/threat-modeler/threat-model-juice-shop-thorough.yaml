@@ -650,6 +650,13 @@ changelog:
     - web3-nft
     - websocket-realtime
     attack_surface: []
+    abuse_cases:
+    - AC-T-001
+    - AC-T-002
+    - AC-T-003
+    - AC-T-004
+    - AC-T-005
+    - AC-T-006
   changed:
     threats: []
   resolved:
@@ -657,6 +664,13 @@ changelog:
     reason_by_id: {}
     instances: []
   note: first full scan
+  abuse_case_fingerprints:
+  - account takeover via stored xss + token hijacking
+  - bulk data exfiltration via broken object authorization
+  - privilege escalation to admin via jwt algorithm confusion
+  - privilege escalation via mass-assignment on registration
+  - authentication bypass via exposed secret material
+  - remote code execution via server-side injection
 components:
 - id: frontend-spa
   name: Angular Single-Page Application
@@ -1891,6 +1905,12 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-001
+  effective_severity: Critical
+  breach_distance: 1
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-03
+  verified_chain_ids: []
 - local_id: auth-identity-005
   threat_category_id: TH-06
   additional_categories: []
@@ -1945,6 +1965,14 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-002
+  effective_severity: Critical
+  breach_distance: 1
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-06
+  verified_chain_ids:
+  - AC-T-002
+  - AC-T-004
 - local_id: backend-api-010
   threat_category_id: TH-17
   additional_categories: []
@@ -2067,6 +2095,11 @@ threats:
   component: b2b-api
   mitigation_ids:
   - M-004
+  effective_severity: High
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - title: Sensitive Routes Registered Without Authorization (server.ts)
   scenario: State-changing operations on sensitive resources MUST require a proven session. A registration line that lacks
     any auth marker either trusts the URL itself or relies on a downstream check that the static signature cannot prove exists.
@@ -2190,6 +2223,12 @@ threats:
   component: backend-api
   mitigation_ids:
   - M-005
+  effective_severity: Critical
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-06
+  verified_chain_ids:
+  - AC-T-002
 - local_id: frontend-spa-005
   threat_category_id: TH-06
   additional_categories:
@@ -2254,6 +2293,11 @@ threats:
   component: frontend-spa
   mitigation_ids:
   - M-006
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: auth-identity-001
   threat_category_id: TH-03
   additional_categories:
@@ -2312,6 +2356,12 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-007
+  effective_severity: Critical
+  breach_distance: 3
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-02
+  verified_chain_ids: []
 - local_id: auth-identity-002
   threat_category_id: TH-02
   additional_categories:
@@ -2397,6 +2447,13 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-008
+  effective_severity: Critical
+  breach_distance: 1
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-02
+  verified_chain_ids:
+  - AC-T-003
 - local_id: frontend-spa-002
   threat_category_id: TH-10
   additional_categories:
@@ -2459,6 +2516,11 @@ threats:
   component: frontend-spa
   mitigation_ids:
   - M-009
+  effective_severity: Critical
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - title: Insecure Direct Object Reference
   scenario: Server-side authorization MUST derive the resource owner from the authenticated session (req.user / req.session
     / req.auth), never from attacker-controlled request data. Trusting req.body.UserId etc. enables horizontal privilege escalation
@@ -2622,6 +2684,11 @@ threats:
   component: backend-api
   mitigation_ids:
   - M-010
+  effective_severity: Critical
+  chain_role: contributor
+  compound_chain_ids: []
+  verified_chain_ids:
+  - AC-T-003
 - local_id: data-persistence-001
   threat_category_id: TH-03
   additional_categories: []
@@ -2680,6 +2747,12 @@ threats:
   component: data-persistence
   mitigation_ids:
   - M-011
+  effective_severity: Critical
+  breach_distance: 3
+  chain_role: contributor
+  compound_chain_ids:
+  - CC-03
+  verified_chain_ids: []
 - local_id: file-upload-handler-001
   threat_category_id: TH-01
   additional_categories:
@@ -2735,6 +2808,11 @@ threats:
   component: file-upload-handler
   mitigation_ids:
   - M-012
+  effective_severity: Critical
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: b2b-api-001
   threat_category_id: TH-05
   additional_categories:
@@ -2804,6 +2882,11 @@ threats:
   component: b2b-api
   mitigation_ids:
   - M-013
+  effective_severity: Critical
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: auth-identity-008
   threat_category_id: TH-02
   additional_categories:
@@ -2867,6 +2950,11 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-014
+  effective_severity: High
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: auth-identity-012
   threat_category_id: TH-02
   additional_categories:
@@ -2922,6 +3010,12 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-015
+  effective_severity: Critical
+  breach_distance: 1
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-02
+  verified_chain_ids: []
 - local_id: auth-identity-006
   threat_category_id: TH-02
   additional_categories:
@@ -2977,6 +3071,11 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-016
+  effective_severity: High
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: backend-api-005
   threat_category_id: TH-03
   additional_categories:
@@ -3025,6 +3124,12 @@ threats:
   component: backend-api
   mitigation_ids:
   - M-017
+  effective_severity: Critical
+  breach_distance: 3
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-02
+  verified_chain_ids: []
 - local_id: chat-llm-007
   threat_category_id: TH-02
   additional_categories:
@@ -3084,6 +3189,11 @@ threats:
   component: chat-llm
   mitigation_ids:
   - M-018
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: frontend-spa-009
   threat_category_id: TH-10
   additional_categories:
@@ -3213,6 +3323,11 @@ threats:
   component: frontend-spa
   mitigation_ids:
   - M-020
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: web3-nft-002
   threat_category_id: TH-02
   additional_categories:
@@ -3272,6 +3387,12 @@ threats:
   component: web3-nft
   mitigation_ids:
   - M-021
+  effective_severity: Critical
+  breach_distance: 1
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-02
+  verified_chain_ids: []
 - local_id: web3-nft-001
   threat_category_id: TH-18
   additional_categories: []
@@ -3339,6 +3460,11 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-022
+  effective_severity: High
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: websocket-realtime-001
   threat_category_id: TH-13
   additional_categories:
@@ -3428,6 +3554,11 @@ threats:
   component: websocket-realtime
   mitigation_ids:
   - M-023
+  effective_severity: Critical
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: b2b-api-002
   threat_category_id: TH-01
   additional_categories:
@@ -3490,6 +3621,11 @@ threats:
   component: b2b-api
   mitigation_ids:
   - M-024
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: backend-api-015
   threat_category_id: TH-01
   additional_categories: []
@@ -3545,6 +3681,12 @@ threats:
   component: backend-api
   mitigation_ids:
   - M-025
+  effective_severity: Critical
+  breach_distance: 1
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-01
+  verified_chain_ids: []
 - local_id: backend-api-018
   threat_category_id: TH-05
   additional_categories:
@@ -3648,6 +3790,12 @@ threats:
   component: backend-api
   mitigation_ids:
   - M-027
+  effective_severity: Critical
+  breach_distance: 2
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-03
+  verified_chain_ids: []
 - local_id: chat-llm-008
   threat_category_id: TH-01
   additional_categories:
@@ -3708,6 +3856,11 @@ threats:
   component: chat-llm
   mitigation_ids:
   - M-028
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: chat-llm-001
   threat_category_id: TH-01
   additional_categories:
@@ -3771,6 +3924,11 @@ threats:
   component: chat-llm
   mitigation_ids:
   - M-029
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: ci-cd-pipeline-004
   threat_category_id: TH-14
   additional_categories: []
@@ -3831,6 +3989,11 @@ threats:
   component: ci-cd-pipeline
   mitigation_ids:
   - M-030
+  effective_severity: High
+  breach_distance: 3
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: ci-cd-pipeline-001
   threat_category_id: TH-14
   additional_categories: []
@@ -3890,6 +4053,11 @@ threats:
   component: ci-cd-pipeline
   mitigation_ids:
   - M-031
+  effective_severity: High
+  breach_distance: 3
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: ci-cd-pipeline-005
   threat_category_id: TH-14
   additional_categories: []
@@ -3952,6 +4120,11 @@ threats:
   component: ci-cd-pipeline
   mitigation_ids:
   - M-032
+  effective_severity: High
+  breach_distance: 3
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: file-upload-handler-003
   threat_category_id: TH-07
   additional_categories:
@@ -4010,6 +4183,11 @@ threats:
   component: file-upload-handler
   mitigation_ids:
   - M-033
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: file-upload-handler-009
   threat_category_id: TH-01
   additional_categories:
@@ -4068,6 +4246,11 @@ threats:
   component: file-upload-handler
   mitigation_ids:
   - M-034
+  effective_severity: High
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: frontend-spa-006
   threat_category_id: TH-11
   additional_categories: []
@@ -4153,6 +4336,13 @@ threats:
   component: frontend-spa
   mitigation_ids:
   - M-035
+  effective_severity: Critical
+  breach_distance: 2
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-01
+  verified_chain_ids:
+  - AC-T-001
 - local_id: auth-identity-010
   threat_category_id: TH-17
   additional_categories:
@@ -4208,6 +4398,11 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-036
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: backend-api-011
   threat_category_id: TH-17
   additional_categories: []
@@ -4306,6 +4501,11 @@ threats:
   component: backend-api
   mitigation_ids:
   - M-038
+  effective_severity: High
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: chat-llm-003
   threat_category_id: TH-17
   additional_categories: []
@@ -4378,7 +4578,7 @@ threats:
   config_check_id: IAC-010
   config_check_slug: null
   iac_type: github_workflow
-  breach_distance: 3
+  breach_distance: 2
   mitigation_title: 'Add `permissions: { contents: read }` at workflow root; elevate per-job only where needed'
   finding_type_id: FT-143
   merged_from:
@@ -4461,6 +4661,10 @@ threats:
   component: ci-cd-pipeline
   mitigation_ids:
   - M-040
+  effective_severity: High
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - title: Third-party GitHub Actions pinned to commit SHA
   scenario: 'Third-party GitHub Actions pinned to commit SHA in /home/mrohr/juice-shop/.github/workflows/rebase.yml. Non-pinned
     action(s): cirrus-actions/rebase@b87d48154a87a85666003575337e27b8cd65f691'
@@ -4556,6 +4760,10 @@ threats:
   component: ci-cd-pipeline
   mitigation_ids:
   - M-041
+  effective_severity: High
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - title: Dockerfile base image must be digest-pinned
   scenario: Dockerfile base image must be digest-pinned in /home/mrohr/juice-shop/Dockerfile.
   stride: Information Disclosure
@@ -4610,6 +4818,10 @@ threats:
   component: ci-cd-pipeline
   mitigation_ids:
   - M-042
+  effective_severity: High
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - title: Package-lock.json present and committed
   scenario: package-lock.json present and committed in package-lock.json.
   stride: Information Disclosure
@@ -4644,6 +4856,10 @@ threats:
   component: backend-api
   mitigation_ids:
   - M-043
+  effective_severity: High
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: data-persistence-002
   threat_category_id: TH-03
   additional_categories: []
@@ -4708,6 +4924,11 @@ threats:
   component: data-persistence
   mitigation_ids:
   - M-044
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: file-upload-handler-002
   threat_category_id: TH-08
   additional_categories: []
@@ -4769,6 +4990,11 @@ threats:
   component: file-upload-handler
   mitigation_ids:
   - M-045
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: frontend-spa-003
   threat_category_id: TH-04
   additional_categories:
@@ -4828,6 +5054,13 @@ threats:
   component: frontend-spa
   mitigation_ids:
   - M-046
+  effective_severity: Critical
+  breach_distance: 2
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-01
+  verified_chain_ids:
+  - AC-T-001
 - local_id: frontend-spa-004
   threat_category_id: TH-04
   additional_categories: []
@@ -4883,6 +5116,11 @@ threats:
   component: frontend-spa
   mitigation_ids:
   - M-047
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: websocket-realtime-002
   threat_category_id: TH-13
   additional_categories:
@@ -4992,6 +5230,11 @@ threats:
   component: backend-api
   mitigation_ids:
   - M-049
+  effective_severity: High
+  breach_distance: 1
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: auth-identity-013
   threat_category_id: TH-06
   additional_categories: []
@@ -5046,6 +5289,12 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-050
+  effective_severity: Critical
+  breach_distance: 2
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-06
+  verified_chain_ids: []
 - local_id: chat-llm-002
   threat_category_id: TH-06
   additional_categories:
@@ -5105,6 +5354,12 @@ threats:
   component: chat-llm
   mitigation_ids:
   - M-051
+  effective_severity: Critical
+  breach_distance: 2
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-06
+  verified_chain_ids: []
 - local_id: ci-cd-pipeline-006
   threat_category_id: TH-06
   additional_categories:
@@ -5176,6 +5431,12 @@ threats:
   component: ci-cd-pipeline
   mitigation_ids:
   - M-052
+  effective_severity: Critical
+  breach_distance: 2
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-06
+  verified_chain_ids: []
 - local_id: data-persistence-005
   threat_category_id: TH-06
   additional_categories:
@@ -5233,6 +5494,11 @@ threats:
   component: data-persistence
   mitigation_ids:
   - M-053
+  effective_severity: High
+  breach_distance: 2
+  chain_role: none
+  compound_chain_ids: []
+  verified_chain_ids: []
 - local_id: auth-identity-009
   threat_category_id: TH-02
   additional_categories: []
@@ -5451,6 +5717,12 @@ threats:
   component: auth-identity
   mitigation_ids:
   - M-057
+  effective_severity: Critical
+  breach_distance: 3
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-02
+  verified_chain_ids: []
 - local_id: ci-cd-pipeline-007
   threat_category_id: TH-14
   additional_categories: []
@@ -5881,7 +6153,7 @@ threats:
   config_check_id: IAC-040
   config_check_slug: null
   iac_type: github_workflow
-  breach_distance: 3
+  breach_distance: 1
   mitigation_title: Add cosign signing step to release workflow; or use actions/attest-build-provenance
   finding_type_id: FT-148
   instances:
@@ -5964,6 +6236,11 @@ threats:
   component: ci-cd-pipeline
   mitigation_ids:
   - M-065
+  effective_severity: Critical
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-02
+  verified_chain_ids: []
 - title: Dockerfile npm/pnpm/yarn uses --ignore-scripts
   scenario: Dockerfile npm/pnpm/yarn uses --ignore-scripts in /home/mrohr/juice-shop/test/smoke/Dockerfile.
   stride: Information Disclosure
@@ -6067,6 +6344,12 @@ threats:
   component: data-persistence
   mitigation_ids:
   - M-067
+  effective_severity: Critical
+  breach_distance: 3
+  chain_role: keystone
+  compound_chain_ids:
+  - CC-02
+  verified_chain_ids: []
 - local_id: auth-identity-007
   threat_category_id: TH-12
   additional_categories:

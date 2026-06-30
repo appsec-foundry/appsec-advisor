@@ -100,7 +100,7 @@ _Append-only history of assessment runs. Most recent first._
 - **Remote code execution via product-review sandbox** — The server evaluates customer-supplied review content as JavaScript using a sandboxed eval that can be escaped, giving any authenticated user the ability to run arbitrary code in the server process. *(🔴 [F-013](#f-013), 🟠 [F-024](#f-024))*
 - **Any user can read or modify another customer's account** — Object references in API requests are trusted without checking ownership, so a logged-in attacker can enumerate and modify any account, order, or review by incrementing the identifier in the request. *(🔴 [F-010](#f-010), 🔴 [F-002](#f-002))*
 - **Password database cracked offline after SQL injection** — Passwords are hashed with an unsalted, single-pass algorithm that is indexable against public rainbow tables, so the credential dump obtained via injection yields plaintext passwords for the majority of accounts within hours. *(🔴 [F-011](#f-011))*
-- **Persistent cross-site attack persists for every visitor** — Output sanitization is deliberately disabled in the Angular template layer, so a stored payload — submitted once through product reviews or user profiles — executes in every subsequent visitor's browser session. *(🟠 [F-025](#f-025), 🟠 [F-035](#f-035))*
+- **Persistent cross-site attack persists for every visitor** — Output sanitization is deliberately disabled in the Angular template layer, so a stored payload — submitted once through product reviews or user profiles — executes in every subsequent visitor's browser session. *(🔴 [F-025](#f-025), 🔴 [F-035](#f-035))*
 
 </blockquote>
 
@@ -108,17 +108,19 @@ _Append-only history of assessment runs. Most recent first._
 
 Remediation must address the structural root causes first - rotating the committed signing key, parameterizing all query construction, enforcing server-side ownership checks on every data-access route, and enabling output encoding - before the application handles real customer data.
 
+**Attack-chain analysis.** 6 findings anchor 4 code-verified attack chains (see [§8](#8-abuse-cases) Abuse Cases): 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields (`verify.ts:51`), 🔴 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts:310`), 🔴 [F-008](#f-008) — Insecure JWT Verification (`insecurity.ts:55`), 🔴 [F-010](#f-010) — Insecure Direct Object Reference (`dataExport.ts:26`), 🔴 [F-035](#f-035) — Cross-Site Scripting (XSS) (`search-result.component.ts:143`), 🔴 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage (`oauth.component.ts:51`). 3 of these are rated above their individual baseline as a direct result of the verified chain.
+
 ### Architectural Anti-Patterns
 
 The defects below are structural - each spans multiple findings and requires a design change, not a point fix. See **[§6 Security Architecture](#6-security-architecture)** for the per-control detail.
 
 - **SPA without BFF** — The Angular SPA stores the session JWT in browser localStorage where any same-origin script can read it; there is no Backend-for-Frontend to hold the credential server-side in an HttpOnly cookie, so a single XSS payload converts to full session takeover for every active user.
     - _Affected components:_ [C-01](#c-01), [C-02](#c-02)
-    - _Findings:_ 🟠 [F-046](#f-046) — JWT stored in localStorage (`oauth.component.ts:51`), 🟠 [F-047](#f-047) — Session Token in Non-HttpOnly Cookie (`oauth.component.ts:50`), 🟠 [F-025](#f-025) — Persistent XSS surface (`server.ts:188`)
+    - _Findings:_ 🔴 [F-046](#f-046) — JWT stored in localStorage (`oauth.component.ts:51`), 🟠 [F-047](#f-047) — Session Token in Non-HttpOnly Cookie (`oauth.component.ts:50`), 🔴 [F-025](#f-025) — Persistent XSS surface (`server.ts:188`)
 
 - **Secrets hardcoded in source** — The RSA private signing key, HMAC secrets for coupon and deluxe-membership tokens, and the 2FA signing key are all committed to the repository, meaning any contributor or repo clone yields material sufficient to forge arbitrary authentication tokens and business-logic tokens.
     - _Affected components:_ [C-03](#c-03), [C-02](#c-02)
-    - _Findings:_ 🔴 [F-007](#f-007) — Hardcoded Cryptographic Key (`insecurity.ts:21`), 🟠 [F-017](#f-017) — Hardcoded HMAC keys for coupon and deluxe tokens (`insecurity.ts:42`), 🟠 [F-015](#f-015) — Weak 2FA Token Signing Key (`2fa.ts:20`)
+    - _Findings:_ 🔴 [F-007](#f-007) — Hardcoded Cryptographic Key (`insecurity.ts:21`), 🔴 [F-017](#f-017) — Hardcoded HMAC keys for coupon and deluxe tokens (`insecurity.ts:42`), 🔴 [F-015](#f-015) — Weak 2FA Token Signing Key (`2fa.ts:20`)
 
 - **Raw SQL string interpolation** — Multiple routes bypass the Sequelize ORM and interpolate request parameters directly into SQL strings; the pattern recurs across the login, search, and review endpoints so it is a structural authoring practice, not an isolated omission.
     - _Affected components:_ [C-02](#c-02), [C-04](#c-04)
@@ -126,7 +128,7 @@ The defects below are structural - each spans multiple findings and requires a d
 
 - **Missing server-side authorization layer** — Route authorization is implemented client-side through Angular guards and server-side only through a JWT presence check, without an ownership or role assertion on the actual resource; every object-access endpoint trusts the id supplied by the caller.
     - _Affected components:_ [C-02](#c-02), [C-01](#c-01)
-    - _Findings:_ 🟠 [F-005](#f-005) — Sensitive Routes Without Authorization (`server.ts:310`), 🟠 [F-006](#f-006) — Client-Side-Only Access Control (`app.guard.ts:52`), 🔴 [F-010](#f-010) — Insecure Direct Object Reference (`dataExport.ts:26`), 🟠 [F-050](#f-050) — Authorization on Unverified Decoded Claims (`insecurity.ts:156`)
+    - _Findings:_ 🔴 [F-005](#f-005) — Sensitive Routes Without Authorization (`server.ts:310`), 🟠 [F-006](#f-006) — Client-Side-Only Access Control (`app.guard.ts:52`), 🔴 [F-010](#f-010) — Insecure Direct Object Reference (`dataExport.ts:26`), 🔴 [F-050](#f-050) — Authorization on Unverified Decoded Claims (`insecurity.ts:156`)
 
 ### AI / LLM Exposure
 
@@ -139,7 +141,7 @@ This system embeds an LLM / AI-agent surface. The risks below are architectural 
   - ↳ 🟠 [F-026](#f-026) — Indirect prompt injection in chatbot grants unauthorized coupons (`chat.ts:205`)
 
 - **LLM06 Excessive Agency** — The chatbot can invoke backend tool-calls (coupon issuance, order placement) without a human-in-the-loop confirmation gate, so a successful prompt injection immediately produces real side-effects rather than only information disclosure. _([C-07](#c-07))_
-  - ↳ 🟠 [F-051](#f-051) — Excessive Agency in LLM Tool Invocation (`chat.ts:176`)
+  - ↳ 🔴 [F-051](#f-051) — Excessive Agency in LLM Tool Invocation (`chat.ts:176`)
   - ↳ 🟠 [F-028](#f-028) — Insecure Handling of LLM Tool-Call Output (`chat.ts:181`)
 
 - **LLM07 System Prompt Leakage** — The chatbot's system prompt embeds confidential discount rules and internal business logic; an attacker who asks the model to repeat its instructions can extract these commercial rules without any authentication. _([C-07](#c-07))_
@@ -256,9 +258,11 @@ flowchart LR
 
 _STRIDE: S spoofing · T tampering · R repudiation · I information disclosure · D denial of service · E elevation of privilege. Risk, findings, components, impact and Fix are derived deterministically; only the one-line weakness description is authored._
 
+**Verified attack chains.** 4 fully viable ([AC-T-001](#ac-t-001), [AC-T-002](#ac-t-002), [AC-T-003](#ac-t-003), [AC-T-004](#ac-t-004)); 2 partially blocked ([AC-T-005](#ac-t-005), [AC-T-006](#ac-t-006)). These chains combine individual findings into end-to-end exploitation paths verified step-by-step against the code - see [§8 Abuse Cases](#8-abuse-cases) for the per-step breakdown and blocking mitigations.
+
 ### Top Mitigations
 
-Highest-impact P1/P2 mitigations - 10 of 53 qualifying (70 total). Full detail in [§9 Mitigation Register](#9-mitigation-register). All 9 mitigation(s) that fix a Critical finding are always listed here.
+Highest-impact P1/P2 mitigations - 21 of 53 qualifying (70 total). Full detail in [§9 Mitigation Register](#9-mitigation-register). All 21 mitigation(s) that fix a Critical finding are always listed here.
 
 | # | Component | Mitigation | Addresses | Effort |
 |---|----------------------|------------------------------------------------|------------------------------------------------|------|
@@ -270,10 +274,21 @@ Highest-impact P1/P2 mitigations - 10 of 53 qualifying (70 total). Full detail i
 | **6** | [C-04](#c-04) — Data Persistence Layer | <span style="color:#111111">❶</span> [M-011](#m-011) — Replace MD5 password hashing with per-user salted bcrypt/argon2 in the User model setter (`user.ts:76`) | 🔴 [F-011](#f-011) — Unsalted MD5 password storage (`models/user.ts`) | Medium |
 | **7** | [C-05](#c-05) — File Upload & Parser Subsystem | <span style="color:#111111">❶</span> [M-012](#m-012) — Disable DTD loading and external-entity resolution in parseXmlString (`xml.ts:35`) | 🔴 [F-012](#f-012) — XML External Entity Injection (`lib/xml.ts`) | Low |
 | **8** | [C-06](#c-06) — B2B v2 Order API | <span style="color:#111111">❶</span> [M-013](#m-013) — Replace safeEval/vm evaluation of orderLinesData with a declarative JSON parser and schema validation (`b2bOrder.ts:23`) | 🔴 [F-013](#f-013) — Server-Side Code Evaluation of Untrusted Input (`routes/b2bOrder.ts`) | Medium |
-| **9** | [C-02](#c-02) — Express REST API Monolith | <span style="color:#555555">❷</span> [M-003](#m-003) — Return sanitized errors and gate verbose handler to development (`server.ts:682`) | 🟠 [F-003](#f-003) — Sensitive Error Detail Disclosure Across Endpoints (`server.ts`) | Low |
-| **10** | [C-03](#c-03) — Authentication & Identity Subsystem | <span style="color:#555555">❷</span> [M-001](#m-001) — Establish dependency-update SLA and automated scanning policy (`login.ts:34`) | 🔴 [F-001](#f-001) — Systemic SQL Injection via String Interpolation (`routes/login.ts`) | Low |
+| **9** | [C-01](#c-01) — Angular Single-Page Application | <span style="color:#555555">❷</span> [M-035](#m-035) — Remove bypassSecurityTrustHtml on the search term and render it via interpolation (`search-result.component.ts:143`) | 🔴 [F-035](#f-035) — Cross-Site Scripting (`frontend/src/app/search-result/search-result.component.ts`) | Low |
+| **10** | [C-01](#c-01) — Angular Single-Page Application | <span style="color:#555555">❷</span> [M-046](#m-046) — Move the session token out of localStorage into an HttpOnly Secure SameSite cookie via a BFF (`oauth.component.ts:51`) | 🔴 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage (`frontend/src/app/oauth/oauth.component.ts`) | High |
+| **11** | [C-02](#c-02) — Express REST API Monolith | <span style="color:#555555">❷</span> [M-017](#m-017) — Move HMAC and deluxe-token secrets to environment configuration (`insecurity.ts:42`) | 🔴 [F-017](#f-017) — Hardcoded HMAC keys for coupon and deluxe tokens (`lib/insecurity.ts`) | Low |
+| **12** | [C-02](#c-02) — Express REST API Monolith | <span style="color:#555555">❷</span> [M-027](#m-027) — Replace \$where with a typed equality filter (`chat.ts:149`) | 🔴 [F-027](#f-027) — NoSQL/JS injection in MongoDB \$where review lookup (`routes/chat.ts`) | Low |
+| **13** | [C-02](#c-02) — Express REST API Monolith | <span style="color:#555555">❷</span> [M-005](#m-005) — Add an explicit auth middleware (`isAuthorized()` / `passport.authenticate()` / requireAuth) to the route registration, or mark the route intentionally public via `app.get`(...) for read-only access only. (`server.ts:310`) | 🔴 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts`) | Medium |
+| **14** | [C-02](#c-02) — Express REST API Monolith | <span style="color:#555555">❷</span> [M-025](#m-025) — Add a strict Content-Security-Policy and server-side output encoding (`server.ts:188`) | 🔴 [F-025](#f-025) — Persistent XSS surface left open by disabled XSS protections (`server.ts`) | Medium |
+| **15** | [C-03](#c-03) — Authentication & Identity Subsystem | <span style="color:#555555">❷</span> [M-001](#m-001) — Establish dependency-update SLA and automated scanning policy (`login.ts:34`) | 🔴 [F-001](#f-001) — Systemic SQL Injection via String Interpolation (`routes/login.ts`) | Low |
+| **16** | [C-03](#c-03) — Authentication & Identity Subsystem | <span style="color:#555555">❷</span> [M-015](#m-015) — Sign 2FA step-up tokens with a dedicated key and bind them to a server-side session (`2fa.ts:20`) | 🔴 [F-015](#f-015) — Weak 2FA Token Signing Key (`routes/2fa.ts`) | Medium |
+| **17** | [C-03](#c-03) — Authentication & Identity Subsystem | <span style="color:#555555">❷</span> [M-050](#m-050) — Verify tokens with a pinned algorithm and resolve roles from the trusted user record (`insecurity.ts:156`) | 🔴 [F-050](#f-050) — Authorization Decisions on Unverified Decoded Claims (`lib/insecurity.ts`) | Medium |
+| **18** | [C-07](#c-07) — AI Chatbot Service | <span style="color:#555555">❷</span> [M-051](#m-051) — Gate sensitive LLM tools behind server-side authorization and least-privilege scope (`chat.ts:176`) | 🔴 [F-051](#f-051) — Excessive Agency in LLM Tool Invocation (`routes/chat.ts`) | Medium |
+| **19** | [C-08](#c-08) — Socket\.IO Real-Time Channel | <span style="color:#555555">❷</span> [M-023](#m-023) — Add a Socket\.IO handshake authentication middleware that validates the session JWT before accepting connections (`registerWebsocketEvents.ts:23`) | 🔴 [F-023](#f-023) — Unauthenticated WebSocket Channel (`lib/startup/registerWebsocketEvents.ts`) | Medium |
+| **20** | [C-09](#c-09) — CI/CD & Source-Contribution Integrity | <span style="color:#555555">❷</span> [M-052](#m-052) — Add least-privilege permissions blocks to all 14 unscoped workflows (default contents: read) (`ci.yml:1`) | 🔴 [F-052](#f-052) — Workflows Missing permissions Block Grant Over-broad `GITHUB_TOKEN` (`ci.yml`) | Medium |
+| **21** | [C-10](#c-10) — Web3 / Wallet / NFT Surface | <span style="color:#555555">❷</span> [M-021](#m-021) — Require signed nonce proving wallet control before honoring walletNFTVerify (`nftMint.ts:41`) | 🔴 [F-021](#f-021) — Wallet Ownership Spoofing on NFT verify (`routes/nftMint.ts`) | Medium |
 
-*43 additional P1/P2 mitigations capped from the leader-board · 17 P3 backlog items in [§9 Mitigation Register](#9-mitigation-register). Sorted by priority (P1 first), then component, then leverage (most findings first), severity (Critical first), and effort (Low first).*
+*32 additional P1/P2 mitigations capped from the leader-board · 17 P3 backlog items in [§9 Mitigation Register](#9-mitigation-register). Sorted by priority (P1 first), then component, then leverage (most findings first), severity (Critical first), and effort (Low first).*
 
 ### Operational Strengths
 
@@ -499,16 +514,16 @@ flowchart TD
 
 | ID | Name | Type | Key Paths | Linked Threats |
 |----|----------------------|-----------|----------------------------------------|------------------------------------------------|
-| <a id="c-01"></a><a id="frontend-spa"></a><span style="white-space:nowrap">C-01</span> | Angular Single-Page Application | client | `frontend/src/**` | 🟠 [F-006](#f-006) — Client-Side-Only Access Control via Route Guards (`app.guard.ts:52`)<br/>🔴 [F-009](#f-009) — Derived Password from OAuth Email Claim (`oauth.component.ts:30`)<br/>🟠 [F-019](#f-019) — Untrusted URL-Fragment Parsing of OAuth Token (`oauth.component.ts:71`)<br/>🟠 [F-020](#f-020) — OAuth Implicit Flow / Token in URL Fragment (`app.routing.ts:257`)<br/>🟠 [F-035](#f-035) — Cross-Site Scripting (XSS) (`search-result.component.ts:143`)<br/>🟠 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage (`oauth.component.ts:51`)<br/>🟠 [F-047](#f-047) — Session Token Stored in Non-HttpOnly Cookie (`oauth.component.ts:50`)<br/>🟡 [F-060](#f-060) — Missing Content-Security-Policy in SPA Document (`index.html:8`) |
-| <a id="c-02"></a><a id="backend-api"></a><span style="white-space:nowrap">C-02</span> | Express REST API Monolith | application | `app.ts`<br/>`server.ts`<br/>`routes/**`<br/>`lib/**` | 🟠 [F-003](#f-003) — Sensitive Error Detail Disclosure Across Endpoints (`server.ts:682`)<br/>🟠 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts:310`)<br/>🔴 [F-010](#f-010) — Insecure Direct Object Reference (`dataExport.ts:26`)<br/>🟠 [F-017](#f-017) — Hardcoded HMAC keys for coupon and deluxe tokens (`insecurity.ts:42`)<br/>🟠 [F-025](#f-025) — Persistent XSS surface left open by disabled XSS protections (`server.ts:188`)<br/>🟠 [F-026](#f-026) — Indirect prompt injection in chatbot grants unauthorized coupons (`chat.ts:205`)<br/>🟠 [F-027](#f-027) — NoSQL/JS injection in MongoDB \$where review lookup (`chat.ts:149`)<br/>🟠 [F-037](#f-037) — Public directory listing and file download under /ftp (`server.ts:269`)<br/>🟠 [F-038](#f-038) — Wildcard CORS reflects any origin with credentials path (`server.ts:183`)<br/>🟠 [F-043](#f-043) — `Package-lock.json` present and committed (`package-lock.json:1`)<br/>🟠 [F-049](#f-049) — Rate-limit key derived from spoofable X-Forwarded-For (`server.ts:346`)<br/>🟡 [F-061](#f-061) — Missing Security Event Logging (`login.ts:18`)<br/>🟡 [F-062](#f-062) — Unauthenticated Prometheus metrics endpoint (`server.ts:676`)<br/>🟡 [F-064](#f-064) — Dockerfile USER directive (non-root) (`Dockerfile:1`)<br/>🟡 [F-066](#f-066) — Dockerfile npm/pnpm/yarn uses --ignore-scripts (`Dockerfile:1`) |
-| <a id="c-03"></a><a id="auth-identity"></a><span style="white-space:nowrap">C-03</span> | Authentication & Identity Subsystem | application | `lib/insecurity.ts`<br/>`routes/login.ts`<br/>`routes/2fa.ts`<br/>`routes/resetPassword.ts`<br/>`routes/verify.ts` | 🔴 [F-001](#f-001) — Systemic SQL Injection via String Interpolation (`login.ts:34`)<br/>🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields (`verify.ts:51`)<br/>🔴 [F-007](#f-007) — Hardcoded Cryptographic Key (`insecurity.ts:21`)<br/>🔴 [F-008](#f-008) — Insecure JWT Verification (`insecurity.ts:55`)<br/>🟠 [F-014](#f-014) — Missing Brute-Force Protection on Login (`server.ts:596`)<br/>🟠 [F-015](#f-015) — Weak 2FA Token Signing Key (`2fa.ts:20`)<br/>🟠 [F-016](#f-016) — Knowledge-Based Password Reset Without Token (`resetPassword.ts:41`)<br/>🟠 [F-022](#f-022) — Open Redirect via substring allowlist (`insecurity.ts:136`)<br/>🟠 [F-036](#f-036) — Arbitrary Field Selection Leaks Sensitive User Data (`currentUser.ts:30`)<br/>🟠 [F-050](#f-050) — Authorization Decisions on Unverified Decoded Claims (`insecurity.ts:156`)<br/>🟡 [F-054](#f-054) — No JWT Revocation or Session Invalidation (`insecurity.ts:54`)<br/>🟡 [F-057](#f-057) — Hardcoded HMAC Key Enables Deluxe-Token Forgery (`insecurity.ts:150`)<br/>🟡 [F-068](#f-068) — Rate Limit Bypass via Spoofable Header (`server.ts:346`) |
-| <a id="c-04"></a><a id="data-persistence"></a><span style="white-space:nowrap">C-04</span> | Data Persistence Layer | data | `models/**`<br/>`data/**`<br/>`lib/startup/**` | 🔴 [F-011](#f-011) — Unsalted MD5 password storage (`user.ts:76`)<br/>🟠 [F-044](#f-044) — Payment card number stored in cleartext (`card.ts:38`)<br/>🟠 [F-053](#f-053) — In-process SQLite datastore gives injection full blast radius (`index.ts:41`)<br/>🟡 [F-067](#f-067) — Security answers HMAC'd with hardcoded key (`securityAnswer.ts:45`) |
+| <a id="c-01"></a><a id="frontend-spa"></a><span style="white-space:nowrap">C-01</span> | Angular Single-Page Application | client | `frontend/src/**` | 🟠 [F-006](#f-006) — Client-Side-Only Access Control via Route Guards (`app.guard.ts:52`)<br/>🔴 [F-009](#f-009) — Derived Password from OAuth Email Claim (`oauth.component.ts:30`)<br/>🟠 [F-019](#f-019) — Untrusted URL-Fragment Parsing of OAuth Token (`oauth.component.ts:71`)<br/>🟠 [F-020](#f-020) — OAuth Implicit Flow / Token in URL Fragment (`app.routing.ts:257`)<br/>🔴 [F-035](#f-035) — Cross-Site Scripting (XSS) (`search-result.component.ts:143`)<br/>🔴 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage (`oauth.component.ts:51`)<br/>🟠 [F-047](#f-047) — Session Token Stored in Non-HttpOnly Cookie (`oauth.component.ts:50`)<br/>🟡 [F-060](#f-060) — Missing Content-Security-Policy in SPA Document (`index.html:8`) |
+| <a id="c-02"></a><a id="backend-api"></a><span style="white-space:nowrap">C-02</span> | Express REST API Monolith | application | `app.ts`<br/>`server.ts`<br/>`routes/**`<br/>`lib/**` | 🟠 [F-003](#f-003) — Sensitive Error Detail Disclosure Across Endpoints (`server.ts:682`)<br/>🔴 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts:310`)<br/>🔴 [F-010](#f-010) — Insecure Direct Object Reference (`dataExport.ts:26`)<br/>🔴 [F-017](#f-017) — Hardcoded HMAC keys for coupon and deluxe tokens (`insecurity.ts:42`)<br/>🔴 [F-025](#f-025) — Persistent XSS surface left open by disabled XSS protections (`server.ts:188`)<br/>🟠 [F-026](#f-026) — Indirect prompt injection in chatbot grants unauthorized coupons (`chat.ts:205`)<br/>🔴 [F-027](#f-027) — NoSQL/JS injection in MongoDB \$where review lookup (`chat.ts:149`)<br/>🟠 [F-037](#f-037) — Public directory listing and file download under /ftp (`server.ts:269`)<br/>🟠 [F-038](#f-038) — Wildcard CORS reflects any origin with credentials path (`server.ts:183`)<br/>🟠 [F-043](#f-043) — `Package-lock.json` present and committed (`package-lock.json:1`)<br/>🟠 [F-049](#f-049) — Rate-limit key derived from spoofable X-Forwarded-For (`server.ts:346`)<br/>🟡 [F-061](#f-061) — Missing Security Event Logging (`login.ts:18`)<br/>🟡 [F-062](#f-062) — Unauthenticated Prometheus metrics endpoint (`server.ts:676`)<br/>🟡 [F-064](#f-064) — Dockerfile USER directive (non-root) (`Dockerfile:1`)<br/>🟡 [F-066](#f-066) — Dockerfile npm/pnpm/yarn uses --ignore-scripts (`Dockerfile:1`) |
+| <a id="c-03"></a><a id="auth-identity"></a><span style="white-space:nowrap">C-03</span> | Authentication & Identity Subsystem | application | `lib/insecurity.ts`<br/>`routes/login.ts`<br/>`routes/2fa.ts`<br/>`routes/resetPassword.ts`<br/>`routes/verify.ts` | 🔴 [F-001](#f-001) — Systemic SQL Injection via String Interpolation (`login.ts:34`)<br/>🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields (`verify.ts:51`)<br/>🔴 [F-007](#f-007) — Hardcoded Cryptographic Key (`insecurity.ts:21`)<br/>🔴 [F-008](#f-008) — Insecure JWT Verification (`insecurity.ts:55`)<br/>🟠 [F-014](#f-014) — Missing Brute-Force Protection on Login (`server.ts:596`)<br/>🔴 [F-015](#f-015) — Weak 2FA Token Signing Key (`2fa.ts:20`)<br/>🟠 [F-016](#f-016) — Knowledge-Based Password Reset Without Token (`resetPassword.ts:41`)<br/>🟠 [F-022](#f-022) — Open Redirect via substring allowlist (`insecurity.ts:136`)<br/>🟠 [F-036](#f-036) — Arbitrary Field Selection Leaks Sensitive User Data (`currentUser.ts:30`)<br/>🔴 [F-050](#f-050) — Authorization Decisions on Unverified Decoded Claims (`insecurity.ts:156`)<br/>🟡 [F-054](#f-054) — No JWT Revocation or Session Invalidation (`insecurity.ts:54`)<br/>🔴 [F-057](#f-057) — Hardcoded HMAC Key Enables Deluxe-Token Forgery (`insecurity.ts:150`)<br/>🟡 [F-068](#f-068) — Rate Limit Bypass via Spoofable Header (`server.ts:346`) |
+| <a id="c-04"></a><a id="data-persistence"></a><span style="white-space:nowrap">C-04</span> | Data Persistence Layer | data | `models/**`<br/>`data/**`<br/>`lib/startup/**` | 🔴 [F-011](#f-011) — Unsalted MD5 password storage (`user.ts:76`)<br/>🟠 [F-044](#f-044) — Payment card number stored in cleartext (`card.ts:38`)<br/>🟠 [F-053](#f-053) — In-process SQLite datastore gives injection full blast radius (`index.ts:41`)<br/>🔴 [F-067](#f-067) — Security answers HMAC'd with hardcoded key (`securityAnswer.ts:45`) |
 | <a id="c-05"></a><a id="file-upload-handler"></a><span style="white-space:nowrap">C-05</span> | File Upload & Parser Subsystem | application | `routes/fileUpload.ts`<br/>`routes/profileImageFileUpload.ts`<br/>`routes/profileImageUrlUpload.ts`<br/>`routes/dataExport.ts`<br/>`uploads/**` | 🔴 [F-012](#f-012) — XML External Entity Injection (`xml.ts:35`)<br/>🟠 [F-033](#f-033) — Zip Slip Path Traversal on Archive Extraction (`fileUpload.ts:34`)<br/>🟠 [F-034](#f-034) — Stored Payload via Weak Upload Validation (`profileImageUrlUpload.ts:29`)<br/>🟠 [F-045](#f-045) — Server-Side Request Forgery (`profileImageUrlUpload.ts:24`)<br/>🟡 [F-069](#f-069) — XML Entity Expansion Denial of Service (`fileUpload.ts:76`) |
 | <a id="c-06"></a><a id="b2b-api"></a><span style="white-space:nowrap">C-06</span> | B2B v2 Order API | application | `routes/b2bOrder.ts` | 🟠 [F-004](#f-004) — Unbounded Resource Consumption (No Rate Limiting) (`server.ts:648`)<br/>🔴 [F-013](#f-013) — Server-Side Code Evaluation of Untrusted Input (`b2bOrder.ts:23`)<br/>🟠 [F-024](#f-024) — Prototype Pollution via Sandbox Escape (`b2bOrder.ts:23`) |
-| <a id="c-07"></a><a id="chat-llm"></a><span style="white-space:nowrap">C-07</span> | AI Chatbot Service | application | `routes/chat.ts`<br/>`data/chatbot/**` | 🟠 [F-018](#f-018) — Unvalidated Conversation History Trust (`chat.ts:191`)<br/>🟠 [F-028](#f-028) — Insecure Handling of LLM Tool-Call Output (`chat.ts:181`)<br/>🟠 [F-029](#f-029) — Prompt Injection (`chat.ts:191`)<br/>🟠 [F-039](#f-039) — System Prompt Leakage of Confidential Discount Rule (`chat.ts:105`)<br/>🟠 [F-051](#f-051) — Excessive Agency in LLM Tool Invocation (`chat.ts:176`)<br/>🟡 [F-063](#f-063) — Client-Side-Only Access Control on Tool-Call Debug View (`chat.ts:220`) |
-| <a id="c-08"></a><a id="websocket-realtime"></a><span style="white-space:nowrap">C-08</span> | Socket\.IO Real-Time Channel | application | `lib/startup/registerWebsocketEvents.ts`<br/>`frontend/src/app/Services/socket-io.service.ts` | 🟠 [F-023](#f-023) — Unauthenticated WebSocket Channel (`registerWebsocketEvents.ts:23`)<br/>🟠 [F-048](#f-048) — Challenge Flag Leak on WebSocket Connect (`registerWebsocketEvents.ts:30`)<br/>🟡 [F-056](#f-056) — Missing Socket\.IO Origin Validation (`registerWebsocketEvents.ts:20`) |
-| <a id="c-09"></a><a id="ci-cd-pipeline"></a><span style="white-space:nowrap">C-09</span> | CI/CD & Source-Contribution Integrity | application | `.github/workflows/**`<br/>`Dockerfile`<br/>`docker-compose.test.yml`<br/>`.gitlab-ci.yml`<br/>`.npmrc` | 🟠 [F-030](#f-030) — Npm install Runs postinstall Build Hook on Untrusted PR Code (`ci.yml:51`)<br/>🟠 [F-031](#f-031) — Third-party Action Pinned to Mutable Branch (`image_actions.yml:33`)<br/>🟠 [F-032](#f-032) — Lockfile Generation Disabled via (`.npmrc:1`)<br/>🟠 [F-040](#f-040) — GitHub Actions workflow-level permissions block (`stale.yml:1`)<br/>🟠 [F-041](#f-041) — Third-party GitHub Actions pinned to commit SHA (`rebase.yml:1`)<br/>🟠 [F-042](#f-042) — Dockerfile base image must be digest-pinned (`Dockerfile:1`)<br/>🟠 [F-052](#f-052) — Workflows Missing permissions Block Grant Over-broad `GITHUB_TOKEN` (`ci.yml:1`)<br/>🟡 [F-058](#f-058) — No Image Signing or Provenance Attestation on Published Artifacts (`release.yml:73`)<br/>🟡 [F-059](#f-059) — Mutable Major-Version Action Tags in CI Workflows (`ci.yml:188`)<br/>🟡 [F-065](#f-065) — Container image signing via cosign or attest-build-provenance (`stale.yml:1`) |
-| <a id="c-10"></a><a id="web3-nft"></a><span style="white-space:nowrap">C-10</span> | Web3 / Wallet / NFT Surface | application | `routes/checkKeys.ts`<br/>`routes/nftMint.ts`<br/>`routes/redirect.ts`<br/>`routes/web3Wallet.ts` | 🟠 [F-021](#f-021) — Wallet Ownership Spoofing on NFT verify (`nftMint.ts:41`)<br/>🟡 [F-055](#f-055) — Unverified Wallet Address Trust on exploit endpoint (`web3Wallet.ts:15`)<br/>🟡 [F-070](#f-070) — Unbounded in-memory wallet sets, no rate limit (`web3Wallet.ts:16`) |
+| <a id="c-07"></a><a id="chat-llm"></a><span style="white-space:nowrap">C-07</span> | AI Chatbot Service | application | `routes/chat.ts`<br/>`data/chatbot/**` | 🟠 [F-018](#f-018) — Unvalidated Conversation History Trust (`chat.ts:191`)<br/>🟠 [F-028](#f-028) — Insecure Handling of LLM Tool-Call Output (`chat.ts:181`)<br/>🟠 [F-029](#f-029) — Prompt Injection (`chat.ts:191`)<br/>🟠 [F-039](#f-039) — System Prompt Leakage of Confidential Discount Rule (`chat.ts:105`)<br/>🔴 [F-051](#f-051) — Excessive Agency in LLM Tool Invocation (`chat.ts:176`)<br/>🟡 [F-063](#f-063) — Client-Side-Only Access Control on Tool-Call Debug View (`chat.ts:220`) |
+| <a id="c-08"></a><a id="websocket-realtime"></a><span style="white-space:nowrap">C-08</span> | Socket\.IO Real-Time Channel | application | `lib/startup/registerWebsocketEvents.ts`<br/>`frontend/src/app/Services/socket-io.service.ts` | 🔴 [F-023](#f-023) — Unauthenticated WebSocket Channel (`registerWebsocketEvents.ts:23`)<br/>🟠 [F-048](#f-048) — Challenge Flag Leak on WebSocket Connect (`registerWebsocketEvents.ts:30`)<br/>🟡 [F-056](#f-056) — Missing Socket\.IO Origin Validation (`registerWebsocketEvents.ts:20`) |
+| <a id="c-09"></a><a id="ci-cd-pipeline"></a><span style="white-space:nowrap">C-09</span> | CI/CD & Source-Contribution Integrity | application | `.github/workflows/**`<br/>`Dockerfile`<br/>`docker-compose.test.yml`<br/>`.gitlab-ci.yml`<br/>`.npmrc` | 🟠 [F-030](#f-030) — Npm install Runs postinstall Build Hook on Untrusted PR Code (`ci.yml:51`)<br/>🟠 [F-031](#f-031) — Third-party Action Pinned to Mutable Branch (`image_actions.yml:33`)<br/>🟠 [F-032](#f-032) — Lockfile Generation Disabled via (`.npmrc:1`)<br/>🟠 [F-040](#f-040) — GitHub Actions workflow-level permissions block (`stale.yml:1`)<br/>🟠 [F-041](#f-041) — Third-party GitHub Actions pinned to commit SHA (`rebase.yml:1`)<br/>🟠 [F-042](#f-042) — Dockerfile base image must be digest-pinned (`Dockerfile:1`)<br/>🔴 [F-052](#f-052) — Workflows Missing permissions Block Grant Over-broad `GITHUB_TOKEN` (`ci.yml:1`)<br/>🟡 [F-058](#f-058) — No Image Signing or Provenance Attestation on Published Artifacts (`release.yml:73`)<br/>🟡 [F-059](#f-059) — Mutable Major-Version Action Tags in CI Workflows (`ci.yml:188`)<br/>🔴 [F-065](#f-065) — Container image signing via cosign or attest-build-provenance (`stale.yml:1`) |
+| <a id="c-10"></a><a id="web3-nft"></a><span style="white-space:nowrap">C-10</span> | Web3 / Wallet / NFT Surface | application | `routes/checkKeys.ts`<br/>`routes/nftMint.ts`<br/>`routes/redirect.ts`<br/>`routes/web3Wallet.ts` | 🔴 [F-021](#f-021) — Wallet Ownership Spoofing on NFT verify (`nftMint.ts:41`)<br/>🟡 [F-055](#f-055) — Unverified Wallet Address Trust on exploit endpoint (`web3Wallet.ts:15`)<br/>🟡 [F-070](#f-070) — Unbounded in-memory wallet sets, no rate limit (`web3Wallet.ts:16`) |
 ### 2.4 Technology Architecture
 
 The technology stack the system is built on. Each box names the framework or runtime that fills that role; per-component findings live in the [§2.3](#23-components) component table above, and the full per-finding catalogue is in [§7 Findings Register](#7-findings-register).
@@ -950,12 +965,12 @@ Network-reachable entry points classified by authentication requirement. Each ro
 | POST | `/profile/image/file` | 🟠 High | 🟠 [F-034](#f-034) — Stored Payload via Weak Upload Validation (`profileImageUrlUpload.ts:29`)<br/>🟠 [F-045](#f-045) — Server-Side Request Forgery (`profileImageUrlUpload.ts:24`)<br/>handler: `server.ts:310` |
 | POST | `/profile/image/url` | 🟠 High | 🟠 [F-045](#f-045) — Server-Side Request Forgery (`profileImageUrlUpload.ts:24`)<br/>🟠 [F-034](#f-034) — Stored Payload via Weak Upload Validation (`profileImageUrlUpload.ts:29`)<br/>handler: `server.ts:311` |
 | POST | `/rest/user/reset-password` | 🟠 High | 🟠 [F-004](#f-004) — Unbounded Resource Consumption (No Rate Limiting) (`server.ts:648`)<br/>🟠 [F-014](#f-014) — Missing Brute-Force Protection on Login (`server.ts:596`)<br/>🟠 [F-016](#f-016) — Knowledge-Based Password Reset Without Token (`resetPassword.ts:41`)<br/>POST /rest/user/reset-password — unauthenticated; security-question-based reset |
-| POST | `/rest/web3/walletNFTVerify` | 🟠 High | 🟠 [F-021](#f-021) — Wallet Ownership Spoofing on NFT verify (`nftMint.ts:41`)<br/>POST /rest/web3/walletNFTVerify — unauthenticated Web3 verification surface |
+| POST | `/rest/web3/walletNFTVerify` | 🟠 High | 🔴 [F-021](#f-021) — Wallet Ownership Spoofing on NFT verify (`nftMint.ts:41`)<br/>POST /rest/web3/walletNFTVerify — unauthenticated Web3 verification surface |
 | GET | `/ftp/ and /ftp/:file` | 🟠 High | 🟠 [F-033](#f-033) — Zip Slip Path Traversal on Archive Extraction (`fileUpload.ts:34`)<br/>🟠 [F-037](#f-037) — Public directory listing and file download under /ftp (`server.ts:269`)<br/>Static FTP directory served by serve-index; directory traversal / poison-null-byte file disclosure of confidential files (`acquisitions.md`, `eastere.gg`, `package.json.bak`). |
 | GET | `/profile` | 🟠 High | 🟠 [F-034](#f-034) — Stored Payload via Weak Upload Validation (`profileImageUrlUpload.ts:29`)<br/>🟠 [F-045](#f-045) — Server-Side Request Forgery (`profileImageUrlUpload.ts:24`)<br/>handler: `server.ts:666` |
 | GET | `/redirect` | 🟠 High | 🟠 [F-022](#f-022) — Open Redirect via substring allowlist (`insecurity.ts:136`)<br/>GET /redirect — open-redirect allowlist bypass |
 | GET | `/rest/user/whoami` | 🟠 High | 🟠 [F-036](#f-036) — Arbitrary Field Selection Leaks Sensitive User Data (`currentUser.ts:30`)<br/>handler: `server.ts:600` |
-| ? | `WSS /​socket.​io (Socket.​IO real-​time channel)` | 🟠 High | 🟠 [F-023](#f-023) — Unauthenticated WebSocket Channel (`registerWebsocketEvents.ts:23`)<br/>Same-origin Socket\.IO channel registered in lib/startup/registerWebsocketEvents; per-event authorization is not consistently enforced — message injection / notification spoofing. |
+| ? | `WSS /​socket.​io (Socket.​IO real-​time channel)` | 🟠 High | 🔴 [F-023](#f-023) — Unauthenticated WebSocket Channel (`registerWebsocketEvents.ts:23`)<br/>Same-origin Socket\.IO channel registered in lib/startup/registerWebsocketEvents; per-event authorization is not consistently enforced — message injection / notification spoofing. |
 | POST | `/​rest/​web3/​walletExploitAddress` | 🟡 Medium | 🟡 [F-055](#f-055) — Unverified Wallet Address Trust on exploit endpoint (`web3Wallet.ts:15`)<br/>🟡 [F-070](#f-070) — Unbounded in-memory wallet sets, no rate limit (`web3Wallet.ts:16`)<br/>handler: `server.ts:645` |
 | GET | `/rest/user/change-password` | 🟡 Medium | 🟡 [F-054](#f-054) — No JWT Revocation or Session Invalidation (`insecurity.ts:54`)<br/>handler: `server.ts:597` |
 | POST | `/` | - | handler: `routes/dataErasure.ts:74`<br/>_⚑ Review: no auth guard detected_ |
@@ -981,7 +996,7 @@ _31 further entry point(s) in this category carry no linked finding and no eleva
 | GET | `/api/Users` | 🔴 Critical | 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields (`verify.ts:51`)<br/>handler: `server.ts:363` |
 | POST | `/api/Users` | 🔴 Critical | 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields (`verify.ts:51`)<br/>POST /api/Users — user registration; role can be tampered via mass-assignment |
 | POST | `/b2b/v2/orders` | 🔴 Critical | 🟠 [F-004](#f-004) — Unbounded Resource Consumption (No Rate Limiting) (`server.ts:648`)<br/>🔴 [F-013](#f-013) — Server-Side Code Evaluation of Untrusted Input (`b2bOrder.ts:23`)<br/>POST /b2b/v2/orders — JWT-auth B2B endpoint; safeEval RCE via orderLinesData |
-| POST | `/rest/chat` | 🟠 High | 🟠 [F-026](#f-026) — Indirect prompt injection in chatbot grants unauthorized coupons (`chat.ts:205`)<br/>🟠 [F-027](#f-027) — NoSQL/JS injection in MongoDB \$where review lookup (`chat.ts:149`)<br/>🟠 [F-029](#f-029) — Prompt Injection (`chat.ts:191`)<br/>POST /rest/chat — authenticated chatbot; prompt injection vector |
+| POST | `/rest/chat` | 🟠 High | 🟠 [F-026](#f-026) — Indirect prompt injection in chatbot grants unauthorized coupons (`chat.ts:205`)<br/>🔴 [F-027](#f-027) — NoSQL/JS injection in MongoDB \$where review lookup (`chat.ts:149`)<br/>🟠 [F-029](#f-029) — Prompt Injection (`chat.ts:191`)<br/>POST /rest/chat — authenticated chatbot; prompt injection vector |
 | GET | `/metrics` | 🟡 Medium | 🟡 [F-062](#f-062) — Unauthenticated Prometheus metrics endpoint (`server.ts:676`)<br/>GET /metrics — Prometheus metrics management surface |
 | PUT | `/api/Addresss/:id` | - | handler: `server.ts:450`<br/>_⚑ Review: no authz guard detected_ |
 | DELETE | `/api/Addresss/:id` | - | handler: `server.ts:451`<br/>_⚑ Review: no authz guard detected_ |
@@ -1063,20 +1078,20 @@ So "🔴 Unsafe" on a control category does *not* mean the control is absent - i
 
 **Implemented controls:** TOTP-based 2FA enrollment and verification (when opted in), OAuth frontend identity adapter via `oauth.component.ts`, Angular route guards (`LoginGuard`, `AdminGuard`) for UI-layer gating, express-rate-limit applied to `/rest/user/reset-password` and 2FA routes.
 
-**Assessment:** The credential verification path (`routes/login.ts`) and the OAuth adapter (`oauth.component.ts`) are both fully implemented and actively used, but each is defeated by a different mechanism: the login path is injectable via raw SQL interpolation (🔴 [F-001](#f-001)), the OAuth path derives a deterministic local password from the user's email address (🔴 [F-009](#f-009)), and the JWT issuance that follows every successful flow is signed with a key committed to the public repository (🔴 [F-007](#f-007)). None of the client-side Angular guards constitute a security boundary - they read a client-decoded token that the server does not consistently re-verify on every call (🟠 [F-006](#f-006), 🟠 [F-050](#f-050)). Each successful flow above terminates in the server issuing a session token; the signing, validation, propagation, storage, and lifecycle of that token are described in [§6.3 Session and Token Controls](#63-session-and-token-controls).
+**Assessment:** The credential verification path (`routes/login.ts`) and the OAuth adapter (`oauth.component.ts`) are both fully implemented and actively used, but each is defeated by a different mechanism: the login path is injectable via raw SQL interpolation (🔴 [F-001](#f-001)), the OAuth path derives a deterministic local password from the user's email address (🔴 [F-009](#f-009)), and the JWT issuance that follows every successful flow is signed with a key committed to the public repository (🔴 [F-007](#f-007)). None of the client-side Angular guards constitute a security boundary - they read a client-decoded token that the server does not consistently re-verify on every call (🟠 [F-006](#f-006), 🔴 [F-050](#f-050)). Each successful flow above terminates in the server issuing a session token; the signing, validation, propagation, storage, and lifecycle of that token are described in [§6.3 Session and Token Controls](#63-session-and-token-controls).
 
 <!-- §6.2 AUTH-MECHANISMS-FROZEN — deterministic inventory, pregenerator-owned. DO NOT EDIT. -->
 **Authentication mechanisms (at a glance).** Every authentication mechanism detected on the application, its effective status, where it is assessed, and its linked findings. Controls are catalogued by domain, so JWT/session handling is assessed under [§6.3 Session and Token Controls](#63-session-and-token-controls) and password hashing under [§6.9 Cryptography Secrets and Data Protection](#69-cryptography-secrets-and-data-protection).
 
 | Mechanism | Status | Assessed in | Findings |
 |----------------------|----------|-----------|------------------------------------------------|
-| User registration | 🔴 Critical | [§6.2](#62-identity-and-authentication-controls) | 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields<br/>🟠 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts`) |
+| User registration | 🔴 Critical | [§6.2](#62-identity-and-authentication-controls) | 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields<br/>🔴 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts`) |
 | Password login | 🔴 Unsafe | [§6.2](#62-identity-and-authentication-controls) | 🟠 [F-014](#f-014) — Missing Brute-Force Protection on Login |
 | Password reset / change | 🟠 High | [§6.2](#62-identity-and-authentication-controls) | 🟠 [F-016](#f-016) — Knowledge-Based Password Reset Without Token |
 | Password storage (hashing) | 🔴 Unsafe | [§6.9](#69-cryptography-secrets-and-data-protection) | 🔴 [F-011](#f-011) — Unsalted MD5 password storage |
-| JWT / bearer-token session | 🔴 Unsafe | [§6.3](#63-session-and-token-controls) | 🔴 [F-008](#f-008) — Insecure JWT Verification<br/>🟠 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage<br/>🟡 [F-054](#f-054) — No JWT Revocation or Session Invalidation<br/>🟡 [F-057](#f-057) — Hardcoded HMAC Key Enables Deluxe-Token Forgery |
-| Session-token storage | 🔴 Unsafe | [§6.3](#63-session-and-token-controls) | 🟠 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage<br/>🟠 [F-047](#f-047) — Session Token Stored in Non-HttpOnly Cookie |
-| Multi-factor authentication (TOTP / 2FA) | 🟡 Partial | [§6.2](#62-identity-and-authentication-controls) | 🟠 [F-015](#f-015) — Weak 2FA Token Signing Key |
+| JWT / bearer-token session | 🔴 Unsafe | [§6.3](#63-session-and-token-controls) | 🔴 [F-008](#f-008) — Insecure JWT Verification<br/>🔴 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage<br/>🟡 [F-054](#f-054) — No JWT Revocation or Session Invalidation<br/>🔴 [F-057](#f-057) — Hardcoded HMAC Key Enables Deluxe-Token Forgery |
+| Session-token storage | 🔴 Unsafe | [§6.3](#63-session-and-token-controls) | 🔴 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage<br/>🟠 [F-047](#f-047) — Session Token Stored in Non-HttpOnly Cookie |
+| Multi-factor authentication (TOTP / 2FA) | 🟡 Partial | [§6.2](#62-identity-and-authentication-controls) | 🔴 [F-015](#f-015) — Weak 2FA Token Signing Key |
 | OAuth / OIDC federated login | 🔴 Unsafe | [§6.2](#62-identity-and-authentication-controls) | 🔴 [F-009](#f-009) — Derived Password from OAuth Email Claim<br/>🟠 [F-019](#f-019) — Untrusted URL-Fragment Parsing of OAuth Token<br/>🟠 [F-020](#f-020) — OAuth Implicit Flow / Token in URL Fragment |
 
 <!-- §6.2 AUTH-MECHANISMS-FROZEN END -->
@@ -1161,7 +1176,7 @@ The TOTP implementation is structurally sound - enrollment generates a per-user 
 
 **Relevant findings**
 
-- 🟠 [F-015](#f-015) — The TOTP bypass token is signed with the same public RSA key used for full session tokens, reducing 2FA to a cosmetic gate.
+- 🔴 [F-015](#f-015) — The TOTP bypass token is signed with the same public RSA key used for full session tokens, reducing 2FA to a cosmetic gate.
 - 🔴 [F-007](#f-007) — Hardcoded RSA private key in source enables arbitrary token forgery, including tmpToken.
 
 <a id="oauth-federated-login"></a>
@@ -1259,8 +1274,8 @@ The RSA private key at `lib/insecurity.ts:21` is committed to the public OWASP J
 **Relevant findings**
 
 - 🔴 [F-007](#f-007) — RSA private key literal in `lib/insecurity.ts:21` enables arbitrary JWT forgery.
-- 🟠 [F-017](#f-017) — Hardcoded HMAC secret for coupon tokens allows coupon forgery without authentication.
-- 🟡 [F-057](#f-057) — Deluxe-membership token HMAC reuses the leaked private key.
+- 🔴 [F-017](#f-017) — Hardcoded HMAC secret for coupon tokens allows coupon forgery without authentication.
+- 🔴 [F-057](#f-057) — Deluxe-membership token HMAC reuses the leaked private key.
 
 <a id="session-token-validation"></a><a id="session-token-validation-jwt-based"></a>
 #### 6.3.2 Session Token Validation
@@ -1295,12 +1310,12 @@ sequenceDiagram
 
 **Security assessment**
 
-`verify()` calls `jws.verify(token, publicKey)` with no algorithm restriction argument. `jws.verify` honours the `alg` header in the token itself: a token with `"alg":"none"` passes verification with an empty signature string, and a token with `"alg":"HS256"` would be verified using the public key as the HMAC secret. Role-check helpers `isAccounting()`, `isDeluxe()`, and `isCustomer()` in `lib/insecurity.ts:156–171` call `decode()` after `verify()` but use the decoded claims from `jwtFrom(req)` - meaning a token that passes the broken `verify()` gates the role check on unvalidated claims (🟠 [F-050](#f-050)).
+`verify()` calls `jws.verify(token, publicKey)` with no algorithm restriction argument. `jws.verify` honours the `alg` header in the token itself: a token with `"alg":"none"` passes verification with an empty signature string, and a token with `"alg":"HS256"` would be verified using the public key as the HMAC secret. Role-check helpers `isAccounting()`, `isDeluxe()`, and `isCustomer()` in `lib/insecurity.ts:156–171` call `decode()` after `verify()` but use the decoded claims from `jwtFrom(req)` - meaning a token that passes the broken `verify()` gates the role check on unvalidated claims (🔴 [F-050](#f-050)).
 
 **Relevant findings**
 
 - 🔴 [F-008](#f-008) — `jws.verify()` with no algorithm whitelist accepts `alg:none` tokens.
-- 🟠 [F-050](#f-050) — Role-check helpers read unverified decoded claims after the broken `verify()` call.
+- 🔴 [F-050](#f-050) — Role-check helpers read unverified decoded claims after the broken `verify()` call.
 
 <a id="session-token-storage"></a><a id="session-token-storage-browser-localstorage"></a>
 #### 6.3.3 Session Token Storage
@@ -1317,7 +1332,7 @@ sequenceDiagram
 
 **Relevant findings**
 
-- 🟠 [F-046](#f-046) — JWT stored in `localStorage`, readable by XSS.
+- 🔴 [F-046](#f-046) — JWT stored in `localStorage`, readable by XSS.
 - 🟠 [F-047](#f-047) — Session token also written to a non-`HttpOnly` cookie via the JavaScript cookie library.
 
 <a id="session-token-revocation"></a>
@@ -1389,8 +1404,8 @@ Server-side role enforcement depends on `security.verify(token)` passing - which
 **Relevant findings**
 
 - 🟠 [F-006](#f-006) — `AdminGuard` and peer guards perform all role enforcement client-side; server-side re-verification is absent on several routes.
-- 🟠 [F-050](#f-050) — Role decisions based on decoded claims from the broken `verify()` path allow a forged token to escalate to any role.
-- 🟠 [F-005](#f-005) — State-changing routes mounted in `server.ts` without an authentication or authorization gate.
+- 🔴 [F-050](#f-050) — Role decisions based on decoded claims from the broken `verify()` path allow a forged token to escalate to any role.
+- 🔴 [F-005](#f-005) — State-changing routes mounted in `server.ts` without an authentication or authorization gate.
 
 <a id="object-level-authorization"></a><a id="object-level-authorization-ownership-checks"></a>
 #### 6.4.2 Object-Level Authorization
@@ -1421,7 +1436,7 @@ Admin functionality under `/api/Admin/**` is guarded by role verification. The `
 
 **Relevant findings**
 
-- 🟠 [F-005](#f-005) — Sensitive routes registered without authorization middleware in `server.ts`.
+- 🔴 [F-005](#f-005) — Sensitive routes registered without authorization middleware in `server.ts`.
 - 🟡 [F-062](#f-062) — Prometheus metrics endpoint at `/metrics` unauthenticated, leaking operational counters.
 - 🟠 [F-037](#f-037) — Public FTP directory listing without authentication exposes files including backups.
 
@@ -1460,12 +1475,12 @@ Two raw SQL call sites concatenate request values without binding:
 - `routes/login.ts:34` - the authentication query embeds `req.body.email` and the MD5-hashed password; a payload of `' OR '1'='1` in the email field bypasses authentication and returns the first user row (typically the seeded admin account).
 - The product-search route embeds the search term in a `LIKE '%${criteria}%'` clause via the same `models.sequelize.query` path.
 
-The `$where` operator in the MarsDB review lookup (`routes/productReviews.ts`) executes server-side JavaScript, and while `productId` is `Number()`-coerced at that call site, the same `$where` pattern in adjacent code accepts string input unchecked (🟠 [F-027](#f-027) (NoSQL/JS injection in MongoDB \$where review lookup)). The in-process SQLite database gives a successful SQL injection the full blast radius of the application's DB principal - no row-level security, no separate read/write accounts (🟠 [F-053](#f-053)).
+The `$where` operator in the MarsDB review lookup (`routes/productReviews.ts`) executes server-side JavaScript, and while `productId` is `Number()`-coerced at that call site, the same `$where` pattern in adjacent code accepts string input unchecked (🔴 [F-027](#f-027) (NoSQL/JS injection in MongoDB \$where review lookup)). The in-process SQLite database gives a successful SQL injection the full blast radius of the application's DB principal - no row-level security, no separate read/write accounts (🟠 [F-053](#f-053)).
 
 **Relevant findings**
 
 - 🔴 [F-001](#f-001) — Raw SQL interpolation in the login and search routes enables authentication bypass and data exfiltration.
-- 🟠 [F-027](#f-027) — MongoDB `$where` operator in the review lookup executes server-side JavaScript with attacker-controlled operands.
+- 🔴 [F-027](#f-027) — MongoDB `$where` operator in the review lookup executes server-side JavaScript with attacker-controlled operands.
 - 🟠 [F-053](#f-053) — In-process SQLite with a single DB principal amplifies SQL injection blast radius.
 
 ### 6.6 Input Boundary Validation Controls
@@ -1550,12 +1565,12 @@ this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam)
 
 **Security assessment**
 
-`search-result.component.ts:143` binds the URL `q` parameter directly into the DOM via `bypassSecurityTrustHtml(queryParam)`, creating a reflected XSS sink. `data-export.component.ts:71` calls `window.open('', '_blank').document.write(this.userData)`, injecting user-controlled export data into a new window's document - a persistent XSS path when the stored data contains script. Helmet's XSS filter is explicitly commented out in the startup configuration with a note reading "no protection from persisted XSS via RESTful API" (🟠 [F-025](#f-025)), and no CSP limits what scripts can execute in the page context (🟡 [F-060](#f-060)).
+`search-result.component.ts:143` binds the URL `q` parameter directly into the DOM via `bypassSecurityTrustHtml(queryParam)`, creating a reflected XSS sink. `data-export.component.ts:71` calls `window.open('', '_blank').document.write(this.userData)`, injecting user-controlled export data into a new window's document - a persistent XSS path when the stored data contains script. Helmet's XSS filter is explicitly commented out in the startup configuration with a note reading "no protection from persisted XSS via RESTful API" (🔴 [F-025](#f-025)), and no CSP limits what scripts can execute in the page context (🟡 [F-060](#f-060)).
 
 **Relevant findings**
 
-- 🟠 [F-035](#f-035) — `bypassSecurityTrustHtml()` on the search query parameter creates a reflected XSS sink.
-- 🟠 [F-025](#f-025) — Helmet `xssFilter` explicitly disabled; persistent XSS surface left unmitigated.
+- 🔴 [F-035](#f-035) — `bypassSecurityTrustHtml()` on the search query parameter creates a reflected XSS sink.
+- 🔴 [F-025](#f-025) — Helmet `xssFilter` explicitly disabled; persistent XSS surface left unmitigated.
 
 ### 6.8 Browser and Cross-Origin Controls
 
@@ -1601,7 +1616,7 @@ Helmet is configured in the Express startup and applies several security headers
 **Relevant findings**
 
 - 🟡 [F-060](#f-060) — No Content-Security-Policy on the SPA document; third-party resources loaded without Subresource Integrity.
-- 🟠 [F-025](#f-025) — Helmet XSS filter disabled explicitly, compounding the missing CSP.
+- 🔴 [F-025](#f-025) — Helmet XSS filter disabled explicitly, compounding the missing CSP.
 
 <a id="csrf-protection"></a>
 #### 6.8.3 CSRF Protection
@@ -1671,18 +1686,18 @@ MD5 is a message-digest function, not a password-hashing function. It produces a
 All key material is committed to the public repository. Any reader can:
 
 - Sign arbitrary JWTs with `role=admin` using the leaked RSA private key (🔴 [F-007](#f-007)).
-- Forge coupon codes by computing `HMAC-SHA256('pa4qacea4VK9t9nGv7yZtwmj', couponString)` (🟠 [F-017](#f-017)).
-- Look up a user's security-answer hash offline given the hardcoded HMAC key (🟡 [F-067](#f-067)).
-- Forge deluxe-membership tokens using the same RSA private key (🟡 [F-057](#f-057)).
+- Forge coupon codes by computing `HMAC-SHA256('pa4qacea4VK9t9nGv7yZtwmj', couponString)` (🔴 [F-017](#f-017)).
+- Look up a user's security-answer hash offline given the hardcoded HMAC key (🔴 [F-067](#f-067)).
+- Forge deluxe-membership tokens using the same RSA private key (🔴 [F-057](#f-057)).
 
 Moving all secrets to runtime-injected environment variables (`e.g`. `process.env.JWT_PRIVATE_KEY`) and rotating the keys immediately would end the exposure. The `config/` directory contains environment-specific YAML files but none inject signing key material at runtime.
 
 **Relevant findings**
 
 - 🔴 [F-007](#f-007) — RSA private key hardcoded at `lib/insecurity.ts:21`.
-- 🟠 [F-017](#f-017) — Coupon HMAC secret hardcoded at `lib/insecurity.ts:42`.
-- 🟡 [F-067](#f-067) — Security-answer HMAC key shared with the coupon key, also hardcoded.
-- 🟡 [F-057](#f-057) — Deluxe-token HMAC derives from the same leaked RSA private key.
+- 🔴 [F-017](#f-017) — Coupon HMAC secret hardcoded at `lib/insecurity.ts:42`.
+- 🔴 [F-067](#f-067) — Security-answer HMAC key shared with the coupon key, also hardcoded.
+- 🔴 [F-057](#f-057) — Deluxe-token HMAC derives from the same leaked RSA private key.
 
 <a id="transport-encryption"></a><a id="transport-encryption-tls"></a>
 #### 6.9.3 Transport Encryption
@@ -1697,7 +1712,7 @@ In the reference Docker deployment, all traffic between the browser and the `Nod
 
 **Relevant findings**
 
-- No dedicated transport-encryption finding is routed here; the exposure is amplified by 🟠 [F-046](#f-046) (JWT in localStorage) and 🟠 [F-047](#f-047) (non-HttpOnly cookie).
+- No dedicated transport-encryption finding is routed here; the exposure is amplified by 🔴 [F-046](#f-046) (JWT in localStorage) and 🟠 [F-047](#f-047) (non-HttpOnly cookie).
 
 <a id="secure-cookie-flags"></a>
 #### 6.9.4 Secure Cookie Flags
@@ -1894,7 +1909,7 @@ A `grep` for `io.use` across `lib/` returns zero hits - no authentication middle
 
 **Relevant findings**
 
-- 🟠 [F-023](#f-023) — No `io.use()` authentication middleware; any client can connect and receive challenge notifications.
+- 🔴 [F-023](#f-023) — No `io.use()` authentication middleware; any client can connect and receive challenge notifications.
 - 🟠 [F-048](#f-048) — Challenge flag values broadcast on every new connection via the `notifications` array replay.
 
 <a id="socketio-origin-validation"></a>
@@ -1931,7 +1946,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 **Risk Distribution:** 🔴 Critical: 9 · 🟠 High: 44 · 🟡 Medium: 17 · 🟢 Low: 0 · **Total findings: 70**
 **STRIDE Coverage:** Spoofing: 16 · Tampering: 18 · Repudiation: 1 · Information Disclosure: 22 · Denial of Service: 5 · Elevation of Privilege: 8
 
-**Findings index:**<br/>🔴 [F-001](#f-001) — SQL Injection — `routes/login.ts:34`<br/>🔴 [F-002](#f-002) — Systemic Mass Assignment Privileged Fields — `routes/verify.ts:51`<br/>🟠 [F-003](#f-003) — Error Message Disclosure — `server.ts:682`<br/>🟠 [F-004](#f-004) — Uncontrolled Resource Consumption — `server.ts:648`<br/>🟠 [F-005](#f-005) — Missing Authorization — `server.ts:310`<br/>🟠 [F-006](#f-006) — Client-Side-Only Access Control Route Guards…<br/>🔴 [F-007](#f-007) — Hardcoded Cryptographic Key — `lib/insecurity.ts:21`<br/>🔴 [F-008](#f-008) — Improper Verification of Cryptographic Signature…<br/>🔴 [F-009](#f-009) — Improper Authentication — `frontend/src/app/oauth/oauth.component.ts:30`<br/>🔴 [F-010](#f-010) — Insecure Direct Object Reference (IDOR) — `routes/dataExport.ts:26`<br/>🔴 [F-011](#f-011) — Password Hash with Insufficient Effort — `models/user.ts:76`<br/>🔴 [F-012](#f-012) — XML External Entity (XXE) — `lib/xml.ts:35`<br/>🔴 [F-013](#f-013) — Code Injection — `routes/b2bOrder.ts:23`<br/>🟠 [F-014](#f-014) — Missing Rate Limiting (Brute-Force) — `server.ts:596`<br/>🟠 [F-015](#f-015) — Improper Verification of Cryptographic Signature — `routes/2fa.ts:20`<br/>🟠 [F-016](#f-016) — Weak Password Recovery Mechanism — `routes/resetPassword.ts:41`<br/>🟠 [F-017](#f-017) — Hardcoded Credentials — `lib/insecurity.ts:42`<br/>🟠 [F-018](#f-018) — Insufficient Verification of Data Authenticity — `routes/chat.ts:191`<br/>🟠 [F-019](#f-019) — Insufficient Verification of Data Authenticity…<br/>🟠 [F-020](#f-020) — OAuth Implicit Flow / Token — `frontend/src/app/app.routing.ts:257`<br/>🟠 [F-021](#f-021) — Authentication Bypass by Spoofing — `routes/nftMint.ts:41`<br/>🟠 [F-022](#f-022) — Open Redirect — `lib/insecurity.ts:136`<br/>🟠 [F-023](#f-023) — Missing Authentication — `lib/startup/registerWebsocketEvents.ts:23`<br/>🟠 [F-024](#f-024) — Prototype Pollution — `routes/b2bOrder.ts:23`<br/>🟠 [F-025](#f-025) — Cross-Site Scripting — `server.ts:188`<br/>🟠 [F-026](#f-026) — Code Injection — `routes/chat.ts:205`<br/>🟠 [F-027](#f-027) — NoSQL Injection — `routes/chat.ts:149`<br/>🟠 [F-028](#f-028) — Code Injection — `routes/chat.ts:181`<br/>🟠 [F-029](#f-029) — Prompt Injection — `routes/chat.ts:191`<br/>🟠 [F-030](#f-030) — Npm install Runs postinstall Build — `.github/workflows/ci.yml:51`<br/>🟠 [F-031](#f-031) — Third-party Action Pinned Mutable Branch…<br/>🟠 [F-032](#f-032) — Lockfile Generation Disabled .npmrc — `.npmrc:1`<br/>🟠 [F-033](#f-033) — Path Traversal — `routes/fileUpload.ts:34`<br/>🟠 [F-034](#f-034) — Unrestricted File Upload — `routes/profileImageUrlUpload.ts:29`<br/>🟠 [F-035](#f-035) — Cross-Site Scripting…<br/>🟠 [F-036](#f-036) — Information Disclosure — `routes/currentUser.ts:30`<br/>🟠 [F-037](#f-037) — Directory Listing Exposure — `server.ts:269`<br/>🟠 [F-038](#f-038) — Permissive Cross-Origin (CORS) Policy — `server.ts:183`<br/>🟠 [F-039](#f-039) — Information Disclosure — `routes/chat.ts:105`<br/>🟠 [F-040](#f-040) — Incorrect Permission Assignment — `.github/workflows/stale.yml:1`<br/>🟠 [F-041](#f-041) — Third-party GitHub Actions pinned commit…<br/>🟠 [F-042](#f-042) — Use of Unmaintained Third-Party Components — `Dockerfile:1`<br/>🟠 [F-043](#f-043) — Use of Unmaintained Third-Party Components — `package-lock.json:1`<br/>🟠 [F-044](#f-044) — Payment card number stored cleartext — `models/card.ts:38`<br/>🟠 [F-045](#f-045) — Server-Side Request Forgery (SSRF)…<br/>🟠 [F-046](#f-046) — Insecure Storage of Sensitive Information…<br/>🟠 [F-047](#f-047) — Sensitive Cookie without HttpOnly…<br/>🟠 [F-048](#f-048) — Information Disclosure — `lib/startup/registerWebsocketEvents.ts:30`<br/>🟠 [F-049](#f-049) — Missing Rate Limiting (Brute-Force) — `server.ts:346`<br/>🟠 [F-050](#f-050) — Improper Authorization — `lib/insecurity.ts:156`<br/>🟠 [F-051](#f-051) — Improper Authorization — `routes/chat.ts:176`<br/>🟠 [F-052](#f-052) — Improper Authorization — `.github/workflows/ci.yml:1`<br/>🟠 [F-053](#f-053) — Improper Access Control — `models/index.ts:41`<br/>🟡 [F-054](#f-054) — No Revocation Session Invalidation — `lib/insecurity.ts:54`<br/>🟡 [F-055](#f-055) — Insufficient Verification of Data Authenticity…<br/>🟡 [F-056](#f-056) — Origin Validation Error — `lib/startup/registerWebsocketEvents.ts:20`<br/>🟡 [F-057](#f-057) — Hardcoded Credentials — `lib/insecurity.ts:150`<br/>🟡 [F-058](#f-058) — Insufficient Verification of Data Authenticity…<br/>🟡 [F-059](#f-059) — Mutable Major-Version Action Tags CI — `.github/workflows/ci.yml:188`<br/>🟡 [F-060](#f-060) — Improper Restriction of UI Rendering Layers (Clickjacking)…<br/>🟡 [F-061](#f-061) — Insufficient Logging — `routes/login.ts:18`<br/>🟡 [F-062](#f-062) — Information Disclosure — `server.ts:676`<br/>🟡 [F-063](#f-063) — Client-Side-Only Access Control Tool-Call Debug — `routes/chat.ts:220`<br/>🟡 [F-064](#f-064) — Dockerfile directive (non-root) — `test/smoke/Dockerfile:1`<br/>🟡 [F-065](#f-065) — Improper Verification of Cryptographic Signature…<br/>🟡 [F-066](#f-066) — Dockerfile npm/pnpm/yarn uses --ignore-scripts…<br/>🟡 [F-067](#f-067) — Hardcoded Credentials — `models/securityAnswer.ts:45`<br/>🟡 [F-068](#f-068) — Allocation of Resources without Limits — `server.ts:346`<br/>🟡 [F-069](#f-069) — Entity Expansion Denial Service — `routes/fileUpload.ts:76`<br/>🟡 [F-070](#f-070) — Allocation of Resources without Limits — `routes/web3Wallet.ts:16`
+**Findings index:**<br/>🔴 [F-001](#f-001) — SQL Injection — `routes/login.ts:34`<br/>🔴 [F-002](#f-002) — Systemic Mass Assignment Privileged Fields — `routes/verify.ts:51`<br/>🟠 [F-003](#f-003) — Error Message Disclosure — `server.ts:682`<br/>🟠 [F-004](#f-004) — Uncontrolled Resource Consumption — `server.ts:648`<br/>🔴 [F-005](#f-005) — Missing Authorization — `server.ts:310`<br/>🟠 [F-006](#f-006) — Client-Side-Only Access Control Route Guards…<br/>🔴 [F-007](#f-007) — Hardcoded Cryptographic Key — `lib/insecurity.ts:21`<br/>🔴 [F-008](#f-008) — Improper Verification of Cryptographic Signature…<br/>🔴 [F-009](#f-009) — Improper Authentication — `frontend/src/app/oauth/oauth.component.ts:30`<br/>🔴 [F-010](#f-010) — Insecure Direct Object Reference (IDOR) — `routes/dataExport.ts:26`<br/>🔴 [F-011](#f-011) — Password Hash with Insufficient Effort — `models/user.ts:76`<br/>🔴 [F-012](#f-012) — XML External Entity (XXE) — `lib/xml.ts:35`<br/>🔴 [F-013](#f-013) — Code Injection — `routes/b2bOrder.ts:23`<br/>🟠 [F-014](#f-014) — Missing Rate Limiting (Brute-Force) — `server.ts:596`<br/>🔴 [F-015](#f-015) — Improper Verification of Cryptographic Signature — `routes/2fa.ts:20`<br/>🟠 [F-016](#f-016) — Weak Password Recovery Mechanism — `routes/resetPassword.ts:41`<br/>🔴 [F-017](#f-017) — Hardcoded Credentials — `lib/insecurity.ts:42`<br/>🟠 [F-018](#f-018) — Insufficient Verification of Data Authenticity — `routes/chat.ts:191`<br/>🟠 [F-019](#f-019) — Insufficient Verification of Data Authenticity…<br/>🟠 [F-020](#f-020) — OAuth Implicit Flow / Token — `frontend/src/app/app.routing.ts:257`<br/>🔴 [F-021](#f-021) — Authentication Bypass by Spoofing — `routes/nftMint.ts:41`<br/>🟠 [F-022](#f-022) — Open Redirect — `lib/insecurity.ts:136`<br/>🔴 [F-023](#f-023) — Missing Authentication — `lib/startup/registerWebsocketEvents.ts:23`<br/>🟠 [F-024](#f-024) — Prototype Pollution — `routes/b2bOrder.ts:23`<br/>🔴 [F-025](#f-025) — Cross-Site Scripting — `server.ts:188`<br/>🟠 [F-026](#f-026) — Code Injection — `routes/chat.ts:205`<br/>🔴 [F-027](#f-027) — NoSQL Injection — `routes/chat.ts:149`<br/>🟠 [F-028](#f-028) — Code Injection — `routes/chat.ts:181`<br/>🟠 [F-029](#f-029) — Prompt Injection — `routes/chat.ts:191`<br/>🟠 [F-030](#f-030) — Npm install Runs postinstall Build — `.github/workflows/ci.yml:51`<br/>🟠 [F-031](#f-031) — Third-party Action Pinned Mutable Branch…<br/>🟠 [F-032](#f-032) — Lockfile Generation Disabled .npmrc — `.npmrc:1`<br/>🟠 [F-033](#f-033) — Path Traversal — `routes/fileUpload.ts:34`<br/>🟠 [F-034](#f-034) — Unrestricted File Upload — `routes/profileImageUrlUpload.ts:29`<br/>🔴 [F-035](#f-035) — Cross-Site Scripting…<br/>🟠 [F-036](#f-036) — Information Disclosure — `routes/currentUser.ts:30`<br/>🟠 [F-037](#f-037) — Directory Listing Exposure — `server.ts:269`<br/>🟠 [F-038](#f-038) — Permissive Cross-Origin (CORS) Policy — `server.ts:183`<br/>🟠 [F-039](#f-039) — Information Disclosure — `routes/chat.ts:105`<br/>🟠 [F-040](#f-040) — Incorrect Permission Assignment — `.github/workflows/stale.yml:1`<br/>🟠 [F-041](#f-041) — Third-party GitHub Actions pinned commit…<br/>🟠 [F-042](#f-042) — Use of Unmaintained Third-Party Components — `Dockerfile:1`<br/>🟠 [F-043](#f-043) — Use of Unmaintained Third-Party Components — `package-lock.json:1`<br/>🟠 [F-044](#f-044) — Payment card number stored cleartext — `models/card.ts:38`<br/>🟠 [F-045](#f-045) — Server-Side Request Forgery (SSRF)…<br/>🔴 [F-046](#f-046) — Insecure Storage of Sensitive Information…<br/>🟠 [F-047](#f-047) — Sensitive Cookie without HttpOnly…<br/>🟠 [F-048](#f-048) — Information Disclosure — `lib/startup/registerWebsocketEvents.ts:30`<br/>🟠 [F-049](#f-049) — Missing Rate Limiting (Brute-Force) — `server.ts:346`<br/>🔴 [F-050](#f-050) — Improper Authorization — `lib/insecurity.ts:156`<br/>🔴 [F-051](#f-051) — Improper Authorization — `routes/chat.ts:176`<br/>🔴 [F-052](#f-052) — Improper Authorization — `.github/workflows/ci.yml:1`<br/>🟠 [F-053](#f-053) — Improper Access Control — `models/index.ts:41`<br/>🟡 [F-054](#f-054) — No Revocation Session Invalidation — `lib/insecurity.ts:54`<br/>🟡 [F-055](#f-055) — Insufficient Verification of Data Authenticity…<br/>🟡 [F-056](#f-056) — Origin Validation Error — `lib/startup/registerWebsocketEvents.ts:20`<br/>🔴 [F-057](#f-057) — Hardcoded Credentials — `lib/insecurity.ts:150`<br/>🟡 [F-058](#f-058) — Insufficient Verification of Data Authenticity…<br/>🟡 [F-059](#f-059) — Mutable Major-Version Action Tags CI — `.github/workflows/ci.yml:188`<br/>🟡 [F-060](#f-060) — Improper Restriction of UI Rendering Layers (Clickjacking)…<br/>🟡 [F-061](#f-061) — Insufficient Logging — `routes/login.ts:18`<br/>🟡 [F-062](#f-062) — Information Disclosure — `server.ts:676`<br/>🟡 [F-063](#f-063) — Client-Side-Only Access Control Tool-Call Debug — `routes/chat.ts:220`<br/>🟡 [F-064](#f-064) — Dockerfile directive (non-root) — `test/smoke/Dockerfile:1`<br/>🔴 [F-065](#f-065) — Improper Verification of Cryptographic Signature…<br/>🟡 [F-066](#f-066) — Dockerfile npm/pnpm/yarn uses --ignore-scripts…<br/>🔴 [F-067](#f-067) — Hardcoded Credentials — `models/securityAnswer.ts:45`<br/>🟡 [F-068](#f-068) — Allocation of Resources without Limits — `server.ts:346`<br/>🟡 [F-069](#f-069) — Entity Expansion Denial Service — `routes/fileUpload.ts:76`<br/>🟡 [F-070](#f-070) — Allocation of Resources without Limits — `routes/web3Wallet.ts:16`
 
 <a id="th-01"></a><a id="th-02"></a><a id="th-03"></a><a id="th-05"></a><a id="th-06"></a><a id="th-10"></a><a id="th-04"></a><a id="th-07"></a><a id="th-08"></a><a id="th-11"></a><a id="th-12"></a><a id="th-13"></a><a id="th-14"></a><a id="th-17"></a><a id="th-18"></a><a id="th-15"></a><a id="th-16"></a>
 
@@ -2524,7 +2539,7 @@ When another user (or admin viewing profiles) loads that image, the SVG executes
 
 **Issue:** `filterTable()` reads the `q` query parameter straight from the route - `this.route.snapshot.queryParams.q` (`search-result.component.ts:136`) - and binds it into the DOM through Angular's sanitizer-bypass: `this.searchValue = this.sanitizer.bypassSecurityTrustHtml(queryParam)` (`search-result.component.ts:143`). Because `bypassSecurityTrustHtml` explicitly disables Angular's contextual auto-escaping, an attacker-crafted link such as `/#/search?q=<img src=x onerror=...>` executes arbitrary JavaScript in the victim's session on click.
 
-Combined with the JWT-in-localStorage finding (🟠 [F-046](#f-046)), this is a one-click session-hijack primitive. Reflected/DOM XSS executing in the victim's authenticated session, enabling token theft and full account takeover.
+Combined with the JWT-in-localStorage finding (🔴 [F-046](#f-046)), this is a one-click session-hijack primitive. Reflected/DOM XSS executing in the victim's authenticated session, enabling token theft and full account takeover.
 
 **Root cause:** Attacker-controlled content is rendered in the victim's browser without sanitization; combined with session tokens held in JavaScript-readable storage, any payload yields immediate account takeover.
 
@@ -3107,7 +3122,183 @@ _**Evidence verification:** rows tagged `⚠ (evidence refuted)` were re-checked
 
 ## 8. Abuse Cases
 
-_No abuse cases were identified or mandated for this assessment._
+_Abuse cases describe end-to-end attack scenarios that chain individual findings into an exploitation path. Each case is **mandatory** - defined in the org profile / plugin library and evaluated against every repository. Every chain step references a finding from [§7 Findings Register](#7-findings-register); each step is code-confirmed against the repository and the chain verdict is folded deterministically from the per-step results, never rated by hand._
+
+| # | Scenario | Actor | Combined Risk | Verdict |
+|--------|------------------------------------|------------------|-------------|--------------|
+| [AC-T-001](#ac-t-001) | Account Takeover via Stored XSS + Token<br/>Hijacking | external-attacker | 🔴 Critical | ⚠ Fully viable |
+| [AC-T-002](#ac-t-002) | Bulk Data Exfiltration via Broken Object<br/>Authorization | authenticated-user | 🔴 Critical | ⚠ Fully viable |
+| [AC-T-003](#ac-t-003) | Privilege Escalation to Admin via JWT<br/>Algorithm Confusion | external-attacker | 🔴 Critical | ⚠ Fully viable |
+| [AC-T-004](#ac-t-004) | Privilege Escalation via Mass-Assignment on<br/>Registration | external-attacker | 🔴 Critical | ⚠ Fully viable |
+| [AC-T-005](#ac-t-005) | Authentication Bypass via Exposed Secret<br/>Material | external-attacker | 🔴 Critical | ◐ Partially blocked |
+| [AC-T-006](#ac-t-006) | Remote Code Execution via Server-Side<br/>Injection | external-attacker | 🔴 Critical | ◐ Partially blocked |
+
+_Verdict: ⚠ Fully viable - no effective control blocks this chain · ◐ Partially blocked - at least one step has a compensating control but the chain is not fully closed · ✓ Mitigated - chain is broken at a verified step · ? Inconclusive - could not be verified end-to-end._
+
+---
+
+### <a id="ac-t-001"></a>AC-T-001 — Account Takeover via Stored XSS + Token Hijacking
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🔴 Critical · **Verdict:** ⚠ Fully viable
+
+**Goal:** Obtain persistent authenticated access as an arbitrary user without valid credentials.
+
+**Prerequisite:** Attacker can submit content that is later rendered to other users (`e.g`. feedback, comments, profile fields).
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🟠 [F-035](#f-035) — Cross-Site Scripting (XSS) (`search-result.component.ts:143`) | Attacker JavaScript executes in the victim's<br/>browser session. |
+| 2 | 🟠 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage (`oauth.component.ts:51`) | Token exfiltrated from local/session storage<br/>via the Step 1 payload. |
+| 3 | 🟠 [F-019](#f-019) — Untrusted URL-Fragment Parsing of OAuth Token (`oauth.component.ts:71`) | Exfiltrated token accepted for a new<br/>session; absence of token binding / PKCE<br/>removes the last server-side revocation<br/>opportunity. |
+
+**Why combined risk exceeds individual ratings**
+
+Individually the XSS sink and the web-readable token storage rate below Critical, but chained they form a repeatable credential-theft path: a single stored payload causes indefinite session compromise for every user who views the affected page.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- <span style="color:#555555">❷</span> [M-035](#m-035) — Remove bypassSecurityTrustHtml on the search term and render it via interpolation (**P2**): remediating 🟠 [F-035](#f-035) — Cross-Site Scripting (XSS) breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+- <span style="color:#555555">❷</span> [M-046](#m-046) — Move the session token out of localStorage into an HttpOnly Secure SameSite cookie via a BFF (**P2**): remediating 🟠 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage breaks the chain at **Step 2**, removing the link the rest of the chain depends on.
+- <span style="color:#555555">❷</span> [M-019](#m-019) — Validate OAuth state and token claims; perform the token exchange server-side (**P2**): remediating 🟠 [F-019](#f-019) — Untrusted URL-Fragment Parsing of OAuth Token breaks the chain at **Step 3**, removing the link the rest of the chain depends on.
+
+---
+
+### <a id="ac-t-002"></a>AC-T-002 — Bulk Data Exfiltration via Broken Object Authorization
+
+> **Source:** mandatory · **Actor:** authenticated-user - authenticated low-privilege user · **Combined Risk:** 🔴 Critical · **Verdict:** ⚠ Fully viable
+
+**Goal:** Enumerate and exfiltrate other users' records, then escalate own permissions via unguarded mass assignment.
+
+**Prerequisite:** Attacker holds a valid, non-privileged user account.
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🟠 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts:310`)<br/>`routes/basket.ts:19` | Attacker enumerates and retrieves records<br/>for arbitrary object IDs; no ownership<br/>comparison is performed. |
+| 2 | 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields (`verify.ts:51`)<br/>`server.ts:484` | Update endpoint persists an unfiltered `role`<br/>(or equivalent) field supplied in the<br/>request body. |
+
+**Why combined risk exceeds individual ratings**
+
+The ownership gap exposes every record, and the mass-assignment gap lets the same low-privilege actor self-elevate - together they turn a single compromised account into full tenant data access and role escalation.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- <span style="color:#555555">❷</span> [M-005](#m-005) — Add an explicit auth middleware (`isAuthorized()` / `passport.authenticate()` / requireAuth) to the route registration, or mark the route intentionally public via `app.get`(...) for read-only access only. (**P2**): remediating 🟠 [F-005](#f-005) — Sensitive Routes Registered Without Authorization breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+- <span style="color:#111111">❶</span> [M-002](#m-002) — Implement centralized input validation and output encoding middleware (**P1**): remediating 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields breaks the chain at **Step 2**, removing the link the rest of the chain depends on.
+
+---
+
+### <a id="ac-t-003"></a>AC-T-003 — Privilege Escalation to Admin via JWT Algorithm Confusion
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🔴 Critical · **Verdict:** ⚠ Fully viable
+
+**Goal:** Forge an admin-role JWT without knowledge of the signing secret.
+
+**Prerequisite:** Attacker can obtain any valid JWT issued by the system (`e.g`. by registering a free account).
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🔴 [F-008](#f-008) — Insecure JWT Verification (`insecurity.ts:55`) | Verifier accepts attacker-chosen `alg` (`e.g`.<br/>`none` or HMAC-with-public-key), allowing<br/>token re-signing without the secret. |
+| 2 | 🔴 [F-010](#f-010) — Insecure Direct Object Reference (`dataExport.ts:26`)<br/>`lib/insecurity.ts:156` | Forged `role: admin` claim is accepted as<br/>authoritative because the role is not<br/>re-fetched from the database per request. |
+
+**Why combined risk exceeds individual ratings**
+
+Algorithm confusion alone yields a forgeable token; trusting the in-token role claim turns that forgery into instant admin access - neither gap is Critical in isolation, but the chain is a full authentication bypass.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- <span style="color:#111111">❶</span> [M-008](#m-008) — Pin JWT verification to RS256 and reject alg:none in `lib/insecurity.ts` (**P1**): remediating 🔴 [F-008](#f-008) — Insecure JWT Verification breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+- <span style="color:#111111">❶</span> [M-010](#m-010) — Replace `req.body.UserId`/userId/ownerId with `req.user.id` (or equivalent session-derived identity) in every WHERE/filter clause. (**P1**): remediating 🔴 [F-010](#f-010) — Insecure Direct Object Reference breaks the chain at **Step 2**, removing the link the rest of the chain depends on.
+
+---
+
+### <a id="ac-t-004"></a>AC-T-004 — Privilege Escalation via Mass-Assignment on Registration
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🔴 Critical · **Verdict:** ⚠ Fully viable
+
+**Goal:** Obtain an administrator account without any existing privilege.
+
+**Prerequisite:** Self-registration is open (one unauthenticated POST).
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields (`verify.ts:51`)<br/>`server.ts:484` | The account-creation handler persists the<br/>request body wholesale, so a client-supplied<br/>`role` (or `isAdmin`) field is written verbatim. |
+
+**Why combined risk exceeds individual ratings**
+
+A single unauthenticated request mints an admin account when the registration handler trusts a client-supplied role field - the most direct full-compromise path in role-based apps with open sign-up.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- <span style="color:#111111">❶</span> [M-002](#m-002) — Implement centralized input validation and output encoding middleware (**P1**): remediating 🔴 [F-002](#f-002) — Systemic Mass Assignment of Privileged Fields breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+
+---
+
+### <a id="ac-t-005"></a>AC-T-005 — Authentication Bypass via Exposed Secret Material
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🔴 Critical · **Verdict:** ◐ Partially blocked
+
+**Goal:** Forge trusted tokens / credentials and impersonate any user.
+
+**Prerequisite:** Signing material or other secrets are reachable (committed to a public repo, served by an unauthenticated route, or in an exposed directory).
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🔴 [F-007](#f-007) — Hardcoded Cryptographic Key (`insecurity.ts:21`) | A private key, signing secret, or credential<br/>file is committed to the source repository<br/>or served without authentication. |
+| 2 | 🔴 [F-007](#f-007) — Hardcoded Cryptographic Key (`insecurity.ts:21`) | The exposed key/secret is the same one the<br/>server trusts, so a token signed with it (or<br/>the leaked credential) is accepted as<br/>authentic. |
+
+**Why combined risk exceeds individual ratings**
+
+Exposed signing material collapses the entire authentication boundary: any attacker who reads the key can mint a valid token for any identity or role, with no credential ever required.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- <span style="color:#111111">❶</span> [M-007](#m-007) — Load the JWT signing key from a secret manager and rotate the leaked key (**P1**): remediating 🔴 [F-007](#f-007) — Hardcoded Cryptographic Key breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
+
+---
+
+### <a id="ac-t-006"></a>AC-T-006 — Remote Code Execution via Server-Side Injection
+
+> **Source:** mandatory · **Actor:** external-attacker - unauthenticated external attacker · **Combined Risk:** 🔴 Critical · **Verdict:** ◐ Partially blocked
+
+**Goal:** Execute arbitrary code in the application process.
+
+**Prerequisite:** An input reaches a server-side interpreter / template / eval.
+
+**Attack chain**
+
+| Step | Finding | Outcome |
+|--------|------------------------------------------------|----------------------|
+| 1 | 🔴 [F-013](#f-013) — Server-Side Code Evaluation of Untrusted Input (`b2bOrder.ts:23`) | Attacker-controlled input is passed to `eval`,<br/>a server-side template engine, an unsafe<br/>sandbox, or an unsafe deserializer. |
+
+**Why combined risk exceeds individual ratings**
+
+A single injection into a server-side interpreter yields code execution in the application process - the highest-impact outcome, granting full filesystem and network access from one unauthenticated request.
+
+**Blocking mitigations**
+
+Implementing any single mitigation below severs the chain at the named step, so the end-to-end abuse can no longer complete:
+
+- <span style="color:#111111">❶</span> [M-013](#m-013) — Replace safeEval/vm evaluation of orderLinesData with a declarative JSON parser and schema validation (**P1**): remediating 🔴 [F-013](#f-013) — Server-Side Code Evaluation of Untrusted Input breaks the chain at **Step 1**, removing the link the rest of the chain depends on.
 
 ---
 
@@ -3410,7 +3601,7 @@ app.use('/b2b/v2', rateLimit({ windowMs: 60_000, max: 20, keyGenerator: req => r
 
 **Addresses:**
 
-- 🟠 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts:310`)
+- 🔴 [F-005](#f-005) — Sensitive Routes Registered Without Authorization (`server.ts:310`)
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `server.ts:310`
 
@@ -3486,7 +3677,7 @@ app.post('/rest/user/login',
 
 **Addresses:**
 
-- 🟠 [F-015](#f-015) — Weak 2FA Token Signing Key (`2fa.ts:20`)
+- 🔴 [F-015](#f-015) — Weak 2FA Token Signing Key (`2fa.ts:20`)
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `2fa.ts:115`
 
@@ -3535,7 +3726,7 @@ await ResetTokenModel.create({ userId, tokenHash: hmac(token), expiresAt: Date.n
 
 **Addresses:**
 
-- 🟠 [F-017](#f-017) — Hardcoded HMAC keys for coupon and deluxe tokens (`insecurity.ts:42`)
+- 🔴 [F-017](#f-017) — Hardcoded HMAC keys for coupon and deluxe tokens (`insecurity.ts:42`)
 
 **Priority:** P2 - This Sprint · **Effort:** Low · **File:** `lib/insecurity.ts:42`
 
@@ -3638,7 +3829,7 @@ location.href = `${authz}?response_type=code&code_challenge=${challenge}&code_ch
 
 **Addresses:**
 
-- 🟠 [F-021](#f-021) — Wallet Ownership Spoofing on NFT verify (`nftMint.ts:41`)
+- 🔴 [F-021](#f-021) — Wallet Ownership Spoofing on NFT verify (`nftMint.ts:41`)
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `routes/nftMint.ts:41`
 
@@ -3697,7 +3888,7 @@ export const isRedirectAllowed = (url: string) => {
 
 **Addresses:**
 
-- 🟠 [F-023](#f-023) — Unauthenticated WebSocket Channel (`registerWebsocketEvents.ts:23`)
+- 🔴 [F-023](#f-023) — Unauthenticated WebSocket Channel (`registerWebsocketEvents.ts:23`)
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `lib/startup/registerWebsocketEvents.ts:23`
 
@@ -3758,7 +3949,7 @@ assertClean(JSON.parse(body.orderLinesData))
 
 **Addresses:**
 
-- 🟠 [F-025](#f-025) — Persistent XSS surface left open by disabled XSS protections (`server.ts:188`)
+- 🔴 [F-025](#f-025) — Persistent XSS surface left open by disabled XSS protections (`server.ts:188`)
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `server.ts:188`
 
@@ -3809,7 +4000,7 @@ execute: async ({ discount }) => {
 
 **Addresses:**
 
-- 🟠 [F-027](#f-027) — NoSQL/JS injection in MongoDB \$where review lookup (`chat.ts:149`)
+- 🔴 [F-027](#f-027) — NoSQL/JS injection in MongoDB \$where review lookup (`chat.ts:149`)
 
 **Priority:** P2 - This Sprint · **Effort:** Low · **File:** `routes/chat.ts:149`
 
@@ -4015,7 +4206,7 @@ if (!t || !['png','jpg','gif'].includes(t.ext)) throw new Error('not an allowed 
 
 **Addresses:**
 
-- 🟠 [F-035](#f-035) — Cross-Site Scripting (XSS) (`search-result.component.ts:143`)
+- 🔴 [F-035](#f-035) — Cross-Site Scripting (XSS) (`search-result.component.ts:143`)
 
 **Priority:** P2 - This Sprint · **Effort:** Low · **File:** `frontend/src/app/search-result/search-result.component.ts:143`
 
@@ -4261,7 +4452,7 @@ if (ipaddr.parse(address).range() !== 'unicast') throw new Error('blocked target
 
 **Addresses:**
 
-- 🟠 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage (`oauth.component.ts:51`)
+- 🔴 [F-046](#f-046) — Insecure Client-Side Storage of JWT in localStorage (`oauth.component.ts:51`)
 
 **Priority:** P2 - This Sprint · **Effort:** High · **File:** `frontend/src/app/oauth/oauth.component.ts:51`
 
@@ -4293,11 +4484,11 @@ res.cookie('session', token, {
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `frontend/src/app/oauth/oauth.component.ts:50`
 
-**How:** Remove the client-side `cookieService.put('token', ...)` call; the Express backend must own session-cookie issuance. Issue the cookie server-side with `HttpOnly; Secure; SameSite=Strict` so JavaScript cannot read it and it is never sent over plaintext. Eliminate the duplicate `localStorage` copy (see 🟠 [F-046](#f-046)) so a single hardened cookie is the only session carrier.
+**How:** Remove the client-side `cookieService.put('token', ...)` call; the Express backend must own session-cookie issuance. Issue the cookie server-side with `HttpOnly; Secure; SameSite=Strict` so JavaScript cannot read it and it is never sent over plaintext. Eliminate the duplicate `localStorage` copy (see 🔴 [F-046](#f-046)) so a single hardened cookie is the only session carrier.
 
 1. Remove the client-side `cookieService.put('token', ...)` call; the Express backend must own session-cookie issuance.
 2. Issue the cookie server-side with `HttpOnly; Secure; SameSite=Strict` so JavaScript cannot read it and it is never sent over plaintext.
-3. Eliminate the duplicate `localStorage` copy (see 🟠 [F-046](#f-046)) so a single hardened cookie is the only session carrier.
+3. Eliminate the duplicate `localStorage` copy (see 🔴 [F-046](#f-046)) so a single hardened cookie is the only session carrier.
 
 ```javascript
 // server-side (Express)
@@ -4361,7 +4552,7 @@ app.use('/rest/user/reset-password', rateLimit({ windowMs: 5*60*1000, max: 100 }
 
 **Addresses:**
 
-- 🟠 [F-050](#f-050) — Authorization Decisions on Unverified Decoded Claims (`insecurity.ts:156`)
+- 🔴 [F-050](#f-050) — Authorization Decisions on Unverified Decoded Claims (`insecurity.ts:156`)
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `lib/insecurity.ts:156`
 
@@ -4389,7 +4580,7 @@ export const isAccounting = () => async (req, res, next) => {
 
 **Addresses:**
 
-- 🟠 [F-051](#f-051) — Excessive Agency in LLM Tool Invocation (`chat.ts:176`)
+- 🔴 [F-051](#f-051) — Excessive Agency in LLM Tool Invocation (`chat.ts:176`)
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `routes/chat.ts:176`
 
@@ -4408,7 +4599,7 @@ export const isAccounting = () => async (req, res, next) => {
 
 **Addresses:**
 
-- 🟠 [F-052](#f-052) — Workflows Missing permissions Block Grant Over-broad `GITHUB_TOKEN` (`ci.yml:1`)
+- 🔴 [F-052](#f-052) — Workflows Missing permissions Block Grant Over-broad `GITHUB_TOKEN` (`ci.yml:1`)
 
 **Priority:** P2 - This Sprint · **Effort:** Medium · **File:** `.github/workflows/ci.yml:1`
 
@@ -4552,7 +4743,7 @@ io.use((socket, next) => {
 
 **Addresses:**
 
-- 🟡 [F-057](#f-057) — Hardcoded HMAC Key Enables Deluxe-Token Forgery (`insecurity.ts:150`)
+- 🔴 [F-057](#f-057) — Hardcoded HMAC Key Enables Deluxe-Token Forgery (`insecurity.ts:150`)
 
 **Priority:** P3 - Next Quarter · **Effort:** Medium · **File:** `insecurity.ts:42`
 
@@ -4742,7 +4933,7 @@ case 'tool-call': {
 
 **Addresses:**
 
-- 🟡 [F-065](#f-065) — Container image signing via cosign or attest-build-provenance (`stale.yml:1`)
+- 🔴 [F-065](#f-065) — Container image signing via cosign or attest-build-provenance (`stale.yml:1`)
 
 **Priority:** P3 - Next Quarter · **Effort:** Medium · **File:** `.github/workflows/stale.yml:1`
 
@@ -4771,7 +4962,7 @@ const decoded = jwt.verify(token, publicKey, { algorithms: ['RS256'] })
 
 **Addresses:**
 
-- 🟡 [F-067](#f-067) — Security answers HMAC'd with hardcoded key (`securityAnswer.ts:45`)
+- 🔴 [F-067](#f-067) — Security answers HMAC'd with hardcoded key (`securityAnswer.ts:45`)
 
 **Priority:** P3 - Next Quarter · **Effort:** Medium · **File:** `lib/insecurity.ts:42`
 
@@ -4900,17 +5091,18 @@ The following items are **explicitly excluded** from this threat model. Findings
 | Repository | - |
 | Output directory | - |
 | Wall clock (active) | 55m 09s |
-| Agent compute (Σ parallel dispatches) | 103m 46s |
+| Agent compute (Σ parallel dispatches) | 106m 02s |
 
 ### Per-Stage Breakdown
 
 | Stage | Description | Agent | Model | Duration | Tool calls | Tokens |
 |--------|------------------------|----------------------|--------|--------|----------|---------|
 | 1 | Threat Analysis & Triage | appsec-threat-analyst | opus | 79m 54s | 336 | 1,192,079 |
+| 1 | Abuse Case Verification | appsec-abuse-case-verifier | sonnet | 2m 16s | 135 | 178,770 |
 | 2 | Report Rendering | appsec-threat-renderer | sonnet | 8m 50s | 62 | 167,181 |
 | 3 | QA Review | appsec-qa-reviewer | sonnet | 4m 26s | 37 | 62,598 |
 | 4 | Architect Review | appsec-architect-reviewer | sonnet | 10m 35s | 59 | 205,309 |
-| **Total** | - | - | - | **103m 46s** | **494** | **1,627,167** |
+| **Total** | - | - | - | **106m 02s** | **629** | **1,805,937** |
 
 ### Per-Phase Duration Breakdown
 
