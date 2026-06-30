@@ -79,6 +79,70 @@ def test_unknown_kind_exits_2(tmp_path: Path):
     assert result.returncode == 2
 
 
+def test_actor_discovery_contract_accepts_distinct_high_confidence_actor():
+    data = {
+        "schema_version": 1,
+        "discovery_cache_key": "a" * 64,
+        "generated_at": "2026-06-30T12:00:00Z",
+        "confirmed_relevant": [],
+        "proposed_additional": [
+            {
+                "id": "ACT-X-1",
+                "label": "partner-api-credential-holder",
+                "access": ["internet"],
+                "trust_positions": ["partner-api-credential"],
+                "distinct_trust_positions": ["partner-api-credential"],
+                "distinct_trust_position_evidence": "Recon section 7.1 identifies a partner-only API credential.",
+                "capabilities": {
+                    "sophistication": "medium",
+                    "tooling": ["off-the-shelf"],
+                    "dwell_time": "weeks",
+                    "surface_reach": ["internet"],
+                },
+                "motivation": "financial",
+                "rationale": "The credential grants authority unavailable to ordinary application users.",
+                "confidence": "high",
+                "discovery_method": "heuristic-section-A",
+            }
+        ],
+        "inputs_questioned": [],
+        "coverage_rationale": "Static and discovered access positions compared.",
+    }
+    ok, errors = vi.validate_actors_discovered(data)
+    assert ok, errors
+
+
+def test_actor_discovery_contract_rejects_unqualified_proposal():
+    data = {
+        "schema_version": 1,
+        "discovery_cache_key": "a",
+        "generated_at": "now",
+        "confirmed_relevant": [],
+        "proposed_additional": [
+            {
+                "id": "ACT-X-1",
+                "label": "prompt-injector",
+                "access": ["internet"],
+                "capabilities": {
+                    "sophistication": "low",
+                    "tooling": [],
+                    "dwell_time": "short",
+                    "surface_reach": ["internet"],
+                },
+                "motivation": "curiosity",
+                "rationale": "This is only an attack technique rather than a distinct access position.",
+                "confidence": "high",
+                "discovery_method": "heuristic-section-A",
+            }
+        ],
+        "inputs_questioned": [],
+        "coverage_rationale": "",
+    }
+    ok, errors = vi.validate_actors_discovered(data)
+    assert not ok
+    assert any("distinct_trust_positions" in error for error in errors)
+
+
 # ---------------------------------------------------------------------------
 # stride validation
 # ---------------------------------------------------------------------------

@@ -924,6 +924,22 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     # BEFORE selection, so a folded chatbot is floored into STRIDE scope.
     all_components = _seed_llm_role(all_components, output_dir, analyst_context)
 
+    # Actor slices depend on the finalized Phase-3 inventory, so Phase 2.7
+    # cannot produce them correctly. Build them here, after reconciliation and
+    # before the dispatch manifest resolves each relevant_actors path.
+    if (output_dir / ".actors-resolved.json").is_file():
+        try:
+            import slice_actors
+
+            slice_actors.write_actor_slices(
+                str(plugin_root),
+                str(output_dir),
+                all_components,
+                verbose=False,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            sys.stderr.write(f"ACTOR_SLICES: could not build actor slices: {e}\n")
+
     components, selection_report = select_stride_components(all_components, depth, ceiling)
     # Persist the selection rationale so a run is auditable (which components were
     # analyzed and why) and so EXPOSURE_CAP_LIFT can be post-hoc verified.

@@ -97,6 +97,30 @@ def agent_ids() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Semantic drift guards
+# ---------------------------------------------------------------------------
+
+
+def test_actor_discovery_prompt_keeps_actor_identity_boundary():
+    """Do not regress to technique-, feature-, or persona-based actor classes."""
+    text = (AGENTS_DIR / "appsec-actor-discoverer.md").read_text(encoding="utf-8")
+    required_contract = (
+        "It is not an attack technique, tool, target feature, or",
+        "Different motivation, sophistication, tooling, dwell time, target subsystem,",
+        "`prompt-injector`",
+        "CTF participant",
+        "`compromised-third-party-service`",
+        "`trust_positions[]`",
+        "`distinct_trust_positions[]`",
+    )
+    missing = [marker for marker in required_contract if marker not in text]
+    assert not missing, f"actor discovery identity-boundary contract drifted; missing: {missing}"
+    assert re.search(r"active\s+or dormant static actor", text), (
+        "actor discovery must compare proposals with both active and dormant static actors"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Parametrized per-file tests
 # ---------------------------------------------------------------------------
 

@@ -159,7 +159,7 @@ Threats not derived from a prior-finding re-read default to `evidence_check: "un
 
 **Actor context loading (when `RELEVANT_ACTORS_INDEX_PATH != none`):**
 
-Read `RELEVANT_ACTORS_INDEX_PATH` once. Cache the `relevant_actors[]` array in working memory under the key `COMPONENT_ACTORS`. For each actor, note: `id`, `label`, `access`, `capabilities.sophistication`, `severity_modulation` map, and whether `proposed: true`.
+Read `RELEVANT_ACTORS_INDEX_PATH` once. Cache the `relevant_actors[]` array in working memory under the key `COMPONENT_ACTORS`. For each actor, note: `id`, `label`, deployment-zone `access`, `trust_positions`, `capabilities.sophistication`, `severity_modulation` map, and whether `proposed: true`.
 
 Print: `[stride | <COMPONENT_NAME>]   ↳ Actors: <n> relevant (<list of IDs>)`
 
@@ -294,7 +294,7 @@ All 6 STRIDE categories, the LLM / Supply-chain / SPA conditional sub-blocks, an
 
 Before iterating STRIDE categories, iterate over the relevant actor list. For each actor in `COMPONENT_ACTORS`:
 
-> Can **this actor** (`<label>`, access: `<access[]>`, sophistication: `<capabilities.sophistication>`) realise a threat against **this component** using the code evidence gathered in Step 2?
+> Can **this actor** (`<label>`, access: `<access[]>`, trust position: `<trust_positions[]>`, sophistication: `<capabilities.sophistication>`) realise a threat against **this component** using the code evidence gathered in Step 2?
 
 This iteration is **additive** — it identifies actor-specific threat angles that a generic STRIDE sweep may miss (especially Insider, Supply-Chain-as-Actor, B2B-Partner, Adjacent-Tenant paths). Record each identified threat opportunity as a note in working memory: `actor_id → threat_hint → which STRIDE category to check`.
 

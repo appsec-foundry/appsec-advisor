@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Actor discovery now rejects technique-, feature-, and persona-based duplicates before they can affect finding attribution. Actor slices are rebuilt from the finalized component inventory, and architect checks now inspect the actual resolved-actor schema.
+- Referenced report IDs such as `M-001` and `F-001` stay on one line in HTML and PDF exports.
+
 ## 0.4.0-beta (2026-06-28)
 
 First public release. Still a beta: good for guided use, but not ready to run unattended in CI yet.

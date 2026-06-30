@@ -182,6 +182,7 @@ actors:
   - id: ACT-E-01
     label: acme-privileged-contractor
     access: [internal-network, ci-cd-secrets, staging-env]
+    trust_positions: [contractor-internal-authority]
     capabilities:
       sophistication: medium
       tooling: [off-the-shelf]
@@ -195,6 +196,10 @@ actors:
 **Override semantics:**
 
 - Enterprise actors additively merge with plugin defaults (field-level deep merge on ID match).
+- `access[]` describes reachable deployment zones; `trust_positions[]`
+  describes the actor's stable credential, authority, control, possession, or
+  membership position. Declare both so discovery can reject semantic
+  duplicates.
 - Enterprise-disable is **terminal** — the repo layer cannot re-enable a disabled enterprise actor.
 - When disabling, `disable_reason` is required for audit.
 

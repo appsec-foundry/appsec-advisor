@@ -2147,7 +2147,7 @@ class TestRenderIdentifiedActors:
         )
         (ctx.output_dir / ".actors-resolved.json").write_text(_json.dumps(resolved), encoding="utf-8")
         out = compose._render_identified_actors(ctx, None, {})
-        assert "1.5 Identified Actors" in out
+        assert "### Identified Actors" in out
         assert "ACT-01" in out
         assert "Newly identified actors" in out
         assert "Disabled actors" in out

@@ -59,6 +59,7 @@ _SCHEMA_FILES = {
     "pentest_tasks": "pentest-tasks.schema.yaml",
     "config_scan_findings": "config-scan-findings.schema.yaml",
     "source_auth_findings": "source-auth-findings.schema.yaml",
+    "actors_discovered": "actors-discovered.schema.yaml",
 }
 
 
@@ -1114,6 +1115,14 @@ def validate_source_auth_findings(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def validate_actors_discovered(data: Any) -> tuple[bool, list[str]]:
+    """Validate the Phase-2.7 LLM actor-discovery sidecar."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_discovered", data)
+    return len(errors) == 0, errors
+
+
 _VALIDATORS = {
     "stride": validate_stride,
     "threats_merged": validate_threats_merged,
@@ -1123,6 +1132,7 @@ _VALIDATORS = {
     "pentest_tasks": validate_pentest_tasks,
     "config_scan_findings": validate_config_scan_findings,
     "source_auth_findings": validate_source_auth_findings,
+    "actors_discovered": validate_actors_discovered,
 }
 
 

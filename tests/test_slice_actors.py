@@ -20,6 +20,10 @@ def plugin_lib(tmp_path: Path) -> Path:
     proot = tmp_path / "plugin"
     lib = {
         "schema_version": 1,
+        "access_zone_aliases": {
+            "internet": ["internet-facing"],
+            "client-device": ["browser"],
+        },
         "component_always_relevant": {
             "auth-service": ["ACT-D-99"],
             "empty-type": None,
@@ -57,6 +61,12 @@ def test_load_component_always_relevant(plugin_lib: Path):
     m = slice_actors.load_component_always_relevant(str(plugin_lib))
     assert m["auth-service"] == ["ACT-D-99"]
     assert m["empty-type"] == []  # None normalized to empty list
+
+
+def test_load_access_zone_aliases(plugin_lib: Path):
+    aliases = slice_actors.load_access_zone_aliases(str(plugin_lib))
+    assert aliases["internet-facing"] == "internet"
+    assert aliases["internet"] == "internet"
 
 
 def test_compute_fingerprint(tmp_path: Path):
@@ -98,7 +108,13 @@ def test_actor_relevant_none():
 # ---------------------------------------------------------------------------
 def test_slice_for_component_filters_inactive_and_builds():
     actors = [
-        {"id": "A", "access": ["dmz"], "label": "la", "_provenance": {"active": True}},
+        {
+            "id": "A",
+            "access": ["dmz"],
+            "trust_positions": ["public-endpoint-reach"],
+            "label": "la",
+            "_provenance": {"active": True},
+        },
         {"id": "B", "access": ["dmz"], "_provenance": {"active": False}},  # inactive -> skip
         {"id": "C", "access": ["internal"]},  # no access overlap, active defaults True
         {"id": "D", "access": [], "_provenance": {"proposed": True, "stale": True}},  # always-relevant
@@ -111,9 +127,32 @@ def test_slice_for_component_filters_inactive_and_builds():
     assert out["component_id"] == "c1"
     assert out["actor_count"] == 2
     assert "A" in out["relevance_rationale"]
+    a_entry = next(a for a in out["relevant_actors"] if a["id"] == "A")
+    assert a_entry["trust_positions"] == ["public-endpoint-reach"]
     d_entry = next(a for a in out["relevant_actors"] if a["id"] == "D")
     assert d_entry["proposed"] is True and d_entry["stale"] is True
     assert d_entry["heatmap_slug"] == "internet-user"  # default
+
+
+def test_slice_accepts_canonical_component_shape_and_normalises_zones():
+    actors = [
+        {"id": "A", "access": ["internet"], "_provenance": {"active": True}},
+        {"id": "ACT-D-99", "access": [], "_provenance": {"active": True}},
+    ]
+    component = {
+        "id": "auth-identity",
+        "name": "Authentication Service",
+        "deployment_zones": ["internet-facing"],
+    }
+    out = slice_actors.slice_for_component(
+        component,
+        actors,
+        {"auth-service": ["ACT-D-99"]},
+        {"internet-facing": "internet", "internet": "internet"},
+    )
+    assert out["component_id"] == "auth-identity"
+    assert out["component_type"] == "auth-service"
+    assert {a["id"] for a in out["relevant_actors"]} == {"A", "ACT-D-99"}
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +242,7 @@ def test_cli_main_bad_components_json(run_plugin_script, plugin_lib: Path, tmp_p
         check=False,
     )
     assert res.returncode == 1
-    assert "invalid --components JSON" in res.stderr
+    assert "invalid component input" in res.stderr
 
 
 def test_cli_main_component_missing_id(run_plugin_script, plugin_lib: Path, tmp_path: Path):
@@ -225,6 +264,44 @@ def test_cli_main_component_missing_id(run_plugin_script, plugin_lib: Path, tmp_
         check=True,
     )
     assert res.returncode == 0
-    assert "missing component_id" in res.stderr
+    assert "missing id" in res.stderr
     manifest = json.loads((out / ".actors-slice-manifest.json").read_text())
     assert manifest["component_slices"] == []
+
+
+def test_cli_components_file_uses_canonical_inventory(run_plugin_script, plugin_lib: Path, tmp_path: Path):
+    out = tmp_path / "out"
+    _setup_resolved(out)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    components_file = tmp_path / ".components.json"
+    components_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {
+                        "id": "public-api",
+                        "name": "Public API",
+                        "deployment_zones": ["internet-facing"],
+                    }
+                ],
+            }
+        )
+    )
+    res = run_plugin_script(
+        "slice_actors.py",
+        "--plugin-root",
+        str(plugin_lib),
+        "--repo-root",
+        str(repo),
+        "--output-dir",
+        str(out),
+        "--components-file",
+        str(components_file),
+        check=True,
+    )
+    assert res.returncode == 0
+    actor_slice = json.loads((out / ".actors-for-public-api.json").read_text())
+    assert actor_slice["component_id"] == "public-api"
+    assert [a["id"] for a in actor_slice["relevant_actors"]] == []

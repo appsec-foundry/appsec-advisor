@@ -490,9 +490,14 @@ Count findings in `threat-model.yaml` `findings[]` with `actor_ids != []` vs. to
 
 **Sub-Check 15.4 — Discovery proposals without findings (when `.actors-discovered.json` exists):**
 
-For each entry in `.actors-discovered.json` `proposed_additional[]`:
+For each active actor in `.actors-resolved.json` where
+`_provenance.proposed=true`:
 - Does at least one finding carry this actor's `id` in `actor_ids[]`?
 - If NO → emit issue `proposed_actor_no_findings`, severity `info` (no escalation)
+
+Do not re-review entries listed in
+`.actors-resolved.json.rejected_discovery_actors[]`; the deterministic resolver
+already prevented them from entering attribution and recorded the reason.
 
 **Sub-Check 15.5 — Inputs-questioned actors not reviewed (when `.actors-discovered.json` exists):**
 

@@ -117,11 +117,36 @@ th {
 }
 tr:nth-child(even) td { background: #fafbfc; }
 
-/* Short ID links (`F-001`) stay whole; long title links (the §7.1 control-
- * category column links to "7.2 Identity and Authentication Controls…") wrap
- * at word boundaries instead of overflowing into the next column. */
+/* Long title links wrap normally. Internal report-ID links are overridden
+ * below so the browser / WeasyPrint cannot use their hyphen as a line-break
+ * opportunity (`M-` on one line, `001` on the next). */
 td a { overflow-wrap: break-word; }
 td code { overflow-wrap: anywhere; }
+
+/* Atomic internal IDs. Keep this selector narrow: applying nowrap to every
+ * anchor would also make long finding/section titles overflow fixed columns. */
+a[href^="#f-"],
+a[href^="#t-"],
+a[href^="#m-"],
+a[href^="#c-"],
+a[href^="#a-"],
+a[href^="#as-"],
+a[href^="#tb-"],
+a[href^="#th-"],
+a[href^="#af-"],
+a[href^="#cc-"],
+a[href^="#act-"],
+a[href^="#ac-"],
+a[href^="#org-ac-"],
+a[href^="#repo-ac-"],
+a[href^="#ep-"],
+a[href^="#pt-"],
+a[href^="#cwe-"] {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: keep-all;
+  hyphens: none;
+}
 
 img {
   max-width: 100%;

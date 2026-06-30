@@ -59,3 +59,15 @@ def test_json_schema_is_valid_jsonschema(schema_path: Path) -> None:
 
 def test_json_schemas_directory_not_empty() -> None:
     assert ALL_JSON_SCHEMAS, "schemas/ must contain at least one top-level *.schema.json"
+
+
+def test_default_actor_library_validates_actor_schema() -> None:
+    schema = yaml.safe_load((SCHEMAS_DIR / "actors.schema.yaml").read_text())
+    library = yaml.safe_load((ROOT / "data" / "actors" / "default-library.yaml").read_text())
+    validator = Draft202012Validator(schema)
+    errors = []
+    for actor in library.get("actors", []):
+        errors.extend(validator.iter_errors(actor))
+    assert not errors, "\n".join(
+        f"{'.'.join(str(p) for p in error.absolute_path) or 'root'}: {error.message}" for error in errors
+    )

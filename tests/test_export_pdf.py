@@ -13,6 +13,51 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 import export_pdf as ep
 
+PRINT_CSS = Path(__file__).parent.parent / "scripts" / "assets" / "print.css"
+
+
+# ---------------------------------------------------------------------------
+# print.css contracts
+# ---------------------------------------------------------------------------
+
+
+def test_internal_report_id_links_are_atomic():
+    """Referenced IDs must never wrap at their semantic hyphen."""
+    css = PRINT_CSS.read_text(encoding="utf-8")
+    prefixes = (
+        "#f-",
+        "#t-",
+        "#m-",
+        "#c-",
+        "#a-",
+        "#as-",
+        "#tb-",
+        "#th-",
+        "#af-",
+        "#cc-",
+        "#act-",
+        "#ac-",
+        "#org-ac-",
+        "#repo-ac-",
+        "#ep-",
+        "#pt-",
+        "#cwe-",
+    )
+    for prefix in prefixes:
+        assert f'a[href^="{prefix}"]' in css
+    rule = re.search(
+        r'a\[href\^="#f-"\],.*?a\[href\^="#cwe-"\]\s*\{(?P<body>.*?)\}',
+        css,
+        flags=re.DOTALL,
+    )
+    assert rule, "atomic report-ID selector block missing"
+    body = rule.group("body")
+    assert "white-space: nowrap" in body
+    assert "overflow-wrap: normal" in body
+    assert "word-break: keep-all" in body
+    assert "hyphens: none" in body
+
+
 # ---------------------------------------------------------------------------
 # preflight()
 # ---------------------------------------------------------------------------

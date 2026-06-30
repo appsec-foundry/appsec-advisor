@@ -86,7 +86,9 @@ def style_circles(text: str) -> tuple[str, int]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Tint mitigation priority circles with a gray ramp in a composed threat-model.md.")
+    ap = argparse.ArgumentParser(
+        description="Tint mitigation priority circles with a gray ramp in a composed threat-model.md."
+    )
     ap.add_argument("md_path", help="path to threat-model.md (or a stamped copy)")
     ap.add_argument("--in-place", action="store_true")
     ap.add_argument("--quiet", action="store_true")

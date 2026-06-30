@@ -175,9 +175,7 @@ def renumber(text: str) -> tuple[str, dict]:
         if in_toc:
             tm = _TOC_MARKER_RE.match(new)
             if tm and _needs_renumber(tm.group(2)):
-                new = _TOC_MARKER_RE.sub(
-                    lambda mm: f"{mm.group(1)}{display_top(int(mm.group(2)))}{mm.group(3)}", new
-                )
+                new = _TOC_MARKER_RE.sub(lambda mm: f"{mm.group(1)}{display_top(int(mm.group(2)))}{mm.group(3)}", new)
                 stats["toc_markers"] += 1
         lines[i] = new
 

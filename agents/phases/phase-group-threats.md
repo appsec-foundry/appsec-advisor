@@ -212,7 +212,17 @@ For each component, use Agent tool:
   **Group C — volatile context file paths (emit LAST):**
   `PRIOR_FINDINGS_INDEX_PATH`, `KNOWN_THREATS_INDEX_PATH`, `CROSS_REPO_CONTEXT_PATH`, `PHASE_8B_VIOLATIONS_INDEX_PATH`, `RELEVANT_ACTORS_INDEX_PATH` — each is either a JSON file under `$OUTPUT_DIR/.dispatch-context/<COMPONENT_ID>/` or `none`. Do **not** inline the JSON arrays in the prompt. The old inline names (`PRIOR_FINDINGS_INDEX`, `KNOWN_THREATS_INDEX`, `CROSS_REPO_CONTEXT`, `PHASE_8B_VIOLATIONS_INDEX`) are accepted only as a legacy fallback for older orchestrator prompts.
 
-  `RELEVANT_ACTORS_INDEX_PATH` points to `$OUTPUT_DIR/.actors-for-<COMPONENT_ID>.json` (produced by Phase 2.7 `slice_actors.py`). When the file does not exist (Phase 2.7 was skipped or the slice for this component was not produced), pass `RELEVANT_ACTORS_INDEX_PATH=none`.
+  `RELEVANT_ACTORS_INDEX_PATH` points to `$OUTPUT_DIR/.actors-for-<COMPONENT_ID>.json`. Actor resolution happens in Phase 2.7, but slicing requires the finalized Phase-3 component inventory. In the parallel runtime, `build_stride_dispatch_manifest.py` writes the slices after component reconciliation. In the legacy runtime, run this once before dispatch:
+
+  ```bash
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/slice_actors.py" \
+      --plugin-root "$CLAUDE_PLUGIN_ROOT" \
+      --repo-root "$REPO_ROOT" \
+      --output-dir "$OUTPUT_DIR" \
+      --components-file "$OUTPUT_DIR/.components.json"
+  ```
+
+  When `.actors-resolved.json` does not exist (actor resolution was skipped or failed), do not call the slicer and pass `RELEVANT_ACTORS_INDEX_PATH=none`.
 
 **Prior-findings index propagation (mandatory):** The orchestrator writes a component-scoped JSON slice of `$OUTPUT_DIR/.prior-findings-index.json` to `prior-findings.json` and passes `PRIOR_FINDINGS_INDEX_PATH`. The STRIDE analyzer uses this instead of reading `.threat-modeling-context.md` — Phase 1 has already extracted file/line/excerpt for every prior finding. Do **not** pass `CONTEXT_FILE` as a parameter; the STRIDE analyzer no longer needs it when the index file is populated. Only pass `CONTEXT_FILE` when a prior finding indicates deeper context (e.g. a known-threat row with cross-component dependencies) and the JSON index is insufficient.
 

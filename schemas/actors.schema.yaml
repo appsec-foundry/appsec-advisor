@@ -15,6 +15,22 @@ required:
   - capabilities
   - motivation
 
+allOf:
+  - if:
+      properties:
+        id:
+          pattern: "^ACT-X-"
+      required: [id]
+    then:
+      required:
+        - trust_positions
+        - distinct_trust_positions
+        - distinct_trust_position_evidence
+        - rationale
+        - confidence
+        - discovery_method
+        - heatmap_slug
+
 properties:
   id:
     type: string
@@ -70,6 +86,46 @@ properties:
   motivation:
     type: string
     enum: [financial, disruption, espionage, curiosity, accidental]
+
+  trust_positions:
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items:
+      type: string
+      pattern: "^[a-z][a-z0-9-]*-(reach|credential|authority|control|possession|membership)$"
+    description: |
+      Stable reach, credential, authority, control, possession, or membership
+      positions held by the actor. Separate from deployment zones in access[].
+
+  distinct_trust_positions:
+    type: array
+    minItems: 1
+    uniqueItems: true
+    items:
+      type: string
+      pattern: "^[a-z][a-z0-9-]*-(reach|credential|authority|control|possession|membership)$"
+    description: "Discovery-only trust positions absent from the static actor catalog."
+
+  distinct_trust_position_evidence:
+    type: string
+    minLength: 20
+    description: "Discovery-only evidence for distinct_trust_positions."
+
+  rationale:
+    type: string
+    maxLength: 1200
+    description: "Discovery-only explanation with concrete recon evidence."
+
+  confidence:
+    type: string
+    enum: [high, medium, low]
+    description: "Discovery-only confidence. Resolver admits only high."
+
+  discovery_method:
+    type: string
+    enum: [heuristic-section-A, heuristic-bypass]
+    description: "Discovery-only producer path."
 
   description:
     type: string

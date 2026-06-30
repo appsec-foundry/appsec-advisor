@@ -475,9 +475,19 @@ MODEL_ID=$ACTOR_DISCOVERY_MODEL
 )
 ```
 
-After the agent returns, verify `.actors-discovered.json` exists and is valid JSON.
-On failure: log `AGENT_WARN`, write an empty discovery sentinel, continue without
-blocking the assessment.
+After the agent returns, validate the full discovery contract:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
+    actors_discovered "$OUTPUT_DIR/.actors-discovered.json"
+```
+
+On failure: log `AGENT_WARN` and replace it with a schema-valid empty discovery
+sentinel carrying the current `DISCOVERY_CACHE_KEY`, an ISO-8601 `generated_at`,
+empty `confirmed_relevant` / `proposed_additional` / `inputs_questioned`
+arrays, and a short `coverage_rationale`. Continue without blocking the
+assessment. `resolve_actors.py` validates the same contract again before it
+can activate any proposal.
 
 ### Step 4 — Finalize resolved actor set (with discovery)
 
