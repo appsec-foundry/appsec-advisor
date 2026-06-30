@@ -21,6 +21,7 @@ are never false-positives.
 Usage: check_reference_format.py <rendered.md> [...]
 Exit 0 = clean, 1 = violations found (printed to stderr).
 """
+
 from __future__ import annotations
 
 import re

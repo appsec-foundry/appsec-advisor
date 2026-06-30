@@ -2299,12 +2299,20 @@ def _compute_toc_entries(ctx: RenderContext) -> list[dict[str, Any]]:
         display_title = _strip_label_code(display_title)
         anchor = sec.get("anchor") or _anchor_from_heading(heading)
         children = _toc_children_for_section(ctx, sid, sec)
+        # Identified Actors renders as an unnumbered `### Identified Actors`
+        # subsection of §1 System Overview (peer of "### Scope"). Nest it under
+        # the preceding system_overview ToC entry instead of emitting a
+        # top-level bullet with a half-step "1.5" number that reads as a gap.
+        if sid == "identified_actors" and entries and entries[-1].get("_sid") == "system_overview":
+            entries[-1]["children"].append({"title": display_title, "anchor": anchor})
+            continue
         entries.append(
             {
                 "number": section_number,
                 "title": display_title,
                 "anchor": anchor,
                 "children": children,
+                "_sid": sid,
             }
         )
     return entries
@@ -13887,8 +13895,10 @@ def _build_threat_card(
 
 
 def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """§1.5 Identified Actors — table of resolved ACT-* actors with layer, status,
-    finding counts, and per-component relevance (actors.md §14). Conditional on
+    """Identified Actors — table of resolved ACT-* actors with layer, status,
+    finding counts, and per-component relevance (actors.md §14). Rendered as an
+    unnumbered `### Identified Actors` subsection of §1 System Overview (peer of
+    "### Scope"), nested under System Overview in the ToC. Conditional on
     `has_resolved_actors`; gracefully renders empty on legacy / pre-Phase-2.7 runs.
     """
     resolved_path = ctx.output_dir / ".actors-resolved.json"
@@ -13922,7 +13932,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         except (OSError, json.JSONDecodeError):
             pass
 
-    lines: list[str] = ['<a id="identified-actors"></a>', "## 1.5 Identified Actors", ""]
+    lines: list[str] = ['<a id="identified-actors"></a>', "### Identified Actors", ""]
 
     # Quick-mode transparency notice (actors.md §12).
     if (ctx.output_dir / ".discovery-skipped.json").is_file():
@@ -13957,7 +13967,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
 
     proposed_actors = [a for a in active if (a.get("_provenance") or {}).get("proposed")]
     if proposed_actors:
-        lines.append("### Newly identified actors — please confirm")
+        lines.append("#### Newly identified actors — please confirm")
         lines.append("")
         lines.append(
             "The following actors were proposed by LLM discovery (Phase 2.7) and are "
@@ -13974,7 +13984,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append("")
 
     if inputs_questioned:
-        lines.append("### Actors flagged for review")
+        lines.append("#### Actors flagged for review")
         lines.append("")
         lines.append(
             "Discovery flagged these actors as questionable — recon shows no plausible "
@@ -13991,7 +14001,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
 
     disabled = [a for a in actors if (a.get("_provenance") or {}).get("disabled_by")]
     if disabled:
-        lines.append("### Disabled actors")
+        lines.append("#### Disabled actors")
         lines.append("")
         lines.append("| ID | Label | Disabled by | Reason |")
         lines.append("|---|---|---|---|")
@@ -14006,7 +14016,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
 
     dormant_threats = [t for t in threats if t.get("_status") == "dormant"]
     if dormant_threats:
-        lines.append("### Dormant findings")
+        lines.append("#### Dormant findings")
         lines.append("")
         lines.append(
             "Findings preserved across re-runs whose structurally-required actor was "

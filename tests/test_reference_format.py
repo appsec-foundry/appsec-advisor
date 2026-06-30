@@ -5,6 +5,7 @@ form) so the producer can never silently drift back to the mixed variants it
 historically shipped (juice-shop 2026-06-29 RC). See
 project-threatmodel-ref-link-format memory + scripts/check_reference_format.py.
 """
+
 from __future__ import annotations
 
 import importlib.util

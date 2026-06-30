@@ -3922,6 +3922,85 @@ if [ "${DRY_RUN:-false}" != "true" ]; then
 fi
 ```
 
+### Contiguous section renumbering (delivered document only)
+
+The section contract keeps §6 (Use Cases) **retired** but does NOT renumber the
+sections above it — §7.x stays §7.x — because the contract number is a stable
+semantic key that `qa_checks.py` (`## 7. Security Architecture` / `## 8.` /
+`### 7.N` literal-number asserts in ~15 places), `section_integrity.py`, every
+renderer fragment, and the incremental baseline all depend on. So the whole
+internal pipeline runs on the canonical numbering and a bare §5 → §7 jump used
+to reach the reader (with an apologetic "numbering is non-contiguous" note that
+reads as a bug on a first run).
+
+`scripts/renumber_sections.py` closes that gap in the **delivered** Markdown
+only. It runs **here** — after Stage 3 QA, the contract gate, section-integrity,
+the phantom-component gate, and the `toc_closure` link gate have all validated
+the canonically-numbered document — and **before** the Completion Summary, the
+PDF / HTML exports, and slug stamping, so every produced artifact inherits the
+contiguous numbering while no upstream validator ever sees it. It rewrites
+top-level + sub-section headings (`## 7.` → `## 6.`, `### 7.2` → `### 6.2`),
+the numbered GFM anchor link targets (`](#7-…)` / `](#72-…)` / `](#8-findings-register)`
+remapped from a slug table built off the document's own headings), bare-number
+link labels (`[7.2 Identity …]` → `[6.2 …]`), inline `§N`/`§N.M` refs, the TOC
+ordered-list markers, and deletes the now-obsolete numbering-gap note. Anchors
+are produced with the canonical `_slug.github_slug` so they stay byte-identical
+to the composer's. The pass is idempotent (a marker comment makes a second run a
+no-op) and link-integrity-neutral (verified: zero new `toc_closure` issues vs
+the pre-renumber document). Skipped under `DRY_RUN=true` (the temp output is
+discarded). Non-fatal — a failure leaves the canonically-numbered document
+intact rather than blocking the run.
+
+```bash
+if [ "${DRY_RUN:-false}" != "true" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/renumber_sections.py" \
+        "$OUTPUT_DIR/threat-model.md" --in-place 2>&1 \
+        | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+    # Belt-and-suspenders: prove the renumbered deliverable did not gain any
+    # broken internal link. Advisory only — the pre-renumber toc_closure gate
+    # above already passed, and the pass is verified link-neutral.
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" toc_closure \
+        "$OUTPUT_DIR/threat-model.md" >/dev/null 2>&1 \
+        || echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  WARN   skill  RENUMBER_LINK_CHECK  toc_closure flagged anchors after renumber — inspect threat-model.md" >> "$OUTPUT_DIR/.agent-run.log"
+fi
+```
+
+The canonical `threat-model.md` is renumbered before slug stamping (which copies
+it) and before the PDF / HTML exports (which render from it), so the stamped set
+and the binary exports all carry the contiguous numbering without a second pass.
+
+### Priority-circle gray ramp (delivered document only)
+
+The mitigation rollout-priority circles (❶ P1 … ❹ P4) are emitted MONOCHROME by
+the renderers — the digit names the priority but every circle is the same black,
+so urgency does not read until the reader parses which digit it is. The
+`scripts/style_priority_circles.py` pass tints each circle with a gray ramp
+(❶ `#111111` → ❷ `#555555` → ❸ `#888888` → ❹ `#bbbbbb`; darker = more urgent),
+wrapping ONLY the glyph in a color span so the `[M-NNN]` link keeps its own
+color.
+
+It runs **here**, as a final deliverable pass, for the same reason the renumber
+does: the circle is emitted from four inline sites in `compose_threat_model.py`
+AND re-validated by idempotent bare-glyph annotation passes in BOTH
+`compose_threat_model.py` (`_prepend_mitigation_prio_circles`) and `qa_checks.py`
+(`_M_REF_RE` / autofix). Wrapping the glyph upstream would make those bare-glyph
+regexes miss the circle and prepend a SECOND one (double circle). Keeping the
+whole pipeline on bare circles and tinting last side-steps that entirely — and
+the digit itself carries the priority, so the pass needs no model/context
+(❶→P1 … ❹→P4). Filled circles are priority-only; the OUTLINE ①②③④ attack-path
+glyphs are a different code point and untouched. Idempotent (re-wraps to the same
+span, corrects a stale shade), fence-aware, link-neutral. Skipped under
+`DRY_RUN=true`. Runs before stamping + PDF/HTML export so every artifact inherits
+the ramp.
+
+```bash
+if [ "${DRY_RUN:-false}" != "true" ]; then
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/style_priority_circles.py" \
+        "$OUTPUT_DIR/threat-model.md" --in-place 2>&1 \
+        | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
+fi
+```
+
 ## Completion Summary
 
 After the last enabled review stage completes (Stage 3 when QA is enabled, Stage 4 when architect review is enabled, or Stage 2 when QA is skipped), **always** print a final summary. For `DRY_RUN=true`, print the dry-run summary after Stage 2 and skip Stage 3/4. This is the last thing the skill outputs and is critical for headless mode (`claude -p`) where it becomes the entire visible output.

@@ -632,8 +632,8 @@ sections:
   # `.actors-resolved.json` (pre-Phase 2.7 caches) so the section gracefully
   # disappears instead of failing the contract.
   identified_actors:
-    heading: "## 1.5 Identified Actors"
-    heading_numbered: false   # half-step numbering — not part of §1→§2 sequence
+    heading: "### Identified Actors"
+    heading_numbered: false   # unnumbered ### subsection of §1 System Overview (like "### Scope")
     fragment_type: computed
     # No fragment file. No required_subsections — sub-headings are renderer-emitted
     # and depend on whether proposed / disabled / dormant actors exist this run.

@@ -67,8 +67,7 @@ def test_no_args_exits_nonzero():
 def test_reference_format_clean_doc_has_no_issues(tmp_path: Path):
     md = _write_minimal_model(
         tmp_path,
-        "## Findings\n\n🔴 [F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`)\n"
-        "🟠 [F-016](#f-016)\n",
+        "## Findings\n\n🔴 [F-010](#f-010) — Insecure Direct Object Reference (`memory.ts:15`)\n🟠 [F-016](#f-016)\n",
     )
     report = qa.check_reference_format(md)
     assert report.issues == []

@@ -631,11 +631,19 @@ cleanup_tails() {
 
 # Tail both logs in the background and pipe them through render_progress.py,
 # which turns the raw event stream into a stateful, human-readable progress view
-# (current phase, sub-agent invokes, sub-steps, wall-clock elapsed). Runs as a
-# single pipeline so the trap can reap it by pid.
+# (current phase, sub-agent invokes, sub-steps, wall-clock elapsed).
+#
+# A background shell pipeline's `$!` identifies only its final process on some
+# `/bin/sh` implementations; killing that PID can leave `tail -F` alive with the
+# caller's stdout/stderr pipe open. That makes a completed headless invocation
+# (and any subprocess test capturing its output) wait forever for EOF. Run the
+# whole monitor through run-interruptible.sh, which owns and reaps a dedicated
+# process group. PROGRESS_PID is then the wrapper PID, and cleanup_tails can
+# terminate one process while the wrapper reliably tears down the entire tree.
 start_progress_monitor() {
-    tail -F "$LOG_FILE" "$RUN_LOG_FILE" 2>/dev/null \
-        | python3 "$SCRIPT_DIR/render_progress.py" >&2 &
+    "$SCRIPT_DIR/run-interruptible.sh" /dev/null \
+        sh -c 'tail -F "$1" "$2" 2>/dev/null | python3 "$3"' \
+        appsec-progress-monitor "$LOG_FILE" "$RUN_LOG_FILE" "$SCRIPT_DIR/render_progress.py" >&2 &
     PROGRESS_PID=$!
 }
 

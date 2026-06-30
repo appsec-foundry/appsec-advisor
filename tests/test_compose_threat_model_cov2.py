@@ -384,9 +384,7 @@ class TestRenderAbuseCases:
                         {
                             "abuse_case_id": "AC-T-001",
                             "chain_verdict": "fully_viable",
-                            "step_verdicts": [
-                                {"step": 1, "verdict": "confirmed", "matched_finding_id": "T-001"}
-                            ],
+                            "step_verdicts": [{"step": 1, "verdict": "confirmed", "matched_finding_id": "T-001"}],
                         }
                     ],
                 }
