@@ -7,6 +7,8 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Actor discovery now rejects technique-, feature-, and persona-based duplicates before they can affect finding attribution. Actor slices are rebuilt from the finalized component inventory, and architect checks now inspect the actual resolved-actor schema.
+- Actor resolution now remains active at quick depth, honors repository discovery opt-outs, reuses valid discovery caches, and validates the resolved actor artifact before rendering.
+- Reports retain their contract-defined section numbers across Markdown, incremental runs, and exports; mitigation priority colors are applied inside the final QA pass.
 - Referenced report IDs such as `M-001` and `F-001` stay on one line in HTML and PDF exports.
 
 ## 0.4.0-beta (2026-06-28)

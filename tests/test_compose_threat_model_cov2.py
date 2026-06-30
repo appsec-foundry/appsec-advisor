@@ -1175,13 +1175,9 @@ class TestRenderIdentifiedActorsExtra:
                             "label": "Anon",
                             "_provenance": {"active": True, "layer": "client", "stale": True},
                         }
-                    ]
+                    ],
+                    "inputs_questioned": [{"id": "ACT-9", "reason": "no plausible reach", "recommendation": "disable"}],
                 }
-            )
-        )
-        (tmp_path / ".actors-discovered.json").write_text(
-            json.dumps(
-                {"inputs_questioned": [{"id": "ACT-9", "reason": "no plausible reach", "recommendation": "disable"}]}
             )
         )
         ctx = self._ctx(tmp_path)
@@ -1194,7 +1190,7 @@ class TestRenderIdentifiedActorsExtra:
         (tmp_path / ".actors-resolved.json").write_text(
             json.dumps({"resolved_actors": [{"id": "A", "label": "L", "_provenance": {"active": True}}]})
         )
-        (tmp_path / ".actors-discovered.json").write_text("{bad json")
+        (tmp_path / ".actors-discovered.json").write_text(json.dumps({"inputs_questioned": ["invalid-raw-entry"]}))
         ctx = self._ctx(tmp_path)
         out = compose._render_identified_actors(ctx, None, {})
         assert "Identified Actors" in out

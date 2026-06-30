@@ -3472,3 +3472,41 @@ def test_autofix_is_idempotent_on_paths(tmp_path: Path):
     qa.cmd_autofix(md, tmp_path)
     assert md.read_text(encoding="utf-8") == first
     assert first.count("`lib/insecurity.ts:54`") == 1  # not double-wrapped
+
+
+def test_priority_circle_styling_handles_markdown_and_converted_html():
+    text = '❶ [M-001](#m-001)\n❷&nbsp;<a href="#m-002">M-002</a>\n```text\n❸ [M-003](#m-003)\n```\n'
+    styled, count = qa._style_priority_circles(text)
+    assert count == 2
+    assert '<span style="color:#111111">❶</span> [M-001](#m-001)' in styled
+    assert '<span style="color:#555555">❷</span>&nbsp;<a href="#m-002">M-002</a>' in styled
+    assert "```text\n❸ [M-003](#m-003)\n```" in styled
+
+
+def test_priority_circle_styling_is_idempotent_and_corrects_stale_color():
+    text = '<span style="color:#ffffff">❹</span> [M-004](#m-004)\n'
+    first, first_count = qa._style_priority_circles(text)
+    second, second_count = qa._style_priority_circles(first)
+    assert first_count == second_count == 1
+    assert first == second == '<span style="color:#bbbbbb">❹</span> [M-004](#m-004)\n'
+
+
+def test_apply_priority_circle_styling_reports_only_real_changes(tmp_path: Path):
+    md = _write_minimal_model(tmp_path, "❷ [M-002](#m-002)\n")
+    assert qa._apply_priority_circle_styling(md) == 1
+    assert qa._apply_priority_circle_styling(md) == 0
+
+
+def test_autofix_priority_circle_styling_is_idempotent(tmp_path: Path):
+    md = _write_minimal_model(tmp_path, "❶ [M-001](#m-001)\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "threats: []\nmitigations:\n  - id: M-001\n    priority: p1\n",
+        encoding="utf-8",
+    )
+    qa.cmd_autofix(md, tmp_path)
+    first = md.read_text(encoding="utf-8")
+    qa.cmd_autofix(md, tmp_path)
+    second = md.read_text(encoding="utf-8")
+    assert first == second
+    assert second.count('<span style="color:#111111">❶</span>') == 1
+    assert second.count("❶") == 1

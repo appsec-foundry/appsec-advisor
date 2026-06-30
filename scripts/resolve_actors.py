@@ -35,6 +35,7 @@ from pathlib import Path
 
 import yaml
 from jsonschema import Draft202012Validator
+from validate_intermediate import validate_actor, validate_actors_repo, validate_actors_resolved
 
 _DISCOVERY_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "actors-discovered.schema.yaml"
 _ACT_X_RE = re.compile(r"^ACT-X-[0-9]{1,4}$")
@@ -317,6 +318,9 @@ def load_enterprise_actors(org_profile_effective: dict, profile_dir: str) -> tup
         for fpath in sorted(glob_module.glob(full_glob)):
             try:
                 data = _load_yaml(fpath)
+                valid, errors = validate_actors_repo(data)
+                if not valid:
+                    raise ValueError(f"invalid actor file: {'; '.join(errors[:3])}")
                 file_actors = data.get("actors", [])
                 for a in file_actors:
                     a.setdefault("_provenance", {})
@@ -344,6 +348,9 @@ def load_repo_actors(
         return [], [], {"enabled": True, "max_proposed": 5}, True
 
     data = _load_yaml(path)
+    valid, errors = validate_actors_repo(data)
+    if not valid:
+        raise ValueError(f"invalid .appsec/actors.yaml: {'; '.join(errors[:3])}")
     actors = data.get("actors", [])
     for a in actors:
         a.setdefault("_provenance", {})
@@ -568,6 +575,14 @@ def resolve(
     # --- Reach-equivalence ---
     resolved_map = apply_reach_equivalence(resolved_map, signals, plugin_root)
 
+    # Validate the fully merged static records before publishing any actor
+    # artifact. Layer files may contain partial overrides, but their merged
+    # result must satisfy the complete actor contract.
+    for actor_id, actor in resolved_map.items():
+        valid, errors = validate_actor(actor)
+        if not valid:
+            raise ValueError(f"resolved actor {actor_id} is invalid: {'; '.join(errors[:3])}")
+
     # --- Compute actors_inputs_fingerprint (actors.md §13) ---
     actors_inputs_fingerprint = _compute_actors_inputs_fingerprint(plugin_root, profile_dir, ent_add_glob, repo_root)
     with open(os.path.join(output_dir, ".actor-fingerprints.json"), "w") as f:
@@ -603,17 +618,28 @@ def resolve(
         f"[resolve_actors] .actors-merged-static.json written ({len(merged_static['resolved_actors'])} active actors)"
     )
 
-    # --- Quick-mode: skip discovery, write sentinel ---
-    if quick_mode or not discovery_config.get("enabled", True):
-        sentinel = {"reason": "quick-mode", "discovery_skipped": True}
+    discovery_enabled = bool(discovery_config.get("enabled", True))
+    discovery_skip_reason = "quick-mode" if quick_mode else "disabled-by-repo-config" if not discovery_enabled else None
+    accepted_confirmed_relevant: list[dict] = []
+    accepted_inputs_questioned: list[dict] = []
+    rejected_discovery_actors: list[dict] = []
+
+    # --- Quick/config mode: skip discovery, write an accurate sentinel ---
+    if quick_mode or not discovery_enabled:
+        sentinel = {
+            "reason": discovery_skip_reason,
+            "discovery_skipped": True,
+        }
         with open(os.path.join(output_dir, ".discovery-skipped.json"), "w") as f:
             json.dump(sentinel, f, indent=2)
-        print("[resolve_actors] Quick-mode: discovery skipped — .discovery-skipped.json written")
+        print(f"[resolve_actors] Actor discovery skipped ({discovery_skip_reason}) — .discovery-skipped.json written")
         discovery_actors: list[dict] = []
     else:
+        skipped_path = os.path.join(output_dir, ".discovery-skipped.json")
+        if os.path.exists(skipped_path):
+            os.unlink(skipped_path)
         # --- Layer 4: LLM-Discovery ---
         discovery_actors = []
-        rejected_discovery_actors: list[dict] = []
         if discovery_output_path and os.path.exists(discovery_output_path):
             try:
                 disc = _load_json(discovery_output_path)
@@ -629,6 +655,8 @@ def resolve(
                         }
                     )
                 else:
+                    accepted_confirmed_relevant = copy.deepcopy(disc.get("confirmed_relevant", []))
+                    accepted_inputs_questioned = copy.deepcopy(disc.get("inputs_questioned", []))
                     max_proposed = min(int(discovery_config.get("max_proposed", 5)), 5)
                     static_catalog = list(resolved_map.values())
                     aliases = _access_alias_map(plugin_root)
@@ -680,20 +708,27 @@ def resolve(
                     }
                 )
 
-    if quick_mode or not discovery_config.get("enabled", True):
+    if quick_mode or not discovery_enabled:
         rejected_discovery_actors = []
 
     # --- Write .actors-resolved.json ---
     resolved_out = {
         "schema_version": 1,
         "quick_mode": quick_mode,
+        "discovery_enabled": discovery_enabled,
+        "discovery_skip_reason": discovery_skip_reason,
         "actors_inputs_fingerprint": actors_inputs_fingerprint,
         "alias_map": alias_map,
         "resolved_actors": list(resolved_map.values()),
+        "confirmed_relevant": accepted_confirmed_relevant,
+        "inputs_questioned": accepted_inputs_questioned,
         "run_issues": run_issues,
         "discovery_actor_count": len(discovery_actors),
         "rejected_discovery_actors": rejected_discovery_actors,
     }
+    valid, errors = validate_actors_resolved(resolved_out)
+    if not valid:
+        raise RuntimeError(f"resolver produced invalid .actors-resolved.json: {'; '.join(errors[:5])}")
     resolved_path = os.path.join(output_dir, ".actors-resolved.json")
     with open(resolved_path, "w") as f:
         json.dump(resolved_out, f, indent=2)
@@ -707,7 +742,7 @@ def resolve(
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description="Resolve Actor Layer (4-layer merge)")
     parser.add_argument("--plugin-root", required=True)
     parser.add_argument("--repo-root", required=True)
@@ -718,16 +753,21 @@ def main() -> None:
     parser.add_argument("--quick", action="store_true")
     args = parser.parse_args()
 
-    resolve(
-        plugin_root=args.plugin_root,
-        repo_root=args.repo_root,
-        output_dir=args.output_dir,
-        org_profile_effective_path=args.org_profile_effective,
-        discovery_output_path=args.discovery_output,
-        signals_path=args.signals,
-        quick_mode=args.quick,
-    )
+    try:
+        resolve(
+            plugin_root=args.plugin_root,
+            repo_root=args.repo_root,
+            output_dir=args.output_dir,
+            org_profile_effective_path=args.org_profile_effective,
+            discovery_output_path=args.discovery_output,
+            signals_path=args.signals,
+            quick_mode=args.quick,
+        )
+    except (OSError, ValueError, RuntimeError, yaml.YAMLError, json.JSONDecodeError) as error:
+        print(f"[resolve_actors] ERROR: {error}", file=sys.stderr)
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

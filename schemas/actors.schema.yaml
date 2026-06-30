@@ -199,8 +199,15 @@ properties:
       the named default-library actor class (marks it 'covered' in coverage report).
 
   renamed_from:
-    type: string
-    pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+    oneOf:
+      - type: string
+        pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+      - type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          type: string
+          pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
     description: |
       When a Discovery actor (ACT-X-N) was renamed to ACT-R-M during promotion,
       carry the original ID here for stable back-reference.
@@ -212,6 +219,23 @@ properties:
     description: |
       Signal flags that trigger a reach-equivalence collapse with another actor.
       Declared in default-library; repo/org layers may add custom equivalences.
+
+  equivalent_to:
+    type: array
+    uniqueItems: true
+    items:
+      type: string
+      pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+    description: "Resolver-owned runtime equivalence set."
+
+  collapse_reason:
+    type: string
+    description: "Resolver-owned signal or rule that activated reach equivalence."
+
+  collapse_primary:
+    type: string
+    pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+    description: "Resolver-owned primary actor for an equivalent set."
 
   disable_reason:
     type: string
@@ -233,10 +257,19 @@ properties:
         type: array
         items:
           type: string
+      aliases:
+        type: array
+        items:
+          type: string
+          pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+      active:
+        type: boolean
+      activation_reason:
+        type: string
       disabled_by:
         type: string
       disable_reason:
-        type: string
+        type: [string, "null"]
       promoted_from_discovery:
         type: boolean
       promoted_at:
@@ -251,3 +284,5 @@ properties:
       classification:
         type: string
         enum: [deterministic, llm-fallback]
+      collapse_note:
+        type: string

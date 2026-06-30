@@ -3689,7 +3689,25 @@ def check_section7_finding_reference_semantic(md_path: Path) -> Report:
 _SEV_DOT_TBL = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
 _PRIO_DIGIT_TBL = {"p1": "❶", "p2": "❷", "p3": "❸", "p4": "❹"}
 _F_REF_RE = re.compile(r"(?P<dot>[🔴🟠🟡🟢⚪](?:\s|&nbsp;|•)*)?(?P<link>\[F-(?P<num>\d+)\]\(#f-\d+\))")
-_M_REF_RE = re.compile(r"(?P<circ>[❶❷❸❹❺❻❼❽❾](?:\s|&nbsp;|•)*)?(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))")
+_M_REF_RE = re.compile(
+    r"(?:(?P<circ>"
+    r'(?:<span style="color:#[0-9a-fA-F]{3,6}">)?'
+    r"[❶❷❸❹❺❻❼❽❾]"
+    r"(?:</span>)?"
+    r")(?P<sep>(?:\s|&nbsp;|•)*))?"
+    r"(?P<link>\[M-(?P<num>\d+)\]\(#m-\d+\))"
+)
+_PRIO_CIRCLE_COLOR = {"❶": "#111111", "❷": "#555555", "❸": "#888888", "❹": "#bbbbbb"}
+_PRIO_CIRCLE_STYLE_RE = re.compile(
+    r'(?:<span style="color:#[0-9a-fA-F]{3,6}">)?'
+    r"(?P<glyph>[❶❷❸❹])"
+    r"(?:</span>)?"
+    r"(?P<sep>(?:\s|&nbsp;|•)*)"
+    r"(?P<link>"
+    r"\[M-\d+\]\(#m-\d+\)"
+    r'|<a href="#m-\d+">M-\d+</a>'
+    r")"
+)
 
 
 def _annotate_id_refs(md_path: Path) -> int:
@@ -3755,9 +3773,9 @@ def _annotate_id_refs(md_path: Path) -> int:
             return m.group(0)
         circ = m.group("circ") or ""
         if circ:
-            # Preserve the existing separator but normalize a stale digit to
-            # the priority in threat-model.yaml.
-            return f"{expected}{circ[1:]}{m.group('link')}"
+            # Normalize styled/bare stale digits back to the canonical bare
+            # form; the final presentation pass below reapplies the color.
+            return f"{expected}{m.group('sep') or ''}{m.group('link')}"
         return f"{expected} {m.group('link')}"
 
     text = md_path.read_text(encoding="utf-8")
@@ -3772,6 +3790,42 @@ def _annotate_id_refs(md_path: Path) -> int:
         md_path.write_text(new, encoding="utf-8")
         return 1
     return 0
+
+
+def _style_priority_circles(md: str) -> tuple[str, int]:
+    """Apply the presentation-only priority ramp after all structural passes.
+
+    The circled digit remains the semantic priority marker. The inline colour
+    is deliberately owned by ``qa_checks.py autofix`` so no standalone
+    post-QA script mutates the validated report. Both Markdown links and links
+    already converted to HTML by the fixed-layout table pass are supported.
+    """
+
+    def _sub(match: re.Match[str]) -> str:
+        glyph = match.group("glyph")
+        color = _PRIO_CIRCLE_COLOR[glyph]
+        return f'<span style="color:{color}">{glyph}</span>{match.group("sep")}{match.group("link")}'
+
+    chunks: list[str] = []
+    count = 0
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```|`[^`\n]+`)", md, flags=re.DOTALL):
+        if chunk.startswith("```") or (chunk.startswith("`") and chunk.endswith("`")):
+            chunks.append(chunk)
+            continue
+        styled, replacements = _PRIO_CIRCLE_STYLE_RE.subn(_sub, chunk)
+        chunks.append(styled)
+        count += replacements
+    return "".join(chunks), count
+
+
+def _apply_priority_circle_styling(md_path: Path) -> int:
+    """Style priority circles in place and return the number actually changed."""
+    before = md_path.read_text(encoding="utf-8")
+    styled, matched = _style_priority_circles(before)
+    if not matched or styled == before:
+        return 0
+    md_path.write_text(styled, encoding="utf-8")
+    return matched
 
 
 # ---------------------------------------------------------------------------
@@ -3999,14 +4053,20 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
             _PrePass.reset()
     except Exception:
         apf_fixes = 0
-    # §5 entry-point tables → fixed-layout HTML. MUST be the last mutating pass:
-    # markdown-it does not parse markdown inside a raw <table>, so the cells are
-    # pre-rendered to HTML here, after every link/dot/title/backtick enrichment
-    # above has run on the GFM form. Idempotent.
+    # §5 entry-point tables → fixed-layout HTML. This is the last structural
+    # pass: markdown-it does not parse markdown inside a raw <table>, so cells
+    # are pre-rendered after every link/dot/title/backtick enrichment above.
     as_converted = 0
     as_text, as_converted = _attack_surface_tables_to_html(md.read_text(encoding="utf-8"))
     if as_converted and as_text != md.read_text(encoding="utf-8"):
         md.write_text(as_text, encoding="utf-8")
+        _PrePass.reset()
+    # Presentation-only final pass. It runs after fixed-layout conversion so it
+    # can style both remaining Markdown links and the HTML anchors emitted for
+    # converted tables. This remains inside the contract-authorized final
+    # ``qa_checks.py autofix`` mutation boundary.
+    priority_circle_fixes = _apply_priority_circle_styling(md)
+    if priority_circle_fixes:
         _PrePass.reset()
     fixes = (
         len(link_report.fixes)
@@ -4016,6 +4076,7 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
         + len(attr_strip_report.fixes)
         + apf_fixes
         + as_converted
+        + priority_circle_fixes
     )
     print(json.dumps({"autofix": {"fix_count": fixes}}, indent=2))
     return 0
@@ -4192,6 +4253,11 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "section7_h4_status": section7_h4_status_report.as_dict(),
         "html_nested_finding_link": html_nested_link_report.as_dict(),
     }
+    # ``all`` is the final QA path when Stage 3 is intentionally skipped
+    # (quick/no-QA/PR mode). Apply the same presentation-only final pass as
+    # ``autofix`` so depth does not change the delivered priority styling.
+    if _apply_priority_circle_styling(md):
+        _PrePass.reset()
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
     return 0 if total_issues == 0 else 1

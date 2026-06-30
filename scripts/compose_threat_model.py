@@ -13922,25 +13922,30 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
             if comp:
                 components.setdefault(aid, set()).add(comp)
 
-    # Load discovery output for inputs_questioned (optional).
-    inputs_questioned: list[dict] = []
-    discovery_path = ctx.output_dir / ".actors-discovered.json"
-    if discovery_path.is_file():
-        try:
-            disc = json.loads(discovery_path.read_text(encoding="utf-8"))
-            inputs_questioned = disc.get("inputs_questioned", []) or []
-        except (OSError, json.JSONDecodeError):
-            pass
+    # The resolver is the trust boundary for the LLM-authored discovery
+    # sidecar. Never read `.actors-discovered.json` directly here: invalid
+    # discovery output is rejected before review flags are copied into this
+    # authoritative artifact.
+    inputs_questioned = [item for item in (resolved.get("inputs_questioned") or []) if isinstance(item, dict)]
 
     lines: list[str] = ['<a id="identified-actors"></a>', "### Identified Actors", ""]
 
     # Quick-mode transparency notice (actors.md §12).
-    if (ctx.output_dir / ".discovery-skipped.json").is_file():
-        lines.append(
-            "> _Note: This run used the static actor library only. "
-            "Re-run with `--standard` or `--thorough` to enable LLM-based actor discovery "
-            "for repo-specific actor identification._"
-        )
+    skip_reason = resolved.get("discovery_skip_reason")
+    if skip_reason is None and (ctx.output_dir / ".discovery-skipped.json").is_file():
+        skip_reason = "quick-mode"  # legacy sentinel
+    if skip_reason:
+        if skip_reason == "disabled-by-repo-config":
+            lines.append(
+                "> _Note: Actor discovery is disabled by `.appsec/actors.yaml`; "
+                "this run used the configured static actor layers only._"
+            )
+        else:
+            lines.append(
+                "> _Note: This run used the static actor library only. "
+                "Re-run with `--standard` or `--thorough` to enable LLM-based actor discovery "
+                "for repo-specific actor identification._"
+            )
         lines.append("")
 
     active = [a for a in actors if (a.get("_provenance") or {}).get("active")]

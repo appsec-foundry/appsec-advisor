@@ -2162,6 +2162,21 @@ class TestRenderIdentifiedActors:
         assert "static actor library only" in out
         assert "No actors resolved" in out
 
+    def test_discovery_disabled_notice_uses_configuration_reason(self, tmp_path):
+        ctx = _mk_ctx(tmp_path)
+        (ctx.output_dir / ".actors-resolved.json").write_text(
+            _json.dumps(
+                {
+                    "resolved_actors": [],
+                    "discovery_skip_reason": "disabled-by-repo-config",
+                }
+            ),
+            encoding="utf-8",
+        )
+        out = compose._render_identified_actors(ctx, None, {})
+        assert "disabled by `.appsec/actors.yaml`" in out
+        assert "Re-run with `--standard`" not in out
+
 
 class TestPostureShortLabel:
     def test_abbreviates(self):

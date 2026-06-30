@@ -143,6 +143,66 @@ def test_actor_discovery_contract_rejects_unqualified_proposal():
     assert any("distinct_trust_positions" in error for error in errors)
 
 
+def _valid_resolved_actors() -> dict:
+    return {
+        "schema_version": 1,
+        "quick_mode": True,
+        "discovery_enabled": True,
+        "discovery_skip_reason": "quick-mode",
+        "actors_inputs_fingerprint": "a" * 64,
+        "alias_map": {},
+        "resolved_actors": [
+            {
+                "id": "ACT-D-1",
+                "label": "anonymous-attacker",
+                "access": ["internet"],
+                "capabilities": {
+                    "sophistication": "low",
+                    "dwell_time": "short",
+                    "surface_reach": ["internet"],
+                },
+                "motivation": "financial",
+                "_provenance": {
+                    "layer": "plugin",
+                    "active": True,
+                    "activation_reason": "always-active (no conditions defined)",
+                    "signal_status": "normal",
+                },
+            }
+        ],
+        "confirmed_relevant": [],
+        "inputs_questioned": [],
+        "run_issues": [],
+        "discovery_actor_count": 0,
+        "rejected_discovery_actors": [],
+    }
+
+
+def test_actor_resolved_contract_accepts_runtime_fields():
+    ok, errors = vi.validate_actors_resolved(_valid_resolved_actors())
+    assert ok, errors
+
+
+def test_actor_resolved_contract_rejects_unknown_runtime_field():
+    data = _valid_resolved_actors()
+    data["resolved_actors"][0]["_provenance"]["invented"] = True
+    ok, errors = vi.validate_actors_resolved(data)
+    assert not ok
+    assert any("invented" in error for error in errors)
+
+
+def test_actor_repo_contract_rejects_invalid_discovery_config():
+    ok, errors = vi.validate_actors_repo({"discovery": {"enabled": "yes", "max_proposed": 99}})
+    assert not ok
+    assert any("enabled" in error or "max_proposed" in error for error in errors)
+
+
+def test_actor_contract_rejects_incomplete_new_actor():
+    ok, errors = vi.validate_actor({"id": "ACT-R-1", "label": "repo-actor"})
+    assert not ok
+    assert any("access" in error or "capabilities" in error for error in errors)
+
+
 # ---------------------------------------------------------------------------
 # stride validation
 # ---------------------------------------------------------------------------

@@ -215,14 +215,7 @@ class TestRenderIdentifiedActorsExtra:
                             "label": "User",
                             "_provenance": {"active": True, "layer": "client"},
                         }
-                    ]
-                }
-            ),
-            encoding="utf-8",
-        )
-        (ctx.output_dir / ".actors-discovered.json").write_text(
-            _json.dumps(
-                {
+                    ],
                     "inputs_questioned": [
                         {
                             "id": "ACT-QQ",
@@ -230,7 +223,7 @@ class TestRenderIdentifiedActorsExtra:
                             "recommendation": "disable",
                         },
                         {"id": "ACT-RR", "reason": "unused"},
-                    ]
+                    ],
                 }
             ),
             encoding="utf-8",
@@ -247,9 +240,12 @@ class TestRenderIdentifiedActorsExtra:
             _json.dumps({"resolved_actors": [{"id": "ACT-01", "label": "U", "_provenance": {"active": True}}]}),
             encoding="utf-8",
         )
-        (ctx.output_dir / ".actors-discovered.json").write_text("{bad", encoding="utf-8")
+        (ctx.output_dir / ".actors-discovered.json").write_text(
+            _json.dumps({"inputs_questioned": ["not-a-mapping"]}),
+            encoding="utf-8",
+        )
         out = compose._render_identified_actors(ctx, None, {})
-        # Malformed discovery file -> no "flagged for review" section but render OK.
+        # Raw discovery output is never consumed by the renderer.
         assert "Actors flagged for review" not in out
         assert "ACT-01" in out
 

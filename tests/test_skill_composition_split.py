@@ -214,3 +214,10 @@ def test_marker_lifecycle_section_is_single_source(skill_impl_text, heading):
     assert skill_impl_text.count(f"### {heading}") == 1, (
         f"'{heading}' must appear exactly once — the divergent duplicate was removed"
     )
+
+
+def test_no_post_qa_report_mutator_is_wired(skill_impl_text):
+    """The canonical section numbers and QA-clean report must reach exports unchanged."""
+    assert "renumber_sections.py" not in skill_impl_text
+    assert "style_priority_circles.py" not in skill_impl_text
+    assert "`qa_checks.py autofix` owns the final presentation-only gray ramp" in skill_impl_text
