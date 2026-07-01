@@ -17,6 +17,7 @@ Usage:
     qa_checks.py summary_bullets <threat-model.md>
     qa_checks.py fragments     <output-dir>
     qa_checks.py contract      <threat-model.md> [<sections-contract.yaml>]
+    qa_checks.py final_structure <threat-model.md> [<sections-contract.yaml>]
     qa_checks.py repair_plan   <threat-model.md> <output-dir> [<sections-contract.yaml>]
     qa_checks.py evidence_integrity <output-dir> <repo-root>
     qa_checks.py unmasked_secrets <threat-model.md> [<output-dir>]
@@ -83,6 +84,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import _safe_cond
+from _atomic_io import atomic_write_text
 from check_reference_format import lint_text as _reference_format_lint
 from perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
 from secret_scan import scan_file as _scan_file_for_secrets
@@ -1484,26 +1486,48 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
             continue
         expected_headings.append(heading)
 
-    # Strip inline `<a id="…"></a>` anchors before comparing so headings like
+    # Strip fenced source snippets before heading discovery so a literal
+    # ``## 8. Findings Register`` inside evidence cannot satisfy the document
+    # contract. Inline anchors are removed so headings like
     # `## <a id="appendix-a-vektor-taxonomy"></a>Appendix A — Vektor Taxonomy`
     # match the contract's `## Appendix A — Vektor Taxonomy`.
-    stripped_text = re.sub(r'<a id="[^"]*"></a>', "", text)
+    stripped_text = re.sub(r'<a id="[^"]*"></a>', "", _strip_code_fences(text))
+
+    def has_substance(body: str) -> bool:
+        substance = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+        substance = re.sub(r'<a\s+id="[^"]+"></a>', "", substance)
+        return any(
+            line.strip() and line.strip() != "---" and not re.match(r"^\s*#{1,6}\s+", line)
+            for line in substance.splitlines()
+        )
 
     last_idx = -1
     for heading in expected_headings:
-        match = re.search(
-            rf"(?m)^{re.escape(heading)}[ \t]*$",
-            stripped_text,
-        )
+        heading_re = re.compile(rf"(?m)^{re.escape(heading)}[ \t]*$")
+        matches = list(heading_re.finditer(stripped_text))
+        match = matches[0] if matches else None
         idx = match.start() if match else -1
         if idx < 0:
             report.issues.append(f"expected section missing: {heading!r}")
             continue
+        if len(matches) > 1:
+            report.issues.append(f"duplicate section heading: {heading!r} appears {len(matches)} times")
         if idx < last_idx:
             report.issues.append(
                 f"section order violation — {heading!r} appears before a section that should come later"
             )
         last_idx = idx
+
+        # A heading by itself is not a rendered section. Validate the final
+        # Markdown rather than trusting the composer's earlier integrity
+        # sidecar: authorized post-compose mutations run after that sidecar was
+        # written and must not be able to leave a heading-only chapter behind.
+        if heading.startswith("## "):
+            tail = stripped_text[match.end() :]
+            next_h2 = re.search(r"(?m)^##\s+", tail)
+            body = tail[: next_h2.start()] if next_h2 else tail
+            if not has_substance(body):
+                report.issues.append(f"section has no substantive body: {heading!r}")
 
     # 1b. Required sub-section presence + order within each top-level
     # section. Historically the §7 contract listed required_subsections but
@@ -1530,39 +1554,71 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
         )
         last_sub_idx = -1
         for sub in required_subs:
+            if isinstance(sub, str):
+                referenced = (contract.get("sections") or {}).get(sub) or {}
+                referenced_heading = (referenced.get("heading") or "").strip()
+                heading_match = re.fullmatch(r"(#{1,6})\s+(.+)", referenced_heading)
+                if not heading_match:
+                    report.issues.append(f"invalid required subsection reference under {parent_heading!r}: {sub!r}")
+                    continue
+                sub = {
+                    "level": len(heading_match.group(1)),
+                    "title": heading_match.group(2),
+                }
             if not isinstance(sub, dict):
+                report.issues.append(f"invalid required subsection declaration under {parent_heading!r}: {sub!r}")
                 continue
             sub_cond = sub.get("condition")
             if sub_cond and not _safe_eval_cond(sub_cond, env):
                 continue
             level = int(sub.get("level") or 3)
             title = (sub.get("title") or "").strip()
-            pattern = (sub.get("pattern") or "").strip()
+            pattern = (sub.get("pattern") or sub.get("title_pattern") or "").strip()
             if not title and not pattern:
+                report.issues.append(f"invalid required subsection declaration under {parent_heading!r}: {sub!r}")
                 continue
             hashes = "#" * level
             if title:
                 sub_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+{re.escape(title)}[ \t]*$")
                 display = f"{hashes} {title}"
+                sub_matches = list(sub_re.finditer(parent_body))
             else:
                 try:
-                    sub_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+{pattern}[ \t]*$")
+                    title_re = re.compile(pattern)
                 except re.error as err:
                     report.issues.append(
                         f"invalid required_subsection pattern under {parent_heading!r}: /{pattern}/ ({err})"
                     )
                     continue
+                heading_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+(?P<title>[^\n]+?)[ \t]*$")
+                sub_matches = [
+                    candidate
+                    for candidate in heading_re.finditer(parent_body)
+                    if title_re.fullmatch(candidate.group("title").strip())
+                ]
                 display = f"{hashes} /{pattern}/"
-            sub_match = sub_re.search(parent_body)
+            sub_match = sub_matches[0] if sub_matches else None
             if not sub_match:
                 report.issues.append(f"required subsection missing under {parent_heading!r}: {display!r}")
                 continue
+            if len(sub_matches) > 1:
+                report.issues.append(
+                    f"duplicate required subsection under {parent_heading!r}: "
+                    f"{display!r} appears {len(sub_matches)} times"
+                )
             if sub_match.start() < last_sub_idx:
                 report.issues.append(
                     f"required subsection order violation under {parent_heading!r}: "
                     f"{display!r} appears before a subsection that should come earlier"
                 )
             last_sub_idx = sub_match.start()
+            sub_tail = parent_body[sub_match.end() :]
+            next_peer_or_parent = re.search(rf"(?m)^#{{1,{level}}}\s+", sub_tail)
+            sub_body = sub_tail[: next_peer_or_parent.start()] if next_peer_or_parent else sub_tail
+            if not has_substance(sub_body):
+                report.issues.append(
+                    f"required subsection has no substantive body under {parent_heading!r}: {display!r}"
+                )
 
     # 2. Forbidden MS subsection patterns.
     ms_info = _slice_management_summary(text)
@@ -1841,6 +1897,7 @@ def build_repair_plan(
     # fires for them as well, and each check type has its own action branch
     # below with targeted remediation instructions.
     mermaid_report = check_mermaid_syntax(md_path)
+    toc_contract_report = check_toc_contract(md_path, contract_path)
     toc_nested_report = check_toc_nested_links(md_path)
     infobox_report = check_infobox_completeness(md_path)
     auth_report = check_auth_method_decomposition(md_path, contract_path)
@@ -1864,6 +1921,7 @@ def build_repair_plan(
     placeholder_report = check_placeholders(md_path)
     yaml_md_report = check_yaml_md_consistency(md_path, output_dir / "threat-model.yaml")
     mermaid_issues = list(mermaid_report.issues)
+    toc_contract_issues = list(toc_contract_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     infobox_issues = list(infobox_report.issues)
     auth_issues = list(auth_report.issues)
@@ -1881,6 +1939,7 @@ def build_repair_plan(
     placeholder_issues = list(placeholder_report.issues)
     yaml_md_issues = list(yaml_md_report.issues)
     report.issues.extend(mermaid_issues)
+    report.issues.extend(toc_contract_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(infobox_issues)
     report.issues.extend(auth_issues)
@@ -1908,6 +1967,22 @@ def build_repair_plan(
     report.issues.extend(yaml_md_issues)
 
     actions: list[dict] = []
+    if toc_contract_issues:
+        actions.append(
+            {
+                "raw_issue": "; ".join(toc_contract_issues),
+                "type": "toc_contract",
+                "section_id": "toc",
+                "fragments_to_rewrite": [],
+                "remediation": (
+                    "The deterministic TOC no longer matches the final chapter "
+                    "set one-to-one. Re-run compose_threat_model.py and the final "
+                    "QA tail. If the mismatch persists, fix `_compute_toc_entries` "
+                    "or the post-compose mutator that changed headings; do not "
+                    "hand-edit the generated TOC."
+                ),
+            }
+        )
     # One action per mermaid-syntax finding. The offending fragment is almost
     # always `.fragments/attack-walkthroughs.md` (sequence diagrams) or
     # `.fragments/architecture-diagrams.md` (flowchart/graph). Pointing at
@@ -2256,6 +2331,7 @@ def build_repair_plan(
         # action for the same violation.
         if (
             raw in mermaid_issues
+            or raw in toc_contract_issues
             or raw in toc_nested_issues
             or raw in infobox_issues
             or raw in auth_issues
@@ -2586,7 +2662,7 @@ def cmd_repair_plan(md_path: Path, output_dir: Path, contract_path: Path) -> int
             pass
         print(json.dumps(plan, indent=2))
         return 0
-    plan_path.write_text(json.dumps(plan, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(plan_path, json.dumps(plan, indent=2) + "\n")
     print(json.dumps(plan, indent=2))
     if plan["status"] == "manual_review":
         return 3
@@ -3787,7 +3863,7 @@ def _annotate_id_refs(md_path: Path) -> int:
             out.append(_M_REF_RE.sub(_m_sub, _F_REF_RE.sub(_f_sub, chunk)))
     new = "".join(out)
     if new != text:
-        md_path.write_text(new, encoding="utf-8")
+        atomic_write_text(md_path, new)
         return 1
     return 0
 
@@ -3824,7 +3900,7 @@ def _apply_priority_circle_styling(md_path: Path) -> int:
     styled, matched = _style_priority_circles(before)
     if not matched or styled == before:
         return 0
-    md_path.write_text(styled, encoding="utf-8")
+    atomic_write_text(md_path, styled)
     return matched
 
 
@@ -4015,19 +4091,19 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
     _PrePass.reset()
     link_report, text_after_links = check_links(md, repo_root)
     if text_after_links != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_links, encoding="utf-8")
+        atomic_write_text(md, text_after_links)
         _PrePass.reset()
     anchor_report, text_after_anchors = linkify_anchors(md)
     if text_after_anchors != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_anchors, encoding="utf-8")
+        atomic_write_text(md, text_after_anchors)
         _PrePass.reset()
     ms_report, text_after_ms = check_ms_structure(md)
     if text_after_ms != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_ms, encoding="utf-8")
+        atomic_write_text(md, text_after_ms)
         _PrePass.reset()
     cell_report, text_after_cell = check_cell_format(md)
     if text_after_cell != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_cell, encoding="utf-8")
+        atomic_write_text(md, text_after_cell)
         _PrePass.reset()
     attr_strip_report, _ = strip_heading_attribute_artifacts(md)
     if attr_strip_report.fixes:
@@ -4049,7 +4125,7 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
 
         _apf_text, apf_fixes = _apf.apply_code_formatting(md.read_text(encoding="utf-8"))
         if apf_fixes and _apf_text != md.read_text(encoding="utf-8"):
-            md.write_text(_apf_text, encoding="utf-8")
+            atomic_write_text(md, _apf_text)
             _PrePass.reset()
     except Exception:
         apf_fixes = 0
@@ -4059,7 +4135,7 @@ def cmd_autofix(md_path: Path, repo_root: Path) -> int:
     as_converted = 0
     as_text, as_converted = _attack_surface_tables_to_html(md.read_text(encoding="utf-8"))
     if as_converted and as_text != md.read_text(encoding="utf-8"):
-        md.write_text(as_text, encoding="utf-8")
+        atomic_write_text(md, as_text)
         _PrePass.reset()
     # Presentation-only final pass. It runs after fixed-layout conversion so it
     # can style both remaining Markdown links and the HTML anchors emitted for
@@ -4093,23 +4169,23 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # the pre-pass cache so the next check re-reads fresh content.
     link_report, text_after_links = check_links(md, repo_root)
     if text_after_links != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_links, encoding="utf-8")
+        atomic_write_text(md, text_after_links)
         _PrePass.reset()
     # Check 10 — anchors (apply in place against the already-linkified text).
     anchor_report, text_after_anchors = linkify_anchors(md)
     if text_after_anchors != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_anchors, encoding="utf-8")
+        atomic_write_text(md, text_after_anchors)
         _PrePass.reset()
     # Check MS structure (apply safe rewrites in place).
     ms_report, text_after_ms = check_ms_structure(md)
     if text_after_ms != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_ms, encoding="utf-8")
+        atomic_write_text(md, text_after_ms)
         _PrePass.reset()
     # Cell format — stack multi-link ID cells with <br/>.  Auto-fix in
     # place so downstream presentation checks see the corrected text.
     cell_report, text_after_cell = check_cell_format(md)
     if text_after_cell != md.read_text(encoding="utf-8"):
-        md.write_text(text_after_cell, encoding="utf-8")
+        atomic_write_text(md, text_after_cell)
         _PrePass.reset()
     contract_report = check_contract(md)
     xref_report = check_xrefs(md)
@@ -4125,6 +4201,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         _PrePass.reset()
     heading_report = check_heading_hygiene(md)
     toc_report = check_toc_closure(md)
+    toc_contract_report = check_toc_contract(md)
     # New structural / rendering checks introduced to catch LLM-authored
     # defects that the contract gate alone does not notice (nested TOC
     # links, broken mermaid, thin metadata).
@@ -4225,6 +4302,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
         "invariants": inv_report.as_dict(),
         "heading_hygiene": heading_report.as_dict(),
         "toc_closure": toc_report.as_dict(),
+        "toc_contract": toc_contract_report.as_dict(),
         "mermaid_syntax": mermaid_report.as_dict(),
         "toc_nested_links": toc_nested_report.as_dict(),
         "infobox_completeness": infobox_report.as_dict(),
@@ -4261,6 +4339,20 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     print(json.dumps(summary, indent=2))
     total_issues = sum(s["issue_count"] for s in summary.values())
     return 0 if total_issues == 0 else 1
+
+
+def cmd_final_structure(
+    md_path: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> int:
+    """Read-only final gate for the persisted Markdown after every mutator."""
+    reports = {
+        "contract": check_contract(md_path, contract_path).as_dict(),
+        "toc_contract": check_toc_contract(md_path, contract_path).as_dict(),
+        "toc_closure": check_toc_closure(md_path).as_dict(),
+    }
+    print(json.dumps(reports, indent=2))
+    return 0 if sum(r["issue_count"] for r in reports.values()) == 0 else 1
 
 
 # ---------------------------------------------------------------------------
@@ -4312,7 +4404,7 @@ def strip_heading_attribute_artifacts(md_path: Path) -> tuple[Report, str]:
     if stripped:
         report.fixes.append(f"stripped attribute trailer from {stripped} headings")
         text = "".join(out_lines)
-        md_path.write_text(text, encoding="utf-8")
+        atomic_write_text(md_path, text)
     return report, text
 
 
@@ -4382,6 +4474,7 @@ def check_heading_hygiene(md_path: Path) -> Report:
 
 
 from _slug import github_render_slug as _github_render_slug  # noqa: E402  (R8 — single source of truth)
+from _slug import github_slug as _github_slug  # noqa: E402
 
 
 def check_toc_closure(md_path: Path) -> Report:
@@ -4425,6 +4518,99 @@ def check_toc_closure(md_path: Path) -> Report:
             report.issues.append(f"unresolved TOC/link anchor: #{slug}")
     if broken > 25:
         report.issues.append(f"…and {broken - 25} more unresolved anchors (truncated)")
+    return report
+
+
+_TOC_TOP_ENTRY_RE = re.compile(
+    r"^(?:\d+[a-z]?\.|-)\s+\[(?P<label>[^\]]+)\]\(#(?P<target>[^)]+)\)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def check_toc_contract(
+    md_path: Path,
+    contract_path: Path = DEFAULT_CONTRACT_PATH,
+) -> Report:
+    """Require a one-to-one, ordered mapping between rendered chapters and TOC.
+
+    ``check_toc_closure`` proves only that links which already exist resolve.
+    It cannot detect an omitted entry or a label redirected to another valid
+    anchor. This check derives the expected top-level TOC from the canonical
+    contract and the chapters actually present in the final Markdown, then
+    compares label, target, order, and multiplicity exactly.
+    """
+    report = Report(check="toc_contract")
+    contract = _read_contract(contract_path)
+    if not isinstance(contract, dict) or not contract:
+        report.issues.append(f"contract is not a mapping or empty: {contract_path}")
+        return report
+
+    raw = md_path.read_text(encoding="utf-8")
+    text = _strip_code_fences(raw)
+    toc_start = re.search(r"(?m)^## Table of Contents[ \t]*$", text)
+    if not toc_start:
+        report.issues.append("TOC contract: `## Table of Contents` heading missing")
+        return report
+    tail = text[toc_start.end() :]
+    toc_end = re.search(r"(?m)^(?:---|##\s+)", tail)
+    toc_body = tail[: toc_end.start()] if toc_end else tail
+    actual = [(m.group("label").strip(), m.group("target").strip()) for m in _TOC_TOP_ENTRY_RE.finditer(toc_body)]
+
+    # Strip explicit anchors before exact heading matching. Top-level entries
+    # are contract sections with H2 headings; H3-only entries such as
+    # Identified Actors are children and intentionally excluded here.
+    body_no_anchors = re.sub(r'<a\s+id="[^"]+"></a>', "", text)
+    expected: list[tuple[str, str]] = []
+    for item in contract.get("document", {}).get("order", []):
+        sid = item if isinstance(item, str) else item.get("id")
+        if sid in {
+            "infobox",
+            "changelog",
+            "quick_mode_notice",
+            "toc",
+            "skipped_sections_placeholder",
+        }:
+            continue
+        section = (contract.get("sections") or {}).get(sid) or {}
+        heading = (section.get("heading") or "").strip()
+        if not heading.startswith("## "):
+            continue
+        matches = list(re.finditer(rf"(?m)^{re.escape(heading)}[ \t]*$", body_no_anchors))
+        if not matches:
+            # Section presence/conditions are owned by check_contract. A
+            # condition-false section contributes no TOC entry.
+            continue
+        clean = heading[3:].strip()
+        title = re.sub(r"^\d+[a-z]?(?:\.\d+)?\.\s+", "", clean, flags=re.IGNORECASE)
+        # Mirror the composer's TOC label generation plus its final
+        # _normalize_emdashes pass (headings retain the em dash; TOC list
+        # labels are mid-line prose and therefore use a spaced ASCII hyphen).
+        title = title.replace("`", "").replace(" — ", " - ")
+        target = (section.get("anchor") or _github_slug(heading)).strip()
+        expected.append((title, target))
+
+    if actual != expected:
+        limit = max(len(actual), len(expected))
+        for idx in range(limit):
+            got = actual[idx] if idx < len(actual) else None
+            want = expected[idx] if idx < len(expected) else None
+            if got != want:
+                report.issues.append(f"TOC contract mismatch at position {idx + 1}: expected {want!r}, got {got!r}")
+                if len(report.issues) >= 25:
+                    break
+
+    # Explicit anchors are declarations and therefore must be globally unique.
+    # Converting to a set, as closure checks do, hides duplicate IDs.
+    anchor_counts: dict[str, int] = {}
+    for anchor in re.findall(r'<a\s+id="([^"]+)"', text):
+        key = anchor.lower()
+        anchor_counts[key] = anchor_counts.get(key, 0) + 1
+    for anchor, count in sorted(anchor_counts.items()):
+        if count > 1:
+            report.issues.append(f"duplicate explicit anchor id: #{anchor} appears {count} times")
+
+    if not report.issues:
+        report.ok = len(expected)
     return report
 
 
@@ -4488,7 +4674,7 @@ def check_mermaid_syntax(md_path: Path) -> Report:
     # are idempotent — a second pass on patched text is a no-op.
     new_raw, autofix_descriptions = _apply_mermaid_autofixes(raw)
     if new_raw != raw:
-        md_path.write_text(new_raw, encoding="utf-8")
+        atomic_write_text(md_path, new_raw)
         raw = new_raw
         report.fixes.extend(autofix_descriptions)
 
@@ -10063,7 +10249,7 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py links <md> <repo-root>", file=sys.stderr)
             return 2
         report, new_text = check_links(Path(argv[2]), Path(argv[3]))
-        Path(argv[2]).write_text(new_text, encoding="utf-8")
+        atomic_write_text(Path(argv[2]), new_text)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "xrefs":
@@ -10076,7 +10262,7 @@ def main(argv: list[str]) -> int:
         return 0 if not report.issues else 1
     if sub == "anchors":
         report, new_text = linkify_anchors(Path(argv[2]))
-        Path(argv[2]).write_text(new_text, encoding="utf-8")
+        atomic_write_text(Path(argv[2]), new_text)
         print(json.dumps(report.as_dict(), indent=2))
         return 0
     if sub == "invariants":
@@ -10088,7 +10274,7 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py ms_structure <md>", file=sys.stderr)
             return 2
         report, new_text = check_ms_structure(Path(argv[2]))
-        Path(argv[2]).write_text(new_text, encoding="utf-8")
+        atomic_write_text(Path(argv[2]), new_text)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "contract":
@@ -10099,6 +10285,15 @@ def main(argv: list[str]) -> int:
         report = check_contract(Path(argv[2]), contract)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
+    if sub == "final_structure":
+        if len(argv) not in (3, 4):
+            print(
+                "usage: qa_checks.py final_structure <md> [<contract.yaml>]",
+                file=sys.stderr,
+            )
+            return 2
+        contract = Path(argv[3]) if len(argv) == 4 else DEFAULT_CONTRACT_PATH
+        return cmd_final_structure(Path(argv[2]), contract)
     if sub == "repair_plan":
         if len(argv) not in (4, 5):
             print(
@@ -10130,6 +10325,14 @@ def main(argv: list[str]) -> int:
             print("usage: qa_checks.py toc_closure <md>", file=sys.stderr)
             return 2
         report = check_toc_closure(Path(argv[2]))
+        print(json.dumps(report.as_dict(), indent=2))
+        return 0 if not report.issues else 1
+    if sub == "toc_contract":
+        if len(argv) not in (3, 4):
+            print("usage: qa_checks.py toc_contract <md> [<contract.yaml>]", file=sys.stderr)
+            return 2
+        contract = Path(argv[3]) if len(argv) == 4 else DEFAULT_CONTRACT_PATH
+        report = check_toc_contract(Path(argv[2]), contract)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "section7_h4_status":
@@ -10311,7 +10514,7 @@ def main(argv: list[str]) -> int:
             return 2
         report, new_text = check_cell_format(Path(argv[2]))
         if new_text != Path(argv[2]).read_text(encoding="utf-8"):
-            Path(argv[2]).write_text(new_text, encoding="utf-8")
+            atomic_write_text(Path(argv[2]), new_text)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if not report.issues else 1
     if sub == "summary_bullets":

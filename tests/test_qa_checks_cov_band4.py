@@ -614,10 +614,12 @@ def test_cli_unknown_subcommand(tmp_path):
         "links",
         "ms_structure",
         "contract",
+        "final_structure",
         "all",
         "autofix",
         "heading_hygiene",
         "toc_closure",
+        "toc_contract",
         "section7_h4_status",
         "attack_tree_node_id_leak",
         "section_713_no_table",
@@ -717,12 +719,20 @@ def test_cli_contract(model):
     _ok(_run(["contract", str(model)]))
 
 
+def test_cli_final_structure(model):
+    _ok(_run(["final_structure", str(model)]))
+
+
 def test_cli_heading_hygiene(model):
     _ok(_run(["heading_hygiene", str(model)]))
 
 
 def test_cli_toc_closure(model):
     _ok(_run(["toc_closure", str(model)]))
+
+
+def test_cli_toc_contract(model):
+    _ok(_run(["toc_contract", str(model)]))
 
 
 def test_cli_section7_h4_status(model):

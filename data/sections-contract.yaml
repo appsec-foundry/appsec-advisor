@@ -545,7 +545,7 @@ sections:
   # data. Every cell except the one-line class description is derived.
 
   mitigations:
-    heading: "### Mitigations"
+    heading: "### Top Mitigations"
     heading_numbered: false
     fragment_type: computed                         # derived from threat-model.yaml mitigations[]
     sub_tables:

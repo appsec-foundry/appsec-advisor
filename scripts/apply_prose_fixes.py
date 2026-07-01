@@ -75,6 +75,7 @@ import re
 import sys
 from pathlib import Path
 
+from _atomic_io import atomic_write_text
 from _slug import github_slug
 from perimeter_patterns import strip_perimeter_absence_sentences
 
@@ -1020,7 +1021,7 @@ def main(argv: list[str]) -> int:
     text = md_path.read_text(encoding="utf-8")
     new_text, n_fixes = apply_fixes(text)
     if n_fixes:
-        md_path.write_text(new_text, encoding="utf-8")
+        atomic_write_text(md_path, new_text)
         print(
             # Note: `rhetorical-severity` here only rewrites the one phrase
             # `trivially crackable` → `recoverable by GPU dictionary attack

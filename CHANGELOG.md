@@ -10,6 +10,7 @@ All notable changes to this project are documented here.
 - Actor resolution now remains active at quick depth, honors repository discovery opt-outs, reuses valid discovery caches, and validates the resolved actor artifact before rendering.
 - Reports retain their contract-defined section numbers across Markdown, incremental runs, and exports; mitigation priority colors are applied inside the final QA pass.
 - Referenced report IDs such as `M-001` and `F-001` stay on one line in HTML and PDF exports.
+- Final report validation now blocks missing or redirected TOC entries, duplicate or empty sections, missing required fragments, and absent or inconsistent render-integrity certificates.
 
 ## 0.4.0-beta (2026-06-28)
 

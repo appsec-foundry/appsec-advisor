@@ -42,6 +42,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _atomic_io import atomic_write_json  # noqa: E402
 from preserve_lib import depth_rank, preservable_sections  # noqa: E402
 
 # Outcomes the composer emits that mean "present with real content".
@@ -82,7 +83,96 @@ def _snapshot_state(output_dir: Path) -> tuple[str, set[str]]:
     return origin, captured
 
 
+def _expected_section_ids(plugin_root: Path) -> list[str] | None:
+    """Load the exact document-order IDs the composer must manifest."""
+    try:
+        import yaml
+
+        contract = yaml.safe_load((plugin_root / "data" / "sections-contract.yaml").read_text(encoding="utf-8"))
+        order = ((contract or {}).get("document") or {}).get("order")
+        if not isinstance(order, list) or not order:
+            return None
+        ids = []
+        for item in order:
+            if isinstance(item, str):
+                ids.append(item)
+            elif isinstance(item, dict):
+                ids.append(item.get("id"))
+            else:
+                return None
+        if not all(isinstance(sid, str) and sid for sid in ids):
+            return None
+        return ids
+    except (OSError, yaml.YAMLError, TypeError):
+        return None
+
+
+def _certificate_error(integrity: dict, sections: list[dict]) -> str:
+    """Return a reason when aggregate certificate fields disagree with rows."""
+    allowed_outcomes = {
+        "rendered",
+        "fallback",
+        "empty",
+        "degraded",
+        "skipped_conditional",
+    }
+    for index, section in enumerate(sections):
+        if not isinstance(section, dict):
+            return f"section manifest entry {index} is not a mapping"
+        if not isinstance(section.get("id"), str) or not section["id"]:
+            return f"section manifest entry {index} has no valid id"
+        if not isinstance(section.get("in_scope"), bool):
+            return f"section manifest entry {index} has non-boolean in_scope"
+        outcome = section.get("outcome")
+        if outcome not in allowed_outcomes:
+            return f"section manifest entry {index} has invalid outcome: {outcome!r}"
+        for field in ("expected_fragments", "present_fragments"):
+            value = section.get(field)
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                return f"section manifest entry {index} has invalid {field}"
+        if section["in_scope"] == (outcome == "skipped_conditional"):
+            return (
+                f"section manifest entry {index} has inconsistent in_scope/outcome: {section['in_scope']!r}/{outcome!r}"
+            )
+
+    in_scope = [section for section in sections if section["in_scope"]]
+
+    def count(outcome: str) -> int:
+        return sum(section["outcome"] == outcome for section in in_scope)
+
+    expected = {
+        "sections_in_scope": len(in_scope),
+        "sections_rendered": count("rendered"),
+        "sections_fallback": count("fallback"),
+        "sections_degraded": count("degraded"),
+        "sections_empty": count("empty"),
+        "sections_skipped_conditional": len(sections) - len(in_scope),
+        "fragments_expected": sum(len(section.get("expected_fragments") or []) for section in in_scope),
+        "fragments_wired": sum(len(section.get("present_fragments") or []) for section in in_scope),
+    }
+    expected["report_integrity_ok"] = expected["sections_degraded"] == 0 and expected["sections_empty"] == 0
+    clean = expected["sections_rendered"] + expected["sections_fallback"]
+    expected["integrity_pct"] = 100 if not in_scope else round(100 * clean / len(in_scope))
+    expected["broken_sections"] = [section["id"] for section in in_scope if section["outcome"] in _PRESENT_BAD]
+
+    for key, value in expected.items():
+        if integrity.get(key) != value:
+            return (
+                f"render-integrity aggregate {key!r} is inconsistent "
+                f"(expected={value!r}, actual={integrity.get(key)!r})"
+            )
+    return ""
+
+
 def build_matrix(output_dir: Path, plugin_root: Path) -> dict:
+    md_path = output_dir / "threat-model.md"
+    if not md_path.is_file():
+        return {"error": "threat-model.md missing or empty", "rows": []}
+    try:
+        if not md_path.read_text(encoding="utf-8").strip():
+            return {"error": "threat-model.md missing or empty", "rows": []}
+    except OSError:
+        return {"error": "threat-model.md unreadable", "rows": []}
     integrity_path = output_dir / ".render-integrity.json"
     if not integrity_path.is_file():
         return {"error": "no .render-integrity.json — compose must run first", "rows": []}
@@ -90,7 +180,26 @@ def build_matrix(output_dir: Path, plugin_root: Path) -> dict:
         integrity = json.loads(integrity_path.read_text(encoding="utf-8"))
     except (OSError, ValueError, json.JSONDecodeError):
         return {"error": "unreadable .render-integrity.json", "rows": []}
-
+    if not isinstance(integrity, dict) or integrity.get("schema_version") != 1:
+        return {"error": "invalid .render-integrity.json schema/version", "rows": []}
+    sections = integrity.get("sections")
+    if not isinstance(sections, list) or not sections:
+        return {"error": "empty .render-integrity.json section manifest", "rows": []}
+    certificate_error = _certificate_error(integrity, sections)
+    if certificate_error:
+        return {"error": certificate_error, "rows": []}
+    expected_ids = _expected_section_ids(plugin_root)
+    if expected_ids is None:
+        return {"error": "sections-contract.yaml missing or unreadable", "rows": []}
+    actual_ids = [sec["id"] for sec in sections]
+    if actual_ids != expected_ids:
+        return {
+            "error": (
+                "render-integrity section manifest does not match document.order "
+                f"(expected={expected_ids}, actual={actual_ids})"
+            ),
+            "rows": [],
+        }
     cur_depth = _current_depth(output_dir)
     origin_depth, snap_captured = _snapshot_state(output_dir)
     # A deeper snapshot exists when the current run is strictly shallower than it.
@@ -98,7 +207,7 @@ def build_matrix(output_dir: Path, plugin_root: Path) -> dict:
     preservable = {s["id"] for s in preservable_sections(plugin_root)}
 
     rows = []
-    for sec in integrity.get("sections") or []:
+    for sec in sections:
         sid = sec.get("id")
         outcome = sec.get("outcome")
         in_scope = bool(sec.get("in_scope"))
@@ -158,12 +267,17 @@ def _print_matrix(m: dict) -> None:
 def run(output_dir: Path, plugin_root: Path) -> int:
     m = build_matrix(output_dir, plugin_root)
     try:
-        (output_dir / ".section-integrity.json").write_text(json.dumps(m, indent=2) + "\n", encoding="utf-8")
+        atomic_write_json(
+            output_dir / ".section-integrity.json",
+            m,
+            indent=2,
+            sort_keys=False,
+        )
     except OSError:
         pass
     _print_matrix(m)
     if m.get("error"):
-        return 0  # nothing to assert yet — non-fatal
+        return 2
     if not m["ok"]:
         sys.stderr.write(
             "section-integrity: FAIL — "
@@ -182,7 +296,7 @@ def main() -> int:
     args = p.parse_args()
     if not args.output_dir.is_dir():
         sys.stderr.write(f"section-integrity: output dir not found: {args.output_dir}\n")
-        return 0
+        return 2
     return run(args.output_dir, args.plugin_root)
 
 

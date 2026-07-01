@@ -221,3 +221,33 @@ def test_no_post_qa_report_mutator_is_wired(skill_impl_text):
     assert "renumber_sections.py" not in skill_impl_text
     assert "style_priority_circles.py" not in skill_impl_text
     assert "`qa_checks.py autofix` owns the final presentation-only gray ramp" in skill_impl_text
+
+
+def test_final_structure_gate_runs_after_last_mutation_before_exports(skill_impl_text):
+    completion_idx = skill_impl_text.find("### Normal Completion (DRY_RUN=false)")
+    patch_idx = skill_impl_text.find("--patch-placeholders \\", completion_idx)
+    no_print_idx = skill_impl_text.find("--no-print", patch_idx)
+    final_idx = skill_impl_text.find("final_structure", patch_idx)
+    completeness_idx = skill_impl_text.find("--phase render", final_idx)
+    integrity_idx = skill_impl_text.find("section_integrity.py", completeness_idx)
+    summary_idx = skill_impl_text.find(
+        'python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py"',
+        integrity_idx,
+    )
+    pdf_idx = skill_impl_text.find("export_pdf.py", integrity_idx)
+    html_idx = skill_impl_text.find("export_html.py", integrity_idx)
+
+    assert -1 not in {
+        completion_idx,
+        patch_idx,
+        no_print_idx,
+        final_idx,
+        completeness_idx,
+        integrity_idx,
+        summary_idx,
+        pdf_idx,
+        html_idx,
+    }
+    assert patch_idx < no_print_idx < final_idx < completeness_idx < integrity_idx
+    assert integrity_idx < summary_idx < pdf_idx
+    assert integrity_idx < summary_idx < html_idx

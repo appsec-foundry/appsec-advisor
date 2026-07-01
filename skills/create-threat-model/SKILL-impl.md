@@ -4079,10 +4079,61 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
     $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \
     $( [ "$VERBOSE_REPORT"       = "true" ] && echo "--verbose" ) \
     $( [ "$QUIET"                = "true" ] && echo "--quiet" ) \
-    --patch-placeholders
+    --patch-placeholders \
+    --no-print
 ```
 
 The `--patch-placeholders` flag rewrites `_pending_` markers in the MD's `## Appendix: Run Statistics` section with the extracted durations and models. Idempotent — a second invocation is a no-op.
+
+**Final post-mutation structure gate (mandatory).** The placeholder patch above
+is the final authorized mutation of `threat-model.md`. Re-validate the persisted
+bytes now, before PDF/HTML export or cleanup. This deliberately repeats the
+earlier link check: the earlier check protects the pre-summary document, while
+this gate certifies the actual delivered Markdown after every mutator.
+
+```bash
+if ! FINAL_STRUCTURE_JSON=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" \
+    final_structure "$OUTPUT_DIR/threat-model.md" 2>&1); then
+    printf '\n  ✗ FINAL REPORT STRUCTURE INVALID — refusing to export.\n' >&2
+    printf '%s\n' "$FINAL_STRUCTURE_JSON" >&2
+    exit 2
+fi
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/assert_completeness.py" "$OUTPUT_DIR" \
+    --phase render --plugin-root "$CLAUDE_PLUGIN_ROOT" || {
+  printf '\n  ✗ FINAL REPORT INCOMPLETE — refusing to export.\n' >&2
+  exit 2
+}
+
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/section_integrity.py" "$OUTPUT_DIR" \
+    --plugin-root "$CLAUDE_PLUGIN_ROOT" || {
+  printf '\n  ✗ FINAL SECTION INTEGRITY INVALID — refusing to export.\n' >&2
+  exit 2
+}
+```
+
+After all three read-only gates pass, invoke
+`render_completion_summary.py` once more with the same arguments but without
+`--patch-placeholders` and `--no-print`. This second invocation is read-only and
+produces the completion text that is surfaced below. A structurally invalid
+report therefore never prints an “Assessment complete” summary.
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
+    --output-dir "$OUTPUT_DIR" \
+    --repo-root  "$REPO_ROOT" \
+    --mode "$MODE" \
+    --reasoning-model "$REASONING_MODEL" \
+    --assessment-depth "$ASSESSMENT_DEPTH" \
+    $( [ "$WRITE_YAML"          = "true" ] && echo "--write-yaml"          || echo "--no-write-yaml" ) \
+    $( [ "$WRITE_SARIF"         = "true" ] && echo "--write-sarif"         || echo "--no-write-sarif" ) \
+    $( [ "$WRITE_PENTEST_TASKS" = "true" ] && echo "--write-pentest-tasks" || echo "--no-write-pentest-tasks" ) \
+    $( [ "$CHECK_REQUIREMENTS"  = "true" ] && echo "--check-requirements"  || echo "--no-check-requirements" ) \
+    $( [ "$ARCHITECT_REVIEW"    = "true" ] && echo "--architect-review"    || echo "--no-architect-review" ) \
+    $( [ "${APPSEC_PLUGIN_DEV:-}" = "1"  ] && echo "--plugin-dev" ) \
+    $( [ "$VERBOSE_REPORT"        = "true" ] && echo "--verbose" ) \
+    $( [ "$QUIET"                 = "true" ] && echo "--quiet" )
+```
 
 The `--quiet` flag (passed only when `QUIET=true`) switches to a compact summary: it keeps Repository / Run / Results / Outputs plus any run-issue or security warnings, and drops the verdict, change summary, threat delta, next steps, run statistics, and log listing. **Default** (no `--quiet`) echoes the report's `### Verdict` (posture statement, risk distribution, scope, and the worst-case attack scenarios) on the console right after the `Results` block, so the user sees the assessment's bottom line without opening `threat-model.md`. The verdict block is also omitted automatically when the report has no `### Verdict` section (e.g. a partial/failed render).
 

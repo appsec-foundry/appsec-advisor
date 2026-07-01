@@ -64,6 +64,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
+from _atomic_io import atomic_write_text
 
 BANNER_WIDTH = 62
 RULE = "═" * BANNER_WIDTH
@@ -1771,7 +1772,7 @@ def patch_placeholders(output_dir: Path, stats: dict) -> int:
         new_text, n = re.subn(pat, repl, new_text, flags=re.IGNORECASE)
         patches += n
     if new_text != text:
-        md_path.write_text(new_text, encoding="utf-8")
+        atomic_write_text(md_path, new_text)
     return patches
 
 

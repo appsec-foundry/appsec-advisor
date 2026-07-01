@@ -42,13 +42,13 @@ invariants:
     when: "threat.effective_severity/risk in {Critical, High} and source != config-scan"
     fix_hint: "emit_finding_fix_mitigations.py / build_mitigations fallback should link every Critical/High finding"
 
+  # ── render phase (threat-model.md) ───────────────────────────────────────
   - id: conditional_fragment_present
-    phase: build
-    severity: warn
+    phase: render
+    severity: fail
     when: "an upstream signal implies a conditional section (e.g. has_llm_surface)"
     fix_hint: "the renderer/emitter that authors the conditional fragment was skipped"
 
-  # ── render phase (threat-model.md) ───────────────────────────────────────
   - id: render_required_sections_present
     phase: render
     severity: fail
