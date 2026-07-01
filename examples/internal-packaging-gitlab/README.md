@@ -1,7 +1,6 @@
-# Internal Packaging - GitLab CI Example
+# Internal Packaging: GitLab CI
 
-Runnable example for building a company-branded `appsec-advisor` plugin in
-GitLab CI.
+Use this pipeline to build a company-branded `appsec-advisor` plugin with GitLab CI.
 
 Copy this directory into a new GitLab project, then set these CI/CD variables
 under **Settings -> CI/CD -> Variables**:

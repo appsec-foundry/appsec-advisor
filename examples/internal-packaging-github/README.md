@@ -1,7 +1,6 @@
-# Internal Packaging - GitHub Actions Example
+# Internal Packaging: GitHub Actions
 
-Runnable example for building a company-branded `appsec-advisor` plugin in
-GitHub Actions.
+Use this workflow to build a company-branded `appsec-advisor` plugin with GitHub Actions.
 
 Copy this directory into a new GitHub repository, then set these repository
 variables under **Settings -> Secrets and variables -> Actions -> Variables**:

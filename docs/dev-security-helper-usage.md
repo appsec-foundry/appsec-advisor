@@ -1,14 +1,13 @@
 # Dev Security Helper
 
-This document explains the developer-facing security review tools in `appsec-advisor`: the Security Coach hook, the `appsec-reviewer` agent, the interactive `verify-requirements` skill, and the `appsec-reviewer-cli` command for CI.
+`appsec-advisor` includes prompt-time guidance, an interactive change review, and a CI review command.
 
 All tools use the same active standard: a configured company requirements catalog, or the bundled best-practices baseline when no catalog is configured.
 
 ## Contents
 
-- [Quickstart](#quickstart)
+- [Quick start](#quick-start)
 - [Tool overview](#tool-overview)
-- [How the tools fit together](#how-the-tools-fit-together)
 - [Setup and prerequisites](#setup-and-prerequisites)
 - [Security Coach hook](#security-coach-hook)
 - [appsec-reviewer agent](#appsec-reviewer-agent)
@@ -21,7 +20,7 @@ All tools use the same active standard: a configured company requirements catalo
 - [Troubleshooting](#troubleshooting)
 - [Flag reference](#flag-reference)
 
-## Quickstart
+## Quick start
 
 Use the hook while writing code:
 
@@ -64,28 +63,7 @@ appsec-reviewer-cli review --diff origin/main --output security-review.md --fail
 | [verify-requirements](#verify-requirements-skill) | Skill | Interactive wrapper for Claude Code sessions. It resolves the requirements source, builds the diff, dispatches `appsec-reviewer`, and can enforce the result with `--gate`. | You want to review the change you just made in your session. |
 | [appsec-reviewer-cli](#appsec-reviewer-cli) | CLI | CI wrapper around the same review. It runs headlessly, writes a Markdown report, and can fail the build with `--fail-on`. | You want the review to run automatically in CI on every change. |
 
-The agent does the actual reviewing. The skill and CLI are front-ends around it. The hook is separate: it guides implementation before a review exists.
-
-## How the tools fit together
-
-```text
-Security Coach hook
-  -> guidance before code is written
-
-verify-requirements skill
-  -> resolves requirements and diff
-  -> dispatches appsec-reviewer
-  -> writes docs/security/.requirements-verification.json
-  -> optional --gate
-
-appsec-reviewer-cli
-  -> calls verify-requirements headlessly
-  -> renders a Markdown report
-  -> optional --fail-on gate
-
-appsec-reviewer agent
-  -> core reviewer used by the skill and CLI
-```
+The Security Coach acts before code is written. The skill and CLI use `appsec-reviewer` to inspect a completed change.
 
 ## Setup and prerequisites
 
@@ -111,11 +89,11 @@ export CLAUDE_PLUGIN_ROOT="/path/to/appsec-advisor"
 export PATH="$CLAUDE_PLUGIN_ROOT/scripts:$PATH"
 ```
 
-In CI examples below, adjust `CLAUDE_PLUGIN_ROOT` to wherever the plugin is installed or checked out in your runner image.
+Set `CLAUDE_PLUGIN_ROOT` to the plugin's location in the CI runner.
 
 ## Security Coach hook
 
-The Security Coach is a `UserPromptSubmit` hook. It checks the user's prompt for security-relevant topics such as authentication, injection, cryptography, secrets, IaC, and LLM security. When a topic matches, it prepends matching guidance and requirements before Claude answers.
+The Security Coach checks prompts for topics such as authentication, injection, cryptography, secrets, IaC, and LLM security. On a match, it adds relevant guidance and requirements before Claude answers.
 
 Enable per session:
 
@@ -131,7 +109,7 @@ security_coach:
   enabled_by_default: true
 ```
 
-The org profile turns the hook on by default for the whole team; `APPSEC_COACH=1` enables it ad hoc per session.
+The org profile enables the hook for the team; `APPSEC_COACH=1` enables it for one session.
 
 Example prompt:
 
@@ -179,7 +157,7 @@ Output (in its configured output directory):
 <output-dir>/.requirements-verification.json
 ```
 
-The agent only writes findings. Gating is a separate, deterministic step; the skill and CLI run it when gate mode is enabled.
+The agent writes findings. The skill and CLI apply the gate when requested.
 
 ## verify-requirements skill
 
@@ -191,13 +169,13 @@ Run:
 /appsec-advisor:verify-requirements
 ```
 
-Default behavior:
+By default, the skill:
 
 - resolves the active requirements source
 - builds a three-dot diff against the upstream default branch
 - dispatches `appsec-reviewer`
 - writes `docs/security/.requirements-verification.json`
-- exits `0` unless `--gate` is set and the deterministic gate fails
+- exits `0` unless `--gate` is set and the gate fails
 
 Common runs:
 
@@ -228,7 +206,7 @@ Saved reports:
 
 ## appsec-reviewer-cli
 
-The CLI is the CI and automation wrapper around `verify-requirements`.
+The CLI runs the same review in CI and other automation.
 
 Run:
 
@@ -236,14 +214,14 @@ Run:
 appsec-reviewer-cli review --diff origin/main --output security-review.md
 ```
 
-Default behavior:
+By default, the CLI:
 
 - invokes `/appsec-advisor:verify-requirements` headlessly
 - writes `docs/security/.requirements-verification.json`
 - renders the requested Markdown report
-- exits `0` unless `--fail-on` is set and the deterministic gate fails
+- exits `0` unless `--fail-on` is set and the gate fails
 
-Before using this in CI, read [CI security notes](#ci-security-notes). Pull-request code is untrusted input. The wrapper runs Claude Code headlessly with bypassed interactive permission prompts so the job can complete unattended.
+Before using this in CI, read [CI security notes](#ci-security-notes). Pull-request code is untrusted input, and the wrapper bypasses interactive permission prompts.
 
 GitLab CI:
 
@@ -311,7 +289,7 @@ Raw request input reaches `sequelize.query()` at `src/routes/search.ts:23`.
 
 ## Requirements source
 
-The active standard is resolved in this order:
+The active requirements source is selected in this order:
 
 1. Explicit `--requirements <src>` for the current run.
 2. Configured organization requirements catalog.
@@ -351,8 +329,6 @@ git diff <ref>...HEAD
 ```
 
 Default interactive behavior uses the upstream default branch when it can be resolved, then common fallbacks such as `origin/main` or `origin/master`.
-
-Operational details:
 
 - `--staged` reviews only `git diff --cached`.
 - `--staged` and `--base` are mutually exclusive.
@@ -399,14 +375,14 @@ Pull-request code is untrusted input. A CI job that runs the reviewer may expose
 
 The CLI invokes Claude Code in headless mode and bypasses interactive permission prompts so it can run unattended. Use it only where that is an acceptable trust boundary.
 
-Recommended use:
+Use the CI reviewer with:
 
 - private repositories
 - trusted same-repository pull requests
 - ephemeral runners
 - dedicated, low-limit CI API keys
 
-Avoid:
+Do not use it with:
 
 - public fork pull requests with secrets
 - `pull_request_target` workflows that bypass secret withholding
@@ -452,5 +428,3 @@ See [SECURITY.md](../SECURITY.md#known-issues--untrusted-repositories).
 | `--requirements <src>` | Use an `http(s)://` URL or local file path; unreadable explicit sources abort. |
 | `--fail-on <must\|partial>` | Make CI fail; omit for advisory mode. `must` gates FAIL findings, `partial` gates FAIL and PARTIAL findings. |
 | `--priority-floor <MUST\|SHOULD\|MAY>` | Lowest priority allowed to gate; default is `MUST`. |
-
-Design rationale: [proposal-dev-security-helper.md](internal/analysis/proposal-dev-security-helper.md).

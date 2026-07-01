@@ -1,6 +1,6 @@
-# Bringing your AppSec requirements into the plugin
+# Requirements Harvester
 
-If your organisation already runs a security-requirements catalog (Confluence, Antora, an exported spreadsheet), the plugin can grade repositories against it. The plugin reads requirements as a single structured YAML file; this document covers how to produce that file from existing pages and keep it current.
+The requirements audit and threat modeler read a YAML requirements catalog. `scripts/harvest_requirements.py` can build that catalog from Confluence, Antora, or other HTML pages.
 
 ## The flow
 
@@ -17,18 +17,13 @@ flowchart LR
     G --> H
 ```
 
-Four moving parts:
+The script crawls configured pages and writes the catalog. Publish that file at an HTTP URL, commit it as `docs/security/requirements.yaml`, or include it in an org profile.
 
-- **The harvester:** `scripts/harvest_requirements.py` is a one-shot Python script that crawls your pages and writes the requirements YAML (the `requirements.yaml` placeholder in the diagram above is just a generic name for this output).
-- **The YAML file** is the canonical format the plugin reads. The bundled example/template, `data/appsec-requirements-fallback.yaml`, contains 63 baseline requirements across 38 categories plus 9 blueprint entries, and is usable as a starting point. A separate `examples/appsec-requirements-example.yaml` serves as mock/demo output for the local loop below.
-- **A way to expose the YAML.** You can commit it to the plugin repo, publish it to a static URL, or serve it locally via the mock server while iterating.
-- **Plugin config:** set `requirements_yaml_url` in `skills/audit-security-requirements/config.json`. Once set, every `create-threat-model --requirements` and every `/appsec-advisor:audit-security-requirements` run picks up the catalog without further flags.
+## Setup options
 
-## Three ways to get started
+### 1. Test with the bundled catalog
 
-### 1. Try the full loop locally in 5 minutes
-
-The repo ships with an example YAML and a mock HTTP server, so the first end-to-end run needs no real catalog and no harvester. This verifies plugin install, config, and the audit skill against each other.
+The bundled mock server lets you test the audit before connecting an internal catalog:
 
 ```bash
 # Serve the bundled example requirements YAML on 127.0.0.1:4444
@@ -38,13 +33,11 @@ python3 scripts/mock-server.py
 /appsec-advisor:audit-security-requirements --requirements http://127.0.0.1:4444/requirements.yaml
 ```
 
-Expected output: the skill fetches the YAML, grades the current repo against each requirement, and prints a compact color-coded console summary with only open requirements (`FAIL` and `PARTIAL`) plus file-and-line evidence. Passed and untestable requirements are counted in the summary but not listed. Once that works, the rest of this document is about replacing the mock URL with a real one.
-
-The mock also exposes `POST /` for the optional `external_context.rest_url` endpoint (business context), useful for exercising the optional business-context integration at the same time.
+The command prints `FAIL` and `PARTIAL` results with file and line evidence. Other statuses appear in the summary count.
 
 ### 2. Adapt the fallback YAML
 
-If you don't have live pages to crawl yet, start from `data/appsec-requirements-fallback.yaml`. It currently contains 63 baseline requirements across 38 categories, plus 9 blueprint entries. Edit the IDs and text to your organisation's vocabulary, commit, and point the plugin at the raw URL:
+If you do not have pages to crawl, start from `data/appsec-requirements-fallback.yaml`. Edit the IDs and text for your organization, then publish the file at a raw HTTP URL:
 
 ```json
 // skills/audit-security-requirements/config.json
@@ -56,16 +49,16 @@ If you don't have live pages to crawl yet, start from `data/appsec-requirements-
 }
 ```
 
-No harvester involved. Often sufficient for a small team — switch to the harvester once manual edits become a maintenance burden.
+This is sufficient when the catalog changes infrequently.
 
 ### 3. Harvest from a live catalog
 
-Point the harvester at the real requirements pages, let it generate the YAML, and run it on a CI schedule so the file stays current. Worth the setup once the catalog changes more than a couple of times a year.
+Configure the harvester for the source pages and run it manually or on a CI schedule:
 
 ```bash
 # Copy the template config
 cp scripts/harvest-config.example.json scripts/harvest-config.json
-# Edit it — at minimum, set the URLs of your requirements & blueprint pages
+# Set the requirements and blueprint page URLs
 $EDITOR scripts/harvest-config.json
 
 # Install deps once
@@ -74,52 +67,48 @@ pip install -r scripts/requirements.txt
 # Dry-run first to verify reachability and parsing
 python3 scripts/harvest_requirements.py --dry-run --verbose
 
-# Real run
+# Write the catalog
 HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py
 ```
 
-The generated YAML lands at the path in `output` (defaults to `data/appsec-requirements-fallback.yaml`). You can inspect it directly before wiring it up — it's a readable YAML with one section per category, one entry per requirement, plus a `sources_meta` block so you can trace each entry back to the page it came from.
+The `output` setting controls the destination and defaults to `data/appsec-requirements-fallback.yaml`. The `sources_meta` block records the source page for each harvested section.
 
 ### Output format & validation
 
-The harvester writes the **canonical catalog format** defined by [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml) — the same shape both `audit-security-requirements` and `create-threat-model` consume. After writing, the harvester validates its own output against that schema: structural breakage fails the run (exit 2), while content-quality issues (a category with no requirements, a requirement missing `text`, duplicate IDs) print as warnings. To validate any catalog by hand — for example in CI before publishing:
+The output follows [`schemas/requirements-catalog.schema.yaml`](../schemas/requirements-catalog.schema.yaml) and is validated before the command exits. Invalid structure returns exit code 2; incomplete fields and duplicate IDs produce warnings. Validate a catalog manually with:
 
 ```bash
 python3 scripts/requirements_state.py --validate data/appsec-requirements-fallback.yaml [--strict]
 ```
 
-## The harvester, in one config
+## Configuration
 
-A single JSON file drives the crawler. Below is the minimum useful shape; defaults cover the rest.
+The crawler reads `scripts/harvest-config.json`. This is the minimum useful configuration:
 
 ```jsonc
 {
   "description": "ACME Corp AppSec requirements",
   "url": "https://security.example.com",
-  "output": "../data/appsec-requirements-fallback.yaml",   // relative to scripts/, i.e. data/appsec-requirements-fallback.yaml from the repo root
+  "output": "../data/appsec-requirements-fallback.yaml",
 
-  // HTTP session — timeout, TLS, auth. Safe to omit for public pages.
   "request": {
     "timeout_seconds": 15,
-    "auth_header_env": "HARVEST_AUTH_TOKEN",     // name of the env var holding the bearer token; `--token` overrides it on the CLI
-
+    "auth_header_env": "HARVEST_AUTH_TOKEN",
     "verify_ssl": true
   },
 
-  // The list of pages to crawl. Two types: "requirement" (extract IDs)
-  // and "blueprint" (extract section content + cross-reference to IDs).
   "sources": [
     {
       "id": "internal-requirements",
       "type": "requirement",
-      "mode": "structured",                       // or "full" (keeps page intro)
+      "mode": "structured",
       "title": "Internal Security Requirements",
       "crawl_url": "https://security.example.com/requirements"
     },
     {
       "id": "api-blueprints",
       "type": "blueprint",
-      "mode": "full",                             // or "summary" (titles only)
+      "mode": "full",
       "title": "API Security Blueprints",
       "crawl_url": "https://security.example.com/blueprints/api"
     }
@@ -127,40 +116,27 @@ A single JSON file drives the crawler. Below is the minimum useful shape; defaul
 }
 ```
 
-The harvester recognises requirement IDs of the shape `PREFIX-PART[-PART…]` — `SEC-AUTH-01`, `SCG-HARDENXML`, `OWASP-A01`, `ISO27K-A12`. No prefix is hardcoded; whatever shape your org uses will be picked up.
+The harvester recognizes IDs such as `SEC-AUTH-01`, `SCG-HARDENXML`, `OWASP-A01`, and `ISO27K-A12`. It does not require a specific prefix.
 
-For every source, `crawl_url` is both a page to index and the base path for direct child-page discovery. The harvester fetches `crawl_url`, indexes that page, then indexes same-origin links below that path up to `max_pages`. Crawling is intentionally one level deep; add another `sources[]` entry when important pages live outside the configured path or are only reachable through a deeper navigation tree.
+For each source, the harvester reads `crawl_url` and direct same-origin child links below that path, up to `max_pages`. Add another `sources[]` entry for pages outside that path or deeper in the navigation tree.
 
-Blueprint sections get an automatic cross-reference pass: if a blueprint mentions `SEC-API-AUTH` in its prose and that ID exists in the harvested requirements, a `references:` list is attached so the audit can navigate from blueprint to the requirement it depends on.
+When a blueprint mentions a harvested requirement ID, the output links the blueprint to that requirement.
 
 ### Useful flags
 
 | Flag | When you'd use it |
 |---|---|
-| `--dry-run` `--verbose` | First run against a new source — see what gets parsed without writing anything |
+| `--dry-run` `--verbose` | Inspect parsing without writing a catalog |
 | `--req-only` / `--blueprint-only` | Debug one source type at a time |
 | `--config PATH` | Multiple environments (e.g. staging vs. prod requirements) |
 | `--output PATH` | Override the config's `output`; useful in CI |
-| `--token TOKEN` | Pass the bearer token on the command line instead of via env var |
+| `--token TOKEN` | Pass a bearer token directly; prefer `auth_header_env` in CI |
 
-Full field reference for `harvest-config.json` is in `scripts/harvest-config.example.json` — the template is annotated and shorter than a table would be.
+See `scripts/harvest-config.example.json` for all fields.
 
 ## Keeping the YAML fresh: scheduling
 
-The harvester is a one-shot script; something else has to run it on a schedule. Three setups in order of operational maturity:
-
-**Local cron.** Fine for a solo user or a shared build host:
-
-```bash
-# crontab -e — run nightly, log to file, commit if anything changed
-0 2 * * * cd /path/to/appsec-advisor && \
-  HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py \
-  && git diff --quiet data/appsec-requirements-fallback.yaml \
-  || (git commit -am "chore: refresh appsec requirements [harvester]" && git push) \
-  >> /var/log/harvest-requirements.log 2>&1
-```
-
-**CI-scheduled commit.** The team default. GitHub Actions example below; the GitLab equivalent is near-identical:
+The harvester runs once and exits. Schedule it with cron or CI if the catalog should update automatically. This GitHub Actions example writes and commits changed output:
 
 ```yaml
 # .github/workflows/harvest-requirements.yml
@@ -192,11 +168,11 @@ jobs:
           fi
 ```
 
-**Publish to a separate URL.** When committing back to the plugin repo is blocked (policy, visibility, update frequency), have the CI job push the YAML to S3, a GitLab raw URL, or an internal CDN, and point `requirements_yaml_url` there. The plugin fetches on demand, so requirement changes do not require a plugin update.
+Instead of committing the file, the job can publish it to S3, a GitLab raw URL, or an internal CDN. Point `requirements_yaml_url` to that location.
 
 ## Wiring it up
 
-A single config field enables the requirements integration. Once set, `create-threat-model` runs the requirements-compliance check automatically and the standalone `audit-security-requirements` skill reads the same URL.
+Set `requirements_yaml_url` to use the catalog for both the threat modeler and requirements audit:
 
 ```json
 // skills/audit-security-requirements/config.json
@@ -208,7 +184,7 @@ A single config field enables the requirements integration. Once set, `create-th
 }
 ```
 
-The fetched catalog is cached locally, so an unreachable URL falls back to the cached copy. An explicit `--requirements <url>` on the command line always wins over the config, and `--no-requirements` turns the check off for a single run.
+The plugin caches the fetched catalog. An explicit `--requirements <url>` overrides the config; `--no-requirements` disables it for one run.
 
 ## Troubleshooting
 

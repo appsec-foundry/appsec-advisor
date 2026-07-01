@@ -8,41 +8,39 @@
 
 > ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin for AppSec teams, built around code-anchored threat modeling. It turns a repository into a security architecture model, identifies trust boundaries and data flows, applies STRIDE, and produces structured findings.
+`appsec-advisor` is a Claude Code plugin for repository-based threat modeling. It derives a security architecture model from code, identifies trust boundaries and data flows, applies STRIDE, and produces reviewable findings.
 
-On the same foundation, it also supports requirements audits and developer helpers (change review, pre-commit guidance, CI gates). Teams can use as-is or adapt with their own requirements, threat context, presets, guardrails, and company-branded packaging.
+It also supports requirements audits, change reviews, prompt-time security guidance, and CI gates. AppSec teams can supply their own requirements, threat context, presets, and guardrails.
 
 ## Problem
 
-Threat modeling is still often done in workshops, design reviews, release gates, or audits. These reviews are useful, but they age quickly once the implementation changes.
+Threat models created during workshops or design reviews become stale as the implementation changes.
 
 Most automated security tooling focuses on implementation issues such as vulnerable dependencies, insecure code patterns, secrets, and misconfigurations. It rarely explains architecture-level risk: missing trust-boundary controls, implicit service trust, unauthenticated internal data paths, or unclear control ownership.
 
-That leaves a gap between code scanning and manual architecture review. The threat modeler is `appsec-advisor`'s answer to that gap.
+`appsec-advisor` covers the gap between code scanning and manual architecture review.
 
 ## Approach
 
 The threat modeler treats the repository as the primary evidence source for security architecture review.
 
-* **Code-anchored architecture model:** Architecture, trust boundaries, and data flows are read from the current code, with no diagrams to keep in sync.
+- **Code-based architecture model:** Architecture, trust boundaries, and data flows come from the current repository.
 
-* **Staged agent pipeline:** Specialized agents run recon, analysis, triage, and QA as separate stages, bound by shared schemas, contracts, and templates. The output is structured and validatable rather than freeform LLM text.
+- **Structured output:** Findings pass through schemas, validation, and fixed report templates.
 
-* **Catalog-grounded context:** Your requirements, prior threats, and adjacent services feed the analysis, so findings reference your controls, not a generic checklist.
+- **Organization context:** Requirements, known threats, and related services can be included in the analysis.
 
-* **Diff-based reruns:** Findings keep stable IDs across runs, so a rescan shows what actually moved since the last one.
+- **Diff-based reruns:** Findings keep stable IDs across runs, so a rescan shows what actually moved since the last one.
 
-* **Architecture-level review:** Findings sit at trust boundaries, service trust, and unauthenticated paths: the architecture risks code scanners miss.
+- **Architecture review:** The analysis covers trust boundaries, service trust, and unauthenticated paths that code scanners often miss.
 
-The result is a repeatable, code-aware starting point for review. It supports architectural judgment, but it is not a verdict. The requirements audit and developer helpers reuse the same catalog and agent infrastructure to extend this into day-to-day development.
+The output is a starting point for security review, not a release verdict. An AppSec engineer or security architect should validate findings before they drive remediation, exceptions, or risk acceptance.
 
 ## Intended use
 
 `appsec-advisor` is intended for internal enterprise security review workflows.
 
 AppSec and security architecture teams own the plugin configuration, defaults, templates, and review policy. Engineering teams run threat models during design work, review preparation, major changes, or release readiness checks, and use the requirements audit and developer helpers for ongoing compliance checks and change review.
-
-Threat model findings should be validated by an AppSec engineer or security architect before they inform release decisions, remediation commitments, exceptions, or formal risk acceptance.
 
 ## Security notes
 
@@ -51,7 +49,7 @@ Threat model findings should be validated by an AppSec engineer or security arch
 
 **What leaves your machine.** Only the source, manifests, and config of the components under analysis, never the whole repo. Secrets surfaced in recon output are masked. The plugin needs `api.anthropic.com` and cannot run air-gapped; cached prompt segments live on Anthropic infrastructure for the cache TTL.
 
-**How the report is produced.** The report is rendered by deterministic Python (Jinja), not by the model, so the same input yields the same report. Intermediate artefacts are schema-validated, and secrets are blocked or masked before publishing, so `publish-threat-model` won't expose an unmasked secret.
+**How the report is produced.** Python renders the final report from validated structured data. Publishing is blocked when the secret scan finds an unmasked secret.
 
 ---
 
@@ -62,7 +60,6 @@ Threat model findings should be validated by an AppSec engineer or security arch
 - [Requirements Audit](#requirements-audit)
 - [Additional developer tools](#additional-developer-tools)
 - [CI integration](#ci-integration)
-- [Plugin development checks](#plugin-development-checks)
 - [Enterprise rollout](#enterprise-rollout)
 - [Roadmap](#roadmap)
 - [Related projects](#related-projects)
@@ -70,12 +67,11 @@ Threat model findings should be validated by an AppSec engineer or security arch
 
 ## Quick start
 
-The steps below get you to your first threat model, the plugin's primary tool. Requirements audit and developer helpers use the same setup and are covered in their own sections below.
+Use the following setup for the threat modeler, requirements audit, and developer tools.
 
-This plugin requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Node deps (`jsdom` + `mermaid`) enable grammar-level Mermaid QA. See the [Threat Modeler](#threat-modeler) docs.
+This plugin requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies provide stricter diagram validation; see the [Threat Modeler](#threat-modeler) reference.
 
-The plugin is registered once, then invoked from the repository you want to assess.
-For now, installation uses a local checkout rather than a packaged release. This makes the plugin files, prompts, schemas, and scripts easy to inspect, patch, or pin while the project is still in beta.
+Install the beta from a local checkout, then run it from the repository you want to assess.
 
 ### 1. Register the local plugin checkout
 
@@ -102,7 +98,7 @@ Before running the threat modeler for the first time, merge the plugin's require
 /appsec-advisor:check-permissions --update
 ```
 
-This checks and updates the allow-list for the Bash, Read, Write, and Edit operations used by the threat model pipeline, avoiding repeated prompts during longer analyses.
+This updates the Claude Code allow-list used during an assessment.
 
 ### 3. Run your first threat model
 
@@ -130,13 +126,11 @@ Generated reports are not committed automatically. For a local review, you can s
 
 An assessment produces a report covering architecture observations, trust boundaries, STRIDE findings, risk-ranked threats, affected components, remediation guidance, and generated diagrams. Default outputs are `threat-model.md` and `threat-model.yaml`; optional exports include PDF, HTML, SARIF, and pentest task lists.
 
-**Example:** A thorough-mode run against [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) produces 78 findings across 9 components (10 Critical, 40 High, 22 Medium, 6 Low) including architecture diagrams, abuse-case chains, and a full mitigation register. → [Read the full example report](examples/threat-modeler/threat-model-juice-shop-thorough.md)
+**Example:** [Read a thorough assessment of OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough.md).
 
 ![Threat Model Juice Shop Thorough](./examples/threat-modeler/threat-model-juice-shop-thorough.figure1.svg)
 
-**→ Full reference: [docs/threat-modeler.md](docs/threat-modeler.md)**
-
-Covers: output formats, what the recon pass checks, all usage examples, assessment depth and cost control, repo-local context (business context, known threats), cross-repo context, pipeline architecture, and workflow commands (publish, export, health checks, run recovery).
+Assessments consume model tokens and typically take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) compares measured costs by depth and model and documents hard cost and time limits.
 
 ## Requirements Audit
 
@@ -150,25 +144,21 @@ Covers: output formats, what the recon pass checks, all usage examples, assessme
 /appsec-advisor:audit-security-requirements --requirements https://URL/appsec-requirements.yaml
 ```
 
-Both `audit-security-requirements` and the requirements phase of `create-threat-model` read from the same `requirements_yaml_url` in `skills/audit-security-requirements/config.json`: configure it once and both commands pick it up automatically.
+The requirements audit and threat modeler use the same configured catalog.
 
-No catalog yet? Start from the bundled baseline (`data/appsec-requirements-fallback.yaml`) and edit it to your organisation's vocabulary. Once you have live requirements pages (Confluence, Antora, static HTML), `scripts/harvest_requirements.py` can generate and refresh the YAML automatically. → [docs/harvester.md](docs/harvester.md)
+If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml`. The [requirements harvester](docs/harvester.md) can build and refresh the YAML from Confluence, Antora, or static HTML.
 
-**→ Full reference: [docs/security-requirements-audit-skill.md](docs/security-requirements-audit-skill.md)**
-
-Covers: status values, catalog setup, the three paths to a catalog, all flags, and how findings link back to the threat model.
+See the [Requirements Audit reference](docs/security-requirements-audit-skill.md) for catalog setup, status values, and flags.
 
 ## Plugin configuration
 
-The root `config.json` is the committed runtime config for safe defaults. Use `config.local.json` for local or internal overrides; it is git-ignored and loaded ahead of `config.json` where supported.
+The root `config.json` contains shared defaults. Put local or internal overrides in the git-ignored `config.local.json`.
 
 Supported root blocks are `external_context` (optional REST business context), `pricing` (token-cost calculation), `logging` (verbose hook output and log rotation), and `organization_profile` (packaged org-profile pointer). Run `python3 scripts/validate_config.py .` after changing plugin config files.
 
 ## Additional developer tools
 
-The requirements audit (`audit-security-requirements`) is an AppSec-owned compliance gate: it grades a snapshot of the repository against a catalog and produces a structured report for dashboards, audits, and release gates.
-
-The tools below serve a different purpose: they are developer-facing helpers that give security feedback during active coding or on a diff in progress. They are not audit artefacts. Like the requirements audit they use the configured requirements catalog as their active standard, falling back to the bundled baseline when none is configured.
+These developer tools provide security guidance while code is being written or reviewed. They use the configured requirements catalog, or the bundled baseline when none is configured.
 
 | Tool | Type | Scope | Entry point | When to use it |
 |---|---|---|---|---|
@@ -179,9 +169,9 @@ The tools below serve a different purpose: they are developer-facing helpers tha
 
 Full guide: [`docs/dev-security-helper-usage.md`](docs/dev-security-helper-usage.md) · Requirements catalog setup: [`docs/harvester.md`](docs/harvester.md) · Security Coach: [`docs/security-coach-skill.md`](docs/security-coach-skill.md).
 
-### Reporting a pipeline error
+### Report a pipeline error
 
-If a run fails, build an **anonymised** diagnostic bundle to send the maintainer.
+If a run fails, build an **anonymized** diagnostic bundle to send the maintainer.
 Plugin users (no checkout) run the skill in the failing session:
 
 ```
@@ -194,17 +184,15 @@ Developers with a checkout can use the Make target instead:
 make diagnostic-bundle RUN=<repo>/docs/security    # → appsec-diag-<id>.tgz
 ```
 
-The bundle contains only tool/plugin versions, run shape (phases reached, stage
-timings, aggregate counts), a metadata-only file inventory, and scrubbed logs.
-It **never** includes the threat-model results, findings, evidence, or any
-source — verify before sending with `make inspect-bundle BUNDLE=appsec-diag-<id>.tgz`.
+The bundle contains versions, run metadata, a file inventory without contents, and scrubbed logs. It excludes source code, findings, evidence, and report contents. Inspect it before sending:
+
+```bash
+make inspect-bundle BUNDLE=appsec-diag-<id>.tgz
+```
 
 ## CI integration
 
-`scripts/run-headless.sh` runs `appsec-advisor` non-interactively in the CI/CD
-pipeline of the repository being assessed. It invokes the same Claude Code
-plugin skills as an interactive run and propagates exit codes so downstream
-steps can gate on the result.
+`scripts/run-headless.sh` runs `appsec-advisor` non-interactively and returns exit codes that CI jobs can use as gates.
 
 ```bash
 ./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5 --sarif
@@ -218,112 +206,40 @@ For a faster requirements-only CI job:
 
 For GitHub Actions, GitLab, Jenkins, and PR-gate examples, see [`docs/headless-mode.md`](docs/headless-mode.md).
 
-## Plugin development checks
-
-For changes to this plugin repository, the deterministic test suite is the per-PR safety net. The committed GitHub Actions workflow runs config validation, ruff, and pytest across Python 3.10, 3.11, and 3.12. Locally, the `Makefile` wraps the same checks:
-
-```bash
-make test           # standard pytest suite with coverage (no LLM)
-make lint           # ruff check + format check
-make check          # continuous gate: lint, format, config validation, fragment-registry/drift, full test suite
-make release-check  # release-boundary gate: `check` + version/tag/changelog consistency
-```
-
-After non-trivial changes to renderers, schemas, phase prompts, hooks, or pipeline control flow, run the manual full-run E2E check:
-
-```bash
-make e2e-full           # quick: pipeline, schemas, full deterministic QA, oracle
-make e2e-full-standard  # also exercises Stage-3 QA
-make e2e-full-thorough  # also exercises Stage-4 architect review
-make e2e-full-eval      # fresh quick run plus adversarial semantic-quality gate
-make e2e-fixture-suite  # all six external language/architecture recall oracles
-```
-
-For local regression checks against the external fixture suite, use the manual fixture drivers:
-
-```bash
-./scripts/e2e_fixture.sh --fixture python-threat-fixture --depth quick --clean-output
-./scripts/e2e_cross_repo_fixture.sh --depth quick --clean-output
-```
-
-The generic single-repo driver supports the Spring, Python, Rust, Go, Node.js/TypeScript, and Python/LangChain fixtures from the sibling [`appsec-advisor-fixtures`](https://github.com/matthiasrohr/appsec-advisor-fixtures) checkout. These E2E runs are manual and opt-in because they invoke Claude Code and consume LLM budget. See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`docs/internal/runbooks/e2e-fixtures.md`](docs/internal/runbooks/e2e-fixtures.md), and [`docs/internal/runbooks/e2e-cross-repo-fixture.md`](docs/internal/runbooks/e2e-cross-repo-fixture.md).
-
 ## Enterprise rollout
 
-For AppSec and Platform teams: treat `appsec-advisor` as the upstream analysis core, wrap it in a company-branded plugin, and ship that to developers. They get one command that runs with your requirements catalog, presets, and guardrails already loaded, with no per-developer configuration.
+AppSec and Platform teams can package `appsec-advisor` under an internal name with centrally managed requirements, presets, and guardrails.
 
-What the org-profile buys you over the generic plugin:
+- Use internal control IDs instead of the bundled baseline.
+- Set cost and duration limits centrally.
+- Configure assessment depth and output formats once.
+- Remove skills or hooks that are not approved for internal use.
 
-- Findings and audit grades reference your internal control IDs and severity definitions instead of the generic baseline.
-- **Fixed cost limits.** Token budget and max duration are baked in, so developers can't accidentally run an unbounded analysis.
-- Service classification, regulatory scope, and risk appetite are set centrally rather than per run.
-- **Consistent presets:** assessment depth, output formats, and SARIF export are configured once for the whole org.
-- `package-policy.yaml` locks the surface, removing experimental skills or hooks that aren't approved for internal use.
-
-The diagram below shows the packaging and distribution flow using "Acme" as a placeholder for your organisation.
+The diagram uses "Acme" as an example organization.
 
 ![Enterprise rollout pipeline](docs/images/orgpackaging.svg)
 
-The initializer guides you through the required organisation-specific settings and creates a ready-to-use packaging repository.
-
-```console
-$ bash <(curl -fsSL https://raw.githubusercontent.com/matthiasrohr/appsec-advisor-org-packaging-template/main/scripts/init-org-repo.sh)
-
-appsec-advisor — org packaging repo setup
-────────────────────────────────────────────
-This script creates a ready-to-use packaging repo for appsec-advisor.
-You will need: git, python3 (3.10+), make
-
-Organization name (e.g. Acme Corp): Secodis
-Organization id (short lowercase abbreviation, e.g. 'acme', 'hl' — used in plugin name) [s]: secodis
-Plugin name (Claude Code command prefix) [secodis-appsec]:
-Team owner (e.g. AppSec Team) [Secodis AppSec Team]:
-Target directory [./secodis-appsec-advisor]:
-Include demo content (example requirements + filled org profile)? [y/N]:
-
-==> Cloning template from GitHub …
-
-Done. Your packaging repo is ready at: ./secodis-appsec-advisor
-
-```
-
-- Runbook: [internal-plugin-packaging.md](docs/internal-plugin-packaging.md) · Profiles: [org-profiles.md](docs/org-profiles.md)
-- Runnable CI starters: [GitLab CI](examples/internal-packaging-gitlab) · [GitHub Actions](examples/internal-packaging-github) · Local build: [Quick start](docs/internal-plugin-packaging.md#quick-start)
-- Complete example packaging repo: [github.com/matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)
+Start with the [packaging runbook](docs/internal-plugin-packaging.md) and [org profile reference](docs/org-profiles.md). CI examples are available for [GitLab](examples/internal-packaging-gitlab) and [GitHub Actions](examples/internal-packaging-github).
 
 ## Roadmap
 
-Planned and in-progress work:
-
-- **Validation against real-world applications.** The plugin is being tested across a growing set of applications — different stacks, architectures, and deployment patterns — to harden prompt behaviour, improve output consistency, and surface edge cases that synthetic fixtures don't cover.
-
-- **Graduating experimental skills to supported status.** The developer tools currently marked *experimental* (`verify-requirements`, `appsec-reviewer`, `appsec-reviewer-cli`, Security Coach hook) are being hardened and will move to supported, production-ready status.
-
-- **Better packaging and configuration.** More ways to tailor the plugin's skills to organisation-specific needs.
-
-- **Stronger threat focus.** Reports still blend architectural observations, compliance signals, and STRIDE findings. Upcoming iterations sharpen the threat narrative with a cleaner split between threats, weaknesses, and architectural risks.
-
-- **Richer context input.** The pipeline is anchored almost entirely in the repo itself. The goal is to let product teams feed more context into the assessment — today this is limited to `docs/business-context.md`, `docs/known-threats.yaml`, and `docs/related-repos.yaml`.
-
-- **Scaling to component-heavy repos.** The analysis covers every component but runs slower and costlier past roughly 8–10. No exposed component is dropped; the open work is making large repos faster.
-
-- **Multi-repo scans.** Per-repo scanning fits monorepos but is limited when an app spans several repos (APIs, IaC, …). Today only partially covered via `docs/related-repos.yaml`.
-
-- **Ingest existing threat models (idea).** Detect an existing model (e.g. Threat Dragon `threat-model.json`) and use it as non-authoritative context.
-
-- **Marketplace release (idea).** Once out of beta, publish the plugin to the Claude Code plugin marketplace for one-step installation.
-
+- Test against more languages, architectures, and deployment models.
+- Move the developer tools from experimental to supported status.
+- Improve performance on repositories with many components.
+- Expand cross-repository and external context support.
+- Import existing threat models as reference data.
+- Publish a packaged marketplace release after the beta.
 
 ## Related projects
 
-- **[matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)**: Companion template repo for building an internal `appsec-advisor` plugin with your own org defaults, requirements catalog, and cost guardrails.
+- **[matthiasrohr/appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template)**: Template for an internal package with organization defaults and requirements.
 
-- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)**: A threat-modeling sidecar for software projects. It analyzes architecture descriptions with specialized agents and generates outputs such as STRIDE findings, attack trees, SARIF, risk scoring data, narrative reports, and PDF reports.
+- **[davidmatousek/tachi](https://github.com/davidmatousek/tachi)**: Agent-based threat modeling from architecture descriptions.
 
-- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: A Streamlit application for generating STRIDE threat models from a textual system or application description. It is mainly useful for early design discussions and can also generate mitigations, attack trees, risk scores, test cases, and Markdown output.
+- **[mrwadams/stride-gpt](https://github.com/mrwadams/stride-gpt)**: STRIDE threat modeling from text descriptions.
 
-- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)** (Anthropic, public beta for Enterprise plans): A vulnerability scanner built into claude.ai that scans GitHub repositories for exploitable weaknesses, validates findings through multi-stage verification to reduce false positives, and links each result into a Claude Code session for patch review. It complements `appsec-advisor`: Claude Security is closer to vulnerability discovery and remediation workflow, while `appsec-advisor` is a broader AppSec review assistant for repository analysis, threat modeling, architecture observations, weakness identification, and recommendations.
+- **[Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security)**: Anthropic's repository vulnerability scanner for Enterprise plans.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to propose changes, development conventions, the test suite, the targeted test checklist, and the manual end-to-end test. Where possible, please open an issue to discuss your idea before sending a pull request.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, repository conventions, and required tests.
