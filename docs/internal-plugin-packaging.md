@@ -305,6 +305,11 @@ Run the smoke test after every build. It checks the plugin identity, org-profile
 $ python3 upstream/appsec-advisor/scripts/smoke_test_package.py build/acme-appsec --name acme-appsec
 ```
 
+The packager excludes dependency trees, caches, run logs, generated report
+state, and other ignored local artifacts at any directory depth. The smoke test
+independently rejects those paths and personal home-directory paths, so package
+from a clean checkout and treat either finding as a build failure.
+
 Use `--skip-archive` while editing locally:
 
 ```console

@@ -1,6 +1,6 @@
 # Analysis: merging "Top Findings" + "Architecture Assessment" → "Top Threats"
 
-Basis: last rendered output `/home/mrohr/juice-shop/docs/security/threat-model.md` (2026-05-29) and the two generators in `scripts/compose_threat_model.py`.
+Basis: last rendered output `<workspace>/juice-shop/docs/security/threat-model.md` (2026-05-29) and the two generators in `scripts/compose_threat_model.py`.
 
 ## Verdict
 

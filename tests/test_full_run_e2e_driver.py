@@ -35,7 +35,7 @@ def test_depth_targets_cover_standard_qa_and_thorough_architect_review() -> None
 
 def test_repair_driver_is_self_contained_and_fails_on_pipeline_error() -> None:
     text = RUN_REPAIR.read_text(encoding="utf-8")
-    assert "/home/mrohr/juice-shop" not in text
+    assert "/home/" not in text
     assert 'SEED="${APPSEC_E2E_REPAIR_SEED:-$PLUGIN_ROOT/tests/fixtures/e2e/_last-run}"' in text
     assert 'REPO="${APPSEC_E2E_REPAIR_REPO:-$PLUGIN_ROOT/tests/fixtures/e2e/_last-repo}"' in text
     assert 'if [ "$RUN_STATUS" -ne 0 ]; then' in text

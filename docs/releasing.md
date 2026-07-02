@@ -14,7 +14,7 @@ at the bottom.
 ## Checklist
 
 ```
-[ ] 1. Bump version in pyproject.toml + matching CHANGELOG.md heading, commit both
+[ ] 1. Align pyproject.toml + plugin.json, promote Unreleased to a dated CHANGELOG.md heading
 [ ] 2. make release-all          # deterministic gate, then live e2e (stops if gate fails)
 [ ] 3. Merge dev → main, tag, push
 [ ] 4. Verify GitHub release was created by the tag workflow
@@ -25,9 +25,11 @@ at the bottom.
 
 ### 1. Bump the version
 
-Edit `version` in `pyproject.toml`, write the matching `CHANGELOG.md` heading
-(see [Version formats](#version-formats) — the three spellings must agree), then
-commit both together:
+Set the release version in `pyproject.toml` and `.claude-plugin/plugin.json`,
+then promote the pending notes under `## Unreleased` into the dated matching
+`CHANGELOG.md` heading. For the first beta this remains `0.4.0b0` /
+`0.4.0-beta`; no extra version bump is needed. Commit all metadata changes
+together:
 
 ```bash
 git commit -am "release: 0.4.0b0"
@@ -105,16 +107,18 @@ reachable from both branches and never needs re-tagging.
 
 ### Version formats
 
-The same version appears in three places, each with its own format:
+The same version appears in four places, using PEP 440-equivalent spellings:
 
 | Where | Format | Example |
 |-------|--------|---------|
 | `pyproject.toml` | PEP 440 | `0.4.0b0` |
+| `.claude-plugin/plugin.json` | SemVer-style, PEP 440-equivalent | `0.4.0-beta` |
 | Git tag | leading `v` | `v0.4.0-beta` |
-| `CHANGELOG.md` heading | version + date | `## 0.4.0-beta — 2026-06-13` |
+| `CHANGELOG.md` heading | version + date | `## 0.4.0-beta (2026-06-28)` |
 
 `scripts/check_release_meta.py` normalizes these before comparing, so `0.4.0b0`
-and `0.4.0-beta` count as equal — but a real mismatch still fails.
+and `0.4.0-beta` count as equal. It also rejects pending `Unreleased` content
+and validates the plugin's analysis-version compatibility declaration.
 
 ### The two gates
 
@@ -143,7 +147,7 @@ to make the gate pass.**
 | 3 | `validate_config.py` | config/YAML schema error | Correct the offending field. Fix the producer, don't loosen the schema. |
 | 4 | `check_fragment_registry.py` | registry maps out of sync | Align all registry maps — see [`adding-a-section.md`](internal/runbooks/adding-a-section.md) and `schema-invariants.md §4f`. |
 | 5 | `pytest` + coverage | failing tests or coverage below floor | Separate pre-existing failures from new ones. Run a single file with `pytest tests/test_x.py -v --tb=short`. Add tests for new code; don't lower the floor. |
-| 6 | `check_release_meta.py` | version/tag/changelog mismatch | **Expected on an ordinary dev commit** — it's the signal the tree isn't a release. For a real release, reconcile the three [version formats](#version-formats). To check only code health without a version bump, run `make check` instead. |
+| 6 | `check_release_meta.py` | version/plugin manifest/tag/changelog mismatch or unpromoted notes | **Expected on an ordinary dev commit** — it's the signal the tree isn't a release. For a real release, reconcile all [version formats](#version-formats) and promote `Unreleased`. To check only code health, run `make check` instead. |
 
 **Auto-repair:** `make fix` handles stages 1–2 (`ruff check --fix` + `ruff
 format`) and then prints what stages 3–6 still need from you. It deliberately

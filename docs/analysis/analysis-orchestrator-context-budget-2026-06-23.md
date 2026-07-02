@@ -36,9 +36,9 @@ Measured the **main-session** transcript (the orchestrator; sub-agents live in s
 `message.usage`. Joined the token curve to phase boundaries via `.agent-run.log`
 `PHASE_START/PHASE_END` timestamps.
 
-- Transcript: `~/.claude/projects/-home-mrohr-j-juice-shop/f038d924-…jsonl`
+- Transcript: `~/.claude/projects/<workspace-slug>/<session-id>.jsonl`
   (Sonnet-4-6, 273 turns, end ctx = 158,287 = **79% of 200K** — matches the observation).
-- Run dir: `/home/mrohr/j/juice-shop/docs/security/` (standard mode).
+- Run dir: `<workspace>/juice-shop/docs/security/` (standard mode).
 - Scripts: `scratchpad/ctxmeasure.py`, `ctxdetail.py`, `ctxphase.py`.
 
 ---

@@ -75,6 +75,19 @@ def _make_source(root):
     (root / "scripts" / "__pycache__" / "c.pyc").write_text("x", encoding="utf-8")
     (root / "scripts" / "docs").mkdir()
     (root / "scripts" / "docs" / "note.md").write_text("excluded\n", encoding="utf-8")
+    (root / "scripts" / "node_modules" / "tool").mkdir(parents=True)
+    (root / "scripts" / "node_modules" / "tool" / "index.js").write_text("excluded\n", encoding="utf-8")
+    (root / "scripts" / ".coverage-data").mkdir()
+    (root / "scripts" / ".coverage-data" / ".coverage").write_text("excluded\n", encoding="utf-8")
+    (root / "skills" / "create-threat-model" / "docs").mkdir()
+    (root / "skills" / "create-threat-model" / "docs" / "runtime.md").write_text(
+        "excluded\n",
+        encoding="utf-8",
+    )
+    (root / "data").mkdir()
+    (root / "data" / "appsec-requirements-fallback.yaml").write_text("excluded\n", encoding="utf-8")
+    (root / ".agent-run.log").write_text("excluded\n", encoding="utf-8")
+    (root / ".appsec-progress.json").write_text("{}\n", encoding="utf-8")
     # hooks
     hooks = root / "hooks"
     hooks.mkdir()
@@ -114,6 +127,12 @@ def test_copy_source_applies_excludes(tmp_path):
     assert not (build / "tests").exists()
     assert not (build / "scripts" / "__pycache__").exists()
     assert not (build / "scripts" / "docs").exists()
+    assert not (build / "scripts" / "node_modules").exists()
+    assert not (build / "scripts" / ".coverage-data").exists()
+    assert not (build / "skills" / "create-threat-model" / "docs").exists()
+    assert not (build / "data" / "appsec-requirements-fallback.yaml").exists()
+    assert not (build / ".agent-run.log").exists()
+    assert not (build / ".appsec-progress.json").exists()
     # re-copy over an existing build removes it first
     pkg.copy_source(source, build)
     assert (build / "config.json").is_file()

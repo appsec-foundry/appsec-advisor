@@ -91,6 +91,11 @@ def _make_doc(threats: list[dict], mitigations: list[dict] | None = None) -> dic
 # ---------------------------------------------------------------------------
 
 
+def test_default_tool_version_comes_from_plugin_manifest():
+    manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert export_sarif.DEFAULT_TOOL_VERSION == manifest["version"]
+
+
 class TestHelpers:
     def test_slugify_basic(self):
         assert export_sarif._slugify("Hardcoded RSA private key") == "hardcoded-rsa-private-key"

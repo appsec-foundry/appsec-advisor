@@ -10,9 +10,9 @@ Earlier versions of that banner used a single hardcoded number per
 prior measurements, reasoning model, or which stages were enabled.
 Empirical runs on `juice-shop` showed the actual wall-clock kept growing
 as features landed: 36–44 min for `standard --full` in 2026-04, then
-~76 min standard / ~81 min thorough by 2026-06 (see `/home/mrohr/scans`
-anchors). The parametric constants were recalibrated 2026-06-13 against
-those anchors. The spread depends strongly on API-tier idle (~25-30 % of
+~76 min standard / ~81 min thorough by 2026-06. The parametric constants
+were recalibrated 2026-06-13 against the local scan archive. The spread
+depends strongly on API-tier idle (~25-30 % of
 wall) and resume/re-dispatch overhead, neither of which is visible at
 banner-print time — so the parametric path is a ballpark; the
 ``last_run_cache`` replay of a prior measured total is the accurate
@@ -59,7 +59,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 # Stage 1 (Phases 1–10b) base time per assessment depth. RECALIBRATED
-# 2026-06-13 against fresh juice-shop anchors (/home/mrohr/scans):
+# 2026-06-13 against fresh juice-shop anchors from the local scan archive:
 #   standard --full sonnet-economy  → 76 min wall (Stage-1 wall ≈ 41 min)
 #   thorough --full opus-cheap +arch → 81 min wall (Stage-1 wall ≈ 39 min)
 # The earlier base (20/25/40, anchored to a 44-min 2026-04-26 run) under-

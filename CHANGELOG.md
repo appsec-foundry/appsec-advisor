@@ -4,8 +4,13 @@ All notable changes to this project are documented here.
 
 ## Unreleased
 
+### Changed
+
+- Analysis baselines now use version 3 after actor trust positions became part of STRIDE context. Version 1 and 2 baselines remain readable but trigger a full-scan recommendation.
+
 ### Fixed
 
+- Release checks now verify the plugin manifest and reject pending `Unreleased` notes; packaged plugins exclude local runtime state and fail smoke tests on personal absolute paths.
 - Actor discovery now rejects technique-, feature-, and persona-based duplicates before they can affect finding attribution. Actor slices are rebuilt from the finalized component inventory, and architect checks now inspect the actual resolved-actor schema.
 - Actor resolution now remains active at quick depth, honors repository discovery opt-outs, reuses valid discovery caches, and validates the resolved actor artifact before rendering.
 - Reports retain their contract-defined section numbers across Markdown, incremental runs, and exports; mitigation priority colors are applied inside the final QA pass.
