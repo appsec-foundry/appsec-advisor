@@ -6927,6 +6927,30 @@ def check_walkthrough_coverage(
         report.ok = 1
         return report
 
+    # §3 is capped at the top-N highest-priority Criticals (see
+    # walkthrough_renderer.DEFAULT_MAX_WALKTHROUGHS) so a report with many
+    # Criticals does not explode into dozens of near-identical walkthroughs.
+    # Coverage is therefore enforced against that CAPPED selection, not against
+    # every Critical — the overflow Criticals are covered by their §8 rows. We
+    # reuse the renderer's own selection so the contract and the fragment can
+    # never disagree on which findings must be walked through.
+    expected = crits
+    walkthrough_cap = len(crits)
+    try:
+        import walkthrough_renderer as _wr  # sibling script
+
+        # select_walkthrough_picks only walks Criticals (Highs get a 0 budget),
+        # so the Critical list alone fully determines the picks.
+        _picks = _wr.select_walkthrough_picks({"threats": crits})
+        if _picks:
+            expected = [t for t in _picks if (t.get("risk") or t.get("severity") or "").strip().lower() == "critical"]
+            walkthrough_cap = len(_picks)
+    except Exception:
+        # Import/selection failure → fall back to full-coverage enforcement
+        # (never weaker than before this cap existed).
+        expected = crits
+        walkthrough_cap = len(crits)
+
     try:
         text = md_path.read_text(encoding="utf-8")
     except OSError as e:
@@ -6970,18 +6994,21 @@ def check_walkthrough_coverage(
     # sits between `**Source:**` and the `[F/T-NNN]` link.
     source_re = re.compile(r"\*\*Source:\*\*\s*(?:[🔴🟠🟡🟢⚪](?:\s|&nbsp;)*)?\[[TF]-(\d{3,4})\]")
     seen_t_ids: set[str] = set()
+    walked_block_count = 0  # blocks that ARE a walkthrough (carry a T-NNN), not the overview
     for block in subsection_blocks:
         ms = source_re.search(block)
         if ms:
             seen_t_ids.add(f"T-{ms.group(1).zfill(3)}")
+            walked_block_count += 1
             continue
         head_line = block.splitlines()[0] if block else ""
         mh = _T_ID_RE_LOCAL.search(head_line)
         if mh:
             seen_t_ids.add(f"T-{mh.group(1).zfill(3)}")
+            walked_block_count += 1
 
     missing: list[dict] = []
-    for t in crits:
+    for t in expected:
         tid = (t.get("id") or t.get("t_id") or "").strip().upper()
         if not tid:
             continue
@@ -6993,18 +7020,44 @@ def check_walkthrough_coverage(
             missing.append({"id": tid, "title": (t.get("title") or "").strip()})
 
     if missing:
-        n_covered = len(crits) - len(missing)
-        report.issues.append(
-            f"§3 Attack Walkthroughs: {n_covered}/{len(crits)} Critical findings "
-            f"have a walkthrough — missing "
-            f"{', '.join(m['id'] for m in missing)}. Contract requires one "
-            f"`### 3.x` sub-section per Critical threat, each declaring its "
-            f"T-NNN on a `**Source:** [T-NNN]` line and carrying its own "
-            f"`sequenceDiagram`."
-        )
+        n_covered = len(expected) - len(missing)
+        if len(expected) < len(crits):
+            # §3 is capped: coverage is enforced against the top-N selection,
+            # not every Critical (overflow Criticals live in §8).
+            report.issues.append(
+                f"§3 Attack Walkthroughs: {n_covered}/{len(expected)} of the "
+                f"{len(expected)} highest-priority of {len(crits)} Critical findings "
+                f"have a walkthrough — missing "
+                f"{', '.join(m['id'] for m in missing)}. Contract requires one "
+                f"`### 3.x` sub-section per walked-through finding, each declaring "
+                f"its T-NNN on a `**Source:** [T-NNN]` line and carrying its own "
+                f"`sequenceDiagram`."
+            )
+        else:
+            # Uncapped (n_crit ≤ cap): every Critical must be walked through.
+            report.issues.append(
+                f"§3 Attack Walkthroughs: {n_covered}/{len(crits)} Critical findings "
+                f"have a walkthrough — missing "
+                f"{', '.join(m['id'] for m in missing)}. Contract requires one "
+                f"`### 3.x` sub-section per Critical threat, each declaring its "
+                f"T-NNN on a `**Source:** [T-NNN]` line and carrying its own "
+                f"`sequenceDiagram`."
+            )
         # Per-missing entries for repair-plan granularity.
         for m in missing:
             report.issues.append(f"§3 missing walkthrough for {m['id']} — {m['title'][:120]}")
+
+    # Explosion guard: the number of ACTUAL walkthroughs (blocks carrying a
+    # T-NNN — the retired §3.1 overview stub carries none) must not exceed the
+    # cap (walkthrough_renderer caps at DEFAULT_MAX_WALKTHROUGHS). A hand-edit /
+    # LLM re-render that reverted to one-per-Critical would trip this and drive
+    # a re-render from the deterministic fragment.
+    if walked_block_count > walkthrough_cap:
+        report.issues.append(
+            f"§3 Attack Walkthroughs: {walked_block_count} walkthroughs exceed "
+            f"the cap of {walkthrough_cap} — §3 must stay focused on the highest-"
+            f"priority findings; the rest are covered by their §8 rows."
+        )
 
     if not report.issues:
         report.ok = 1

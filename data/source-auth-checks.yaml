@@ -616,10 +616,16 @@ checks:
       - "**/coverage/**"
       - "**/frontend/**"
       - "**/client/**"
-    # Backtick template literal carrying a SQL DML keyword AND a ${...}
-    # interpolation. Parameterized queries (placeholders outside the SQL
-    # string) do not interpolate inside the backtick, so they do not match.
-    pattern: '(?is)`[^`]*\b(?:SELECT|INSERT|UPDATE|DELETE)\b[^`]*\$\{[^}]*\}'
+    # Backtick template literal carrying a real SQL statement AND a ${...}
+    # interpolation. We require full clause STRUCTURE (SELECT..FROM /
+    # INSERT..INTO / UPDATE..SET / DELETE..FROM), not a lone DML verb: the
+    # bare-keyword form matched ordinary English in log/error strings
+    # (`logger.error(`Could not bulk insert X: ${e}`)`, `soft delete for the
+    # user ${id}`) and produced Critical false positives on any codebase that
+    # logs around inserts/updates/deletes. Parameterized queries (placeholders
+    # outside the SQL string) do not interpolate inside the backtick, so they
+    # do not match.
+    pattern: '(?is)`[^`]*(?:\bSELECT\b[^`]*\bFROM\b|\bINSERT\b[^`]*\bINTO\b|\bUPDATE\b[^`]*\bSET\b|\bDELETE\b[^`]*\bFROM\b)[^`]*\$\{[^}]*\}'
     counter_scope: line
     counter_window: 0
     counter_patterns: []

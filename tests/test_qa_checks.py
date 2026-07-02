@@ -3135,6 +3135,70 @@ class TestWalkthroughCoverageSourceLineMatch:
         assert any("T-001" in i for i in report.issues), report.issues
 
 
+class TestWalkthroughCoverageCapped:
+    """§3 is capped at the top-N Criticals (walkthrough_renderer). Coverage is
+    enforced against that capped selection, not every Critical (2026-07-02)."""
+
+    def _write_yaml_n_criticals(self, output_dir: Path, n: int) -> None:
+        rows = "\n".join(
+            f"  - id: T-{i:03d}\n    title: SQL injection sink {i}\n"
+            f"    risk: Critical\n    cwe: CWE-89\n    breach_distance: {i}"
+            for i in range(1, n + 1)
+        )
+        (output_dir / "threat-model.yaml").write_text(
+            "meta:\n  generated: 2026-07-02T00:00:00Z\nthreats:\n" + rows + "\n",
+            encoding="utf-8",
+        )
+
+    def _block(self, idx: int, tid: str) -> str:
+        return (
+            f"### 3.{idx} SQL injection sink\n\n"
+            f"**Source:** [{tid}](#{tid.lower()}) — `routes/r.ts:{idx}`\n\n"
+            "**Attack Steps**\n\n1. step\n\n"
+            "**Sequence Diagram**\n\n```mermaid\nsequenceDiagram\n  A->>B: x\n```\n\n"
+            "**Defense in Depth**\n\n- mitigation\n"
+        )
+
+    def _md(self, output_dir: Path, tids: list[str]) -> Path:
+        body = "\n\n".join(self._block(i + 1, t) for i, t in enumerate(tids))
+        md = output_dir / "threat-model.md"
+        md.write_text("## 3. Attack Walkthroughs\n\n" + body + "\n\n## 4. Assets\n", encoding="utf-8")
+        return md
+
+    def test_top_n_coverage_passes_overflow_not_flagged(self, output_dir):
+        qa = _load_qa_checks()
+        import walkthrough_renderer as wr
+
+        self._write_yaml_n_criticals(output_dir, 12)
+        # Walk through exactly the top-N selection; T-009..T-012 must NOT be flagged.
+        top = [f"T-{i:03d}" for i in range(1, wr.DEFAULT_MAX_WALKTHROUGHS + 1)]
+        md = self._md(output_dir, top)
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert report.issues == [], report.issues
+        assert report.ok == 1
+
+    def test_missing_top_n_critical_is_flagged(self, output_dir):
+        qa = _load_qa_checks()
+        import walkthrough_renderer as wr
+
+        self._write_yaml_n_criticals(output_dir, 12)
+        # Cover 7 of the top-8 — drop T-008 (a top-N pick) → must be flagged.
+        top = [f"T-{i:03d}" for i in range(1, wr.DEFAULT_MAX_WALKTHROUGHS)]  # T-001..T-007
+        md = self._md(output_dir, top)
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert any("T-008" in i for i in report.issues), report.issues
+        assert any("highest-priority of 12" in i for i in report.issues)
+
+    def test_explosion_over_cap_is_flagged(self, output_dir):
+        qa = _load_qa_checks()
+        self._write_yaml_n_criticals(output_dir, 12)
+        # A reverted render that walks ALL 12 Criticals → exceeds the cap.
+        allt = [f"T-{i:03d}" for i in range(1, 13)]
+        md = self._md(output_dir, allt)
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert any("exceed the cap" in i for i in report.issues), report.issues
+
+
 def test_section7_h4_status_flags_missing_badge(tmp_path: Path):
     """An H4 with no `**Status:**` badge is flagged (warning-level)."""
     md = _write_minimal_model(

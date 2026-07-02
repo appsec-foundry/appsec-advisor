@@ -42,6 +42,20 @@ import yaml
 # Register row.
 MAX_HIGH_WALKTHROUGHS = 0
 
+# Hard ceiling on the number of §3 walkthroughs (2026-07-02). A report with
+# many Criticals otherwise renders one deep-dive narrative per Critical, which
+# explodes §3 into dozens of near-identical blocks and buries the worst risks.
+# §3 is the editorial "here are the attacks that matter most" section; the
+# EXHAUSTIVE per-finding record (evidence, fix, classification) lives in §8,
+# which carries every finding regardless of this cap. So capping §3 loses no
+# information — only the narrative walkthrough for lower-priority Criticals,
+# which are selected out by _walkthrough_priority (chain anchors + smallest
+# breach-distance win). Kept intentionally small (reader feedback: 5–8 is
+# digestible, >10 is a wall). Override via .skill-config.json `max_walkthroughs`
+# (clamped to [1, MAX_WALKTHROUGHS_CEILING]).
+DEFAULT_MAX_WALKTHROUGHS = 8
+MAX_WALKTHROUGHS_CEILING = 10
+
 # Minimums for the bullet lists feeding the walkthrough body. Set low —
 # the renderer no longer pads with generic boilerplate to hit a body-line
 # floor; the contract floor is 5 lines and the labelled-form sections plus
@@ -457,13 +471,43 @@ def _sort_key(t: dict) -> tuple[int, str]:
     return _RISK_RANK.get(_risk_of(t), 9), str(t.get("id") or "")
 
 
-def select_walkthrough_picks(yaml_data: dict) -> list[dict]:
-    """All Criticals (deterministic order) + a small budget of Highs."""
+def _walkthrough_priority(t: dict) -> tuple:
+    """Most-important-first ordering for the capped §3 selection. Lower sorts
+    earlier. Compound-chain anchors come first (they are the entry point of a
+    code-verified abuse chain), then findings closest to a breach
+    (smaller ``breach_distance``), then stable ``id`` order for determinism."""
+    is_anchor = bool(t.get("compound_chain_ids")) or (
+        (t.get("chain_role") or "").strip().lower() in {"anchor", "entry_point", "initial_access", "entry"}
+    )
+    bd = t.get("breach_distance")
+    bd = bd if isinstance(bd, (int, float)) else 999
+    return (0 if is_anchor else 1, bd, str(t.get("id") or ""))
 
+
+def resolve_walkthrough_cap(yaml_data: dict | None = None, config: dict | None = None) -> int:
+    """Resolve the §3 walkthrough cap: ``max_walkthroughs`` from skill-config
+    when present (clamped to [1, MAX_WALKTHROUGHS_CEILING]), else the default."""
+    cap = DEFAULT_MAX_WALKTHROUGHS
+    if isinstance(config, dict):
+        raw = config.get("max_walkthroughs")
+        if isinstance(raw, int) and raw > 0:
+            cap = raw
+    return max(1, min(cap, MAX_WALKTHROUGHS_CEILING))
+
+
+def select_walkthrough_picks(yaml_data: dict, cap: int | None = None) -> list[dict]:
+    """The ``cap`` highest-priority Criticals (chain anchors + smallest
+    breach-distance first) + a small budget of Highs. Capping keeps §3 from
+    exploding when a report has many Criticals; every finding — walked through
+    or not — still has its full §8 Findings Register row."""
+
+    if cap is None:
+        cap = DEFAULT_MAX_WALKTHROUGHS
+    cap = max(1, min(int(cap), MAX_WALKTHROUGHS_CEILING))
     threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
-    crit = sorted([t for t in threats if _risk_of(t) == "critical"], key=_sort_key)
+    crit = sorted([t for t in threats if _risk_of(t) == "critical"], key=_walkthrough_priority)
     high = sorted([t for t in threats if _risk_of(t) == "high"], key=_sort_key)
-    return crit + high[:MAX_HIGH_WALKTHROUGHS]
+    return (crit + high[:MAX_HIGH_WALKTHROUGHS])[:cap]
 
 
 # ---------------------------------------------------------------------------
@@ -1046,6 +1090,10 @@ def render_attack_walkthroughs_md(
 
     templates = load_templates(template_dir or DEFAULT_TEMPLATE_DIR)
     picks = select_walkthrough_picks(yaml_data)
+    _all_threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
+    _n_critical_total = sum(1 for t in _all_threats if _risk_of(t) == "critical")
+    _n_walked = sum(1 for t in picks if _risk_of(t) == "critical")
+    _capped = _n_critical_total > _n_walked
 
     indexes = {
         "mitigations": _mitigations_by_threat(yaml_data),
@@ -1076,12 +1124,26 @@ def render_attack_walkthroughs_md(
         out.append("<!-- generated:walkthrough_renderer -->")
         return "\n".join(out).rstrip() + "\n"
 
+    if _capped:
+        intro = (
+            f"This section walks through how the highest-risk findings are "
+            f"exploited. To keep the section focused, it covers the "
+            f"**{_n_walked} highest-priority of {_n_critical_total} Critical "
+            f"findings** (chain entry points and the findings closest to a "
+            f"breach); every remaining Critical still has a full "
+            f"[§8 Findings Register](#8-findings-register) row with the same "
+            f"evidence, impact, and fix. Each walkthrough has attack steps, a "
+            f"focused sequence diagram, and the primary mitigation."
+        )
+    else:
+        intro = (
+            "This section walks through how the highest-risk findings are "
+            "exploited — one short walkthrough per Critical, each with attack "
+            "steps, a focused sequence diagram, and the primary mitigation."
+        )
     out.append(
-        "This section walks through how the highest-risk findings are "
-        "exploited — one short walkthrough per Critical, each with attack "
-        "steps, a focused sequence diagram, and the primary mitigation. The "
-        "cross-finding view (which weaknesses combine toward the worst-case "
-        "goal, and where one fix severs several paths) is in the "
+        intro + " The cross-finding view (which weaknesses combine toward the "
+        "worst-case goal, and where one fix severs several paths) is in the "
         "[Critical Attack Tree](#critical-attack-tree). Full per-finding "
         "context — severity rationale, assets, detection signals — is in the "
         "[§8 Findings Register](#8-findings-register) row for each finding."

@@ -77,6 +77,12 @@ _UNIVERSAL_EXCLUDES = (
     ".idea/",
     "vendor/",
     "__pycache__/",
+    # Static code snippets stored as DATA and served to the user (e.g. the
+    # coding-challenge "fix this vuln" snippets under data/static/codefixes/).
+    # They contain intentionally-vulnerable example code but are read via
+    # fs.readFile and rendered as text — never require()'d or executed — so
+    # their SQL/command literals are inert, not live sinks.
+    "codefixes/",
 )
 
 # Maximum file size (bytes) — files larger than this are skipped (likely

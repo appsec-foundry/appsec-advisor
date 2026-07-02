@@ -132,3 +132,54 @@ groups:
         title_pattern: '(?i)\b(lock.?file|package.lock|renovate|dependabot|sca|dependency.review|dependency.track|supply.chain.gate)\b'
       - cwe: [CWE-1104, CWE-937]
         title_pattern: '(?i)\babsent\b.{0,40}\b(repository|repo|project)\b'
+
+  # --- Injection family (2026-07-02) ---
+  #
+  # Same rationale as xss-per-component: multiple sinks of the SAME injection
+  # class in the SAME component share one root cause (that component builds a
+  # dangerous string / call from unneutralized untrusted input) and one fix
+  # (parameterize / use a safe API / validate + canonicalize). Listing every
+  # sink as its own Critical buries the signal — a data seeder or a route file
+  # with a dozen interpolated queries rendered a dozen near-identical findings
+  # and §3 walkthroughs. Every sink is preserved as an `instances[]` entry.
+  #
+  # ONE GROUP PER CLASS, NOT a shared "injection" group: SQLi, XXE, SSRF,
+  # command injection and path traversal are DISTINCT objects with DISTINCT
+  # fixes, so a component that has both SQLi and XXE must keep them as two
+  # findings — a single merged bucket (per-component scope collapses all
+  # matches for one group into one survivor) would wrongly fuse them.
+  #
+  # per-component (not cross-component): a raw-SQL sink in the API tier and one
+  # in a background worker are different code owned by different teams; only
+  # co-located sinks share the one fix. Pure-CWE match (no title_pattern) is
+  # deliberate and mirrors idor-object-authz / xss-per-component — these CWEs
+  # are class-specific enough that the code number alone is the right key.
+  - id: sql-injection-per-component
+    title: "SQL Injection"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-89]
+
+  - id: xxe-per-component
+    title: "XML External Entity (XXE) Injection"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-611]
+
+  - id: ssrf-per-component
+    title: "Server-Side Request Forgery (SSRF)"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-918]
+
+  - id: command-injection-per-component
+    title: "OS Command Injection"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-78]
+
+  - id: path-traversal-per-component
+    title: "Path Traversal"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-22]

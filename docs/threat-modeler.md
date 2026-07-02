@@ -170,18 +170,18 @@ The number of analyzed components follows the repository's attack surface rather
 
 ### Cost by depth
 
-These clean OWASP Juice Shop runs were measured on 2026-06-23. They compare modes but do not predict the exact bill for another repository.
+These clean OWASP Juice Shop runs were measured on 2026-07-02. They compare modes but do not predict the exact bill for another repository.
 
 | Mode | Best fit | Review depth | Measured API cost (USD) and time |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | About $18 and 43 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick.md)) |
-| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | About $31 and 88 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
+| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | About $37 and 102 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard.md)) |
 | **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | About $50 and 94 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough.md)) |
 
 > [!NOTE]
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
 
-`--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the same standard benchmark, a cap of 2 reduced the finding count from 89 to about 52 and saved roughly $4. The selected cap is recorded in the report.
+`--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the same standard benchmark, a cap of 2 reduced the finding count from 83 to about 52 and saved roughly $4. The selected cap is recorded in the report.
 
 ### Reasoning model
 

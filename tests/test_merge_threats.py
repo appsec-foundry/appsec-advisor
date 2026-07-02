@@ -862,6 +862,67 @@ class TestConsolidateByGroup:
         assert "routes/address.ts" in s["affected_files"]
         assert "routes/wallet.ts" in s["affected_files"]
 
+    def test_sql_injection_consolidates_per_component(self, mt):
+        # CWE-89 sinks in ONE component share a root cause (raw SQL from
+        # untrusted input) and one fix (parameterize) → one systemic survivor
+        # with every sink preserved as an instance. (Added 2026-07-02 to stop N
+        # near-identical SQLi findings/§3 walkthroughs.)
+        rows = [
+            _threat(
+                cwe="CWE-89",
+                title="SQL injection request data interpolated into a SQL",
+                evidence={"file": f, "line": ln},
+                component_id="backend-api",
+            )
+            for f, ln in (("routes/login.ts", 34), ("routes/search.ts", 23))
+        ]
+        out = mt._consolidate_by_group([dict(t) for t in rows])
+        survivors = [t for t in out if t.get("consolidation_group") == "sql-injection-per-component"]
+        assert len(survivors) == 1
+        s = survivors[0]
+        assert s["systemic"] is True
+        assert s["title"] == "SQL Injection"
+        assert s["instance_count"] == 2
+        assert "routes/login.ts" in s["affected_files"]
+        assert "routes/search.ts" in s["affected_files"]
+
+    def test_high_cardinality_consolidation_preserves_all_instances(self, mt):
+        # A component with MANY same-CWE sinks collapses to ONE survivor that
+        # preserves every hit as an instance (data completeness for YAML/SARIF).
+        # The DATA list is deliberately unbounded — the §8 card render caps the
+        # DISPLAY at 8 (see test_high_cardinality_instances_capped_with_more_suffix),
+        # so a large cluster never explodes the report even though no evidence
+        # is dropped.
+        rows = [
+            _threat(
+                cwe="CWE-89",
+                title="SQL injection",
+                evidence={"file": f"routes/r{i:02d}.ts", "line": i},
+                component_id="backend-api",
+            )
+            for i in range(1, 13)
+        ]
+        out = mt._consolidate_by_group([dict(t) for t in rows])
+        survivors = [t for t in out if t.get("consolidation_group") == "sql-injection-per-component"]
+        assert len(survivors) == 1
+        assert survivors[0]["instance_count"] == 12
+        assert len(survivors[0]["instances"]) == 12
+
+    def test_distinct_injection_classes_stay_separate_in_same_component(self, mt):
+        # The per-class design guarantee: SQLi (CWE-89) and XXE (CWE-611) in the
+        # SAME component are DISTINCT objects with DISTINCT fixes and must NOT
+        # fuse into one finding — each class has its own group.
+        rows = [
+            _threat(cwe="CWE-89", title="SQL injection", evidence={"file": "routes/search.ts", "line": 23}, component_id="backend-api"),
+            _threat(cwe="CWE-611", title="XXE", evidence={"file": "lib/xml.ts", "line": 21}, component_id="backend-api"),
+        ]
+        out = mt._consolidate_by_group([dict(t) for t in rows])
+        groups = {t.get("consolidation_group") for t in out if t.get("systemic")}
+        # Two lone matches → neither is made systemic (one instance each), and
+        # they are never merged together.
+        assert len(out) == 2
+        assert not any(t.get("systemic") for t in out)
+
     def test_missing_route_auth_groups_by_source_check_id(self, mt):
         rows = [
             _threat(
@@ -1659,12 +1720,16 @@ class TestCmdCollectFinalizeBranches:
 
     def test_finalize_reads_decisions_file_dict(self, mt, tmp_path):
         # lines 1532-1533: .merge-decisions.json as dict with decisions[].
+        # CWE-94 (code injection) has no catalog consolidation group, so the two
+        # findings form an LLM merge candidate_group (as this test needs to reach
+        # the decision-file branch). CWE-89 was used here originally but now
+        # auto-consolidates via sql-injection-per-component, leaving no candidate.
         _write_stride(
             tmp_path,
             "backend",
             [
-                _threat(cwe="CWE-89", stride="Tampering", title="SQLi a", evidence={"file": "a.ts", "line": 1}),
-                _threat(cwe="CWE-89", stride="Tampering", title="SQLi b", evidence={"file": "b.ts", "line": 2}),
+                _threat(cwe="CWE-94", stride="Tampering", title="Code injection a", evidence={"file": "a.ts", "line": 1}),
+                _threat(cwe="CWE-94", stride="Tampering", title="Code injection b", evidence={"file": "b.ts", "line": 2}),
             ],
         )
         mt.main(["collect", "--output-dir", str(tmp_path)])

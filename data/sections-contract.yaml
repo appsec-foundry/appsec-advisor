@@ -826,7 +826,15 @@ sections:
     required_patterns:
       - "sequenceDiagram"                           # per-Critical walkthrough
     required_patterns_condition: "has_authored_walkthroughs"
-    per_critical_subsection: true                   # §3.2+ = one per Critical finding
+    # §3 is CAPPED at the top-N highest-priority Criticals (chain anchors +
+    # smallest breach-distance) — see walkthrough_renderer.DEFAULT_MAX_WALKTHROUGHS
+    # (currently 8, ceiling 10). This stops §3 from exploding into dozens of
+    # near-identical walkthroughs on Critical-heavy reports; overflow Criticals
+    # keep their full §8 row. check_walkthrough_coverage enforces coverage of
+    # the CAPPED selection (reusing walkthrough_renderer.select_walkthrough_picks
+    # so the contract and fragment can never disagree) and flags any §3 that
+    # exceeds the cap.
+    per_critical_subsection: true                   # §3.2+ = one per walked-through Critical
     per_critical_subsection_condition: "has_authored_walkthroughs"
 
     # ---------------------------------------------------------------------

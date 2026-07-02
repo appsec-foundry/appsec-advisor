@@ -2663,3 +2663,18 @@ class TestInstancesCard:
         card = self._card(tmp_path, t)
         assert "Instances (2):" in card
         assert "🟠 `server.ts:310`" not in card  # uniform severity → plain locations
+
+    def test_high_cardinality_instances_capped_with_more_suffix(self, tmp_path):
+        # A systemic finding with many instances (e.g. a component with a dozen
+        # same-CWE injection sinks) must NOT dump every location into the §8
+        # card — that just relocates the "too many near-identical entries" bloat.
+        # The card shows the true total, caps the shown locations at 8, and
+        # collapses the rest into "… (+N more)". Guards the _cap=8 branch.
+        t = self._systemic_threat(
+            [{"file": f"routes/r{i:02d}.ts", "line": i, "severity": "Critical"} for i in range(1, 13)]
+        )  # 12 instances
+        card = self._card(tmp_path, t)
+        assert "Instances (12):" in card          # true total surfaced
+        assert "… (+4 more)" in card               # 12 - 8 cap = 4 collapsed
+        assert "routes/r08.ts:8" in card           # 8th shown
+        assert "routes/r09.ts:9" not in card       # 9th collapsed into "+more"

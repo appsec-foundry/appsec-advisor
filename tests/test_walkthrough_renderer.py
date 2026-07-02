@@ -165,6 +165,57 @@ class TestSequenceDiagramAltElseBlock:
         assert "else After M-005 — Use parameterized queries" in md
 
 
+class TestWalkthroughCap:
+    """§3 is capped at DEFAULT_MAX_WALKTHROUGHS so a Critical-heavy report does
+    not explode into dozens of near-identical walkthroughs (2026-07-02)."""
+
+    def _crits(self, n, *, with_anchor_last=False):
+        threats = [
+            {
+                "id": f"T-{i:03d}",
+                "title": f"SQL injection sink {i}",
+                "component": "express-backend",
+                "cwe": "CWE-89",
+                "risk": "critical",
+                "breach_distance": i,  # lower = more important
+                "evidence": [{"file": f"routes/r{i:02d}.ts", "line": i}],
+            }
+            for i in range(1, n + 1)
+        ]
+        if with_anchor_last:
+            threats[-1]["compound_chain_ids"] = ["AC-T-001"]  # anchor → must win a slot
+        return {"threats": threats, "mitigations": [], "assets": [], "attack_surface": []}
+
+    def _count_blocks(self, md):
+        import re as _re
+
+        return len(_re.findall(r"^###\s+3\.\d+\s", md, _re.MULTILINE))
+
+    def test_caps_at_default_with_honest_note(self):
+        md = renderer.render_attack_walkthroughs_md(self._crits(12))
+        assert self._count_blocks(md) == renderer.DEFAULT_MAX_WALKTHROUGHS  # 8, not 12
+        # Intro must disclose the cap and point overflow to §8.
+        assert "8 highest-priority of 12 Critical findings" in md
+        assert "§8 Findings Register" in md
+
+    def test_no_cap_note_when_under_limit(self):
+        md = renderer.render_attack_walkthroughs_md(self._crits(5))
+        assert self._count_blocks(md) == 5
+        assert "highest-priority of" not in md  # no cap disclosure when nothing is dropped
+
+    def test_anchor_wins_a_slot_over_lower_breach_distance(self):
+        # T-012 has the WORST breach_distance but is a chain anchor → it must be
+        # in the capped picks even though 11 lower-distance Criticals exist.
+        picks = renderer.select_walkthrough_picks(self._crits(12, with_anchor_last=True))
+        ids = [p["id"] for p in picks]
+        assert "T-012" in ids
+        assert picks[0]["id"] == "T-012"  # anchor sorts first
+
+    def test_cap_never_exceeds_ceiling(self):
+        picks = renderer.select_walkthrough_picks(self._crits(30), cap=99)
+        assert len(picks) == renderer.MAX_WALKTHROUGHS_CEILING  # clamped to 10
+
+
 class TestAttackStepsFallbackWhenNoScenario:
     """When `scenario` is missing the renderer still produces clean steps."""
 
