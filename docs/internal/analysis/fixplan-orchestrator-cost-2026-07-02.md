@@ -118,3 +118,104 @@ fixes) — a fresh session loses nothing.
    fixes still present (branch `dev`).
 3. Decide with user: commit Part A + add regression tests? then start Part B Phase 1.
 4. Part B Phase 1/2 need NO full scan — scripts + `--rerender` only.
+
+---
+
+## UPDATE 2026-07-02 (later same day) — Part A committed; Part B Phase 1 done, Phase 2 blocked
+
+**Part A:** committed as `96b6058` on `dev` (not pushed). Regression tests per bug not
+yet added (deferred by user — commit first).
+
+### Part B Phase 1 — two corrections to the numbers above
+
+1. **`context_window_report.py` double-counted cache_read (now fixed, `dev`
+   uncommitted).** Claude Code logs one JSONL record per content block
+   (thinking/text/tool_use) for a single API turn, and every block carries the
+   *same* `message.usage` snapshot. The script summed `cache_read_input_tokens`
+   per JSONL record instead of per unique `message.id` — in the analyzed session
+   that inflated `cache_read_throughput` by **2.12×** (546 raw records → 258 real
+   API turns). `peak_resident_context` was NOT affected (`max()` is dedup-proof) —
+   **563,717 is correct; the "~802k" figure above was never corroborated by this
+   tool and should be treated as an unverified rough estimate, not a baseline.**
+   Fix: dedupe by `message.id` in `analyze_session`; regression test added
+   (`test_multiple_content_blocks_per_message_are_not_double_counted`).
+2. **The analyzed session silently mixed models — it was NOT all-Sonnet.** Sonnet
+   ran 07:30–09:31 (157 turns = the original threat-model run). At 09:42 someone
+   switched to **Opus** for the rest of the session — 101 turns through 11:11,
+   which is the Part-A bug-fixing/debugging work. The "$77 / cache_read 178.6M at
+   Sonnet rates" framing above conflated the two: a real chunk of that spend was
+   at Opus rates, not Sonnet.
+
+**Corrected real cost** (deduped turns, real per-model pricing — Sonnet 5
+input/output $2/$10 intro through 2026-08-31 or $3/$15 standard, cache_read≈0.1×
+input, cache_write(5m)≈1.25× input; Opus 4.8 input/output $5/$25, no intro,
+same cache-rate formula):
+
+| | turns | cache_read | cost |
+|---|---:|---:|---:|
+| Sonnet block (07:30–09:31, the original run) | 157 | 45.4M | ~$12.01 (intro) / ~$18.02 (standard) |
+| Opus block (09:42–11:11, the fixing work) | 101 | 46.5M | ~$30.29 |
+| **Total (this retained session)** | 258 | 91.8M | **~$42–48**, not $77 |
+
+The $77→~$42–48 revision is NOT the legacy-runtime fix paying off — it's simply
+correcting bad arithmetic (double-counted cache_read) and a bad pricing
+assumption (the "Opus ≈ 5×" comparison used `verify_run_costs.py`'s stale
+`opus-4-6` pricing table; real Opus 4.8 cache_read is $0.50/M vs that table's
+$1.50/M — 3× too high). `verify_run_costs.py`'s `PRICING_MODELS` dict has no
+`sonnet-5`/`opus-4-8` entries — flagged as a Phase-3 candidate, not fixed here.
+
+**Arithmetic resolved** (the "245 tool_results / ~220k unique content vs 178M
+cache_read" puzzle from Part B's first pass): deduped cache_read (91.8M) vs
+deduped cache_creation — i.e. genuinely NEW content ever added to the
+conversation (1.27M) — gives a **~72× average re-read multiplier**. This is
+structural, not a bug: with 0 compactions, every token added to context stays
+resident and gets re-read from cache on every subsequent turn until session end.
+Rough fixed/growing split: the turn-1 baseline (~62.7k tokens — system + tools +
+partial skill load) gets re-read across the other 257 turns ≈ 16.1M tokens ≈
+**~17% fixed**, **~83% growing** (conversation/tool-result/subagent-notification
+accumulation over the session). This confirms Part B's qualitative diagnosis
+(growth, not fixed overhead, dominates) even though the dollar figures above
+were wrong.
+
+### Part B Phase 2 — blocked, not executable as written
+
+`--rerender` **always routes to `runtime=legacy`**, regardless of
+`APPSEC_THIN_ORCHESTRATOR` — `orchestration_controller.py`'s router requires
+`mode in {"full","rebuild"}` AND `not rerender`
+(`_runtime_for()` around line 234–245; reason string:
+`"special mode retains the parity runtime"`). The cheap path (`--rerender`,
+skips Stage 1/STRIDE) and the thin-eligible path (`--full`/`--rebuild`, which
+triggers the expensive Stage-1 fan-out) are mutually exclusive today. A cheap
+A/B of legacy-vs-thin is **not possible** without either (a) a real
+`--full`/`--rebuild` run (expensive, not done — out of scope this session), or
+(b) a router code change to add a diagnostic-only override (not done — would
+need review as its own change).
+
+**Decision (user, 2026-07-02): skip Phase 2, go straight to Phase 3 using Phase 1
+data only.**
+
+### Part B Phase 3 — done this session
+
+- Fixed `context_window_report.py` dedup bug (see above); regression test added;
+  full related test files green (`context_window_report` + `run_costs`, 74
+  passed). Uncommitted on `dev`.
+- **Thin-runtime GA recommendation (for the maintainer — this is their call, not
+  implemented here):** the legacy runtime holds `SKILL-impl.md` (351,511 bytes /
+  ~86k tokens) resident for the entire session and re-pays it on every turn; the
+  thin runtime's `SKILL-full-runtime.md` is 8,717 bytes / ~2k tokens — roughly
+  **43× smaller**. Given ~83% of this session's cache_read was growth-driven
+  (not fixed-baseline-driven), thin runtime would cut the *fixed* ~17% slice
+  further but wouldn't by itself fix the *growing* ~83% (conversation/subagent
+  notification accumulation) — meaning thin-runtime GA (Phase-3 item 1) and the
+  compact sub-agent completion contract (Phase-3 item 3, "biggest lever if
+  notifications dominate") are complementary, not substitutes. Recommend GA'ing
+  thin runtime AND scoping the compact-completion-contract work, in that
+  priority order — but closing the parity matrix for GA is a maintainer decision
+  outside this session's scope.
+- Items 2 (lazy-load `SKILL-impl.md` per-stage) and 4 (mid-run `skill_watchdog.py`
+  guardrail) from the original Phase-3 list were NOT implemented this session —
+  open follow-ups if the maintainer wants them ahead of thin-runtime GA.
+
+**Open decisions for next session:** commit the `context_window_report.py` fix?
+add regression tests for Part A's 6 bugs (still deferred)? pursue Phase-3 items
+2/4, or the `verify_run_costs.py` stale-pricing-table fix?
