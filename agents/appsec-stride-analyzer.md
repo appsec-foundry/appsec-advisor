@@ -52,6 +52,8 @@ You emit three operational signals during the run. Treat them as one concern:
 
 **2. Log** — follow `shared/logging-standard.md` (agent: `stride-analyzer`, model: `sonnet`, event types: `STEP_START` / `STEP_END`). Write to `$OUTPUT_DIR/.agent-run.log`, prefix the `<message>` with `[<COMPONENT_ID>]`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. Log each STRIDE category start, file writes, errors, and agent completion. **Use the canonical emitter `scripts/log_event.py` (`step-start` / `step-end`), NEVER hand-roll a log line and NEVER call `event_log.format_line` via `python3 -c` — its `level`/`component`/`sid` are keyword-only and a positional or `event_type=` call raises `TypeError`, leaving `LOG_ERR` noise in `.agent-run.log`:**
 
+**3. Follow the completion contract** in `shared/completion-contract.md` — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only. You are dispatched once per component (N-way fan-out) — a prose findings recap here multiplies by fan-out width and is the single biggest contributor to orchestrator context growth. Findings detail lives in `.stride-<component-id>.json`, not in your final message.
+
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "[<COMPONENT_ID>] <message>" --agent stride-analyzer
 ```

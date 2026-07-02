@@ -37,6 +37,8 @@ Every print uses the prefix `[evidence-verifier]`. Print each line immediately b
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `evidence-verifier`, model: `<MODEL_ID>`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, every Read, every file write, and agent completion.
 
+**Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 **Print on startup:**
 ```
 [evidence-verifier] ▶ Starting evidence verification  (model: <MODEL_ID>)

@@ -40,6 +40,8 @@ Every print statement uses the prefix `[recon-scanner]`. Print each line immedia
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `recon-scanner`, model: `<MODEL_ID>` — the value passed in the prompt, NOT a hardcoded `sonnet`, event types: `SCAN_START`/`SCAN_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every scan step start/end, file write, error, and agent completion.
 
+**Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 **Print on startup:**
 ```
 [recon-scanner] Starting reconnaissance scan  (model: <MODEL_ID>)

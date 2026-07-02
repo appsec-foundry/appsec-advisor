@@ -216,6 +216,51 @@ data only.**
   guardrail) from the original Phase-3 list were NOT implemented this session —
   open follow-ups if the maintainer wants them ahead of thin-runtime GA.
 
-**Open decisions for next session:** commit the `context_window_report.py` fix?
-add regression tests for Part A's 6 bugs (still deferred)? pursue Phase-3 items
-2/4, or the `verify_run_costs.py` stale-pricing-table fix?
+### Part B Phase 3 item 3 — compact sub-agent completion contract (done, this
+### session, after user picked it as the priority fix to implement before a
+### verify scan)
+
+Research (fork agent) confirmed: no `agents/*.md` file constrained the
+sub-agent's own final assistant-message text — every agent is told to `Write`
+full JSON/MD artifacts to disk (good) but its closing prose is left to the
+model's judgment, which defaults to a findings recap. The orchestrator
+(`SKILL-impl.md:2096-2180`) never reads that prose back — it reads the files on
+disk plus the harness `<usage>` block — so the recap is pure duplication that
+sits in the orchestrator's context for the rest of the run (no mid-run
+compaction) and gets re-read from cache every subsequent turn. Biggest volume
+drivers: `appsec-stride-analyzer` (N× per run, once per component) and
+`appsec-abuse-case-verifier` (M× per run, once per candidate) — everything else
+is 0–1× per run.
+
+**Implemented:** new `agents/shared/completion-contract.md` (the reusable
+snippet, matching the existing `shared/logging-standard.md` /
+`shared/validation-routine.md` pattern) — rule: final message is exactly
+`Wrote <N> <unit> to <path>. <one-sentence outcome>.`, no finding details, no
+restated reasoning, no bulleted recap. Referenced from 13 agent files:
+`appsec-abuse-case-verifier`, `appsec-actor-discoverer`,
+`appsec-architect-reviewer`, `appsec-config-scanner`, `appsec-context-resolver`,
+`appsec-evidence-verifier`, `appsec-fragment-fixer`, `appsec-qa-reviewer`,
+`appsec-recon-scanner`, `appsec-stride-analyzer` (extra callout: fan-out width
+multiplies the cost of verbosity here), `appsec-threat-merger`,
+`appsec-threat-renderer` (already had an informal "terse status only" rule —
+tied it to the shared contract instead of rewriting it), `appsec-triage-validator`.
+Full suite: **8964 passed, 93 skipped** (one more passing test than baseline —
+the `context_window_report.py` regression test from the earlier fix).
+
+**Explicitly out of scope:** `agents/appsec-threat-analyst.md` (1466 lines) was
+NOT edited. It's structurally the orchestrator role itself (writes
+`threat-model.md` directly, dispatches its own sub-agents) rather than a
+sub-agent reporting up to one — unclear from a fork-scoped read whether/how
+often it's itself dispatched as a sub-agent (e.g. Incremental Mode
+Analyst-A/B) in a way where the contract would apply to its own return value.
+Flagged as a follow-up requiring a dedicated read of that file, not guessed at.
+
+**Not yet done:** no verify run (Phase 4) — the user's plan was
+completion-contract first, then a real comparison scan against the $77 (now
+~$42–48, see corrected numbers above) baseline. That real scan has NOT been
+run — still pending an explicit go-ahead given it costs real money.
+
+**Open decisions for next session:** commit this? run the verify scan (Phase 4,
+real cost)? add regression tests for Part A's 6 bugs (still deferred)? pursue
+Phase-3 items 2/4, the `verify_run_costs.py` stale-pricing-table fix, or the
+`appsec-threat-analyst.md` completion-contract follow-up?

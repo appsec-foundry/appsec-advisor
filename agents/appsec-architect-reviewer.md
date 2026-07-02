@@ -63,6 +63,8 @@ You emit two operational signals during the run. Treat them as one concern:
 
 **2. Log** — follow `shared/logging-standard.md` (agent: `architect-reviewer`, model: `<MODEL_ID>`, event types: `STEP_START` / `STEP_END`). Write to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash call, before any file reads. Log every check start/end (batched with the next check's start per the standard's batching rule), the file writes, errors, and agent completion.
 
+**3. Follow the completion contract** in `shared/completion-contract.md` — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only, no narrative findings recap.
+
 **Print on startup:**
 ```
 [architect] ▶ Starting architect review  (model: <MODEL_ID>)

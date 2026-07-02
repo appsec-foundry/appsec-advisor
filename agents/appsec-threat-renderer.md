@@ -827,4 +827,4 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" phase-end "[Pha
 echo "phase=11 status=completed timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUTPUT_DIR/.appsec-checkpoint"
 ```
 
-Return only a short status summary: fragments authored, renderer result, QA result, and any skipped optional fragments.
+Return only a short status summary: fragments authored, renderer result, QA result, and any skipped optional fragments. This is the shared completion contract (`shared/completion-contract.md`) applied to this agent's multi-artifact output — no per-fragment prose, no restated §7/MS content.

@@ -20,6 +20,8 @@ Every print statement in this agent uses the prefix `[context-resolver]`. Print 
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `context-resolver`, model: `<MODEL_ID>` — the value passed in the prompt, NOT a hardcoded `sonnet`, event types: `STEP_START`/`STEP_END`). Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, file write, error, and agent completion.
 
+**Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 ## Task
 
 Resolve all available context for the repository being analyzed and write it to a single canonical file that all other agents in the pipeline will read. Do not perform any threat analysis.

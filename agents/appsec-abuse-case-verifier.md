@@ -35,6 +35,8 @@ Every print uses the prefix `[abuse-case-verifier:<ABUSE_CASE_ID>]`. Print each 
 
 **Follow the logging standard in `shared/logging-standard.md`** (agent: `abuse-case-verifier`, model: `<MODEL_ID>`, event types: `STEP_START`/`STEP_END`). Write all log entries to `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY FIRST Bash command, before any file reads. Log every step start/end, every Read/Grep, the final file write, and agent completion.
 
+**Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only, no per-step verdict recap.
+
 **Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format) — it stamps the real UTC time and the correct column widths for you, so the timestamp can never be wrong or literal. Emit every event with one of these exact Bash calls (pass `--agent abuse-case-verifier` so the component column is correct):
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier

@@ -30,6 +30,8 @@ This agent runs on `sonnet`. Budget: 15–25k tokens — breadth-first identific
 
 Every status line uses prefix `[actor-discoverer]`. Write log entries to `$OUTPUT_DIR/.agent-run.log` (agent: `actor-discoverer`, model: `sonnet`, event types: `STEP_START`/`STEP_END`).
 
+Follow the completion contract in `shared/completion-contract.md` — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only.
+
 **Print on startup:**
 ```
 [actor-discoverer] ▶ Starting actor discovery  (model: <MODEL_ID>)
