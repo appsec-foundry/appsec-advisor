@@ -3641,7 +3641,13 @@ def _render_threat_hypotheses_table(yaml_data: dict) -> list[str]:
     if not unpromoted:
         return []
 
+    # Emit the explicit name-slug anchor the §7.2 "Controls covered" bullet
+    # links to. Real controls get this <a id> from _emit_v2_grouped_control;
+    # this pseudo-control heading previously had none, so its Controls-covered
+    # bullet `[Threat Hypotheses Requiring Validation](#threat-hypotheses-requiring-validation)`
+    # dangled (juice-shop 2026-07-02).
     lines: list[str] = [
+        f'<a id="{_v2_slug("Threat Hypotheses Requiring Validation")}"></a>',
         "#### Threat Hypotheses Requiring Validation",
         "",
         "**Status:** 🟡 Partial — architecture-derived control gaps not yet source-to-sink proven; treat as leads requiring a validate-or-refute pentest probe before promotion to a finding.",
@@ -5425,7 +5431,21 @@ _LLM_TOP10_RULES = [
     (
         "LLM10",
         "Unbounded Consumption",
-        ["unbounded", "resource exhaustion", "model denial", "rate limit", "provider cost"],
+        [
+            "unbounded",
+            "resource exhaustion",
+            "model denial",
+            "rate limit",
+            # Hyphenated / negated spellings the space-separated "rate limit"
+            # keyword missed — e.g. "Unrate-Limited LLM Chat Proxy" (T-037,
+            # juice-shop 2026-07-02) dropped out of the AI-exposure map entirely.
+            "rate-limit",
+            "rate limiting",
+            "unrate-limited",
+            "no rate limit",
+            "unlimited",
+            "provider cost",
+        ],
         "The LLM endpoint imposes no authentication, rate, or quota boundary, so "
         "any client can drive unbounded model invocations — uncontrolled "
         "provider cost and denial of service for legitimate users.",

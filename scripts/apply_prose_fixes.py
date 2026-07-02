@@ -77,6 +77,7 @@ from pathlib import Path
 
 from _atomic_io import atomic_write_text
 from _slug import github_slug
+from _slug import github_render_slug
 from perimeter_patterns import strip_perimeter_absence_sentences
 
 _EXTENSIONS = (
@@ -641,7 +642,16 @@ def _rewrite_controls_covered_anchors(text: str) -> tuple[str, int]:
         m4 = sub_header_re.match(ln)
         if m4:
             h = m4.group(1)
-            sections[current_sec].append((h, github_slug(h)))
+            # Link TARGET must be github_render_slug — the anchor GitHub/pandoc
+            # actually render — NOT github_slug (the collapsed form). They
+            # diverge for any subsection heading carrying ` / `, ` & `, ` — `
+            # (e.g. `7.2.3 OAuth / Google Social Login` → GitHub
+            # `#723-oauth--google-social-login`, github_slug
+            # `#723-oauth-google-social-login`), so the Controls-covered bullet
+            # dangled for every such control. toc_closure verifies with
+            # render_slug, so this makes them agree; non-divergent headings are
+            # byte-identical under both functions (juice-shop 2026-07-02).
+            sections[current_sec].append((h, github_render_slug(h)))
 
     n_fixes = 0
     current_sec = None

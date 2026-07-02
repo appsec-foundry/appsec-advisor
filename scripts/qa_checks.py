@@ -1591,10 +1591,19 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
                     )
                     continue
                 heading_re = re.compile(rf"(?m)^{re.escape(hashes)}\s+(?P<title>[^\n]+?)[ \t]*$")
+                # Prefix match, NOT fullmatch: required_subsection patterns are
+                # authored as ^-anchored prefixes (e.g. `^5\.1 Unauthenticated
+                # Entry Points`), so a heading that carries a trailing decoration
+                # the generator legitimately appends — e.g. the route-count
+                # suffix `5.1 Unauthenticated Entry Points (54)` from
+                # pregenerate_fragments — must still satisfy the requirement.
+                # `fullmatch` rejected the suffix and produced a false-positive
+                # "required subsection missing", forcing a needless fragment-fixer
+                # repair pass (juice-shop 2026-07-02).
                 sub_matches = [
                     candidate
                     for candidate in heading_re.finditer(parent_body)
-                    if title_re.fullmatch(candidate.group("title").strip())
+                    if title_re.match(candidate.group("title").strip())
                 ]
                 display = f"{hashes} /{pattern}/"
             sub_match = sub_matches[0] if sub_matches else None

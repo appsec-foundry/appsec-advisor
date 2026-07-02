@@ -2479,6 +2479,7 @@ def _toc_children_for_section(ctx: RenderContext, sid: str, sec: dict[str, Any])
 
 
 from _slug import github_slug as _slug_github_slug  # noqa: E402  (R8 — single source of truth)
+from _slug import github_render_slug as _slug_github_render_slug  # noqa: E402  (link targets → GitHub-rendered anchor)
 
 
 def _anchor_from_heading(heading: str) -> str:
@@ -10488,9 +10489,17 @@ def _linkify_section_refs(md: str) -> str:
     heading_re = re.compile(r"^(#{2,4})\s+(\d+(?:\.\d+(?:\.\d+)?)?)[\.\s]+(.+?)\s*$", re.MULTILINE)
     for m in heading_re.finditer(md):
         hashes, num, title = m.group(1), m.group(2), m.group(3)
-        # Slug uses the FULL heading text (number + title) per
-        # _anchor_from_heading semantics — the GFM convention.
-        slug = _anchor_from_heading(f"{hashes} {num} {title}")
+        # Slug uses the FULL heading text (number + title). Build the LINK
+        # TARGET with github_render_slug — the anchor GitHub/pandoc ACTUALLY
+        # render — NOT github_slug (the collapsed generator form). The two
+        # diverge for any heading carrying ` / `, ` & `, ` — ` (e.g.
+        # `7.9.2 Secret / Key Management` → GitHub `#792-secret--key-management`
+        # but github_slug `#792-secret-key-management`), so a github_slug target
+        # dangled on every §N.M prose ref into such a subsection. toc_closure
+        # already verifies with render_slug, so this makes generator and checker
+        # agree. Non-divergent headings are byte-identical under both functions,
+        # so no working link changes (juice-shop 2026-07-02).
+        slug = _slug_github_render_slug(f"{hashes} {num} {title}")
         slug_map.setdefault(num, slug)
 
     if not slug_map:
@@ -10569,6 +10578,22 @@ def _linkify_section_refs(md: str) -> str:
             i = close + 1
         return "".join(out_parts)
 
+    # Repair ALREADY-linked section refs whose anchor is stale/wrong. An
+    # LLM-authored fragment sometimes hand-writes `[§7.9.2](#792-secret-key-management)`
+    # with its own (collapsed, or mis-numbered) anchor guess; the outside-link
+    # substitution above deliberately skips inside-link spans, so such a link
+    # would ship broken. This pass recomputes the anchor from the §-number in
+    # the VISIBLE label (authoritative) against the same slug_map, but ONLY when
+    # the label is exactly `§N(.M(.K)?)` — so it can never nest a link or touch a
+    # titled link like `[§7.2 Identity …](#…)`. No-op when the anchor already
+    # matches (juice-shop 2026-07-02).
+    _PRELINKED_REF_RE = re.compile(r"\[§(\d+(?:\.\d+){0,2})\]\(#[^)]+\)")
+
+    def _fix_prelinked(m: re.Match[str]) -> str:
+        num = m.group(1)
+        slug = slug_map.get(num)
+        return f"[§{num}](#{slug})" if slug else m.group(0)
+
     out_lines: list[str] = []
     in_fence = False
     for chunk in re.split(r"(```[^\n]*\n.*?\n```|<!--.*?-->)", md, flags=re.DOTALL):
@@ -10580,7 +10605,8 @@ def _linkify_section_refs(md: str) -> str:
             if re.match(r"^\s{0,3}#{1,6}\s", line):
                 # Heading line — never linkify §-refs in headings
                 continue
-            lines[i] = _sub_outside_link_labels(line)
+            line = _sub_outside_link_labels(line)
+            lines[i] = _PRELINKED_REF_RE.sub(_fix_prelinked, line)
         out_lines.append("\n".join(lines))
     return "".join(out_lines)
 
@@ -15774,13 +15800,6 @@ def render(
     # sections go through their own Jinja templates and bypass it.
     rendered = _escape_dollar_operators(rendered)
 
-    # Section cross-reference linkifier — convert bare `§N` / `§N.M` /
-    # `§N.M.K` tokens in prose into anchor-linked form so cross-references
-    # to other sections are clickable. The linkifier scans the rendered
-    # document for `##` / `###` / `####` headings, builds a number → slug
-    # map, and rewrites `§N(.M(.K)?)?` in non-heading prose.
-    rendered = _linkify_section_refs(rendered)
-
     # Wrap unescaped `<script>` / `<img onerror=…>` attacker-payload tags
     # in inline backticks so the rendered HTML/PDF report does not interpret
     # them as live HTML elements (the report would otherwise become its own
@@ -15817,6 +15836,18 @@ def render(
     #    titled enumeration stays in each control's `Relevant findings` block).
     rendered = _section7_number_and_bulletize(rendered)
     rendered = _section7_inline_findings_id_only(ctx, rendered)
+
+    # Section cross-reference linkifier — convert bare `§N` / `§N.M` / `§N.M.K`
+    # tokens in prose into anchor-linked form so cross-references are clickable.
+    # MUST run AFTER _section7_number_and_bulletize: that pass RENUMBERS the §7
+    # H4 sub-controls (an un-numbered opener like "Threat Hypotheses Requiring
+    # Validation" shifts the LLM-authored 7.2.1…7.2.N by one). Running the
+    # linkifier earlier built its number→slug map from the stale pre-renumber
+    # headings, so a prose `(§7.2.2)` linked to the fragment's 7.2.2 (OAuth)
+    # while the final document renumbered 7.2.2 to Password-Based — a dangling,
+    # mislabeled anchor (juice-shop 2026-07-02). Building the map here, after
+    # renumbering, resolves both the number and the anchor correctly.
+    rendered = _linkify_section_refs(rendered)
 
     # General table compaction — proportional column widths on every table so
     # description columns stop crowding out finding/link columns and short IDs
