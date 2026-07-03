@@ -233,13 +233,30 @@ At the Stage-2 handoff, read `SKILL-impl.md` from the
 QA, repair, architect review, completion, cleanup, and error handling on the
 existing contract.
 
-After each major agent return, the filesystem is authoritative. If context was
-compacted or a return is ambiguous, run:
+**Mandatory finalize gate (deterministic — do NOT skip).** After the Stage-2
+renderer agent(s) return, and again before you emit any completion summary, you
+MUST run:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
   next --output-dir "$OUTPUT_DIR"
 ```
 
-Use the returned action only to re-establish the current stage. Never infer a
-completed stage solely from conversation memory.
+This call now **composes `threat-model.md` deterministically** from the on-disk
+render fragments whenever they are present but the report was never composed —
+the 2026-07-02 gap where the parallel-render agents authored the fragments and
+the orchestrator then ended (turn budget / skipped step) before invoking
+`compose_threat_model.py`, leaving `threat-model.yaml` + a full `.fragments/`
+set but no report. Honor the returned `action`/`stage`:
+
+- `stage=stage2` → the report still does not exist **and** the render fragments
+  are missing; (re-)dispatch Stage 2. **Never emit a completion summary in this
+  state.**
+- `stage=stage3` / `stage=stage4` → proceed with that stage.
+- `action=complete` → the report exists; proceed to the completion summary.
+
+**Hard invariant:** never emit an "Assessment complete" summary while
+`$OUTPUT_DIR/threat-model.md` is absent. After each major agent return the
+filesystem is authoritative — if context was compacted or a return is
+ambiguous, run the same `next` call and use its action to re-establish the
+current stage. Never infer a completed stage solely from conversation memory.

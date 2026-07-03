@@ -849,6 +849,68 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     }
 
 
+# LLM-authored render fragments a Stage-2 renderer must produce before the
+# report can be composed. Their presence means the expensive rendering already
+# happened and only the deterministic compose remains.
+_REQUIRED_RENDER_FRAGMENTS = ("ms-verdict.json", "security-architecture.md")
+
+
+def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
+    """Deterministically compose ``threat-model.md`` from on-disk fragments.
+
+    Closes the thin-runtime gap where the orchestrator authored the render
+    fragments but ended — turn budget, or a skipped skill-level step — before
+    issuing ``compose_threat_model.py``, leaving ``threat-model.yaml`` plus a
+    full ``.fragments/`` set but no report (2026-07-02 juice-shop thin run).
+
+    Only fires when the LLM-authored fragments are already present, so no agent
+    work is needed; otherwise returns False and the caller falls back to a
+    Stage-2 agent dispatch. Runs the canonical finalization tail
+    (compose --strict → apply_prose_fixes → qa_checks autofix). Fail-safe: any
+    error returns False and never raises into ``next``'s JSON output.
+    """
+    frag_dir = output_dir / ".fragments"
+    if not all((frag_dir / name).is_file() for name in _REQUIRED_RENDER_FRAGMENTS):
+        return False
+    md = output_dir / "threat-model.md"
+
+    def _run(*cmd: str) -> bool:
+        try:
+            proc = subprocess.run(
+                [sys.executable, *cmd],
+                cwd=str(SCRIPT_DIR),
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            return proc.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    # Mechanical structural fragments (idempotent backstop), then the strict
+    # compose, then the prose-fix + autofix tail (AGENTS.md "Critical ordering").
+    _run(
+        str(SCRIPT_DIR / "pregenerate_fragments.py"), str(output_dir), "--force", "--only",
+        "system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md",
+    )
+    # Conditional MS fragments (idempotent, self-gating — a renderer-authored
+    # copy already on disk is preserved). ms-ai-exposure.json is the recurring
+    # gap: the thin renderer often skips it, so the "AI / LLM Exposure" MS
+    # callout silently vanishes even though the yaml carries an LLM surface
+    # (2026-07-02). Deriving it here from the yaml guarantees the section.
+    _run(
+        str(SCRIPT_DIR / "pregenerate_fragments.py"), str(output_dir), "--only",
+        "ms-ai-exposure.json,ms-critical-attack-tree.json",
+    )
+    if not _run(str(SCRIPT_DIR / "compose_threat_model.py"), "--output-dir", str(output_dir), "--strict"):
+        return False
+    if not md.is_file():
+        return False
+    _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
+    _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
+    return md.is_file()
+
+
 def next_action(output_dir: Path) -> dict[str, Any]:
     output_dir = output_dir.resolve()
     config_path = output_dir / ".skill-config.json"
@@ -871,12 +933,17 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             "instruction_file": str(LEGACY_RUNTIME),
         }
     if not (output_dir / "threat-model.md").is_file():
-        return {
-            **common,
-            "action": "dispatch_agent",
-            "stage": "stage2",
-            "instruction_file": str(LEGACY_RUNTIME),
-        }
+        # Deterministic compose backstop: when the render fragments are already
+        # on disk the remaining work is a pure compose, so finish it here rather
+        # than re-dispatching the (expensive) renderer. Only falls through to a
+        # Stage-2 agent when the fragments are genuinely missing.
+        if not _compose_if_ready(output_dir, str(cfg.get("repo_root") or "")):
+            return {
+                **common,
+                "action": "dispatch_agent",
+                "stage": "stage2",
+                "instruction_file": str(LEGACY_RUNTIME),
+            }
     if not cfg.get("skip_qa") and not (output_dir / ".qa-status.json").is_file():
         return {
             **common,

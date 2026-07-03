@@ -396,6 +396,64 @@ def test_next_action_rehydrates_from_filesystem(tmp_path):
     assert controller.next_action(output)["action"] == "complete"
 
 
+def test_compose_if_ready_requires_llm_fragments(tmp_path):
+    """No render fragments on disk → cannot compose, caller must dispatch Stage 2."""
+    output = tmp_path / "out"
+    (output / ".fragments").mkdir(parents=True)
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    assert controller._compose_if_ready(output, "") is False
+
+
+def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch):
+    """The deterministic backstop: yaml + render fragments present but no .md →
+    next_action composes the report itself (no Stage-2 re-dispatch), then routes
+    to QA. Closes the 2026-07-02 thin-runtime gap (fragments authored, compose
+    never ran)."""
+    output = tmp_path / "out"
+    frag = output / ".fragments"
+    frag.mkdir(parents=True)
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    # The LLM-authored fragments the renderer would have produced.
+    (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
+    (frag / "security-architecture.md").write_text("## 7. Security Architecture\n", encoding="utf-8")
+
+    md = output / "threat-model.md"
+
+    def fake_run(cmd, **kwargs):
+        # Simulate compose_threat_model.py writing the report; all steps succeed.
+        if any("compose_threat_model.py" in str(c) for c in cmd):
+            md.write_text("# Threat Model\n", encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(controller.subprocess, "run", fake_run)
+
+    action = controller.next_action(output)
+    assert md.is_file()               # composed deterministically
+    assert action["stage"] == "stage3"  # routed to QA, NOT re-dispatched as stage2
+
+
+def test_next_action_falls_back_to_stage2_when_compose_fails(tmp_path, monkeypatch):
+    """If the deterministic compose cannot produce the .md, fall back to a
+    Stage-2 agent dispatch (no regression vs. the pre-backstop behaviour)."""
+    output = tmp_path / "out"
+    frag = output / ".fragments"
+    frag.mkdir(parents=True)
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
+    (frag / "security-architecture.md").write_text("## 7\n", encoding="utf-8")
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, "", "boom")  # compose fails
+
+    monkeypatch.setattr(controller.subprocess, "run", fake_run)
+
+    action = controller.next_action(output)
+    assert not (output / "threat-model.md").is_file()
+    assert action["stage"] == "stage2"
+
+
 def test_action_schema_rejects_executable_command_field():
     with pytest.raises(controller.ControllerError):
         controller._validate_action(
